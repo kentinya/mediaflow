@@ -4255,6 +4255,51 @@ def reset_automation_definitions(state: AppState) -> dict[str, object]:
     }
 
 
+def automation_record_evidence(
+    state: AppState, *, definition_id: str | None = None, run_id: str | None = None
+) -> dict[str, object]:
+    """Exact numeric Automation records evidence for the browser journey.
+
+    A native assertion must compare a real numeric total and a real record
+    identity, not a substring of the rendered text.  This reads the same
+    bounded window and the same population predicate the Automation records
+    page uses, through the real repository, and never mutates anything.
+    """
+
+    arguments: dict[str, object] = {"limit": 100, "automation_admissions": True}
+    if definition_id:
+        arguments["definition_id"] = definition_id
+    try:
+        window = state.repository.operations_runs_window(**arguments)
+    except Exception as error:  # pragma: no cover - diagnostic only
+        return {"available": False, "reason": str(error)}
+    page = list(window.page)
+    document: dict[str, object] = {
+        "available": True,
+        "total": int(window.total),
+        "statusCounts": dict(window.status_counts),
+        "population": [item.run_id for item in page],
+        "definitionId": definition_id,
+        "sideEffects": "none",
+    }
+    if run_id:
+        record = next((item for item in page if item.task_id == run_id), None)
+        if record is None:
+            document["record"] = None
+        else:
+            document["record"] = {
+                "runId": record.run_id,
+                "taskId": record.task_id,
+                "status": record.status.value,
+                "organized": record.organized_successfully,
+                "successItems": record.organization_success_items,
+                "uncertainSuccessItems": record.uncertain_success_items,
+                "admittedItemBound": record.admitted_item_bound,
+                "reachedItemBound": record.reached_item_bound,
+            }
+    return document
+
+
 def seed_automation_record_page(state: AppState, *, runs: int = 26) -> dict[str, object]:
     """Emit many real scheduled occurrences of the fixture definition.
 
@@ -5310,6 +5355,13 @@ def application(environ, start_response):
             document = seed_run_once_mixed_scope(STATE)
         elif path == "/__harness__/open-automation-definition-draft" and method == "POST":
             document = open_automation_definition_draft(STATE)
+        elif path == "/__harness__/automation-record-evidence" and method == "GET":
+            query = urllib.parse.parse_qs(str(environ.get("QUERY_STRING", "")))
+            document = automation_record_evidence(
+                STATE,
+                definition_id=(query.get("definitionId") or [None])[0],
+                run_id=(query.get("runId") or [None])[0],
+            )
         elif path == "/__harness__/seed-automation-record-page" and method == "POST":
             query = urllib.parse.parse_qs(str(environ.get("QUERY_STRING", "")))
             document = seed_automation_record_page(

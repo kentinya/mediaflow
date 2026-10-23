@@ -348,6 +348,7 @@ function recordDocument(overrides: Json = {}): Json {
       noWork: false,
       successItems: 1,
       uncertainSuccessItems: 1,
+      admittedItemBound: 5,
       reachedItemBound: false,
       statement:
         "本次执行失败；已受理的运行和逐项结果仍然保留，请在任务中心查看原因",
@@ -357,7 +358,27 @@ function recordDocument(overrides: Json = {}): Json {
       category: "storage_failure",
       nextAction: "inspect the Storage failure and retry the exact item",
       statement:
-        "正式整理任务已经存在；逐项失败阶段与原因属于该任务，请在任务中心查看",
+        "正式整理任务中 1 个条目失败或部分完成：Storage failure: the configured Storage operation did not complete",
+      items: [
+        {
+          itemId: "item-2",
+          status: "failed",
+          stage: "organizing",
+          destination: "Movies/Harness/second.mkv",
+          category: "storage_failure",
+          message:
+            "Storage failure: the configured Storage operation did not complete",
+          durableState: "TaskItem and Result are durable with a failed outcome",
+          sideEffects: "none",
+          retrySafe: true,
+          nextAction:
+            "inspect the Storage failure and source/destination state before explicitly retrying this item",
+          effectCertainty: "none",
+        },
+      ],
+      effects: { none: 1, known: 0, uncertain: 0, partial: 0 },
+      itemsTruncated: false,
+      unavailable: false,
     },
     nextAction: {
       kind: "task-center-run",

@@ -14427,8 +14427,14 @@ class MediaFlowApi:
             window = window_reader(after=cursor.position if cursor else None, **arguments)
         page = window.page
         handling = self._automation_handling_evidence(page)
+        failure_evidence = self._automation_failure_evidence(page)
         rows = [
-            self._automation_record_document(item, principal, handling.get(item.run_id))
+            self._automation_record_document(
+                item,
+                principal,
+                handling.get(item.run_id),
+                failure_evidence.get(item.task_id) if item.task_id else None,
+            )
             for item in page
         ]
         scope = query["scope"]
@@ -14480,17 +14486,31 @@ class MediaFlowApi:
             # Every run on this page is still pre-Task: there is nothing a
             # follow-up could link to, and "unhandled" is the honest state.
             return {}
+        unavailable = {
+            "state": "unavailable",
+            "attempts": 0,
+            "latestKind": None,
+            "latestStatus": None,
+            "nextAction": (
+                "the linked follow-up state could not be read; reload this record and, if it "
+                "stays unavailable, inspect the exact Task Center run"
+            ),
+        }
         try:
             by_task = reader(task_ids)
         except Exception:
-            return {}
+            # A failed read is never "no follow-up" and never "unhandled": the
+            # operator must not be told there is nothing to handle when the
+            # evidence simply could not be read.
+            return {item.run_id: dict(unavailable) for item in page}
+        if not isinstance(by_task, dict):
+            return {item.run_id: dict(unavailable) for item in page}
         handling: dict[str, dict] = {}
         for item in page:
-            evidence = by_task.get(item.task_id) if item.task_id else None
-            if evidence is None:
-                # A pre-Task run genuinely has no linked follow-up; only a run
-                # whose durable read actually failed becomes "unavailable".
-                evidence = {
+            if not item.task_id:
+                # A pre-Task run genuinely has nothing a follow-up could link
+                # to yet, so "unhandled" is the honest state.
+                handling[item.run_id] = {
                     "state": "unhandled",
                     "attempts": 0,
                     "latestKind": None,
@@ -14499,11 +14519,41 @@ class MediaFlowApi:
                         "open the exact Task Center run once this admission acquires its Task"
                     ),
                 }
-            handling[item.run_id] = evidence
+                continue
+            evidence = by_task.get(item.task_id)
+            handling[item.run_id] = evidence if isinstance(evidence, dict) else dict(unavailable)
         return handling
 
+    def _automation_failure_evidence(self, page) -> dict[str, dict]:
+        """Batched concrete per-item failure evidence for this page's runs.
+
+        A records read must tell the operator why an affected item failed and
+        what is known about its effects, using the durable evidence that already
+        exists on the linked Task's failed/partial items and their Results.  The
+        read is batched per page and bounded, and an unavailable read stays
+        explicitly unavailable rather than being published as "no failure".
+        """
+
+        repository = self._repository
+        reader = getattr(repository, "automation_record_failure_evidence", None)
+        if not callable(reader):
+            return {}
+        task_ids = tuple(
+            dict.fromkeys(item.task_id for item in page if getattr(item, "task_id", None))
+        )
+        if not task_ids:
+            return {}
+        try:
+            return reader(task_ids)
+        except Exception:
+            return {}
+
     def _automation_record_document(
-        self, overview, principal: ResolvedApiPrincipal, handling: dict | None = None
+        self,
+        overview,
+        principal: ResolvedApiPrincipal,
+        handling: dict | None = None,
+        failure_evidence: dict | None = None,
     ) -> dict[str, object]:
         """One read-only Automation execution record with its exact next action.
 
@@ -14568,10 +14618,11 @@ class MediaFlowApi:
             "noWork": overview.no_work_completion,
             "successItems": overview.organization_success_items,
             "uncertainSuccessItems": overview.uncertain_success_items,
-            "reachedItemBound": self._automation_record_reached_bound(overview),
+            "reachedItemBound": overview.reached_item_bound,
+            "admittedItemBound": overview.admitted_item_bound,
             "statement": self._automation_record_result_statement(overview),
         }
-        document["failureStage"] = self._automation_record_failure_stage(overview)
+        document["failureStage"] = self._automation_record_failure_stage(overview, failure_evidence)
         document["nextAction"] = route["next_action"]
         # The separately linked follow-up handling state.  It never rewrites the
         # original outcome; a recovery attempt is not a new scheduled trigger and
@@ -14609,18 +14660,6 @@ class MediaFlowApi:
         return document
 
     @staticmethod
-    def _automation_record_reached_bound(overview) -> bool:
-        """Whether the run's durable item count reached its admitted bound.
-
-        ``total_items`` is the durable primary-item population the admission
-        persisted, and a discovery or preparation row has no item population at
-        all.  Reaching the bound does not prove scope exhaustion, so the record
-        publishes the fact without claiming the source was fully consumed.
-        """
-
-        return False
-
-    @staticmethod
     def _automation_record_result_statement(overview) -> str:
         """One bounded, truthful statement of what this run's result means."""
 
@@ -14649,13 +14688,23 @@ class MediaFlowApi:
         return "本次执行仍在进行或等待，逐项结果会在任务中心更新"
 
     @staticmethod
-    def _automation_record_failure_stage(overview) -> dict[str, object] | None:
+    def _automation_record_failure_stage(
+        overview, failure_evidence: dict | None = None
+    ) -> dict[str, object] | None:
         """The bounded failure stage/reason of one record, or ``None``.
 
-        A prestart Job failure publishes the structured durable category and
-        next action it recorded; a Task failure publishes the current stage the
-        durable item evidence reached.  Admission-completion is never treated as
-        a failure stage, and no raw exception text is published.
+        Two truthful shapes exist:
+
+        - a proven settled **pre-start** failure publishes the structured
+          durable category and next action the Job itself recorded;
+        - a **formal Task** failure publishes the concrete evidence that already
+          exists on its failed/partial items and their Results: the bounded
+          failure category/message, the durable stage, the per-item known or
+          uncertain effects and the exact safe next action.
+
+        No raw exception text is ever published, and admission completion is
+        never a failure stage.  When the linked evidence cannot be read the
+        record says so explicitly instead of silently showing no reason.
         """
 
         if overview.attention_reason == "run_repair":
@@ -14665,20 +14714,89 @@ class MediaFlowApi:
                 "nextAction": overview.attention_failure_next_action,
                 "statement": ("整理开始前失败：没有创建正式整理任务，也没有产生媒体效果"),
             }
-        if overview.status.value in {"failed", "partial_success"} and overview.task_id:
+        if overview.status.value not in {"failed", "partial_success"}:
+            return None
+        if not overview.task_id:
+            return None
+        items = (failure_evidence or {}).get("items") or []
+        # ``bounded_failure_document`` decodes this backend's own envelope and
+        # otherwise classifies the persisted value into the same closed set, so
+        # a legacy or adapter-written error column never surfaces raw text.
+        decoded = [
+            (value, bounded_failure_document(value.get("error")) if value.get("error") else None)
+            for value in items
+            if isinstance(value, dict)
+        ]
+        explained = [(value, document) for value, document in decoded if document is not None]
+        lead = next((document for _value, document in explained if document), None)
+        stage_values = [
+            str(value["stage"])
+            for value, _document in decoded
+            if value.get("stage") not in {None, ""}
+        ]
+        stage = (
+            f"{overview.current_stage}_stage"
+            if overview.current_stage
+            else (f"{stage_values[0]}_stage" if stage_values else "linked_task_stage")
+        )
+        if not items:
+            # The same closed shape as an inspectable failure, with every
+            # count explicitly absent-from-zero: a Web consumer must not have to
+            # guess which keys a partially-unavailable document carries.
             return {
-                "stage": (
-                    f"{overview.current_stage}_stage"
-                    if overview.current_stage
-                    else "linked_task_stage"
-                ),
-                "category": overview.attention_failure_category,
-                "nextAction": overview.attention_failure_next_action,
+                "stage": stage,
+                "category": None,
+                "nextAction": None,
                 "statement": (
-                    "正式整理任务已经存在；逐项失败阶段与原因属于该任务，请在任务中心查看"
+                    "正式整理任务已经存在，但持久化的逐项失败原因当前不可读；"
+                    "请在任务中心核对该运行的条目证据"
                 ),
+                "unavailable": True,
+                "items": [],
+                "effects": {"none": 0, "known": 0, "uncertain": 0, "partial": 0},
+                "itemsTruncated": False,
             }
-        return None
+        # The effect partition covers the whole durable failed/partial item
+        # population (the repository computes it separately from the bounded
+        # sample), so a count is never silently the sample size.
+        raw_effects = (failure_evidence or {}).get("effects") or {}
+        effects = {
+            key: int(raw_effects.get(key) or 0) for key in ("none", "known", "uncertain", "partial")
+        }
+        item_documents = [
+            {
+                "itemId": value.get("itemId"),
+                "status": value.get("status"),
+                "stage": value.get("stage"),
+                "destination": value.get("destination"),
+                "category": (document or {}).get("category"),
+                "message": (document or {}).get("message"),
+                "durableState": (document or {}).get("durableState"),
+                "sideEffects": (document or {}).get("sideEffects"),
+                "retrySafe": (document or {}).get("retrySafe"),
+                "nextAction": (document or {}).get("nextAction"),
+                "effectCertainty": value.get("effectCertainty"),
+            }
+            for value, document in decoded
+        ]
+        affected = (failure_evidence or {}).get("failedItems") or 0
+        affected += (failure_evidence or {}).get("partialItems") or 0
+        affected = affected or len(items)
+        statement = (
+            f"正式整理任务中有 {affected} 个条目失败或部分完成，原因与已知效果已记录"
+            if lead is None
+            else f"正式整理任务中有 {affected} 个条目失败或部分完成：{lead['message']}"
+        )
+        return {
+            "stage": stage,
+            "category": (lead or {}).get("category"),
+            "nextAction": (lead or {}).get("nextAction"),
+            "statement": statement,
+            "items": item_documents,
+            "effects": effects,
+            "itemsTruncated": bool((failure_evidence or {}).get("truncated")),
+            "unavailable": False,
+        }
 
     @staticmethod
     def _automation_record_route(overview) -> dict[str, object]:

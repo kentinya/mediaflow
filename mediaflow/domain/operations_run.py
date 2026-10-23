@@ -391,6 +391,11 @@ class OperationsRunOverview:
     #: success, and a skipped item is not an organized item.
     organization_success_items: int = 0
     uncertain_success_items: int = 0
+    #: The admitted item bound the producer persisted with the run, or ``None``
+    #: when this run carries no bound at all (a discovery, a legacy row, a
+    #: pre-Task failure).  It is the durable admission value, never today's
+    #: definition limit, so a historical run keeps the exact bound it ran with.
+    admitted_item_bound: int | None = None
 
     @property
     def organized_successfully(self) -> bool:
@@ -419,6 +424,22 @@ class OperationsRunOverview:
             and self.organization_success_items == 0
             and self.uncertain_success_items == 0
         )
+
+    @property
+    def reached_item_bound(self) -> bool:
+        """Whether the durable admitted item population reached its own bound.
+
+        Only an admitted bound plus an exactly equal durable primary-item
+        population proves this.  A run without a bound (a bounded discovery, a
+        legacy row, a pre-Task admission) and a primary population below or
+        above its admitted bound all publish ``False``: reaching a bound is a
+        fact about this admission, never a claim that the source scope was
+        exhausted.
+        """
+
+        if self.admitted_item_bound is None or self.total_items is None:
+            return False
+        return self.total_items >= self.admitted_item_bound > 0
 
 
 # -- Selected-run detail: progress, items and operation records (RO-3) -------

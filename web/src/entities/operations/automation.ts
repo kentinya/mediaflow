@@ -417,6 +417,64 @@ function optionalFlag(
   return flag(source, field);
 }
 
+/**
+ * The bounded per-item failure evidence a record may carry.
+ *
+ * The list is capped by the backend; a missing list normalizes to an empty one
+ * so an older document still renders its stage/reason instead of failing the
+ * whole page.
+ */
+function normalizeFailureItems(
+  value: unknown,
+): readonly AutomationRecordFailureItemModel[] {
+  if (value === null || value === undefined) {
+    return [];
+  }
+  if (!Array.isArray(value) || value.length > 32) {
+    return fail("failureStage.items");
+  }
+  return value.map((entry, index) => {
+    const source = readRecord(entry, `failureStage.items[${index}]`);
+    return {
+      itemId: optionalText(source, "itemId"),
+      status: optionalText(source, "status"),
+      stage: optionalText(source, "stage"),
+      destination: optionalText(source, "destination"),
+      category: optionalText(source, "category"),
+      message: optionalText(source, "message"),
+      durableState: optionalText(source, "durableState"),
+      sideEffects: optionalText(source, "sideEffects"),
+      retrySafe: optionalFlag(source, "retrySafe"),
+      nextAction: optionalText(source, "nextAction"),
+      effectCertainty: optionalText(source, "effectCertainty"),
+    };
+  });
+}
+
+/**
+ * The closed effect partition of one record's failed/partial items.
+ *
+ * An absent partition normalizes to all-zero counts so an older document still
+ * shows its stage/reason; a present but malformed one fails closed.
+ */
+function normalizeFailureEffects(value: unknown): {
+  readonly none: number;
+  readonly known: number;
+  readonly uncertain: number;
+  readonly partial: number;
+} {
+  if (value === null || value === undefined) {
+    return { none: 0, known: 0, uncertain: 0, partial: 0 };
+  }
+  const source = readRecord(value, "failureStage.effects");
+  return {
+    none: count(source, "none"),
+    known: count(source, "known"),
+    uncertain: count(source, "uncertain"),
+    partial: count(source, "partial"),
+  };
+}
+
 function optionalFiniteNumber(
   source: Record<string, unknown>,
   field: string,
@@ -1859,7 +1917,30 @@ export interface AutomationRecordResultModel {
   readonly noWork: boolean;
   readonly successItems: number;
   readonly uncertainSuccessItems: number;
+  /**
+   * The durable admitted item bound, or `null` when this run carries no
+   * containment bound (a discovery, a legacy row, a definition Run once whose
+   * persisted limit is the selected count).
+   */
+  readonly admittedItemBound: number | null;
+  /** Reaching the bound is never an exhaustion claim. */
+  readonly reachedItemBound: boolean;
   readonly statement: string;
+}
+
+/** One affected item's bounded failure evidence. */
+export interface AutomationRecordFailureItemModel {
+  readonly itemId: string | null;
+  readonly status: string | null;
+  readonly stage: string | null;
+  readonly destination: string | null;
+  readonly category: string | null;
+  readonly message: string | null;
+  readonly durableState: string | null;
+  readonly sideEffects: string | null;
+  readonly retrySafe: boolean | null;
+  readonly nextAction: string | null;
+  readonly effectCertainty: string | null;
 }
 
 /** The bounded failure stage/reason of one record, when there is one. */
@@ -1868,6 +1949,15 @@ export interface AutomationRecordFailureStageModel {
   readonly category: string | null;
   readonly nextAction: string | null;
   readonly statement: string;
+  readonly items: readonly AutomationRecordFailureItemModel[];
+  readonly effects: {
+    readonly none: number;
+    readonly known: number;
+    readonly uncertain: number;
+    readonly partial: number;
+  };
+  readonly itemsTruncated: boolean;
+  readonly unavailable: boolean;
 }
 
 export interface AutomationRecordModel {
@@ -1968,6 +2058,8 @@ function normalizeAutomationRecord(
       noWork: flag(result, "noWork"),
       successItems: count(result, "successItems"),
       uncertainSuccessItems: count(result, "uncertainSuccessItems"),
+      admittedItemBound: optionalCount(result, "admittedItemBound"),
+      reachedItemBound: flag(result, "reachedItemBound"),
       statement: text(result, "statement"),
     },
     failureStage:
@@ -1978,6 +2070,10 @@ function normalizeAutomationRecord(
             category: optionalText(failureStage, "category"),
             nextAction: optionalText(failureStage, "nextAction"),
             statement: text(failureStage, "statement"),
+            items: normalizeFailureItems(failureStage["items"]),
+            effects: normalizeFailureEffects(failureStage["effects"]),
+            itemsTruncated: flag(failureStage, "itemsTruncated"),
+            unavailable: flag(failureStage, "unavailable"),
           },
     nextAction:
       nextAction === null

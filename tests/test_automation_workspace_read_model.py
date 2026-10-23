@@ -50,6 +50,10 @@ from mediaflow.domain.automation import (
     AutomationJob,
     AutomationJobStatus,
 )
+from mediaflow.domain.manual_recovery import (
+    ManualRecoveryPreparation,
+    ManualRecoveryPreparationStatus,
+)
 from mediaflow.domain.security import ApiPermission, ResolvedApiPrincipal
 from mediaflow.domain.task_persistence import (
     PersistentResultRecord,
@@ -1148,6 +1152,655 @@ class AutomationWorkspaceReadModelTests(unittest.TestCase):
                 [item["recordId"] for item in back["items"]],
                 [item["recordId"] for item in first["items"]],
             )
+
+    # -- R1: follow-up executions are not original admissions --------------
+
+    def _recovery_records(self, api) -> dict[str, dict]:
+        status, page = _request(api, RECORDS_ROUTE)
+        self.assertEqual(status, 200)
+        return {item["recordId"]: item for item in page["items"]}
+
+    def test_recovery_follow_up_task_is_not_an_original_admission(self) -> None:
+        """A confirmed recovery execution inherits the origin but is not a run.
+
+        The existing supported recovery path writes its follow-up Task with the
+        original admission's definition origin (that is how the same execution
+        stays reachable from both surfaces).  Origin alone therefore cannot
+        decide whether a run is an *original* Automation admission: the durable
+        recovery lineage must, and it has to do so before the page window, the
+        filtered total, the status partitions, the metric cohorts and the
+        per-definition latest outcome, so all of them agree.
+        """
+
+        with self._runtime() as value:
+            origin = self._admitted_automation_run(
+                value,
+                "original",
+                created_at=_NOW - timedelta(minutes=30),
+                status=PersistentTaskStatus.PARTIAL_SUCCESS,
+                job_status=AutomationJobStatus.COMPLETED,
+                succeeded_items=1,
+            )
+            self.assertIsNone(origin)
+            origin_task_id = "original-task"
+            # The confirmed recovery summary of one failed item of that run and
+            # the execution it admitted.  Both carry the exact persisted link
+            # the real journey writes; the follow-up Task inherits the origin.
+            value.runtime.create_task(
+                _task(
+                    "recovery-prep-task",
+                    created_at=_NOW - timedelta(minutes=20),
+                    command="preview",
+                )
+            )
+            value.runtime.create_task(
+                dataclasses.replace(
+                    _task(
+                        "follow-up-task",
+                        created_at=_NOW - timedelta(minutes=10),
+                        command="manual_organize",
+                    ),
+                    total_items=1,
+                    completed_items=1,
+                ),
+                display=RunDisplayContext(
+                    source_scope="Media/电影",
+                    labels=("电影库",),
+                    origin_definition_id=_DEFINITION["id"],
+                    origin_definition_name="Nightly automation",
+                    origin_kind="definition-run-once",
+                ),
+            )
+            value.runtime.create_manual_recovery_preparation(
+                ManualRecoveryPreparation(
+                    "preparation-1",
+                    origin_task_id,
+                    "original-failed-0",
+                    "continuation-1",
+                    "recovery-prep-task",
+                    "recovery-prep-result",
+                    "intent-1",
+                    "preview-1",
+                    1,
+                    "checkpoint-1",
+                    "fingerprint-1",
+                    "revision-active",
+                    "d" * 64,
+                    "tester",
+                    ManualRecoveryPreparationStatus.PREPARED,
+                    _NOW - timedelta(minutes=20),
+                    _NOW - timedelta(minutes=10),
+                )
+            )
+            value.runtime._connection.execute(
+                "UPDATE manual_recovery_preparations SET status='confirmed', current=0, "
+                "execution_id='execution-1' WHERE preparation_id='preparation-1'"
+            )
+            # The execution row names the follow-up Task; ``manual_executions``
+            # refers to a preview/intent, so only the durable execution Task
+            # identity is needed here.
+            value.runtime._connection.execute(
+                """INSERT INTO manual_executions (
+                    execution_id, preview_id, intent_id, authorization_id, task_id,
+                    actor, intent_version, configuration_snapshot_id,
+                    configuration_snapshot_digest, selected_item_ids_json,
+                    unselected_item_ids_json, status, next_action, error,
+                    allow_overwrite, allow_source_cleanup, created_at, updated_at,
+                    completed_at, worker_id, claim_token, claimed_at, claim_expires_at, attempts
+                ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?,
+                          NULL, NULL, NULL, NULL, 0)""",
+                (
+                    "execution-1",
+                    "preview-1",
+                    "intent-1",
+                    "authorization-1",
+                    "follow-up-task",
+                    "tester",
+                    1,
+                    "revision-active",
+                    "d" * 64,
+                    "[]",
+                    "[]",
+                    "completed",
+                    "inspect the linked execution",
+                    None,
+                    0,
+                    0,
+                    (_NOW - timedelta(minutes=10)).isoformat(),
+                    (_NOW - timedelta(minutes=10)).isoformat(),
+                    (_NOW - timedelta(minutes=10)).isoformat(),
+                ),
+            )
+
+            records = self._recovery_records(value.api)
+            # The follow-up Task is genuinely reachable in Operations but is not
+            # another original Automation run.
+            self.assertEqual(set(records), {"original-job"})
+            self.assertNotIn("follow-up-task", records)
+            status, page = _request(value.api, RECORDS_ROUTE)
+            self.assertEqual(page["total"], 1)
+            self.assertEqual(sum(page["statusCounts"].values()), 1)
+
+            status, metrics = _request(value.api, METRICS_ROUTE)
+            self.assertEqual(metrics["monthToDateAdmitted"], 1)
+            self.assertEqual(metrics["monthToDateTerminal"], 1)
+
+            # The ordinary Operations population still shows both runs, so the
+            # exclusion is confined to the *original Automation* population.
+            self.assertTrue(
+                any(
+                    item.task_id == "follow-up-task"
+                    for item in value.runtime.list_operations_runs(limit=50)
+                )
+            )
+            # The original row keeps its historical result and its origin; the
+            # exclusion never rewrote the admission evidence.
+            record = records["original-job"]
+            self.assertEqual(record["trigger"], "scheduled")
+            self.assertEqual(record["historyContext"]["definitionId"], _DEFINITION["id"])
+
+    def test_follow_up_exclusion_survives_reopen_and_keeps_latest_original(self) -> None:
+        """The same rule holds after a reopen and for the latest-outcome read."""
+
+        with self._runtime() as value:
+            self._admitted_automation_run(
+                value,
+                "original",
+                created_at=_NOW - timedelta(hours=1),
+                succeeded_items=1,
+            )
+            value.runtime.create_task(
+                dataclasses.replace(
+                    _task("follow-up-task", created_at=_NOW),
+                    command="manual_organize",
+                ),
+                display=RunDisplayContext(
+                    source_scope="Media/电影",
+                    labels=("电影库",),
+                    origin_definition_id=_DEFINITION["id"],
+                    origin_definition_name="Nightly automation",
+                    origin_kind="definition-run-once",
+                ),
+            )
+            value.runtime._connection.execute(
+                """INSERT INTO manual_recovery_preparations (
+                    preparation_id, source_task_id, source_item_id,
+                    analysis_continuation_id, analysis_task_id, analysis_result_id,
+                    intent_id, preview_id, intent_version, checkpoint_version,
+                    input_fingerprint, configuration_snapshot_id,
+                    configuration_snapshot_digest, actor, status, current,
+                    authorization_id, execution_id, selected_item_ids_json,
+                    allow_overwrite, allow_source_cleanup, created_at, updated_at
+                ) VALUES ('preparation-1', 'original-task', 'original-ok-0',
+                          'continuation-1', 'analysis-task', 'analysis-result',
+                          'intent-1', 'preview-1', 1, 'checkpoint-1', 'fingerprint-1',
+                          'revision-active', ?, 'tester', 'prepared', 0, NULL,
+                          NULL, '[]', 0, 0, ?, ?)""",
+                (
+                    "d" * 64,
+                    (_NOW - timedelta(minutes=10)).isoformat(),
+                    (_NOW - timedelta(minutes=5)).isoformat(),
+                ),
+            )
+            value.runtime._connection.execute(
+                """INSERT INTO manual_executions (
+                    execution_id, preview_id, intent_id, authorization_id, task_id,
+                    actor, intent_version, configuration_snapshot_id,
+                    configuration_snapshot_digest, selected_item_ids_json,
+                    unselected_item_ids_json, status, next_action, error,
+                    allow_overwrite, allow_source_cleanup, created_at, updated_at,
+                    completed_at, worker_id, claim_token, claimed_at, claim_expires_at, attempts
+                ) VALUES ('execution-1', 'preview-1', 'intent-1', 'authorization-1',
+                          'follow-up-task', 'tester', 1, 'revision-active', ?, '[]', '[]',
+                          'completed', 'inspect', NULL, 0, 0, ?, ?, ?,
+                          NULL, NULL, NULL, NULL, 0)""",
+                (
+                    "d" * 64,
+                    (_NOW - timedelta(minutes=10)).isoformat(),
+                    (_NOW - timedelta(minutes=5)).isoformat(),
+                    (_NOW - timedelta(minutes=5)).isoformat(),
+                ),
+            )
+            value.runtime._connection.execute(
+                "UPDATE manual_recovery_preparations SET status='confirmed', current=0, "
+                "execution_id='execution-1' WHERE preparation_id='preparation-1'"
+            )
+            value.runtime._connection.commit()
+
+            latest = value.runtime.automation_latest_admitted_runs()
+            # The newer follow-up never becomes the definition's latest run.
+            self.assertEqual(latest[_DEFINITION["id"]]["runId"], "original-job")
+            status, page = _request(value.api, RECORDS_ROUTE)
+            self.assertEqual(page["total"], 1)
+            value.runtime._connection.commit()
+
+    def test_failed_handling_read_is_unavailable_not_unhandled(self) -> None:
+        """A follow-up read that failed is never published as "nothing to do"."""
+
+        with self._runtime() as value:
+            self._admitted_automation_run(
+                value,
+                "origin",
+                created_at=_NOW,
+                status=PersistentTaskStatus.FAILED,
+                job_status=AutomationJobStatus.FAILED,
+                succeeded_items=0,
+            )
+
+            def explode(_task_ids):
+                raise RuntimeError("durable handling read is unavailable")
+
+            value.runtime.automation_linked_handling = explode
+            status, page = _request(value.api, RECORDS_ROUTE)
+            self.assertEqual(status, 200)
+            handling = page["items"][0]["handling"]
+            self.assertEqual(handling["state"], "unavailable")
+            self.assertNotEqual(handling["state"], "unhandled")
+            self.assertIn("could not be read", handling["nextAction"])
+            # The original outcome is still published unchanged.
+            self.assertEqual(page["items"][0]["status"], "failed")
+
+    # -- R3: concrete failure reason and known effects ----------------------
+
+    def test_record_publishes_concrete_item_failure_reason_and_effects(self) -> None:
+        """A formal Task failure names its real reason, stage and known effects.
+
+        The exact Task Center item evidence already carries the bounded failure
+        envelope, the durable item stage and the effect certainty.  The record
+        must reuse it, so the operator sees why an item failed and what is
+        known about its effects — without raw exception text and without a
+        local recovery control.
+        """
+
+        from mediaflow.application.failure_explanation import failure_explanation
+
+        with self._runtime() as value:
+            task_id = "mixed-task"
+            value.runtime.create_task(
+                dataclasses.replace(
+                    _task(
+                        task_id,
+                        status=PersistentTaskStatus.PARTIAL_SUCCESS,
+                        command="manual_organize",
+                    ),
+                    total_items=2,
+                    completed_items=1,
+                    failed_items=1,
+                ),
+                display=RunDisplayContext(
+                    source_scope="Media/电影",
+                    labels=("电影库",),
+                    origin_definition_id=_DEFINITION["id"],
+                    origin_definition_name="Nightly automation",
+                    origin_kind="definition-run-once",
+                ),
+            )
+            value.runtime.upsert_item(_run_item(task_id, "success-item", TaskItemStatus.SUCCESS))
+            value.runtime.append_result(_run_result(task_id, "success-item"))
+            value.runtime.upsert_item(
+                dataclasses.replace(
+                    _run_item(task_id, "failed-item", TaskItemStatus.FAILED),
+                    stage="organizing",
+                    error=failure_explanation(
+                        "storage_failure", durable="failed", side_effects="none", retry_safe=True
+                    ).encode(),
+                )
+            )
+            value.runtime.append_result(
+                dataclasses.replace(
+                    _run_result(
+                        task_id,
+                        "failed-item",
+                        status="failed",
+                        effect_certainty="none",
+                    ),
+                    error=failure_explanation(
+                        "storage_failure", durable="failed", side_effects="none", retry_safe=True
+                    ).encode(),
+                )
+            )
+
+            status, page = _request(value.api, RECORDS_ROUTE)
+            self.assertEqual(status, 200)
+            record = page["items"][0]
+            self.assertEqual(record["status"], "partial_success")
+            stage = record["failureStage"]
+            self.assertIsNotNone(stage)
+            self.assertFalse(stage["unavailable"])
+            self.assertEqual(stage["category"], "storage_failure")
+            self.assertIn("Storage operation did not complete", stage["statement"])
+            self.assertEqual(stage["effects"]["none"], 1)
+            self.assertEqual(stage["effects"]["known"], 0)
+            self.assertEqual(len(stage["items"]), 1)
+            failed = stage["items"][0]
+            self.assertEqual(failed["itemId"], "failed-item")
+            self.assertEqual(failed["category"], "storage_failure")
+            self.assertEqual(failed["sideEffects"], "none")
+            self.assertIn("source/destination state", failed["nextAction"])
+            # No raw exception/plan text is exposed anywhere in the document.
+            text = json.dumps(page).lower()
+            for forbidden in ("traceback", "mediaflow-failure-v1", "storageerror"):
+                self.assertNotIn(forbidden, text)
+            # The successful sibling's proven effect stays distinct.
+            self.assertEqual(record["result"]["successItems"], 1)
+
+    def test_original_failure_reason_survives_later_handling(self) -> None:
+        """A historical failure reason is never erased by starting recovery.
+
+        Admitting a recovery continuation moves the source TaskItem off
+        ``failed``, so the durable failed Result is what keeps the original
+        reason readable.  A per-Task page bound must also keep every Task's own
+        evidence: a single global row limit would let one Task hide another.
+        """
+
+        from mediaflow.application.failure_explanation import failure_explanation
+
+        with self._runtime() as value:
+            encoded = failure_explanation(
+                "storage_failure", durable="failed", side_effects="none", retry_safe=True
+            ).encode()
+            self._admitted_automation_run(
+                value,
+                "origin",
+                created_at=_NOW - timedelta(minutes=30),
+                status=PersistentTaskStatus.PARTIAL_SUCCESS,
+                job_status=AutomationJobStatus.COMPLETED,
+                succeeded_items=1,
+            )
+            value.runtime.upsert_item(
+                dataclasses.replace(
+                    _run_item("origin-task", "origin-failed", TaskItemStatus.FAILED),
+                    error=encoded,
+                )
+            )
+            value.runtime.append_result(
+                dataclasses.replace(
+                    _run_result(
+                        "origin-task",
+                        "origin-failed",
+                        created_at=_NOW - timedelta(minutes=40),
+                        status="failed",
+                        effect_certainty="none",
+                    ),
+                    error=encoded,
+                )
+            )
+            # This one Task has more failed items than any per-Task sample
+            # bound, and two sibling Tasks each have their own single failure.
+            # A global row bound would let the big Task's rows consume the whole
+            # window and silently drop the siblings' evidence.
+            for index in range(14):
+                item_id = f"origin-bad-{index}"
+                value.runtime.upsert_item(
+                    dataclasses.replace(
+                        _run_item("origin-task", item_id, TaskItemStatus.FAILED),
+                        error=encoded,
+                    )
+                )
+                value.runtime.append_result(
+                    dataclasses.replace(
+                        _run_result(
+                            "origin-task", item_id, status="failed", effect_certainty="none"
+                        ),
+                        error=encoded,
+                    )
+                )
+            for index in range(2):
+                self._admitted_automation_run(
+                    value,
+                    f"noise-{index}",
+                    created_at=_NOW - timedelta(minutes=index + 1),
+                    status=PersistentTaskStatus.FAILED,
+                    job_status=AutomationJobStatus.FAILED,
+                    succeeded_items=0,
+                )
+                value.runtime.upsert_item(
+                    dataclasses.replace(
+                        _run_item(
+                            f"noise-{index}-task",
+                            f"noise-{index}-bad",
+                            TaskItemStatus.FAILED,
+                            created_at=_NOW,
+                        ),
+                        error=encoded,
+                    )
+                )
+                value.runtime.append_result(
+                    dataclasses.replace(
+                        _run_result(
+                            f"noise-{index}-task",
+                            f"noise-{index}-bad",
+                            created_at=_NOW,
+                            status="failed",
+                            effect_certainty="none",
+                        ),
+                        error=encoded,
+                    )
+                )
+            # The real recovery admission moves the source item off ``failed``.
+            value.runtime.upsert_item(
+                _run_item("origin-task", "origin-failed", TaskItemStatus.PENDING)
+            )
+
+            status, page = _request(value.api, RECORDS_ROUTE, query="limit=100")
+            self.assertEqual(status, 200)
+            records = {item["recordId"]: item for item in page["items"]}
+            record = records["origin-job"]
+            stage = record["failureStage"]
+            self.assertFalse(stage["unavailable"])
+            self.assertEqual(stage["category"], "storage_failure")
+            # The sample is bounded but the counts are honest, and the
+            # historical zero-effect reason still names the original item.
+            self.assertEqual(stage["effects"]["none"], 15)
+            self.assertTrue(stage["itemsTruncated"])
+            self.assertEqual(len(stage["items"]), 10)
+            self.assertIn("origin-failed", {item["itemId"] for item in stage["items"]})
+            self.assertTrue(all(item["sideEffects"] == "none" for item in stage["items"]))
+            # The original outcome itself is unchanged by the handling.
+            self.assertEqual(record["status"], "partial_success")
+            self.assertEqual(record["result"]["successItems"], 1)
+            # Every sibling Task kept its own evidence: no global row bound.
+            for index in range(2):
+                sibling = records[f"noise-{index}-job"]["failureStage"]
+                self.assertFalse(sibling["unavailable"])
+                self.assertEqual(len(sibling["items"]), 1)
+                self.assertEqual(sibling["items"][0]["itemId"], f"noise-{index}-bad")
+
+    def test_record_reports_reached_bound_only_from_admitted_evidence(self) -> None:
+        """A reached bound is a durable fact, never an exhaustion claim."""
+
+        with self._runtime() as value:
+            # A scheduled occurrence admitted with an item limit of 2 whose Task
+            # persisted exactly 2 primary items reached that bound.
+            value.runtime.create_task(
+                dataclasses.replace(_task("bounded-task"), total_items=2),
+            )
+            value.runtime.create_job(
+                dataclasses.replace(
+                    _job(
+                        "bounded-job",
+                        task_id="bounded-task",
+                        definition_id=_DEFINITION["id"],
+                        schedule_id="schedule-1",
+                    ),
+                    limit=2,
+                )
+            )
+            status, page = _request(value.api, RECORDS_ROUTE)
+            self.assertEqual(status, 200)
+            result = page["items"][0]["result"]
+            self.assertEqual(result["admittedItemBound"], 2)
+            self.assertTrue(result["reachedItemBound"])
+
+            # A definition Run once persists the *selected* count as its limit,
+            # which is not a containment bound: it stays explicitly unavailable.
+            value.runtime.create_task(
+                dataclasses.replace(
+                    _task("manual-bounded", created_at=_NOW - timedelta(minutes=5)),
+                    item_limit=2,
+                    total_items=2,
+                ),
+                display=RunDisplayContext(
+                    source_scope="Media/电影",
+                    labels=("电影库",),
+                    origin_definition_id=_DEFINITION["id"],
+                    origin_definition_name="Nightly automation",
+                    origin_kind="definition-run-once",
+                ),
+            )
+            status, page = _request(value.api, RECORDS_ROUTE)
+            records = {item["recordId"]: item for item in page["items"]}
+            manual = records["manual-bounded"]["result"]
+            self.assertIsNone(manual["admittedItemBound"])
+            self.assertFalse(manual["reachedItemBound"])
+
+    def test_handling_progress_is_truthful_across_analysis_plan_and_execution(self) -> None:
+        """Analysis completion is not resolution; only a proven effect is.
+
+        The same-page recovery journey writes a recovery continuation (a
+        zero-mutation DryRun), then a non-authorizing plan summary, then an
+        execution whose items prove the effect.  Each step must publish its own
+        truthful handling state so the record never claims resolution before the
+        operator confirmed and executed a plan.
+        """
+
+        with self._runtime() as value:
+            self._admitted_automation_run(
+                value,
+                "origin",
+                created_at=_NOW - timedelta(minutes=30),
+                status=PersistentTaskStatus.PARTIAL_SUCCESS,
+                job_status=AutomationJobStatus.COMPLETED,
+                succeeded_items=1,
+            )
+            origin = "origin-task"
+            value.runtime.upsert_item(
+                _run_item(origin, "origin-failed", TaskItemStatus.FAILED, created_at=_NOW)
+            )
+            # Step 1 — the completed zero-mutation analysis continuation.
+            self._write_recovery_continuation(
+                value, origin, "origin-failed", "analysis-task", "completed"
+            )
+            handling = self._recovery_records(value.api)["origin-job"]["handling"]
+            self.assertEqual(handling["state"], "investigation")
+            self.assertNotEqual(handling["state"], "resolved")
+
+            # Step 2 — a prepared (non-authorizing) plan summary.
+            value.runtime.create_task(
+                _task("follow-up-task", created_at=_NOW, command="manual_organize")
+            )
+            value.runtime.upsert_item(
+                _run_item("follow-up-task", "follow-up-item", TaskItemStatus.PENDING)
+            )
+            value.runtime.create_manual_recovery_preparation(
+                ManualRecoveryPreparation(
+                    "preparation-1",
+                    origin,
+                    "origin-failed",
+                    "continuation-1",
+                    "analysis-task",
+                    "analysis-result",
+                    "intent-1",
+                    "preview-1",
+                    1,
+                    "checkpoint-1",
+                    "fingerprint-1",
+                    "revision-active",
+                    "d" * 64,
+                    "tester",
+                    ManualRecoveryPreparationStatus.PREPARED,
+                    _NOW,
+                    _NOW,
+                )
+            )
+            handling = self._recovery_records(value.api)["origin-job"]["handling"]
+            self.assertEqual(handling["state"], "investigation")
+
+            # Step 3 — an admitted, still-running execution is progress.
+            value.runtime._connection.execute(
+                """INSERT INTO manual_executions (
+                    execution_id, preview_id, intent_id, authorization_id, task_id,
+                    actor, intent_version, configuration_snapshot_id,
+                    configuration_snapshot_digest, selected_item_ids_json,
+                    unselected_item_ids_json, status, next_action, error,
+                    allow_overwrite, allow_source_cleanup, created_at, updated_at,
+                    completed_at, worker_id, claim_token, claimed_at, claim_expires_at, attempts
+                ) VALUES ('execution-1', 'preview-1', 'intent-1', 'authorization-1',
+                          'follow-up-task', 'tester', 1, 'revision-active', ?, '[]', '[]',
+                          'admitted', 'wait for the Worker', NULL, 0, 0, ?, ?, NULL,
+                          NULL, NULL, NULL, NULL, 0)""",
+                ("d" * 64, _NOW.isoformat(), _NOW.isoformat()),
+            )
+            value.runtime._connection.execute(
+                "UPDATE manual_recovery_preparations SET status='confirmed', current=0, "
+                "execution_id='execution-1' WHERE preparation_id='preparation-1'"
+            )
+            value.runtime._connection.commit()
+            handling = self._recovery_records(value.api)["origin-job"]["handling"]
+            self.assertEqual(handling["state"], "handling")
+
+            # Step 4 — a terminal execution whose item proved the effect is the
+            # only state that may read as resolved.
+            value.runtime.upsert_item(
+                _run_item("follow-up-task", "follow-up-item", TaskItemStatus.SUCCESS)
+            )
+            value.runtime.append_result(_run_result("follow-up-task", "follow-up-item"))
+            value.runtime._connection.execute(
+                "UPDATE manual_executions SET status='completed' WHERE execution_id='execution-1'"
+            )
+            value.runtime._connection.commit()
+            handling = self._recovery_records(value.api)["origin-job"]["handling"]
+            self.assertEqual(handling["state"], "resolved")
+
+            # Step 5 — a still-failing item in the linked execution is never
+            # hidden by an earlier success.
+            value.runtime.upsert_item(
+                _run_item("follow-up-task", "follow-up-item", TaskItemStatus.FAILED)
+            )
+            handling = self._recovery_records(value.api)["origin-job"]["handling"]
+            self.assertEqual(handling["state"], "recovery_failed")
+
+    @staticmethod
+    def _write_recovery_continuation(
+        value, source_task_id: str, source_item_id: str, new_task_id: str, status: str
+    ) -> None:
+        value.runtime.create_task(
+            _task(new_task_id, created_at=_NOW, command="recovery-continuation")
+        )
+        value.runtime._connection.execute(
+            """INSERT INTO recovery_requests (
+                request_id, task_id, item_id, action_id, checkpoint_version,
+                source_storage_id, source_path, actor, requested_at, status,
+                authority_statement, next_action
+            ) VALUES ('request-1', ?, ?, 'retry', 'checkpoint-1',
+                      'source-storage', 'Media/电影/origin-failed.mkv', 'tester', ?,
+                      'completed', 'analysis-only', 'inspect the analysis')""",
+            (source_task_id, source_item_id, _NOW.isoformat()),
+        )
+        value.runtime._connection.execute(
+            """INSERT INTO recovery_continuations (
+                continuation_id, request_id, source_task_id, source_item_id,
+                checkpoint_version, configuration_snapshot_id,
+                configuration_snapshot_digest, boundary, status, created_at,
+                updated_at, actor, job_id, new_task_id, new_result_id, started_at,
+                completed_at, error, recovery, authority_statement
+            ) VALUES ('continuation-1', 'request-1', ?, ?, 'checkpoint-1',
+                      'revision-active', ?, 'analysis', ?, ?, ?, 'tester',
+                      'analysis-job', ?, 'analysis-result', ?, ?, NULL, NULL,
+                      'analysis-only')""",
+            (
+                source_task_id,
+                source_item_id,
+                "d" * 64,
+                status,
+                _NOW.isoformat(),
+                _NOW.isoformat(),
+                new_task_id,
+                _NOW.isoformat(),
+                _NOW.isoformat(),
+            ),
+        )
+        value.runtime._connection.commit()
 
     # -- passive reads ------------------------------------------------------
 

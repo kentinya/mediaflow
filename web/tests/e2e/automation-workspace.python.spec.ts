@@ -365,6 +365,27 @@ test("a record keeps its original result while a handled item shows separate pro
   expect(executionBody.taskId).toBeTruthy();
   expect(executionBody.failedItemId).toBeTruthy();
 
+  // Every checkpoint of this journey reads the *same* original population
+  // through the real records read. The numeric total must never change and the
+  // handling state must progress truthfully: analysis and plan preparation are
+  // not resolution, and the follow-up execution is not a second original run.
+  const evidence = async () => {
+    const response = await page.request.get(
+      `/__harness__/automation-record-evidence?definitionId=${DEFINITION_ID}&runId=${executionBody.taskId}`,
+    );
+    return (await response.json()) as {
+      readonly available: boolean;
+      readonly total: number;
+      readonly population: readonly string[];
+      readonly record: {
+        readonly status: string;
+        readonly organized: boolean;
+        readonly successItems: number;
+        readonly reachedItemBound: boolean;
+      } | null;
+    };
+  };
+
   // Read Automation *before* the recovery: the original mixed result is
   // published as a historical fact with its failure stage and its handling
   // state, and no local recovery control is offered.
@@ -375,8 +396,24 @@ test("a record keeps its original result while a handled item shows separate pro
   await page.getByLabel("定义").fill(DEFINITION_ID);
   await page.getByLabel("定义").press("Enter");
   await expect(region.getByText(/共 \d+ 条执行记录/)).toBeVisible();
-  const beforeRecovery = await region.textContent();
-  expect(beforeRecovery).toContain("定时触发");
+  const initial = await evidence();
+  expect(initial.available, JSON.stringify(initial)).toBe(true);
+  // The baseline is this spec's own filtered population: the shared harness
+  // carries other journeys' admitted runs, so the invariant proven below is
+  // that *this* population never grows during recovery, not a fixed number.
+  expect(initial.total).toBeGreaterThan(0);
+  expect(initial.population).toContain(executionBody.taskId);
+  expect(initial.record?.status).toBe("partial_success");
+  expect(initial.record?.successItems).toBe(1);
+  // The row tells the operator *why* it failed, with the concrete bounded
+  // reason and the known per-item effects, and offers no local command.
+  const ownRow = region
+    .getByRole("row")
+    .filter({ hasText: "Handled records workspace" });
+  await expect(ownRow.getByText(/部分成功/)).toBeVisible();
+  await expect(ownRow.getByText(/阶段：/)).toBeVisible();
+  await expect(ownRow.getByText(/Storage failure/).first()).toBeVisible();
+  await expect(ownRow.getByText(/尚未处理/)).toBeVisible();
   await expect(
     region.getByRole("button", { name: /重新分析|暂停|继续|取消|运行一次/ }),
   ).toHaveCount(0);
@@ -397,43 +434,141 @@ test("a record keeps its original result while a handled item shows separate pro
   await recovery.getByRole("button", { name: "继续此条目的安全分析" }).click();
   expect((await continuation).status()).toBe(202);
 
-  // Back in Automation, the original record keeps its historical result while
-  // the linked follow-up shows its own progress state.
+  // Checkpoint 1 — the admitted analysis. The handling state is progress, not
+  // resolution, and the original population is unchanged.
+  const afterAdmission = await evidence();
+  expect(afterAdmission.total).toBe(initial.total);
+  expect(afterAdmission.population).toEqual(initial.population);
+
+  // Checkpoint 2 — the zero-mutation analysis completes. This proves only that
+  // the item can be planned again; it is *not* resolution.
+  const analyzedRecovery = await page.request.post(
+    `/__harness__/run-task-item-recovery-worker?itemId=${executionBody.failedItemId}`,
+  );
+  const analyzedBody = (await analyzedRecovery.json()) as {
+    readonly continuationStatus?: string;
+  };
+  expect(analyzedBody.continuationStatus).toBe("completed");
+  await connectOn(page, "/ui-v2/operations/automation");
+  await page.getByRole("button", { name: "执行记录" }).click();
+  const analysisRegion = page.getByRole("region", { name: "自动化执行记录" });
+  await expect(analysisRegion).toBeVisible();
+  await page.getByLabel("定义").fill(DEFINITION_ID);
+  await page.getByLabel("定义").press("Enter");
+  const analysisRow = analysisRegion
+    .getByRole("row")
+    .filter({ hasText: "Handled records workspace" });
+  await expect(analysisRow.getByText(/部分成功/)).toBeVisible();
+  // Analysis completion is explicitly *not* reported as a completed follow-up.
+  await expect(analysisRow.getByText(/后续处理已完成/)).toHaveCount(0);
+  await expect(analysisRow.getByText(/需要核对/)).toBeVisible();
+  const afterAnalysis = await evidence();
+  expect(afterAnalysis.total).toBe(initial.total);
+
+  // Checkpoint 3 — prepare the legitimate plan summary, then confirm it. The
+  // summary is non-authorizing; the confirmation is the admission.
+  await connectOn(
+    page,
+    `/ui-v2/operations?run=${executionBody.taskId}&item=${executionBody.failedItemId}`,
+  );
+  const preparedDetail = page.getByRole("region", { name: "运行详情" });
+  const preparedRecovery = preparedDetail.getByRole("region", {
+    name: "条目审核与恢复",
+  });
+  await preparedRecovery.getByRole("button", { name: "Refresh" }).click();
+  await expect(preparedRecovery.getByText(/单项分析已完成/)).toBeVisible();
+  const preparation = page.waitForResponse(
+    (response) =>
+      response.request().method() === "POST" &&
+      /\/recovery\/prepare-summary$/.test(new URL(response.url()).pathname),
+  );
+  await preparedRecovery
+    .getByRole("button", { name: "生成计划摘要并在此确认" })
+    .click();
+  expect((await preparation).status()).toBe(201);
+  const afterPreparation = await evidence();
+  expect(afterPreparation.total).toBe(initial.total);
+  expect(afterPreparation.population).toEqual(initial.population);
+
+  const summaryRegion = preparedRecovery.getByRole("region", {
+    name: "新计划摘要",
+  });
+  await expect(summaryRegion).toBeVisible();
+  await expect(summaryRegion).toContainText("Two.2002.mkv");
+  await expect(summaryRegion).not.toContainText("One.2001.mkv");
+  const recovered = page.waitForResponse(
+    (response) =>
+      response.request().method() === "POST" &&
+      /\/api\/v1\/manual-recovery-preparations\/[^/]+\/confirm$/.test(
+        new URL(response.url()).pathname,
+      ),
+  );
+  await summaryRegion
+    .getByRole("button", { name: /确认继续整理 1 项/ })
+    .click();
+  expect((await recovered).status()).toBe(202);
+
+  // Checkpoint 4 — the recovery execution is admitted. It inherits the
+  // definition origin, yet it must never become a third original admission.
+  const afterExecutionAdmission = await evidence();
+  expect(
+    afterExecutionAdmission.total,
+    JSON.stringify(afterExecutionAdmission),
+  ).toBe(initial.total);
+  expect(afterExecutionAdmission.population).toEqual(initial.population);
+
+  // Checkpoint 5 — execute the exact confirmed subset. Only the failed item's
+  // source moves; the successful sibling keeps its own result.
+  const recoveredWorker = await page.request.post(
+    "/__harness__/run-manual-worker",
+  );
+  expect((await recoveredWorker.json()).completed).toBe(true);
+  const itemState = await (
+    await page.request.get(
+      `/__harness__/task-item-recovery-state?itemId=${executionBody.failedItemId}`,
+    )
+  ).json();
+  expect(itemState.available, JSON.stringify(itemState)).toBe(true);
+  expect(itemState.successItemStatus).toBe("success");
+  expect(itemState.successSourceExists).toBe(false);
+  expect(itemState.successResultId).toBeTruthy();
+
+  // The original population and the original per-item result are unchanged by
+  // the whole recovery; only the separately linked handling state advanced.
+  const afterHandling = await evidence();
+  expect(afterHandling.total).toBe(initial.total);
+  expect(afterHandling.population).toEqual(initial.population);
+  expect(afterHandling.record?.status).toBe("partial_success");
+  expect(afterHandling.record?.successItems).toBe(1);
+
+  // Back in Automation, the record still reports its original result and its
+  // bounded failure stage, with the follow-up handled separately and the
+  // successful sibling unchanged.
   await connectOn(page, "/ui-v2/operations/automation");
   await page.getByRole("button", { name: "执行记录" }).click();
   const afterRegion = page.getByRole("region", { name: "自动化执行记录" });
   await expect(afterRegion).toBeVisible();
   await page.getByLabel("定义").fill(DEFINITION_ID);
   await page.getByLabel("定义").press("Enter");
-  const afterRecovery = await afterRegion.textContent();
-  // The original record set is unchanged: recovery never creates another
-  // original admission.
-  expect((afterRecovery ?? "").split("条执行记录").length).toBe(
-    (beforeRecovery ?? "").split("条执行记录").length,
-  );
-  // The exact run's own row still reports its original mixed result, its
-  // failure stage and a separately linked handling state. Scoping to this
-  // exact record's row keeps the assertion independent of the other records
-  // this shared harness accumulated.
-  const ownRow = afterRegion
+  await expect(afterRegion.getByText(/共 \d+ 条执行记录/)).toBeVisible();
+  const handledRow = afterRegion
     .getByRole("row")
     .filter({ hasText: "Handled records workspace" });
-  await expect(ownRow.getByText(/部分成功/)).toBeVisible();
+  await expect(handledRow.getByText(/部分成功/)).toBeVisible();
   await expect(
-    ownRow.getByText(/部分条目已整理，其余条目有独立结果/),
+    handledRow.getByText(/部分条目已整理，其余条目有独立结果/),
   ).toBeVisible();
-  await expect(ownRow.getByText(/阶段：/)).toBeVisible();
-  await expect(
-    ownRow.getByText(/尚未处理|正在处理|后续处理已完成/),
-  ).toBeVisible();
+  await expect(handledRow.getByText(/阶段：/)).toBeVisible();
+  await expect(handledRow.getByText(/后续处理已完成/)).toBeVisible();
   // The record never acquires a local recovery/execution control.
   await expect(
-    ownRow.getByRole("button", {
+    handledRow.getByRole("button", {
       name: /重新分析|暂停|继续|取消|运行一次|重试/,
     }),
   ).toHaveCount(0);
+  await handledRow.scrollIntoViewIfNeeded();
   // The exact Task Center link returns to the same filtered records list.
-  await ownRow.getByRole("button", { name: "打开任务中心运行" }).click();
+  await handledRow.getByRole("button", { name: "打开任务中心运行" }).click();
   await expect(page).toHaveURL(/\/ui-v2\/operations\?run=/);
   await expect(
     page.getByRole("button", { name: "返回自动化执行记录" }),

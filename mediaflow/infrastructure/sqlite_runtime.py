@@ -456,10 +456,28 @@ def _safe_json_object(raw: object) -> dict[str, object]:
 def _summarize_handling(entries) -> dict:
     """Summarize exactly-linked follow-up handling for one original run.
 
-    The summary never upgrades an admission to a resolution: a completed
-    execution still needs a verified effect, and an ambiguous entry stays
-    ``investigation``.  No entry means ``unhandled`` — which the caller only
-    publishes when the durable read itself succeeded.
+    The summary describes *handling progress*, never the original outcome, and
+    it never upgrades a partial step to a resolution.  The distinction matters
+    because the linked analysis stage is a zero-mutation DryRun: a completed
+    ``recovery`` continuation only proves that the failed item can be planned
+    again.  The operator still has to review and confirm a fresh plan, and the
+    resulting execution has to prove the effect.  Therefore:
+
+    - ``handling``: linked work is queued/claimed/running, or an admitted
+      execution still has an active item;
+    - ``resolved``: the newest linked *execution* terminally settled with
+      proven item success and no failed/uncertain item of its own;
+    - ``recovery_failed``: the newest linked execution settled without success;
+    - ``investigation``: linked evidence exists but has not proved a result —
+      an analysis-only step, a prepared-but-unconfirmed plan, or an ambiguous
+      state;
+    - ``unhandled``: no linked follow-up exists at all.  The caller only
+      publishes this when the durable read itself succeeded.
+
+    Only entries that actually admitted an execution can prove resolution; an
+    analysis continuation carries none.  Every decision reads the linked Task's
+    own durable item evidence, so an older successful attempt can never hide a
+    still-active, still-failed or uncertain item.
     """
 
     if not entries:
@@ -479,56 +497,95 @@ def _summarize_handling(entries) -> dict:
         ),
     )
     latest = entries[-1]
-    statuses = {str(entry["status"]) for entry in entries}
-    # A preparation row carries its linked execution's status in the same
-    # effect column, so one read reports both the follow-up lifecycle and the
-    # proven effect.
-    execution_statuses = {
-        str(entry["effect_status"])
+
+    def number(entry, name: str) -> int:
+        value = entry[name] if name in entry.keys() else None
+        return value if isinstance(value, int) and not isinstance(value, bool) else 0
+
+    def execution_status_of(entry) -> str | None:
+        value = entry["execution_status"] if "execution_status" in entry.keys() else None
+        return str(value) if value not in {None, ""} else None
+
+    def state(name: str, next_action: str) -> dict:
+        return {
+            # The linked step this summary is describing is the newest one, so
+            # an operator can follow it without guessing which attempt ran.
+            "state": name,
+            "attempts": attempts,
+            "latestKind": str(latest["kind"]),
+            "latestStatus": str(latest["status"]),
+            "latestExecutionStatus": execution_status_of(latest),
+            "nextAction": next_action,
+        }
+
+    # 1. A live step anywhere means the operator is waiting, not done.
+    if any(
+        str(entry["status"]) in {"queued", "running"}
+        or execution_status_of(entry) in {"admitted", "running"}
+        or number(entry, "active_items") > 0
         for entry in entries
-        if entry["kind"] == "preparation" and entry["effect_status"]
-    }
-    latest_kind = str(latest["kind"])
-    latest_status = str(latest["status"])
-    if statuses & {"queued", "running"}:
-        return {
-            "state": "handling",
-            "attempts": attempts,
-            "latestKind": latest_kind,
-            "latestStatus": latest_status,
-            "nextAction": "wait for the linked follow-up to settle, then re-read this record",
-        }
-    if "completed" in execution_statuses or (
-        "completed" in statuses and latest_kind != "preparation"
     ):
-        return {
-            "state": "resolved",
-            "attempts": attempts,
-            "latestKind": latest_kind,
-            "latestStatus": latest_status,
-            "nextAction": "no further Automation action is needed for this record",
-        }
-    if statuses & {"failed", "cancelled", "superseded", "stale"}:
-        return {
-            "state": "recovery_failed",
-            "attempts": attempts,
-            "latestKind": latest_kind,
-            "latestStatus": latest_status,
-            "nextAction": (
-                "the linked follow-up did not succeed; open the exact Task Center run "
-                "to review it before any further decision"
-            ),
-        }
-    return {
-        "state": "investigation",
-        "attempts": attempts,
-        "latestKind": latest_kind,
-        "latestStatus": latest_status,
-        "nextAction": (
-            "linked follow-up evidence is ambiguous; inspect the exact Task Center run "
-            "before any further command"
-        ),
-    }
+        return state(
+            "handling", "wait for the linked follow-up to settle, then re-read this record"
+        )
+
+    # Every entry that admitted an execution carries the only evidence that can
+    # prove or refuse a resolution.  An analysis-only lineage cannot.
+    executed = [entry for entry in entries if execution_status_of(entry) is not None]
+    if not executed:
+        analysis_settled = any(
+            str(entry["status"]) in {"failed", "cancelled", "superseded", "stale"}
+            for entry in entries
+        )
+        if analysis_settled:
+            return state(
+                "recovery_failed",
+                "the linked follow-up did not settle successfully; open the exact Task "
+                "Center run to review it before any further decision",
+            )
+        return state(
+            "investigation",
+            "the linked follow-up has not proved a result for the affected item; review the "
+            "plan summary and confirm the exact next step in the Task Center run",
+        )
+
+    newest = executed[-1]
+    newest_status = execution_status_of(newest)
+    success_items = number(newest, "success_items")
+    failed_items = number(newest, "failed_items")
+    uncertain_items = number(newest, "uncertain_items")
+    if (
+        newest_status in {"completed", "partial_success"}
+        and success_items > 0
+        and failed_items == 0
+        and uncertain_items == 0
+    ):
+        return state("resolved", "no further Automation action is needed for this record")
+    if newest_status in {"completed", "partial_success"}:
+        # The execution settled but its own items did not prove a result for
+        # everything it was admitted to handle.
+        return state(
+            "recovery_failed",
+            "the linked follow-up did not resolve every affected item; open the exact "
+            "Task Center run to review it before any further decision",
+        )
+    if newest_status in {"failed", "cancelled"}:
+        return state(
+            "recovery_failed",
+            "the linked follow-up did not succeed; open the exact Task Center run to "
+            "review it before any further decision",
+        )
+    if uncertain_items > 0:
+        return state(
+            "investigation",
+            "the linked follow-up left an uncertain effect; inspect the exact Task Center "
+            "run before any further command",
+        )
+    return state(
+        "investigation",
+        "the linked follow-up state is ambiguous; inspect the exact Task Center run before "
+        "any further command",
+    )
 
 
 def _bounded_item_count(raw: object) -> int:
@@ -5380,6 +5437,20 @@ class SQLiteTaskRepository:
 
     # -- Unified Operations run inventory (Slice 42 RO-1/RO-2) ------------
 
+    #: The one mandatory *original* Automation admission population.
+    #: Applied before the page window, the filtered total, the status
+    #: partitions, both metric cohorts and the per-definition latest-outcome
+    #: selection, so all six consumers can never disagree about which runs are
+    #: original Automation work.  A durable follow-up execution that inherits a
+    #: definition origin is excluded by its own persisted lineage, which the
+    #: run document projects as ``is_recovery_follow_up``.
+    _ORIGINAL_AUTOMATION_ADMISSION_WHERE = (
+        "WHERE is_recovery_follow_up = 0 AND "
+        "((run_kind = 'job' AND (schedule_id IS NOT NULL "
+        "OR definition_id IS NOT NULL)) "
+        "OR (run_kind = 'task' AND origin_definition_id IS NOT NULL))"
+    )
+
     _RUN_QUERY_SELECT = """
         SELECT 'job' AS run_kind, jobs.job_id AS anchor_id, jobs.created_at AS sort_at,
                jobs.task_id AS linked_task_id, NULL AS transfer_task_id,
@@ -5511,15 +5582,67 @@ class SQLiteTaskRepository:
             # or a deliberate definition Run once (the admission-written manual
             # origin on the exact admitted execution's Task).  An ordinary
             # Files/CLI Job, a standalone manual organize Task, a preparation-
-            # only discovery/analysis, a rejected or blocked attempt (never
-            # admitted at all) and a recovery follow-up Task (which carries no
-            # definition origin of its own) are therefore excluded from
-            # original-run counts, pages and metrics.
+            # only discovery/analysis and a rejected or blocked attempt (never
+            # admitted at all) are therefore excluded from original-run counts,
+            # pages, metrics and latest-outcome selection.
+            #
+            # A durable follow-up is excluded from the *original* population by
+            # its own persisted recovery lineage (see
+            # :attr:`_recovery_follow_up_sql`), never by removing the definition
+            # origin from the row: an existing supported recovery execution
+            # deliberately inherits the original admission's origin, so origin
+            # alone cannot distinguish it from the run the operator is reading.
+            # The same rule therefore applies to every consumer below.
             clauses.append(
-                "((run_kind = 'job' AND (schedule_id IS NOT NULL OR definition_id IS NOT NULL)) "
+                "is_recovery_follow_up = 0 AND "
+                "((run_kind = 'job' AND (schedule_id IS NOT NULL "
+                "OR definition_id IS NOT NULL)) "
                 "OR (run_kind = 'task' AND origin_definition_id IS NOT NULL))"
             )
         return clauses, parameters
+
+    @staticmethod
+    def _recovery_follow_up_sql(task_identity: str) -> str:
+        """The durable lineage that proves a run is a *follow-up*, not an origin.
+
+        A recovery attempt is always written through an existing persisted
+        relation, so this reads those relations only — never a name, a timestamp
+        proximity or the current status of some other Task:
+
+        - a Task Center recovery / remaining-scope / metadata-correction
+          continuation records the exact child Task it produced
+          (``new_task_id``);
+        - a same-page recovery execution is the confirmed execution of one
+          ``manual_recovery_preparations`` summary and/or the consumed
+          ``manual_recovery_links`` anchor, and both tables persist the exact
+          ``manual_executions.task_id`` they admitted.
+
+        A follow-up may legitimately inherit its source's definition origin, so
+        this lineage — not the presence or absence of an origin — is what keeps
+        it out of the original admitted-run population, its totals, its metric
+        cohorts and its per-definition latest outcome.  Nothing about the write
+        path changes: the rows keep their recorded origin and stay reachable
+        through the Task Center.
+        """
+
+        return (
+            "(EXISTS (SELECT 1 FROM recovery_continuations followup_recovery "
+            f"WHERE followup_recovery.new_task_id = {task_identity}) "
+            "OR EXISTS (SELECT 1 FROM scope_continuations followup_scope "
+            f"WHERE followup_scope.new_task_id = {task_identity}) "
+            "OR EXISTS (SELECT 1 FROM metadata_correction_continuations "
+            f"followup_correction WHERE followup_correction.new_task_id = {task_identity}) "
+            # The two same-page branches start from the indexed
+            # ``manual_executions.task_id`` identity and then prove the
+            # preparation/link membership, so a run with no manual execution
+            # costs one indexed lookup rather than two table scans.
+            "OR EXISTS (SELECT 1 FROM manual_executions followup_execution "
+            f"WHERE followup_execution.task_id = {task_identity} "
+            "AND (EXISTS (SELECT 1 FROM manual_recovery_preparations followup_preparation "
+            "WHERE followup_preparation.execution_id = followup_execution.execution_id) "
+            "OR EXISTS (SELECT 1 FROM manual_recovery_links followup_link "
+            "WHERE followup_link.execution_id = followup_execution.execution_id))))"
+        )
 
     def _run_query_document(self) -> str:
         """One derived, deduplicated run population as a subquery.
@@ -5668,6 +5791,11 @@ class SQLiteTaskRepository:
             f"CASE WHEN {item_attention} THEN 'task_problem' "
             f"WHEN {run_level_repair} THEN 'run_repair' ELSE NULL END"
         )
+        # The durable "this run is a follow-up" facet, computed once and shared
+        # by every consumer that must keep follow-ups out of the *original*
+        # Automation population (page, filtered total, status partitions, metric
+        # cohorts and per-definition latest outcome all read this same column).
+        recovery_follow_up_sql = self._recovery_follow_up_sql(task_identity)
         problem_sql = {
             problem: f"CASE WHEN {task_item_exists(problem)} THEN 1 ELSE 0 END"
             for problem in RECOVERY_PROBLEM_TYPES
@@ -5698,6 +5826,16 @@ class SQLiteTaskRepository:
                    END AS library_kind,
                    task_status.total_items, task_status.completed_items,
                    task_status.failed_items, task_status.pause_requested,
+                   -- The item bound this admission itself recorded.  Only the
+                   -- Job occurrence records a *containment* bound (the
+                   -- definition's item limit at emission time), which is the
+                   -- durable value a "did this run hit its limit" question
+                   -- needs.  A standalone Task persists the *selected* count as
+                   -- its limit, which is not a containment bound, so it stays
+                   -- explicitly unavailable instead of being misread as
+                   -- truncation.  Nothing is backfilled from today's Active.
+                   CASE WHEN runs.run_kind = 'job' THEN runs.anchor_job_limit
+                        ELSE NULL END AS admitted_item_bound,
                    CASE WHEN task_status.task_id IS NULL OR task_status.total_items IS NULL
                         THEN NULL
                         -- The declared admission total must bound the WHOLE
@@ -5863,6 +6001,18 @@ class SQLiteTaskRepository:
                    -- lists read.  A plain queue admission is not attention.
                    {attention_sql} AS derived_attention,
                    {attention_reason_sql} AS attention_reason,
+                   -- Only an admission-shaped row can be an Automation
+                   -- follow-up, so the lineage probe is evaluated for those
+                   -- rows only.  That keeps the unrestricted Operations
+                   -- inventory from paying for it on ordinary Files/CLI work.
+                   CASE
+                       WHEN ((runs.run_kind = 'job' AND (runs.schedule_id IS NOT NULL
+                               OR runs.definition_id IS NOT NULL))
+                           OR (runs.run_kind = 'task'
+                               AND display.origin_definition_id IS NOT NULL))
+                       THEN CASE WHEN {recovery_follow_up_sql} THEN 1 ELSE 0 END
+                       ELSE 0
+                   END AS is_recovery_follow_up,
                    CASE WHEN {run_level_repair}
                         THEN runs.anchor_failure_category ELSE NULL END
                        AS attention_failure_category,
@@ -5892,6 +6042,7 @@ class SQLiteTaskRepository:
                        jobs.updated_at AS job_updated_at,
                        jobs.started_at AS job_started_at,
                        jobs.completed_at AS job_completed_at,
+                       jobs.limit_value AS anchor_job_limit,
                        jobs.failure_category AS anchor_failure_category,
                        jobs.failure_durable_state AS anchor_failure_durable_state,
                        jobs.failure_next_action AS anchor_failure_next_action
@@ -6337,11 +6488,7 @@ class SQLiteTaskRepository:
             raise ValueError("automation metric window is inverted")
         document = self._run_query_document()
         terminal = "('completed', 'partial_success', 'failed', 'cancelled')"
-        admission_predicate = (
-            "WHERE ((run_kind = 'job' AND (schedule_id IS NOT NULL "
-            "OR definition_id IS NOT NULL)) "
-            "OR (run_kind = 'task' AND origin_definition_id IS NOT NULL))"
-        )
+        admission_predicate = self._ORIGINAL_AUTOMATION_ADMISSION_WHERE
         organized = (
             "derived_status = 'completed' AND organization_success_items > 0 "
             "AND uncertain_success_items = 0"
@@ -6446,11 +6593,7 @@ class SQLiteTaskRepository:
         """
 
         document = self._run_query_document()
-        admission_predicate = (
-            "WHERE ((run_kind = 'job' AND (schedule_id IS NOT NULL "
-            "OR definition_id IS NOT NULL)) "
-            "OR (run_kind = 'task' AND origin_definition_id IS NOT NULL))"
-        )
+        admission_predicate = self._ORIGINAL_AUTOMATION_ADMISSION_WHERE
         with self._lock:
             self._connection.execute("BEGIN")
             try:
@@ -6521,17 +6664,23 @@ class SQLiteTaskRepository:
         current status of some other Task.
 
         The returned state is one of the closed set below, derived from the
-        linked continuation/preparation/execution evidence:
+        linked continuation/preparation/execution evidence *and* the exact
+        linked Task's own durable item evidence:
 
-        - ``handling``: a linked follow-up is queued/claimed/running;
-        - ``resolved``: a linked follow-up completed with a verified effect;
-        - ``recovery_failed``: the linked follow-up settled without success;
-        - ``investigation``: linked evidence exists but is ambiguous/unknown;
+        - ``handling``: linked work is queued/claimed/running or its admitted
+          execution is still active;
+        - ``resolved``: the linked execution terminally settled with proven
+          item success and no failed/uncertain item of its own;
+        - ``recovery_failed``: the linked follow-up settled without resolving
+          every affected item;
+        - ``investigation``: linked evidence exists but is ambiguous, or the
+          step is still waiting for the operator's plan review/confirmation;
         - ``unhandled``: no linked follow-up exists at all.
 
-        A continuation that admits work but never proves an effect is not
-        resolution, and an unavailable read is reported by the caller rather
-        than silently reading as ``unhandled``.
+        A completed zero-mutation analysis therefore reads as ``investigation``
+        progress rather than resolution, and an older successful attempt cannot
+        hide a still-active/failed/uncertain item.  An unavailable read is
+        reported by the caller rather than silently reading as ``unhandled``.
         """
 
         wanted = [value for value in run_ids if isinstance(value, str) and value][:100]
@@ -6546,30 +6695,64 @@ class SQLiteTaskRepository:
                     f"""
                     WITH sources(source_task_id) AS (
                         SELECT task_id FROM tasks WHERE task_id IN ({placeholders})
+                    ),
+                    follow_ups AS (
+                        SELECT 'recovery' AS kind, c.source_task_id AS source_task_id,
+                               c.status AS status, c.started_at AS started_at,
+                               c.completed_at AS completed_at,
+                               c.new_task_id AS new_task_id,
+                               NULL AS effect_status,
+                               NULL AS execution_status
+                        FROM recovery_continuations c
+                        JOIN sources s ON s.source_task_id = c.source_task_id
+                        UNION ALL
+                        SELECT 'scope', c.source_task_id, c.status, c.started_at,
+                               c.completed_at, c.new_task_id, NULL, NULL
+                        FROM scope_continuations c
+                        JOIN sources s ON s.source_task_id = c.source_task_id
+                        UNION ALL
+                        SELECT 'metadata-correction', c.source_task_id, c.status,
+                               c.started_at, c.completed_at, c.new_task_id, NULL, NULL
+                        FROM metadata_correction_continuations c
+                        JOIN sources s ON s.source_task_id = c.source_task_id
+                        UNION ALL
+                        -- A same-page recovery summary carries no execution
+                        -- until the operator confirms an exact subset, so an
+                        -- admitted execution is reported from its own row.
+                        SELECT 'preparation', p.source_task_id, p.status, p.created_at,
+                               p.updated_at, e.task_id, NULL, e.status
+                        FROM manual_recovery_preparations p
+                        JOIN sources s ON s.source_task_id = p.source_task_id
+                        LEFT JOIN manual_executions e ON e.execution_id = p.execution_id
                     )
-                    SELECT 'recovery' AS kind, c.source_task_id AS source_task_id,
-                           c.status AS status, c.started_at AS started_at,
-                           c.completed_at AS completed_at,
-                           c.new_task_id AS new_task_id,
-                           c.recovery AS effect_status
-                    FROM recovery_continuations c
-                    JOIN sources s ON s.source_task_id = c.source_task_id
-                    UNION ALL
-                    SELECT 'scope', c.source_task_id, c.status, c.started_at,
-                           c.completed_at, c.new_task_id, NULL
-                    FROM scope_continuations c
-                    JOIN sources s ON s.source_task_id = c.source_task_id
-                    UNION ALL
-                    SELECT 'metadata-correction', c.source_task_id, c.status,
-                           c.started_at, c.completed_at, c.new_task_id, NULL
-                    FROM metadata_correction_continuations c
-                    JOIN sources s ON s.source_task_id = c.source_task_id
-                    UNION ALL
-                    SELECT 'preparation', p.source_task_id, p.status, p.created_at,
-                           p.updated_at, NULL, e.status
-                    FROM manual_recovery_preparations p
-                    JOIN sources s ON s.source_task_id = p.source_task_id
-                    LEFT JOIN manual_executions e ON e.execution_id = p.execution_id
+                    SELECT follow_ups.*,
+                           -- The linked follow-up Task's own durable item
+                           -- evidence.  A zero-mutation analysis has no success
+                           -- item, so it can never read as a resolved origin.
+                           (SELECT COUNT(*) FROM task_items items
+                            WHERE items.task_id = follow_ups.new_task_id
+                            AND items.status = 'success') AS success_items,
+                           (SELECT COUNT(*) FROM task_items items
+                            WHERE items.task_id = follow_ups.new_task_id
+                            AND items.status IN ('failed', 'partial')) AS failed_items,
+                           (SELECT COUNT(*) FROM task_items items
+                            WHERE items.task_id = follow_ups.new_task_id
+                            AND items.status IN ('pending', 'processing', 'paused',
+                                'waiting_confirm', 'waiting_recognition', 'waiting_metadata',
+                                'waiting_metadata_correction', 'waiting_classification'))
+                                AS active_items,
+                           (SELECT COUNT(*) FROM task_items items
+                            WHERE items.task_id = follow_ups.new_task_id
+                            AND items.status = 'success'
+                            AND COALESCE((
+                                SELECT latest.effect_certainty FROM task_results latest
+                                WHERE latest.item_id = items.item_id
+                                AND latest.task_id = items.task_id
+                                ORDER BY latest.created_at DESC,
+                                         latest.result_id DESC LIMIT 1
+                            ), 'unknown') IN ('attempted_unverified', 'unknown'))
+                                AS uncertain_items
+                    FROM follow_ups
                     """,
                     tuple(wanted),
                 ).fetchall()
@@ -6585,6 +6768,160 @@ class SQLiteTaskRepository:
             entries = grouped.get(run_id)
             handling[run_id] = _summarize_handling(entries)
         return handling
+
+    def automation_record_failure_evidence(self, task_ids: tuple[str, ...]) -> dict[str, dict]:
+        """Concrete per-item failure evidence for one page of original runs.
+
+        The Automation record must tell the operator *why* an affected item
+        failed, with its known effects and the exact safe next action.  That
+        evidence already exists durably on the linked Task's own failed/
+        partial Results and TaskItems — the same bounded envelope the Task
+        Center item read publishes — so this read re-uses it instead of
+        inventing a second failure model.
+
+        A failure reason is a **historical fact**: admitting a recovery
+        continuation moves the source TaskItem off ``failed`` while its Result
+        still records the original bounded failure.  The evidence therefore
+        reads the durable failed/partial Results (newest per item) plus any
+        currently failed/partial TaskItem that has none, so an original reason
+        never disappears because later handling started.
+
+        Both reads are batched per page **and per Task**: a single global row
+        bound would let one Task with many failed items consume the whole window
+        and silently hide another Task's evidence.  Counts come from a grouped
+        aggregate over distinct items and the sample uses a per-Task
+        ``ROW_NUMBER()`` window.
+
+        Nothing raw is returned: the caller decodes only this backend's bounded
+        failure envelope and derives everything else from persisted columns.
+        """
+
+        wanted = [value for value in task_ids if isinstance(value, str) and value][:100]
+        if not wanted:
+            return {}
+        placeholders = ", ".join("?" for _ in wanted)
+        per_task_sample = 10
+        # The one shared per-item evidence set: a failed/partial Result (newest
+        # per item, historical) or, when an item has none, its current
+        # failed/partial TaskItem state.
+        evidence_rows = f"""
+            SELECT latest.task_id AS task_id, latest.item_id AS item_id,
+                   latest.status AS status, latest.created_at AS sort_at,
+                   latest.error AS result_error, latest.effect_certainty,
+                   latest.uncertain_effects
+            FROM (
+                SELECT results.*, ROW_NUMBER() OVER (
+                    PARTITION BY results.task_id, results.item_id
+                    ORDER BY results.created_at DESC, results.result_id DESC
+                ) AS result_rank
+                FROM task_results results
+                WHERE results.task_id IN ({placeholders})
+                AND results.status IN ('failed', 'partial')
+            ) latest
+            WHERE latest.result_rank = 1
+            UNION ALL
+            SELECT items.task_id, items.item_id, items.status, items.updated_at,
+                   items.error, NULL, NULL
+            FROM task_items items
+            WHERE items.task_id IN ({placeholders})
+            AND items.status IN ('failed', 'partial')
+            AND NOT EXISTS (
+                SELECT 1 FROM task_results earlier
+                WHERE earlier.task_id = items.task_id
+                AND earlier.item_id = items.item_id
+                AND earlier.status IN ('failed', 'partial')
+            )
+        """
+        evidence: dict[str, dict] = {}
+        with self._lock:
+            self._connection.execute("BEGIN")
+            try:
+                count_rows = self._connection.execute(
+                    f"""SELECT task_id, status, COUNT(DISTINCT item_id) AS value_count
+                    FROM ({evidence_rows})
+                    GROUP BY task_id, status""",
+                    (*wanted, *wanted),
+                ).fetchall()
+                rows = self._connection.execute(
+                    f"""SELECT * FROM (
+                        SELECT evidence.*,
+                               items.stage AS item_stage,
+                               items.destination_path AS destination,
+                               ROW_NUMBER() OVER (
+                                   PARTITION BY evidence.task_id
+                                   ORDER BY evidence.sort_at ASC, evidence.item_id ASC
+                               ) AS item_rank
+                        FROM ({evidence_rows}) evidence
+                        LEFT JOIN task_items items ON items.item_id = evidence.item_id
+                    ) WHERE item_rank <= ?""",
+                    (*wanted, *wanted, per_task_sample),
+                ).fetchall()
+                # The effect partition is computed over the *whole* evidence
+                # population, not the bounded sample, so a published count of
+                # known/uncertain effects is never silently a sample size.
+                effect_rows = self._connection.execute(
+                    f"""SELECT task_id, status,
+                               CASE
+                                   WHEN effect_certainty = 'none' THEN 'none'
+                                   WHEN effect_certainty = 'verified_complete' THEN 'known'
+                                   WHEN effect_certainty IN ('attempted_unverified', 'unknown')
+                                       THEN 'uncertain'
+                                   ELSE 'partial'
+                               END AS effect_bucket,
+                               COUNT(DISTINCT item_id) AS value_count
+                    FROM ({evidence_rows})
+                    GROUP BY task_id, status, effect_bucket""",
+                    (*wanted, *wanted),
+                ).fetchall()
+            except BaseException:
+                self._connection.execute("ROLLBACK")
+                raise
+            else:
+                self._connection.execute("COMMIT")
+
+        def empty_bucket() -> dict:
+            return {
+                "failedItems": 0,
+                "partialItems": 0,
+                "effects": {"none": 0, "known": 0, "uncertain": 0, "partial": 0},
+                "items": [],
+                "truncated": False,
+            }
+
+        for row in count_rows:
+            bucket = evidence.setdefault(str(row["task_id"]), empty_bucket())
+            key = "failedItems" if str(row["status"]) == "failed" else "partialItems"
+            bucket[key] = int(row["value_count"])
+        for row in effect_rows:
+            bucket = evidence.setdefault(str(row["task_id"]), empty_bucket())
+            bucket["effects"][str(row["effect_bucket"])] += int(row["value_count"])
+        for row in rows:
+            bucket = evidence.setdefault(str(row["task_id"]), empty_bucket())
+            if len(bucket["items"]) >= per_task_sample:
+                bucket["truncated"] = True
+                continue
+            uncertain_effects = row["uncertain_effects"] or "[]"
+            bucket["items"].append(
+                {
+                    "itemId": str(row["item_id"]),
+                    "status": str(row["status"]),
+                    "stage": str(row["item_stage"]) if row["item_stage"] else None,
+                    "destination": (
+                        str(row["destination"]) if row["destination"] not in {None, ""} else None
+                    ),
+                    "error": row["result_error"],
+                    "effectCertainty": (
+                        str(row["effect_certainty"])
+                        if row["effect_certainty"] not in {None, ""}
+                        else "unknown"
+                    ),
+                    "saturated": uncertain_effects not in {"", "[]"},
+                }
+            )
+        for bucket in evidence.values():
+            if bucket["failedItems"] + bucket["partialItems"] > len(bucket["items"]):
+                bucket["truncated"] = True
+        return evidence
 
     def _run_summary_files_locked(self, document: str) -> dict[str, int]:
         """Distinct affected primary files per recovery problem type.
@@ -7573,6 +7910,11 @@ class SQLiteTaskRepository:
                 _bounded_item_count(row["uncertain_success_items"])
                 if run_kind != "discovery"
                 else 0
+            ),
+            admitted_item_bound=(
+                _bounded_item_count(row["admitted_item_bound"])
+                if run_kind != "discovery" and row["admitted_item_bound"] is not None
+                else None
             ),
         )
 

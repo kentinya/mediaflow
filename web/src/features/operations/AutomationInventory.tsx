@@ -437,6 +437,34 @@ export function AutomationRecordRow({
             {failureStage.category !== null && (
               <p className="mf-dashboard-meta">原因：{failureStage.category}</p>
             )}
+            {failureStage.items.length > 0 && (
+              <details>
+                <summary className="mf-dashboard-meta">
+                  逐项失败原因与已知效果（{failureStage.items.length}）
+                  {failureStage.itemsTruncated ? "，已截断" : ""}
+                </summary>
+                <ul className="mf-dashboard-meta">
+                  {failureStage.items.map((item, index) => (
+                    <li key={item.itemId ?? `item-${index}`}>
+                      {item.message ?? "该项的持久化原因当前不可读"}
+                      {item.destination !== null &&
+                        ` · 目标 ${item.destination}`}
+                      {item.sideEffects !== null &&
+                        ` · 已知效果 ${item.sideEffects}`}
+                      {item.nextAction !== null &&
+                        ` · 下一步：${item.nextAction}`}
+                    </li>
+                  ))}
+                </ul>
+              </details>
+            )}
+            {result.admittedItemBound !== null && (
+              <p className="mf-dashboard-meta">
+                {result.reachedItemBound
+                  ? `已达到本次上限 ${result.admittedItemBound} 个条目（不代表来源已全部处理）`
+                  : `本次上限 ${result.admittedItemBound} 个条目，未达到`}
+              </p>
+            )}
           </>
         )}
       </td>
