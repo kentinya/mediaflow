@@ -1729,8 +1729,12 @@ class ManualOrganizeDisplayEvidenceTests(_JourneyFixtureMixin, unittest.TestCase
 
             status, page = self._request(value, "/api/v1/operations/runs")
             self.assertEqual(200, status)
-            self.assertEqual(1, page["total"])
-            run = page["items"][0]
+            # Durable organize analysis is an explicit discovery run in the
+            # unified inventory.  It is distinct from, and linked to, the
+            # admitted execution Task; both rows are real history and must be
+            # counted without treating the discovery as a duplicate Task.
+            self.assertEqual(2, page["total"])
+            run = next(item for item in page["items"] if item["run_id"] == task_id)
             self.assertEqual(task_id, run["run_id"])
             self.assertEqual("手动整理", run["command_label"])
             self.assertEqual("manual", run["trigger"])
