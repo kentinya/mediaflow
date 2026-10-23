@@ -317,120 +317,88 @@ composition/style, not sample data, removed modes, validation ranges or executio
 
 ### Checkpoint
 
-- Status: **READY FOR B REVIEW**. FIX-REQUIRED round R1–R4 delivered; affected-test plan executed on
-  the working tree below. B acceptance (T3 gates, Slice Final T4) remains pending.
+- Status: **READY FOR B REVIEW**. B's 2026-10-24 FIX-REQUIRED round R1/R3 (three corrections)
+  is implemented in the working tree; the affected-test plan and the assigned native matrix were
+  executed on it. B acceptance (T3 gates, Slice Final T4) remains pending.
 - Task Base unchanged (`78ec108d4473e8c140174c1356d0e88a1ae42b34`); reassessment source
   `533a666860a571e61c78ac49b3e45c44acaa419e` is not a Base.
-- Implementation checkpoint: `f0c42784ad3fe6b748cd9457bc440a83e37346e1` (parent
-  `7e1aa92889932b50044d14d09115577580bb1529`); this report is a documentation successor of that
-  candidate, so B reviews `7e1aa92889932b50044d14d09115577580bb1529..HEAD`.
+- Implementation candidate: `29048876f0546efd3ba9c8a5cd5463b7f4b8168f` (parent
+  `383aae3d06e1fb2075d263368d67535e93541fae`). B's reviewed input was
+  `f0c42784ad3fe6b748cd9457bc440a83e37346e1` (report successor `2b75fe98362a58aaf4c7b4b01e19d1a1fd76dede`).
+  This report is a documentation successor of that candidate, so B reviews
+  `383aae3d06e1fb2075d263368d67535e93541fae..HEAD`.
 
-### Changed behavior — R1..R4
+### Changed behavior — this correction round
 
-1. **R1 — one mandatory original-Automation-admission population.**
-   `_run_query_clauses`/`operations_runs_window`/`operations_runs_page`/`list_operations_runs` take
-   an `automation_admissions` predicate applied **before** the page window, filtered total, status
-   partitions and metric aggregation:
-   `(run_kind='job' AND (schedule_id IS NOT NULL OR definition_id IS NOT NULL)) OR
-   (run_kind='task' AND origin_definition_id IS NOT NULL)`. `_automation_records_page` always submits
-   it, and `automation_run_metrics` uses the identical SQL predicate. Ordinary Files/CLI Jobs,
-   standalone manual organize Tasks, preparation-only discoveries, rejected/blocked attempts and
-   recovery follow-up Jobs/Tasks therefore never appear in Automation records, totals or cards.
-   Result semantics are now durable item evidence: `organization_success_items` /
-   `uncertain_success_items` are derived per run from `task_items` + the latest `task_results`
-   effect_certainty. A terminal `completed` run counts as organization success only with ≥1 proven
-   success item and no uncertain success item; `noWorkCount` labels a successful no-work completion,
-   and the success denominator keeps failed/partial/cancelled/terminal-uncertain. The metric test
-   that previously counted unrelated standalone Tasks was corrected, and mixed-population plus
-   no-work/uncertain cases were added.
-2. **R2 — full-population inventory aggregates and merged latest execution.**
-   `GET /api/v1/operations/automation/task-definitions` now returns `inventoryCounts`
-   (`published`/`enabled`/`draftOnly`/`total`, basis `exact_current_active_and_open_drafts`) computed
-   over the complete authorized definition population **before** filters and paging, and embeds it in
-   `metrics.inventory`. Draft-only rows stay reachable and labelled but are never counted as
-   published/enabled. `latestAdmittedRuns` merges the scheduled-occurrence projection with new
-   repository evidence (`automation_latest_admitted_runs`, one newest original admitted run per
-   definition written by an admission), so a manual-only definition reports its real latest result
-   and each latest row carries `organized`/`noWork`/success/uncertain item counts and the real
-   execution window. Web consumes `inventoryCounts` and `latestAdmittedRuns` directly; the previous
-   page-derived `enabledCount`/`pendingCount` and the filter-suppression of totals are gone.
-3. **R3 — result/reason and separately linked handling.**
-   `OperationsRunOverview` gained `execution_started_at`/`execution_finished_at` (Job
-   `started_at`/`completed_at`, Task `started_at`/`completed_at`; `created_at`/`updated_at` are never
-   reused) plus `organization_success_items`/`uncertain_success_items` and the `organized_successfully`
-   /`no_work_completion` properties. `_automation_record_document` now publishes `result` (status,
-   organized, noWork, success/uncertain item counts, statement), `failureStage` (bounded stage,
-   category, next action, statement — pre-start repair vs formal-Task stage), `nextAction` (closed
-   kind plus statement and exact run/definition identity) and `handling` as a **separate** state
-   (`unhandled`/`handling`/`recovered`/`recovery_failed`/`investigation`/`unavailable`) from a new
-   repository read `automation_linked_handling` that joins only persisted
-   `recovery_continuations`/`scope_continuations`/`metadata_correction_continuations`/
-   `manual_recovery_preparations`+`manual_executions` rows for the page's own Task IDs. The original
-   failed/partial outcome is never rewritten. `AutomationRecordRow` renders the real window, the
-   original result statement, the stage/reason, the separate handling badge/next action and the
-   exact Task Center/definition links — still with no local recovery control. A record whose read
-   genuinely failed stays `unavailable`; a pre-Task admission is honestly `unhandled`.
-4. **R4 — direction + persistent navigation + time controls.**
-   `AutomationRecordsQueryOptions.direction` is now carried through `automationRecordsUrl`, the
-   TanStack query key and `fetchAutomationRecords`, matching the backend's
-   `automation records query accepts ... direction` contract; the first → next → previous round trip
-   now works through the real Web controls. `AutomationListPage` moved its tab, definition/record
-   filters, sort and server page cursor into the route search (free-text inputs are local drafts
-   submitted on Enter/blur), so a reload, a reconnect and a return from a definition or Task Center
-   page restore the same population. `执行记录` gained bounded UTC start/end `datetime-local`
-   controls wired to the backend `from`/`to` filters. New `shared/navigation/automation-return.ts`
-   and `automation-list-return.ts` re-validate the preserved context key by key;
-   `destination-model.ts` allowlists the Automation list state (`tab`, filters, cursor, `dir`,
-   `returnTab`) for Authentication continuations and Automation detail routes. Definition/lifecycle
-   back links submit that preserved state, and the Task Center offers
-   `返回自动化执行记录` for the record round trip.
+1. **R1 — one population rule excludes durable follow-up executions.**
+   `_recovery_follow_up_sql` derives a run's follow-up lineage from persisted identities only:
+   `recovery_continuations.new_task_id`, `scope_continuations.new_task_id`,
+   `metadata_correction_continuations.new_task_id`, and `manual_executions.task_id` proven to be
+   referenced by `manual_recovery_preparations` or `manual_recovery_links`. That is projected once
+   as `is_recovery_follow_up` in the shared run document, and one constant
+   `_ORIGINAL_AUTOMATION_ADMISSION_WHERE` is now the *only* Automation population rule used by the
+   records page/filtered total/status partitions (`_run_query_clauses`), `automation_run_metrics`
+   (both calendar cohorts) and `automation_latest_admitted_runs`. A supported recovery execution
+   that inherits `origin_definition_id` therefore no longer becomes another original admission,
+   while the origin is preserved on the row (no write-path change). The lineage probe is evaluated
+   only for admission-shaped rows, so the unrestricted Operations inventory pays nothing new.
+2. **R3 — handling derives from verified resolution, not completed analysis.**
+   `automation_linked_handling` now returns, per linked entry, the linked Task's own durable item
+   evidence (success/failed/active/uncertain counts, from `task_items` + latest `task_results`
+   effect certainty) and `execution_status` only from a *real* `manual_executions` row.
+   `_summarize_handling` was rewritten: queued/running/admitted/active ⇒ `handling`; only the newest
+   linked **execution** terminally settling with ≥1 success and zero failed/uncertain of its own ⇒
+   `resolved`; a settled-but-incomplete or failed/cancelled execution ⇒ `recovery_failed`; an
+   analysis-only lineage or a prepared-but-unconfirmed plan ⇒ `investigation` (never `resolved`).
+   A failed durable read is now explicitly `unavailable` for every row on the page instead of
+   falling through to `unhandled`.
+3. **R3 — the record shows the original concrete reason and known effects.**
+   New bounded read `automation_record_failure_evidence` returns, per Task on the page, the durable
+   failed/partial **Results** (newest per item — a historical fact that survives the source item
+   leaving `failed`) plus any currently failed/partial item with no such Result, a per-Task
+   `ROW_NUMBER()` sample of 10 and page/per-Task honest counts. Both the counts and the effect
+   partition (`none`/`known`/`uncertain`/`partial`) cover the whole evidence population, not the
+   sample. `_automation_record_failure_stage` now publishes the decoded bounded category/message,
+   durable state, side effects, retry safety and next action per item, the aggregate effects, the
+   truncation flag and an explicit `unavailable: true` shape — never raw exception text.
+   `reachedItemBound` is now real: `OperationsRunOverview.admitted_item_bound` is the Job's own
+   `limit_value` (a definition-occurrence containment bound, never today's Active) and
+   `reached_item_bound` requires an exactly-reached durable primary-item population; a definition
+   Run once publishes `admittedItemBound: null` because its persisted limit is the *selected* count.
+   Web consumes the new fields and renders them in the records row.
 
 ### Affected commands and actual results
 
 ```text
 python3 scripts/check_governance.py                                    PASS
-.venv/bin/python -m unittest tests.test_automation_workspace_read_model
-                                                                      Ran 24 OK (8 new R1–R4 cases)
-.venv/bin/python -m unittest tests.test_automation_workspace_read_model \
-  tests.test_operations_run_inventory tests.test_operations_run_detail \
-  tests.test_operations_workspace tests.test_automation_definition_occurrence \
-  tests.test_v2_automation_operations tests.test_v2_automation_lifecycle \
-  tests.test_automation_run_once tests.test_v2_automation_run_once \
-  tests.test_operations_task_center tests.test_operations_run_detail_plan_evidence \
-  tests.test_operations_run_detail_log_isolation tests.test_automation_api \
-  tests.test_system_settings_management tests.test_automation_admission \
-  tests.test_automation_authorized_execution_matrix \
-  tests.test_automation_definition_execution                        Ran 374 OK
-.venv/bin/python -m unittest tests.test_automation_job_fencing \
-  tests.test_automation_task_definition tests.test_automation_definition_publication \
-  tests.test_automation_unattended_grant                             Ran 74  OK
-.venv/bin/ruff format --check mediaflow tests scripts                350 files already formatted
-.venv/bin/ruff check mediaflow tests scripts                         All checks passed
-.venv/bin/python -m compileall -q mediaflow tests scripts            OK
-.venv/bin/mediaflow --config config/strategy.example.json config validate
-                                                                     PASS
-.venv/bin/mediaflow --config config/mediaflow.phase13.2.example.json config validate
-                                                                     PASS
-rg -n -i 'ffprobe|ffmpeg' mediaflow pyproject.toml                   no match (exit 1)
-npm --prefix web run typecheck                                       OK
-npm --prefix web run lint                                            OK
-npm --prefix web run format:check                                    All matched files formatted
-npm --prefix web run build                                           OK (dist rebuilt)
-npm --prefix web run test -- run                                     80 files / 1172 tests passed
-git diff --check                                                     clean
+.venv/bin/python -m unittest tests.test_automation_workspace_read_model   tests.test_operations_run_inventory tests.test_operations_run_detail   tests.test_operations_workspace tests.test_automation_definition_occurrence   tests.test_v2_automation_operations tests.test_v2_automation_lifecycle   tests.test_automation_run_once tests.test_v2_automation_run_once   tests.test_automation_api tests.test_system_settings_management   tests.test_automation_admission tests.test_automation_authorized_execution_matrix   tests.test_automation_definition_execution tests.test_operations_task_center   tests.test_operations_run_detail_plan_evidence   tests.test_operations_run_detail_log_isolation tests.test_automation_job_fencing   tests.test_automation_task_definition tests.test_automation_definition_publication   tests.test_automation_unattended_grant                                Ran 455 OK
+.venv/bin/python -m unittest tests.test_manual_organize_execution   tests.test_recovery_continuation                                     Ran 220 OK
+.venv/bin/ruff format --check mediaflow tests scripts                 350 files already formatted
+.venv/bin/ruff check mediaflow tests scripts                          All checks passed
+.venv/bin/python -m compileall -q mediaflow tests scripts             OK
+.venv/bin/mediaflow --config config/strategy.example.json config validate  PASS
+rg -n -i 'ffprobe|ffmpeg' mediaflow pyproject.toml                    no match (exit 1)
+npm --prefix web run test -- run                                      80 files / 1172 tests passed
+npm --prefix web run typecheck                                        OK
+npm --prefix web run lint                                             OK
+npm --prefix web run format:check                                     All matched files formatted
+npm --prefix web run build                                            OK (dist rebuilt)
+git diff --check                                                      clean
 shasum -a 256 docs/pics/自动化页.png docs/pics/自动化页-全局设置.png
   d2f759ead56a30dce344ccce97e7c119e144ca728a31b3af8e9a355eefa6ba34
   68d91070e859dd363d3e45dd2d21e38783e0cfbef0867ce28c3f42eac7d6c7b9
 ```
 
-New Web coverage: `web/src/features/operations/AutomationWorkspaceReadModel.test.tsx` (7 cases:
-fixture normalizers, full-population cards under filtering, no-work labelling, unavailable
-latest-result labelling, original result + real window + failure stage + separate handling + no
-local control, backward paging direction, URL-persisted tab/filter across a reload). Existing
-`automation.test.ts`/`AutomationRouter.test.tsx` fixtures were updated to the new required
-projection fields.
+New Python coverage in `tests/test_automation_workspace_read_model.py` (24 → 31 cases): follow-up
+Task exclusion with totals/partitions/metrics/latest and Operations non-regression; the same rule
+across a reopen and the latest-outcome read; concrete item reason/effects with no raw text; the
+historical reason surviving an item leaving `failed` together with per-Task bound isolation;
+`reachedItemBound` from admitted evidence only; the five-step handling progression
+(analysis → prepared → admitted → terminal → still-failing); and `unavailable` on a failed handling
+read.
 
-Native (real Python + SQLite + Storage + Scheduler/Worker, built asset, isolated harness 4185):
+Native (real Python + SQLite + Local Storage + Scheduler/Worker, rebuilt production asset, isolated
+harness):
 
 ```text
 # cwd web, after npm run build
@@ -438,58 +406,61 @@ npm run test:e2e -- --config=playwright.python.automation.config.ts \
   tests/e2e/automation-workspace.python.spec.ts \
   tests/e2e/automation-lifecycle.python.spec.ts \
   tests/e2e/automation-run-once.python.spec.ts
-  20 passed  (5 workspace specs — 2 new; all 15 pre-existing lifecycle/Run-once specs)
+  20 passed  (including the 11 pre-existing lifecycle specs and 4 pre-existing Run-once specs)
 ```
 
-The new workspace specs prove, through the real UI: full-population cards unchanged while filtering
-and paging; a manual-only latest run surfaced from merged admitted-run evidence; the read-only
-records surface with no command and no invented Task Center link for a pre-Task admission; a
-scheduled record population of >20 real Scheduler emissions traversed first → next → previous through
-the real controls with `direction=previous` observed on the wire and the definition filter retained
-across reload; and the mixed-item Run-once recovery journey re-reading Automation before/after
-recovery to show the original partial result, its failure stage and a separately linked `正在处理`
-handling state, no extra original admission, then an exact Task Center round trip back to the same
-filtered records list. Test wall clock stayed well below 30% of this round's working time.
+The rewritten mixed-item journey now asserts, through the real UI and the new read-only
+`/__harness__/automation-record-evidence` control on the supported repository read: the filtered
+numeric total and record identities are unchanged at *every* checkpoint (recovery admitted,
+zero-mutation analysis completed, plan summary prepared, recovery execution admitted, execution
+completed); the successful sibling keeps `success` with its source gone and its Result intact; the
+row shows the real `storage_failure` reason and the `none` effect partition before handling; the
+zero-mutation analysis is explicitly **not** reported as a completed follow-up (`需要核对`, no
+`后续处理已完成`); and only after the confirmed execution does the row report `后续处理已完成` —
+still with `partial_success` and the original statements, and still with no local control. Test wall
+clock for all native runs in this round was ≈1 minute against a ≈3.5 h round (< 30 %).
 
-New harness controls (test infrastructure only, real production paths):
-`POST /__harness__/seed-automation-record-page` emits N real Scheduler occurrences dated in the past,
-and `POST /__harness__/run-automation-definition-worker?definitionId=…` scopes the Worker claim to an
-explicitly named definition.
+New harness controls are test infrastructure only and use production paths:
+`GET /__harness__/automation-record-evidence` reads the same bounded window and population predicate
+the records page uses and returns the numeric total plus one run's result/bound evidence.
 
 ### Known failures / remaining risks
 
-- **DST/leap month-boundary rendering is unit-level only.** `test_metric_windows_clamp_the_previous_period_at_month_end`
-  asserts the clamped previous window and a leap-February start; a full cross-timezone *browser*
-  render of a month boundary is not exercised. The counting rule is server-side.
-- **Corrupt/oversized managed sections** remain bounded by `_AUTOMATION_INVENTORY_CAP` and reported
-  via `itemsTruncatedByCap`; only the existing corrupt-published-evidence native test covers the
-  corrupt path end-to-end.
-- **`itemsTruncatedByCap` and `stale_page`** are proven in Python, not reproduced through the browser.
-- **Separate-connection deep pagination:** the read model's page/total/status counts and the metric
-  aggregates each come from their own read call; a concurrent writer between two calls can make the
-  two *separately published* documents differ. Each publication is internally consistent and
-  explicitly says so; they are not claimed to be one snapshot across surfaces.
-- `automationMetricsQueryOptions`/`fetchAutomationMetrics` remain available as an independent
-  `/api/v1/operations/automation/metrics` read; the list page embeds the same document, so nothing
-  renders two possibly-different card sets.
-- **RO-6** (settings form/publication/actual resident adoption) and the settings portion of AC-1
-  remain **outside** this Task and incomplete; the settings tab is a link only, and no adoption is
-  claimed. AC-12's whole-Slice T4 gate is not satisfied by these T3 checks.
-- Pre-existing untracked workspace artifacts (`.DS_Store` files, `.t*.log`, `output/…zip`,
-  `web/test-results*`, untracked `15`) and the pre-existing `docs/pics/操作与任务.png` deletion are
-  preserved untouched. Both reference PNGs stay untracked with the verified digests. No private
-  configuration was read or changed.
+- **`failureStage` naming is a Web-contract extension.** `AutomationRecordFailureStageModel` gained
+  `items`/`effects`/`itemsTruncated`/`unavailable` and `AutomationRecordResultModel` gained
+  `admittedItemBound`. The normalizer tolerates an absent `effects`/`items` (so an older document
+  still renders) but rejects a malformed one, matching the model's existing fail-closed style.
+- **Web tests were extended, not multiplied.** The failure-stage fixture in
+  `AutomationWorkspaceReadModel.test.tsx` was updated to the real projected shape; no new Web unit
+  case was added for the new fields (they are covered by the Python read contract and the native
+  journey).
+- **A definition Run once never reports a reached bound.** Its persisted `item_limit` is the
+  *selected* item count, not a containment bound, so `admittedItemBound` is explicitly `null`
+  instead of being misread as truncation. Only Scheduler-emitted occurrences publish a bound.
+- **DST/leap month-boundary rendering remains unit-level.** The counting rule is server-side.
+- **Separate read calls, not one snapshot.** Records page/total/status counts, metrics and the
+  failure sample are separate reads; each publication is internally consistent and says so.
+- **`itemsTruncatedByCap` and `stale_page`** are proven in Python, not through the browser.
+- **RO-6** (settings publication/actual resident adoption) and the settings portion of AC-1 remain
+  **outside** this Task; AC-12's whole-Slice T4 gate is not satisfied by these T3 checks.
+- Pre-existing untracked artifacts (`.DS_Store`, `.t*.log`, `output/…zip`, `web/test-results*`,
+  untracked `15`) and the pre-existing `docs/pics/操作与任务.png` deletion are preserved untouched.
+  Both reference PNGs stay untracked with the verified digests.
 
 ### Reusable lesson candidates (Developer)
 
 - A shared read model that many surfaces consume needs the population predicate as a **first-class
-  query parameter**, not a caller convention: one surface silently reporting every run is a
-  data-truth bug, not a display bug.
-- "Latest outcome" must merge every durable admission family; a scheduled-only projection makes a
-  manual-only history read as "never ran".
-- A cumulative record surface must label the follow-up handling state separately and keep
-  `created_at`/`updated_at` distinct from a real execution window, or a pending row displays an
-  end time and an old failure reads as resolved.
+  query parameter**, and a follow-up execution that legitimately inherits an origin must be excluded
+  by its own persisted lineage, not by removing that origin: the write path stays honest and the
+  read path carries the rule.
+- "Handling resolved" must be decided from the linked **execution's own item evidence**, because a
+  completed analysis is a zero-mutation step and a `_summarize_handling` that accepts any completed
+  record reports a resolution before the operator ever confirmed a plan.
+- A historical failure reason belongs to the durable failed **Result**, not to the current item
+  status: once recovery starts, the item leaves `failed` and a status-only read silently erases the
+  reason the operator needs.
+- A page-wide `LIMIT` over many Tasks' child rows is a correctness bug, not a performance guard: use
+  a per-Task window for the sample and a grouped aggregate for the counts.
 
 ## B Review Result
 
