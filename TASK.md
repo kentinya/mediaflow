@@ -146,7 +146,7 @@ B 不改 A 的 Final Review、Slice/Roadmap/Progress 状态或宣告 CLOSED。
 ```text
 Task: 45.7
 Task Base: 172b628ae1d820d6eed0bb4f746da85fb3b3a97d
-Candidate Head: <filled after commit>
+Candidate Head: bcd17c24003c9722aec7dc804b51eff0d5fa4499
 Status: READY FOR B REVIEW
 ```
 
