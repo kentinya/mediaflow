@@ -1705,6 +1705,130 @@ def run_manual_worker_once(state: AppState) -> dict[str, object]:
         }
 
 
+def _failure_for_one_execution_item(source_path: str | None):
+    """A zero-effect failure seam pinned to exactly one planned source.
+
+    The seam runs a real ``OrganizerExecutor`` for every sibling and returns a
+    truthful pre-mutation failure only for the named plan source, so a
+    mixed-outcome journey has one genuinely executed sibling and one genuinely
+    failed item without inventing an execution path.
+    """
+
+    from mediaflow.application.organizer import OrganizerExecutor
+
+    basename = source_path.rsplit("/", 1)[-1] if source_path else None
+
+    class _OneItemFailureExecutor(OrganizerExecutor):
+        def execute(self, plan, storages, **kwargs):
+            if basename is None or plan.source.rsplit("/", 1)[-1] != basename:
+                return super().execute(plan, storages, **kwargs)
+            return ExecutionResult(
+                ExecutionStatus.FAILED,
+                plan.operation,
+                plan.source,
+                plan.target,
+                plan_id=plan.plan_id,
+                resolved_destination=plan.target,
+                errors=("harness injected a failure before Storage mutation",),
+                effect_certainty=ExecutionEffectCertainty.NONE,
+            )
+
+    return _OneItemFailureExecutor()
+
+
+def run_run_once_mixed_worker(state: AppState, *, execution_id: str) -> dict[str, object]:
+    """Execute one admitted Run-once selection with one injected item failure.
+
+    This is a harness *driver*, not a new product entry point: it claims the
+    same admitted ``ManualExecution`` the operator confirmed in the browser,
+    runs the real ``ManualOrganizeExecutionWorker`` boundary and the real
+    ``OrganizerExecutor``, and injects one known-zero-effect failure for the
+    last reviewed primary so the operator journey can prove that a successful
+    sibling is never replayed while the failed item keeps its own durable state.
+    """
+
+    if not execution_id:
+        return {"completed": False, "reason": "executionId is required"}
+    with state._manual_lock:
+        manual_execution = state.api._manual_execution
+        if manual_execution is None:
+            return {"completed": False, "reason": "manual execution service unavailable"}
+        execution = manual_execution.get(execution_id)
+        execution_items = list(execution.items)
+        if len(execution_items) < 2:
+            return {
+                "completed": False,
+                "reason": "the mixed journey needs at least two selected items",
+            }
+        durable_item = state.repository.get_item(execution_items[-1].task_item_id)
+        actual_executor = manual_execution._executor
+        manual_execution._executor = _failure_for_one_execution_item(
+            durable_item.source_path if durable_item is not None else None
+        )
+        try:
+            completed = ManualOrganizeExecutionWorker(
+                manual_execution,
+                worker_id="harness-run-once-mixed-worker",
+                notice=lambda _line: None,
+            ).run_next()
+        finally:
+            manual_execution._executor = actual_executor
+        if completed is None:
+            return {"completed": False, "reason": "no admitted manual execution"}
+        durable = state.repository.get_manual_execution(completed.execution_id)
+        if durable is None or durable.task_id is None:
+            raise RuntimeError("Run-once mixed execution lost its durable Task linkage")
+        items = list(state.repository.list_items(durable.task_id))
+        failed = next((item for item in items if item.status.value in {"failed", "partial"}), None)
+        succeeded = next((item for item in items if item.status.value == "success"), None)
+        return {
+            "completed": completed.status.value in {"completed", "partial_success", "failed"},
+            "executionId": durable.execution_id,
+            "taskId": durable.task_id,
+            "status": completed.status.value,
+            "failedItemId": failed.item_id if failed is not None else None,
+            "successItemId": succeeded.item_id if succeeded is not None else None,
+        }
+
+
+def _run_once_item_state(state: AppState, *, item_id: str) -> dict[str, object] | None:
+    """Read the durable per-item state of one real Run-once execution item.
+
+    Bounded, read-only evidence about the temporary harness roots only: whether
+    the failed item's source still exists and whether the successful sibling
+    already moved.  It proves the independence obligation without inventing an
+    execution or replaying any effect.
+    """
+
+    item = state.repository.get_item(item_id)
+    if item is None:
+        return None
+    items = list(state.repository.list_items(item.task_id))
+    success = next((value for value in items if value.status.value == "success"), None)
+    source_root = state.managed.root / "source"
+    results = list(state.repository.list_results(item.task_id))
+    success_result = (
+        next((value for value in results if value.item_id == success.item_id), None)
+        if success is not None
+        else None
+    )
+    return {
+        "available": True,
+        "taskId": item.task_id,
+        "itemId": item.item_id,
+        "itemStatus": item.status.value,
+        "itemStage": item.stage,
+        "sourcePath": item.source_path,
+        "sourceExists": (source_root / item.source_path).exists(),
+        "successItemId": success.item_id if success is not None else None,
+        "successItemStatus": success.status.value if success is not None else None,
+        "successSourceExists": (
+            (source_root / success.source_path).exists() if success is not None else None
+        ),
+        "successResultId": success_result.result_id if success_result is not None else None,
+    }
+
+
 def operations_origin_state(state: AppState, *, task_id: str) -> dict[str, object]:
     """Report the durable definition origin of one executed Operations run.
 
@@ -2375,6 +2499,12 @@ def run_task_item_recovery_worker_once(
         recovery_item_ids.extend(
             str(value) for value in state.recovery_batch_summary_run["itemIds"]
         )
+    if not recovery_item_ids and item_id is not None:
+        # A real Run-once execution is not a seeded fixture: its own durable
+        # queued continuation is addressed by the exact item identity the
+        # operator selected in Task Center, so the same resident handler can
+        # advance it without inventing a fixture record.
+        recovery_item_ids = [item_id]
     if not recovery_item_ids:
         raise RuntimeError("task-item recovery fixture has not been seeded")
     from mediaflow.final_cli import _run_queued_workflow
@@ -2837,6 +2967,13 @@ def task_item_recovery_state(state: AppState, *, item_id: str | None = None) -> 
         state.recovery_run if item_id is None else None,
     )
     if run is None:
+        # A real Run-once execution is not a seeded fixture: the same bounded
+        # test-only read resolves it from the explicit item identity the
+        # browser already holds.
+        if item_id is not None:
+            resolved = _run_once_item_state(state, item_id=item_id)
+            if resolved is not None:
+                return resolved
         return {"available": False}
     task = state.repository.get_task(run["taskId"])
     source = state.repository.get_item(run["itemId"])
@@ -3950,16 +4087,16 @@ def restore_source_media(state: AppState) -> dict[str, object]:
     """
 
     source_root = state.managed.root / "source"
-    scoped_fixtures = (
-        source_root / "电影" / "One.2001.mkv",
-        source_root / "电影" / "Two.2002.mkv",
-    )
-    for scoped_fixture in scoped_fixtures:
-        scoped_fixture.unlink(missing_ok=True)
-    try:
-        scoped_fixtures[0].parent.rmdir()
-    except OSError:
-        pass
+    # The scoped definition fixtures. They are restored below rather than only
+    # deleted: a narrowed success scope must still hold its two primaries after
+    # a previous test moved one of them, otherwise the next journey would find
+    # an empty scope and report a misleading refusal.
+    scoped_fixtures = {
+        "电影/One.2001.mkv": b"synthetic browser media",
+        "电影/Two.2002.mkv": b"second synthetic browser media",
+    }
+    for relative_path in scoped_fixtures:
+        (source_root / relative_path).unlink(missing_ok=True)
     # The Run-once restart journey executes these same deterministic fixtures
     # through OrganizerExecutor. Restore their source files before the next
     # browser test and clear only their known outputs from this temporary
@@ -3989,6 +4126,7 @@ def restore_source_media(state: AppState) -> dict[str, object]:
         "Two.2002.mkv": b"second synthetic browser media",
         "Three.2003.mkv": b"new-task synthetic browser media",
         "Four.2004.mkv": b"default-origin synthetic browser media",
+        **scoped_fixtures,
     }
     for relative_path, content in files.items():
         target = source_root / relative_path
@@ -5093,6 +5231,11 @@ def application(environ, start_response):
             document = restore_source_media(STATE)
         elif path == "/__harness__/seed-scheduled-worker-scope" and method == "POST":
             document = seed_scheduled_worker_scope(STATE)
+        elif path == "/__harness__/run-run-once-mixed-worker" and method == "POST":
+            query = urllib.parse.parse_qs(str(environ.get("QUERY_STRING", "")))
+            document = run_run_once_mixed_worker(
+                STATE, execution_id=(query.get("executionId") or [""])[0]
+            )
         elif path == "/__harness__/seed-run-once-mixed-scope" and method == "POST":
             document = seed_run_once_mixed_scope(STATE)
         elif path == "/__harness__/open-automation-definition-draft" and method == "POST":

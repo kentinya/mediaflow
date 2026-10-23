@@ -5330,6 +5330,8 @@ class SQLiteTaskRepository:
         view: str | None = None,
         problem_type: str | None = None,
         source: str | None = None,
+        definition_id: str | None = None,
+        trigger: str | None = None,
     ) -> tuple[list[str], list[object]]:
         """Bounded WHERE clauses shared by the page and the count queries.
 
@@ -5342,6 +5344,15 @@ class SQLiteTaskRepository:
         selects one of the nine sibling views and ``problem_type`` selects
         one cross-Task recovery list; both are real persisted-evidence
         filters rather than client-side page filtering.
+
+        ``definition_id`` and ``trigger`` are the Automation execution-record
+        selectors.  They bind the same admission-written identities the run
+        row already publishes: a scheduled occurrence through the Job's own
+        persisted ``definition_id`` column, and a deliberate definition Run
+        once through the durable ``operations_run_display.origin_definition_id``
+        recorded with the admission.  Neither is derived from the current
+        Active configuration, so a renamed or removed definition keeps its
+        historical records reachable.
         """
 
         clauses: list[str] = []
@@ -5391,6 +5402,16 @@ class SQLiteTaskRepository:
         if created_before is not None:
             clauses.append("sort_at <= ?")
             parameters.append(created_before.isoformat())
+        if definition_id is not None:
+            # The admission-written definition identity: the scheduled
+            # occurrence's own Job column plus the durable manual-origin
+            # display evidence.  A legacy or unrelated run carries neither
+            # and is therefore never claimed by this selector.
+            clauses.append("(definition_id = ? OR origin_definition_id = ?)")
+            parameters.extend((definition_id, definition_id))
+        if trigger is not None:
+            clauses.append("derived_trigger = ?")
+            parameters.append(trigger)
         return clauses, parameters
 
     def _run_query_document(self) -> str:
@@ -5676,6 +5697,18 @@ class SQLiteTaskRepository:
                            runs.job_status
                        ELSE 'unknown'
                    END AS derived_status,
+                   -- The durable trigger, derived from admission-written
+                   -- identity only and with exactly the precedence
+                   -- :meth:`_operations_run_overview` applies, so the SQL
+                   -- trigger selector and the published row value can never
+                   -- disagree about what admitted a run.
+                   CASE
+                       WHEN runs.schedule_id IS NOT NULL
+                            OR runs.definition_id IS NOT NULL THEN 'scheduled'
+                       WHEN display.origin_definition_id IS NOT NULL THEN 'manual'
+                       WHEN runs.run_kind = 'job' THEN 'automation'
+                       ELSE 'manual'
+                   END AS derived_trigger,
                    -- The current, real operator-attention facet (RO-1).  It is
                    -- true only when this run has an outstanding decision,
                    -- repair or investigation derived from the same durable
@@ -5755,6 +5788,8 @@ class SQLiteTaskRepository:
         view: str | None = None,
         problem_type: str | None = None,
         source: str | None = None,
+        definition_id: str | None = None,
+        trigger: str | None = None,
     ) -> tuple[OperationsRunOverview, ...]:
         """One bounded, deterministic page of the unified run population.
 
@@ -5777,6 +5812,8 @@ class SQLiteTaskRepository:
             view=view,
             problem_type=problem_type,
             source=source,
+            definition_id=definition_id,
+            trigger=trigger,
         )
         return page
 
@@ -5795,6 +5832,8 @@ class SQLiteTaskRepository:
         view: str | None = None,
         problem_type: str | None = None,
         source: str | None = None,
+        definition_id: str | None = None,
+        trigger: str | None = None,
     ) -> OperationsRunsWindow:
         """One page window plus filter-scoped totals from one read snapshot.
 
@@ -5835,6 +5874,8 @@ class SQLiteTaskRepository:
             view=view,
             problem_type=problem_type,
             source=source,
+            definition_id=definition_id,
+            trigger=trigger,
         )
         filter_where = f"WHERE {' AND '.join(filter_clauses)}" if filter_clauses else ""
         page_clauses = list(filter_clauses)
@@ -5972,6 +6013,8 @@ class SQLiteTaskRepository:
         view: str | None = None,
         problem_type: str | None = None,
         source: str | None = None,
+        definition_id: str | None = None,
+        trigger: str | None = None,
     ) -> tuple[tuple[OperationsRunOverview, ...], int, dict[str, int]]:
         """Page, filtered total and status counts from one consistent basis.
 
@@ -5992,6 +6035,8 @@ class SQLiteTaskRepository:
             view=view,
             problem_type=problem_type,
             source=source,
+            definition_id=definition_id,
+            trigger=trigger,
         )
         return window.page, window.total, window.status_counts
 
@@ -6084,6 +6129,92 @@ class SQLiteTaskRepository:
             "problem_files": files,
             "sources": sources,
             "sources_truncated": len(source_rows) > 50,
+            "sideEffects": "none",
+        }
+
+    def automation_run_metrics(
+        self,
+        *,
+        current_start: datetime,
+        current_end: datetime,
+        previous_start: datetime,
+        previous_end: datetime,
+    ) -> dict[str, object]:
+        """One snapshot of the Automation run metrics (RO-1 metric contract).
+
+        The cards cover the **whole authorized admitted-run population**, never
+        the browser's current page or one definition's history, and both the
+        calendar cohort counts and the previous-period comparison come from the
+        same SQLite read transaction, so a concurrent admission cannot make the
+        cards disagree with each other.
+
+        The two submitted windows are the caller's *system-timezone* local
+        calendar periods, resolved to absolute UTC instants before this call:
+        the repository only compares the durable ``sort_at`` admission
+        timestamp, never a Cron/browser timezone.  Every window is a half-open
+        interval ``[start, end)`` so a run admitted exactly at a boundary is
+        counted exactly once.
+
+        Each original admitted run counts once: the population is the same
+        deduplicated Job/Task/discovery document the inventory reads, so a Job
+        acquiring its Task never becomes a second run and a Task Center
+        recovery execution is a separate admission of its own (never a second
+        count of the original).  The denominator is the terminal cohort only
+        (``completed``/``partial_success``/``failed``/``cancelled``); active and
+        waiting runs are reported separately and excluded from the rate, so a
+        still-running schedule never depresses or inflates success.
+        """
+
+        for value in (current_start, current_end, previous_start, previous_end):
+            if value.tzinfo is None:
+                raise ValueError("automation metric window needs a timezone")
+        if current_end < current_start or previous_end < previous_start:
+            raise ValueError("automation metric window is inverted")
+        document = self._run_query_document()
+        terminal = "('completed', 'partial_success', 'failed', 'cancelled')"
+        with self._lock:
+            self._connection.execute("BEGIN")
+            try:
+                row = self._connection.execute(
+                    f"""SELECT
+                        COALESCE(SUM(CASE WHEN sort_at >= ? AND sort_at < ?
+                            THEN 1 ELSE 0 END), 0) AS current_admitted,
+                        COALESCE(SUM(CASE WHEN sort_at >= ? AND sort_at < ?
+                            THEN 1 ELSE 0 END), 0) AS previous_admitted,
+                        COALESCE(SUM(CASE WHEN sort_at >= ? AND sort_at < ?
+                            AND derived_status IN {terminal}
+                            THEN 1 ELSE 0 END), 0) AS current_terminal,
+                        COALESCE(SUM(CASE WHEN sort_at >= ? AND sort_at < ?
+                            AND derived_status = 'completed'
+                            THEN 1 ELSE 0 END), 0) AS current_completed,
+                        COALESCE(SUM(CASE WHEN sort_at >= ? AND sort_at < ?
+                            AND derived_status NOT IN {terminal}
+                            THEN 1 ELSE 0 END), 0) AS current_active
+                    FROM ({document})""",
+                    (
+                        current_start.isoformat(),
+                        current_end.isoformat(),
+                        previous_start.isoformat(),
+                        previous_end.isoformat(),
+                        current_start.isoformat(),
+                        current_end.isoformat(),
+                        current_start.isoformat(),
+                        current_end.isoformat(),
+                        current_start.isoformat(),
+                        current_end.isoformat(),
+                    ),
+                ).fetchone()
+            except BaseException:
+                self._connection.execute("ROLLBACK")
+                raise
+            else:
+                self._connection.execute("COMMIT")
+        return {
+            "currentAdmitted": int(row["current_admitted"] or 0),
+            "previousAdmitted": int(row["previous_admitted"] or 0),
+            "currentTerminal": int(row["current_terminal"] or 0),
+            "currentCompleted": int(row["current_completed"] or 0),
+            "currentActive": int(row["current_active"] or 0),
             "sideEffects": "none",
         }
 
@@ -11152,12 +11283,21 @@ class SQLiteTaskRepository:
             raise ValueError("definition Run once definition ID is required")
         if isinstance(limit, bool) or not 1 <= limit <= 500:
             raise ValueError("definition Run once limit must be between 1 and 500")
+        # The definition filter belongs to the SQL predicate, ahead of the
+        # bounded window: filtering the *newest N* discovery rows in Python
+        # silently dropped this definition's older records as soon as any
+        # other definition had newer admissions.  The recorded origin is a
+        # durable JSON column, so ``json_extract`` binds the exact immutable
+        # definition identity without any schema change, and the LIMIT then
+        # applies to this definition's own population only.
         with self._lock:
             rows = self._connection.execute(
                 "SELECT discovery_id, definition_origin_json FROM media_discoveries "
                 "WHERE definition_origin_json IS NOT NULL "
+                "AND json_valid(definition_origin_json) "
+                "AND json_extract(definition_origin_json, '$.definitionId') = ? "
                 "ORDER BY created_at DESC, discovery_id DESC LIMIT ?",
-                (limit,),
+                (definition_id, limit),
             ).fetchall()
             matches: list[MediaDiscovery] = []
             for row in rows:

@@ -111,11 +111,11 @@ function listDefinitionPayload(
         path: `${operationsRoute}/occurrences`,
         requiresConfirmation: false,
       },
-      preview: {
+      runOnce: {
         available: false,
         reason: "not Active yet",
         method: "POST",
-        path: `${automationRoute}/preview`,
+        path: `${operationsRoute}/run-once`,
         requiresConfirmation: false,
       },
       grantState: {
@@ -171,6 +171,38 @@ function definitionsPagePayload(
     items,
     total: 101,
     truncated: true,
+    metrics: {
+      available: true,
+      scope: "full_authorized_population",
+      basis: "each original admitted run counted once",
+      timezone: "Asia/Shanghai",
+      cronTimezoneNote: "Cron definition timezones stay separate",
+      evaluatedAt: "2026-03-01T04:00:00+08:00",
+      monthToDateAdmitted: 4,
+      previousPeriodAdmitted: 0,
+      comparisonAvailable: false,
+      denominatorStatement: "no terminal admitted run in the current month",
+      successRate: null,
+      completedCount: 0,
+      monthToDateTerminal: 0,
+      monthToDateActive: 1,
+      noWorkStatement: "skipped files are not organized files",
+      nextAction: null,
+      windows: null,
+    },
+    query: {
+      q: null,
+      enabled: null,
+      library: null,
+      state: null,
+      sort: "name",
+      direction: "asc",
+      limit: 20,
+      scope: "full_authorized_population",
+    },
+    itemsTruncatedByCap: false,
+    next_cursor: null,
+    previous_cursor: null,
     draftState: {
       present: false,
       reason: "no open successor Draft exists",
@@ -625,53 +657,21 @@ describe("normalizeAutomationPreview", () => {
 });
 
 describe("normalizeAutomationDefinitionsPage", () => {
-  it("normalizes the bounded page with Active identity and Draft state", () => {
-    const page = normalizeAutomationDefinitionsPage({
-      activeConfiguration: {
-        revisionId: "rev-1",
-        version: 3,
-        revisionSequence: 2,
-        status: "active",
-      },
-      items: [],
-      total: 0,
-      truncated: false,
-      draftState: {
-        present: false,
-        reason: "no open successor Draft exists",
-        revisionId: null,
-        revisionVersion: null,
-        revisionStatus: null,
-        baseActiveRevisionId: null,
-        updatedAt: null,
-        validatedAt: null,
-        validationErrors: [],
-      },
-      resourceLibraryOptions: [{ id: "source", name: "Source", enabled: true }],
-      actions: {
-        create: {
-          available: true,
-          reason: null,
-          method: "POST",
-          path: "/api/v1/automation/task-definitions",
-          sideEffects: "none",
-          durableOutcome: "stored in the open Draft",
-          nextAction: "start or open a successor Draft",
-        },
-        createDraft: {
-          available: true,
-          reason: null,
-          method: "POST",
-          path: "/api/v1/configuration/revisions/rev-1/successor",
-          sideEffects: "none",
-          durableOutcome: "a successor Draft is stored",
-          nextAction: "create or open the successor Draft",
-        },
-      },
-    });
+  it("normalizes the bounded page with Active identity, metrics and Draft state", () => {
+    const page = normalizeAutomationDefinitionsPage(definitionsPagePayload([]));
     expect(page.activeConfiguration?.revisionId).toBe("rev-1");
     expect(page.resourceLibraryOptions[0]?.id).toBe("source");
     expect(page.actions.create.available).toBe(true);
+    // The metric cards come from the backend document and keep their honest
+    // "no denominator" shape instead of a fabricated zero.
+    expect(page.metrics.available).toBe(true);
+    expect(page.metrics.timezone).toBe("Asia/Shanghai");
+    expect(page.metrics.successRate).toBeNull();
+    expect(page.metrics.comparisonAvailable).toBe(false);
+    // The page cursor fields are the server page boundary, not client state.
+    expect(page.nextCursor).toBeNull();
+    expect(page.previousCursor).toBeNull();
+    expect(page.itemsTruncatedByCap).toBe(false);
     expect(() =>
       normalizeAutomationDefinitionsPage({
         ...({ items: "many" } as unknown as Record<string, unknown>),
@@ -730,14 +730,15 @@ describe("normalizeAutomationDefinitionsPage", () => {
         durableOutcome: null,
         nextAction: "inspect the bounded occurrence history",
       },
-      preview: {
+      runOnce: {
         available: false,
         reason: "not Active yet",
         method: "POST",
-        path: "/api/v1/automation/task-definitions/auto-task/preview",
+        path: "/api/v1/operations/automation/task-definitions/auto-task/run-once",
         sideEffects: "none",
-        durableOutcome: "a durable zero-mutation Preview is stored",
-        nextAction: "activate the Draft, then create the exact Preview",
+        durableOutcome:
+          "a durable bounded discovery of the definition scope is admitted",
+        nextAction: "activate the Draft before starting Run once",
       },
       grantState: {
         available: true,

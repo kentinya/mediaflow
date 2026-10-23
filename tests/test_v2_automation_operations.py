@@ -1786,24 +1786,38 @@ class AutomationOperatorJourneyTests(unittest.TestCase):
             )
             self.assertEqual(status, 200)
 
-            # The merged page is bounded at the exact frontend contract limit:
-            # 100 Active items, the Draft-only definition dropped beyond the
-            # limit, and truthful total/truncated semantics.
+            # The inventory is a real server-side page over the complete
+            # authorized population: the page window is bounded by the submitted
+            # limit, the reported total covers every Active and Draft-only
+            # definition, and the remaining rows stay reachable by paging
+            # instead of being dropped behind a hidden prefix.
             status, page = _request(value.api, OPERATIONS_ROUTE)
             self.assertEqual(status, 200)
             _assert_operator_document_clean(page)
-            self.assertLessEqual(len(page["items"]), 100)
-            self.assertEqual(len(page["items"]), 100)
+            self.assertLessEqual(len(page["items"]), 20)
             self.assertEqual(page["total"], 101)
             self.assertTrue(page["truncated"])
-            self.assertEqual(
-                [item["id"] for item in page["items"]],
-                [_DEFINITION["id"], *[f"bulk-{index:02d}" for index in range(99)]],
-            )
-            self.assertNotIn("draft-only-task", {item["id"] for item in page["items"]})
+            self.assertIsNotNone(page["next_cursor"])
+            self.assertFalse(page["itemsTruncatedByCap"])
 
-            # The dropped Draft-only definition stays reachable through its
-            # exact detail route and is still honestly marked draft-only.
+            seen = [item["id"] for item in page["items"]]
+            cursor = page["next_cursor"]
+            while cursor is not None:
+                status, following = _request(
+                    value.api,
+                    OPERATIONS_ROUTE,
+                    query=f"limit=100&cursor={cursor}",
+                )
+                self.assertEqual(status, 200)
+                seen.extend(item["id"] for item in following["items"])
+                cursor = following["next_cursor"]
+            self.assertEqual(len(seen), 101)
+            self.assertEqual(len(set(seen)), 101)
+            # Every authorized Active definition plus the Draft-only correction
+            # is reachable, and the Draft-only row is labelled as such.
+            self.assertIn(_DEFINITION["id"], seen)
+            self.assertIn("draft-only-task", seen)
+            self.assertIn(f"bulk-{98:02d}", seen)
             status, detail = _request(value.api, f"{OPERATIONS_ROUTE}/draft-only-task")
             self.assertEqual(status, 200)
             self.assertEqual(detail["definition"]["definitionState"], "draft-only")

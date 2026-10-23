@@ -12,20 +12,90 @@ import {
   fetchAutomationDefinition,
   fetchAutomationDefinitionDraft,
   fetchAutomationDefinitions,
+  fetchAutomationMetrics,
   fetchAutomationOccurrences,
-  fetchAutomationPreview,
-  fetchAutomationPreviewItems,
+  fetchAutomationRecords,
+  type AutomationInventoryQueryOptions,
+  type AutomationRecordsQueryOptions,
 } from "../../shared/api/api-client";
 
 export const automationListQueryKey = "operations.automation-list" as const;
 
+/**
+ * The bounded Automation inventory read.
+ *
+ * The submitted filters and page cursor are part of the query key, so a page
+ * can never be rendered from a different filter state's rows: changing any
+ * filter is a new server read, and a cursor is only ever taken from the
+ * response to the identical state.
+ */
 export function automationListQueryOptions(
+  token: string | null,
+  options: AutomationInventoryQueryOptions = {},
+  enabled = true,
+) {
+  return queryOptions({
+    // The key names each submitted value explicitly: an object identity would
+    // mint a new key on every render and turn the page into an endless
+    // refetch loop.
+    queryKey: [
+      automationListQueryKey,
+      options.q ?? null,
+      options.enabled ?? null,
+      options.library ?? null,
+      options.state ?? null,
+      options.sort ?? null,
+      options.direction ?? null,
+      options.limit ?? null,
+      options.cursor ?? null,
+    ],
+    queryFn: () => fetchAutomationDefinitions(token, options),
+    enabled: token !== null && enabled,
+    retry: false,
+    refetchOnWindowFocus: false,
+    refetchOnReconnect: false,
+    staleTime: 5_000,
+  });
+}
+
+export const automationMetricsQueryKey =
+  "operations.automation-metrics" as const;
+
+export function automationMetricsQueryOptions(
   token: string | null,
   enabled = true,
 ) {
   return queryOptions({
-    queryKey: [automationListQueryKey],
-    queryFn: () => fetchAutomationDefinitions(token),
+    queryKey: [automationMetricsQueryKey],
+    queryFn: () => fetchAutomationMetrics(token),
+    enabled: token !== null && enabled,
+    retry: false,
+    refetchOnWindowFocus: false,
+    refetchOnReconnect: false,
+    staleTime: 5_000,
+  });
+}
+
+export const automationRecordsQueryKey =
+  "operations.automation-records" as const;
+
+export function automationRecordsQueryOptions(
+  token: string | null,
+  options: AutomationRecordsQueryOptions = {},
+  enabled = true,
+) {
+  return queryOptions({
+    queryKey: [
+      automationRecordsQueryKey,
+      options.definition ?? null,
+      options.trigger ?? null,
+      options.status ?? null,
+      options.from ?? null,
+      options.to ?? null,
+      options.limit ?? null,
+      options.cursor ?? null,
+    ],
+    queryFn: () => fetchAutomationRecords(token, options),
     enabled: token !== null && enabled,
     retry: false,
     refetchOnWindowFocus: false,
@@ -64,59 +134,6 @@ export function automationDraftQueryOptions(
     queryKey: [automationDraftQueryKey, definitionId],
     queryFn: () => fetchAutomationDefinitionDraft(token, definitionId),
     enabled: token !== null && definitionId.length > 0 && enabled,
-    retry: false,
-    refetchOnWindowFocus: false,
-    refetchOnReconnect: false,
-    staleTime: 5_000,
-  });
-}
-
-export const automationPreviewQueryKey =
-  "operations.automation-preview" as const;
-
-export function automationPreviewQueryOptions(
-  token: string | null,
-  definitionId: string,
-  previewId: string,
-  enabled = true,
-) {
-  return queryOptions({
-    queryKey: [automationPreviewQueryKey, definitionId, previewId],
-    queryFn: () => fetchAutomationPreview(token, definitionId, previewId),
-    enabled:
-      token !== null &&
-      definitionId.length > 0 &&
-      previewId.length > 0 &&
-      enabled,
-    retry: false,
-    refetchOnWindowFocus: false,
-    refetchOnReconnect: false,
-    staleTime: 5_000,
-  });
-}
-
-export const automationPreviewItemsQueryKey =
-  "operations.automation-preview-items" as const;
-
-export function automationPreviewItemsQueryOptions(
-  token: string | null,
-  definitionId: string,
-  previewId: string,
-  after: number | null,
-  enabled = true,
-) {
-  return queryOptions({
-    queryKey: [automationPreviewItemsQueryKey, definitionId, previewId, after],
-    queryFn: () =>
-      fetchAutomationPreviewItems(token, definitionId, previewId, {
-        limit: 50,
-        after,
-      }),
-    enabled:
-      token !== null &&
-      definitionId.length > 0 &&
-      previewId.length > 0 &&
-      enabled,
     retry: false,
     refetchOnWindowFocus: false,
     refetchOnReconnect: false,

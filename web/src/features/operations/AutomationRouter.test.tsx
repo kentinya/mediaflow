@@ -173,11 +173,12 @@ function definitionDocument(
         durableOutcome: null,
         nextAction: "inspect the bounded occurrence history",
       }),
-      preview: action({
-        path: "/api/v1/automation/task-definitions/auto-task/preview",
+      runOnce: action({
+        path: "/api/v1/operations/automation/task-definitions/auto-task/run-once",
         requiresConfirmation: false,
-        durableOutcome: "a durable zero-mutation Preview is stored",
-        nextAction: "create the exact Preview",
+        durableOutcome:
+          "a durable bounded discovery of the definition scope is admitted",
+        nextAction: "start Run once and review the exact plan summary",
       }),
       grantState: action({
         available: true,
@@ -212,6 +213,75 @@ function definitionDocument(
   };
 }
 
+/**
+ * The full-population metric cards exactly as the backend publishes them.
+ *
+ * The backend counts the whole authorized admitted-run population, so the
+ * values are independent of the page the table happens to show.
+ */
+function metricsDocument(
+  overrides: Record<string, unknown> = {},
+): Record<string, unknown> {
+  return {
+    available: true,
+    scope: "full_authorized_population",
+    basis:
+      "each original admitted run counted once by its durable admission " +
+      "timestamp in the configured system timezone",
+    timezone: "Asia/Shanghai",
+    cronTimezoneNote:
+      "Cron definition timezones stay separate from this system calendar",
+    evaluatedAt: "2026-03-01T04:00:00+08:00",
+    monthToDateAdmitted: 4,
+    previousPeriodAdmitted: 0,
+    comparisonAvailable: false,
+    comparisonUnavailableReason: "no_comparable_previous_period",
+    monthToDateTerminal: 3,
+    monthToDateActive: 1,
+    denominatorStatement:
+      "terminal admitted runs in the current local month (3)",
+    successRate: 2 / 3,
+    completedCount: 2,
+    noWorkStatement:
+      "skipped files are not organized files and a reached item bound does " +
+      "not prove scope exhaustion",
+    nextAction: null,
+    windows: {
+      current: {
+        start: "2026-02-28T16:00:00+00:00",
+        end: "2026-03-01T04:00:00+00:00",
+        startLocal: "2026-03-01T00:00:00+08:00",
+        endLocal: "2026-03-01T12:00:00+08:00",
+        nextPeriodStartLocal: "2026-04-01T00:00:00+08:00",
+      },
+      previous: {
+        start: "2026-01-31T16:00:00+00:00",
+        end: "2026-02-28T16:00:00+00:00",
+        startLocal: "2026-02-01T00:00:00+08:00",
+        endLocal: "2026-03-01T00:00:00+08:00",
+      },
+    },
+    ...overrides,
+  };
+}
+
+/** The exact submitted inventory read basis the backend echoes back. */
+function inventoryQueryDocument(
+  overrides: Record<string, unknown> = {},
+): Record<string, unknown> {
+  return {
+    q: null,
+    enabled: null,
+    library: null,
+    state: null,
+    sort: "name",
+    direction: "asc",
+    limit: 20,
+    scope: "full_authorized_population",
+    ...overrides,
+  };
+}
+
 function listDocument(
   overrides: Record<string, unknown> = {},
 ): Record<string, unknown> {
@@ -225,6 +295,11 @@ function listDocument(
     items: [definitionDocument()],
     total: 1,
     truncated: false,
+    metrics: metricsDocument(),
+    query: inventoryQueryDocument(),
+    itemsTruncatedByCap: false,
+    next_cursor: null,
+    previous_cursor: null,
     draftState: {
       present: false,
       reason: "no open successor Draft exists",
@@ -333,13 +408,14 @@ function draftOnlyDefinitionDocument(
         durableOutcome: null,
         nextAction: "inspect the bounded occurrence history",
       }),
-      preview: action({
+      runOnce: action({
         available: false,
         reason: notActiveReason,
-        path: "/api/v1/automation/task-definitions/created-task/preview",
+        path: "/api/v1/operations/automation/task-definitions/created-task/run-once",
         requiresConfirmation: false,
-        durableOutcome: "a durable zero-mutation Preview is stored",
-        nextAction: "activate the Draft, then create the exact Preview",
+        durableOutcome:
+          "a durable bounded discovery of the definition scope is admitted",
+        nextAction: "activate the Draft before starting Run once",
       }),
       grantState: action({
         available: true,
@@ -452,7 +528,10 @@ function draftDocument(
 describe("V2 Automation journey", () => {
   it("renders the Active identity, definition state and gated create entry", async () => {
     recordingFetch((call) => {
-      if (call.url === "/api/v1/operations/automation/task-definitions") {
+      if (
+        call.url ===
+        "/api/v1/operations/automation/task-definitions?sort=name&limit=20"
+      ) {
         return jsonResponse(listDocument());
       }
       return undefined;
@@ -460,25 +539,45 @@ describe("V2 Automation journey", () => {
     authStore.setToken(TOKEN);
     renderApp("/ui-v2/operations/automation");
 
-    await screen.findByRole("heading", { name: "Automation" });
-    expect(screen.getByText(/revision-active-1/)).toBeVisible();
-    expect(screen.getByText(/Nightly automation/)).toBeVisible();
-    expect(screen.getByText(/every 3600 seconds/)).toBeVisible();
-    expect(screen.getByText(/no occurrence yet/)).toBeVisible();
+    await screen.findByRole("heading", { name: "自动化" });
+    // The reference-style table publishes the definition's real schedule and
+    // its truthful "no result yet" state.
+    expect(await screen.findByText(/Nightly automation/)).toBeVisible();
+    expect(screen.getByText(/每隔 3600 秒/)).toBeVisible();
+    expect(screen.getByText(/尚无执行/)).toBeVisible();
+    // The full-population cards come from the backend metrics document, not
+    // from the rendered page rows.
+    expect(await screen.findByText("自动化任务数")).toBeVisible();
+    expect(screen.getByText("本月执行次数")).toBeVisible();
+    expect(screen.getByText("成功率")).toBeVisible();
+    expect(screen.getByText("较上月")).toBeVisible();
+    // No comparable previous period is published as the documented marker,
+    // never as a fabricated zero.
+    expect(screen.getAllByText("暂无可比数据").length).toBeGreaterThan(0);
     // The backend advertises creation for this principal.
-    expect(
-      screen.getByRole("link", { name: "Create Automation definition" }),
-    ).toBeVisible();
+    expect(screen.getByRole("link", { name: "新建自动化任务" })).toBeVisible();
+    // The three sibling tabs are real navigation, labelled as in the
+    // reference composition.
+    expect(screen.getByRole("button", { name: "任务列表" })).toBeVisible();
+    expect(screen.getByRole("button", { name: "执行记录" })).toBeVisible();
+    expect(screen.getByRole("button", { name: "系统设置" })).toBeVisible();
   });
 
-  it("renders the truthful combined-page bound when the list is truncated", async () => {
+  it("renders an explicit unavailable card value instead of a fabricated zero", async () => {
     recordingFetch((call) => {
-      if (call.url === "/api/v1/operations/automation/task-definitions") {
+      if (
+        call.url ===
+        "/api/v1/operations/automation/task-definitions?sort=name&limit=20"
+      ) {
         return jsonResponse(
           listDocument({
-            items: [definitionDocument(), draftOnlyDefinitionDocument()],
-            total: 3,
-            truncated: true,
+            metrics: metricsDocument({
+              available: false,
+              monthToDateAdmitted: null,
+              monthToDateTerminal: null,
+              successRate: null,
+              nextAction: "inspect the runtime database, then refresh",
+            }),
           }),
         );
       }
@@ -487,12 +586,62 @@ describe("V2 Automation journey", () => {
     authStore.setToken(TOKEN);
     renderApp("/ui-v2/operations/automation");
 
-    await screen.findByRole("heading", { name: "Automation" });
-    // The bounded list says exactly what it shows and what it excludes.
+    await screen.findByRole("heading", { name: "自动化" });
+    await waitFor(() =>
+      expect(screen.getAllByText("暂无统计").length).toBeGreaterThan(0),
+    );
     expect(
-      screen.getByText(/Showing the first 2 of 3 definitions/),
+      screen.getByText(/指标暂不可用：inspect the runtime database/),
     ).toBeVisible();
+  });
+
+  it("reaches the whole population through the server page cursor", async () => {
+    recordingFetch((call) => {
+      // The page read carries the submitted limit, so the next request is the
+      // one the backend minted its cursor for.
+      if (
+        call.url ===
+        "/api/v1/operations/automation/task-definitions?sort=name&limit=20"
+      ) {
+        return jsonResponse(
+          listDocument({
+            items: [definitionDocument(), draftOnlyDefinitionDocument()],
+            total: 3,
+            truncated: true,
+            next_cursor: "page-2",
+          }),
+        );
+      }
+      if (
+        call.url ===
+        "/api/v1/operations/automation/task-definitions?sort=name&limit=20&cursor=page-2"
+      ) {
+        return jsonResponse(
+          listDocument({
+            items: [draftOnlyDefinitionDocument({ name: "Third automation" })],
+            total: 3,
+            truncated: false,
+            previous_cursor: "page-1",
+          }),
+        );
+      }
+      return undefined;
+    });
+    authStore.setToken(TOKEN);
+    renderApp("/ui-v2/operations/automation");
+
+    await screen.findByRole("heading", { name: "自动化" });
+    // The count is the full population total, not the rows on this page.
+    expect(await screen.findByText(/共 3 个自动化任务/)).toBeVisible();
     expect(screen.getByText(/Created automation/)).toBeVisible();
+    const next = screen.getByRole("button", { name: "下一页" });
+    expect(next).toBeEnabled();
+    await userEvent.setup().click(next);
+    // The second page is a real server read of the remaining row.
+    await screen.findByText("Third automation");
+    // The second page replaces the first: the operator never sees a merge of
+    // two different pages.
+    expect(screen.queryByText(/Nightly automation/)).toBeNull();
   });
 
   it("renders no create entry when the backend withholds the action", async () => {
@@ -508,7 +657,10 @@ describe("V2 Automation journey", () => {
       nextAction: "start or open a successor Draft, then create",
     });
     recordingFetch((call) => {
-      if (call.url === "/api/v1/operations/automation/task-definitions") {
+      if (
+        call.url ===
+        "/api/v1/operations/automation/task-definitions?sort=name&limit=20"
+      ) {
         return jsonResponse(page);
       }
       return undefined;
@@ -516,13 +668,9 @@ describe("V2 Automation journey", () => {
     authStore.setToken(TOKEN);
     renderApp("/ui-v2/operations/automation");
 
-    await screen.findByRole("heading", { name: "Automation" });
-    expect(
-      screen.queryByRole("link", { name: "Create Automation definition" }),
-    ).toBeNull();
-    expect(
-      screen.getByText(/cannot create Automation Task Definitions/),
-    ).toBeVisible();
+    await screen.findByRole("heading", { name: "自动化" });
+    await screen.findByText("自动化任务数");
+    expect(screen.queryByRole("link", { name: "新建自动化任务" })).toBeNull();
   });
 
   it("grants unattended authority with one explicit confirmed action and no authority material", async () => {
@@ -881,6 +1029,8 @@ describe("V2 Automation journey", () => {
 
   it("completes create and copy into reachable draft-only definitions", async () => {
     const user = userEvent.setup();
+    // The create form's own inventory read shares the page read basis.
+    void 0;
     const listWithDraft = listDocument({
       draftState: {
         present: true,
@@ -899,7 +1049,8 @@ describe("V2 Automation journey", () => {
     };
     const { calls } = recordingFetch((call) => {
       if (
-        call.url === "/api/v1/operations/automation/task-definitions" &&
+        call.url ===
+          "/api/v1/operations/automation/task-definitions?limit=20" &&
         call.method === "GET"
       ) {
         return jsonResponse(listWithDraft);

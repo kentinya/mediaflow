@@ -1836,15 +1836,19 @@ import {
   normalizeAutomationDefinitionsPage,
   normalizeAutomationDraftDocument,
   normalizeAutomationGrantState,
+  normalizeAutomationMetrics,
   normalizeAutomationOccurrencesPage,
   normalizeAutomationPreview,
+  normalizeAutomationRecordsPage,
   normalizeAutomationPreviewItemsPage,
   type AutomationActivationModel,
   type AutomationDefinitionModel,
   type AutomationDefinitionsPage,
   type AutomationDraftDocumentModel,
   type AutomationGrantStateModel,
+  type AutomationMetricsModel,
   type AutomationOccurrencesPage,
+  type AutomationRecordsPage,
   type AutomationPreviewItemsPage,
   type AutomationPreviewModel,
 } from "../../entities/operations/automation";
@@ -5042,19 +5046,54 @@ export type AutomationDefinitionsRead =
   | { readonly ok: true; readonly model: AutomationDefinitionsPage }
   | { readonly ok: false; readonly failure: OperationsFailure };
 
+/**
+ * The submitted Automation inventory read basis.
+ *
+ * Every filter is a server-side query parameter: the page never filters a
+ * partial list in the browser and never derives a total or a metric from the
+ * rows it happens to hold. The cursor is only ever taken from the response to
+ * the identical filter state.
+ */
+export interface AutomationInventoryQueryOptions {
+  readonly q?: string | null;
+  readonly enabled?: boolean | null;
+  readonly library?: string | null;
+  readonly state?: string | null;
+  readonly sort?: string | null;
+  readonly direction?: string | null;
+  readonly limit?: number;
+  readonly cursor?: string | null;
+}
+
+export function automationDefinitionsUrl(
+  options: AutomationInventoryQueryOptions = {},
+): string {
+  const params = new URLSearchParams();
+  if (options.q) params.set("q", options.q);
+  if (options.enabled !== null && options.enabled !== undefined) {
+    params.set("enabled", options.enabled ? "true" : "false");
+  }
+  if (options.library) params.set("library", options.library);
+  if (options.state) params.set("state", options.state);
+  if (options.sort) params.set("sort", options.sort);
+  if (options.direction) params.set("direction", options.direction);
+  if (options.limit !== undefined) params.set("limit", String(options.limit));
+  if (options.cursor) params.set("cursor", options.cursor);
+  const qs = params.toString();
+  return `/api/v1/operations/automation/task-definitions${qs ? `?${qs}` : ""}`;
+}
+
 export async function fetchAutomationDefinitions(
   token: string | null,
+  options: AutomationInventoryQueryOptions = {},
   fetchImpl: FetchLike = fetch,
 ): Promise<AutomationDefinitionsRead> {
   let response: Response;
   try {
-    response = await fetchImpl(
-      "/api/v1/operations/automation/task-definitions",
-      {
-        method: "GET",
-        headers: operationsHeaders(token),
-      },
-    );
+    response = await fetchImpl(automationDefinitionsUrl(options), {
+      method: "GET",
+      headers: operationsHeaders(token),
+    });
   } catch {
     return { ok: false, failure: operationsFailure("unavailable") };
   }
@@ -5127,6 +5166,110 @@ export async function fetchAutomationDefinition(
         withEligibility: true,
       }),
     };
+  } catch {
+    throw new OperationsApiError("malformed");
+  }
+}
+
+export type AutomationMetricsRead =
+  | { readonly ok: true; readonly model: AutomationMetricsModel }
+  | { readonly ok: false; readonly failure: OperationsFailure };
+
+export async function fetchAutomationMetrics(
+  token: string | null,
+  fetchImpl: FetchLike = fetch,
+): Promise<AutomationMetricsRead> {
+  let response: Response;
+  try {
+    response = await fetchImpl("/api/v1/operations/automation/metrics", {
+      method: "GET",
+      headers: operationsHeaders(token),
+    });
+  } catch {
+    return { ok: false, failure: operationsFailure("unavailable") };
+  }
+  if (response.status === 401) {
+    throw new OperationsApiError("unauthorized");
+  }
+  if (response.status === 403) {
+    throw new OperationsApiError("forbidden");
+  }
+  if (!response.ok) {
+    return { ok: false, failure: operationsFailure("unavailable") };
+  }
+  let payload: unknown;
+  try {
+    payload = await response.json();
+  } catch {
+    throw new OperationsApiError("malformed");
+  }
+  try {
+    return { ok: true, model: normalizeAutomationMetrics(payload) };
+  } catch {
+    throw new OperationsApiError("malformed");
+  }
+}
+
+export interface AutomationRecordsQueryOptions {
+  readonly definition?: string | null;
+  readonly trigger?: string | null;
+  readonly status?: string | null;
+  readonly from?: string | null;
+  readonly to?: string | null;
+  readonly limit?: number;
+  readonly cursor?: string | null;
+}
+
+export function automationRecordsUrl(
+  options: AutomationRecordsQueryOptions = {},
+): string {
+  const params = new URLSearchParams();
+  if (options.definition) params.set("definition", options.definition);
+  if (options.trigger) params.set("trigger", options.trigger);
+  if (options.status) params.set("status", options.status);
+  if (options.from) params.set("from", options.from);
+  if (options.to) params.set("to", options.to);
+  if (options.limit !== undefined) params.set("limit", String(options.limit));
+  if (options.cursor) params.set("cursor", options.cursor);
+  const qs = params.toString();
+  return `/api/v1/operations/automation/records${qs ? `?${qs}` : ""}`;
+}
+
+export type AutomationRecordsRead =
+  | { readonly ok: true; readonly model: AutomationRecordsPage }
+  | { readonly ok: false; readonly failure: OperationsFailure };
+
+export async function fetchAutomationRecords(
+  token: string | null,
+  options: AutomationRecordsQueryOptions = {},
+  fetchImpl: FetchLike = fetch,
+): Promise<AutomationRecordsRead> {
+  let response: Response;
+  try {
+    response = await fetchImpl(automationRecordsUrl(options), {
+      method: "GET",
+      headers: operationsHeaders(token),
+    });
+  } catch {
+    return { ok: false, failure: operationsFailure("unavailable") };
+  }
+  if (response.status === 401) {
+    throw new OperationsApiError("unauthorized");
+  }
+  if (response.status === 403) {
+    throw new OperationsApiError("forbidden");
+  }
+  if (!response.ok) {
+    return { ok: false, failure: operationsFailure("unavailable") };
+  }
+  let payload: unknown;
+  try {
+    payload = await response.json();
+  } catch {
+    throw new OperationsApiError("malformed");
+  }
+  try {
+    return { ok: true, model: normalizeAutomationRecordsPage(payload) };
   } catch {
     throw new OperationsApiError("malformed");
   }

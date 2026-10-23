@@ -25,6 +25,7 @@ _KINDS = frozenset(
         "notification_deliveries",
         "schedule_audit",
         "automation_definition_occurrences",
+        "automation_definitions",
         "operational_logs",
     }
 )
@@ -41,6 +42,7 @@ _SCOPED_KINDS = frozenset(
         "notification_deliveries",
         "schedule_audit",
         "automation_definition_occurrences",
+        "automation_definitions",
         "operational_logs",
         "operations_runs",
         # The selected-run detail reads (Run 42.2): every item/record page is

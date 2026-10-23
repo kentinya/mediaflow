@@ -12,6 +12,7 @@ from datetime import UTC, datetime, timedelta
 from enum import Enum
 from urllib.parse import parse_qs, quote
 from uuid import uuid4
+from zoneinfo import ZoneInfo
 
 from mediaflow.application.automation import AutomationJobService, ProcessingWorkerService
 from mediaflow.application.automation_definition_occurrence import (
@@ -173,6 +174,7 @@ from mediaflow.domain.operations_run import (
     RUN_RECORD_KINDS,
     OperationsRunRecord,
     OperationsRunStatus,
+    OperationsRunTrigger,
     OperationsRunView,
     known_command_label,
 )
@@ -213,6 +215,9 @@ from mediaflow.interfaces.v2_ui import V2_UI_PREFIX, v2_ui_asset
 # matches it against the exact command and its own ``<kind>:<identity>``
 # continuation family.
 _TASK_COMMAND_FILTER = re.compile(r"[A-Za-z0-9][A-Za-z0-9_.:-]{0,63}")
+# The bounded Automation definition identity grammar shared by the definition
+# reads and the execution-record selector: one URI-safe, length-bounded token.
+_AUTOMATION_DEFINITION_FILTER = re.compile(r"[A-Za-z0-9][A-Za-z0-9_.:-]{0,63}")
 
 # Historical Task/Job/TaskItem/Result keys that must never leave the API: claim
 # and fence evidence, internal scope hints and fingerprint values.  The V2
@@ -281,6 +286,15 @@ class _CurrentConfiguredPermissionAuthority:
                 ApiPrincipalDefinition("legacy-admin", runtime.api_token_env, (ApiRole.ADMIN,)),
             )
         return definitions
+
+
+class _AutomationInventoryCursorStale(ValueError):
+    """A definition page cursor whose exact boundary left the submitted population.
+
+    This is a *recoverable* read condition: the inventory changed under a
+    bounded page, so the operator gets an explicit stale-page read with a
+    refresh action instead of a silently different page or a generic rejection.
+    """
 
 
 @dataclass(frozen=True)
@@ -1409,6 +1423,35 @@ class MediaFlowApi:
                 error.code,
                 str(error),
                 details={"sideEffects": "none", "nextAction": error.next_action},
+            )
+        except _AutomationInventoryCursorStale as error:
+            # A bounded page whose exact boundary definition left the submitted
+            # population is a recoverable stale read, not a malformed request:
+            # the operator gets the truthful condition and a refresh action.
+            self._safe_audit(
+                environ,
+                request_id,
+                locals().get("principal"),
+                method,
+                path,
+                "request",
+                "error",
+                409,
+            )
+            return self._error(
+                start_response,
+                409,
+                "stale_page",
+                redact_manual_text(error),
+                details={
+                    "durableState": "inventory_changed_under_cursor",
+                    "sideEffects": "none",
+                    "retrySafe": True,
+                    "nextAction": (
+                        "refresh the Automation inventory to read the current page "
+                        "boundary; no work, Draft or grant was created"
+                    ),
+                },
             )
         except (ValueError, json.JSONDecodeError) as error:
             self._safe_audit(
@@ -2925,13 +2968,11 @@ class MediaFlowApi:
             response["configurationRevisionId"] = revision.revision_id
             response["automationTaskDefinition"] = definition
             return self._response(start_response, 200, response)
-        if parts[:5] == [
-            "api",
-            "v1",
-            "operations",
-            "automation",
-            "task-definitions",
-        ] and method in {"GET", "POST", "PUT", "DELETE"}:
+        if parts[:5] in (
+            ["api", "v1", "operations", "automation", "task-definitions"],
+            ["api", "v1", "operations", "automation", "metrics"],
+            ["api", "v1", "operations", "automation", "records"],
+        ) and method in {"GET", "POST", "PUT", "DELETE"}:
             return self._automation_operations_projection(
                 parts, method, environ, start_response, principal
             )
@@ -12721,11 +12762,13 @@ class MediaFlowApi:
             "view",
             "problem",
             "source",
+            "definition",
+            "trigger",
         }
         if set(values).difference(allowed) or any(len(value) != 1 for value in values.values()):
             raise ValueError(
                 "operations runs query accepts limit, cursor, status, command, q, from, to, "
-                "attention, view, problem, and source once"
+                "attention, view, problem, source, definition, and trigger once"
             )
         limit = MediaFlowApi._parse_bounded_limit(values.get("limit", ["50"])[0], "run")
         raw_view = values.get("view", ["all"])[0]
@@ -12782,6 +12825,21 @@ class MediaFlowApi:
         if len(raw_search) > 128:
             raise ValueError("operations run search text is too long")
         search = raw_search or None
+        # The Automation execution-record selectors bind the admission-written
+        # definition identity and the derived trigger.  Both are optional, so
+        # the existing Operations list keeps its exact population when neither
+        # is submitted.
+        raw_definition = values.get("definition", [""])[0]
+        definition_id = None if raw_definition in {"", "all"} else raw_definition
+        if definition_id is not None and not _AUTOMATION_DEFINITION_FILTER.fullmatch(definition_id):
+            raise ValueError("operations run definition filter is invalid")
+        raw_trigger = values.get("trigger", [""])[0]
+        if raw_trigger in {"", "all"}:
+            trigger = None
+        elif raw_trigger in {item.value for item in OperationsRunTrigger}:
+            trigger = raw_trigger
+        else:
+            raise ValueError("operations run trigger filter is invalid")
         created_after = cls._run_time_filter(values.get("from", [""])[0], "from")
         created_before = cls._run_time_filter(values.get("to", [""])[0], "to")
         scope = cls._operations_runs_scope(
@@ -12795,6 +12853,8 @@ class MediaFlowApi:
             view=view,
             problem_type=problem_type,
             source=source,
+            definition_id=definition_id,
+            trigger=trigger,
         )
         raw_cursor = values.get("cursor")
         cursor = (
@@ -12816,6 +12876,8 @@ class MediaFlowApi:
             "view": view,
             "problem": problem_type,
             "source": source,
+            "definition_id": definition_id,
+            "trigger": trigger,
             "created_after": created_after,
             "created_before": created_before,
             "scope": scope,
@@ -12863,6 +12925,8 @@ class MediaFlowApi:
         view: str | None = None,
         problem_type: str | None = None,
         source: str | None = None,
+        definition_id: str | None = None,
+        trigger: str | None = None,
     ) -> str:
         """Deterministic cursor scope binding filters and the reading principal.
 
@@ -12888,6 +12952,15 @@ class MediaFlowApi:
             f"from={created_after.isoformat() if created_after else ''}",
             f"to={created_before.isoformat() if created_before else ''}",
         ]
+        # The Automation execution-record selectors are appended only when they
+        # are actually submitted.  A cursor minted without them therefore never
+        # matches a read that submits one, and a cursor minted with a specific
+        # definition/trigger never matches any other value — while the existing
+        # unfiltered/already-supported scopes keep their exact historical form.
+        if definition_id is not None:
+            parts.append(f"definition={definition_id}")
+        if trigger is not None:
+            parts.append(f"trigger={trigger}")
         return ";".join(parts)
 
     def _operations_runs_page(
@@ -12927,6 +13000,8 @@ class MediaFlowApi:
             "view": query["view"],
             "problem_type": query["problem"],
             "source": query["source"],
+            "definition_id": query["definition_id"],
+            "trigger": query["trigger"],
         }
         if cursor is not None and cursor.direction is CursorDirection.PREVIOUS:
             window = repository.operations_runs_window(before=cursor.position, **arguments)
@@ -12962,6 +13037,8 @@ class MediaFlowApi:
                 "view": query["view"],
                 "problem": query["problem"],
                 "source": bounded_identity_path(query["source"]),
+                "definition": query["definition_id"],
+                "trigger": query["trigger"],
                 "from": (query["created_after"].isoformat() if query["created_after"] else None),
                 "to": (query["created_before"].isoformat() if query["created_before"] else None),
                 "total": window.total,
@@ -13943,6 +14020,24 @@ class MediaFlowApi:
             )
         if method != "GET":
             return self._error(start_response, 405, "method_not_allowed", "GET required")
+        if (
+            parts
+            in (
+                ["api", "v1", "operations", "automation", "metrics"],
+                ["api", "v1", "operations", "automation", "records"],
+            )
+            and method == "GET"
+        ):
+            # The two Automation read-model surfaces need no managed
+            # configuration service: a definition inventory without Active
+            # configuration and an execution-record history of removed
+            # definitions are exactly the states the operator must still be
+            # able to read truthfully.
+            self._require(principal, ApiPermission.READ)
+            if parts[4] == "metrics":
+                self._require_empty_query(environ, "automation metrics")
+                return self._response(start_response, 200, self._automation_metrics_document())
+            return self._automation_records_page(environ, start_response, principal)
         self._require(principal, ApiPermission.READ)
         if self._configuration_service is None or self._configuration_objects is None:
             return self._error(
@@ -13952,7 +14047,6 @@ class MediaFlowApi:
                 "managed configuration service is unavailable",
             )
         if len(parts) == 5:
-            self._require_empty_query(environ, "operations automation definitions")
             return self._automation_definitions_operator_page(environ, start_response, principal)
         if len(parts) == 6:
             self._require_empty_query(environ, "operations automation definition")
@@ -13965,6 +14059,537 @@ class MediaFlowApi:
                 parts[5], environ, start_response, principal
             )
         return self._error(start_response, 404, "not_found", "route was not found")
+
+    # ------------------------------------------------------------------
+    # Automation inventory/records/metrics reads (RO-1/RO-5 read model)
+    # ------------------------------------------------------------------
+
+    _AUTOMATION_DEFINITIONS_QUERY_FIELDS = frozenset(
+        {
+            "limit",
+            "cursor",
+            "q",
+            "enabled",
+            "library",
+            "sort",
+            "direction",
+            "state",
+        }
+    )
+    _AUTOMATION_RUNS_QUERY_FIELDS = frozenset(
+        {
+            "limit",
+            "cursor",
+            "direction",
+            "definition",
+            "trigger",
+            "status",
+            "from",
+            "to",
+        }
+    )
+    #: The five admitted-run terminal states that form the success denominator.
+    _AUTOMATION_TERMINAL_STATUSES = frozenset(
+        {"completed", "partial_success", "failed", "cancelled"}
+    )
+    #: Bounded Automation inventory orderings; each has one deterministic tie.
+    _AUTOMATION_DEFINITION_SORTS = frozenset({"name", "enabled", "nextRun", "latest", "limit"})
+
+    def _automation_now(self) -> datetime:
+        """The single evaluation instant the Automation cards are computed at.
+
+        Overridable so a controlled-clock test can assert one exact calendar
+        boundary without freezing the process clock; production always reads
+        the real current instant.
+        """
+
+        return datetime.now(UTC)
+
+    def _automation_system_timezone(self) -> str:
+        """The one configured system timezone the metric calendar uses.
+
+        Read from the same Active managed document the rest of the surface
+        reads, never from a Cron/browser value.  An unreadable/absent timezone
+        is explicitly ``UTC`` with a truthful ``available: False`` marker at
+        the metric level, so a card never silently pretends a different zone.
+        """
+
+        binding = getattr(self, "_runtime_binding", None)
+        configuration = getattr(binding, "runtime_configuration", None)
+        timezone = getattr(configuration, "timezone", None)
+        if isinstance(timezone, str) and timezone.strip():
+            return timezone.strip()
+        if self._configuration_service is not None:
+            try:
+                active = self._configuration_service.active()
+            except Exception:
+                active = None
+            if active is not None and isinstance(active.document, dict):
+                candidate = active.document.get("timezone")
+                if isinstance(candidate, str) and candidate.strip():
+                    return candidate.strip()
+        return "UTC"
+
+    @staticmethod
+    def _automation_metric_windows(now: datetime, timezone_name: str) -> dict[str, object]:
+        """Month-to-date and clamped previous-period windows in one system zone.
+
+        Both windows are derived from the *same* evaluation instant and the
+        *same* configured IANA zone, so a DST transition, a leap day or an
+        unequal month length cannot make the comparison period longer than the
+        elapsed current period.  The windows are returned as absolute UTC
+        instants (half-open) together with the exact local boundaries the
+        operator can verify.
+        """
+
+        try:
+            zone = ZoneInfo(timezone_name)
+        except Exception:
+            zone = ZoneInfo("UTC")
+            timezone_name = "UTC"
+        local_now = now.astimezone(zone)
+        start_local = local_now.replace(day=1, hour=0, minute=0, second=0, microsecond=0)
+        if start_local.month == 12:
+            next_start_local = start_local.replace(year=start_local.year + 1, month=1)
+        else:
+            next_start_local = start_local.replace(month=start_local.month + 1)
+        if start_local.month == 1:
+            previous_start_local = start_local.replace(year=start_local.year - 1, month=12)
+        else:
+            previous_start_local = start_local.replace(month=start_local.month - 1)
+        # The previous month's comparable elapsed period, clamped to that
+        # month's own end: short months and month-length differences never
+        # stretch the comparison past a complete previous period.
+        elapsed_seconds = (local_now - start_local).total_seconds()
+        previous_period_end = previous_start_local + timedelta(seconds=elapsed_seconds)
+        if previous_period_end > start_local:
+            previous_period_end = start_local
+        return {
+            "timezone": timezone_name,
+            "evaluatedAt": local_now.isoformat(),
+            "current": {
+                "startLocal": start_local.isoformat(),
+                "endLocal": local_now.isoformat(),
+                "nextPeriodStartLocal": next_start_local.isoformat(),
+                "start": start_local.astimezone(UTC),
+                "end": local_now.astimezone(UTC),
+            },
+            "previous": {
+                "startLocal": previous_start_local.isoformat(),
+                "endLocal": previous_period_end.astimezone(zone).isoformat(),
+                "start": previous_start_local.astimezone(UTC),
+                "end": previous_period_end.astimezone(UTC),
+            },
+        }
+
+    def _automation_metrics_document(self) -> dict[str, object]:
+        """The four full-population Automation cards (RO-1 metric contract).
+
+        Every number is read from the shared deduplicated admitted-run
+        population in one snapshot, so the cards never derive from the current
+        browser page, the list filters or one definition's history.  A missing
+        denominator or an unavailable query is published as explicitly
+        unavailable/``None`` — never as a fabricated zero or percentage.
+        """
+
+        repository = self._repository
+        reader = getattr(repository, "automation_run_metrics", None)
+        timezone_name = self._automation_system_timezone()
+        now = self._automation_now()
+        windows = self._automation_metric_windows(now, timezone_name)
+        current = windows["current"]
+        previous = windows["previous"]
+        base: dict[str, object] = {
+            "available": False,
+            "scope": "full_authorized_population",
+            "basis": (
+                "each original admitted run counted once by its durable admission "
+                "timestamp in the configured system timezone"
+            ),
+            "timezone": timezone_name,
+            "cronTimezoneNote": (
+                "Cron definition timezones stay separate from this system calendar"
+            ),
+            "evaluatedAt": windows["evaluatedAt"],
+            "windows": {
+                "current": {
+                    "start": current["start"].isoformat(),
+                    "end": current["end"].isoformat(),
+                    "startLocal": current["startLocal"],
+                    "endLocal": current["endLocal"],
+                    "nextPeriodStartLocal": current["nextPeriodStartLocal"],
+                },
+                "previous": {
+                    "start": previous["start"].isoformat(),
+                    "end": previous["end"].isoformat(),
+                    "startLocal": previous["startLocal"],
+                    "endLocal": previous["endLocal"],
+                },
+            },
+            "sideEffects": "none",
+        }
+        if repository is None or not callable(reader):
+            base["nextAction"] = (
+                "restore the runtime database read model, then refresh the Automation cards"
+            )
+            base["denominatorStatement"] = "unavailable"
+            return base
+        try:
+            values = reader(
+                current_start=current["start"],
+                current_end=current["end"],
+                previous_start=previous["start"],
+                previous_end=previous["end"],
+            )
+        except Exception:
+            base["nextAction"] = "inspect the runtime database, then refresh the Automation cards"
+            base["denominatorStatement"] = "unavailable"
+            return base
+        admitted = int(values.get("currentAdmitted", 0))
+        previous_admitted = int(values.get("previousAdmitted", 0))
+        terminal = int(values.get("currentTerminal", 0))
+        completed = int(values.get("currentCompleted", 0))
+        active = int(values.get("currentActive", 0))
+        base.update(
+            {
+                "available": True,
+                "monthToDateAdmitted": admitted,
+                "previousPeriodAdmitted": previous_admitted,
+                "comparisonAvailable": previous_admitted > 0,
+                "comparisonUnavailableReason": (
+                    None if previous_admitted > 0 else "no_comparable_previous_period"
+                ),
+                "monthToDateTerminal": terminal,
+                "monthToDateActive": active,
+                "denominatorStatement": (
+                    f"terminal admitted runs in the current local month ({terminal})"
+                    if terminal > 0
+                    else "no terminal admitted run in the current local month"
+                ),
+                "successRate": (completed / terminal if terminal > 0 else None),
+                "completedCount": completed,
+                "noWorkStatement": (
+                    "skipped files are not organized files and a reached item bound "
+                    "does not prove scope exhaustion"
+                ),
+            }
+        )
+        return base
+
+    def _automation_metric_window_document(self) -> dict[str, object]:
+        return self._automation_metrics_document()
+
+    @classmethod
+    def _automation_records_query(cls, environ: dict, principal_id: str) -> dict[str, object]:
+        """Bounded admitted-run record filters plus their principal-bound cursor.
+
+        Every selector is one of the durable identities the shared run
+        population exposes; an unknown or contradictory value is a rejected
+        filter, never a silently different population.  A recovery attempt is a
+        distinct admission with its own identity, so it appears as its own
+        record and never replaces or duplicates the original.
+        """
+
+        values = parse_qs(str(environ.get("QUERY_STRING", "")), keep_blank_values=True)
+        if set(values).difference(cls._AUTOMATION_RUNS_QUERY_FIELDS) or any(
+            len(value) != 1 for value in values.values()
+        ):
+            raise ValueError(
+                "automation records query accepts limit, cursor, direction, definition, "
+                "trigger, status, from, and to once"
+            )
+        limit = cls._parse_bounded_limit(values.get("limit", ["20"])[0], "automation record")
+        raw_direction = values.get("direction", ["next"])[0]
+        if raw_direction not in {"next", "previous"}:
+            raise ValueError("automation record direction is invalid")
+        raw_definition = values.get("definition", [""])[0]
+        definition_id = None if raw_definition in {"", "all"} else raw_definition
+        if definition_id is not None and not _AUTOMATION_DEFINITION_FILTER.fullmatch(definition_id):
+            raise ValueError("automation record definition filter is invalid")
+        raw_trigger = values.get("trigger", [""])[0]
+        if raw_trigger in {"", "all"}:
+            trigger = None
+        elif raw_trigger in {item.value for item in OperationsRunTrigger}:
+            trigger = raw_trigger
+        else:
+            raise ValueError("automation record trigger filter is invalid")
+        raw_status = values.get("status", [""])[0]
+        if raw_status in {"", "all"}:
+            status = None
+        elif raw_status in cls._RUNS_STATUS_FILTER_VALUES:
+            status = raw_status
+        else:
+            raise ValueError("automation record status filter is invalid")
+        created_after = cls._run_time_filter(values.get("from", [""])[0], "from")
+        created_before = cls._run_time_filter(values.get("to", [""])[0], "to")
+        if created_after is not None and created_before is not None:
+            if created_after > created_before:
+                raise ValueError("automation record time window is inverted")
+        scope = ";".join(
+            (
+                f"principal={principal_id}",
+                "kind=automation-records",
+                f"definition={definition_id or 'all'}",
+                f"trigger={trigger or 'all'}",
+                f"status={status or 'all'}",
+                f"from={created_after.isoformat() if created_after else ''}",
+                f"to={created_before.isoformat() if created_before else ''}",
+            )
+        )
+        raw_cursor = values.get("cursor", [""])[0]
+        cursor = (
+            decode_directional_cursor(raw_cursor, "operations_runs", expected_scope=scope)
+            if raw_cursor
+            else None
+        )
+        if cursor is not None and cursor.direction.value != raw_direction:
+            raise ValueError("automation record direction does not match its cursor")
+        return {
+            "limit": limit,
+            "direction": raw_direction,
+            "definition_id": definition_id,
+            "trigger": trigger,
+            "status": status,
+            "created_after": created_after,
+            "created_before": created_before,
+            "cursor": cursor,
+            "scope": scope,
+        }
+
+    #: The scheduler diagnostic outcomes that are *not* admitted runs.  They are
+    #: durable due-state evidence that the Scheduler blocked or skipped an
+    #: emission; they never became a Job, Task or execution.
+    _AUTOMATION_BLOCKED_OUTCOMES = frozenset(
+        {
+            "blocked",
+            "disabled",
+            "unsupported",
+            "failed",
+        }
+    )
+
+    def _automation_records_page(
+        self, environ: dict, start_response: Callable, principal: ResolvedApiPrincipal
+    ):
+        """One bounded page of admitted Automation runs (RO-5 read model).
+
+        The records read is the *shared* deduplicated run population restricted
+        to runs with a durable Automation origin, so a linked Job→Task pair
+        stays one identity with one count, a pre-Task failure stays visible and
+        a definition that has since been renamed or removed still resolves
+        through its admission-written identity.  Every row is read-only: no
+        analysis, no admission, no Provider/Storage access and no authority.
+        """
+
+        repository = self._repository
+        window_reader = getattr(repository, "operations_runs_window", None)
+        if repository is None or not callable(window_reader):
+            return self._error(
+                start_response,
+                503,
+                "service_unavailable",
+                "Automation execution records are unavailable for this runtime",
+            )
+        query = self._automation_records_query(environ, principal.principal_id)
+        arguments: dict[str, object] = {
+            "limit": query["limit"],
+            "status": query["status"],
+            "created_after": query["created_after"],
+            "created_before": query["created_before"],
+            "definition_id": query["definition_id"],
+            "trigger": query["trigger"],
+        }
+        cursor = query["cursor"]
+        if cursor is not None and cursor.direction is CursorDirection.PREVIOUS:
+            window = window_reader(before=cursor.position, **arguments)
+        else:
+            window = window_reader(after=cursor.position if cursor else None, **arguments)
+        page = window.page
+        rows = [self._automation_record_document(item, principal) for item in page]
+        scope = query["scope"]
+        return self._response(
+            start_response,
+            200,
+            {
+                "items": rows,
+                "limit": query["limit"],
+                "definition": query["definition_id"],
+                "trigger": query["trigger"],
+                "status": query["status"],
+                "from": (query["created_after"].isoformat() if query["created_after"] else None),
+                "to": (query["created_before"].isoformat() if query["created_before"] else None),
+                "total": window.total,
+                "statusCounts": window.status_counts,
+                "truncated": bool(window.has_next),
+                "population": ("admitted Automation runs deduplicated by explicit task linkage"),
+                "historyBasis": (
+                    "definition/name/scope/version from the durable admission, never "
+                    "backfilled from the current Active configuration"
+                ),
+                "sideEffects": "none",
+                "previous_cursor": self._run_page_cursor(
+                    page, bool(window.has_previous), CursorDirection.PREVIOUS, scope
+                ),
+                "next_cursor": self._run_page_cursor(
+                    page, bool(window.has_next), CursorDirection.NEXT, scope
+                ),
+            },
+        )
+
+    def _automation_record_document(
+        self, overview, principal: ResolvedApiPrincipal
+    ) -> dict[str, object]:
+        """One read-only Automation execution record with its exact next action.
+
+        The record reports the original durable outcome, its stage/reason and
+        known effects, plus the exact legal next action.  It never embeds a
+        file-decision form, re-analysis, pause/continue/cancel, retry command
+        or recovery execution: after a durable formal organizing Task exists,
+        all of that belongs to the exact native Task Center run.
+        """
+
+        document = self._operations_run_document(overview)
+        task_center = (
+            {"runId": overview.task_id, "path": f"/api/v1/operations/runs/{overview.task_id}"}
+            if overview.task_id
+            else None
+        )
+        job_center = (
+            {"jobId": overview.job_id, "path": f"/api/v1/operations/jobs/{overview.job_id}"}
+            if overview.job_id
+            else None
+        )
+        route = self._automation_record_route(overview)
+        document["recordId"] = overview.run_id
+        document["origin"] = (
+            {
+                "kind": overview.origin_kind,
+                "definitionId": overview.origin_definition_id,
+                "definitionName": overview.origin_definition_name,
+            }
+            if overview.origin_definition_id
+            else None
+        )
+        document["historyContext"] = {
+            "definitionId": overview.definition_id or overview.origin_definition_id,
+            "definitionName": overview.origin_definition_name,
+            "sourceScope": document.get("source_scope"),
+            "trigger": overview.trigger.value,
+            "scheduleId": overview.schedule_id,
+            "recoveredFrom": None,
+        }
+        document["handoff"] = {
+            # Ownership is determined by the durable formal-execution evidence,
+            # never by the first media mutation and never by an absent Task
+            # link alone.
+            "ownership": route["ownership"],
+            "formalExecution": route["formal_execution"],
+            "durableState": route["durable_state"],
+            "explanation": route["explanation"],
+            "taskCenter": task_center,
+            "job": job_center,
+            "definitionSettings": (
+                f"/ui-v2/operations/automation/definition/"
+                f"{overview.definition_id or overview.origin_definition_id}"
+                if (overview.definition_id or overview.origin_definition_id)
+                else None
+            ),
+            "supportedCommand": route["supported_command"],
+            "startAgainAllowed": False,
+            "retryExplanation": route["retry_explanation"],
+        }
+        return document
+
+    @staticmethod
+    def _automation_record_route(overview) -> dict[str, object]:
+        """Classify one record's recovery ownership from durable evidence only.
+
+        Three disjoint cases are published:
+
+        - ``task_center``: a formal organizing Task exists (including one that
+          failed during scanning/recognition/metadata/planning before any
+          mutation).  Every execution/recovery command belongs to that Task.
+        - ``prestart_repair``: a proven settled pre-start failure with a stable
+          failure category and next action, no Task and no claimed/queued work.
+          Only the existing supported definition command may be used again, and
+          only after the command owner revalidates the current context.
+        - ``reconcile``: an ambiguous handoff or unknown effect.  The operator
+          must reconcile/investigate before any further command; no start-again
+          retry is offered.
+        """
+
+        has_task = overview.task_id is not None
+        if has_task:
+            return {
+                "ownership": "task_center",
+                "formal_execution": True,
+                "durable_state": "formal_execution_exists",
+                "explanation": (
+                    "a durable organizing Task exists for this run; its plan, per-item "
+                    "results and every recovery command belong to that exact Task Center run"
+                ),
+                "supported_command": None,
+                "retry_explanation": (
+                    "Task Center owns recovery for this run; successful or uncertain "
+                    "effects are never replayed from Automation"
+                ),
+            }
+        status = overview.status.value
+        if status in {"pending", "running", "paused", "waiting"}:
+            return {
+                "ownership": "reconcile",
+                "formal_execution": False,
+                "durable_state": "attempt_in_progress",
+                "explanation": (
+                    "this admission is still queued, claimed or running; it is not a "
+                    "settled pre-start failure and no second attempt may be started"
+                ),
+                "supported_command": None,
+                "retry_explanation": (
+                    "wait for this attempt to settle; a settled record can then be "
+                    "reconciled and, if provably pre-start, re-run deliberately"
+                ),
+            }
+        if (
+            status == "failed"
+            and overview.attention_reason == "run_repair"
+            and overview.attention_failure_category
+            and overview.attention_failure_next_action
+        ):
+            definition_id = overview.definition_id or overview.origin_definition_id
+            return {
+                "ownership": "prestart_repair",
+                "formal_execution": False,
+                "durable_state": "settled_before_formal_execution",
+                "explanation": (
+                    "this admission failed before any formal organizing execution or "
+                    "media effect; repair the stated prerequisite, then deliberately "
+                    "start a new run from the definition"
+                ),
+                "supported_command": (
+                    "run-once" if overview.origin_definition_id else "scheduled-evaluation"
+                ),
+                "definition_settings": definition_id,
+                "retry_explanation": (
+                    "the existing supported definition command may be used again after "
+                    "the prerequisite is repaired and the current scope, pins and "
+                    "authority are revalidated; this record stays as the historical fact"
+                ),
+            }
+        return {
+            "ownership": "reconcile",
+            "formal_execution": False,
+            "durable_state": "handoff_uncertain",
+            "explanation": (
+                "no durable Task proves a formal execution, but the handoff or its "
+                "effects cannot be proven absent; investigate before any command"
+            ),
+            "supported_command": None,
+            "retry_explanation": (
+                "start-again is refused while the handoff is ambiguous; reconcile the "
+                "durable evidence first and preserve this record"
+            ),
+        }
 
     def _automation_run_once_projection(
         self,
@@ -15042,9 +15667,122 @@ class MediaFlowApi:
                 next_action=error.next_action,
             ) from error
 
+    #: Bounded upper bound of one Automation inventory read.  The managed
+    #: configuration document is itself bounded, so this only protects the read
+    #: from a corrupt/unduly large section: it never truncates a supported page.
+    _AUTOMATION_INVENTORY_CAP = 10_000
+
+    @classmethod
+    def _automation_definitions_query(cls, environ: dict, principal_id: str) -> dict[str, object]:
+        """Submitted Automation inventory filters plus their principal-bound cursor.
+
+        The inventory is a bounded, server-side query over **every** authorized
+        Active and Draft-only definition: search, enablement/source filters,
+        a stable total ordering and a page cursor that is bound to the exact
+        filter state and reading principal.  A cursor minted for one filter
+        state or principal is therefore refused instead of silently returning a
+        different population.
+        """
+
+        values = parse_qs(str(environ.get("QUERY_STRING", "")), keep_blank_values=True)
+        if set(values).difference(cls._AUTOMATION_DEFINITIONS_QUERY_FIELDS) or any(
+            len(value) != 1 for value in values.values()
+        ):
+            raise ValueError(
+                "automation definitions query accepts limit, cursor, q, enabled, library, "
+                "sort, direction, and state once"
+            )
+        limit = cls._parse_bounded_limit(values.get("limit", ["20"])[0], "automation definition")
+        raw_search = values.get("q", [""])[0].strip()
+        if len(raw_search) > 128:
+            raise ValueError("automation definition search text is too long")
+        search = raw_search or None
+        raw_enabled = values.get("enabled", [""])[0]
+        if raw_enabled in {"", "all"}:
+            enabled = None
+        elif raw_enabled in {"true", "yes"}:
+            enabled = True
+        elif raw_enabled in {"false", "no"}:
+            enabled = False
+        else:
+            raise ValueError("automation definition enabled filter is invalid")
+        raw_library = values.get("library", [""])[0]
+        library = None if raw_library in {"", "all"} else raw_library
+        if library is not None and not _AUTOMATION_DEFINITION_FILTER.fullmatch(library):
+            raise ValueError("automation definition library filter is invalid")
+        raw_state = values.get("state", [""])[0]
+        if raw_state in {"", "all"}:
+            state = None
+        elif raw_state in {"active", "draft-only"}:
+            state = raw_state
+        else:
+            raise ValueError("automation definition state filter is invalid")
+        sort = values.get("sort", ["name"])[0]
+        if sort not in cls._AUTOMATION_DEFINITION_SORTS:
+            raise ValueError("automation definition sort is invalid")
+        raw_direction = values.get("direction", [""])[0]
+        if raw_direction in {"", "auto"}:
+            # The default order visits the most operationally relevant rows
+            # first for schedule/result orderings and alphabetical otherwise.
+            direction = "desc" if sort in {"nextRun", "latest"} else "asc"
+        elif raw_direction in {"asc", "desc"}:
+            direction = raw_direction
+        else:
+            raise ValueError("automation definition direction is invalid")
+        scope = ";".join(
+            (
+                f"principal={principal_id}",
+                "kind=automation-definitions",
+                f"q={search or ''}",
+                f"enabled={'all' if enabled is None else str(enabled).lower()}",
+                f"library={library or 'all'}",
+                f"state={state or 'all'}",
+                f"sort={sort}",
+                f"direction={direction}",
+            )
+        )
+        raw_cursor = values.get("cursor", [""])[0]
+        cursor = (
+            decode_directional_cursor(raw_cursor, "automation_definitions", expected_scope=scope)
+            if raw_cursor
+            else None
+        )
+        return {
+            "limit": limit,
+            "search": search,
+            "enabled": enabled,
+            "library": library,
+            "state": state,
+            "sort": sort,
+            "direction": direction,
+            "cursor": cursor,
+            "scope": scope,
+        }
+
+    @staticmethod
+    def _automation_inventory_sort_key(document: dict, sort: str):
+        """One stable, total ordering key over a projected definition document."""
+
+        body = document
+        occurrence = document.get("occurrenceState") or {}
+        if sort == "enabled":
+            return (1 if body.get("enabled") is True else 0, str(body.get("id", "")))
+        if sort == "nextRun":
+            return (str(occurrence.get("nextRunAt") or ""), str(body.get("id", "")))
+        if sort == "latest":
+            return (
+                str(occurrence.get("lastOccurrenceAt") or ""),
+                str(body.get("id", "")),
+            )
+        if sort == "limit":
+            return (int(body.get("itemLimit") or 0), str(body.get("id", "")))
+        return (str(body.get("name", "")).casefold(), str(body.get("id", "")))
+
     def _automation_definitions_operator_page(
         self, environ: dict, start_response: Callable, principal: ResolvedApiPrincipal
     ) -> None:
+        query = self._automation_definitions_query(environ, principal.principal_id)
+        metrics = self._automation_metrics_document()
         active = self._configuration_service.active()
         if active is None:
             manage = ApiPermission.MANAGE_CONFIGURATION in principal.permissions
@@ -15056,6 +15794,11 @@ class MediaFlowApi:
                     "items": [],
                     "total": 0,
                     "truncated": False,
+                    "metrics": metrics,
+                    "query": self._automation_inventory_query_echo(query),
+                    "itemsTruncatedByCap": False,
+                    "previous_cursor": None,
+                    "next_cursor": None,
                     "draftState": self._automation_draft_state(
                         None,
                         empty_reason=(
@@ -15142,8 +15885,7 @@ class MediaFlowApi:
         # normalizer fails closed on any page above this limit, so the merged
         # response must never exceed it; dropped definitions stay counted in
         # the truthful total and the truncated flag.
-        active_page = all_items[: self.AUTOMATION_DEFINITIONS_PAGE_LIMIT]
-        draft_capacity = self.AUTOMATION_DEFINITIONS_PAGE_LIMIT - len(active_page)
+        active_page = all_items
         for draft in drafts:
             document = draft.document if isinstance(draft.document, dict) else {}
             section = document.get("automationTaskDefinitions")
@@ -15158,8 +15900,6 @@ class MediaFlowApi:
                     continue
                 seen_draft_only.add(candidate["id"])
                 draft_only_total += 1
-                if len(draft_only) >= draft_capacity:
-                    continue
                 draft_only.append((draft, candidate))
         projected = self._automation_occurrences.project_definitions(
             active_page,
@@ -15190,16 +15930,42 @@ class MediaFlowApi:
                     in_active=False,
                 )
             )
+        # The complete authorized inventory is the filter/search/sort basis; the
+        # bounded page below is only a window over it, so no definition is
+        # hidden behind a hidden prefix and every authorized Draft-only
+        # correction stays reachable.
+        capped = len(items) > self._AUTOMATION_INVENTORY_CAP
+        if capped:
+            items = items[: self._AUTOMATION_INVENTORY_CAP]
+        filtered = [item for item in items if self._automation_definition_matches(item, query)]
+        ordered = sorted(
+            filtered,
+            key=lambda item: self._automation_inventory_sort_key(item, query["sort"]),
+            reverse=query["direction"] == "desc",
+        )
+        total = len(ordered)
+        cursor = query["cursor"]
+        page, has_previous, has_next = self._automation_inventory_window(
+            ordered, query["limit"], cursor
+        )
+        scope = query["scope"]
         manage = ApiPermission.MANAGE_CONFIGURATION in principal.permissions
         return self._response(
             start_response,
             200,
             {
                 "activeConfiguration": self._automation_active_configuration(active),
-                "items": items,
-                "total": len(all_items) + draft_only_total,
-                "truncated": (
-                    len(all_items) > len(active_page) or draft_only_total > len(draft_only)
+                "items": page,
+                "total": total,
+                "truncated": has_next or capped,
+                "metrics": metrics,
+                "query": self._automation_inventory_query_echo(query),
+                "itemsTruncatedByCap": capped,
+                "previous_cursor": self._automation_inventory_cursor(
+                    page, has_previous, CursorDirection.PREVIOUS, scope, query["sort"]
+                ),
+                "next_cursor": self._automation_inventory_cursor(
+                    page, has_next, CursorDirection.NEXT, scope, query["sort"]
                 ),
                 "draftState": self._automation_draft_state(
                     drafts[0] if drafts else None,
@@ -15250,6 +16016,112 @@ class MediaFlowApi:
                 },
             },
         )
+
+    @staticmethod
+    def _automation_definition_matches(document: dict, query: dict) -> bool:
+        """Whether one projected definition document satisfies the submitted filters.
+
+        The predicate is the exact server-side filter basis: the same fields the
+        page renders (name, id, source library, scope, schedule text) form the
+        search text, and enablement/source/state are the published document
+        values.  A Draft-only definition is never matched by an ``active``
+        state filter and never contributes to published/enabled counts.
+        """
+
+        body = document
+        enabled = query["enabled"]
+        if enabled is not None and (body.get("enabled") is True) != enabled:
+            return False
+        library = query["library"]
+        if library is not None and body.get("resourceLibraryId") != library:
+            return False
+        state = query["state"]
+        if state is not None and document.get("definitionState") != state:
+            return False
+        search = query["search"]
+        if search is not None:
+            haystack = " ".join(
+                str(value)
+                for value in (
+                    body.get("name"),
+                    body.get("id"),
+                    body.get("resourceLibraryId"),
+                    body.get("sourceScope"),
+                    body.get("cron"),
+                    body.get("timezone"),
+                )
+                if value is not None
+            ).casefold()
+            if search.casefold() not in haystack:
+                return False
+        return True
+
+    #: The documentary cursor timestamp for the id-only Automation inventory.
+    #: Definitions carry no admission time, so the durable boundary is the
+    #: definition identity itself; the field satisfies the shared directional
+    #: cursor format without claiming a timestamp it does not have.
+    _AUTOMATION_INVENTORY_CURSOR_EPOCH = datetime(2026, 1, 1, tzinfo=UTC)
+
+    def _automation_inventory_window(self, ordered: list, limit: int, cursor):
+        """One page window over the ordered inventory with honest neighbours.
+
+        The cursor names the exact boundary definition it was minted from, so a
+        page boundary never shifts because another definition was published:
+        the window starts strictly after (or before) that durable identity in
+        the freshly ordered population.  A boundary identity that no longer
+        exists in the submitted population is reported as a stale cursor for a
+        bounded refresh instead of silently returning a different page.
+        """
+
+        if cursor is None:
+            page = ordered[:limit]
+            return page, False, len(ordered) > limit
+        ids = [str(item.get("id", "")) for item in ordered]
+        if cursor.record_id not in ids:
+            raise _AutomationInventoryCursorStale(
+                "the definition this page cursor was minted from is no longer in the "
+                "submitted population"
+            )
+        index = ids.index(cursor.record_id)
+        if cursor.direction is CursorDirection.PREVIOUS:
+            end = index
+            start = max(0, end - limit)
+            return ordered[start:end], start > 0, bool(ordered[end:])
+        start = index + 1
+        end = start + limit
+        return ordered[start:end], True, len(ordered) > end
+
+    def _automation_inventory_cursor(
+        self, page: list, available: bool, direction: CursorDirection, scope: str, sort: str
+    ) -> str | None:
+        if not available or not page:
+            return None
+        record = page[0] if direction is CursorDirection.PREVIOUS else page[-1]
+        identity = str(record.get("id", ""))
+        if not identity:
+            return None
+        return encode_cursor(
+            "automation_definitions",
+            self._AUTOMATION_INVENTORY_CURSOR_EPOCH,
+            identity,
+            direction,
+            scope=scope,
+        )
+
+    @staticmethod
+    def _automation_inventory_query_echo(query: dict) -> dict[str, object]:
+        """The exact submitted read basis, echoed for a rebuildable refresh."""
+
+        return {
+            "q": query["search"],
+            "enabled": query["enabled"],
+            "library": query["library"],
+            "state": query["state"],
+            "sort": query["sort"],
+            "direction": query["direction"],
+            "limit": query["limit"],
+            "scope": "full_authorized_population",
+        }
 
     def _automation_definition_operator_detail(
         self, definition_id: str, start_response: Callable, principal: ResolvedApiPrincipal

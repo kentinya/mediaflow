@@ -50,7 +50,9 @@ export function AutomationNewPage() {
   const [timezone, setTimezone] = useState("UTC");
   const [error, setError] = useState<string | null>(null);
 
-  const listQuery = useQuery(automationListQueryOptions(token));
+  // The create form reuses the inventory read for its Active identity and
+  // Draft state, so it submits no filters of its own.
+  const listQuery = useQuery(automationListQueryOptions(token, { limit: 20 }));
 
   const draftMutation = useMutation({
     mutationFn: (activeRevisionId: string) =>

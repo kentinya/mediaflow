@@ -5583,3 +5583,95 @@ tr[aria-selected="true"] {
   flex-wrap: wrap;
   gap: 0.375rem;
 }
+
+/* V2 Automation workspace (Slice 43 RO-1/RO-5 read-only inventory). */
+.mf-automation-metrics {
+  display: flex;
+  flex-direction: column;
+  gap: 10px;
+  margin-bottom: 12px;
+}
+.mf-automation-metric-grid {
+  grid-template-columns: repeat(4, minmax(0, 1fr));
+}
+.mf-automation-filters {
+  flex-wrap: wrap;
+  align-items: center;
+  gap: 8px;
+  margin-bottom: 12px;
+}
+.mf-automation-filters label {
+  font-size: 0.85rem;
+  color: var(--muted);
+}
+.mf-automation-filters input[type="search"],
+.mf-automation-filters input[type="text"],
+.mf-automation-filters select {
+  min-width: 9rem;
+  max-width: 16rem;
+}
+.mf-automation-table {
+  width: 100%;
+  border-collapse: collapse;
+  display: block;
+  overflow-x: auto;
+  white-space: normal;
+}
+.mf-automation-table thead th {
+  text-align: left;
+  font-size: 0.8rem;
+  font-weight: 600;
+  color: var(--muted);
+  padding: 8px 10px;
+  border-bottom: 1px solid var(--line);
+  white-space: nowrap;
+}
+.mf-automation-table tbody td {
+  padding: 10px;
+  border-bottom: 1px solid var(--line);
+  vertical-align: top;
+  overflow-wrap: anywhere;
+}
+.mf-automation-table .mf-actions {
+  flex-wrap: wrap;
+  gap: 6px;
+}
+.mf-link-button {
+  border: none;
+  background: none;
+  padding: 0;
+  font: inherit;
+  font-weight: 600;
+  color: var(--accent);
+  cursor: pointer;
+  text-align: left;
+}
+.mf-link-button:hover {
+  text-decoration: underline;
+}
+.mf-status-ok {
+  color: var(--ok, #1f7a4d);
+}
+.mf-status-warn {
+  color: var(--warn, #8a5a00);
+}
+.mf-status-bad {
+  color: var(--danger, #a3232a);
+}
+@media (max-width: 900px) {
+  .mf-automation-metric-grid {
+    grid-template-columns: repeat(2, minmax(0, 1fr));
+  }
+  .mf-automation-filters {
+    flex-direction: column;
+    align-items: stretch;
+  }
+  .mf-automation-filters input,
+  .mf-automation-filters select {
+    max-width: none;
+  }
+  .mf-automation-table th,
+  .mf-automation-table td {
+    min-width: 9rem;
+  }
+}

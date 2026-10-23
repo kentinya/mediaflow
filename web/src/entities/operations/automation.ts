@@ -120,7 +120,7 @@ export type AutomationScheduleType = (typeof AUTOMATION_SCHEDULE_TYPES)[number];
 export type AutomationActionKind =
   | "definition-detail"
   | "definition-occurrences"
-  | "definition-preview"
+  | "definition-run-once"
   | "definition-grant-state"
   | "definition-grant"
   | "definition-revoke"
@@ -168,10 +168,13 @@ export const AUTOMATION_ACTION_CONTRACTS: Readonly<
     offeredWithoutTransport: false,
     objectBound: true,
   },
-  "definition-preview": {
+  "definition-run-once": {
+    // The one deliberate ``运行一次`` entry of a published definition.  Its
+    // bounded discovery is admitted by the existing Run-once service; the
+    // retired standalone Preview action is gone and is never restored here.
     method: "POST",
-    routePrefix: AUTOMATION_DEFINITIONS_ROUTE,
-    suffix: "preview",
+    routePrefix: OPERATIONS_DEFINITIONS_ROUTE,
+    suffix: "run-once",
     requiresConfirmation: false,
     offeredWithoutTransport: false,
     objectBound: true,
@@ -897,7 +900,7 @@ export interface AutomationDefinitionModel {
   readonly actions: {
     readonly detail: AutomationActionModel;
     readonly occurrences: AutomationActionModel;
-    readonly preview: AutomationActionModel;
+    readonly runOnce: AutomationActionModel;
     readonly grantState: AutomationActionModel;
     readonly grant: AutomationActionModel;
     readonly revoke: AutomationActionModel;
@@ -970,10 +973,10 @@ export function normalizeAutomationDefinition(
         "definition-occurrences",
         identity,
       ),
-      preview: normalizeAutomationAction(
-        actions["preview"],
-        `${field}.actions.preview`,
-        "definition-preview",
+      runOnce: normalizeAutomationAction(
+        actions["runOnce"],
+        `${field}.actions.runOnce`,
+        "definition-run-once",
         identity,
       ),
       grantState: normalizeAutomationAction(
@@ -1434,11 +1437,155 @@ export function normalizeAutomationDraftDocument(
   };
 }
 
+/** One full-population Automation metric card set (RO-1 metric contract). */
+export interface AutomationMetricsModel {
+  readonly available: boolean;
+  readonly scope: string;
+  readonly basis: string;
+  readonly timezone: string;
+  readonly cronTimezoneNote: string;
+  readonly evaluatedAt: string;
+  readonly monthToDateAdmitted: number | null;
+  readonly previousPeriodAdmitted: number | null;
+  readonly comparisonAvailable: boolean;
+  readonly denominatorStatement: string;
+  readonly successRate: number | null;
+  readonly completedCount: number | null;
+  readonly monthToDateTerminal: number | null;
+  readonly monthToDateActive: number | null;
+  readonly noWorkStatement: string;
+  readonly nextAction: string | null;
+  readonly windows: {
+    readonly current: AutomationMetricWindowModel;
+    readonly previous: AutomationMetricWindowModel;
+  } | null;
+}
+
+export interface AutomationMetricWindowModel {
+  readonly start: string;
+  readonly end: string;
+  readonly startLocal: string;
+  readonly endLocal: string;
+  readonly nextPeriodStartLocal: string | null;
+}
+
+function normalizeMetricWindow(
+  value: unknown,
+  field: string,
+): AutomationMetricWindowModel {
+  const source = readRecord(value, field);
+  return {
+    start: text(source, "start"),
+    end: text(source, "end"),
+    startLocal: text(source, "startLocal"),
+    endLocal: text(source, "endLocal"),
+    nextPeriodStartLocal: optionalText(source, "nextPeriodStartLocal"),
+  };
+}
+
+/**
+ * The metrics document, normalized fail-closed.
+ *
+ * An unavailable read keeps its truthful "no number" shape: a missing
+ * denominator or an unusable query is never coerced into a fabricated zero or
+ * a percentage. A success rate is only accepted while its denominator exists.
+ */
+export function normalizeAutomationMetrics(
+  value: unknown,
+  field = "metrics",
+): AutomationMetricsModel {
+  const source = readRecord(value, field);
+  const available = flag(source, "available");
+  const successRate = optionalFiniteNumber(source, "successRate");
+  const terminal = optionalCount(source, "monthToDateTerminal");
+  if (successRate !== null && (terminal === null || terminal <= 0)) {
+    return fail(`${field}.successRate`);
+  }
+  if (successRate !== null && (successRate < 0 || successRate > 1)) {
+    return fail(`${field}.successRate`);
+  }
+  const rawWindows = source["windows"];
+  let windows: AutomationMetricsModel["windows"] = null;
+  if (rawWindows !== null && rawWindows !== undefined) {
+    const windowSource = readRecord(rawWindows, `${field}.windows`);
+    windows = {
+      current: normalizeMetricWindow(
+        windowSource["current"],
+        `${field}.windows.current`,
+      ),
+      previous: normalizeMetricWindow(
+        windowSource["previous"],
+        `${field}.windows.previous`,
+      ),
+    };
+  }
+  return {
+    available,
+    scope: text(source, "scope"),
+    basis: text(source, "basis"),
+    timezone: text(source, "timezone"),
+    cronTimezoneNote: text(source, "cronTimezoneNote"),
+    evaluatedAt: text(source, "evaluatedAt"),
+    monthToDateAdmitted: optionalCount(source, "monthToDateAdmitted"),
+    previousPeriodAdmitted: optionalCount(source, "previousPeriodAdmitted"),
+    comparisonAvailable: flag(source, "comparisonAvailable"),
+    denominatorStatement: text(source, "denominatorStatement"),
+    successRate,
+    completedCount: optionalCount(source, "completedCount"),
+    monthToDateTerminal: terminal,
+    monthToDateActive: optionalCount(source, "monthToDateActive"),
+    noWorkStatement: text(source, "noWorkStatement"),
+    nextAction: optionalText(source, "nextAction"),
+    windows,
+  };
+}
+
+/** The exact submitted inventory read basis the backend echoes back. */
+export interface AutomationInventoryQueryModel {
+  readonly q: string | null;
+  readonly enabled: boolean | null;
+  readonly library: string | null;
+  readonly state: string | null;
+  readonly sort: string;
+  readonly direction: string;
+  readonly limit: number;
+  readonly scope: string;
+}
+
+function normalizeInventoryQuery(
+  value: unknown,
+  field = "query",
+): AutomationInventoryQueryModel {
+  const source = readRecord(value, field);
+  const rawEnabled = source["enabled"];
+  let enabled: boolean | null;
+  if (rawEnabled === null || rawEnabled === undefined) {
+    enabled = null;
+  } else {
+    enabled = flag(source, "enabled");
+  }
+  return {
+    q: optionalText(source, "q"),
+    enabled,
+    library: optionalText(source, "library"),
+    state: optionalText(source, "state"),
+    sort: text(source, "sort"),
+    direction: text(source, "direction"),
+    limit: count(source, "limit"),
+    scope: text(source, "scope"),
+  };
+}
+
 export interface AutomationDefinitionsPage {
   readonly activeConfiguration: AutomationActiveConfigurationModel | null;
   readonly items: readonly AutomationDefinitionModel[];
   readonly total: number;
   readonly truncated: boolean;
+  readonly metrics: AutomationMetricsModel;
+  readonly query: AutomationInventoryQueryModel;
+  readonly itemsTruncatedByCap: boolean;
+  readonly nextCursor: string | null;
+  readonly previousCursor: string | null;
   readonly draftState: AutomationDraftStateModel;
   readonly resourceLibraryOptions: readonly AutomationResourceLibraryOptionModel[];
   readonly actions: {
@@ -1471,6 +1618,11 @@ export function normalizeAutomationDefinitionsPage(
     ),
     total: count(source, "total"),
     truncated: flag(source, "truncated"),
+    metrics: normalizeAutomationMetrics(source["metrics"]),
+    query: normalizeInventoryQuery(source["query"]),
+    itemsTruncatedByCap: flag(source, "itemsTruncatedByCap"),
+    nextCursor: optionalText(source, "next_cursor"),
+    previousCursor: optionalText(source, "previous_cursor"),
     draftState: normalizeAutomationDraftState(source["draftState"]),
     resourceLibraryOptions: rawOptions.map((option, index) =>
       normalizeResourceLibraryOption(
@@ -1523,6 +1675,151 @@ export function normalizeAutomationOccurrencesPage(
     ),
     limit: count(source, "limit"),
     truncated: flag(source, "truncated"),
+    nextCursor: optionalText(source, "next_cursor"),
+    previousCursor: optionalText(source, "previous_cursor"),
+  };
+}
+
+/**
+ * One read-only Automation execution record.
+ *
+ * The record carries the original durable outcome plus its exact recovery
+ * ownership. It never carries a file-decision form, re-analysis, pause/resume/
+ * cancel or a recovery execution: `startAgainAllowed` is published as a
+ * backend decision and is never inferred from a missing Task link.
+ */
+export type AutomationRecordOwnership =
+  "task_center" | "prestart_repair" | "reconcile";
+
+export const AUTOMATION_RECORD_OWNERSHIPS: readonly AutomationRecordOwnership[] =
+  ["task_center", "prestart_repair", "reconcile"];
+
+export interface AutomationRecordModel {
+  readonly recordId: string;
+  readonly runKind: string;
+  readonly status: string;
+  readonly trigger: string;
+  readonly commandLabel: string | null;
+  readonly createdAt: string;
+  readonly updatedAt: string;
+  readonly jobId: string | null;
+  readonly taskId: string | null;
+  readonly definitionId: string | null;
+  readonly sourceScope: string | null;
+  readonly targetScope: string | null;
+  readonly totalItems: number | null;
+  readonly completedItems: number | null;
+  readonly failedItems: number | null;
+  readonly definitionName: string | null;
+  readonly handoff: {
+    readonly ownership: AutomationRecordOwnership;
+    readonly formalExecution: boolean;
+    readonly durableState: string;
+    readonly explanation: string;
+    readonly taskCenterRunId: string | null;
+    readonly jobId: string | null;
+    readonly definitionSettings: string | null;
+    readonly supportedCommand: string | null;
+    readonly startAgainAllowed: boolean;
+    readonly retryExplanation: string;
+  };
+}
+
+function normalizeAutomationRecord(
+  value: unknown,
+  field: string,
+): AutomationRecordModel {
+  const source = readRecord(value, field);
+  const origin = optionalRecord(source["origin"], `${field}.origin`);
+  const history = readRecord(
+    source["historyContext"],
+    `${field}.historyContext`,
+  );
+  const handoff = readRecord(source["handoff"], `${field}.handoff`);
+  const taskCenter = optionalRecord(
+    handoff["taskCenter"],
+    `${field}.handoff.taskCenter`,
+  );
+  const startAgainAllowed = flag(handoff, "startAgainAllowed");
+  if (startAgainAllowed) {
+    // Records never offer a start-again retry: recovery lives in Task Center
+    // or in the existing supported definition command, never in the record.
+    return fail(`${field}.handoff.startAgainAllowed`);
+  }
+  return {
+    recordId: text(source, "recordId"),
+    runKind: text(source, "run_kind"),
+    status: text(source, "status"),
+    trigger: text(source, "trigger"),
+    commandLabel: optionalText(source, "command_label"),
+    createdAt: text(source, "created_at"),
+    updatedAt: text(source, "updated_at"),
+    jobId: optionalText(source, "job_id"),
+    taskId: optionalText(source, "task_id"),
+    definitionId: optionalText(history, "definitionId"),
+    sourceScope: optionalText(source, "source_scope"),
+    targetScope: optionalText(source, "target_scope"),
+    totalItems: optionalCount(source, "total_items"),
+    completedItems: optionalCount(source, "completed_items"),
+    failedItems: optionalCount(source, "failed_items"),
+    definitionName:
+      optionalText(history, "definitionName") ??
+      optionalText(origin ?? {}, "definitionName"),
+    handoff: {
+      ownership: enumOrFail(
+        handoff["ownership"],
+        `${field}.handoff.ownership`,
+        AUTOMATION_RECORD_OWNERSHIPS,
+      ),
+      formalExecution: flag(handoff, "formalExecution"),
+      durableState: text(handoff, "durableState"),
+      explanation: text(handoff, "explanation"),
+      taskCenterRunId: optionalText(taskCenter ?? {}, "runId"),
+      jobId: optionalText(handoff, "jobId"),
+      definitionSettings: optionalText(handoff, "definitionSettings"),
+      supportedCommand: optionalText(handoff, "supportedCommand"),
+      startAgainAllowed,
+      retryExplanation: text(handoff, "retryExplanation"),
+    },
+  };
+}
+
+export interface AutomationRecordsPage {
+  readonly items: readonly AutomationRecordModel[];
+  readonly limit: number;
+  readonly definition: string | null;
+  readonly trigger: string | null;
+  readonly status: string | null;
+  readonly from: string | null;
+  readonly to: string | null;
+  readonly total: number;
+  readonly truncated: boolean;
+  readonly population: string;
+  readonly historyBasis: string;
+  readonly nextCursor: string | null;
+  readonly previousCursor: string | null;
+}
+
+export function normalizeAutomationRecordsPage(
+  payload: unknown,
+): AutomationRecordsPage {
+  const source = readRecord(payload, "automation_records");
+  const rawItems = source["items"];
+  if (!Array.isArray(rawItems) || rawItems.length > 100) {
+    return fail("items");
+  }
+  return {
+    items: rawItems.map((item) => normalizeAutomationRecord(item, "items[]")),
+    limit: count(source, "limit"),
+    definition: optionalText(source, "definition"),
+    trigger: optionalText(source, "trigger"),
+    status: optionalText(source, "status"),
+    from: optionalText(source, "from"),
+    to: optionalText(source, "to"),
+    total: count(source, "total"),
+    truncated: flag(source, "truncated"),
+    population: text(source, "population"),
+    historyBasis: text(source, "historyBasis"),
     nextCursor: optionalText(source, "next_cursor"),
     previousCursor: optionalText(source, "previous_cursor"),
   };

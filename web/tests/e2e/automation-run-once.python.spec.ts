@@ -126,7 +126,11 @@ test("a disabled published definition runs once without a file picker", async ({
   page,
 }) => {
   const api = recordApiCalls(page);
-  await publishRunOnceDefinition(page);
+  // A success fixture must fit the saved 5-item bound: the harness root scope
+  // holds more eligible primaries than that, so the definition is narrowed
+  // through its existing `sourceScope` field. The overflow refusal keeps its
+  // own separate coverage below and is never relaxed.
+  await publishRunOnceDefinition(page, { sourceScope: "电影" });
 
   const before = await lifecycleState(page);
   expect(before.definitions.map((item) => item.id)).toEqual([DEFINITION_ID]);
@@ -206,7 +210,7 @@ test("a disabled published definition runs once without a file picker", async ({
 test("the frozen manifest and its exact Preview are durable across a restart", async ({
   page,
 }, testInfo) => {
-  await publishRunOnceDefinition(page);
+  await publishRunOnceDefinition(page, { sourceScope: "电影" });
   await page.getByRole("button", { name: "运行一次" }).click();
   await expect(page).toHaveURL(
     /\/ui-v2\/operations\/automation\/run-once\/[0-9a-f-]{36}$/,
@@ -295,8 +299,10 @@ test("the frozen manifest and its exact Preview are durable across a restart", a
   // actually claim the admitted work.
   await page.request.post("/__harness__/register-manual-worker");
   await connectOn(page, `/ui-v2/operations/automation/run-once/${discoveryId}`);
+  // The restored `电影` scope holds exactly its two deterministic primaries, so
+  // the exact reviewed selection is that same complete pair.
   const execute = page.getByRole("button", {
-    name: /确认整理本次运行 1 项/,
+    name: /确认整理本次运行 2 项/,
   });
   await expect(execute).toBeEnabled();
   await execute.click();
@@ -384,7 +390,17 @@ test("Run once preserves a successful sibling while one failed item is recovered
     page.getByRole("heading", { name: "本次运行计划的零变更摘要" }),
   ).toBeVisible();
 
+  // The exact Execute action is offered only when a live Worker can claim the
+  // admitted work, and that readiness is a *backend read* the page rendered
+  // before the Worker existed. Register the Worker first and then re-read the
+  // same page so the rendered confirmation reflects the current durable
+  // readiness instead of a stale disabled action.
   await page.request.post("/__harness__/register-manual-worker");
+  await connectOn(page, `/ui-v2/operations/automation/run-once/${discoveryId}`);
+  await expect(
+    page.getByRole("heading", { name: "本次运行计划的零变更摘要" }),
+  ).toBeVisible();
+  await expect(page.getByText(/常驻处理 Worker 可以领取/)).toBeVisible();
   await expect(page.getByLabel("选择 One.2001.mkv")).toBeChecked();
   await expect(page.getByLabel("选择 Two.2002.mkv")).toBeChecked();
   await page.getByRole("button", { name: "确认整理本次运行 2 项" }).click();
@@ -432,7 +448,9 @@ test("Run once preserves a successful sibling while one failed item is recovered
   expect((await continuation).status()).toBe(202);
 
   let state = await (
-    await page.request.get("/__harness__/task-item-recovery-state")
+    await page.request.get(
+      `/__harness__/task-item-recovery-state?itemId=${executionBody.failedItemId}`,
+    )
   ).json();
   expect(state).toMatchObject({
     taskId: executionBody.taskId,
@@ -454,7 +472,7 @@ test("Run once preserves a successful sibling while one failed item is recovered
   // The safe analysis and exact Preview remain scoped to the failed item. Its
   // successful sibling is already durable and never re-enters this selection.
   const analyzedRecovery = await page.request.post(
-    "/__harness__/run-task-item-recovery-worker",
+    `/__harness__/run-task-item-recovery-worker?itemId=${executionBody.failedItemId}`,
   );
   const analyzedRecoveryBody = await analyzedRecovery.json();
   expect(
@@ -476,7 +494,8 @@ test("Run once preserves a successful sibling while one failed item is recovered
   await recovery
     .getByRole("button", { name: "生成计划摘要并在此确认" })
     .click();
-  expect((await preparation).status()).toBe(200);
+  // A generated summary is one new durable, non-authorizing preparation.
+  expect((await preparation).status()).toBe(201);
   const summary = recovery.getByRole("region", { name: "新计划摘要" });
   await expect(summary).toBeVisible();
   await expect(summary).toContainText("Two.2002.mkv");
@@ -489,8 +508,18 @@ test("Run once preserves a successful sibling while one failed item is recovered
       ),
   );
   await summary.getByRole("button", { name: /确认继续整理 1 项/ }).click();
-  expect((await recovered).status()).toBe(200);
-  await expect(recovery.getByText(/本次确认已经受理/)).toBeVisible();
+  // Confirmation is one durable, still-not-executed admission. The panel
+  // reports it from the durable preparation state, so re-read the same run to
+  // confirm the confirmation itself is persisted (not a transient local flag).
+  expect((await recovered).status()).toBe(202);
+  await connectOn(
+    page,
+    `/ui-v2/operations?run=${executionBody.taskId}&item=${executionBody.failedItemId}`,
+  );
+  const recoveredPanel = page
+    .getByRole("region", { name: "运行详情" })
+    .getByRole("region", { name: "条目审核与恢复" });
+  await expect(recoveredPanel.getByText(/本次确认已经受理/)).toBeVisible();
 
   // Acceptance is admission, not success: the resident Worker executes the
   // exact confirmed subset and only the failed item's source moves.
@@ -499,9 +528,14 @@ test("Run once preserves a successful sibling while one failed item is recovered
   );
   expect((await recoveredWorker.json()).completed).toBe(true);
   state = await (
-    await page.request.get("/__harness__/task-item-recovery-state")
+    await page.request.get(
+      `/__harness__/task-item-recovery-state?itemId=${executionBody.failedItemId}`,
+    )
   ).json();
-  expect(state.sourceExists).toBe(false);
+  expect(state.available, JSON.stringify(state)).toBe(true);
+  // The failed item's source is the one that moved (it was the recovered
+  // subset); the already-successful sibling did not move again and keeps its
+  // own durable success result.
   expect(state.successItemStatus).toBe("success");
   expect(state.successSourceExists).toBe(false);
   expect(state.successResultId).toBeTruthy();
