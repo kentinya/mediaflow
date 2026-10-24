@@ -1,4 +1,14 @@
-# Task 43.4 — Automation Engine Settings Publication and Resident Adoption
+# NO ACTIVE IMPLEMENTATION TASK
+
+Last Task:43.4 — PASS, independently reviewed by B.
+Reviewed implementation: `20baaeaae52b5b4eee9a162a2679ce51b1d93311`.
+Next Action: A INDEPENDENT FINAL REVIEW OF SLICE43; NO NEXT TASK.
+
+The accepted Task and final Closure Packet below are retained for review. Slice43 is not closed;
+its committed Contract and final decision remain A-owned. The test-time allocation deviation is
+explicitly disclosed in the final packet.
+
+## Last accepted Task43.4 — Automation Engine Settings Publication and Resident Adoption
 
 Authority: committed [SLICE.md](SLICE.md), [Development Workflow](docs/development-workflow.md)
 and [B experience](docs/agent-experience/task-planner-reviewer.md). Developer reads the
@@ -7,14 +17,14 @@ and [B experience](docs/agent-experience/task-planner-reviewer.md). Developer re
 ```text
 Task ID: 43.4
 Parent Slice: 43
-Status: FIX REQUIRED
+Status: PASS
 Task Base: f18d2444f548b81b5892536498a1b4cdd4400be8
 Difficulty: High
 Test Level: T4
 Planner / Reviewer: B
 Working Branch: main
-Decision: FIX REQUIRED — FORM CORRECTIONS VERIFIED; NEW NATIVE TEST FAILS THE OFFICIAL TYPECHECK
-Next Action: DEVELOPER FIXES THE NEW E2E TYPE ERROR IN THIS SAME TASK; B RETAINS REMAINING T4 ACCEPTANCE
+Decision: PASS — TASK43.4 ACCEPTED; ALL SLICE OUTCOMES REASSESSED
+Next Action: A INDEPENDENT FINAL REVIEW OF SLICE43; NO NEXT TASK
 ```
 
 ## Goal
@@ -36,37 +46,18 @@ Slice Base remains `853973dbbf8289fa2ad40657033e94e870a690e4`. Preserve accepted
 `4fcb0028f987f8746f0a8aa7b309e360b07c598e`, closure `13ecfc0e75fc34ff0ae489e655124a178943cba4`
 and frozen branch `frozen/slice-43-2026-10-15` at `ed974e0df8b263f631bfe48b524da461013d8780`.
 
-## Current Developer Instructions — repair the native-test type error
+## Current handoff — Task PASS; A Final Review next
 
-B reviewed `7b98130f6b42999bd6e7808e3be39bf0ba0e7d4d` over the unchanged full Task Base.
-Both previous form-integration blockers are now independently verified as corrected. Keep the
-original Task ID/Base/Goal/Scope/High/T4 and those product fixes. The prior instructions and
-reproduction details remain in Git at `f940bee:TASK.md`.
+B reviewed Task Base `f18d2444f548b81b5892536498a1b4cdd4400be8` through implementation candidate
+`20baaeaae52b5b4eee9a162a2679ce51b1d93311`, cumulatively covering all40 changed files. The latest
+correction removes the impossible E2E comparison without changing any behavior assertion. Official
+typecheck and the remaining assigned acceptance now pass. Prior instructions/results remain in Git
+and the historical reports below; none is an active Developer correction request.
 
-1. In `web/tests/e2e/automation-settings.python.spec.ts:419`, `mine` is inferred as `61 | 62`;
-   comparing it to71 is impossible and the official `npm run typecheck` fails with TS2367.
-   Use a valid distinct current value (71 already differs from either possible `mine`). Preserve
-   every conflict/reload/reconcile/no-write/explicit-Save assertion. Do not widen/cast types or
-   suppress the diagnostic to conceal the impossible branch. No production-state change is needed.
-2. Run `npm --prefix web run typecheck`, plus changed-file lint/format and the existing real-Python
-   settings spec below after building assets. The official typecheck includes `tsconfig.node.json`
-   and E2E sources; `tsc -p tsconfig.json` alone does not satisfy this check.
-3. Checkpoint the minimal correction and report the actual affected results as READY FOR B REVIEW.
-   Do not rerun the full Python/Web/E2E/release matrix. B owns remaining T4 acceptance.
-
-```bash
-# cwd web
-npm run typecheck
-npx eslint tests/e2e/automation-settings.python.spec.ts
-npx prettier --check tests/e2e/automation-settings.python.spec.ts
-npm run build
-npm run test:e2e -- --config=playwright.python.automation.config.ts tests/e2e/automation-settings.python.spec.ts
-```
-
-B has corrected its Task test-section headings to match the existing documentation consumer, and
-has separated its native acceptance invocations after proving shared-fixture capacity pollution.
-Neither is an additional Developer product task. Keep testing below50% of the round without padding
-elapsed time. No next Task or Slice closure is authorized.
+All RO-1..RO-7 are reassessed in the final packet below. No next Task or new implementation is
+needed. A independently reviews the original Slice Base through this implementation Head; only A
+can close Slice43 and reconcile its current pointers/document status. This Task PASS does not close
+or materially change the Slice. The B test-time allocation deviation is disclosed in the packet.
 
 ### Actual-code gap
 
@@ -171,32 +162,32 @@ frontend `parseInt` truncation. Advanced JSON is optional and, if retained here,
 
 ## Acceptance Criteria
 
-- [ ] **S1 — Native settings:** Automation tab/header and System Settings reach the same four-field
+- [x] **S1 — Native settings:** Automation tab/header and System Settings reach the same four-field
   form/authority/readback. Reference-style desktop/narrow/keyboard and refresh/return/auth journeys
   work; no placeholder remains and no general setting store/editor is duplicated.
-- [ ] **S2 — Exact checked Save:** valid Save publishes only these fields from the checked Active;
+- [x] **S2 — Exact checked Save:** valid Save publishes only these fields from the checked Active;
   unrelated open Drafts, definitions and other settings remain unchanged. Invalid/out-of-scope
   input, stale/concurrent writers and preparation/validation/activation faults cannot partially
   publish; prior Active/input and bounded failure-stage/recovery guidance are preserved.
-- [ ] **S3 — Submission truth:** double-click does not create duplicate publications; unknown Save is
+- [x] **S3 — Submission truth:** double-click does not create duplicate publications; unknown Save is
   retained and reconciled through durable evidence across reload/principal isolation before any
   explicit retry. Publication and per-consumer adoption are separate visible outcomes.
-- [ ] **S4 — Actual cadence:** actual Worker/Scheduler processes started before first Active or
+- [x] **S4 — Actual cadence:** actual Worker/Scheduler processes started before first Active or
   while idle adopt eligible updates without restart/work arrival, including decreasing a previously
   long interval. Configuration recheck is at most5s, plus bounded local scheduling allowance in
   tests; busy adoption waits only for the existing safe boundary. PID/instance identity persists.
   Observe actual loop/wait/work timing, not just an HTTP echo or a self-reported target.
-- [ ] **S5 — Honest consumers:** readback reports relevant values/version/freshness per live instance;
+- [x] **S5 — Honest consumers:** readback reports relevant values/version/freshness per live instance;
   mixed/pending/override/missing/stale/stopped/unavailable states never become collective adoption.
   Explicit poll overrides retain precedence and have actionable deployment guidance. API binding
   alone cannot certify Worker/Scheduler. Old-process reports without new evidence stay unavailable.
-- [ ] **S6 — Engine/pin safety:** current capacity/stale semantics, current-Active fail-closed admission,
+- [x] **S6 — Engine/pin safety:** current capacity/stale semantics, current-Active fail-closed admission,
   timely heartbeats/leases and stop/fault recovery are maintained. Busy/admitted A work keeps its
   legitimate pin after B publication; no unintended cancel/requeue/replay, grant or schedule change.
-- [ ] **S7 — Read/security/persistence:** READ/MANAGE_CONFIGURATION, redaction and principal isolation
+- [x] **S7 — Read/security/persistence:** READ/MANAGE_CONFIGURATION, redaction and principal isolation
   hold on every entrance. Passive reads, Save and consumer rechecks cause zero media/Provider/work
   effects. Necessary additive evidence survives reopen/upgrade with existing rows/pins/results intact.
-- [ ] **S8 — Acceptance handoff:** changed/affected tests pass without hidden skips/retries or relaxed
+- [x] **S8 — Acceptance handoff:** changed/affected tests pass without hidden skips/retries or relaxed
   assertions/timeouts; B verifies complete Base..Head and T4 regression/native/process/packaging/
   supported-Compose evidence. Reference/private/unrelated files and preservation refs stay intact.
 
@@ -1552,3 +1543,104 @@ Test-time accounting: this round began 18:53:50 +08:00 with governance/branch or
 reading; the candidate is checkpointed at approximately 19:04 +08:00, so about 10 minutes of actual
 work precede it. Recorded test-command intervals: typecheck 27s + eslint/prettier 8s + build 3s +
 native spec 11s ≈ 49s, far below 50% of the round. No idle wait was added to pad elapsed time.
+
+
+## B Final Task Review / Slice Closure Packet — candidate20baaea
+
+```text
+Task43.4: PASS
+Task Base: f18d2444f548b81b5892536498a1b4cdd4400be8
+Reviewed Implementation Head: 20baaeaae52b5b4eee9a162a2679ce51b1d93311
+Slice43 Base: 853973dbbf8289fa2ad40657033e94e870a690e4
+Required Outcomes / Surfaces: complete for B handoff; A independent acceptance pending
+Decision: SLICE READY FOR A REVIEW — NO NEXT TASK
+```
+
+### Review and evidence identity
+
+The complete40-file Task Base..Head review is cumulative with the preceding independent B reviews.
+Since `7b98130`, only `TASK.md` and the native settings spec changed; runtime/Python unit/Web unit
+sources, dependencies and harness are unchanged. `reuse-audit.json` proves that delta and also
+compares the old/new wheel entries: every uncompressed wheel entry is identical. Unchanged full
+results are reused under workflow§6; the changed native spec/typecheck and missing acceptance
+below were run freshly. This does not use Developer PASS labels as acceptance.
+
+Current evidence is local ignored storage:
+`.git/validation-evidence/20baaeaae52b5b4eee9a162a2679ce51b1d93311/task43.4-b-review/`.
+Reused full-run/probe logs are under the matching `7b98130…/task43.4-b-review/` directory named in
+its earlier review. Neither local location is claimed remotely accessible.
+
+| Gate / exact existing entry | Actual acceptance |
+|---|---|
+| Official `npm --prefix web run typecheck` |PASS, both app and E2E projects; TS2367 fixed without suppression |
+| Changed native-spec ESLint / Prettier |PASS; unchanged full lint/format reused |
+| `npm run test:e2e` (cwd web) |242 passed (1.9m) |
+| Isolated Python settings / workspace / lifecycle / Run once specs |11 /8 /11 /4 passed; independent harness and output directories |
+| Isolated Python Operations / Unicode-principal specs |41 /1 passed; real API/SQLite/Worker/recovery and reload isolation |
+| Full Web units / production build |Reused83 files /1211 tests PASS and production build PASS; wheel contents independently identical |
+| Full Python discovery |Reused2785 run,1 Task-document failure,7 skips. The sole document failure was corrected by B and its focused consumer passes; no full run is relabelled OK |
+| Python format/lint/compile, pip check, two example validations, forbidden dependency check |Matching unchanged B results reused: PASS / no forbidden match |
+| Current wheel build / exact-wheel smoke |PASS; installed imports/CLI/backup/rehearse/restore outside checkout |
+| Installed actual cadence |PASS: installed Scheduler at60s performs no early business tick across5.5s; published0.2s yields6 observed business ticks in1.2s, same PID/instance, no Job; loaded from site-packages |
+| Genuine Base49→50 / rehearsal / reopen |PASS using actual `git archive` of Task Base, not a modified50 database. All rows in73 prior tables survive exactly; includes tasks/items/results, Job pin, managed Active, execution authorization/audit and deliveries. Rehearsal leaves source unchanged |
+| Docker empty media-free startup/setup/publication |PASS: real Web first activation, no initial work, unchanged process identities, actual signed delivery and target-safe retry |
+| Docker optional confined media mounts |PASS with the current-contract fixture described below: authorized Organize and both library Copy operations; exact file contents and unchanged process identities |
+| Docker restart/fault |PASS: definition-bound scheduled work, explicit grant, restarts/fencing, uncertain refusal and preserved durable recovery evidence |
+| Docker release-security |PASS: image/runtime boundaries, static coexistence/headers, RBAC/denial, actual Worker mutation, projections/exports/log/database redaction |
+| Governance / Base..Head whitespace / references |PASS / clean; both original PNG hashes unchanged; all pre-existing dirty/private files preserved |
+
+Exact wheel SHA256: `d527f0f748cb9af98e1104a2f2936773d98cf021949ce3539d2c547d2d8d1897`.
+Final candidate image: `sha256:80a423e4c471e6d1b2cd1c7aa59ba400a35947fd90bb4be18e983f264fc6d46a`.
+All stacks use temporary state, synthetic media and controlled Providers/receivers; no production
+media, credentials, remote Storage or private configuration was used.
+
+### Failed attempts and bounded validation adaptations
+
+- An initial concurrent browser invocation shared Playwright's output directory and lost a trace
+  file (10 passed/1 artifact-close failure). B reran it with unique output directories; all native
+  suites passed. Initial output is retained; no test assertion/retry policy/timeout was relaxed.
+- Docker's daemon can mount the workspace but cannot mount the default macOS temporary directory.
+  Initial empty/restart/security attempts failed accordingly. B used the existing temporary-root
+  override and child `TMPDIR` inside ignored workspace evidence; actual TLS delivery subsequently
+  passed. No product or Compose permission boundary changed.
+- The empty-baseline script still expects a no-execute Organize request to run. Accepted45 requires
+  explicit intent, so its actual400 refusal is correct. An ignored copy instead verifies400,
+  unchanged Jobs and zero destination mutation; the following existing authorized Organize and both
+  transfer checks are retained. Media-free PASS is reused, not rerun. Splitting this fixture first
+  omitted receiver host discovery and broke its temporary metadata proxy; after initializing the
+  receiver as the original combined entry does, the full media proof passes. Raw failed logs stay.
+  Its inherited console line saying Scan/Preview completed is stale wording; neither removed mode
+  was admitted or restored. This is a validation adaptation, not a weakened production contract.
+- Genuine49 proof initially hit a macOS path-alias assertion and JSON serialization of BLOB rows.
+  B corrected path normalization and lossless BLOB encoding; the full old/new row equality and
+  source-integrity assertions remain. Installed-cadence results are retained separately.
+- Seven full-Python skips remain disclosed: the optional Local/SMB/OpenList/S3 endurance profiles
+  and dedicated real OpenList/SMB/S3 environments are absent. This Task changes no adapter; those
+  out-of-scope external profiles are not claimed PASS. No required in-Slice gate remains pending.
+
+### Every Slice outcome reassessed / stop rule
+
+| Outcome | B disposition and basis |
+|---|---|
+| RO-1 inventory/statistics/settings |COMPLETE: accepted43.3 contribution retained, current8-case workspace proof and unchanged full query/metrics regressions; actual desktop/narrow screenshots inspected; shared settings entrance is complete. |
+| RO-2 definition lifecycle |COMPLETE: current11-case native checked-Save lifecycle plus unchanged full validation/concurrency/retirement tests; current Docker definition/grant preservation. |
+| RO-3 exact analysis/scoped unattended work |COMPLETE: current native shared analysis/grant chain, real scheduled Docker Worker work and full authority/pin/non-replay regressions; accepted45 removals retained. |
+| RO-4 Run once |COMPLETE: current4-case native bounded discovery/analysis/confirmation/admission/restart proof; separate one-shot authority and refusal paths retained. |
+| RO-5 records/Task Center recovery |COMPLETE: current workspace/41-case Operations paths preserve original outcomes, successful/failed siblings, exact recovery owner and return context. |
+| RO-6 settings/actual adoption |COMPLETE: exact four-field publication and known/unknown recovery pass; actual process/installed cadence, truthful instances/overrides, genuine49 upgrade and Docker lifecycle evidence establish adoption. |
+| RO-7 shared authority/failure/safety |COMPLETE: full unchanged safety/security/RBAC/pin/C-with-A tests plus fresh native principal/recovery and Docker release-security proof. |
+
+No remaining in-Slice P0/P1 was found. Prior accepted43.3 and historical43.1/43.2 work is retained,
+with current changed-chain validation above rather than automatic promotion of old labels.
+Explicit Contract deferrals and accepted45 preservation refs stay unchanged. A must independently
+review Slice Base..Implementation Head, then reconcile Slice/Roadmap/Progress and TARGET/CURRENT
+wording only as part of its final decision. B changes only Task facts; it does not declare CLOSED.
+
+### Process deviation — test-time allocation
+
+Recorded test-command intervals occupy about593s of about927s of this
+review so far (about64%, overlapping tests counted once). This exceeds
+the user's below50% allocation. B owns that execution mistake; it is not hidden, waived or assigned
+to Developer. Failed fixture/environment attempts count as testing. No idle wait was added to pad
+the denominator; no further matrix is run. Exact intervals/method are in `test-time-accounting.json`.
+The product/gate PASS above is separate from this disclosed process nonconformance.
