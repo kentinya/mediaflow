@@ -51,6 +51,8 @@ prior closure records remain historical facts. Base and Implementation Head rema
   不再要求规则全部匹配或先生成可执行摘要。明确提交后先受理整理任务，四类问题在任务内恢复。
 - 自动化“运行一次”直接受理并执行该已保存整理策略一次，四类问题同样在任务内处理；
   正常文件无需先出摘要再确认一次。文件页手动整理仍保留任务内摘要与执行确认。
+- 自动化定时运行和“运行一次”遇到尚未稳定的文件，本次将该文件记为失败，其他文件继续；
+  下次自动化照常运行，并按正常流程判断当时文件的稳定性。
 
 本 Slice 交付按钮可读、文件操作归属清楚的 V2 体验：普通文件管理在原库页完成反馈与恢复，
 文件选择式手动整理从资源库文件页发起，任务中心专注已受理整理的进度、结果与恢复。
@@ -143,6 +145,12 @@ may run once with execution permission; this neither enables nor advances the sc
 problems enter Task Center decisions/re-analysis/explicit continuation; successful siblings are not
 replayed. A healthy empty scope is a labelled no-work outcome; unreadable scope is a factual failure.
 Unknown admission reconciles the exact request. Historical grant failures stay unchanged in All/Ended.
+
+**Automation stability:** in either scheduled execution or Run once, a file not yet proven stable
+fails for this run without media effects; other files continue. The run does not remain open waiting
+for that file to stabilize. A later normal run applies the ordinary saved-scope filtering and
+stability checks. This is not a failed-item retry/selection mechanism. The old failure remains factual
+All/Ended history outside four-type Attention; Files manual stability waiting is unchanged.
 
 ## Base audit and reuse
 
@@ -369,6 +377,15 @@ Automation/Task Center records; separate analysis is not retroactively converted
 Healthy empty scopes are labelled no-work; partial bounds cannot execute a first-N prefix, and
 permission/Storage failures cannot masquerade as emptiness or success.
 
+For both scheduled execution and Run once, unmet stability requirements are per-file failures for
+the current run, not a waiting-stability lifecycle. Retain the actual reason and zero-media-effect
+evidence, continue other files, and finish with truthful per-item/overall outcomes when other work
+settles. All-unstable work is not an empty/no-work success. These failures appear in All/Ended without
+four-type Attention, pending-task counts or a recovery entry. The next scheduled occurrence or later
+explicit Run once follows its normal saved scope and normal stability checks; add no previous-failure
+selection, automatic retry or old-result rewriting. Preserve the configured stability policy and
+real elapsed-time proof. Files manual stability waiting in RO-2 remains unchanged.
+
 Existing published enabled definitions adopt the new Enabled semantics without requiring an old
 grant, re-analysis or a forced off/on cycle. Old grants/revocations are historical evidence, neither
 an extra gate nor a way to execute a disabled definition. Preserve supported already-admitted pins,
@@ -436,6 +453,7 @@ supervision redesign, new file commands or unrestricted authority is authorized.
 | AC-15 | Four-type decision → analysis → exact summary/confirmation → real outcome remains Web-completable. Save/admission alone does not imply success; after actual resolution no stale review/continuation keeps a task in Attention. If all organizing work succeeds through exact linked recovery, overall display becomes Completed/recovered while prior failed attempts remain history. A new four-type blocker changes type; a purely technical follow-up failure becomes read-only All/Ended history. Mixed successful/ignored/four-type/technical/uncertain items retain independent truth without false success or completed/uncertain replay. |
 | AC-16 | Manual entry business checks are only same-source unfinished organizing work and explicit extension exclusion; rule/include misses and non-excluded suffixes cannot demand a ready plan first. Duplicates/exclusions have truthful per-item reasons and independent siblings; source ownership is atomic across overlapping manual/Automation/continuation requests, including queued/paused/recovery work, and is not inferred from filename or any past task. Rule-miss/ambiguous-recognition, metadata-decision, classification-miss and conflict cases are admitted and reachable in their four task recovery lists/counts through real completion. Stability, bounds, RBAC/confinement/pins, exact confirmation and completed/uncertain non-replay remain enforced. |
 | AC-17 | One explicit Run once on an enabled or disabled saved definition admits a real organizing task before rule readiness and executes ready items through the same bounded pipeline, without preliminary analysis/grant or a second initial summary/execute gate. Four business blockers enter native recovery/Attention/counts and complete without successful-sibling replay; Files manual summary/confirmation remains. Saved scope/filtering/limits/pins, schedule independence, source ownership, exact unknown-request reconciliation, empty/no-work, partial/incomplete bounds, permissions and uncertain effects remain truthful across refresh/restart and simultaneous triggers. |
+| AC-18 | Scheduled execution and Run once record each not-yet-stable file as a current-run failure without media mutation or waiting for it; other files continue. A settled stable-success/unstable-failure mix is PartialSuccess, and all-unstable work is Failed rather than empty/no-work success. Instability alone adds no four-type Attention/pending count or recovery entry. A subsequent normal run uses its ordinary saved scope/filtering and stability checks, with no previous-failure retry/selection mechanism or change to old results. Configured stability/elapsed proof and Files manual waiting remain intact. |
 
 ## Validation and handoff
 
@@ -493,6 +511,10 @@ B's final evidence includes:
   Reuse current Automation Run once,
   definition publication/execution/occurrence and execution-safety matrix tests; adapt obsolete grant
   assumptions while retaining their actual permissions/fences/pin/effect safety assertions.
+- Cover both Automation entry paths with stable/unstable siblings and all-unstable scopes: no
+  waiting-stability run, no unstable-file mutation, truthful failure/PartialSuccess and no four-type
+  Attention inflation. Cover a later ordinary run's normal scope/filtering/stability checks, retained
+  old failure history and unchanged real stability policy; add no failed-item retry/selection flow.
 - Actual desktop/narrow Entry, local progress/results/recovery and simplified-center inspection;
   computed contrast and keyboard evidence for shared variants/overrides. Record candidate/artifact
   identity, actual commands/results, failures and skips; do not test only CSS implementation literals.
@@ -507,5 +529,5 @@ Planning started on `main` at Base above; repository/Git/governance files were w
 preflight passed. Pre-existing deletion of `docs/pics/操作与任务.png` and untracked reference images,
 logs, OS files and test/artifact directories remain unrelated, untouched and unstaged. Private
 runtime configuration/databases/user media are not planning fixtures. No push is authorized/performed.
-The current Automation-intent amendment starts from checkpoint `954652f547c01c2401f0753ed92f77655fa9b742`
+The current Automation-stability amendment starts from checkpoint `a3d345bf255cc812a64013a198d13a679141347c`
 on the same branch with the same unrelated dirty files preserved; it does not repin the Slice Base.

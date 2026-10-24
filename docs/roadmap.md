@@ -48,8 +48,10 @@ work and explicit extension exclusion as business entry checks; four-type proble
 summary/execution confirmation occur inside the Files manual task. V2-AUTO-010/011 replace the
 previous pending-grant target: checked Enabled supplies scheduled intent, Run once supplies immediate
 one-run intent with no second initial summary/execute gate, and four-type blockers use task recovery.
-Saved scope/filtering/limits, backend execution safety, schedule independence and history remain. The
-[Contract](../SLICE.md) defines five outcomes and T4 final acceptance. No implementation is
+Saved scope/filtering/limits, backend execution safety, schedule independence and history remain.
+Automation stability clarification fails not-yet-stable files for the current run while other files
+continue; subsequent normal runs apply ordinary stability checks without a failed-item retry flow.
+The [Contract](../SLICE.md) defines five outcomes and T4 final acceptance. No implementation is
 delivered and [TASK.md](../TASK.md) has no active Task; **B PLANS THE FIRST TASK** after this
 Contract is checkpointed. The authorized changes are TARGET, not accepted CURRENT behavior.
 

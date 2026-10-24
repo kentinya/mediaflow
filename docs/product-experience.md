@@ -76,7 +76,7 @@ User-authorized on 2026-10-24; [Slice46](../SLICE.md) and `V2-UX-004`, `V2-OPS-0
   effects at safe boundaries; an in-flight call/completed effect is not rolled back. Existing enabled
   definitions need no old grant or off/on cycle. Old grants/revocations cannot override Enabled.
 - **Automation Run once:** click 运行一次 on a saved definition → enter the real organizing task
-  before business-rule readiness → observe bounded discovery, stability and full planning → execute
+  before business-rule readiness → observe bounded discovery, stability checks and full planning → execute
   ready items under that saved policy. The click is explicit one-run intent; no separate initial
   analysis/grant/summary confirmation is needed. Use the same saved scope/filtering/pipeline as
   scheduled execution, with no new source picker. Disabled definitions may run once with execution
@@ -89,6 +89,13 @@ User-authorized on 2026-10-24; [Slice46](../SLICE.md) and `V2-UX-004`, `V2-OPS-0
   once; old analysis-only requests/failed history are neither auto-executed nor relabelled.
   Explicit policy/effect intent still governs overwrite/Delete/cleanup. Files manual organizing
   retains its task-contained exact summary/confirmation.
+- **Automation unstable files:** scheduled execution and Run once record a not-yet-stable file as
+  failed for this run, leave it unmodified and continue other files. The run does not wait for that
+  file to stabilize. All-unstable work is a failure; mixed results retain their truthful overall
+  status. Instability alone is factual All/Ended history, outside four-type Attention and pending
+  counts. A later normal run follows its ordinary saved scope/filtering and stability checks; no
+  previous-failure selection/retry flow is added. Real stability requirements and Files manual
+  stability waiting remain.
 
 This TARGET supersedes the later CURRENT text's mixed file-operation center population,
 center-created manual organizing entry, pre-task ready-plan gating for explicit Files organizing

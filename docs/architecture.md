@@ -104,6 +104,14 @@ Run once is counted once over its linked Job/Task; separate analysis remains sep
 Its effective primary-source limit remains `min(definition itemLimit, 100)`, with existing traversal/
 evidence budgets; reusing scheduled planning does not raise the Run once admission bound.
 
+Both Automation entry paths settle not-yet-stable files as current-run failures with no media effects
+and continue other files; no waiting-stability run is retained for those files. Aggregate actual
+results truthfully, including all-unstable failure instead of empty/no-work success. A later ordinary
+occurrence/Run once uses its normal saved scope/filtering and stability checks, without a new
+previous-failure selection/retry mechanism. Retain the configured stability predicates/real elapsed
+proof and old failure evidence; instability alone creates no four-type Attention or recovery entry.
+Files manual stability waiting is unaffected.
+
 Existing enabled definitions use Enabled semantics without old grants, re-analysis or off/on cycles;
 historical grants/revocations no longer gate or confer supported scheduled execution. Preserve
 already-admitted pins/results and original failed Jobs/Tasks/occurrences/audit. Never execute old

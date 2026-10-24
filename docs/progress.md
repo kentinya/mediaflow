@@ -23,6 +23,8 @@ problems and exact summary/execution confirmation occur inside the Files manual 
 V2-AUTO-010/011 amendment supplies scheduled intent through checked Enabled and one-run intent through
 Run once, with no second normal initial summary/execute gate; four-type problems use task recovery.
 Saved definition scope/filtering/limits, backend permissions/safety and historical outcomes remain.
+Automation's stability clarification records not-yet-stable files as current-run failures while other
+files continue; a later normal run uses ordinary stability checks, without a failed-item retry flow.
 Implementation Head is NOT SET; these corrections are required TARGET, not delivered fixes, and no
 Task or product acceptance is claimed.
 **B PLANS THE FIRST TASK**; final acceptance is T4. No Slice46 closure row is added below.
