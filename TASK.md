@@ -36,6 +36,104 @@ Slice Base remains `853973dbbf8289fa2ad40657033e94e870a690e4`. Preserve accepted
 `4fcb0028f987f8746f0a8aa7b309e360b07c598e`, closure `13ecfc0e75fc34ff0ae489e655124a178943cba4`
 and frozen branch `frozen/slice-43-2026-10-15` at `ed974e0df8b263f631bfe48b524da461013d8780`.
 
+## Current Developer Instructions — remaining recovery correction
+
+用户要求 B 指导 Developer 开发。本节将 `d8e5f01` 的审查结论落实为当前执行步骤；历史计划及
+报告留作追溯，已修好的项不重新开发。Task43.4 的 Base/Goal/Scope、High/T4 均不变。
+本节从 `aa9efcb2d038ef8f2c3efb753f28ba30c7831299` 的真实代码出发；当前仅有后续 TASK 文档提交，
+不重设实现 Base。Developer 接手时先运行治理检查、记录当时 HEAD/dirty，再进入 IN PROGRESS。
+
+### 1. 保存原始编辑基线，完成逐字段恢复
+
+主要修改 `web/src/features/operations/AutomationSettingsPanel.tsx`、
+`automation-settings-session.ts` 及对应测试；核实目标/错误的类型解析确有需要时再改
+`web/src/shared/api/api-client.ts` / `entities/operations/automation-settings.ts`。
+
+- `EditState` 当前只有基线身份和完整 input。开始编辑时同时保留该身份对应的四字段原值，后台
+  refetch 不得更新它。发送 Save 前，将这些原值随现有 principal-scoped 提交上下文保存，以便
+  lost-response 后真实 reload 仍能区分“用户改过”与“表单里原本就有”。以相对原值的最终差异判断
+  编辑，不把“点过但改回原值”视为用户仍要求覆盖；数字格式等价不能导致隐式截断。
+- 删除 terminal reconcile 中 `baseline: baselineOf(currentTarget), input: pendingContext.input`
+  的整份旧输入重新绑定行为。取得一份成功读取的最新目标及其身份，再对每个字段使用下表：
+
+  | 原始值 B / 用户输入 I / 最新发布值 C | 恢复表单的值及动作 |
+  |---|---|
+  | 用户未改变该字段（I 等于 B） | 使用 C，保留别人的修改。 |
+  | 用户改变该字段，C 仍等于 B | 保留 I，说明它尚未保存。 |
+  | 用户改变该字段，C 已等于 I | 使用 C，不制造额外冲突或发布。 |
+  | 用户改变该字段，C 与 B、I 均不同 | 同字段冲突；显示带单位的当前值和用户值，明确选择“采用当前值”或“保留我的修改”后才允许 Save。 |
+
+- 无冲突的确定性合并自动完成，不要求额外确认。冲突选择本身不发送 Save；下一次明确 Save
+  携带合并所依据的最新身份，并继续由后端做并发校验。冲突未选择或最新目标不可读时保留输入、
+  暂不允许 Save。不要把核实成功前闭包里的 `published` 当作核实后的最新目标；可消费核实响应的
+  target，或等待现有 GET/refetch 的实际成功结果，不新增探测入口。
+- 已持久化的旧提交上下文没有原值时，仍保留其 identity/输入和核实能力；不要因新增字段校验而
+  丢掉未知提交。终态后不能猜测哪些字段是用户改的，可使用明确差异选择完成保守恢复。
+- 保留保存期间禁用输入、已知失败保留输入、后台轮询拒绝旧基线、principal 隔离等已有修正。
+  最终表单必须说明哪些修改还未保存；内部身份/指纹不成为用户操作步骤。
+
+### 2. 分离输入拒绝记录与失败结果查询
+
+主要修改 `mediaflow/application/automation_settings.py`，复用现有
+`automation_settings_outcome` 审计与权限入口；API/error 解析仅作必要适配。
+
+- `save()` 当前在识别提交之前执行 `normalize_engine_setting_edits()`，导致前置422没有终态。
+  先在已授权边界识别 actor/submissionId，并为有界请求生成稳定的内容匹配证据；再执行原有
+  严格发布校验。捕获 `AutomationEngineSettingsError` 时，记录该次终态拒绝的指纹、允许的错误
+  代码、字段及阶段，然后保留原422语义。无 Draft、无 Active 变化、无媒体/Provider/work 效果。
+- 内容匹配不能依赖“已通过发布校验”的 normalized 字典：3.5、布尔值、缺字段、null 等必须
+  能与原请求精确区分。只持久化有界指纹及受控错误信息，不把任意原始请求、未知键值、异常文本
+  或凭据复制到审计/响应。复用现有请求大小/四字段范围边界；不建设通用命令框架。
+- `reconcile()` 对身份、请求结构/大小和匹配证据做安全校验，然后查询本次 durable outcome；
+  不以 `normalize_engine_setting_edits()` 作为读取该失败结果的前提。查到精确拒绝记录才返回现有
+  `not_committed`，同时返回可读字段错误和下一步。前端解除未知锁、保留3.5、允许改成整数。
+  原四字段内容仍须在新的 Save 时完整通过严格校验，不能通过核实绕过发布校验。
+- 保持有效请求旧有 audit 证据的查询能力及成功证据优先规则，区分 committed/superseded/no-op。
+  不同 actor、不同身份、不同内容不得借用终态；不存在证据、原请求尚未结束或持久化证据不可读
+  继续保持 `unresolved`。核实只读，不制造拒绝证据、不自动重发或发布。
+- 继续使用现有四种公开结果和现有审计表；本轮不新增用户状态、数据库表、通用请求队列或进程
+  管理工具。更新 architecture/configuration 中无条件重绑旧输入的描述，使其符合实际合并行为。
+
+### 3. 用现有入口验到最后结果
+
+优先扩展现有 `AutomationSettingsPage.test.tsx`、session/API 测试、
+`tests/test_automation_settings_management.py` 与 `automation-settings.python.spec.ts`。
+参考上一轮证据 `.git/validation-evidence/aa9efcb2d038ef8f2c3efb753f28ba30c7831299/task43.4-b-review/`；
+脚本通过真实表单/API 仅丢弃实际响应，不直接改持久化数据或构造不存在的产品入口。
+
+| 必须完成的场景 | 最终断言 |
+|---|---|
+| 只改容量61；其他 writer 将调度5→9；原 Save 的409响应丢失；reload→核实→再次 Save | 容量61发布，调度仍为9；未编辑字段不被覆盖。必须实际点最后一次 Save 并读取 Active，不能只断言按钮 enabled。 |
+| 双方修改同一个字段；丢失409响应后恢复 | 显示当前值和用户值；未选择前无发布；明确选择后仅发布该选择及本次合并结果。Save 前再有新 writer，仍拒绝新的 stale 身份。 |
+| 容量3.5；真实422响应丢失；reload→核实→改为合法整数→再次 Save | 核实成功读取本次拒绝，字段可修改、错误可读；合法新 Save 成功，其他字段保持最新值。 |
+| 其他类型/有限值/边界拒绝，已知422与lost422，账号/内容不匹配，原请求延迟 | focused API 覆盖原有验证边界及精确证据；不得误判另一请求、放宽校验或提前重放。已知失败与未知后终态都保留可纠正输入。 |
+| session 新上下文 reload / 缺少新基线字段的旧上下文 | 编辑意图与账号隔离保留；旧 unknown 不被默默删除或自动授权重试。 |
+
+Developer 完成上述修改后只执行新增/变更及直接受影响检查，记录实际结果与缺口；以下为当前
+预计受影响命令，若实际改动扩及共享模块，补其直接受影响用例，不扩成整仓验收：
+
+```sh
+# 仓库根目录
+python3 scripts/check_governance.py
+.venv/bin/python -m unittest tests.test_automation_settings_management tests.test_system_settings_management
+.venv/bin/ruff check mediaflow/application/automation_settings.py tests/test_automation_settings_management.py
+.venv/bin/ruff format --check mediaflow/application/automation_settings.py tests/test_automation_settings_management.py
+git diff --check
+
+# cwd: web
+npm run typecheck
+npx vitest run src/features/operations/AutomationSettingsPage.test.tsx src/features/operations/automation-settings-session.test.ts src/shared/api/api-client.test.ts src/features/configuration/ConfigurationPage.test.tsx
+npm run build
+npm run test:e2e -- --config=playwright.python.automation.config.ts tests/e2e/automation-settings.python.spec.ts
+```
+
+再对实际修改的 Web 文件运行 ESLint/Prettier 检查。不得删断言、加 retry 或扩大 timeout 掩盖失败。
+测试/复现耗时须小于本轮开发耗时50%；先完成代码和针对性复现，不用等待或扩大测试填充时间。
+交接为 READY FOR B REVIEW：一份可定位候选 SHA、修改摘要、实际命令/结果和剩余风险。
+Developer 不自判 PASS，不改 Slice/Roadmap/Progress，不运行作为交付前提的整仓 Python/Web/E2E/
+Docker/发布矩阵。B 接手独立核对整个原 Task Base..候选，复验两条完整恢复路径并承担剩余 T4。
+已满足全部 Slice 结果后停止规划，由 A 最终审查与关闭；本轮不新增 Task 或修改父 Slice 边界。
+
 ### Actual-code gap
 
 | Existing entry / implementation | Reuse and remaining change |
