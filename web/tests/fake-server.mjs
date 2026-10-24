@@ -5285,16 +5285,19 @@ function automationDefinitionActions(state, token) {
       durableOutcome: null,
       nextAction: "inspect the bounded occurrence history and its linked work",
     }),
-    preview: automationAction({
+    runOnce: automationAction({
+      // The current published definition advertises its own definition-bound
+      // Run once; the retired standalone Preview action is gone.  A Draft-only
+      // definition advertises it as withheld with the activation reason.
       available: dryRun,
       reason: dryRun
         ? null
-        : "the connected API principal cannot run a zero-mutation Automation Preview",
-      path: `/api/v1/automation/task-definitions/${AUTOMATION_DEFINITION_ID}/preview`,
+        : "the connected API principal cannot start a zero-mutation Run once",
+      path: `/api/v1/operations/automation/task-definitions/${AUTOMATION_DEFINITION_ID}/run-once`,
       durableOutcome:
-        "a durable zero-mutation Preview of the exact Active definition is stored",
+        "a durable bounded discovery of the definition scope is admitted; it freezes a complete manifest and stores an exact zero-mutation Preview",
       nextAction:
-        "create the exact Preview after reviewing the schedule and scope",
+        "start Run once, review the exact Preview of the frozen manifest, then separately confirm execution",
     }),
     grantState: automationAction({
       available: true,
@@ -5571,13 +5574,13 @@ function automationDraftOnlyDefinitionDocument(state, token, definition) {
         nextAction:
           "inspect the bounded occurrence history and its linked work",
       }),
-      preview: automationAction({
+      runOnce: automationAction({
         available: false,
         reason: notActiveReason,
-        path: `/api/v1/automation/task-definitions/${definition.id}/preview`,
+        path: `/api/v1/operations/automation/task-definitions/${definition.id}/run-once`,
         durableOutcome:
-          "a durable zero-mutation Preview of the exact Active definition is stored",
-        nextAction: "activate the Draft, then create the exact Preview",
+          "a durable bounded discovery of the definition scope is admitted; it freezes a complete manifest and stores an exact zero-mutation Preview",
+        nextAction: "activate the Draft before starting Run once",
       }),
       grantState: automationAction({
         available: true,
@@ -5631,6 +5634,92 @@ function automationDraftOnlyDefinitionDocument(state, token, definition) {
   };
 }
 
+/**
+ * The full-population Automation metric cards, exactly as the real backend
+ * publishes them for this fake population: one terminal admitted run is not
+ * claimed, so the success denominator is empty and the rate is explicit
+ * `null` instead of a fabricated percentage.
+ */
+function automationMetricsDocument(inventoryCounts) {
+  return {
+    available: true,
+    scope: "full_authorized_population",
+    basis:
+      "each original admitted run counted once by its durable admission " +
+      "timestamp in the configured system timezone",
+    timezone: "UTC",
+    cronTimezoneNote:
+      "Cron definition timezones stay separate from this system calendar",
+    evaluatedAt: MANUAL_RECORDED_AT,
+    monthToDateAdmitted: 0,
+    previousPeriodAdmitted: 0,
+    comparisonAvailable: false,
+    comparisonUnavailableReason: "no_comparable_previous_period",
+    monthToDateTerminal: 0,
+    monthToDateActive: 0,
+    monthToDateNoWork: 0,
+    monthToDatePartial: 0,
+    monthToDateFailed: 0,
+    monthToDateCancelled: 0,
+    monthToDateUncertain: 0,
+    denominatorStatement: "no terminal admitted run in the current local month",
+    successRate: null,
+    completedCount: 0,
+    noWorkStatement:
+      "skipped files are not organized files, a completed queue or " +
+      "preparation row is not organizing success, a successful no-work " +
+      "completion is labelled as such, and a reached item bound does not " +
+      "prove scope exhaustion",
+    inventory: inventoryCounts,
+    nextAction: null,
+    windows: {
+      current: {
+        start: "2026-09-01T00:00:00+00:00",
+        end: MANUAL_RECORDED_AT,
+        startLocal: "2026-09-01T00:00:00+00:00",
+        endLocal: MANUAL_RECORDED_AT,
+        nextPeriodStartLocal: "2026-10-01T00:00:00+00:00",
+      },
+      previous: {
+        start: "2026-08-01T00:00:00+00:00",
+        end: "2026-09-01T00:00:00+00:00",
+        startLocal: "2026-08-01T00:00:00+00:00",
+        endLocal: "2026-09-01T00:00:00+00:00",
+      },
+    },
+  };
+}
+
+/**
+ * The full-population definition aggregates the backend computes over the
+ * exact current Active configuration and every open Draft, before any filter
+ * or page window. A Draft-only correction entry is counted separately and is
+ * never counted as published or enabled.
+ */
+function automationInventoryCounts(items) {
+  let published = 0;
+  let enabled = 0;
+  let draftOnly = 0;
+  for (const item of items) {
+    if (item.definitionState === "draft-only") {
+      draftOnly += 1;
+      continue;
+    }
+    published += 1;
+    if (item.enabled === true) {
+      enabled += 1;
+    }
+  }
+  return {
+    published,
+    enabled,
+    draftOnly,
+    total: published + draftOnly,
+    basis: "exact_current_active_and_open_drafts",
+    scope: "full_authorized_population",
+  };
+}
+
 function automationListDocument(state, token) {
   const { manage } = automationPermissions(token);
   const items = [automationDefinitionDocument(state, token)];
@@ -5644,6 +5733,7 @@ function automationListDocument(state, token) {
       );
     }
   }
+  const inventoryCounts = automationInventoryCounts(items);
   return {
     activeConfiguration: {
       revisionId: state.activated
@@ -5656,6 +5746,27 @@ function automationListDocument(state, token) {
     items,
     total: items.length,
     truncated: false,
+    metrics: {
+      ...automationMetricsDocument(inventoryCounts),
+      inventory: inventoryCounts,
+    },
+    inventoryCounts,
+    // No manual Run once has been admitted in this fake population, so the
+    // latest admitted run map is legitimately empty ("no execution yet").
+    latestAdmittedRuns: {},
+    query: {
+      q: null,
+      enabled: null,
+      library: null,
+      state: null,
+      sort: "name",
+      direction: "asc",
+      limit: 20,
+      scope: "full_authorized_population",
+    },
+    itemsTruncatedByCap: false,
+    next_cursor: null,
+    previous_cursor: null,
     draftState: state.draftCreated
       ? {
           present: true,
@@ -14831,6 +14942,48 @@ const server = createServer(async (req, res) => {
   // digest value is ever echoed back into a response document.
 
   // --- Automation operator projections (read) and existing-route mutations ---
+  //
+  // The bounded V2 read model the Automation workspace consumes: the read-only
+  // execution records. The shape is the real public one (proved by
+  // tests/test_automation_workspace_read_model.py) and is GET-only here, so
+  // reading it can never admit work. The inventory's cards travel with the
+  // list document itself, exactly as the real backend publishes them.
+  if (url.pathname === "/api/v1/automation/records" && req.method === "GET") {
+    if (!operationsGuard(res)) {
+      return;
+    }
+    // This fake population has admitted no original Automation run, so the
+    // truthful answer is an empty page of records — never a fabricated row and
+    // never an unavailable error.
+    recordManualRequestForSession({
+      method: "GET",
+      objectId: null,
+      objectType: "automation_records",
+      path: "/api/v1/operations/automation/records",
+      body: null,
+    });
+    sendJson(res, 200, {
+      items: [],
+      limit: 20,
+      definition: null,
+      trigger: null,
+      status: null,
+      from: null,
+      to: null,
+      total: 0,
+      statusCounts: {},
+      truncated: false,
+      population:
+        "admitted Automation runs deduplicated by explicit task linkage",
+      historyBasis:
+        "definition/name/scope/version from the durable admission, never " +
+        "backfilled from the current Active configuration",
+      sideEffects: "none",
+      previous_cursor: null,
+      next_cursor: null,
+    });
+    return;
+  }
   if (
     url.pathname === "/api/v1/automation/task-definitions" &&
     req.method === "GET"

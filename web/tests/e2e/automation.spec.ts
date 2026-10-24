@@ -1,15 +1,18 @@
 import { expect, test, type Page } from "@playwright/test";
 
 /**
- * Built-artifact browser proof for the V2 scheduled Automation journey.
+ * Built-artifact browser proof for the V2 Automation workspace.
  *
  * It runs against the built V2 artifact plus the local fake API: no production
  * credentials, media, Storage or external providers are used. The fake mirrors
  * the exact operator documents the real Python API publishes (proved by
- * tests/test_v2_automation_operations.py): Draft/Active distinction, bounded
- * editor, explicit validation and checked activation, exact zero-mutation
- * Preview with paged items, confirmed unattended grant, pinned occurrences
- * with linked work, and fail-closed malformed documents. Captured evidence
+ * tests/test_v2_automation_operations.py and
+ * tests/test_automation_workspace_read_model.py): the reference-aligned
+ * `任务列表` table with its full-population cards, query echo and page cursors,
+ * Draft/Active distinction, explicit validation and checked activation, the
+ * definition-bound Run once entry (the retired standalone Preview product is
+ * gone), confirmed unattended grant, pinned occurrences with linked work, the
+ * read-only `执行记录` tab and fail-closed malformed documents. Captured evidence
  * excludes Bearer values, grant secrets, digests, fingerprints and raw plans.
  */
 
@@ -52,8 +55,10 @@ async function openAutomation(page: Page) {
     .first()
     .click();
   await expect(page).toHaveURL(/\/ui-v2\/operations\/automation$/);
+  // The workspace heading is the retained Chinese section title; the shell
+  // navigation uses its own English route label.
   await expect(
-    page.getByRole("heading", { name: "Automation", exact: true }),
+    page.getByRole("heading", { name: "自动化", exact: true, level: 2 }),
   ).toBeVisible();
 }
 
@@ -74,29 +79,94 @@ test.beforeEach(async ({ page }) => {
   await page.request.post("/__test__/reset-automation");
 });
 
-test("the Operations landing links the Automation workspace with Active identity and definitions", async ({
+test("the Operations landing links the Automation workspace with cards, tabs and the definition table", async ({
   page,
 }) => {
   await connect(page);
   await openAutomation(page);
-  await expect(page.getByText(new RegExp(ACTIVE_REVISION))).toBeVisible();
-  await expect(page.getByText(/Nightly automation/)).toBeVisible();
-  await expect(page.getByText(/every 3600 seconds/)).toBeVisible();
-  const create = page.getByRole("link", {
-    name: "Create Automation definition",
-  });
+  // Four full-population cards plus the inventory table are the reference
+  // composition; the counts are backend aggregates, not page-derived.
+  const metrics = page.getByRole("region", { name: "自动化统计" });
+  await expect(metrics).toBeVisible();
+  await expect(
+    metrics.getByText("自动化任务数", { exact: true }),
+  ).toBeVisible();
+  await expect(
+    metrics.getByText("本月执行次数", { exact: true }),
+  ).toBeVisible();
+  await expect(metrics.getByText("成功率", { exact: true })).toBeVisible();
+  await expect(metrics.getByText("较上月", { exact: true })).toBeVisible();
+  // The three sibling tabs share one shell and the settings shortcut exists.
+  const tabs = page.getByRole("navigation", { name: "自动化分区" });
+  await expect(tabs.getByRole("button", { name: "任务列表" })).toBeVisible();
+  await expect(tabs.getByRole("button", { name: "执行记录" })).toBeVisible();
+  await expect(tabs.getByRole("button", { name: "全局设置" })).toBeVisible();
+  await expect(page.getByRole("button", { name: "系统设置" })).toBeVisible();
+
+  // The table is the reference-aligned inventory: one row per definition with
+  // its source, schedule, limit, next run and latest result.
+  const table = page.getByRole("table", { name: "自动化任务" });
+  await expect(table).toBeVisible();
+  const row = table.getByRole("row", { name: /Nightly automation/ });
+  await expect(row).toBeVisible();
+  await expect(row.getByText(/每隔 3600 秒/)).toBeVisible();
+  await expect(row.getByText("source", { exact: true })).toBeVisible();
+  await expect(row.getByText("尚无执行")).toBeVisible();
+  // A published definition advertises its own definition-bound Run once; the
+  // retired standalone Preview product has no control anywhere in the row.
+  await expect(row.getByRole("button", { name: "运行一次" })).toBeVisible();
+  await expect(
+    page.getByRole("button", { name: "Create exact Preview" }),
+  ).toHaveCount(0);
+
+  // Create is an explicit navigation, not an implicit side effect, and it
+  // carries the bounded list return state so the operator comes back here.
+  const create = page.getByRole("link", { name: "新建自动化任务" });
   await expect(create).toBeVisible();
   await expect(create).toHaveAttribute(
     "href",
-    /\/ui-v2\/operations\/automation\/lifecycle$/,
+    /\/ui-v2\/operations\/automation\/lifecycle\?(.*&)?tab=definitions(&|$)/,
   );
-  // The definition card links the exact durable detail route.
-  await page
-    .getByRole("link", { name: /Nightly automation/ })
-    .first()
-    .click();
+
+  // The row opens the exact durable detail route, carrying this list's
+  // bounded return context (tab/filters/page) rather than resetting it.
+  await row.getByRole("button", { name: "打开" }).click();
   await expect(page).toHaveURL(
-    new RegExp(`/ui-v2/operations/automation/definition/${DEFINITION_ID}$`),
+    new RegExp(
+      `/ui-v2/operations/automation/definition/${DEFINITION_ID}\\?.*returnTab=definitions`,
+    ),
+  );
+  // The detail publishes the exact immutable Active identity the list read
+  // resolved, so a definition row can never be read as a Draft.
+  await expect(
+    page.getByText(new RegExp(`Active revision ${ACTIVE_REVISION}`)),
+  ).toBeVisible();
+});
+
+test("the read-only execution records tab reads an honest empty history", async ({
+  page,
+}) => {
+  await connect(page);
+  await openAutomation(page);
+  const tabs = page.getByRole("navigation", { name: "自动化分区" });
+  await tabs.getByRole("button", { name: "执行记录" }).click();
+  await expect(page).toHaveURL(/\/ui-v2\/operations\/automation\?tab=records$/);
+
+  const region = page.getByRole("region", { name: "自动化执行记录" });
+  await expect(region).toBeVisible();
+  // The records surface is explicitly read-only: it reports original results
+  // and where to handle them, and offers no local control.
+  await expect(region.getByText(/执行记录只读/)).toBeVisible();
+  await expect(region.getByText("还没有执行记录")).toBeVisible();
+  // No admitted run exists, so the truthful read is an empty page, not an
+  // unavailable error and never a fabricated row.
+  await expect(region.getByRole("table")).toHaveCount(0);
+  await expect(page.getByText(/执行记录不可用/)).toHaveCount(0);
+
+  // Reading the history is GET-only: no work was emitted or submitted.
+  const evidence = await automationEvidence(page);
+  expect(evidence.items.filter((item) => item.method !== "GET")).toHaveLength(
+    0,
   );
 });
 
@@ -127,7 +197,7 @@ test("the definition detail offers the backend-advertised actions only", async (
       page,
       /an open successor Draft is required to copy this definition/,
     ),
-  ).toBeTruthy();
+  ).toBeVisible();
 });
 
 test("the Draft journey composes successor Draft, bounded save, validation and checked activation", async ({
@@ -367,18 +437,15 @@ test("the Automation journey is keyboard operable and responsive at narrow and w
   await connect(page);
   await openAutomation(page);
 
-  // Keyboard: reach the definition and its Preview without a pointer.
-  await page
-    .getByRole("link", { name: /Nightly automation/ })
-    .first()
-    .focus();
+  // Keyboard: reach the definition row without a pointer and open it. The
+  // inventory row's name is the real navigation control of the table.
+  const table = page.getByRole("table", { name: "自动化任务" });
+  const row = table.getByRole("row", { name: /Nightly automation/ });
+  await row.getByRole("button", { name: "Nightly automation" }).focus();
   await page.keyboard.press("Enter");
   await expect(
     page.getByRole("heading", { name: /Automation definition/ }),
   ).toBeVisible();
-  // The keyboard journey reaches the retained Run once control on the
-  // lifecycle page, which owns the shared bounded discovery and the
-  // zero-mutation plan summary of the frozen manifest.
   // The keyboard journey reaches the definition's occurrence history, which is
   // the durable evidence for every Run once this definition emitted.
   const occurrences = page.getByRole("link", { name: "Occurrence history" });
