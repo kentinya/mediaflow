@@ -86,7 +86,13 @@ test("the settings tab renders the four fields and states publication apart from
   const before = await settingsDocument(page);
   expect(before.target).not.toBeNull();
   await expect(panel.getByText("已发布目标")).toBeVisible();
-  // The published target is named with its real Active revision.
+  // The published target is stated as the exact Active it came from.  The raw
+  // revision identity is diagnostic and stays folded rather than being the
+  // primary page content, so the operator sees the version and can expand it.
+  await expect(panel.getByText(/版本 \d+ · Active/)).toBeVisible();
+  const diagnostics = panel.getByText("诊断标识");
+  await expect(diagnostics).toBeVisible();
+  await diagnostics.click();
   await expect(
     panel.getByText(new RegExp(before.target!.revisionId)),
   ).toBeVisible();
@@ -256,6 +262,178 @@ test("out-of-scope, non-finite and out-of-range values never publish", async ({
   }
 });
 
+test("a checked Save from the form publishes once and keeps adoption separate", async ({
+  page,
+}) => {
+  await connectOn(page, "/ui-v2/operations/automation?tab=settings");
+  const panel = page.getByRole("region", { name: "自动化引擎设置" });
+  await expect(panel).toBeVisible();
+  const before = await settingsDocument(page);
+
+  // The shared form Save is the real command, not a raw API call: it carries
+  // one submission identity and the checked Active identity it was edited on.
+  const target = before.target!.values["automation.maximumActiveJobs"];
+  const nextCapacity = target === 90 ? 91 : 90;
+  const jobs = panel.getByLabel(/并行任务上限/);
+  await jobs.fill(String(nextCapacity));
+  const requests: string[] = [];
+  page.on("request", (request) => {
+    if (
+      request.method() === "PUT" &&
+      new URL(request.url()).pathname === SETTINGS_PATH
+    ) {
+      requests.push(request.postData() ?? "");
+    }
+  });
+  await panel.getByRole("button", { name: "保存设置" }).click();
+
+  await expect(panel.getByText(/已发布新的目标值/)).toBeVisible();
+  const after = await settingsDocument(page);
+  expect(after.target!.values["automation.maximumActiveJobs"]).toBe(
+    nextCapacity,
+  );
+  expect(after.target!.revisionId).not.toBe(before.target!.revisionId);
+  // Exactly one submission for one click, and it named its own identity.
+  expect(requests).toHaveLength(1);
+  const body = JSON.parse(requests[0]!) as {
+    submissionId?: string;
+    expectedRevisionId?: string;
+  };
+  expect(typeof body.submissionId).toBe("string");
+  expect(body.expectedRevisionId).toBe(before.target!.revisionId);
+  // Publication is still shown apart from adoption.
+  await expect(
+    panel.getByText(/尚未整体采用|全部相关常驻进程都已采用当前发布值/).first(),
+  ).toBeVisible();
+});
+
+test("a concurrent writer makes the ordinary background readback refuse the stale Save", async ({
+  page,
+}) => {
+  await connectOn(page, "/ui-v2/operations/automation?tab=settings");
+  const panel = page.getByRole("region", { name: "自动化引擎设置" });
+  await expect(panel).toBeVisible();
+  const before = await settingsDocument(page);
+
+  // The operator starts editing the capacity field.
+  const jobs = panel.getByLabel(/并行任务上限/);
+  await jobs.fill("77");
+
+  // Another writer publishes a different field while this form is open.
+  const otherPoll =
+    before.target!.values["automation.schedulerPollSeconds"] === 9 ? 8 : 9;
+  const other = await page.request.put(SETTINGS_PATH, {
+    headers: {
+      Authorization: `Bearer ${ADMIN_TOKEN}`,
+      "Content-Type": "application/json",
+    },
+    data: {
+      settings: {
+        ...before.target!.values,
+        "automation.schedulerPollSeconds": otherPoll,
+      },
+      expectedRevisionId: before.target!.revisionId,
+      expectedDigest: before.target!.digest,
+      submissionId: "e2e-concurrent-writer-1",
+    },
+  });
+  expect(other.status()).toBe(201);
+
+  // The panel's ordinary bounded readback (~5s) must deliver that publication
+  // and refuse to re-arm the operator's old input against the new identity.
+  await expect(
+    panel.getByText(/已发布的设置在此期间被其他保存改变/),
+  ).toBeVisible({
+    timeout: 20_000,
+  });
+  await expect(panel.getByRole("button", { name: "保存设置" })).toBeDisabled();
+  // The typed input stayed correctable.
+  await expect(jobs).toHaveValue("77");
+  // Only the concurrent writer published: the form never submitted.
+  const after = await settingsDocument(page);
+  expect(after.target!.values["automation.maximumActiveJobs"]).toBe(
+    before.target!.values["automation.maximumActiveJobs"],
+  );
+  expect(after.target!.values["automation.schedulerPollSeconds"]).toBe(
+    otherPoll,
+  );
+});
+
+test("an unknown submission is reconciled from its own durable evidence, never by value equality", async ({
+  page,
+}) => {
+  await connectOn(page, "/ui-v2/operations/automation?tab=settings");
+  const panel = page.getByRole("region", { name: "自动化引擎设置" });
+  await expect(panel).toBeVisible();
+  const before = await settingsDocument(page);
+  const values = { ...before.target!.values };
+
+  // A submission identity that was never published, whose values happen to
+  // equal the current target, must not be reported as committed.
+  const equalButForeign = await page.request.put(SETTINGS_PATH, {
+    headers: {
+      Authorization: `Bearer ${ADMIN_TOKEN}`,
+      "Content-Type": "application/json",
+    },
+    data: {
+      reconcile: true,
+      settings: values,
+      submissionId: "e2e-never-submitted-identity",
+    },
+  });
+  expect(equalButForeign.status()).toBe(200);
+  const foreign = (await equalButForeign.json()) as {
+    state: string;
+    committed: boolean;
+  };
+  expect(foreign.state).toBe("unresolved");
+  expect(foreign.committed).toBe(false);
+
+  // A real submission whose answer was lost is reconciled by its own identity.
+  const nextCapacity = values["automation.maximumActiveJobs"] === 88 ? 89 : 88;
+  const published = await page.request.put(SETTINGS_PATH, {
+    headers: {
+      Authorization: `Bearer ${ADMIN_TOKEN}`,
+      "Content-Type": "application/json",
+    },
+    data: {
+      settings: {
+        ...values,
+        "automation.maximumActiveJobs": nextCapacity,
+      },
+      expectedRevisionId: before.target!.revisionId,
+      expectedDigest: before.target!.digest,
+      submissionId: "e2e-lost-response-1",
+    },
+  });
+  expect(published.status()).toBe(201);
+  const committed = await published.json();
+  const reconciled = await page.request.put(SETTINGS_PATH, {
+    headers: {
+      Authorization: `Bearer ${ADMIN_TOKEN}`,
+      "Content-Type": "application/json",
+    },
+    data: {
+      reconcile: true,
+      settings: {
+        ...values,
+        "automation.maximumActiveJobs": nextCapacity,
+      },
+      submissionId: "e2e-lost-response-1",
+    },
+  });
+  const resolved = (await reconciled.json()) as {
+    state: string;
+    committed: boolean;
+    committedRevisionId: string | null;
+  };
+  expect(resolved.state).toBe("committed");
+  expect(resolved.committed).toBe(true);
+  expect(resolved.committedRevisionId).toBe(
+    (committed as { revisionId: string }).revisionId,
+  );
+});
+
 test("the System Settings Automation section reaches the same form and authority", async ({
   page,
 }) => {
@@ -263,6 +441,8 @@ test("the System Settings Automation section reaches the same form and authority
   const panel = page.getByRole("region", { name: "自动化引擎设置" });
   await expect(panel).toBeVisible();
   const document = await settingsDocument(page);
+  await expect(panel.getByText(/版本 \d+ · Active/)).toBeVisible();
+  await panel.getByText("诊断标识").click();
   await expect(
     panel.getByText(new RegExp(document.target!.revisionId)),
   ).toBeVisible();

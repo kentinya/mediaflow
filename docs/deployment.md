@@ -219,11 +219,16 @@ New admission uses Active; intact older admitted pins stay valid, broken pins bl
 
 `automation.workerPollSeconds` and `automation.schedulerPollSeconds` are the real resident loop
 cadences. A running Worker or Scheduler resolves the current managed Active at each safe loop
-boundary and before each idle wait, installs the published value, and only then writes its own
-adoption report. No restart and no arriving work is required, and an idle wait never sleeps longer
-than the documented 5-second configuration recheck, so a previously long cadence still observes a
-new publication promptly. A busy step adopts at its next safe boundary; admitted work keeps its
-immutable pin and is never repinned, cancelled, requeued or replayed by a settings publication.
+boundary and on each bounded recheck wake, installs the published value, and only then writes its
+own adoption report. No restart and no arriving work is required.
+
+Rechecks and the business poll are deliberately separate: configuration, heartbeat and adoption-report
+writes may happen on a bound of at most 5 seconds, but claiming work, ticking the Scheduler or emitting
+an occurrence still happens only on the cadence this process selected. That is why a previously long
+cadence observes a new publication promptly without performing early claims/emissions, and why the
+readback's freshness is refreshed by the owning process rather than by an API read. A busy step adopts
+at its next safe boundary; admitted work keeps its immutable pin and is never repinned, cancelled,
+requeued or replayed by a settings publication.
 
 `worker run`/`scheduler run --poll-seconds N` and any deployment-owned override keep precedence over
 the published value. Such a process reports its effective value as an *override*, never as adoption,

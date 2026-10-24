@@ -1855,6 +1855,7 @@ import {
 import {
   normalizeAutomationSettings,
   type AutomationSettingsModel,
+  type EngineSubmissionState,
 } from "../../entities/operations/automation-settings";
 import {
   normalizeAutomationFormAuthority,
@@ -2817,6 +2818,8 @@ export type AutomationMutationResult<T> =
  * server messages are deliberately discarded.
  */
 export interface AutomationMutationFailureDetails {
+  /** Which bounded publication stage failed (read/compose/persist/validate/prepare/activate). */
+  readonly stage?: string;
   readonly durableState?: string;
   readonly candidateState?: string;
   readonly sideEffects?: string;
@@ -2838,6 +2841,9 @@ function normalizeAutomationMutationFailureDetails(
   }
   const record = value as Record<string, unknown>;
   const details: AutomationMutationFailureDetails = {
+    ...(typeof record.stage === "string" && record.stage.length <= 32
+      ? { stage: record.stage }
+      : {}),
     ...(typeof record.durableState === "string" &&
     record.durableState.length <= 128
       ? { durableState: record.durableState }
@@ -5116,6 +5122,11 @@ export type AutomationSettingsSave =
 export type AutomationSettingsReconcile =
   | {
       readonly ok: true;
+      /**
+       * The exact submission's durable outcome. `committed` is true for both
+       * `committed` and `superseded`; only `unresolved` may block resubmission.
+       */
+      readonly state: EngineSubmissionState;
       readonly committed: boolean;
       readonly nextAction: string | null;
       readonly evidenceRevisionId: string | null;
@@ -5307,9 +5318,21 @@ export async function reconcileAutomationSettings(
     !Array.isArray(record["evidence"])
       ? (record["evidence"] as Record<string, unknown>)
       : null;
+  // The state is the real answer. `committed` is derived from it only when the
+  // backend states a known terminal outcome; an unstated or unknown state is
+  // reported as unresolved so the page never clears a resubmission block on a
+  // guess.
+  const rawState = record["state"];
+  const state: EngineSubmissionState =
+    rawState === "committed" ||
+    rawState === "superseded" ||
+    rawState === "not_committed"
+      ? rawState
+      : "unresolved";
   return {
     ok: true,
-    committed: record["committed"] === true,
+    state,
+    committed: state === "committed" || state === "superseded",
     nextAction:
       typeof record["nextAction"] === "string" ? record["nextAction"] : null,
     evidenceRevisionId:

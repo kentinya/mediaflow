@@ -65,8 +65,18 @@ _OVERRIDE_SOURCES = frozenset({OVERRIDE_SOURCE_CLI, OVERRIDE_SOURCE_DEPLOYMENT})
 
 #: Documented internal recheck bound for the resident loops' idle wait.  It is
 #: independent of the configured poll value and of work arriving, so a
-#: previously long wait still observes a new publication promptly.
+#: previously long wait still observes a new publication promptly.  The bound
+#: gates the *configuration recheck* only: the business poll (claim/due check)
+#: keeps the cadence this process selected, so a recheck never turns into an
+#: early tick/emission.
 CONFIG_RECHECK_SECONDS = 5.0
+
+#: How often an owning resident consumer refreshes its own adoption report even
+#: though nothing changed.  Readback expires a report as stale when it is older
+#: than ``max(3 * heartbeat interval, 10s)``, so a bounded refresh keeps a live,
+#: unchanged consumer distinct from a dead one.  It is a reporting cadence on the
+#: existing bounded wake, never an extra business poll.
+ADOPTION_REPORT_REFRESH_SECONDS = 5.0
 
 MAX_ENGINE_EFFECTIVE_REPORT_FIELDS = 4
 
@@ -383,6 +393,30 @@ class ConsumerAdoptionStatus(StrEnum):
 #: Statuses that cannot contribute to a collective adoption claim.
 NON_ADOPTED_STATUSES: frozenset[str] = frozenset(
     item.value for item in ConsumerAdoptionStatus if item is not ConsumerAdoptionStatus.ADOPTED
+)
+
+
+class EngineSubmissionState(StrEnum):
+    """Durable outcome of one identified focused settings submission.
+
+    The four states are deliberately distinct, because collapsing them into one
+    boolean is what lets a failed Draft or an older equal submission certify a
+    request that never published.
+    """
+
+    #: The submission's own revision is the current Active.
+    COMMITTED = "committed"
+    #: The submission published, and a later publication has replaced it.
+    SUPERSEDED = "superseded"
+    #: The submission's own revision terminally failed; it cannot publish.
+    NOT_COMMITTED = "not_committed"
+    #: No terminal durable outcome can be proven for this exact submission.
+    UNRESOLVED = "unresolved"
+
+
+#: States in which the submission certainly published.
+COMMITTED_SUBMISSION_STATES: frozenset[str] = frozenset(
+    {EngineSubmissionState.COMMITTED.value, EngineSubmissionState.SUPERSEDED.value}
 )
 
 

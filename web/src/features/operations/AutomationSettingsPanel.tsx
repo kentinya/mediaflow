@@ -11,23 +11,31 @@
  *
  * 1. **published target** — the exact Active values and identity;
  * 2. **input** — what the operator has typed, preserved across a background
- *    readback until it is saved or explicitly discarded;
+ *    readback until it is saved or explicitly discarded, and remembered
+ *    together with the publication identity editing started from;
  * 3. **adoption** — what each live resident process reports it installed.
+ *
+ * A background refetch may update the *readback* but never silently re-arms the
+ * operator's old input against a newer publication: an edit keeps the identity it
+ * was written against, so a concurrent writer's change is refused as stale
+ * (with the input retained) instead of being silently reverted by this save.
  *
  * A successful Save therefore says "published, adoption pending" until the
  * consumers' own reports prove otherwise, and an unknown outcome blocks every
- * further save until durable reconciliation proves what happened.
+ * further save until durable reconciliation proves what happened.  That
+ * unresolved submission survives a real reload, principal-scoped.
  */
 
 import { useMemo, useState } from "react";
 import { useQuery } from "@tanstack/react-query";
-import { useAuthToken } from "../../shared/api/auth-context";
+import { useAuthGeneration, useAuthToken } from "../../shared/api/auth-context";
 import { AuthorizedReadBoundary } from "../../shared/auth/AuthorizedReadBoundary";
 import { Button } from "../../shared/ui/Button";
 import { RefreshControl } from "../../shared/ui/RefreshControl";
 import { StatusBanner } from "../../shared/ui/StatusBanner";
 import {
   fetchAutomationSettings,
+  fetchAuthenticatedPrincipal,
   reconcileAutomationSettings,
   saveAutomationSettings,
 } from "../../shared/api/api-client";
@@ -37,12 +45,19 @@ import {
   automationSettingsBody,
   automationSettingsReconcileBody,
   type AutomationEngineField,
-  type AutomationSettingsModel,
   type ConsumerAdoptionView,
   type ConsumerInstanceView,
+  type PublishedTargetView,
 } from "../../entities/operations/automation-settings";
+import {
+  newSubmissionId,
+  readPendingSubmission,
+  writePendingSubmission,
+  type PendingEngineSettingsSubmission,
+} from "./automation-settings-session";
 
 const QUERY_KEY = ["operations", "automation-engine-settings"] as const;
+const PRINCIPAL_QUERY_KEY = ["authenticated-principal"] as const;
 
 /** Which backend failure stage/reason copy the operator sees. */
 const FAILURE_STAGE_LABELS: Readonly<Record<string, string>> = {
@@ -50,17 +65,27 @@ const FAILURE_STAGE_LABELS: Readonly<Record<string, string>> = {
   compose: "组装候选配置",
   persist: "保存后继修订",
   validate: "整份候选校验",
+  prepare: "准备运行时绑定",
   activate: "发布 Active",
 };
 
-interface FormState {
-  readonly [key: string]: string;
+type FormState = Readonly<Record<string, string>>;
+
+/** The publication identity one edit was written against. */
+type Baseline = Pick<
+  PublishedTargetView,
+  "revisionId" | "revisionVersion" | "digest"
+>;
+
+interface EditState {
+  readonly baseline: Baseline;
+  readonly input: FormState;
 }
 
-function initialForm(model: AutomationSettingsModel): FormState {
+function publishValues(target: PublishedTargetView): FormState {
   const next: Record<string, string> = {};
   for (const field of AUTOMATION_ENGINE_FIELDS) {
-    const value = model.target?.values[field];
+    const value = target.values[field];
     next[field] = value === undefined ? "" : String(value);
   }
   return next;
@@ -70,91 +95,122 @@ function sameValues(a: FormState, b: FormState): boolean {
   return AUTOMATION_ENGINE_FIELDS.every((field) => a[field] === b[field]);
 }
 
+function baselineOf(target: PublishedTargetView): Baseline {
+  return {
+    revisionId: target.revisionId,
+    revisionVersion: target.revisionVersion,
+    digest: target.digest,
+  };
+}
+
+function sameBaseline(a: Baseline, b: Baseline): boolean {
+  return a.revisionId === b.revisionId && a.digest === b.digest;
+}
+
+/**
+ * The operator's copy for one adoption basis.  The capacity/stale fields are
+ * read by the admission/observation boundary itself, so their evidence has a
+ * different basis and is never folded into a resident-cadence claim.
+ */
+function consumerHeading(service: string): string {
+  if (service === "worker") return "Worker 轮询";
+  if (service === "scheduler") return "调度器轮询";
+  if (service === "api") return "准入上限与失效判定";
+  return service;
+}
+
 /** One consumer's per-instance adoption rows, each independently truthful. */
 function ConsumerAdoption({
   consumer,
 }: {
   readonly consumer: ConsumerAdoptionView;
 }) {
-  const label =
-    consumer.service === "worker"
-      ? "Worker 轮询"
-      : consumer.service === "scheduler"
-        ? "调度器轮询"
-        : consumer.service === "api"
-          ? "准入/失效判定"
-          : consumer.service;
+  const label = consumerHeading(consumer.service);
+  const cadence = consumer.basis !== "api_local";
   return (
     <section className="mf-panel" aria-label={`${label}采用情况`}>
       <h3>{label}</h3>
-      {consumer.basis === "api_local" ? (
+      <p className="mf-dashboard-meta">
+        {cadence
+          ? "每个正在运行的进程在自己的安全边界读取并采用发布值,并在采用之后写入自己的报告。只有全部实例都报告采用当前发布值时,才视为该服务已采用。"
+          : (consumer.explanation ??
+            "这些值由准入/观察边界各自读取当前 Active,不是常驻进程的轮询值。")}
+      </p>
+      {cadence && consumer.instances.length === 0 ? (
         <p className="mf-dashboard-meta">
-          {consumer.explanation ??
-            "这些值由准入/观察边界各自读取当前 Active,不是常驻进程轮询值。"}
+          当前没有该服务的注册实例,因此没有进程可以报告采用情况。启动该服务后无需重启即可采用发布值。
         </p>
-      ) : (
-        <p className="mf-dashboard-meta">
-          每个正在运行的进程在自己的安全边界读取并采用发布值,并在采用之后写入自己的报告。
-          只有全部实例都报告采用当前发布值时,才视为部署整体已采用。
-        </p>
-      )}
-      {consumer.instances.length === 0 ? (
-        <p className="mf-dashboard-meta">
-          {consumer.basis === "api_local"
-            ? "此处不列举进程实例。"
-            : "当前没有该服务的注册实例;尚未有进程可以报告采用情况。"}
-        </p>
-      ) : (
-        <table className="mf-table">
-          <caption>{label}实例采用情况</caption>
-          <thead>
-            <tr>
-              <th scope="col">实例</th>
-              <th scope="col">状态</th>
-              <th scope="col">实际值</th>
-              <th scope="col">所属发布</th>
-              <th scope="col">下一步</th>
-            </tr>
-          </thead>
-          <tbody>
-            {consumer.instances.map((instance: ConsumerInstanceView) => (
-              <tr key={instance.instanceId}>
-                <td>
-                  <code>{instance.instanceId}</code>
-                </td>
-                <td>{ADOPTION_STATUS_LABELS[instance.status]}</td>
-                <td>
-                  {instance.effectiveValue === null
-                    ? "—"
-                    : String(instance.effectiveValue)}
-                  {instance.overrideSource === "cli" ? "(命令行覆盖)" : ""}
-                </td>
-                <td>
-                  {instance.reportedRevisionId === null
-                    ? "—"
-                    : instance.reportedRevisionId}
-                </td>
-                <td>{instance.nextAction}</td>
+      ) : null}
+      {cadence && consumer.instances.length > 0 ? (
+        <div className="mf-automation-settings-table">
+          <table className="mf-table">
+            <caption>{label}实例采用情况</caption>
+            <thead>
+              <tr>
+                <th scope="col">实例</th>
+                <th scope="col">状态</th>
+                <th scope="col">实际使用值</th>
+                <th scope="col">下一步</th>
+                <th scope="col">诊断标识</th>
               </tr>
-            ))}
-          </tbody>
-        </table>
-      )}
-      {consumer.adopted ? (
+            </thead>
+            <tbody>
+              {consumer.instances.map((instance: ConsumerInstanceView) => (
+                <tr key={instance.instanceId}>
+                  <td>
+                    <code>{instance.instanceId}</code>
+                  </td>
+                  <td>{ADOPTION_STATUS_LABELS[instance.status]}</td>
+                  <td>
+                    {instance.effectiveValue === null
+                      ? "—"
+                      : String(instance.effectiveValue)}
+                    {instance.overrideSource === "cli"
+                      ? "(命令行覆盖)"
+                      : instance.overrideSource === "deployment"
+                        ? "(部署覆盖)"
+                        : ""}
+                  </td>
+                  <td>{instance.nextAction}</td>
+                  <td>
+                    <details className="mf-automation-settings-diagnostics">
+                      <summary>展开</summary>
+                      <dl>
+                        <dt>发布的修订</dt>
+                        <dd>
+                          <code>{instance.publishedRevisionId ?? "—"}</code>
+                        </dd>
+                        <dt>进程报告的修订</dt>
+                        <dd>
+                          <code>{instance.reportedRevisionId ?? "—"}</code>
+                        </dd>
+                        <dt>报告时间</dt>
+                        <dd>{instance.reportedAt ?? "—"}</dd>
+                        <dt>状态代码</dt>
+                        <dd>{instance.durableState || "—"}</dd>
+                      </dl>
+                    </details>
+                  </td>
+                </tr>
+              ))}
+            </tbody>
+          </table>
+        </div>
+      ) : null}
+      {cadence ? (
         <p className="mf-dashboard-meta">
-          该服务的全部实例都已采用当前发布值。
+          {consumer.adopted
+            ? "该服务的全部实例都已采用当前发布值。"
+            : "该服务尚未达到整体采用;上表逐实例说明真实状态。"}
         </p>
-      ) : (
-        <p className="mf-dashboard-meta">
-          该服务尚未达到整体采用;上表逐实例说明真实状态。
-        </p>
-      )}
+      ) : null}
     </section>
   );
 }
 
 export function AutomationSettingsPanel() {
   const token = useAuthToken();
+  const authGeneration = useAuthGeneration();
   const query = useQuery({
     queryKey: QUERY_KEY,
     queryFn: () => fetchAutomationSettings(token),
@@ -166,48 +222,143 @@ export function AutomationSettingsPanel() {
     // bounded interval while this surface is open.  A read has no side effect.
     refetchInterval: 5_000,
   });
+  // The backend-authenticated identity scopes the retained unknown submission.
+  // It is a read only; it never admits work or grants authority.
+  const principalQuery = useQuery({
+    queryKey: [...PRINCIPAL_QUERY_KEY, authGeneration],
+    queryFn: () => fetchAuthenticatedPrincipal(token),
+    enabled: token !== null,
+    retry: false,
+    refetchOnWindowFocus: false,
+    staleTime: 60_000,
+  });
+  const principalId = principalQuery.data?.principalId ?? null;
   const model = query.data?.ok === true ? query.data.model : null;
-  // The operator's in-progress input lives in its own state. `null` means "no
-  // edits": the form then reads the current published target, so a background
-  // readback refreshes it. Once edited, the input is preserved verbatim across
-  // every refetch until it is saved or explicitly discarded.
-  const [edited, setEdited] = useState<FormState | null>(null);
+  // `null` means "no edits": the form then reads the current published target.
+  // Once edited, the input *and the identity it was written against* are kept,
+  // so a background readback can never silently re-arm old input for a newer
+  // publication.
+  const [edit, setEdit] = useState<EditState | null>(null);
   const [message, setMessage] = useState<string | null>(null);
   const [failure, setFailure] = useState<{
     readonly stage: string;
     readonly durableState: string;
     readonly nextAction: string;
   } | null>(null);
-  const [awaitingReconciliation, setAwaitingReconciliation] = useState(false);
   const [submitting, setSubmitting] = useState(false);
+  const [reloadedSubmission, setReloadedSubmission] =
+    useState<PendingEngineSettingsSubmission | null>(null);
+  // A freshly-minted unknown submission in this tab, or the one restored after a
+  // reload.  Either way it blocks further saves until it is reconciled.
+  const [unresolved, setUnresolved] =
+    useState<PendingEngineSettingsSubmission | null>(null);
   const [lastPublished, setLastPublished] = useState<{
     readonly revisionId: string;
-    readonly values: string;
+    readonly revisionVersion: number | null;
+    readonly values: FormState;
   } | null>(null);
 
-  const baseline = useMemo(
-    () => (model === null ? {} : initialForm(model)),
-    [model],
-  );
-  const form = edited ?? baseline;
-  const dirty = edited !== null && !sameValues(edited, baseline);
-  const pending = dirty;
+  // Restore a retained unknown submission exactly once per principal.
+  const restoredKey = `${authGeneration}:${principalId ?? ""}`;
+  const [restoredFor, setRestoredFor] = useState<string | null>(null);
+  if (principalId !== null && restoredFor !== restoredKey) {
+    setRestoredFor(restoredKey);
+    const retained = readPendingSubmission(principalId);
+    const value = retained.available ? retained.value : null;
+    setReloadedSubmission(value);
+    setUnresolved(value);
+    if (value !== null) {
+      setEdit({
+        baseline: {
+          revisionId: value.baselineRevisionId,
+          revisionVersion: value.baselineRevisionVersion,
+          digest: value.baselineDigest,
+        },
+        input: value.input,
+      });
+    }
+  }
+
+  const pendingSubmission = unresolved;
+  const published = model?.target ?? null;
+  const baseline = published === null ? null : baselineOf(published);
+  const publishedValues = published === null ? {} : publishValues(published);
+  const form = edit?.input ?? publishedValues;
+  const dirty = edit !== null && !sameValues(edit.input, publishedValues);
+  // A Save is offered only while the input is still written against the current
+  // publication; a changed target requires an explicit review/refresh.
+  const staleBaseline =
+    edit !== null &&
+    baseline !== null &&
+    !sameBaseline(edit.baseline, baseline);
+  const canSave =
+    model !== null &&
+    model.canManage &&
+    dirty &&
+    !staleBaseline &&
+    !submitting &&
+    pendingSubmission === null;
+
+  const visibleMessage = useMemo(() => {
+    if (message !== null) return message;
+    if (staleBaseline) {
+      return "已发布的设置在此期间被其他保存改变。你输入的值仍保留在表单中;请先查看新的发布目标,再决定是否放弃修改后重新填写。";
+    }
+    if (pendingSubmission !== null) {
+      return "上一次保存的结果未知:请求未收到服务器确认,本次保存可能已生效也可能未生效。系统不会自动重试;请先用下方的核实操作确认结果。";
+    }
+    return null;
+  }, [message, staleBaseline, pendingSubmission]);
 
   const submit = async () => {
-    if (model === null || model.target === null) return;
+    if (model === null || model.target === null || edit === null) return;
+    const submissionId = newSubmissionId();
+    if (submissionId === null || principalId === null) {
+      setMessage(
+        "当前浏览器或账号身份不足以安全标识本次提交,因此不会发送保存。请刷新后重试。",
+      );
+      return;
+    }
+    const submittedValues = automationSettingsBody(edit.input, {
+      ...model.target,
+      ...edit.baseline,
+    }).settings as Record<string, number>;
+    const retained: PendingEngineSettingsSubmission = {
+      submissionId,
+      input: edit.input,
+      submittedValues,
+      baselineRevisionId: edit.baseline.revisionId,
+      baselineRevisionVersion: edit.baseline.revisionVersion,
+      baselineDigest: edit.baseline.digest,
+      submittedAt: new Date().toISOString(),
+    };
+    // The retained context is written *before* the mutation, so a lost response
+    // (or a reload mid-flight) can never leave an unreconcilable submission.
+    writePendingSubmission(principalId, retained);
     setSubmitting(true);
     setMessage(null);
     setFailure(null);
     try {
       const result = await saveAutomationSettings(
         token,
-        automationSettingsBody(form, model.target),
+        automationSettingsBody(
+          edit.input,
+          {
+            ...model.target,
+            ...edit.baseline,
+          },
+          submissionId,
+        ),
       );
       if (result.ok) {
-        setEdited(null);
+        writePendingSubmission(principalId, null);
+        setUnresolved(null);
+        setReloadedSubmission(null);
+        setEdit(null);
         setLastPublished({
-          revisionId: result.revisionId ?? model.target.revisionId,
-          values: JSON.stringify(form),
+          revisionId: result.revisionId ?? edit.baseline.revisionId,
+          revisionVersion: result.readback.target?.revisionVersion ?? null,
+          values: edit.input,
         });
         setMessage(
           result.unchanged
@@ -218,16 +369,18 @@ export function AutomationSettingsPanel() {
         return;
       }
       if (result.unknownOutcome) {
-        setAwaitingReconciliation(true);
-        setMessage(
-          "提交结果未知:请求未收到服务器确认,本次保存可能已生效也可能未生效。系统不会自动重试,请先核实下方已发布目标。",
-        );
+        // Retain the exact submission; only its own durable evidence may clear it.
+        setUnresolved(retained);
+        setMessage(null);
         await query.refetch();
         return;
       }
-      const stage = result.details?.durableState ?? "";
+      // A *known* rejection did not publish, so its retained context is cleared.
+      writePendingSubmission(principalId, null);
+      setUnresolved(null);
+      setReloadedSubmission(null);
       setFailure({
-        stage: FAILURE_STAGE_LABELS[stage] ?? stage,
+        stage: FAILURE_STAGE_LABELS[result.details?.stage ?? ""] ?? "",
         durableState: result.details?.durableState ?? "",
         nextAction: result.details?.nextAction ?? "刷新后再决定下一步。",
       });
@@ -239,26 +392,44 @@ export function AutomationSettingsPanel() {
   };
 
   const reconcile = async () => {
+    const pendingContext = pendingSubmission;
+    if (pendingContext === null || principalId === null) return;
     setSubmitting(true);
     try {
       const result = await reconcileAutomationSettings(
         token,
-        automationSettingsReconcileBody(form),
+        automationSettingsReconcileBody(
+          pendingContext.submittedValues,
+          pendingContext.submissionId,
+        ),
       );
       if (!result.ok) {
-        setMessage("无法读取核对结果,请稍后刷新页面再判断。");
+        setMessage(
+          "核对读取失败:本次提交的结果仍然未知,请不要再次保存。稍后刷新页面再核对。",
+        );
         return;
       }
-      if (result.committed) {
-        setAwaitingReconciliation(false);
-        setEdited(null);
+      if (result.state === "unresolved") {
         setMessage(
-          `核对完成:本次提交已发布为 ${result.evidenceRevisionId ?? "新的 Active"}。无需再次保存。`,
+          `核对结果仍不确定:无法证明本次提交已经发布或已经失败。${result.nextAction ?? ""}`,
+        );
+        return;
+      }
+      writePendingSubmission(principalId, null);
+      setUnresolved(null);
+      setReloadedSubmission(null);
+      if (result.committed) {
+        setEdit(null);
+        setMessage(
+          result.state === "superseded"
+            ? `核对完成:本次提交已发布为 ${result.evidenceRevisionId ?? "一个修订"},但之后又被新的发布取代。请查看当前发布目标。`
+            : `核对完成:本次提交已发布为 ${result.evidenceRevisionId ?? "当前 Active"},无需再次保存。`,
         );
       } else {
-        setAwaitingReconciliation(false);
+        // A terminal non-publication: keep the operator's input for correction
+        // and state the exact next action.
         setMessage(
-          `核对完成:未发现本次提交的持久化证据,当前发布值未包含它。${result.nextAction ?? ""}`,
+          `核对完成:本次提交没有发布(保存失败或未生效)。${result.nextAction ?? "请修正后再次保存。"}`,
         );
       }
       await query.refetch();
@@ -308,147 +479,238 @@ export function AutomationSettingsPanel() {
             </section>
           );
         }
+        const target = model.target;
         return (
           <div className="mf-automation-settings">
-            <section className="mf-panel" aria-label="自动化引擎设置">
-              <header className="mf-panel-header">
-                <div>
-                  <h2>自动化引擎设置</h2>
-                  <p className="mf-dashboard-meta">
-                    一次保存只发布这四个字段;其他设置、定义与草稿保持不变。
-                  </p>
-                </div>
-                <RefreshControl onRefresh={refresh} refreshing={isFetching} />
-              </header>
-              <dl className="mf-detail-grid">
-                <div>
-                  <dt>已发布目标</dt>
-                  <dd>
-                    <code>{model.target.revisionId}</code>
-                    {model.target.revisionVersion === null
-                      ? ""
-                      : ` · 版本 ${model.target.revisionVersion}`}
-                  </dd>
-                </div>
-                <div>
-                  <dt>读取时间</dt>
-                  <dd>{model.asOf ?? "—"}</dd>
-                </div>
-                <div>
-                  <dt>部署整体采用</dt>
-                  <dd>
-                    {model.adoption.allAdopted
-                      ? "全部相关常驻进程都已采用当前发布值"
-                      : "尚未整体采用;以下逐进程显示真实状态"}
-                  </dd>
-                </div>
-              </dl>
-              {!model.canManage && (
-                <StatusBanner variant="info" title="只读">
-                  <p>当前账号没有管理配置的权限,只能查看发布值与采用情况。</p>
-                </StatusBanner>
-              )}
-              <form
-                className="mf-form"
-                onSubmit={(event) => {
-                  event.preventDefault();
-                  void submit();
-                }}
-              >
-                {model.fields.map((field) => (
-                  <div className="mf-form-field" key={field.fieldPath}>
-                    <label htmlFor={`automation-setting-${field.fieldPath}`}>
-                      {field.label}
-                      {field.unit ? `(${field.unit})` : ""}
-                    </label>
-                    <input
-                      id={`automation-setting-${field.fieldPath}`}
-                      name={field.fieldPath}
-                      inputMode="decimal"
-                      value={form[field.fieldPath] ?? ""}
-                      disabled={!model.canManage || awaitingReconciliation}
-                      onChange={(event) => {
-                        setEdited({
-                          ...form,
-                          [field.fieldPath]: event.target.value,
-                        });
-                      }}
-                    />
-                    <p className="mf-field-help">
-                      {field.meaning}
-                      {field.notMeaning ? ` ${field.notMeaning}` : ""}
-                      {field.minimum !== null && field.maximum !== null
-                        ? ` 允许范围 ${field.minimum}–${field.maximum}。`
-                        : " 必须是有限正数。"}
+            <div className="mf-automation-settings-grid">
+              <section className="mf-panel" aria-label="自动化引擎设置">
+                <header className="mf-panel-header">
+                  <div>
+                    <h2>自动化引擎设置</h2>
+                    <p className="mf-dashboard-meta">
+                      这些设置控制整个自动化执行引擎,不属于任何一个具体任务。一次保存只发布这四个字段;
+                      其他设置、定义与草稿保持不变。
                     </p>
                   </div>
-                ))}
-                <div className="mf-actions">
-                  <Button
-                    type="submit"
-                    disabled={
-                      !model.canManage ||
-                      submitting ||
-                      awaitingReconciliation ||
-                      !pending
-                    }
-                  >
-                    {submitting ? "保存中…" : "保存引擎设置"}
-                  </Button>
-                  {awaitingReconciliation && (
-                    <Button
-                      type="button"
-                      variant="secondary"
-                      disabled={submitting}
-                      onClick={() => void reconcile()}
-                    >
-                      核实上次提交
+                  <span className="mf-automation-settings-refresh">
+                    <RefreshControl
+                      onRefresh={refresh}
+                      refreshing={isFetching}
+                    />
+                  </span>
+                </header>
+                {!model.canManage && (
+                  <StatusBanner variant="info" title="只读">
+                    <p>当前账号没有管理配置的权限,只能查看发布值与采用情况。</p>
+                  </StatusBanner>
+                )}
+                {(pendingSubmission !== null ||
+                  reloadedSubmission !== null) && (
+                  <StatusBanner variant="error" title="上一次保存结果未知">
+                    <p>
+                      请求未收到服务器确认,本次保存可能已生效也可能未生效。系统不会自动重试;
+                      请先核实该次提交的持久化结果,再决定下一步。
+                    </p>
+                    <div className="mf-actions">
+                      <Button
+                        type="button"
+                        variant="secondary"
+                        disabled={submitting || principalId === null}
+                        onClick={() => void reconcile()}
+                      >
+                        核实上次提交
+                      </Button>
+                    </div>
+                  </StatusBanner>
+                )}
+                <form
+                  className="mf-form"
+                  onSubmit={(event) => {
+                    event.preventDefault();
+                    void submit();
+                  }}
+                >
+                  {model.fields.map((field) => (
+                    <div className="mf-form-field" key={field.fieldPath}>
+                      <label htmlFor={`automation-setting-${field.fieldPath}`}>
+                        {field.label}
+                        {field.unit ? `(${field.unit})` : ""}
+                      </label>
+                      <div className="mf-form-control">
+                        <input
+                          id={`automation-setting-${field.fieldPath}`}
+                          name={field.fieldPath}
+                          inputMode="decimal"
+                          value={
+                            form[field.fieldPath] ??
+                            publishedValues[field.fieldPath] ??
+                            ""
+                          }
+                          disabled={
+                            !model.canManage || pendingSubmission !== null
+                          }
+                          onChange={(event) => {
+                            const input = {
+                              ...(edit?.input ?? publishedValues),
+                              [field.fieldPath]: event.target.value,
+                            };
+                            setEdit({
+                              baseline: edit?.baseline ?? baselineOf(target),
+                              input,
+                            });
+                            setMessage(null);
+                          }}
+                        />
+                        <span className="mf-form-unit">{field.unit}</span>
+                      </div>
+                      <p className="mf-field-help">
+                        {field.meaning}
+                        {field.notMeaning ? ` ${field.notMeaning}` : ""}
+                        {field.minimum !== null && field.maximum !== null
+                          ? ` 允许范围 ${field.minimum}–${field.maximum}。`
+                          : " 必须是有限正数。"}
+                      </p>
+                    </div>
+                  ))}
+                  <div className="mf-actions">
+                    <Button type="submit" disabled={!canSave}>
+                      {submitting ? "保存中…" : "保存设置"}
                     </Button>
-                  )}
-                  {dirty && !awaitingReconciliation && (
-                    <Button
-                      type="button"
-                      variant="secondary"
-                      disabled={submitting}
-                      onClick={() => {
-                        setEdited(null);
-                        setMessage(null);
-                        setFailure(null);
-                      }}
-                    >
-                      放弃修改
-                    </Button>
-                  )}
-                </div>
-              </form>
-              {message !== null && (
-                <p className="mf-dashboard-meta" role="status">
-                  {message}
-                </p>
-              )}
-              {lastPublished !== null && (
-                <p className="mf-dashboard-meta">
-                  最近一次成功发布:<code>{lastPublished.revisionId}</code>
-                </p>
-              )}
-              {failure !== null && (
-                <StatusBanner variant="error" title="保存未生效">
-                  <p>
-                    失败阶段:{failure.stage || "未知"}。持久化状态:
-                    {failure.durableState || "上一份 Active 保持不变"}。
+                    {edit !== null &&
+                      !submitting &&
+                      pendingSubmission === null && (
+                        <Button
+                          type="button"
+                          variant="secondary"
+                          onClick={() => {
+                            setEdit(null);
+                            setMessage(null);
+                            setFailure(null);
+                          }}
+                        >
+                          {staleBaseline
+                            ? "放弃修改并采用最新发布值"
+                            : "放弃修改"}
+                        </Button>
+                      )}
+                  </div>
+                </form>
+                {visibleMessage !== null && (
+                  <p className="mf-dashboard-meta" role="status">
+                    {visibleMessage}
                   </p>
-                  <p>下一步:{failure.nextAction}</p>
-                </StatusBanner>
-              )}
-              <section className="mf-panel" aria-label="保存与采用的区别">
-                <h3>发布与生效是两个独立结果</h3>
-                <p>
-                  保存只会发布新的目标值。常驻进程在自己的安全边界(而不是收到通知时)
-                  采用新值,并在采用之后写入自己的报告。发布成功不代表部署整体已生效;
-                  停止、心跳过期、版本不一致或使用命令行覆盖的进程都会单独显示真实状态与下一步。
+                )}
+                {failure !== null && (
+                  <StatusBanner variant="error" title="保存未生效">
+                    <p>
+                      失败阶段:{failure.stage || "未知"}。持久化状态:
+                      {failure.durableState || "上一份 Active 保持不变"}。
+                    </p>
+                    <p>下一步:{failure.nextAction}</p>
+                  </StatusBanner>
+                )}
+                <dl className="mf-detail-grid mf-automation-settings-target">
+                  <div>
+                    <dt>已发布目标</dt>
+                    <dd>版本 {target.revisionVersion ?? "—"} · Active</dd>
+                  </div>
+                  <div>
+                    <dt>读取时间</dt>
+                    <dd>{model.asOf ?? "—"}</dd>
+                  </div>
+                  <div>
+                    <dt>部署整体采用</dt>
+                    <dd>
+                      {model.adoption.allAdopted
+                        ? "全部相关常驻进程都已采用当前发布值"
+                        : "尚未整体采用;下方逐进程显示真实状态"}
+                    </dd>
+                  </div>
+                  {lastPublished !== null && (
+                    <div>
+                      <dt>最近一次成功发布</dt>
+                      <dd>
+                        版本 {lastPublished.revisionVersion ?? "—"} · 已发布
+                      </dd>
+                    </div>
+                  )}
+                </dl>
+                {/* Diagnostic identities stay folded: they are for diagnosis,
+                    not the primary content of an operator decision. */}
+                <details className="mf-automation-settings-diagnostics">
+                  <summary>诊断标识</summary>
+                  <dl>
+                    <dt>Active 修订</dt>
+                    <dd>
+                      <code>{target.revisionId}</code>
+                    </dd>
+                    <dt>Active 摘要</dt>
+                    <dd>
+                      <code>{target.digest}</code>
+                    </dd>
+                    {lastPublished !== null && (
+                      <>
+                        <dt>最近一次成功发布的修订</dt>
+                        <dd>
+                          <code>{lastPublished.revisionId}</code>
+                        </dd>
+                      </>
+                    )}
+                  </dl>
+                </details>
+                <p className="mf-dashboard-meta">
+                  配置复检上限:{model.configRecheckSeconds}
+                  秒。复检只更新配置与报告,不会提前领取工作或提前触发调度。
                 </p>
-                <p>配置复检上限:{model.configRecheckSeconds} 秒。</p>
               </section>
+              <aside className="mf-panel mf-automation-settings-help">
+                <h2>关于自动化引擎</h2>
+                <p>
+                  自动化引擎负责按任务的调度计划定时触发扫描、识别和整理流程。
+                  它会根据系统资源情况控制并发任务数量,并监控任务的执行状态。
+                  这些设置是全局性的,所有自动化任务都会受到这些参数的影响。
+                </p>
+                <p className="mf-automation-settings-warning">
+                  注意事项:发布设置与常驻进程真正生效是两个独立结果。发布成功后,
+                  每个常驻进程会在自己的安全边界采用新值,无需重启;停止、心跳过期、
+                  版本不一致或使用命令行/部署覆盖的进程会单独显示真实状态与下一步。
+                </p>
+                <p>
+                  建议值仅作参考,不是额外范围:默认并发 100、失效判定 3600
+                  秒、Worker 2 秒、调度器 5 秒。
+                </p>
+              </aside>
+            </div>
+            <section className="mf-panel" aria-label="调度与时区说明">
+              <h2>调度与时区说明</h2>
+              <div className="mf-automation-settings-grid">
+                <div>
+                  <h3>任务调度方式</h3>
+                  <p>每个自动化任务可以选择以下一种调度方式:</p>
+                  <ul>
+                    <li>固定间隔:按设定的秒数循环执行(intervalSeconds)。</li>
+                    <li>Cron 表达式:使用标准的 Cron 表达式(cron)。</li>
+                    <li>Cron 任务必须指定时区(timezone),用于确定执行时间。</li>
+                  </ul>
+                  <p>
+                    这里的两个轮询间隔只决定常驻进程多久检查一次,不会改变任何任务的间隔、Cron
+                    表达式或时区。
+                  </p>
+                </div>
+                <div>
+                  <h3>配置示例(全局设置)</h3>
+                  <pre className="mf-automation-settings-example">
+                    {`{
+  "automation": {
+    "maximumActiveJobs": ${form["automation.maximumActiveJobs"] ?? "100"},
+    "staleJobAgeSeconds": ${form["automation.staleJobAgeSeconds"] ?? "3600"},
+    "workerPollSeconds": ${form["automation.workerPollSeconds"] ?? "2"},
+    "schedulerPollSeconds": ${form["automation.schedulerPollSeconds"] ?? "5"}
+  }
+}`}
+                  </pre>
+                </div>
+              </div>
             </section>
             {model.consumers.map((consumer) => (
               <ConsumerAdoption key={consumer.service} consumer={consumer} />

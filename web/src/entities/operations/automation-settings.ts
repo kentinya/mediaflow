@@ -341,10 +341,17 @@ export function normalizeAutomationSettings(
   const adoption = optionalRecord(record["adoption"]);
   const rawUnavailable = optionalRecord(record["unavailable"]);
   const reportedAllAdopted = adoption?.["allAdopted"] === true;
+  // The collective claim covers the resident *cadence* consumers only. The
+  // API-local capacity evidence has a different basis (it is read by the
+  // admission/observation boundary itself), so including it would render a real
+  // deployment-wide adoption as "pending" forever.
+  const cadenceConsumers = consumers.filter(
+    (consumer) => consumer.basis !== "api_local",
+  );
   const allAdopted =
     reportedAllAdopted &&
-    consumers.length > 0 &&
-    consumers.every((consumer) => consumer.adopted);
+    cadenceConsumers.length > 0 &&
+    cadenceConsumers.every((consumer) => consumer.adopted);
   return {
     target,
     fields,
@@ -384,10 +391,19 @@ export function normalizeAutomationSettings(
  * browser never truncates with `parseInt`, so a fractional or out-of-range
  * value reaches the backend's real validation instead of being silently
  * coerced into a different published setting.
+ *
+ * `submissionId` names exactly this request. The backend binds it into durable
+ * audit evidence, so an unknown outcome is reconciled against *this*
+ * submission's own publication rather than against equal values another writer
+ * happened to publish.
  */
 export function automationSettingsBody(
   values: Readonly<Record<string, string>>,
-  target: PublishedTargetView,
+  target: Pick<
+    PublishedTargetView,
+    "revisionId" | "revisionVersion" | "digest"
+  >,
+  submissionId?: string | null,
 ): Record<string, unknown> {
   const settings: Record<string, number> = {};
   for (const field of AUTOMATION_ENGINE_FIELDS) {
@@ -400,16 +416,31 @@ export function automationSettingsBody(
     expectedRevisionId: target.revisionId,
     expectedRevisionVersion: target.revisionVersion,
     expectedDigest: target.digest,
+    ...(submissionId === undefined || submissionId === null
+      ? {}
+      : { submissionId }),
   };
 }
 
+export type EngineSubmissionState =
+  "committed" | "superseded" | "not_committed" | "unresolved";
+
+/**
+ * The reconciliation body for one *identified* submission.
+ *
+ * The typed values alone cannot prove anything: they are sent together with
+ * the submission identity so the backend resolves that request's own durable
+ * trail. A submission with no identity is reported as unresolved rather than
+ * being credited with whatever the current target happens to say.
+ */
 export function automationSettingsReconcileBody(
-  values: Readonly<Record<string, string>>,
+  values: Readonly<Record<string, number>>,
+  submissionId: string,
 ): Record<string, unknown> {
   const settings: Record<string, number> = {};
   for (const field of AUTOMATION_ENGINE_FIELDS) {
     const raw = values[field];
-    settings[field] = raw === undefined ? Number.NaN : Number(raw.trim());
+    settings[field] = raw === undefined ? Number.NaN : raw;
   }
-  return { reconcile: true, settings };
+  return { reconcile: true, settings, submissionId };
 }

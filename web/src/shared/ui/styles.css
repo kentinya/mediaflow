@@ -5675,3 +5675,250 @@ tr[aria-selected="true"] {
     min-width: 9rem;
   }
 }
+
+/* V2 Automation engine settings (Task 43.4 RO-6/S1).
+   The form, its help column, the schedule/timezone explanation and the
+   per-consumer adoption readback are one composition: published target, the
+   operator's input and adopted values are visually separate, and diagnostic
+   identifiers stay folded inside a per-instance disclosure. */
+.mf-automation-settings {
+  display: flex;
+  flex-direction: column;
+  gap: 16px;
+}
+
+.mf-automation-settings-grid {
+  display: grid;
+  grid-template-columns: minmax(0, 2fr) minmax(240px, 1fr);
+  gap: 16px;
+  align-items: start;
+}
+
+.mf-panel {
+  background: var(--panel);
+  border: 1px solid var(--line);
+  border-radius: 12px;
+  padding: 18px 20px;
+  display: flex;
+  flex-direction: column;
+  gap: 12px;
+}
+
+.mf-panel-header {
+  display: flex;
+  align-items: flex-start;
+  justify-content: space-between;
+  gap: 16px;
+  flex-wrap: wrap;
+}
+
+.mf-panel h2 {
+  margin: 0;
+  font-size: 1.05rem;
+}
+
+.mf-panel h3 {
+  margin: 0;
+  font-size: 0.95rem;
+}
+
+.mf-panel p {
+  margin: 0;
+}
+
+.mf-form {
+  display: flex;
+  flex-direction: column;
+  gap: 14px;
+}
+
+.mf-form-field {
+  display: flex;
+  flex-direction: column;
+  gap: 4px;
+}
+
+.mf-form-field > label {
+  font-weight: 600;
+}
+
+.mf-form-control {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+}
+
+.mf-form-control input {
+  width: 9rem;
+  padding: 7px 10px;
+  border: 1px solid var(--line);
+  border-radius: 8px;
+  background: var(--panel);
+  color: var(--ink);
+  font: inherit;
+}
+
+.mf-form-control input:disabled {
+  background: var(--bg);
+  color: var(--muted);
+}
+
+.mf-form-unit {
+  color: var(--muted);
+  font-size: 0.9rem;
+}
+
+.mf-field-help {
+  color: var(--muted);
+  font-size: 0.85rem;
+  line-height: 1.5;
+}
+
+.mf-detail-grid {
+  display: grid;
+  grid-template-columns: repeat(auto-fit, minmax(180px, 1fr));
+  gap: 12px;
+  margin: 0;
+}
+
+.mf-detail-grid dt {
+  color: var(--muted);
+  font-size: 0.8rem;
+  margin-bottom: 2px;
+}
+
+.mf-detail-grid dd {
+  margin: 0;
+  overflow-wrap: anywhere;
+}
+
+.mf-automation-settings-target {
+  border-top: 1px solid var(--line);
+  padding-top: 12px;
+}
+
+.mf-automation-settings-help {
+  background: var(--bg);
+}
+
+.mf-automation-settings-warning {
+  border-left: 3px solid var(--warn);
+  padding-left: 10px;
+}
+
+.mf-automation-settings-example {
+  margin: 0;
+  padding: 12px 14px;
+  background: var(--bg);
+  border: 1px solid var(--line);
+  border-radius: 8px;
+  overflow-x: auto;
+  font-size: 0.85rem;
+  line-height: 1.5;
+}
+
+.mf-automation-settings-table {
+  overflow-x: auto;
+}
+
+.mf-table {
+  width: 100%;
+  border-collapse: collapse;
+  white-space: normal;
+}
+
+.mf-table caption {
+  text-align: left;
+  color: var(--muted);
+  font-size: 0.8rem;
+  padding-bottom: 6px;
+}
+
+.mf-table thead th {
+  text-align: left;
+  font-size: 0.8rem;
+  font-weight: 600;
+  color: var(--muted);
+  padding: 8px 10px;
+  border-bottom: 1px solid var(--line);
+  white-space: nowrap;
+}
+
+.mf-table tbody td {
+  padding: 10px;
+  border-bottom: 1px solid var(--line);
+  vertical-align: top;
+  overflow-wrap: anywhere;
+}
+
+.mf-automation-settings-diagnostics summary {
+  cursor: pointer;
+  color: var(--accent);
+  font-size: 0.85rem;
+}
+
+.mf-automation-settings-diagnostics dl {
+  margin: 6px 0 0;
+  font-size: 0.8rem;
+  color: var(--muted);
+}
+
+.mf-automation-settings-diagnostics dt {
+  font-weight: 600;
+}
+
+.mf-automation-settings-diagnostics dd {
+  margin: 0 0 4px;
+  overflow-wrap: anywhere;
+}
+
+@media (max-width: 900px) {
+  .mf-automation-settings-grid {
+    grid-template-columns: minmax(0, 1fr);
+  }
+}
+
+@media (max-width: 480px) {
+  .mf-panel {
+    padding: 14px;
+  }
+
+  .mf-form-control input {
+    width: 100%;
+  }
+
+  .mf-form-control {
+    flex-wrap: wrap;
+  }
+
+  .mf-table thead th,
+  .mf-table tbody td {
+    min-width: 7rem;
+  }
+}
+
+/* The shared form's primary/secondary buttons are scoped to the Automation
+   settings composition so a Save is legible against the panel surface without
+   redesigning any other settings page. */
+.mf-automation-settings .mf-button-primary {
+  background: var(--accent);
+  border-color: var(--accent);
+  color: #ffffff;
+}
+
+.mf-automation-settings .mf-button-primary:not(:disabled):hover,
+.mf-automation-settings .mf-button-primary:not(:disabled):focus {
+  background: #0d55cc;
+  border-color: #0d55cc;
+}
+
+.mf-automation-settings .mf-button-secondary {
+  background: var(--panel);
+  color: var(--ink);
+}
+
+.mf-automation-settings-refresh .mf-button {
+  background: var(--panel);
+  color: var(--muted);
+  padding: 6px 12px;
+}

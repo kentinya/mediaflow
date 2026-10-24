@@ -15123,10 +15123,16 @@ const server = createServer(async (req, res) => {
         });
         sendJson(res, 200, {
           sideEffects: "none",
+          submissionId:
+            typeof document.submissionId === "string"
+              ? document.submissionId
+              : null,
+          state: "unresolved",
           committed: false,
+          committedRevisionId: null,
           evidence: null,
           nextAction:
-            "no matching durable submission was observed; publish deliberately again",
+            "no terminal durable outcome can be proven for this exact submission; do not resubmit",
         });
         return;
       }
@@ -15250,6 +15256,10 @@ const server = createServer(async (req, res) => {
         published: true,
         unchanged: false,
         sideEffects: "configuration_only",
+        submissionId:
+          typeof document.submissionId === "string"
+            ? document.submissionId
+            : null,
         revisionId: "automation-settings-rev-e2e-002",
         revisionVersion: 4,
         publishedValues: settings,

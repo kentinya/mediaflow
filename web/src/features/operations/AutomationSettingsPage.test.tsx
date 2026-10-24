@@ -51,6 +51,9 @@ function recordingFetch(respond: (call: Call) => Response | undefined): {
       if (response !== undefined) {
         return response;
       }
+      if (call.url === "/api/v1/auth/principal") {
+        return jsonResponse({ principal_id: "automation-settings-admin" });
+      }
       return jsonResponse({ error: { code: "not_found" } }, 404);
     }),
   );
@@ -178,6 +181,20 @@ function settingsDocument(overrides: Json = {}): Json {
   };
 }
 
+function otherWriterTarget(): Json {
+  return {
+    revisionId: "revision-published-2",
+    revisionVersion: 8,
+    digest: "digest-published-2",
+    values: {
+      "automation.maximumActiveJobs": 100,
+      "automation.staleJobAgeSeconds": 3600,
+      "automation.workerPollSeconds": 2,
+      "automation.schedulerPollSeconds": 9,
+    },
+  };
+}
+
 function automationInventory(): Json {
   return {
     items: [],
@@ -295,7 +312,7 @@ describe("Automation engine settings surface", () => {
     await userEvent.clear(worker);
     await userEvent.type(worker, "1.5");
     const save = within(panel).getByRole("button", {
-      name: "保存引擎设置",
+      name: "保存设置",
     });
     expect((save as HTMLButtonElement).disabled).toBe(false);
     await userEvent.click(save);
@@ -366,7 +383,7 @@ describe("Automation engine settings surface", () => {
     await userEvent.clear(jobs);
     await userEvent.type(jobs, "60");
     const save = within(panel).getByRole("button", {
-      name: "保存引擎设置",
+      name: "保存设置",
     });
     // Two clicks in the same event loop must not create two publications.
     await Promise.all([userEvent.click(save), userEvent.click(save)]);
@@ -426,7 +443,7 @@ describe("Automation engine settings surface", () => {
     await userEvent.clear(jobs);
     await userEvent.type(jobs, "3.5");
     await userEvent.click(
-      within(panel).getByRole("button", { name: "保存引擎设置" }),
+      within(panel).getByRole("button", { name: "保存设置" }),
     );
 
     await waitFor(() => {
@@ -462,9 +479,12 @@ describe("Automation engine settings surface", () => {
             );
           }
           return jsonResponse({
+            state: "not_committed",
             committed: false,
             sideEffects: "none",
-            nextAction: "publish deliberately again",
+            evidence: null,
+            nextAction:
+              "the submission failed; correct the value and save again",
           });
         }
         return jsonResponse(settingsDocument());
@@ -489,15 +509,15 @@ describe("Automation engine settings surface", () => {
     await userEvent.clear(jobs);
     await userEvent.type(jobs, "50");
     await userEvent.click(
-      within(panel).getByRole("button", { name: "保存引擎设置" }),
+      within(panel).getByRole("button", { name: "保存设置" }),
     );
 
     await waitFor(() => {
-      expect(within(panel).getByText(/提交结果未知/)).toBeTruthy();
+      expect(within(panel).getByText(/上一次保存结果未知/)).toBeTruthy();
     });
     // The save button stays disabled: an ambiguous mutation is never replayed.
     const save = within(panel).getByRole("button", {
-      name: "保存引擎设置",
+      name: "保存设置",
     }) as HTMLButtonElement;
     expect(save.disabled).toBe(true);
     const reconcile = within(panel).getByRole("button", {
@@ -505,7 +525,18 @@ describe("Automation engine settings surface", () => {
     });
     await userEvent.click(reconcile);
     await waitFor(() => {
-      expect(within(panel).getByText(/核对完成/)).toBeTruthy();
+      expect(within(panel).getByText(/核对完成:本次提交没有发布/)).toBeTruthy();
+    });
+    // The retained unknown submission is now resolved, so a deliberate save is
+    // offered again (the operator's input stayed correctable throughout).
+    await waitFor(() => {
+      expect(
+        (
+          within(panel).getByRole("button", {
+            name: "保存设置",
+          }) as HTMLButtonElement
+        ).disabled,
+      ).toBe(false);
     });
   });
 
@@ -641,7 +672,249 @@ describe("Automation engine settings surface", () => {
         "complete first setup and activate a configuration",
       ),
     ).toBeTruthy();
-    expect(screen.queryByRole("button", { name: "保存引擎设置" })).toBeNull();
+    expect(screen.queryByRole("button", { name: "保存设置" })).toBeNull();
+  });
+
+  // This journey deliberately waits for the panel's real 5s polling interval, so
+  // it declares its own timeout rather than shortening the product interval:
+  // the assertion is about the *ordinary* background read, not a manual refresh.
+  it(
+    "refuses a stale save after a background readback changed the target",
+    { timeout: 20_000 },
+    async () => {
+      // B43.4-R2 real journey: the operator edits capacity, another writer changes
+      // the scheduler poll, and the ordinary background GET delivers that newer
+      // publication.  The old input must not be silently re-armed against the new
+      // identity: the Save is refused as stale and the typed value is retained.
+      let reads = 0;
+      let putBody: Json | null = null;
+      recordingFetch((call) => {
+        if (call.url.includes("/operations/automation/settings")) {
+          if (call.method === "PUT") {
+            putBody = JSON.parse(call.body ?? "{}") as Json;
+            return jsonResponse(
+              {
+                error: {
+                  code: "automation_settings_stale",
+                  message: "the published settings changed",
+                  details: {
+                    stage: "compose",
+                    durableState: "active_preserved",
+                    sideEffects: "none",
+                    nextAction: "refresh the published values and save again",
+                  },
+                },
+              },
+              409,
+            );
+          }
+          reads += 1;
+          // The first read is the target the operator edits; every later
+          // background read is the other writer's publication.
+          if (reads === 1) return jsonResponse(settingsDocument());
+          return jsonResponse(
+            settingsDocument({ target: otherWriterTarget() }),
+          );
+        }
+        if (call.url.includes("/operations/automation/task-definitions")) {
+          return jsonResponse(automationInventory());
+        }
+        if (call.url.includes("/operations/automation/metrics")) {
+          return jsonResponse({ available: false });
+        }
+        if (call.url.includes("/operations/automation/records")) {
+          return jsonResponse({ items: [], total: 0 });
+        }
+        return undefined;
+      });
+      await connect("/ui-v2/operations/automation?tab=settings");
+      const panel = await screen.findByRole("region", {
+        name: "自动化引擎设置",
+      });
+      const jobs = within(panel).getByLabelText(
+        /并行任务上限/,
+      ) as HTMLInputElement;
+      await userEvent.clear(jobs);
+      await userEvent.type(jobs, "70");
+      // The ordinary bounded readback (the panel's real 5s polling interval, not
+      // a manual refresh) delivers the other writer's publication.
+      await waitFor(
+        () => {
+          expect(reads).toBeGreaterThan(1);
+        },
+        { timeout: 9_000 },
+      );
+      await waitFor(() => {
+        expect(within(panel).getByText("revision-published-2")).toBeTruthy();
+      });
+      const save = within(panel).getByRole("button", {
+        name: "保存设置",
+      }) as HTMLButtonElement;
+      // The old input is not silently re-armed against the new publication.
+      expect(save.disabled).toBe(true);
+      expect(
+        within(panel).getByText(/已发布的设置在此期间被其他保存改变/),
+      ).toBeTruthy();
+      // The operator's typed value is retained for review.
+      expect(jobs.value).toBe("70");
+      // No PUT was ever sent with the fresh identity attached to the old input.
+      expect(putBody).toBeNull();
+    },
+  );
+
+  it("restores and reconciles an unknown submission after a reload", async () => {
+    // B43.4-R5 real journey: the Save reached the backend but the response was
+    // lost; the page reloaded.  The retained submission must come back, block a
+    // new Save, and be reconciled by its own durable evidence.
+    authStore.setToken(TOKEN);
+    const retained = {
+      submissionId: "submission-reload-1",
+      input: {
+        "automation.maximumActiveJobs": "80",
+        "automation.staleJobAgeSeconds": "3600",
+        "automation.workerPollSeconds": "2",
+        "automation.schedulerPollSeconds": "5",
+      },
+      submittedValues: {
+        "automation.maximumActiveJobs": 80,
+        "automation.staleJobAgeSeconds": 3600,
+        "automation.workerPollSeconds": 2,
+        "automation.schedulerPollSeconds": 5,
+      },
+      baselineRevisionId: TARGET_REVISION,
+      baselineRevisionVersion: 7,
+      baselineDigest: "digest-published-1",
+      submittedAt: "2026-03-16T00:00:01+00:00",
+    };
+    window.sessionStorage.setItem(
+      "mediaflow.operations.automation-settings-submission:v1:automation-settings-admin",
+      JSON.stringify(retained),
+    );
+    let reconcileBody: Json | null = null;
+    recordingFetch((call) => {
+      if (call.url.includes("/operations/automation/settings")) {
+        if (call.method === "PUT") {
+          reconcileBody = JSON.parse(call.body ?? "{}") as Json;
+          return jsonResponse({
+            state: "committed",
+            committed: true,
+            sideEffects: "none",
+            evidence: { revisionId: "revision-published-9" },
+            nextAction: "this exact submission is the current published target",
+          });
+        }
+        return jsonResponse(settingsDocument());
+      }
+      if (call.url.includes("/operations/automation/task-definitions")) {
+        return jsonResponse(automationInventory());
+      }
+      if (call.url.includes("/operations/automation/metrics")) {
+        return jsonResponse({ available: false });
+      }
+      if (call.url.includes("/operations/automation/records")) {
+        return jsonResponse({ items: [], total: 0 });
+      }
+      return undefined;
+    });
+    renderApp("/ui-v2/operations/automation?tab=settings");
+    const panel = await screen.findByRole("region", { name: "自动化引擎设置" });
+    // The unknown submission survived the reload and still blocks a new Save.
+    expect(await within(panel).findByText(/上一次保存结果未知/)).toBeTruthy();
+    const jobs = within(panel).getByLabelText(
+      /并行任务上限/,
+    ) as HTMLInputElement;
+    expect(jobs.value).toBe("80");
+    expect(
+      (
+        within(panel).getByRole("button", {
+          name: "保存设置",
+        }) as HTMLButtonElement
+      ).disabled,
+    ).toBe(true);
+    await userEvent.click(
+      within(panel).getByRole("button", { name: "核实上次提交" }),
+    );
+    await waitFor(() => {
+      expect(within(panel).getByText(/核对完成:本次提交已发布/)).toBeTruthy();
+    });
+    // The reconciliation named the exact retained submission identity.
+    expect(reconcileBody).toMatchObject({
+      reconcile: true,
+      submissionId: "submission-reload-1",
+    });
+    expect(
+      window.sessionStorage.getItem(
+        "mediaflow.operations.automation-settings-submission:v1:automation-settings-admin",
+      ),
+    ).toBeNull();
+  });
+
+  it("states a genuinely adopted deployment as adopted", async () => {
+    // B43.4-R4: the api_local row's adopted flag is always false, so aggregating
+    // it made a real all-adopted deployment render as pending.
+    recordingFetch((call) => {
+      if (call.url.includes("/operations/automation/settings")) {
+        return jsonResponse(
+          settingsDocument({
+            adoption: { consumers: 2, adoptedConsumers: 2, allAdopted: true },
+            consumers: {
+              worker: {
+                service: "worker",
+                field: "automation.workerPollSeconds",
+                publishedValue: 2,
+                adopted: true,
+                instanceCount: 1,
+                instances: [
+                  instance("adopted", { instanceId: "worker-adopted" }),
+                ],
+              },
+              scheduler: {
+                service: "scheduler",
+                field: "automation.schedulerPollSeconds",
+                publishedValue: 5,
+                adopted: true,
+                instanceCount: 1,
+                instances: [
+                  instance("adopted", { instanceId: "scheduler-adopted" }),
+                ],
+              },
+              api: {
+                service: "api",
+                field: "automation.maximumActiveJobs",
+                fields: [
+                  "automation.maximumActiveJobs",
+                  "automation.staleJobAgeSeconds",
+                ],
+                publishedValues: {
+                  "automation.maximumActiveJobs": 100,
+                  "automation.staleJobAgeSeconds": 3600,
+                },
+                adopted: false,
+                basis: "api_local",
+                instanceCount: 0,
+                instances: [],
+              },
+            },
+          }),
+        );
+      }
+      if (call.url.includes("/operations/automation/task-definitions")) {
+        return jsonResponse(automationInventory());
+      }
+      if (call.url.includes("/operations/automation/metrics")) {
+        return jsonResponse({ available: false });
+      }
+      if (call.url.includes("/operations/automation/records")) {
+        return jsonResponse({ items: [], total: 0 });
+      }
+      return undefined;
+    });
+    await connect("/ui-v2/operations/automation?tab=settings");
+    const panel = await screen.findByRole("region", { name: "自动化引擎设置" });
+    expect(
+      within(panel).getByText("全部相关常驻进程都已采用当前发布值"),
+    ).toBeTruthy();
+    expect(within(panel).queryByText(/尚未整体采用/)).toBeNull();
   });
 
   it("keeps the form read-only without manage-permission", async () => {
@@ -669,7 +942,7 @@ describe("Automation engine settings surface", () => {
     ) as HTMLInputElement;
     expect(jobs.disabled).toBe(true);
     const save = within(panel).getByRole("button", {
-      name: "保存引擎设置",
+      name: "保存设置",
     }) as HTMLButtonElement;
     expect(save.disabled).toBe(true);
   });

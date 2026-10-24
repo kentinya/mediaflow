@@ -14113,6 +14113,10 @@ class MediaFlowApi:
             elif not isinstance(value, str):
                 raise ValueError(f"{key} must be a string")
             expected[key] = value
+        # The client-generated submission identity names exactly this request, so
+        # a lost response is reconciled against *its own* durable evidence rather
+        # than against equal values that another writer published.
+        submission_id = document.pop("submissionId", None)
         # An unknown submission is reconciled by reading durable evidence, never
         # by re-submitting the mutation automatically.
         if document.pop("reconcile", False) is True:
@@ -14120,40 +14124,73 @@ class MediaFlowApi:
             result = service.reconcile(
                 payload,
                 actor=principal.principal_id,
+                submission_id=submission_id,
             )
             return self._response(start_response, 200, result)
-        try:
-            result = service.save(
-                document,
-                actor=principal.principal_id,
-                expected_revision_id=expected.get("expectedRevisionId"),  # type: ignore[arg-type]
-                expected_version=expected.get("expectedRevisionVersion"),  # type: ignore[arg-type]
-                expected_digest=expected.get("expectedDigest"),  # type: ignore[arg-type]
-            )
-        except ConfigurationVersionConflict:
-            raise
-        except AutomationSettingsPublicationError as error:
-            self._safe_audit(
-                environ,
-                None,
-                principal,
-                method,
-                "/api/v1/operations/automation/settings",
-                "automation-engine-settings",
-                "conflict" if error.status < 500 else "error",
-                error.status,
-            )
-            return self._error(
-                start_response,
-                error.status,
-                error.code,
-                str(error),
-                details=error.details,
-            )
-        if result.get("published") is True:
-            # Publish the newly prepared runtime binding exactly like every other
-            # checked Save, so this API process then reads the new Active.
-            self._refresh_configuration_binding()
+        prepared: list[_ApiRuntimeBinding] = []
+        with self._runtime_binding_lock:
+            # Pin this process to the same save-time Active the predecessor was
+            # observed from, exactly like every other checked Save.
+            self._refresh_configuration_binding_locked()
+            try:
+                result = service.save(
+                    document,
+                    actor=principal.principal_id,
+                    expected_revision_id=expected.get("expectedRevisionId"),  # type: ignore[arg-type]
+                    expected_version=expected.get("expectedRevisionVersion"),  # type: ignore[arg-type]
+                    expected_digest=expected.get("expectedDigest"),  # type: ignore[arg-type]
+                    submission_id=submission_id,  # type: ignore[arg-type]
+                    before_publish=lambda revision: prepared.append(
+                        self._prepare_runtime_binding_for_revision(revision)
+                    ),
+                )
+            except (ConfigurationActivationConflict, ConfigurationVersionConflict):
+                # The repository fences concurrency authoritatively: consume the
+                # winning Active before returning the stale/conflict result.
+                self._refresh_configuration_binding_locked()
+                raise
+            except AutomationSettingsPublicationError as error:
+                self._safe_audit(
+                    environ,
+                    None,
+                    principal,
+                    method,
+                    "/api/v1/operations/automation/settings",
+                    "automation-engine-settings",
+                    "conflict" if error.status < 500 else "error",
+                    error.status,
+                )
+                return self._error(
+                    start_response,
+                    error.status,
+                    error.code,
+                    str(error),
+                    details=error.details,
+                )
+            if result.get("published") is True:
+                if len(prepared) != 1:
+                    # Publication prepared no binding: this process must not claim
+                    # it now serves the new Active.
+                    self._refresh_configuration_binding_locked()
+                    raise AutomationSettingsPublicationError(
+                        "automation_settings_runtime_failed",
+                        "the successor runtime binding was not prepared; the previous Active "
+                        "remains in use",
+                        status=503,
+                        stage="prepare",
+                        durable_state="active_preserved",
+                        side_effects=(
+                            "successor_draft_and_read_only_evidence_retained; "
+                            "Active pointer unchanged"
+                        ),
+                        next_action=(
+                            "correct the runtime configuration, refresh the published values and "
+                            "save again"
+                        ),
+                    )
+                # Publish the newly prepared runtime binding exactly like every
+                # other checked Save, so this API process then reads the new Active.
+                self._publish_runtime_binding(prepared[0])
         result["sideEffects"] = result.get("sideEffects", "none")
         result["readback"] = service.read()
         return self._response(start_response, 201 if result.get("published") else 200, result)

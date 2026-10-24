@@ -32,6 +32,7 @@ from mediaflow.application.configuration_snapshot import (
 )
 from mediaflow.domain.automation_settings import (
     CAPACITY_FIELD_PATHS,
+    COMMITTED_SUBMISSION_STATES,
     CONFIG_RECHECK_SECONDS,
     CONSUMER_POLLING_FIELDS,
     ENGINE_FIELD_PATHS,
@@ -39,6 +40,7 @@ from mediaflow.domain.automation_settings import (
     NON_ADOPTED_STATUSES,
     ConsumerAdoptionStatus,
     ConsumerRegistrationState,
+    EngineSubmissionState,
     PublishedEngineTarget,
     ResidentSettingsEvidence,
     adoption_summary,
@@ -66,7 +68,36 @@ RELEVANT_CONSUMERS: tuple[str, ...] = ("worker", "scheduler")
 #: appears — as unreported — instead of disappearing from the answer.
 ADOPTION_EVIDENCE_LIMIT = 100
 
+#: One submission identity is a client-generated, non-secret token.  It is
+#: bounded and opaque so it can be recorded in durable audit evidence and read
+#: back after a reload without ever becoming an authority.
+SUBMISSION_ID_MAX_LENGTH = 64
+
+
+def normalize_submission_id(value: object) -> str | None:
+    """Return a bounded opaque submission identity, or ``None`` when unusable.
+
+    The identity is deliberately required to look like a random token rather
+    than free text: it is persisted in bounded audit evidence and echoed to the
+    operator for reconciliation, so it must not be able to carry a secret, a
+    path or a bearer credential.
+    """
+
+    if not isinstance(value, str):
+        return None
+    trimmed = value.strip()
+    if not trimmed or len(trimmed) > SUBMISSION_ID_MAX_LENGTH:
+        return None
+    if not all(character.isalnum() or character in "-_.:" for character in trimmed):
+        return None
+    return trimmed
+
+
 SETTINGS_PUBLICATION_ACTION = "automation_engine_settings_publish"
+
+
+class _RuntimePreparationFailure(Exception):
+    """Marker: the successor's runtime binding could not be constructed."""
 
 
 class AutomationSettingsPublicationError(RuntimeError):
@@ -242,17 +273,22 @@ class AutomationSettingsService:
         expected_revision_id: str | None = None,
         expected_version: int | None = None,
         expected_digest: str | None = None,
+        submission_id: str | None = None,
+        before_publish: Callable[[ManagedConfigurationRevision], object] | None = None,
     ) -> dict[str, object]:
         """Publish exactly these four fields from the checked Active.
 
         The command is deliberately narrow: it validates the submitted values,
         creates a successor Draft from the observed Active, applies only the four
-        fields, validates the whole candidate, prepares the runtime binding, and
-        lets the existing activation boundary publish it atomically.  A no-op
-        submission publishes nothing and reports the unchanged target.
+        fields, validates the whole candidate, prepares the runtime binding and
+        only then lets the existing activation boundary publish it atomically.  A
+        preparation failure therefore cannot leave the persisted Active ahead of
+        the process binding.  A no-op submission publishes nothing and reports
+        the unchanged target.
         """
 
         normalized = normalize_engine_setting_edits(payload)
+        identity = normalize_submission_id(submission_id)
         target = self._published_target(required=True)
         assert target is not None  # narrow type for the reader
         current_values = target.values.as_field_map()
@@ -263,6 +299,7 @@ class AutomationSettingsService:
                 "published": False,
                 "unchanged": True,
                 "sideEffects": "none",
+                "submissionId": identity,
                 "target": target.as_document(),
                 "nextAction": "none; the submitted values already match the published target",
             }
@@ -322,6 +359,10 @@ class AutomationSettingsService:
                     "routeObjectId": None,
                     "sourceObjectId": None,
                     "publishedFromRevisionId": target.revision_id,
+                    # The submission identity is the reconciliation fence: only
+                    # this request's own revision may certify it, so an older
+                    # equal submission or a failed Draft never does.
+                    "submissionId": identity,
                     "before": before,
                     "candidate": {path: normalized[path] for path in ENGINE_FIELD_PATHS},
                 },
@@ -339,11 +380,14 @@ class AutomationSettingsService:
 
         self._assert_focused_change(target, edited)
         validated = self._validate(edited)
-        published = self._activate(validated, actor=actor)
+        published = self._activate(
+            validated, actor=actor, before_publish=before_publish, submission_id=identity
+        )
         return {
             "published": True,
             "unchanged": False,
             "sideEffects": "configuration_only",
+            "submissionId": identity,
             "revisionId": published.revision_id,
             "revisionVersion": (published.revision_sequence or published.version),
             "digest": published.digest,
@@ -425,14 +469,56 @@ class AutomationSettingsService:
         return validated
 
     def _activate(
-        self, validated: ManagedConfigurationRevision, *, actor: str
+        self,
+        validated: ManagedConfigurationRevision,
+        *,
+        actor: str,
+        before_publish: Callable[[ManagedConfigurationRevision], object] | None = None,
+        submission_id: str | None = None,
     ) -> ManagedConfigurationRevision:
+        """Publish the validated successor *after* the caller prepared runtime.
+
+        ``before_publish`` runs while the previous Active pointer is still
+        authoritative, exactly like every other checked Save.  A preparation
+        fault therefore raises before publication and leaves both the persisted
+        Active and the process binding untouched.
+        """
+
+        failure: list[BaseException] = []
+
+        def prepare(revision: ManagedConfigurationRevision) -> object:
+            try:
+                return before_publish(revision) if before_publish is not None else None
+            except BaseException as error:  # noqa: BLE001 - re-raised as a marker below
+                failure.append(error)
+                raise _RuntimePreparationFailure from error
+
         try:
             return self._config.activate(
                 validated.revision_id,
                 expected_version=validated.version,
                 actor=actor,
+                before_publish=prepare if before_publish is not None else None,
             )
+        except _RuntimePreparationFailure as error:
+            # The runtime binding could not be constructed for the successor, so
+            # the pointer was never advanced: Active and the process binding are
+            # both unchanged and the operator gets a bounded preparation stage.
+            raise AutomationSettingsPublicationError(
+                "automation_settings_runtime_failed",
+                "the successor configuration could not be bound to the runtime; the previous "
+                "Active remains in use",
+                status=503,
+                stage="prepare",
+                durable_state="active_preserved",
+                side_effects=(
+                    "successor_draft_and_read_only_evidence_retained; Active pointer unchanged"
+                ),
+                revision_id=validated.revision_id,
+                next_action=(
+                    "correct the runtime configuration, refresh the published values and save again"
+                ),
+            ) from (failure[0] if failure else error)
         except Exception as error:
             from mediaflow.domain.configuration_management import (
                 ConfigurationActivationConflict,
@@ -459,54 +545,149 @@ class AutomationSettingsService:
         payload: object,
         *,
         actor: str,
-        submitted_revision_id: str | None = None,
+        submission_id: str | None = None,
     ) -> dict[str, object]:
-        """Read back whether one focused submission actually published.
+        """Resolve one *identified* focused submission from durable evidence.
 
-        Comparing four equal values alone proves nothing: the current Active may
-        already have carried them.  A submission is only reported as committed
-        when durable audit evidence for this actor's focused edit records the
-        candidate *and* the current Active still carries it.
+        Four equal values prove nothing: the current Active may already have
+        carried them, and an older equal submission or a failed Draft is not a
+        publication of this request.  The reconciliation therefore follows this
+        request's own durable trail:
+
+        * the ``draft_edit`` audit that carries this submission identity names the
+          revision this request edited;
+        * that revision's own activation evidence decides whether *it* published;
+        * the persisted ``validation_failed`` audit decides a terminal rejection.
+
+        A submission whose own evidence cannot be located or read completely is
+        reported as ``unresolved`` — that state keeps the resubmission block in
+        place, because an absent audit while publication is still possible is not
+        permission to submit again.
         """
 
         normalized = normalize_engine_setting_edits(payload)
+        identity = normalize_submission_id(submission_id)
         target = self._published_target(required=False)
         current = target.values.as_field_map() if target is not None else {}
-        matches = bool(current) and all(
+        matches_current = bool(current) and all(
             current.get(path) == normalized[path] for path in ENGINE_FIELD_PATHS
         )
-        evidence = self._focused_edit_evidence(actor, normalized)
-        committed = bool(matches and evidence)
-        if committed:
-            next_action = "the submission is published; no further retry is needed"
-        elif evidence and not matches:
+        if identity is None:
+            # Without the submission identity this read can only describe the
+            # current publication.  It is never reported as this request's
+            # outcome, so the caller must not treat it as a resubmission licence.
+            return {
+                "sideEffects": "none",
+                "submissionId": None,
+                "state": EngineSubmissionState.UNRESOLVED.value,
+                "committed": False,
+                "committedRevisionId": None,
+                "currentValuesMatchSubmission": matches_current,
+                "submittedValues": {path: normalized[path] for path in ENGINE_FIELD_PATHS},
+                "currentValues": current,
+                "evidence": None,
+                "target": target.as_document() if target is not None else None,
+                "nextAction": (
+                    "this submission identity is unavailable, so its outcome cannot be proven; "
+                    "inspect the published target and publish deliberately again only if it does "
+                    "not carry your values"
+                ),
+            }
+        evidence = self._submission_evidence(actor, identity, normalized)
+        state = evidence.pop("state")
+        committed = state in COMMITTED_SUBMISSION_STATES
+        if state == EngineSubmissionState.COMMITTED.value:
             next_action = (
-                "a matching submission was recorded but the current Active does not carry it; "
-                "refresh the published values before deciding"
+                "this exact submission is the current published target; no further retry is needed"
+            )
+        elif state == EngineSubmissionState.SUPERSEDED.value:
+            next_action = (
+                "this exact submission published and a later publication has replaced it; "
+                "review the current target before saving your values again"
+            )
+        elif state == EngineSubmissionState.NOT_COMMITTED.value:
+            next_action = (
+                "this exact submission terminated without publishing; correct the reported "
+                "condition and save deliberately again"
             )
         else:
-            next_action = "no matching durable submission was observed; publish deliberately again"
+            next_action = (
+                "no terminal durable outcome can be proven for this exact submission; do not "
+                "resubmit until the published target and its audit evidence are readable"
+            )
         return {
             "sideEffects": "none",
+            "submissionId": identity,
+            "state": state,
+            "committed": committed,
+            # True only for the committed/superseded distinction: a superseded
+            # submission published but is not what runtime consumes today.
+            "currentValuesMatchSubmission": matches_current,
+            "committedRevisionId": evidence.get("revisionId") if committed else None,
             "submittedValues": {path: normalized[path] for path in ENGINE_FIELD_PATHS},
             "currentValues": current,
-            "committed": committed,
-            "evidence": evidence,
+            "evidence": evidence or None,
             "target": target.as_document() if target is not None else None,
             "nextAction": next_action,
         }
 
-    def _focused_edit_evidence(
-        self, actor: str, normalized: Mapping[str, Any]
-    ) -> dict[str, object] | None:
+    def _submission_evidence(
+        self, actor: str, identity: str, normalized: Mapping[str, Any]
+    ) -> dict[str, object]:
+        """Walk this submission's own durable trail, newest first.
+
+        The walk is targeted at the audit ledger through its monotonic
+        ``sequence`` cursor rather than a bounded recent window, so a submission
+        made long before later activity is still located.  Only an audit that
+        carries *this* submission identity for *this* actor counts; a `draft_edit`
+        with equal values but another (or no) identity is a different request and
+        can never certify this one.
+        """
+
         repository = self._config.repository
-        reader = getattr(repository, "list_recent_command_audits", None)
-        if not callable(reader):
-            return None
-        try:
-            audits = reader(("draft_edit",), limit=200)
-        except Exception:
-            return None
+        targeted = getattr(repository, "list_command_audits_before", None)
+        latest = getattr(repository, "latest_command_audit_sequence", None)
+        recent = getattr(repository, "list_recent_command_audits", None)
+        audits: list[Any] = []
+        complete = False
+        if callable(targeted) and callable(latest):
+            marker = None
+            try:
+                marker = int(latest()) + 1
+                while True:
+                    page = targeted(("draft_edit",), before_sequence=marker, limit=200)
+                    audits.extend(page)
+                    if len(page) < 200:
+                        complete = True
+                        break
+                    sequences = [
+                        int(item.sequence) for item in page if getattr(item, "sequence", None)
+                    ]
+                    if not sequences:
+                        break
+                    next_marker = min(sequences)
+                    if next_marker >= marker:
+                        break
+                    marker = next_marker
+            except Exception:
+                audits = []
+                complete = False
+        elif callable(recent):
+            try:
+                audits = list(recent(("draft_edit",), limit=500))
+            except Exception:
+                audits = []
+        if not audits:
+            # Nothing durable names this submission.  If the ledger read was
+            # incomplete, publication may still be in flight or recorded later,
+            # so this stays unresolved; only a complete walk with no evidence at
+            # all is the same unresolved answer for a different reason, and the
+            # next action states it.
+            return {
+                "state": EngineSubmissionState.UNRESOLVED.value,
+                "evidenceComplete": complete,
+                "identityMatched": False,
+            }
         for audit in audits:
             if audit.actor != actor:
                 continue
@@ -515,16 +696,70 @@ class AutomationSettingsService:
                 continue
             if change.get("objectId") != "automation_engine_settings":
                 continue
+            if change.get("submissionId") != identity:
+                continue
             candidate = change.get("candidate")
             if not isinstance(candidate, dict):
                 continue
-            if all(candidate.get(path) == normalized[path] for path in ENGINE_FIELD_PATHS):
+            if not all(candidate.get(path) == normalized[path] for path in ENGINE_FIELD_PATHS):
+                # The same identity submitted different values: the durable
+                # records contradict each other, so nothing is certified.
                 return {
+                    "state": EngineSubmissionState.UNRESOLVED.value,
+                    "evidenceComplete": complete,
+                    "identityMatched": True,
                     "auditId": audit.audit_id,
                     "revisionId": audit.object_id,
                     "occurredAt": audit.occurred_at.isoformat(),
+                    "durableState": "submission_values_contradict_evidence",
                 }
-        return None
+            return self._revision_submission_state(audit, complete)
+        return {
+            "state": EngineSubmissionState.UNRESOLVED.value,
+            "evidenceComplete": complete,
+            "identityMatched": False,
+        }
+
+    def _revision_submission_state(self, audit: Any, complete: bool) -> dict[str, object]:
+        """Decide one submission's outcome from its own revision's evidence."""
+
+        revision_id = str(audit.object_id)
+        evidence: dict[str, object] = {
+            "auditId": audit.audit_id,
+            "revisionId": revision_id,
+            "occurredAt": audit.occurred_at.isoformat(),
+            "evidenceComplete": complete,
+            "identityMatched": True,
+        }
+        try:
+            revision = self._config.require(revision_id)
+        except LookupError:
+            # The audit names a revision durable authority no longer holds: its
+            # outcome cannot be proven, so this stays unresolved.
+            evidence["durableState"] = "submission_revision_unreadable"
+            return {**evidence, "state": EngineSubmissionState.UNRESOLVED.value}
+        except Exception:
+            evidence["durableState"] = "submission_revision_unreadable"
+            return {**evidence, "state": EngineSubmissionState.UNRESOLVED.value}
+        evidence["revisionStatus"] = revision.status.value
+        if revision.status.value == "active":
+            return {**evidence, "state": EngineSubmissionState.COMMITTED.value}
+        if revision.status.value == "superseded":
+            # Published, but a later immutable Active replaced it.  The
+            # revision is still readable evidence that this exact submission did
+            # publish, so it is not a rejection.
+            return {**evidence, "state": EngineSubmissionState.SUPERSEDED.value}
+        if revision.status.value == "draft" and revision.validation_errors:
+            # A terminal validation rejection: this revision cannot publish, and
+            # a later equal publication by another writer is not this request's
+            # success.
+            evidence["durableState"] = "submission_validation_failed"
+            evidence["validationErrors"] = [
+                str(item)[:240] for item in revision.validation_errors[:3]
+            ]
+            return {**evidence, "state": EngineSubmissionState.NOT_COMMITTED.value}
+        evidence["durableState"] = "submission_revision_unpublished"
+        return {**evidence, "state": EngineSubmissionState.UNRESOLVED.value}
 
     # ------------------------------------------------------------------
     # Consumer adoption readback

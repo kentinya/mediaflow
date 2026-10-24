@@ -22,12 +22,14 @@ from __future__ import annotations
 
 import math
 import secrets
+import time
 from collections.abc import Callable
 from dataclasses import dataclass
 from typing import TextIO
 
 from mediaflow.application.resident_services import ResidentServiceService
 from mediaflow.domain.automation_settings import (
+    ADOPTION_REPORT_REFRESH_SECONDS,
     CONFIG_RECHECK_SECONDS,
     ResidentCadence,
 )
@@ -259,6 +261,7 @@ class ResidentLoop:
         describe: Callable[[BaseException], tuple[str, str]] | None = None,
         cadence_resolver: Callable[[], ResidentCadence | None] | None = None,
         adoption_reporter: Callable[[ResidentCadence], object] | None = None,
+        monotonic: Callable[[], float] | None = None,
     ) -> None:
         if poll_seconds <= 0 or not math.isfinite(float(poll_seconds)):
             raise ValueError("resident poll interval must be a positive finite number")
@@ -283,6 +286,17 @@ class ResidentLoop:
         self._last_resolved_cadence: ResidentCadence | None = None
         #: A bounded, secret-free reason the last adoption attempt failed.
         self._adoption_blocker: tuple[str, str] | None = None
+        #: Wall/monotonic clock used for cadence scheduling and report refresh.
+        #: It is injectable so a controlled-clock test can prove the wait
+        #: deadlines without sleeping in real time.
+        self._monotonic = monotonic or time.monotonic
+        #: When this process last *successfully* wrote its own adoption report.
+        #: ``None`` means nothing has been reported yet, so the first successful
+        #: adoption always reports.
+        self._last_report_at: float | None = None
+        #: How many times a report refresh was attempted but failed.  It is only
+        #: diagnostic; the retry itself happens on the next safe boundary.
+        self.adoption_report_failures = 0
 
     @property
     def poll_seconds(self) -> float:
@@ -299,22 +313,39 @@ class ResidentLoop:
         return self._adoption_blocker
 
     def effective_poll_deadline(self) -> float:
-        """The idle wait bound: the selected cadence, capped by the recheck.
+        """The bounded *configuration/heartbeat* wake interval.
 
-        A previously long wait must still re-observe a new publication promptly,
-        so the wait never exceeds the documented configuration recheck bound and
-        never depends on work arriving.
+        This is the bound for re-observing configuration, refreshing the
+        heartbeat and refreshing this process's own adoption report.  It is not
+        the business poll: a wake never claims work, ticks the Scheduler or
+        emits an occurrence, so a previously long cadence still observes a new
+        publication promptly without turning a recheck into an early poll.
         """
 
         return min(self._poll_seconds, CONFIG_RECHECK_SECONDS)
 
+    def business_poll_deadline(self) -> float:
+        """How long the *business* cadence waits from now.
+
+        The value this process actually selected (published or overridden) is
+        preserved here; only the recheck wakes in between are bounded.
+        """
+
+        return self._poll_seconds
+
     def adopt_cadence(self) -> bool:
         """Install the currently published cadence at a safe loop boundary.
 
-        Called before each step and before each idle wait.  The effective cadence
-        is only acknowledged (and only reported) after it is actually installed,
-        and an explicitly overridden process keeps its own cadence while
-        reporting the override truthfully.
+        Called before each step and on each bounded recheck wake.  The effective
+        cadence is only acknowledged after it is actually installed, and an
+        explicitly overridden process keeps its own cadence while reporting the
+        override truthfully.
+
+        The report is written by this process only, and only after the cadence
+        is installed.  An unchanged cadence is re-reported on a bounded cadence
+        so a live consumer never decays into "stale" merely because nothing
+        changed, and a failed write is retried at the next safe boundary instead
+        of being silently remembered as adopted.
         """
 
         if self._cadence_resolver is None:
@@ -341,20 +372,34 @@ class ResidentLoop:
         self._poll_seconds = float(candidate.poll_seconds)
         self._adoption_blocker = None
         previous = self._applied_cadence
-        self._applied_cadence = candidate
-        if self._adoption_reporter is not None and (
+        changed = (
             previous is None
             or previous.published_revision_digest != candidate.published_revision_digest
             or previous.poll_seconds != candidate.poll_seconds
             or previous.override_source != candidate.override_source
-        ):
-            try:
-                self._adoption_reporter(candidate)
-            except Exception:
-                # Reporting uses the same database as work.  A failed report
-                # keeps the loop alive and leaves the consumer visibly
-                # "unreported" instead of claiming an adoption it cannot prove.
-                return False
+        )
+        if self._adoption_reporter is None:
+            self._applied_cadence = candidate
+            return True
+        now = self._monotonic()
+        due = (
+            self._last_report_at is None
+            or (now - self._last_report_at) >= ADOPTION_REPORT_REFRESH_SECONDS
+        )
+        if not changed and not due:
+            return True
+        try:
+            self._adoption_reporter(candidate)
+        except Exception:
+            # Reporting uses the same database as work.  A failed report keeps
+            # the loop alive, is retried on the next safe boundary, and does not
+            # acknowledge the cadence: the consumer stays visibly unreported
+            # rather than claiming an adoption it could not prove.
+            self.adoption_report_failures += 1
+            return False
+        self.adoption_report_failures = 0
+        self._applied_cadence = candidate
+        self._last_report_at = now
         return True
 
     def note(self, reason: str, detail: str = "") -> None:
@@ -384,8 +429,32 @@ class ResidentLoop:
         # Adopt at the very first boundary so a process that started before the
         # first publication picks it up as soon as it exists.
         self.adopt_cadence()
+        # The business cadence deadline is kept across bounded configuration
+        # wakes: a recheck must never become an early claim/tick/emission.
+        next_business_poll = self._monotonic()
         try:
             while not stop_requested():
+                now = self._monotonic()
+                if now < next_business_poll:
+                    # Configuration/heartbeat/report wake only.  No work is
+                    # claimed, no schedule is ticked and nothing is emitted, so
+                    # the selected business cadence is preserved exactly.
+                    self.adopt_cadence()
+                    self._maybe_heartbeat()
+                    remaining = next_business_poll - self._monotonic()
+                    if remaining <= 0:
+                        continue
+                    # Adopting a *shorter* cadence during the wait shortens the
+                    # pending business deadline; a longer one never extends a
+                    # wait that was already scheduled.
+                    next_business_poll = min(
+                        next_business_poll, self._monotonic() + self._poll_seconds
+                    )
+                    remaining = next_business_poll - self._monotonic()
+                    if remaining <= 0:
+                        continue
+                    sleep(max(0.0, min(self.effective_poll_deadline(), remaining)))
+                    continue
                 worked = 0
                 try:
                     schema = self._runtime.service._repository.schema_version
@@ -404,12 +473,12 @@ class ResidentLoop:
                     self.note(reason, detail)
                 processed += worked
                 self._maybe_heartbeat()
-                if not worked:
-                    # Recheck configuration during the idle wait on a documented
-                    # bound, so a previously long cadence still observes a new
-                    # publication without work arriving.
-                    self.adopt_cadence()
-                    sleep(self.effective_poll_deadline())
+                if worked:
+                    # The existing immediate-drain rule: real processed work is
+                    # followed by another step without waiting a full cadence.
+                    next_business_poll = self._monotonic()
+                else:
+                    next_business_poll = self._monotonic() + self.business_poll_deadline()
         finally:
             try:
                 self._runtime.service.stop(self._instance_id)
@@ -442,9 +511,7 @@ class ResidentLoop:
         database, and a slow poll must still keep the registration fresh.
         """
 
-        import time
-
-        now = time.monotonic()
+        now = self._monotonic()
         if now - self._last_heartbeat < self._heartbeat_interval_seconds:
             return
         self._last_heartbeat = now

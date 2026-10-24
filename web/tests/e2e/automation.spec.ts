@@ -226,7 +226,7 @@ test("the settings form publishes exactly the four fields once", async ({
 
   const worker = panel.getByLabel(/Worker 轮询间隔/);
   await worker.fill("1.5");
-  await panel.getByRole("button", { name: "保存引擎设置" }).click();
+  await panel.getByRole("button", { name: "保存设置" }).click();
   await expect(panel.getByText(/已发布新的目标值/)).toBeVisible();
 
   const evidence = await automationEvidence(page);
@@ -247,7 +247,7 @@ test("a fractional integer is sent as-is and rejected without coercion", async (
   const panel = page.getByRole("region", { name: "自动化引擎设置" });
   const jobs = panel.getByLabel(/并行任务上限/);
   await jobs.fill("3.5");
-  await panel.getByRole("button", { name: "保存引擎设置" }).click();
+  await panel.getByRole("button", { name: "保存设置" }).click();
   // The backend's real rejection reaches the operator and the input stays
   // correctable for the next explicit attempt.
   await expect(

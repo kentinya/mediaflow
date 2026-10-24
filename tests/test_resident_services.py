@@ -373,11 +373,13 @@ class ResidentLoopTests(ResidentDeploymentFixture):
             stdout=log,
             step=step,
         )
-        ticks = {"count": 0}
 
         def stop() -> bool:
-            ticks["count"] += 1
-            return ticks["count"] > 8
+            # Stop after the two faults, the one real unit of work and one idle
+            # iteration.  The loop now distinguishes its bounded configuration
+            # rechecks from its business poll, so iterations are no longer a
+            # one-to-one proxy for steps.
+            return attempts["count"] >= 4
 
         processed = loop.run(stop, lambda seconds: slept.append(seconds))
         # The two recoverable faults were survived, and the one real unit of

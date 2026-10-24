@@ -676,11 +676,28 @@ PUT /api/v1/operations/automation/settings   MANAGE_CONFIGURATION
   → whole-candidate validation → runtime preparation → atomic activation
 
 resident Worker/Scheduler loop
-  → at each safe loop boundary and before each idle wait: resolve current
+  → at each safe loop boundary and on each bounded recheck wake: resolve current
     managed Active → install effective cadence → only then write own report
-  → idle wait bounded by min(selected cadence, 5s) configuration recheck
+  → configuration/heartbeat/report wakes bounded by min(cadence, 5s); the
+    business claim/tick deadline is preserved across them, so a recheck never
+    claims work or ticks the Scheduler early
+  → an unchanged live consumer re-reports on the bounded refresh; a failed
+    report write is retried and is never acknowledged as adopted
   → override (CLI/deployment) keeps precedence and is reported as an override
 ```
+
+Preparation happens **before** publication: the same `before_publish` callback
+every other checked Save uses constructs the successor runtime binding while the
+previous Active pointer is still authoritative, so a runtime-construction fault
+leaves both the persisted Active and the process binding unchanged and reports a
+bounded `prepare` stage.
+
+A Save carries a client-generated submission identity. Unknown outcomes are
+reconciled against that exact submission's own durable revision and activation
+evidence (`committed` / `superseded` / `not_committed` / `unresolved`); equal
+values, another writer's equal publication, or a still-Draft failed revision can
+never certify it. Only a terminal proof clears the retained resubmission block,
+which survives reload principal-scoped without storing a bearer token.
 
 `SystemSettingsService` retains the generic Draft editor and its
 `/api/v1/system/settings` semantics unchanged; the focused command is a distinct

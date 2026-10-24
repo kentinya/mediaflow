@@ -499,6 +499,11 @@ describe("V2 configuration route", () => {
           409,
         );
       }
+      if (input.endsWith("/auth/principal")) {
+        // The embedded panel scopes its retained unknown submission by the
+        // authenticated principal; that read is not a configuration status read.
+        return response({ principal_id: "configuration-admin" });
+      }
       if (input.endsWith("/activate")) {
         activationAttempted = true;
         throw new TypeError(

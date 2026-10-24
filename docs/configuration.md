@@ -172,8 +172,17 @@ Publication and adoption are reported as separate outcomes. Each live resident i
 its own adopted values, the publication identity it adopted, freshness and any explicit
 CLI/deployment override. Unreported, stale, stopped, mixed-version and overridden instances never
 form a collective "deployed" claim, and the two capacity/observation fields carry an API-local
-basis instead of being attributed to a resident process. An unknown Save outcome must be reconciled
-from durable audit evidence before any deliberate resubmission; it is never retried automatically.
+basis instead of being attributed to a resident process.
+
+A healthy consumer whose value did not change re-writes its own report on the bounded refresh, so a
+live-but-idle process is not reported as stale merely because nothing changed; a failed report write
+is retried at the next boundary and never acknowledged as adopted. An unknown Save outcome is
+resolved by the *submission identity* the browser sends with each Save: the reconciled answer is
+`committed`, `superseded`, `not_committed` or `unresolved`, derived from that request's own durable
+revision and activation evidence. Equal values alone — or another writer publishing the same values —
+never certify a submission that did not publish, and only a terminal proof clears the resubmission
+block. The retained submission context (identity, submitted values and the publication identity the
+form was edited against) survives a reload, is principal-scoped, and never stores a bearer token.
 
 ## Storage configuration model
 
@@ -347,8 +356,8 @@ See [Roadmap](roadmap.md), [Progress](progress.md) and [Deployment](deployment.m
 | `workflowRetry` | `enabled` defaults false; `baseDelaySeconds`/`maxDelaySeconds` bound backoff. Read-only retry covers normalized timeout/connection/rate-limit/temporary-provider failures before planning/execution. `maxAttempts` 1–10, `maxDelaySeconds` ≤300, `jitterRatio` 0–1; never retries mutation/uncertain effects or grants execute authority. |
 | `automation.maximumActiveJobs` | Default 100, range 1–10000; atomic shared Pending+Running backlog bound, not worker parallelism. Terminal Jobs release capacity. Lowering it blocks new excess admissions and preserves already admitted work. Published through the four-field `自动化 → 全局设置` Save; the API's admission boundary reads the current Active. |
 | `automation.staleJobAgeSeconds` | Default 3600, range 60–604800; no-update diagnostic, not total-runtime timeout or death/replay authority. Stale lists are bounded 100; inspect Worker and effects before permitted explicit recovery. Published through the same focused Save and read by the observation boundary. |
-| `automation.workerPollSeconds` | Finite positive seconds; the real resident Worker loop cadence, independent of heartbeat/lease and of any Job's media pin. A running Worker adopts a new value at its next safe loop boundary without a restart; idle waits are rechecked at most every 5s so a previously long value cannot defer adoption. `--poll-seconds`/deployment overrides keep precedence and are reported as overrides. |
-| `automation.schedulerPollSeconds` | Finite positive seconds; the real resident Scheduler due-check cadence. It never changes any definition's interval, Cron expression or timezone, and adopts without restart under the same boundary/recheck rules and override precedence. |
+| `automation.workerPollSeconds` | Finite positive seconds; the real resident Worker loop cadence, independent of heartbeat/lease and of any Job's media pin. A running Worker adopts a new value at its next safe loop boundary without a restart. Configuration/heartbeat/report wakes are bounded to at most 5s so a previously long value cannot defer adoption, while the business claim cadence itself stays at the selected value — a recheck never claims early. `--poll-seconds`/deployment overrides keep precedence and are reported as overrides. |
+| `automation.schedulerPollSeconds` | Finite positive seconds; the real resident Scheduler due-check cadence. It never changes any definition's interval, Cron expression or timezone, and adopts without restart under the same boundary/recheck rules and override precedence. Bounded configuration wakes do not tick the interval/due check early. |
 | Organizing Cron schedules | Validated five numeric fields with IANA timezone; `*`, lists, inclusive ranges and positive steps, no seconds/names/macros/shell/catch-up backlog. Missing DST wall times skip; ambiguous wall time fires once. Scheduling/enablement never grants execution authority; supported execution retains its separate explicit authority boundary. Independent Preview schedules are unsupported. |
 | Organize Hash/attachments | Hash defaults NONE with zero reads; FAST is bounded prefix evidence, FULL is bounded streaming. Failed/unknown comparison adds a conflict and never authorizes overwrite/delete. Opt-in attachments are matched only in the primary directory; unknown files are not included/cleaned. |
 | Source cleanup / rollback | Cleanup defaults none; only fully verified successful MOVE may clean bounded ancestors below the exclusive ResourceLibrary root. `rollback.enabled` defaults false, `cleanupCreatedDirectories` true; compensation covers only this invocation's verified effects, never changed targets, reappeared sources or older executions. Complete policy constraints remain in Requirements. |

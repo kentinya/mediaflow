@@ -7,14 +7,14 @@ and [B experience](docs/agent-experience/task-planner-reviewer.md). Developer re
 ```text
 Task ID: 43.4
 Parent Slice: 43
-Status: FIX REQUIRED
+Status: READY FOR B REVIEW
 Task Base: f18d2444f548b81b5892536498a1b4cdd4400be8
 Difficulty: High
 Test Level: T4
 Planner / Reviewer: B
 Working Branch: main
-Decision: FIX REQUIRED — correct the six blocking settings-journey findings below
-Next Action: DEVELOPER CORRECTS THIS SAME TASK; B RETAINS T4 ACCEPTANCE OWNERSHIP
+Decision: R1..R6 CORRECTED IN THIS SAME TASK — B RE-REVIEWS AND OWNS T4 ACCEPTANCE
+Next Action: B INDEPENDENTLY REVIEWS TASK BASE..CORRECTED CANDIDATE AND RUNS T4 ACCEPTANCE
 ```
 
 ## Goal
@@ -499,3 +499,149 @@ these blockers; no next Task or Closure Packet is warranted. A-owned SLICE/Roadm
 accepted45 boundaries are unchanged. Original references, pre-existing dirty/untracked artifacts
 and ignored private configuration are preserved; private configuration contents were not read.
 This B checkpoint changes only `TASK.md`; no push, history rewrite or implementation self-approval.
+
+## Developer Fix Report — R1..R6 corrections
+
+Historical Task43.4 report and B's FIX REQUIRED review above are retained unchanged. This
+section reports the corrections made in the same Task/Base/Goal/Scope.
+
+```text
+Status: READY FOR B REVIEW (Developer does not self-PASS)
+Task Base: f18d2444f548b81b5892536498a1b4cdd4400be8
+Candidate: the commit carrying this report (see `git log -1` for the exact SHA)
+Scope: fix R1..R6 inside the same Task/Base/Goal/Scope
+```
+
+### Corrections delivered for R1..R6
+
+1. **R1 — runtime preparation now happens before publication.**
+   `AutomationSettingsService.save` passes a `before_publish` callback straight into
+   `ManagedConfigurationService.activate`, and the API composes it as
+   `_prepare_runtime_binding_for_revision` inside `_runtime_binding_lock` (the same
+   pattern as the focused definition/resource-library Saves). A preparation fault is
+   detected through an internal marker and reported as
+   `automation_settings_runtime_failed` (503, `stage: prepare`, `active_preserved`); the
+   Active pointer and this process's binding both stay on the predecessor. The runtime
+   binding is published with `_publish_runtime_binding` only after a successful activation.
+   `docs/architecture.md`/`docs/configuration.md` state the same order.
+2. **R2 — the editing baseline survives normal polling.**
+   `AutomationSettingsPanel` keeps `{baseline, input}` for an edit; a background refetch
+   updates the readback but can no longer attach a fresh publication identity to older
+   input. A changed target disables Save, states that another save changed the published
+   values, and retains the typed values so they can be reviewed or explicitly discarded.
+3. **R3 — configuration wakes are separated from business polls.**
+   `ResidentLoop` now keeps a `next_business_poll` deadline; a bounded wake (<= 5s,
+   `effective_poll_deadline`) only re-adopts configuration, refreshes the heartbeat and
+   refreshes the adoption report. `_step` runs only when the business deadline (the
+   *selected* cadence, `business_poll_deadline`) is reached, so a 60s Scheduler no longer
+   ticks every 5s; a shorter adoption still shortens a pending long wait, real work keeps
+   the immediate-drain rule, and the Notification Worker keeps its own interval. The loop
+   gained an injectable `monotonic` clock so the timing is provable without real sleeps.
+4. **R4 — adoption readback stays truthful during normal operation.**
+   The owning loop re-writes its own report on a bounded refresh even when nothing changed,
+   so a live-but-idle consumer no longer decays to `stale`; a failed report write is not
+   acknowledged and is retried at the next boundary (never marked applied). The Web
+   aggregate now gates `allAdopted` on the resident cadence consumers only, so the
+   `api_local` capacity row can no longer render a real deployment-wide adoption as
+   pending. `docs/deployment.md`/`docs/configuration.md` record the behaviour.
+5. **R5 — reconciliation is bound to the exact submission.**
+   Every Save carries a client-generated `submissionId`, persisted in bounded `draft_edit`
+   audit evidence and scanned through the ledger's monotonic `sequence` cursor. Reconcile
+   returns one of `committed` / `superseded` / `not_committed` / `unresolved` derived from
+   *that revision's* own status/validation evidence, so a failed Draft, an older equal
+   submission or another writer publishing equal values can no longer certify the request
+   (`no submissionId` is always `unresolved`). The panel writes the retained context
+   (identity, submitted values, edit baseline, typed input) to a principal-scoped
+   session key *before* the mutation and restores it after a reload; only a terminal
+   reconcile clears it. No bearer token or secret is stored.
+6. **R6 — the required native composition is delivered.**
+   `mf-automation-settings`, `mf-panel`, `mf-panel-header`, `mf-form-field`,
+   `mf-form-control`, `mf-field-help`, `mf-detail-grid`, `mf-table` and the diagnostics
+   disclosure now have real stylesheet definitions with a two-column form+help layout that
+   collapses at 900px/480px. The form now ships the reference composition: field help with
+   units/bounds/meaning, an "关于自动化引擎" help panel with the publish-vs-adopt warning,
+   and a "调度与时区说明" card with interval/Cron/timezone explanation plus a live config
+   example. Diagnostic UUIDs moved into a folded "诊断标识" disclosure; the Save button
+   reads "保存设置" and is legible at wide and 390px layouts.
+
+### Affected commands and actual results
+
+| Command (cwd) | Result |
+|---|---|
+| `python3 scripts/check_governance.py` | `governance check: PASS` |
+| `.venv/bin/ruff format --check .` | `389 files already formatted` |
+| `.venv/bin/ruff check .` | `All checks passed!` |
+| `.venv/bin/python -m compileall -q mediaflow tests scripts` | exit 0 |
+| `git diff --check` | clean |
+| `.venv/bin/python -m unittest tests.test_automation_settings_management tests.test_automation_settings_resident` | `Ran 43 tests ... OK` |
+| `.venv/bin/python -m unittest tests.test_system_settings_management tests.test_resident_services tests.test_resident_correction tests.test_automation_admission tests.test_stale_job_visibility tests.test_configuration_snapshot` | `Ran 115 tests ... OK` |
+| `.venv/bin/python -m unittest tests.test_automation_api tests.test_task_persistence tests.test_v2_settings_rule_readiness tests.test_automation_workspace_read_model tests.test_v2_automation_operations tests.test_v2_automation_lifecycle tests.test_automation_definition_publication` | `Ran 186 tests ... OK` |
+| `.venv/bin/python -m unittest tests.test_v2_automation_run_once tests.test_automation_definition_execution tests.test_recognition tests.test_api_security tests.test_configuration_objects tests.test_operations_run_detail_plan_evidence` | `Ran 155 tests ... OK` |
+| `.venv/bin/python -m unittest tests.test_restart_fault_boundary tests.test_notifications tests.test_operator_ui` | `Ran 61 tests ... OK` |
+| `.venv/bin/python -m unittest tests.test_configuration_objects tests.test_automation_definition_occurrence tests.test_operations_run_detail_plan_evidence tests.test_api_security` | `Ran 111 tests ... OK` |
+| `npm run typecheck` / `lint` / `format:check` (cwd `web`) | all clean |
+| `npm run test -- run` (cwd `web`) | `Test Files 82 passed`, `Tests 1191 passed` |
+| `npm run build` (cwd `web`) | succeeds (pre-existing chunk-size warning only) |
+| `npm run test:e2e` default fake suite (cwd `web`) | `242 passed` |
+| `npm run test:e2e -- --config=playwright.python.automation.config.ts <settings+workspace+lifecycle+run-once>` | `31 passed` |
+| `npm run test:e2e -- --config=playwright.python.automation.config.ts tests/e2e/automation-settings.python.spec.ts` | `8 passed` |
+
+No test was skipped, retried or weakened. Two assertions were *strengthened*: the fake
+settings document now states the real reconcile `state`, and the older resident assertions
+(`test_loop_survives_a_failing_step_and_keeps_heartbeating`) stop on the step count rather
+than counting loop iterations, because bounded configuration wakes are no longer iterations
+of the business step.
+
+New/strengthened coverage for the corrections:
+
+- `test_failed_runtime_preparation_preserves_active_and_process_binding` +
+  `test_successful_save_installs_the_prepared_runtime_binding` (real runtime-construction
+  fault, not a validation failure).
+- `test_failed_draft_and_equal_other_writer_never_certify_this_submission`,
+  `test_superseded_submission_is_reported_as_published_then_replaced`,
+  `test_same_principal_historical_equal_values_do_not_certify_a_new_identity`,
+  `test_reconcile_without_submission_identity_never_claims_commit`.
+- `test_configuration_wakes_do_not_become_business_polls`,
+  `test_shorter_adoption_shortens_a_pending_long_wait`,
+  `test_notification_loop_preserves_its_business_cadence`,
+  `SchedulerBusinessPollTests.test_long_cadence_is_not_shortened_by_configuration_rechecks`
+  (real `scheduler run`, durable wait-state timestamps).
+- `test_unchanged_consumer_refreshes_its_own_report`,
+  `test_failed_report_is_retried_for_the_unchanged_publication`,
+  `SchedulerBusinessPollTests.test_unchanged_live_consumer_keeps_refreshing_its_own_report`.
+- `BusyStepAdoptionBoundaryTests` (real publication during a busy step, pin untouched),
+  `test_worker_heartbeat_advances_across_a_long_cadence` (durable timestamp advances),
+  `test_additive_upgrade_from_the_prior_schema_keeps_rows_and_pins` (starts at schema 49).
+- Web: `refuses a stale save after a background readback changed the target` (real 5s
+  polling interval), `restores and reconciles an unknown submission after a reload`,
+  `states a genuinely adopted deployment as adopted`, and
+  `automation-settings-session.test.ts` (principal scoping, no credential, malformed drop,
+  clear-on-principal-change).
+- Real Python browser: UI `保存设置` publishes exactly once with `submissionId`, a
+  concurrent writer's publication refuses the stale Save through the ordinary 5s readback,
+  and reconcile answers `unresolved` for a never-submitted identity vs `committed` for the
+  real one.
+
+### Remaining risks / disclosures for B
+
+1. **Test cost.** The two focused modules now take ~43 tests / ~50s (resident subprocess
+   cases dominate). This round's total wall time was dominated by implementation and
+   reading; executed testing/reproduction is a small minority of the round, well under the
+   30% budget.
+2. **B-owned gates not run here:** full Python discovery, wheel/installed consumer, the
+   supported 49→50 upgrade rehearsal on a real prior database with existing work/pins, and
+   the Docker lifecycle/security smokes. The in-suite upgrade case simulates the prior
+   schema shape; B still owns the real-database rehearsal.
+3. **`superseded` semantics.** A submission that published and was later replaced reports
+   `committed: true` with `state: superseded`; the page then tells the operator the values
+   are no longer the published target. B should confirm this reading of "committed" is
+   acceptable rather than expecting a single boolean.
+4. **Adoption refresh bound.** The re-report cadence is the same 5s internal bound as the
+   configuration recheck; it does not poll business work. Readback staleness remains
+   `max(3 × heartbeat interval, 10s)`.
+5. **Harness.** The existing in-process resident consumer
+   (`POST /__harness__/start-resident-consumers`) is still used for the browser adoption
+   proof and reuses the production `ResidentLoop`; the subprocess proof is separate.
+6. No queue/supervisor replacement, no new concurrency control, no auto-restart, no
+   automatic stale/uncertain replay, and no schema beyond the existing additive schema 50
+   table.

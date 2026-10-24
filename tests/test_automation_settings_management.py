@@ -17,6 +17,7 @@ from pathlib import Path
 
 from mediaflow.application.configuration_snapshot import ManagedConfigurationService
 from mediaflow.domain.automation_settings import ENGINE_FIELD_PATHS
+from mediaflow.domain.configuration_management import ResourceLibrarySaveError
 from mediaflow.domain.security import ApiPermission, ResolvedApiPrincipal
 from mediaflow.infrastructure.sqlite_configuration_management import (
     SQLiteConfigurationRepository,
@@ -376,6 +377,70 @@ class AutomationSettingsSaveTests(unittest.TestCase):
         self.assertEqual(active.revision_id, before.revision_id)
         self.assertEqual(active.document["automation"]["maximumActiveJobs"], 100)
 
+    def test_failed_runtime_preparation_preserves_active_and_process_binding(self) -> None:
+        """B43.4-R1: preparation happens *before* publication.
+
+        The reviewed defect constructed the runtime binding only after the Active
+        pointer had advanced, so a runtime-construction fault returned 500 while
+        the Active had already changed (capacity 100 -> 31).  A preparation fault
+        must now leave both the persisted Active and this process's binding
+        unchanged, with a bounded stage/recovery answer.
+        """
+
+        before = self.fixture.configuration.active()
+
+        original = self.fixture.api._prepare_runtime_binding_for_revision
+
+        def failing_prepare(revision):
+            raise ResourceLibrarySaveError(
+                "resource_library_runtime_failed",
+                "runtime adapters could not be constructed for this candidate",
+                status=503,
+                revision_id=getattr(revision, "revision_id", None),
+                durable_state="active_preserved",
+                next_action="correct the runtime configuration and retry",
+            )
+
+        self.fixture.api._prepare_runtime_binding_for_revision = failing_prepare
+        try:
+            status, data = self.fixture.submit(
+                self.fixture.full(**{"automation.maximumActiveJobs": 31})
+            )
+        finally:
+            self.fixture.api._prepare_runtime_binding_for_revision = original
+
+        self.assertEqual(status, 503, data)
+        self.assertEqual(data["error"]["code"], "automation_settings_runtime_failed")
+        details = data["error"]["details"]
+        self.assertEqual(details["stage"], "prepare")
+        self.assertEqual(details["durableState"], "active_preserved")
+        # The successor Draft and read-only evidence stay for review; the Active
+        # pointer and the process binding do not move.
+        self.assertIn("Active pointer unchanged", details["sideEffects"])
+        # The Active pointer never advanced, so nothing published capacity 31.
+        active = self.fixture.configuration.active()
+        self.assertEqual(active.revision_id, before.revision_id)
+        self.assertEqual(active.document["automation"]["maximumActiveJobs"], 100)
+        revision = self.fixture.configuration.require(before.revision_id)
+        self.assertEqual(revision.status.value, "active")
+        # This API process still serves the pre-Save Active binding, never the
+        # rejected candidate (the save-time refresh may have rebound it to the
+        # same Active the predecessor was read from).
+        binding = self.fixture.api._runtime_binding
+        self.assertEqual(binding.maximum_active_jobs, 100)
+        self.assertEqual(binding.snapshot_id, before.revision_id)
+
+    def test_successful_save_installs_the_prepared_runtime_binding(self) -> None:
+        status, data = self.fixture.submit(
+            self.fixture.full(**{"automation.maximumActiveJobs": 33})
+        )
+        self.assertEqual(status, 201, data)
+        self.assertEqual(self.fixture.api._runtime_binding.maximum_active_jobs, 33)
+        self.assertEqual(
+            self.fixture.api._runtime_binding.snapshot_id,
+            self.fixture.configuration.active().revision_id,
+        )
+
     def test_save_has_no_job_task_or_storage_effect(self) -> None:
         before_jobs = self.fixture.repository.list_jobs()
         before_tasks = self.fixture.repository.list_tasks(limit=50)
@@ -412,50 +477,138 @@ class AutomationSettingsReconcileTests(unittest.TestCase):
         self.fixture = SettingsFixture(self._temporary.name)
         self.addCleanup(self.fixture.close)
 
-    def test_unknown_submission_reconciles_from_durable_evidence(self) -> None:
+    def reconcile(self, values: dict, *, submission_id, token="admin-token"):
+        body = {"reconcile": True, "settings": values, "submissionId": submission_id}
+        return request(
+            self.fixture.api,
+            SETTINGS,
+            method="PUT",
+            body=json.dumps(body).encode("utf-8"),
+            token=token,
+        )
+
+    def test_unknown_submission_reconciles_from_its_own_durable_evidence(self) -> None:
         values = self.fixture.full(**{"automation.maximumActiveJobs": 51})
-        status, data = self.fixture.submit(values)
+        status, data = self.fixture.submit(values, submissionId="submit-51-abc")
         self.assertEqual(status, 201, data)
         # The browser lost the answer; it now reads durable state instead of
         # re-submitting the mutation.
-        status, reconciled = request(
-            self.fixture.api,
-            SETTINGS,
-            method="PUT",
-            body=json.dumps({"reconcile": True, "settings": values}).encode("utf-8"),
-        )
+        status, reconciled = self.reconcile(values, submission_id="submit-51-abc")
         self.assertEqual(status, 200, reconciled)
+        self.assertEqual(reconciled["state"], "committed")
         self.assertTrue(reconciled["committed"])
         self.assertEqual(reconciled["sideEffects"], "none")
         self.assertEqual(reconciled["evidence"]["revisionId"], data["revisionId"])
+        self.assertEqual(reconciled["committedRevisionId"], data["revisionId"])
 
-    def test_reconcile_does_not_claim_commit_for_equal_values_without_evidence(self) -> None:
+    def test_reconcile_does_not_claim_commit_for_equal_values_without_identity(self) -> None:
         # A principal that never submitted anything must not be credited with
         # the current Active merely because the values happen to match.
-        status, reconciled = request(
-            self.fixture.api,
-            SETTINGS,
-            method="PUT",
-            body=json.dumps({"reconcile": True, "settings": self.fixture.full()}).encode("utf-8"),
-            token="unicode-token",
+        status, reconciled = self.reconcile(
+            self.fixture.full(), submission_id="never-used-1", token="unicode-token"
         )
         self.assertEqual(status, 200, reconciled)
         self.assertFalse(reconciled["committed"])
-        self.assertIn("publish deliberately again", reconciled["nextAction"])
+        self.assertEqual(reconciled["state"], "unresolved")
+        self.assertIn("can be proven", reconciled["nextAction"])
 
-    def test_reconcile_is_principal_scoped(self) -> None:
-        values = self.fixture.full(**{"automation.maximumActiveJobs": 52})
-        status, _data = self.fixture.submit(values, token="writer-token")
+    def test_reconcile_without_submission_identity_never_claims_commit(self) -> None:
+        values = self.fixture.full(**{"automation.maximumActiveJobs": 53})
+        status, _data = self.fixture.submit(values, submissionId="submit-53-abc")
         self.assertEqual(status, 201)
         status, reconciled = request(
             self.fixture.api,
             SETTINGS,
             method="PUT",
             body=json.dumps({"reconcile": True, "settings": values}).encode("utf-8"),
-            token="unicode-token",
         )
         self.assertEqual(status, 200, reconciled)
         self.assertFalse(reconciled["committed"])
+        self.assertEqual(reconciled["state"], "unresolved")
+
+    def test_reconcile_is_principal_scoped_by_submission_identity(self) -> None:
+        values = self.fixture.full(**{"automation.maximumActiveJobs": 52})
+        status, _data = self.fixture.submit(
+            values, token="writer-token", submissionId="writer-submit-52"
+        )
+        self.assertEqual(status, 201)
+        status, reconciled = self.reconcile(
+            values, submission_id="writer-submit-52", token="unicode-token"
+        )
+        self.assertEqual(status, 200, reconciled)
+        self.assertFalse(reconciled["committed"])
+
+    def test_failed_draft_and_equal_other_writer_never_certify_this_submission(self) -> None:
+        """The reviewed reproduction (B43.4-R5).
+
+        Admin's submission terminally fails validation; another writer then
+        publishes the same four values deliberately.  Admin's own submission did
+        not publish, so reconciliation must not report it as committed and cite a
+        still-Draft revision.
+        """
+
+        values = self.fixture.full(**{"automation.maximumActiveJobs": 53})
+        # A real terminal validation failure: inject a loader rejection on the
+        # exact successor the focused Save composes.
+        original_loader = self.fixture.configuration._loader
+
+        def failing_loader(document):
+            if document.get("automation", {}).get("maximumActiveJobs") == 53:
+                raise ValueError("maximumActiveJobs is unacceptable for this deployment")
+            return original_loader(document)
+
+        self.fixture.configuration._loader = failing_loader
+        try:
+            status, failed = self.fixture.submit(values, submissionId="admin-submit-53")
+        finally:
+            self.fixture.configuration._loader = original_loader
+        self.assertEqual(status, 422, failed)
+        self.assertEqual(failed["error"]["details"]["durableState"], "active_preserved")
+
+        # A different principal publishes the identical four values.
+        status, published = self.fixture.submit(
+            values, token="writer-token", submissionId="writer-submit-53"
+        )
+        self.assertEqual(status, 201, published)
+
+        # Admin's own submission is still a failed Draft, not a publication.
+        status, reconciled = self.reconcile(values, submission_id="admin-submit-53")
+        self.assertEqual(status, 200, reconciled)
+        self.assertFalse(reconciled["committed"])
+        self.assertEqual(reconciled["state"], "not_committed")
+        self.assertEqual(reconciled["committedRevisionId"], None)
+        self.assertTrue(reconciled["currentValuesMatchSubmission"])
+        self.assertNotEqual(
+            reconciled["evidence"]["revisionId"], reconciled["target"]["revisionId"]
+        )
+
+    def test_superseded_submission_is_reported_as_published_then_replaced(self) -> None:
+        values = self.fixture.full(**{"automation.maximumActiveJobs": 54})
+        status, first = self.fixture.submit(values, submissionId="submit-54-abc")
+        self.assertEqual(status, 201, first)
+        # An ordinary later publication moves the Active on.
+        status, _second = self.fixture.submit(
+            self.fixture.full(**{"automation.maximumActiveJobs": 55}), submissionId="submit-55"
+        )
+        self.assertEqual(status, 201)
+        status, reconciled = self.reconcile(values, submission_id="submit-54-abc")
+        self.assertEqual(status, 200, reconciled)
+        self.assertEqual(reconciled["state"], "superseded")
+        self.assertTrue(reconciled["committed"])
+        self.assertEqual(reconciled["committedRevisionId"], first["revisionId"])
+        self.assertFalse(reconciled["currentValuesMatchSubmission"])
+
+    def test_same_principal_historical_equal_values_do_not_certify_a_new_identity(self) -> None:
+        values = self.fixture.full(**{"automation.maximumActiveJobs": 56})
+        status, _first = self.fixture.submit(values, submissionId="submit-56-first")
+        self.assertEqual(status, 201)
+        # The same principal submits the same values again under a new identity
+        # whose response never arrives and whose own publication never happens
+        # (it is a no-op because the values already match).
+        status, reconciled = self.reconcile(values, submission_id="submit-56-second")
+        self.assertEqual(status, 200, reconciled)
+        self.assertFalse(reconciled["committed"])
+        self.assertEqual(reconciled["state"], "unresolved")
 
 
 if __name__ == "__main__":
