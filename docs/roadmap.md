@@ -51,6 +51,8 @@ one-run intent with no second initial summary/execute gate, and four-type blocke
 Saved scope/filtering/limits, backend execution safety, schedule independence and history remain.
 Automation stability clarification fails not-yet-stable files for the current run while other files
 continue; subsequent normal runs apply ordinary stability checks without a failed-item retry flow.
+Ordinary-file status uses 当前页面操作状态 immediately left of the corresponding 添加资源库 /
+添加媒体库 button with the same style, opening a centered modal with durable local reopening.
 The [Contract](../SLICE.md) defines five outcomes and T4 final acceptance. No implementation is
 delivered and [TASK.md](../TASK.md) has no active Task; **B PLANS THE FIRST TASK** after this
 Contract is checkpointed. The authorized changes are TARGET, not accepted CURRENT behavior.

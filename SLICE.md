@@ -97,7 +97,10 @@ credentials stay memory-only and no command replays.
 
 **Ordinary file management:** enter ResourceLibrary/MediaLibrary Files → inspect exact selection,
 capabilities and bounded impact → submit an ordinary command or confirm Delete → follow local progress,
-independent durable results and live-directory reconciliation. Failure shows completed steps, known
+independent durable results and live-directory reconciliation. The header's 当前页面操作状态 button,
+immediately left of 添加资源库 (添加媒体库 on MediaLibrary), uses the same button style and opens a
+centered modal for this file page's ordinary-operation status, results and existing permitted controls.
+Failure shows completed steps, known
 or uncertain effects and allowed repair/controls locally. Closing a dialog, reload, reconnect or service
 restart retains access from the original library to relevant unfinished/attention work and bounded
 recent results. Unknown admission is reconciled by exact durable identity, never guessed/replayed.
@@ -257,6 +260,15 @@ ResourceLibrary/MediaLibrary file surface. Replace normal center links/guidance 
 and existing permitted controls/recovery. Reuse result dialogs/projections and only add bounded local
 access needed to reopen relevant work/results. Multiple operations stay independent; equal IDs in
 two library kinds never exchange scope, cache or authority.
+
+Use the user-selected header entry 当前页面操作状态, immediately left of 添加资源库, styled the same
+as that Add button; apply the corresponding placement/style beside 添加媒体库 on MediaLibrary Files.
+Clicking opens a centered modal with bounded ordinary-operation progress, independent item results
+and existing permitted controls/recovery. Each entry retains its originating library/source context;
+ResourceLibrary and MediaLibrary work never mix. Empty/loading/read-error states and modal dismissal/
+keyboard behavior follow existing accessible conventions. Closing the modal neither cancels nor
+replays work; this same entry reopens relevant durable work after close/reload/reconnect/restart.
+Do not add a global operation center or new retry/undo authority through this presentation choice.
 
 Retain durable Tasks/results/audit, claims and immutable admitted context, including supported
 ordinary work admitted before46. Close/reload/restart must not strand known work. An in-memory ID or
@@ -439,7 +451,7 @@ supervision redesign, new file commands or unrestricted authority is authorized.
 | AC-1 | Applicable V2 actions and Entry are readable with computed contrast and desktop/narrow visual evidence; focus/busy/disabled and existing auth continuation/token privacy work. |
 | AC-2 | Explicit ResourceLibrary Files 整理 admits durable organizing work before rule/metadata/classification/conflict readiness or an executable summary; single/multiple/folder/mixed selections follow task-contained discovery/analysis → exact summary → selected execution confirmation. Center creation actions/independent source selection are absent; browsing/analysis-only preparation creates no organizing task. |
 | AC-3 | Files can recover the exact submitted task and separate/pre-existing preparation/unknown requests after close/reload/reconnect without the center discovery list, guessed identity or automatic submission. Task progress and four-type findings stay reachable in Task Center. |
-| AC-4 | Both library kinds complete ordinary work locally, including multiple operations, per-item results and existing safe controls/recovery after close/reload/restart; no normal center handoff remains. |
+| AC-4 | Both library kinds complete ordinary work locally, including multiple operations, per-item results and existing safe controls/recovery after close/reload/reconnect/restart. 当前页面操作状态 sits immediately left of 添加资源库 / 添加媒体库 with the corresponding Add button's style and opens a centered modal; entries retain originating library/source context and never mix library kinds. Empty/loading/read-error/dismissal states remain usable; closing/reopening creates no cancellation or replay. No normal center handoff remains. |
 | AC-5 | Mixed histories spanning multiple pages produce organizing-only eight views/counts/options/cursors/details; pre-Task failures remain in All/Ended, explicit Job→Task deduplication and permitted continuations remain truthful. |
 | AC-6 | The three removed blocks and exclusive landing reads are absent; task-specific Worker/pin/readiness and factual failure evidence remain readable, with recovery limited by RO-4. |
 | AC-7 | Existing file/preparation links preserve exact principal/kind/source/pin or explain refusal; tampered/deleted/stale/foreign contexts and 401/403 create no work or cross-scope exposure. |

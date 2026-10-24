@@ -25,6 +25,8 @@ Run once, with no second normal initial summary/execute gate; four-type problems
 Saved definition scope/filtering/limits, backend permissions/safety and historical outcomes remain.
 Automation's stability clarification records not-yet-stable files as current-run failures while other
 files continue; a later normal run uses ordinary stability checks, without a failed-item retry flow.
+Ordinary-file status uses 当前页面操作状态 immediately left of the corresponding 添加资源库 /
+添加媒体库 button with the same style, opening a centered modal with durable local reopening.
 Implementation Head is NOT SET; these corrections are required TARGET, not delivered fixes, and no
 Task or product acceptance is claimed.
 **B PLANS THE FIRST TASK**; final acceptance is T4. No Slice46 closure row is added below.

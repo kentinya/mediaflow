@@ -69,6 +69,10 @@ API/CLI recovery engines or change native Automation/ordinary-file behavior thro
 
 Local ordinary-work readback is bounded, authenticated and library-kind/source/pin aware, over
 existing durable Tasks/items/results/claims and audit. UI hints are not authority or the sole index.
+The Files header entry 当前页面操作状态 sits immediately left of the corresponding 添加资源库 /
+添加媒体库 button with the same style and opens a centered modal over this existing projection.
+Entries preserve originating library/source context and never mix library kinds; close/reopen is
+read-only and does not cancel/replay work or add a queue, global center or recovery authority.
 Shared repository/API evidence may retain administrative consumers; center scope must not erase
 Automation records or ordinary command execution/recovery. No second queue/lifecycle/recovery
 engine or broader file authority is added. OrganizerExecutor, admitted pins, RBAC, explicit Delete/

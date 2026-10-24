@@ -26,6 +26,13 @@ User-authorized on 2026-10-24; [Slice46](../SLICE.md) and `V2-UX-004`, `V2-OPS-0
   Files-originated tasks and separate preparing/unknown requests remain reachable from Files.
   Explicitly submitted organizing tasks enter Task Center before business readiness, with true
   pipeline progress, four-type problems/results and exact return context.
+- **Local operation status:** 当前页面操作状态 appears immediately left of 添加资源库 with the same
+  button style; MediaLibrary Files uses the corresponding placement beside 添加媒体库. Click it to
+  open a centered modal showing this file page's bounded ordinary-operation progress, per-item results
+  and existing permitted controls/recovery. Entries retain their originating library/source; the two
+  library kinds never mix. Empty/loading/read-error and accessible close/keyboard behavior follow
+  existing conventions. Closing does not cancel/replay work; the same entry reopens durable work
+  after close/reload/reconnect/restart, without a new global center or universal retry/undo.
 - **Failure/recovery:** expose per-item stage, durable state, known effects/uncertainty and legal
   actions in the owning flow. Unknown submission reads back the exact request; successful/uncertain
   mutations never replay. Kind/principal/source/pin isolation and auth continuation remain.

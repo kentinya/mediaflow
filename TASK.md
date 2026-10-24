@@ -5,6 +5,9 @@ Slice46 — **V2 Organizing Task Center and Readable Actions** — is **ACTIVE**
 
 - Immutable Slice Base: `e9f1a8dc607cfc6d5ea02141b058da8ce849cd70`.
 - Implementation Head: **NOT SET**; no product implementation or Task acceptance is claimed.
+- RO-3's selected local entry is 当前页面操作状态, styled like and immediately left of 添加资源库
+  (添加媒体库 on MediaLibrary Files), opening a centered modal for ordinary progress/results/existing
+  permitted controls and durable reopening. AC-4 applies; this does not add a global center or new recovery.
 - User-authorized RO-5 includes Automation detail name/“打开”, same-page Save/Enabled, enable-to-execute
   scheduling without independent grants/pre-analysis and real Run once that admits before business
   readiness and executes ready items without a second initial summary/execute gate. Four business
