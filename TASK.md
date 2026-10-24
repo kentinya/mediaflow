@@ -7,14 +7,14 @@ and [B experience](docs/agent-experience/task-planner-reviewer.md). Developer re
 ```text
 Task ID: 43.4
 Parent Slice: 43
-Status: READY FOR B REVIEW
+Status: FIX REQUIRED
 Task Base: f18d2444f548b81b5892536498a1b4cdd4400be8
 Difficulty: High
 Test Level: T4
 Planner / Reviewer: B
 Working Branch: main
-Decision: IMPLEMENT THIS TASK ONLY — RO-6 and its settings/navigation/safety integration
-Next Action: B INDEPENDENTLY REVIEWS COMPLETE TASK BASE..CANDIDATE AND RUNS T4 ACCEPTANCE
+Decision: FIX REQUIRED — correct the six blocking settings-journey findings below
+Next Action: DEVELOPER CORRECTS THIS SAME TASK; B RETAINS T4 ACCEPTANCE OWNERSHIP
 ```
 
 ## Goal
@@ -370,10 +370,132 @@ adds one extra GET read (they now scope "one read" assertions to the route they 
 ## B Review Result
 
 ```text
-Reviewed: planning only at f18d2444f548b81b5892536498a1b4cdd4400be8
-Decision: PENDING — Developer candidate submitted READY FOR B REVIEW; independent T4 acceptance not run
-Acceptance runs: none yet on the implementation candidate
-Task blockers: not assessed
-Slice Required Outcomes / Surfaces all satisfied: NO — B must re-evaluate RO-1..RO-7 after acceptance
-Next: B REVIEWS TASK BASE..CANDIDATE AND RUNS T4 ACCEPTANCE
+Reviewed candidate: b3dc11f067a9d1a8864d99aa24bdfba0d859fbef (main)
+Complete Task range: f18d2444f548b81b5892536498a1b4cdd4400be8..b3dc11f067a9d1a8864d99aa24bdfba0d859fbef
+Decision: FIX REQUIRED — R1..R6 below are Task blockers (P1)
+Task ID / Base / Goal / Scope / Difficulty / Test Level: unchanged
+Slice Required Outcomes / Surfaces all satisfied: NO
+Next: correct Task43.4, run failing/new/directly affected checks, checkpoint READY FOR B REVIEW
 ```
+
+B inspected the complete34-file Task manifest, production/API/CLI/persistence/Web changes and
+changed test/harness/doc consumers. The implementation and planning commits were both reviewed;
+no partial-diff review or A Final Review is claimed. All six findings originate in implementation
+`b3dc11f` (2026-10-24 12:47:04 +08:00), rather than being assumed Base failures. Existing public
+settings entrances and `scheduler run` reproduced the failures below. Fault injection was limited
+to the existing runtime-construction/validation boundary over isolated fixtures, not nonexistent
+routes or production data. The Developer report above remains historical, not B acceptance.
+
+### Required corrections inside this Task
+
+1. **R1 — Prepare runtime before activation (S2/S6/S7).**
+   `AutomationSettingsService._activate` calls `activate` without `before_publish`;
+   `_automation_engine_settings_projection` constructs the binding only after publication.
+   Existing PUT with a runtime-binding construction fault returned500/internal_error while
+   Active advanced and capacity changed100→31. Reuse the checked publication lock/preparation
+   callback/binding installation pattern already used by focused definition Save. A preparation
+   failure must leave both Active and process binding unchanged, with bounded stage/recovery.
+   Add an actual runtime-construction failure case; the current test named failed preparation
+   injects validation failure and does not exercise this boundary. Reconcile documentation's
+   prepare-before-publication claim with the corrected implementation.
+2. **R2 — Retain the editing baseline across polling (S2).**
+   `AutomationSettingsPanel` preserves edited values but sends `model.target` from the newest
+   background read. Real UI: edit capacity; another writer changes scheduler poll5→9;
+   wait for the ordinary background GET; Save returns201 and silently restores scheduler5.
+   Capture values plus checked identity when editing begins. Refetch may update readback but
+   cannot silently attach a fresh identity to old four-field input. A changed target must refuse
+   the stale Save or require explicit refresh/review while retaining correctable input. Add a
+   real two-writer UI case that includes the normal polling interval; direct stale API tests alone
+   do not cover this journey. Do not silently discard edits made during an outstanding Save.
+3. **R3 — Separate configuration wakes from business polls (S4/S6).**
+   `ResidentLoop.effective_poll_deadline` caps the sleep at5s, after which `run` invokes `_step`
+   again. A real `scheduler run` configured60s performed four actual `IntervalScheduler.tick`
+   calls at5.01/5.02/5.02s, while reporting60s adopted. Preserve a business-poll deadline across
+   bounded config/heartbeat wakes; rechecks must not claim work or emit/tick early. Eligible
+   updates must still shorten a long wait within the existing≤5s bound, explicit overrides
+   must retain their real cadence, and successful work keeps the existing immediate-drain rule.
+   Protect Notification Worker timing too: the changed unconditional cap currently reaches it.
+   Test actual idle poll/claim/due-check timing with values above5s and config-only wakes, not
+   only `_poll_seconds`, wait caps or self-written adoption rows.
+4. **R4 — Make adoption readback stay truthful through normal operation (S5).**
+   The owning loop writes a report only on value/digest change, yet readback expires that report.
+   Real unchanged60s Scheduler remained live but became adoption `stale` after16s; no report
+   refresh occurred. Failed report writes also set `_applied_cadence` before success and are
+   never retried for the unchanged publication. Refresh/retry owning-consumer evidence at safe
+   bounded points, without fabrication by API/heartbeat or extra business polls. Separately,
+   `normalizeAutomationSettings` aggregates the `api_local` row whose adopted flag is always
+   false: real backend allAdopted=true with both resident rows adopted still renders pending.
+   Aggregate the intended cadence consumers consistently; retain API-local field evidence as
+   separate. Cover unchanged healthy processes beyond the freshness window, failed-report
+   recovery, genuine collective success, overrides and stopped/stale/mixed instances. Preserve
+   exact publication identity and consumer-specific freshness, not value equality alone.
+5. **R5 — Reconcile the exact submission, preserve it across reload (S3/S7).**
+   `reconcile` accepts any actor-matching `draft_edit` plus currently equal values as committed.
+   Existing API reproduction: admin edit fails validation (503); writer publishes the same
+   values (201); admin reconciliation returns committed=true and cites the still-Draft failed
+   revision, which is not Active. Bind the internal submission identity and baseline to durable
+   publication/terminal evidence using existing patterns; a draft edit or older equal submission
+   cannot certify publication of this request. An absent audit while a request can still publish
+   cannot authorize another Save. Preserve unresolved, non-secret submission context across
+   reload/navigation with principal isolation and no stored bearer token. Real UI with committed
+   response loss showed the reconcile action before reload and lost it after reconnect; subsequent
+   Save is then possible without reconciliation. Test lost-response reload, delayed original
+   completion, failed-Draft/equal-other-writer and same-principal historical equality. Keep
+   committed/superseded/not-committed/unresolved states truthful rather than one false boolean.
+6. **R6 — Complete the required native settings composition (S1).**
+   Production desktop/narrow screenshots compared with the original reference show an unstyled
+   form and raw adoption tables, without the required help panel or schedule/timezone explanation.
+   The new `mf-automation-settings`, `mf-form-field`, `mf-panel`, `mf-detail-grid` and related
+   selectors have no stylesheet definitions. Reuse actual shared form/card/table styles and add
+   only needed scoped layout. Deliver the specified form/help composition and schedule/timezone
+   explanation; fold/label diagnostic IDs rather than making UUIDs the primary page content.
+   Keep adoption evidence readable at390px, ordinary keyboard focus and actionable setup/denied/
+   error states. Verify real wide/narrow images after production build. This is the missing
+   required composition/journey, not a pixel-exact request or new design scope.
+
+### Independent evidence and remaining gates
+
+Local evidence (not remotely accessible):
+`.git/validation-evidence/b3dc11f/task43.4-b-review/`.
+
+| Actual B execution | Result |
+|---|---|
+| `python3 scripts/check_governance.py`; complete Task `git diff --check` | PASS / clean before review-document update; repeated for checkpoint below |
+| `PYTHONPATH=. .venv/bin/python <evidence>/api_probe.py` | R1/R5 reproduced through existing real WSGI API and SQLite;0.137s |
+| `PYTHONPATH=. .venv/bin/python <evidence>/resident_probe.py` | R3/R4 reproduced with actual `scheduler run`, observer delegates real tick;16.25s; PID alive, liveness live |
+| `npm --prefix web run build` | PASS; existing chunk-size warning; freshly served production assets |
+| `node <evidence>/browser-probe.cjs` with existing `operations_inventory_harness.py --port4197` | R2/R4/R5 reproduced through actual Web/API;6.042s; desktop/narrow screenshots inspected |
+| Both original reference SHA256s; frozen branch | Match Contract; `frozen/slice-43-2026-10-15` remains `ed974e0df8b263f631bfe48b524da461013d8780` |
+
+The initial evidence-script import path and tick-trace path needed correction; their failed runs
+are not product defects or passes. Final scripts/logs contain the corrected reproductions; trace
+observer does not replace or change the scheduler tick. All isolated processes were stopped.
+Conservative cumulative testing/reproduction/check allowance is under60s, including the failed
+16s observer attempt, comfortably below50% of this substantive review round; no padding waits.
+
+Per workflow§6, proven blockers permit early FIX REQUIRED: full Python/Web/default/native T4,
+wheel/installed-consumer, supported49→50 upgrade and Docker lifecycle/security gates were **not run
+by B this round and remain pending**. Developer's reported results are not relabelled B evidence.
+The new busy-step test actually checks a pending unclaimed Job, the heartbeat case initially
+checks liveness without proving advancement, and the additive-upgrade case starts at schema50.
+Strengthen the existing affected tests to exercise the already-required busy boundary, actual
+heartbeat progression and supported prior-schema preservation; no process-tooling project or new
+Task is needed. Full acceptance/release gates stay B-owned after correction.
+
+### All-Slice outcome reassessment
+
+| Required Outcome / Surface | Disposition on this candidate |
+|---|---|
+| RO-1 workspace/inventory/statistics |43.3 inventory/records contribution remains prior accepted work; settings/reference/readback portion incomplete (R4/R6). |
+| RO-2 checked definition lifecycle |Existing implementation reused; this Task does not change its intended contract. Current whole-Slice T4 still pending; no automatic renewed PASS from historical labels. |
+| RO-3 analysis/scoped unattended execution |Existing shared chain and authority retained in scope; current safety/resident/full proof pending. No retired Preview restoration is authorized. |
+| RO-4 deliberate Run once |Existing bounded discovery/analysis/confirmation journey retained; final candidate native/Worker regression pending. |
+| RO-5 records / Task Center recovery |Prior43.3 accepted read-only records/recovery boundary remains; this Task must not introduce execution recovery in settings/records. |
+| RO-6 settings / real resident adoption |INCOMPLETE: R1..R6 block exact publication, concurrent/unknown recovery, cadence and truthful/native adoption. |
+| RO-7 shared authority/failure/safety |Settings contribution incomplete; full RBAC/pins/retirement/packaging/current-consumer acceptance remains pending. |
+
+Slice43 stays ACTIVE, **not READY FOR A REVIEW**. Keep the same Task/Base/Goal/Scope and correct
+these blockers; no next Task or Closure Packet is warranted. A-owned SLICE/Roadmap/Progress and
+accepted45 boundaries are unchanged. Original references, pre-existing dirty/untracked artifacts
+and ignored private configuration are preserved; private configuration contents were not read.
+This B checkpoint changes only `TASK.md`; no push, history rewrite or implementation self-approval.
