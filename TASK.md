@@ -1,3 +1,9 @@
+# NO ACTIVE IMPLEMENTATION TASK
+
+Task43.3 is PASS on candidate `8ff9b173972c15a46afc9c8f8aaa8c5584c127e2`.
+Slice43 remains ACTIVE; RO-6 settings is the next coherent outcome, not planned here.
+The terminal Task and its unchanged Developer report follow for this review checkpoint.
+
 # Task 43.3 — Automation Inventory, Execution Records and Truthful Statistics
 
 Authority: committed [SLICE.md](SLICE.md), [Development Workflow](docs/development-workflow.md)
@@ -7,14 +13,14 @@ and [B experience](docs/agent-experience/task-planner-reviewer.md). Developer al
 ```text
 Task ID: 43.3
 Parent Slice: 43
-Status: FIX REQUIRED
+Status: PASS
 Task Base: 78ec108d4473e8c140174c1356d0e88a1ae42b34
 Difficulty: High
 Test Level: T3
 Planner / Reviewer: B — temporary role exception explicitly authorized by user, 2026-10-23
 Reassessment source / Contract: 533a666860a571e61c78ac49b3e45c44acaa419e
-Decision: FIX REQUIRED — candidate 878d3f85cafab8d177d4b5457237c01f87581c72; implementation eb74f36; prior T1/T2 findings verified fixed; default Automation E2E contract/fixture alignment still blocks T8 acceptance; same Task/Base/Goal/Scope
-Next Action: DEVELOPER CORRECTS THIS TASK; B owns corrected-candidate T3 acceptance; Slice Final stays T4
+Decision: PASS — reviewed 8ff9b173972c15a46afc9c8f8aaa8c5584c127e2; default E2E contract alignment and remaining assigned T3 gates pass; same Task/Base/Goal/Scope
+Next Action: NEXT TASK — RO-6 settings remains; this review does not plan it or close Slice43; Slice Final stays T4
 ```
 
 ## Goal
@@ -192,25 +198,25 @@ redaction, fences, C-with-A/A identity and non-replay.
 
 ## Acceptance Criteria
 
-- [ ] **T1:** Native inventory/records complete across pages, empty/setup/error/denied/loading,
+- [x] **T1:** Native inventory/records complete across pages, empty/setup/error/denied/loading,
   keyboard/narrow use, refresh-safe deep links and bounded return context.
-- [ ] **T2:** Server query/sort/page reaches every authorized definition/Draft-only correction;
+- [x] **T2:** Server query/sort/page reaches every authorized definition/Draft-only correction;
   no hidden prefix or Draft-as-Active action/count. Current supported lifecycle/shared analysis/
   grant/Run-once navigation survives read-contract alignment.
-- [ ] **T3:** Combined manual/scheduled admitted history retains stable deduplicated identities,
+- [x] **T3:** Combined manual/scheduled admitted history retains stable deduplicated identities,
   filter-scoped totals and historical context through Task linkage, rename/remove/reopen;
   pre-Task failures remain visible and preparation/blocked/rejected evidence stays distinct.
-- [ ] **T4:** Full-population metrics satisfy calendar/cohort/denominator rules across pages,
+- [x] **T4:** Full-population metrics satisfy calendar/cohort/denominator rules across pages,
   filters/months/timezones; unavailable query/evidence never becomes empty/zero.
-- [ ] **T5:** Records retain original results/reasons/effects and separately linked handling
+- [x] **T5:** Records retain original results/reasons/effects and separately linked handling
   outcomes. Verified recovery updates handling only; successful/uncertain siblings never replay
   and recovery is not a second scheduled trigger or successful original execution.
-- [ ] **T6:** Proven settled pre-start failure guides repair/supported explicit command; queued/
+- [x] **T6:** Proven settled pre-start failure guides repair/supported explicit command; queued/
   claimed/ambiguous work cannot offer start-again retry. Formal Task failures before mutation link
   Task Center. Records execute no control/recovery/re-analysis command.
-- [ ] **T7:** Compatible page/count/metric/latest read bases, bounded secret-free evidence and
+- [x] **T7:** Compatible page/count/metric/latest read bases, bounded secret-free evidence and
   principal/query cursor isolation; passive reads cause no Provider/Storage/work/authority effects.
-- [ ] **T8:** Current-contract fixes/fixture adaptations and complete affected reruns resolve known
+- [x] **T8:** Current-contract fixes/fixture adaptations and complete affected reruns resolve known
   baseline obligations without deleting assertions, adding retries or relaxing guards/timeouts.
   Exact-candidate T3 evidence and preserved unrelated/private/reference files/refs are verified.
 
@@ -640,114 +646,113 @@ seam, independent sibling non-replay, real reopen evidence, and the T8 default-c
 ## B Review Result
 
 ```text
-Reviewed candidate: 878d3f85cafab8d177d4b5457237c01f87581c72 (main; report successor)
-Implementation: eb74f36 (2026-10-24 latest-result / empty-history correction)
-Task range: 78ec108d4473e8c140174c1356d0e88a1ae42b34..878d3f85cafab8d177d4b5457237c01f87581c72
-Reassessment-source range: 533a666860a571e61c78ac49b3e45c44acaa419e..878d3f85cafab8d177d4b5457237c01f87581c72
-Correction range: 96db521..878d3f85cafab8d177d4b5457237c01f87581c72
-Decision: FIX REQUIRED — T8 default-E2E contract/fixture alignment and acceptance remain incomplete
+Reviewed candidate: 8ff9b173972c15a46afc9c8f8aaa8c5584c127e2 (main)
+Latest implementation: 12e8b7b (default Automation fake/browser contract alignment)
+Task range: 78ec108d4473e8c140174c1356d0e88a1ae42b34..8ff9b173972c15a46afc9c8f8aaa8c5584c127e2
+Reassessment-source range: 533a666860a571e61c78ac49b3e45c44acaa419e..8ff9b173972c15a46afc9c8f8aaa8c5584c127e2
+Latest correction range: 7e7c436..8ff9b173972c15a46afc9c8f8aaa8c5584c127e2
+Decision: PASS — Task43.3 acceptance T1–T8; no remaining proven Task blocker
 Base / Goal / Scope / Test Level: unchanged; Task T3, Slice Final T4
-Slice Required Outcomes / Surfaces all satisfied: NO; RO-6 remains outside this Task
-Next: DEVELOPER CORRECTS THIS TASK'S AFFECTED TEST CONSUMERS; B retains full acceptance
+Slice Required Outcomes / Surfaces all satisfied: NO
+Next: NEXT TASK — RO-6 settings; no next-Task plan or Slice closure in this review
 ```
 
-B inspected the complete immutable Task-range manifest, distinguishing accepted45 integration
-from the 27-file43.3 delta, and reviewed the current correction against the preceding independent
-findings and actual consumers. `eb74f36..878d3f8` changes only `TASK.md`. Fresh checks below use
-this candidate and rebuilt production assets; no prior candidate's green label substitutes for
-current execution. This is a whole-Task review with a proven acceptance-blocker early stop, not
-A Final Review, Slice Final or closed45 reapproval. The Developer report is preserved unchanged.
+B independently continued the complete Base..Head review, preserving the preceding full-range
+review of unchanged inputs and inspecting the latest correction in full. The original Task range
+includes accepted45 integration; its acceptance and retirement boundary are not reopened. The
+reassessment-source delta now has29 files, including the two corrected test consumers. The latest
+correction changes only `TASK.md`, `web/tests/fake-server.mjs` and
+`web/tests/e2e/automation.spec.ts`; `12e8b7b..8ff9b17` changes only the report. No product source,
+Python/native harness, dependency, build configuration or served production asset changed since
+B's previous candidate. The Developer report above is preserved byte-for-byte.
 
-### Verified corrections and retained outcomes
+### User outcome and correction assessment
 
-- **Latest-result sort (prior P1/T2): fixed.** The original independent UI reproduction now
-  passes: publish `a-review-manual`, use the existing Run-once discovery/frozen-plan/explicit
-  confirmation journey, publish the never-run `z-review-never`, and select `排序 → 最近结果`.
-  The genuine manual admission sorts above the never-run definition. This independent case
-  proves admission and ordering, not completion of that manual execution. The assigned native
-  matrix separately executes the Worker and verifies the completed journey. Sorting uses the
-  same latest-original-admission projection returned with the row, before page windowing.
-- **Healthy empty history (prior P1/T1): fixed.** The original real temporary SQLite/API probe
-  returns200 with `runtimeLatest={}`, `latestAdmittedRuns={}` and available metrics. The real
-  browser shows `尚无执行`; a sibling with history and a genuine read failure remain distinct
-  in fresh integration coverage. No scheduled diagnostic is borrowed as a processing result.
-- **Original item recovery/results: retained.** Fresh real-Python journeys still prove independent
-  successful-sibling preservation, one-of-two failed-item recovery remaining unresolved, original
-  uppercase producer failure reasons/known-zero-effect evidence, and durable reopen. Recovery
-  analysis alone does not resolve the original record or create another original admission.
-- **Inventory/records/navigation:** current focused integration and native coverage pass, including
-  beyond-page queries, original-admission population/metrics, calendar cases, pre-start/formal/
-  ambiguous ownership, read-only records and exact Task Center return. Wide/narrow workspace and
-  Run-once screenshots were inspected against the original reference; no pixel-exact promise or
-  settings completion is inferred. Remaining assigned gates below prevent whole-Task acceptance.
+- **Default test-consumer blocker: resolved.** Both published and Draft-only fake producers now
+  advertise the real `runOnce` contract; the inventory returns the required counts, metrics,
+  query and page fields. The browser uses the existing operations route; the fake's pre-existing
+  alias rewrite explains its internal `/api/v1/automation/records` handler. This is not a new
+  production endpoint. Current table/tab/heading/navigation assertions preserve lifecycle,
+  permissions, malformed-document and keyboard checks. No tests were removed/skipped, retries
+  added or timeouts relaxed. All239 default browser cases now pass, including the10 Automation
+  cases and the new honest-empty/read-only records case.
+- **Inventory/latest state (T1/T2/T4): accepted.** Native inventory paging/filtering/cards, stable
+  manual/scheduled latest-result ordering and healthy-empty versus unavailable history remain
+  verified. The original independent latest-sort reproduction passes through genuine Run-once
+  admission; it proves admission/order, not execution completion. The separate native Worker
+  journey supplies execution evidence. Cards use admitted-run population/cohort semantics;
+  absent terminal/prior denominators do not fabricate a success or comparison rate.
+- **Records/recovery (T3/T5/T6): accepted.** Original results, producer failure vocabulary and
+  known effects remain separate from linked handling. Actual recovery of one of two failed
+  items leaves affected2/resolved1/unresolved1; the successful sibling stays untouched and
+  original failure reasons survive reopen. Analysis/preparation alone cannot resolve a record.
+  Formal Task handoff routes recovery to Task Center even before mutation; queued/claimed or
+  ambiguous work cannot start again from records. Records contain no execution/recovery controls.
+- **Shared journeys/safety (T7/T8): accepted at assigned T3.** Fresh native Operations coverage
+  verifies real Worker/restart/navigation and independent recovery paths; Unicode-principal
+  admission/reconciliation passes. Existing authenticated API/query tests cover cursor isolation,
+  unavailable evidence and passive-read safety. Complete current default regression no longer
+  stops at the stale fake. This does not claim Slice-final concurrency/release validation.
 
-### Required correction — same Task, test consumers only
+### Independent validation and explicit reuse
 
-**T8 acceptance blocker — align the default Automation fake-server/browser contract with the
-current real API and UI.** The unchanged default command actually fails from existing Automation
-entrances; this is neither a guessed route nor an injected impossible persisted state:
+Fresh executions on `8ff9b17`:
 
-- `web/tests/fake-server.mjs:5270` (`automationDefinitionActions`) and the Draft-only producer still
-  return retired `preview` actions without the now-required `runOnce` action. The actual200 detail
-  and inventory responses captured from the browser fail the current normalizer respectively at
-  `definition.actions.runOnce` and `items[].actions.runOnce`. Detail/create/Draft/copy consequently
-  show `Automation definition unavailable` / `Automation unavailable` in the **fake-backed test
-  environment**, before their intended assertions or commands are reachable.
-- `automationListDocument` at `web/tests/fake-server.mjs:5634` also omits the inventory's current
-  required metrics/count/query/cap fields. Correcting only `runOnce` would leave that list response
-  incompatible. Mirror real public read documents and permission/action transports; retain malformed
-  response and denied-state cases. Do not weaken production normalization or restore standalone
-  Preview to accommodate a stale fixture.
-- `web/tests/e2e/automation.spec.ts:47` still waits for the old exact `Automation` heading and its
-  first inventory case expects the old card/link/text composition. Adapt these assertions to the
-  existing `自动化` table, advertised actions and current navigation while preserving the original
-  lifecycle/publication/permissions/failure guarantees. Do not delete/skip the cases, add retries,
-  relax timeouts or exclude this ordinary fake-backed spec from the default suite.
-
-The observed incompatibility follows the43.3 read-contract/UI change in `9d9e1f0`
-(2026-10-23 22:59:44 +08), with later required inventory fields in `f0c4278`
-(2026-10-24 00:50:09 +08); the fake retained its earlier shape. This review does **not** claim
-that the latest two corrections introduced a production outage, or that the real Python API
-produces these malformed documents. The verified product fixes stay accepted as facts; the
-required candidate gate cannot be declared PASS while its affected consumer remains red.
-
-Developer runs the changed tests/fixtures and the failed affected spec only, plus relevant changed-
-file checks; for example `npm --prefix web run test:e2e -- tests/e2e/automation.spec.ts` and any
-new/changed contract unit cases. Keep this a cohesive test-consumer correction in43.3; no schema,
-executor, permissions, endpoint or governance-tool expansion is needed. B reruns the complete
-assigned acceptance on the corrected checkpoint; the full default suite and other B gates are
-**not** transferred to Developer.
-
-### Independent commands and actual results
-
-| Check on this candidate | B result |
+| Gate | Actual B result |
 |---|---|
-| `python3 scripts/check_governance.py`; complete Task diff `git diff --check` | PASS / clean |
-| `.venv/bin/python -m unittest tests.test_automation_workspace_read_model tests.test_operations_run_inventory tests.test_operations_run_detail tests.test_operations_workspace tests.test_automation_definition_occurrence tests.test_v2_automation_operations tests.test_v2_automation_lifecycle tests.test_automation_run_once tests.test_v2_automation_run_once tests.test_automation_api tests.test_task_center_recovery_lineage tests.test_operations_task_center tests.test_operations_run_detail_plan_evidence tests.test_operations_run_detail_log_isolation` |327 tests OK;35 workspace cases included;50.79s wall clock |
-| `npm --prefix web run test -- run` |80 files /1173 passed;58.40s |
-| `npm --prefix web run typecheck`, `lint`, `format:check`, `build` |All PASS; logs retained |
-| Changed43.3 Python paths: `.venv/bin/ruff check <paths>` and `ruff format --check <paths>` |PASS; exact paths in timing log |
-| `npm run test:e2e -- --config=playwright.python.automation.config.ts tests/e2e/automation-workspace.python.spec.ts tests/e2e/automation-lifecycle.python.spec.ts tests/e2e/automation-run-once.python.spec.ts --output=<evidence>/automation-native-output` (cwd `web/`) |23 passed;30.60s; no retries |
-| Original independent existing-UI latest-sort reproduction, unchanged spec / isolated config |1 passed;2.23s; original failure assertion now passes |
-| Original healthy-empty-history temporary SQLite/API probe |200; healthy empty map, available metrics, no unavailable entry |
-| `npm --prefix web run test:e2e -- --output=<evidence>/default-e2e-output` |4 failed /1 interrupted /233 not run;108.79s; B stopped only this review's Playwright process after proven failures; exit130 |
+| `python3 scripts/check_governance.py`; whole Task `git diff --check` | PASS / clean |
+| `npm --prefix web run typecheck`, `lint`, `format:check`; `node --check web/tests/fake-server.mjs` | All PASS |
+| `npm --prefix web run test:e2e -- --output=<evidence>/default-e2e-output` |239 passed;111.43s measured wall clock |
+| `npm --prefix web run test:e2e -- --config=playwright.python.config.ts tests/e2e/operations-inventory.python.spec.ts --output=<evidence>/operations-native-output` |41 passed;91.93s |
+| `npm --prefix web run test:e2e -- --config=playwright.python.unicode-principal.config.ts tests/e2e/operations-principal-identity.python.spec.ts --output=<evidence>/unicode-native-output` |1 passed;1.71s |
 
-Default failures are `automation.spec.ts:77`, `:103`, `:133`, `:211`; the copy case at`:267` was
-interrupted, not counted failed or passed. Actual DOM error contexts, traces,200 response bodies
-and direct current-normalizer errors are retained. The first failure also independently shows
-the old heading assertion. No result is silently turned into a waiver or a real-product failure.
-SQLite ResourceWarnings, jsdom scrollTo and build chunk-size warnings remain visible.
+No failures, interruptions, skips or retries occurred in these three fresh browser gates. Normal
+Node color warnings and the previous disclosed SQLite/jsdom/build warnings are not hidden.
 
-**Pending B gates:** completed full default E2E, real Operations-inventory, Unicode-principal
-native and any remaining whole-Task acceptance. Early stop is permitted by the workflow; these
-are pending, not green or waived. Slice Final T4 and RO-6 remain incomplete. Do not plan a new
-Task or close the Slice from this review.
+B reuses its own actual runs on `878d3f85cafab8d177d4b5457237c01f87581c72`, not Developer's
+PASS labels. `reuse-input-check.json`, tracked-range diffs and the clean product working tree
+prove matching relevant source/tests/harnesses, package manifests/lock/configuration and served
+asset hashes; only `TASK.md` differs among the prior recorded source hashes. No dependency
+installation or rebuild changed the execution environment in this review. Fresh fake/default
+checks above replace the previous red default run; that red run remains in its original evidence.
 
-Local-only evidence (not remotely accessible):
+| Matching B evidence reused; not rerun this round | Actual prior result |
+|---|---|
+|14 Python integration modules: workspace read model, run inventory/detail/workspace, occurrences, Automation operations/lifecycle/Run once/API, recovery lineage, Task Center/plan/log isolation (exact command in prior timing log) |327 OK, including35 workspace cases |
+| `npm --prefix web run test -- run` |80 files /1173 passed |
+| Real Automation workspace/lifecycle/Run-once explicit3-spec matrix |23 passed |
+| Production Web build; changed43.3 Python Ruff lint/format |PASS |
+| Original independent UI latest-sort and empty-history authenticated temporary SQLite/API probes |1 browser PASS; API200/healthy empty/available metrics |
+| Wide/narrow workspace and Run-once screenshots compared with original reference |Previously inspected; identical UI source/served assets; no pixel-exact or RO-6 claim |
+
+Prior evidence:
 `.git/validation-evidence/878d3f85cafab8d177d4b5457237c01f87581c72/b-review-20261024/`.
-The evidence index records commands/cwd, execution-input/asset/dependency identity, raw failures,
-visual checks, timing and preservation checks. Both original reference digests, frozen branch and
-pre-existing dirty/private files remain unchanged. No product/test implementation, push or history
-rewrite is performed by this B checkpoint.
+Fresh logs, exact commands/cwd/timing, range manifests/diffs, reuse checks and preservation facts:
+`.git/validation-evidence/8ff9b173972c15a46afc9c8f8aaa8c5584c127e2/b-review-20261024/`.
+These are local durable artifacts, not remotely accessible links.
 
-Timing at 2026-10-24T10:11:49.769611+08:00: measured gate wall clocks 269.46s; including extra probes/doc checks, a conservative 280s upper bound / 620.77s elapsed = 45.1%, below the user's strict50% cap.
+### All-Slice outcome reassessment and stop boundary
+
+| Slice outcome / surface | Current disposition |
+|---|---|
+| RO-1 inventory/statistics |Task43.3 list/query/cards/latest/empty/read-only tab/navigation outcome accepted. Settings portion of the workspace remains with RO-6. |
+| RO-2 checked definition lifecycle |Existing current lifecycle preserved and real11-case lifecycle matrix passes; historical43.1/43.2 labels alone are not used as current acceptance. Whole-Slice final proof remains A's later acceptance. |
+| RO-3 shared analysis / scoped unattended execution |Existing current analysis/grant/revoke semantics preserved; no retired Preview product or new authority/write path added. Assigned integration/native coverage passes; Scheduler/resident/full safety proof remains Slice T4. |
+| RO-4 Run once |Current bounded discovery/plan/confirmation/Worker/restart and independent-item recovery journeys pass, including the original independent admission/order check. No schedule/grant/executor semantics changed here; final matrix remains Slice T4. |
+| RO-5 read-only records / Task Center recovery |Task43.3 outcome accepted, including historical context, original-admission deduplication, original results, per-item handling and exact recovery owner/return. |
+| RO-6 global settings / actual resident adoption |INCOMPLETE, outside43.3: four-field focused checked Save plus real Worker/Scheduler polling adoption and fresh consumer readback still required. A settings tab/link does not satisfy it. |
+| RO-7 compatible navigation / failure / safety |Inventory/records-related contribution accepted with current shared default/native regression. Settings/service and whole-Slice safety/packaging/release obligations remain final acceptance work. |
+
+Therefore Task43.3 is terminal PASS, while Slice43 stays ACTIVE and is **not** READY FOR A REVIEW
+or PASS / CLOSED. NEXT TASK is the remaining coherent settings outcome; this review does not
+create its plan, modify A-owned SLICE/Roadmap/Progress, or turn this Task's T3 into Slice T4.
+Only A may finally accept/close the complete Slice. No optional proof/tooling Task is introduced.
+
+Both original reference digests and frozen branch remain unchanged; all pre-existing dirty and
+untracked files are preserved. `config/alist.json` remains ignored/untracked/unstaged and its
+contents were not read. This B checkpoint changes only `TASK.md`; no push or history rewrite.
+
+Timing at 2026-10-24T11:10:12.008750+08:00: measured fresh gates 226.94s; including governance/
+whitespace and documentation verification, conservative upper bound 234.94s /
+504.01s elapsed = 46.6%, below the user's strict50% cap. Reused runs
+are not rerun time in this round. No sleep was used to extend the review.
