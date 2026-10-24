@@ -508,7 +508,7 @@ section reports the corrections made in the same Task/Base/Goal/Scope.
 ```text
 Status: READY FOR B REVIEW (Developer does not self-PASS)
 Task Base: f18d2444f548b81b5892536498a1b4cdd4400be8
-Candidate: the commit carrying this report (see `git log -1` for the exact SHA)
+Candidate: `24b92ab` (report commit supersedes it with this section only)
 Scope: fix R1..R6 inside the same Task/Base/Goal/Scope
 ```
 
@@ -585,6 +585,7 @@ Scope: fix R1..R6 inside the same Task/Base/Goal/Scope
 | `npm run test:e2e` default fake suite (cwd `web`) | `242 passed` |
 | `npm run test:e2e -- --config=playwright.python.automation.config.ts <settings+workspace+lifecycle+run-once>` | `31 passed` |
 | `npm run test:e2e -- --config=playwright.python.automation.config.ts tests/e2e/automation-settings.python.spec.ts` | `8 passed` |
+| `npm run test:e2e` fake suite re-run after the settings fake/reconcile shape update | `242 passed` |
 
 No test was skipped, retried or weakened. Two assertions were *strengthened*: the fake
 settings document now states the real reconcile `state`, and the older resident assertions
