@@ -4,8 +4,18 @@
   --panel: #ffffff;
   --line: #e2e8f0;
   --ink: #18243b;
-  --muted: #667895;
+  --muted: #57678a;
   --accent: #1268f5;
+  /* `--accent` fills a solid primary action and carries white text (4.86:1).
+     Accent-coloured text and hover states use the darker tone so they stay
+     readable on the pale surfaces those states paint. */
+  --accent-strong: #0d4fb8;
+  --accent-soft: #e8efff;
+  /* One explicit unavailable palette: labels stay legible instead of being
+     faded by opacity below the readable range. */
+  --disabled-surface: #edf1f6;
+  --disabled-ink: #46556b;
+  --disabled-line: #d5dde8;
   --warn: #d69b1b;
   --bad: #c2413b;
   font:
@@ -37,7 +47,7 @@ body {
   z-index: 10;
   padding: 10px 14px;
   background: var(--accent);
-  color: #101512;
+  color: #ffffff;
 }
 
 .mf-skip-link:focus {
@@ -335,9 +345,9 @@ body {
   cursor: pointer;
 }
 .mf-rules-actions button:disabled {
-  color: #94a0b2;
+  color: var(--disabled-ink);
   cursor: not-allowed;
-  background: #f3f5f8;
+  background: var(--disabled-surface);
 }
 .mf-rules-table td:last-child {
   min-width: 200px;
@@ -725,26 +735,40 @@ body {
 }
 
 .mf-button {
-  border: 1px solid var(--line);
+  border: 1px solid var(--accent);
   border-radius: 6px;
-  background: #202b24;
-  color: var(--ink);
+  background: var(--accent);
+  color: #ffffff;
   padding: 9px 14px;
   cursor: pointer;
 }
 
-.mf-button:hover,
-.mf-button:focus {
-  border-color: var(--accent);
+/* Primary hover/focus darkens the fill; the white label keeps its contrast. */
+.mf-button:not(:disabled):hover,
+.mf-button:not(:disabled):focus {
+  border-color: var(--accent-strong);
+  background: var(--accent-strong);
 }
 
 .mf-button:disabled {
-  opacity: 0.55;
+  border-color: var(--disabled-line);
+  background: var(--disabled-surface);
+  color: var(--disabled-ink);
+  opacity: 1;
   cursor: default;
 }
 
-.mf-button-secondary {
-  background: transparent;
+.mf-button.mf-button-secondary {
+  border-color: var(--line);
+  background: var(--panel);
+  color: var(--ink);
+}
+
+.mf-button.mf-button-secondary:not(:disabled):hover,
+.mf-button.mf-button-secondary:not(:disabled):focus {
+  border-color: var(--accent-strong);
+  background: var(--accent-soft);
+  color: var(--accent-strong);
 }
 
 .mf-field {
@@ -762,7 +786,7 @@ body {
 .mf-field input {
   border: 1px solid var(--line);
   border-radius: 6px;
-  background: #202b24;
+  background: var(--panel);
   color: var(--ink);
   padding: 9px 12px;
 }
@@ -1046,7 +1070,7 @@ body {
   min-width: 0;
   border: 1px solid var(--line);
   border-radius: 6px;
-  background: #202b24;
+  background: var(--panel);
   color: var(--ink);
   padding: 9px 10px;
   font: inherit;
@@ -1227,9 +1251,15 @@ body {
   --files-surface: #ffffff;
   --files-line: #e3e8ef;
   --files-ink: #1f2733;
-  --files-muted: #64748b;
-  --files-accent: #2f6bff;
+  --files-muted: #5a6b85;
+  /* Files keeps its own action blue, but the fill now carries white labels at
+     an AA ratio and the text tone is dark enough for the soft selection tint. */
+  --files-accent: #1f56d8;
+  --files-accent-strong: #1a4bc4;
   --files-accent-soft: #e8efff;
+  --files-disabled-surface: #edf1f6;
+  --files-disabled-ink: #46556b;
+  --files-disabled-line: #d5dde8;
   --files-enabled: #16a34a;
   color: var(--files-ink);
   background: var(--files-bg);
@@ -1291,8 +1321,25 @@ body {
   cursor: pointer;
 }
 
+.mf-files-page .mf-button.mf-button-secondary:not(:disabled):hover,
+.mf-files-page .mf-button.mf-button-secondary:not(:disabled):focus {
+  border-color: var(--files-accent);
+  background: var(--files-accent-soft);
+  color: var(--files-accent-strong);
+}
+
+.mf-files-page .mf-button-primary:not(:disabled):hover,
+.mf-files-page .mf-button-primary:not(:disabled):focus {
+  border-color: var(--files-accent-strong);
+  background: var(--files-accent-strong);
+  color: #ffffff;
+}
+
 .mf-files-page .mf-button:disabled {
-  opacity: 0.55;
+  border-color: var(--files-disabled-line);
+  background: var(--files-disabled-surface);
+  color: var(--files-disabled-ink);
+  opacity: 1;
   cursor: default;
 }
 
@@ -1513,6 +1560,10 @@ body {
   color: var(--files-accent);
 }
 
+.mf-view-toggle:hover:not(:disabled) {
+  color: var(--files-accent-strong);
+}
+
 .mf-files-table {
   width: 100%;
   table-layout: fixed;
@@ -1686,7 +1737,10 @@ button.mf-grid-button {
 }
 
 .mf-page-button:disabled {
-  opacity: 0.5;
+  border-color: var(--files-disabled-line);
+  background: var(--files-disabled-surface);
+  color: var(--files-disabled-ink);
+  opacity: 1;
   cursor: default;
 }
 
@@ -2081,13 +2135,13 @@ button.mf-grid-button {
 .mf-nav-link.is-active {
   border: 0;
   background: #e4efff;
-  color: #1268f5;
+  color: var(--accent-strong);
 }
 
 .mf-nav-link.is-active svg,
 .mf-nav-link:hover svg,
 .mf-nav-link:focus-visible svg {
-  color: #1268f5;
+  color: var(--accent-strong);
 }
 
 .mf-shell-content {
@@ -2296,10 +2350,26 @@ button.mf-grid-button {
   line-height: 20px;
 }
 
+/* The later geometry block above paints every Files action white, so the
+   unavailable and primary palettes are restated here at the same specificity
+   to keep a disabled label legible and the primary fill white-on-blue. */
+.mf-files-page .mf-button:disabled {
+  border-color: var(--files-disabled-line);
+  background: var(--files-disabled-surface);
+  color: var(--files-disabled-ink);
+  opacity: 1;
+}
+
 .mf-files-page .mf-button-primary {
-  border-color: #1268f5;
-  background: #1268f5;
+  border-color: var(--files-accent);
+  background: var(--files-accent);
   color: #ffffff;
+}
+
+.mf-files-page .mf-button-primary:disabled {
+  border-color: var(--files-disabled-line);
+  background: var(--files-disabled-surface);
+  color: var(--files-disabled-ink);
 }
 
 .mf-files-page .mf-files-header-actions .mf-button-primary {
@@ -2666,7 +2736,7 @@ button.mf-grid-button {
 .mf-view-toggle.is-active {
   background: #edf4ff;
   border-color: #bcd5ff;
-  color: #1268f5;
+  color: var(--files-accent);
 }
 
 .mf-files-table-scroll {
@@ -2922,7 +2992,7 @@ button.mf-grid-button {
 }
 
 .mf-selection-hint {
-  color: #667895;
+  color: var(--files-muted);
   font-size: 12px;
 }
 
@@ -2932,7 +3002,7 @@ button.mf-grid-button {
 
 .mf-files-pagination {
   gap: 8px;
-  color: #617595;
+  color: var(--files-muted);
   font-size: 14px;
 }
 
@@ -3251,11 +3321,13 @@ button.mf-grid-button {
   border-color: var(--accent);
 }
 
+/* Selection keeps the darker accent text so the pale selected tint stays
+   readable, while the border keeps the lighter action blue. */
 .mf-library-card.is-selected {
   border-color: var(--accent);
   border-width: 2px;
   background: #eff5ff;
-  color: var(--accent);
+  color: var(--accent-strong);
 }
 
 /* The one selection control covers the full card, so a click on the padding,
@@ -3278,7 +3350,7 @@ button.mf-grid-button {
 }
 
 .mf-library-card-select.is-selected {
-  color: var(--accent);
+  color: var(--accent-strong);
   font-weight: 700;
 }
 
@@ -3448,7 +3520,7 @@ button.mf-grid-button {
 .mf-more-item:hover,
 .mf-more-item.is-selected {
   background: #eff5ff;
-  color: var(--accent);
+  color: var(--accent-strong);
 }
 
 .mf-more-item-icon {
@@ -3608,9 +3680,9 @@ button.mf-grid-button {
 }
 
 .mf-button-danger {
-  background: #d92d20;
+  background: #c2413b;
   color: #ffffff;
-  border: 1px solid #d92d20;
+  border: 1px solid #c2413b;
   border-radius: 8px;
   padding: 9px 16px;
   font: inherit;
@@ -3618,12 +3690,18 @@ button.mf-grid-button {
 }
 
 .mf-button-danger:disabled {
-  opacity: 0.55;
+  border-color: var(--disabled-line);
+  background: var(--disabled-surface);
+  color: var(--disabled-ink);
+  opacity: 1;
   cursor: default;
 }
 
-.mf-button-danger:not(:disabled):hover {
-  background: #b42318;
+.mf-button-danger:not(:disabled):hover,
+.mf-button-danger:not(:disabled):focus {
+  background: #96231c;
+  border-color: #96231c;
+  color: #ffffff;
 }
 
 .mf-text-editor {
@@ -4150,14 +4228,32 @@ button.mf-grid-button {
   background: var(--accent);
   color: #fff;
 }
+.mf-operations-inventory
+  .mf-button:not(.mf-button-secondary):not(.mf-button-danger):not(
+    :disabled
+  ):hover,
+.mf-operations-inventory
+  .mf-button:not(.mf-button-secondary):not(.mf-button-danger):not(
+    :disabled
+  ):focus {
+  border-color: var(--accent-strong);
+  background: var(--accent-strong);
+  color: #fff;
+}
 .mf-operations-inventory .mf-button-secondary {
   background: #fff;
   color: var(--ink);
 }
+.mf-operations-inventory .mf-button-secondary:not(:disabled):hover,
+.mf-operations-inventory .mf-button-secondary:not(:disabled):focus {
+  border-color: var(--accent-strong);
+  background: var(--accent-soft);
+  color: var(--accent-strong);
+}
 .mf-operations-inventory .mf-button:disabled:not(.mf-button-danger) {
-  border-color: #d5dde8;
-  background: #edf1f6;
-  color: #46556b;
+  border-color: var(--disabled-line);
+  background: var(--disabled-surface);
+  color: var(--disabled-ink);
   opacity: 1;
 }
 .mf-task-center-summary .mf-count-grid {
@@ -4238,7 +4334,7 @@ button.mf-grid-button {
   color: var(--ink);
 }
 .mf-task-center-panel .mf-run-tabs.mf-view-tabs > button[aria-current="page"] {
-  color: var(--accent);
+  color: var(--accent-strong);
   border-bottom-color: var(--accent);
   font-weight: 600;
   background: none;
@@ -4783,7 +4879,7 @@ tr[aria-selected="true"] {
 .mf-rules-card.is-active .mf-rules-card-name,
 .mf-rules-card.is-active small,
 .mf-rules-card.is-active svg {
-  color: #1268f5;
+  color: var(--accent-strong);
 }
 
 /* --- inventory title/description and the action row ---------------------- */
@@ -5906,6 +6002,13 @@ tr[aria-selected="true"] {
   color: #ffffff;
 }
 
+.mf-automation-settings .mf-button-primary:disabled {
+  background: var(--disabled-surface);
+  border-color: var(--disabled-line);
+  color: var(--disabled-ink);
+  opacity: 1;
+}
+
 .mf-automation-settings .mf-button-primary:not(:disabled):hover,
 .mf-automation-settings .mf-button-primary:not(:disabled):focus {
   background: #0d55cc;
@@ -5917,10 +6020,23 @@ tr[aria-selected="true"] {
   color: var(--ink);
 }
 
+.mf-automation-settings .mf-button-secondary:disabled {
+  background: var(--disabled-surface);
+  border-color: var(--disabled-line);
+  color: var(--disabled-ink);
+  opacity: 1;
+}
+
 .mf-automation-settings-refresh .mf-button {
   background: var(--panel);
   color: var(--muted);
   padding: 6px 12px;
+}
+
+.mf-automation-settings-refresh .mf-button:not(:disabled):hover,
+.mf-automation-settings-refresh .mf-button:not(:disabled):focus {
+  background: var(--accent-soft);
+  color: var(--accent-strong);
 }
 
 /*

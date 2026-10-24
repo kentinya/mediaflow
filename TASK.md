@@ -7,7 +7,7 @@ Authority: committed [Slice46](SLICE.md) RO-1 / AC-1 and
 ```text
 Task ID: 46.1
 Parent Slice: 46
-Status: PLANNED
+Status: READY FOR B REVIEW
 Task Base: 725458f83862d12362fe4d9da57d0ceb9437398e
 Difficulty: Medium
 Test Level: T3
@@ -157,8 +157,143 @@ OS files and test/artifact directories. Keep private runtime state ignored/untra
 
 ## Developer Completion Report
 
-Not started. At handoff record checkpoint SHA, READY FOR B REVIEW, actual affected checks, visual/
-contrast evidence, known risks and remaining Slice outcomes. Full acceptance stays with B.
+Status: READY FOR B REVIEW. Implemented only Task 46.1 (RO-1/AC-1). The shared light action
+palette, Entry field colors and the conflicting consumer overrides were repaired; a real-browser
+readability matrix was added. RO-2–RO-5 are untouched.
+
+### Source identity
+
+- Task Base: `725458f83862d12362fe4d9da57d0ceb9437398e`
+- Checkpoint: this report's commit (`docs(task-46.1): hand off readable V2 actions`); see
+  `git log -1` for the exact SHA and the parent chain to the Task Base.
+- Branch: `main`. No push, no tag, no release.
+- Files changed: `web/src/shared/ui/styles.css`, `web/playwright.config.ts`,
+  `web/tests/e2e/action-readability.python.spec.ts` (new), `TASK.md`.
+- Preserved untouched: the pre-existing `docs/pics/操作与任务.png` deletion and all untracked
+  images/logs/OS files/test-output directories listed at planning time. No private runtime state
+  was staged.
+
+### What actually changed, and why
+
+The measured cause was the cascade, not one missing declaration. Inventory of the real bundle
+before the repair (`1536×1024`, isolated real-Python harness):
+
+| Element | Rendered text | Rendered backdrop | Contrast |
+|---|---|---|---|
+| Entry `#api-token` | `rgb(24,36,59)` | `rgb(32,43,36)` | **1.06:1** |
+| Entry Connect | `rgb(24,36,59)` | `rgb(32,43,36)` | **1.06:1** |
+| Automation `a.mf-button-primary` (新建自动化任务) | `rgb(24,36,59)` | `rgb(32,43,36)` | **1.06:1** |
+| Review / Notifications primary links | `rgb(24,36,59)` | `rgb(32,43,36)` | **1.06:1** |
+| Shell skip link | `rgb(16,21,18)` | `rgb(18,104,245)` | **3.80:1** |
+| Files active view toggle | `rgb(18,104,245)` | `rgb(237,244,255)` | **4.39:1** |
+| Files selected library card | `rgb(18,104,245)` | `rgb(239,245,255)` | **4.43:1** |
+| Active shell nav link / hover | `rgb(18,104,245)` | `rgb(228,239,255)` | **4.18:1** |
+| Task Center tab labels, `Refresh`, dialog close | `rgb(102,120,149)` | `rgb(255,255,255)` | **4.48:1** |
+| Disabled batch action (55% opacity) | blended `#94bbfa` | blended `#7dacfa` | **1.17:1** |
+| Disabled danger action (55% opacity) | blended `#eea09b` | blended `#ea8c84` | **1.18:1** |
+| Rules disabled action | `rgb(148,160,178)` | `rgb(243,245,248)` | **2.42:1** |
+
+The dark `#202b24` base `.mf-button`/`.mf-field input` fill was the root defect: it was inherited by
+Entry, Review, Notifications and every primary button-styled `<Link>`, while Files/Rules/Automation
+each patched over it locally. Disabled relied on `opacity: 0.55`, which composites both label and
+fill so no palette can stay legible.
+
+Repair (single shared palette + only the overrides that were demonstrably wrong):
+
+- `:root` gained `--accent-strong` (accent-coloured text/hover), `--accent-soft`, and one explicit
+  `--disabled-surface/-ink/-line` unavailable palette. `--muted` `#667895`→`#57678a`.
+- `.mf-button` is a real primary (accent fill, white label, hover/focus darkening) instead of the
+  dark base; `.mf-button-secondary` is the light surface variant with its own hover/focus.
+  `.mf-button:disabled` no longer uses opacity, so a disabled label stays at 6.68:1 and visibly grey.
+- `.mf-button-danger` uses `#c2413b` (5.11:1 white label) with a legible disabled state.
+- `.mf-field input` / `.mf-filter-field` no longer use the dark fill; Entry is readable with the
+  shared `Button`/`TextField` markup unchanged.
+- Shell: skip link to white-on-accent (4.86:1), nav hover/active to `--accent-strong` on its pale
+  tint, and selected nav stays distinguishable.
+- Files: `--files-accent` `#2f6bff`→`#1f56d8` (white label 6.21:1, dark-on-soft 5.39:1),
+  `--files-muted`→`#5a6b85`, and the later geometry block's white-everything override was restated
+  so disabled and primary stay correct at that specificity (this was the actual cascade bug).
+- Task Center, Rules, Automation and pagination/selection states restated on the same tokens.
+  Task-local primary/secondary/danger distinctions, focus rings, `disabled`/`aria-busy`, action
+  handlers, permission guards and auth storage are unchanged — only colors and the disabled
+  mechanism moved.
+
+### Evidence
+
+New real-browser matrix: `web/tests/e2e/action-readability.python.spec.ts` (5 tests, excluded from
+the fake-server suite via `playwright.config.ts`). Every assertion composites the full ancestor
+background chain and the effective ancestor opacity, then compares the **visible** foreground with
+the **painted** backdrop against 4.5:1 (3:1 for qualifying large text). Coverage:
+
+1. Entry field/label/Connect/validation alert/connected+Disconnect; empty input rejected; valid
+   token continues to the recorded route; token absent from localStorage/sessionStorage/cookies/URL.
+2. All visible actions measured on Dashboard, both Files kinds, Storage, Rules, Automation, Task
+   Center, Settings; both library kinds' create-folder dialog (primary/secondary/close/field); a
+   real MediaLibrary delete-confirmation danger action; a real row action menu; narrow `390×844`
+   Files plus its dialog with no clipped labels.
+3. Primary vs secondary vs danger backdrops stay distinct; keyboard-modality focus ring measured on
+   a primary button, a secondary button and a button-styled nav link.
+4. Real disabled batch/pagination actions readable and distinguishable from enabled; a held Files
+   command proves `aria-busy="true"`, `disabled`, `提交中…` label, and that a second activation
+   (dispatched click + Enter) never reaches the backend; read-only principal exposes no token text.
+5. A real 503 Task Center read failure stays readable, and re-entry re-reads the surface.
+
+Measured after the repair (all ≥5.6:1 except the deliberately 4.86:1 white-on-accent primary):
+Entry field 15.51, Entry Connect 4.86, nav active 6.40, skip link 4.86, view toggle active 5.62,
+selected library card 6.78, dialog primary 6.21, dialog cancel 15.86, dialog close 5.66, dialog
+field 15.51, Task Center tabs 7.43, disabled batch/page 6.68, Automation primary link 4.86,
+Automation secondary 17.27.
+
+Screenshots (ignored test output, not tracked): `web/test-results/action-readability/*.png` —
+`entry-desktop`, `entry-invalid`, `entry-connected`, `entry-connected`, `*-desktop` for all eight
+surfaces, `resource-dialog-desktop`, `media-dialog-desktop`, `medialibrary-delete-danger`,
+`files-disabled`, `files-submitting`, `files-narrow`, `files-dialog-narrow`,
+`task-center-read-failure`. Visually reviewed: `entry-desktop` (light field, dark label, blue
+Connect), `medialibrary-delete-danger` (light dialog, readable toggle/table, distinct danger action),
+`files-narrow` (no clipped labels at 390px).
+
+Regression proof: with the old `styles.css` restored and rebuilt, all 5 new tests fail; with the
+repair they pass. The spec is not a CSS-literal guard.
+
+### Commands actually run
+
+From repository root: `python3 scripts/check_governance.py` → PASS; `git diff --check` → clean.
+
+From `web/`:
+
+```
+npm run test -- run src/features/entry/EntryPage.test.tsx src/shared/auth/AuthBoundary.test.tsx src/shared/ui/AppShell.test.tsx   → 3 files / 21 tests passed
+npm run test -- run src/shared/ui                                                                                              → 4 files / 31 tests passed
+npx prettier --check src/shared/ui/styles.css tests/e2e/action-readability.python.spec.ts playwright.config.ts                  → all formatted
+npm run typecheck                                                                                                              → clean
+npm run lint                                                                                                                   → clean
+npm run build                                                                                                                  → built
+timeout 400 npx playwright test --config=playwright.python.config.ts tests/e2e/action-readability.python.spec.ts                → 5 passed
+npm run test:e2e -- tests/e2e/deep-link.spec.ts                                                                                → 14 passed
+npm run test:e2e -- tests/e2e/manual-organize.spec.ts                                                                          → 14 passed
+npm run test:e2e -- tests/e2e/library-files.spec.ts                                                                            → 48 passed
+npm run test:e2e                                                                                                               → 242 passed (16 files)
+npx playwright test --config=playwright.config.ts --list                                                                       → 242 tests, 0 action-readability
+```
+
+### Known risks and limits
+
+- The measured matrix covers every palette/context combination that a V2 surface renders from the
+  visited fixtures (admin principal, seeded real data). Some data-dependent variants — an error
+  banner's own inline color, a provider-specific Storage card accent, the Automation
+  detail/Enabled defect states — were not separately measured here because those states are the
+  known RO-5 defects and must not be faked into a passing payload. Their shared palette inherits
+  the repaired tokens.
+- `--warn` `#d69b1b` (draft-state badge) is 2.45:1 on white. It is a pre-existing non-action
+  annotation outside RO-1's action/Entry scope and was deliberately left alone; flagging it rather
+  than silently widening the Task.
+- Entry has no in-page submitting state: `connect()` sets the token synchronously and navigates, so
+  the busy/disabled proof uses the real held Files command instead of inventing an Entry spinner.
+- Contrast is asserted for the visible text/backdrop pair only; it does not model subpixel
+  antialiasing, so borderline 4.5:1 pairs were deliberately avoided in favor of ≥5:1 except the
+  white-on-`--accent` primary (4.86:1).
+- B must independently re-run the two focused Playwright commands, inspect the screenshots and
+  confirm the old-palette failure. Slice-final T4 gates and RO-2–RO-5 remain outstanding.
 
 ## B Review Result
 
