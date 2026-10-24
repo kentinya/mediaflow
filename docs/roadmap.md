@@ -34,19 +34,17 @@ only in [the development workflow](development-workflow.md).
 
 ## Current boundary
 
-Slice43 — **V2 Automation Workspace and Engine Settings** — is **ACTIVE** on main following the
-user's explicit 2026-10-23 request to continue Automation-page development. The original immutable
-Base remains `853973dbbf8289fa2ad40657033e94e870a690e4`; the current [Contract](../SLICE.md) restores
-RO-1..RO-7 and T4 acceptance with the accepted45 product amendments. B first reassesses the preserved,
-unstarted Task43.3 with its original ID/Base/Goal/Scope; no implementation is authorized from its
-obsolete snapshot before that explicit continuation/adjustment/replan.
+Slice43 — **V2 Automation Workspace and Engine Settings** — remains the **ACTIVE** large-Slice
+priority on main. A's 2026-10-24 final review of original Base
+`853973dbbf8289fa2ad40657033e94e870a690e4` through `20baaeaae52b5b4eee9a162a2679ce51b1d93311`
+is **FIX REQUIRED**: an ordinary Scheduler restart leaves its historical stopped instance permanently
+blocking current settings-adoption completion (A43-01). B plans one focused correction within the
+unchanged [Contract](../SLICE.md), then supplies corrected acceptance and a refreshed Closure Packet.
+No new feature Slice or closure is selected; B's43.3/43.4 PASS and actual evidence remain historical facts.
 
-`frozen/slice-43-2026-10-15` remains an unchanged historical preservation branch, not the current
-work branch. Historical43.1/43.2 B PASS is not current whole-Slice acceptance. Reference-style
-inventory/read-only execution records/statistics, current shared-analysis/authorization/Run-once integration and actual
-four-field settings consumption remain required; existing code is reused only after reassessment.
-Execution records explain results/reasons and prerequisite repair; safe pre-start retry follows
-existing authority, while formal organizing-task recovery remains exclusively in Task Center.
+`frozen/slice-43-2026-10-15` and both integration-preservation refs remain unchanged. RO-1..RO-7,
+T4 and accepted45 amendments retain their meaning. Automation records remain read-only with
+prerequisite-repair guidance; formal organizing-task recovery remains exclusively in Task Center.
 
 Slice45 remains **PASS / CLOSED**, with Base `a72252091d5d46edf3e2114b994036ae21b08e2e`, reviewed
 Implementation Head `4fcb0028f987f8746f0a8aa7b309e360b07c598e` and closure

@@ -8,19 +8,17 @@ workflow authority. Closure rules live only in
 
 ## Current development pointer
 
-Slice43 — **V2 Automation Workspace and Engine Settings** — is **ACTIVE** on main by explicit
-user resumption on 2026-10-23. Original Slice Base `853973dbbf8289fa2ad40657033e94e870a690e4` and
-unstarted Task43.3 Base `78ec108d4473e8c140174c1356d0e88a1ae42b34` are unchanged. The committed
-[Slice](../SLICE.md) preserves full outcomes/T4, aligns the accepted45 retirement amendments, and
-hands the existing Task identity/Goal/Scope to B for current-code reassessment before implementation.
-No new product acceptance or completed43 outcome is claimed by reactivation.
+Slice43 — **V2 Automation Workspace and Engine Settings** — remains open on main. A's
+2026-10-24 final review of original Base `853973dbbf8289fa2ad40657033e94e870a690e4` through
+implementation `20baaeaae52b5b4eee9a162a2679ce51b1d93311` is **FIX REQUIRED**, with A43-01 in
+the required settings-adoption/restart journey. See the [Slice review](../SLICE.md#a-final-review).
+B's43.3/43.4 acceptance and Closure Packet remain reachable; B must now plan one focused correction
+and refresh corrected-candidate evidence. No43 closure or new accepted ledger row is claimed.
 
-The original hold Contract and branch `frozen/slice-43-2026-10-15` remain unchanged; preservation
-checkpoints and historical43.1/43.2 B PASS remain reachable. Current inventory/history/settings gaps,
-changed analysis/Run-once consumers and previously reported native failures need B reassessment.
-The user refined the records boundary on 2026-10-23: Automation reports results/reasons and guides
-repair before safe explicit retry; after formal organizing-task handoff, recovery is in Task Center.
-This is an A Contract revision for B reassessment, not implementation or product acceptance.
+The original Slice/Task43.3 Bases, hold Contract, `frozen/slice-43-2026-10-15` and integration refs
+remain unchanged. Full outcomes/T4, the user's read-only records/Task Center recovery boundary and
+accepted45 retirement amendments are preserved. B's test-time allocation deviation remains disclosed
+in the original packet; it is not erased by A's product review or reassigned to Developer.
 
 Slice45 stays **PASS / CLOSED** at implementation `4fcb0028f987f8746f0a8aa7b309e360b07c598e`.
 Its full Contract/A review/evidence limits and last Task closure are retained at

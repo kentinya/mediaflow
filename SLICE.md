@@ -4,14 +4,14 @@
 Slice ID: 43
 Name: V2 Automation Workspace and Engine Settings
 Owner: A — Slice Owner / Architect / Final Reviewer
-Status: ACTIVE
+Status: FIX REQUIRED
 Base SHA: 853973dbbf8289fa2ad40657033e94e870a690e4
-Implementation Head: 4fcb0028f987f8746f0a8aa7b309e360b07c598e
+Implementation Head: 20baaeaae52b5b4eee9a162a2679ce51b1d93311
 Working Branch: main
-Development Authorization: USER-AUTHORIZED RESUMPTION — 2026-10-23; B REASSESSMENT BEFORE IMPLEMENTATION
+Development Authorization: USER-AUTHORIZED RESUMPTION — 2026-10-23; B CORRECTION TASK REQUIRED
 Risk: High
 Final Test Level: T4
-Next Action: B REASSESS PRESERVED TASK 43.3 AGAINST CURRENT CODE AND COMMITTED CONTRACT
+Next Action: B PLANS ONE FOCUSED CORRECTION TASK FOR A43-01; NO NEW FEATURE SLICE
 ```
 
 ## User-authorized resumption and authority
@@ -19,7 +19,7 @@ Next Action: B REASSESS PRESERVED TASK 43.3 AGAINST CURRENT CODE AND COMMITTED C
 用户于 2026-10-23 明确要求继续自动化页开发。A 恢复同一 Slice43，不另起 Slice、不改原 Base，
 在已由用户授权整合的 main 上，承接已关闭 Slice45 后的实际代码。解除的是当前开发冻结；
 `frozen/slice-43-2026-10-15` 作为不可变历史保留，不移动其指针。
-本 checkpoint 只恢复范围与交接，不是产品实现、B Task 规划或 A 最终验收。
+原恢复 checkpoint 只恢复范围与交接；当前实现交接及 A 最终审查结论见文末。
 
 [AGENTS.md](AGENTS.md) 和 [Development Workflow](docs/development-workflow.md) 为现行权威。
 原用户结果、RO-1..RO-7、设置实际消费义务与 T4 门槛保留；只将旧合同中的 Scan、独立 Preview、
@@ -47,29 +47,24 @@ Before formal organizing starts, guide repair and an explicit safe retry through
 commands. After durable organizing-task handoff, all execution controls and per-item recovery belong
 to Task Center. This does not select the earlier proposed replacement of the records page with a
 Task Center filtered list. RO-5/AC-8 below define the boundary and non-replay requirements; original
-Base/outcomes/T4 and accepted45 behavior remain. B must reassess43.3 against this material revision.
+Base/outcomes/T4 and accepted45 behavior remain. B's subsequent43.3 reassessment and implementation
+followed this material revision; its historical Task identity/Base remain unchanged.
 
-### Actual-code reassessment and B handoff
+### Current implementation and B handoff
 
-The current inventory still renders bounded cards, with a truncated-prefix message; it has no complete
-reference table/tabs/full-population statistics journey. Current Automation details/lifecycle/Run once,
-API composition and analysis consumers changed materially after the preserved43 candidate; standalone
-Preview services/pages were removed. Historical43.1/43.2 evidence cannot simply certify these current
-entrances. RO-1/RO-5/RO-6 remain unfinished and other outcomes require current reassessment.
+B explicitly reassessed the preserved Task43.3, retained its original Base, and accepted inventory,
+records and statistics at `8ff9b173972c15a46afc9c8f8aaa8c5584c127e2`; its report is retained at
+`f18d2444f548b81b5892536498a1b4cdd4400be8:TASK.md`. Task43.4 then delivered focused engine-settings
+publication and resident adoption from that checkpoint. B's final packet is in
+`b1098329115dd53625ff08c4b616ecc80da89c1d:TASK.md`, reviewing implementation `20baaea…`.
+It requests whole-Slice A review, not another feature Task. The seven extra frozen43 native failures
+were not accepted during45; current lifecycle/Run-once/workspace/settings evidence is assessed now
+under the accepted45 amendments, without restoring retired products.
 
-Developer previously disclosed seven failures in extra frozen43 native cases. B/A did not establish
-their current cause or claim them PASS during45; these are reassessment inputs, not seven already
-proven production defects or erased blockers. B starts from the existing Automation entry and actual
-supported calls, checks current assertions against the accepted45 behavior, then records cause, user
-trigger and disposition. Do not invent routes or revive deleted products to make obsolete fixtures pass.
-
-Recover Task43.3's same ID/Base/Goal/Scope from the immutable snapshot before planning work. Root TASK
-keeps a no-active-implementation notice until B explicitly continues, legally adjusts or replans the
-unstarted unit against this committed Contract and current source. No silent Task Base reset, automatic
-promotion of historical PASS, obsolete Developer-full-suite assignment or implementation from the old
-snapshot. If necessary current lifecycle/analysis/Run-once repair cannot fit that read-model Task,
-B must make the coherent dependency/Task decision explicitly rather than hide mutation work in T3.
-Developer runs new/changed/directly affected checks; B owns full/final acceptance under current workflow.
+A's independent final review below finds A43-01 in the required settings-consumption/restart journey.
+The Slice remains open for one focused B correction Task. Original Base, outcomes, acceptance,
+deferrals and preserved refs are unchanged. Developer runs affected checks; B owns corrected-candidate
+acceptance and the refreshed Closure Packet. Historical Task PASS remains a B decision, not A closure.
 
 ## User Goal and Journey
 
@@ -456,11 +451,112 @@ Task planning/review, correction loops, stop rules, Closure Packet and final rev
 
 ## Closure Packet
 
-Not submitted. Task43.1/43.2 historical B PASS and the original unstarted Task43.3 are preserved.
-B must reassess the integrated current candidate and all outcomes before continuing/replanning;
-resumption is not current product acceptance, Slice readiness or final verification.
+B submitted Task43.4 PASS / SLICE READY FOR A REVIEW in
+`b1098329115dd53625ff08c4b616ecc80da89c1d:TASK.md`, reviewing
+`20baaeaae52b5b4eee9a162a2679ce51b1d93311`. Task43.3 PASS and the historical43.1/43.2 chain remain
+reachable. B reported RO-1..RO-7 complete and no next feature Task. A does not accept completion of
+RO-6/AC-10 because of A43-01 below; corrected evidence and a refreshed packet are required.
+
+Raw local B evidence is under `.git/validation-evidence/20baaeaae52b5b4eee9a162a2679ce51b1d93311/task43.4-b-review/`,
+with matching unchanged full runs under `7b98130f6b42999bd6e7808e3be39bf0ba0e7d4d/task43.4-b-review/`.
+These are local evidence, not remotely accessible links. B's disclosed test-time allocation
+nonconformance (about64%, above the requested below50%) remains visible; it is not waived or turned
+into a Developer defect. A's product finding is independent of that process issue.
 
 ## A Final Review
 
-Not performed. The resumption and user-authorized scope/document revisions are not product acceptance.
-Final review will cover the original immutable Base through the submitted Implementation Head.
+Reviewed Range: 853973dbbf8289fa2ad40657033e94e870a690e4..20baaeaae52b5b4eee9a162a2679ce51b1d93311
+Reporting Successor: b1098329115dd53625ff08c4b616ecc80da89c1d (TASK.md only)
+Decision: FIX REQUIRED — 2026-10-24
+P0/P1 Blockers: A43-01 (P1, RO-6 / AC-10 / V2-AUTO-008)
+Closure Reconciliation: NOT PERFORMED
+
+### Review scope and evidence
+
+A inspected the entire original Base..Head manifest (456 changed files), the current43 application/
+domain/API/SQLite/resident/Web boundaries, the original definition/Run-once chain and the68-file
+post45 delta. The range includes explicitly integrated44/45; their immutable acceptance reports,
+retirement amendments and evidence limits remain valid historical facts, not automatic acceptance
+of43. Original Base, frozen43 and both integration-preservation refs are unchanged. The working
+branch was main at `b109832…`; the workspace and Git were writable and entry governance passed.
+
+| Required outcome | A assessment of submitted candidate |
+|---|---|
+| RO-1 | Native table/tabs, bounded backend queries and full-population metric windows/denominators are implemented. A inspected real desktop/narrow captures and both original references; no additional P0/P1 identified in this review. |
+| RO-2 | Focused successor/checked publication, lifecycle permissions, copy/removal/history and current native lifecycle evidence support this outcome; historical Task PASS alone was not used. |
+| RO-3 | Shared analysis/plan evidence and separate live scoped grant remain over existing Scheduler/Worker/Executor authority, preserving accepted45 retirement and mutation checks. |
+| RO-4 | Definition Run once freezes bounded discovery, separately confirms one-shot execution, reconciles admission and preserves schedule state. Current four-case native/restart evidence supports the changed consumers. |
+| RO-5 | Read-only records derive original results, per-item follow-up handling, failure effects and durable Task Center ownership. Current workspace/Operations evidence covers sibling non-replay and return context. |
+| RO-6 | NOT COMPLETE: current live adoption is reported incorrectly after an ordinary resident restart; A43-01 prevents acceptance of the promised consumption/recovery journey. |
+| RO-7 | Shared validation/publication/RBAC/pins/redaction/authority and retired-product absence retain required boundaries; no independent additional blocker established. Corrected-candidate acceptance remains B-owned. |
+
+A inspected B's raw gate results and reuse delta, including full Web1211, default E2E242,
+isolated real-Python settings/workspace/lifecycle/Run-once11/8/11/4, Operations41 and principal1.
+The Python full run is accurately2785 run /1 document-consumer failure /7 skips, followed by the
+focused document correction PASS; A does not relabel the original full run OK. External Storage/
+endurance skips remain unavailable. The wheel-content reuse audit, installed actual Scheduler tick
+observation, genuine Task-Base49→50 preservation of73 prior tables, media-free/optional-media Docker,
+restart/fault and security logs support the reported boundaries. Earlier failed environment/fixture
+attempts and corrected logs remain distinct; the no-execute400 fixture adaptation preserves
+accepted45 explicit intent. These checks do not prove adoption recovery after a resident restart.
+
+Fresh A checks on the submitted executable inputs:
+
+- `.venv/bin/python -m unittest tests.test_automation_settings_management`:38 passed,2.315s.
+- `npm run build` in `web/`:PASS, existing chunk-size warning.
+- Existing real-Python settings spec filtered to lost same-field conflict, exact unknown-submission
+  reconciliation and System Settings entrance:3 passed,2.3s; no new route/assertion/retry was added.
+- Supported CLI/API restart reproduction below reproduced the product failure; passing reproduction
+  assertions are not passing acceptance of the requirement.
+- Original Base..Head whitespace is clean; both reference SHA256 values above match. All initial
+  unrelated dirty/untracked/private files remain untouched. No full suite was mechanically repeated.
+
+A's script, raw result, focused logs and complete manifest are in local ignored storage:
+`.git/validation-evidence/20baaeaae52b5b4eee9a162a2679ce51b1d93311/slice43-a-review/`.
+
+### A43-01 — Historical stopped processes permanently veto current adoption (P1)
+
+**Actual trigger:** start Worker and Scheduler through existing `worker run` / `scheduler run`
+commands on an isolated empty managed deployment, let both adopt published0.1s polling, normally
+terminate Scheduler and start it again. Read the existing
+`GET /api/v1/operations/automation/settings`, consumed by `自动化 → 全局设置`. Registration/adoption
+rows come from the real processes; the probe fabricates no reports, routes or production media.
+
+Before restart, the API reports2/2 consumers and `allAdopted=true`. After restart both currently live
+processes independently report `status=adopted` for the same publication, but Scheduler includes
+its old stopped instance and returns `adopted=false`; the summary drops to1/2 and `allAdopted=false`.
+The old instance instructs "start this service" even though its replacement is already running.
+Zero Jobs are created. `restart_adoption_probe.py` and `restart-adoption.json` retain the exact trace.
+
+**Cause and introduction:** `AutomationSettingsService._resident_state` reads every historical
+registration, while `evaluate_consumer_adoption` at
+`mediaflow/domain/automation_settings.py:530` requires all those rows to be adopted. Normal startup
+allocates a new process identity and stop retains the old row, so the stopped veto cannot clear
+through the offered recovery. This logic was introduced by
+`b3dc11f067a9d1a8864d99aa24bdfba0d859fbef` (2026-10-24 12:47:04 +08:00) and remains in the candidate.
+Registration history is legitimate existing behavior; the new adoption population is incorrect.
+This is a normal deployment/restart path through a required outcome, not hypothetical adapter
+injection or optional label cleanup. Actual cadence works; required truthful completion and
+actionable recovery do not.
+
+**Required correction boundary for B:** plan one coherent correction of current consumer membership,
+adoption aggregation and its Web recovery projection, preserving diagnostic history without making
+terminated predecessors permanent current consumers. A healthy replacement must allow the current
+service to reach truthful adoption. Preserve detection of real live mixed/overridden/unreported/
+schema-incompatible instances. Absent live services and unreadable evidence must remain unavailable.
+Do not simply declare every service with one adopted row healthy, drop genuine current replicas,
+erase history, weaken freshness or add restart supervision/new deployment authority.
+
+Verify through real existing resident commands and settings Web/API: fresh startup, graceful
+stop→replacement, later publication after replacement, multiple live instances with mixed adoption/
+override, and missing/stopped-only/unavailable states. B chooses the minimal mechanism and exact
+Task/tests within the unchanged Slice; Developer runs failing/affected checks and B runs assigned
+corrected-candidate acceptance plus the refreshed whole-Slice packet. Prior B facts remain evidence,
+but changed executable inputs require fresh applicable gates under the workflow.
+
+No next large Slice, CURRENT delivery reconciliation or closure is authorized. Root TASK retains B's
+accepted packet until B plans this correction; A has not invented a B Task. Consequently the guard
+reports `Slice FIX REQUIRED cannot have NO ACTIVE IMPLEMENTATION TASK` at this handoff, as in the
+prior44 A-return precedent. This is disclosed transitional governance state, not a PASS or a reason
+to alter the guard: B must checkpoint the correction Task before implementation, then rerun
+governance. Original Base/outcomes/deferrals and accepted44/45 closures stay unchanged.
