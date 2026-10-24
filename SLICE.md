@@ -5,14 +5,39 @@ Slice ID: 43
 Name: V2 Automation Workspace and Engine Settings
 Owner: A — Slice Owner / Architect / Final Reviewer
 Status: PASS / CLOSED
-Base SHA: 853973dbbf8289fa2ad40657033e94e870a690e4
-Implementation Head: 97316131946bdecc483b684f6e6f6ecb98c5594d
+Base SHA: 24a7a519844dd953a01a43d4a80b8ea999ada812
+Implementation Head: acc5c567788410cde68ed24b4fee12a84ee47ef2
 Working Branch: main
 Development Authorization: USER-AUTHORIZED RESUMPTION — 2026-10-23; ACCEPTED — 2026-10-24
 Risk: High
 Final Test Level: T4
 Next Action: A SELECTS THE NEXT LARGE SLICE
 ```
+
+## Git history attribution update
+
+On 2026-10-24 the user authorized Git identity normalization and removal of assistant coauthor
+trailers. The machine-readable Base and Implementation Head above use the corresponding commits
+on rewritten `main`. Every mapped commit has the exact original file tree; the underlying Slice
+start, reviewed implementation, outcomes and acceptance remain fixed.
+
+Historical review paragraphs, the closure ledger and evidence-directory names retain their
+original commit IDs. Original commits and frozen/preservation refs remain in owner-local backups.
+Use these equivalents for current-lineage navigation and governance:
+
+| Reference | Original review ID | Equivalent on current main |
+|---|---|---|
+| Slice43 Base | `853973dbbf8289fa2ad40657033e94e870a690e4` | `24a7a519844dd953a01a43d4a80b8ea999ada812` |
+| Reviewed implementation | `97316131946bdecc483b684f6e6f6ecb98c5594d` | `acc5c567788410cde68ed24b4fee12a84ee47ef2` |
+| B report | `0822e58fd687e402551e3224073cc8e8522192a0` | `473af50a7cb0a61f665db3b3fdb94a47bf2af6b4` |
+| Original Task43.3 Base | `78ec108d4473e8c140174c1356d0e88a1ae42b34` | `e0765da38c20c60f8fd74a2a7bdccaba7b86d670` |
+| Accepted Slice45 Base | `a72252091d5d46edf3e2114b994036ae21b08e2e` | `e13fa03f87151c5f763ce64d6cca08897c57356d` |
+| Accepted Slice45 implementation | `4fcb0028f987f8746f0a8aa7b309e360b07c598e` | `d59d48f349bddf67562c1d5e81f2fb78e82b13a0` |
+| Accepted Slice45 closure | `13ecfc0e75fc34ff0ae489e655124a178943cba4` | `3947fbe00963a17744570a2f7a95ac0146991d53` |
+
+The independent frozen Contract stays on its original branch. Complete rewrite maps and checks
+remain locally under `.git/author-rewrite/`, `.git/identity-rewrite/` and
+`.git/coauthor-cleanup/20261024T131020Z/`.
 
 ## User-authorized resumption and authority
 
@@ -29,10 +54,10 @@ FileIndex 形式及旧产品迁移/兼容义务对齐用户后来明确授权、
 
 | Preserved / current fact | Immutable reference and meaning |
 |---|---|
-| Original Slice43 Base | `853973dbbf8289fa2ad40657033e94e870a690e4` — unchanged, ancestor of main |
+| Original Slice43 Base | `853973dbbf8289fa2ad40657033e94e870a690e4` — preserved review reference; [current-lineage equivalent](#git-history-attribution-update) above |
 | Frozen Contract / branch | `ed974e0df8b263f631bfe48b524da461013d8780:SLICE.md`; `frozen/slice-43-2026-10-15` |
 | Original pre-hold Task43.3 | `c539429c2c3aaeaab4842b87d3c858e77106fed1:TASK.md` — PLANNED, not started |
-| Original Task43.3 Base | `78ec108d4473e8c140174c1356d0e88a1ae42b34` — unchanged, ancestor of main |
+| Original Task43.3 Base | `78ec108d4473e8c140174c1356d0e88a1ae42b34` — retained on its preservation branch; [current-lineage equivalent](#git-history-attribution-update) above |
 | Task43.3 Goal / Scope | Automation Inventory, Execution Records and Truthful Statistics; RO-1 inventory/statistics + consolidated RO-5 + related RO-7 query/navigation/failure surfaces; RO-6 settings remains a separate coherent unit |
 | Historical43 implementation / report | `727317168cc62f859f19db1b54b8175cb08449de` / `78ec108d4473e8c140174c1356d0e88a1ae42b34:TASK.md`; 43.1/43.2 are historical B PASS only |
 | Integrated preservation refs | `preserved/main-before-slice45-merge-20261018`; `preserved/slice45-before-main-merge-20261018` — unchanged |

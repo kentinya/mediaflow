@@ -5,11 +5,16 @@ release explicitly.
 
 ## Release lines
 
-`v1.0.0` is the released V1 baseline at `9562b0c9b09b9b2ac9f34b2187c86469a9ab1782`, maintained on
+`v1.0.0` is the released V1 baseline at `6386e704fa90a1ae3bf90f7d6a3ef62d4e5d2752`, maintained on
 `release/v1`. The `main` branch is the V2 development trunk and carries package version
 `2.0.0.dev0`. Its V2 frontend implementation is active and substantial across the current
 Dashboard, Library and Operations journeys, but this development line is not a V1 release and has
 not been released as V2.
+
+The user-authorized 2026-10-24 Git attribution update maps the original release commit
+`9562b0c9b09b9b2ac9f34b2187c86469a9ab1782` to the current baseline above with an identical file
+tree. The original annotated tag and release history remain in owner-local backups; release
+version, code and artifacts retain their existing meaning.
 
 ## V1 Docker release
 

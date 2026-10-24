@@ -15,8 +15,10 @@ implementation `97316131946bdecc483b684f6e6f6ecb98c5594d`. A43-01 is resolved. S
 `0822e58fd687e402551e3224073cc8e8522192a0:TASK.md`. No active Task or next large Slice is selected.
 
 The original Slice/Task Bases, prior rejected review, frozen hold and integration refs remain
-unchanged. Full outcomes/T4, read-only records/Task Center recovery and accepted45 amendments are
-preserved. External-service/endurance profiles remain unavailable; test-time allocation deviations
+unchanged in local backups. Current-lineage equivalents after the user-authorized attribution
+update are recorded in [SLICE.md](../SLICE.md#git-history-attribution-update); the ledger below keeps
+the original accepted review IDs. Full outcomes/T4, read-only records/Task Center recovery and
+accepted45 amendments are preserved. External-service/endurance profiles remain unavailable; test-time allocation deviations
 and the latest unmeasured denominator remain disclosed in the packets, not waived or transferred.
 
 Slice45 stays **PASS / CLOSED** at implementation `4fcb0028f987f8746f0a8aa7b309e360b07c598e`.

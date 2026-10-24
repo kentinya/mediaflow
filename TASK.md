@@ -11,3 +11,7 @@ Slice43 is **PASS / CLOSED** by A — 2026-10-24.
 
 No next Task is planned. The original Base, prior rejection/Task history, accepted44/45 boundaries,
 frozen/preservation refs, unrelated workspace changes and private configuration remain preserved.
+
+Current-lineage equivalents after the user-authorized Git attribution update are listed in
+[SLICE.md](SLICE.md#git-history-attribution-update). The immutable IDs above retain their original
+review and evidence meaning.

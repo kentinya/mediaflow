@@ -42,6 +42,8 @@ record complete RO-1..RO-7, T4 evidence, remaining limits and deferrals. No acti
 Task or next large Slice is selected; **A SELECTS THE NEXT LARGE SLICE** as a separate action.
 
 Original Bases, `frozen/slice-43-2026-10-15` and both integration-preservation refs remain unchanged.
+Their original review identities remain in local backups; current-lineage equivalents after the
+user-authorized attribution update are recorded in [SLICE.md](../SLICE.md#git-history-attribution-update).
 Automation records are read-only with prerequisite-repair guidance; formal organizing-task recovery
 belongs to Task Center. External-service/endurance skips and test-time evidence limits remain disclosed.
 
