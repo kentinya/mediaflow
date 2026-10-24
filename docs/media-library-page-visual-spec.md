@@ -1,7 +1,8 @@
 # MediaLibrary Page Visual Specification
 
 Status: CURRENT visual baseline — accepted Slice 38, including page-local editing
-Canonical image: [媒体库页.png](pics/媒体库页.png)
+Canonical image: `docs/pics/媒体库页.png` (absent from the current tree; preserved in Git at
+`f458646d3dac280b118a511c60ec53a5d3075d67:docs/pics/媒体库页.png`)
 Reference size: `1536 x 1024`
 Route: `/ui-v2/medialib/files`
 Current scope: [SLICE.md](../SLICE.md); accepted ranges: [Progress](progress.md)

@@ -11,131 +11,61 @@ Detailed superseded delivery notes are retained at
 
 ## TARGET — Slice46 readable actions and organizing-only Task Center
 
-User-authorized on 2026-10-24; [Slice46](../SLICE.md) and `V2-UX-004`, `V2-OPS-014–017`,
-`V2-FILES-007` own scope/acceptance, together with the user-added Automation corrections under
-`V2-AUTO-001–006/010/011`. This journey is not yet implemented or accepted.
+[Slice46](../SLICE.md) owns scope and acceptance; [V2 Requirements](v2-requirements.md) owns the
+stable amendment IDs. These journeys are TARGET, not delivered changes. The later CURRENT sections
+remain the accepted baseline except where this section explicitly selects a replacement.
 
-- **Goal/entry:** read and use shared V2 buttons, including Entry. New file-selection-based manual
-  organization starts from ResourceLibrary Files; ordinary maintenance starts on its own library page.
-- **State/action:** readable normal/focus/busy/disabled actions; exact selected sources and bounded
-  local command impact/progress; explicit Files 整理 submits bounded organizing work before business-rule
-  resolution, with in-task summary/confirmation. Automation Run once supplies one-run execution
-  intent and executes ready items after backend analysis without that extra initial confirmation.
-  Task Center has eight organizing-only views and four-type native recovery.
-- **Success:** ordinary results and relevant work reopen locally after close/reload/reconnect/restart;
-  Files-originated tasks and separate preparing/unknown requests remain reachable from Files.
-  Explicitly submitted organizing tasks enter Task Center before business readiness, with true
-  pipeline progress, four-type problems/results and exact return context.
-- **Local operation status:** 当前页面操作状态 appears immediately left of 添加资源库 with the same
-  button style; MediaLibrary Files uses the corresponding placement beside 添加媒体库. Click it to
-  open a centered modal showing this file page's bounded ordinary-operation progress, per-item results
-  and existing permitted controls/recovery. Entries retain their originating library/source; the two
-  library kinds never mix. Empty/loading/read-error and accessible close/keyboard behavior follow
-  existing conventions. Closing does not cancel/replay work; the same entry reopens durable work
-  after close/reload/reconnect/restart, without a new global center or universal retry/undo.
-- **Failure/recovery:** expose per-item stage, durable state, known effects/uncertainty and legal
-  actions in the owning flow. Unknown submission reads back the exact request; successful/uncertain
-  mutations never replay. Kind/principal/source/pin isolation and auth continuation remain.
-- **Manual admission:** select one/multiple files or bounded folders/mixed scopes on ResourceLibrary
-  Files → explicitly submit 整理 → check directly selected files for same-source unfinished work and
-  explicit extension exclusions → follow the admitted task. Folder tasks are admitted before
-  traversal; discovered files receive those checks and atomic ownership with their own item
-  admission inside the task. No complete folder scan is required before task creation; full bounds
-  checks still precede effects. Direct files do not require an allowlisted suffix.
-  Folder discovery (including folders in mixed selections) retains the library's configured primary-
-  media extension filter, defaulting to video. Rule/include misses and metadata/target/conflict
-  readiness cannot force a ready-plan step before task creation. Duplicate/excluded items have exact
-  reasons and eligible siblings remain independent;
-  an existing same-source run can be opened instead of duplicated. Queued/paused/unresolved recovery
-  work owns its source across manual/Automation requests; terminal history or a shared filename alone
-  does not block entry. Backend ownership is atomic; unknown submissions reconcile the exact request.
-- **Folder files and attachments:** default media types keep pictures/subtitles/NFO out of independent
-  primary processing. Existing policy-controlled matching may attach them to a video; unassociated
-  files remain at source without an independent Recognition/Attention problem. Turning artwork off
-  does not turn pictures into primaries; the existing other-same-stem setting can still attach
-  matching pictures when enabled. Explicit library media-extension customization stays effective;
-  no image-content/ad detection or automatic deletion is added. This replaces the earlier46 target
-  of admitting every non-excluded folder file, while direct-file selection keeps its explicit intent.
-- **Manual processing/recovery:** observe real discovery/stability waiting and the full pipeline
-  inside the task. Recognition misses/ambiguity, Metadata decisions, Classification misses and
-  Conflict problems enter their four lists/Attention/counts. Save the permitted decision → analyze
-  → inspect exact in-task summary → confirm selected execution → inspect actual results. A missing
-  match never silently selects a default type/identity/destination. Completed/uncertain siblings do
-  not replay; four-type resolution follows the truthful completion rules below. Technical failures
-  remain All/Ended history. Authentication/confinement/bounds/pins, stability and effect permissions
-  still govern real execution; admitting a task is not permission for unreviewed file effects.
-  Normal summary/confirmation stays reachable from Running/All in the exact unfinished task context,
-  including after refresh/restart. Without four-type recovery lineage, this confirmation creates no
-  fifth Attention category or pending-task count; confirmation inside four-type recovery keeps its
-  existing Attention lineage until the required human steps are resolved.
-  Browsing/DryRun/analysis-only requests never implicitly submit this manual organizing command.
-- **Task Center attention:** only Recognition, Metadata candidate/correction, Classification and
-  Conflict business problems enter “需要处理” and pending-task statistics. Required human steps
-  in those recovery journeys stay reachable through decision → analysis → exact summary/confirmation
-  → actual outcome. One task counts once across types; type/file counts retain their own meanings.
-  Saving a decision or queuing work is not success; queued/running alone is not a human to-do.
-  Actual resolution clears the exact problem; a new business blocker changes type. Once no current
-  four-type human problem remains, the task leaves attention, including when only technical failure
-  remains. Mixed outcomes retain independent truth rather than turning the whole run successful.
-  When exact linked recovery proves all organizing work succeeded, the overall task display becomes
-  “已完成（恢复成功）”; original failed attempts remain history, not overwritten successes.
-- **Other task failures:** remove “失败恢复”, separate failure statistics and generic failure repair/
-  retry/investigation guidance in Task Center. Network/Provider transport, Storage, permission/grant,
-  configuration/source and partial/uncertain failures appear only in All/Ended and their read-only
-  detail/results/logs/export, with real status/reason/stage/completed or uncertain effects. An outage
-  during Metadata lookup is not a candidate/correction problem. Old recovery links cannot restore
-  the removed flow or start work; safely resolve to the exact history or ordinary unavailable state.
-- **Automation detail/editing:** name/“打开” shows the saved definition and truthful enabled/
-  execution readiness without independent grant eligibility. Checked Save → further Enabled change/
-  Save or enable/disable works on the same page. Peer changes retain input; stale/denied/unknown
-  commands never silently overwrite, enable or replay. New/copy starts disabled. Reads do no work.
-- **Automation scheduled execution:** review the saved definition's source/scope/limits → explicitly
-  enable (or deliberately save an enabled successor) → execute at normal due times. This action
-  supplies scoped scheduled intent with backend execution permission and audit; no independent
-  grant, successful pre-analysis or repeated per-run confirmation is required. Enabling does not run
-  immediately. Disabled/removed definitions stop future scheduled admission and unperformed scheduled
-  effects at safe boundaries; an in-flight call/completed effect is not rolled back. Existing enabled
-  definitions need no old grant or off/on cycle. Old grants/revocations cannot override Enabled.
-- **Automation Run once:** click 运行一次 on a saved definition → enter the real organizing task
-  before business-rule readiness → observe bounded discovery, stability checks and full planning → execute
-  ready items under that saved policy. The click is explicit one-run intent; no separate initial
-  analysis/grant/summary confirmation is needed. Use the same saved scope/filtering/pipeline as
-  scheduled execution, with no new source picker. Disabled definitions may run once with execution
-  permission; Enabled and next due time stay unchanged. Recognition/Metadata/Classification/Conflict
-  blockers enter Task Center's four native recovery flows/counts while ready siblings can proceed.
-  Decisions are non-executing until safe explicit continuation; successful/uncertain items do not
-  replay. Exact source ownership/request reconciliation prevents duplicate work across manual/due/
-  Run once/recovery triggers. Healthy empty scope reports no work; unreadable scope stays a real
-  failure, and incomplete material bounds cannot execute a first-N prefix. One admitted run counts
-  once; old analysis-only requests/failed history are neither auto-executed nor relabelled.
-  Explicit policy/effect intent still governs overwrite/Delete/cleanup. Files manual organizing
-  retains its task-contained exact summary/confirmation.
-- **Automation stability:** retain the existing shared pipeline's stability checks and bounded
-  wait/re-scan for scheduled execution and Run once. If unstable candidates exist but no files are
-  ready, wait/re-scan once only when the shortest remaining interval is greater than zero and at
-  most 60 seconds. Ready files proceed without waiting for unstable siblings. Files proven stable,
-  including by that re-scan, can execute; remaining unstable files fail without modification. Only
-  instability-failure outcomes mean Failed, never empty/no-work success; mixed outcomes retain their
-  real status. Instability failures stay in All/Ended, outside four-type Attention/pending counts.
-  Later ordinary runs use normal saved scope/filtering/checks; no previous-failure retry/selection
-  or cross-run observation sharing is added. Configured real elapsed proof, work-scoped evidence
-  and Files manual handling remain. This withdraws the earlier46 immediate-failure/no-wait target.
+**Readable actions:** open Entry or a V2 page/dialog → distinguish text, availability and focus →
+submit the permitted action → read the result or bounded failure. Preserve keyboard/busy/disabled
+behavior, authentication continuation and memory-only credentials; no command replays on reconnect.
 
-This TARGET supersedes the later CURRENT text's mixed file-operation center population,
-center-created manual organizing entry, pre-task ready-plan gating for explicit Files organizing
-and nine-view/general-failure recovery. Exact summary/confirmation moves inside the admitted manual
-task and still precedes mutation. Manual entry no longer applies automatic include/exclude/match
-rules as extra vetoes; configured folder media-type filtering, explicit excluded extensions and hard
-safety limits remain. Remove global Worker/
-resident-status, discovery and manual-operation blocks and center creation actions; task-specific
-readiness reasons stay visible. Existing prepared-work and four-type native recovery remain legal
-continuations. V2-AUTO-010/011 explicitly replace the later CURRENT Automation grant/pre-analysis
-journey and Run once analysis-then-confirm sequence with enablement/Run once execution intent.
-Existing scope, pins, permissions, results and non-replay safeguards remain.
-No MediaLibrary organizing, alternate global file-operation center or new execution engine is added.
-For Task Center failures outside the four types, the explicit user decision replaces generic
-failure-recovery guidance in the general completion rules below with factual read-only history;
-durable evidence, administrative API/CLI capabilities and all execution safety remain.
+**Ordinary file work:** create/rename/edit/copy/move/delete on its ResourceLibrary or MediaLibrary
+file page → follow independent results → reopen durable work after close/refresh/reconnect/restart.
+“当前页面操作状态” sits immediately left of the corresponding “添加资源库 / 添加媒体库” with the
+same style and opens a centered modal. Entries retain their original library/source; kinds never mix.
+Show progress, effects/uncertainty and existing permitted controls/recovery, including empty/loading/
+read-error states and accessible dismissal. Closing cancels/replays nothing; add no universal undo.
+
+**Manual organizing:** select live ResourceLibrary files/folders → explicitly submit 整理 → admit
+before rule/metadata/target/conflict readiness → inspect task-contained discovery/stability/analysis
+→ review exact summary and confirm selected execution → inspect actual results. Direct files retain
+same-source unfinished-work and explicit extension checks; an unlisted suffix is not exclusion.
+Folder tasks precede traversal; each discovered source is atomically checked/reserved with item
+admission. Folder/mixed-folder processing retains configured primary-media extensions (default video)
+and attachment settings: ordinary pictures/subtitles/NFO are not standalone problems; unmatched files
+stay at source. Artwork-off does not promote pictures; other-same-stem remains effective. Other
+automatic include/exclude/rule readiness is not an extra manual veto. Bounds/real stability/RBAC/
+confinement/pins and explicit effect intent remain. Files retains exact task/preparation/unknown
+request readback; browsing/analysis-only never submits work. MediaLibrary is not an organizing source.
+
+**Task Center and recovery:** use All/Running/Attention/Ended plus Recognition/Metadata/Classification/
+Conflict. New manual work starts only from Files; remove center creation/global Worker/discovery/
+manual-operation blocks. Ordinary work stays local. Normal manual WaitingConfirm is unfinished in
+Running/All, with exact summary access after refresh/restart; it does not add a fifth pending type.
+Four-type problems enter their native decision → analysis → exact summary/confirmation → actual
+outcome journey. Required human steps keep their lineage; queued/running alone is not Attention.
+Count each task once across types and keep type/file counts distinct. Actual resolution clears the
+problem; new business blockers change type. All-success linked recovery may display “已完成（恢复成功）”
+while retaining original attempts. Mixed technical failures never become success merely by leaving
+Attention. Technical/uncertain failures remain factual All/Ended detail/results/logs/export, without
+a separate failure count, generic recovery flow or restored old recovery deep link. Successful/
+uncertain effects never replay; ordinary-file and administrative recovery retain their own scope.
+
+**Automation:** name/打开 reads the saved definition; Save → further Enabled edit/Save works on the
+same page. Genuine peer conflicts preserve input; denied/failed/unknown commands never overwrite or
+replay. New/copy starts disabled. Review saved scope/limits/effects → enable or deliberately save an
+enabled successor → execute at normal due times, with no separate grant/pre-analysis/per-run confirm.
+Enablement does not run immediately. Disabling/removal stops future due work and remaining scheduled
+effects safely, without rollback of in-flight/completed calls. “运行一次” admits and executes the saved
+scope once without another normal initial confirmation, even while disabled, without changing its
+schedule. Ready items proceed; four-type blockers use the recovery journey above and explicit safe
+continuation. Preserve exact request/source ownership, backend permissions/plans/effect checks,
+no-work vs unavailable truth, immutable pins and historical outcomes.
+
+**Automation stability:** retain the current shared organizing checks and conditional bounded
+wait/re-scan under RO-5/AC-18. Proven-stable files proceed; remaining unstable files fail unmodified
+and stay outside four-type Attention. Later ordinary runs use their normal scope/checks, without a
+failed-item selection/retry flow or cross-run observation sharing. Files manual handling stays.
 
 ## Product Experience Priority
 

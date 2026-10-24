@@ -35,31 +35,10 @@ only in [the development workflow](development-workflow.md).
 
 ## Current boundary
 
-Slice46 — **V2 Organizing Task Center and Readable Actions** — is **ACTIVE**, selected by A on
-2026-10-24 at immutable Base `e9f1a8dc607cfc6d5ea02141b058da8ce849cd70` following the user's
-button-readability, organizing-only center and Files-only manual-entry decisions, amended by the
-user to include Automation detail opening, continued Save/Enabled editing, enable-to-execute
-scheduling without independent grants and real Run once before business-rule readiness. The attention
-amendment selects eight Task Center views and only Recognition/Metadata/Classification/Conflict
-for Attention/pending-task statistics; Failure Recovery and other failures' separate statistics/guidance are removed, while
-terminal failures remain factual read-only history in All/Ended. The latest manual-entry amendment
-admits explicit Files organizing before business-rule resolution. Direct-file business checks remain
-same-source unfinished work and explicit extension exclusion; folder/mixed-folder discovery retains
-configured media-type filtering (default video) and existing attachment settings, without promoting
-ordinary images into independent Recognition/Attention items. Four-type problems and exact
-summary/execution confirmation occur inside the Files manual task. V2-AUTO-010/011 replace the
-previous pending-grant target: checked Enabled supplies scheduled intent, Run once supplies immediate
-one-run intent with no second initial summary/execute gate, and four-type blockers use task recovery.
-Saved scope/filtering/limits, backend execution safety, schedule independence and history remain.
-The user retained Automation's existing stability checks and conditional bounded wait/re-scan,
-withdrawing the immediate-failure/no-wait target. Remaining unstable files fail while ready files
-proceed; later normal runs retain ordinary checks without failed-item retry or cross-run observation
-sharing. Slice46 AC-18 defines the preserved behavior.
-Ordinary-file status uses 当前页面操作状态 immediately left of the corresponding 添加资源库 /
-添加媒体库 button with the same style, opening a centered modal with durable local reopening.
-The [Contract](../SLICE.md) defines five outcomes and T4 final acceptance. No implementation is
-delivered and [TASK.md](../TASK.md) has no active Task; **B PLANS THE FIRST TASK** after this
-Contract is checkpointed. The authorized changes are TARGET, not accepted CURRENT behavior.
+Slice46 — **V2 Organizing Task Center and Readable Actions** — is **ACTIVE** at immutable Base
+`e9f1a8dc607cfc6d5ea02141b058da8ce849cd70`. [SLICE.md](../SLICE.md) owns its five outcomes,
+18 acceptance criteria and T4 validation; [TASK.md](../TASK.md) has no active implementation Task.
+Implementation Head: **NOT SET**. Next: **B PLANS THE FIRST TASK**. This is TARGET, not delivery.
 
 Slice43 remains **PASS / CLOSED** after A's 2026-10-24 review of original Base
 `853973dbbf8289fa2ad40657033e94e870a690e4` through implementation

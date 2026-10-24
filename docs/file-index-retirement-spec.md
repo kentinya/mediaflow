@@ -1,14 +1,9 @@
 # FileIndex 完全退役与实时文件列表统一 — Slice45（CURRENT / PASS / CLOSED）
 
-用户于 2026-10-18 将 FileIndex 完全退役加入当前 Slice45，并要求 `mediaflow files list`
-与文件页、媒体库页使用相同的实时 Storage 列表逻辑，只列举、不建立文件记录。
-本文件为整 Slice 验收后的 CURRENT 合同；[SLICE.md](../SLICE.md) 定义范围和验收记录，
-[V2-FILES-005/006](v2-requirements.md) 定义稳定验收。
-
-本文关于 Slice43 冻结/延期的表述记录45验收时的范围排除，不是43的当前状态。
-用户于 2026-10-23 单独恢复43；当前开发以 [SLICE.md](../SLICE.md) 为准。
-45完整验收和 Closure Packet 保留于 `13ecfc0e75fc34ff0ae489e655124a178943cba4:SLICE.md`；
-不得以恢复43撤销本文已接受的退役、共享分析或安全边界。
+本文件保留 Slice45 已验收的 CURRENT 退役合同；稳定要求为
+[V2-FILES-005/006](v2-requirements.md)。完整 Contract 与验收证据见
+`13ecfc0e75fc34ff0ae489e655124a178943cba4:SLICE.md`，当前状态见 [Progress](progress.md)。
+后续 TARGET 修订以当前 [SLICE.md](../SLICE.md) 为准，不撤销 FileIndex 退役及其安全边界。
 
 ## 1. 用户旅程与范围
 
@@ -98,7 +93,7 @@ metadata/fingerprint、版本、pin 和已完成效果仍可保存并用于准�
 不因仅路径相同或旧成功结果，永久压住同路径后来出现的新文件；现有锁、原子准入、
 精确请求去重、目标冲突和成功/未知效果非重放继续成立。
 
-## 5. 整理、稳定性及冻结 Automation 边界
+## 5. 整理、稳定性及 Automation 边界
 
 列举仅回答当前目录有什么；显式整理准备才开始现有有界发现和稳定性观察。
 优先复用 `MediaDiscoveryService/Worker`、`scan_filters` 与工作自己的持久 scope/观察。
@@ -107,14 +102,10 @@ stable-size 必须跨真实配置区间的未变观察；大小/mtime/有效指�
 长工作沿用现有 Task/Worker 和 lease/fence，配置 pin、范围/时间/条目限制保留；
 无 FileIndex 仍能新建→分析→同页摘要→明确确认→执行，并从 Task/checkpoint 完成恢复。
 
-FileIndex 原先在已接受的 Automation 基础实现中也有消费者；这些共享依赖已随本 Outcome 移除。
-可修改必要装配与共用发现/来源验证，不能因 Slice43 冻结而留下可运行 Index。
-此 FileIndex Outcome 不扩展自动化业务；Scan 模式删除已由 2026-10-18 首次部署修订另行选入
-同 Slice 的 RO-5 / Task45.4，作为冻结边界窄例外。其余页面、Run once、指标和全局设置消费
-继续延期。按 main 合并后的用户最新决定，Slice43 专属实现不构成 Slice45 必须保留、恢复、
-兼容或验收的前提；必要删除可直接清理其耦合，无需先适配旧自动化页。自动化页在 Slice45
-完成后重新设计实现。仍被支持基础流程实际消费的定义授权、scope、Provider、冲突、执行安全
-与 Task/Result/pin 保持，不以保护43为由保留 Index，也不借本 Outcome 开展无关页面重做。
+Automation 的共享发现、来源验证和运行装配不再依赖 FileIndex。受支持流程的定义授权、
+scope、Provider、冲突、执行安全及 Task/Result/pin 保持；退役不产生额外执行权限。
+Automation 的验收状态见 [Progress](progress.md)，当前修订见 [SLICE.md](../SLICE.md)。
+本合同不要求旧产品兼容或迁移，也不授权扩展其他业务。
 
 ## 6. 服务未上线的交付边界
 

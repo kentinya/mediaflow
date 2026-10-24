@@ -1,13 +1,9 @@
 # 独立 Preview 产品退役 — Slice45（CURRENT / PASS / CLOSED）
 
-用户要求将独立 Preview 完整退役加入当前 Slice，退役方式与 Scan 相同。
-[SLICE.md](../SLICE.md) RO-8 与 [V2-OPS-013](v2-requirements.md) 是范围和稳定验收 authority。
-本合同已通过 A 的整 Slice 验收；没有把 Task45.4 Scan PASS 代替此结果的验收。
-
-本文关于 Slice43 冻结/延期的表述记录45验收时的范围排除，不是43的当前状态。
-用户于 2026-10-23 单独恢复43；当前开发以 [SLICE.md](../SLICE.md) 为准。
-45完整验收和 Closure Packet 保留于 `13ecfc0e75fc34ff0ae489e655124a178943cba4:SLICE.md`；
-不得以恢复43撤销本文已接受的退役、共享分析或安全边界。
+本文件保留 Slice45 已验收的 CURRENT 退役合同；稳定要求为
+[V2-OPS-013](v2-requirements.md)。完整 Contract 与验收证据见
+`13ecfc0e75fc34ff0ae489e655124a178943cba4:SLICE.md`，当前状态见 [Progress](progress.md)。
+后续 TARGET 修订以当前 [SLICE.md](../SLICE.md) 为准，不撤销独立 Preview 退役及共享分析边界。
 
 ## 1. 用户旅程
 
@@ -71,8 +67,8 @@ discovery Worker，完整计划原子发布后才生成摘要，已生效的取�
 
 Web/API/CLI/Job/调度/dispatch/继续的独立产品及专用模型/仓储/schema/装配已退出。
 fixture 使用受支持准入、实际 Worker 或明确的投影 Task/Result，不通过放开权限、删除安全
-断言或恢复退役执行器满足验收。支持的共享 Automation 授权/执行仍需明确许可；这不接受或
-恢复冻结 Slice43 的页面/Run once/指标/设置重设计。
+断言或恢复退役执行器满足验收。支持的共享 Automation 授权/执行仍需明确许可；
+Automation 的验收状态见 [Progress](progress.md)，当前授权修订见 [SLICE.md](../SLICE.md)。
 
 ## 5. 验收边界
 

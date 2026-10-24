@@ -8,32 +8,13 @@ workflow authority. Closure rules live only in
 
 ## Current development pointer
 
-Slice46 — **V2 Organizing Task Center and Readable Actions** — is **ACTIVE**, selected by A on
-2026-10-24 at Base `e9f1a8dc607cfc6d5ea02141b058da8ce849cd70`. The [Contract](../SLICE.md)
-selects readable shared V2 actions, Files-only manual organizing entry, library-local ordinary-file
-feedback/recovery and an organizing-only Task Center without the three auxiliary blocks or creation
-entry, plus Automation detail-opening/post-Save Enabled fixes and the user-selected enable-to-execute
-and real Run once semantics, removing independent grants/pre-analysis and repeated missing-grant failures.
-The attention amendment selects eight views and four business types for Attention/pending-task
-statistics; Failure Recovery and other failures' separate statistics/guidance are removed. Other
-terminal failures remain factual read-only records in All/Ended, not outstanding recovery tasks.
-The latest manual-entry amendment admits explicit Files organizing before business-rule readiness;
-direct-file business checks are same-source unfinished work and explicit extension exclusion.
-Folder/mixed-folder discovery retains configured media-type filtering (default video) and existing
-attachment settings, without promoting ordinary images into independent Recognition/Attention items.
-Four-type problems and exact summary/execution confirmation occur inside the Files manual task. The latest
-V2-AUTO-010/011 amendment supplies scheduled intent through checked Enabled and one-run intent through
-Run once, with no second normal initial summary/execute gate; four-type problems use task recovery.
-Saved definition scope/filtering/limits, backend permissions/safety and historical outcomes remain.
-The user retained Automation's existing stability checks and conditional bounded wait/re-scan,
-withdrawing the immediate-failure/no-wait target. Remaining unstable files fail while ready files
-proceed; later normal runs retain ordinary checks without failed-item retry or cross-run observation
-sharing. Slice46 AC-18 defines the preserved behavior; no product change is delivered by this decision.
-Ordinary-file status uses 当前页面操作状态 immediately left of the corresponding 添加资源库 /
-添加媒体库 button with the same style, opening a centered modal with durable local reopening.
-Implementation Head is NOT SET; these corrections are required TARGET, not delivered fixes, and no
-Task or product acceptance is claimed.
-**B PLANS THE FIRST TASK**; final acceptance is T4. No Slice46 closure row is added below.
+Slice46 — **V2 Organizing Task Center and Readable Actions** — is **ACTIVE** at immutable Base
+`e9f1a8dc607cfc6d5ea02141b058da8ce849cd70`. [SLICE.md](../SLICE.md) owns its five outcomes,
+18 acceptance criteria and T4 validation; [TASK.md](../TASK.md) has no active implementation Task.
+Implementation Head: **NOT SET**. Next: **B PLANS THE FIRST TASK**. This is TARGET, not delivery.
+
+Historical Slice43 resumption and Slice44 audit/review packets remain in Git at
+`22a23cc61686eb2c72ce56ea0b6cc3dea4380bf4:docs/reviews/`; closed-stage packets are not current work.
 
 Slice43 remains **PASS / CLOSED** by A on 2026-10-24, reviewed from original Base
 `853973dbbf8289fa2ad40657033e94e870a690e4` through implementation

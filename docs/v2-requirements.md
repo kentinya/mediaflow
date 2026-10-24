@@ -10,62 +10,17 @@ product and authority boundaries.
 
 ## Current program boundary
 
-[Release](release.md) owns V1/V2 release-line facts; [Roadmap](roadmap.md) owns Slice priority and
-status; [Progress](progress.md) records accepted closures. Current scope and work state live in
-[SLICE.md](../SLICE.md) and [TASK.md](../TASK.md). CURRENT journeys and implementation boundaries
-are described by [Product Experience](product-experience.md) and [Architecture](architecture.md).
-
-Slice 44 delivers `V2-RULES-009` and the selected improvements to existing Files, MediaLibrary and
-Rules journeys. Local tests do not replace whole-graph publication or execution checks. Stable
-requirement IDs and acceptance meanings are unchanged; CURRENT details and exceptional discovery
-recovery deferrals are recorded in Product Experience/Architecture. Suspended work is not accepted
-delivery or an implicit dependency. Reference images define business/style, never runtime authority.
-
-Slice45 is PASS / CLOSED for `V2-OPS-009–013` and `V2-FILES-005/006`. Its nine Task Center views,
-in-context confirmation/recovery and Scan/Preview/FileIndex retirement are CURRENT. Slice43 is also
-PASS / CLOSED for its separately reviewed native Automation workspace/settings outcomes, preserving
-the accepted45 retirement boundary.
+[Release](release.md) owns release lines; [Roadmap](roadmap.md) priorities/status; [Progress](progress.md)
+accepted closures and deferrals. [SLICE.md](../SLICE.md) and [TASK.md](../TASK.md) own current work.
+CURRENT journeys/contracts live in Product Experience/Architecture; reference images are never
+runtime authority. Accepted43–45 behavior remains CURRENT until an authorized TARGET is delivered.
 
 ## Slice46 authorized TARGET — not yet delivered
 
-On 2026-10-24 the user selected shared button readability, an organizing-only Task Center and
-Files-only creation of file-selection-based manual organizing. These requirements are authorized
-TARGET under [Slice46](../SLICE.md); the accepted43–45 CURRENT baselines below are not relabelled
-as delivered changes. Historical acceptance stays in Git/Progress.
-
-The user includes Automation detail name/“打开” and same-page Save/Enabled fixes under existing
-`V2-AUTO-001/002`, then explicitly replaces the independent grant/pre-analysis journey with
-`V2-AUTO-010/011`: checked enablement authorizes future scheduled execution of the saved definition;
-Run once directly runs that organizing definition once. Neither requires prior successful media
-analysis, a separate grant or another normal initial execute click. Four business problems arise
-inside the admitted task and use `V2-OPS-016` recovery/counts. Files manual summary/confirmation
-remains under `V2-OPS-017`; Automation still uses its saved definition scope/filtering/limits.
-
-The earlier Slice46 pending-authorization/grant-journey target is superseded. Preserve checked
-publication, execution permissions, deliberate intent, immutable pins, backend plan/effect checks,
-idempotency and live disable/permission fencing. Current enabled definitions need no old grant or
-off/on cycle. Historical grants/failures/analysis-only records are not new execution requests or
-successes. Healthy empty scope reports no work; unreadable scope is unavailable/failure, not empty.
-These changes remain TARGET and restore no Scan/Preview/FileIndex products.
-
-On 2026-10-25 the user retained existing Automation stability handling, superseding the earlier46
-immediate-failure/no-wait target. Scheduled execution and Run once reuse the shared pipeline's real
-checks and bounded wait/re-scan: with unstable candidates and no ready files, wait/re-scan once only
-if the shortest remaining interval is greater than zero and at most 60 seconds; ready siblings avoid
-that wait. Proven-stable files proceed, while remaining unstable files fail without media effects.
-Solely instability-failure outcomes are Failed, never empty/no-work success. Later ordinary runs use
-normal saved scope/filtering/checks, without previous-failure retry/selection or cross-run observation
-sharing. Preserve configured real elapsed proof, existing work-scoped evidence, factual All/Ended
-history, the four-type-only Attention boundary and Files manual handling. See Slice46 RO-5/AC-18.
-
-On 2026-10-25 the user retained the existing file-type behavior for folder organizing: in-task folder
-expansion uses the ResourceLibrary's configured primary-media extensions, default video, including
-the folder part of mixed selections. Default pictures/subtitles/NFO are not independent primary/
-Recognition/Attention items. Existing attachment settings still associate related sidecars; unmatched
-files stay at source and artwork-off does not promote images. Other-same-stem remains effective,
-explicit extension customization is honored, and no image-content/ad detector or automatic deletion
-is added. This supersedes the earlier46 blanket non-excluded-folder-suffix admission target, while
-preserving deliberate direct-file selection, other manual filter boundaries and task-native recovery.
+The following stable amendments select readable actions, organizing-only Task Center, earlier Files
+manual admission, local ordinary-work feedback and enable-to-execute/real Run once. [Slice46](../SLICE.md)
+owns full scope/acceptance and retained stability behavior; Product Experience owns complete journeys.
+Prior independent-grant, all-folder-suffix and no-wait planning variants are superseded, not delivery.
 
 | ID | Requirement | Acceptance meaning |
 |---|---|---|

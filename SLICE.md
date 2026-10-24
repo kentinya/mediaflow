@@ -17,62 +17,22 @@ Next Action: B PLANS THE FIRST TASK
 ## Authority and accepted baseline
 
 [AGENTS.md](AGENTS.md) and [Development Workflow](docs/development-workflow.md) govern roles,
-implementation, testing and closure. This newly selected Slice does not reopen or reinterpret
-Slices43–45 acceptance. Base is the checkpoint before this Contract, not a later planning commit.
-No product implementation or B Task is delivered by this selection.
+safety, tests and closure. This ACTIVE Contract selects TARGET changes; it delivers no product
+implementation and does not reopen Slices43–45. Accepted Base/Head/deferrals remain in
+[Progress](docs/progress.md). The prior43 Contract is retained at
+`e9f1a8dc607cfc6d5ea02141b058da8ce849cd70:SLICE.md`; accepted45 at
+`13ecfc0e75fc34ff0ae489e655124a178943cba4:SLICE.md`. Detailed planning revisions remain in Git.
 
-The complete previous Slice43 Contract, A review, validation limits and attribution mapping remain
-at `e9f1a8dc607cfc6d5ea02141b058da8ce849cd70:SLICE.md`. Its current-lineage accepted implementation
-is `acc5c567788410cde68ed24b4fee12a84ee47ef2` (original review ID
-`97316131946bdecc483b684f6e6f6ecb98c5594d`). Accepted45 closure remains at current-lineage
-`3947fbe00963a17744570a2f7a95ac0146991d53:SLICE.md` (original
-`13ecfc0e75fc34ff0ae489e655124a178943cba4`). Original review identities, deferrals and preservation
-refs remain historical facts. This Slice does not rewrite history.
+## User goal
 
-The user's 2026-10-24 scope amendments integrate the diagnosed Automation defects, narrow
-Task Center attention/recovery to four business problem types, admit Files manual organizing
-before business-rule resolution and make Automation enablement/Run once explicit execution intent.
-These are required TARGET changes;
-prior closure records remain historical facts. Base and Implementation Head remain unchanged.
-
-## User decision and goal
-
-用户实际使用发现多个按钮呈深色且文字不可辨，登录时尤其明显。用户随后明确：
-
-- 重命名、删除等普通文件操作不进入操作中心；该中心只保留整理任务。
-- 页面中的 Worker 状态显示、整理发现和手动操作板块全部移除。
-- 手动整理统一从文件页进入，任务中心的整理创建入口删除。
-- 自动化策略的“打开”和名称点击恢复可用；保存后继续修改 Enabled/启停不再误报旧版本冲突。
-- 自动化移除独立无人值守授权步骤；明确启用即允许按已保存策略定时执行，解决
-  `unattended_execution_authority_missing` 的重复失败，不再要求先分析、再单独授权。
-- “需要处理”及待处理任务统计只包含识别、元数据、分类、冲突四类当前问题；删除“失败恢复”。
-  其他失败只在“全部任务 / 已结束”查看任务与失败原因，不单独统计失败或提供恢复指引。
-- 手动整理保留同源未结束工作去重及明确后缀排除；选文件夹时沿用资源库的媒体类型筛选，
-  默认视频作为主文件，图片等按已有附件配置处理，不因未明确排除而自动成为独立整理项。
-  不再要求规则全部匹配或先生成可执行摘要。明确提交后先受理整理任务，四类问题在任务内恢复。
-- 自动化“运行一次”直接受理并执行该已保存整理策略一次，四类问题同样在任务内处理；
-  正常文件无需先出摘要再确认一次。文件页手动整理仍保留任务内摘要与执行确认。
-- 自动化定时运行和“运行一次”维持现有稳定性判断及有界等待/复查逻辑，撤回此前
-  “首次发现不稳定就直接失败、完全不等待”的调整；仍未稳定的文件记失败，其他文件继续。
-  下次自动化照常运行，不增加按上次失败结果筛选/重试的机制。
-
-本 Slice 交付按钮可读、文件操作归属清楚的 V2 体验：普通文件管理在原库页完成反馈与恢复，
-文件选择式手动整理从资源库文件页发起，任务中心专注已受理整理的进度、结果与恢复。
-“不进入任务中心”约束用户入口、列表、统计和处理归属，不取消后台耐久任务、结果或审计。
-同时修复已复现的自动化详情读取、保存后表单版本残留及未授权调度问题，保留真实并发保护、
-明确执行意图、范围限制与运行时权限/安全复核。
-
-The explicit TARGET amendment is `V2-UX-004`, `V2-OPS-014–017`, `V2-FILES-007` and
-`V2-AUTO-010/011` in
-[V2 Requirements](docs/v2-requirements.md#slice46-authorized-target--not-yet-delivered).
-It supersedes the earlier all-command population, center-created manual entry, nine-view navigation,
-general-failure attention/recovery and Files' ready-plan prerequisite for task admission. Eight views
-retain shared analysis, four-type native recovery and all execution safety. CURRENT descriptions
-are the accepted Base until implementation and acceptance; TARGET is not a delivery claim.
-Automation's user-authorized `V2-AUTO-010/011` supersede independent grant/pre-analysis requirements
-and Run once's analysis-then-confirm sequence in `V2-AUTO-002–006`. Enablement supplies bounded
-scheduled intent; Run once supplies one deliberate execution intent. Broader file/destructive
-authority is not implied. The previous grant journey is superseded TARGET, not unfinished delivery.
+- 修复登录及各页按钮文字不可辨的问题。
+- 任务中心只管整理，移除全局 Worker、整理发现、手动操作板块及整理创建入口。
+- 普通文件操作通过原库文件页的“当前页面操作状态”弹窗查看，刷新/重启后仍能找回。
+- 手动整理从资源库文件页先创建任务，再处理四类问题、查看摘要并确认执行；文件夹默认
+  按视频主文件筛选，图片等沿用附件配置，直接选文件保留其明确意图。
+- “需要处理”只包含识别、元数据、分类、冲突；其他失败只留只读历史。真实全成功才显示完成。
+- 修复自动化打开及保存后 Enabled；启用即允许定时执行，运行一次直接执行一次。
+  稳定性判断及有界等待维持现有方式。完整边界及验收以 RO-1–5 / AC-1–18 为准。
 
 ## Applicable requirements and journeys
 
@@ -81,121 +41,25 @@ authority is not implied. The previous grant journey is superseded TARGET, not u
 - `V2-UX-001–004`, `V2-WEB-001`, `V2-SHELL-001`, `V2-AUTH-001–003`, `V2-SAFE-001`,
   `V2-FILES-002/003/007`, `V2-AUTO-001–006/010/011`, applicable amended `V2-OPS-001–017`:
   [V2 Requirements](docs/v2-requirements.md).
-- [Product Experience](docs/product-experience.md): V2 authentication/continuation; Real Storage
-  Files/Common file maintenance; separate MediaLibrary journey; Manual organize/bounded discovery;
-  Tasks/results/per-item recovery; complete native Automation workspace; Slice46 TARGET journey.
-- [Task Center specification](docs/task-center-page-spec.md): accepted nine-view baseline amended
-  by Slice46's eight views/four-type attention, same-interface summary/confirmation and results.
-- [Architecture](docs/architecture.md): V2/authentication; Operations read projection and typed
-  recovery; direct commands/durable Delete; admitted-transfer Worker lifetime; Automation focused
-  publication, current grant/pre-analysis boundaries and their Slice46 replacements.
-
-### Complete user journeys
-
-**Readable actions:** open V2 Entry or a business page/dialog → distinguish action text, availability,
-submission and keyboard focus → connect or use the permitted command → read success or stage-specific
-validation/permission/transport failure and safe next action. Reconnect restores the supported read;
-credentials stay memory-only and no command replays.
-
-**Ordinary file management:** enter ResourceLibrary/MediaLibrary Files → inspect exact selection,
-capabilities and bounded impact → submit an ordinary command or confirm Delete → follow local progress,
-independent durable results and live-directory reconciliation. The header's 当前页面操作状态 button,
-immediately left of 添加资源库 (添加媒体库 on MediaLibrary), uses the same button style and opens a
-centered modal for this file page's ordinary-operation status, results and existing permitted controls.
-Failure shows completed steps, known
-or uncertain effects and allowed repair/controls locally. Closing a dialog, reload, reconnect or service
-restart retains access from the original library to relevant unfinished/attention work and bounded
-recent results. Unknown admission is reconciled by exact durable identity, never guessed/replayed.
-
-**Manual organizing and follow-up:** select live ResourceLibrary files/folders → explicitly submit
-整理 → check directly selected files for same-source unfinished work/explicit extension exclusions
-and admit durable organizing work without requiring all business rules to match. Folder work is
-admitted before traversal; each discovered file passes those checks and is atomically reserved with
-its own item admission inside that task. Folder expansion retains the library's
-configured primary-media extension filter, defaulting to video, plus existing attachment semantics.
-Follow discovery/stability/pipeline
-progress and per-item findings in Task Center. Recognition/Metadata/Classification/Conflict problems
-enter their native task/type recovery; ready items reach the exact in-task summary and selected
-execution confirmation. Save a decision → analyze → review/confirm the eligible summary → inspect
-actual results; successful siblings are not replayed and one blocked item does not erase others.
-Files retains exact request readback/return context. Other terminal failures are read-only history
-in All/Ended. Browsing or analysis-only preparation never implicitly submits an organizing task.
-Center views never offer arbitrary new manual-organize requests.
-
-**Four-type attention:** open “需要处理” or one of the four type lists → inspect the task's current
-business problems → complete the corresponding native decision/analysis/confirmation → refresh
-the authoritative result. A task counts once even when it has several types/items. Pending human
-steps in that four-type journey stay reachable; queued/running recovery alone is not a human to-do.
-When no such current problem remains, the task leaves attention even if historical technical failures
-remain. A new four-type blocker moves to that type; a new technical failure is visible only through
-All/Ended with its factual reason/effects, no generic recovery prompt or dedicated failure count.
-If linked four-type recovery completes all organizing work successfully, the overall task display
-becomes “已完成（恢复成功）”; original failed attempts remain independently visible in its history.
-
-**Automation detail and continued editing:** open a published definition through its name or
-“打开” → read the exact saved definition and truthful enabled/execution readiness, including unavailable
-reasons → enter Edit → save a checked change → continue changing Enabled or use the existing
-explicit enable/disable action on the same page → read the confirmed published state without
-leaving/reopening. Genuine concurrent publication, validation/permission/read failure or unknown
-submission preserves known durable state/input, explains the next action and never auto-replays.
-
-**Scheduled execution:** save a definition → explicitly enable it → at a normal due occurrence,
-admit and execute the saved bounded organizing policy through the existing pipeline. Enablement is
-the scoped scheduled execution intent, with no independent grant, pre-analysis or pending-grant step.
-It does not run immediately. Disabling/removing stops future due admission and unperformed scheduled
-effects at safe boundaries; completed/in-flight effects are not rolled back. Configuration edits,
-permissions, pins and readiness remain truthful and backend-authoritative.
-
-**Automation Run once:** click 运行一次 on the published definition → admit a real organizing task
-before rule/metadata/classification/conflict readiness → perform discovery/stability/full planning
-inside the task → execute ready items within the saved policy, without a separate initial summary/
-execution-confirmation gate. The click is this run's explicit execution intent. Disabled definitions
-may run once with execution permission; this neither enables nor advances the schedule. Four-type
-problems enter Task Center decisions/re-analysis/explicit continuation; successful siblings are not
-replayed. A healthy empty scope is a labelled no-work outcome; unreadable scope is a factual failure.
-Unknown admission reconciles the exact request. Historical grant failures stay unchanged in All/Ended.
-
-**Automation stability:** scheduled execution and Run once reuse the existing shared organizing
-pipeline's stability checks and bounded wait/re-observation. If there are unstable candidates but no
-ready files, wait once and re-scan only when the shortest remaining interval is greater than zero
-and at most 60 seconds. If ready files exist, do not wait for unstable siblings. Files still unstable
-after this handling fail without media effects; ready files proceed. A later normal run applies its
-ordinary saved scope/filtering and stability checks without a previous-failure retry/selection flow.
-Instability failures remain factual All/Ended history outside four-type Attention. This supersedes
-the earlier46 no-wait target; configured policy/real elapsed proof and Files manual handling remain.
+- [Product Experience](docs/product-experience.md) owns complete entry → state → action → result →
+  failure/recovery journeys; its Slice46 TARGET identifies changes to the accepted CURRENT behavior.
+- [Task Center specification](docs/task-center-page-spec.md) owns page/view interactions;
+  [Architecture](docs/architecture.md) owns query, admission, authority and execution boundaries.
 
 ## Base audit and reuse
 
-- Shared `styles.css` gives `.mf-button` background `#202b24` with dark `--ink: #18243b`.
-  Some pages override this locally; Entry uses the shared Button. Shared fields have the same color
-  combination. This source-level cause still needs browser reproduction; no product fix is claimed.
-- `OperationsLanding.tsx` renders global Worker/resident status, organizing-discovery readback and
-  a manual-action section; landing/refresh also read those dependencies.
-- `StorageFilesPage.tsx` already submits exact selected discovery and passes its durable identity to
-  shared preparation. Unknown-admission guidance currently relies on center discovery records.
-- The Files command currently requests `autoPrepare` discovery, then opens shared preparation;
-  `media_discovery.py` rejects selected sources using extension/include/exclude/depth filters, and
-  manual planning/execution requires ready intent/plan items before task admission. This explains
-  why pre-task business problems cannot use task recovery; the TARGET moves that boundary, not just
-  the button's disabled state. This is source inspection, not a new runtime reproduction.
-- `FileCommandDialogs.tsx` sends Delete inspection/recovery to `/operations/tasks/$taskId`.
-  `TransferDialog.tsx` already polls kind-scoped progress/controls. Both kinds reuse durable direct-
-  command/Delete/transfer families. Local reopen/readback must replace the removed center handoff.
-- `operations_run.py`, `sqlite_runtime.py` and `service_api.py` already provide explicit Job/Task
-  linkage, bounded consistent pages/counts and durable results. Mixed ordinary/organizing work and
-  other consumers, including Automation, share this projection; reuse it with explicit query scope.
-- Isolated real-Python/temporary-SQLite/browser diagnosis reproduced both Automation defects:
-  name/“打开” uses the detail route; its HTTP 200 grant-eligibility response lacks `current` and
-  `zeroMutation` required by the frontend normalizer. The focused Edit route reads successfully.
-- `AutomationLifecyclePage.tsx` retains its pre-Save candidate authority after a successful edit.
-  Its own publication triggers the stale-input banner/disabled Save; a following enable/disable
-  request uses the old identity and returns `409 configuration_version_conflict`. Durable saved
-  values remain readable after re-entry. This is diagnosis, not a delivered correction.
-- The user's actual error is `unattended_execution_authority_missing`. Scheduler currently admits
-  an enabled definition before grant checking; Worker checks authority before Storage/Task creation
-  and persists the Job as failed. The grant control is on the broken detail route, absent from Edit.
-  Isolated runs confirmed healthy authorized empty directories complete with zero items, while a
-  missing grant or missing scope produces distinct failures; emptiness is not this error's cause.
+These source/isolated-runtime findings identify gaps, not delivered fixes; B verifies actual code
+when planning. Detailed diagnosis is retained at `22a23cc61686eb2c72ce56ea0b6cc3dea4380bf4:SLICE.md`.
+
+- Shared button/field colors and local overrides explain unreadable Entry/actions; verify in-browser.
+- Files discovery/preparation currently gates business readiness before task creation. Reuse the
+  pipeline, exact preparations and typed four-type recovery while moving admission earlier.
+- Ordinary Delete/transfer work already has durable results/controls; replace center handoff with
+  kind/library-scoped local readback. Scope shared Job/Task projections before counts and paging.
+- Automation detail's grant-eligibility payload fails frontend normalization; Edit still reads.
+  Same-page Save retains stale publication identity and later Enabled commands return 409.
+- `unattended_execution_authority_missing` comes from the independent grant gate, not an empty
+  directory: authorized healthy empty scopes already finish with zero items. RO-5 replaces the gate.
 
 ## Required outcomes
 
@@ -588,9 +452,6 @@ or visual pass is claimed. Closure Packet and A Final Review: **NOT STARTED**. I
 
 ## Workspace record
 
-Planning started on `main` at Base above; repository/Git/governance files were writable and the
-preflight passed. Pre-existing deletion of `docs/pics/操作与任务.png` and untracked reference images,
-logs, OS files and test/artifact directories remain unrelated, untouched and unstaged. Private
-runtime configuration/databases/user media are not planning fixtures. No push is authorized/performed.
-The current folder-media-filter amendment starts from checkpoint `fccf0ea4ac18c2683ed2095d2cb3e943bb3b0800`
-on the same branch with the same unrelated dirty files preserved; it does not repin the Slice Base.
+Planning uses `main` with the immutable Base above. Pre-existing reference-image deletion, untracked
+references/logs/OS files and test artifacts remain unrelated and unstaged. Private runtime config,
+databases and user media are not validation fixtures. No push is authorized or performed.

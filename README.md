@@ -41,6 +41,7 @@ business authority and V1 `/ui` remains available. [Roadmap](docs/roadmap.md) re
 Slice43 is PASS / CLOSED: native Automation lifecycle, bounded Run once, read-only records/statistics
 and engine settings with actual resident adoption are accepted. Slice45's Task Center and retired
 Scan/Preview/FileIndex boundaries remain intact; V2 is still unreleased and V1 cutover is not selected.
+The active Slice46 changes are TARGET under the current Contract, with no implementation Task yet.
 
 ## V2 frontend (web/)
 
@@ -62,7 +63,8 @@ The development listener is trusted-loopback only; production exposure/TLS/proxy
 
 ### Current live file lists
 
-[Slice45](SLICE.md) delivers library-scoped live Storage lists shared by CLI, Files and MediaLibrary,
+[The accepted live-list contract](docs/file-index-retirement-spec.md) defines library-scoped Storage
+lists shared by CLI, Files and MediaLibrary,
 with no catalog/observation/work recording or execution authority from listing:
 
 ```bash
@@ -190,6 +192,9 @@ refresh and review again after writers are quiescent. No claim of atomic externa
 | [Deployment](docs/deployment.md) | Start/health, mounts/secrets, restart, backup, migration and production artifacts |
 | [Requirements](docs/requirements.md) / [V2 requirements](docs/v2-requirements.md) | Stable product scope/IDs and explicit amendments |
 | [Release](docs/release.md) / [Storage acceptance](docs/storage-acceptance.md) | Release gates and bounded real-service evidence |
+
+Detailed past Task/audit/review packets live in Git; [Progress](docs/progress.md) retains accepted
+Base/Head/closure facts and historical lookup pointers. `docs/history/` is immutable legacy evidence.
 
 ## Development workflow
 

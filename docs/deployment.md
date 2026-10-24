@@ -76,7 +76,7 @@ mount overlay below. Either way the generated file uses
 `config/mediaflow.json` is Git-ignored.
 
 - A deployment-owned environment file. Copy
-  [deploy/mediaflow.env.example](deploy/mediaflow.env.example) to
+  [deploy/mediaflow.env.example](../deploy/mediaflow.env.example) to
   `.env.mediaflow`, replace the placeholder, and make the file readable by the
   container UID/GID:
 
