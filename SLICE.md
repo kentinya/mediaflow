@@ -29,7 +29,7 @@ is `acc5c567788410cde68ed24b4fee12a84ee47ef2` (original review ID
 `13ecfc0e75fc34ff0ae489e655124a178943cba4`). Original review identities, deferrals and preservation
 refs remain historical facts. This Slice does not rewrite history.
 
-The user's 2026-10-24 scope amendment explicitly integrates the two diagnosed Automation defects
+The user's 2026-10-24 scope amendments explicitly integrate the diagnosed Automation defects
 below into this Slice. Their correction is required here; prior closure records remain historical
 facts, not evidence that these defects are fixed. Base and Implementation Head remain unchanged.
 
@@ -41,18 +41,21 @@ facts, not evidence that these defects are fixed. Base and Implementation Head r
 - 页面中的 Worker 状态显示、整理发现和手动操作板块全部移除。
 - 手动整理统一从文件页进入，任务中心的整理创建入口删除。
 - 自动化策略的“打开”和名称点击恢复可用；保存后继续修改 Enabled/启停不再误报旧版本冲突。
+- 修复仅启用却未获无人值守授权时反复产生 `unattended_execution_authority_missing` 失败记录：
+  清楚显示待授权、打通分析与明确授权，并在新定时任务受理前检查授权。
 
 本 Slice 交付按钮可读、文件操作归属清楚的 V2 体验：普通文件管理在原库页完成反馈与恢复，
 文件选择式手动整理从资源库文件页发起，任务中心专注已受理整理的进度、结果与恢复。
 “不进入任务中心”约束用户入口、列表、统计和处理归属，不取消后台耐久任务、结果或审计。
-同时修复已复现的自动化详情读取和保存后表单版本残留问题，保留真实并发修改的保护与恢复。
+同时修复已复现的自动化详情读取、保存后表单版本残留及未授权调度问题，保留真实并发保护、
+独立明确授权与运行时授权复核。
 
 The explicit TARGET amendment is `V2-UX-004`, `V2-OPS-014/015` and `V2-FILES-007` in
 [V2 Requirements](docs/v2-requirements.md#slice46-authorized-target--not-yet-delivered).
 It supersedes only the earlier all-command center population and center-created manual entry.
 Nine task/recovery views, shared analysis and all safety requirements remain. CURRENT descriptions
 are the accepted Base until implementation and acceptance; TARGET is not a delivery claim.
-The Automation corrections fulfill existing `V2-AUTO-001–003`; they add no execution authority or
+The Automation corrections fulfill existing `V2-AUTO-001–006`; they add no execution authority or
 new Automation capability.
 
 ## Applicable requirements and journeys
@@ -60,7 +63,7 @@ new Automation capability.
 - `UX-001–003/005–007/010`, `REQ-TASK-002/003/005–010`, applicable `REQ-RECOVERY-*`,
   `REQ-API-002/003` and `REQ-SAFE-001–009`: [Requirements](docs/requirements.md).
 - `V2-UX-001–004`, `V2-WEB-001`, `V2-SHELL-001`, `V2-AUTH-001–003`, `V2-SAFE-001`,
-  `V2-FILES-002/003/007`, `V2-AUTO-001–003`, applicable amended `V2-OPS-001–015`:
+  `V2-FILES-002/003/007`, `V2-AUTO-001–006`, applicable amended `V2-OPS-001–015`:
   [V2 Requirements](docs/v2-requirements.md).
 - [Product Experience](docs/product-experience.md): V2 authentication/continuation; Real Storage
   Files/Common file maintenance; separate MediaLibrary journey; Manual organize/bounded discovery;
@@ -99,6 +102,14 @@ explicit enable/disable action on the same page → read the confirmed published
 leaving/reopening. Genuine concurrent publication, validation/permission/read failure or unknown
 submission preserves known durable state/input, explains the next action and never auto-replays.
 
+**Scheduled authority:** a saved/enabled definition without unattended authority shows “待授权”
+and a working native analysis/explicit-grant entry → review exact scope/effects → explicitly grant
+→ observe current authorization/readiness → a normal eligible due occurrence executes through the
+existing Worker. Known missing authority blocks new scheduled admission without repeated failed
+Jobs/Tasks. Failures or unknown grant outcomes retain the safe next action; existing failed history
+links to the definition's repair flow and is never rewritten or replayed. With valid authority and
+a complete healthy read, an empty scope reports no work; permission/Storage failure is not emptiness.
+
 ## Base audit and reuse
 
 - Shared `styles.css` gives `.mf-button` background `#202b24` with dark `--ink: #18243b`.
@@ -121,6 +132,11 @@ submission preserves known durable state/input, explains the next action and nev
   Its own publication triggers the stale-input banner/disabled Save; a following enable/disable
   request uses the old identity and returns `409 configuration_version_conflict`. Durable saved
   values remain readable after re-entry. This is diagnosis, not a delivered correction.
+- The user's actual error is `unattended_execution_authority_missing`. Scheduler currently admits
+  an enabled definition before grant checking; Worker checks authority before Storage/Task creation
+  and persists the Job as failed. The grant control is on the broken detail route, absent from Edit.
+  Isolated runs confirmed healthy authorized empty directories complete with zero items, while a
+  missing grant or missing scope produces distinct failures; emptiness is not this error's cause.
 
 ## Required outcomes
 
@@ -200,7 +216,7 @@ recovery without executing. Necessary shell/Dashboard/return-link corrections pr
 creation entries or stranded file work. Shared administrative API/CLI evidence and Automation records
 remain functional; center-specific scope never deletes data or silently changes another consumer.
 
-### RO-5 — usable Automation detail and continued Enabled editing
+### RO-5 — usable Automation detail, continued editing and scheduled authority
 
 Make both the definition name and “打开” entry render the saved definition before and after
 enablement. Align the real eligibility projection and frontend contract with the supported shared
@@ -217,6 +233,22 @@ unattended grants/execution. A genuine peer publication still refuses stale comm
 input for deliberate review; never silently overwrite or rebind a peer's change. Rejected/unknown
 commands retain bounded failure/reconciliation guidance and never replay automatically.
 
+Complete the native saved definition → shared zero-mutation analysis → exact explicit unattended
+grant → scheduled execution journey. Show published, enabled, granted and ready as distinct states;
+an enabled definition with no grant has an actionable “待授权” state, not only a raw error code or
+an unusable Task Center repair control. Known missing authority must block new scheduled Job/Task
+admission at the backend and expose bounded current readiness/next action on Automation, rather
+than repeatedly manufacturing failed execution records. Preserve due-state idempotency/coalescing;
+authorization recovery resumes normal eligible scheduling without replaying blocked ticks.
+
+This is a narrow pre-admission readiness correction, not removal of Worker authorization. Recheck
+live authority for already-admitted work and at mutation boundaries; revocation, changed scope,
+permission loss and races still fail closed with truthful evidence. Keep prior failed Jobs/Tasks,
+occurrences/results/audit and genuine post-admission failures visible; link missing-grant repair to
+the definition's analysis/grant journey without automatic retry, relabelling or data cleanup. Grant
+reads/errors cannot invent eligibility or authority. Healthy authorized empty scopes remain no-work;
+unreadable/missing scopes or missing authority cannot be reclassified as empty/success.
+
 ## Required surfaces and architecture boundary
 
 - Shared V2 actions/styles and actual Entry/business/dialog consumers.
@@ -226,8 +258,10 @@ commands retain bounded failure/reconciliation guidance and never replay automat
   and necessary shell/Dashboard/return integration.
 - Typed authenticated API/application queries and bounded repository projections over existing
   Job/Task/items/results, preparation, transfer/Delete and audit state.
-- Automation inventory name/“打开”, definition detail/eligibility, focused Edit/Save/Enabled controls
-  and their existing managed-publication authority/readback.
+- Automation inventory name/“打开”, definition detail/eligibility, focused Edit/Save/Enabled controls,
+  shared analysis/explicit grant/readiness and definition-linked pre-start repair.
+- Existing Scheduler admission/readiness and Worker grant rechecks, with truthful Automation/Task
+  Center history/counts over existing managed definitions, grants, due state and occurrences.
 
 No second execution/recovery engine, catalog, lifecycle or mutation authority. Frontend cannot load
 mixed pages and filter them locally. Storage stays behind ports; only OrganizerExecutor mutates.
@@ -245,7 +279,8 @@ cross-kind transfer; unbounded work; Upload/Download; new auth/Secret Store; dar
 general redesign/localization; a global file-operation center; history cleanup/retention; cross-Task
 bulk recovery; arbitrary historical Reprocess; automatic uncertain replay/rollback; V1 cutover;
 Scan/Preview/FileIndex restoration/migration. Automation/Notifications/Dashboard are not redesigned;
-only shared readability, integration corrections and the two Automation defects in RO-5 are included.
+only shared readability, integration corrections and the Automation corrections in RO-5 are included.
+The limited Scheduler readiness check in RO-5 is in scope; no scheduler/queue redesign is authorized.
 
 ## Acceptance
 
@@ -263,6 +298,7 @@ only shared readability, integration corrections and the two Automation defects 
 | AC-10 | Required evidence passes or unavailable gates stay explicit; A reviews immutable Base..Implementation Head, then CURRENT documentation is reconciled at accepted closure. |
 | AC-11 | Automation name/“打开” and direct detail links render valid saved definitions before/after enabling; real eligible/ineligible/unavailable eligibility evidence is readable, bounded and truthful. Malformed/401/403/not-found/read failures have safe recovery; reads create no work/grant/media effects and no retired product returns. |
 | AC-12 | On the same Edit page, successful Save → another Enabled change/Save and Save → explicit enable/disable complete with correct durable readback, without a false conflict or forced reopen. Genuine concurrent changes still refuse stale commands and preserve input; failed/unknown commands never silently overwrite or auto-replay, and enablement alone grants/executes nothing. |
+| AC-13 | Enabled/no-grant definitions show actionable pending authorization and complete native analysis → explicit grant → normal due execution. Repeated due ticks with known missing authority admit no new execution Job/Task or manufactured failed-run counts; current readiness remains visible. Existing failures/history remain intact with definition-linked repair. Worker/revocation/concurrency guards remain, recovery never replays old work, and healthy authorized empty scope reports no work without masking permission/Storage failures. |
 
 ## Validation and handoff
 
@@ -290,6 +326,11 @@ B's final evidence includes:
   genuine concurrent publication and failed/unknown outcomes. After building, run the applicable
   `tests/e2e/automation-lifecycle.python.spec.ts` and `tests/e2e/automation-workspace.python.spec.ts`
   through the same real-Python Playwright configuration, without reopening between every command.
+- Cover enabled/no-grant repeated due ticks, the full native analysis/grant/scheduled journey,
+  read/permission/unknown-grant failures, revoke/queued-work races and restart. Verify no new failed
+  execution records before admission, truthful Automation/Task Center counts and retained historical
+  failures/repair links. Extend existing occurrence/execution/grant tests; compare healthy authorized
+  empty scope, missing scope and missing authority without weakening Worker checks or auto-replay.
 - Actual desktop/narrow Entry, local progress/results/recovery and simplified-center inspection;
   computed contrast and keyboard evidence for shared variants/overrides. Record candidate/artifact
   identity, actual commands/results, failures and skips; do not test only CSS implementation literals.
@@ -304,5 +345,5 @@ Planning started on `main` at Base above; repository/Git/governance files were w
 preflight passed. Pre-existing deletion of `docs/pics/操作与任务.png` and untracked reference images,
 logs, OS files and test/artifact directories remain unrelated, untouched and unstaged. Private
 runtime configuration/databases/user media are not planning fixtures. No push is authorized/performed.
-The Automation amendment starts from planning checkpoint `4daac131f7bb92b5a0a11ebcebd33e46c4d1c2fb`
+The current Automation amendment starts from checkpoint `93f490bf60aa250dcdac4249f020f77e0a3d08fd`
 on the same branch with the same unrelated dirty files preserved; it does not repin the Slice Base.

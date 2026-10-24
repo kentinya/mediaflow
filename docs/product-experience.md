@@ -12,8 +12,8 @@ Detailed superseded delivery notes are retained at
 ## TARGET — Slice46 readable actions and organizing-only Task Center
 
 User-authorized on 2026-10-24; [Slice46](../SLICE.md) and `V2-UX-004`, `V2-OPS-014/015`,
-`V2-FILES-007` own scope/acceptance, together with the two user-added Automation corrections under
-`V2-AUTO-001–003`. This journey is not yet implemented or accepted.
+`V2-FILES-007` own scope/acceptance, together with the user-added Automation corrections under
+`V2-AUTO-001–006`. This journey is not yet implemented or accepted.
 
 - **Goal/entry:** read and use shared V2 buttons, including Entry. New file-selection-based manual
   organization starts from ResourceLibrary Files; ordinary maintenance starts on its own library page.
@@ -33,12 +33,22 @@ User-authorized on 2026-10-24; [Slice46](../SLICE.md) and `V2-UX-004`, `V2-OPS-0
   peer changes preserve input and require review; invalid/denied/unavailable/unknown outcomes expose
   the durable state and safe next action without silent overwrite/replay. Enabling grants no
   unattended authority and starts no work. Reads and return/reconnect create no commands.
+- **Automation scheduled authority:** saved/enabled/no-grant shows “待授权” with a usable native
+  analysis/explicit-grant entry. Review the exact scope/effects → explicitly grant → see current
+  readiness → normal due execution. Known missing grants block admission without repeatedly
+  creating failed execution Jobs/Tasks or inflating failure counts; readiness stays visible on
+  Automation. Prior failures remain inspectable with definition-linked repair, never rewritten or
+  automatically replayed. Revocation/permission/read/unknown outcomes retain safe recovery and
+  runtime checks. With valid authority, healthy empty scope reports no work; inaccessible or
+  unauthorized scope is not an empty-success result.
 
 This TARGET supersedes the later CURRENT text's mixed file-operation center population and
 center-created manual organizing entry only. Remove global Worker/resident-status, discovery and
 manual-operation blocks and center creation actions; task-specific readiness reasons stay visible.
 Existing prepared-work and native task recovery remain legal continuations, and Automation's
 published-definition-bound Run once/scheduled journeys retain their accepted scope/authority.
+The scheduled readiness/admission correction above is the explicit exception to unchanged
+Automation behavior; manual Run once authority and existing admitted-work safeguards remain.
 No MediaLibrary organizing, alternate global file-operation center or new execution engine is added.
 
 ## Product Experience Priority

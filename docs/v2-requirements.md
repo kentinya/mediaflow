@@ -33,13 +33,22 @@ Files-only creation of file-selection-based manual organizing. These requirement
 TARGET under [Slice46](../SLICE.md); the accepted43–45 CURRENT baselines below are not relabelled
 as delivered changes. Historical acceptance stays in Git/Progress.
 
-The user also explicitly includes two Automation corrections in Slice46 under existing
+The user also explicitly includes Automation corrections in Slice46 under existing
 `V2-AUTO-001–003`: definition name/“打开” must render saved detail with truthful eligibility, and
 confirmed own Save must support subsequent same-page Enabled/enable-disable changes without a
 false stale-version conflict. Real concurrent publication still refuses stale writes and preserves
 input; failures/unknown outcomes require safe review/reconciliation without automatic replay.
 Enablement remains distinct from grant/execution. These corrections are TARGET, not delivery claims
 or new Automation authority; no Scan/Preview/FileIndex product is restored.
+
+The subsequent missing-authority correction under `V2-AUTO-001–006` completes native shared
+analysis → explicit scoped grant → scheduled execution. Enabled/no-grant shows actionable pending
+authorization. Known missing grants block new scheduled execution admission without repeated failed
+Jobs/Tasks or failed-run counts; bounded readiness remains visible in Automation. Existing admitted
+failures/history remain intact with repair links to the definition; Worker live checks, revocation,
+permissions, pins, idempotency/coalescing and non-replay remain. Valid authorized empty scope is
+no-work; unavailable/unauthorized scope is not emptiness or success. This TARGET changes admission
+readiness, not grant authority, historical outcomes or manual Run once semantics.
 
 | ID | Requirement | Acceptance meaning |
 |---|---|---|

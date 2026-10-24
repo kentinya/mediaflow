@@ -12,7 +12,8 @@ Slice46 — **V2 Organizing Task Center and Readable Actions** — is **ACTIVE**
 2026-10-24 at Base `e9f1a8dc607cfc6d5ea02141b058da8ce849cd70`. The [Contract](../SLICE.md)
 selects readable shared V2 actions, Files-only manual organizing entry, library-local ordinary-file
 feedback/recovery and an organizing-only Task Center without the three auxiliary blocks or creation
-entry, plus the user-added Automation detail-opening and post-Save Enabled/version corrections.
+entry, plus the user-added Automation detail-opening, post-Save Enabled/version and unattended
+authorization/readiness corrections that prevent repeated missing-grant failed admissions.
 Implementation Head is NOT SET; these corrections are required TARGET, not delivered fixes, and no
 Task or product acceptance is claimed.
 **B PLANS THE FIRST TASK**; final acceptance is T4. No Slice46 closure row is added below.

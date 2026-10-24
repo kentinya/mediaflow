@@ -11,7 +11,7 @@ Detailed former delivery notes remain at `865ebdce47b0b323064fd8e05fbfaa54546e62
 
 The user-authorized [Slice46](../SLICE.md), `V2-UX-004`, `V2-OPS-014/015` and `V2-FILES-007`
 select this TARGET; the accepted CURRENT contracts below remain implementation facts until delivery.
-The user's same-Slice Automation correction scope also fulfills existing `V2-AUTO-001–003`.
+The user's same-Slice Automation correction scope also fulfills existing `V2-AUTO-001–006`.
 
 Shared V2 action components/styles supply readable light-theme states. Files owns ordinary-command
 progress/results/existing safe recovery and file-selection-based manual organizing preparation.
@@ -39,6 +39,16 @@ same-page edit/Enabled command. This cannot silently rebind input to a peer's ne
 genuine stale-write rejection, input retention, unknown-outcome reconciliation and explicit intent
 remain. Reuse managed publication/grants/shared analysis; no second lifecycle, new execution
 authority or weakened response validation is introduced. These corrections remain TARGET.
+
+Scheduler must resolve current unattended readiness before admitting a new definition-bound
+scheduled execution. Known missing authority produces bounded pending-authorization/readiness
+evidence on Automation without creating Jobs/Tasks that Worker will predictably reject; repeated
+ticks do not manufacture failed executions. Reuse existing grants/due-state/admission services and
+preserve idempotency/coalescing. Shared analysis and exact explicit grant stay distinct from Enabled;
+frontend state cannot authorize scheduling. Unknown authority reads remain unavailable, never valid
+or empty. Worker still checks already-admitted work and every mutation boundary, including revoke/
+permission races. Retain historical failures and their definition-linked repair; no retroactive
+relabelling, deletion or replay. This limited TARGET admission correction adds no second scheduler.
 
 ## CURRENT — Admitted transfer Worker lifetime (Slice 39 implementation)
 
