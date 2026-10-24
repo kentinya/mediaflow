@@ -13,7 +13,7 @@ Difficulty: High
 Test Level: T3
 Planner / Reviewer: B — temporary role exception explicitly authorized by user, 2026-10-23
 Reassessment source / Contract: 533a666860a571e61c78ac49b3e45c44acaa419e
-Decision: FIX REQUIRED — candidate 87ec86f0cdbd3c84e901594e5f0dd034f4e0cf12; implementation 29048876f0546efd3ba9c8a5cd5463b7f4b8168f; same Task/Base/Goal/Scope
+Decision: FIX REQUIRED — candidate 94aede19095b77af0edffaa74a3da16b7492dd2a; implementation d9157af; latest-result sorting and healthy empty-history state still violate T1/T2; same Task/Base/Goal/Scope
 Next Action: DEVELOPER CORRECTS THIS TASK; B owns corrected-candidate T3 acceptance; Slice Final stays T4
 ```
 
@@ -478,139 +478,135 @@ supported one-item journey still uses exactly one named source).
 ## B Review Result
 
 ```text
-Reviewed candidate: 87ec86f0cdbd3c84e901594e5f0dd034f4e0cf12 (main; report successor)
-Implementation: 29048876f0546efd3ba9c8a5cd5463b7f4b8168f
-Task range: 78ec108d4473e8c140174c1356d0e88a1ae42b34..87ec86f0cdbd3c84e901594e5f0dd034f4e0cf12
-Reassessment-source range: 533a666860a571e61c78ac49b3e45c44acaa419e..87ec86f0cdbd3c84e901594e5f0dd034f4e0cf12
-Correction delta: 383aae3d06e1fb2075d263368d67535e93541fae..87ec86f0cdbd3c84e901594e5f0dd034f4e0cf12
-Decision: FIX REQUIRED — R3 still has two independently reproduced P1 outcome defects; T8 default-E2E gate also fails
+Reviewed candidate: 94aede19095b77af0edffaa74a3da16b7492dd2a (main; report successor)
+Implementation: d9157af (2026-10-24 correction)
+Task range: 78ec108d4473e8c140174c1356d0e88a1ae42b34..94aede19095b77af0edffaa74a3da16b7492dd2a
+Reassessment-source range: 533a666860a571e61c78ac49b3e45c44acaa419e..94aede19095b77af0edffaa74a3da16b7492dd2a
+Correction range: 744d9dc..94aede19095b77af0edffaa74a3da16b7492dd2a
+Decision: FIX REQUIRED — T1/T2 required latest-result and empty-history read semantics remain incorrect
 Base / Goal / Scope / Test Level: unchanged; Task T3, Slice Final T4
 Slice Required Outcomes / Surfaces all satisfied: NO
-Next: DEVELOPER CORRECTS TASK 43.3; B reviews the next immutable candidate
+Next: DEVELOPER CORRECTS THE SAME TASK; B retains corrected-candidate acceptance
 ```
 
-B inspected the full Task-range manifest and separated the accepted45 integration from the26-file
-current43.3 delta, then reviewed the current read/query/API/Web/navigation changes and correction.
-`2904887..87ec86f` changes only `TASK.md`; executable inputs match the submitted implementation.
-This is an early FIX REQUIRED on proven blockers, **not** whole-range acceptance, a rerun/override of
-accepted45's A review, or Slice Final. All still-unexecuted acceptance remains B-owned.
-The Developer completion report records submitted claims, not B acceptance.
+B reviewed the full immutable Task-range manifest, separating the already accepted45 integration
+from the current27-file43.3 read/query/API/Web/navigation delta, and inspected the correction.
+`d9157af..94aede1` changes only `TASK.md`. This is independent whole-Task review with proven-blocker
+early stop, **not** whole-range acceptance, A Final Review, closed45 reapproval or Slice Final.
+The Developer report above remains submitted evidence, not self-acceptance.
+
+### Verified corrections from the prior review
+
+- **R3 per-original-item handling:** the real three-item Run once produces one success and two
+  known-zero-effect failures. Recovering exactly one failure through Task Center analysis → exact
+  summary → explicit confirmation → real Worker leaves handling `investigation`, with
+  `affectedItems=2 / resolvedItems=1 / unresolvedItems=1`; the other source remains failed/present.
+  The successful sibling remains complete. The same evidence survives a real runtime reopen.
+  The one-failure/all-affected recovery journey also passes; analysis alone never proves resolution.
+- **R3 original reason/effects:** the native producer's uppercase failure Results are retained;
+  both original reasons and `effects.none=2` survive analysis/preparation/execution/reopen, with
+  no false partial/unknown partition and no original result/count rewrite. The32 read-model
+  cases and assigned affected integration modules pass on this candidate.
+- **T8 registration:** default `--list` independently reports238 tests/16files and zero
+  workspace-python entries; the real-Python Automation invocation still executes all six
+  workspace cases (21 cases total across three specs). This fixes collection isolation, not a
+  claim that the still-unrun full default suite is green.
 
 ### Required corrections — same Task
 
-1. **R3 / P1 — Resolve the original problem population, not just the newest execution
-   (T3/T5/T6).** `_summarize_handling` selects the newest linked execution and treats its own
-   positive success count/zero failed count as resolution of the entire original record. A real
-   Run once with three recognized files produces one successful sibling and two zero-effect
-   failures. Recovering only `Two.2002.mkv` through Task Center analysis → plan summary → explicit
-   confirmation → real Worker leaves `Three.2003.mkv` failed with its source still present, yet
-   Automation displays `后续处理已完成` and `no further Automation action is needed for this record`.
-   Carry the existing durable source-item/continuation/preparation/execution relations into the
-   handling read; reconcile relevant outcomes **per original affected item** before aggregating the
-   record. A successful subset must not hide an unhandled, failed, active or uncertain sibling,
-   nor may an unrelated older/latest attempt prove another item's resolution. Preserve original
-   results and conservative investigation when coverage cannot be proved. Reuse existing states
-   and lineage; no new workflow, schema, write semantics or local record commands are authorized.
-   Add the actual multi-failure/subset journey and prove all affected items must independently
-   resolve before the whole record may say resolved, including durable reopen.
-2. **R3 / P1 — Read actual durable Result statuses and retain original reason/effect evidence
-   (T3/T5/T6).** `automation_record_failure_evidence` filters `task_results.status` with lower-case
-   `failed`/`partial`, while the real Manual execution producer persists `ExecutionStatus.value`
-   as upper-case `FAILED`/`PARTIAL`. Its TaskItem fallback initially shows a reason but discards the
-   known Result certainty: the native fixture's two known-zero-effect failures publish
-   `effects.partial=2`, `effects.none=0`, and per-item `effectCertainty=unknown`, despite
-   `sideEffects=none`. As soon as recovery analysis moves Two's TaskItem off failed, Two's original
-   failure evidence disappears: the original record's reason sample/count drops2→1 before any
-   recovery execution. The durable failure Result was not removed. Match the actual existing
-   Result vocabulary at the read boundary, keep TaskItem and Result status meanings distinct,
-   and derive the bounded historical failure population/effect partitions from those Results.
-   Preserve the original stage/reason/known effects while current handling changes; do not rewrite
-   stored outcomes, synthesize Results or change the execution producer. Use real producer-backed
-   coverage, not only lower-case manually seeded Result fixtures. Assert initial `none=2`, no false
-   partial/unknown effect, both original reasons through analysis/preparation/execution and reopen,
-   per-Task sample/count isolation, and no successful-sibling effect attributed to a failed item.
-3. **T8 — Isolate the real-Python workspace spec from the default fake-server suite.**
-   `web/playwright.config.ts` explicitly excludes the other real-Python specs but not the new
-   `automation-workspace.python.spec.ts`; the ordinary `npm run test:e2e` therefore collects all
-   five of its Python-only journeys against the Node fake. Independently running its first test
-   under that default config fails at the existing Create-definition entry after10seconds.
-   Add this spec to the established exclusion (or an equivalent minimal existing convention),
-   keeping it included under `playwright.python.automation.config.ts`. Verify both configurations'
-   test inventories and rerun the affected real native journey. Do not add fake versions of Python
-   harness controls, skip the spec everywhere, weaken assertions/timeouts or remove B's default gate.
+1. **P1 / T2 / RO-1 — Sort the actual latest admitted result, not scheduled-only state.**
+   From the existing UI, B creates `a-review-manual`, runs its saved scope through discovery,
+   frozen manifest, exact summary and explicit confirmation, then creates `z-review-never`
+   without running it. Selecting `排序 → 最近结果` submits the real inventory GET with
+   `sort=latest` / `direction=desc`. The same200 response publishes A's genuine manual
+   `admittedAt`/trigger yet orders `[z-review-never, a-review-manual]`. The actual table shows
+   the never-run definition first. `_automation_inventory_sort_key` still reads
+   `occurrenceState.lastOccurrenceAt`; `_automation_latest_runs` supplies the manual/scheduled
+   admitted value only to a separate map. Use the authoritative latest-original-admission
+   value as the shared row/sort/page basis before windowing, with a deterministic identity tie.
+   Keep never-run/unavailable states explicit; do not sort a manual-only history by ID or let
+   a non-admitted scheduled diagnostic masquerade as a processing result. Preserve all query/
+   cursor/principal safety. Add mixed manual/scheduled/never-run ordering, tied-time and
+   beyond-page forward/back coverage, plus this real UI latest-sort journey. Do not remove
+   the offered sort or weaken the assertion.
+2. **P1 / T1 / RO-1/RO-7 — Distinguish a successful empty history from an unreadable history.**
+   The existing real temporary configuration/SQLite fixture has a healthy published enabled
+   definition and no admitted runs. The repository's latest-admission read succeeds with `{}`;
+   the authenticated public inventory GET returns200 and available metrics, but publishes
+   `latestAdmittedRuns.auto-task.unavailable=true` and says the durable history could not be
+   read. The Web consequently labels a legitimate empty history `最近结果不可用` instead of
+   `尚无执行`. `_automation_latest_runs` conflates `{}` with failure at
+   `unavailable = not callable(reader) or not admitted`. Track read success separately from
+   returned population. A healthy empty or per-definition absent history must mean no execution;
+   a failed/unavailable read must remain explicitly unavailable, never borrowed scheduled success
+   or fabricated no-execution. Cover healthy global-empty, no run for one definition beside a
+   sibling with history, and a genuine fault-seam unreadable read through the existing public
+   inventory/Web contract. No schema, write semantics, new endpoint or workflow is needed.
 
-### Independent reproduction and evidence
+These are required current Task surfaces, not optional process improvements. Correct only the
+read/projection/ordering and their focused tests; retain the previous recovery fixes and accepted45
+boundaries. Both corrections stay inside the existing High/T3 unit; no new Task/fix ladder or
+A-owned Contract change is requested.
 
-The reproduction adapts the **existing** `a record keeps its original result while a handled item
-shows separate progress` browser journey. Only the temporary fixture/fault seam changes: add the
-already-supported `Three.2003.mkv` candidate beside One/Two, and return the same known-zero-effect
-Executor failure for Two and Three. The existing harness driver still claims the browser-admitted
-execution and runs the real Manual Worker/OrganizerExecutor. Task Center still handles only Two
-through the original UI and supported commands. No product source, route, persisted status or
-recovery relation is fabricated or changed for this probe. Passive captures read the real records
-responses; the existing per-item harness read confirms the untouched failed sibling and successful
-sibling independently. All original journey assertions through confirmed recovery completed; the
-added assertion that the record must not claim resolution fails.
+### Independent commands and actual results
 
-| Real checkpoint | Original admission total | Original outcome | Reason items / effects | Handling |
-|---|---:|---|---|---|
-| Before handling | 1 | partial_success | Two + Three; partial2/none0 incorrectly | unhandled |
-| Zero-mutation analysis of Two complete | 1 | partial_success | Three only; Two's historical reason missing | investigation |
-| Confirmed recovery of Two complete | 1 | partial_success | Three only; Three still failed/source present | **resolved — incorrect** |
+| Check on the submitted candidate | B result |
+|---|---|
+| `python3 scripts/check_governance.py` | PASS |
+| `.venv/bin/python -m unittest tests.test_automation_workspace_read_model tests.test_operations_run_inventory tests.test_operations_run_detail tests.test_operations_workspace tests.test_automation_definition_occurrence tests.test_v2_automation_operations tests.test_v2_automation_lifecycle tests.test_automation_run_once tests.test_v2_automation_run_once tests.test_automation_api tests.test_task_center_recovery_lineage tests.test_operations_task_center tests.test_operations_run_detail_plan_evidence tests.test_operations_run_detail_log_isolation` |324 tests OK;32 workspace cases included;50.75s wall clock |
+| `npm --prefix web run test -- run` |80 files /1172 passed;59.07s |
+| `npm --prefix web run typecheck`, `lint`, `format:check`, `build` |All PASS; actual logs retained |
+| `npm run test:e2e -- --config=playwright.python.automation.config.ts tests/e2e/automation-workspace.python.spec.ts tests/e2e/automation-lifecycle.python.spec.ts tests/e2e/automation-run-once.python.spec.ts --output=<evidence>/automation-native-output` (cwd `web/`) |21 passed;29.06s wall clock; no retries |
+| Default `npm run test:e2e -- --list` (cwd `web/`) |238 tests/16files;0 workspace-python entries |
+| Independent existing-UI latest-sort journey (ignored config/spec) |1 FAILED at actual result-order assertion;3.12s; all admission and latest-evidence assertions reached |
+| Existing real empty-history fixture → authenticated inventory GET |200; healthy `{}` incorrectly labelled unavailable; raw response saved |
 
-The successful One sibling stays `success`, its source is gone and its Result ID remains present.
-The original admission identities/count remain unchanged through recovery: this is meaningful R1
-progress, not acceptance of every population/metric/latest case. Analysis alone no longer resolves
-this record. Concrete failure category and Task Center ownership render, but the two R3 obligations
-above remain unmet. No source/media outside the isolated temporary harness is touched.
+The native proof uses unchanged production code, original harness and supported UI/commands. Only
+legal fixture definition IDs/names and the sorting assertion differ from the existing journey;
+there is no guessed endpoint, direct status edit or impossible product state. The empty-history
+probe uses the existing `_runtime`/`_request` test fixture and public read route, without injected
+exceptions. Desktop/narrow workspace and Run-once screenshots were visually inspected against
+the original reference: composition is present, but that does not certify the unmet read semantics.
+SQLite ResourceWarnings, jsdom scrollTo and build chunk-size warnings are retained, not suppressed.
 
-Actual B checks on this candidate:
+Local-only evidence (not claimed remotely available):
+`.git/validation-evidence/94aede19095b77af0edffaa74a3da16b7492dd2a/b-review-20261024/`.
+`INDEX.md` gives actual commands, reproduction, source/config/dependency/served-artifact identity
+and attribution. Logs, full diff/manifest, `latest-sort-response.json`, empty-history response,
+independent config/spec, screenshots/DOM/trace and `timing.jsonl` are retained there.
 
-- Governance **PASS**; production Web build **PASS** (≈0.60s).
-- `.venv/bin/python -m unittest tests.test_automation_workspace_read_model`: **31 tests OK**
-  (≈2.39s). Its manually seeded lower-case failure Result cases do not prove the production format.
-- Independent real-Python/UI multi-failure journey: **1 FAILED** (13.85s including assertion wait),
-  specifically whole-record resolution while an original failed sibling remains. No retries.
-- Default config's existing workspace inventory test: **1 FAILED** (11.26s), Python-only fixture
-  running against Node fake. `--list` independently confirms all five Python workspace tests are
-  incorrectly collected there. This is not a new product-route probe or an unavailable environment.
-- Full Task Base..candidate `git diff --check` clean; both reference PNG digests match the Contract;
-  private config remains untracked/unstaged and all pre-existing dirty/untracked files are preserved.
-- All other assigned full Web/static/default-E2E/integration/native and visual-reference acceptance
-  remains **pending**, not waived or transferred to Developer. Proven-blocker early stop applies.
-  No full Python/Docker/packaging run or Slice T4 PASS is claimed.
+### Developer affected checks / B retained acceptance
 
-Durable local evidence (not claimed remotely available):
-`.git/validation-evidence/87ec86f0cdbd3c84e901594e5f0dd034f4e0cf12/b-review-20261024/`.
-It contains the exact range manifests/diffs, fixture-only driver/spec/config, build/focused logs,
-`independent-two-failures.log`, `two-failure-record-responses.json`, screenshot/trace under
-`native-output/`, `default-registration.log`/trace, and input/artifact/check timing identities.
-The first independent launch encountered an already-occupied port; no existing process was touched;
-B switched to an OS-selected free port and then ran the isolated journey. That launch is not a
-product failure. Review execution/testing remains below50% of this round's elapsed time.
+Run new/changed latest/read-state cases in `tests.test_automation_workspace_read_model`, plus
+`tests.test_operations_run_inventory` and `tests.test_v2_automation_operations` where affected.
+Run the changed entity/component tests (`automation.test.ts`,
+`AutomationWorkspaceReadModel.test.tsx`, Router/navigation tests if touched), changed-file quality
+checks, typecheck and build. After build, run the existing three-spec real Automation invocation
+with the new two-definition/latest-sort and healthy-empty-history assertions. Preserve the native
+multi-failure/subset, actual Result vocabulary, original reason/effect, non-replay and reopen proofs.
+Developer does not own full Web/default-E2E/Operations/Unicode/Slice T4 gates.
 
-### Developer affected tests and B retained gates
-
-Correct only these in-Task read/aggregation/test-registration gaps. Run new/changed cases in
-`tests.test_automation_workspace_read_model`, the affected Operations/read modules from Required
-Tests, and changed Web projection/component tests (`automation.test.ts`,
-`AutomationWorkspaceReadModel.test.tsx` as applicable). Use actual produced Result states and
-existing source-item lineage. After building production assets, run the three existing Automation
-Python specs using `playwright.python.automation.config.ts`, with the mixed test extended to the
-multi-failure/subset and exact original-reason/effect assertions above. Check both Playwright test
-inventories and changed-file quality checks. Developer does **not** own the full Web/default-E2E or
-Slice T4 sweep; B runs the retained assigned acceptance on the corrected candidate.
+B stops the remaining expensive gates after the proven required-outcome blockers. Full default
+E2E, real `operations-inventory.python.spec.ts`, Unicode-principal native acceptance, and any
+still-missing whole-Task query/visual acceptance remain **pending**, not waived or transferred.
+No full Python/Docker/packaging or Slice T4 PASS is claimed. Current passing checks may be reused
+only if their executable inputs match under the workflow; changed inputs need fresh acceptance.
 
 ### All Slice outcomes reassessed
 
 | Outcome / surface | Current B assessment |
 |---|---|
-| RO-1 inventory/statistics | Implementation progress and31 focused cases; complete query/metric/latest/native acceptance still pending. Settings portion remains outside43.3. |
-| RO-2 typed lifecycle/checked Save | Existing implementation reused; this native Create/Save entrance works. Full current lifecycle acceptance is not claimed by this one journey. |
-| RO-3 shared analysis/grant/scheduled execution | Shared analysis is reached without retired products; current full grant/scheduled authority acceptance remains pending. |
-| RO-4 deliberate Run once | Real three-item discovery/analysis/one-shot admission and execution reached; all other current boundary/reconciliation acceptance remains pending. |
-| RO-5 read-only records/recovery | **Incomplete:** false whole-record resolution plus loss/misclassification of original failure evidence above. Task Center ownership and original admission identity are retained. |
-| RO-6 settings/real consumer adoption | **Incomplete/outside this Task:** resident loop still retains startup `_poll_seconds`; CLI constructs Worker/Scheduler cadence at startup. A settings link does not complete this outcome. |
-| RO-7 shared authority/navigation/failure | Current read surfaces still have R3 defects and the assigned default-E2E gate fails; complete integration acceptance remains pending. |
+| RO-1 inventory/statistics |Full-population cards and read queries have meaningful integration/native proof; required latest-result sorting and healthy-empty-history state are still blocked. Settings portion remains outside43.3. |
+| RO-2 lifecycle/checked Save |Current eleven-case real lifecycle matrix passes, including durable Save, enable/copy/remove, unknown-response reconciliation and retained/corrupt history. This is not historical43.1 PASS reuse or A whole-outcome acceptance. |
+| RO-3 shared analysis/grant/scheduled execution |Current affected Python tests and native scheduled-record/analysis paths pass; no retired Preview product restored. Complete Contract-level unattended/safety/T4 acceptance is not claimed. |
+| RO-4 deliberate Run once |Current four-case Run-once native suite passes, including exact frozen plan/restart and independent recovery; no schedule/authority rewrite. Further Contract safety proof remains in Slice Final. |
+| RO-5 records/recovery |Original-result retention, per-item handling, durable reasons/effects and Task Center ownership/return now pass current native cases; latest-result truth is not fully accepted while the RO-1 read defects remain. |
+| RO-6 actual settings consumption |Still incomplete and outside43.3: four-field settings/real resident cadence adoption requires its later coherent unit; a navigation link/API rebinding is not adoption. |
+| RO-7 shared safety/failure/return |324 affected integration cases, full Web1172, static checks and Automation native pass; empty-read semantics still fail and default/Operations/Unicode acceptance remains pending. |
 
-No next Task, Closure Packet, Roadmap/Progress change or Slice closure follows this FIX REQUIRED.
+**Decision remains FIX REQUIRED on43.3.** Do not plan43.4 yet, change Slice/Roadmap/Progress,
+prepare a Closure Packet or claim Slice READY/CLOSED. Preserve all pre-existing dirty/untracked/
+private files, original reference PNG hashes and preservation refs. Only B-owned Task review/status
+is checkpointed; no product implementation, push or history rewrite is performed in this review.
+
+Testing/checking time recorded at this review write: **161.56s / 704.85s elapsed (22.9%)**, strictly below50%; final timing and scope checks are retained in the evidence index.
