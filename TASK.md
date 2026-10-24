@@ -197,7 +197,7 @@ standalone Preview or FileIndex; Slice/Roadmap boundaries or closure; next featu
 
 ```text
 Task: 43.4 / A43-01 correction (no new Task, no scope change)
-Checkpoint: 20baaea..HEAD of this commit (source identity below)
+Checkpoint: 20baaeaae52b5b4eee9a162a2679ce51b1d93311..97f3ceb (corrected candidate)
 Decision: READY FOR B REVIEW — not self-PASSED, not CLOSED
 Base reviewed by B: f18d2444f548b81b5892536498a1b4cdd4400be8 (unchanged)
 Test Level: T4 (B retains full regression); Developer ran affected checks only
