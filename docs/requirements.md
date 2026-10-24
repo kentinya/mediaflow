@@ -37,15 +37,16 @@ scope and delivery state remain in root contracts, [Roadmap](roadmap.md) and [Pr
 
 These amendments define authorized scope; actual acceptance is recorded separately. Necessary
 Slice43 Scan/index/standalone-Preview coupling cleanup was accepted within45, not the whole Automation
-workspace. The user explicitly resumed remaining Slice43 development on 2026-10-23; its current
-Contract preserves the original Base/results and requires B reassessment before implementation.
+workspace. Separately resumed Slice43 is now PASS / CLOSED at reviewed implementation
+`97316131946bdecc483b684f6e6f6ecb98c5594d`, preserving its original Base and the accepted45 amendments.
 Accepted V1 facts
 and original amendments remain in Git. `REQ-GEN-004` still requires fail-closed data integrity;
 UX-first does not weaken safety or justify unnecessary CLI/internal-token ceremony.
 
 Slice45 已整体验收为 PASS / CLOSED，交付上述 `V2-OPS-009–013` 与 `V2-FILES-005/006`。
 该验收不改变冻结 V1 定义或原始接受事实；下面 CURRENT 修订及 Product Experience/Architecture
-记录现行行为。剩余 Slice43 自动化工作区现已单独恢复为 ACTIVE，但尚未整体验收；不得恢复45已退役产品。
+记录现行行为。Slice43 自动化工作区已单独整体验收为 PASS / CLOSED：原生定义生命周期、完整有界
+运行一次、真实统计、只读执行记录及常驻进程实际采纳的引擎设置均为 CURRENT；不得恢复45已退役产品。
 
 ## Traceability and derivation rules
 

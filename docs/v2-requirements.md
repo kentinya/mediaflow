@@ -22,9 +22,9 @@ recovery deferrals are recorded in Product Experience/Architecture. Suspended wo
 delivery or an implicit dependency. Reference images define business/style, never runtime authority.
 
 Slice45 is PASS / CLOSED for `V2-OPS-009–013` and `V2-FILES-005/006`. Its nine Task Center views,
-in-context confirmation/recovery and Scan/Preview/FileIndex retirement are CURRENT; the remaining
-Slice43 Automation workspace targets resumed as ACTIVE by explicit user instruction on 2026-10-23,
-without a delivery claim or restoration of retired products.
+in-context confirmation/recovery and Scan/Preview/FileIndex retirement are CURRENT. Slice43 is also
+PASS / CLOSED for its separately reviewed native Automation workspace/settings outcomes, preserving
+the accepted45 retirement boundary.
 
 ## Stable V2 requirements
 
@@ -142,13 +142,14 @@ defines the accepted CLI and end-to-end journey. Closure facts live in Progress 
 | V2-FILES-005 | CLI `mediaflow files list`, ResourceLibrary Files and MediaLibrary browsing share library-scoped live Storage listing without recording a file catalog. | Resolve the same Active library kind/ID/root and bounded relative directory/cursor through shared application behavior. Preserve exact names, supported entry types, path confinement, kind-separated cursors, bounded/unknown totals and actionable errors. List/refresh/paging creates no file/observation records, Tasks/Jobs/Results, execution authority, Provider/Hash calls or media mutations; it never falls back to an index. Explicit subsequent work retains its required durable records. |
 | V2-FILES-006 | FileIndex fully exits the product and all runtime consumers under the prelaunch boundary. | Remove indexed CLI/API/UI/reprocess/statistics, global file-directory/occurrence/disposition persistence, repositories/stand-ins, dedicated schema, initialization, sync/repair paths and dead code. Fresh supported deployments and every supported CLI/API/Worker/discovery/organize/recovery/Automation foundation work without FileIndex; do not hide or rename it or substitute a no-op/global cache. Exact work-scoped source/plan/pin/stability/results, locks and completed/uncertain non-replay stay authoritative. No old FileIndex production migration, dual write, historical FileID/API or takeover compatibility is required; do not clear existing runtime data/media. Necessary shared dependency removal does not implement frozen Automation business features. |
 
-## Automation workspace requirements — TARGET (Slice 43)
+## Automation workspace requirements — CURRENT (Slice 43 PASS / CLOSED)
 
-The user explicitly resumed Slice43 on 2026-10-23. The current [Contract](../SLICE.md) keeps the
-original Base/outcomes and requires B to reassess preserved Task43.3 before implementation. The hold
-Contract `ed974e0df8b263f631bfe48b524da461013d8780:SLICE.md` and branch
-`frozen/slice-43-2026-10-15` remain historical, unchanged. Merged implementation/historical43.2 B PASS
-is not current A acceptance; all targets below still need whole-journey proof.
+Slice43 is PASS / CLOSED after A's review of original Base
+`853973dbbf8289fa2ad40657033e94e870a690e4` through implementation
+`97316131946bdecc483b684f6e6f6ecb98c5594d`; see the [Contract and review](../SLICE.md).
+The hold Contract `ed974e0df8b263f631bfe48b524da461013d8780:SLICE.md` and branch
+`frozen/slice-43-2026-10-15` remain historical, unchanged. This factual delivery update preserves
+the stable requirements and the Contract's explicit deferrals and evidence limits.
 
 Scan/Preview/FileIndex removal is already accepted under45. Historical old-mode parity/inventory/
 migration clauses are superseded by `V2-OPS-011` first-deployment absence. `V2-OPS-013` replaces the

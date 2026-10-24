@@ -3,8 +3,8 @@
 This document owns component/dependency boundaries and distinguishes accepted CURRENT baselines
 from TARGET design. [Progress](progress.md) owns closure facts; committed [SLICE.md](../SLICE.md)
 owns scope. Slice45 is PASS / CLOSED: Task Center/typed recovery, shared live listing and
-Scan/Preview/FileIndex retirement below are CURRENT. Slice43 resumed as ACTIVE on 2026-10-23; its
-remaining workspace/settings contract is TARGET, not newly accepted behavior.
+Scan/Preview/FileIndex retirement below are CURRENT. Slice43 is also PASS / CLOSED; its Automation
+workspace/settings contract below is CURRENT within the accepted outcomes and deferrals.
 Detailed former delivery notes remain at `865ebdce47b0b323064fd8e05fbfaa54546e6269:docs/architecture.md`.
 
 ## CURRENT — Admitted transfer Worker lifetime (Slice 39 implementation)
@@ -617,8 +617,8 @@ Active snapshot at creation; the Worker runs the existing pipeline and records l
 Result evidence.
 
 The current implementation accepts automatic-organization only; removed Scan modes have no
-compatible executor or dedicated history layer. Broader Automation redesign remains TARGET below;
-Slice45 closure does not accept the remaining Slice43 workspace redesign.
+compatible executor or dedicated history layer. The complete native Automation workspace below is
+separately accepted by Slice43; Slice45's closure and retirement boundaries remain unchanged.
 
 Unattended authority is persistent, scoped, revocable and separate from schedule enablement. Exact
 shared analysis eligibility and authority are required before a due run may reach mutation. The Worker rechecks live
@@ -626,17 +626,16 @@ authority, scope, capabilities, conflicts and current snapshot at each mutation 
 blocks future mutation without rewriting completed effects. Uncertain mutation is not automatically
 replayed.
 
-### TARGET — V2 Automation workspace and consumed engine settings (Slice 43)
+### CURRENT — V2 Automation workspace and consumed engine settings (Slice43 PASS / CLOSED)
 
-The user explicitly resumed43 workspace/Run once/metrics/settings development on 2026-10-23 under
-the current [Contract](../SLICE.md), retaining original Base/outcomes and B reassessment before
-implementation. The hold Contract `ed974e0df8b263f631bfe48b524da461013d8780:SLICE.md` and preservation
-branch `frozen/slice-43-2026-10-15` remain unchanged. Historical43.1/43.2 B PASS does not certify the
-current changed consumers or constitute A acceptance. Accepted45 Scan/Preview/FileIndex removal
-is an integration invariant, not a reason to restore exclusive models/repos/routes or a second engine.
+Slice43 is PASS / CLOSED at implementation `97316131946bdecc483b684f6e6f6ecb98c5594d` after
+whole-Slice A review from the original Base; the accepted [Contract](../SLICE.md) records evidence
+and deferrals. The hold Contract `ed974e0df8b263f631bfe48b524da461013d8780:SLICE.md` and preservation
+branch `frozen/slice-43-2026-10-15` remain unchanged. Accepted45 Scan/Preview/FileIndex removal
+is an integration invariant; no exclusive retired models/repos/routes or second engine are restored.
 
-[V2-AUTO-001–009](v2-requirements.md#automation-workspace-requirements--target-slice-43) retain the
-full target: reuse managed definitions/occurrences/grants, Scheduler/Worker/Operations and exact focused
+[V2-AUTO-001–009](v2-requirements.md#automation-workspace-requirements--current-slice-43-pass--closed) describe
+the accepted contract: reuse managed definitions/occurrences/grants, Scheduler/Worker/Operations and exact focused
 publication, not another queue/config store. Manual Run once uses complete bounded live discovery
 and shared exact analysis/plan-summary evidence plus separate one-shot intent under V2-OPS-013;
 min(definition ceiling,100) bounds primaries, incomplete/
@@ -657,10 +656,10 @@ fresh actual consumer values/version at safe resident-loop boundaries, independe
 media pin. API runtime binding alone is not proof of another process's cadence. Idle/long waits,
 heartbeat/lease ownership and CLI/deployment overrides retain meaning; unavailable Active cannot
 schedule from cache. Preserve supported history/schema/pins and non-replay; no process supervisor
-or new execution parallelism. The remaining inventory/records/Run once outcomes stay TARGET; the
-engine-settings publication and resident adoption below are delivered by Task 43.4.
+or new execution parallelism. Inventory/records/Run once and the engine-settings publication and
+resident adoption below are accepted parts of the same Slice.
 
-#### Delivered in Task 43.4 — focused engine-settings publication and resident adoption
+#### Focused engine-settings publication and resident adoption
 
 ```text
 GET /api/v1/operations/automation/settings   READ

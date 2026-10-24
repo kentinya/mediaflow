@@ -343,13 +343,19 @@ Do not infer a feature or permission to rebuild user data from an old schema num
 
 Provider switching/new Providers, built-in users/sessions/OIDC, general Secret Store/Docker Secrets,
 automatic uncertain replay and historical rollback remain outside the accepted baseline. No arbitrary
-host paths or mutation-based capability probes. Native Settings and Rules are delivered; that does
-not imply V1 cutover or acceptance of the remaining Automation workspace, now active under Slice43. Slice45's Task Center,
+host paths or mutation-based capability probes. Native Settings, Rules and Slice43's Automation
+workspace are delivered; V1 cutover remains unselected. Slice45's Task Center,
 typed recovery and Scan/Preview/FileIndex retirement are accepted CURRENT behavior.
 Production uses Waitress `api serve-production`; standard-library `api serve` stays trusted-loopback.
 See [Roadmap](roadmap.md), [Progress](progress.md) and [Deployment](deployment.md) for their own facts.
 
 ### Operational setting meanings
+
+`自动化 → 全局设置` and the Automation section of System Settings share the same four-field
+publication and readback. Adoption checks every fresh live Worker/Scheduler instance separately.
+Stopped/expired registrations remain bounded diagnostic history with a true total; a healthy
+replacement can complete adoption without deleting history. Absent live consumers, unreadable
+evidence and live overridden/pending instances keep collective adoption unproven with recovery guidance.
 
 | Setting | Implemented meaning |
 |---|---|

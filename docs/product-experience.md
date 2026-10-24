@@ -4,8 +4,8 @@ This document owns operator journeys and completion semantics. Stable scope/IDs 
 [Requirements](requirements.md) and [V2 Requirements](v2-requirements.md); technical boundaries in
 [Architecture](architecture.md). [Progress](progress.md) records accepted baselines and deferrals.
 The committed [Slice](../SLICE.md) owns scope. Slice45 is PASS / CLOSED; its accepted Task Center,
-live-list and retirement journeys below are CURRENT. Slice43 resumed as ACTIVE on 2026-10-23; its
-complete Automation workspace/settings journey remains TARGET until accepted.
+live-list and retirement journeys below are CURRENT. Slice43 is also PASS / CLOSED; its complete
+Automation workspace/settings journey below is CURRENT within its accepted boundary.
 Detailed superseded delivery notes are retained at
 `865ebdce47b0b323064fd8e05fbfaa54546e6269:docs/product-experience.md`.
 
@@ -327,14 +327,13 @@ preparation and do not fabricate execution recovery work.
 Automatic organization is the only supported definition mode in current code; removed Scan intents
 cannot be reinterpreted as execution permission. Independent diagnostic/scheduled Preview is absent;
 necessary analysis/authorization checks use shared organizing behavior.
-The user resumed the complete native Automation workspace, Run once, metrics and engine-settings
-journey under Slice43 on 2026-10-23. It is ACTIVE / TARGET, not accepted delivery; the historical43
-hold and Task PASS remain unchanged. [V2-AUTO requirements](v2-requirements.md#automation-workspace-requirements--target-slice-43)
-and the current [Contract](../SLICE.md) preserve complete bounded discovery, separate manual/scheduled
-authority, truthful historical metrics and actual resident settings consumption. B must first
-reassess the changed current consumers and preserved Task43.3; retired45 products stay absent.
+Slice43's complete native Automation workspace, Run once, metrics and engine-settings journey is
+PASS / CLOSED. [V2-AUTO requirements](v2-requirements.md#automation-workspace-requirements--current-slice-43-pass--closed)
+and the accepted [Contract](../SLICE.md) preserve complete bounded discovery, separate manual/scheduled
+authority, truthful historical metrics and actual resident settings consumption. Historical hold and
+prior review facts remain in Git; retired45 products stay absent.
 
-### TARGET — Complete native Automation workspace (active Slice43)
+### CURRENT — Complete native Automation workspace (Slice43 PASS / CLOSED)
 
 - **Entry/state:** shared-shell `自动化` opens the real definition inventory, with `任务列表 / 执行记录 /
   全局设置`, population metrics, source/scope/schedule/timezone/limit, next/latest outcome and distinct
@@ -369,6 +368,10 @@ reassess the changed current consumers and preserved Task43.3; retired45 product
   running Job count, stale age is no-update observation, and Worker/Scheduler polling must be
   adopted by actual resident loops without routine restart. Published/adopted/pending/override/
   stale or unavailable consumers have truthful readback and concrete repair guidance.
+  Each fresh live instance must prove its own adoption. Stopped/expired predecessors remain folded
+  diagnostic history with a bounded display and real total; they neither veto nor prove current
+  adoption. A healthy replacement restores completion, while missing services, unreadable evidence
+  and any real live pending/overridden replica still refuse collective success.
 
 ## Operations administration
 

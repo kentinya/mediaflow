@@ -215,7 +215,7 @@ burning targetless attempts, preserves recipient/signing identity and reports ch
 target as configuration failure, never retargeting. Retry/dead-letter/lease/at-least-once rules remain.
 New admission uses Active; intact older admitted pins stay valid, broken pins block before mutation.
 
-### Engine poll cadence adoption (Slice 43, Task 43.4)
+### Engine poll cadence adoption (Slice43 PASS / CLOSED)
 
 `automation.workerPollSeconds` and `automation.schedulerPollSeconds` are the real resident loop
 cadences. A running Worker or Scheduler resolves the current managed Active at each safe loop
@@ -236,6 +236,13 @@ and the Web Save cannot rewrite it. To adopt the published cadence, remove the e
 the Compose command/CLI and restart that service once. `automation.maximumActiveJobs` and
 `automation.staleJobAgeSeconds` are read by the admission/observation boundaries at their own
 boundary; they are shown with an API-local basis and are never claimed as a resident process's poll.
+
+The settings page evaluates every fresh live registration, so a second live instance with an
+override, missing report or older publication still blocks collective adoption. Normal service stop
+and replacement preserve the predecessor as diagnostic history; it cannot veto the replacement or
+prove current adoption. With no fresh live instance, check that the service is running and reaching
+the shared database. Unreadable registration/adoption evidence remains unproven; restore database
+health/permissions and refresh. Do not delete history or restart an obsolete identity to clear a status.
 
 ## CURRENT — Worker startup and transfer readiness (Slice 39)
 
