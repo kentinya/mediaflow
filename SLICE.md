@@ -108,8 +108,10 @@ restart retains access from the original library to relevant unfinished/attentio
 recent results. Unknown admission is reconciled by exact durable identity, never guessed/replayed.
 
 **Manual organizing and follow-up:** select live ResourceLibrary files/folders → explicitly submit
-整理 → check same-source unfinished organizing work and explicit extension exclusions → admit durable
-organizing work without requiring all business rules to match. Folder expansion retains the library's
+整理 → check directly selected files for same-source unfinished work/explicit extension exclusions
+and admit durable organizing work without requiring all business rules to match. Folder work is
+admitted before traversal; each discovered file passes those checks and is atomically reserved with
+its own item admission inside that task. Folder expansion retains the library's
 configured primary-media extension filter, defaulting to video, plus existing attachment semantics.
 Follow discovery/stability/pipeline
 progress and per-item findings in Task Center. Recognition/Metadata/Classification/Conflict problems
@@ -237,8 +239,12 @@ do not become fabricated Recognition failures.
 
 Backend duplicate detection uses verified Storage/source identity, not just filename; include queued,
 running, paused and unresolved four-type/recovery work, across manual/Automation/continuations.
-Check/reserve each concrete source atomically with admission so overlapping/concurrent requests
-cannot execute it twice. Show the exact existing run or explicit extension-exclusion reason per item;
+Check/reserve each concrete source atomically with its item admission so overlapping/concurrent
+requests cannot execute it twice. Direct files can be checked at request admission; folders are
+admitted as outer tasks before traversal, then discovered sources are checked/reserved inside them.
+Do not require complete pre-task folder traversal or hold a database transaction across Storage I/O.
+Complete required scope/bounds checks before any mutation; early task admission does not authorize a
+truncated first-N execution. Show the exact existing run or explicit extension-exclusion reason per item;
 eligible siblings remain independently admissible. A finished history record alone is not a perpetual
 entry lock; completed/uncertain effects still cannot be replayed through a new request.
 
@@ -253,8 +259,9 @@ recognition, metadata decisions, classification misses and conflicts produce act
 in Attention and its four lists/statistics. Do not force a default type, identity or destination to
 make an item ready. Exact summary and explicit selected execution confirmation remain inside the
 task before mutation, including separate permission for overwrite/Delete/cleanup where applicable.
-Its normal summary/confirmation remains reachable in the exact task context without inventing a
-fifth Attention type when none of the four business problems exists.
+Its normal summary/confirmation remains reachable in the exact task context from Running and All
+until execution or another real lifecycle transition; without four-type recovery lineage, waiting
+for this normal confirmation creates no fifth Attention type or pending-task count.
 Task admission, analysis and decision Save confer no unreviewed media effects. Only OrganizerExecutor
 mutates after source/capability/authority/fence checks; successful or uncertain siblings never replay.
 
@@ -320,6 +327,11 @@ problem membership. Cards/totals/options and all recovery views use the same aut
 population. Ordinary-file, notification and unknown unrelated commands cannot leak through `all`,
 filters/cursors, selected runs or legacy Task/Job lists. Classify from supported command semantics
 and durable admitted context/links, never display labels, substrings or today's mutable Active.
+
+Normal manual WaitingConfirm work without four-type recovery lineage remains unfinished in Running
+and All, with an exact link to its summary/confirmation after refresh/restart. It is neither an
+Attention problem nor an ended task merely because it needs that initial execution confirmation.
+Four-type recovery's required human confirmation retains its existing Attention lineage below.
 
 Attention and every Task Center pending-task badge/card/count are the distinct union of current
 Recognition, Metadata (candidate/correction), Classification and Conflict problems. Type lists keep
@@ -563,6 +575,9 @@ B's final evidence includes:
   stable files execute; remaining unstable outcomes retain truthful failure/PartialSuccess without
   four-type Attention inflation or false no-work. Cover later normal scope/filtering/checks and old
   failure history; add no failed-item retry/selection or cross-run observation mechanism.
+- Cover folder task admission before traversal and atomic per-discovered-source ownership races,
+  plus normal manual WaitingConfirm readback in Running/All after refresh/restart without four-type
+  Attention inflation. Complete scope/bounds validation still precedes any media effects.
 - Actual desktop/narrow Entry, local progress/results/recovery and simplified-center inspection;
   computed contrast and keyboard evidence for shared variants/overrides. Record candidate/artifact
   identity, actual commands/results, failures and skips; do not test only CSS implementation literals.

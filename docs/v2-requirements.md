@@ -90,6 +90,12 @@ configured folder media-type filtering, explicit extension exclusions, source sa
 bounded traversal remain. A merely unlisted suffix remains admissible for direct-file intent, not
 blanket folder enumeration. Definition-bound
 Automation keeps saved source filtering; its intent/admission sequence is replaced by V2-AUTO-010/011.
+For V2-OPS-017, admit outer folder work before traversal, then atomically check/reserve each
+discovered source with its own item admission; full scope/bounds validation still precedes effects.
+Do not restore pre-task full traversal or span Storage I/O with a database transaction. Under
+V2-OPS-014/016, normal manual WaitingConfirm without four-type recovery lineage remains unfinished
+in Running/All with exact summary/confirmation readback after refresh/restart, outside Attention and
+pending-task counts. Necessary human confirmation within four-type recovery retains its lineage.
 For other Task Center failures, this explicit user amendment replaces generic repair guidance with
 factual read-only history, without removing durable evidence or administrative recovery capabilities.
 `V2-FILES-007` changes ordinary recovery ownership without weakening

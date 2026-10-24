@@ -35,6 +35,10 @@ pins. Check/reserve concrete source ownership atomically across overlapping manu
 continuation admission, including queued/paused/unresolved four-type work; do not infer duplicates
 from filename or terminal history alone. Exclusions/duplicates retain per-item evidence and eligible
 siblings. Folder/mixed enumeration stays bounded and cannot execute a silently truncated prefix.
+Outer folder tasks are admitted before traversal; each concrete source is checked/reserved atomically
+with its own item admission during in-task discovery. Direct-file admission may check its known
+sources immediately. Do not require pre-task full traversal or a database transaction spanning
+Storage I/O; all required scope/bounds checks still precede any effects.
 
 Reuse existing Task/Worker/pipeline, decisions and continuation evidence. Real stability observation,
 recognition/metadata/classification/conflict analysis and exact plan generation occur inside the
@@ -52,6 +56,9 @@ Use supported command semantics and actual durable links/context; do not filter 
 the browser or infer organizing authority from labels/current configuration. Remove the center's
 creation/global Worker/discovery/manual-operation blocks and exclusive reads. Task-local readiness
 and failure reasons remain. Legacy Task/Job/deep links must respect the new presentation ownership.
+Normal manual WaitingConfirm without four-type recovery lineage stays unfinished in Running/All,
+with exact summary/confirmation readback after refresh/restart; that status alone is neither Attention
+nor ended. Human confirmation within four-type recovery retains that journey's Attention lineage.
 
 The same backend query contract supplies eight views, four business problem types and all related
 pending-task counts. Attention is the distinct task union of current Recognition/Metadata decision/

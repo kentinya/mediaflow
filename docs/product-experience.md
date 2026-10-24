@@ -37,8 +37,11 @@ User-authorized on 2026-10-24; [Slice46](../SLICE.md) and `V2-UX-004`, `V2-OPS-0
   actions in the owning flow. Unknown submission reads back the exact request; successful/uncertain
   mutations never replay. Kind/principal/source/pin isolation and auth continuation remain.
 - **Manual admission:** select one/multiple files or bounded folders/mixed scopes on ResourceLibrary
-  Files → explicitly submit 整理 → backend checks same-source unfinished organizing work and explicit
-  extension exclusions → follow the admitted task. Direct files do not require an allowlisted suffix.
+  Files → explicitly submit 整理 → check directly selected files for same-source unfinished work and
+  explicit extension exclusions → follow the admitted task. Folder tasks are admitted before
+  traversal; discovered files receive those checks and atomic ownership with their own item
+  admission inside the task. No complete folder scan is required before task creation; full bounds
+  checks still precede effects. Direct files do not require an allowlisted suffix.
   Folder discovery (including folders in mixed selections) retains the library's configured primary-
   media extension filter, defaulting to video. Rule/include misses and metadata/target/conflict
   readiness cannot force a ready-plan step before task creation. Duplicate/excluded items have exact
@@ -61,8 +64,10 @@ User-authorized on 2026-10-24; [Slice46](../SLICE.md) and `V2-UX-004`, `V2-OPS-0
   not replay; four-type resolution follows the truthful completion rules below. Technical failures
   remain All/Ended history. Authentication/confinement/bounds/pins, stability and effect permissions
   still govern real execution; admitting a task is not permission for unreviewed file effects.
-  Normal summary/confirmation stays reachable in the exact task context; without a four-type business
-  problem it does not create a fifth Attention category or pending-task count.
+  Normal summary/confirmation stays reachable from Running/All in the exact unfinished task context,
+  including after refresh/restart. Without four-type recovery lineage, this confirmation creates no
+  fifth Attention category or pending-task count; confirmation inside four-type recovery keeps its
+  existing Attention lineage until the required human steps are resolved.
   Browsing/DryRun/analysis-only requests never implicitly submit this manual organizing command.
 - **Task Center attention:** only Recognition, Metadata candidate/correction, Classification and
   Conflict business problems enter “需要处理” and pending-task statistics. Required human steps
