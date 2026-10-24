@@ -14,9 +14,12 @@ selects readable shared V2 actions, Files-only manual organizing entry, library-
 feedback/recovery and an organizing-only Task Center without the three auxiliary blocks or creation
 entry, plus the user-added Automation detail-opening, post-Save Enabled/version and unattended
 authorization/readiness corrections that prevent repeated missing-grant failed admissions.
-The latest user amendment selects eight views and four business types for Attention/pending-task
+The attention amendment selects eight views and four business types for Attention/pending-task
 statistics; Failure Recovery and other failures' separate statistics/guidance are removed. Other
 terminal failures remain factual read-only records in All/Ended, not outstanding recovery tasks.
+The latest manual-entry amendment admits explicit Files organizing before business-rule readiness;
+business entry checks are same-source unfinished work and explicit extension exclusion. Four-type
+problems and exact summary/execution confirmation occur inside the task; execution safety remains.
 Implementation Head is NOT SET; these corrections are required TARGET, not delivered fixes, and no
 Task or product acceptance is claimed.
 **B PLANS THE FIRST TASK**; final acceptance is T4. No Slice46 closure row is added below.

@@ -29,8 +29,9 @@ is `acc5c567788410cde68ed24b4fee12a84ee47ef2` (original review ID
 `13ecfc0e75fc34ff0ae489e655124a178943cba4`). Original review identities, deferrals and preservation
 refs remain historical facts. This Slice does not rewrite history.
 
-The user's 2026-10-24 scope amendments integrate the diagnosed Automation defects and narrow
-Task Center attention/recovery to four business problem types. These are required TARGET changes;
+The user's 2026-10-24 scope amendments integrate the diagnosed Automation defects, narrow
+Task Center attention/recovery to four business problem types and admit Files manual organizing
+before business-rule resolution. These are required TARGET changes;
 prior closure records remain historical facts. Base and Implementation Head remain unchanged.
 
 ## User decision and goal
@@ -45,6 +46,8 @@ prior closure records remain historical facts. Base and Implementation Head rema
   清楚显示待授权、打通分析与明确授权，并在新定时任务受理前检查授权。
 - “需要处理”及待处理任务统计只包含识别、元数据、分类、冲突四类当前问题；删除“失败恢复”。
   其他失败只在“全部任务 / 已结束”查看任务与失败原因，不单独统计失败或提供恢复指引。
+- 手动整理入口只按同一文件是否已有未结束的整理工作、后缀是否被明确排除判断业务准入；
+  不再要求规则全部匹配或先生成可执行摘要。明确提交后先受理整理任务，四类问题在任务内恢复。
 
 本 Slice 交付按钮可读、文件操作归属清楚的 V2 体验：普通文件管理在原库页完成反馈与恢复，
 文件选择式手动整理从资源库文件页发起，任务中心专注已受理整理的进度、结果与恢复。
@@ -52,12 +55,12 @@ prior closure records remain historical facts. Base and Implementation Head rema
 同时修复已复现的自动化详情读取、保存后表单版本残留及未授权调度问题，保留真实并发保护、
 独立明确授权与运行时授权复核。
 
-The explicit TARGET amendment is `V2-UX-004`, `V2-OPS-014–016` and `V2-FILES-007` in
+The explicit TARGET amendment is `V2-UX-004`, `V2-OPS-014–017` and `V2-FILES-007` in
 [V2 Requirements](docs/v2-requirements.md#slice46-authorized-target--not-yet-delivered).
-It supersedes the earlier all-command population, center-created manual entry, nine-view navigation
-and general-failure attention/recovery. Eight views retain shared analysis, four-type native recovery
-and all execution safety. CURRENT descriptions are the accepted Base until implementation and
-acceptance; TARGET is not a delivery claim.
+It supersedes the earlier all-command population, center-created manual entry, nine-view navigation,
+general-failure attention/recovery and Files' ready-plan prerequisite for task admission. Eight views
+retain shared analysis, four-type native recovery and all execution safety. CURRENT descriptions
+are the accepted Base until implementation and acceptance; TARGET is not a delivery claim.
 The Automation corrections fulfill existing `V2-AUTO-001–006`; they add no execution authority or
 new Automation capability.
 
@@ -66,7 +69,7 @@ new Automation capability.
 - `UX-001–003/005–007/010`, `REQ-TASK-002/003/005–010`, applicable `REQ-RECOVERY-*`,
   `REQ-API-002/003` and `REQ-SAFE-001–009`: [Requirements](docs/requirements.md).
 - `V2-UX-001–004`, `V2-WEB-001`, `V2-SHELL-001`, `V2-AUTH-001–003`, `V2-SAFE-001`,
-  `V2-FILES-002/003/007`, `V2-AUTO-001–006`, applicable amended `V2-OPS-001–016`:
+  `V2-FILES-002/003/007`, `V2-AUTO-001–006`, applicable amended `V2-OPS-001–017`:
   [V2 Requirements](docs/v2-requirements.md).
 - [Product Experience](docs/product-experience.md): V2 authentication/continuation; Real Storage
   Files/Common file maintenance; separate MediaLibrary journey; Manual organize/bounded discovery;
@@ -91,14 +94,16 @@ or uncertain effects and allowed repair/controls locally. Closing a dialog, relo
 restart retains access from the original library to relevant unfinished/attention work and bounded
 recent results. Unknown admission is reconciled by exact durable identity, never guessed/replayed.
 
-**Manual organizing and follow-up:** select live ResourceLibrary files/folders → explicitly prepare,
-observe real discovery/stability progress → inspect same-interface exact summary → select eligible
-items and separately confirm execution → follow the admitted organizing run in Task Center.
-Preparation findings/unknown requests remain reachable from Files. Pre-execution problems stay in
-preparation; admitted Recognition/Metadata/Classification/conflict problems use native task/type
-recovery. Save a decision → analyze → review/confirm the eligible summary → inspect actual results;
-completed/ignored outcomes clear only their exact current problem. Other terminal failures are
-read-only history in All/Ended. Center views never offer arbitrary new manual-organize requests.
+**Manual organizing and follow-up:** select live ResourceLibrary files/folders → explicitly submit
+整理 → check same-source unfinished organizing work and explicit extension exclusions → admit durable
+organizing work without requiring all business rules to match. Follow discovery/stability/pipeline
+progress and per-item findings in Task Center. Recognition/Metadata/Classification/Conflict problems
+enter their native task/type recovery; ready items reach the exact in-task summary and selected
+execution confirmation. Save a decision → analyze → review/confirm the eligible summary → inspect
+actual results; successful siblings are not replayed and one blocked item does not erase others.
+Files retains exact request readback/return context. Other terminal failures are read-only history
+in All/Ended. Browsing or analysis-only preparation never implicitly submits an organizing task.
+Center views never offer arbitrary new manual-organize requests.
 
 **Four-type attention:** open “需要处理” or one of the four type lists → inspect the task's current
 business problems → complete the corresponding native decision/analysis/confirmation → refresh
@@ -136,6 +141,11 @@ is not emptiness.
   a manual-action section; landing/refresh also read those dependencies.
 - `StorageFilesPage.tsx` already submits exact selected discovery and passes its durable identity to
   shared preparation. Unknown-admission guidance currently relies on center discovery records.
+- The Files command currently requests `autoPrepare` discovery, then opens shared preparation;
+  `media_discovery.py` rejects selected sources using extension/include/exclude/depth filters, and
+  manual planning/execution requires ready intent/plan items before task admission. This explains
+  why pre-task business problems cannot use task recovery; the TARGET moves that boundary, not just
+  the button's disabled state. This is source inspection, not a new runtime reproduction.
 - `FileCommandDialogs.tsx` sends Delete inspection/recovery to `/operations/tasks/$taskId`.
   `TransferDialog.tsx` already polls kind-scoped progress/controls. Both kinds reuse durable direct-
   command/Delete/transfer families. Local reopen/readback must replace the removed center handoff.
@@ -170,12 +180,40 @@ Disabled labels remain legible and visibly unavailable. Verify computed browser 
 rendered states, not only CSS literals/selectors. Fix the directly related Entry field colors where
 needed for the same readable login journey; no form/authentication redesign or dark-mode product.
 
-### RO-2 — Files-only manual organization and retained preparation recovery
+### RO-2 — Files-only manual organization before business-rule resolution
 
 Remove center new-organize CTAs, manual-action section and its independent source-selection entry.
 ResourceLibrary Files is the sole normal entry for new file-selection-based manual organization.
-Keep exact selections, pins, bounded preparation, same-interface summary/confirmation and return
-context. MediaLibrary stays a destination, never an organizing source.
+An explicit Files 整理 command admits durable bounded organizing work before complete rule matching,
+metadata/target/conflict resolution or an executable summary exists. The two business entry checks
+are unfinished same-source organizing work and explicitly excluded extensions. A suffix absent from
+an allowlist is not an explicit exclusion. Automatic scan include/exclude/rule-match readiness must
+not silently become extra vetoes for this deliberate manual selection. Apply the same contract to
+single/multiple files and the bounded contents of folder/mixed selections; retain attachment semantics.
+MediaLibrary stays a destination, never an organizing source.
+
+Backend duplicate detection uses verified Storage/source identity, not just filename; include queued,
+running, paused and unresolved four-type/recovery work, across manual/Automation/continuations.
+Check/reserve each concrete source atomically with admission so overlapping/concurrent requests
+cannot execute it twice. Show the exact existing run or explicit extension-exclusion reason per item;
+eligible siblings remain independently admissible. A finished history record alone is not a perpetual
+entry lock; completed/uncertain effects still cannot be replayed through a new request.
+
+Keep authentication/RBAC, valid bounded source selection, library/root confinement and immutable
+admission pins. Real stability waiting and downstream business analysis now belong inside the task;
+neither rule misses nor instability force an analysis-ready prerequisite before task creation.
+Folder traversal retains hard safety budgets and cannot execute a silently truncated first-N prefix.
+Unreadable sources/configuration or technical errors never become fabricated business decisions.
+
+Reuse the full pipeline and native four-type decisions within the admitted task. Missing/ambiguous
+recognition, metadata decisions, classification misses and conflicts produce actual per-item problems
+in Attention and its four lists/statistics. Do not force a default type, identity or destination to
+make an item ready. Exact summary and explicit selected execution confirmation remain inside the
+task before mutation, including separate permission for overwrite/Delete/cleanup where applicable.
+Its normal summary/confirmation remains reachable in the exact task context without inventing a
+fifth Attention type when none of the four business problems exists.
+Task admission, analysis and decision Save confer no unreviewed media effects. Only OrganizerExecutor
+mutates after source/capability/authority/fence checks; successful or uncertain siblings never replay.
 
 Shared preparation components/routes may remain for exact Files-originated work and legal
 continuations. A generic new-organize URL without that context guides to Files without starting
@@ -183,9 +221,11 @@ work or offering another independent library picker. Preserve valid prepared-wor
 a route containing `operations` is not by itself an independent creation entry. Invalid/foreign/
 stale context cannot choose a guessed library/request or start work.
 
-Provide Files-local access to its bounded preparation progress, findings and exact unknown-request
-readback after removing the discovery block. Close/refresh/reconnect never silently cancels,
-resubmits or starts discovery. Analysis-only findings do not become execution tasks/authority.
+Files retains bounded access to the exact submitted work, unknown-request reconciliation and any
+separate analysis-only/pre-existing preparation after removing the discovery block. Close/refresh/
+reconnect never silently cancels, resubmits or starts discovery. Merely browsing or requesting analysis
+does not create an organizing task or execution authority. Existing prepared-work remains supported;
+it cannot force new explicit Files organizing back through the old pre-task readiness gate.
 The four business types' task recovery remains in the center and is not new-task creation.
 Automation's published-definition-bound `运行一次`/scheduled journeys retain their authority and records;
 this entry change does not add a generic manual file picker to Automation.
@@ -215,11 +255,13 @@ without discarding unaffected selections or sibling results.
 Keep the shell, eight sibling views, detail/results/export and four-type native recovery. The views
 are All, Running, Attention, Ended, Recognition, Metadata, Classification and Conflict; remove Failure
 Recovery from navigation, filters, summaries and normal/deep-link recovery entry. Include supported
-admitted organizing runs and legitimate organizing continuations: standalone manual executions,
-scheduled/definition-bound runs and actual linked Job/Task records. Preserve pre-Task organizing
+admitted organizing runs and legitimate organizing continuations: explicitly submitted manual tasks
+through discovery/analysis/confirmation/execution, scheduled/definition-bound runs and actual linked
+Job/Task records. Preserve pre-Task organizing
 queue/failures and explicit durable deduplication. Terminal failures outside the four types appear
-only in All/Ended and their selected read-only detail/results/export. Discovery/analysis alone remains
-preparation; admitted recovery links retain their supported context.
+only in All/Ended and their selected read-only detail/results/export. Separate analysis-only requests
+remain preparation; analysis stages inside an explicitly admitted manual task do not hide that task
+from the center. Admitted recovery links retain their supported context.
 
 Apply the organizing population on the backend before grouping, filtering, paging, counts and
 problem membership. Cards/totals/options and all recovery views use the same authorized consistent
@@ -303,7 +345,8 @@ unreadable/missing scopes or missing authority cannot be reclassified as empty/s
 
 - Shared V2 actions/styles and actual Entry/business/dialog consumers.
 - Both library kinds' command results and bounded local work/readback/controls; ResourceLibrary
-  manual organizing preparation, exact summary and confirmation.
+  manual entry, atomic same-source/exclusion checks and task-before-rule-resolution admission,
+  in-task discovery/analysis/four-type recovery, exact summary and confirmation.
 - Eight center lists/counts/options/cursors, four-type pending-task statistics and recovery, selected
   factual detail/results, affected Task/Job/former Failure Recovery deep links and necessary
   shell/Dashboard/return integration.
@@ -338,8 +381,8 @@ The limited Scheduler readiness check in RO-5 is in scope; no scheduler/queue re
 | ID | Acceptance |
 |---|---|
 | AC-1 | Applicable V2 actions and Entry are readable with computed contrast and desktop/narrow visual evidence; focus/busy/disabled and existing auth continuation/token privacy work. |
-| AC-2 | New file-selection-based manual organizing starts from ResourceLibrary Files and completes preparation → same-interface summary → selected confirmation → admitted task; center creation actions/independent source selection are absent. |
-| AC-3 | Files can recover exact preparation/progress/unknown requests after close/reload/reconnect without the center discovery list, guessed identity, automatic submission or fabricated execution tasks. |
+| AC-2 | Explicit ResourceLibrary Files 整理 admits durable organizing work before rule/metadata/classification/conflict readiness or an executable summary; single/multiple/folder/mixed selections follow task-contained discovery/analysis → exact summary → selected execution confirmation. Center creation actions/independent source selection are absent; browsing/analysis-only preparation creates no organizing task. |
+| AC-3 | Files can recover the exact submitted task and separate/pre-existing preparation/unknown requests after close/reload/reconnect without the center discovery list, guessed identity or automatic submission. Task progress and four-type findings stay reachable in Task Center. |
 | AC-4 | Both library kinds complete ordinary work locally, including multiple operations, per-item results and existing safe controls/recovery after close/reload/restart; no normal center handoff remains. |
 | AC-5 | Mixed histories spanning multiple pages produce organizing-only eight views/counts/options/cursors/details; pre-Task failures remain in All/Ended, explicit Job→Task deduplication and permitted continuations remain truthful. |
 | AC-6 | The three removed blocks and exclusive landing reads are absent; task-specific Worker/pin/readiness and factual failure evidence remain readable, with recovery limited by RO-4. |
@@ -352,6 +395,7 @@ The limited Scheduler readiness check in RO-5 is in scope; no scheduler/queue re
 | AC-13 | Enabled/no-grant definitions show actionable pending authorization on Automation and complete native analysis → explicit grant → normal due execution. Repeated due ticks with known missing authority admit no new execution Job/Task; current readiness remains visible. Historical failures remain intact in Task Center All/Ended without attention, separate failure statistics or repair guidance. Worker/revocation/concurrency guards remain, old work never replays, and healthy authorized empty scope reports no work without masking permission/Storage failures. |
 | AC-14 | Only current Recognition/Metadata/Classification/Conflict problems and their required human recovery steps enter Attention and pending-task statistics. Tasks deduplicate across types; type/file counts remain accurate across pages, filters, refresh and restart. Failure Recovery and separate Task Center failure statistics/guidance are absent, including former deep links; other terminal failures and factual reasons/effects remain accessible in All/Ended without success relabelling. |
 | AC-15 | Four-type decision → analysis → exact summary/confirmation → real outcome remains Web-completable. Save/admission alone does not imply success; after actual resolution no stale review/continuation keeps a task in Attention. If all organizing work succeeds through exact linked recovery, overall display becomes Completed/recovered while prior failed attempts remain history. A new four-type blocker changes type; a purely technical follow-up failure becomes read-only All/Ended history. Mixed successful/ignored/four-type/technical/uncertain items retain independent truth without false success or completed/uncertain replay. |
+| AC-16 | Manual entry business checks are only same-source unfinished organizing work and explicit extension exclusion; rule/include misses and non-excluded suffixes cannot demand a ready plan first. Duplicates/exclusions have truthful per-item reasons and independent siblings; source ownership is atomic across overlapping manual/Automation/continuation requests, including queued/paused/recovery work, and is not inferred from filename or any past task. Rule-miss/ambiguous-recognition, metadata-decision, classification-miss and conflict cases are admitted and reachable in their four task recovery lists/counts through real completion. Stability, bounds, RBAC/confinement/pins, exact confirmation and completed/uncertain non-replay remain enforced. |
 
 ## Validation and handoff
 
@@ -382,6 +426,15 @@ B's final evidence includes:
   `npm run test:e2e -- --config=playwright.python.config.ts tests/e2e/direct-files.python.spec.ts tests/e2e/operations-inventory.python.spec.ts tests/e2e/operations-task-center-visual.python.spec.ts`.
   Also cover Files-originated organizing, retained Automation links and native recovery. Node-fake
   E2E alone does not establish backend population, persistence or Worker behavior.
+- Cover manual submission with recognition misses/ambiguity, metadata decisions, classification
+  misses and conflicts: a real durable task exists before readiness, each native recovery/count
+  works through verified outcome and restart. Exercise explicit excluded vs merely unlisted suffixes,
+  automatic include-rule misses, mixed/folder selections, stability waiting and real bounds; shared
+  Automation filtering stays unchanged. Overlapping/concurrent manual/Automation/recovery requests
+  reserve one source once, while same-named distinct sources and terminal history are not falsely
+  blocked. Preserve analysis-only zero mutation/no task authority, exact request readback, partial/
+  unknown non-replay and in-task exact summary/confirmation. Extend existing preparation/direct-file/
+  task-recovery tests rather than merely changing frontend eligibility fixtures.
 - Real backend eligibility payloads must pass the frontend contract; extend Automation API/Web
   coverage for eligible/ineligible/unavailable reads and same-page repeated Save/Enabled commands,
   genuine concurrent publication and failed/unknown outcomes. After building, run the applicable
@@ -407,5 +460,5 @@ Planning started on `main` at Base above; repository/Git/governance files were w
 preflight passed. Pre-existing deletion of `docs/pics/操作与任务.png` and untracked reference images,
 logs, OS files and test/artifact directories remain unrelated, untouched and unstaged. Private
 runtime configuration/databases/user media are not planning fixtures. No push is authorized/performed.
-The current four-type attention amendment starts from checkpoint `b5ee45669a07f0c0058d971b9b6fe579e83177cc`
+The current manual-admission amendment starts from checkpoint `8628902301c1548b5b84322b3cbba1162bc6daa3`
 on the same branch with the same unrelated dirty files preserved; it does not repin the Slice Base.

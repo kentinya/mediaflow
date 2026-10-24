@@ -9,8 +9,11 @@ Slice46 — **V2 Organizing Task Center and Readable Actions** — is **ACTIVE**
   unattended-authority corrections: actionable analysis/grant/readiness and no repeated failed
   scheduled admissions for known missing grants. RO-4 now selects eight views and only four business
   problem types for Attention/pending-task statistics, removing Failure Recovery and other failures'
-  separate statistics/guidance; those failures remain read-only in All/Ended. AC-11–15 apply;
-  B plans against all five outcomes and the superseding four-type scope.
+  separate statistics/guidance; those failures remain read-only in All/Ended. RO-2 now admits explicit
+  Files manual organizing before business-rule readiness, using only same-source unfinished work
+  and explicit extension exclusion as business entry checks. Four-type problems and exact summary/
+  execution confirmation occur inside the task; baseline safety remains. AC-11–16 apply;
+  B plans against all five outcomes and the superseding V2-OPS-016/017 scope.
 - Next Action: **B PLANS THE FIRST TASK** after the Contract is checkpointed and governance passes.
 - B owns coherent Task scope, Difficulty/Test Level and acceptance; Developer implements only that
   active Task and runs affected tests. Final Slice acceptance remains T4 under the workflow.

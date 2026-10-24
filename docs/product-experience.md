@@ -11,21 +11,42 @@ Detailed superseded delivery notes are retained at
 
 ## TARGET — Slice46 readable actions and organizing-only Task Center
 
-User-authorized on 2026-10-24; [Slice46](../SLICE.md) and `V2-UX-004`, `V2-OPS-014–016`,
+User-authorized on 2026-10-24; [Slice46](../SLICE.md) and `V2-UX-004`, `V2-OPS-014–017`,
 `V2-FILES-007` own scope/acceptance, together with the user-added Automation corrections under
 `V2-AUTO-001–006`. This journey is not yet implemented or accepted.
 
 - **Goal/entry:** read and use shared V2 buttons, including Entry. New file-selection-based manual
   organization starts from ResourceLibrary Files; ordinary maintenance starts on its own library page.
 - **State/action:** readable normal/focus/busy/disabled actions; exact selected sources and bounded
-  local command impact/progress; organizing preparation and same-interface summary with separate
-  confirmation. Task Center has eight organizing-only views and four-type native recovery.
+  local command impact/progress; explicit 整理 submits bounded organizing work before business-rule
+  resolution. In-task analysis leads to four-type decisions or an exact summary with separate
+  execution confirmation. Task Center has eight organizing-only views and four-type native recovery.
 - **Success:** ordinary results and relevant work reopen locally after close/reload/reconnect/restart;
-  Files-originated preparing/unknown requests remain reachable from Files. Confirmed organizing
-  executions enter Task Center with real results and exact return context.
+  Files-originated tasks and separate preparing/unknown requests remain reachable from Files.
+  Explicitly submitted organizing tasks enter Task Center before business readiness, with true
+  pipeline progress, four-type problems/results and exact return context.
 - **Failure/recovery:** expose per-item stage, durable state, known effects/uncertainty and legal
   actions in the owning flow. Unknown submission reads back the exact request; successful/uncertain
   mutations never replay. Kind/principal/source/pin isolation and auth continuation remain.
+- **Manual admission:** select one/multiple files or bounded folders/mixed scopes on ResourceLibrary
+  Files → explicitly submit 整理 → backend checks same-source unfinished organizing work and explicit
+  extension exclusions → follow the admitted task. Rule/include misses, metadata/target/conflict
+  readiness and a suffix merely absent from an allowlist cannot force a ready-plan step before task
+  creation. Duplicate/excluded items have exact reasons and eligible siblings remain independent;
+  an existing same-source run can be opened instead of duplicated. Queued/paused/unresolved recovery
+  work owns its source across manual/Automation requests; terminal history or a shared filename alone
+  does not block entry. Backend ownership is atomic; unknown submissions reconcile the exact request.
+- **Manual processing/recovery:** observe real discovery/stability waiting and the full pipeline
+  inside the task. Recognition misses/ambiguity, Metadata decisions, Classification misses and
+  Conflict problems enter their four lists/Attention/counts. Save the permitted decision → analyze
+  → inspect exact in-task summary → confirm selected execution → inspect actual results. A missing
+  match never silently selects a default type/identity/destination. Completed/uncertain siblings do
+  not replay; four-type resolution follows the truthful completion rules below. Technical failures
+  remain All/Ended history. Authentication/confinement/bounds/pins, stability and effect permissions
+  still govern real execution; admitting a task is not permission for unreviewed file effects.
+  Normal summary/confirmation stays reachable in the exact task context; without a four-type business
+  problem it does not create a fifth Attention category or pending-task count.
+  Browsing/DryRun/analysis-only requests never implicitly submit this manual organizing command.
 - **Task Center attention:** only Recognition, Metadata candidate/correction, Classification and
   Conflict business problems enter “需要处理” and pending-task statistics. Required human steps
   in those recovery journeys stay reachable through decision → analysis → exact summary/confirmation
@@ -60,7 +81,10 @@ User-authorized on 2026-10-24; [Slice46](../SLICE.md) and `V2-UX-004`, `V2-OPS-0
   unauthorized scope is not an empty-success result.
 
 This TARGET supersedes the later CURRENT text's mixed file-operation center population,
-center-created manual organizing entry and nine-view/general-failure recovery. Remove global Worker/
+center-created manual organizing entry, pre-task ready-plan gating for explicit Files organizing
+and nine-view/general-failure recovery. Exact summary/confirmation moves inside the admitted manual
+task and still precedes mutation. Manual entry no longer applies automatic include/exclude/match
+rules as extra vetoes; explicit excluded extensions and hard safety limits remain. Remove global Worker/
 resident-status, discovery and manual-operation blocks and center creation actions; task-specific
 readiness reasons stay visible. Existing prepared-work and four-type native recovery remain legal
 continuations, and definition-bound Automation Run once/scheduled journeys retain scope/authority.

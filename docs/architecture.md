@@ -9,14 +9,36 @@ Detailed former delivery notes remain at `865ebdce47b0b323064fd8e05fbfaa54546e62
 
 ## TARGET — Slice46 presentation and work-query ownership
 
-The user-authorized [Slice46](../SLICE.md), `V2-UX-004`, `V2-OPS-014–016` and `V2-FILES-007`
+The user-authorized [Slice46](../SLICE.md), `V2-UX-004`, `V2-OPS-014–017` and `V2-FILES-007`
 select this TARGET; the accepted CURRENT contracts below remain implementation facts until delivery.
 The user's same-Slice Automation correction scope also fulfills existing `V2-AUTO-001–006`.
 
 Shared V2 action components/styles supply readable light-theme states. Files owns ordinary-command
-progress/results/existing safe recovery and file-selection-based manual organizing preparation.
-Preparation readback/unknown-admission recovery stays reachable from Files without the center's
-global discovery list; shared exact-context preparation routes/components may be reused.
+progress/results/existing safe recovery and explicit file-selection-based manual organizing entry.
+Task/separate preparation readback and unknown-admission recovery stay reachable from Files without
+the center's global discovery list; shared exact-context preparation routes/components may be reused.
+
+Explicit Files 整理 now admits durable bounded organizing work before complete business-rule
+resolution or a ready plan. Admission business gates are only same-source unfinished organizing
+work and explicitly excluded extensions; automatic include/exclude/match rules and merely unlisted
+suffixes cannot recreate the old pre-task readiness gate. This is a manual-only override of the
+CURRENT discovery filter/admission order below, not a change to definition-bound Automation filters.
+Preserve server-verified source intent, RBAC, library/root confinement, request bounds and immutable
+pins. Check/reserve concrete source ownership atomically across overlapping manual/Automation/
+continuation admission, including queued/paused/unresolved four-type work; do not infer duplicates
+from filename or terminal history alone. Exclusions/duplicates retain per-item evidence and eligible
+siblings. Folder/mixed enumeration stays bounded and cannot execute a silently truncated prefix.
+
+Reuse existing Task/Worker/pipeline, decisions and continuation evidence. Real stability observation,
+recognition/metadata/classification/conflict analysis and exact plan generation occur inside the
+admitted task, with native four-type problems/counts available before matching is complete. No
+default type/identity/destination may conceal a missing business decision. Exact summary and explicit
+selected execution confirmation now follow task admission but still precede any mutation; source/
+capability/authority/fence checks and explicit destructive/overwrite scope remain at execution.
+Task admission or decision Save is not unreviewed effect authority. Reads, DryRun and analysis-only
+requests are not converted into this manual organizing submission or granted execution authority.
+Pre-existing exact preparation/executions and
+their legitimate pins remain supported; no second queue, pipeline or recovery engine is introduced.
 
 Task Center queries scope admitted organizing work before grouping, counts, paging and recovery.
 Use supported command semantics and actual durable links/context; do not filter mixed pages in

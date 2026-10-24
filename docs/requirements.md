@@ -36,6 +36,7 @@ scope and delivery state remain in root contracts, [Roadmap](roadmap.md) and [Pr
 | 2026-10-18, `V2-OPS-013` | Retire the standalone Preview product with the same first-deployment standard as Scan: remove Web/API/CLI/Job/scheduled/definition-bound entry, execution/continuation, dedicated schema/composition and compatibility layers. Old inputs ordinarily fail before discovery/Provider/admission/authority, with no conversion, retirement page/410/guard, old-work migration/takeover/history or V1-parity obligation. `REQ-ORG-004/011` zero-mutation analysis, `REQ-SCHED-001` shared planning and `REQ-WEB-004` checks continue through organizing summaries/DryRun and shared Rules/configuration/authorization checks. Exact plans/pins/permissions/results and non-replay remain; no data/media clearing or unrelated Automation redesign. |
 | 2026-10-24, `V2-UX-004`, `V2-OPS-014/015`, `V2-FILES-007` — TARGET / Slice46 | Make shared V2 actions readable; restrict Task Center to admitted organizing work and its recovery; remove center creation/global Worker/discovery/manual-operation blocks; start new file-selection-based manual organizing only from ResourceLibrary Files. Ordinary-file progress/results/recovery stay on the originating library page while durable Tasks, audit, pinned execution and safety remain. This narrows prior all-command center discoverability/entry, not task durability or command authority. Definition-bound Automation Run once and scheduled work retain their accepted semantics. |
 | 2026-10-24, `V2-OPS-016` — TARGET / Slice46 | Only Recognition/Metadata/Classification/Conflict problems and their required human recovery steps enter Task Center Attention and pending-task statistics; remove Failure Recovery, leaving eight views. Other terminal failures are factual read-only history in All/Ended, with no separate failure statistics or recovery guidance/actions. This narrows the V2 presentation/recovery realization of `UX-002`, `REQ-TASK-004`, `REQ-RECOVERY-002/006/008/009` and earlier V2 task-center obligations; it does not erase failure/effect evidence, relabel success, remove administrative API/CLI recovery, weaken authority/non-replay or change ordinary-file/Automation ownership. |
+| 2026-10-24, `V2-OPS-017` — TARGET / Slice46 | Explicit ResourceLibrary Files manual organizing creates durable work before full business-rule resolution. Entry business eligibility checks only same-source unfinished organizing work and explicit extension exclusion; rule/include misses or a merely unlisted suffix cannot demand a ready plan first. This supersedes manual entry's automatic filtering and plan-ready task-admission ordering, not `UX-006`/`REQ-RECOVERY-007/009` exact planning, decision/analysis separation or explicit authority before mutation. Four business problems use task-native recovery; RBAC/confinement/bounds/pins, stability, capabilities, atomic ownership and completed/uncertain non-replay remain. Browsing/DryRun/analysis-only work and definition-bound Automation semantics are unchanged. |
 
 These amendments define authorized scope; actual acceptance is recorded separately. Necessary
 Slice43 Scan/index/standalone-Preview coupling cleanup was accepted within45, not the whole Automation
@@ -62,6 +63,11 @@ Slice46 的上述修订已获用户授权并选为 ACTIVE，但尚未实现或�
 全部整理工作经精确关联恢复确实成功时，任务整体显示“已完成（恢复成功）”，原失败历史保留；
 仍有技术失败时只移出已无四类问题的待处理清单，不改写成成功。
 本次 `V2-OPS-016` 仍是 TARGET；自动化页正常的待授权/明确授权功能保留。
+手动整理进一步按 `V2-OPS-017` 调整：文件页明确提交后先受理整理任务，入口只作同源未结束
+整理工作去重和明确后缀排除的业务检查；识别、元数据、分类、冲突问题在任务内出现并恢复。
+规则未匹配、非排除后缀未在白名单内，不再阻止创建任务。精确摘要及明确执行确认移到任务内，
+仍在真实变更之前完成；稳定性、权限、来源边界、固定快照和非重放不取消。仅浏览、分析或
+DryRun 不自动转为本次手动整理提交或获得执行授权；自动化路径的筛选和授权不随此手动入口修订放宽。
 以下 CURRENT 与历史 V1 定义保留接受基线；不得将新范围写成已交付，或以移除页面展示为由
 取消耐久任务、文件操作恢复、权限、固定快照、审计和不确定效果非重放。
 
