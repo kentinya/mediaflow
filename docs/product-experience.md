@@ -9,6 +9,30 @@ Automation workspace/settings journey below is CURRENT within its accepted bound
 Detailed superseded delivery notes are retained at
 `865ebdce47b0b323064fd8e05fbfaa54546e6269:docs/product-experience.md`.
 
+## TARGET — Slice46 readable actions and organizing-only Task Center
+
+User-authorized on 2026-10-24; [Slice46](../SLICE.md) and `V2-UX-004`, `V2-OPS-014/015`,
+`V2-FILES-007` own scope/acceptance. This journey is not yet implemented or accepted.
+
+- **Goal/entry:** read and use shared V2 buttons, including Entry. New file-selection-based manual
+  organization starts from ResourceLibrary Files; ordinary maintenance starts on its own library page.
+- **State/action:** readable normal/focus/busy/disabled actions; exact selected sources and bounded
+  local command impact/progress; organizing preparation and same-interface summary with separate
+  confirmation. Task Center has nine organizing-only views and existing task controls/recovery.
+- **Success:** ordinary results and relevant work reopen locally after close/reload/reconnect/restart;
+  Files-originated preparing/unknown requests remain reachable from Files. Confirmed organizing
+  executions enter Task Center with real results and exact return context.
+- **Failure/recovery:** expose per-item stage, durable state, known effects/uncertainty and legal
+  actions in the owning flow. Unknown submission reads back the exact request; successful/uncertain
+  mutations never replay. Kind/principal/source/pin isolation and auth continuation remain.
+
+This TARGET supersedes the later CURRENT text's mixed file-operation center population and
+center-created manual organizing entry only. Remove global Worker/resident-status, discovery and
+manual-operation blocks and center creation actions; task-specific readiness reasons stay visible.
+Existing prepared-work and native task recovery remain legal continuations, and Automation's
+published-definition-bound Run once/scheduled journeys retain their accepted scope/authority.
+No MediaLibrary organizing, alternate global file-operation center or new execution engine is added.
+
 ## Product Experience Priority
 
 Choose the most direct complete Web journey that preserves correctness, security and data integrity.

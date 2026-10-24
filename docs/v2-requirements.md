@@ -26,6 +26,26 @@ in-context confirmation/recovery and Scan/Preview/FileIndex retirement are CURRE
 PASS / CLOSED for its separately reviewed native Automation workspace/settings outcomes, preserving
 the accepted45 retirement boundary.
 
+## Slice46 authorized TARGET — not yet delivered
+
+On 2026-10-24 the user selected shared button readability, an organizing-only Task Center and
+Files-only creation of file-selection-based manual organizing. These requirements are authorized
+TARGET under [Slice46](../SLICE.md); the accepted43–45 CURRENT baselines below are not relabelled
+as delivered changes. Historical acceptance stays in Git/Progress.
+
+| ID | Requirement | Acceptance meaning |
+|---|---|---|
+| V2-UX-004 | Shared V2 actions are readable and usable throughout the light shell, especially Entry. | Primary/secondary/danger/link/icon and dialog actions preserve readable normal/hover/focus/busy/disabled states and keyboard names/focus. Enabled text meets AA contrast; directly related Entry field colors support the same readable journey. Existing auth, semantics and duplicate-submit guards remain; no new identity/theme product. |
+| V2-OPS-014 | Task Center's nine views, counts, filters and selected detail concern admitted organizing work and its legitimate organizing continuations only. | Backend scopes the complete authorized population before grouping/counting/paging, preserving pre-Task organizing queue/failures and actual Job→Task deduplication. Ordinary-file/notification/unrelated work and analysis-only preparation do not enter center lists/counts/recovery or legacy-list/deep-link loopholes. Remove global Worker/resident-status, discovery and manual-operation blocks and their exclusive landing reads; retain task-specific failure/readiness explanations and native recovery. |
+| V2-OPS-015 | New file-selection-based manual organizing starts only from ResourceLibrary Files. | Remove center creation CTAs and independent source-selection flow. Files selection completes bounded preparation, same-interface exact summary and separate selected execution confirmation; preparation/unknown-request readback remains accessible from Files after close/reload/reconnect. Existing prepared-work/task-recovery links retain exact context; generic creation URLs guide to Files without work. MediaLibrary is not a source; definition-bound Automation Run once/scheduled authority remains distinct and unchanged. |
+| V2-FILES-007 | Ordinary-file progress, results and supported recovery belong to the originating ResourceLibrary/MediaLibrary file page. | Create/rename/edit/Copy/Move/Delete do not send normal progress/recovery to Task Center. Bounded local access reopens multiple relevant operations and durable per-item results after close/reload/reconnect/service restart, including supported pre-existing work. Preserve exact kind/principal/source/pin, unknown-admission reconciliation, existing safe controls and completed/uncertain non-replay; hiding work never removes Tasks/results/audit or requires a new global center. |
+
+`V2-OPS-014/015` narrow the prior all-command discoverability of `V2-OPS-002`, the population of
+`V2-OPS-001/003/009/012` and the Task Center creation realization of `V2-OPS-006/010`.
+They preserve nine-view recovery, exact plans, explicit authority and `V2-OPS-007/008/011–013` safety
+and retirement boundaries. `V2-FILES-007` changes ordinary recovery ownership without weakening
+`V2-FILES-002/003`, `REQ-TASK-009/010`, RBAC, immutable pins, fences or durable results.
+
 ## Stable V2 requirements
 
 | ID | Requirement | Acceptance meaning |

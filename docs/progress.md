@@ -8,15 +8,22 @@ workflow authority. Closure rules live only in
 
 ## Current development pointer
 
-Slice43 — **V2 Automation Workspace and Engine Settings** — is **PASS / CLOSED** by A on
-2026-10-24, reviewed from original Base `853973dbbf8289fa2ad40657033e94e870a690e4` through
-implementation `97316131946bdecc483b684f6e6f6ecb98c5594d`. A43-01 is resolved. See the
-[final review](../SLICE.md#a-final-review); the refreshed B packet remains at
-`0822e58fd687e402551e3224073cc8e8522192a0:TASK.md`. No active Task or next large Slice is selected.
+Slice46 — **V2 Organizing Task Center and Readable Actions** — is **ACTIVE**, selected by A on
+2026-10-24 at Base `e9f1a8dc607cfc6d5ea02141b058da8ce849cd70`. The [Contract](../SLICE.md)
+selects readable shared V2 actions, Files-only manual organizing entry, library-local ordinary-file
+feedback/recovery and an organizing-only Task Center without the three auxiliary blocks or creation
+entry. Implementation Head is NOT SET; no Task or product acceptance is claimed.
+**B PLANS THE FIRST TASK**; final acceptance is T4. No Slice46 closure row is added below.
+
+Slice43 remains **PASS / CLOSED** by A on 2026-10-24, reviewed from original Base
+`853973dbbf8289fa2ad40657033e94e870a690e4` through implementation
+`97316131946bdecc483b684f6e6f6ecb98c5594d`. A43-01 is resolved. The complete Contract and final
+review remain at `e9f1a8dc607cfc6d5ea02141b058da8ce849cd70:SLICE.md`; the refreshed B packet
+remains at `0822e58fd687e402551e3224073cc8e8522192a0:TASK.md`.
 
 The original Slice/Task Bases, prior rejected review, frozen hold and integration refs remain
 unchanged in local backups. Current-lineage equivalents after the user-authorized attribution
-update are recorded in [SLICE.md](../SLICE.md#git-history-attribution-update); the ledger below keeps
+update remain in that prior43 Contract; the ledger below keeps
 the original accepted review IDs. Full outcomes/T4, read-only records/Task Center recovery and
 accepted45 amendments are preserved. External-service/endurance profiles remain unavailable; test-time allocation deviations
 and the latest unmeasured denominator remain disclosed in the packets, not waived or transferred.

@@ -31,26 +31,33 @@ only in [the development workflow](development-workflow.md).
 | 43 — V2 Automation Workspace and Engine Settings | Complete reference-aligned automatic-organization-only definitions with checked Save, exact analysis/plan evidence and scoped scheduled authority, deliberate Run once, truthful statistics, read-only execution records/reasons with Task Center recovery, and global engine settings verified against actual resident consumers; preserve the Scan/Preview/FileIndex retirement accepted in Slice45 | PASS / CLOSED | 42 closure, accepted 44 improvements and existing Automation/managed-configuration/Operations/resident-service foundations |
 | 44 — Existing V2 Pages Functional Improvements | Improve existing V2 pages: consistent ResourceLibrary/MediaLibrary ordinary file operations with optional fingerprints; reference-aligned Rules presentation; classification destinations using MediaLibrary plus path with explicit legacy conversion and preserved historical authority; object-scoped Rules tests and separate complete-flow checks; usable long-name paths/toolbars on both library pages; bounded ResourceLibrary folder/mixed-selection organization through exact Preview and confirmed execution | PASS / CLOSED | Accepted existing V2 pages through 42; explicit user priority change before 43 closure |
 | 45 — V2 Task Center, Recovery and Scan/Preview/FileIndex Retirement | Deliver nine authoritative task/recovery lists, in-context exact plan-summary confirmation, durable per-item results/controls, first-deployment absence of Scan and standalone Preview products/compatibility layers, complete FileIndex retirement, and shared CLI/Files/MediaLibrary live lists without catalog recording | PASS / CLOSED | Accepted Slice44 baseline; existing Operations/Files/Task/Worker/recovery foundations; explicit user priority change and required retirement-coupling exceptions before Slice43 closure |
+| 46 — V2 Organizing Task Center and Readable Actions | Repair V2 action readability; start file-selection-based manual organizing only from ResourceLibrary Files; keep ordinary-file progress/results/recovery on each library page; restrict all Task Center views/counts to admitted organizing work and remove its creation, global Worker, discovery and manual-operation blocks | ACTIVE | Accepted43–45 baseline and existing shared action, live Files, durable direct-command/transfer/Delete, organizing and recovery foundations |
 
 ## Current boundary
 
-Slice43 — **V2 Automation Workspace and Engine Settings** — is **PASS / CLOSED** after A's
-2026-10-24 independent review of original Base `853973dbbf8289fa2ad40657033e94e870a690e4` through
-implementation `97316131946bdecc483b684f6e6f6ecb98c5594d`. A43-01 is resolved; the refreshed B packet
-is at `0822e58fd687e402551e3224073cc8e8522192a0:TASK.md`. The [Contract and A review](../SLICE.md)
-record complete RO-1..RO-7, T4 evidence, remaining limits and deferrals. No active implementation
-Task or next large Slice is selected; **A SELECTS THE NEXT LARGE SLICE** as a separate action.
+Slice46 — **V2 Organizing Task Center and Readable Actions** — is **ACTIVE**, selected by A on
+2026-10-24 at immutable Base `e9f1a8dc607cfc6d5ea02141b058da8ce849cd70` following the user's
+button-readability, organizing-only center and Files-only manual-entry decisions. The
+[Contract](../SLICE.md) defines four outcomes and T4 final acceptance. No implementation is
+delivered and [TASK.md](../TASK.md) has no active Task; **B PLANS THE FIRST TASK** after this
+Contract is checkpointed. The authorized changes are TARGET, not accepted CURRENT behavior.
+
+Slice43 remains **PASS / CLOSED** after A's 2026-10-24 review of original Base
+`853973dbbf8289fa2ad40657033e94e870a690e4` through implementation
+`97316131946bdecc483b684f6e6f6ecb98c5594d`. A43-01 is resolved; the refreshed B packet is at
+`0822e58fd687e402551e3224073cc8e8522192a0:TASK.md`. Its complete Contract, A review and evidence
+limits remain at `e9f1a8dc607cfc6d5ea02141b058da8ce849cd70:SLICE.md`.
 
 Original Bases, `frozen/slice-43-2026-10-15` and both integration-preservation refs remain unchanged.
 Their original review identities remain in local backups; current-lineage equivalents after the
-user-authorized attribution update are recorded in [SLICE.md](../SLICE.md#git-history-attribution-update).
+user-authorized attribution update remain in the prior43 Contract at the checkpoint above.
 Automation records are read-only with prerequisite-repair guidance; formal organizing-task recovery
 belongs to Task Center. External-service/endurance skips and test-time evidence limits remain disclosed.
 
 Slice45 remains **PASS / CLOSED**, with Base `a72252091d5d46edf3e2114b994036ae21b08e2e`, reviewed
 Implementation Head `4fcb0028f987f8746f0a8aa7b309e360b07c598e` and closure
 `13ecfc0e75fc34ff0ae489e655124a178943cba4:SLICE.md`. Its Task Center, recovery, live lists and
-Scan/Preview/FileIndex retirement are protected. Resuming43 does not reopen45 or restore retired
+Scan/Preview/FileIndex retirement are protected. Selecting46 does not reopen43/45 or restore retired
 products/compatibility. All accepted closures, original exceptions and preserved refs retain their
 historical facts in Git/[Progress](progress.md).
 

@@ -1,17 +1,15 @@
 # NO ACTIVE IMPLEMENTATION TASK
 
-Slice43 is **PASS / CLOSED** by A — 2026-10-24.
+Slice46 — **V2 Organizing Task Center and Readable Actions** — is **ACTIVE** under A's
+2026-10-24 user-authorized [Contract](SLICE.md).
 
-- Immutable Slice Base: `853973dbbf8289fa2ad40657033e94e870a690e4`.
-- Reviewed Implementation Head: `97316131946bdecc483b684f6e6f6ecb98c5594d`.
-- Last Task43.4 and refreshed B Closure Packet: `0822e58fd687e402551e3224073cc8e8522192a0:TASK.md`.
-- A43-01 is resolved; complete A assessment, validation and evidence limits are in
-  [SLICE.md](SLICE.md#a-final-review).
-- Next Action: **A SELECTS THE NEXT LARGE SLICE**.
+- Immutable Slice Base: `e9f1a8dc607cfc6d5ea02141b058da8ce849cd70`.
+- Implementation Head: **NOT SET**; no product implementation or Task acceptance is claimed.
+- Next Action: **B PLANS THE FIRST TASK** after the Contract is checkpointed and governance passes.
+- B owns coherent Task scope, Difficulty/Test Level and acceptance; Developer implements only that
+  active Task and runs affected tests. Final Slice acceptance remains T4 under the workflow.
 
-No next Task is planned. The original Base, prior rejection/Task history, accepted44/45 boundaries,
-frozen/preservation refs, unrelated workspace changes and private configuration remain preserved.
-
-Current-lineage equivalents after the user-authorized Git attribution update are listed in
-[SLICE.md](SLICE.md#git-history-attribution-update). The immutable IDs above retain their original
-review and evidence meaning.
+The previous Slice43 Contract/A review and no-active-Task notice remain at
+`e9f1a8dc607cfc6d5ea02141b058da8ce849cd70:SLICE.md` / `TASK.md`.
+Slices43–45 remain PASS / CLOSED. Preserve their accepted facts, existing work/pins/results,
+unrelated workspace changes and private configuration. This file does not plan Task46.1.

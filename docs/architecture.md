@@ -7,6 +7,29 @@ Scan/Preview/FileIndex retirement below are CURRENT. Slice43 is also PASS / CLOS
 workspace/settings contract below is CURRENT within the accepted outcomes and deferrals.
 Detailed former delivery notes remain at `865ebdce47b0b323064fd8e05fbfaa54546e6269:docs/architecture.md`.
 
+## TARGET — Slice46 presentation and work-query ownership
+
+The user-authorized [Slice46](../SLICE.md), `V2-UX-004`, `V2-OPS-014/015` and `V2-FILES-007`
+select this TARGET; the accepted CURRENT contracts below remain implementation facts until delivery.
+
+Shared V2 action components/styles supply readable light-theme states. Files owns ordinary-command
+progress/results/existing safe recovery and file-selection-based manual organizing preparation.
+Preparation readback/unknown-admission recovery stays reachable from Files without the center's
+global discovery list; shared exact-context preparation routes/components may be reused.
+
+Task Center queries scope admitted organizing work before grouping, counts, paging and recovery.
+Use supported command semantics and actual durable links/context; do not filter mixed pages in
+the browser or infer organizing authority from labels/current configuration. Remove the center's
+creation/global Worker/discovery/manual-operation blocks and exclusive reads. Task-local readiness
+and failure reasons remain. Legacy Task/Job/deep links must respect the new presentation ownership.
+
+Local ordinary-work readback is bounded, authenticated and library-kind/source/pin aware, over
+existing durable Tasks/items/results/claims and audit. UI hints are not authority or the sole index.
+Shared repository/API evidence may retain administrative consumers; center scope must not erase
+Automation records or ordinary command execution/recovery. No second queue/lifecycle/recovery
+engine or new mutation authority is added. OrganizerExecutor, admitted pins, RBAC, explicit Delete/
+overwrite, source verification, fences and completed/uncertain non-replay remain unchanged.
+
 ## CURRENT — Admitted transfer Worker lifetime (Slice 39 implementation)
 
 `_files_transfer_worker_context` installs both ResourceLibrary and MediaLibrary transfer consumers

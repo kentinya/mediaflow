@@ -34,6 +34,7 @@ scope and delivery state remain in root contracts, [Roadmap](roadmap.md) and [Pr
 | 2026-10-18, `V2-OPS-011` | Treat Scan as absent on first deployment, including definition modes: remove routes/aliases/help, work/schema/execution/recovery and dedicated retirement/history/migration layers. Ordinary authenticated not-found/argument/shared unsupported-type validation stops before discovery/admission/authority; no automatic conversion. Preserve shared filtering/real elapsed stability/planning, zero-mutation analysis (standalone Preview is separately superseded by V2-OPS-013), supported-work restart/pins/results/audit/permissions and completed/uncertain non-replay. No data/media clearing or V1-wide removal. |
 | 2026-10-18, `V2-FILES-005/006` | Replace global `REQ-SCAN-004` indexing, `REQ-ORG-012` result sync and indexed `REQ-WEB-003`/`REQ-SAFE-009` exceptions with shared library/live-Storage CLI/Web lists and complete FileIndex exit. Browsing records no catalog/observations/work/authority or Provider/Hash/media effects; explicit work retains exact scoped evidence. No global stand-in, dual write, old FileID/API migration/compatibility or data clearing. `REQ-SCAN-006` source identity/safety remains. |
 | 2026-10-18, `V2-OPS-013` | Retire the standalone Preview product with the same first-deployment standard as Scan: remove Web/API/CLI/Job/scheduled/definition-bound entry, execution/continuation, dedicated schema/composition and compatibility layers. Old inputs ordinarily fail before discovery/Provider/admission/authority, with no conversion, retirement page/410/guard, old-work migration/takeover/history or V1-parity obligation. `REQ-ORG-004/011` zero-mutation analysis, `REQ-SCHED-001` shared planning and `REQ-WEB-004` checks continue through organizing summaries/DryRun and shared Rules/configuration/authorization checks. Exact plans/pins/permissions/results and non-replay remain; no data/media clearing or unrelated Automation redesign. |
+| 2026-10-24, `V2-UX-004`, `V2-OPS-014/015`, `V2-FILES-007` — TARGET / Slice46 | Make shared V2 actions readable; restrict Task Center to admitted organizing work and its recovery; remove center creation/global Worker/discovery/manual-operation blocks; start new file-selection-based manual organizing only from ResourceLibrary Files. Ordinary-file progress/results/recovery stay on the originating library page while durable Tasks, audit, pinned execution and safety remain. This narrows prior all-command center discoverability/entry, not task durability or command authority. Definition-bound Automation Run once and scheduled work retain their accepted semantics. |
 
 These amendments define authorized scope; actual acceptance is recorded separately. Necessary
 Slice43 Scan/index/standalone-Preview coupling cleanup was accepted within45, not the whole Automation
@@ -47,6 +48,11 @@ Slice45 已整体验收为 PASS / CLOSED，交付上述 `V2-OPS-009–013` 与 `
 该验收不改变冻结 V1 定义或原始接受事实；下面 CURRENT 修订及 Product Experience/Architecture
 记录现行行为。Slice43 自动化工作区已单独整体验收为 PASS / CLOSED：原生定义生命周期、完整有界
 运行一次、真实统计、只读执行记录及常驻进程实际采纳的引擎设置均为 CURRENT；不得恢复45已退役产品。
+
+Slice46 的上述修订已获用户授权并选为 ACTIVE，但尚未实现或验收；稳定验收含义见
+[V2 Requirements 的 TARGET 章节](v2-requirements.md#slice46-authorized-target--not-yet-delivered)。
+以下 CURRENT 与历史 V1 定义保留接受基线；不得将新范围写成已交付，或以移除页面展示为由
+取消耐久任务、文件操作恢复、权限、固定快照、审计和不确定效果非重放。
 
 ## Traceability and derivation rules
 
