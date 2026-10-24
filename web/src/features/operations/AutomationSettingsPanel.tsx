@@ -246,8 +246,6 @@ export function AutomationSettingsPanel() {
     readonly nextAction: string;
   } | null>(null);
   const [submitting, setSubmitting] = useState(false);
-  const [reloadedSubmission, setReloadedSubmission] =
-    useState<PendingEngineSettingsSubmission | null>(null);
   // A freshly-minted unknown submission in this tab, or the one restored after a
   // reload.  Either way it blocks further saves until it is reconciled.
   const [unresolved, setUnresolved] =
@@ -258,28 +256,36 @@ export function AutomationSettingsPanel() {
     readonly values: FormState;
   } | null>(null);
 
-  // Restore a retained unknown submission exactly once per principal.
+  // Restore a retained unknown submission exactly once per authenticated
+  // principal.  React's documented "adjust state when an input changes" pattern
+  // is used deliberately: the retained value is *derived state* of the principal
+  // identity, so it is recomputed during render rather than synchronised in an
+  // effect that would cascade an extra render.
   const restoredKey = `${authGeneration}:${principalId ?? ""}`;
-  const [restoredFor, setRestoredFor] = useState<string | null>(null);
-  if (principalId !== null && restoredFor !== restoredKey) {
-    setRestoredFor(restoredKey);
+  const [restored, setRestored] = useState<{
+    readonly key: string;
+    readonly value: PendingEngineSettingsSubmission | null;
+  } | null>(null);
+  let pendingFromStorage = restored?.value ?? null;
+  if (principalId !== null && restored?.key !== restoredKey) {
     const retained = readPendingSubmission(principalId);
-    const value = retained.available ? retained.value : null;
-    setReloadedSubmission(value);
-    setUnresolved(value);
-    if (value !== null) {
+    pendingFromStorage = retained.available ? retained.value : null;
+    setRestored({ key: restoredKey, value: pendingFromStorage });
+    setUnresolved(pendingFromStorage);
+    if (pendingFromStorage !== null) {
       setEdit({
         baseline: {
-          revisionId: value.baselineRevisionId,
-          revisionVersion: value.baselineRevisionVersion,
-          digest: value.baselineDigest,
+          revisionId: pendingFromStorage.baselineRevisionId,
+          revisionVersion: pendingFromStorage.baselineRevisionVersion,
+          digest: pendingFromStorage.baselineDigest,
         },
-        input: value.input,
+        input: pendingFromStorage.input,
       });
     }
   }
 
   const pendingSubmission = unresolved;
+  const reloadedSubmission = pendingFromStorage;
   const published = model?.target ?? null;
   const baseline = published === null ? null : baselineOf(published);
   const publishedValues = published === null ? {} : publishValues(published);
@@ -353,7 +359,7 @@ export function AutomationSettingsPanel() {
       if (result.ok) {
         writePendingSubmission(principalId, null);
         setUnresolved(null);
-        setReloadedSubmission(null);
+        setRestored({ key: restoredKey, value: null });
         setEdit(null);
         setLastPublished({
           revisionId: result.revisionId ?? edit.baseline.revisionId,
@@ -378,7 +384,7 @@ export function AutomationSettingsPanel() {
       // A *known* rejection did not publish, so its retained context is cleared.
       writePendingSubmission(principalId, null);
       setUnresolved(null);
-      setReloadedSubmission(null);
+      setRestored({ key: restoredKey, value: null });
       setFailure({
         stage: FAILURE_STAGE_LABELS[result.details?.stage ?? ""] ?? "",
         durableState: result.details?.durableState ?? "",
@@ -417,7 +423,7 @@ export function AutomationSettingsPanel() {
       }
       writePendingSubmission(principalId, null);
       setUnresolved(null);
-      setReloadedSubmission(null);
+      setRestored({ key: restoredKey, value: null });
       if (result.committed) {
         setEdit(null);
         setMessage(
