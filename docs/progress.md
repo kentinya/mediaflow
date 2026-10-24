@@ -25,8 +25,10 @@ Four-type problems and exact summary/execution confirmation occur inside the Fil
 V2-AUTO-010/011 amendment supplies scheduled intent through checked Enabled and one-run intent through
 Run once, with no second normal initial summary/execute gate; four-type problems use task recovery.
 Saved definition scope/filtering/limits, backend permissions/safety and historical outcomes remain.
-Automation's stability clarification records not-yet-stable files as current-run failures while other
-files continue; a later normal run uses ordinary stability checks, without a failed-item retry flow.
+The user retained Automation's existing stability checks and conditional bounded wait/re-scan,
+withdrawing the immediate-failure/no-wait target. Remaining unstable files fail while ready files
+proceed; later normal runs retain ordinary checks without failed-item retry or cross-run observation
+sharing. Slice46 AC-18 defines the preserved behavior; no product change is delivered by this decision.
 Ordinary-file status uses 当前页面操作状态 immediately left of the corresponding 添加资源库 /
 添加媒体库 button with the same style, opening a centered modal with durable local reopening.
 Implementation Head is NOT SET; these corrections are required TARGET, not delivered fixes, and no

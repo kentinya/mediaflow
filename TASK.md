@@ -12,8 +12,10 @@ Slice46 — **V2 Organizing Task Center and Readable Actions** — is **ACTIVE**
   scheduling without independent grants/pre-analysis and real Run once that admits before business
   readiness and executes ready items without a second initial summary/execute gate. Four business
   problems use task-native recovery; V2-AUTO-010/011 supersede the earlier pending-grant target.
-  Scheduled execution and Run once fail not-yet-stable files for the current run while other files
-  continue; later normal runs perform their ordinary stability checks, with no failed-item retry flow.
+  Scheduled execution and Run once preserve the shared pipeline's existing stability checks and
+  conditional bounded wait/re-scan; the earlier immediate-failure/no-wait target is withdrawn.
+  Files remaining unstable fail while ready siblings proceed; later normal runs use ordinary checks,
+  with no failed-item retry or cross-run observation mechanism. AC-18 defines the retained behavior.
   RO-4 selects eight views and only four business problem types for Attention/pending-task statistics,
   removing Failure Recovery and other failures'
   separate statistics/guidance; those failures remain read-only in All/Ended. RO-2 now admits explicit

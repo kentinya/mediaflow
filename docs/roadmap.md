@@ -51,8 +51,10 @@ summary/execution confirmation occur inside the Files manual task. V2-AUTO-010/0
 previous pending-grant target: checked Enabled supplies scheduled intent, Run once supplies immediate
 one-run intent with no second initial summary/execute gate, and four-type blockers use task recovery.
 Saved scope/filtering/limits, backend execution safety, schedule independence and history remain.
-Automation stability clarification fails not-yet-stable files for the current run while other files
-continue; subsequent normal runs apply ordinary stability checks without a failed-item retry flow.
+The user retained Automation's existing stability checks and conditional bounded wait/re-scan,
+withdrawing the immediate-failure/no-wait target. Remaining unstable files fail while ready files
+proceed; later normal runs retain ordinary checks without failed-item retry or cross-run observation
+sharing. Slice46 AC-18 defines the preserved behavior.
 Ordinary-file status uses 当前页面操作状态 immediately left of the corresponding 添加资源库 /
 添加媒体库 button with the same style, opening a centered modal with durable local reopening.
 The [Contract](../SLICE.md) defines five outcomes and T4 final acceptance. No implementation is

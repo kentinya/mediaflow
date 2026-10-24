@@ -48,12 +48,15 @@ off/on cycle. Historical grants/failures/analysis-only records are not new execu
 successes. Healthy empty scope reports no work; unreadable scope is unavailable/failure, not empty.
 These changes remain TARGET and restore no Scan/Preview/FileIndex products.
 
-For both scheduled execution and Run once, not-yet-stable files fail for the current run without
-media effects while other files continue; the run does not wait for them to stabilize. All-unstable
-work is not empty/no-work success. A later ordinary run applies its normal saved scope/filtering and
-stability checks; no previous-failure selection/retry mechanism is added. Retain real stability
-requirements, factual All/Ended history and the four-type-only Attention boundary. Files manual
-stability waiting is unchanged.
+On 2026-10-25 the user retained existing Automation stability handling, superseding the earlier46
+immediate-failure/no-wait target. Scheduled execution and Run once reuse the shared pipeline's real
+checks and bounded wait/re-scan: with unstable candidates and no ready files, wait/re-scan once only
+if the shortest remaining interval is greater than zero and at most 60 seconds; ready siblings avoid
+that wait. Proven-stable files proceed, while remaining unstable files fail without media effects.
+Solely instability-failure outcomes are Failed, never empty/no-work success. Later ordinary runs use
+normal saved scope/filtering/checks, without previous-failure retry/selection or cross-run observation
+sharing. Preserve configured real elapsed proof, existing work-scoped evidence, factual All/Ended
+history, the four-type-only Attention boundary and Files manual handling. See Slice46 RO-5/AC-18.
 
 On 2026-10-25 the user retained the existing file-type behavior for folder organizing: in-task folder
 expansion uses the ResourceLibrary's configured primary-media extensions, default video, including

@@ -114,13 +114,18 @@ Run once is counted once over its linked Job/Task; separate analysis remains sep
 Its effective primary-source limit remains `min(definition itemLimit, 100)`, with existing traversal/
 evidence budgets; reusing scheduled planning does not raise the Run once admission bound.
 
-Both Automation entry paths settle not-yet-stable files as current-run failures with no media effects
-and continue other files; no waiting-stability run is retained for those files. Aggregate actual
-results truthfully, including all-unstable failure instead of empty/no-work success. A later ordinary
-occurrence/Run once uses its normal saved scope/filtering and stability checks, without a new
-previous-failure selection/retry mechanism. Retain the configured stability predicates/real elapsed
-proof and old failure evidence; instability alone creates no four-type Attention or recovery entry.
-Files manual stability waiting is unaffected.
+Both Automation entry paths retain the shared organizing pipeline's existing stability predicates
+and bounded wait/re-observation, superseding the earlier46 immediate-failure/no-wait target. The
+age predicate uses time since last modification against the larger configured age threshold; a
+nonzero stable-size interval requires real unchanged observations. With unstable candidates and no
+ready files, retain one wait/re-scan only when the shortest remaining interval is greater than zero
+and at most 60 seconds; ready siblings avoid that wait, and longer intervals do not synchronously
+wait. Keep existing work-scoped observation/continuation evidence; add no cross-run observation
+sharing or waiting lifecycle. Proven-stable files proceed; remaining unstable files fail without
+media effects. Aggregate actual results truthfully: solely instability failures mean Failed rather
+than no-work, and stable success plus instability failure means PartialSuccess. Later normal runs
+use ordinary saved scope/filtering/checks without previous-failure retry/selection or old-result
+rewriting. Instability alone adds no four-type Attention/recovery entry. Files manual handling stays.
 
 Existing enabled definitions use Enabled semantics without old grants, re-analysis or off/on cycles;
 historical grants/revocations no longer gate or confer supported scheduled execution. Preserve

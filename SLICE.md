@@ -52,8 +52,9 @@ prior closure records remain historical facts. Base and Implementation Head rema
   不再要求规则全部匹配或先生成可执行摘要。明确提交后先受理整理任务，四类问题在任务内恢复。
 - 自动化“运行一次”直接受理并执行该已保存整理策略一次，四类问题同样在任务内处理；
   正常文件无需先出摘要再确认一次。文件页手动整理仍保留任务内摘要与执行确认。
-- 自动化定时运行和“运行一次”遇到尚未稳定的文件，本次将该文件记为失败，其他文件继续；
-  下次自动化照常运行，并按正常流程判断当时文件的稳定性。
+- 自动化定时运行和“运行一次”维持现有稳定性判断及有界等待/复查逻辑，撤回此前
+  “首次发现不稳定就直接失败、完全不等待”的调整；仍未稳定的文件记失败，其他文件继续。
+  下次自动化照常运行，不增加按上次失败结果筛选/重试的机制。
 
 本 Slice 交付按钮可读、文件操作归属清楚的 V2 体验：普通文件管理在原库页完成反馈与恢复，
 文件选择式手动整理从资源库文件页发起，任务中心专注已受理整理的进度、结果与恢复。
@@ -152,11 +153,14 @@ problems enter Task Center decisions/re-analysis/explicit continuation; successf
 replayed. A healthy empty scope is a labelled no-work outcome; unreadable scope is a factual failure.
 Unknown admission reconciles the exact request. Historical grant failures stay unchanged in All/Ended.
 
-**Automation stability:** in either scheduled execution or Run once, a file not yet proven stable
-fails for this run without media effects; other files continue. The run does not remain open waiting
-for that file to stabilize. A later normal run applies the ordinary saved-scope filtering and
-stability checks. This is not a failed-item retry/selection mechanism. The old failure remains factual
-All/Ended history outside four-type Attention; Files manual stability waiting is unchanged.
+**Automation stability:** scheduled execution and Run once reuse the existing shared organizing
+pipeline's stability checks and bounded wait/re-observation. If there are unstable candidates but no
+ready files, wait once and re-scan only when the shortest remaining interval is greater than zero
+and at most 60 seconds. If ready files exist, do not wait for unstable siblings. Files still unstable
+after this handling fail without media effects; ready files proceed. A later normal run applies its
+ordinary saved scope/filtering and stability checks without a previous-failure retry/selection flow.
+Instability failures remain factual All/Ended history outside four-type Attention. This supersedes
+the earlier46 no-wait target; configured policy/real elapsed proof and Files manual handling remain.
 
 ## Base audit and reuse
 
@@ -405,14 +409,22 @@ Automation/Task Center records; separate analysis is not retroactively converted
 Healthy empty scopes are labelled no-work; partial bounds cannot execute a first-N prefix, and
 permission/Storage failures cannot masquerade as emptiness or success.
 
-For both scheduled execution and Run once, unmet stability requirements are per-file failures for
-the current run, not a waiting-stability lifecycle. Retain the actual reason and zero-media-effect
-evidence, continue other files, and finish with truthful per-item/overall outcomes when other work
-settles. All-unstable work is not an empty/no-work success. These failures appear in All/Ended without
-four-type Attention, pending-task counts or a recovery entry. The next scheduled occurrence or later
-explicit Run once follows its normal saved scope and normal stability checks; add no previous-failure
-selection, automatic retry or old-result rewriting. Preserve the configured stability policy and
-real elapsed-time proof. Files manual stability waiting in RO-2 remains unchanged.
+For both scheduled execution and Run once, preserve the existing shared organizing pipeline's real
+stability checks and bounded wait/re-observation; the user withdrew the earlier46 immediate-failure/
+no-wait target. The age check uses time since last modification against the larger configured
+minimum-age/modified threshold; a nonzero stable-size interval requires unchanged observations
+separated by that real duration. No prior observation is fabricated from old modification time.
+When unstable candidates exist and no files are ready, retain one wait/re-scan if the shortest
+remaining interval is greater than zero and at most 60 seconds; longer intervals do not synchronously
+wait. If any files are ready, process them without waiting for unstable siblings. Preserve the
+existing work-scoped evidence and continuation behavior; do not add cross-run observation sharing
+or a new waiting lifecycle. Files still unstable after this handling fail without media effects;
+ready siblings proceed. Retain factual reasons and truthful aggregates: only instability-failure
+outcomes mean Failed, never empty/no-work success; stable success plus instability failure is
+PartialSuccess. These failures appear in All/Ended without four-type Attention, pending-task counts
+or a recovery entry. A later ordinary occurrence/Run once uses normal saved scope/filtering/stability
+checks; add no previous-failure selection, automatic retry or old-result rewriting. Files manual
+stability handling in RO-2 remains unchanged.
 
 Existing published enabled definitions adopt the new Enabled semantics without requiring an old
 grant, re-analysis or a forced off/on cycle. Old grants/revocations are historical evidence, neither
@@ -481,7 +493,7 @@ supervision redesign, new file commands or unrestricted authority is authorized.
 | AC-15 | Four-type decision → analysis → exact summary/confirmation → real outcome remains Web-completable. Save/admission alone does not imply success; after actual resolution no stale review/continuation keeps a task in Attention. If all organizing work succeeds through exact linked recovery, overall display becomes Completed/recovered while prior failed attempts remain history. A new four-type blocker changes type; a purely technical follow-up failure becomes read-only All/Ended history. Mixed successful/ignored/four-type/technical/uncertain items retain independent truth without false success or completed/uncertain replay. |
 | AC-16 | Direct-file business checks remain same-source unfinished organizing work and explicit extension exclusion; a merely unlisted suffix does not veto explicit file selection. Folder/mixed-folder discovery retains the configured primary-media extension filter, defaulting to video, and existing attachment semantics. Default images/subtitles/NFO do not become independent primaries or generate Attention through primary admission; artwork-off does not promote images, and other-same-stem settings remain effective. Unassociated files stay at source; no ad-content classifier/deletion is added. Rule/include misses cannot demand a ready plan first. Duplicates/exclusions have truthful per-item reasons and independent siblings; source ownership is atomic across overlapping manual/Automation/continuation requests, including queued/paused/recovery work, and is not inferred from filename or any past task. Rule-miss/ambiguous-recognition, metadata-decision, classification-miss and conflict cases are admitted and reachable in their four task recovery lists/counts through real completion. Stability, bounds, RBAC/confinement/pins, exact confirmation and completed/uncertain non-replay remain enforced. |
 | AC-17 | One explicit Run once on an enabled or disabled saved definition admits a real organizing task before rule readiness and executes ready items through the same bounded pipeline, without preliminary analysis/grant or a second initial summary/execute gate. Four business blockers enter native recovery/Attention/counts and complete without successful-sibling replay; Files manual summary/confirmation remains. Saved scope/filtering/limits/pins, schedule independence, source ownership, exact unknown-request reconciliation, empty/no-work, partial/incomplete bounds, permissions and uncertain effects remain truthful across refresh/restart and simultaneous triggers. |
-| AC-18 | Scheduled execution and Run once record each not-yet-stable file as a current-run failure without media mutation or waiting for it; other files continue. A settled stable-success/unstable-failure mix is PartialSuccess, and all-unstable work is Failed rather than empty/no-work success. Instability alone adds no four-type Attention/pending count or recovery entry. A subsequent normal run uses its ordinary saved scope/filtering and stability checks, with no previous-failure retry/selection mechanism or change to old results. Configured stability/elapsed proof and Files manual waiting remain intact. |
+| AC-18 | Scheduled execution and Run once preserve the shared organizing pipeline's existing age/stable-size checks and bounded wait/re-observation. With unstable candidates and no ready files, one wait/re-scan occurs only when the shortest remaining interval is greater than zero and at most 60 seconds; ready siblings avoid that wait, and longer intervals do not synchronously wait. Proven-stable files proceed, including those proven by the re-scan; remaining unstable files fail without mutation. A settled stable-success/unstable-failure mix is PartialSuccess, and solely instability-failure outcomes are Failed rather than empty/no-work success. Instability alone adds no four-type Attention/pending count or recovery entry. Later ordinary runs retain normal saved scope/filtering/checks, without previous-failure retry/selection, cross-run observation sharing or old-result rewriting. Configured real elapsed proof, work-scoped evidence and Files manual handling remain intact. |
 
 ## Validation and handoff
 
@@ -545,10 +557,12 @@ B's final evidence includes:
   Reuse current Automation Run once,
   definition publication/execution/occurrence and execution-safety matrix tests; adapt obsolete grant
   assumptions while retaining their actual permissions/fences/pin/effect safety assertions.
-- Cover both Automation entry paths with stable/unstable siblings and all-unstable scopes: no
-  waiting-stability run, no unstable-file mutation, truthful failure/PartialSuccess and no four-type
-  Attention inflation. Cover a later ordinary run's normal scope/filtering/stability checks, retained
-  old failure history and unchanged real stability policy; add no failed-item retry/selection flow.
+- Cover both Automation entry paths with ready/unstable siblings and initially all-unstable scopes:
+  preserve the existing conditional single wait/re-scan and 60-second remaining-interval bound,
+  including zero-duration, positive-size-duration, changed-source and over-bound cases. Only proven
+  stable files execute; remaining unstable outcomes retain truthful failure/PartialSuccess without
+  four-type Attention inflation or false no-work. Cover later normal scope/filtering/checks and old
+  failure history; add no failed-item retry/selection or cross-run observation mechanism.
 - Actual desktop/narrow Entry, local progress/results/recovery and simplified-center inspection;
   computed contrast and keyboard evidence for shared variants/overrides. Record candidate/artifact
   identity, actual commands/results, failures and skips; do not test only CSS implementation literals.
