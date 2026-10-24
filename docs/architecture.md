@@ -11,7 +11,8 @@ Detailed former delivery notes remain at `865ebdce47b0b323064fd8e05fbfaa54546e62
 
 The user-authorized [Slice46](../SLICE.md), `V2-UX-004`, `V2-OPS-014–017` and `V2-FILES-007`
 select this TARGET; the accepted CURRENT contracts below remain implementation facts until delivery.
-The user's same-Slice Automation correction scope also fulfills existing `V2-AUTO-001–006`.
+The user's same-Slice Automation scope fulfills existing `V2-AUTO-001–006` and supersedes its
+independent grant/Run once boundaries under `V2-AUTO-010/011`.
 
 Shared V2 action components/styles supply readable light-theme states. Files owns ordinary-command
 progress/results/existing safe recovery and explicit file-selection-based manual organizing entry.
@@ -70,28 +71,48 @@ Local ordinary-work readback is bounded, authenticated and library-kind/source/p
 existing durable Tasks/items/results/claims and audit. UI hints are not authority or the sole index.
 Shared repository/API evidence may retain administrative consumers; center scope must not erase
 Automation records or ordinary command execution/recovery. No second queue/lifecycle/recovery
-engine or new mutation authority is added. OrganizerExecutor, admitted pins, RBAC, explicit Delete/
+engine or broader file authority is added. OrganizerExecutor, admitted pins, RBAC, explicit Delete/
 overwrite, source verification, fences and completed/uncertain non-replay remain unchanged.
 
-Automation detail projection/normalization must share a supported eligibility contract without
-invented freshness/zero-mutation evidence or retired Preview dependencies. Valid ineligible or
-unavailable eligibility is a readable state, not malformed definition data. Focused Save success
-must reconcile the form's saved values with that confirmed publication's authority for the next
-same-page edit/Enabled command. This cannot silently rebind input to a peer's newer publication;
-genuine stale-write rejection, input retention, unknown-outcome reconciliation and explicit intent
-remain. Reuse managed publication/grants/shared analysis; no second lifecycle, new execution
-authority or weakened response validation is introduced. These corrections remain TARGET.
+Automation detail projection/normalization renders the saved definition and supported execution
+readiness without mandatory independent-grant eligibility reads or obsolete preflight fields.
+Remove grant/revoke/pending-grant controls and their exclusive supported-work dependencies; shared
+analysis and backend plan validation retain their real responsibilities. Focused Save reconciles
+its confirmed publication before the next same-page edit/Enabled command; genuine stale-write
+refusal, input retention and unknown-outcome reconciliation remain.
 
-Scheduler must resolve current unattended readiness before admitting a new definition-bound
-scheduled execution. Known missing authority produces bounded pending-authorization/readiness
-evidence on Automation without creating Jobs/Tasks that Worker will predictably reject; repeated
-ticks do not manufacture failed executions. Reuse existing grants/due-state/admission services and
-preserve idempotency/coalescing. Shared analysis and exact explicit grant stay distinct from Enabled;
-frontend state cannot authorize scheduling. Unknown authority reads remain unavailable, never valid
-or empty. Worker still checks already-admitted work and every mutation boundary, including revoke/
-permission races. Retain historical failures as Task Center All/Ended read-only records without
-attention or repair guidance; normal readiness/authorization remains on Automation. No retroactive
-relabelling, deletion or replay. This limited TARGET admission correction adds no second scheduler.
+Checked enable/enabled-successor publication is the durable scoped scheduled execute intent,
+authoritatively bound to the saved definition/source/scope/limits, current execution/configuration
+permissions and audited actor. No separate grant or successful media-analysis prerequisite is needed.
+Apply the same checked intent/permission contract through all supported enable/publication entry points.
+Scheduler reuses its due-state/idempotent admission and the existing Worker; enabling starts no
+immediate run. Disabled/removal/permission loss prevents future admission and unperformed scheduled
+mutations at cooperative boundaries; an in-flight Storage call/completed effect is not rolled back.
+Admitted configuration pins remain immutable while live scope/intent/permission fences still apply.
+Unrelated publication, stale requests or frontend flags cannot broaden intent. An enabled successor
+with changed scope requires deliberate checked publication, never silent binding to a peer's edit.
+
+Run once admits a real definition-pinned organizing task before rule readiness. Its explicit command
+provides one-run execute intent independent of scheduled Enabled/due state; no old grant, mandatory
+pre-analysis/ready summary or second initial confirm is consumed. Reuse the same saved scope/filtering,
+complete bounded enumeration, full pipeline, exact backend plan and OrganizerExecutor checks as a
+scheduled run. Ready items execute while four-type blockers use existing decisions/re-analysis and
+explicit continuation links in Task Center; Files manual summary/confirmation is unchanged. Source
+ownership/request admission is atomic across manual/Run once/due/recovery; unknown outcomes reconcile
+persisted principal/request/origin identities without guessed links or duplicate execution. Real
+Run once is counted once over its linked Job/Task; separate analysis remains separate evidence.
+Its effective primary-source limit remains `min(definition itemLimit, 100)`, with existing traversal/
+evidence budgets; reusing scheduled planning does not raise the Run once admission bound.
+
+Existing enabled definitions use Enabled semantics without old grants, re-analysis or off/on cycles;
+historical grants/revocations no longer gate or confer supported scheduled execution. Preserve
+already-admitted pins/results and original failed Jobs/Tasks/occurrences/audit. Never execute old
+analysis-only records or replay failed/unknown work as a migration. Healthy empty scope is no-work;
+unreadable/unauthorized scope is not empty/success. New/copy stays disabled; a disabled definition's
+explicit Run once can execute with valid permission without enabling or changing the schedule.
+Retain backend source/capability/conflict/plan/effect permissions at every mutation boundary, including
+explicit overwrite/Delete/cleanup scope and completed/uncertain non-replay. Reuse the existing
+execution/authorization ports and queue; do not introduce a second engine or unrestricted authority.
 
 ## CURRENT — Admitted transfer Worker lifetime (Slice 39 implementation)
 

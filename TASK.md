@@ -5,15 +5,17 @@ Slice46 — **V2 Organizing Task Center and Readable Actions** — is **ACTIVE**
 
 - Immutable Slice Base: `e9f1a8dc607cfc6d5ea02141b058da8ce849cd70`.
 - Implementation Head: **NOT SET**; no product implementation or Task acceptance is claimed.
-- User-authorized RO-5 includes Automation detail name/“打开”, same-page Save/Enabled and missing
-  unattended-authority corrections: actionable analysis/grant/readiness and no repeated failed
-  scheduled admissions for known missing grants. RO-4 now selects eight views and only four business
-  problem types for Attention/pending-task statistics, removing Failure Recovery and other failures'
+- User-authorized RO-5 includes Automation detail name/“打开”, same-page Save/Enabled, enable-to-execute
+  scheduling without independent grants/pre-analysis and real Run once that admits before business
+  readiness and executes ready items without a second initial summary/execute gate. Four business
+  problems use task-native recovery; V2-AUTO-010/011 supersede the earlier pending-grant target.
+  RO-4 selects eight views and only four business problem types for Attention/pending-task statistics,
+  removing Failure Recovery and other failures'
   separate statistics/guidance; those failures remain read-only in All/Ended. RO-2 now admits explicit
   Files manual organizing before business-rule readiness, using only same-source unfinished work
   and explicit extension exclusion as business entry checks. Four-type problems and exact summary/
-  execution confirmation occur inside the task; baseline safety remains. AC-11–16 apply;
-  B plans against all five outcomes and the superseding V2-OPS-016/017 scope.
+  execution confirmation occur inside the Files manual task; baseline safety remains. AC-11–17 apply;
+  B plans against all five outcomes and V2-OPS-016/017 plus V2-AUTO-010/011.
 - Next Action: **B PLANS THE FIRST TASK** after the Contract is checkpointed and governance passes.
 - B owns coherent Task scope, Difficulty/Test Level and acceptance; Developer implements only that
   active Task and runs affected tests. Final Slice acceptance remains T4 under the workflow.

@@ -12,14 +12,17 @@ Slice46 — **V2 Organizing Task Center and Readable Actions** — is **ACTIVE**
 2026-10-24 at Base `e9f1a8dc607cfc6d5ea02141b058da8ce849cd70`. The [Contract](../SLICE.md)
 selects readable shared V2 actions, Files-only manual organizing entry, library-local ordinary-file
 feedback/recovery and an organizing-only Task Center without the three auxiliary blocks or creation
-entry, plus the user-added Automation detail-opening, post-Save Enabled/version and unattended
-authorization/readiness corrections that prevent repeated missing-grant failed admissions.
+entry, plus Automation detail-opening/post-Save Enabled fixes and the user-selected enable-to-execute
+and real Run once semantics, removing independent grants/pre-analysis and repeated missing-grant failures.
 The attention amendment selects eight views and four business types for Attention/pending-task
 statistics; Failure Recovery and other failures' separate statistics/guidance are removed. Other
 terminal failures remain factual read-only records in All/Ended, not outstanding recovery tasks.
 The latest manual-entry amendment admits explicit Files organizing before business-rule readiness;
 business entry checks are same-source unfinished work and explicit extension exclusion. Four-type
-problems and exact summary/execution confirmation occur inside the task; execution safety remains.
+problems and exact summary/execution confirmation occur inside the Files manual task. The latest
+V2-AUTO-010/011 amendment supplies scheduled intent through checked Enabled and one-run intent through
+Run once, with no second normal initial summary/execute gate; four-type problems use task recovery.
+Saved definition scope/filtering/limits, backend permissions/safety and historical outcomes remain.
 Implementation Head is NOT SET; these corrections are required TARGET, not delivered fixes, and no
 Task or product acceptance is claimed.
 **B PLANS THE FIRST TASK**; final acceptance is T4. No Slice46 closure row is added below.

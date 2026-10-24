@@ -13,14 +13,15 @@ Detailed superseded delivery notes are retained at
 
 User-authorized on 2026-10-24; [Slice46](../SLICE.md) and `V2-UX-004`, `V2-OPS-014–017`,
 `V2-FILES-007` own scope/acceptance, together with the user-added Automation corrections under
-`V2-AUTO-001–006`. This journey is not yet implemented or accepted.
+`V2-AUTO-001–006/010/011`. This journey is not yet implemented or accepted.
 
 - **Goal/entry:** read and use shared V2 buttons, including Entry. New file-selection-based manual
   organization starts from ResourceLibrary Files; ordinary maintenance starts on its own library page.
 - **State/action:** readable normal/focus/busy/disabled actions; exact selected sources and bounded
-  local command impact/progress; explicit 整理 submits bounded organizing work before business-rule
-  resolution. In-task analysis leads to four-type decisions or an exact summary with separate
-  execution confirmation. Task Center has eight organizing-only views and four-type native recovery.
+  local command impact/progress; explicit Files 整理 submits bounded organizing work before business-rule
+  resolution, with in-task summary/confirmation. Automation Run once supplies one-run execution
+  intent and executes ready items after backend analysis without that extra initial confirmation.
+  Task Center has eight organizing-only views and four-type native recovery.
 - **Success:** ordinary results and relevant work reopen locally after close/reload/reconnect/restart;
   Files-originated tasks and separate preparing/unknown requests remain reachable from Files.
   Explicitly submitted organizing tasks enter Task Center before business readiness, with true
@@ -63,22 +64,31 @@ User-authorized on 2026-10-24; [Slice46](../SLICE.md) and `V2-UX-004`, `V2-OPS-0
   detail/results/logs/export, with real status/reason/stage/completed or uncertain effects. An outage
   during Metadata lookup is not a candidate/correction problem. Old recovery links cannot restore
   the removed flow or start work; safely resolve to the exact history or ordinary unavailable state.
-- **Automation detail/editing:** both definition name and “打开” show saved detail and truthful
-  grant eligibility/reasons before and after enabling. Edit → checked Save → further Enabled
-  change/Save or explicit enable/disable works on the same page with confirmed saved state. An own
-  successful Save does not produce a false concurrent-change error or require reopening. Genuine
-  peer changes preserve input and require review; invalid/denied/unavailable/unknown outcomes expose
-  the durable state and safe next action without silent overwrite/replay. Enabling grants no
-  unattended authority and starts no work. Reads and return/reconnect create no commands.
-- **Automation scheduled authority:** saved/enabled/no-grant shows “待授权” with a usable native
-  analysis/explicit-grant entry. Review the exact scope/effects → explicitly grant → see current
-  readiness → normal due execution. Known missing grants block admission without repeatedly
-  creating failed execution Jobs/Tasks or inflating failure counts; readiness stays visible on
-  Automation. Prior failures remain inspectable in Task Center All/Ended without attention or repair
-  guidance, never rewritten or automatically replayed. Native Automation authorization and its
-  revocation/permission/read/unknown outcomes retain safe recovery and
-  runtime checks. With valid authority, healthy empty scope reports no work; inaccessible or
-  unauthorized scope is not an empty-success result.
+- **Automation detail/editing:** name/“打开” shows the saved definition and truthful enabled/
+  execution readiness without independent grant eligibility. Checked Save → further Enabled change/
+  Save or enable/disable works on the same page. Peer changes retain input; stale/denied/unknown
+  commands never silently overwrite, enable or replay. New/copy starts disabled. Reads do no work.
+- **Automation scheduled execution:** review the saved definition's source/scope/limits → explicitly
+  enable (or deliberately save an enabled successor) → execute at normal due times. This action
+  supplies scoped scheduled intent with backend execution permission and audit; no independent
+  grant, successful pre-analysis or repeated per-run confirmation is required. Enabling does not run
+  immediately. Disabled/removed definitions stop future scheduled admission and unperformed scheduled
+  effects at safe boundaries; an in-flight call/completed effect is not rolled back. Existing enabled
+  definitions need no old grant or off/on cycle. Old grants/revocations cannot override Enabled.
+- **Automation Run once:** click 运行一次 on a saved definition → enter the real organizing task
+  before business-rule readiness → observe bounded discovery, stability and full planning → execute
+  ready items under that saved policy. The click is explicit one-run intent; no separate initial
+  analysis/grant/summary confirmation is needed. Use the same saved scope/filtering/pipeline as
+  scheduled execution, with no new source picker. Disabled definitions may run once with execution
+  permission; Enabled and next due time stay unchanged. Recognition/Metadata/Classification/Conflict
+  blockers enter Task Center's four native recovery flows/counts while ready siblings can proceed.
+  Decisions are non-executing until safe explicit continuation; successful/uncertain items do not
+  replay. Exact source ownership/request reconciliation prevents duplicate work across manual/due/
+  Run once/recovery triggers. Healthy empty scope reports no work; unreadable scope stays a real
+  failure, and incomplete material bounds cannot execute a first-N prefix. One admitted run counts
+  once; old analysis-only requests/failed history are neither auto-executed nor relabelled.
+  Explicit policy/effect intent still governs overwrite/Delete/cleanup. Files manual organizing
+  retains its task-contained exact summary/confirmation.
 
 This TARGET supersedes the later CURRENT text's mixed file-operation center population,
 center-created manual organizing entry, pre-task ready-plan gating for explicit Files organizing
@@ -87,9 +97,9 @@ task and still precedes mutation. Manual entry no longer applies automatic inclu
 rules as extra vetoes; explicit excluded extensions and hard safety limits remain. Remove global Worker/
 resident-status, discovery and manual-operation blocks and center creation actions; task-specific
 readiness reasons stay visible. Existing prepared-work and four-type native recovery remain legal
-continuations, and definition-bound Automation Run once/scheduled journeys retain scope/authority.
-The scheduled readiness/admission correction above is the explicit exception to unchanged
-Automation behavior; manual Run once authority and existing admitted-work safeguards remain.
+continuations. V2-AUTO-010/011 explicitly replace the later CURRENT Automation grant/pre-analysis
+journey and Run once analysis-then-confirm sequence with enablement/Run once execution intent.
+Existing scope, pins, permissions, results and non-replay safeguards remain.
 No MediaLibrary organizing, alternate global file-operation center or new execution engine is added.
 For Task Center failures outside the four types, the explicit user decision replaces generic
 failure-recovery guidance in the general completion rules below with factual read-only history;

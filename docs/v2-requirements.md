@@ -33,31 +33,30 @@ Files-only creation of file-selection-based manual organizing. These requirement
 TARGET under [Slice46](../SLICE.md); the accepted43–45 CURRENT baselines below are not relabelled
 as delivered changes. Historical acceptance stays in Git/Progress.
 
-The user also explicitly includes Automation corrections in Slice46 under existing
-`V2-AUTO-001–003`: definition name/“打开” must render saved detail with truthful eligibility, and
-confirmed own Save must support subsequent same-page Enabled/enable-disable changes without a
-false stale-version conflict. Real concurrent publication still refuses stale writes and preserves
-input; failures/unknown outcomes require safe review/reconciliation without automatic replay.
-Enablement remains distinct from grant/execution. These corrections are TARGET, not delivery claims
-or new Automation authority; no Scan/Preview/FileIndex product is restored.
+The user includes Automation detail name/“打开” and same-page Save/Enabled fixes under existing
+`V2-AUTO-001/002`, then explicitly replaces the independent grant/pre-analysis journey with
+`V2-AUTO-010/011`: checked enablement authorizes future scheduled execution of the saved definition;
+Run once directly runs that organizing definition once. Neither requires prior successful media
+analysis, a separate grant or another normal initial execute click. Four business problems arise
+inside the admitted task and use `V2-OPS-016` recovery/counts. Files manual summary/confirmation
+remains under `V2-OPS-017`; Automation still uses its saved definition scope/filtering/limits.
 
-The subsequent missing-authority correction under `V2-AUTO-001–006` completes native shared
-analysis → explicit scoped grant → scheduled execution. Enabled/no-grant shows actionable pending
-authorization. Known missing grants block new scheduled execution admission without repeated failed
-Jobs/Tasks or failed-run counts; bounded readiness remains visible in Automation. Existing admitted
-failures/history remain intact; native authorization stays on Automation, while Task Center shows
-these terminal failures only in All/Ended without repair guidance. Worker live checks, revocation,
-permissions, pins, idempotency/coalescing and non-replay remain. Valid authorized empty scope is
-no-work; unavailable/unauthorized scope is not emptiness or success. This TARGET changes admission
-readiness, not grant authority, historical outcomes or manual Run once semantics.
+The earlier Slice46 pending-authorization/grant-journey target is superseded. Preserve checked
+publication, execution permissions, deliberate intent, immutable pins, backend plan/effect checks,
+idempotency and live disable/permission fencing. Current enabled definitions need no old grant or
+off/on cycle. Historical grants/failures/analysis-only records are not new execution requests or
+successes. Healthy empty scope reports no work; unreadable scope is unavailable/failure, not empty.
+These changes remain TARGET and restore no Scan/Preview/FileIndex products.
 
 | ID | Requirement | Acceptance meaning |
 |---|---|---|
 | V2-UX-004 | Shared V2 actions are readable and usable throughout the light shell, especially Entry. | Primary/secondary/danger/link/icon and dialog actions preserve readable normal/hover/focus/busy/disabled states and keyboard names/focus. Enabled text meets AA contrast; directly related Entry field colors support the same readable journey. Existing auth, semantics and duplicate-submit guards remain; no new identity/theme product. |
 | V2-OPS-014 | Task Center's eight views, counts, filters and selected detail concern admitted organizing work and its legitimate organizing continuations only. | Backend scopes the complete authorized population before grouping/counting/paging, preserving pre-Task organizing queue/failures and actual Job→Task deduplication. Ordinary-file/notification/unrelated work and analysis-only preparation do not enter center lists/counts/recovery or legacy-list/deep-link loopholes. Remove global Worker/resident-status, discovery and manual-operation blocks and their exclusive landing reads; retain factual failure/readiness evidence and the four-type recovery selected by V2-OPS-016. |
-| V2-OPS-015 | New file-selection-based manual organizing starts only from ResourceLibrary Files. | Remove center creation CTAs and independent source-selection flow. Explicit Files submission admits organizing work before business readiness under V2-OPS-017, with discovery/analysis, exact summary and separate selected execution confirmation inside the task. Exact task/preparation/unknown-request readback remains accessible from Files after close/reload/reconnect. Existing prepared-work/task-recovery links retain exact context; generic creation URLs guide to Files without work. MediaLibrary is not a source; definition-bound Automation Run once/scheduled authority remains distinct and unchanged. |
+| V2-OPS-015 | New file-selection-based manual organizing starts only from ResourceLibrary Files. | Remove center creation CTAs and independent source-selection flow. Explicit Files submission admits organizing work before business readiness under V2-OPS-017, with discovery/analysis, exact summary and separate selected execution confirmation inside the task. Exact task/preparation/unknown-request readback remains accessible from Files after close/reload/reconnect. Existing prepared-work/task-recovery links retain exact context; generic creation URLs guide to Files without work. MediaLibrary is not a source; definition-bound Automation execution intent follows V2-AUTO-010/011 without a new generic file picker. |
 | V2-OPS-016 | Task Center Attention and pending-task statistics cover only current Recognition, Metadata, Classification and Conflict problems; Failure Recovery is removed. | Keep All/Running/Attention/Ended and four type lists. Pending task total is the distinct union of the four types and their required human decision/analysis/confirmation steps; queued/running alone is not attention. Genuine resolution clears the exact problem; new business blockers change type, while solely technical failures leave attention. Exact linked recovery proving all organizing work succeeded gives an overall Completed/recovered display while preserving failed-attempt history. Other terminal failures appear only in All/Ended and factual detail/results/logs/export, with real status/reason/effects but no separate failure statistics or generic recovery guidance/actions, including old deep links. Provider/network faults are not Metadata decisions. Mixed tasks count only current four-type problems, without false success, history rewriting or completed/uncertain replay. Administrative API/CLI recovery and native Automation readiness/authorization remain outside this presentation change. |
-| V2-OPS-017 | Explicit Files manual organizing admits a durable task before business-rule resolution; entry business checks are only same-source unfinished organizing work and explicit extension exclusion. | Single/multiple/folder/mixed selections do not require matching all rules, metadata/target/conflict readiness or an executable summary before admission. Merely unlisted suffixes and automatic include/exclude/rule readiness are not additional manual vetoes. Backend verified source ownership is atomic across manual/Automation/continuation work, including queued/paused/unresolved four-type recovery; filename or terminal history alone cannot prove a duplicate. Report duplicates/exclusions per item and preserve eligible siblings. Recognition/Metadata/Classification/Conflict problems arise inside the admitted task and complete their native recovery/counts under V2-OPS-016. Keep bounded/constrained sources, immutable pins, real stability before execution, full pipeline, exact in-task summary and explicit selected execution/destructive authority, capabilities/fences and completed/uncertain non-replay. Browsing/DryRun/analysis-only requests are not converted into manual organizing submissions and gain no execution authority. No forced default identity/target or changed Automation filtering/admission semantics. |
+| V2-OPS-017 | Explicit Files manual organizing admits a durable task before business-rule resolution; entry business checks are only same-source unfinished organizing work and explicit extension exclusion. | Single/multiple/folder/mixed selections do not require matching all rules, metadata/target/conflict readiness or an executable summary before admission. Merely unlisted suffixes and automatic include/exclude/rule readiness are not additional manual vetoes. Backend verified source ownership is atomic across manual/Automation/continuation work, including queued/paused/unresolved four-type recovery; filename or terminal history alone cannot prove a duplicate. Report duplicates/exclusions per item and preserve eligible siblings. Recognition/Metadata/Classification/Conflict problems arise inside the admitted task and complete their native recovery/counts under V2-OPS-016. Keep bounded/constrained sources, immutable pins, real stability before execution, full pipeline, exact in-task summary and explicit selected execution/destructive authority, capabilities/fences and completed/uncertain non-replay. Browsing/DryRun/analysis-only requests are not converted into manual organizing submissions and gain no execution authority. No forced default identity/target; Automation intent/Run once follows V2-AUTO-010/011 and retains its saved source filtering. |
+| V2-AUTO-010 | Checked Enabled publication supplies scoped scheduled execution intent; independent unattended grants and mandatory grant pre-analysis are removed. | All supported enable/publication entry points validate execution/configuration permissions and audit the exact saved definition/source/scope/limits for enable/enabled-successor intent. Normal due execution needs no separate grant or per-run click; enabling starts no immediate run. Disabled-first create/copy remains. Disabled/removed definitions and live permission loss stop future admission and unperformed scheduled effects at safe boundaries; no rollback. Existing enabled definitions use these semantics without old grants or re-enabling; old grants/revocations cannot override Enabled. Retain pins, immutable admitted context, optimistic concurrency, plan/capability/source/effect checks, idempotency and independent outcomes. Explicit overwrite/Delete/cleanup intent remains required. Reads/analysis/unrelated publication never fabricate execute intent or replay history. |
+| V2-AUTO-011 | Run once directly executes the saved Automation organizing definition once, admitting a task before business-rule readiness. | The explicit command binds current saved definition/principal/scope/pin and supplies one-run execution intent, without prior analysis/grant or a second initial summary/execute gate. Reuse the scheduled source scope/filtering, full pipeline and bounded complete enumeration; retain Run once's effective primary limit of min(definition itemLimit, 100) and existing traversal/evidence budgets. Ready items execute and four business blockers use native Task Center recovery/Attention/counts. Single-source ownership is atomic across manual/Run once/due/recovery work; unknown submissions reconcile exact identities. Disabled definitions can run once with execution permission without enabling or advancing the schedule. Empty/no-work, stability waiting, incomplete bounds and actual failures remain truthful; no first-N execution, forced identity/target, successful/uncertain replay or silent destructive escalation. Files manual summary/confirmation and four-type decision/analysis/explicit-continuation safety remain. One real run counts once; old analysis-only preparations are not auto-executed. |
 | V2-FILES-007 | Ordinary-file progress, results and supported recovery belong to the originating ResourceLibrary/MediaLibrary file page. | Create/rename/edit/Copy/Move/Delete do not send normal progress/recovery to Task Center. Bounded local access reopens multiple relevant operations and durable per-item results after close/reload/reconnect/service restart, including supported pre-existing work. Preserve exact kind/principal/source/pin, unknown-admission reconciliation, existing safe controls and completed/uncertain non-replay; hiding work never removes Tasks/results/audit or requires a new global center. |
 
 `V2-OPS-014–017` narrow the prior all-command discoverability of `V2-OPS-002`, the population of
@@ -69,10 +68,20 @@ only after ready-plan confirmation in `V2-OPS-006/010` and the CURRENT manual jo
 now precedes business resolution, while exact planning/confirmation still precedes media mutation.
 It also supersedes automatic include/exclude/match filtering as deliberate manual entry vetoes;
 explicit extension exclusions, source safety/stability and bounded traversal remain. Definition-bound
-Automation Run once/scheduled filtering and authority are not relaxed. For other Task Center
-failures, this explicit user amendment replaces generic repair guidance with factual read-only history, without removing durable evidence
-or administrative recovery capabilities. `V2-FILES-007` changes ordinary recovery ownership without weakening
+Automation keeps saved source filtering; its intent/admission sequence is replaced by V2-AUTO-010/011.
+For other Task Center failures, this explicit user amendment replaces generic repair guidance with
+factual read-only history, without removing durable evidence or administrative recovery capabilities.
+`V2-FILES-007` changes ordinary recovery ownership without weakening
 `V2-FILES-002/003`, `REQ-TASK-009/010`, RBAC, immutable pins, fences or durable results.
+
+`V2-AUTO-010/011` supersede the separate grant/pre-analysis requirements and analysis-then-confirm
+Run once in `V2-AUTO-002–004`, `V2-OPS-010/013`, and the V2 realization of `UX-006`,
+`REQ-SCHED-006/007` and `REQ-SAFE-008`. Scoped explicit intent is now checked enable/enabled-successor
+publication or the Run once command; independent revocation becomes scheduled disable/removal.
+Exact backend plans and execution checks still precede mutation; four-type recovery retains explicit
+safe continuation, and Files manual summary/confirmation remains. `V2-AUTO-005/006` counts/read-only
+records apply to real executions with the four-type-only attention amendment. This does not authorize
+a second execution engine, broad file authority, destructive defaults or historical work replay.
 
 ## Stable V2 requirements
 
