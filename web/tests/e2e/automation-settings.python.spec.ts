@@ -49,8 +49,14 @@ interface SettingsDocument {
     {
       readonly adopted: boolean;
       readonly instances: Array<{
+        readonly instanceId: string;
         readonly status: string;
         readonly effectiveValue: number | null;
+      }>;
+      readonly historyCount?: number;
+      readonly history?: Array<{
+        readonly instanceId: string;
+        readonly liveness: string;
       }>;
     }
   >;
@@ -186,6 +192,116 @@ test("a live resident consumer adopts the published cadence without a restart", 
   const after = await settingsDocument(page);
   expect(after.target!.values["automation.workerPollSeconds"]).toBe(nextValue);
   expect(after.consumers["worker"].adopted).toBe(true);
+});
+
+test("a graceful resident restart restores current adoption and keeps the predecessor as history", async ({
+  page,
+}) => {
+  // A43-01: the ordinary restart path must not let the stopped predecessor veto
+  // (or certify) the deployment-wide claim. Both entries are real: the consumers
+  // are the production ResidentLoop + adoption reporter, and the read is the
+  // real settings API the page itself calls.
+  const started = await page.request.post(
+    "/__harness__/start-resident-consumers",
+    { headers: { Authorization: `Bearer ${ADMIN_TOKEN}` } },
+  );
+  expect(started.ok()).toBe(true);
+
+  const published = await settingsDocument(page);
+  const schedulerPoll =
+    published.target!.values["automation.schedulerPollSeconds"];
+
+  // Publish a distinctly different Scheduler cadence through the checked Save.
+  const nextValue = schedulerPoll === 3 ? 4 : 3;
+  const saved = await page.request.put(SETTINGS_PATH, {
+    headers: {
+      Authorization: `Bearer ${ADMIN_TOKEN}`,
+      "Content-Type": "application/json",
+    },
+    data: {
+      settings: {
+        ...published.target!.values,
+        "automation.schedulerPollSeconds": nextValue,
+      },
+      expectedRevisionId: published.target!.revisionId,
+      expectedDigest: published.target!.digest,
+    },
+  });
+  expect(saved.status()).toBe(201);
+
+  const consumerIds = async (service: string): Promise<string[]> =>
+    (await settingsDocument(page)).consumers[service]!.instances.map(
+      (item) => item.instanceId,
+    );
+  await expect
+    .poll(
+      async () => (await settingsDocument(page)).adoption.adoptedConsumers,
+      { timeout: 30_000 },
+    )
+    .toBe(2);
+  const predecessor = (await consumerIds("scheduler"))[0]!;
+  expect(predecessor).toBeTruthy();
+
+  // The graceful stop + fresh replacement happens through one existing-style
+  // harness call that runs the production stop/register path.
+  const restarted = await page.request.post(
+    "/__harness__/restart-resident-consumer?service=scheduler",
+    { headers: { Authorization: `Bearer ${ADMIN_TOKEN}` } },
+  );
+  expect(restarted.ok()).toBe(true);
+
+  // The replacement is a new current consumer and the claim recovers without any
+  // operator workaround.
+  await expect
+    .poll(
+      async () => {
+        const document = await settingsDocument(page);
+        const ids = document.consumers["scheduler"]!.instances.map(
+          (item) => item.instanceId,
+        );
+        return {
+          allAdopted: document.adoption.allAdopted,
+          newIdentity: ids.length === 1 && ids[0] !== predecessor,
+        };
+      },
+      { timeout: 40_000 },
+    )
+    .toEqual({ allAdopted: true, newIdentity: true });
+
+  const after = await settingsDocument(page);
+  const history = after.consumers["scheduler"] as unknown as {
+    history?: Array<{ instanceId: string; liveness: string }>;
+    historyCount?: number;
+  };
+  expect(history.historyCount).toBe(1);
+  expect(history.history?.map((item) => item.instanceId)).toEqual([
+    predecessor,
+  ]);
+  expect(history.history?.[0]?.liveness).toBe("stopped");
+
+  // The page shows the same truth: the live replacement adopted, and the
+  // retained identity is folded into history rather than presented as a
+  // current consumer to "start up".
+  await connectOn(page, "/ui-v2/operations/automation?tab=settings");
+  const panel = page.getByRole("region", { name: "自动化引擎设置" });
+  await expect(panel).toBeVisible();
+  const schedulerAdoption = page.getByRole("region", {
+    name: "调度器轮询采用情况",
+  });
+  await expect(
+    schedulerAdoption.getByText("已采用当前发布值").first(),
+  ).toBeVisible({ timeout: 20_000 });
+  // History is folded diagnosis: expanding it is how the operator reads it, and
+  // the retained identity appears there rather than as a current consumer.
+  const historySummary = schedulerAdoption.getByText(/历史注册/);
+  await expect(historySummary).toBeVisible();
+  await historySummary.click();
+  await expect(schedulerAdoption.getByText(predecessor)).toBeVisible({
+    timeout: 20_000,
+  });
+  await expect(
+    panel.getByText(/全部相关常驻进程都已采用当前发布值/),
+  ).toBeVisible({ timeout: 20_000 });
 });
 
 test("a stale form is refused and the published Active is preserved", async ({

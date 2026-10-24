@@ -22,7 +22,7 @@ from mediaflow.domain.security import ApiPermission, ResolvedApiPrincipal
 from mediaflow.infrastructure.sqlite_configuration_management import (
     SQLiteConfigurationRepository,
 )
-from mediaflow.infrastructure.sqlite_runtime import SQLiteTaskRepository
+from mediaflow.infrastructure.sqlite_runtime import SCHEMA_VERSION, SQLiteTaskRepository
 from mediaflow.interfaces.service_api import MediaFlowApi
 
 ADMIN = ("admin", "admin-token")
@@ -1009,6 +1009,395 @@ class AutomationSettingsReconcileTests(unittest.TestCase):
         self.assertEqual(reconciled["state"], "not_committed")
         self.assertFalse(reconciled["committed"])
         self.assertFalse(reconciled["currentValuesMatchSubmission"])
+
+
+def _registration(instance_id: str, status: str, *, schema: int = 0, interval: float = 5.0):
+    from mediaflow.domain.automation_settings import ConsumerRegistrationState
+
+    return ConsumerRegistrationState(
+        service="worker",
+        instance_id=instance_id,
+        status=status,
+        runtime_schema_version=schema,
+        heartbeat_interval_seconds=interval,
+    )
+
+
+def _evidence(instance_id: str, digest: str, *, value: float = 2.0, override=None):
+    from datetime import UTC, datetime
+
+    from mediaflow.domain.automation_settings import ResidentSettingsEvidence
+
+    return ResidentSettingsEvidence(
+        service="worker",
+        instance_id=instance_id,
+        published_revision_id="rev-1",
+        published_revision_version=1,
+        published_revision_digest=digest,
+        applied_fields=("automation.workerPollSeconds",),
+        effective_values={"automation.workerPollSeconds": value},
+        override_source=override,
+        reported_at=datetime.now(UTC),
+    )
+
+
+def _target(digest: str = "digest-1"):
+    from mediaflow.domain.automation_settings import (
+        AutomationEngineValues,
+        PublishedEngineTarget,
+    )
+
+    return PublishedEngineTarget(
+        revision_id="rev-1",
+        revision_version=1,
+        digest=digest,
+        values=AutomationEngineValues(
+            maximum_active_jobs=100,
+            stale_job_age_seconds=3600,
+            worker_poll_seconds=2.0,
+            scheduler_poll_seconds=5.0,
+        ),
+    )
+
+
+class CurrentConsumerPopulationTests(unittest.TestCase):
+    """A43-01 at the pure decision boundary.
+
+    The current population is exactly the fresh-at-read registrations.  A
+    stopped/stale predecessor is retained history: it can neither veto nor
+    certify the current state, and an unreadable read is unproven rather than
+    an empty (apparently healthy) population.
+    """
+
+    def evaluate(self, registrations, evidence=(), **extra):
+        from datetime import UTC, datetime
+
+        from mediaflow.domain.automation_settings import evaluate_consumer_adoption
+
+        return evaluate_consumer_adoption(
+            service="worker",
+            field_path="automation.workerPollSeconds",
+            target=_target(),
+            registrations=tuple(registrations),
+            evidence=tuple(evidence),
+            now=datetime.now(UTC),
+            expected_schema_version=0,
+            stale_threshold_seconds=30.0,
+            **extra,
+        )
+
+    def test_stopped_predecessor_cannot_veto_a_healthy_replacement(self) -> None:
+        result = self.evaluate(
+            [_registration("worker-old", "stopped"), _registration("worker-new", "live")],
+            [
+                _evidence("worker-old", "digest-1"),
+                _evidence("worker-new", "digest-1"),
+            ],
+        )
+        self.assertTrue(result["adopted"])
+        self.assertEqual(result["instanceCount"], 1)
+        self.assertEqual([item["instanceId"] for item in result["instances"]], ["worker-new"])
+        self.assertEqual(result["historyCount"], 1)
+        self.assertEqual(result["history"][0]["instanceId"], "worker-old")
+        self.assertEqual(result["history"][0]["liveness"], "stopped")
+        # History is never told to start the obsolete process.
+        self.assertIn("retained, stopped registration", result["history"][0]["nextAction"])
+
+    def test_stopped_only_population_is_never_success(self) -> None:
+        result = self.evaluate(
+            [_registration("worker-old", "stopped")],
+            [_evidence("worker-old", "digest-1")],
+        )
+        self.assertFalse(result["adopted"])
+        self.assertEqual(result["instances"], [])
+        self.assertEqual(result["historyCount"], 1)
+        self.assertEqual(result["durableState"], "no_current_consumer")
+        self.assertIn("fresh heartbeat", result["nextAction"])
+        self.assertNotIn("start this service", result["nextAction"])
+
+    def test_stale_predecessor_does_not_block_a_fresh_live_instance(self) -> None:
+        result = self.evaluate(
+            [_registration("worker-stale", "stale"), _registration("worker-live", "live")],
+            [
+                _evidence("worker-stale", "digest-1"),
+                _evidence("worker-live", "digest-1"),
+            ],
+        )
+        self.assertTrue(result["adopted"])
+        self.assertEqual(result["history"][0]["liveness"], "stale")
+        self.assertIn("rejoins the current checks", result["history"][0]["nextAction"])
+
+    def test_stale_only_population_stays_pending_not_adopted(self) -> None:
+        result = self.evaluate(
+            [_registration("worker-stale", "stale")],
+            [_evidence("worker-stale", "digest-1")],
+        )
+        self.assertFalse(result["adopted"])
+        self.assertEqual(result["durableState"], "no_current_consumer")
+
+    def test_no_registration_is_distinct_from_an_unreadable_read(self) -> None:
+        empty = self.evaluate([])
+        self.assertEqual(empty["durableState"], "no_consumer_registered")
+        self.assertIn("start it so it registers", empty["nextAction"])
+        failed = self.evaluate([], registration_read_failed=True)
+        self.assertFalse(failed["adopted"])
+        self.assertEqual(failed["durableState"], "consumer_registration_unreadable")
+        self.assertIn("could not be read", failed["nextAction"])
+
+    def test_unreadable_evidence_is_unproven_rather_than_unreported(self) -> None:
+        result = self.evaluate([_registration("worker-live", "live")], evidence_read_failed=True)
+        self.assertFalse(result["adopted"])
+        self.assertEqual(result["durableState"], "consumer_evidence_unreadable")
+        self.assertEqual(result["instances"], [])
+
+    def test_every_live_instance_is_checked_including_override_and_old_value(self) -> None:
+        result = self.evaluate(
+            [
+                _registration("worker-a", "live"),
+                _registration("worker-b", "live"),
+                _registration("worker-c", "live"),
+            ],
+            [
+                _evidence("worker-a", "digest-1"),
+                _evidence("worker-b", "digest-1", override="cli"),
+                _evidence("worker-c", "digest-older"),
+            ],
+        )
+        self.assertFalse(result["adopted"])
+        self.assertEqual(result["instanceCount"], 3)
+        statuses = {item["instanceId"]: item["status"] for item in result["instances"]}
+        self.assertEqual(
+            statuses,
+            {"worker-a": "adopted", "worker-b": "override", "worker-c": "pending"},
+        )
+        self.assertEqual(result["durableState"], "current_consumers_pending")
+
+    def test_one_healthy_instance_never_hides_anothers_missing_report(self) -> None:
+        result = self.evaluate(
+            [_registration("worker-a", "live"), _registration("worker-b", "live")],
+            [_evidence("worker-a", "digest-1")],
+        )
+        self.assertFalse(result["adopted"])
+        statuses = {item["instanceId"]: item["status"] for item in result["instances"]}
+        self.assertEqual(statuses, {"worker-a": "adopted", "worker-b": "unreported"})
+
+    def test_reappearing_fresh_instance_rejoins_the_current_checks(self) -> None:
+        # The same registration reads stale now and live again after a later
+        # heartbeat: membership is derived at read time, never pinned.
+        stale = self.evaluate([_registration("worker-1", "stale")])
+        self.assertFalse(stale["adopted"])
+        live = self.evaluate(
+            [_registration("worker-1", "live")], [_evidence("worker-1", "digest-1")]
+        )
+        self.assertTrue(live["adopted"])
+        self.assertEqual(live["historyCount"], 0)
+
+    def test_history_is_bounded_but_reports_the_real_total(self) -> None:
+        from mediaflow.domain.automation_settings import MAX_CONSUMER_HISTORY_ENTRIES
+
+        total = MAX_CONSUMER_HISTORY_ENTRIES + 5
+        result = self.evaluate(
+            [_registration(f"worker-{index:03d}", "stopped") for index in range(total)]
+        )
+        self.assertEqual(result["historyCount"], total)
+        self.assertEqual(len(result["history"]), MAX_CONSUMER_HISTORY_ENTRIES)
+        self.assertFalse(result["adopted"])
+
+
+class AutomationSettingsMembershipReadTests(unittest.TestCase):
+    """The same rule through the real WSGI settings read."""
+
+    def setUp(self) -> None:
+        self._temporary = tempfile.TemporaryDirectory()
+        self.addCleanup(self._temporary.cleanup)
+        self.fixture = SettingsFixture(self._temporary.name)
+        self.addCleanup(self.fixture.close)
+
+    def register(self, instance_id: str, service: str, *, heartbeat_age_seconds: float):
+        from datetime import UTC, datetime, timedelta
+
+        from mediaflow.domain.resident_services import (
+            ResidentServiceStatus,
+            evaluate_resident_service_status,
+        )
+
+        repository = self.fixture.repository
+        now = datetime.now(UTC)
+        registration = repository.register_resident_service(
+            service,
+            instance_id,
+            5.0,
+            SCHEMA_VERSION,
+            None,
+            now - timedelta(seconds=heartbeat_age_seconds),
+        )
+        return (
+            registration,
+            evaluate_resident_service_status(registration, now),
+            ResidentServiceStatus,
+        )
+
+    def test_read_exposes_current_instances_apart_from_retained_history(self) -> None:
+        from datetime import UTC, datetime
+
+        from mediaflow.domain.automation_settings import ResidentSettingsEvidence
+
+        active = self.fixture.configuration.active()
+        target = active.document["automation"]
+        for instance_id, service, field, value in (
+            (
+                "worker-history-stopped",
+                "worker",
+                "automation.workerPollSeconds",
+                "workerPollSeconds",
+            ),
+            ("worker-current-live", "worker", "automation.workerPollSeconds", "workerPollSeconds"),
+            (
+                "scheduler-current-live",
+                "scheduler",
+                "automation.schedulerPollSeconds",
+                "schedulerPollSeconds",
+            ),
+        ):
+            self.register(instance_id, service, heartbeat_age_seconds=0.0)
+            self.fixture.repository.record_resident_settings_adoption(
+                ResidentSettingsEvidence(
+                    service=service,
+                    instance_id=instance_id,
+                    published_revision_id=active.revision_id,
+                    published_revision_version=active.revision_sequence or active.version,
+                    published_revision_digest=active.digest,
+                    applied_fields=(field,),
+                    effective_values={field: float(target[value])},
+                    override_source=None,
+                    reported_at=datetime.now(UTC),
+                )
+            )
+        # A graceful stop of the Worker predecessor, exactly like the real
+        # restart path: the row is retained, never deleted.
+        self.fixture.repository.stop_resident_service("worker-history-stopped", datetime.now(UTC))
+        status, data = request(self.fixture.api, SETTINGS)
+        self.assertEqual(status, 200, data)
+        worker = data["consumers"]["worker"]
+        self.assertTrue(worker["adopted"])
+        self.assertEqual(
+            [item["instanceId"] for item in worker["instances"]], ["worker-current-live"]
+        )
+        self.assertEqual(worker["instanceCount"], 1)
+        self.assertEqual(worker["historyCount"], 1)
+        self.assertEqual(worker["history"][0]["instanceId"], "worker-history-stopped")
+        # Both live roles adopted, so the deployment-wide claim is now true.
+        self.assertTrue(data["adoption"]["allAdopted"])
+        self.assertEqual(data["adoption"]["consumers"], 2)
+        self.assertEqual(data["adoption"]["adoptedConsumers"], 2)
+
+    def test_stopped_only_service_reports_no_current_adoption(self) -> None:
+        from datetime import UTC, datetime
+
+        self.register("worker-old", "worker", heartbeat_age_seconds=0.0)
+        self.fixture.repository.stop_resident_service("worker-old", datetime.now(UTC))
+        status, data = request(self.fixture.api, SETTINGS)
+        self.assertEqual(status, 200, data)
+        worker = data["consumers"]["worker"]
+        self.assertFalse(worker["adopted"])
+        self.assertEqual(worker["instances"], [])
+        self.assertEqual(worker["historyCount"], 1)
+        self.assertEqual(worker["durableState"], "no_current_consumer")
+        self.assertFalse(data["adoption"]["allAdopted"])
+
+    def test_unreadable_registration_is_unproven_not_empty(self) -> None:
+        from unittest.mock import patch
+
+        with patch.object(
+            self.fixture.repository,
+            "list_resident_services",
+            side_effect=RuntimeError("database is unavailable"),
+        ):
+            status, data = request(self.fixture.api, SETTINGS)
+        self.assertEqual(status, 200, data)
+        for service in ("worker", "scheduler"):
+            self.assertFalse(data["consumers"][service]["adopted"])
+            self.assertEqual(
+                data["consumers"][service]["durableState"],
+                "consumer_registration_unreadable",
+            )
+        # The collection is not claimed as a healthy empty deployment.
+        self.assertFalse(data["adoption"]["allAdopted"])
+
+    def test_unreadable_evidence_page_is_unproven(self) -> None:
+        from unittest.mock import patch
+
+        self.register("worker-live", "worker", heartbeat_age_seconds=0.0)
+        with patch.object(
+            self.fixture.repository,
+            "list_resident_settings_adoption",
+            side_effect=RuntimeError("evidence page unreadable"),
+        ):
+            status, data = request(self.fixture.api, SETTINGS)
+        self.assertEqual(status, 200, data)
+        worker = data["consumers"]["worker"]
+        self.assertFalse(worker["adopted"])
+        self.assertEqual(worker["durableState"], "consumer_evidence_unreadable")
+
+    def test_expired_heartbeat_leaves_the_current_checks_and_a_fresh_one_rejoins(self) -> None:
+        """Freshness is derived per read, and it is never extended by a read."""
+
+        from datetime import UTC, datetime, timedelta
+
+        from mediaflow.domain.automation_settings import ResidentSettingsEvidence
+
+        active = self.fixture.configuration.active()
+        values = active.document["automation"]
+        stale_at = datetime.now(UTC) - timedelta(seconds=120)
+        self.fixture.repository.register_resident_service(
+            "worker", "worker-flapping", 5.0, SCHEMA_VERSION, None, stale_at
+        )
+        self.fixture.repository.record_resident_settings_adoption(
+            ResidentSettingsEvidence(
+                service="worker",
+                instance_id="worker-flapping",
+                published_revision_id=active.revision_id,
+                published_revision_version=active.revision_sequence or active.version,
+                published_revision_digest=active.digest,
+                applied_fields=("automation.workerPollSeconds",),
+                effective_values={
+                    "automation.workerPollSeconds": float(values["workerPollSeconds"])
+                },
+                override_source=None,
+                reported_at=datetime.now(UTC),
+            )
+        )
+        status, expired = request(self.fixture.api, SETTINGS)
+        self.assertEqual(status, 200, expired)
+        worker = expired["consumers"]["worker"]
+        # The expired heartbeat is retained history: not a current consumer, and
+        # its old adopted report cannot certify current consumption.
+        self.assertFalse(worker["adopted"])
+        self.assertEqual(worker["instances"], [])
+        self.assertEqual(worker["historyCount"], 1)
+        self.assertEqual(worker["history"][0]["liveness"], "stale")
+
+        # A later fresh heartbeat makes that same identity subject to the current
+        # checks again — the current population is derived, never pinned.
+        self.fixture.repository.heartbeat_resident_service("worker-flapping", datetime.now(UTC))
+        status, revived = request(self.fixture.api, SETTINGS)
+        self.assertEqual(status, 200, revived)
+        worker = revived["consumers"]["worker"]
+        self.assertEqual([item["instanceId"] for item in worker["instances"]], ["worker-flapping"])
+        self.assertEqual(worker["historyCount"], 0)
+        self.assertTrue(worker["adopted"])
+
+    def test_reads_still_create_no_draft_job_or_grant(self) -> None:
+        self.register("worker-live", "worker", heartbeat_age_seconds=0.0)
+        before_revisions = len(self.fixture.configuration.repository.list_revisions())
+        for _ in range(3):
+            request(self.fixture.api, SETTINGS)
+        self.assertEqual(
+            len(self.fixture.configuration.repository.list_revisions()), before_revisions
+        )
+        self.assertEqual(tuple(self.fixture.repository.list_jobs()), ())
+        # Retained registrations were not deleted or rewritten by a read.
+        self.assertEqual(len(self.fixture.repository.list_resident_services()), 1)
 
 
 if __name__ == "__main__":

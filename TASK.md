@@ -195,8 +195,113 @@ standalone Preview or FileIndex; Slice/Roadmap boundaries or closure; next featu
 
 ## Developer Completion Report
 
-Pending correction. Supply immutable checkpoint SHA, READY FOR B REVIEW, concise behavior/files,
-actual affected commands/results and remaining risks. Keep fixes in this same Task; do not self-PASS.
+```text
+Task: 43.4 / A43-01 correction (no new Task, no scope change)
+Checkpoint: 20baaea..HEAD of this commit (source identity below)
+Decision: READY FOR B REVIEW — not self-PASSED, not CLOSED
+Base reviewed by B: f18d2444f548b81b5892536498a1b4cdd4400be8 (unchanged)
+Test Level: T4 (B retains full regression); Developer ran affected checks only
+```
+
+### Behaviour delivered (A43-01)
+
+One current-population rule now governs the shared read model, replacing the
+historical "every registration must be adopted" aggregate:
+
+- **Current membership is derived at read time** from the existing registration
+  lifecycle + heartbeat freshness (`evaluate_resident_service_status`). Every
+  fresh live Worker/Scheduler instance is a current consumer and must satisfy the
+  existing per-instance checks (own fresh report, exact publication digest/value,
+  compatible runtime schema, no CLI/deployment override). One healthy replica
+  cannot hide another's pending/old/unreported/override/incompatible state; the
+  latest registration, a single success, matching values and the newest evidence
+  page are never used as membership.
+- **Retained history is diagnostic only.** `stopped` / expired-heartbeat
+  registrations stay durable and are projected as bounded `history` with the real
+  `historyCount`, so a truncated list can never look complete. History can neither
+  veto nor certify adoption, and its recovery text never tells the operator to
+  start an obsolete process. No registration/report row is deleted, overwritten,
+  or schema-changed; freshness thresholds are unchanged, and a later fresh
+  heartbeat makes that same instance subject to the current checks again.
+- **Fail-closed reads.** An unreadable registration read or unreadable adoption
+  evidence for a service is reported as `consumer_registration_unreadable` /
+  `consumer_evidence_unreadable` with a next action, never flattened to an empty
+  (apparently healthy) population. Absent, stopped-only and stale-only
+  populations report `no_consumer_registered` / `no_current_consumer` and never
+  collective success. No-live/stale thresholds are not extended.
+- **Web/API agree.** The typed normalizer adds `historyCount`/`history`/
+  `durableState`/`nextAction`, keeps the conservative contradictory-response
+  guard, and additionally refuses a claim whose `instanceCount` disagrees with its
+  rows or that mixes a live row into history. The panel shows current instances
+  separately from a folded "历史注册" diagnostic section, distinguishes "no live
+  instance" (with heartbeat/database guidance) from "never registered" (start it),
+  and surfaces the aggregate's own next action/durable state. Both entrances
+  (Automation tab and System Settings) use this same component.
+- Verified unchanged: Save/RBAC/concurrency/audit/override/pins/heartbeat/fencing,
+  completed/uncertain non-replay, Accepted45 retirements, zero Draft/Job/Task/
+  grant/Provider/Storage effect from reads or restarts.
+
+### Files
+
+```text
+mediaflow/domain/automation_settings.py             current population + history + read-failure answer
+mediaflow/application/automation_settings.py        resident read state, evidence read failures, API shape
+scripts/operations_inventory_harness.py             + POST /__harness__/restart-resident-consumer (production
+                                                    stop/register path only; harness infra, not a product route)
+web/src/entities/operations/automation-settings.ts  history/durableState/nextAction + contradiction guards
+web/src/features/operations/AutomationSettingsPanel.tsx  current vs history presentation + recovery copy
+docs/architecture.md                                CURRENT contract: membership/readback/history rule
+tests/test_automation_settings_resident.py          real restart/replica/override/later-publication proofs
+tests/test_automation_settings_management.py        pure decision matrix + real WSGI read matrix
+web/src/entities/operations/automation-settings.test.ts       normalizer matrix (new file)
+web/src/features/operations/AutomationSettingsPage.test.tsx   current/history/contradiction/no-live UI
+web/tests/e2e/automation-settings.python.spec.ts     real-Python restart → readback journey
+```
+
+### Actual commands and results (this round)
+
+```bash
+python3 scripts/check_governance.py                              # PASS at entry
+.venv/bin/python -m unittest tests.test_automation_settings_management \
+    tests.test_automation_settings_resident tests.test_resident_services \
+    tests.test_resident_correction tests.test_system_settings_management
+    # Ran 133 tests, OK (56.5s) — includes the 4 new real-process A43-01 cases
+.venv/bin/python -m unittest <new A43-01 cases> # RED on pre-correction domain/application (verified by
+    # temporarily restoring only those two files): real restart aggregate stayed 1/2 and
+    # the stopped predecessor still vetoed; GREEN after the fix.
+npm --prefix web run test -- run src/features/operations/AutomationSettingsPage.test.tsx \
+    src/features/configuration/ConfigurationPage.test.tsx \
+    src/features/operations/AutomationRouter.test.tsx \
+    src/entities/operations/automation-settings.test.ts        # 4 files / 65 tests passed
+npm --prefix web run test -- run src/features/operations/  # 21 files / 237 tests passed
+npm --prefix web run test -- run src/features/configuration/  # 1 file / 21 tests passed
+npm --prefix web run typecheck                                  # clean (app + node configs)
+npm --prefix web run build                                      # production assets built
+# cwd web, production assets, isolated real-Python harness:
+npm run test:e2e -- --config=playwright.python.automation.config.ts \
+    tests/e2e/automation-settings.python.spec.ts                # 12 passed (11.6s)
+.venv/bin/python -m ruff format --check / check <changed py + harness>   # clean
+.venv/bin/python -m compileall <changed py>                     # OK
+npx prettier --check / eslint <changed ts/tsx>                   # clean
+```
+
+Evidence: `.git/validation-evidence/dev-43.4-a43-01/` (base head, entry status,
+python-affected.log, web-unit.log, e2e-settings.log).
+
+### Remaining risks / not done by Developer
+
+- B owns full T4 regression, production-asset journeys, wheel/installed consumer,
+  Docker empty-baseline/restart-fault/release-security and independent desktop +
+  narrow visual review; none of those are claimed here.
+- The harness restart route is test infrastructure around the real
+  `ResidentLoop` stop/`register_resident_process` path (as the existing
+  start-consumers route already was); it is not a product endpoint and must be
+  reviewed as such. Real CLI `worker/scheduler run` restart is covered by the
+  Python real-process cases, not by the browser spec.
+- History is bounded to `MAX_CONSUMER_HISTORY_ENTRIES` (20) per service with the
+  real total in `historyCount`; a deployment with very many historical identities
+  sees a truncated diagnostic list by design (no new history browser/retention
+  product was added, per non-goals).
 
 ## B Review Result
 

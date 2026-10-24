@@ -665,7 +665,8 @@ engine-settings publication and resident adoption below are delivered by Task 43
 ```text
 GET /api/v1/operations/automation/settings   READ
   → published target (Active revision id/version/digest + the four values)
-  → per-consumer adoption (each resident instance's own report)
+  → per-consumer adoption (each *current* resident instance's own report)
+  → bounded retained stopped/stale history as diagnostics only
 
 PUT /api/v1/operations/automation/settings   MANAGE_CONFIGURATION
   → strict four-field normalization (no other key, no bool/fractional/non-finite)
@@ -756,6 +757,26 @@ as unreported, and a later publication is never mistaken for an older adoption
 because the row carries the publication identity it adopted. The collective claim
 covers only the two resident cadence consumers; the API-local capacity/stale
 basis is projected separately and never inflates a polling-adoption statement.
+
+Current consumer membership is derived at read time from the existing
+registration lifecycle and heartbeat freshness, never from a stored flag, the
+newest registration only, one successful report, matching values, or a bounded
+evidence page. Every registration that is live at the read timestamp is a current
+consumer and must satisfy its own adoption checks — including an overridden,
+unreported, incompatible-schema or older-publication instance — so one healthy
+replica can never hide another's pending state. A registration that is `stopped`
+or has an expired heartbeat is retained history: it stays visible as bounded
+diagnostics (`historyCount` is the real total, `history` the bounded page) with a
+diagnostic next action, and it can neither veto nor certify the current
+population, so a fresh replacement or a recovered process restores the
+collective claim without touching the predecessor row. The same instance rejoins
+the current checks as soon as it heartbeats freshly again; freshness thresholds
+and the registration/report rows are unchanged. Empty, stopped-only, stale-only,
+unreadable-registration and unreadable-evidence reads are all explicitly
+unproven rather than an empty (apparently healthy) population, and the Web
+normalizer refuses a document whose collective flag contradicts its instance
+evidence, whose `instanceCount` disagrees with the rows it carries, or that mixes
+a live row into history.
 
 Explicit non-goals that this delivery does not change: the admission pool is not
 replaced, no new concurrency control or process supervisor is added, a poll

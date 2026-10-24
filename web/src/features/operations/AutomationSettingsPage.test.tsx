@@ -2329,6 +2329,213 @@ describe("Automation engine settings surface", () => {
     expect(within(panel).queryByText(/尚未整体采用/)).toBeNull();
   });
 
+  it("labels a retained stopped predecessor as history, not as a current consumer", async () => {
+    // A43-01: a graceful restart leaves the old identity durable. The page must
+    // show the fresh replacement as the only current consumer, and the retained
+    // stopped row as history whose recovery never says "start this process".
+    recordingFetch((call) => {
+      if (call.url.includes("/operations/automation/settings")) {
+        return jsonResponse(
+          settingsDocument({
+            adoption: { consumers: 2, adoptedConsumers: 2, allAdopted: true },
+            consumers: {
+              worker: {
+                service: "worker",
+                field: "automation.workerPollSeconds",
+                publishedValue: 2,
+                adopted: true,
+                instanceCount: 1,
+                historyCount: 1,
+                history: [
+                  {
+                    instanceId: "worker-stopped-1",
+                    liveness: "stopped",
+                    durableState: "historical_registration_stopped",
+                    nextAction:
+                      "this identity is a retained, stopped registration and not a current consumer",
+                  },
+                ],
+                instances: [
+                  instance("adopted", { instanceId: "worker-live-2" }),
+                ],
+                durableState: "adopted_current_publication",
+                nextAction: "none",
+              },
+              scheduler: {
+                service: "scheduler",
+                field: "automation.schedulerPollSeconds",
+                publishedValue: 5,
+                adopted: true,
+                instanceCount: 1,
+                historyCount: 0,
+                history: [],
+                instances: [
+                  instance("adopted", { instanceId: "scheduler-live-2" }),
+                ],
+                durableState: "adopted_current_publication",
+                nextAction: "none",
+              },
+            },
+          }),
+        );
+      }
+      if (call.url.includes("/operations/automation/task-definitions")) {
+        return jsonResponse(automationInventory());
+      }
+      if (call.url.includes("/operations/automation/metrics")) {
+        return jsonResponse({ available: false });
+      }
+      if (call.url.includes("/operations/automation/records")) {
+        return jsonResponse({ items: [], total: 0 });
+      }
+      return undefined;
+    });
+    await connect("/ui-v2/operations/automation?tab=settings");
+    const panel = await screen.findByRole("region", { name: "自动化引擎设置" });
+    const workerAdoption = screen.getByRole("region", {
+      name: "Worker 轮询采用情况",
+    });
+    // The live replacement is the current consumer and is adopted.
+    expect(within(workerAdoption).getByText("worker-live-2")).toBeTruthy();
+    expect(within(workerAdoption).getAllByText("已采用当前发布值").length).toBe(
+      1,
+    );
+    // The stopped predecessor appears only in the folded history section.
+    expect(within(workerAdoption).getByText(/历史注册/)).toBeTruthy();
+    expect(within(workerAdoption).getByText("worker-stopped-1")).toBeTruthy();
+    expect(within(workerAdoption).queryByText("进程已停止")).toBeNull();
+    // A healthy replacement means the deployment-wide claim is true.
+    expect(
+      within(panel).getByText("全部相关常驻进程都已采用当前发布值"),
+    ).toBeTruthy();
+  });
+
+  it("refuses a document that mixes a current consumer with a live history row", async () => {
+    recordingFetch((call) => {
+      if (call.url.includes("/operations/automation/settings")) {
+        return jsonResponse(
+          settingsDocument({
+            adoption: { consumers: 2, adoptedConsumers: 2, allAdopted: true },
+            consumers: {
+              worker: {
+                service: "worker",
+                field: "automation.workerPollSeconds",
+                publishedValue: 2,
+                adopted: true,
+                instanceCount: 1,
+                historyCount: 1,
+                history: [
+                  {
+                    instanceId: "worker-claimed-live",
+                    liveness: "live",
+                    durableState: "adopted_current_publication",
+                    nextAction: "none",
+                  },
+                ],
+                instances: [instance("adopted", { instanceId: "worker-live" })],
+              },
+              scheduler: {
+                service: "scheduler",
+                field: "automation.schedulerPollSeconds",
+                publishedValue: 5,
+                adopted: true,
+                instanceCount: 1,
+                historyCount: 0,
+                history: [],
+                instances: [
+                  instance("adopted", { instanceId: "scheduler-live" }),
+                ],
+              },
+            },
+          }),
+        );
+      }
+      if (call.url.includes("/operations/automation/task-definitions")) {
+        return jsonResponse(automationInventory());
+      }
+      if (call.url.includes("/operations/automation/metrics")) {
+        return jsonResponse({ available: false });
+      }
+      if (call.url.includes("/operations/automation/records")) {
+        return jsonResponse({ items: [], total: 0 });
+      }
+      return undefined;
+    });
+    await connect("/ui-v2/operations/automation?tab=settings");
+    const panel = await screen.findByRole("region", { name: "自动化引擎设置" });
+    // Contradictory populations never become a collective success claim.
+    expect(within(panel).getAllByText(/尚未整体采用/).length).toBeGreaterThan(
+      0,
+    );
+    expect(
+      within(panel).queryByText("全部相关常驻进程都已采用当前发布值"),
+    ).toBeNull();
+  });
+
+  it("states no current adoption and actionable recovery when nothing is live", async () => {
+    recordingFetch((call) => {
+      if (call.url.includes("/operations/automation/settings")) {
+        return jsonResponse(
+          settingsDocument({
+            consumers: {
+              worker: {
+                service: "worker",
+                field: "automation.workerPollSeconds",
+                publishedValue: 2,
+                adopted: false,
+                instanceCount: 0,
+                historyCount: 1,
+                history: [
+                  {
+                    instanceId: "worker-stopped-1",
+                    liveness: "stopped",
+                    durableState: "historical_registration_stopped",
+                    nextAction:
+                      "this identity is a retained, stopped registration and not a current consumer",
+                  },
+                ],
+                instances: [],
+                durableState: "no_current_consumer",
+                nextAction:
+                  "no live worker instance has a fresh heartbeat, so no current adoption is proved",
+              },
+              scheduler: settingsDocument()["consumers"] as Json,
+            },
+          }),
+        );
+      }
+      if (call.url.includes("/operations/automation/task-definitions")) {
+        return jsonResponse(automationInventory());
+      }
+      if (call.url.includes("/operations/automation/metrics")) {
+        return jsonResponse({ available: false });
+      }
+      if (call.url.includes("/operations/automation/records")) {
+        return jsonResponse({ items: [], total: 0 });
+      }
+      return undefined;
+    });
+    await connect("/ui-v2/operations/automation?tab=settings");
+    const workerAdoption = await screen.findByRole("region", {
+      name: "Worker 轮询采用情况",
+    });
+    expect(
+      within(workerAdoption).getByText(/当前没有该服务的存活实例/),
+    ).toBeTruthy();
+    expect(
+      within(workerAdoption).getByText(
+        /no live worker instance has a fresh heartbeat/,
+      ),
+    ).toBeTruthy();
+    // The retained identity is offered as diagnosis only.
+    expect(
+      within(workerAdoption).getAllByText(/历史注册/).length,
+    ).toBeGreaterThan(0);
+    expect(
+      within(workerAdoption).queryByText(/该服务的全部当前实例/),
+    ).toBeNull();
+  });
+
   it("keeps the form read-only without manage-permission", async () => {
     recordingFetch((call) => {
       if (call.url.includes("/operations/automation/settings")) {

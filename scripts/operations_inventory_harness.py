@@ -50,7 +50,13 @@ infrastructure, not product endpoints, and never touch product documents):
   so the browser can prove that a visible terminal-only inventory refreshes;
 - ``POST /__harness__/restart`` closes and reopens the runtime database and
   API object over the same file, which is exactly what a process restart does
-  to durable state.
+  to durable state;
+- ``POST /__harness__/start-resident-consumers`` starts the production
+  ``ResidentLoop`` cadence adoption/reporting consumers for Worker and
+  Scheduler, and ``POST /__harness__/restart-resident-consumer?service=…``
+  gracefully stops one of them and starts a fresh replacement through the same
+  production registration path, so the settings readback is proved over the
+  ordinary restart boundary and the predecessor row stays retained.
 
 The run-detail result-package export is served by the shared package-exchange
 authority; it reads durable Task/Result rows and writes one best-effort audit
@@ -5455,6 +5461,40 @@ def harness_start_resident_consumer(state: AppState) -> dict[str, object]:
     return {"started": True, "consumers": [item._service for item in consumers]}
 
 
+def harness_restart_resident_consumer(state: AppState, service: str) -> dict[str, object]:
+    """Gracefully stop one real consumer and start its replacement.
+
+    This is the ordinary restart path reduced to one call for the browser proof:
+    the stopped consumer's loop finishes its ``finally`` and records its own
+    durable stop, and the replacement registers through the same production
+    ``register_resident_process`` entry with a brand-new instance identity.
+    Nothing deletes the predecessor row, so the readback must keep it as history.
+    """
+
+    if state.resident_consumers is None:
+        return {"error": "no resident consumers were started"}
+    if service not in {"worker", "scheduler"}:
+        return {"error": "service must be worker or scheduler"}
+    field_path = (
+        "automation.workerPollSeconds" if service == "worker" else "automation.schedulerPollSeconds"
+    )
+    retained: list[_HarnessResidentConsumer] = []
+    replaced = False
+    for consumer in state.resident_consumers:
+        if consumer._service != service:
+            retained.append(consumer)
+            continue
+        consumer.stop()
+        replacement = _HarnessResidentConsumer(state, service, field_path)
+        replacement.start()
+        retained.append(replacement)
+        replaced = True
+    if not replaced:
+        return {"error": "service was not running"}
+    state.resident_consumers = tuple(retained)
+    return {"restarted": True, "service": service}
+
+
 def application(environ, start_response):
     path = str(environ.get("PATH_INFO", ""))
     if path.startswith("/__harness__/") and STATE is not None:
@@ -5618,6 +5658,9 @@ def application(environ, start_response):
             document = crowd_automation_command_trail(STATE, edits=requested_edits)
         elif path == "/__harness__/start-resident-consumers" and method == "POST":
             document = harness_start_resident_consumer(STATE)
+        elif path == "/__harness__/restart-resident-consumer" and method == "POST":
+            query = urllib.parse.parse_qs(str(environ.get("QUERY_STRING", "")))
+            document = harness_restart_resident_consumer(STATE, (query.get("service") or [""])[0])
         elif path == "/__harness__/restart" and method == "POST":
             STATE.restart()
             document = {"restarted": True}

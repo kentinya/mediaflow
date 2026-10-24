@@ -480,13 +480,25 @@ class ResidentSettingsEvidence:
 
 @dataclass(frozen=True)
 class ConsumerRegistrationState:
-    """The minimum liveness/schema facts an adoption answer needs."""
+    """The minimum liveness/schema facts an adoption answer needs.
+
+    ``status`` is the *freshness derived at the read timestamp*, not a historical
+    fact: an instance whose heartbeat expired reads ``stale`` now and reads
+    ``live`` again as soon as it heartbeats again, which is exactly what makes a
+    fresh replacement or a recovered process rejoin the current checks.
+    """
 
     service: str
     instance_id: str
     status: str  # "live" | "stale" | "stopped"
     runtime_schema_version: int
     heartbeat_interval_seconds: float
+
+
+#: How many retained historical registrations are still projected for diagnosis.
+#: This bounds the document, never the truth: ``historyCount`` carries the real
+#: total so a truncated diagnostic list can never look like a complete one.
+MAX_CONSUMER_HISTORY_ENTRIES = 20
 
 
 def evaluate_consumer_adoption(
@@ -499,18 +511,54 @@ def evaluate_consumer_adoption(
     now: datetime,
     expected_schema_version: int,
     stale_threshold_seconds: float,
+    registration_read_failed: bool = False,
+    evidence_read_failed: bool = False,
 ) -> dict[str, object]:
     """One truthful per-consumer adoption answer for one polling field.
 
-    Every live instance of the consumer is projected separately: a deployment is
-    never reported as collectively adopted because one instance (or the API's own
-    binding) reported a value.  Unreported, stale, stopped, schema-incompatible
-    and overridden instances each keep their own explicit state and next action.
+    Two populations are deliberately kept apart:
+
+    * **current consumers** — every instance whose own registration is *fresh at
+      this read timestamp* (``live``), whether it reports a desirable value or
+      not.  Only these can prove or refuse the collective adoption, so a real
+      live replica with an old publication, a missing report, an override or an
+      incompatible schema always blocks success, and a live replacement can
+      restore it without waiting for its stopped predecessor's history.
+    * **retained history** — registrations that are ``stopped`` or have an
+      expired heartbeat.  They stay visible as bounded diagnostics with their
+      own next action, but they can neither veto nor certify the current state,
+      and they are never described as if the operator should start an obsolete
+      process.
+
+    A read that could not be answered is reported as unproven, never as an empty
+    (and therefore apparently healthy) population.
     """
 
     target_value = target.values.field_value(field_path) if target is not None else None
+    current = tuple(item for item in registrations if item.status == "live")
+    historical = tuple(item for item in registrations if item.status != "live")
+    if registration_read_failed or evidence_read_failed:
+        return {
+            "service": service,
+            "field": field_path,
+            "publishedValue": target_value,
+            "adopted": False,
+            "instanceCount": 0,
+            "instances": [],
+            "historyCount": len(historical),
+            "history": _history_projection(historical),
+            "durableState": (
+                "consumer_registration_unreadable"
+                if registration_read_failed
+                else "consumer_evidence_unreadable"
+            ),
+            "nextAction": (
+                "the shared runtime database could not be read, so no current adoption is "
+                "proved; check database health/permissions and re-read"
+            ),
+        }
     instances: list[dict[str, object]] = []
-    for registration in sorted(registrations, key=lambda item: item.instance_id):
+    for registration in sorted(current, key=lambda item: item.instance_id):
         report = next(
             (item for item in evidence if item.instance_id == registration.instance_id),
             None,
@@ -530,6 +578,27 @@ def evaluate_consumer_adoption(
     adopted = bool(instances) and all(
         item["status"] == ConsumerAdoptionStatus.ADOPTED.value for item in instances
     )
+    if adopted:
+        durable_state = "adopted_current_publication"
+        next_action = "none"
+    elif instances:
+        durable_state = "current_consumers_pending"
+        next_action = (
+            "review each current instance above; it adopts the current publication at its "
+            "next safe loop boundary"
+        )
+    elif historical:
+        durable_state = "no_current_consumer"
+        next_action = (
+            f"no live {service} instance has a fresh heartbeat, so no current adoption is "
+            "proved; check that the process is running and reaching the shared database"
+        )
+    else:
+        durable_state = "no_consumer_registered"
+        next_action = (
+            f"no {service} process has registered; start it so it registers and adopts the "
+            "published value"
+        )
     return {
         "service": service,
         "field": field_path,
@@ -537,7 +606,46 @@ def evaluate_consumer_adoption(
         "adopted": adopted,
         "instanceCount": len(instances),
         "instances": instances,
+        "historyCount": len(historical),
+        "history": _history_projection(historical),
+        "durableState": durable_state,
+        "nextAction": next_action,
     }
+
+
+def _history_projection(
+    historical: tuple[ConsumerRegistrationState, ...],
+) -> list[dict[str, object]]:
+    """Bounded diagnostic view of retained stopped/stale registrations.
+
+    A historical row explains *why* the operator may still see an old identity,
+    and nothing more: it is never a current consumer, so it cannot refuse or
+    certify the current adoption.  Its next action is diagnostic, never "start
+    this obsolete process".
+    """
+
+    retained = sorted(historical, key=lambda item: item.instance_id)
+    entries: list[dict[str, object]] = []
+    for registration in retained[:MAX_CONSUMER_HISTORY_ENTRIES]:
+        stopped = registration.status == "stopped"
+        entries.append(
+            {
+                "instanceId": registration.instance_id,
+                "liveness": registration.status,
+                "durableState": (
+                    "historical_registration_stopped" if stopped else "historical_heartbeat_stale"
+                ),
+                "nextAction": (
+                    "this identity is a retained, stopped registration and not a current "
+                    "consumer; a new or restarted process registers its own current identity"
+                    if stopped
+                    else "this identity's heartbeat expired, so it is not a current "
+                    "consumer; if that process is still meant to run, restore its heartbeat "
+                    "and it rejoins the current checks"
+                ),
+            }
+        )
+    return entries
 
 
 def _evaluate_instance(

@@ -217,13 +217,15 @@ function ConsumerAdoption({
       </p>
       {cadence && consumer.instances.length === 0 ? (
         <p className="mf-dashboard-meta">
-          当前没有该服务的注册实例,因此没有进程可以报告采用情况。启动该服务后无需重启即可采用发布值。
+          {consumer.historyCount > 0
+            ? "当前没有该服务的存活实例(心跳新鲜的进程),因此没有进程能报告采用情况,也不存在整体采用。下方「历史注册」只是已保留的旧身份,不能作为当前采用的证据;请确认该服务正在运行并能访问共享数据库,它恢复心跳后会重新进入当前检查。"
+            : "当前没有该服务的注册实例,因此没有进程可以报告采用情况。启动该服务后无需重启即可采用发布值。"}
         </p>
       ) : null}
       {cadence && consumer.instances.length > 0 ? (
         <div className="mf-automation-settings-table">
           <table className="mf-table">
-            <caption>{label}实例采用情况</caption>
+            <caption>{label}当前实例采用情况</caption>
             <thead>
               <tr>
                 <th scope="col">实例</th>
@@ -279,9 +281,46 @@ function ConsumerAdoption({
       {cadence ? (
         <p className="mf-dashboard-meta">
           {consumer.adopted
-            ? "该服务的全部实例都已采用当前发布值。"
+            ? "该服务的全部当前实例都已采用当前发布值。"
             : "该服务尚未达到整体采用;上表逐实例说明真实状态。"}
         </p>
+      ) : null}
+      {cadence && !consumer.adopted && consumer.nextAction ? (
+        <p className="mf-dashboard-meta">下一步:{consumer.nextAction}</p>
+      ) : null}
+      {cadence && !consumer.adopted && consumer.durableState ? (
+        <p className="mf-dashboard-meta">
+          状态代码:<code>{consumer.durableState}</code>
+        </p>
+      ) : null}
+      {cadence && consumer.historyCount > 0 ? (
+        <details className="mf-automation-settings-history">
+          <summary>
+            历史注册 ({consumer.historyCount}个已停止/心跳过期的身份)
+          </summary>
+          <p className="mf-dashboard-meta">
+            {
+              "这些身份已被保留但不再是当前消费者:它们既不能让当前采用失效,也不能证明当前采用。如果某个进程仍在运行,恢复心跳后它会重新进入当前检查。"
+            }
+          </p>
+          <ul className="mf-automation-settings-history-list">
+            {consumer.history.map((entry) => (
+              <li key={entry.instanceId}>
+                <code>{entry.instanceId}</code>
+                <span className="mf-dashboard-meta">
+                  {entry.liveness === "stopped" ? "已停止" : "心跳过期"}
+                  {entry.nextAction ? ` · ${entry.nextAction}` : ""}
+                </span>
+              </li>
+            ))}
+          </ul>
+          {consumer.historyCount > consumer.history.length ? (
+            <p className="mf-dashboard-meta">
+              仅显示最近的 {consumer.history.length} 个历史身份,共{" "}
+              {consumer.historyCount} 个。
+            </p>
+          ) : null}
+        </details>
       ) : null}
     </section>
   );

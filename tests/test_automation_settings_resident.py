@@ -926,5 +926,204 @@ class AdoptionEvidencePersistenceTests(ResidentDeploymentFixture):
         self.assertIn("effective_values_json", columns)
 
 
+class CurrentConsumerMembershipTests(ResidentAdoptionFixture):
+    """A43-01 — a graceful restart must not leave the old identity in charge.
+
+    The reproduction B confirmed: after a real graceful Scheduler restart both
+    live instances had adopted, yet the aggregate stayed at 1/2 because the
+    historical *stopped predecessor* still vetoed success.  These cases assert
+    the required behaviour through the same supported entries: the real
+    ``worker run`` / ``scheduler run`` commands, the real settings read model and
+    the real WSGI settings route.  Nothing here deletes or rewrites a
+    registration row; the retained lifecycle stays exactly as it was.
+    """
+
+    def settings_document(self) -> dict:
+        """Read the operator document through the WSGI settings entry."""
+
+        import io
+        import json
+
+        from mediaflow.application.configuration_snapshot import ManagedConfigurationService
+        from mediaflow.domain.security import ApiPermission, ResolvedApiPrincipal
+        from mediaflow.infrastructure.sqlite_configuration_management import (
+            SQLiteConfigurationRepository,
+        )
+        from mediaflow.interfaces.service_api import MediaFlowApi
+
+        with (
+            SQLiteConfigurationRepository(self.database) as configuration,
+            SQLiteTaskRepository(self.database) as repository,
+        ):
+            api = MediaFlowApi(
+                repository,
+                None,
+                principals=(
+                    ResolvedApiPrincipal("admin", "settings-read-token", frozenset(ApiPermission)),
+                ),
+                configuration_service=ManagedConfigurationService(
+                    configuration,
+                    bootstrap_database_path=self.database,
+                    bootstrap_document=self.document,
+                ),
+                bootstrap_document=self.document,
+            )
+            statuses: list[str] = []
+            environ = {
+                "REQUEST_METHOD": "GET",
+                "PATH_INFO": "/api/v1/operations/automation/settings",
+                "QUERY_STRING": "",
+                "CONTENT_LENGTH": "0",
+                "wsgi.input": io.BytesIO(b""),
+                "REMOTE_ADDR": "127.0.0.1",
+                "HTTP_AUTHORIZATION": "Bearer settings-read-token",
+            }
+            raw = b"".join(api(environ, lambda status, headers: statuses.append(status)))
+        self.assertTrue(statuses and statuses[0].startswith("200"), (statuses, raw[:2000]))
+        return json.loads(raw)
+
+    def stop_gracefully(self, process) -> None:
+        """Stop one real resident command the ordinary way (SIGTERM)."""
+
+        self.assertIsNone(process.poll(), "the resident process died before it was stopped")
+        process.terminate()
+        self.assertEqual(process.wait(timeout=25), 0)
+
+    def jobs(self) -> list:
+        with SQLiteTaskRepository(self.database, read_only=True) as repository:
+            return list(repository.list_jobs())
+
+    def test_graceful_scheduler_restart_restores_current_adoption(self) -> None:
+        self.publish_first_draft(self.empty_baseline())
+        digest = self.publish_engine(worker_poll=0.4, scheduler_poll=0.4)
+        # Both real cadence consumers run, so the deployment-wide claim is
+        # observable both before and after the restart.
+        self.start("worker")
+        first = self.start("scheduler")
+        self.wait_adoption("worker", digest, "automation.workerPollSeconds")
+        self.wait_adoption("scheduler", digest, "automation.schedulerPollSeconds")
+        before = self.settings_document()
+        self.assertTrue(before["adoption"]["allAdopted"], before["adoption"])
+        predecessors = {
+            item["instanceId"] for item in before["consumers"]["scheduler"]["instances"]
+        }
+        self.assertEqual(len(predecessors), 1)
+
+        # A normal graceful stop leaves the predecessor retained and stopped.
+        self.stop_gracefully(first)
+        stopped = self.settings_document()
+        # Only the Scheduler lost its live consumer, so the deployment-wide
+        # claim is honestly false while the still-live Worker remains adopted.
+        self.assertFalse(stopped["adoption"]["allAdopted"])
+        self.assertTrue(stopped["consumers"]["worker"]["adopted"])
+        self.assertEqual(stopped["consumers"]["scheduler"]["instances"], [])
+        self.assertEqual(stopped["consumers"]["scheduler"]["historyCount"], 1)
+        self.assertEqual(stopped["consumers"]["scheduler"]["history"][0]["liveness"], "stopped")
+
+        # The fresh replacement restores current service and collective adoption
+        # with no operator workaround — and the retained identity is still there.
+        self.start("scheduler")
+        self.wait_for(
+            lambda: self.settings_document()["adoption"]["allAdopted"],
+            message="the fresh Scheduler replacement never restored current adoption",
+        )
+        after = self.settings_document()
+        current = after["consumers"]["scheduler"]["instances"]
+        self.assertEqual(len(current), 1)
+        self.assertNotIn(current[0]["instanceId"], predecessors)
+        self.assertEqual(current[0]["status"], "adopted")
+        # History is diagnostic only: it cannot be mistaken for a live adopter.
+        self.assertEqual(after["consumers"]["scheduler"]["historyCount"], 1)
+        self.assertEqual(
+            [item["instanceId"] for item in after["consumers"]["scheduler"]["history"]],
+            sorted(predecessors),
+        )
+        self.assertIn(
+            "retained, stopped registration",
+            after["consumers"]["scheduler"]["history"][0]["nextAction"],
+        )
+        # The still-running Worker keeps its own single current instance, so a
+        # Scheduler restart neither hides nor moves it.
+        self.assertEqual(len(after["consumers"]["worker"]["instances"]), 1)
+        self.assertEqual(after["consumers"]["worker"]["historyCount"], 0)
+        # Nothing was admitted or replayed by any of these reads/restarts.
+        self.assertEqual(self.jobs(), [])
+        # Every registration row is still durable after reopening the database.
+        with SQLiteTaskRepository(self.database) as reopened:
+            retained = [
+                row for row in reopened.list_resident_services() if row.service == "scheduler"
+            ]
+        self.assertEqual(len(retained), 2)
+
+    def test_two_live_worker_replicas_must_both_adopt(self) -> None:
+        self.publish_first_draft(self.empty_baseline())
+        digest = self.publish_engine(worker_poll=0.3)
+        self.start("worker")
+        self.start("worker")
+        self.wait_for(
+            lambda: len(self.settings_document()["consumers"]["worker"]["instances"]) == 2,
+            message="both live Worker replicas never appeared as current consumers",
+        )
+        with SQLiteTaskRepository(self.database, read_only=True) as repository:
+            live = {
+                row.instance_id
+                for row in repository.list_resident_services()
+                if row.service == "worker"
+            }
+        for instance in live:
+            self.wait_adoption("worker", digest, "automation.workerPollSeconds")
+        document = self.settings_document()
+        worker = document["consumers"]["worker"]
+        self.assertEqual({item["instanceId"] for item in worker["instances"]}, live)
+        self.assertTrue(all(item["status"] == "adopted" for item in worker["instances"]))
+        # The Scheduler never started, so its absence still blocks the
+        # deployment-wide claim.
+        self.assertFalse(document["adoption"]["allAdopted"])
+        self.assertTrue(worker["adopted"])
+        self.assertEqual(worker["historyCount"], 0)
+
+    def test_override_on_one_live_replica_keeps_the_service_pending(self) -> None:
+        self.publish_first_draft(self.empty_baseline())
+        self.start("worker")
+        self.start("worker", extra=("--poll-seconds", "0.4"))
+        digest = self.publish_engine(worker_poll=0.3)
+
+        def both_reported() -> bool:
+            rows = self.adoption_rows("worker")
+            return (
+                len({row.instance_id for row in rows if row.published_revision_digest == digest})
+                == 2
+            )
+
+        self.wait_for(both_reported, message="both Worker replicas never reported")
+        document = self.settings_document()
+        worker = document["consumers"]["worker"]
+        self.assertEqual(len(worker["instances"]), 2)
+        self.assertFalse(worker["adopted"])
+        overrides = [item for item in worker["instances"] if item["status"] == "override"]
+        self.assertEqual(len(overrides), 1)
+        self.assertEqual(overrides[0]["overrideSource"], "cli")
+        # A real live override keeps its own next action instead of being
+        # collapsed into a generic "wait for the next boundary".
+        self.assertIn("override", overrides[0]["nextAction"])
+
+    def test_later_publication_is_pending_until_the_live_instance_adopts(self) -> None:
+        self.publish_first_draft(self.empty_baseline())
+        first_digest = self.publish_engine(scheduler_poll=0.4)
+        self.start("scheduler")
+        self.wait_adoption("scheduler", first_digest, "automation.schedulerPollSeconds")
+        later = self.publish_engine(scheduler_poll=0.6)
+        # The live instance is still current; its own report is what must move.
+        pending = self.settings_document()
+        scheduler = pending["consumers"]["scheduler"]
+        self.assertEqual(len(scheduler["instances"]), 1)
+        self.wait_adoption("scheduler", later, "automation.schedulerPollSeconds")
+        adopted = self.settings_document()
+        self.assertEqual(adopted["target"]["digest"], later)
+        self.assertEqual(adopted["consumers"]["scheduler"]["instances"][0]["status"], "adopted")
+        self.assertTrue(adopted["consumers"]["scheduler"]["adopted"])
+        self.assertEqual(self.jobs(), [])
+
+
 if __name__ == "__main__":
     unittest.main()

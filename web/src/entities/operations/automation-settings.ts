@@ -98,6 +98,20 @@ export interface ConsumerInstanceView {
   readonly nextAction: string;
 }
 
+/**
+ * One retained stopped/stale registration, kept strictly as a diagnostic.
+ *
+ * A historical identity is never a current consumer: it can neither refuse nor
+ * certify the current adoption, and its recovery text never asks the operator to
+ * start an obsolete process.
+ */
+export interface ConsumerHistoryView {
+  readonly instanceId: string;
+  readonly liveness: string;
+  readonly durableState: string;
+  readonly nextAction: string;
+}
+
 export interface ConsumerAdoptionView {
   readonly service: string;
   readonly field: string | null;
@@ -107,7 +121,12 @@ export interface ConsumerAdoptionView {
   readonly adopted: boolean;
   readonly basis: "consumer" | "api_local";
   readonly instanceCount: number;
+  /** Retained stopped/stale registrations, bounded diagnostic only. */
+  readonly historyCount: number;
+  readonly history: readonly ConsumerHistoryView[];
   readonly instances: readonly ConsumerInstanceView[];
+  readonly durableState: string;
+  readonly nextAction: string;
   readonly explanation: string | null;
 }
 
@@ -282,6 +301,30 @@ function normalizeInstance(value: unknown): ConsumerInstanceView {
   };
 }
 
+function normalizeHistoryEntry(value: unknown): ConsumerHistoryView {
+  const record = readRecord(
+    value,
+    "automation engine settings consumer history entry",
+  );
+  if (record === null) {
+    throw new Error(
+      "automation engine settings consumer history entry is malformed",
+    );
+  }
+  const instanceId = optionalText(record["instanceId"], 128);
+  if (instanceId === null) {
+    throw new Error(
+      "automation engine settings consumer history entry lacks an identity",
+    );
+  }
+  return {
+    instanceId,
+    liveness: boundedText(record["liveness"]),
+    durableState: boundedText(record["durableState"]),
+    nextAction: boundedText(record["nextAction"]),
+  };
+}
+
 function normalizeConsumer(
   service: string,
   value: unknown,
@@ -293,6 +336,9 @@ function normalizeConsumer(
   const instances = Array.isArray(record["instances"])
     ? record["instances"].map(normalizeInstance)
     : [];
+  const history = Array.isArray(record["history"])
+    ? record["history"].map(normalizeHistoryEntry)
+    : [];
   const publishedValues: Record<string, number | null> = {};
   const rawPublished = optionalRecord(record["publishedValues"]);
   if (rawPublished !== null) {
@@ -300,14 +346,33 @@ function normalizeConsumer(
       publishedValues[key] = optionalNumber(raw, key);
     }
   }
+  const instanceCount = normalizeBoundedCount(
+    record["instanceCount"] ?? 0,
+    "instanceCount",
+  );
+  // `historyCount` is the real total of retained stopped/stale identities; the
+  // bounded `history` list may be shorter. Absent, it degrades to what is shown.
+  const historyCount =
+    record["historyCount"] === undefined || record["historyCount"] === null
+      ? history.length
+      : normalizeBoundedCount(record["historyCount"], "historyCount");
   // A collective claim is only accepted when it is consistent with the
   // instance evidence the same document carries. This is the guard that keeps
-  // a fabricated "allAdopted" flag from becoming a deployment-wide success.
+  // a fabricated "allAdopted" flag from becoming a deployment-wide success, and
+  // it covers both a missing current population and a per-instance row that is
+  // not itself adopted.
   const reportedAdopted = record["adopted"] === true;
   const consistent =
     !reportedAdopted ||
     (instances.length > 0 &&
       instances.every((instance) => instance.status === "adopted"));
+  // A retained history entry can never be a current consumer, and a current
+  // instance is never a stopped/stale identity: a document that mixes them is
+  // contradictory, so no collective claim is taken from it.
+  const populationsConsistent =
+    history.every((entry) => entry.liveness !== "live") &&
+    instances.every((instance) => instance.liveness !== "stopped") &&
+    instanceCount === instances.length;
   return {
     service,
     field: optionalText(record["field"], 128),
@@ -318,13 +383,14 @@ function normalizeConsumer(
       : [],
     publishedValue: optionalNumber(record["publishedValue"], "publishedValue"),
     publishedValues,
-    adopted: reportedAdopted && consistent,
+    adopted: reportedAdopted && consistent && populationsConsistent,
     basis: record["basis"] === "api_local" ? "api_local" : "consumer",
-    instanceCount: normalizeBoundedCount(
-      record["instanceCount"] ?? 0,
-      "instanceCount",
-    ),
+    instanceCount,
+    historyCount,
+    history,
     instances,
+    durableState: boundedText(record["durableState"]),
+    nextAction: boundedText(record["nextAction"]),
     explanation: optionalText(record["explanation"], 1024),
   };
 }

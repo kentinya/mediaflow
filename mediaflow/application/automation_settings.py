@@ -25,6 +25,7 @@ import copy
 import hashlib
 import json
 from collections.abc import Callable, Mapping
+from dataclasses import dataclass
 from datetime import UTC, datetime
 from typing import Any
 from uuid import uuid4
@@ -177,6 +178,21 @@ TERMINAL_NON_PUBLICATION_STATE_VALUES: frozenset[str] = frozenset(
 
 class _RuntimePreparationFailure(Exception):
     """Marker: the successor's runtime binding could not be constructed."""
+
+
+@dataclass(frozen=True)
+class _ResidentReadState:
+    """One bounded resident read: every retained row plus what could be read.
+
+    ``evidence_read_failures`` names the services whose adoption-report page could
+    not be read, so an unreadable read is reported as unproven rather than as a
+    population that simply has no report yet.
+    """
+
+    registrations: tuple[ConsumerRegistrationState, ...]
+    evidence: tuple[ResidentSettingsEvidence, ...]
+    registration_read_failed: bool = False
+    evidence_read_failures: frozenset[str] = frozenset()
 
 
 class AutomationSettingsPublicationError(RuntimeError):
@@ -1223,10 +1239,12 @@ class AutomationSettingsService:
         self, target: PublishedEngineTarget, now: datetime
     ) -> dict[str, dict[str, object]]:
         projections: dict[str, dict[str, object]] = {}
-        registrations, evidence = self._resident_state()
+        state = self._resident_state()
         for service, field_path in CONSUMER_POLLING_FIELDS.items():
-            service_registrations = tuple(item for item in registrations if item.service == service)
-            service_evidence = tuple(item for item in evidence if item.service == service)
+            service_registrations = tuple(
+                item for item in state.registrations if item.service == service
+            )
+            service_evidence = tuple(item for item in state.evidence if item.service == service)
             projections[service] = evaluate_consumer_adoption(
                 service=service,
                 field_path=field_path,
@@ -1235,7 +1253,13 @@ class AutomationSettingsService:
                 evidence=service_evidence,
                 now=now,
                 expected_schema_version=self._schema_version(),
+                # Freshness is a property of the whole population this read
+                # observed, so the threshold comes from every registration of
+                # the service — including a stopped or stale one whose own
+                # heartbeat interval is still the deployment's real interval.
                 stale_threshold_seconds=self._stale_threshold(service_registrations),
+                registration_read_failed=state.registration_read_failed,
+                evidence_read_failed=service in state.evidence_read_failures,
             )
         # Surface API-local evidence for the two capacity/observation fields so
         # the page never presents them as a resident process's cadence.
@@ -1257,16 +1281,24 @@ class AutomationSettingsService:
         }
         return projections
 
-    def _resident_state(
-        self,
-    ) -> tuple[tuple[ConsumerRegistrationState, ...], tuple[ResidentSettingsEvidence, ...]]:
+    def _resident_state(self) -> _ResidentReadState:
+        """Every retained registration/report row plus its liveness *now*.
+
+        The registration lifecycle is the membership authority: registrations are
+        never filtered or deleted here.  Each row gets its freshness derived at
+        this read's timestamp, so the current population is exactly the live
+        subset.  A read failure is recorded instead of being flattened into an
+        empty population, because "nobody is registered" and "this read could not
+        answer" are different operator situations.
+        """
+
         repository = self._residents
         if repository is None:
-            return ((), ())
+            return _ResidentReadState((), (), registration_read_failed=True)
         try:
             rows = repository.list_resident_services()
         except Exception:
-            return ((), ())
+            return _ResidentReadState((), (), registration_read_failed=True)
         registrations: list[ConsumerRegistrationState] = []
         for row in rows:
             if not isinstance(row, ResidentServiceRegistration):
@@ -1283,14 +1315,21 @@ class AutomationSettingsService:
                 )
             )
         evidence: list[ResidentSettingsEvidence] = []
+        failures: set[str] = set()
         reader = getattr(repository, "list_resident_settings_adoption", None)
         if callable(reader):
             for service in RELEVANT_CONSUMERS:
                 try:
                     evidence.extend(reader(service=service, limit=ADOPTION_EVIDENCE_LIMIT))
                 except Exception:
-                    continue
-        return (tuple(registrations), tuple(evidence))
+                    # One unreadable evidence page is unproven adoption for that
+                    # service, never silently "no report exists".
+                    failures.add(service)
+        return _ResidentReadState(
+            tuple(registrations),
+            tuple(evidence),
+            evidence_read_failures=frozenset(failures),
+        )
 
     def _liveness(self, row: ResidentServiceRegistration) -> str:
         from mediaflow.domain.resident_services import (
@@ -1337,7 +1376,12 @@ def _unavailable() -> dict[str, dict[str, object]]:
             "adopted": False,
             "instanceCount": 0,
             "instances": [],
+            # No publication exists, so nothing about a consumer can be proved;
+            # its retained history is still not silently dropped.
+            "historyCount": 0,
+            "history": [],
             "status": ConsumerAdoptionStatus.UNAVAILABLE.value,
+            "durableState": "no_published_target",
             "nextAction": "publish a valid Active configuration before reading adoption",
         }
         for service, field_path in CONSUMER_POLLING_FIELDS.items()
