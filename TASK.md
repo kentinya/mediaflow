@@ -13,8 +13,8 @@ Difficulty: High
 Test Level: T4
 Planner / Reviewer: B
 Working Branch: main
-Decision: FIX REQUIRED — TERMINAL RECONCILE DROPS FIELD CONFLICTS; MERGED SAVE SUCCESS RESTORES UNEDITED OLD VALUES
-Next Action: DEVELOPER CORRECTS THESE TWO FORM-INTEGRATION PATHS IN THIS SAME TASK; B RETAINS T4 OWNERSHIP
+Decision: FIX REQUIRED — FORM CORRECTIONS VERIFIED; NEW NATIVE TEST FAILS THE OFFICIAL TYPECHECK
+Next Action: DEVELOPER FIXES THE NEW E2E TYPE ERROR IN THIS SAME TASK; B RETAINS REMAINING T4 ACCEPTANCE
 ```
 
 ## Goal
@@ -36,66 +36,37 @@ Slice Base remains `853973dbbf8289fa2ad40657033e94e870a690e4`. Preserve accepted
 `4fcb0028f987f8746f0a8aa7b309e360b07c598e`, closure `13ecfc0e75fc34ff0ae489e655124a178943cba4`
 and frozen branch `frozen/slice-43-2026-10-15` at `ed974e0df8b263f631bfe48b524da461013d8780`.
 
-## Current Developer Instructions — finish field-merge integration
+## Current Developer Instructions — repair the native-test type error
 
-B independently reviewed candidate `f66c2fd6c22cc9a5cd5627175c95eb7ac2240c2a`. The lost422 recovery
-and the nonconflicting lost409 → reload → reconcile → final Save now work; do not rebuild them.
-The original Task ID/Base/Goal/Scope/High/T4 remain. Correct only the following two integration
-failures in the existing form/recovery helpers and their directly affected tests. Prior guidance
-is retained at `521bb50:TASK.md`; reports below remain historical facts, not additional work.
+B reviewed `7b98130f6b42999bd6e7808e3be39bf0ba0e7d4d` over the unchanged full Task Base.
+Both previous form-integration blockers are now independently verified as corrected. Keep the
+original Task ID/Base/Goal/Scope/High/T4 and those product fixes. The prior instructions and
+reproduction details remain in Git at `f940bee:TASK.md`.
 
-### 1. Preserve unresolved field conflicts after terminal reconciliation
+1. In `web/tests/e2e/automation-settings.python.spec.ts:419`, `mine` is inferred as `61 | 62`;
+   comparing it to71 is impossible and the official `npm run typecheck` fails with TS2367.
+   Use a valid distinct current value (71 already differs from either possible `mine`). Preserve
+   every conflict/reload/reconcile/no-write/explicit-Save assertion. Do not widen/cast types or
+   suppress the diagnostic to conceal the impossible branch. No production-state change is needed.
+2. Run `npm --prefix web run typecheck`, plus changed-file lint/format and the existing real-Python
+   settings spec below after building assets. The official typecheck includes `tsconfig.node.json`
+   and E2E sources; `tsc -p tsconfig.json` alone does not satisfy this check.
+3. Checkpoint the minimal correction and report the actual affected results as READY FOR B REVIEW.
+   Do not rerun the full Python/Web/E2E/release matrix. B owns remaining T4 acceptance.
 
-- At `AutomationSettingsPanel.tsx:593–606`, `planRecovery()` correctly finds a same-field conflict,
-  but `applyEdit()` immediately sets both baseline identity and baseline values to current. The
-  render then sees `staleBaseline === false`, discards the recovery plan and enables Save without
-  a choice. Do not consume/rebase the original editing context before its conflicts are resolved.
-- Preserve the original B/I comparison (including an older context's absent baseline) and the
-  unresolved conflict set through reconciliation. Reuse the existing per-field choice UI and
-  Save guard. Nonconflicting fields can merge automatically; a real overlap must still display
-  current/user values with units and require `采用当前值` or `保留我的修改`. A choice publishes nothing.
-- Obtain the current target from the reconcile response or an awaited successful refetch, rather
-  than the pre-request `published` closure. Bind the reviewed merge/choices to that exact target;
-  a further change must not inherit a choice for a different current value. Keep the backend's
-  exact identity fence. A failed current read cannot justify making a stale merge saveable.
-- Do not add a public result state, database table or generic workflow engine. Existing four
-  reconciliation results, retained submission evidence and strict publication validation remain.
+```bash
+# cwd web
+npm run typecheck
+npx eslint tests/e2e/automation-settings.python.spec.ts
+npx prettier --check tests/e2e/automation-settings.python.spec.ts
+npm run build
+npm run test:e2e -- --config=playwright.python.automation.config.ts tests/e2e/automation-settings.python.spec.ts
+```
 
-### 2. Do not mistake a merged candidate for typing during Save
-
-- At `AutomationSettingsPanel.tsx:486–503`, `editRef.current.input` still holds the pre-merge raw
-  edit, while `submittedEdit.input` is the merged candidate. Comparing those different snapshots
-  labels another writer's preserved field as a new keystroke, and `rebaseOnto()` restores its old
-  value into the form after a successful Save.
-- Keep the actual edit-at-request-start separate from the effective candidate sent to the API.
-  Detect only genuine post-start operator changes, using the actual starting edit snapshot or
-  an equivalent bounded local edit identity; do not compare raw pre-merge input to merged input.
-  With no intervening input, successful Save clears the edit and the form shows the returned/current
-  publication, Save is disabled and the message does not invent unsaved typing. If a real input
-  races the request, preserve only that genuine difference under the existing safety contract.
-- After the next ordinary capacity edit and Save, untouched scheduler/other settings must still
-  equal the other writer's publication. Preserve the existing read-only inputs while submitting.
-
-### 3. Acceptance reaches the post-Save form and the next edit
-
-Use the existing Automation settings page, real API and isolated harness; no new probe routes.
-Extend the existing component/native tests, not only the pure recovery helper:
-
-1. Both writers change capacity: original4, mine61, current71; lose the original409 response,
-   reload and reconcile. The conflict must remain visible and Save disabled. Test both choices;
-   neither choice writes, and only an explicit permitted Save can publish61. Cover a retained
-   older context without baseline values using the same conservative explicit-choice behavior.
-2. Start with scheduler5, edit only capacity62, another writer saves scheduler9, then the existing
-   Refresh/poll delivers it. Save must publish62/9 **and finish with form62/9 and no dirty edit**.
-   Change only capacity to63 and Save again: final publication must remain63/9, never63/5.
-3. Keep the now-passing nonconflicting lost409/final Save and lost3.5/422 → reload → reconcile →
-   correct4 → final Save cases; retain identity/principal isolation and strict invalid-input checks.
-
-Developer runs changed/affected tests and static checks, including the settings component/recovery/
-session tests and real-Python settings spec, then submits one coherent checkpoint and exact results
-as READY FOR B REVIEW. Do not run the full Python/Web/E2E/release matrix for this fix. B owns the
-remaining T4/native/process/wheel/upgrade/Docker acceptance. Testing time must stay below50% of the
-round; do not pad elapsed time. No next Task or Slice closure is authorized.
+B has corrected its Task test-section headings to match the existing documentation consumer, and
+has separated its native acceptance invocations after proving shared-fixture capacity pollution.
+Neither is an additional Developer product task. Keep testing below50% of the round without padding
+elapsed time. No next Task or Slice closure is authorized.
 
 ### Actual-code gap
 
@@ -237,7 +208,7 @@ actual commands. Start from existing Automation/System Settings and real `worker
 entrances. Fixtures use temporary SQLite/local Storage/fake Providers; no user database/media/secrets.
 Do not construct nonexistent probe routes or require extra process tooling beyond these outcomes.
 
-### Developer — changed and directly affected tests
+### Developer — affected tests
 
 Add focused API/publication tests and real resident-process tests, e.g.
 `tests/test_automation_settings_management.py` and `tests/test_automation_settings_resident.py`.
@@ -274,7 +245,7 @@ Align fake documents and exclude the new Python-only spec from default fake-back
 the existing convention; retain it in the explicit real command. Developer does not run full Python,
 Web/default E2E, Docker or release matrices before handing off.
 
-### B — independent acceptance and full regression
+### B — acceptance and full regression
 
 Review immutable **Task Base..candidate**, re-evaluate all Slice RO-1..RO-7 and preserve accepted45.
 Independently reproduce a real UI checked Save, long-wait idle adoption without restart or work,
@@ -290,7 +261,11 @@ on isolated temporary configuration/ports:
 
 ```bash
 # cwd web; after production build
-npm run test:e2e -- --config=playwright.python.automation.config.ts tests/e2e/automation-settings.python.spec.ts tests/e2e/automation-workspace.python.spec.ts tests/e2e/automation-lifecycle.python.spec.ts tests/e2e/automation-run-once.python.spec.ts
+# Each invocation starts a fresh isolated harness; settings changes global capacity.
+npm run test:e2e -- --config=playwright.python.automation.config.ts tests/e2e/automation-settings.python.spec.ts
+npm run test:e2e -- --config=playwright.python.automation.config.ts tests/e2e/automation-workspace.python.spec.ts
+npm run test:e2e -- --config=playwright.python.automation.config.ts tests/e2e/automation-lifecycle.python.spec.ts
+npm run test:e2e -- --config=playwright.python.automation.config.ts tests/e2e/automation-run-once.python.spec.ts
 npm run test:e2e -- --config=playwright.python.config.ts tests/e2e/operations-inventory.python.spec.ts
 npm run test:e2e -- --config=playwright.python.unicode-principal.config.ts tests/e2e/operations-principal-identity.python.spec.ts
 # repo root; exact candidate image, isolated temporary stacks
@@ -1388,3 +1363,101 @@ matrices, wheel/installed-consumer, supported-schema upgrade rehearsal and Docke
    reconciliation outcomes, retained submission evidence and strict publication validation are
    unchanged. Still B-owned: T4 process/wheel/upgrade/Docker acceptance, and the earlier rounds'
    disclosures (additive schema-50 evidence upgrade rehearsal, harness in-process consumer review).
+
+## B Re-review — candidate 7b98130
+
+```text
+Decision: FIX REQUIRED — official Web typecheck fails in the new native test
+Reviewed Head: 7b98130f6b42999bd6e7808e3be39bf0ba0e7d4d
+Task Base: f18d2444f548b81b5892536498a1b4cdd4400be8 (unchanged)
+Review: cumulative complete Base..Head (40 files), including the seven-file correction
+Scope / Difficulty / Test Level: unchanged / High / T4
+```
+
+### Delivered behavior independently verified
+
+- Same-field lost409 → reload → reconcile retains the61/71 conflict with Save disabled. Choosing
+  `保留我的修改` writes nothing; the following explicit Save publishes61. Native coverage also
+  verifies `采用当前值` writes nothing. The original editing baseline and backend identity fence
+  remain authoritative; no new public result state or persistence model is introduced.
+- Background/Refresh merge Save finishes at capacity62/scheduler9 with Save disabled and no false
+  unsaved-typing message. A subsequent capacity-only Save finishes at63/9, retaining scheduler9.
+- Nonconflicting lost409 completes through a deliberate final Save without reverting scheduler9.
+  Lost422 with input3.5 survives reload, reconciles as not_committed, remains correctable, and a
+  deliberate corrected4 Save preserves scheduler9. These are existing page/API/temporary SQLite
+  journeys through `operations_inventory_harness.py`, with no invented route or real user media.
+- B inspected the resulting conflict and completed-form screenshots. The previously reported
+  product failures are closed findings, not current correction requests.
+
+### Remaining correction and gate ownership
+
+`npm run typecheck` fails at the newly added native spec line419 with TS2367 (`61 | 62` versus71).
+This is a required acceptance-gate blocker; it does not show another failure in the delivered form.
+Apply the single minimal test correction in the current instructions. The Developer's app-only
+`tsc -p tsconfig.json` result remains true but does not cover the official E2E typecheck.
+
+The Python full run's only failure was the B-owned Task heading/document-consumer mismatch:
+`test_release_quality_gate_commands_are_documented_for_task_execution`. B restores the two exact
+headings expected by the existing consumer, preserving ownership and all required checks. The
+focused rerun passes (1 test); the original full-run failure is retained, not relabelled OK.
+
+The assigned combined native run produced31 passed/3 failed. Both recovery409 traces explicitly
+say `queue_full`, configured active Job limit4. The settings spec's valid corrected4 publication
+survived into workspace cases sharing that harness. With a fresh harness, the unchanged workspace
+spec passes all8 cases, including paging and both recoveries. This is acceptance-fixture isolation,
+not evidence for weakening capacity enforcement or changing product recovery. B changes the assigned
+commands to separate harness invocations; no assertions/retries/timeouts are relaxed. Combined
+lifecycle/run-once results remain actual passing cases, but their isolated final gates stay pending.
+
+### Actual independent validation
+
+Evidence: `.git/validation-evidence/7b98130f6b42999bd6e7808e3be39bf0ba0e7d4d/task43.4-b-review/`.
+These local logs/artifacts are not claimed remotely accessible.
+
+| Check | Actual result |
+|---|---|
+| Real-page B recovery/background probes | Four complete recovery/merge journeys pass; script/results/screenshots retained |
+| Full Python unittest discovery |2785 run /1 failed /7 skipped,332.206s; sole failure is the Task headings described above |
+| Task documentation consumer after B heading correction |1 test PASS; no full-suite rerun for this document-only change |
+| Full Web unit tests |83 files /1211 tests pass,104.56s |
+| Official Web typecheck |FAIL TS2367,6.58s |
+| Full Web lint / format |PASS,8.30s /3.56s |
+| Production Web build |PASS,0.43s; existing chunk-size warning |
+| Combined real-Python Automation native run |31 passed /3 failed,42.6s; shared capacity contamination diagnosed from retained traces |
+| Fresh-harness workspace native run |8 passed,10.6s; unchanged tests, no retries or relaxed assertions |
+| Python format / lint / compile; pip check |PASS;389 formatted files checked |
+| Two example configuration validations |PASS |
+| Forbidden FFmpeg/FFprobe dependency search |No match, expected exit1 |
+| Exact candidate wheel / installed-wheel smoke |PASS; build1.79s, smoke5.96s; outside-checkout installed imports and CLI/backup/rehearse/restore |
+| Governance / Base..Head whitespace |PASS / clean |
+
+Wheel SHA256: `bb6a6d941ad5d445c7ae01b63a97840a2b221924280918462118f40eeb006382`.
+Its smoke is not proof of an installed resident's actual changed cadence. The seven Python skips
+remain disclosed; warnings and complete results are in `python-full.log`.
+
+Per workflow§6, stop expensive acceptance after the proven typecheck blocker. Full default E2E,
+remaining isolated native operations/principal/Automation gates, installed-consumer actual cadence,
+real supported49→50 upgrade with preserved work/pins/authority, and Docker empty/restart/security
+remain B-owned pending. No full T4 PASS or Closure Packet is asserted. Do not restore retired45
+products to repair old validation fixtures; any necessary evidence adaptation stays with B.
+
+Test-time accounting: this review began approximately18:47:20 +08:00; about12 minutes of actual
+review work precede this checkpoint. Recorded test-command intervals occupy about347 seconds
+(5m47s), below50% of the round, counting parallel overlap once. Log timestamps/merged intervals
+are retained in `test-time-accounting.json`; no idle wait was added to pad the round.
+
+### All-Slice outcome reassessment
+
+| Outcome | Current disposition |
+|---|---|
+| RO-1 workspace/inventory/statistics/settings | Prior43.3 contribution retained; current workspace8-case proof passes in isolation and settings completion defects are corrected; final gates pending. |
+| RO-2 checked definition lifecycle | Delivered chain retained;11 combined native cases passed; final isolated/current full acceptance pending. |
+| RO-3 exact analysis/scoped unattended authority | Existing chain and accepted45 retirement retained; current final safety/process proof pending. |
+| RO-4 deliberate Run once |4 combined native cases passed; final isolated/Worker acceptance pending. |
+| RO-5 read-only records/Task Center recovery |8 isolated workspace cases pass, including independent sibling outcomes and unchanged original results; final broader regression pending. |
+| RO-6 settings/real resident adoption | Both latest product blockers corrected and four recovery/merge journeys pass; official typecheck and remaining process/installed/upgrade/Docker gates prevent completion. |
+| RO-7 shared authority/failure/safety | Latest conflict/false-edit defects corrected; remaining full safety/compatibility/native gates pending. |
+
+Slice43 remains ACTIVE. Preserve Task Base/Goal/Scope and accepted45; no next Task, A-readiness
+or Slice-closure claim. Only `TASK.md` changes in this B checkpoint; unrelated dirty/private files
+and original reference images remain untouched.
