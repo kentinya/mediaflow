@@ -1854,8 +1854,10 @@ import {
 } from "../../entities/operations/automation";
 import {
   normalizeAutomationSettings,
+  normalizePublishedTarget,
   type AutomationSettingsModel,
   type EngineSubmissionState,
+  type PublishedTargetView,
 } from "../../entities/operations/automation-settings";
 import {
   normalizeAutomationFormAuthority,
@@ -5145,6 +5147,13 @@ export type AutomationSettingsReconcile =
       readonly rejectionCode: string | null;
       readonly rejectionField: string | null;
       readonly rejectionMessage: string | null;
+      /**
+       * The current published target stated by the reconcile answer itself, or
+       * `null` when that document was absent/malformed. A per-field merge
+       * decided after reconcile is bound to *this* identity; the pre-request
+       * value may already have been overtaken.
+       */
+      readonly readback: PublishedTargetView | null;
     }
   | { readonly ok: false; readonly status: number; readonly code: string };
 
@@ -5288,6 +5297,19 @@ export async function saveAutomationSettings(
 }
 
 /** Read back whether one lost submission actually published. */
+/**
+ * A published target from a reconcile answer, or `null` when it is absent or
+ * malformed. The outcome itself is never lost because the target was unreadable.
+ */
+function readPublishedTarget(value: unknown): PublishedTargetView | null {
+  if (value === null || value === undefined) return null;
+  try {
+    return normalizePublishedTarget(value);
+  } catch {
+    return null;
+  }
+}
+
 export async function reconcileAutomationSettings(
   token: string | null,
   body: Record<string, unknown>,
@@ -5350,6 +5372,12 @@ export async function reconcileAutomationSettings(
     !Array.isArray(record["rejection"])
       ? (record["rejection"] as Record<string, unknown>)
       : null;
+  // The current target stated by this answer. A malformed target must not lose
+  // the outcome itself, so it degrades to `null`; the caller then relies on an
+  // awaited successful refetch before judging any current value.
+  const readback: PublishedTargetView | null = readPublishedTarget(
+    record["target"],
+  );
   return {
     ok: true,
     state,
@@ -5366,6 +5394,7 @@ export async function reconcileAutomationSettings(
       typeof rejection?.["field"] === "string" ? rejection["field"] : null,
     rejectionMessage:
       typeof rejection?.["message"] === "string" ? rejection["message"] : null,
+    readback,
   };
 }
 

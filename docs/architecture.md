@@ -722,10 +722,24 @@ fenced. The baseline values are part of the retained context; a context retained
 by an older build has none and recovery then asks explicitly per differing field
 rather than guessing which fields the operator edited.
 
+Reconciliation does not rebase that editing context: the original baseline
+identity/values and the unresolved conflict set survive it, so a real overlap
+stays visible with both current and typed values and cannot be saved until the
+operator chooses. The merged decision is bound to the exact current target read
+from the reconcile answer (or an awaited successful refetch), never the
+pre-request value; a failed current read leaves Save unavailable instead of
+making a stale merge publishable. An explicit choice is remembered together with
+the published value it reviewed, so a further change to that field reopens the
+conflict rather than inheriting the old decision.
+
 While a Save is outstanding the four inputs are read-only, so a keystroke can
 never belong to a request that already left the browser. A value that still
 races the response is retained and explicitly re-based onto the just-published
-identity rather than being cleared or silently attached to the old one.
+identity rather than being cleared or silently attached to the old one. That
+comparison uses the edit snapshot the request actually started from, never the
+merged candidate the request sent: the two differ by construction, so comparing
+against the candidate would treat another writer's preserved field as a fresh
+keystroke and restore its old value after a successful Save.
 
 `SystemSettingsService` retains the generic Draft editor and its
 `/api/v1/system/settings` semantics unchanged; the focused command is a distinct

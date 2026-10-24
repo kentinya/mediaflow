@@ -838,6 +838,11 @@ describe("Automation engine settings surface", () => {
     // writer published first, and only that refusal response was lost.  The
     // retained submission must reconcile into a *terminal, correctable* state,
     // survive a page reload while unresolved, and then allow a deliberate save.
+    //
+    // This context was retained by an older build and carries no baseline values,
+    // so which fields the operator edited is genuinely unknown: every field whose
+    // typed value differs from the current publication needs an explicit choice
+    // before Save is offered (Task43.4 correction, item 1).
     const retained = {
       submissionId: "submission-lost-rejection-1",
       input: {
@@ -917,20 +922,25 @@ describe("Automation engine settings surface", () => {
       expect(within(panel).getByText(/本次提交没有发布/)).toBeTruthy();
     });
     expect(reconciled).toBe(true);
-    // The typed value is retained, corrected against the *current* identity, and
-    // a deliberate Save is available again.
+    // The typed value is retained and still correctable, but because this context
+    // carries no baseline values the capacity overlap is a real conflict: Save is
+    // refused until the operator explicitly keeps their value.
     const jobs = within(panel).getByLabelText(
       /并行任务上限/,
     ) as HTMLInputElement;
     expect(jobs.value).toBe("61");
+    const save = within(panel).getByRole("button", {
+      name: "保存设置",
+    }) as HTMLButtonElement;
+    expect(save.disabled).toBe(true);
+    expect(
+      within(panel).getByText(/当前发布值为 41,你输入的值是 61/),
+    ).toBeTruthy();
+    await userEvent.click(
+      within(panel).getByRole("button", { name: "保留我的修改" }),
+    );
     await waitFor(() => {
-      expect(
-        (
-          within(panel).getByRole("button", {
-            name: "保存设置",
-          }) as HTMLButtonElement
-        ).disabled,
-      ).toBe(false);
+      expect(save.disabled).toBe(false);
     });
     expect(window.sessionStorage.getItem(storageKey)).toBeNull();
 
@@ -1546,6 +1556,619 @@ describe("Automation engine settings surface", () => {
       const save = within(panel).getByRole("button", {
         name: "保存设置",
       }) as HTMLButtonElement;
+      expect(save.disabled).toBe(true);
+      expect(putBodies).toHaveLength(0);
+    },
+  );
+
+  it(
+    "keeps a same-field conflict unresolved through terminal reconciliation",
+    { timeout: 30_000 },
+    async () => {
+      // Task43.4 correction item 1 (real journey): both writers changed capacity
+      // (original 4, mine 61, current 71) and only the original 409 response was
+      // lost.  Reconcile then proves this submission published nothing, and the
+      // overlap must stay a *conflict*: choosing a side writes nothing, and only
+      // an explicit permitted Save publishes 61.
+      const retained = {
+        submissionId: "submission-same-field-lost-409",
+        input: {
+          "automation.maximumActiveJobs": "61",
+          "automation.staleJobAgeSeconds": "3600",
+          "automation.workerPollSeconds": "2",
+          "automation.schedulerPollSeconds": "5",
+        },
+        submittedValues: {
+          "automation.maximumActiveJobs": 61,
+          "automation.staleJobAgeSeconds": 3600,
+          "automation.workerPollSeconds": 2,
+          "automation.schedulerPollSeconds": 5,
+        },
+        baselineRevisionId: TARGET_REVISION,
+        baselineRevisionVersion: 7,
+        baselineDigest: "digest-published-1",
+        // Original 4: the value both writers started from.
+        baselineValues: {
+          "automation.maximumActiveJobs": "4",
+          "automation.staleJobAgeSeconds": "3600",
+          "automation.workerPollSeconds": "2",
+          "automation.schedulerPollSeconds": "5",
+        },
+        submittedAt: "2026-03-16T00:00:04+00:00",
+      };
+      const storageKey =
+        "mediaflow.operations.automation-settings-submission:v1:automation-settings-admin";
+      const currentTarget = {
+        revisionId: "revision-published-71",
+        revisionVersion: 12,
+        digest: "digest-published-71",
+        values: {
+          "automation.maximumActiveJobs": 71,
+          "automation.staleJobAgeSeconds": 3600,
+          "automation.workerPollSeconds": 2,
+          "automation.schedulerPollSeconds": 5,
+        },
+      };
+      let putBodies: Json[] = [];
+      const mount = async () => {
+        window.sessionStorage.setItem(storageKey, JSON.stringify(retained));
+        recordingFetch((call) => {
+          if (call.url.includes("/operations/automation/settings")) {
+            if (call.method === "PUT") {
+              const body = JSON.parse(call.body ?? "{}") as Json;
+              putBodies.push(body);
+              if (body["reconcile"] === true) {
+                // This exact submission is proven settled and unpublished; the
+                // answer also states the current target it was read against.
+                return jsonResponse({
+                  state: "not_committed",
+                  committed: false,
+                  sideEffects: "none",
+                  evidence: {
+                    revisionId: "revision-unpublished-2",
+                    durableState: "submission_refused_stale",
+                    evidenceComplete: true,
+                    identityMatched: true,
+                  },
+                  target: currentTarget,
+                  nextAction:
+                    "review the current values and save your corrected values deliberately",
+                });
+              }
+              return jsonResponse(
+                {
+                  published: true,
+                  unchanged: false,
+                  revisionId: "revision-published-61",
+                  sideEffects: "configuration_only",
+                  readback: settingsDocument({
+                    target: {
+                      revisionId: "revision-published-61",
+                      revisionVersion: 13,
+                      digest: "digest-published-61",
+                      values: {
+                        "automation.maximumActiveJobs": 61,
+                        "automation.staleJobAgeSeconds": 3600,
+                        "automation.workerPollSeconds": 2,
+                        "automation.schedulerPollSeconds": 5,
+                      },
+                    },
+                  }),
+                },
+                201,
+              );
+            }
+            return jsonResponse(settingsDocument({ target: currentTarget }));
+          }
+          if (call.url.includes("/operations/automation/task-definitions")) {
+            return jsonResponse(automationInventory());
+          }
+          if (call.url.includes("/operations/automation/metrics")) {
+            return jsonResponse({ available: false });
+          }
+          if (call.url.includes("/operations/automation/records")) {
+            return jsonResponse({ items: [], total: 0 });
+          }
+          return undefined;
+        });
+        await connect("/ui-v2/operations/automation?tab=settings");
+        return screen.findByRole("region", { name: "自动化引擎设置" });
+      };
+
+      // --- First choice: keep mine. The decision itself writes nothing. ---
+      let panel = await mount();
+      await userEvent.click(
+        within(panel).getByRole("button", { name: "核实上次提交" }),
+      );
+      await waitFor(() => {
+        expect(within(panel).getByText(/本次提交没有发布/)).toBeTruthy();
+      });
+      const save = within(panel).getByRole("button", {
+        name: "保存设置",
+      }) as HTMLButtonElement;
+      // The overlap survives the reconciliation: current 71 and mine 61 are both
+      // shown and Save is refused.
+      expect(
+        await within(panel).findByText(/当前发布值为 71,你输入的值是 61/),
+      ).toBeTruthy();
+      expect(save.disabled).toBe(true);
+      expect(
+        putBodies.filter((body) => body["reconcile"] !== true),
+      ).toHaveLength(0);
+      await userEvent.click(
+        within(panel).getByRole("button", { name: "保留我的修改" }),
+      );
+      await waitFor(() => {
+        expect(save.disabled).toBe(false);
+      });
+      expect(
+        putBodies.filter((body) => body["reconcile"] !== true),
+      ).toHaveLength(0);
+      expect(
+        (within(panel).getByLabelText(/并行任务上限/) as HTMLInputElement)
+          .value,
+      ).toBe("61");
+
+      // Only the explicit Save publishes 61, against the current identity.
+      await userEvent.click(save);
+      await waitFor(() => {
+        expect(
+          putBodies.filter((body) => body["reconcile"] !== true),
+        ).toHaveLength(1);
+      });
+      const published = putBodies.filter(
+        (body) => body["reconcile"] !== true,
+      )[0];
+      expect(published["expectedRevisionId"]).toBe("revision-published-71");
+      expect(
+        (published["settings"] as Json)["automation.maximumActiveJobs"],
+      ).toBe(61);
+
+      // --- Second choice: use current. Also writes nothing. ---
+      cleanup();
+      authStore.setToken(TOKEN);
+      putBodies = [];
+      panel = await mount();
+      await userEvent.click(
+        within(panel).getByRole("button", { name: "核实上次提交" }),
+      );
+      await waitFor(() => {
+        expect(within(panel).getByText(/本次提交没有发布/)).toBeTruthy();
+      });
+      expect(
+        await within(panel).findByText(/当前发布值为 71,你输入的值是 61/),
+      ).toBeTruthy();
+      await userEvent.click(
+        within(panel).getByRole("button", { name: "采用当前值" }),
+      );
+      await waitFor(() => {
+        expect(
+          (within(panel).getByLabelText(/并行任务上限/) as HTMLInputElement)
+            .value,
+        ).toBe("71");
+      });
+      const saveAfter = within(panel).getByRole("button", {
+        name: "保存设置",
+      }) as HTMLButtonElement;
+      expect(saveAfter.disabled).toBe(true);
+      expect(
+        putBodies.filter((body) => body["reconcile"] !== true),
+      ).toHaveLength(0);
+    },
+  );
+
+  it(
+    "does not mistake a merged candidate for typing, and keeps the other writer's value on the next Save",
+    { timeout: 30_000 },
+    async () => {
+      // Task43.4 correction item 2 (real journey): the operator edits only
+      // capacity, another writer publishes scheduler 9, the ordinary refresh
+      // delivers it, and Save merges the candidate.  The form must then show the
+      // returned publication with no fabricated dirty edit, and a following
+      // capacity-only Save must keep scheduler 9 instead of restoring 5.
+      let reads = 0;
+      let revision = 0;
+      const putBodies: Json[] = [];
+      const currentValues = () => ({
+        "automation.maximumActiveJobs":
+          revision === 0 ? 100 : revision === 1 ? 62 : 63,
+        "automation.staleJobAgeSeconds": 3600,
+        "automation.workerPollSeconds": 2,
+        "automation.schedulerPollSeconds": 9,
+      });
+      recordingFetch((call) => {
+        if (call.url.includes("/operations/automation/settings")) {
+          if (call.method === "PUT") {
+            const body = JSON.parse(call.body ?? "{}") as Json;
+            putBodies.push(body);
+            revision += 1;
+            const values = currentValues();
+            return jsonResponse(
+              {
+                published: true,
+                unchanged: false,
+                revisionId: `revision-published-${8 + revision}`,
+                sideEffects: "configuration_only",
+                readback: settingsDocument({
+                  target: {
+                    revisionId: `revision-published-${8 + revision}`,
+                    revisionVersion: 8 + revision,
+                    digest: `digest-published-${8 + revision}`,
+                    values,
+                  },
+                }),
+              },
+              201,
+            );
+          }
+          reads += 1;
+          // First read: the target the operator edits (scheduler 5).  Every later
+          // read is the other writer's publication (scheduler 9), then whatever
+          // this page itself published.
+          if (reads === 1) {
+            return jsonResponse(
+              settingsDocument({
+                target: {
+                  revisionId: TARGET_REVISION,
+                  revisionVersion: 7,
+                  digest: "digest-published-1",
+                  values: {
+                    "automation.maximumActiveJobs": 100,
+                    "automation.staleJobAgeSeconds": 3600,
+                    "automation.workerPollSeconds": 2,
+                    "automation.schedulerPollSeconds": 5,
+                  },
+                },
+              }),
+            );
+          }
+          return jsonResponse(
+            settingsDocument({
+              target: {
+                revisionId:
+                  revision === 0
+                    ? "revision-published-2"
+                    : `revision-published-${8 + revision}`,
+                revisionVersion: revision === 0 ? 8 : 8 + revision,
+                digest:
+                  revision === 0
+                    ? "digest-published-2"
+                    : `digest-published-${8 + revision}`,
+                values:
+                  revision === 0
+                    ? {
+                        "automation.maximumActiveJobs": 100,
+                        "automation.staleJobAgeSeconds": 3600,
+                        "automation.workerPollSeconds": 2,
+                        "automation.schedulerPollSeconds": 9,
+                      }
+                    : currentValues(),
+              },
+            }),
+          );
+        }
+        if (call.url.includes("/operations/automation/task-definitions")) {
+          return jsonResponse(automationInventory());
+        }
+        if (call.url.includes("/operations/automation/metrics")) {
+          return jsonResponse({ available: false });
+        }
+        if (call.url.includes("/operations/automation/records")) {
+          return jsonResponse({ items: [], total: 0 });
+        }
+        return undefined;
+      });
+      await connect("/ui-v2/operations/automation?tab=settings");
+      const panel = await screen.findByRole("region", {
+        name: "自动化引擎设置",
+      });
+      const jobs = within(panel).getByLabelText(
+        /并行任务上限/,
+      ) as HTMLInputElement;
+      await userEvent.clear(jobs);
+      await userEvent.type(jobs, "62");
+      // The ordinary background readback delivers the other writer's scheduler 9.
+      await waitFor(
+        () => {
+          expect(reads).toBeGreaterThan(1);
+        },
+        { timeout: 9_000 },
+      );
+      const scheduler = within(panel).getByLabelText(
+        /调度器轮询间隔/,
+      ) as HTMLInputElement;
+      await waitFor(() => {
+        expect(scheduler.value).toBe("9");
+      });
+      const save = within(panel).getByRole("button", {
+        name: "保存设置",
+      }) as HTMLButtonElement;
+      await waitFor(() => {
+        expect(save.disabled).toBe(false);
+      });
+      await userEvent.click(save);
+
+      // After the merged Save: form 62/9, no dirty edit (Save disabled), and no
+      // invented "typing during Save" message that would restore scheduler 5.
+      await waitFor(() => {
+        expect(putBodies).toHaveLength(1);
+      });
+      expect(putBodies[0]["settings"] as Json).toEqual({
+        "automation.maximumActiveJobs": 62,
+        "automation.staleJobAgeSeconds": 3600,
+        "automation.workerPollSeconds": 2,
+        "automation.schedulerPollSeconds": 9,
+      });
+      await waitFor(() => {
+        expect(
+          (within(panel).getByLabelText(/并行任务上限/) as HTMLInputElement)
+            .value,
+        ).toBe("62");
+      });
+      expect(
+        (within(panel).getByLabelText(/调度器轮询间隔/) as HTMLInputElement)
+          .value,
+      ).toBe("9");
+      expect(within(panel).queryByText(/保存期间输入的其他值/)).toBeNull();
+      await waitFor(() => {
+        expect(save.disabled).toBe(true);
+      });
+
+      // The next ordinary capacity-only edit must keep the other writer's 9.
+      const jobsAfter = within(panel).getByLabelText(
+        /并行任务上限/,
+      ) as HTMLInputElement;
+      await userEvent.clear(jobsAfter);
+      await userEvent.type(jobsAfter, "63");
+      await waitFor(() => {
+        expect(save.disabled).toBe(false);
+      });
+      expect(
+        (within(panel).getByLabelText(/调度器轮询间隔/) as HTMLInputElement)
+          .value,
+      ).toBe("9");
+      await userEvent.click(save);
+      await waitFor(() => {
+        expect(putBodies).toHaveLength(2);
+      });
+      expect(putBodies[1]["settings"] as Json).toEqual({
+        "automation.maximumActiveJobs": 63,
+        "automation.staleJobAgeSeconds": 3600,
+        "automation.workerPollSeconds": 2,
+        "automation.schedulerPollSeconds": 9,
+      });
+    },
+  );
+
+  it(
+    "does not make a stale merge saveable when the current read fails",
+    { timeout: 30_000 },
+    async () => {
+      // Task43.4 correction item 1: reconciliation must read the *current* target.
+      // When that read fails, the retained input stays visible but Save stays
+      // unavailable — a failed read can never justify publishing a stale merge.
+      const retained = {
+        submissionId: "submission-current-read-fails",
+        input: {
+          "automation.maximumActiveJobs": "61",
+          "automation.staleJobAgeSeconds": "3600",
+          "automation.workerPollSeconds": "2",
+          "automation.schedulerPollSeconds": "5",
+        },
+        submittedValues: {
+          "automation.maximumActiveJobs": 61,
+          "automation.staleJobAgeSeconds": 3600,
+          "automation.workerPollSeconds": 2,
+          "automation.schedulerPollSeconds": 5,
+        },
+        baselineRevisionId: TARGET_REVISION,
+        baselineRevisionVersion: 7,
+        baselineDigest: "digest-published-1",
+        baselineValues: {
+          "automation.maximumActiveJobs": "100",
+          "automation.staleJobAgeSeconds": "3600",
+          "automation.workerPollSeconds": "2",
+          "automation.schedulerPollSeconds": "5",
+        },
+        submittedAt: "2026-03-16T00:00:05+00:00",
+      };
+      window.sessionStorage.setItem(
+        "mediaflow.operations.automation-settings-submission:v1:automation-settings-admin",
+        JSON.stringify(retained),
+      );
+      let failReads = false;
+      recordingFetch((call) => {
+        if (call.url.includes("/operations/automation/settings")) {
+          if (call.method === "PUT") {
+            // The reconcile answer carries no target, so the page must refetch.
+            return jsonResponse({
+              state: "not_committed",
+              committed: false,
+              sideEffects: "none",
+              evidence: {
+                revisionId: "revision-unpublished-3",
+                durableState: "submission_refused_stale",
+                evidenceComplete: true,
+                identityMatched: true,
+              },
+              nextAction: "refresh the published values before saving again",
+            });
+          }
+          if (failReads) {
+            return jsonResponse({ error: { code: "internal_error" } }, 500);
+          }
+          return jsonResponse(settingsDocument());
+        }
+        if (call.url.includes("/operations/automation/task-definitions")) {
+          return jsonResponse(automationInventory());
+        }
+        if (call.url.includes("/operations/automation/metrics")) {
+          return jsonResponse({ available: false });
+        }
+        if (call.url.includes("/operations/automation/records")) {
+          return jsonResponse({ items: [], total: 0 });
+        }
+        return undefined;
+      });
+      await connect("/ui-v2/operations/automation?tab=settings");
+      const panel = await screen.findByRole("region", {
+        name: "自动化引擎设置",
+      });
+      expect(await within(panel).findByText(/上一次保存结果未知/)).toBeTruthy();
+      // From here on, reading the current publication fails.
+      failReads = true;
+      await userEvent.click(
+        within(panel).getByRole("button", { name: "核实上次提交" }),
+      );
+      // The surface states that the current publication could not be read and
+      // offers no Save: it never invents a current target from the old value.
+      expect(await screen.findByText("引擎设置暂不可用")).toBeTruthy();
+      expect(screen.queryByRole("button", { name: "保存设置" })).toBeNull();
+
+      // Once a read succeeds again the retained input returns, and Save is offered
+      // only because a real current target now proves the merge.  The surface's own
+      // bounded readback (5s) is what re-proves it; no write is involved.
+      failReads = false;
+      const recovered = await screen.findByRole(
+        "region",
+        { name: "自动化引擎设置" },
+        { timeout: 9_000 },
+      );
+      const jobs = within(recovered).getByLabelText(
+        /并行任务上限/,
+      ) as HTMLInputElement;
+      expect(jobs.value).toBe("61");
+      expect(jobs.disabled).toBe(false);
+      await waitFor(() => {
+        expect(
+          (
+            within(recovered).getByRole("button", {
+              name: "保存设置",
+            }) as HTMLButtonElement
+          ).disabled,
+        ).toBe(false);
+      });
+    },
+  );
+
+  it(
+    "drops an inherited choice when the conflicting current value changes again",
+    { timeout: 30_000 },
+    async () => {
+      // A per-field decision reviews one exact published value.  When that value
+      // changes again, the decision no longer applies: the conflict must be
+      // reviewed afresh instead of silently publishing the old choice.
+      let reads = 0;
+      const putBodies: Json[] = [];
+      const targetWith = (
+        capacity: number,
+        revisionId: string,
+        digest: string,
+      ) => ({
+        revisionId,
+        revisionVersion: 8,
+        digest,
+        values: {
+          "automation.maximumActiveJobs": capacity,
+          "automation.staleJobAgeSeconds": 3600,
+          "automation.workerPollSeconds": 2,
+          "automation.schedulerPollSeconds": 5,
+        },
+      });
+      recordingFetch((call) => {
+        if (call.url.includes("/operations/automation/settings")) {
+          if (call.method === "PUT") {
+            putBodies.push(JSON.parse(call.body ?? "{}") as Json);
+            return jsonResponse(
+              {
+                published: true,
+                unchanged: false,
+                revisionId: "revision-published-choice",
+                sideEffects: "configuration_only",
+                readback: settingsDocument({
+                  target: targetWith(
+                    70,
+                    "revision-published-choice",
+                    "digest-published-choice",
+                  ),
+                }),
+              },
+              201,
+            );
+          }
+          reads += 1;
+          if (reads === 1) return jsonResponse(settingsDocument());
+          // Second read: current capacity 90. Third: current capacity 95.
+          return jsonResponse(
+            settingsDocument({
+              target:
+                reads === 2
+                  ? targetWith(
+                      90,
+                      "revision-published-2d",
+                      "digest-published-2d",
+                    )
+                  : targetWith(
+                      95,
+                      "revision-published-2e",
+                      "digest-published-2e",
+                    ),
+            }),
+          );
+        }
+        if (call.url.includes("/operations/automation/task-definitions")) {
+          return jsonResponse(automationInventory());
+        }
+        if (call.url.includes("/operations/automation/metrics")) {
+          return jsonResponse({ available: false });
+        }
+        if (call.url.includes("/operations/automation/records")) {
+          return jsonResponse({ items: [], total: 0 });
+        }
+        return undefined;
+      });
+      await connect("/ui-v2/operations/automation?tab=settings");
+      const panel = await screen.findByRole("region", {
+        name: "自动化引擎设置",
+      });
+      const jobs = within(panel).getByLabelText(
+        /并行任务上限/,
+      ) as HTMLInputElement;
+      await userEvent.clear(jobs);
+      await userEvent.type(jobs, "70");
+      await waitFor(
+        () => {
+          expect(reads).toBeGreaterThan(1);
+        },
+        { timeout: 9_000 },
+      );
+      await waitFor(() => {
+        expect(
+          within(panel).getByText(/当前发布值为 90,你输入的值是 70/),
+        ).toBeTruthy();
+      });
+      await userEvent.click(
+        within(panel).getByRole("button", { name: "保留我的修改" }),
+      );
+      const save = within(panel).getByRole("button", {
+        name: "保存设置",
+      }) as HTMLButtonElement;
+      await waitFor(() => {
+        expect(save.disabled).toBe(false);
+      });
+
+      // The current value changes again before that Save is made.
+      await waitFor(
+        () => {
+          expect(reads).toBeGreaterThan(2);
+        },
+        { timeout: 9_000 },
+      );
+      await waitFor(() => {
+        expect(
+          within(panel).getByText(/当前发布值为 95,你输入的值是 70/),
+        ).toBeTruthy();
+      });
       expect(save.disabled).toBe(true);
       expect(putBodies).toHaveLength(0);
     },

@@ -1268,3 +1268,123 @@ remain **pending and B-owned**. They are neither PASS nor missing Developer impl
 Slice43 remains ACTIVE. Same Task/Base/Goal/Scope; no next Task, Closure Packet or A readiness claim.
 This review changes TASK only. All pre-existing dirty/untracked/reference/private artifacts and
 accepted/frozen refs are preserved; no product edit, push or history rewrite.
+
+## Developer Correction Report — field-merge integration (round 2)
+
+```text
+Status: READY FOR B REVIEW (Developer does not self-PASS)
+Task Base: f18d2444f548b81b5892536498a1b4cdd4400be8 (unchanged)
+Correction scope: B's two integration failures + acceptance items 1-3 only
+Candidate: the commit carrying this report (`git log -1` for the exact SHA)
+```
+
+The prior report and both B reviews above are historical facts and were not rewritten. No backend,
+API, persistence, schema, loop or harness behavior changed in this round; the change is confined to
+the shared form/recovery helpers, the reconcile readback projection they consume, their directly
+affected tests and the delivered-architecture wording.
+
+### 1. Unresolved field conflicts survive terminal reconciliation
+
+`AutomationSettingsPanel.reconcile()` no longer consumes the editing context. The merge result is
+still computed (it supplies the readable next action), but the applied edit keeps the **original**
+baseline identity and baseline values and the raw typed input, so the render continues to see
+`staleBaseline === true` and recomputes the same conflict set. A real same-field overlap therefore
+stays visible with both current/user values plus units and keeps Save disabled until the operator
+picks `采用当前值` or `保留我的修改`; a choice still publishes nothing. A retained older context
+without baseline values keeps its conservative explicit-choice behavior (it is never given invented
+baseline values).
+
+The reviewed current target now comes from the reconcile answer's own `target` document
+(`reconcileAutomationSettings` → `readback`, normalized through the new exported
+`normalizePublishedTarget`) or from an awaited successful refetch — never from the pre-request
+`published` closure. If neither yields a target, Save is blocked (`currentReadFailed`, a derived
+state keyed off `query.dataUpdatedAt`, so any later successful read clears it) and the page says the
+current publication could not be read. An explicit choice is stored with the published value it
+reviewed (`ResolutionChoice`), and `reviewedResolutions()` drops it when that field's published
+value changes again, so a decision is never inherited by a different current value. The backend
+identity fence is unchanged: every Save still sends the observed `revisionId`/`digest`.
+
+### 2. A merged candidate is no longer mistaken for typing
+
+`submit()` now separates two snapshots: `startedInput` (the actual form input when the request
+started) and `submitInput` (the effective — possibly merged — candidate sent to the API). The
+post-response race check compares `editRef.current.input` only against `startedInput`, and
+`rebaseOnto()` uses the same starting snapshot, so another writer's preserved field is no longer
+relabelled as a fresh keystroke. With no intervening input the edit is cleared, the returned
+publication becomes the form, Save is disabled and no "values typed during Save" message appears.
+A genuine raced keystroke is still preserved and explicitly re-based. After a successful Save the
+cache is seeded with the returned model and then awaited-refetched; if that refetch fails the page
+says the published target could not be re-read instead of silently showing the pre-request values.
+The four inputs stay read-only while a submission is outstanding.
+
+### 3. Acceptance now reaches the post-Save form and the next edit
+
+Component tests added to `AutomationSettingsPage.test.tsx` (real shared panel, real router path,
+recorded API traffic):
+
+1. `keeps a same-field conflict unresolved through terminal reconciliation` — original 4, mine 61,
+   current 71, lost 409, reload + reconcile. Conflict text `当前发布值为 71,你输入的值是 61` is
+   shown, Save disabled, both choices write nothing, and only the explicit Save publishes 61 against
+   `revision-published-71`. The older-context case is covered by the existing
+   `reconciles a lost rejection…` test, which was corrected to the required conservative behavior
+   (conflict + explicit choice instead of a free Save).
+2. `does not mistake a merged candidate for typing…` — scheduler 5, capacity 62 edited, other writer
+   saves 9, the ordinary 5s readback delivers it; the Save publishes 62/9 **and finishes with form
+   62/9, Save disabled, no "other values preserved" message**; a following capacity-only 63 Save
+   publishes **63/9**.
+3. Supporting cases: `does not make a stale merge saveable when the current read fails` (failed
+   current read ⇒ no Save until a successful read) and `drops an inherited choice when the
+   conflicting current value changes again` (90 → 95 reopens the conflict).
+4. Retained passing cases: the nonconflicting background-merge Save, the lost-409 → final Save, the
+   lost `3.5`/422 → reload → reconcile → correct 4 → final Save, unknown-outcome block/reconcile,
+   double-click, principal/reload isolation and the strict invalid-input checks.
+
+Both new behavior tests were confirmed to fail on the pre-correction `HEAD` sources and pass on the
+candidate. Real-Python browser proof was extended in `web/tests/e2e/automation-settings.python.spec.ts`
+using the existing Automation settings page and the existing isolated harness (no new routes):
+
+- `a concurrent writer makes the ordinary background readback refuse the stale Save` now also
+  asserts post-Save form 77/`otherPoll`, Save disabled, no invented "typing during Save" copy, and a
+  second capacity-only Save that publishes capacity with the other writer's scheduler value intact.
+- new `a lost same-field conflict stays an explicit choice until the operator saves`: real 409 whose
+  response is dropped, reload, reconcile, conflict visible with Save disabled, `采用当前值` writes
+  nothing, and `保留我的修改` + explicit Save publishes only the operator's capacity.
+
+### Affected commands and actual results
+
+| Command (cwd) | Result |
+|---|---|
+| `python3 scripts/check_governance.py` | `governance check: PASS` |
+| `git diff --check` | clean |
+| `.venv/bin/python -m unittest tests.test_automation_settings_management` | `Ran 38 tests ... OK` |
+| `.venv/bin/python -m unittest tests.test_system_settings_management tests.test_automation_settings_resident` | `Ran 43 tests ... OK` |
+| `npx vitest run src/features/operations/AutomationSettingsPage.test.tsx` (cwd `web`) | `23 passed` |
+| `npx vitest run src/features/operations/automation-settings-recovery.test.ts …automation-settings-session.test.ts …AutomationRouter.test.tsx` | `4 files / 49 tests passed` |
+| `npx vitest run src/features/operations src/features/configuration` (cwd `web`) | `22 files / 255 tests passed` |
+| `npx tsc --noEmit -p tsconfig.json` (cwd `web`) | clean |
+| `npx eslint` on the five changed files | clean |
+| `npx prettier --check` on the five changed files | clean |
+| `npm run build` (cwd `web`) | succeeds (pre-existing chunk-size warning only) |
+| `npm run test:e2e -- --config=playwright.python.automation.config.ts tests/e2e/automation-settings.python.spec.ts` (cwd `web`) | `11 passed` |
+| Reference PNG digests | unchanged: `d2f759e…ba34`, `68d9107…c7b9` |
+
+No test was skipped, retried or weakened, no assertion relaxed and no timeout raised; the only added
+timeouts are the explicit Playwright/vitest `timeout` budgets on multi-readback journeys that
+already existed elsewhere in this file. As instructed, the full Python/Web/default-E2E/release
+matrices, wheel/installed-consumer, supported-schema upgrade rehearsal and Docker lifecycle were
+**not** run; they stay B-owned T4 gates and are neither PASS nor claimed.
+
+### Remaining risks / disclosures for B
+
+1. **`queryClient.setQueryData` seeding.** On a successful Save the returned model is written into
+   the shared read cache before the awaited refetch, so the form shows the returned publication
+   immediately. It is only used for the published target/values, never to claim consumer adoption,
+   and the refetch (or the explicit failed-read message) follows immediately. B may prefer to prove
+   this path in the native spec (it is exercised implicitly by the passing 62/9 spec).
+2. **`currentReadFailed` derivation.** It is cleared by any later readable model
+   (`query.dataUpdatedAt` comparison) rather than by a manual action, so a transient read failure
+   cannot permanently block the form after recovery.
+3. **Scope.** No public result state, table, route or generic workflow engine was added; the four
+   reconciliation outcomes, retained submission evidence and strict publication validation are
+   unchanged. Still B-owned: T4 process/wheel/upgrade/Docker acceptance, and the earlier rounds'
+   disclosures (additive schema-50 evidence upgrade rehearsal, harness in-process consumer review).

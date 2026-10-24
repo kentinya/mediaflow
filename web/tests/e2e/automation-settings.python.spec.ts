@@ -373,6 +373,148 @@ test("a concurrent writer makes the ordinary background readback refuse the stal
   expect(saved.target!.values["automation.schedulerPollSeconds"]).toBe(
     otherPoll,
   );
+
+  // After the merged Save the form shows the returned publication: capacity 77
+  // with the other writer's scheduler value, nothing pending, and no invented
+  // "you typed during the Save" message (which used to restore the old value).
+  await expect(jobs).toHaveValue("77");
+  await expect(panel.getByLabel(/调度器轮询间隔/)).toHaveValue(
+    String(otherPoll),
+  );
+  await expect(panel.getByText(/保存期间输入的其他值/)).toHaveCount(0);
+  await expect(panel.getByRole("button", { name: "保存设置" })).toBeDisabled();
+
+  // The next ordinary capacity-only edit keeps the other writer's scheduler
+  // value: it must never be silently restored to the pre-merge value.
+  await jobs.fill("78");
+  await expect(panel.getByRole("button", { name: "保存设置" })).toBeEnabled();
+  await expect(panel.getByLabel(/调度器轮询间隔/)).toHaveValue(
+    String(otherPoll),
+  );
+  await panel.getByRole("button", { name: "保存设置" }).click();
+  await expect(panel.getByText(/已发布新的目标值/)).toBeVisible({
+    timeout: 20_000,
+  });
+  const twiceSaved = await settingsDocument(page);
+  expect(twiceSaved.target!.values["automation.maximumActiveJobs"]).toBe(78);
+  expect(twiceSaved.target!.values["automation.schedulerPollSeconds"]).toBe(
+    otherPoll,
+  );
+});
+
+test("a lost same-field conflict stays an explicit choice until the operator saves", async ({
+  page,
+}) => {
+  // Both writers change the *same* field and only the original 409 response is
+  // lost.  Reconciling proves that request published nothing, but the overlap
+  // must stay a conflict: each choice writes nothing, and only the explicit Save
+  // publishes the operator's value — while an older context without baseline
+  // values needs the same explicit choice.
+  await connectOn(page, "/ui-v2/operations/automation?tab=settings");
+  const panel = page.getByRole("region", { name: "自动化引擎设置" });
+  await expect(panel).toBeVisible();
+  const before = await settingsDocument(page);
+  const original = before.target!.values["automation.maximumActiveJobs"];
+  const mine = original === 61 ? 62 : 61;
+  const current = mine === 71 ? 72 : 71;
+
+  // The operator types a capacity the other writer will also change.
+  const jobs = panel.getByLabel(/并行任务上限/);
+  await jobs.fill(String(mine));
+  const other = await page.request.put(SETTINGS_PATH, {
+    headers: {
+      Authorization: `Bearer ${ADMIN_TOKEN}`,
+      "Content-Type": "application/json",
+    },
+    data: {
+      settings: {
+        ...before.target!.values,
+        "automation.maximumActiveJobs": current,
+      },
+      expectedRevisionId: before.target!.revisionId,
+      expectedDigest: before.target!.digest,
+      submissionId: "e2e-same-field-winner",
+    },
+  });
+  expect(other.status()).toBe(201);
+  const winner = await settingsDocument(page);
+  expect(winner.target!.values["automation.maximumActiveJobs"]).toBe(current);
+
+  // The form's own Save is refused 409 by the real API, but only the response is
+  // lost, so the page must retain the attempt and reconcile it from durability.
+  let serverStatus: number | null = null;
+  await page.route(`**${SETTINGS_PATH}`, async (route) => {
+    if (route.request().method() !== "PUT") {
+      await route.continue();
+      return;
+    }
+    const response = await route.fetch();
+    serverStatus = response.status();
+    await route.abort("failed");
+  });
+  await panel.getByRole("button", { name: "保存设置" }).click();
+  await expect(panel.getByText(/上一次保存结果未知/)).toBeVisible({
+    timeout: 20_000,
+  });
+  expect(serverStatus).toBe(409);
+  await page.unroute(`**${SETTINGS_PATH}`);
+  expect((await settingsDocument(page)).target!.revisionId).toBe(
+    winner.target!.revisionId,
+  );
+
+  await page.reload();
+  await page.getByLabel("API token").fill(ADMIN_TOKEN);
+  await page.getByRole("button", { name: "Connect" }).click();
+  const reloaded = page.getByRole("region", { name: "自动化引擎设置" });
+  await reloaded.getByRole("button", { name: "核实上次提交" }).click();
+  await expect(reloaded.getByText(/本次提交没有发布/)).toBeVisible({
+    timeout: 20_000,
+  });
+
+  // The conflict survives the reconciliation: both values are stated, Save is
+  // refused, and reconciling published nothing.
+  const conflictCopy = new RegExp(
+    `当前发布值为 ${current},你输入的值是 ${mine}`,
+  );
+  await expect(reloaded.getByText(conflictCopy)).toBeVisible({
+    timeout: 20_000,
+  });
+  await expect(
+    reloaded.getByRole("button", { name: "保存设置" }),
+  ).toBeDisabled();
+  expect((await settingsDocument(page)).target!.revisionId).toBe(
+    winner.target!.revisionId,
+  );
+
+  // Adopting the current value publishes nothing and leaves nothing to save.
+  await reloaded.getByRole("button", { name: "采用当前值" }).click();
+  await expect(reloaded.getByLabel(/并行任务上限/)).toHaveValue(
+    String(current),
+  );
+  await expect(
+    reloaded.getByRole("button", { name: "保存设置" }),
+  ).toBeDisabled();
+  expect((await settingsDocument(page)).target!.revisionId).toBe(
+    winner.target!.revisionId,
+  );
+
+  // Keeping the operator's value also publishes nothing; only the explicit Save
+  // does, and it is checked against the current identity.
+  await reloaded.getByLabel(/并行任务上限/).fill(String(mine));
+  await expect(reloaded.getByText(conflictCopy)).toBeVisible();
+  await reloaded.getByRole("button", { name: "保留我的修改" }).click();
+  await expect(
+    reloaded.getByRole("button", { name: "保存设置" }),
+  ).toBeEnabled();
+  expect((await settingsDocument(page)).target!.revisionId).toBe(
+    winner.target!.revisionId,
+  );
+  await reloaded.getByRole("button", { name: "保存设置" }).click();
+  await expect(reloaded.getByText(/已发布新的目标值/)).toBeVisible({
+    timeout: 20_000,
+  });
+  const published = await settingsDocument(page);
+  expect(published.target!.values["automation.maximumActiveJobs"]).toBe(mine);
 });
 
 test("an unknown submission is reconciled from its own durable evidence, never by value equality", async ({

@@ -161,6 +161,19 @@ function optionalNumber(value: unknown, field: string): number | null {
   return normalizeOptionalFiniteNumber(value, field);
 }
 
+/**
+ * Normalize one published-target document.
+ *
+ * Exported for the reconciliation answer, whose `target` is the same document
+ * the readback carries: a merge decided after reconcile must be bound to that
+ * exact current identity rather than to a pre-request value.
+ */
+export function normalizePublishedTarget(
+  value: unknown,
+): PublishedTargetView | null {
+  return normalizeTarget(value);
+}
+
 function normalizeTarget(value: unknown): PublishedTargetView | null {
   const record = optionalRecord(value);
   if (record === null) return null;

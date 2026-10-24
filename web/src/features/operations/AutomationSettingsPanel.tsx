@@ -27,7 +27,7 @@
  */
 
 import { useEffect, useMemo, useRef, useState } from "react";
-import { useQuery } from "@tanstack/react-query";
+import { useQuery, useQueryClient } from "@tanstack/react-query";
 import { useAuthGeneration, useAuthToken } from "../../shared/api/auth-context";
 import { AuthorizedReadBoundary } from "../../shared/auth/AuthorizedReadBoundary";
 import { Button } from "../../shared/ui/Button";
@@ -49,6 +49,7 @@ import {
   type ConsumerInstanceView,
   type PublishedTargetView,
 } from "../../entities/operations/automation-settings";
+import type { AutomationSettingsRead } from "../../shared/api/api-client";
 import {
   newSubmissionId,
   readPendingSubmission,
@@ -127,24 +128,62 @@ function sameBaseline(a: Baseline, b: Baseline): boolean {
  * Re-base input typed during an outstanding Save onto the newly published
  * target.
  *
- * Only the fields the operator actually changed after submitting are carried
- * over; every other field takes the just-published value.  That keeps a raced
- * keystroke instead of discarding it, while never presenting the old identity as
- * still current.
+ * Only the fields the operator actually changed *after* the request started are
+ * carried over; every other field takes the just-published value.  The
+ * comparison must use the edit snapshot the request started from, never the
+ * merged candidate this request actually sent: those are different values by
+ * construction, so comparing against the candidate would relabel another
+ * writer's preserved field as a fresh keystroke and restore its old value.
  */
 function rebaseOnto(
   newer: FormState,
-  submitted: FormState,
+  started: FormState,
   published: PublishedTargetView,
 ): FormState {
   const base = publishValues(published);
   const rebased: Record<string, string> = { ...base };
   for (const field of AUTOMATION_ENGINE_FIELDS) {
-    if (!sameTypedValue(newer[field], submitted[field])) {
+    if (!sameTypedValue(newer[field], started[field])) {
       rebased[field] = newer[field] ?? "";
     }
   }
   return rebased;
+}
+
+/**
+ * One explicit same-field decision, bound to the published value it reviewed.
+ *
+ * Binding the choice to the exact current value is what stops a decision made
+ * for one publication from being inherited silently by a different one: if that
+ * field's published value changes again, the choice no longer applies and the
+ * conflict has to be reviewed again.
+ */
+interface ResolutionChoice {
+  readonly choice: FieldResolution;
+  /** The current published value this choice was made against. */
+  readonly current: string;
+}
+
+/**
+ * Only choices that still review the *currently* published value apply.
+ *
+ * A decision made against one publication is not inherited by a different one:
+ * if that field's published value changes again, the conflict has to be reviewed
+ * again.  This is a pure filter so the recovery plan stays a memoizable value.
+ */
+function reviewedResolutions(
+  resolutions: Readonly<Record<string, ResolutionChoice | undefined>>,
+  published: PublishedTargetView,
+): Record<string, FieldResolution | undefined> {
+  const current = publishValues(published);
+  const reviewed: Record<string, FieldResolution | undefined> = {};
+  for (const field of AUTOMATION_ENGINE_FIELDS) {
+    const entry = resolutions[field];
+    if (entry !== undefined && sameTypedValue(entry.current, current[field])) {
+      reviewed[field] = entry.choice;
+    }
+  }
+  return reviewed;
 }
 
 /**
@@ -251,6 +290,7 @@ function ConsumerAdoption({
 export function AutomationSettingsPanel() {
   const token = useAuthToken();
   const authGeneration = useAuthGeneration();
+  const queryClient = useQueryClient();
   const query = useQuery({
     queryKey: QUERY_KEY,
     queryFn: () => fetchAutomationSettings(token),
@@ -314,11 +354,18 @@ export function AutomationSettingsPanel() {
     readonly revisionVersion: number | null;
     readonly values: FormState;
   } | null>(null);
-  // An explicit choice the operator made for a *same-field* conflict. It only
-  // decides what this form will submit; it never publishes on its own.
+  // An explicit choice the operator made for a *same-field* conflict, together
+  // with the published value it was made against. It only decides what this form
+  // will submit; it never publishes on its own.
   const [resolutions, setResolutions] = useState<
-    Record<string, FieldResolution | undefined>
+    Record<string, ResolutionChoice | undefined>
   >({});
+  // The read basis at which a reconciliation could not read the current published
+  // target. A stale merge is never made saveable from a failed read: Save stays
+  // unavailable until a *newer* successful read proves what is published now.
+  // Keeping the instant rather than a boolean makes that clearing a derivation of
+  // the read state instead of an effect that cascades extra renders.
+  const [readFailureAt, setReadFailureAt] = useState<number | null>(null);
 
   // Restore a retained unknown submission exactly once per authenticated
   // principal.  React's documented "adjust state when an input changes" pattern
@@ -355,6 +402,11 @@ export function AutomationSettingsPanel() {
 
   const pendingSubmission = unresolved;
   const reloadedSubmission = pendingFromStorage;
+  // A newer readable model proves the current target again, so an earlier failed
+  // read only blocks Save while no later successful read has arrived.
+  const currentReadFailed =
+    readFailureAt !== null &&
+    (model === null || query.dataUpdatedAt <= readFailureAt);
   const published = model?.target ?? null;
   const baseline = published === null ? null : baselineOf(published);
   const publishedValues = published === null ? {} : publishValues(published);
@@ -375,7 +427,7 @@ export function AutomationSettingsPanel() {
             typed: edit.input,
             baseline: edit.baselineValues ?? null,
             current: publishValues(published),
-            resolutions,
+            resolutions: reviewedResolutions(resolutions, published),
           })
         : null,
     [edit, staleBaseline, published, resolutions],
@@ -397,6 +449,7 @@ export function AutomationSettingsPanel() {
     submitBaseline !== null &&
     !submitting &&
     pendingSubmission === null &&
+    !currentReadFailed &&
     (recovery === null || !recovery.blocked);
 
   const visibleMessage = useMemo(() => {
@@ -426,13 +479,19 @@ export function AutomationSettingsPanel() {
       return;
     }
     const checkedAgainst = submitBaseline;
-    // The exact input this request submits.  Later keystrokes are compared
-    // against this snapshot when the answer arrives.
-    const submittedEdit: EditState = {
-      baseline: checkedAgainst,
-      baselineValues: submitBaselineValues,
-      input: submitInput,
-    };
+    // Two different snapshots matter after this request:
+    //
+    // - `startedInput` — the operator's actual form input when the request
+    //   started.  A later keystroke is a genuine change *against this* value.
+    // - the effective candidate sent to the API (`submitInput`), which is the
+    //   merged input when the target moved under the edit.  It is what the
+    //   response describes and what a retained submission is reconciled from,
+    //   but it is never an input snapshot the operator typed.
+    //
+    // Comparing the live input against the merged candidate would relabel another
+    // writer's preserved field as a fresh keystroke and restore its old value
+    // after a successful Save, so the comparison below uses `startedInput`.
+    const startedInput = form;
     const submissionId = newSubmissionId();
     if (submissionId === null || principalId === null) {
       setMessage(
@@ -479,32 +538,33 @@ export function AutomationSettingsPanel() {
         setUnresolved(null);
         setRestored({ key: restoredKey, value: null });
         // The response belongs to the input that was submitted.  The form is
-        // read-only while a Save is outstanding, but a keystroke that raced the
-        // request could still be present: those *changed* fields are preserved
-        // and explicitly re-based onto the just-published values instead of being
-        // cleared or silently rebased against the old identity.
+        // read-only while a Save is outstanding, so normally there is no newer
+        // input at all and the just-published target simply becomes the form.
+        // If a keystroke genuinely raced the request, only *that* difference is
+        // preserved and explicitly re-based onto the just-published values.
         const current = editRef.current;
-        // Compare by value, not identity: the snapshot object is reconstructed
-        // for this one request, so object identity would always look "newer" and
-        // would fabricate a retained edit that never happened.
+        // Compare by value against the input the operator actually had when the
+        // request started, never against the merged candidate: those differ by
+        // construction, so using the candidate would fabricate a retained edit
+        // for every field another writer had changed.
         const newer =
-          current !== null && !sameValues(current.input, submittedEdit.input)
+          current !== null && !sameValues(current.input, startedInput)
             ? current
             : null;
         const publishedNow = result.readback.target;
         const rebased =
           newer !== null && publishedNow !== null
-            ? rebaseOnto(newer.input, submittedEdit.input, publishedNow)
+            ? rebaseOnto(newer.input, startedInput, publishedNow)
             : null;
+        let nextEdit: EditState | null = null;
         if (rebased !== null && publishedNow !== null) {
-          applyEdit({
+          nextEdit = {
             baseline: baselineOf(publishedNow),
             baselineValues: publishValues(publishedNow),
             input: rebased,
-          });
-        } else {
-          applyEdit(null);
+          };
         }
+        applyEdit(nextEdit);
         setResolutions({});
         setLastPublished({
           revisionId: result.revisionId ?? checkedAgainst.revisionId,
@@ -518,7 +578,27 @@ export function AutomationSettingsPanel() {
               ? "提交值与已发布目标相同,未产生新的发布。"
               : "已发布新的目标值。常驻进程会在各自的安全边界采用;下方逐实例显示真实采用情况。",
         );
-        await query.refetch();
+        // Make the form show the returned publication before the cache settles;
+        // the awaited refetch below then keeps every other reader consistent.
+        // A returned publication is what the form shows until the refetch lands;
+        // it is never used to claim that any consumer adopted it.
+        const savedReadback = result.readback;
+        queryClient.setQueryData(
+          QUERY_KEY,
+          (previous: AutomationSettingsRead | undefined) =>
+            previous === undefined
+              ? previous
+              : ({ ok: true, model: savedReadback } as const),
+        );
+        const refreshed = await query.refetch();
+        // A readback that *failed* (or returned no readable model) must not
+        // silently fall back to the pre-request publication: an edit that is
+        // still bound to an older identity would then present itself as current.
+        if (refreshed.isError || refreshed.data?.ok !== true) {
+          setMessage(
+            "设置已发布,但随后读取当前发布值失败。请刷新页面确认已发布目标;本次不会自动重试保存。",
+          );
+        }
         return;
       }
       if (result.unknownOutcome) {
@@ -582,50 +662,99 @@ export function AutomationSettingsPanel() {
             ? `核对完成:本次提交已发布为 ${result.evidenceRevisionId ?? "一个修订"},但之后又被新的发布取代。请查看当前发布目标。`
             : `核对完成:本次提交已发布为 ${result.evidenceRevisionId ?? "当前 Active"},无需再次保存。`,
         );
-      } else {
-        // A terminal non-publication.  The block is cleared and the operator's
-        // typed input becomes correctable again — but *per field*, never as one
-        // wholesale re-arm: only the fields this operator actually changed are
-        // merged into the current target, so another writer's change to a field
-        // the operator never edited is preserved.  A same-field overlap needs an
-        // explicit choice before Save is offered.  Nothing is re-submitted here:
-        // the next Save is a deliberate new action.
-        const currentTarget = published;
-        if (currentTarget !== null) {
-          const current = publishValues(currentTarget);
-          const merged = planRecovery({
-            typed: pendingContext.input,
-            baseline: pendingContext.baselineValues ?? null,
-            current,
-          });
-          setResolutions({});
-          applyEdit({
-            baseline: baselineOf(currentTarget),
-            baselineValues: current,
-            input: merged.input,
-          });
-          setFailure(
-            result.rejectionCode !== null
-              ? {
-                  stage: "输入校验",
-                  durableState: "本次提交在发布前被拒绝,Active 未改变",
-                  nextAction: merged.blocked
-                    ? "请先逐字段确认冲突,再修正被拒绝的值后保存。"
-                    : (result.nextAction ?? "修正被拒绝的值后保存。"),
-                  fieldError:
-                    result.rejectionField === null
-                      ? result.rejectionCode
-                      : `${result.rejectionField}:${result.rejectionCode}`,
-                }
-              : null,
-          );
-        }
+        await query.refetch();
+        return;
+      }
+      // A terminal non-publication.  The block is cleared and the operator's
+      // typed input becomes correctable again — but *per field*, never as one
+      // wholesale re-arm: only the fields this operator actually changed are
+      // merged into the current target, so another writer's change to a field
+      // the operator never edited is preserved.  A same-field overlap stays an
+      // open conflict that needs an explicit choice before Save is offered.
+      // Nothing is re-submitted here: the next Save is a deliberate new action.
+      //
+      // The merge is bound to the current *target*, so it must be read from the
+      // reconcile outcome (this request's own readback) or from an awaited
+      // successful refetch.  The pre-request `published` closure is exactly the
+      // value the reconcile may have overtaken, and a failed current read can
+      // never justify making a stale merge saveable.
+      const refreshed = await query.refetch();
+      // `result.readback` is the reconcile answer's own `target` document (the
+      // current published identity), while the refetch provides the full model.
+      // The pre-request `published` closure is exactly the value the reconcile may
+      // have overtaken, so it is never used here: a merge must be bound to the
+      // target that is current now.
+      const currentTarget =
+        result.readback ??
+        (refreshed.data?.ok === true ? refreshed.data.model.target : null);
+      if (currentTarget === null) {
+        // A failed current read can never justify making a stale merge saveable:
+        // Save stays unavailable until a successful read shows the current target.
+        setReadFailureAt(query.dataUpdatedAt);
+        setFailure(
+          result.rejectionCode !== null
+            ? {
+                stage: "输入校验",
+                durableState: "本次提交在发布前被拒绝,Active 未改变",
+                nextAction:
+                  result.nextAction ?? "修正被拒绝的值后刷新并重新保存。",
+                fieldError:
+                  result.rejectionField === null
+                    ? result.rejectionCode
+                    : `${result.rejectionField}:${result.rejectionCode}`,
+              }
+            : null,
+        );
         setMessage(
-          `核对完成:本次提交没有发布,当前发布值未被本次请求改变。${result.nextAction ?? "请核对当前值后再次保存。"}`,
+          "核对完成:本次提交没有发布,但当前发布值读取失败。你输入的值仍保留在表单中;请刷新页面读取当前发布值后再决定是否保存。",
         );
         return;
       }
-      await query.refetch();
+      // A readable current target proves the publication again.
+      setReadFailureAt(null);
+      const merged = planRecovery({
+        typed: pendingContext.input,
+        baseline: pendingContext.baselineValues ?? null,
+        current: publishValues(currentTarget),
+      });
+      setResolutions({});
+      // The original editing context — the identity *and the values* this input
+      // was written against — is preserved, not rebased onto the current target.
+      // Rebasing it would consume the B/I comparison before its conflicts are
+      // resolved: the next render would then see an up-to-date baseline, drop the
+      // conflict set and offer Save without an explicit choice.  Recovery keeps
+      // comparing the original baseline against the live published target, so a
+      // real overlap stays visible; the Save itself is fenced against that exact
+      // current identity.  An older context without baseline values stays without
+      // them for the same reason and keeps its conservative explicit choices.
+      applyEdit({
+        baseline: {
+          revisionId: pendingContext.baselineRevisionId,
+          revisionVersion: pendingContext.baselineRevisionVersion,
+          digest: pendingContext.baselineDigest,
+        },
+        baselineValues: pendingContext.baselineValues ?? null,
+        input: pendingContext.input,
+      });
+      setFailure(
+        result.rejectionCode !== null
+          ? {
+              stage: "输入校验",
+              durableState: "本次提交在发布前被拒绝,Active 未改变",
+              nextAction: merged.blocked
+                ? "请先逐字段确认冲突,再修正被拒绝的值后保存。"
+                : (result.nextAction ?? "修正被拒绝的值后保存。"),
+              fieldError:
+                result.rejectionField === null
+                  ? result.rejectionCode
+                  : `${result.rejectionField}:${result.rejectionCode}`,
+            }
+          : null,
+      );
+      setMessage(
+        `核对完成:本次提交没有发布,当前发布值未被本次请求改变。${result.nextAction ?? "请核对当前值后再次保存。"}`,
+      );
+      return;
     } finally {
       setSubmitting(false);
     }
@@ -789,7 +918,14 @@ export function AutomationSettingsPanel() {
                               onClick={() =>
                                 setResolutions((previous) => ({
                                   ...previous,
-                                  [field.fieldPath]: "current",
+                                  [field.fieldPath]: {
+                                    choice: "current",
+                                    // Bind the decision to the value it reviewed:
+                                    // a later change to this field is a new
+                                    // conflict, not an inherited choice.
+                                    current:
+                                      publishedValues[field.fieldPath] ?? "",
+                                  },
                                 }))
                               }
                             >
@@ -801,7 +937,11 @@ export function AutomationSettingsPanel() {
                               onClick={() =>
                                 setResolutions((previous) => ({
                                   ...previous,
-                                  [field.fieldPath]: "mine",
+                                  [field.fieldPath]: {
+                                    choice: "mine",
+                                    current:
+                                      publishedValues[field.fieldPath] ?? "",
+                                  },
                                 }))
                               }
                             >
