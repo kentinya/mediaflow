@@ -89,6 +89,32 @@ describe("retained engine-settings submission", () => {
     ]);
   });
 
+  it("round-trips the published baseline values a recovery needs", () => {
+    // Without them a recovery cannot tell an edited field from one the form
+    // merely carried, which is exactly what let an old form overwrite another
+    // writer's change. They are stored as text so a rejected entry survives.
+    const baselineValues = {
+      "automation.maximumActiveJobs": "3.5",
+      "automation.staleJobAgeSeconds": "3600",
+      "automation.workerPollSeconds": "2",
+      "automation.schedulerPollSeconds": "5",
+    };
+    writePendingSubmission(ADMIN, context({ baselineValues }));
+    expect(readPendingSubmission(ADMIN).value?.baselineValues).toEqual(
+      baselineValues,
+    );
+  });
+
+  it("keeps a context retained by an older build usable", () => {
+    // No baselineValues: it must still be readable so the submission can be
+    // reconciled; per-field recovery then asks explicitly instead of guessing.
+    writePendingSubmission(ADMIN, context());
+    const read = readPendingSubmission(ADMIN);
+    expect(read.available).toBe(true);
+    expect(read.value?.submissionId).toBe("submission-1");
+    expect(read.value?.baselineValues).toBeUndefined();
+  });
+
   it("drops a malformed or over-long retained record instead of trusting it", () => {
     window.sessionStorage.setItem(
       submissionSessionKey(ADMIN),
@@ -98,11 +124,24 @@ describe("retained engine-settings submission", () => {
       available: true,
       value: null,
     });
+    // A genuinely unusable value map is dropped...
     window.sessionStorage.setItem(
       submissionSessionKey(ADMIN),
-      JSON.stringify(context({ submittedValues: { "a.b": Number.NaN } })),
+      JSON.stringify(
+        context({ submittedValues: { "a.b": "not-a-number" } as never }),
+      ),
     );
     expect(readPendingSubmission(ADMIN).value).toBeNull();
+    // ...while `null` is a legitimate entry: it is exactly how an unparseable
+    // typed value travels, and dropping it would break reconciliation of the
+    // refused request.
+    window.sessionStorage.setItem(
+      submissionSessionKey(ADMIN),
+      JSON.stringify(context({ submittedValues: { "a.b": null } })),
+    );
+    expect(readPendingSubmission(ADMIN).value?.submittedValues).toEqual({
+      "a.b": null,
+    });
   });
 
   it("clears every retained submission when the principal changes", () => {

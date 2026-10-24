@@ -697,13 +697,30 @@ reconciled against that exact submission's own durable evidence
 (`committed` / `superseded` / `not_committed` / `unresolved`); equal values,
 another writer's equal publication, or a still-Draft failed revision can never
 certify it. A submission that terminates without ever owning a revision — a
-stale/no-op refusal, or a persist/validate/prepare/activate fault — records its
-own bounded terminal outcome under the same actor + submission identity, so a
-lost failure response reconciles into a *terminal, correctable* state instead of
-a permanently blocked form. Only terminal evidence clears the retained
-resubmission block, which survives reload principal-scoped without storing a
-bearer token, and the operator's typed input is then re-based onto the current
-published identity for an explicit new Save.
+four-field input refusal, a stale/no-op refusal, or a
+persist/validate/prepare/activate fault — records its own bounded terminal
+outcome under the same actor + submission identity, so a lost failure response
+reconciles into a *terminal, correctable* state instead of a permanently blocked
+form. A refusal decided before normalisation (for example the text `3.5` for an
+integer field) can only record a bounded content fingerprint plus the rejection
+code/field, because the submitted values are not valid for publication; lookup
+therefore identifies that exact request *without* re-running publication
+validation, while strict validation still governs every value that can actually
+be published. Only terminal evidence clears the retained resubmission block,
+which survives reload principal-scoped without storing a bearer token.
+
+Recovery after a terminal non-publication, and any edit whose target moved under
+a background readback, merges **per field** instead of re-arming the whole form
+against a new identity. For each field it compares the baseline value the edit
+started from, the operator's typed value and the value published now: an
+untouched field takes the current publication (preserving another writer's
+change), a changed-but-unsaved field keeps the operator's value, an already-equal
+value needs no publication, and a genuine same-field overlap requires an explicit
+"use current" / "keep mine" choice before Save is offered. The identity checked by
+the next Save is always the latest one, so a further concurrent writer is still
+fenced. The baseline values are part of the retained context; a context retained
+by an older build has none and recovery then asks explicitly per differing field
+rather than guessing which fields the operator edited.
 
 While a Save is outstanding the four inputs are read-only, so a keystroke can
 never belong to a request that already left the browser. A value that still

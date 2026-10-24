@@ -1074,3 +1074,138 @@ Slice43 stays ACTIVE, not READY FOR A REVIEW. Same Task/Base/Goal/Scope; no next
 Packet. Preserve original reference files/frozen branch, accepted45, private configuration and all
 pre-existing dirty artifacts. This B checkpoint edits only TASK; no A-owned Contract/Roadmap/Progress
 change, product implementation, push or history rewrite.
+
+## Developer Fix Report — third correction (R2 per-field recovery, R5 input-rejection recovery)
+
+Historical reports and all three B checkpoints above are retained unchanged. This section reports
+the corrections made in the same Task/Base/Goal/Scope.
+
+```text
+Status: READY FOR B REVIEW (Developer does not self-PASS)
+Task Base: f18d2444f548b81b5892536498a1b4cdd4400be8
+Candidate: the commit carrying this report (see `git log -1` for the exact SHA)
+Scope: fix the two remaining P1 blockers (R2/R5 recovery integration, R5 input rejection)
+Started from: 521bb5022ce1187581b4e47020e9a796c08a5250 (main, clean apart from pre-existing
+untracked artifacts and the pre-existing `docs/pics/操作与任务.png` deletion, both preserved)
+```
+
+### Corrections delivered
+
+1. **R2/R5 — recovery merges per field instead of re-arming the whole form (S2/S3/RO-7).**
+   `EditState` now also carries `baselineValues` — the published four values the edit started
+   from — and those values are stored in the retained principal-scoped submission context
+   (`automation-settings-session.ts`) *before* the mutation. A new pure module
+   `automation-settings-recovery.ts` implements the reviewed three-value table for every field
+   (untouched → current publication wins; changed-but-unsaved → operator's value; already equal →
+   nothing to publish; genuine same-field overlap → explicit choice). The panel no longer restores
+   `pendingContext.input` wholesale:
+   - after a terminal reconcile the merged input is shown against the *current* identity;
+   - after a background readback moved the target under a live edit, the same merge runs, so a
+     concurrent writer's change to an untouched field is preserved instead of silently reverted;
+   - a real overlap shows both values with units and blocks Save until the operator picks
+     `采用当前值` or `保留我的修改`; the pick itself publishes nothing;
+   - the identity sent with the next Save is always the *latest* one, so a further concurrent
+     writer is still refused by the backend's own check;
+   - a context retained by an older build has no baseline: it stays reconcilable and each
+     differing field becomes an explicit choice rather than a guess.
+   `docs/architecture.md`/`docs/configuration.md` now describe the merge instead of the previous
+   unconditional rebase.
+2. **R5 — input rejections are recorded before normalization and read without it (S2/S3/RO-6/7).**
+   `AutomationSettingsService.save` identifies the actor/submission first, then catches
+   `AutomationEngineSettingsError` and records a bounded terminal `input_rejected` outcome (a
+   secret-free SHA-256 content fingerprint of the bounded raw request plus only the rejection
+   code/field/message and next action) before re-raising the unchanged 422. `reconcile` computes
+   the same fingerprint and looks the outcome up **without** requiring the payload to pass
+   publication validation, while every value that can actually be published still goes through the
+   strict normalization/whole-candidate path. The public `rejection` object carries the readable
+   code/field so the page can point at the value; `submittedValues` is `null` for an invalid
+   submission (nothing publishable is invented). Evidence stays actor + identity + content scoped:
+   a different payload under the same identity reports
+   `submission_values_contradict_evidence`, another principal or identity stays `unresolved`, and
+   positive publication evidence still wins over a later outcome record.
+3. **Unparseable typed input keeps the exact request.** `automationSettingsBody` now sends a
+   non-numeric entry as `null` instead of `NaN` (which JSON cannot carry and which previously
+   turned one request into a different, silently altered one); the retained
+   `submittedValues`/reconcile body can hold `null`, so a type refusal stays reconcilable with the
+   identical content. The session validator accepts `null` entries but still drops genuinely
+   malformed records.
+4. **Two integration defects found while finishing the above**, both in this Task's scope:
+   the "did the operator type while the Save was outstanding" comparison used object identity on a
+   snapshot that is now reconstructed per request (it would always look newer and fabricate a
+   retained edit), and `AutomationMutationFailureDetails` dropped the backend's `field`, so a
+   known 422 could not name the offending field. Both are corrected with value comparison and a
+   bounded `field` projection.
+
+### Affected commands and actual results
+
+| Command (cwd) | Result |
+|---|---|
+| `python3 scripts/check_governance.py` | `governance check: PASS` |
+| `git diff --check` | clean |
+| `.venv/bin/ruff check mediaflow tests scripts` / `ruff format --check` | `All checks passed!` / `354 files already formatted` |
+| `.venv/bin/python -m compileall -q mediaflow tests scripts` | exit 0 |
+| `.venv/bin/python -m unittest tests.test_automation_settings_management` | `Ran 38 tests ... OK` |
+| `.venv/bin/python -m unittest tests.test_automation_settings_resident tests.test_system_settings_management` | `Ran 43 tests ... OK` (pre-existing `ResourceWarning` for unclosed SQLite connections retained in the raw log) |
+| `.venv/bin/python -m unittest tests.test_automation_settings_management tests.test_system_settings_management tests.test_resident_correction tests.test_automation_api` | `Ran 88 tests ... OK` |
+| `npm run typecheck` (cwd `web`) | clean |
+| `npx eslint <changed files>` / `npx prettier --check <changed files>` | clean / all matched files formatted |
+| `npx vitest run` (cwd `web`, full unit suite) | `Test Files 83 passed`, `Tests 1207 passed` |
+| `npm run build` (cwd `web`) | succeeds (pre-existing chunk-size warning only) |
+| `npx playwright test tests/e2e/automation.spec.ts` (default fake suite for this surface) | `13 passed` |
+| `npm run test:e2e -- --config=playwright.python.automation.config.ts tests/e2e/automation-settings.python.spec.ts` | `10 passed` (9.7s) |
+| `... automation-workspace.python.spec.ts` | `8 passed` |
+
+No test was skipped, retried or weakened, no assertion removed and no timeout raised. Two existing
+browser assertions were *re-targeted to the corrected product behaviour* rather than relaxed: the
+stale-readback spec now asserts the per-field merge message and then performs the decisive next
+Save (capacity published, other writer's scheduler value preserved), which is exactly the journey
+the previous candidate failed.
+
+New/strengthened coverage for these corrections:
+
+- Python (`tests/test_automation_settings_management.py`):
+  `test_lost_fractional_integer_rejection_reconciles_into_a_correctable_form` (the reviewed
+  `3.5` → lost 422 → repeated reconcile → corrected Save, asserting unrelated fields survive),
+  `test_every_supported_input_rejection_is_a_terminal_correctable_outcome` (bounds, fractional,
+  boolean, type, non-finite, missing field),
+  `test_input_rejection_evidence_is_content_and_principal_scoped` (different payload, other
+  principal, other identity, exact request), and
+  `test_input_rejection_is_never_mistaken_for_a_publication`.
+- Web (`automation-settings-recovery.test.ts`, new): the full three-value table including
+  "clicked back to the original value" and the missing-baseline case.
+- Web (`AutomationSettingsPage.test.tsx`):
+  `merges only the edited field after a background readback changed the target` (real 5s polling
+  interval, then the actual Save with the latest identity and the other writer's value intact),
+  `requires an explicit choice for a same-field conflict and never publishes it unconfirmed`,
+  `lets the operator adopt the current value instead of a conflicting input`,
+  `recovers a lost invalid-input rejection per field without reverting another writer`, and
+  `sends an unparseable entry as a typed refusal instead of a silently different request`.
+- Web (`automation-settings-session.test.ts`): baseline-value round trip and older-context
+  compatibility.
+- Real Python browser (`automation-settings.python.spec.ts`): the lost-409 → reload → reconcile
+  journey now continues through the *actual next Save* and asserts capacity published with the
+  other writer's scheduler value preserved; new `a lost invalid-input rejection reconciles into a
+  correctable integer` runs the real form `3.5` → real 422 → lost response → reload → reconcile
+  (200/`not_committed` with the rejection code/field) → editable text → corrected Save.
+
+### Remaining risks / disclosures for B
+
+1. **B-owned gates still not run here:** full Python discovery, wheel/installed consumer, the
+   supported 49→50 upgrade rehearsal on a real prior database, and Docker lifecycle/security
+   smokes.
+2. **Input-refusal evidence is a fingerprint, not the values.** A refused payload cannot be stored
+   (it may be invalid, oversized or hostile), so the durable record proves *which content* ended
+   there without echoing it. `reconcile` therefore returns `submittedValues: null` plus a
+   `rejection` object for that case; the request itself still carries the corrected content on the
+   next deliberate Save.
+3. **Audit action reuse unchanged:** terminal outcomes (including the new `input_rejected`) are
+   bounded rows in the existing configuration audit ledger with the existing `action`, so no
+   migration is involved and existing rows/pins are untouched.
+4. **Missing-baseline (older context) recovery is intentionally conservative:** every field whose
+   suggested value differs from the current publication requires an explicit choice. This asks more
+   of the operator but never guesses which fields were edited.
+5. **`superseded` semantics** (carried over): a submission that published and was replaced reports
+   `committed: true` with `state: superseded`.
+6. **Test cost:** the changed/affected set executed above (focused Python, focused Web, full Web
+   unit suite, build and the three browser specs) is the large majority of this round's ~30 min
+   elapsed; it stays within the round's allowance and no sleeps were added to pad it.

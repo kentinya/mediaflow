@@ -465,6 +465,65 @@ describe("Automation engine settings surface", () => {
     expect(jobs.value).toBe("3.5");
   });
 
+  it("sends an unparseable entry as a typed refusal instead of a silently different request", async () => {
+    // `NaN` cannot travel in JSON: dropping it or sending `null` implicitly would
+    // change what the operator submitted and break reconciliation of the exact
+    // refused request. The value is sent as `null`, which the backend refuses by
+    // type, and the retained context carries the same content.
+    const putBodies: Json[] = [];
+    recordingFetch((call) => {
+      if (call.url.includes("/operations/automation/settings")) {
+        if (call.method === "PUT") {
+          putBodies.push(JSON.parse(call.body ?? "{}") as Json);
+          return jsonResponse(
+            {
+              error: {
+                code: "settings_invalid_type",
+                message: "automation.maximumActiveJobs must be a number",
+                details: {
+                  field: "automation.maximumActiveJobs",
+                  durableState: "active_unchanged",
+                  sideEffects: "none",
+                  nextAction: "enter a numeric value",
+                },
+              },
+            },
+            422,
+          );
+        }
+        return jsonResponse(settingsDocument());
+      }
+      if (call.url.includes("/operations/automation/task-definitions")) {
+        return jsonResponse(automationInventory());
+      }
+      if (call.url.includes("/operations/automation/metrics")) {
+        return jsonResponse({ available: false });
+      }
+      if (call.url.includes("/operations/automation/records")) {
+        return jsonResponse({ items: [], total: 0 });
+      }
+      return undefined;
+    });
+    await connect("/ui-v2/operations/automation?tab=settings");
+    const panel = await screen.findByRole("region", { name: "自动化引擎设置" });
+    const jobs = within(panel).getByLabelText(
+      /并行任务上限/,
+    ) as HTMLInputElement;
+    await userEvent.clear(jobs);
+    await userEvent.type(jobs, "abc");
+    await userEvent.click(
+      within(panel).getByRole("button", { name: "保存设置" }),
+    );
+    await waitFor(() => {
+      expect(putBodies).toHaveLength(1);
+    });
+    const settings = putBodies[0]["settings"] as Json;
+    expect(settings["automation.maximumActiveJobs"]).toBeNull();
+    expect(settings["automation.workerPollSeconds"]).toBe(2);
+    // The text is preserved for correction.
+    expect(jobs.value).toBe("abc");
+  });
+
   it("blocks further saves and offers reconciliation for an unknown outcome", async () => {
     let failNext = true;
     recordingFetch((call) => {
@@ -891,6 +950,164 @@ describe("Automation engine settings surface", () => {
     ).toBe(true);
   });
 
+  it("recovers a lost invalid-input rejection per field without reverting another writer", async () => {
+    // B43.4-R5 end-to-end: capacity 3.5 was refused 422 and only that response was
+    // lost, while another writer changed the scheduler poll.  After reconciliation
+    // the form must (a) prove this request published nothing, (b) keep the invalid
+    // text correctable, and (c) preserve the other writer's scheduler value — the
+    // next Save must publish only the corrected capacity.
+    const retained = {
+      submissionId: "submission-invalid-3-5",
+      input: {
+        "automation.maximumActiveJobs": "3.5",
+        "automation.staleJobAgeSeconds": "3600",
+        "automation.workerPollSeconds": "2",
+        "automation.schedulerPollSeconds": "5",
+      },
+      submittedValues: {
+        "automation.maximumActiveJobs": 3.5,
+        "automation.staleJobAgeSeconds": 3600,
+        "automation.workerPollSeconds": 2,
+        "automation.schedulerPollSeconds": 5,
+      },
+      baselineRevisionId: TARGET_REVISION,
+      baselineRevisionVersion: 7,
+      baselineDigest: "digest-published-1",
+      baselineValues: {
+        "automation.maximumActiveJobs": "100",
+        "automation.staleJobAgeSeconds": "3600",
+        "automation.workerPollSeconds": "2",
+        "automation.schedulerPollSeconds": "5",
+      },
+      submittedAt: "2026-03-16T00:00:00+00:00",
+    };
+    const storageKey =
+      "mediaflow.operations.automation-settings-submission:v1:automation-settings-admin";
+    window.sessionStorage.setItem(storageKey, JSON.stringify(retained));
+    const putBodies: Json[] = [];
+    recordingFetch((call) => {
+      if (call.url.includes("/operations/automation/settings")) {
+        if (call.method === "PUT") {
+          const body = JSON.parse(call.body ?? "{}") as Json;
+          putBodies.push(body);
+          if (body["reconcile"] === true) {
+            return jsonResponse({
+              state: "not_committed",
+              committed: false,
+              sideEffects: "none",
+              evidence: {
+                durableState: "submission_input_rejected",
+                submissionOutcome: "input_rejected",
+                field: "automation.maximumActiveJobs",
+                evidenceComplete: true,
+                identityMatched: true,
+              },
+              rejection: {
+                code: "settings_fractional_integer",
+                message: "automation.maximumActiveJobs must be a whole number",
+                field: "automation.maximumActiveJobs",
+                nextAction: "enter a whole number of seconds/jobs",
+              },
+              nextAction: "correct that value and save deliberately again",
+            });
+          }
+          return jsonResponse(
+            {
+              published: true,
+              unchanged: false,
+              revisionId: "revision-published-9",
+              sideEffects: "configuration_only",
+              readback: settingsDocument({
+                target: {
+                  revisionId: "revision-published-9",
+                  revisionVersion: 9,
+                  digest: "digest-published-9",
+                  values: {
+                    "automation.maximumActiveJobs": 4,
+                    "automation.staleJobAgeSeconds": 3600,
+                    "automation.workerPollSeconds": 2,
+                    "automation.schedulerPollSeconds": 9,
+                  },
+                },
+              }),
+            },
+            201,
+          );
+        }
+        return jsonResponse(
+          settingsDocument({
+            target: {
+              ...otherWriterTarget(),
+              values: {
+                "automation.maximumActiveJobs": 100,
+                "automation.staleJobAgeSeconds": 3600,
+                "automation.workerPollSeconds": 2,
+                "automation.schedulerPollSeconds": 9,
+              },
+            },
+          }),
+        );
+      }
+      if (call.url.includes("/operations/automation/task-definitions")) {
+        return jsonResponse(automationInventory());
+      }
+      if (call.url.includes("/operations/automation/metrics")) {
+        return jsonResponse({ available: false });
+      }
+      if (call.url.includes("/operations/automation/records")) {
+        return jsonResponse({ items: [], total: 0 });
+      }
+      return undefined;
+    });
+    await connect("/ui-v2/operations/automation?tab=settings");
+    const panel = await screen.findByRole("region", { name: "自动化引擎设置" });
+    expect(await within(panel).findByText(/上一次保存结果未知/)).toBeTruthy();
+    await userEvent.click(
+      within(panel).getByRole("button", { name: "核实上次提交" }),
+    );
+    await waitFor(() => {
+      expect(within(panel).getByText(/本次提交没有发布/)).toBeTruthy();
+    });
+    // The rejection is readable (code plus field) and the invalid text is still
+    // correctable.
+    expect(
+      within(panel).getByText(
+        /automation\.maximumActiveJobs:settings_fractional_integer/,
+      ),
+    ).toBeTruthy();
+    const jobs = within(panel).getByLabelText(
+      /并行任务上限/,
+    ) as HTMLInputElement;
+    expect(jobs.value).toBe("3.5");
+    expect(jobs.disabled).toBe(false);
+    expect(window.sessionStorage.getItem(storageKey)).toBeNull();
+
+    // The operator corrects the value; the other writer's scheduler 9 is kept.
+    await userEvent.clear(jobs);
+    await userEvent.type(jobs, "4");
+    const scheduler = within(panel).getByLabelText(
+      /调度器轮询间隔/,
+    ) as HTMLInputElement;
+    expect(scheduler.value).toBe("9");
+    const save = within(panel).getByRole("button", {
+      name: "保存设置",
+    }) as HTMLButtonElement;
+    expect(save.disabled).toBe(false);
+    await userEvent.click(save);
+    await waitFor(() => {
+      const submitted = putBodies.filter((body) => body["reconcile"] !== true);
+      expect(submitted).toHaveLength(1);
+    });
+    const submitted = putBodies.filter((body) => body["reconcile"] !== true)[0];
+    expect(submitted["expectedRevisionId"]).toBe("revision-published-2");
+    expect(submitted["settings"]).toEqual({
+      "automation.maximumActiveJobs": 4,
+      "automation.staleJobAgeSeconds": 3600,
+      "automation.workerPollSeconds": 2,
+      "automation.schedulerPollSeconds": 9,
+    });
+  });
+
   it("renders a stopped/overridden consumer as not adopted with its next action", async () => {
     recordingFetch((call) => {
       if (call.url.includes("/operations/automation/settings")) {
@@ -1030,13 +1247,15 @@ describe("Automation engine settings surface", () => {
   // it declares its own timeout rather than shortening the product interval:
   // the assertion is about the *ordinary* background read, not a manual refresh.
   it(
-    "refuses a stale save after a background readback changed the target",
+    "merges only the edited field after a background readback changed the target",
     { timeout: 20_000 },
     async () => {
-      // B43.4-R2 real journey: the operator edits capacity, another writer changes
-      // the scheduler poll, and the ordinary background GET delivers that newer
-      // publication.  The old input must not be silently re-armed against the new
-      // identity: the Save is refused as stale and the typed value is retained.
+      // B43.4-R2/R5 real journey: the operator edits capacity, another writer
+      // changes the scheduler poll, and the ordinary background GET delivers that
+      // newer publication.  The old four-field input must not be re-armed against
+      // the new identity (that would silently restore scheduler 5), and it must
+      // not simply refuse forever either: only the field the operator changed is
+      // merged into the *current* target, and Save publishes exactly that.
       let reads = 0;
       let putBody: Json | null = null;
       recordingFetch((call) => {
@@ -1045,18 +1264,25 @@ describe("Automation engine settings surface", () => {
             putBody = JSON.parse(call.body ?? "{}") as Json;
             return jsonResponse(
               {
-                error: {
-                  code: "automation_settings_stale",
-                  message: "the published settings changed",
-                  details: {
-                    stage: "compose",
-                    durableState: "active_preserved",
-                    sideEffects: "none",
-                    nextAction: "refresh the published values and save again",
+                published: true,
+                unchanged: false,
+                revisionId: "revision-published-3",
+                sideEffects: "configuration_only",
+                readback: settingsDocument({
+                  target: {
+                    revisionId: "revision-published-3",
+                    revisionVersion: 9,
+                    digest: "digest-published-3",
+                    values: {
+                      "automation.maximumActiveJobs": 70,
+                      "automation.staleJobAgeSeconds": 3600,
+                      "automation.workerPollSeconds": 2,
+                      "automation.schedulerPollSeconds": 9,
+                    },
                   },
-                },
+                }),
               },
-              409,
+              201,
             );
           }
           reads += 1;
@@ -1098,18 +1324,230 @@ describe("Automation engine settings surface", () => {
       await waitFor(() => {
         expect(within(panel).getByText("revision-published-2")).toBeTruthy();
       });
+      // The edit was merged deterministically: nothing needs confirming, and the
+      // other writer's scheduler value is displayed (never silently replaced by
+      // the value this operator read before).
+      expect(
+        within(panel).getByText(/你改过的字段已合并到最新发布值上/),
+      ).toBeTruthy();
+      expect(jobs.value).toBe("70");
+      expect(
+        (within(panel).getByLabelText(/调度器轮询间隔/) as HTMLInputElement)
+          .value,
+      ).toBe("9");
+
       const save = within(panel).getByRole("button", {
         name: "保存设置",
       }) as HTMLButtonElement;
-      // The old input is not silently re-armed against the new publication.
+      expect(save.disabled).toBe(false);
+      await userEvent.click(save);
+      await waitFor(() => {
+        expect(putBody).not.toBeNull();
+      });
+      // The Save is checked against the *latest* identity and publishes the
+      // merged values: capacity 70 with the other writer's scheduler 9 intact.
+      expect(putBody!["expectedRevisionId"]).toBe("revision-published-2");
+      expect(putBody!["expectedDigest"]).toBe("digest-published-2");
+      expect(putBody!["settings"]).toEqual({
+        "automation.maximumActiveJobs": 70,
+        "automation.staleJobAgeSeconds": 3600,
+        "automation.workerPollSeconds": 2,
+        "automation.schedulerPollSeconds": 9,
+      });
+    },
+  );
+
+  it(
+    "requires an explicit choice for a same-field conflict and never publishes it unconfirmed",
+    { timeout: 20_000 },
+    async () => {
+      // B43.4-R5 second half: both writers change the *same* field, so no
+      // deterministic merge exists.  Save stays refused until the operator
+      // explicitly picks a side, and the pick itself publishes nothing.
+      let reads = 0;
+      const putBodies: Json[] = [];
+      recordingFetch((call) => {
+        if (call.url.includes("/operations/automation/settings")) {
+          if (call.method === "PUT") {
+            putBodies.push(JSON.parse(call.body ?? "{}") as Json);
+            return jsonResponse(
+              {
+                published: true,
+                unchanged: false,
+                revisionId: "revision-published-4",
+                sideEffects: "configuration_only",
+                readback: settingsDocument({
+                  target: {
+                    revisionId: "revision-published-4",
+                    revisionVersion: 10,
+                    digest: "digest-published-4",
+                    values: {
+                      "automation.maximumActiveJobs": 70,
+                      "automation.staleJobAgeSeconds": 3600,
+                      "automation.workerPollSeconds": 2,
+                      "automation.schedulerPollSeconds": 5,
+                    },
+                  },
+                }),
+              },
+              201,
+            );
+          }
+          reads += 1;
+          if (reads === 1) return jsonResponse(settingsDocument());
+          return jsonResponse(
+            settingsDocument({
+              target: {
+                revisionId: "revision-published-2b",
+                revisionVersion: 8,
+                digest: "digest-published-2b",
+                values: {
+                  "automation.maximumActiveJobs": 90,
+                  "automation.staleJobAgeSeconds": 3600,
+                  "automation.workerPollSeconds": 2,
+                  "automation.schedulerPollSeconds": 5,
+                },
+              },
+            }),
+          );
+        }
+        if (call.url.includes("/operations/automation/task-definitions")) {
+          return jsonResponse(automationInventory());
+        }
+        if (call.url.includes("/operations/automation/metrics")) {
+          return jsonResponse({ available: false });
+        }
+        if (call.url.includes("/operations/automation/records")) {
+          return jsonResponse({ items: [], total: 0 });
+        }
+        return undefined;
+      });
+      await connect("/ui-v2/operations/automation?tab=settings");
+      const panel = await screen.findByRole("region", {
+        name: "自动化引擎设置",
+      });
+      const jobs = within(panel).getByLabelText(
+        /并行任务上限/,
+      ) as HTMLInputElement;
+      await userEvent.clear(jobs);
+      await userEvent.type(jobs, "70");
+      await waitFor(
+        () => {
+          expect(reads).toBeGreaterThan(1);
+        },
+        { timeout: 9_000 },
+      );
+      const save = within(panel).getByRole("button", {
+        name: "保存设置",
+      }) as HTMLButtonElement;
+      // Both values are shown and Save is refused until the operator chooses.
+      await waitFor(() => {
+        expect(
+          within(panel).getByText(/当前发布值为 90,你输入的值是 70/),
+        ).toBeTruthy();
+      });
       expect(save.disabled).toBe(true);
+      expect(putBodies).toHaveLength(0);
+
+      // Choosing to keep the operator's value updates the form; it publishes
+      // nothing by itself.
+      await userEvent.click(
+        within(panel).getByRole("button", { name: "保留我的修改" }),
+      );
+      expect(putBodies).toHaveLength(0);
+      await waitFor(() => {
+        expect(save.disabled).toBe(false);
+      });
+      await userEvent.click(save);
+      await waitFor(() => {
+        expect(putBodies).toHaveLength(1);
+      });
+      // Only the explicit choice is published, against the latest identity.
+      expect(putBodies[0]["expectedRevisionId"]).toBe("revision-published-2b");
       expect(
-        within(panel).getByText(/已发布的设置在此期间被其他保存改变/),
-      ).toBeTruthy();
-      // The operator's typed value is retained for review.
-      expect(jobs.value).toBe("70");
-      // No PUT was ever sent with the fresh identity attached to the old input.
-      expect(putBody).toBeNull();
+        (putBodies[0]["settings"] as Json)["automation.maximumActiveJobs"],
+      ).toBe(70);
+    },
+  );
+
+  it(
+    "lets the operator adopt the current value instead of a conflicting input",
+    { timeout: 20_000 },
+    async () => {
+      let reads = 0;
+      const putBodies: Json[] = [];
+      recordingFetch((call) => {
+        if (call.url.includes("/operations/automation/settings")) {
+          if (call.method === "PUT") {
+            putBodies.push(JSON.parse(call.body ?? "{}") as Json);
+            return jsonResponse(
+              {
+                published: true,
+                unchanged: false,
+                revisionId: "revision-published-5",
+                sideEffects: "configuration_only",
+                readback: settingsDocument(),
+              },
+              201,
+            );
+          }
+          reads += 1;
+          if (reads === 1) return jsonResponse(settingsDocument());
+          return jsonResponse(
+            settingsDocument({
+              target: {
+                revisionId: "revision-published-2c",
+                revisionVersion: 8,
+                digest: "digest-published-2c",
+                values: {
+                  "automation.maximumActiveJobs": 90,
+                  "automation.staleJobAgeSeconds": 3600,
+                  "automation.workerPollSeconds": 2,
+                  "automation.schedulerPollSeconds": 5,
+                },
+              },
+            }),
+          );
+        }
+        if (call.url.includes("/operations/automation/task-definitions")) {
+          return jsonResponse(automationInventory());
+        }
+        if (call.url.includes("/operations/automation/metrics")) {
+          return jsonResponse({ available: false });
+        }
+        if (call.url.includes("/operations/automation/records")) {
+          return jsonResponse({ items: [], total: 0 });
+        }
+        return undefined;
+      });
+      await connect("/ui-v2/operations/automation?tab=settings");
+      const panel = await screen.findByRole("region", {
+        name: "自动化引擎设置",
+      });
+      const jobs = within(panel).getByLabelText(
+        /并行任务上限/,
+      ) as HTMLInputElement;
+      await userEvent.clear(jobs);
+      await userEvent.type(jobs, "70");
+      await waitFor(
+        () => {
+          expect(reads).toBeGreaterThan(1);
+        },
+        { timeout: 9_000 },
+      );
+      await userEvent.click(
+        within(panel).getByRole("button", { name: "采用当前值" }),
+      );
+      // The conflicting field now shows the published value and nothing differs,
+      // so there is nothing to publish and no input was discarded silently.
+      await waitFor(() => {
+        expect(jobs.value).toBe("90");
+      });
+      const save = within(panel).getByRole("button", {
+        name: "保存设置",
+      }) as HTMLButtonElement;
+      expect(save.disabled).toBe(true);
+      expect(putBodies).toHaveLength(0);
     },
   );
 

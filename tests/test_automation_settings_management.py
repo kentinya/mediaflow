@@ -477,7 +477,7 @@ class AutomationSettingsReconcileTests(unittest.TestCase):
         self.fixture = SettingsFixture(self._temporary.name)
         self.addCleanup(self.fixture.close)
 
-    def reconcile(self, values: dict, *, submission_id, token="admin-token"):
+    def reconcile(self, values, *, submission_id, token="admin-token"):
         body = {"reconcile": True, "settings": values, "submissionId": submission_id}
         return request(
             self.fixture.api,
@@ -870,6 +870,145 @@ class AutomationSettingsReconcileTests(unittest.TestCase):
         self.assertEqual(status, 200, second)
         self.assertEqual(second["state"], "not_committed")
         self.assertEqual(second["evidence"]["submissionOutcome"], "unchanged_no_publication")
+
+    # -- B43.4 input-validation rejection recovery ----------------------
+
+    def test_lost_fractional_integer_rejection_reconciles_into_a_correctable_form(
+        self,
+    ) -> None:
+        """The reviewed reproduction: the form accepted `3.5`, the real PUT was
+        refused 422/``settings_fractional_integer``, and only that response was
+        lost.  Reconcile used to re-run publication validation on the same payload
+        and answer 422/``settings_fractional_integer`` again, so the operator could
+        never get past the block.  The exact rejected submission must now be
+        provable as a terminal refusal that keeps the invalid text correctable.
+        """
+
+        before = self.fixture.configuration.active()
+        rejected = {**self.fixture.full(), "automation.maximumActiveJobs": 3.5}
+        status, refusal = self.fixture.submit(rejected, submissionId="admin-invalid-3-5")
+        self.assertEqual(status, 422, refusal)
+        self.assertEqual(refusal["error"]["code"], "settings_fractional_integer")
+        self.assertEqual(refusal["error"]["details"]["sideEffects"], "none")
+        self.assertEqual(self.fixture.configuration.active().revision_id, before.revision_id)
+
+        # Repeated reconciliation, including the reload-equivalent after a lost
+        # response: the outcome is durable, not page state.
+        for attempt in range(3):
+            with self.subTest(attempt=attempt):
+                status, reconciled = self.reconcile(rejected, submission_id="admin-invalid-3-5")
+                self.assertEqual(status, 200, reconciled)
+                self.assertEqual(reconciled["state"], "not_committed")
+                self.assertFalse(reconciled["committed"])
+                self.assertEqual(
+                    reconciled["evidence"]["durableState"], "submission_input_rejected"
+                )
+                self.assertEqual(reconciled["evidence"]["submissionOutcome"], "input_rejected")
+                self.assertEqual(reconciled["rejection"]["code"], "settings_fractional_integer")
+                self.assertEqual(reconciled["rejection"]["field"], "automation.maximumActiveJobs")
+                self.assertIn("correct", reconciled["nextAction"])
+                # An invalid submission is never echoed back as publishable
+                # values, and it never became a publication.
+                self.assertIsNone(reconciled["submittedValues"])
+        # The published Active is untouched, and a corrected Save still has to
+        # pass strict validation (no bypass through reconciliation).
+        self.assertEqual(self.fixture.configuration.active().revision_id, before.revision_id)
+        corrected = {**rejected, "automation.maximumActiveJobs": 4}
+        status, published = self.fixture.submit(corrected, submissionId="admin-corrected-4")
+        self.assertEqual(status, 201, published)
+        self.assertEqual(
+            self.fixture.configuration.active().document["automation"]["maximumActiveJobs"],
+            4,
+        )
+        self.assertEqual(
+            self.fixture.configuration.active().document["automation"]["schedulerPollSeconds"],
+            before.document["automation"]["schedulerPollSeconds"],
+        )
+
+    def test_every_supported_input_rejection_is_a_terminal_correctable_outcome(
+        self,
+    ) -> None:
+        cases = {
+            "settings_out_of_range": {"automation.maximumActiveJobs": 0},
+            "settings_fractional_integer": {"automation.staleJobAgeSeconds": 90.25},
+            "settings_boolean_not_number": {"automation.maximumActiveJobs": True},
+            "settings_invalid_type": {"automation.workerPollSeconds": "2"},
+            "settings_not_finite": {"automation.maximumActiveJobs": float("inf")},
+            "settings_field_missing": None,
+        }
+        for index, (expected_code, override) in enumerate(cases.items()):
+            with self.subTest(code=expected_code):
+                identity = f"admin-invalid-{index}"
+                if override is None:
+                    values = self.fixture.full()
+                    values.pop("automation.workerPollSeconds")
+                else:
+                    values = self.fixture.full(**override)
+                before = self.fixture.configuration.active()
+                status, refusal = self.fixture.submit(values, submissionId=identity)
+                self.assertEqual(status, 422, refusal)
+                self.assertEqual(refusal["error"]["code"], expected_code)
+                status, reconciled = self.reconcile(values, submission_id=identity)
+                self.assertEqual(status, 200, reconciled)
+                self.assertEqual(reconciled["state"], "not_committed")
+                self.assertEqual(
+                    reconciled["evidence"]["durableState"], "submission_input_rejected"
+                )
+                self.assertEqual(reconciled["rejection"]["code"], expected_code)
+                self.assertEqual(
+                    self.fixture.configuration.active().revision_id, before.revision_id
+                )
+
+    def test_input_rejection_evidence_is_content_and_principal_scoped(self) -> None:
+        """Only the exact refused payload of this actor may borrow the outcome."""
+
+        rejected = {**self.fixture.full(), "automation.maximumActiveJobs": 3.5}
+        status, _refused = self.fixture.submit(rejected, submissionId="admin-invalid-scoped")
+        self.assertEqual(status, 422)
+        # A different payload under the same identity contradicts the record.
+        other = {**self.fixture.full(), "automation.maximumActiveJobs": 3.25}
+        status, contradicted = self.reconcile(other, submission_id="admin-invalid-scoped")
+        self.assertEqual(status, 200, contradicted)
+        self.assertEqual(contradicted["state"], "unresolved")
+        self.assertEqual(
+            contradicted["evidence"]["durableState"],
+            "submission_values_contradict_evidence",
+        )
+        # Another principal cannot borrow it.
+        status, foreign = self.reconcile(
+            rejected, submission_id="admin-invalid-scoped", token="unicode-token"
+        )
+        self.assertEqual(status, 200, foreign)
+        self.assertEqual(foreign["state"], "unresolved")
+        # Nor can another identity.
+        status, unrelated = self.reconcile(rejected, submission_id="admin-invalid-scoped-other")
+        self.assertEqual(status, 200, unrelated)
+        self.assertEqual(unrelated["state"], "unresolved")
+        # The exact request still resolves.
+        status, exact = self.reconcile(rejected, submission_id="admin-invalid-scoped")
+        self.assertEqual(status, 200, exact)
+        self.assertEqual(exact["state"], "not_committed")
+
+    def test_input_rejection_is_never_mistaken_for_a_publication(self) -> None:
+        """A rejected identity stays refused even if others publish equal values."""
+
+        # Another writer publishes capacity 3 (the integer the operator meant).
+        status, _winner = self.fixture.submit(
+            self.fixture.full(**{"automation.maximumActiveJobs": 3}),
+            token="writer-token",
+            submissionId="writer-published-3",
+        )
+        self.assertEqual(status, 201)
+        rejected = {**self.fixture.full(), "automation.maximumActiveJobs": 3.5}
+        status, _refused = self.fixture.submit(rejected, submissionId="admin-invalid-then-equal")
+        self.assertEqual(status, 422)
+        # The current values now equal what the operator *intended*, but this
+        # request still never published and must say so.
+        status, reconciled = self.reconcile(rejected, submission_id="admin-invalid-then-equal")
+        self.assertEqual(status, 200, reconciled)
+        self.assertEqual(reconciled["state"], "not_committed")
+        self.assertFalse(reconciled["committed"])
+        self.assertFalse(reconciled["currentValuesMatchSubmission"])
 
 
 if __name__ == "__main__":

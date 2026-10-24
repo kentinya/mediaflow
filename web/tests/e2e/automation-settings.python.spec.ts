@@ -339,22 +339,38 @@ test("a concurrent writer makes the ordinary background readback refuse the stal
   });
   expect(other.status()).toBe(201);
 
-  // The panel's ordinary bounded readback (~5s) must deliver that publication
-  // and refuse to re-arm the operator's old input against the new identity.
-  await expect(
-    panel.getByText(/已发布的设置在此期间被其他保存改变/),
-  ).toBeVisible({
-    timeout: 20_000,
-  });
-  await expect(panel.getByRole("button", { name: "保存设置" })).toBeDisabled();
-  // The typed input stayed correctable.
+  // The panel's ordinary bounded readback (~5s) delivers that publication. The
+  // old four-field input is never re-armed against the new identity, and the
+  // operator is not simply blocked either: only the field they actually edited
+  // is merged onto the latest publication.
+  await expect(panel.getByText(/你改过的字段已合并到最新发布值上/)).toBeVisible(
+    {
+      timeout: 20_000,
+    },
+  );
+  // The typed capacity is kept and the other writer's scheduler value is shown.
   await expect(jobs).toHaveValue("77");
-  // Only the concurrent writer published: the form never submitted.
+  await expect(panel.getByLabel(/调度器轮询间隔/)).toHaveValue(
+    String(otherPoll),
+  );
+  // Only the concurrent writer has published so far.
   const after = await settingsDocument(page);
   expect(after.target!.values["automation.maximumActiveJobs"]).toBe(
     before.target!.values["automation.maximumActiveJobs"],
   );
   expect(after.target!.values["automation.schedulerPollSeconds"]).toBe(
+    otherPoll,
+  );
+
+  // The deliberate Save publishes the capacity and keeps the other writer's
+  // scheduler value: no silent revert, no whole-form re-arm.
+  await panel.getByRole("button", { name: "保存设置" }).click();
+  await expect(panel.getByText(/已发布新的目标值/)).toBeVisible({
+    timeout: 20_000,
+  });
+  const saved = await settingsDocument(page);
+  expect(saved.target!.values["automation.maximumActiveJobs"]).toBe(77);
+  expect(saved.target!.values["automation.schedulerPollSeconds"]).toBe(
     otherPoll,
   );
 });
@@ -507,9 +523,13 @@ test("a lost rejection response reconciles into a correctable form, across a rel
   await expect(reloaded.getByText(/本次提交没有发布/)).toBeVisible({
     timeout: 20_000,
   });
-  // The typed value is retained and a deliberate Save is possible again.
+  // The typed value is retained, and the other writer's untouched scheduler
+  // change is *shown* rather than silently reverted to the value this form read.
   await expect(reloaded.getByLabel(/并行任务上限/)).toHaveValue(
     String(submittedCapacity),
+  );
+  await expect(reloaded.getByLabel(/调度器轮询间隔/)).toHaveValue(
+    String(otherPoll),
   );
   await expect(
     reloaded.getByRole("button", { name: "保存设置" }),
@@ -517,6 +537,126 @@ test("a lost rejection response reconciles into a correctable form, across a rel
   // Reconciling proved truth, it did not publish anything.
   expect((await settingsDocument(page)).target!.revisionId).toBe(
     winner.target!.revisionId,
+  );
+
+  // The decisive check B flagged: the *next* Save must publish the operator's
+  // capacity while preserving the other writer's scheduler value.  Before the
+  // correction the offered Save silently restored scheduler 5.
+  await reloaded.getByRole("button", { name: "保存设置" }).click();
+  await expect(reloaded.getByText(/已发布新的目标值/)).toBeVisible({
+    timeout: 20_000,
+  });
+  const afterSave = await settingsDocument(page);
+  expect(afterSave.target!.values["automation.maximumActiveJobs"]).toBe(
+    submittedCapacity,
+  );
+  expect(afterSave.target!.values["automation.schedulerPollSeconds"]).toBe(
+    otherPoll,
+  );
+});
+
+test("a lost invalid-input rejection reconciles into a correctable integer", async ({
+  page,
+}) => {
+  await connectOn(page, "/ui-v2/operations/automation?tab=settings");
+  const panel = page.getByRole("region", { name: "自动化引擎设置" });
+  await expect(panel).toBeVisible();
+  const before = await settingsDocument(page);
+  const otherPoll =
+    before.target!.values["automation.schedulerPollSeconds"] === 9 ? 8 : 9;
+
+  // Another writer changes the scheduler poll, so the recovery must not revert it.
+  const other = await page.request.put(SETTINGS_PATH, {
+    headers: {
+      Authorization: `Bearer ${ADMIN_TOKEN}`,
+      "Content-Type": "application/json",
+    },
+    data: {
+      settings: {
+        ...before.target!.values,
+        "automation.schedulerPollSeconds": otherPoll,
+      },
+      expectedRevisionId: before.target!.revisionId,
+      expectedDigest: before.target!.digest,
+      submissionId: "e2e-invalid-winner",
+    },
+  });
+  expect(other.status()).toBe(201);
+  const winner = await settingsDocument(page);
+
+  // The real form accepts the text `3.5` for the integer capacity and the real
+  // API refuses it 422/settings_fractional_integer; only that response is lost.
+  const jobs = panel.getByLabel(/并行任务上限/);
+  await jobs.fill("3.5");
+  let serverStatus: number | null = null;
+  let serverCode: string | null = null;
+  await page.route(`**${SETTINGS_PATH}`, async (route) => {
+    if (route.request().method() !== "PUT") {
+      await route.continue();
+      return;
+    }
+    const response = await route.fetch();
+    serverStatus = response.status();
+    const payload = (await response.json()) as {
+      error?: { code?: string };
+    };
+    serverCode = payload.error?.code ?? null;
+    await route.abort("failed");
+  });
+  await panel.getByRole("button", { name: "保存设置" }).click();
+  await expect(panel.getByText(/上一次保存结果未知/)).toBeVisible({
+    timeout: 20_000,
+  });
+  expect(serverStatus).toBe(422);
+  expect(serverCode).toBe("settings_fractional_integer");
+  await page.unroute(`**${SETTINGS_PATH}`);
+  expect((await settingsDocument(page)).target!.revisionId).toBe(
+    winner.target!.revisionId,
+  );
+
+  // Reload while unresolved, then reconcile the exact refused submission.
+  await page.reload();
+  await page.getByLabel("API token").fill(ADMIN_TOKEN);
+  await page.getByRole("button", { name: "Connect" }).click();
+  const reloaded = page.getByRole("region", { name: "自动化引擎设置" });
+  await expect(reloaded.getByText(/上一次保存结果未知/)).toBeVisible({
+    timeout: 20_000,
+  });
+  const reconcile = reloaded.getByRole("button", { name: "核实上次提交" });
+  const reconcileResponse = page.waitForResponse(
+    (response) =>
+      response.url().endsWith(SETTINGS_PATH) &&
+      response.request().method() === "PUT",
+  );
+  await reconcile.click();
+  const reconciled = await reconcileResponse;
+  expect(reconciled.status()).toBe(200);
+  const reconciledBody = (await reconciled.json()) as {
+    state: string;
+    rejection?: { code?: string; field?: string };
+  };
+  expect(reconciledBody.state).toBe("not_committed");
+  expect(reconciledBody.rejection?.code).toBe("settings_fractional_integer");
+  expect(reconciledBody.rejection?.field).toBe("automation.maximumActiveJobs");
+
+  // The invalid text is retained and editable; the other writer's scheduler
+  // value is preserved in the form.
+  await expect(reloaded.getByLabel(/并行任务上限/)).toHaveValue("3.5");
+  await expect(reloaded.getByLabel(/并行任务上限/)).toBeEditable();
+  await expect(reloaded.getByLabel(/调度器轮询间隔/)).toHaveValue(
+    String(otherPoll),
+  );
+
+  // Correcting it and saving publishes only the corrected value.
+  await reloaded.getByLabel(/并行任务上限/).fill("4");
+  await reloaded.getByRole("button", { name: "保存设置" }).click();
+  await expect(reloaded.getByText(/已发布新的目标值/)).toBeVisible({
+    timeout: 20_000,
+  });
+  const afterSave = await settingsDocument(page);
+  expect(afterSave.target!.values["automation.maximumActiveJobs"]).toBe(4);
+  expect(afterSave.target!.values["automation.schedulerPollSeconds"]).toBe(
+    otherPoll,
   );
 });
 

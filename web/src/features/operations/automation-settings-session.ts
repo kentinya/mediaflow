@@ -29,12 +29,28 @@ export interface PendingEngineSettingsSubmission {
   readonly submissionId: string;
   /** The exact typed input, so a failed/unknown save keeps correctable text. */
   readonly input: Readonly<Record<string, string>>;
-  /** The typed values exactly as they were submitted (numbers). */
-  readonly submittedValues: Readonly<Record<string, number>>;
+  /**
+   * The typed values exactly as they were submitted, so reconciliation can send
+   * the same content the backend fingerprinted. `null` preserves an entry that
+   * could not be parsed as a finite number (for example `abc`), because the
+   * backend refuses it by type and the refusal must stay reconcilable.
+   */
+  readonly submittedValues: Readonly<Record<string, number | null>>;
   /** The publication identity the form was edited against. */
   readonly baselineRevisionId: string;
   readonly baselineRevisionVersion: number | null;
   readonly baselineDigest: string;
+  /**
+   * The published four values the edit started from.
+   *
+   * Without them a recovery cannot tell "the operator changed this field" from
+   * "the form simply carried the published value", so a recovered submission
+   * could silently overwrite another writer's change. They are stored as text
+   * so a rejected entry (for example `3.5` for an integer field) survives
+   * verbatim. Contexts retained by an older build lack the field; recovery then
+   * falls back to an explicit per-field difference choice instead of guessing.
+   */
+  readonly baselineValues?: Readonly<Record<string, string>>;
   readonly submittedAt: string;
 }
 
@@ -72,7 +88,7 @@ function isStringMap(
 function isNumberMap(
   value: unknown,
   limit: number,
-): value is Record<string, number> {
+): value is Record<string, number | null> {
   if (!isRecord(value)) return false;
   const entries = Object.entries(value);
   if (entries.length === 0 || entries.length > limit) return false;
@@ -80,8 +96,7 @@ function isNumberMap(
     ([key, item]) =>
       key.length > 0 &&
       key.length <= 128 &&
-      typeof item === "number" &&
-      Number.isFinite(item),
+      (item === null || (typeof item === "number" && Number.isFinite(item))),
   );
 }
 
@@ -100,6 +115,11 @@ function isValid(value: unknown): value is PendingEngineSettingsSubmission {
         Number.isFinite(value["baselineRevisionVersion"]))) &&
     typeof value["baselineDigest"] === "string" &&
     value["baselineDigest"].length > 0 &&
+    // Absent is valid: a context retained by an older build keeps working, with
+    // the conservative explicit-difference recovery instead of a guessed
+    // baseline. Present must be a complete, bounded four-field value map.
+    (value["baselineValues"] === undefined ||
+      isStringMap(value["baselineValues"], 8)) &&
     typeof value["submittedAt"] === "string" &&
     value["submittedAt"].length > 0
   );

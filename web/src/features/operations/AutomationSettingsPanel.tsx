@@ -55,6 +55,11 @@ import {
   writePendingSubmission,
   type PendingEngineSettingsSubmission,
 } from "./automation-settings-session";
+import {
+  planRecovery,
+  sameTypedValue,
+  type FieldResolution,
+} from "./automation-settings-recovery";
 
 const QUERY_KEY = ["operations", "automation-engine-settings"] as const;
 const PRINCIPAL_QUERY_KEY = ["authenticated-principal"] as const;
@@ -78,7 +83,16 @@ type Baseline = Pick<
 >;
 
 interface EditState {
+  /**
+   * The publication identity *and the published values* editing started from.
+   *
+   * The values are what makes a later recovery safe: without them the form can
+   * only see the operator's whole input, and re-arming it against a newer
+   * publication would silently revert a field this operator never touched.
+   */
   readonly baseline: Baseline;
+  /** The published values editing started from; `null` for an older context. */
+  readonly baselineValues: FormState | null;
   readonly input: FormState;
 }
 
@@ -92,7 +106,9 @@ function publishValues(target: PublishedTargetView): FormState {
 }
 
 function sameValues(a: FormState, b: FormState): boolean {
-  return AUTOMATION_ENGINE_FIELDS.every((field) => a[field] === b[field]);
+  return AUTOMATION_ENGINE_FIELDS.every((field) =>
+    sameTypedValue(a[field], b[field]),
+  );
 }
 
 function baselineOf(target: PublishedTargetView): Baseline {
@@ -124,7 +140,7 @@ function rebaseOnto(
   const base = publishValues(published);
   const rebased: Record<string, string> = { ...base };
   for (const field of AUTOMATION_ENGINE_FIELDS) {
-    if (newer[field] !== submitted[field]) {
+    if (!sameTypedValue(newer[field], submitted[field])) {
       rebased[field] = newer[field] ?? "";
     }
   }
@@ -285,6 +301,8 @@ export function AutomationSettingsPanel() {
     readonly stage: string;
     readonly durableState: string;
     readonly nextAction: string;
+    /** A readable four-field input rejection, when that is what happened. */
+    readonly fieldError: string | null;
   } | null>(null);
   const [submitting, setSubmitting] = useState(false);
   // A freshly-minted unknown submission in this tab, or the one restored after a
@@ -296,6 +314,11 @@ export function AutomationSettingsPanel() {
     readonly revisionVersion: number | null;
     readonly values: FormState;
   } | null>(null);
+  // An explicit choice the operator made for a *same-field* conflict. It only
+  // decides what this form will submit; it never publishes on its own.
+  const [resolutions, setResolutions] = useState<
+    Record<string, FieldResolution | undefined>
+  >({});
 
   // Restore a retained unknown submission exactly once per authenticated
   // principal.  React's documented "adjust state when an input changes" pattern
@@ -313,6 +336,7 @@ export function AutomationSettingsPanel() {
     pendingFromStorage = retained.available ? retained.value : null;
     setRestored({ key: restoredKey, value: pendingFromStorage });
     setUnresolved(pendingFromStorage);
+    setResolutions({});
     if (pendingFromStorage !== null) {
       setEditState({
         baseline: {
@@ -320,6 +344,10 @@ export function AutomationSettingsPanel() {
           revisionVersion: pendingFromStorage.baselineRevisionVersion,
           digest: pendingFromStorage.baselineDigest,
         },
+        // A context retained by an older build has no baseline values. It can
+        // still be reconciled and corrected; per-field recovery then requires an
+        // explicit choice instead of guessing which fields the operator changed.
+        baselineValues: pendingFromStorage.baselineValues ?? null,
         input: pendingFromStorage.input,
       });
     }
@@ -331,37 +359,80 @@ export function AutomationSettingsPanel() {
   const baseline = published === null ? null : baselineOf(published);
   const publishedValues = published === null ? {} : publishValues(published);
   const form = edit?.input ?? publishedValues;
-  const dirty = edit !== null && !sameValues(edit.input, publishedValues);
   // A Save is offered only while the input is still written against the current
-  // publication; a changed target requires an explicit review/refresh.
+  // publication; a changed target requires an explicit per-field review.
   const staleBaseline =
     edit !== null &&
     baseline !== null &&
     !sameBaseline(edit.baseline, baseline);
+  // A stale edit is not refused outright and never re-armed as a whole: only the
+  // fields this operator changed are merged into the *current* target, and a
+  // real same-field conflict needs an explicit choice first.
+  const recovery = useMemo(
+    () =>
+      edit !== null && staleBaseline && published !== null
+        ? planRecovery({
+            typed: edit.input,
+            baseline: edit.baselineValues ?? null,
+            current: publishValues(published),
+            resolutions,
+          })
+        : null,
+    [edit, staleBaseline, published, resolutions],
+  );
+  // What the next Save would actually publish: the merged input when the target
+  // moved under an edit, otherwise exactly what the operator typed.
+  const submitInput = recovery !== null ? recovery.input : form;
+  // The identity that Save is checked against: the current publication whenever a
+  // merge already happened, so the backend still fences a concurrent writer.
+  const submitBaseline: Baseline | null =
+    recovery !== null ? baseline : (edit?.baseline ?? baseline);
+  const submitBaselineValues =
+    recovery !== null ? publishedValues : (edit?.baselineValues ?? null);
+  const dirty = edit !== null && !sameValues(submitInput, publishedValues);
   const canSave =
     model !== null &&
     model.canManage &&
     dirty &&
-    !staleBaseline &&
+    submitBaseline !== null &&
     !submitting &&
-    pendingSubmission === null;
+    pendingSubmission === null &&
+    (recovery === null || !recovery.blocked);
 
   const visibleMessage = useMemo(() => {
     if (message !== null) return message;
+    if (recovery !== null && recovery.blocked) {
+      return "已发布的设置在此期间被其他保存改变,且其中至少一个字段与你的输入冲突。请逐字段确认采用当前值或保留你的修改;在确认前不会保存。";
+    }
+    if (recovery !== null && recovery.notes.length > 0) {
+      return "已发布的设置在此期间被其他保存改变。你改过的字段已合并到最新发布值上,其他字段保留对方的修改;请核对后保存。";
+    }
     if (staleBaseline) {
-      return "已发布的设置在此期间被其他保存改变。你输入的值仍保留在表单中;请先查看新的发布目标,再决定是否放弃修改后重新填写。";
+      return "已发布的设置在此期间被其他保存改变。你输入的值仍保留在表单中;保存将只发布你改过的字段。";
     }
     if (pendingSubmission !== null) {
       return "上一次保存的结果未知:请求未收到服务器确认,本次保存可能已生效也可能未生效。系统不会自动重试;请先用下方的核实操作确认结果。";
     }
     return null;
-  }, [message, staleBaseline, pendingSubmission]);
+  }, [message, recovery, staleBaseline, pendingSubmission]);
 
   const submit = async () => {
-    if (model === null || model.target === null || edit === null) return;
+    if (
+      model === null ||
+      model.target === null ||
+      edit === null ||
+      submitBaseline === null
+    ) {
+      return;
+    }
+    const checkedAgainst = submitBaseline;
     // The exact input this request submits.  Later keystrokes are compared
     // against this snapshot when the answer arrives.
-    const submittedEdit = edit;
+    const submittedEdit: EditState = {
+      baseline: checkedAgainst,
+      baselineValues: submitBaselineValues,
+      input: submitInput,
+    };
     const submissionId = newSubmissionId();
     if (submissionId === null || principalId === null) {
       setMessage(
@@ -369,17 +440,20 @@ export function AutomationSettingsPanel() {
       );
       return;
     }
-    const submittedValues = automationSettingsBody(edit.input, {
+    const submittedValues = automationSettingsBody(submitInput, {
       ...model.target,
-      ...edit.baseline,
-    }).settings as Record<string, number>;
+      ...checkedAgainst,
+    }).settings as Record<string, number | null>;
     const retained: PendingEngineSettingsSubmission = {
       submissionId,
-      input: edit.input,
+      input: submitInput,
       submittedValues,
-      baselineRevisionId: edit.baseline.revisionId,
-      baselineRevisionVersion: edit.baseline.revisionVersion,
-      baselineDigest: edit.baseline.digest,
+      baselineRevisionId: checkedAgainst.revisionId,
+      baselineRevisionVersion: checkedAgainst.revisionVersion,
+      baselineDigest: checkedAgainst.digest,
+      ...(submitBaselineValues === null
+        ? {}
+        : { baselineValues: submitBaselineValues }),
       submittedAt: new Date().toISOString(),
     };
     // The retained context is written *before* the mutation, so a lost response
@@ -392,10 +466,10 @@ export function AutomationSettingsPanel() {
       const result = await saveAutomationSettings(
         token,
         automationSettingsBody(
-          edit.input,
+          submitInput,
           {
             ...model.target,
-            ...edit.baseline,
+            ...checkedAgainst,
           },
           submissionId,
         ),
@@ -410,22 +484,32 @@ export function AutomationSettingsPanel() {
         // and explicitly re-based onto the just-published values instead of being
         // cleared or silently rebased against the old identity.
         const current = editRef.current;
+        // Compare by value, not identity: the snapshot object is reconstructed
+        // for this one request, so object identity would always look "newer" and
+        // would fabricate a retained edit that never happened.
         const newer =
-          current !== null && current !== submittedEdit ? current : null;
+          current !== null && !sameValues(current.input, submittedEdit.input)
+            ? current
+            : null;
         const publishedNow = result.readback.target;
         const rebased =
           newer !== null && publishedNow !== null
             ? rebaseOnto(newer.input, submittedEdit.input, publishedNow)
             : null;
         if (rebased !== null && publishedNow !== null) {
-          applyEdit({ baseline: baselineOf(publishedNow), input: rebased });
+          applyEdit({
+            baseline: baselineOf(publishedNow),
+            baselineValues: publishValues(publishedNow),
+            input: rebased,
+          });
         } else {
           applyEdit(null);
         }
+        setResolutions({});
         setLastPublished({
-          revisionId: result.revisionId ?? edit.baseline.revisionId,
+          revisionId: result.revisionId ?? checkedAgainst.revisionId,
           revisionVersion: result.readback.target?.revisionVersion ?? null,
-          values: edit.input,
+          values: submitInput,
         });
         setMessage(
           rebased !== null
@@ -452,6 +536,10 @@ export function AutomationSettingsPanel() {
         stage: FAILURE_STAGE_LABELS[result.details?.stage ?? ""] ?? "",
         durableState: result.details?.durableState ?? "",
         nextAction: result.details?.nextAction ?? "刷新后再决定下一步。",
+        fieldError:
+          result.details?.field === undefined
+            ? null
+            : `${result.details.field}:${result.code}`,
       });
       setMessage(`保存未生效(${result.code})。您输入的值仍保留在表单中。`);
       await query.refetch();
@@ -496,20 +584,46 @@ export function AutomationSettingsPanel() {
         );
       } else {
         // A terminal non-publication.  The block is cleared and the operator's
-        // typed input is re-based onto the *current* published identity, so the
-        // form is correctable again instead of staying refused as stale forever.
-        // Nothing is re-submitted: the next Save is a deliberate new action.
+        // typed input becomes correctable again — but *per field*, never as one
+        // wholesale re-arm: only the fields this operator actually changed are
+        // merged into the current target, so another writer's change to a field
+        // the operator never edited is preserved.  A same-field overlap needs an
+        // explicit choice before Save is offered.  Nothing is re-submitted here:
+        // the next Save is a deliberate new action.
         const currentTarget = published;
         if (currentTarget !== null) {
+          const current = publishValues(currentTarget);
+          const merged = planRecovery({
+            typed: pendingContext.input,
+            baseline: pendingContext.baselineValues ?? null,
+            current,
+          });
+          setResolutions({});
           applyEdit({
             baseline: baselineOf(currentTarget),
-            input: pendingContext.input,
+            baselineValues: current,
+            input: merged.input,
           });
+          setFailure(
+            result.rejectionCode !== null
+              ? {
+                  stage: "输入校验",
+                  durableState: "本次提交在发布前被拒绝,Active 未改变",
+                  nextAction: merged.blocked
+                    ? "请先逐字段确认冲突,再修正被拒绝的值后保存。"
+                    : (result.nextAction ?? "修正被拒绝的值后保存。"),
+                  fieldError:
+                    result.rejectionField === null
+                      ? result.rejectionCode
+                      : `${result.rejectionField}:${result.rejectionCode}`,
+                }
+              : null,
+          );
         }
-        setFailure(null);
         setMessage(
           `核对完成:本次提交没有发布,当前发布值未被本次请求改变。${result.nextAction ?? "请核对当前值后再次保存。"}`,
         );
+        return;
       }
       await query.refetch();
     } finally {
@@ -621,7 +735,7 @@ export function AutomationSettingsPanel() {
                           name={field.fieldPath}
                           inputMode="decimal"
                           value={
-                            form[field.fieldPath] ??
+                            submitInput[field.fieldPath] ??
                             publishedValues[field.fieldPath] ??
                             ""
                           }
@@ -630,20 +744,72 @@ export function AutomationSettingsPanel() {
                             pendingSubmission !== null ||
                             submitting
                           }
+                          aria-invalid={
+                            recovery?.conflicts.includes(field.fieldPath)
+                              ? true
+                              : undefined
+                          }
                           onChange={(event) => {
+                            const base = edit ?? {
+                              baseline: baselineOf(target),
+                              baselineValues: publishValues(target),
+                              input: publishedValues,
+                            };
                             const input = {
-                              ...(edit?.input ?? publishedValues),
+                              ...(recovery !== null ? submitInput : base.input),
                               [field.fieldPath]: event.target.value,
                             };
-                            applyEdit({
-                              baseline: edit?.baseline ?? baselineOf(target),
-                              input,
+                            applyEdit({ ...base, input });
+                            // Only this field's previous conflict decision is
+                            // dropped (its typed value just changed); other
+                            // fields keep the choice the operator already made.
+                            setResolutions((previous) => {
+                              const next = { ...previous };
+                              delete next[field.fieldPath];
+                              return next;
                             });
                             setMessage(null);
                           }}
                         />
                         <span className="mf-form-unit">{field.unit}</span>
                       </div>
+                      {recovery?.conflicts.includes(field.fieldPath) ? (
+                        <div className="mf-field-conflict" role="group">
+                          <p className="mf-field-help">
+                            当前发布值为
+                            {publishedValues[field.fieldPath] ?? "—"}
+                            {field.unit ? ` ${field.unit}` : ""},你输入的值是
+                            {submitInput[field.fieldPath] ?? "—"}
+                            {field.unit ? ` ${field.unit}` : ""}。请选择:
+                          </p>
+                          <div className="mf-actions">
+                            <Button
+                              type="button"
+                              variant="secondary"
+                              onClick={() =>
+                                setResolutions((previous) => ({
+                                  ...previous,
+                                  [field.fieldPath]: "current",
+                                }))
+                              }
+                            >
+                              采用当前值
+                            </Button>
+                            <Button
+                              type="button"
+                              variant="secondary"
+                              onClick={() =>
+                                setResolutions((previous) => ({
+                                  ...previous,
+                                  [field.fieldPath]: "mine",
+                                }))
+                              }
+                            >
+                              保留我的修改
+                            </Button>
+                          </div>
+                        </div>
+                      ) : null}
                       <p className="mf-field-help">
                         {field.meaning}
                         {field.notMeaning ? ` ${field.notMeaning}` : ""}
@@ -665,6 +831,7 @@ export function AutomationSettingsPanel() {
                           variant="secondary"
                           onClick={() => {
                             applyEdit(null);
+                            setResolutions({});
                             setMessage(null);
                             setFailure(null);
                           }}
@@ -681,12 +848,26 @@ export function AutomationSettingsPanel() {
                     {visibleMessage}
                   </p>
                 )}
+                {recovery !== null && recovery.notes.length > 0 && (
+                  <ul className="mf-dashboard-meta" role="list">
+                    {recovery.notes.map((note) => (
+                      <li key={note}>{note}</li>
+                    ))}
+                  </ul>
+                )}
                 {failure !== null && (
                   <StatusBanner variant="error" title="保存未生效">
-                    <p>
-                      失败阶段:{failure.stage || "未知"}。持久化状态:
-                      {failure.durableState || "上一份 Active 保持不变"}。
-                    </p>
+                    {failure.fieldError !== null ? (
+                      <p>
+                        字段错误:{failure.fieldError}。Active
+                        未改变,本次请求没有发布。
+                      </p>
+                    ) : (
+                      <p>
+                        失败阶段:{failure.stage || "未知"};持久化状态:
+                        {failure.durableState || "上一份 Active 保持不变"}。
+                      </p>
+                    )}
                     <p>下一步:{failure.nextAction}</p>
                   </StatusBanner>
                 )}

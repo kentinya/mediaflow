@@ -22,6 +22,8 @@ mutate no Storage.
 from __future__ import annotations
 
 import copy
+import hashlib
+import json
 from collections.abc import Callable, Mapping
 from datetime import UTC, datetime
 from typing import Any
@@ -39,6 +41,7 @@ from mediaflow.domain.automation_settings import (
     ENGINE_FIELD_PATHS,
     ENGINE_FIELD_SPECS,
     NON_ADOPTED_STATUSES,
+    AutomationEngineSettingsError,
     ConsumerAdoptionStatus,
     ConsumerRegistrationState,
     EngineSubmissionState,
@@ -99,15 +102,17 @@ SETTINGS_PUBLICATION_ACTION = "automation_engine_settings_publish"
 
 #: Durable, bounded terminal-outcome records for one identified focused Save.
 #:
-#: A submission can terminate *without* ever owning a revision: a stale refusal
-#: happens before a Draft exists, a no-op publishes nothing, and a persist/
-#: validate/prepare/activate fault leaves the successor unpublished.  Without a
-#: durable record of those terminations a lost response would leave the operator
-#: with a permanently blocked form: the request cannot be re-sent safely and the
-#: exact submission could never be proven either way.  The record is scoped to
-#: the same submission identity and actor as the publication trail, so it can
-#: only ever resolve that one request.
+#: A submission can terminate *without* ever owning a revision: a four-field
+#: input rejection happens before normalisation succeeds, a stale refusal happens
+#: before a Draft exists, a no-op publishes nothing, and a persist/validate/
+#: prepare/activate fault leaves the successor unpublished.  Without a durable
+#: record of those terminations a lost response would leave the operator with a
+#: permanently blocked form: the request cannot be re-sent safely and the exact
+#: submission could never be proven either way.  The record is scoped to the same
+#: submission identity and actor as the publication trail, so it can only ever
+#: resolve that one request.
 SUBMISSION_OUTCOME_ACTION = "automation_settings_outcome"
+SUBMISSION_OUTCOME_INPUT_REJECTED = "input_rejected"
 SUBMISSION_OUTCOME_STALE = "stale_refused"
 SUBMISSION_OUTCOME_UNCHANGED = "unchanged_no_publication"
 SUBMISSION_OUTCOME_VALIDATION_FAILED = "validation_failed"
@@ -143,6 +148,7 @@ SUBMISSION_TRAIL_ACTIONS: tuple[str, ...] = ("draft_edit", SUBMISSION_OUTCOME_AC
 #: The recorded outcomes that prove this submission will never publish.
 TERMINAL_NON_PUBLICATION_OUTCOMES: frozenset[str] = frozenset(
     {
+        SUBMISSION_OUTCOME_INPUT_REJECTED,
         SUBMISSION_OUTCOME_STALE,
         SUBMISSION_OUTCOME_UNCHANGED,
         SUBMISSION_OUTCOME_VALIDATION_FAILED,
@@ -154,6 +160,7 @@ TERMINAL_NON_PUBLICATION_OUTCOMES: frozenset[str] = frozenset(
 
 #: The bounded durable-state code each terminal outcome reports.
 TERMINAL_NON_PUBLICATION_STATES: dict[str, str] = {
+    SUBMISSION_OUTCOME_INPUT_REJECTED: "submission_input_rejected",
     SUBMISSION_OUTCOME_STALE: "submission_refused_stale",
     SUBMISSION_OUTCOME_UNCHANGED: "submission_no_publication_needed",
     SUBMISSION_OUTCOME_VALIDATION_FAILED: "submission_validation_failed",
@@ -357,10 +364,24 @@ class AutomationSettingsService:
         preparation failure therefore cannot leave the persisted Active ahead of
         the process binding.  A no-op submission publishes nothing and reports
         the unchanged target.
+
+        A request refused by the four-field *input* validation still terminates,
+        and it terminates without ever owning a revision.  Its bounded content
+        fingerprint is recorded before the refusal is returned, so a lost
+        rejection response can be reconciled by the exact same identity without
+        requiring that payload to pass publication validation again.  The refusal
+        semantics themselves are unchanged: nothing is published, no Draft is
+        created and no work is admitted.
         """
 
-        normalized = normalize_engine_setting_edits(payload)
         identity = normalize_submission_id(submission_id)
+        try:
+            normalized = normalize_engine_setting_edits(payload)
+        except AutomationEngineSettingsError as error:
+            self._record_input_rejection(
+                actor=actor, identity=identity, request=payload, error=error
+            )
+            raise
         target = self._published_target(required=True)
         assert target is not None  # narrow type for the reader
         current_values = target.values.as_field_map()
@@ -708,13 +729,59 @@ class AutomationSettingsService:
                 next_action="check configuration persistence health, then save again",
             ) from error
 
+    def _record_input_rejection(
+        self,
+        *,
+        actor: str,
+        identity: str | None,
+        request: object,
+        error: AutomationEngineSettingsError,
+    ) -> None:
+        """Persist the terminal refusal of a submission that never normalised.
+
+        The exact four values cannot be persisted here: they may be booleans,
+        strings, fractional integers, non-finite numbers or an out-of-scope key,
+        and copying them would either fail the bounded-ledger contract or store
+        arbitrary operator input.  What is durable instead is a bounded,
+        secret-free *content fingerprint* of the request plus the rejection code
+        and field.  That is enough to prove that this actor's exact request ended
+        here — a different payload for the same identity contradicts the record
+        and stays unresolved — while keeping strict validation and never letting
+        reconciliation re-publish the rejected values.
+        """
+
+        if identity is None:
+            return
+        fingerprint = submission_request_fingerprint(request)
+        if fingerprint is None:
+            return
+        self._record_submission_outcome(
+            actor=actor,
+            identity=identity,
+            outcome=SUBMISSION_OUTCOME_INPUT_REJECTED,
+            normalized=None,
+            target=None,
+            stage="normalize",
+            next_action=(
+                f"correct the reported value ({error.code})"
+                + (f" for {error.field}" if error.field else "")
+                + ", then save deliberately again"
+            ),
+            extra={
+                "requestFingerprint": fingerprint,
+                "code": error.code,
+                "field": error.field,
+                "message": error.message[:240],
+            },
+        )
+
     def _record_submission_outcome(
         self,
         *,
         actor: str,
         identity: str | None,
         outcome: str,
-        normalized: Mapping[str, Any],
+        normalized: Mapping[str, Any] | None,
         target: PublishedEngineTarget | None,
         stage: str,
         next_action: str,
@@ -754,7 +821,11 @@ class AutomationSettingsService:
                     "submissionId": identity,
                     "outcome": outcome,
                     "stage": stage,
-                    "candidate": {path: normalized[path] for path in ENGINE_FIELD_PATHS},
+                    **(
+                        {"candidate": {path: normalized[path] for path in ENGINE_FIELD_PATHS}}
+                        if normalized is not None
+                        else {}
+                    ),
                     "publishedRevisionId": (target.revision_id if target is not None else None),
                     "publishedRevisionDigest": (target.digest if target is not None else None),
                     "nextAction": next_action,
@@ -802,21 +873,45 @@ class AutomationSettingsService:
           revision this request edited, and that revision's own status decides
           whether *it* published;
         * a persisted terminal-outcome record proves a termination that never
-          owned a revision at all (a stale refusal before any Draft, a no-op, or
-          a persist/validate/prepare/activate fault).
+          owned a revision at all (a four-field input refusal, a stale refusal
+          before any Draft, a no-op, or a persist/validate/prepare/activate
+          fault).
 
         A submission whose own evidence cannot be located or read completely is
         reported as ``unresolved`` — that state keeps the resubmission block in
         place, because an absent audit while publication is still possible is not
         permission to submit again.
+
+        Looking the outcome up is deliberately *separate* from publishing: a
+        request refused by four-field input validation (for example the text
+        ``3.5`` for an integer field) is precisely the request whose outcome the
+        operator most needs proven, so this read must identify it without
+        requiring its payload to pass publication validation again.  Strict
+        validation is preserved everywhere a value could be published.
         """
 
-        normalized = normalize_engine_setting_edits(payload)
         identity = normalize_submission_id(submission_id)
+        # The bounded content evidence of the submitted request is computed from
+        # the *raw* payload, so it distinguishes `3.5`, `"3.5"`, `true`, a missing
+        # field and an out-of-scope key exactly as the request carried them.
+        fingerprint = submission_request_fingerprint(payload)
+        try:
+            normalized: dict[str, float | int] | None = normalize_engine_setting_edits(payload)
+            rejection: AutomationEngineSettingsError | None = None
+        except AutomationEngineSettingsError as error:
+            normalized = None
+            rejection = error
         target = self._published_target(required=False)
         current = target.values.as_field_map() if target is not None else {}
-        matches_current = bool(current) and all(
-            current.get(path) == normalized[path] for path in ENGINE_FIELD_PATHS
+        matches_current = (
+            normalized is not None
+            and bool(current)
+            and all(current.get(path) == normalized[path] for path in ENGINE_FIELD_PATHS)
+        )
+        submitted_values = (
+            {path: normalized[path] for path in ENGINE_FIELD_PATHS}
+            if normalized is not None
+            else None
         )
         if identity is None:
             # Without the submission identity this read can only describe the
@@ -829,7 +924,7 @@ class AutomationSettingsService:
                 "committed": False,
                 "committedRevisionId": None,
                 "currentValuesMatchSubmission": matches_current,
-                "submittedValues": {path: normalized[path] for path in ENGINE_FIELD_PATHS},
+                "submittedValues": submitted_values,
                 "currentValues": current,
                 "evidence": None,
                 "target": target.as_document() if target is not None else None,
@@ -839,7 +934,9 @@ class AutomationSettingsService:
                     "not carry your values"
                 ),
             }
-        evidence = self._submission_evidence(actor, identity, normalized)
+        evidence = self._submission_evidence(
+            actor, identity, normalized=normalized, fingerprint=fingerprint
+        )
         state = evidence.pop("state")
         committed = state in COMMITTED_SUBMISSION_STATES
         if state == EngineSubmissionState.COMMITTED.value:
@@ -853,13 +950,23 @@ class AutomationSettingsService:
             )
         elif state == EngineSubmissionState.NOT_COMMITTED.value:
             terminal = evidence.get("durableState")
-            next_action = (
-                "this exact submission is settled and did not change the published settings; "
-                "review the current values and save your corrected values deliberately"
-                if terminal in TERMINAL_NON_PUBLICATION_STATE_VALUES
-                else "this exact submission terminated without publishing; correct the reported "
-                "condition and save deliberately again"
-            )
+            if terminal == TERMINAL_NON_PUBLICATION_STATES[SUBMISSION_OUTCOME_INPUT_REJECTED]:
+                rejected_field = evidence.get("field")
+                next_action = (
+                    "this exact submission was refused before publication"
+                    + (f" ({rejected_field})" if isinstance(rejected_field, str) else "")
+                    + "; correct that value and save deliberately again"
+                )
+            elif terminal in TERMINAL_NON_PUBLICATION_STATE_VALUES:
+                next_action = (
+                    "this exact submission is settled and did not change the published settings; "
+                    "review the current values and save your corrected values deliberately"
+                )
+            else:
+                next_action = (
+                    "this exact submission terminated without publishing; correct the reported "
+                    "condition and save deliberately again"
+                )
         else:
             next_action = (
                 "no terminal durable outcome can be proven for this exact submission; do not "
@@ -874,15 +981,21 @@ class AutomationSettingsService:
             # submission published but is not what runtime consumes today.
             "currentValuesMatchSubmission": matches_current,
             "committedRevisionId": evidence.get("revisionId") if committed else None,
-            "submittedValues": {path: normalized[path] for path in ENGINE_FIELD_PATHS},
+            "submittedValues": submitted_values,
             "currentValues": current,
             "evidence": evidence or None,
+            "rejection": _rejection_detail(rejection, evidence),
             "target": target.as_document() if target is not None else None,
             "nextAction": next_action,
         }
 
     def _submission_evidence(
-        self, actor: str, identity: str, normalized: Mapping[str, Any]
+        self,
+        actor: str,
+        identity: str,
+        *,
+        normalized: Mapping[str, Any] | None,
+        fingerprint: str | None,
     ) -> dict[str, object]:
         """Walk this submission's own durable trail, newest first.
 
@@ -949,21 +1062,33 @@ class AutomationSettingsService:
                 continue
             if change.get("submissionId") != identity:
                 continue
-            candidate = change.get("candidate")
-            if not isinstance(candidate, dict):
+            if audit.action == SUBMISSION_OUTCOME_ACTION:
+                # A terminal-outcome record proves the content it recorded.  An
+                # input refusal can only record a fingerprint (the values were
+                # never normalised), while every other outcome records the
+                # normalised four values.
+                recorded_fingerprint = change.get("requestFingerprint")
+                if isinstance(recorded_fingerprint, str):
+                    if recorded_fingerprint != fingerprint:
+                        return self._contradiction(audit, complete)
+                    matched.append((audit, change))
+                    continue
+                candidate = change.get("candidate")
+                if not isinstance(candidate, dict) or normalized is None:
+                    # The durable record names different (or unusable) values than
+                    # the request being reconciled: nothing is certified.
+                    return self._contradiction(audit, complete)
+                if not all(candidate.get(path) == normalized[path] for path in ENGINE_FIELD_PATHS):
+                    return self._contradiction(audit, complete)
+                matched.append((audit, change))
                 continue
+            candidate = change.get("candidate")
+            if not isinstance(candidate, dict) or normalized is None:
+                return self._contradiction(audit, complete)
             if not all(candidate.get(path) == normalized[path] for path in ENGINE_FIELD_PATHS):
                 # The same identity submitted different values: the durable
                 # records contradict each other, so nothing is certified.
-                return {
-                    "state": EngineSubmissionState.UNRESOLVED.value,
-                    "evidenceComplete": complete,
-                    "identityMatched": True,
-                    "auditId": audit.audit_id,
-                    "revisionId": audit.object_id,
-                    "occurredAt": audit.occurred_at.isoformat(),
-                    "durableState": "submission_values_contradict_evidence",
-                }
+                return self._contradiction(audit, complete)
             matched.append((audit, change))
         if not matched:
             return {
@@ -983,6 +1108,20 @@ class AutomationSettingsService:
         if audit.action == SUBMISSION_OUTCOME_ACTION:
             return self._terminal_outcome_state(audit, change, complete)
         return self._revision_submission_state(audit, complete)
+
+    @staticmethod
+    def _contradiction(audit: Any, complete: bool) -> dict[str, object]:
+        """One identity's durable evidence disagrees with the request."""
+
+        return {
+            "state": EngineSubmissionState.UNRESOLVED.value,
+            "evidenceComplete": complete,
+            "identityMatched": True,
+            "auditId": audit.audit_id,
+            "revisionId": audit.object_id,
+            "occurredAt": audit.occurred_at.isoformat(),
+            "durableState": "submission_values_contradict_evidence",
+        }
 
     @staticmethod
     def _terminal_outcome_state(
@@ -1020,6 +1159,10 @@ class AutomationSettingsService:
             "nextAction": str(change.get("nextAction") or "") or None,
             "targetRevisionId": change.get("publishedRevisionId"),
         }
+        for key in ("field", "message", "code"):
+            value = change.get(key)
+            if isinstance(value, str) and value:
+                evidence[key] = value[:240]
         revision_id = change.get("revisionId")
         if isinstance(revision_id, str) and revision_id:
             # A persist/validate/prepare/activate fault may leave an unpublished
@@ -1227,6 +1370,84 @@ def _field_projection(field_path: str) -> dict[str, object]:
         "consumer": spec.consumer,
         "integer": spec.value_type == "integer",
     }
+
+
+def _rejection_detail(
+    rejection: AutomationEngineSettingsError | None, evidence: Mapping[str, Any]
+) -> dict[str, str] | None:
+    """The readable field error for a refused submission, if one is proven.
+
+    The local normalisation failure is preferred because it is the same code the
+    Save returned.  A caller that sends different (already corrected) content can
+    still be told what the *durable* record rejected, because the record is
+    authoritative for that exact submission.
+    """
+
+    if rejection is not None:
+        return rejection.as_detail()
+    if evidence.get("submissionOutcome") != SUBMISSION_OUTCOME_INPUT_REJECTED:
+        return None
+    detail: dict[str, str] = {}
+    code = evidence.get("failureCode")
+    if isinstance(code, str) and code:
+        detail["code"] = code
+    field = evidence.get("field")
+    if isinstance(field, str) and field:
+        detail["field"] = field
+    message = evidence.get("message")
+    if isinstance(message, str) and message:
+        detail["message"] = message
+    next_action = evidence.get("nextAction")
+    if isinstance(next_action, str) and next_action:
+        detail["nextAction"] = next_action
+    return detail or None
+
+
+def submission_request_fingerprint(request: object) -> str | None:
+    """A bounded, secret-free fingerprint of one submitted settings request.
+
+    Reconciliation needs to prove that the durable record belongs to the *same
+    content* the operator submitted.  The published request is normalised before
+    it is stored, but a request refused by input validation never is — `3.5`,
+    `"3.5"`, `true`, `None`, a missing field and an out-of-scope key must still be
+    distinguishable from each other and from an accepted submission.
+
+    The fingerprint is therefore taken over a canonical encoding of the raw
+    request, restricted to the bounded four-field surface so an oversized or
+    hostile payload cannot be persisted through the audit ledger.  Arbitrary
+    values are never copied into durable evidence or into the response: only this
+    digest and the bounded rejection code/field are kept.
+    """
+
+    if not isinstance(request, Mapping):
+        return None
+    raw = request.get("settings", request)
+    if not isinstance(raw, Mapping):
+        return None
+    if len(raw) > 16:
+        return None
+    encoded: dict[str, str] = {}
+    for original_key, value in raw.items():
+        key = str(original_key)
+        if len(key) > 128:
+            return None
+        try:
+            encoded[key] = json.dumps(
+                value,
+                ensure_ascii=False,
+                sort_keys=True,
+                separators=(",", ":"),
+                allow_nan=True,
+                default=repr,
+            )
+        except (TypeError, ValueError):
+            encoded[key] = "<unencodable>"
+        if len(encoded[key]) > 256:
+            return None
+    payload = json.dumps(encoded, ensure_ascii=False, sort_keys=True, separators=(",", ":"))
+    if len(payload.encode("utf-8")) > 8 * 1024:
+        return None
+    return "sha256:" + hashlib.sha256(payload.encode("utf-8")).hexdigest()
 
 
 def _canonical(document: object) -> str:

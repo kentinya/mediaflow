@@ -405,11 +405,16 @@ export function automationSettingsBody(
   >,
   submissionId?: string | null,
 ): Record<string, unknown> {
-  const settings: Record<string, number> = {};
+  const settings: Record<string, number | null> = {};
   for (const field of AUTOMATION_ENGINE_FIELDS) {
     const raw = values[field];
     const parsed = raw === undefined ? Number.NaN : Number(raw.trim());
-    settings[field] = parsed;
+    // A non-numeric entry is sent as `null` rather than as `NaN`, because JSON
+    // cannot carry NaN and silently dropping it would send a *different* request
+    // than the one the operator made — and a different one than reconciliation
+    // needs to identify. `null` is refused by the backend's type validation,
+    // which is exactly the refusal the operator must be able to correct.
+    settings[field] = Number.isFinite(parsed) ? parsed : null;
   }
   return {
     settings,
@@ -434,13 +439,15 @@ export type EngineSubmissionState =
  * being credited with whatever the current target happens to say.
  */
 export function automationSettingsReconcileBody(
-  values: Readonly<Record<string, number>>,
+  values: Readonly<Record<string, number | null>>,
   submissionId: string,
 ): Record<string, unknown> {
-  const settings: Record<string, number> = {};
+  const settings: Record<string, number | null> = {};
   for (const field of AUTOMATION_ENGINE_FIELDS) {
     const raw = values[field];
-    settings[field] = raw === undefined ? Number.NaN : raw;
+    // The identical content the Save carried: a `null` entry stays `null` so the
+    // backend's content fingerprint matches the refused request exactly.
+    settings[field] = raw === undefined ? null : raw;
   }
   return { reconcile: true, settings, submissionId };
 }

@@ -5922,3 +5922,29 @@ tr[aria-selected="true"] {
   color: var(--muted);
   padding: 6px 12px;
 }
+
+/*
+ * A same-field merge conflict: the published value and the operator's value are
+ * both stated with units, and Save stays refused until one is chosen.  It uses
+ * the existing warn surface rather than introducing a new status colour.
+ */
+.mf-field-conflict {
+  border: 1px solid var(--warn, var(--line));
+  border-radius: 8px;
+  padding: 8px 10px;
+  margin-top: 4px;
+  background: var(--panel);
+}
+
+.mf-field-conflict .mf-field-help {
+  margin: 0 0 6px;
+}
+
+.mf-field-conflict input[aria-invalid="true"] {
+  border-color: var(--warn, var(--line));
+}
+
+.mf-automation-settings .mf-dashboard-meta[role="list"] {
+  padding-left: 18px;
+  list-style: disc;
+}
