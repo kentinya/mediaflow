@@ -14491,6 +14491,11 @@ class MediaFlowApi:
             "attempts": 0,
             "latestKind": None,
             "latestStatus": None,
+            # An unavailable read proves nothing about coverage, so the counts
+            # are explicitly absent-from-zero rather than a fabricated 0/0.
+            "affectedItems": None,
+            "resolvedItems": None,
+            "unresolvedItems": None,
             "nextAction": (
                 "the linked follow-up state could not be read; reload this record and, if it "
                 "stays unavailable, inspect the exact Task Center run"
@@ -14515,6 +14520,9 @@ class MediaFlowApi:
                     "attempts": 0,
                     "latestKind": None,
                     "latestStatus": None,
+                    "affectedItems": 0,
+                    "resolvedItems": 0,
+                    "unresolvedItems": 0,
                     "nextAction": (
                         "open the exact Task Center run once this admission acquires its Task"
                     ),
@@ -14634,6 +14642,9 @@ class MediaFlowApi:
             "attempts": 0,
             "latestKind": None,
             "latestStatus": None,
+            "affectedItems": 0,
+            "resolvedItems": 0,
+            "unresolvedItems": 0,
             "nextAction": ("open the exact Task Center run once this admission acquires its Task"),
         }
         document["handoff"] = {
@@ -14776,6 +14787,10 @@ class MediaFlowApi:
                 "retrySafe": (document or {}).get("retrySafe"),
                 "nextAction": (document or {}).get("nextAction"),
                 "effectCertainty": value.get("effectCertainty"),
+                # Whether this entry is the durable failed/partial Result (its
+                # own status and effect certainty) or the current TaskItem
+                # fallback, which exists only because no such Result does.
+                "statusSource": value.get("statusSource"),
             }
             for value, document in decoded
         ]

@@ -1739,26 +1739,254 @@ class AutomationWorkspaceReadModelTests(unittest.TestCase):
             handling = self._recovery_records(value.api)["origin-job"]["handling"]
             self.assertEqual(handling["state"], "handling")
 
-            # Step 4 — a terminal execution whose item proved the effect is the
-            # only state that may read as resolved.
-            value.runtime.upsert_item(
-                _run_item("follow-up-task", "follow-up-item", TaskItemStatus.SUCCESS)
+            # Step 4 — a terminal execution whose own item proved the effect
+            # for the *exact original source* is the only state that may read as
+            # resolved.  A completed execution alone is not enough: the durable
+            # per-item effect has to prove the affected item's own resolution.
+            self._write_verified_recovery_effect(
+                value,
+                source_task_id=origin,
+                source_item_id="origin-failed",
+                execution_id="execution-1",
+                follow_up_item_id="follow-up-item",
             )
-            value.runtime.append_result(_run_result("follow-up-task", "follow-up-item"))
-            value.runtime._connection.execute(
-                "UPDATE manual_executions SET status='completed' WHERE execution_id='execution-1'"
-            )
-            value.runtime._connection.commit()
             handling = self._recovery_records(value.api)["origin-job"]["handling"]
             self.assertEqual(handling["state"], "resolved")
+            self.assertEqual(handling["affectedItems"], 1)
+            self.assertEqual(handling["resolvedItems"], 1)
 
-            # Step 5 — a still-failing item in the linked execution is never
-            # hidden by an earlier success.
+            # Step 5 — the same execution settling without that verified effect
+            # is never a resolution for the affected item.
             value.runtime.upsert_item(
                 _run_item("follow-up-task", "follow-up-item", TaskItemStatus.FAILED)
             )
+            value.runtime._connection.execute(
+                "UPDATE manual_execution_items SET status='failed', effect_certainty='none', "
+                "result_id=NULL WHERE execution_id='execution-1'"
+            )
+            value.runtime._connection.commit()
             handling = self._recovery_records(value.api)["origin-job"]["handling"]
             self.assertEqual(handling["state"], "recovery_failed")
+            self.assertEqual(handling["resolvedItems"], 0)
+
+    def test_handling_requires_every_original_affected_item_to_resolve(self) -> None:
+        """A successful subset never resolves a record with a failed sibling.
+
+        The real Run once journey fails two items and recovers only one of them.
+        The linked execution's own totals therefore prove *one* success: the
+        record must keep the un-recovered sibling visible and must not publish
+        ``resolved`` (or hide that sibling's original reason) merely because a
+        confirmed execution completed.
+        """
+
+        from mediaflow.application.failure_explanation import failure_explanation
+
+        encoded = failure_explanation(
+            "storage_failure", durable="failed", side_effects="none", retry_safe=True
+        ).encode()
+        with self._runtime() as value:
+            self._admitted_automation_run(
+                value,
+                "origin",
+                created_at=_NOW - timedelta(minutes=30),
+                status=PersistentTaskStatus.PARTIAL_SUCCESS,
+                job_status=AutomationJobStatus.COMPLETED,
+                succeeded_items=1,
+            )
+            origin = "origin-task"
+            for item_id in ("failed-two", "failed-three"):
+                value.runtime.upsert_item(
+                    dataclasses.replace(
+                        _run_item(origin, item_id, TaskItemStatus.FAILED), error=encoded
+                    )
+                )
+                value.runtime.append_result(
+                    dataclasses.replace(
+                        _run_result(origin, item_id, status="FAILED", effect_certainty="none"),
+                        error=encoded,
+                    )
+                )
+            record = self._recovery_records(value.api)["origin-job"]
+            # Both original zero-effect failures are published as historical
+            # facts with their own known effect, never as one partial/unknown.
+            self.assertEqual(record["failureStage"]["effects"]["none"], 2)
+            self.assertEqual(record["failureStage"]["effects"]["partial"], 0)
+            self.assertEqual(record["failureStage"]["effects"]["uncertain"], 0)
+            self.assertTrue(
+                all(item["effectCertainty"] == "none" for item in record["failureStage"]["items"])
+            )
+            self.assertEqual(record["handling"]["affectedItems"], 2)
+            self.assertEqual(record["handling"]["resolvedItems"], 0)
+
+            # Recover only the first failure through the real durable chain.
+            self._write_recovery_continuation(
+                value, origin, "failed-two", "analysis-task", "completed"
+            )
+            value.runtime.create_task(
+                _task("follow-up-task", created_at=_NOW, command="manual_organize")
+            )
+            value.runtime.create_manual_recovery_preparation(
+                ManualRecoveryPreparation(
+                    "preparation-1",
+                    origin,
+                    "failed-two",
+                    "continuation-1",
+                    "analysis-task",
+                    "analysis-result",
+                    "intent-1",
+                    "preview-1",
+                    1,
+                    "checkpoint-1",
+                    "fingerprint-1",
+                    "revision-active",
+                    "d" * 64,
+                    "tester",
+                    ManualRecoveryPreparationStatus.PREPARED,
+                    _NOW,
+                    _NOW,
+                )
+            )
+            value.runtime._connection.execute(
+                """INSERT INTO manual_executions (
+                    execution_id, preview_id, intent_id, authorization_id, task_id,
+                    actor, intent_version, configuration_snapshot_id,
+                    configuration_snapshot_digest, selected_item_ids_json,
+                    unselected_item_ids_json, status, next_action, error,
+                    allow_overwrite, allow_source_cleanup, created_at, updated_at,
+                    completed_at, worker_id, claim_token, claimed_at, claim_expires_at, attempts
+                ) VALUES ('execution-1', 'preview-1', 'intent-1', 'authorization-1',
+                          'follow-up-task', 'tester', 1, 'revision-active', ?, '[]', '[]',
+                          'admitted', 'wait for the Worker', NULL, 0, 0, ?, ?, NULL,
+                          NULL, NULL, NULL, NULL, 0)""",
+                ("d" * 64, _NOW.isoformat(), _NOW.isoformat()),
+            )
+            value.runtime._connection.execute(
+                "UPDATE manual_recovery_preparations SET status='confirmed', current=0, "
+                "execution_id='execution-1' WHERE preparation_id='preparation-1'"
+            )
+            value.runtime._connection.commit()
+            self._write_verified_recovery_effect(
+                value,
+                source_task_id=origin,
+                source_item_id="failed-two",
+                execution_id="execution-1",
+                follow_up_item_id="follow-up-item",
+            )
+
+            for reopen in (False, True):
+                with self.subTest(reopen=reopen):
+                    if reopen:
+                        value.api = MediaFlowApi(
+                            value.runtime,
+                            None,
+                            principals=(
+                                ResolvedApiPrincipal(
+                                    "admin", ADMIN_TOKEN, frozenset(ApiPermission)
+                                ),
+                                ResolvedApiPrincipal(
+                                    "viewer", VIEWER_TOKEN, frozenset({ApiPermission.READ})
+                                ),
+                            ),
+                            configuration_service=value.managed,
+                            bootstrap_document=_document(value.root),
+                        )
+                        value.api._automation_now = lambda: _NOW
+                    reopened = self._recovery_records(value.api)["origin-job"]
+                    # The recovered item resolved; the untouched sibling did not.
+                    self.assertEqual(reopened["handling"]["affectedItems"], 2)
+                    self.assertEqual(reopened["handling"]["resolvedItems"], 1)
+                    self.assertEqual(reopened["handling"]["unresolvedItems"], 1)
+                    self.assertNotEqual(reopened["handling"]["state"], "resolved")
+                    # The confirmed subset really succeeded; the untouched
+                    # sibling still needs its own decision, so the record is
+                    # unfinished handling rather than a failed recovery.
+                    self.assertEqual(reopened["handling"]["state"], "investigation")
+                    # Both original reasons survive the partial handling.
+                    self.assertEqual(reopened["failureStage"]["effects"]["none"], 2)
+                    self.assertEqual(
+                        {item["itemId"] for item in reopened["failureStage"]["items"]},
+                        {"failed-two", "failed-three"},
+                    )
+                    # The original outcome is never rewritten by handling.
+                    self.assertEqual(reopened["status"], "partial_success")
+                    self.assertEqual(reopened["result"]["successItems"], 1)
+
+            # A second failure on the *same* execution, without its own verified
+            # effect, still leaves the record unresolved rather than resolved.
+            value.runtime._connection.execute(
+                "UPDATE manual_execution_items SET status='failed', effect_certainty='none', "
+                "result_id=NULL WHERE execution_id='execution-1'"
+            )
+            value.runtime._connection.commit()
+            after = self._recovery_records(value.api)["origin-job"]
+            self.assertEqual(after["handling"]["resolvedItems"], 0)
+            self.assertNotEqual(after["handling"]["state"], "resolved")
+
+    @staticmethod
+    def _write_verified_recovery_effect(
+        value,
+        *,
+        source_task_id: str,
+        source_item_id: str,
+        execution_id: str,
+        follow_up_item_id: str,
+    ) -> None:
+        """Write the durable per-item success a confirmed recovery produces.
+
+        ``ManualOrganizeExecutionWorker`` persists exactly this chain: the
+        executed TaskItem becomes ``success`` with a verified Result, and its
+        ``manual_execution_items`` row keeps the exact source identity it
+        reviewed.  Writing it here keeps the read-model test on real producer
+        vocabulary (``task_results.status`` = ``SUCCESS``) instead of a
+        hand-invented lower-case shape.
+        """
+
+        value.runtime.upsert_item(
+            _run_item("follow-up-task", follow_up_item_id, TaskItemStatus.SUCCESS)
+        )
+        value.runtime.append_result(
+            _run_result("follow-up-task", follow_up_item_id, status="SUCCESS")
+        )
+        source = value.runtime.get_item(source_item_id)
+        source_json = json.dumps(
+            {
+                "sourceId": f"source-{source_item_id}",
+                "storageId": source.storage_id,
+                "resourceLibraryId": source.resource_library_id,
+                "path": source.source_path,
+                "filename": source.source_path.rsplit("/", 1)[-1],
+                "extension": "mkv",
+                "size": 1,
+                "modifiedAt": _NOW.isoformat(),
+                "observedAt": _NOW.isoformat(),
+            }
+        )
+        value.runtime._connection.execute(
+            """INSERT OR REPLACE INTO manual_execution_items (
+                execution_item_id, execution_id, preview_id, preview_item_id, intent_id,
+                item_id, task_id, task_item_id, item_version, source_fingerprint,
+                plan_fingerprint, source_json, choice_json, plan_json, status, stage,
+                result_id, effect_certainty, completed_operations, uncertain_effects,
+                error, next_action, created_at, updated_at
+            ) VALUES ('execution-item-1', ?, 'preview-1', 'preview-item-1', 'intent-1',
+                      ?, 'follow-up-task', ?, 1, 'fingerprint-1', 'plan-fingerprint-1',
+                      ?, '{}', '{}', 'success', 'organizing', ?, 'verified_complete',
+                      '[]', '[]', NULL, 'inspect the verified Result', ?, ?)""",
+            (
+                execution_id,
+                follow_up_item_id,
+                follow_up_item_id,
+                source_json,
+                f"result-{follow_up_item_id}",
+                _NOW.isoformat(),
+                _NOW.isoformat(),
+            ),
+        )
+        value.runtime._connection.execute(
+            "UPDATE manual_executions SET status='completed' WHERE execution_id=?",
+            (execution_id,),
+        )
+        value.runtime._connection.commit()
 
     @staticmethod
     def _write_recovery_continuation(

@@ -437,6 +437,19 @@ export function AutomationRecordRow({
             {failureStage.category !== null && (
               <p className="mf-dashboard-meta">原因：{failureStage.category}</p>
             )}
+            {failureStage.unavailable && (
+              <p className="mf-dashboard-meta">
+                持久化的逐项失败原因当前不可读；请在任务中心核对该运行的条目证据
+              </p>
+            )}
+            {failureStage.items.length > 0 && (
+              <p className="mf-dashboard-meta">
+                已知效果：无效果 {failureStage.effects.none} · 已确认{" "}
+                {failureStage.effects.known} · 不确定{" "}
+                {failureStage.effects.uncertain} · 部分{" "}
+                {failureStage.effects.partial}
+              </p>
+            )}
             {failureStage.items.length > 0 && (
               <details>
                 <summary className="mf-dashboard-meta">
@@ -480,6 +493,17 @@ export function AutomationRecordRow({
               : ` · ${handling.latestStatus}`}
           </p>
         )}
+        {handling.affectedItems !== null &&
+          handling.resolvedItems !== null &&
+          handling.unresolvedItems !== null && (
+            <p className="mf-dashboard-meta">
+              受影响条目 {handling.affectedItems} · 已确认恢复{" "}
+              {handling.resolvedItems}
+              {handling.unresolvedItems > 0
+                ? ` · 仍未解决 ${handling.unresolvedItems}`
+                : ""}
+            </p>
+          )}
         {handling.nextAction !== null && (
           <p className="mf-dashboard-meta">{handling.nextAction}</p>
         )}

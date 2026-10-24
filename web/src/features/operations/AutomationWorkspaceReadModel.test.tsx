@@ -374,6 +374,7 @@ function recordDocument(overrides: Json = {}): Json {
           nextAction:
             "inspect the Storage failure and source/destination state before explicitly retrying this item",
           effectCertainty: "none",
+          statusSource: "result",
         },
       ],
       effects: { none: 1, known: 0, uncertain: 0, partial: 0 },
@@ -391,6 +392,9 @@ function recordDocument(overrides: Json = {}): Json {
       attempts: 1,
       latestKind: "recovery",
       latestStatus: "running",
+      affectedItems: 1,
+      resolvedItems: 0,
+      unresolvedItems: 1,
       nextAction:
         "wait for the linked follow-up to settle, then re-read this record",
     },
@@ -589,10 +593,21 @@ describe("V2 Automation workspace read model", () => {
     // The failure stage/reason is separate from the original outcome.
     expect(within(region).getByText(/阶段：organizing_stage/)).toBeVisible();
     expect(within(region).getByText(/原因：storage_failure/)).toBeVisible();
-    // The linked follow-up is shown separately.
+    // The linked follow-up is shown separately, with its per-original-item
+    // coverage counts published by the backend.
     expect(within(region).getByText("正在处理")).toBeVisible();
     expect(
       within(region).getByText(/最近关联：recovery · running/),
+    ).toBeVisible();
+    expect(
+      within(region).getByText(/受影响条目 1 · 已确认恢复 0 · 仍未解决 1/),
+    ).toBeVisible();
+    // The known-effect partition covers the whole failed population, so the
+    // operator can tell "no effect" apart from "partial/unknown effect".
+    expect(
+      within(region).getByText(
+        /已知效果：无效果 1 · 已确认 0 · 不确定 0 · 部分 0/,
+      ),
     ).toBeVisible();
     // Records never embed a recovery/execution control.
     expect(

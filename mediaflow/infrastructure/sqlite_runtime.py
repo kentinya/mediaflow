@@ -453,7 +453,7 @@ def _safe_json_object(raw: object) -> dict[str, object]:
     return value if isinstance(value, dict) else {}
 
 
-def _summarize_handling(entries) -> dict:
+def _summarize_handling(entries, coverage=None) -> dict:
     """Summarize exactly-linked follow-up handling for one original run.
 
     The summary describes *handling progress*, never the original outcome, and
@@ -465,19 +465,23 @@ def _summarize_handling(entries) -> dict:
 
     - ``handling``: linked work is queued/claimed/running, or an admitted
       execution still has an active item;
-    - ``resolved``: the newest linked *execution* terminally settled with
-      proven item success and no failed/uncertain item of its own;
-    - ``recovery_failed``: the newest linked execution settled without success;
+    - ``resolved``: **every original affected item** independently carries the
+      durable proof that its own source was resolved by a confirmed execution;
+    - ``recovery_failed``: a linked execution settled with its own failed or
+      uncertain item, or failed/was cancelled;
     - ``investigation``: linked evidence exists but has not proved a result —
-      an analysis-only step, a prepared-but-unconfirmed plan, or an ambiguous
-      state;
+      an analysis-only step, a prepared-but-unconfirmed plan, or an execution
+      that resolved only the subset the operator confirmed while an original
+      affected item still has no proof of its own;
     - ``unhandled``: no linked follow-up exists at all.  The caller only
       publishes this when the durable read itself succeeded.
 
-    Only entries that actually admitted an execution can prove resolution; an
-    analysis continuation carries none.  Every decision reads the linked Task's
-    own durable item evidence, so an older successful attempt can never hide a
-    still-active, still-failed or uncertain item.
+    ``coverage`` is the per-original-item reconciliation the caller computed
+    from persisted source-item/continuation/preparation/execution relations:
+    ``{"affectedItems": n, "resolvedItems": m}`` over the record's own failure
+    population.  A successful subset never hides an unhandled, failed, active or
+    uncertain sibling, and an unrelated attempt can never prove another item's
+    resolution because every proof is bound to that item's exact source.
     """
 
     if not entries:
@@ -486,6 +490,7 @@ def _summarize_handling(entries) -> dict:
             "attempts": 0,
             "latestKind": None,
             "latestStatus": None,
+            **_coverage_document(coverage),
             "nextAction": "open the exact Task Center run to review and handle it",
         }
     attempts = len(entries)
@@ -515,6 +520,7 @@ def _summarize_handling(entries) -> dict:
             "latestKind": str(latest["kind"]),
             "latestStatus": str(latest["status"]),
             "latestExecutionStatus": execution_status_of(latest),
+            **_coverage_document(coverage),
             "nextAction": next_action,
         }
 
@@ -545,47 +551,94 @@ def _summarize_handling(entries) -> dict:
             )
         return state(
             "investigation",
-            "the linked follow-up has not proved a result for the affected item; review the "
+            "the linked follow-up has not proved a result for the affected items; review the "
             "plan summary and confirm the exact next step in the Task Center run",
         )
 
     newest = executed[-1]
     newest_status = execution_status_of(newest)
-    success_items = number(newest, "success_items")
     failed_items = number(newest, "failed_items")
     uncertain_items = number(newest, "uncertain_items")
-    if (
-        newest_status in {"completed", "partial_success"}
-        and success_items > 0
-        and failed_items == 0
-        and uncertain_items == 0
-    ):
-        return state("resolved", "no further Automation action is needed for this record")
-    if newest_status in {"completed", "partial_success"}:
-        # The execution settled but its own items did not prove a result for
-        # everything it was admitted to handle.
-        return state(
-            "recovery_failed",
-            "the linked follow-up did not resolve every affected item; open the exact "
-            "Task Center run to review it before any further decision",
-        )
+    affected, resolved = _coverage_counts(coverage)
     if newest_status in {"failed", "cancelled"}:
         return state(
             "recovery_failed",
             "the linked follow-up did not succeed; open the exact Task Center run to "
             "review it before any further decision",
         )
-    if uncertain_items > 0:
+    if newest_status not in {"completed", "partial_success"}:
         return state(
             "investigation",
-            "the linked follow-up left an uncertain effect; inspect the exact Task Center "
-            "run before any further command",
+            "the linked follow-up state is ambiguous; inspect the exact Task Center run before "
+            "any further command",
         )
+    if coverage is None:
+        # Without the per-item reconciliation the record cannot honestly claim
+        # that every original problem is handled, so it stays an inspection.
+        return state(
+            "investigation",
+            "the linked follow-up outcomes could not be reconciled per affected item; inspect "
+            "the exact Task Center run before any further command",
+        )
+    if affected == 0:
+        return state(
+            "investigation",
+            "this record published no durable affected item, so a completed follow-up cannot "
+            "prove that the original problem was resolved; inspect the exact Task Center run",
+        )
+    if resolved >= affected and failed_items == 0 and uncertain_items == 0:
+        return state("resolved", "no further Automation action is needed for this record")
+    # The execution left its own failed/uncertain item behind: that is a failed
+    # follow-up, not a partial success.
+    if failed_items > 0 or uncertain_items > 0:
+        if uncertain_items > 0 and failed_items == 0:
+            return state(
+                "investigation",
+                "the linked follow-up left an uncertain effect; inspect the exact Task Center "
+                "run before any further command",
+            )
+        return state(
+            "recovery_failed",
+            "the linked follow-up did not resolve every affected item it admitted; open the "
+            "exact Task Center run to review it before any further decision",
+        )
+    # The execution itself settled successfully for exactly the subset the
+    # operator confirmed, but the record still has an original affected item
+    # without its own proof.  That is unfinished handling, not a failed
+    # recovery and not a resolution: the remaining item needs its own decision.
     return state(
         "investigation",
-        "the linked follow-up state is ambiguous; inspect the exact Task Center run before "
-        "any further command",
+        "this record still has an affected item without its own resolution; open the exact "
+        "Task Center run and decide the remaining item separately",
     )
+
+
+def _coverage_counts(coverage) -> tuple[int, int]:
+    """The bounded ``(affected, resolved)`` pair of a coverage mapping."""
+
+    if not isinstance(coverage, dict):
+        return 0, 0
+    affected = coverage.get("affectedItems")
+    resolved = coverage.get("resolvedItems")
+    affected = affected if isinstance(affected, int) and not isinstance(affected, bool) else 0
+    resolved = resolved if isinstance(resolved, int) and not isinstance(resolved, bool) else 0
+    resolved = min(max(resolved, 0), max(affected, 0))
+    return max(affected, 0), resolved
+
+
+def _coverage_document(coverage) -> dict:
+    """Publish the per-item coverage counts without inventing a resolution.
+
+    ``affectedItems == 0`` is a real "no durable affected item" statement, not a
+    resolution: the caller decides what that means for the record state.
+    """
+
+    affected, resolved = _coverage_counts(coverage)
+    return {
+        "affectedItems": affected,
+        "resolvedItems": resolved,
+        "unresolvedItems": affected - resolved,
+    }
 
 
 def _bounded_item_count(raw: object) -> int:
@@ -6669,8 +6722,9 @@ class SQLiteTaskRepository:
 
         - ``handling``: linked work is queued/claimed/running or its admitted
           execution is still active;
-        - ``resolved``: the linked execution terminally settled with proven
-          item success and no failed/uncertain item of its own;
+        - ``resolved``: **every original affected item** independently carries
+          the durable proof that its own source was resolved by a confirmed
+          execution;
         - ``recovery_failed``: the linked follow-up settled without resolving
           every affected item;
         - ``investigation``: linked evidence exists but is ambiguous, or the
@@ -6681,6 +6735,16 @@ class SQLiteTaskRepository:
         progress rather than resolution, and an older successful attempt cannot
         hide a still-active/failed/uncertain item.  An unavailable read is
         reported by the caller rather than silently reading as ``unhandled``.
+
+        Resolution is reconciled **per original affected item**, never from the
+        newest execution's own totals: a real three-item run can fail two items,
+        have only one of them recovered, and must then stay unresolved.  Each
+        original failure population member is matched to the same durable proof
+        the Task Center problem list uses — the confirmed preparation that
+        selected it, its linked completed execution, and that execution's own
+        verified per-item effect for the exact source identity.  Nothing is
+        inferred from a sibling's success, from a timestamp, or from today's
+        Active configuration.
         """
 
         wanted = [value for value in run_ids if isinstance(value, str) and value][:100]
@@ -6756,6 +6820,12 @@ class SQLiteTaskRepository:
                     """,
                     tuple(wanted),
                 ).fetchall()
+                coverage: dict[str, dict] = {}
+                for row in self._automation_handling_coverage_locked(tuple(wanted)):
+                    coverage[str(row["source_task_id"])] = {
+                        "affectedItems": int(row["affected_items"]),
+                        "resolvedItems": int(row["resolved_items"]),
+                    }
             except BaseException:
                 self._connection.execute("ROLLBACK")
                 raise
@@ -6766,8 +6836,87 @@ class SQLiteTaskRepository:
             grouped.setdefault(str(row["source_task_id"]), []).append(row)
         for run_id in wanted:
             entries = grouped.get(run_id)
-            handling[run_id] = _summarize_handling(entries)
+            handling[run_id] = _summarize_handling(entries, coverage.get(run_id))
         return handling
+
+    def _automation_handling_coverage_locked(self, wanted: tuple[str, ...]) -> list:
+        """Per-original-item resolution coverage for one page of origin runs.
+
+        One original run's *affected* population is its own durable failed/
+        partial item evidence (the same Result-first population the failure
+        stage publishes), and each affected item is *resolved* only when the
+        exact same source identity carries a confirmed preparation whose linked
+        execution terminally completed with a per-item verified effect.  The
+        proof is per item, so recovering one failure out of two can never
+        aggregate into a whole-record resolution.
+
+        A record with no durable affected item publishes ``affected_items = 0``
+        and the caller decides what that means; nothing here invents an
+        affected item to make a completed analysis look like a resolution.
+        """
+
+        if not wanted:
+            return []
+        placeholders = ", ".join("?" for _ in wanted)
+        affected_sql = f"""
+            SELECT DISTINCT source_items.task_id AS source_task_id,
+                   source_items.item_id AS item_id
+            FROM task_items source_items
+            WHERE source_items.task_id IN ({placeholders})
+            AND (
+                source_items.status IN ('failed', 'partial')
+                OR EXISTS (
+                    SELECT 1 FROM task_results failed_results
+                    WHERE failed_results.task_id = source_items.task_id
+                    AND failed_results.item_id = source_items.item_id
+                    AND lower(failed_results.status) IN ('failed', 'partial')
+                )
+            )
+        """
+        resolved_sql = f"""
+            SELECT DISTINCT affected.source_task_id AS source_task_id,
+                   affected.item_id AS item_id
+            FROM ({affected_sql}) affected
+            JOIN manual_recovery_preparations preparation
+              ON preparation.source_task_id = affected.source_task_id
+             AND preparation.source_item_id = affected.item_id
+             AND preparation.status = 'confirmed'
+             AND preparation.execution_id IS NOT NULL
+            JOIN manual_executions execution
+              ON execution.execution_id = preparation.execution_id
+             AND execution.status IN ('completed', 'partial_success')
+            JOIN manual_execution_items execution_item
+              ON execution_item.execution_id = execution.execution_id
+             AND execution_item.preview_id = preparation.preview_id
+             AND execution_item.intent_id = preparation.intent_id
+             AND execution_item.effect_certainty = 'verified_complete'
+             AND execution_item.uncertain_effects = '[]'
+             AND lower(execution_item.status) = 'success'
+            JOIN task_results effect_result
+              ON effect_result.result_id = execution_item.result_id
+             AND effect_result.task_id = execution.task_id
+             AND effect_result.item_id = execution_item.task_item_id
+             AND lower(effect_result.status) = 'success'
+            JOIN task_items source_item
+              ON source_item.item_id = affected.item_id
+             AND source_item.task_id = affected.source_task_id
+             AND json_extract(execution_item.source_json, '$.storageId')
+                 = source_item.storage_id
+             AND json_extract(execution_item.source_json, '$.path')
+                 = source_item.source_path
+        """
+        return self._connection.execute(
+            f"""SELECT affected.source_task_id AS source_task_id,
+                       COUNT(*) AS affected_items,
+                       (SELECT COUNT(*) FROM ({resolved_sql}) resolved
+                        WHERE resolved.source_task_id = affected.source_task_id)
+                           AS resolved_items
+                FROM ({affected_sql}) affected
+                GROUP BY affected.source_task_id""",
+            # ``resolved_sql`` embeds ``affected_sql`` too, so the page filter
+            # binds exactly twice.
+            (*wanted, *wanted),
+        ).fetchall()
 
     def automation_record_failure_evidence(self, task_ids: tuple[str, ...]) -> dict[str, dict]:
         """Concrete per-item failure evidence for one page of original runs.
@@ -6786,6 +6935,16 @@ class SQLiteTaskRepository:
         currently failed/partial TaskItem that has none, so an original reason
         never disappears because later handling started.
 
+        The stored Result vocabulary is the producer's own: manual executions
+        persist ``ExecutionStatus`` values (``FAILED``/``PARTIAL``) while other
+        producers use the lower-case TaskItem vocabulary, so the predicate
+        compares case-insensitively at this read boundary instead of assuming
+        one spelling.  A TaskItem and a Result are also kept distinct: a
+        Result-backed entry publishes the Result's own status and effect
+        certainty, and only an item with *no* durable failure Result falls back
+        to its current TaskItem state (whose effect certainty is then honestly
+        unknown).
+
         Both reads are batched per page **and per Task**: a single global row
         bound would let one Task with many failed items consume the whole window
         and silently hide another Task's evidence.  Counts come from a grouped
@@ -6803,12 +6962,15 @@ class SQLiteTaskRepository:
         per_task_sample = 10
         # The one shared per-item evidence set: a failed/partial Result (newest
         # per item, historical) or, when an item has none, its current
-        # failed/partial TaskItem state.
+        # failed/partial TaskItem state.  Every status comparison is
+        # case-insensitive because the durable Result column carries the
+        # producer's own vocabulary (``FAILED``/``PARTIAL`` from a manual
+        # execution, lower case from other producers).
         evidence_rows = f"""
             SELECT latest.task_id AS task_id, latest.item_id AS item_id,
-                   latest.status AS status, latest.created_at AS sort_at,
+                   lower(latest.status) AS status, latest.created_at AS sort_at,
                    latest.error AS result_error, latest.effect_certainty,
-                   latest.uncertain_effects
+                   latest.uncertain_effects, 'result' AS status_source
             FROM (
                 SELECT results.*, ROW_NUMBER() OVER (
                     PARTITION BY results.task_id, results.item_id
@@ -6816,12 +6978,12 @@ class SQLiteTaskRepository:
                 ) AS result_rank
                 FROM task_results results
                 WHERE results.task_id IN ({placeholders})
-                AND results.status IN ('failed', 'partial')
+                AND lower(results.status) IN ('failed', 'partial')
             ) latest
             WHERE latest.result_rank = 1
             UNION ALL
             SELECT items.task_id, items.item_id, items.status, items.updated_at,
-                   items.error, NULL, NULL
+                   items.error, NULL, NULL, 'task_item'
             FROM task_items items
             WHERE items.task_id IN ({placeholders})
             AND items.status IN ('failed', 'partial')
@@ -6829,7 +6991,7 @@ class SQLiteTaskRepository:
                 SELECT 1 FROM task_results earlier
                 WHERE earlier.task_id = items.task_id
                 AND earlier.item_id = items.item_id
-                AND earlier.status IN ('failed', 'partial')
+                AND lower(earlier.status) IN ('failed', 'partial')
             )
         """
         evidence: dict[str, dict] = {}
@@ -6858,15 +7020,17 @@ class SQLiteTaskRepository:
                 ).fetchall()
                 # The effect partition is computed over the *whole* evidence
                 # population, not the bounded sample, so a published count of
-                # known/uncertain effects is never silently a sample size.
+                # known/uncertain effects is never silently a sample size.  A
+                # TaskItem fallback carries no Result certainty at all, so it
+                # is honestly ``uncertain`` rather than being counted as a
+                # partial effect the Executor never reported.
                 effect_rows = self._connection.execute(
                     f"""SELECT task_id, status,
                                CASE
                                    WHEN effect_certainty = 'none' THEN 'none'
                                    WHEN effect_certainty = 'verified_complete' THEN 'known'
-                                   WHEN effect_certainty IN ('attempted_unverified', 'unknown')
-                                       THEN 'uncertain'
-                                   ELSE 'partial'
+                                   WHEN effect_certainty = 'partial' THEN 'partial'
+                                   ELSE 'uncertain'
                                END AS effect_bucket,
                                COUNT(DISTINCT item_id) AS value_count
                     FROM ({evidence_rows})
@@ -6915,6 +7079,10 @@ class SQLiteTaskRepository:
                         if row["effect_certainty"] not in {None, ""}
                         else "unknown"
                     ),
+                    # Whether this entry is the durable Result (its own status
+                    # and effect certainty) or the current TaskItem fallback
+                    # (no failure Result exists, so effects stay unknown).
+                    "statusSource": str(row["status_source"]),
                     "saturated": uncertain_effects not in {"", "[]"},
                 }
             )

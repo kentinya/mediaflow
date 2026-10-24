@@ -447,6 +447,7 @@ function normalizeFailureItems(
       retrySafe: optionalFlag(source, "retrySafe"),
       nextAction: optionalText(source, "nextAction"),
       effectCertainty: optionalText(source, "effectCertainty"),
+      statusSource: optionalText(source, "statusSource"),
     };
   });
 }
@@ -1941,6 +1942,12 @@ export interface AutomationRecordFailureItemModel {
   readonly retrySafe: boolean | null;
   readonly nextAction: string | null;
   readonly effectCertainty: string | null;
+  /**
+   * `"result"` when this entry is the durable failed/partial Result (its own
+   * status and effect certainty) or `"task_item"` for the current TaskItem
+   * fallback, which exists only because no such Result does.
+   */
+  readonly statusSource: string | null;
 }
 
 /** The bounded failure stage/reason of one record, when there is one. */
@@ -1988,6 +1995,14 @@ export interface AutomationRecordModel {
     readonly attempts: number;
     readonly latestKind: string | null;
     readonly latestStatus: string | null;
+    /**
+     * The record's own original affected-item population and how many of those
+     * items carry independent durable resolution proof. `null` means the read
+     * could not prove coverage at all — never a fabricated zero.
+     */
+    readonly affectedItems: number | null;
+    readonly resolvedItems: number | null;
+    readonly unresolvedItems: number | null;
     readonly nextAction: string | null;
   };
   readonly handoff: {
@@ -2094,6 +2109,9 @@ function normalizeAutomationRecord(
       attempts: count(handling, "attempts"),
       latestKind: optionalText(handling, "latestKind"),
       latestStatus: optionalText(handling, "latestStatus"),
+      affectedItems: optionalCount(handling, "affectedItems"),
+      resolvedItems: optionalCount(handling, "resolvedItems"),
+      unresolvedItems: optionalCount(handling, "unresolvedItems"),
       nextAction: optionalText(handling, "nextAction"),
     },
     definitionName:

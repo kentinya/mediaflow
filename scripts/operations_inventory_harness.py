@@ -1705,22 +1705,28 @@ def run_manual_worker_once(state: AppState) -> dict[str, object]:
         }
 
 
-def _failure_for_one_execution_item(source_path: str | None):
-    """A zero-effect failure seam pinned to exactly one planned source.
+def _failure_for_named_execution_items(source_paths):
+    """A zero-effect failure seam pinned to exact planned sources.
 
-    The seam runs a real ``OrganizerExecutor`` for every sibling and returns a
-    truthful pre-mutation failure only for the named plan source, so a
-    mixed-outcome journey has one genuinely executed sibling and one genuinely
-    failed item without inventing an execution path.
+    The seam runs a real ``OrganizerExecutor`` for every other sibling and
+    returns a truthful pre-mutation failure only for the named plan sources, so
+    a mixed-outcome journey has genuinely executed siblings and genuinely
+    failed items without inventing an execution path.  One, several or all
+    reviewed sources can be named; the subset a journey recovers is chosen by
+    the operator's own Task Center decision, not by this seam.
     """
 
     from mediaflow.application.organizer import OrganizerExecutor
 
-    basename = source_path.rsplit("/", 1)[-1] if source_path else None
+    basenames = {
+        value.rsplit("/", 1)[-1]
+        for value in (source_paths or ())
+        if isinstance(value, str) and value
+    }
 
-    class _OneItemFailureExecutor(OrganizerExecutor):
+    class _NamedItemsFailureExecutor(OrganizerExecutor):
         def execute(self, plan, storages, **kwargs):
-            if basename is None or plan.source.rsplit("/", 1)[-1] != basename:
+            if plan.source.rsplit("/", 1)[-1] not in basenames:
                 return super().execute(plan, storages, **kwargs)
             return ExecutionResult(
                 ExecutionStatus.FAILED,
@@ -1733,7 +1739,64 @@ def _failure_for_one_execution_item(source_path: str | None):
                 effect_certainty=ExecutionEffectCertainty.NONE,
             )
 
-    return _OneItemFailureExecutor()
+    return _NamedItemsFailureExecutor()
+
+
+def run_run_once_two_failure_worker(state: AppState, *, execution_id: str) -> dict[str, object]:
+    """Execute one admitted Run-once selection with TWO injected item failures.
+
+    This is a harness *driver*, not a new product entry point.  It claims the
+    same admitted ``ManualExecution`` the operator confirmed in the browser and
+    runs the real ``ManualOrganizeExecutionWorker``/``OrganizerExecutor``, with
+    a truthful zero-effect failure injected for the two reviewed sources the
+    journey must reconcile per item.  The remaining sibling really executes, so
+    a partial subset recovery is proven against genuine durable effects.
+    """
+
+    if not execution_id:
+        return {"completed": False, "reason": "executionId is required"}
+    with state._manual_lock:
+        manual_execution = state.api._manual_execution
+        if manual_execution is None:
+            return {"completed": False, "reason": "manual execution service unavailable"}
+        execution = manual_execution.get(execution_id)
+        execution_items = list(execution.items)
+        if len(execution_items) < 3:
+            return {
+                "completed": False,
+                "reason": "the two-failure journey needs at least three selected items",
+            }
+        failed_sources = []
+        for item in execution_items[1:3]:
+            durable_item = state.repository.get_item(item.task_item_id)
+            if durable_item is not None:
+                failed_sources.append(durable_item.source_path)
+        actual_executor = manual_execution._executor
+        manual_execution._executor = _failure_for_named_execution_items(failed_sources)
+        try:
+            completed = ManualOrganizeExecutionWorker(
+                manual_execution,
+                worker_id="harness-run-once-two-failure-worker",
+                notice=lambda _line: None,
+            ).run_next()
+        finally:
+            manual_execution._executor = actual_executor
+        if completed is None:
+            return {"completed": False, "reason": "no admitted manual execution"}
+        durable = state.repository.get_manual_execution(completed.execution_id)
+        if durable is None or durable.task_id is None:
+            raise RuntimeError("Run-once two-failure execution lost its durable Task linkage")
+        items = list(state.repository.list_items(durable.task_id))
+        failed = [item.item_id for item in items if item.status.value in {"failed", "partial"}]
+        succeeded = [item.item_id for item in items if item.status.value == "success"]
+        return {
+            "completed": completed.status.value in {"completed", "partial_success", "failed"},
+            "executionId": durable.execution_id,
+            "taskId": durable.task_id,
+            "status": completed.status.value,
+            "failedItemIds": failed,
+            "successItemIds": succeeded,
+        }
 
 
 def run_run_once_mixed_worker(state: AppState, *, execution_id: str) -> dict[str, object]:
@@ -1762,8 +1825,8 @@ def run_run_once_mixed_worker(state: AppState, *, execution_id: str) -> dict[str
             }
         durable_item = state.repository.get_item(execution_items[-1].task_item_id)
         actual_executor = manual_execution._executor
-        manual_execution._executor = _failure_for_one_execution_item(
-            durable_item.source_path if durable_item is not None else None
+        manual_execution._executor = _failure_for_named_execution_items(
+            (durable_item.source_path if durable_item is not None else None,)
         )
         try:
             completed = ManualOrganizeExecutionWorker(
@@ -4183,6 +4246,32 @@ def seed_run_once_mixed_scope(state: AppState) -> dict[str, object]:
     return {"sourcePaths": sorted(files), "scanStatus": scan.status}
 
 
+def seed_run_once_two_failure_scope(state: AppState) -> dict[str, object]:
+    """Create and index three recognized sources for the two-failure journey.
+
+    Three items, two of which the harness Worker will fail before any Storage
+    mutation.  That is exactly the shape the read model must reconcile per
+    original item: recovering only one failure can never resolve the record.
+    """
+
+    files = {
+        "电影/One.2001.mkv": b"synthetic browser media",
+        "电影/Two.2002.mkv": b"second synthetic browser media",
+        "电影/Three.2003.mkv": b"third synthetic browser media",
+    }
+    for relative_path, content in files.items():
+        target = state.managed.root / "source" / relative_path
+        target.parent.mkdir(parents=True, exist_ok=True)
+        target.write_bytes(content)
+    scan = StorageScanner(
+        state.managed.runtime.create_storages(),
+        clock=lambda: datetime.now(UTC) + timedelta(hours=2),
+    ).scan(state.managed.runtime.resource_libraries[0])
+    if scan.status != "completed":
+        raise RuntimeError("two-failure Run-once fixture could not be indexed")
+    return {"sourcePaths": sorted(files), "scanStatus": scan.status}
+
+
 def reset_automation_definitions(state: AppState) -> dict[str, object]:
     """Publish an empty Automation section through the real managed authority.
 
@@ -4297,6 +4386,15 @@ def automation_record_evidence(
                 "admittedItemBound": record.admitted_item_bound,
                 "reachedItemBound": record.reached_item_bound,
             }
+            # The same real read the browser's records page consumes: the
+            # per-original-item handling coverage and the concrete failure
+            # evidence, so a native assertion can compare exact numbers instead
+            # of scraping rendered Chinese text.
+            if record.task_id:
+                handling = state.repository.automation_linked_handling((record.task_id,))
+                document["handling"] = handling.get(record.task_id)
+                evidence = state.repository.automation_record_failure_evidence((record.task_id,))
+                document["failureEvidence"] = evidence.get(record.task_id)
     return document
 
 
@@ -5351,8 +5449,15 @@ def application(environ, start_response):
             document = run_run_once_mixed_worker(
                 STATE, execution_id=(query.get("executionId") or [""])[0]
             )
+        elif path == "/__harness__/run-run-once-two-failure-worker" and method == "POST":
+            query = urllib.parse.parse_qs(str(environ.get("QUERY_STRING", "")))
+            document = run_run_once_two_failure_worker(
+                STATE, execution_id=(query.get("executionId") or [""])[0]
+            )
         elif path == "/__harness__/seed-run-once-mixed-scope" and method == "POST":
             document = seed_run_once_mixed_scope(STATE)
+        elif path == "/__harness__/seed-run-once-two-failure-scope" and method == "POST":
+            document = seed_run_once_two_failure_scope(STATE)
         elif path == "/__harness__/open-automation-definition-draft" and method == "POST":
             document = open_automation_definition_draft(STATE)
         elif path == "/__harness__/automation-record-evidence" and method == "GET":
