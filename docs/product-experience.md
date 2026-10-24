@@ -12,7 +12,8 @@ Detailed superseded delivery notes are retained at
 ## TARGET — Slice46 readable actions and organizing-only Task Center
 
 User-authorized on 2026-10-24; [Slice46](../SLICE.md) and `V2-UX-004`, `V2-OPS-014/015`,
-`V2-FILES-007` own scope/acceptance. This journey is not yet implemented or accepted.
+`V2-FILES-007` own scope/acceptance, together with the two user-added Automation corrections under
+`V2-AUTO-001–003`. This journey is not yet implemented or accepted.
 
 - **Goal/entry:** read and use shared V2 buttons, including Entry. New file-selection-based manual
   organization starts from ResourceLibrary Files; ordinary maintenance starts on its own library page.
@@ -25,6 +26,13 @@ User-authorized on 2026-10-24; [Slice46](../SLICE.md) and `V2-UX-004`, `V2-OPS-0
 - **Failure/recovery:** expose per-item stage, durable state, known effects/uncertainty and legal
   actions in the owning flow. Unknown submission reads back the exact request; successful/uncertain
   mutations never replay. Kind/principal/source/pin isolation and auth continuation remain.
+- **Automation detail/editing:** both definition name and “打开” show saved detail and truthful
+  grant eligibility/reasons before and after enabling. Edit → checked Save → further Enabled
+  change/Save or explicit enable/disable works on the same page with confirmed saved state. An own
+  successful Save does not produce a false concurrent-change error or require reopening. Genuine
+  peer changes preserve input and require review; invalid/denied/unavailable/unknown outcomes expose
+  the durable state and safe next action without silent overwrite/replay. Enabling grants no
+  unattended authority and starts no work. Reads and return/reconnect create no commands.
 
 This TARGET supersedes the later CURRENT text's mixed file-operation center population and
 center-created manual organizing entry only. Remove global Worker/resident-status, discovery and

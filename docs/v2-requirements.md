@@ -33,6 +33,14 @@ Files-only creation of file-selection-based manual organizing. These requirement
 TARGET under [Slice46](../SLICE.md); the accepted43–45 CURRENT baselines below are not relabelled
 as delivered changes. Historical acceptance stays in Git/Progress.
 
+The user also explicitly includes two Automation corrections in Slice46 under existing
+`V2-AUTO-001–003`: definition name/“打开” must render saved detail with truthful eligibility, and
+confirmed own Save must support subsequent same-page Enabled/enable-disable changes without a
+false stale-version conflict. Real concurrent publication still refuses stale writes and preserves
+input; failures/unknown outcomes require safe review/reconciliation without automatic replay.
+Enablement remains distinct from grant/execution. These corrections are TARGET, not delivery claims
+or new Automation authority; no Scan/Preview/FileIndex product is restored.
+
 | ID | Requirement | Acceptance meaning |
 |---|---|---|
 | V2-UX-004 | Shared V2 actions are readable and usable throughout the light shell, especially Entry. | Primary/secondary/danger/link/icon and dialog actions preserve readable normal/hover/focus/busy/disabled states and keyboard names/focus. Enabled text meets AA contrast; directly related Entry field colors support the same readable journey. Existing auth, semantics and duplicate-submit guards remain; no new identity/theme product. |

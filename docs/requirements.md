@@ -51,6 +51,8 @@ Slice45 已整体验收为 PASS / CLOSED，交付上述 `V2-OPS-009–013` 与 `
 
 Slice46 的上述修订已获用户授权并选为 ACTIVE，但尚未实现或验收；稳定验收含义见
 [V2 Requirements 的 TARGET 章节](v2-requirements.md#slice46-authorized-target--not-yet-delivered)。
+用户随后明确将自动化详情“打开”/名称入口、保存后 Enabled 的旧版本误报两项修复纳入同一
+Slice46，按既有 `V2-AUTO-001–003` 验收；仍是待交付修复，保留真实并发保护与授权边界。
 以下 CURRENT 与历史 V1 定义保留接受基线；不得将新范围写成已交付，或以移除页面展示为由
 取消耐久任务、文件操作恢复、权限、固定快照、审计和不确定效果非重放。
 

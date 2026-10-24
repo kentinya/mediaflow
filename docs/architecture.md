@@ -11,6 +11,7 @@ Detailed former delivery notes remain at `865ebdce47b0b323064fd8e05fbfaa54546e62
 
 The user-authorized [Slice46](../SLICE.md), `V2-UX-004`, `V2-OPS-014/015` and `V2-FILES-007`
 select this TARGET; the accepted CURRENT contracts below remain implementation facts until delivery.
+The user's same-Slice Automation correction scope also fulfills existing `V2-AUTO-001–003`.
 
 Shared V2 action components/styles supply readable light-theme states. Files owns ordinary-command
 progress/results/existing safe recovery and file-selection-based manual organizing preparation.
@@ -29,6 +30,15 @@ Shared repository/API evidence may retain administrative consumers; center scope
 Automation records or ordinary command execution/recovery. No second queue/lifecycle/recovery
 engine or new mutation authority is added. OrganizerExecutor, admitted pins, RBAC, explicit Delete/
 overwrite, source verification, fences and completed/uncertain non-replay remain unchanged.
+
+Automation detail projection/normalization must share a supported eligibility contract without
+invented freshness/zero-mutation evidence or retired Preview dependencies. Valid ineligible or
+unavailable eligibility is a readable state, not malformed definition data. Focused Save success
+must reconcile the form's saved values with that confirmed publication's authority for the next
+same-page edit/Enabled command. This cannot silently rebind input to a peer's newer publication;
+genuine stale-write rejection, input retention, unknown-outcome reconciliation and explicit intent
+remain. Reuse managed publication/grants/shared analysis; no second lifecycle, new execution
+authority or weakened response validation is introduced. These corrections remain TARGET.
 
 ## CURRENT — Admitted transfer Worker lifetime (Slice 39 implementation)
 

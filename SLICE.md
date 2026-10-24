@@ -29,6 +29,10 @@ is `acc5c567788410cde68ed24b4fee12a84ee47ef2` (original review ID
 `13ecfc0e75fc34ff0ae489e655124a178943cba4`). Original review identities, deferrals and preservation
 refs remain historical facts. This Slice does not rewrite history.
 
+The user's 2026-10-24 scope amendment explicitly integrates the two diagnosed Automation defects
+below into this Slice. Their correction is required here; prior closure records remain historical
+facts, not evidence that these defects are fixed. Base and Implementation Head remain unchanged.
+
 ## User decision and goal
 
 用户实际使用发现多个按钮呈深色且文字不可辨，登录时尤其明显。用户随后明确：
@@ -36,31 +40,36 @@ refs remain historical facts. This Slice does not rewrite history.
 - 重命名、删除等普通文件操作不进入操作中心；该中心只保留整理任务。
 - 页面中的 Worker 状态显示、整理发现和手动操作板块全部移除。
 - 手动整理统一从文件页进入，任务中心的整理创建入口删除。
+- 自动化策略的“打开”和名称点击恢复可用；保存后继续修改 Enabled/启停不再误报旧版本冲突。
 
 本 Slice 交付按钮可读、文件操作归属清楚的 V2 体验：普通文件管理在原库页完成反馈与恢复，
 文件选择式手动整理从资源库文件页发起，任务中心专注已受理整理的进度、结果与恢复。
 “不进入任务中心”约束用户入口、列表、统计和处理归属，不取消后台耐久任务、结果或审计。
+同时修复已复现的自动化详情读取和保存后表单版本残留问题，保留真实并发修改的保护与恢复。
 
 The explicit TARGET amendment is `V2-UX-004`, `V2-OPS-014/015` and `V2-FILES-007` in
 [V2 Requirements](docs/v2-requirements.md#slice46-authorized-target--not-yet-delivered).
 It supersedes only the earlier all-command center population and center-created manual entry.
 Nine task/recovery views, shared analysis and all safety requirements remain. CURRENT descriptions
 are the accepted Base until implementation and acceptance; TARGET is not a delivery claim.
+The Automation corrections fulfill existing `V2-AUTO-001–003`; they add no execution authority or
+new Automation capability.
 
 ## Applicable requirements and journeys
 
 - `UX-001–003/005–007/010`, `REQ-TASK-002/003/005–010`, applicable `REQ-RECOVERY-*`,
   `REQ-API-002/003` and `REQ-SAFE-001–009`: [Requirements](docs/requirements.md).
 - `V2-UX-001–004`, `V2-WEB-001`, `V2-SHELL-001`, `V2-AUTH-001–003`, `V2-SAFE-001`,
-  `V2-FILES-002/003/007`, applicable amended `V2-OPS-001–015`:
+  `V2-FILES-002/003/007`, `V2-AUTO-001–003`, applicable amended `V2-OPS-001–015`:
   [V2 Requirements](docs/v2-requirements.md).
 - [Product Experience](docs/product-experience.md): V2 authentication/continuation; Real Storage
   Files/Common file maintenance; separate MediaLibrary journey; Manual organize/bounded discovery;
-  Tasks/results/per-item recovery; Slice46 TARGET journey.
+  Tasks/results/per-item recovery; complete native Automation workspace; Slice46 TARGET journey.
 - [Task Center specification](docs/task-center-page-spec.md): nine views, same-interface exact
   summary/confirmation, task/type recovery and results, with the Slice46 entry/population amendment.
 - [Architecture](docs/architecture.md): V2/authentication; Operations read projection and typed
-  recovery; direct commands/durable Delete; admitted-transfer Worker lifetime; Slice46 TARGET.
+  recovery; direct commands/durable Delete; admitted-transfer Worker lifetime; Automation focused
+  publication/shared analysis and eligibility; Slice46 TARGET.
 
 ### Complete user journeys
 
@@ -83,6 +92,13 @@ Preparation findings/unknown requests remain reachable from Files. Pre-execution
 preparation; admitted task problems use native task/type recovery. Center views, reads and controls
 never offer creation of another arbitrary manual-organize request.
 
+**Automation detail and continued editing:** open a published definition through its name or
+“打开” → read the exact saved definition and truthful grant eligibility, including ineligible
+reasons → enter Edit → save a checked change → continue changing Enabled or use the existing
+explicit enable/disable action on the same page → read the confirmed published state without
+leaving/reopening. Genuine concurrent publication, validation/permission/read failure or unknown
+submission preserves known durable state/input, explains the next action and never auto-replays.
+
 ## Base audit and reuse
 
 - Shared `styles.css` gives `.mf-button` background `#202b24` with dark `--ink: #18243b`.
@@ -98,6 +114,13 @@ never offer creation of another arbitrary manual-organize request.
 - `operations_run.py`, `sqlite_runtime.py` and `service_api.py` already provide explicit Job/Task
   linkage, bounded consistent pages/counts and durable results. Mixed ordinary/organizing work and
   other consumers, including Automation, share this projection; reuse it with explicit query scope.
+- Isolated real-Python/temporary-SQLite/browser diagnosis reproduced both Automation defects:
+  name/“打开” uses the detail route; its HTTP 200 grant-eligibility response lacks `current` and
+  `zeroMutation` required by the frontend normalizer. The focused Edit route reads successfully.
+- `AutomationLifecyclePage.tsx` retains its pre-Save candidate authority after a successful edit.
+  Its own publication triggers the stale-input banner/disabled Save; a following enable/disable
+  request uses the old identity and returns `409 configuration_version_conflict`. Durable saved
+  values remain readable after re-entry. This is diagnosis, not a delivered correction.
 
 ## Required outcomes
 
@@ -177,6 +200,23 @@ recovery without executing. Necessary shell/Dashboard/return-link corrections pr
 creation entries or stranded file work. Shared administrative API/CLI evidence and Automation records
 remain functional; center-specific scope never deletes data or silently changes another consumer.
 
+### RO-5 — usable Automation detail and continued Enabled editing
+
+Make both the definition name and “打开” entry render the saved definition before and after
+enablement. Align the real eligibility projection and frontend contract with the supported shared
+analysis model. Eligible, ineligible and permission/evidence-unavailable states show truthful bounded
+reasons/next actions instead of making a valid definition unreadable. Do not fabricate eligibility,
+freshness or zero-mutation evidence, relax unrelated malformed-response validation, or restore
+retired Preview products to satisfy an obsolete contract. Reads create no work or authority.
+
+After a confirmed own Save, update the form's saved values and observed publication identity
+consistently so the next same-page edit/Enabled change or explicit enable/disable command can
+complete without a false stale-state refusal. Submit the intended enabled state and display the
+confirmed durable state; preserve disabled-first create/copy and the separation of enablement from
+unattended grants/execution. A genuine peer publication still refuses stale commands and preserves
+input for deliberate review; never silently overwrite or rebind a peer's change. Rejected/unknown
+commands retain bounded failure/reconciliation guidance and never replay automatically.
+
 ## Required surfaces and architecture boundary
 
 - Shared V2 actions/styles and actual Entry/business/dialog consumers.
@@ -186,6 +226,8 @@ remain functional; center-specific scope never deletes data or silently changes 
   and necessary shell/Dashboard/return integration.
 - Typed authenticated API/application queries and bounded repository projections over existing
   Job/Task/items/results, preparation, transfer/Delete and audit state.
+- Automation inventory name/“打开”, definition detail/eligibility, focused Edit/Save/Enabled controls
+  and their existing managed-publication authority/readback.
 
 No second execution/recovery engine, catalog, lifecycle or mutation authority. Frontend cannot load
 mixed pages and filter them locally. Storage stays behind ports; only OrganizerExecutor mutates.
@@ -203,7 +245,7 @@ cross-kind transfer; unbounded work; Upload/Download; new auth/Secret Store; dar
 general redesign/localization; a global file-operation center; history cleanup/retention; cross-Task
 bulk recovery; arbitrary historical Reprocess; automatic uncertain replay/rollback; V1 cutover;
 Scan/Preview/FileIndex restoration/migration. Automation/Notifications/Dashboard are not redesigned;
-only shared readability and integration corrections required above are included.
+only shared readability, integration corrections and the two Automation defects in RO-5 are included.
 
 ## Acceptance
 
@@ -219,6 +261,8 @@ only shared readability and integration corrections required above are included.
 | AC-8 | Delete/Move/partial/unknown effects, lost responses, duplicates/concurrent controls and restart retain durable per-item evidence/fences; completed or uncertain mutations never replay. |
 | AC-9 | Definition-bound Run once, scheduled records/statistics and native organizing recovery still work; no retired Scan/Preview/FileIndex product or new authority returns. |
 | AC-10 | Required evidence passes or unavailable gates stay explicit; A reviews immutable Base..Implementation Head, then CURRENT documentation is reconciled at accepted closure. |
+| AC-11 | Automation name/“打开” and direct detail links render valid saved definitions before/after enabling; real eligible/ineligible/unavailable eligibility evidence is readable, bounded and truthful. Malformed/401/403/not-found/read failures have safe recovery; reads create no work/grant/media effects and no retired product returns. |
+| AC-12 | On the same Edit page, successful Save → another Enabled change/Save and Save → explicit enable/disable complete with correct durable readback, without a false conflict or forced reopen. Genuine concurrent changes still refuse stale commands and preserve input; failed/unknown commands never silently overwrite or auto-replay, and enablement alone grants/executes nothing. |
 
 ## Validation and handoff
 
@@ -241,6 +285,11 @@ B's final evidence includes:
   `npm run test:e2e -- --config=playwright.python.config.ts tests/e2e/direct-files.python.spec.ts tests/e2e/operations-inventory.python.spec.ts tests/e2e/operations-task-center-visual.python.spec.ts`.
   Also cover Files-originated organizing, retained Automation links and native recovery. Node-fake
   E2E alone does not establish backend population, persistence or Worker behavior.
+- Real backend eligibility payloads must pass the frontend contract; extend Automation API/Web
+  coverage for eligible/ineligible/unavailable reads and same-page repeated Save/Enabled commands,
+  genuine concurrent publication and failed/unknown outcomes. After building, run the applicable
+  `tests/e2e/automation-lifecycle.python.spec.ts` and `tests/e2e/automation-workspace.python.spec.ts`
+  through the same real-Python Playwright configuration, without reopening between every command.
 - Actual desktop/narrow Entry, local progress/results/recovery and simplified-center inspection;
   computed contrast and keyboard evidence for shared variants/overrides. Record candidate/artifact
   identity, actual commands/results, failures and skips; do not test only CSS implementation literals.
@@ -255,3 +304,5 @@ Planning started on `main` at Base above; repository/Git/governance files were w
 preflight passed. Pre-existing deletion of `docs/pics/操作与任务.png` and untracked reference images,
 logs, OS files and test/artifact directories remain unrelated, untouched and unstaged. Private
 runtime configuration/databases/user media are not planning fixtures. No push is authorized/performed.
+The Automation amendment starts from planning checkpoint `4daac131f7bb92b5a0a11ebcebd33e46c4d1c2fb`
+on the same branch with the same unrelated dirty files preserved; it does not repin the Slice Base.

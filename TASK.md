@@ -5,6 +5,8 @@ Slice46 — **V2 Organizing Task Center and Readable Actions** — is **ACTIVE**
 
 - Immutable Slice Base: `e9f1a8dc607cfc6d5ea02141b058da8ce849cd70`.
 - Implementation Head: **NOT SET**; no product implementation or Task acceptance is claimed.
+- User-authorized scope now includes RO-5: Automation detail name/“打开” and same-page Save/Enabled
+  corrections, with AC-11/12 in the amended Contract. B must plan against all five outcomes.
 - Next Action: **B PLANS THE FIRST TASK** after the Contract is checkpointed and governance passes.
 - B owns coherent Task scope, Difficulty/Test Level and acceptance; Developer implements only that
   active Task and runs affected tests. Final Slice acceptance remains T4 under the workflow.
