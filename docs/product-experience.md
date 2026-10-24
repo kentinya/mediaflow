@@ -11,7 +11,7 @@ Detailed superseded delivery notes are retained at
 
 ## TARGET — Slice46 readable actions and organizing-only Task Center
 
-User-authorized on 2026-10-24; [Slice46](../SLICE.md) and `V2-UX-004`, `V2-OPS-014/015`,
+User-authorized on 2026-10-24; [Slice46](../SLICE.md) and `V2-UX-004`, `V2-OPS-014–016`,
 `V2-FILES-007` own scope/acceptance, together with the user-added Automation corrections under
 `V2-AUTO-001–006`. This journey is not yet implemented or accepted.
 
@@ -19,13 +19,29 @@ User-authorized on 2026-10-24; [Slice46](../SLICE.md) and `V2-UX-004`, `V2-OPS-0
   organization starts from ResourceLibrary Files; ordinary maintenance starts on its own library page.
 - **State/action:** readable normal/focus/busy/disabled actions; exact selected sources and bounded
   local command impact/progress; organizing preparation and same-interface summary with separate
-  confirmation. Task Center has nine organizing-only views and existing task controls/recovery.
+  confirmation. Task Center has eight organizing-only views and four-type native recovery.
 - **Success:** ordinary results and relevant work reopen locally after close/reload/reconnect/restart;
   Files-originated preparing/unknown requests remain reachable from Files. Confirmed organizing
   executions enter Task Center with real results and exact return context.
 - **Failure/recovery:** expose per-item stage, durable state, known effects/uncertainty and legal
   actions in the owning flow. Unknown submission reads back the exact request; successful/uncertain
   mutations never replay. Kind/principal/source/pin isolation and auth continuation remain.
+- **Task Center attention:** only Recognition, Metadata candidate/correction, Classification and
+  Conflict business problems enter “需要处理” and pending-task statistics. Required human steps
+  in those recovery journeys stay reachable through decision → analysis → exact summary/confirmation
+  → actual outcome. One task counts once across types; type/file counts retain their own meanings.
+  Saving a decision or queuing work is not success; queued/running alone is not a human to-do.
+  Actual resolution clears the exact problem; a new business blocker changes type. Once no current
+  four-type human problem remains, the task leaves attention, including when only technical failure
+  remains. Mixed outcomes retain independent truth rather than turning the whole run successful.
+  When exact linked recovery proves all organizing work succeeded, the overall task display becomes
+  “已完成（恢复成功）”; original failed attempts remain history, not overwritten successes.
+- **Other task failures:** remove “失败恢复”, separate failure statistics and generic failure repair/
+  retry/investigation guidance in Task Center. Network/Provider transport, Storage, permission/grant,
+  configuration/source and partial/uncertain failures appear only in All/Ended and their read-only
+  detail/results/logs/export, with real status/reason/stage/completed or uncertain effects. An outage
+  during Metadata lookup is not a candidate/correction problem. Old recovery links cannot restore
+  the removed flow or start work; safely resolve to the exact history or ordinary unavailable state.
 - **Automation detail/editing:** both definition name and “打开” show saved detail and truthful
   grant eligibility/reasons before and after enabling. Edit → checked Save → further Enabled
   change/Save or explicit enable/disable works on the same page with confirmed saved state. An own
@@ -37,19 +53,23 @@ User-authorized on 2026-10-24; [Slice46](../SLICE.md) and `V2-UX-004`, `V2-OPS-0
   analysis/explicit-grant entry. Review the exact scope/effects → explicitly grant → see current
   readiness → normal due execution. Known missing grants block admission without repeatedly
   creating failed execution Jobs/Tasks or inflating failure counts; readiness stays visible on
-  Automation. Prior failures remain inspectable with definition-linked repair, never rewritten or
-  automatically replayed. Revocation/permission/read/unknown outcomes retain safe recovery and
+  Automation. Prior failures remain inspectable in Task Center All/Ended without attention or repair
+  guidance, never rewritten or automatically replayed. Native Automation authorization and its
+  revocation/permission/read/unknown outcomes retain safe recovery and
   runtime checks. With valid authority, healthy empty scope reports no work; inaccessible or
   unauthorized scope is not an empty-success result.
 
-This TARGET supersedes the later CURRENT text's mixed file-operation center population and
-center-created manual organizing entry only. Remove global Worker/resident-status, discovery and
-manual-operation blocks and center creation actions; task-specific readiness reasons stay visible.
-Existing prepared-work and native task recovery remain legal continuations, and Automation's
-published-definition-bound Run once/scheduled journeys retain their accepted scope/authority.
+This TARGET supersedes the later CURRENT text's mixed file-operation center population,
+center-created manual organizing entry and nine-view/general-failure recovery. Remove global Worker/
+resident-status, discovery and manual-operation blocks and center creation actions; task-specific
+readiness reasons stay visible. Existing prepared-work and four-type native recovery remain legal
+continuations, and definition-bound Automation Run once/scheduled journeys retain scope/authority.
 The scheduled readiness/admission correction above is the explicit exception to unchanged
 Automation behavior; manual Run once authority and existing admitted-work safeguards remain.
 No MediaLibrary organizing, alternate global file-operation center or new execution engine is added.
+For Task Center failures outside the four types, the explicit user decision replaces generic
+failure-recovery guidance in the general completion rules below with factual read-only history;
+durable evidence, administrative API/CLI capabilities and all execution safety remain.
 
 ## Product Experience Priority
 

@@ -45,7 +45,8 @@ The subsequent missing-authority correction under `V2-AUTO-001–006` completes 
 analysis → explicit scoped grant → scheduled execution. Enabled/no-grant shows actionable pending
 authorization. Known missing grants block new scheduled execution admission without repeated failed
 Jobs/Tasks or failed-run counts; bounded readiness remains visible in Automation. Existing admitted
-failures/history remain intact with repair links to the definition; Worker live checks, revocation,
+failures/history remain intact; native authorization stays on Automation, while Task Center shows
+these terminal failures only in All/Ended without repair guidance. Worker live checks, revocation,
 permissions, pins, idempotency/coalescing and non-replay remain. Valid authorized empty scope is
 no-work; unavailable/unauthorized scope is not emptiness or success. This TARGET changes admission
 readiness, not grant authority, historical outcomes or manual Run once semantics.
@@ -53,14 +54,18 @@ readiness, not grant authority, historical outcomes or manual Run once semantics
 | ID | Requirement | Acceptance meaning |
 |---|---|---|
 | V2-UX-004 | Shared V2 actions are readable and usable throughout the light shell, especially Entry. | Primary/secondary/danger/link/icon and dialog actions preserve readable normal/hover/focus/busy/disabled states and keyboard names/focus. Enabled text meets AA contrast; directly related Entry field colors support the same readable journey. Existing auth, semantics and duplicate-submit guards remain; no new identity/theme product. |
-| V2-OPS-014 | Task Center's nine views, counts, filters and selected detail concern admitted organizing work and its legitimate organizing continuations only. | Backend scopes the complete authorized population before grouping/counting/paging, preserving pre-Task organizing queue/failures and actual Job→Task deduplication. Ordinary-file/notification/unrelated work and analysis-only preparation do not enter center lists/counts/recovery or legacy-list/deep-link loopholes. Remove global Worker/resident-status, discovery and manual-operation blocks and their exclusive landing reads; retain task-specific failure/readiness explanations and native recovery. |
+| V2-OPS-014 | Task Center's eight views, counts, filters and selected detail concern admitted organizing work and its legitimate organizing continuations only. | Backend scopes the complete authorized population before grouping/counting/paging, preserving pre-Task organizing queue/failures and actual Job→Task deduplication. Ordinary-file/notification/unrelated work and analysis-only preparation do not enter center lists/counts/recovery or legacy-list/deep-link loopholes. Remove global Worker/resident-status, discovery and manual-operation blocks and their exclusive landing reads; retain factual failure/readiness evidence and the four-type recovery selected by V2-OPS-016. |
 | V2-OPS-015 | New file-selection-based manual organizing starts only from ResourceLibrary Files. | Remove center creation CTAs and independent source-selection flow. Files selection completes bounded preparation, same-interface exact summary and separate selected execution confirmation; preparation/unknown-request readback remains accessible from Files after close/reload/reconnect. Existing prepared-work/task-recovery links retain exact context; generic creation URLs guide to Files without work. MediaLibrary is not a source; definition-bound Automation Run once/scheduled authority remains distinct and unchanged. |
+| V2-OPS-016 | Task Center Attention and pending-task statistics cover only current Recognition, Metadata, Classification and Conflict problems; Failure Recovery is removed. | Keep All/Running/Attention/Ended and four type lists. Pending task total is the distinct union of the four types and their required human decision/analysis/confirmation steps; queued/running alone is not attention. Genuine resolution clears the exact problem; new business blockers change type, while solely technical failures leave attention. Exact linked recovery proving all organizing work succeeded gives an overall Completed/recovered display while preserving failed-attempt history. Other terminal failures appear only in All/Ended and factual detail/results/logs/export, with real status/reason/effects but no separate failure statistics or generic recovery guidance/actions, including old deep links. Provider/network faults are not Metadata decisions. Mixed tasks count only current four-type problems, without false success, history rewriting or completed/uncertain replay. Administrative API/CLI recovery and native Automation readiness/authorization remain outside this presentation change. |
 | V2-FILES-007 | Ordinary-file progress, results and supported recovery belong to the originating ResourceLibrary/MediaLibrary file page. | Create/rename/edit/Copy/Move/Delete do not send normal progress/recovery to Task Center. Bounded local access reopens multiple relevant operations and durable per-item results after close/reload/reconnect/service restart, including supported pre-existing work. Preserve exact kind/principal/source/pin, unknown-admission reconciliation, existing safe controls and completed/uncertain non-replay; hiding work never removes Tasks/results/audit or requires a new global center. |
 
-`V2-OPS-014/015` narrow the prior all-command discoverability of `V2-OPS-002`, the population of
-`V2-OPS-001/003/009/012` and the Task Center creation realization of `V2-OPS-006/010`.
-They preserve nine-view recovery, exact plans, explicit authority and `V2-OPS-007/008/011–013` safety
-and retirement boundaries. `V2-FILES-007` changes ordinary recovery ownership without weakening
+`V2-OPS-014–016` narrow the prior all-command discoverability of `V2-OPS-002`, the population of
+`V2-OPS-001/003/009/012`, Task Center creation in `V2-OPS-006/010`, and the nine-view/general-failure
+recovery and next-action realization of `V2-OPS-005/008/009/012`. The four selected business types
+retain native recovery, exact plans and explicit authority; `V2-OPS-007/008/011–013` execution safety
+and retirement boundaries remain. For other Task Center failures, this explicit user amendment
+replaces generic repair guidance with factual read-only history, without removing durable evidence
+or administrative recovery capabilities. `V2-FILES-007` changes ordinary recovery ownership without weakening
 `V2-FILES-002/003`, `REQ-TASK-009/010`, RBAC, immutable pins, fences or durable results.
 
 ## Stable V2 requirements

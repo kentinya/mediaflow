@@ -9,7 +9,7 @@ Detailed former delivery notes remain at `865ebdce47b0b323064fd8e05fbfaa54546e62
 
 ## TARGET — Slice46 presentation and work-query ownership
 
-The user-authorized [Slice46](../SLICE.md), `V2-UX-004`, `V2-OPS-014/015` and `V2-FILES-007`
+The user-authorized [Slice46](../SLICE.md), `V2-UX-004`, `V2-OPS-014–016` and `V2-FILES-007`
 select this TARGET; the accepted CURRENT contracts below remain implementation facts until delivery.
 The user's same-Slice Automation correction scope also fulfills existing `V2-AUTO-001–006`.
 
@@ -23,6 +23,26 @@ Use supported command semantics and actual durable links/context; do not filter 
 the browser or infer organizing authority from labels/current configuration. Remove the center's
 creation/global Worker/discovery/manual-operation blocks and exclusive reads. Task-local readiness
 and failure reasons remain. Legacy Task/Job/deep links must respect the new presentation ownership.
+
+The same backend query contract supplies eight views, four business problem types and all related
+pending-task counts. Attention is the distinct task union of current Recognition/Metadata decision/
+Classification/Conflict problems and required human steps in those exact recovery journeys. Reuse
+persisted decision/continuation/preparation/execution links to avoid stale waiting flags after actual
+resolution or a transition to purely technical failure; queued/running alone is not attention.
+No inference from a failure status, stage name, free-text error or current Active may invent one of
+the four types. Provider transport errors are not Metadata decisions. Apply this scope before all
+grouping/filtering/paging/counts, including task-center badges and type-file readbacks.
+Only exact verified recovery links proving all work succeeded may project an overall Completed/
+recovered display; historical attempt states/results remain intact, recovery is not double-counted
+and mixed technical/uncertain outcomes cannot acquire success through removal from Attention.
+
+Remove Failure Recovery and dedicated Task Center failure counts/repair guidance/actions. Other
+terminal failures—including pre-Task authority failures and uncertain/partial effects—remain only
+in All/Ended and their factual read-only detail/results/logs/export. Preserve inclusive history totals,
+real lifecycle status/effect certainty and the durable failure/next-action evidence for administrative
+consumers; absence from Attention grants no success or replay authority. Former Web failure-recovery
+links resolve without execution to exact history or ordinary unavailable state. Do not remove shared
+API/CLI recovery engines or change native Automation/ordinary-file behavior through center scoping.
 
 Local ordinary-work readback is bounded, authenticated and library-kind/source/pin aware, over
 existing durable Tasks/items/results/claims and audit. UI hints are not authority or the sole index.
@@ -47,7 +67,8 @@ ticks do not manufacture failed executions. Reuse existing grants/due-state/admi
 preserve idempotency/coalescing. Shared analysis and exact explicit grant stay distinct from Enabled;
 frontend state cannot authorize scheduling. Unknown authority reads remain unavailable, never valid
 or empty. Worker still checks already-admitted work and every mutation boundary, including revoke/
-permission races. Retain historical failures and their definition-linked repair; no retroactive
+permission races. Retain historical failures as Task Center All/Ended read-only records without
+attention or repair guidance; normal readiness/authorization remains on Automation. No retroactive
 relabelling, deletion or replay. This limited TARGET admission correction adds no second scheduler.
 
 ## CURRENT — Admitted transfer Worker lifetime (Slice 39 implementation)

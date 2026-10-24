@@ -14,6 +14,9 @@ selects readable shared V2 actions, Files-only manual organizing entry, library-
 feedback/recovery and an organizing-only Task Center without the three auxiliary blocks or creation
 entry, plus the user-added Automation detail-opening, post-Save Enabled/version and unattended
 authorization/readiness corrections that prevent repeated missing-grant failed admissions.
+The latest user amendment selects eight views and four business types for Attention/pending-task
+statistics; Failure Recovery and other failures' separate statistics/guidance are removed. Other
+terminal failures remain factual read-only records in All/Ended, not outstanding recovery tasks.
 Implementation Head is NOT SET; these corrections are required TARGET, not delivered fixes, and no
 Task or product acceptance is claimed.
 **B PLANS THE FIRST TASK**; final acceptance is T4. No Slice46 closure row is added below.
