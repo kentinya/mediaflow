@@ -2,6 +2,7 @@ import { useState } from "react";
 import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
 import { Link, useNavigate, useSearch } from "@tanstack/react-router";
 import { useAuthToken } from "../../shared/api/auth-context";
+import { AutomationSettingsPanel } from "../operations/AutomationSettingsPanel";
 import { AuthorizedReadBoundary } from "../../shared/auth/AuthorizedReadBoundary";
 import { Button } from "../../shared/ui/Button";
 import { RefreshControl } from "../../shared/ui/RefreshControl";
@@ -746,6 +747,7 @@ export function ConfigurationPage() {
                 </dl>
               </section>
             )}
+            <AutomationSettingsPanel />
             {ruleReadiness !== null ? (
               <RuleReadinessPanel
                 readiness={ruleReadiness}

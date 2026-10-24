@@ -31,6 +31,9 @@ from mediaflow.domain.automation import (
     validate_worker_label,
     worker_stale_threshold_seconds,
 )
+from mediaflow.domain.automation_settings import (
+    ResidentSettingsEvidence,
+)
 from mediaflow.domain.classification_review import (
     ClassificationReview,
     ClassificationReviewChoice,
@@ -285,7 +288,7 @@ from mediaflow.infrastructure.task_source_schema import ensure_task_occurrence_c
 # observation and ownership evidence only: discovery performs metadata-only
 # reads, creates no execution authority, and a legacy database simply has no
 # discovery rows, so nothing is backfilled.
-SCHEMA_VERSION = 49
+SCHEMA_VERSION = 50
 
 #: The conservative owner generation written to ``file_locks`` rows that predate
 #: schema 38.  It is a fixed, non-guessable-looking sentinel rather than NULL so
@@ -8963,6 +8966,96 @@ class SQLiteTaskRepository:
             status=ResidentServiceStatus(row["status"]),
         )
 
+    def record_resident_settings_adoption(
+        self, evidence: ResidentSettingsEvidence
+    ) -> ResidentSettingsEvidence:
+        """Persist one consumer's own report that it adopted a published cadence.
+
+        Only the process that owns the instance writes this row, and it is
+        written *after* the effective cadence is installed — never at startup
+        registration and never at a generic heartbeat.  The row is bounded and
+        secret-free: no path, endpoint, token or raw exception is stored.
+        """
+
+        if not isinstance(evidence, ResidentSettingsEvidence):
+            raise ValueError("resident settings adoption evidence is required")
+        with self._lock, self._connection:
+            self._connection.execute(
+                "INSERT INTO resident_settings_adoption ("
+                "instance_id, service, published_revision_id, "
+                "published_revision_version, published_revision_digest, "
+                "applied_fields_json, effective_values_json, override_source, "
+                "reported_at) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?) "
+                "ON CONFLICT(instance_id) DO UPDATE SET "
+                "service=excluded.service, "
+                "published_revision_id=excluded.published_revision_id, "
+                "published_revision_version=excluded.published_revision_version, "
+                "published_revision_digest=excluded.published_revision_digest, "
+                "applied_fields_json=excluded.applied_fields_json, "
+                "effective_values_json=excluded.effective_values_json, "
+                "override_source=excluded.override_source, "
+                "reported_at=excluded.reported_at",
+                (
+                    evidence.instance_id,
+                    evidence.service,
+                    evidence.published_revision_id,
+                    evidence.published_revision_version,
+                    evidence.published_revision_digest,
+                    json.dumps(sorted(evidence.applied_fields), sort_keys=True),
+                    json.dumps(
+                        {
+                            key: float(value)
+                            for key, value in sorted(evidence.effective_values.items())
+                        },
+                        sort_keys=True,
+                    ),
+                    evidence.override_source,
+                    evidence.reported_at.isoformat(),
+                ),
+            )
+        return evidence
+
+    def list_resident_settings_adoption(
+        self, *, service: str | None = None, limit: int = 100
+    ) -> tuple[ResidentSettingsEvidence, ...]:
+        """Bounded newest-first adoption evidence, optionally for one service."""
+
+        if service is not None:
+            validate_resident_service_name(service)
+        if isinstance(limit, bool) or not isinstance(limit, int) or not 1 <= limit <= 500:
+            raise ValueError("resident settings adoption limit must be between 1 and 500")
+        with self._lock:
+            if service is None:
+                rows = self._connection.execute(
+                    "SELECT * FROM resident_settings_adoption "
+                    "ORDER BY reported_at DESC, instance_id ASC LIMIT ?",
+                    (limit,),
+                ).fetchall()
+            else:
+                rows = self._connection.execute(
+                    "SELECT * FROM resident_settings_adoption WHERE service=? "
+                    "ORDER BY reported_at DESC, instance_id ASC LIMIT ?",
+                    (service, limit),
+                ).fetchall()
+        return tuple(self._resident_settings_evidence(row) for row in rows)
+
+    @staticmethod
+    def _resident_settings_evidence(row: sqlite3.Row) -> ResidentSettingsEvidence:
+        return ResidentSettingsEvidence(
+            service=row["service"],
+            instance_id=row["instance_id"],
+            published_revision_id=row["published_revision_id"],
+            published_revision_version=row["published_revision_version"],
+            published_revision_digest=row["published_revision_digest"],
+            applied_fields=tuple(json.loads(row["applied_fields_json"] or "[]")),
+            effective_values={
+                key: float(value)
+                for key, value in json.loads(row["effective_values_json"] or "{}").items()
+            },
+            override_source=row["override_source"],
+            reported_at=datetime.fromisoformat(row["reported_at"]),
+        )
+
     def get_schedule_state(self, schedule_id: str) -> ScheduleState | None:
         with self._lock:
             row = self._connection.execute(
@@ -15773,6 +15866,19 @@ class SQLiteTaskRepository:
                     waiting_detail TEXT NOT NULL DEFAULT '',
                     updated_at TEXT NOT NULL
                 );
+                CREATE TABLE IF NOT EXISTS resident_settings_adoption (
+                    instance_id TEXT PRIMARY KEY,
+                    service TEXT NOT NULL,
+                    published_revision_id TEXT NOT NULL,
+                    published_revision_version INTEGER,
+                    published_revision_digest TEXT NOT NULL,
+                    applied_fields_json TEXT NOT NULL DEFAULT '[]',
+                    effective_values_json TEXT NOT NULL DEFAULT '{}',
+                    override_source TEXT,
+                    reported_at TEXT NOT NULL
+                );
+                CREATE INDEX IF NOT EXISTS resident_settings_adoption_service
+                    ON resident_settings_adoption(service, reported_at);
                 CREATE TABLE IF NOT EXISTS automation_definition_due_state (
                     definition_id TEXT PRIMARY KEY, next_run_at TEXT NOT NULL,
                     updated_at TEXT NOT NULL, last_occurrence_at TEXT,

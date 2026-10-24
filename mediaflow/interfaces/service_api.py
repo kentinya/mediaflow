@@ -22,6 +22,10 @@ from mediaflow.application.automation_run_once import (
     AutomationRunOnceError,
     AutomationRunOnceService,
 )
+from mediaflow.application.automation_settings import (
+    AutomationSettingsPublicationError,
+    AutomationSettingsService,
+)
 from mediaflow.application.automation_workspace_commands import (
     AUTOMATION_DEFINITION_FORM_FIELDS,
     AutomationWorkspaceCommandService,
@@ -125,6 +129,7 @@ from mediaflow.domain.automation import (
     WorkerReadiness,
     WorkerStatus,
 )
+from mediaflow.domain.automation_settings import AutomationEngineSettingsError
 from mediaflow.domain.configuration_management import (
     AutomationDefinitionSaveError,
     ConfigurationActivationConflict,
@@ -495,6 +500,19 @@ class MediaFlowApi:
             SystemSettingsService(
                 configuration_service,
                 runtime_snapshot_provider=lambda: self._runtime_settings_evidence(),
+            )
+            if configuration_service is not None
+            else None
+        )
+        # The focused four-field Automation engine settings command and its
+        # per-consumer adoption readback.  It composes the same managed
+        # publication authority as every other checked Save and reads adoption
+        # only from each resident process's own durable report.
+        self._automation_settings = (
+            AutomationSettingsService(
+                configuration_service,
+                resident_repository=repository,
+                expected_schema_version=SCHEMA_VERSION,
             )
             if configuration_service is not None
             else None
@@ -941,6 +959,49 @@ class MediaFlowApi:
                 error.code,
                 str(error),
                 details=error.details,
+            )
+        except AutomationSettingsPublicationError as error:
+            # Focused engine-settings publication failure: the four-field scope,
+            # preserved previous Active and bounded next action stay explicit.
+            self._safe_audit(
+                environ,
+                request_id,
+                locals().get("principal"),
+                method,
+                path,
+                "automation-engine-settings",
+                "conflict" if error.status < 500 else "error",
+                error.status,
+            )
+            return self._error(
+                start_response,
+                error.status,
+                error.code,
+                str(error),
+                details=error.details,
+            )
+        except AutomationEngineSettingsError as error:
+            self._safe_audit(
+                environ,
+                request_id,
+                locals().get("principal"),
+                method,
+                path,
+                "automation-engine-settings",
+                "validation_failed",
+                422,
+            )
+            return self._error(
+                start_response,
+                422,
+                error.code,
+                str(error),
+                details={
+                    **error.as_detail(),
+                    "durableState": "active_unchanged",
+                    "sideEffects": "none",
+                    "retrySafe": True,
+                },
             )
         except AutomationDefinitionSaveError as error:
             # Handled before the generic page-local Save family because the
@@ -2985,6 +3046,16 @@ class MediaFlowApi:
         ] and method in {"GET", "POST", "PUT", "DELETE"}:
             return self._automation_definition_focused_projection(
                 parts, method, environ, start_response, principal
+            )
+        if parts == [
+            "api",
+            "v1",
+            "operations",
+            "automation",
+            "settings",
+        ] and method in {"GET", "PUT"}:
+            return self._automation_engine_settings_projection(
+                method, environ, start_response, principal
             )
         if parts[:4] == ["api", "v1", "operations", "notifications"] and method in {
             "GET",
@@ -13995,6 +14066,103 @@ class MediaFlowApi:
             "sideEffects": "none",
         }
         return redact_manual_value(document)
+
+    def _automation_engine_settings_projection(
+        self,
+        method: str,
+        environ: dict,
+        start_response: Callable,
+        principal: ResolvedApiPrincipal,
+    ):
+        """The focused four-field engine settings read and checked Save.
+
+        This is a distinct contract from the generic managed Settings editor:
+        ``GET`` states the published target plus each live consumer's own
+        adoption, and ``PUT`` publishes exactly these four fields from the
+        checked Active.  The generic ``/api/v1/system/settings`` Draft semantics
+        stay unchanged and keep their own validation/activation journey.
+        """
+
+        service = getattr(self, "_automation_settings", None)
+        if service is None:
+            return self._error(
+                start_response,
+                503,
+                "service_unavailable",
+                "managed configuration service is unavailable",
+            )
+        if method == "GET":
+            self._require(principal, ApiPermission.READ)
+            self._require_empty_query(environ, "automation engine settings")
+            document = service.read()
+            document["authority"] = "MANAGED"
+            document["canManage"] = self._principal_has_permission(
+                principal, ApiPermission.MANAGE_CONFIGURATION
+            )
+            return self._response(start_response, 200, document)
+        self._require(principal, ApiPermission.MANAGE_CONFIGURATION)
+        document = self._document(environ)
+        expected: dict[str, object] = {}
+        for key in ("expectedRevisionId", "expectedRevisionVersion", "expectedDigest"):
+            value = document.pop(key, None)
+            if value is None:
+                continue
+            if key == "expectedRevisionVersion":
+                if isinstance(value, bool) or not isinstance(value, int):
+                    raise ValueError(f"{key} must be an integer")
+            elif not isinstance(value, str):
+                raise ValueError(f"{key} must be a string")
+            expected[key] = value
+        # An unknown submission is reconciled by reading durable evidence, never
+        # by re-submitting the mutation automatically.
+        if document.pop("reconcile", False) is True:
+            payload = document.pop("settings", document)
+            result = service.reconcile(
+                payload,
+                actor=principal.principal_id,
+            )
+            return self._response(start_response, 200, result)
+        try:
+            result = service.save(
+                document,
+                actor=principal.principal_id,
+                expected_revision_id=expected.get("expectedRevisionId"),  # type: ignore[arg-type]
+                expected_version=expected.get("expectedRevisionVersion"),  # type: ignore[arg-type]
+                expected_digest=expected.get("expectedDigest"),  # type: ignore[arg-type]
+            )
+        except ConfigurationVersionConflict:
+            raise
+        except AutomationSettingsPublicationError as error:
+            self._safe_audit(
+                environ,
+                None,
+                principal,
+                method,
+                "/api/v1/operations/automation/settings",
+                "automation-engine-settings",
+                "conflict" if error.status < 500 else "error",
+                error.status,
+            )
+            return self._error(
+                start_response,
+                error.status,
+                error.code,
+                str(error),
+                details=error.details,
+            )
+        if result.get("published") is True:
+            # Publish the newly prepared runtime binding exactly like every other
+            # checked Save, so this API process then reads the new Active.
+            self._refresh_configuration_binding()
+        result["sideEffects"] = result.get("sideEffects", "none")
+        result["readback"] = service.read()
+        return self._response(start_response, 201 if result.get("published") else 200, result)
+
+    @staticmethod
+    def _principal_has_permission(
+        principal: ResolvedApiPrincipal, permission: ApiPermission
+    ) -> bool:
+        return permission in getattr(principal, "permissions", frozenset())
 
     def _automation_operations_projection(
         self,

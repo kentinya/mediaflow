@@ -215,6 +215,23 @@ burning targetless attempts, preserves recipient/signing identity and reports ch
 target as configuration failure, never retargeting. Retry/dead-letter/lease/at-least-once rules remain.
 New admission uses Active; intact older admitted pins stay valid, broken pins block before mutation.
 
+### Engine poll cadence adoption (Slice 43, Task 43.4)
+
+`automation.workerPollSeconds` and `automation.schedulerPollSeconds` are the real resident loop
+cadences. A running Worker or Scheduler resolves the current managed Active at each safe loop
+boundary and before each idle wait, installs the published value, and only then writes its own
+adoption report. No restart and no arriving work is required, and an idle wait never sleeps longer
+than the documented 5-second configuration recheck, so a previously long cadence still observes a
+new publication promptly. A busy step adopts at its next safe boundary; admitted work keeps its
+immutable pin and is never repinned, cancelled, requeued or replayed by a settings publication.
+
+`worker run`/`scheduler run --poll-seconds N` and any deployment-owned override keep precedence over
+the published value. Such a process reports its effective value as an *override*, never as adoption,
+and the Web Save cannot rewrite it. To adopt the published cadence, remove the explicit override from
+the Compose command/CLI and restart that service once. `automation.maximumActiveJobs` and
+`automation.staleJobAgeSeconds` are read by the admission/observation boundaries at their own
+boundary; they are shown with an API-local basis and are never claimed as a resident process's poll.
+
 ## CURRENT — Worker startup and transfer readiness (Slice 39)
 
 The resident Worker advertises both library-kind transfer families before Active, then reconstructs

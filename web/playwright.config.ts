@@ -9,6 +9,7 @@ export default defineConfig({
   // the Node fake; the fake-path suite must never pick it up.
   testIgnore: [
     "**/automation-lifecycle.python.spec.ts",
+    "**/automation-settings.python.spec.ts",
     "**/automation-workspace.python.spec.ts",
     "**/automation-run-once.python.spec.ts",
     "**/direct-files.python.spec.ts",

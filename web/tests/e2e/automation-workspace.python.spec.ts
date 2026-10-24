@@ -1060,12 +1060,19 @@ test("the workspace keeps narrow and wide layouts usable", async ({
     path: testInfo.outputPath("automation-workspace-wide.png"),
   });
 
-  // The settings tab links to the *same* managed settings surface rather than
-  // a duplicate form or a claimed adoption.
+  // The settings tab renders the shared four-field engine-settings surface in
+  // place (Task 43.4) rather than a placeholder that hands off elsewhere: the
+  // published target and the per-consumer adoption readback are both visible
+  // without leaving the workspace.
   await page.getByRole("button", { name: "全局设置" }).click();
+  const settingsPanel = page.getByRole("region", { name: "自动化引擎设置" });
+  await expect(settingsPanel).toBeVisible();
+  await expect(settingsPanel.getByText("已发布目标")).toBeVisible();
+  await expect(settingsPanel.getByLabel(/Worker 轮询间隔/)).toBeVisible();
   await expect(
-    page.getByText(/自动化引擎设置|与系统设置共用同一份受管配置/),
+    page.getByRole("region", { name: "Worker 轮询采用情况" }),
   ).toBeVisible();
-  await page.getByRole("button", { name: "打开系统设置" }).click();
-  await expect(page).toHaveURL(/\/ui-v2\/configuration/);
+  await expect(page).toHaveURL(
+    /\/ui-v2\/operations\/automation\?tab=settings$/,
+  );
 });

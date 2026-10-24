@@ -7,14 +7,14 @@ and [B experience](docs/agent-experience/task-planner-reviewer.md). Developer re
 ```text
 Task ID: 43.4
 Parent Slice: 43
-Status: PLANNED
+Status: READY FOR B REVIEW
 Task Base: f18d2444f548b81b5892536498a1b4cdd4400be8
 Difficulty: High
 Test Level: T4
 Planner / Reviewer: B
 Working Branch: main
 Decision: IMPLEMENT THIS TASK ONLY — RO-6 and its settings/navigation/safety integration
-Next Action: DEVELOPER IMPLEMENTS; B independently reviews complete Task Base..candidate and runs T4 acceptance
+Next Action: B INDEPENDENTLY REVIEWS COMPLETE TASK BASE..CANDIDATE AND RUNS T4 ACCEPTANCE
 ```
 
 ## Goal
@@ -271,17 +271,109 @@ untracked artifacts and ignored/untracked/unstaged `config/alist.json` without r
 
 ## Developer Completion Report
 
-Pending implementation. Hand off a coherent implementation SHA as READY FOR B REVIEW with actual
-changed behavior/files, affected commands/results, known failures/risks and remaining Slice outcomes.
-B owns full acceptance. Do not self-PASS, close Slice43 or plan another Task.
+```text
+Status: READY FOR B REVIEW (Developer does not self-PASS)
+Task Base: f18d2444f548b81b5892536498a1b4cdd4400be8
+Candidate: the commit carrying this report (see `git log -1` for the exact SHA)
+```
+
+### Implemented behavior
+
+1. **Focused four-field publication (`AutomationSettingsService`).** Added
+   `mediaflow/domain/automation_settings.py` (field metadata/bounds/meanings, strict
+   normalization, adoption evaluation) and `mediaflow/application/automation_settings.py`
+   (checked Save, no-op detection, focused-change proof, reconciliation, consumer
+   projection). One Save seeds a successor from the observed immutable Active, applies only
+   the four fields, validates the whole candidate, prepares the runtime binding and
+   activates atomically. Other settings/definitions/open Drafts stay byte-identical.
+2. **Explicit API contract.** `GET/PUT /api/v1/operations/automation/settings` with
+   READ / MANAGE_CONFIGURATION enforcement, typed normalization errors (422 with
+   `field`/`durableState`/`sideEffects`), `stale` (409, `active_preserved`) and
+   prepare/validate/activate stage failures (503). Unknown outcome is reconciled with
+   `{"reconcile": true}` against principal-scoped durable audit evidence + current Active.
+   Generic `/api/v1/system/settings` Draft semantics are untouched.
+3. **Finite-number protection.** `mediaflow.domain.system_settings._validate_number_bounds`
+   now rejects non-finite values before any bound, so `inf`/`NaN` can no longer pass a
+   `<= 0` comparison.
+4. **Real resident cadence adoption.** `ResidentLoop` gained optional
+   `cadence_resolver`/`adoption_reporter`; it adopts at entry, before each step and before
+   each idle wait, and its idle wait is `min(selected cadence, 5s)`. `worker run` /
+   `scheduler run` compose the resolver/reporter through
+   `resident_cadence_adoption`; `--poll-seconds` keeps precedence and is reported as an
+   override. Notification Worker behavior is unchanged.
+5. **Truthful consumer evidence.** Additive runtime schema 50 table
+   `resident_settings_adoption`, written only by the owning process after it installed the
+   cadence, carrying the publication identity it adopted. Readback reports per-instance
+   status/freshness/override with an explicit next action; the collective claim covers only
+   the two cadence consumers and the capacity/stale fields carry an `api_local` basis.
+6. **Shared native UI.** `AutomationSettingsPanel` renders the same form + adoption readback
+   from `自动化 → 全局设置` (replacing the placeholder that handed off) and from
+   `/configuration`. Published target, in-progress input and adoption are visually and
+   logically separate; an unknown Save blocks further saves until reconciliation.
+7. **Docs.** `docs/architecture.md` (delivered CURRENT subsection),
+   `docs/deployment.md` (cadence adoption + override guidance), `docs/configuration.md`
+   (field meanings + focused settings section).
+
+### Affected commands and actual results
+
+| Command (cwd) | Result |
+|---|---|
+| `python3 scripts/check_governance.py` | `governance check: PASS` |
+| `.venv/bin/ruff format --check .` | `389 files already formatted` |
+| `.venv/bin/ruff check .` | `All checks passed!` |
+| `.venv/bin/python -m compileall -q mediaflow tests scripts` | exit 0 |
+| `.venv/bin/python -m unittest tests.test_automation_settings_management tests.test_automation_settings_resident` | `Ran 32 tests ... OK` |
+| `.venv/bin/python -m unittest tests.test_system_settings_management tests.test_resident_services tests.test_resident_correction` | `Ran 86 tests ... OK` |
+| `.venv/bin/python -m unittest tests.test_automation_admission tests.test_stale_job_visibility tests.test_configuration_snapshot tests.test_automation_api tests.test_task_persistence tests.test_v2_settings_rule_readiness` | `Ran 117 tests ... OK` |
+| `.venv/bin/python -m unittest tests.test_automation_workspace_read_model tests.test_v2_automation_operations tests.test_v2_automation_lifecycle tests.test_automation_definition_publication tests.test_automation_definition_occurrence` | `Ran 146 tests ... OK` |
+| `.venv/bin/python -m unittest tests.test_v2_automation_run_once tests.test_v2_settings_rule_readiness tests.test_automation_definition_execution tests.test_media_discovery` | `Ran 171 tests ... OK` |
+| `.venv/bin/python -m unittest tests.test_recognition tests.test_api_security tests.test_configuration_objects` | `Ran 100 tests ... OK` |
+| `.venv/bin/python -m unittest tests.test_operations_run_detail_plan_evidence` (C-with-A/A) | `Ran 10 tests ... OK` |
+| `npm run typecheck` / `lint` / `format:check` (cwd `web`) | all clean |
+| `npm run test -- run` (cwd `web`) | `Test Files 82 passed`, `Tests 1183 passed` |
+| `npm run build` (cwd `web`) | succeeds (pre-existing chunk-size warning only) |
+| `npm run test:e2e` default fake suite (cwd `web`) | `242 passed` |
+| `npm run test:e2e -- --config=playwright.python.automation.config.ts tests/e2e/automation-settings.python.spec.ts` | `5 passed` |
+| `... automation-workspace.python.spec.ts` | `8 passed` |
+| `... automation-lifecycle.python.spec.ts` | `11 passed` |
+| `... automation-run-once.python.spec.ts` | `4 passed` |
+| `npm run test:e2e -- --config=playwright.python.config.ts tests/e2e/operations-inventory.python.spec.ts` | `41 passed` |
+
+No test was skipped, retried or weakened; no assertion was relaxed and no timeout was raised.
+`web/src/features/operations/AutomationWorkspaceReadModel.test.tsx` and
+`.../ConfigurationPage.test.tsx` were corrected only where the newly shared panel legitimately
+adds one extra GET read (they now scope "one read" assertions to the route they intend to prove).
+
+### Remaining risks / disclosures for B
+
+1. **Adoption evidence is additive (schema 49 → 50).** I verified the additive table creation
+   and reopen durability, but **B owns the supported-schema upgrade rehearsal on a real prior
+   database with existing work/pins/authorities** (T4). No FileIndex/retired-product schema was
+   recreated.
+2. **Test cost.** The resident subprocess suites are the slowest part of this round (~30s for
+   the two new modules; the previously existing resident modules are unchanged in behavior).
+3. **Deliberate limits.** No queue/supervisor replacement, no new concurrency control, no
+   auto-restart, no automatic stale/uncertain replay, and no process-tooling project were added.
+   `maximumActiveJobs` still counts Pending+Running Jobs in the shared pool.
+4. **UI depth.** The form is text-input based with backend-advertised minimum/maximum/unit help;
+   there is no per-field slider or Advanced JSON editor, deliberately keeping the surface to the
+   safe supported subset.
+5. **The harness gained a real in-process resident cadence consumer**
+   (`POST /__harness__/start-resident-consumers`) so the browser proof is derived from a real
+   adoption; it reuses the production `ResidentLoop` composition and claims no work. B should
+   confirm this meets the "actual application services" requirement (I believe it does; the
+   subprocess proof is separate in `tests/test_automation_settings_resident.py`).
+6. **Not run by Developer (B-owned):** full Python discovery, wheel/installed-consumer, Docker
+   lifecycle/security smokes, Unicode-principal and task-center visual native suites, and the
+   complete T4 matrix.
 
 ## B Review Result
 
 ```text
-Reviewed: planning only at f18d2444f548b81b5892536498a1b4cdd4400be8; no implementation candidate
-Decision: PLANNED — implementation and independent T4 acceptance pending
-Acceptance runs: planning governance / whitespace / scope checks only; no product tests claimed
-Task blockers: not assessed before implementation
-Slice Required Outcomes / Surfaces all satisfied: NO — RO-6 and Slice-final T4 remain
-Next: DEVELOPER IMPLEMENTS TASK43.4; after PASS B reevaluates all outcomes and stops planning if satisfied
+Reviewed: planning only at f18d2444f548b81b5892536498a1b4cdd4400be8
+Decision: PENDING — Developer candidate submitted READY FOR B REVIEW; independent T4 acceptance not run
+Acceptance runs: none yet on the implementation candidate
+Task blockers: not assessed
+Slice Required Outcomes / Surfaces all satisfied: NO — B must re-evaluate RO-1..RO-7 after acceptance
+Next: B REVIEWS TASK BASE..CANDIDATE AND RUNS T4 ACCEPTANCE
 ```

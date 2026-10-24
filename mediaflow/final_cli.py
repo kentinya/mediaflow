@@ -78,6 +78,7 @@ from mediaflow.domain.automation import (
     CronSchedule,
     SchedulerConfigurationSnapshot,
 )
+from mediaflow.domain.automation_settings import engine_values_from_document
 from mediaflow.domain.classification_review import (
     ClassificationReviewStatus,
     ClassificationSelection,
@@ -3897,6 +3898,44 @@ def _scheduler_waiting_reason(configuration: RuntimeConfiguration | None) -> tup
     return (ResidentServiceWaiting.NONE.value, "")
 
 
+def _resident_published_cadence_resolver(
+    configured_path: str | None, field: str
+) -> Callable[[], tuple[str, int | None, str, float] | None]:
+    """Resolve the current publication identity plus one consumed poll cadence.
+
+    Only managed Active authority is used, so a JSON compatibility bootstrap
+    never becomes a published target for these engine settings.  The resolver is
+    called at each safe loop boundary, which is what makes adoption independent
+    of process start time and of work arriving.
+    """
+
+    def resolve() -> tuple[str, int | None, str, float] | None:
+        try:
+            document = _configuration_document(configured_path)
+            database_path = _bootstrap_database_path(document)
+            with SQLiteConfigurationRepository(database_path) as repository:
+                active = repository.get_active_revision()
+        except Exception:
+            # A transient database/configuration fault yields no candidate: the
+            # loop keeps the last known-good cadence rather than installing one
+            # it cannot attribute to a publication.
+            return None
+        if active is None:
+            return None
+        values = engine_values_from_document(active.document)
+        if values is None:
+            return None
+        cadence = values.worker_poll_seconds if field == "worker" else values.scheduler_poll_seconds
+        return (
+            active.revision_id,
+            active.revision_sequence or active.version,
+            active.digest,
+            float(cadence),
+        )
+
+    return resolve
+
+
 def _resident_snapshot_reference(path: str | None) -> tuple[str, str] | None:
     try:
         return _managed_snapshot_reference(path)
@@ -3935,6 +3974,7 @@ def _run_worker(
         ResidentLoop,
         build_resident_runtime,
         register_resident_process,
+        resident_cadence_adoption,
         resident_instance_id,
     )
 
@@ -4026,6 +4066,25 @@ def _run_worker(
                     poll = getattr(arguments, "poll_seconds", None) or getattr(
                         configuration, "worker_poll_seconds", default_poll
                     )
+                    # Engine settings adoption: the Worker consumes
+                    # ``automation.workerPollSeconds``.  An explicit
+                    # ``--poll-seconds`` retains precedence and is reported as an
+                    # override, never as adoption of the published value.
+                    cadence_resolver, cadence_reporter = resident_cadence_adoption(
+                        runtime,
+                        "worker",
+                        instance_id,
+                        field_path="automation.workerPollSeconds",
+                        published_resolver=_resident_published_cadence_resolver(
+                            configured_path, "worker"
+                        ),
+                        override_poll_seconds=getattr(arguments, "poll_seconds", None),
+                        override_source="cli",
+                    )
+                    cadence_adoption = {
+                        "cadence_resolver": cadence_resolver,
+                        "adoption_reporter": cadence_reporter,
+                    }
                     original_heartbeat = worker_service.heartbeat
 
                     def heartbeat(now=None) -> bool:
@@ -4074,6 +4133,7 @@ def _run_worker(
                         stdout=stdout,
                         step=step,
                         describe=_resident_failure_reason,
+                        **cadence_adoption,
                     )
                     try:
                         processed = _run_resident(
@@ -4142,6 +4202,7 @@ def _run_scheduler(
         ResidentLoop,
         build_resident_runtime,
         register_resident_process,
+        resident_cadence_adoption,
         resident_instance_id,
     )
 
@@ -4246,6 +4307,19 @@ def _run_scheduler(
                 return 0
             return len(build_service(resolved).tick())
 
+        # Engine settings adoption: the Scheduler consumes
+        # ``automation.schedulerPollSeconds`` as its due-check cadence.  Schedule
+        # resolution stays separate — a poll change never alters a definition's
+        # interval, Cron expression or timezone.
+        cadence_resolver, cadence_reporter = resident_cadence_adoption(
+            runtime,
+            "scheduler",
+            instance_id,
+            field_path="automation.schedulerPollSeconds",
+            published_resolver=_resident_published_cadence_resolver(configured_path, "scheduler"),
+            override_poll_seconds=getattr(arguments, "poll_seconds", None),
+            override_source="cli",
+        )
         loop = ResidentLoop(
             runtime,
             "scheduler",
@@ -4255,6 +4329,8 @@ def _run_scheduler(
             stdout=stdout,
             step=step,
             describe=_resident_failure_reason,
+            cadence_resolver=cadence_resolver,
+            adoption_reporter=cadence_reporter,
         )
         emitted = _run_resident(lambda stop: loop.run(stop, lambda seconds: _wait(stop, seconds)))
         stdout.write(f"Scheduler stopped; emitted={emitted}\n")

@@ -77,8 +77,13 @@ describe("V2 configuration route", () => {
     expect(
       await screen.findByRole("heading", { name: "需要创建首个 Draft" }),
     ).toBeVisible();
-    expect(fetchMock).toHaveBeenCalledTimes(1);
-    expect(fetchMock.mock.calls[0]?.[1]?.method).toBeUndefined();
+    // The configuration-status read is the only status read; the embedded
+    // Automation engine-settings panel performs its own separate read.
+    const statusCalls = fetchMock.mock.calls.filter(([input]) =>
+      String(input).includes("/configuration/status"),
+    );
+    expect(statusCalls).toHaveLength(1);
+    expect(statusCalls[0]?.[1]?.method).toBeUndefined();
     await userEvent.click(
       screen.getByRole("button", { name: "创建首个 Draft" }),
     );
@@ -480,6 +485,20 @@ describe("V2 configuration route", () => {
     const calls: Array<{ input: string; init?: RequestInit }> = [];
     const fetchMock = vi.fn(async (input: string, init?: RequestInit) => {
       calls.push({ input, init });
+      if (input.includes("/operations/automation/settings")) {
+        // The embedded engine-settings panel has its own read; it must not be
+        // mistaken for one of this journey's configuration-status reads.
+        return response(
+          {
+            error: {
+              code: "automation_settings_unavailable",
+              message: "no Active",
+              details: { durableState: "no_active_configuration" },
+            },
+          },
+          409,
+        );
+      }
       if (input.endsWith("/activate")) {
         activationAttempted = true;
         throw new TypeError(
@@ -840,8 +859,9 @@ describe("V2 configuration rule readiness", () => {
   };
 
   const statusWith = (ruleReadiness: unknown) =>
-    vi.fn(async () =>
-      response({
+    vi.fn(async (...args: [string, RequestInit?]) => {
+      void args;
+      return response({
         authority: "MANAGED",
         setupRequired: false,
         emptyActive: false,
@@ -849,8 +869,8 @@ describe("V2 configuration rule readiness", () => {
         canManageConfiguration: true,
         canActivateConfiguration: true,
         ruleReadiness,
-      }),
-    );
+      });
+    });
 
   it("shows the same Active readiness as the rules workspace and links each family", async () => {
     const fetchMock = statusWith({
@@ -897,8 +917,19 @@ describe("V2 configuration rule readiness", () => {
       "/ui-v2/rules?section=recognitionRules",
     );
     expect(screen.getByText("2 项 · 2 已启用")).toBeVisible();
-    // Reading readiness is a pure read.
-    expect(fetchMock).toHaveBeenCalledTimes(1);
+    // Reading readiness is a pure read: exactly one configuration-status read,
+    // with no mutation. The embedded engine-settings panel reads separately.
+    expect(
+      fetchMock.mock.calls.filter(([input]) =>
+        String(input).includes("/configuration/status"),
+      ),
+    ).toHaveLength(1);
+    expect(
+      fetchMock.mock.calls.filter((call) => {
+        const init = call[1] as RequestInit | undefined;
+        return init?.method !== undefined && init.method !== "GET";
+      }),
+    ).toHaveLength(0);
   });
 
   it("keeps no-Active, unavailable and malformed distinct from empty readiness", async () => {

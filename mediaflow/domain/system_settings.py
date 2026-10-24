@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import copy
+import math
 import posixpath
 import re
 import zoneinfo
@@ -15,6 +16,20 @@ BOOTSTRAP_IMMUTABLE_FIELDS: frozenset[str] = frozenset(
     {
         "persistence.databasePath",
     }
+)
+
+# The exact four Automation engine settings one focused checked Save owns.
+#
+# This is deliberately a *subset* of the editable System Settings surface: the
+# generic Draft editor keeps its own whole-document authority, while the native
+# Automation settings form publishes only these scalar fields.  Every value here
+# must already be a supported ``HOT_CONSUMED_FIELDS`` member, so the focused
+# command can never invent a setting boundary of its own.
+FOCUSED_AUTOMATION_SETTING_FIELDS: tuple[str, ...] = (
+    "automation.maximumActiveJobs",
+    "automation.staleJobAgeSeconds",
+    "automation.workerPollSeconds",
+    "automation.schedulerPollSeconds",
 )
 
 # Fields that require a restart/deployment to take effect.
@@ -673,6 +688,17 @@ def _validate_integer_bounds(field_path: str, value: int) -> dict[str, str] | No
 
 
 def _validate_number_bounds(field_path: str, value: float) -> dict[str, str] | None:
+    # A non-finite value is not a number the runtime can consume: ``float('inf')``
+    # and NaN both pass a ``value <= 0`` comparison, so finite-ness is checked
+    # before any bound.  This is what makes the finite-positive requirement
+    # real rather than an assumption about JSON parsing.
+    if not math.isfinite(value):
+        return {
+            "code": "invalid_range",
+            "message": f"{field_path} must be a finite number",
+            "field": field_path,
+            "nextAction": "provide a finite numeric value",
+        }
     if field_path in {
         "automation.workerPollSeconds",
         "automation.schedulerPollSeconds",

@@ -657,7 +657,51 @@ fresh actual consumer values/version at safe resident-loop boundaries, independe
 media pin. API runtime binding alone is not proof of another process's cadence. Idle/long waits,
 heartbeat/lease ownership and CLI/deployment overrides retain meaning; unavailable Active cannot
 schedule from cache. Preserve supported history/schema/pins and non-replay; no process supervisor
-or new execution parallelism. These are targets, not newly delivered behavior.
+or new execution parallelism. The remaining inventory/records/Run once outcomes stay TARGET; the
+engine-settings publication and resident adoption below are delivered by Task 43.4.
+
+#### Delivered in Task 43.4 — focused engine-settings publication and resident adoption
+
+```text
+GET /api/v1/operations/automation/settings   READ
+  → published target (Active revision id/version/digest + the four values)
+  → per-consumer adoption (each resident instance's own report)
+
+PUT /api/v1/operations/automation/settings   MANAGE_CONFIGURATION
+  → strict four-field normalization (no other key, no bool/fractional/non-finite)
+  → observed Active captured, no-op detected (publishes nothing)
+  → successor Draft from that exact Active
+  → only automation.{maximumActiveJobs,staleJobAgeSeconds,
+                     workerPollSeconds,schedulerPollSeconds} applied
+  → whole-candidate validation → runtime preparation → atomic activation
+
+resident Worker/Scheduler loop
+  → at each safe loop boundary and before each idle wait: resolve current
+    managed Active → install effective cadence → only then write own report
+  → idle wait bounded by min(selected cadence, 5s) configuration recheck
+  → override (CLI/deployment) keeps precedence and is reported as an override
+```
+
+`SystemSettingsService` retains the generic Draft editor and its
+`/api/v1/system/settings` semantics unchanged; the focused command is a distinct
+contract, not a replacement. Shared validation stays in
+`mediaflow.domain.system_settings` (now including finite-number rejection) and the
+four-field subset/bounds/meanings live in `mediaflow.domain.automation_settings`.
+`AutomationSettingsService` composes the existing `ManagedConfigurationService`
+activation and `_document_evidence` audit rather than duplicating them.
+
+Adoption evidence is additive durable state (`resident_settings_adoption`, runtime
+schema 50) written only by the owning process *after* it installed the cadence.
+Registration and heartbeat cannot write it, so an unreported consumer is reported
+as unreported, and a later publication is never mistaken for an older adoption
+because the row carries the publication identity it adopted. The collective claim
+covers only the two resident cadence consumers; the API-local capacity/stale
+basis is projected separately and never inflates a polling-adoption statement.
+
+Explicit non-goals that this delivery does not change: the admission pool is not
+replaced, no new concurrency control or process supervisor is added, a poll
+override is never rewritten by Web Save, and `maximumActiveJobs` remains
+pending+running Jobs in the shared pool rather than worker/thread parallelism.
 
 ## API and Operator Web
 

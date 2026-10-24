@@ -94,6 +94,12 @@ class ResidentServiceRepository(Protocol):
         self, service: str, instance_id: str
     ) -> ResidentServiceWaitState | None: ...
 
+    def record_resident_settings_adoption(self, evidence) -> object: ...
+
+    def list_resident_settings_adoption(
+        self, *, service: str | None = None, limit: int = 100
+    ) -> tuple: ...
+
 
 class ResidentServiceService:
     """Register resident processes and report infrastructure readiness."""
@@ -164,6 +170,20 @@ class ResidentServiceService:
             waiting_detail,
             now or datetime.now(UTC),
         )
+
+    def record_settings_adoption(self, evidence) -> object:
+        """Persist this process's own post-adoption cadence report.
+
+        Only the owning process calls this, and only after it installed the
+        effective cadence.  Registration and heartbeat deliberately cannot
+        write it, so an unreported consumer stays visibly unreported instead of
+        being credited with an adoption it never performed.
+        """
+
+        writer = getattr(self._repository, "record_resident_settings_adoption", None)
+        if not callable(writer):
+            return None
+        return writer(evidence)
 
     def get(self, service: str, instance_id: str) -> ResidentServiceRegistration | None:
         return self._repository.get_resident_service(

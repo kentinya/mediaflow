@@ -1853,6 +1853,10 @@ import {
   type AutomationPreviewModel,
 } from "../../entities/operations/automation";
 import {
+  normalizeAutomationSettings,
+  type AutomationSettingsModel,
+} from "../../entities/operations/automation-settings";
+import {
   normalizeAutomationFormAuthority,
   normalizeAutomationCopyCandidate,
   normalizeAutomationCopyIntent,
@@ -5081,6 +5085,238 @@ export function automationDefinitionsUrl(
   if (options.cursor) params.set("cursor", options.cursor);
   const qs = params.toString();
   return `/api/v1/operations/automation/task-definitions${qs ? `?${qs}` : ""}`;
+}
+
+// --- Focused Automation engine settings (Task 43.4) ----------------------
+
+/** The one shared engine-settings read/command URL. */
+export const automationSettingsUrl = "/api/v1/operations/automation/settings";
+
+export type AutomationSettingsRead =
+  | { readonly ok: true; readonly model: AutomationSettingsModel }
+  | { readonly ok: false; readonly failure: OperationsFailure };
+
+export type AutomationSettingsSave =
+  | {
+      readonly ok: true;
+      readonly status: number;
+      readonly published: boolean;
+      readonly unchanged: boolean;
+      readonly revisionId: string | null;
+      readonly readback: AutomationSettingsModel;
+    }
+  | {
+      readonly ok: false;
+      readonly status: number;
+      readonly code: string;
+      readonly unknownOutcome: boolean;
+      readonly details?: AutomationMutationFailureDetails;
+    };
+
+export type AutomationSettingsReconcile =
+  | {
+      readonly ok: true;
+      readonly committed: boolean;
+      readonly nextAction: string | null;
+      readonly evidenceRevisionId: string | null;
+    }
+  | { readonly ok: false; readonly status: number; readonly code: string };
+
+/**
+ * Read the published target plus each live consumer's own adoption.
+ *
+ * A read never mutates: it creates no Draft, admits no work and grants no
+ * authority, which is why the page can poll it freely.
+ */
+export async function fetchAutomationSettings(
+  token: string | null,
+  fetchImpl: FetchLike = fetch,
+): Promise<AutomationSettingsRead> {
+  let response: Response;
+  try {
+    response = await fetchImpl(automationSettingsUrl, {
+      method: "GET",
+      headers: operationsHeaders(token),
+    });
+  } catch {
+    return { ok: false, failure: operationsFailure("unavailable") };
+  }
+  if (response.status === 401) {
+    return { ok: false, failure: operationsFailure("unauthorized") };
+  }
+  if (response.status === 403) {
+    return { ok: false, failure: operationsFailure("forbidden") };
+  }
+  if (!response.ok) {
+    return {
+      ok: false,
+      failure: operationsFailure(
+        response.status >= 500 ? "unavailable" : "rejected",
+      ),
+    };
+  }
+  let payload: unknown;
+  try {
+    payload = await response.json();
+  } catch {
+    return { ok: false, failure: operationsFailure("malformed") };
+  }
+  try {
+    return { ok: true, model: normalizeAutomationSettings(payload) };
+  } catch {
+    return { ok: false, failure: operationsFailure("malformed") };
+  }
+}
+
+/**
+ * Publish exactly the four engine fields through one checked Save.
+ *
+ * A transport failure or an unexplained 5xx is reported as an *unknown*
+ * outcome: the browser must reconcile from durable evidence instead of
+ * re-submitting, and this function never retries on its own.
+ */
+export async function saveAutomationSettings(
+  token: string | null,
+  body: Record<string, unknown>,
+  fetchImpl: FetchLike = fetch,
+): Promise<AutomationSettingsSave> {
+  let response: Response;
+  try {
+    response = await fetchImpl(automationSettingsUrl, {
+      method: "PUT",
+      headers: operationsMutationHeaders(token),
+      body: JSON.stringify(body),
+    });
+  } catch {
+    return {
+      ok: false,
+      status: 0,
+      code: "transport_unavailable",
+      unknownOutcome: true,
+    };
+  }
+  if (response.ok) {
+    let payload: unknown;
+    try {
+      payload = await response.json();
+    } catch {
+      return {
+        ok: false,
+        status: response.status,
+        code: "malformed_response",
+        unknownOutcome: true,
+      };
+    }
+    const record =
+      typeof payload === "object" && payload !== null && !Array.isArray(payload)
+        ? (payload as Record<string, unknown>)
+        : null;
+    if (record === null) {
+      return {
+        ok: false,
+        status: response.status,
+        code: "malformed_response",
+        unknownOutcome: true,
+      };
+    }
+    let readback: AutomationSettingsModel;
+    try {
+      readback = normalizeAutomationSettings(record["readback"] ?? payload);
+    } catch {
+      return {
+        ok: false,
+        status: response.status,
+        code: "malformed_response",
+        unknownOutcome: true,
+      };
+    }
+    return {
+      ok: true,
+      status: response.status,
+      published: record["published"] === true,
+      unchanged: record["unchanged"] === true,
+      revisionId:
+        typeof record["revisionId"] === "string" ? record["revisionId"] : null,
+      readback,
+    };
+  }
+  const envelope = await readErrorEnvelope(response);
+  const code =
+    typeof envelope.code === "string" && envelope.code.length > 0
+      ? envelope.code
+      : "request_rejected";
+  const details = normalizeAutomationMutationFailureDetails(envelope.details);
+  // Only an explicit durable-state statement makes a 5xx a *known* failure. An
+  // internal error may have failed before or after committing, so it stays
+  // unknown and blocks an automatic retry.
+  const unknownOutcome =
+    response.status >= 500 &&
+    (details?.durableState === undefined || code === "internal_error");
+  return {
+    ok: false,
+    status: response.status,
+    code,
+    unknownOutcome,
+    ...(details === undefined ? {} : { details }),
+  };
+}
+
+/** Read back whether one lost submission actually published. */
+export async function reconcileAutomationSettings(
+  token: string | null,
+  body: Record<string, unknown>,
+  fetchImpl: FetchLike = fetch,
+): Promise<AutomationSettingsReconcile> {
+  let response: Response;
+  try {
+    response = await fetchImpl(automationSettingsUrl, {
+      method: "PUT",
+      headers: operationsMutationHeaders(token),
+      body: JSON.stringify(body),
+    });
+  } catch {
+    return { ok: false, status: 0, code: "transport_unavailable" };
+  }
+  if (!response.ok) {
+    const envelope = await readErrorEnvelope(response);
+    return {
+      ok: false,
+      status: response.status,
+      code:
+        typeof envelope.code === "string" && envelope.code.length > 0
+          ? envelope.code
+          : "request_rejected",
+    };
+  }
+  let payload: unknown;
+  try {
+    payload = await response.json();
+  } catch {
+    return { ok: false, status: response.status, code: "malformed_response" };
+  }
+  const record =
+    typeof payload === "object" && payload !== null && !Array.isArray(payload)
+      ? (payload as Record<string, unknown>)
+      : null;
+  if (record === null) {
+    return { ok: false, status: response.status, code: "malformed_response" };
+  }
+  const evidence =
+    typeof record["evidence"] === "object" &&
+    record["evidence"] !== null &&
+    !Array.isArray(record["evidence"])
+      ? (record["evidence"] as Record<string, unknown>)
+      : null;
+  return {
+    ok: true,
+    committed: record["committed"] === true,
+    nextAction:
+      typeof record["nextAction"] === "string" ? record["nextAction"] : null,
+    evidenceRevisionId:
+      evidence !== null && typeof evidence["revisionId"] === "string"
+        ? evidence["revisionId"]
+        : null,
+  };
 }
 
 export async function fetchAutomationDefinitions(

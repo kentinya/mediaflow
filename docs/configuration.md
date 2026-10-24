@@ -153,6 +153,28 @@ all historical pin semantics. Scanner/manual discovery consume the same pinned f
 real elapsed stability policy. Forms retain tab-scoped correctable values, never credentials or
 runtime authority. Empty/partial graphs explain missing dependencies without generating policies.
 
+## Automation engine settings (native, focused)
+
+`/ui-v2/operations/automation?tab=settings` and the Automation section of `/ui-v2/configuration`
+render the *same* four-field form and readback (`AutomationSettingsPanel`); no second store or
+editor exists. `GET/PUT /api/v1/operations/automation/settings` serves the projection and the
+checked Save with READ / MANAGE_CONFIGURATION enforcement.
+
+One Save publishes only `automation.{maximumActiveJobs,staleJobAgeSeconds,workerPollSeconds,
+schedulerPollSeconds}` from the observed immutable Active. Other settings, definitions and open
+Drafts are preserved byte-identically, the whole candidate is validated, and the runtime binding is
+prepared before atomic activation. An unchanged save publishes nothing. Out-of-scope keys, booleans,
+fractional integers, non-finite and out-of-range values are rejected before a Draft exists. The
+generic `/api/v1/system/settings` Draft editor and its separate validate/activate journey are
+unchanged and remain available for the wider field set.
+
+Publication and adoption are reported as separate outcomes. Each live resident instance publishes
+its own adopted values, the publication identity it adopted, freshness and any explicit
+CLI/deployment override. Unreported, stale, stopped, mixed-version and overridden instances never
+form a collective "deployed" claim, and the two capacity/observation fields carry an API-local
+basis instead of being attributed to a resident process. An unknown Save outcome must be reconciled
+from durable audit evidence before any deliberate resubmission; it is never retried automatically.
+
 ## Storage configuration model
 
 The runtime loader supports these Storage types:
@@ -323,8 +345,10 @@ See [Roadmap](roadmap.md), [Progress](progress.md) and [Deployment](deployment.m
 | Setting | Implemented meaning |
 |---|---|
 | `workflowRetry` | `enabled` defaults false; `baseDelaySeconds`/`maxDelaySeconds` bound backoff. Read-only retry covers normalized timeout/connection/rate-limit/temporary-provider failures before planning/execution. `maxAttempts` 1–10, `maxDelaySeconds` ≤300, `jitterRatio` 0–1; never retries mutation/uncertain effects or grants execute authority. |
-| `automation.maximumActiveJobs` | Default 100; atomic shared Pending+Running backlog bound, not worker parallelism. Terminal Jobs release capacity. |
-| `automation.staleJobAgeSeconds` | Default 3600, range 60–604800; no-update diagnostic, not total-runtime timeout or death/replay authority. Stale lists are bounded 100; inspect Worker and effects before permitted explicit recovery. |
+| `automation.maximumActiveJobs` | Default 100, range 1–10000; atomic shared Pending+Running backlog bound, not worker parallelism. Terminal Jobs release capacity. Lowering it blocks new excess admissions and preserves already admitted work. Published through the four-field `自动化 → 全局设置` Save; the API's admission boundary reads the current Active. |
+| `automation.staleJobAgeSeconds` | Default 3600, range 60–604800; no-update diagnostic, not total-runtime timeout or death/replay authority. Stale lists are bounded 100; inspect Worker and effects before permitted explicit recovery. Published through the same focused Save and read by the observation boundary. |
+| `automation.workerPollSeconds` | Finite positive seconds; the real resident Worker loop cadence, independent of heartbeat/lease and of any Job's media pin. A running Worker adopts a new value at its next safe loop boundary without a restart; idle waits are rechecked at most every 5s so a previously long value cannot defer adoption. `--poll-seconds`/deployment overrides keep precedence and are reported as overrides. |
+| `automation.schedulerPollSeconds` | Finite positive seconds; the real resident Scheduler due-check cadence. It never changes any definition's interval, Cron expression or timezone, and adopts without restart under the same boundary/recheck rules and override precedence. |
 | Organizing Cron schedules | Validated five numeric fields with IANA timezone; `*`, lists, inclusive ranges and positive steps, no seconds/names/macros/shell/catch-up backlog. Missing DST wall times skip; ambiguous wall time fires once. Scheduling/enablement never grants execution authority; supported execution retains its separate explicit authority boundary. Independent Preview schedules are unsupported. |
 | Organize Hash/attachments | Hash defaults NONE with zero reads; FAST is bounded prefix evidence, FULL is bounded streaming. Failed/unknown comparison adds a conflict and never authorizes overwrite/delete. Opt-in attachments are matched only in the primary directory; unknown files are not included/cleaned. |
 | Source cleanup / rollback | Cleanup defaults none; only fully verified successful MOVE may clean bounded ancestors below the exclusive ResourceLibrary root. `rollback.enabled` defaults false, `cleanupCreatedDirectories` true; compensation covers only this invocation's verified effects, never changed targets, reappeared sources or older executions. Complete policy constraints remain in Requirements. |

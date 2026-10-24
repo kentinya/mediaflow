@@ -170,6 +170,92 @@ test("the read-only execution records tab reads an honest empty history", async 
   );
 });
 
+test("the settings tab renders the four-field form and an honest adoption readback", async ({
+  page,
+}) => {
+  await connect(page);
+  await openAutomation(page);
+  // The header shortcut and the tab reach the same in-place surface: one form,
+  // no navigation away to a generic settings store.
+  await page.getByRole("button", { name: "系统设置" }).click();
+  await expect(page).toHaveURL(
+    /\/ui-v2\/operations\/automation\?tab=settings$/,
+  );
+
+  const panel = page.getByRole("region", { name: "自动化引擎设置" });
+  await expect(panel).toBeVisible();
+  // The published target is labelled as such; it is never presented as adopted.
+  await expect(panel.getByText("已发布目标")).toBeVisible();
+  await expect(panel.getByText(/尚未整体采用/).first()).toBeVisible();
+  await expect(
+    panel.getByText(/全部相关常驻进程都已采用当前发布值/),
+  ).toHaveCount(0);
+  // All four engine fields are the only editable values.
+  for (const label of [
+    /并行任务上限/,
+    /任务失效判定时间/,
+    /Worker 轮询间隔/,
+    /调度器轮询间隔/,
+  ]) {
+    await expect(panel.getByLabel(label)).toBeVisible();
+  }
+  // An unreported consumer is stated as unreported, never as adopted.
+  const workerAdoption = page.getByRole("region", {
+    name: "Worker 轮询采用情况",
+  });
+  await expect(workerAdoption.getByText("尚未上报采用")).toBeVisible();
+
+  // Reading the settings is GET-only: no work, no Draft, no grant.
+  const evidence = await automationEvidence(page);
+  expect(evidence.items.filter((item) => item.method !== "GET")).toHaveLength(
+    0,
+  );
+});
+
+test("the settings form publishes exactly the four fields once", async ({
+  page,
+}) => {
+  await connect(page);
+  await openAutomation(page);
+  await page
+    .getByRole("navigation", { name: "自动化分区" })
+    .getByRole("button", { name: "全局设置" })
+    .click();
+  const panel = page.getByRole("region", { name: "自动化引擎设置" });
+  await expect(panel).toBeVisible();
+
+  const worker = panel.getByLabel(/Worker 轮询间隔/);
+  await worker.fill("1.5");
+  await panel.getByRole("button", { name: "保存引擎设置" }).click();
+  await expect(panel.getByText(/已发布新的目标值/)).toBeVisible();
+
+  const evidence = await automationEvidence(page);
+  const writes = evidence.items.filter((item) => item.method === "PUT");
+  expect(writes).toHaveLength(1);
+  expect(writes[0].objectType).toBe("automation_engine_settings_save");
+});
+
+test("a fractional integer is sent as-is and rejected without coercion", async ({
+  page,
+}) => {
+  await connect(page);
+  await openAutomation(page);
+  await page
+    .getByRole("navigation", { name: "自动化分区" })
+    .getByRole("button", { name: "全局设置" })
+    .click();
+  const panel = page.getByRole("region", { name: "自动化引擎设置" });
+  const jobs = panel.getByLabel(/并行任务上限/);
+  await jobs.fill("3.5");
+  await panel.getByRole("button", { name: "保存引擎设置" }).click();
+  // The backend's real rejection reaches the operator and the input stays
+  // correctable for the next explicit attempt.
+  await expect(
+    panel.getByText(/保存未生效\(settings_out_of_range\)/),
+  ).toBeVisible();
+  await expect(jobs).toHaveValue("3.5");
+});
+
 test("the definition detail offers the backend-advertised actions only", async ({
   page,
 }) => {

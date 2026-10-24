@@ -20,12 +20,17 @@ normal, reportable state rather than a startup error.
 
 from __future__ import annotations
 
+import math
 import secrets
 from collections.abc import Callable
 from dataclasses import dataclass
 from typing import TextIO
 
 from mediaflow.application.resident_services import ResidentServiceService
+from mediaflow.domain.automation_settings import (
+    CONFIG_RECHECK_SECONDS,
+    ResidentCadence,
+)
 from mediaflow.domain.resident_services import (
     ResidentServiceReadiness,
     ResidentServiceWaiting,
@@ -153,6 +158,76 @@ def resident_health_error(
     return f"resident {service} is not infrastructure-ready ({condition})"
 
 
+def resident_cadence_adoption(
+    runtime: ResidentRuntime,
+    service: str,
+    instance_id: str,
+    *,
+    field_path: str,
+    published_resolver: Callable[[], tuple[str, int | None, str, float] | None],
+    override_poll_seconds: float | None = None,
+    override_source: str | None = None,
+    clock: Callable[[], object] | None = None,
+) -> tuple[Callable[[], ResidentCadence | None], Callable[[ResidentCadence], object]]:
+    """Compose this process's cadence resolver and its own adoption report.
+
+    The resolver reads the *current* published publication identity and the one
+    cadence field this service consumes.  The reporter writes the durable row
+    only after the loop installed the value, so a report can never precede the
+    effect it claims.  An explicit CLI/deployment override keeps precedence and
+    is recorded as an override rather than as adoption of the published value.
+    """
+
+    from datetime import UTC, datetime
+
+    from mediaflow.domain.automation_settings import ResidentSettingsEvidence
+
+    current_clock = clock or (lambda: datetime.now(UTC))
+
+    def resolve() -> ResidentCadence | None:
+        published = published_resolver()
+        if published is None:
+            return None
+        revision_id, revision_version, digest, published_poll = published
+        if not revision_id or not digest:
+            return None
+        if override_poll_seconds is not None:
+            return ResidentCadence(
+                service=service,
+                field_path=field_path,
+                poll_seconds=float(override_poll_seconds),
+                published_revision_id=revision_id,
+                published_revision_version=revision_version,
+                published_revision_digest=digest,
+                override_source=override_source or "cli",
+            )
+        return ResidentCadence(
+            service=service,
+            field_path=field_path,
+            poll_seconds=float(published_poll),
+            published_revision_id=revision_id,
+            published_revision_version=revision_version,
+            published_revision_digest=digest,
+        )
+
+    def report(cadence: ResidentCadence) -> object:
+        return runtime.service.record_settings_adoption(
+            ResidentSettingsEvidence(
+                service=service,
+                instance_id=instance_id,
+                published_revision_id=cadence.published_revision_id,
+                published_revision_version=cadence.published_revision_version,
+                published_revision_digest=cadence.published_revision_digest,
+                applied_fields=(cadence.field_path,),
+                effective_values={cadence.field_path: float(cadence.poll_seconds)},
+                override_source=cadence.override_source,
+                reported_at=current_clock(),
+            )
+        )
+
+    return (resolve, report)
+
+
 class ResidentLoop:
     """A fault-tolerant resident loop with bounded waiting and heartbeating.
 
@@ -182,18 +257,105 @@ class ResidentLoop:
         stdout: TextIO,
         step: Callable[[ResidentLoop], int],
         describe: Callable[[BaseException], tuple[str, str]] | None = None,
+        cadence_resolver: Callable[[], ResidentCadence | None] | None = None,
+        adoption_reporter: Callable[[ResidentCadence], object] | None = None,
     ) -> None:
-        if poll_seconds <= 0:
-            raise ValueError("resident poll interval must be positive")
+        if poll_seconds <= 0 or not math.isfinite(float(poll_seconds)):
+            raise ValueError("resident poll interval must be a positive finite number")
         self._runtime = runtime
         self._service = service
         self._instance_id = instance_id
         self._heartbeat_interval_seconds = heartbeat_interval_seconds
-        self._poll_seconds = poll_seconds
+        self._poll_seconds = float(poll_seconds)
         self._stdout = stdout
         self._step = step
         self._describe = describe
         self._last_heartbeat = 0.0
+        # Engine settings adoption is optional so a consumer with no published
+        # cadence (the Notification Worker) keeps its existing behaviour and is
+        # never asked to report a field it does not consume.
+        self._cadence_resolver = cadence_resolver
+        self._adoption_reporter = adoption_reporter
+        #: The exact cadence this process last installed and acknowledged.
+        self._applied_cadence: ResidentCadence | None = None
+        #: The most recent resolution, so a transient configuration fault does
+        #: not silently reinstall a stale value or lose a valid adoption.
+        self._last_resolved_cadence: ResidentCadence | None = None
+        #: A bounded, secret-free reason the last adoption attempt failed.
+        self._adoption_blocker: tuple[str, str] | None = None
+
+    @property
+    def poll_seconds(self) -> float:
+        """The cadence this loop is currently using (the real observable)."""
+
+        return self._poll_seconds
+
+    @property
+    def applied_cadence(self) -> ResidentCadence | None:
+        return self._applied_cadence
+
+    @property
+    def adoption_blocker(self) -> tuple[str, str] | None:
+        return self._adoption_blocker
+
+    def effective_poll_deadline(self) -> float:
+        """The idle wait bound: the selected cadence, capped by the recheck.
+
+        A previously long wait must still re-observe a new publication promptly,
+        so the wait never exceeds the documented configuration recheck bound and
+        never depends on work arriving.
+        """
+
+        return min(self._poll_seconds, CONFIG_RECHECK_SECONDS)
+
+    def adopt_cadence(self) -> bool:
+        """Install the currently published cadence at a safe loop boundary.
+
+        Called before each step and before each idle wait.  The effective cadence
+        is only acknowledged (and only reported) after it is actually installed,
+        and an explicitly overridden process keeps its own cadence while
+        reporting the override truthfully.
+        """
+
+        if self._cadence_resolver is None:
+            return False
+        try:
+            candidate = self._cadence_resolver()
+        except Exception:
+            # A transient configuration/database fault must not change the
+            # cadence in use; the loop keeps the last known-good value and the
+            # existing fault path reports the recoverable state.
+            self._adoption_blocker = (
+                "configuration_unavailable",
+                "current engine settings could not be read; the previous cadence stays in use",
+            )
+            return False
+        if candidate is None:
+            self._adoption_blocker = (
+                "configuration_unavailable",
+                "no valid published engine settings exist yet; the infrastructure default "
+                "cadence stays in use",
+            )
+            return False
+        self._last_resolved_cadence = candidate
+        self._poll_seconds = float(candidate.poll_seconds)
+        self._adoption_blocker = None
+        previous = self._applied_cadence
+        self._applied_cadence = candidate
+        if self._adoption_reporter is not None and (
+            previous is None
+            or previous.published_revision_digest != candidate.published_revision_digest
+            or previous.poll_seconds != candidate.poll_seconds
+            or previous.override_source != candidate.override_source
+        ):
+            try:
+                self._adoption_reporter(candidate)
+            except Exception:
+                # Reporting uses the same database as work.  A failed report
+                # keeps the loop alive and leaves the consumer visibly
+                # "unreported" instead of claiming an adoption it cannot prove.
+                return False
+        return True
 
     def note(self, reason: str, detail: str = "") -> None:
         """Record a bounded waiting state from inside a loop step."""
@@ -219,6 +381,9 @@ class ResidentLoop:
 
     def run(self, stop_requested: Callable[[], bool], sleep: Callable[[float], None]) -> int:
         processed = 0
+        # Adopt at the very first boundary so a process that started before the
+        # first publication picks it up as soon as it exists.
+        self.adopt_cadence()
         try:
             while not stop_requested():
                 worked = 0
@@ -229,6 +394,10 @@ class ResidentLoop:
                             "schema_unsupported", "run the explicit upgrade/recovery workflow"
                         )
                     else:
+                        # A busy step may have observed a new publication; adopt
+                        # only at this boundary, never in the middle of admitted
+                        # work, so an in-flight pin is never repinned.
+                        self.adopt_cadence()
                         worked = self._step(self)
                 except Exception as error:  # noqa: BLE001 - deliberate boundary
                     reason, detail = self._reason_for(error)
@@ -236,7 +405,11 @@ class ResidentLoop:
                 processed += worked
                 self._maybe_heartbeat()
                 if not worked:
-                    sleep(self._poll_seconds)
+                    # Recheck configuration during the idle wait on a documented
+                    # bound, so a previously long cadence still observes a new
+                    # publication without work arriving.
+                    self.adopt_cadence()
+                    sleep(self.effective_poll_deadline())
         finally:
             try:
                 self._runtime.service.stop(self._instance_id)

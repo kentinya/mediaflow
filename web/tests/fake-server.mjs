@@ -4722,6 +4722,7 @@ function automationState(session) {
       draftStatus: "draft",
       previewCreated: false,
       previewStale: false,
+      workerPollSeconds: 2,
       granted: false,
       activated: false,
       hostileGrant: false,
@@ -4731,6 +4732,144 @@ function automationState(session) {
     AUTOMATION_STATES.set(key, value);
   }
   return value;
+}
+
+const AUTOMATION_ENGINE_SETTING_FIELDS = new Set([
+  "automation.maximumActiveJobs",
+  "automation.staleJobAgeSeconds",
+  "automation.workerPollSeconds",
+  "automation.schedulerPollSeconds",
+]);
+const AUTOMATION_SETTINGS_REVISION = AUTOMATION_ACTIVE_REVISION;
+const AUTOMATION_SETTINGS_DIGEST = "automation-settings-digest-e2e-001";
+
+function automationSettingsValues(session) {
+  const state = automationState(session);
+  return {
+    "automation.maximumActiveJobs": 100,
+    "automation.staleJobAgeSeconds": 3600,
+    "automation.workerPollSeconds": state.workerPollSeconds,
+    "automation.schedulerPollSeconds": 5,
+  };
+}
+
+function automationSettingsField(fieldPath, overrides = {}) {
+  return {
+    fieldPath,
+    label: fieldPath,
+    unit: "秒",
+    valueType: "number",
+    minimum: null,
+    maximum: null,
+    meaning: "该设置的运营含义",
+    notMeaning: "不是其他概念",
+    consumer: null,
+    integer: false,
+    ...overrides,
+  };
+}
+
+/**
+ * The focused four-field engine settings document.
+ *
+ * It mirrors the real Python projection (proved by
+ * tests/test_automation_settings_management.py): the published target is stated
+ * separately from each consumer's adoption, and no consumer is ever reported as
+ * adopted because the API happens to hold a value. The fake has no live resident
+ * process, so every consumer is truthfully `unreported` and the deployment is
+ * never collectively adopted.
+ */
+function automationSettingsDocument(session) {
+  const values = automationSettingsValues(session);
+  const unreported = {
+    instanceId: "worker-e2e-001",
+    liveness: "live",
+    status: "unreported",
+    effectiveValue: null,
+    publishedRevisionId: AUTOMATION_SETTINGS_REVISION,
+    reportedRevisionId: null,
+    reportedAt: null,
+    appliedFields: [],
+    overrideSource: null,
+    durableState: "adoption_not_reported",
+    nextAction:
+      "this process adopts the published value at its next safe loop boundary",
+  };
+  return {
+    sideEffects: "none",
+    asOf: MANUAL_RECORDED_AT,
+    configRecheckSeconds: 5,
+    authority: "MANAGED",
+    canManage: true,
+    fields: [
+      automationSettingsField("automation.maximumActiveJobs", {
+        label: "并行任务上限",
+        valueType: "integer",
+        integer: true,
+        minimum: 1,
+        maximum: 10000,
+        unit: "个任务",
+      }),
+      automationSettingsField("automation.staleJobAgeSeconds", {
+        label: "任务失效判定时间",
+        valueType: "integer",
+        integer: true,
+        minimum: 60,
+        maximum: 604800,
+      }),
+      automationSettingsField("automation.workerPollSeconds", {
+        label: "Worker 轮询间隔",
+        consumer: "worker",
+      }),
+      automationSettingsField("automation.schedulerPollSeconds", {
+        label: "调度器轮询间隔",
+        consumer: "scheduler",
+      }),
+    ],
+    target: {
+      revisionId: AUTOMATION_SETTINGS_REVISION,
+      revisionVersion: 3,
+      digest: AUTOMATION_SETTINGS_DIGEST,
+      values,
+    },
+    consumers: {
+      worker: {
+        service: "worker",
+        field: "automation.workerPollSeconds",
+        publishedValue: values["automation.workerPollSeconds"],
+        adopted: false,
+        instanceCount: 1,
+        instances: [unreported],
+      },
+      scheduler: {
+        service: "scheduler",
+        field: "automation.schedulerPollSeconds",
+        publishedValue: 5,
+        adopted: false,
+        instanceCount: 0,
+        instances: [],
+      },
+      api: {
+        service: "api",
+        field: "automation.maximumActiveJobs",
+        fields: [
+          "automation.maximumActiveJobs",
+          "automation.staleJobAgeSeconds",
+        ],
+        publishedValues: {
+          "automation.maximumActiveJobs": 100,
+          "automation.staleJobAgeSeconds": 3600,
+        },
+        adopted: false,
+        basis: "api_local",
+        instanceCount: 0,
+        instances: [],
+        explanation:
+          "容量与失效判定由准入/观察边界各自读取当前 Active,不是常驻进程轮询值。",
+      },
+    },
+    adoption: { consumers: 2, adoptedConsumers: 0, allAdopted: false },
+  };
 }
 
 function automationAction(overrides = {}) {
@@ -8685,7 +8824,11 @@ const server = createServer(async (req, res) => {
   if (
     url.pathname.startsWith("/api/v1/operations/") &&
     !url.pathname.startsWith("/api/v1/operations/runs") &&
-    !url.pathname.startsWith("/api/v1/operations/organize/discoveries")
+    !url.pathname.startsWith("/api/v1/operations/organize/discoveries") &&
+    // The focused engine-settings command is served only on its own
+    // /operations/automation path, exactly as the real Python API publishes it;
+    // there is no /api/v1/automation/settings alias to fall back to.
+    url.pathname !== "/api/v1/operations/automation/settings"
   ) {
     url.pathname = url.pathname.replace("/api/v1/operations/", "/api/v1/");
   }
@@ -14948,6 +15091,177 @@ const server = createServer(async (req, res) => {
   // tests/test_automation_workspace_read_model.py) and is GET-only here, so
   // reading it can never admit work. The inventory's cards travel with the
   // list document itself, exactly as the real backend publishes them.
+  if (url.pathname === "/api/v1/operations/automation/settings") {
+    if (!operationsGuard(res)) {
+      return;
+    }
+    if (req.method === "GET") {
+      recordManualRequestForSession({
+        method: "GET",
+        objectId: null,
+        objectType: "automation_engine_settings",
+        path: "/api/v1/operations/automation/settings",
+        body: null,
+      });
+      sendJson(res, 200, automationSettingsDocument(session));
+      return;
+    }
+    if (req.method === "PUT") {
+      const parsed = await readBoundedJsonBody(req, res);
+      if (!parsed.ok) {
+        return;
+      }
+      const document = parsed.document;
+      const state = automationState(session);
+      if (document.reconcile === true) {
+        recordManualRequestForSession({
+          method: "PUT",
+          objectId: null,
+          objectType: "automation_engine_settings_reconcile",
+          path: "/api/v1/operations/automation/settings",
+          body: { reconcile: true },
+        });
+        sendJson(res, 200, {
+          sideEffects: "none",
+          committed: false,
+          evidence: null,
+          nextAction:
+            "no matching durable submission was observed; publish deliberately again",
+        });
+        return;
+      }
+      const settings = document.settings;
+      if (
+        settings === null ||
+        typeof settings !== "object" ||
+        Array.isArray(settings)
+      ) {
+        sendJson(res, 422, {
+          error: {
+            code: "settings_payload_invalid",
+            message: "settings must be an object",
+            details: {
+              durableState: "active_unchanged",
+              sideEffects: "none",
+              retrySafe: true,
+              nextAction: "submit the four fields",
+            },
+          },
+        });
+        return;
+      }
+      const unsupported = Object.keys(settings).filter(
+        (key) => !AUTOMATION_ENGINE_SETTING_FIELDS.has(key),
+      );
+      if (unsupported.length > 0) {
+        sendJson(res, 422, {
+          error: {
+            code: "settings_field_unsupported",
+            message: "unsupported field",
+            details: {
+              field: unsupported[0],
+              durableState: "active_unchanged",
+              sideEffects: "none",
+              retrySafe: true,
+              nextAction: "edit only the four engine settings",
+            },
+          },
+        });
+        return;
+      }
+      const invalidInteger = Object.entries({
+        "automation.maximumActiveJobs": [1, 10000],
+        "automation.staleJobAgeSeconds": [60, 604800],
+      }).find(([field, [low, high]]) => {
+        const value = settings[field];
+        return (
+          typeof value !== "number" ||
+          !Number.isFinite(value) ||
+          !Number.isInteger(value) ||
+          value < low ||
+          value > high
+        );
+      });
+      if (invalidInteger !== undefined) {
+        sendJson(res, 422, {
+          error: {
+            code: "settings_out_of_range",
+            message: "value out of range",
+            details: {
+              field: invalidInteger[0],
+              durableState: "active_unchanged",
+              sideEffects: "none",
+              retrySafe: true,
+              nextAction: "enter a whole number within the allowed range",
+            },
+          },
+        });
+        return;
+      }
+      const invalidPoll = [
+        "automation.workerPollSeconds",
+        "automation.schedulerPollSeconds",
+      ].find((field) => {
+        const value = settings[field];
+        return (
+          typeof value !== "number" || !Number.isFinite(value) || value <= 0
+        );
+      });
+      if (invalidPoll !== undefined) {
+        sendJson(res, 422, {
+          error: {
+            code: "settings_out_of_range",
+            message: "poll must be a finite positive number",
+            details: {
+              field: invalidPoll,
+              durableState: "active_unchanged",
+              sideEffects: "none",
+              retrySafe: true,
+              nextAction: "enter a finite positive number of seconds",
+            },
+          },
+        });
+        return;
+      }
+      if (document.expectedDigest !== AUTOMATION_SETTINGS_DIGEST) {
+        sendJson(res, 409, {
+          error: {
+            code: "automation_settings_stale",
+            message: "the published settings changed",
+            details: {
+              durableState: "active_preserved",
+              sideEffects: "none",
+              retrySafe: true,
+              nextAction: "refresh the published values and save again",
+            },
+          },
+        });
+        return;
+      }
+      state.workerPollSeconds = settings["automation.workerPollSeconds"];
+      recordManualRequestForSession({
+        method: "PUT",
+        objectId: null,
+        objectType: "automation_engine_settings_save",
+        path: "/api/v1/operations/automation/settings",
+        body: { settings },
+      });
+      sendJson(res, 201, {
+        published: true,
+        unchanged: false,
+        sideEffects: "configuration_only",
+        revisionId: "automation-settings-rev-e2e-002",
+        revisionVersion: 4,
+        publishedValues: settings,
+        nextAction:
+          "each live consumer adopts the published target at its next safe loop boundary",
+        readback: automationSettingsDocument(session),
+      });
+      return;
+    }
+    sendJson(res, 405, { error: { code: "method_not_allowed" } });
+    return;
+  }
   if (url.pathname === "/api/v1/automation/records" && req.method === "GET") {
     if (!operationsGuard(res)) {
       return;
@@ -16931,6 +17245,7 @@ const server = createServer(async (req, res) => {
       draftStatus: "draft",
       previewCreated: false,
       previewStale: false,
+      workerPollSeconds: 2,
       granted: false,
       activated: false,
       createdDefinition: null,

@@ -3,8 +3,9 @@
  *
  * Three sibling tabs share one shell: `任务列表` (the bounded definition
  * inventory), `执行记录` (read-only admitted-run records) and `全局设置` (the
- * existing managed settings surface). Every number and row comes from a
- * backend read; nothing is filtered, aggregated or authorized in the browser.
+ * focused four-field Automation engine settings form and its per-consumer
+ * adoption readback). Every number and row comes from a backend read; nothing
+ * is filtered, aggregated or authorized in the browser.
  *
  * The submitted tab, filters, sort, time window and server page cursor live in
  * the route search, so a reload, a reconnect and a return from a definition or
@@ -39,6 +40,7 @@ import {
   type AutomationTab,
 } from "./AutomationInventory";
 import { AuthorizedReadBoundary } from "../../shared/auth/AuthorizedReadBoundary";
+import { AutomationSettingsPanel } from "./AutomationSettingsPanel";
 import { RefreshControl } from "../../shared/ui/RefreshControl";
 import { StatusBanner } from "../../shared/ui/StatusBanner";
 import type {
@@ -294,13 +296,10 @@ export function AutomationListPage() {
   }
 
   function openSettings() {
-    // The settings form/publication/resident adoption is a separate coherent
-    // unit (RO-6). This tab is an entry to the one existing managed settings
-    // surface — no duplicate form and no adoption claim.
-    void navigate({
-      to: "/configuration",
-      search: { tab: "settings" },
-    });
+    // The header shortcut opens the same focused engine-settings surface the
+    // `全局设置` tab renders in place: one form, one publication authority and
+    // one adoption readback, reached without leaving the workspace.
+    selectedTab("settings");
   }
 
   function openTaskCenter(runId: string) {
@@ -408,25 +407,7 @@ export function AutomationListPage() {
         ))}
       </nav>
 
-      {tab === "settings" && (
-        <section className="mf-count-section">
-          <h3>全局设置</h3>
-          <p className="mf-dashboard-meta">
-            自动化引擎设置（最大并发任务数、任务失效判定时间、Worker
-            与调度器检查间隔） 与系统设置共用同一份受管配置和同一套保存权限。
-            这些设置的发布、生效和常驻进程采用情况属于单独的设置任务，本页只提供入口。
-          </p>
-          <div className="mf-actions">
-            <button
-              type="button"
-              className="mf-button mf-button-secondary"
-              onClick={openSettings}
-            >
-              打开系统设置
-            </button>
-          </div>
-        </section>
-      )}
+      {tab === "settings" && <AutomationSettingsPanel />}
 
       {tab === "definitions" && (
         <AuthorizedReadBoundary

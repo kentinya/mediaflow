@@ -815,6 +815,8 @@ class AppState:
         self.task_center_problems: dict[str, object] | None = None
         self.task_center_problem_page: dict[str, object] | None = None
         self.inventory_poll_population: dict[str, object] | None = None
+        #: The real resident cadence consumers the settings proof starts.
+        self.resident_consumers: tuple[_HarnessResidentConsumer, ...] | None = None
 
     @property
     def database(self) -> Path:
@@ -5328,6 +5330,131 @@ def cli_files_list(
     return {"ok": True, "code": code, "output": output.getvalue()}
 
 
+class _HarnessResidentConsumer:
+    """A real resident loop running inside this harness process.
+
+    The browser proof needs a *live consumer that adopts the published engine
+    settings and reports its own adoption*, exactly as ``worker run`` does.  It
+    reuses the production :class:`ResidentLoop` and the production cadence
+    adoption/reporting composition — a thread only provides the process
+    boundary — so the readback the browser sees is derived from a real
+    adoption, never from a fabricated API row.
+
+    The thread stops on harness shutdown and never claims work, opens a
+    Provider or mutates Storage.
+    """
+
+    def __init__(self, state: AppState, service: str, field_path: str) -> None:
+        self._state = state
+        self._service = service
+        self._field_path = field_path
+        self._stop = threading.Event()
+        self._thread: threading.Thread | None = None
+        self._loop = None
+
+    def start(self) -> None:
+        from mediaflow.application.resident_runtime import (
+            ResidentLoop,
+            build_resident_runtime,
+            register_resident_process,
+            resident_cadence_adoption,
+            resident_instance_id,
+        )
+
+        state = self._state
+        runtime = build_resident_runtime(str(state.database))
+        instance = resident_instance_id(self._service)
+        register_resident_process(
+            runtime,
+            self._service,
+            instance,
+            heartbeat_interval_seconds=0.2,
+        )
+        configured = str(state.managed.config_path)
+        published_field = "worker" if self._service == "worker" else "scheduler"
+        resolver, reporter = resident_cadence_adoption(
+            runtime,
+            self._service,
+            instance,
+            field_path=self._field_path,
+            published_resolver=_harness_published_cadence(configured, published_field),
+        )
+
+        def step(loop) -> int:
+            loop.clear_waiting()
+            return 0
+
+        loop = ResidentLoop(
+            runtime,
+            self._service,
+            instance,
+            heartbeat_interval_seconds=0.2,
+            poll_seconds=5.0,
+            stdout=io.StringIO(),
+            step=step,
+            cadence_resolver=resolver,
+            adoption_reporter=reporter,
+        )
+        self._loop = loop
+        self._thread = threading.Thread(
+            target=lambda: loop.run(
+                self._stop.is_set,
+                lambda seconds: self._stop.wait(min(seconds, 0.2)),
+            ),
+            daemon=True,
+        )
+        self._thread.start()
+
+    def stop(self) -> None:
+        self._stop.set()
+        if self._thread is not None:
+            self._thread.join(timeout=10.0)
+
+
+def _harness_published_cadence(configured_path: str, field: str):
+    """Resolve the current managed Active publication plus one poll cadence."""
+
+    from mediaflow.domain.automation_settings import engine_values_from_document
+
+    def resolve():
+        try:
+            configuration = json.loads(Path(configured_path).read_text(encoding="utf-8"))
+            database_path = str(configuration["persistence"]["databasePath"])
+            with SQLiteConfigurationRepository(database_path) as repository:
+                active = repository.get_active_revision()
+        except Exception:
+            return None
+        if active is None:
+            return None
+        values = engine_values_from_document(active.document)
+        if values is None:
+            return None
+        cadence = values.worker_poll_seconds if field == "worker" else values.scheduler_poll_seconds
+        return (
+            active.revision_id,
+            active.revision_sequence or active.version,
+            active.digest,
+            float(cadence),
+        )
+
+    return resolve
+
+
+def harness_start_resident_consumer(state: AppState) -> dict[str, object]:
+    """Start the real Worker and Scheduler cadence consumers for the browser."""
+
+    if state.resident_consumers is not None:
+        return {"started": True, "already": True}
+    consumers = (
+        _HarnessResidentConsumer(state, "worker", "automation.workerPollSeconds"),
+        _HarnessResidentConsumer(state, "scheduler", "automation.schedulerPollSeconds"),
+    )
+    for consumer in consumers:
+        consumer.start()
+    state.resident_consumers = consumers
+    return {"started": True, "consumers": [item._service for item in consumers]}
+
+
 def application(environ, start_response):
     path = str(environ.get("PATH_INFO", ""))
     if path.startswith("/__harness__/") and STATE is not None:
@@ -5489,6 +5616,8 @@ def application(environ, start_response):
             except ValueError:
                 requested_edits = 0
             document = crowd_automation_command_trail(STATE, edits=requested_edits)
+        elif path == "/__harness__/start-resident-consumers" and method == "POST":
+            document = harness_start_resident_consumer(STATE)
         elif path == "/__harness__/restart" and method == "POST":
             STATE.restart()
             document = {"restarted": True}
