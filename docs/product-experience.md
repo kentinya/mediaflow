@@ -38,12 +38,21 @@ User-authorized on 2026-10-24; [Slice46](../SLICE.md) and `V2-UX-004`, `V2-OPS-0
   mutations never replay. Kind/principal/source/pin isolation and auth continuation remain.
 - **Manual admission:** select one/multiple files or bounded folders/mixed scopes on ResourceLibrary
   Files → explicitly submit 整理 → backend checks same-source unfinished organizing work and explicit
-  extension exclusions → follow the admitted task. Rule/include misses, metadata/target/conflict
-  readiness and a suffix merely absent from an allowlist cannot force a ready-plan step before task
-  creation. Duplicate/excluded items have exact reasons and eligible siblings remain independent;
+  extension exclusions → follow the admitted task. Direct files do not require an allowlisted suffix.
+  Folder discovery (including folders in mixed selections) retains the library's configured primary-
+  media extension filter, defaulting to video. Rule/include misses and metadata/target/conflict
+  readiness cannot force a ready-plan step before task creation. Duplicate/excluded items have exact
+  reasons and eligible siblings remain independent;
   an existing same-source run can be opened instead of duplicated. Queued/paused/unresolved recovery
   work owns its source across manual/Automation requests; terminal history or a shared filename alone
   does not block entry. Backend ownership is atomic; unknown submissions reconcile the exact request.
+- **Folder files and attachments:** default media types keep pictures/subtitles/NFO out of independent
+  primary processing. Existing policy-controlled matching may attach them to a video; unassociated
+  files remain at source without an independent Recognition/Attention problem. Turning artwork off
+  does not turn pictures into primaries; the existing other-same-stem setting can still attach
+  matching pictures when enabled. Explicit library media-extension customization stays effective;
+  no image-content/ad detection or automatic deletion is added. This replaces the earlier46 target
+  of admitting every non-excluded folder file, while direct-file selection keeps its explicit intent.
 - **Manual processing/recovery:** observe real discovery/stability waiting and the full pipeline
   inside the task. Recognition misses/ambiguity, Metadata decisions, Classification misses and
   Conflict problems enter their four lists/Attention/counts. Save the permitted decision → analyze
@@ -108,7 +117,8 @@ This TARGET supersedes the later CURRENT text's mixed file-operation center popu
 center-created manual organizing entry, pre-task ready-plan gating for explicit Files organizing
 and nine-view/general-failure recovery. Exact summary/confirmation moves inside the admitted manual
 task and still precedes mutation. Manual entry no longer applies automatic include/exclude/match
-rules as extra vetoes; explicit excluded extensions and hard safety limits remain. Remove global Worker/
+rules as extra vetoes; configured folder media-type filtering, explicit excluded extensions and hard
+safety limits remain. Remove global Worker/
 resident-status, discovery and manual-operation blocks and center creation actions; task-specific
 readiness reasons stay visible. Existing prepared-work and four-type native recovery remain legal
 continuations. V2-AUTO-010/011 explicitly replace the later CURRENT Automation grant/pre-analysis

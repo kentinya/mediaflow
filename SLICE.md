@@ -47,7 +47,8 @@ prior closure records remain historical facts. Base and Implementation Head rema
   `unattended_execution_authority_missing` 的重复失败，不再要求先分析、再单独授权。
 - “需要处理”及待处理任务统计只包含识别、元数据、分类、冲突四类当前问题；删除“失败恢复”。
   其他失败只在“全部任务 / 已结束”查看任务与失败原因，不单独统计失败或提供恢复指引。
-- 手动整理入口只按同一文件是否已有未结束的整理工作、后缀是否被明确排除判断业务准入；
+- 手动整理保留同源未结束工作去重及明确后缀排除；选文件夹时沿用资源库的媒体类型筛选，
+  默认视频作为主文件，图片等按已有附件配置处理，不因未明确排除而自动成为独立整理项。
   不再要求规则全部匹配或先生成可执行摘要。明确提交后先受理整理任务，四类问题在任务内恢复。
 - 自动化“运行一次”直接受理并执行该已保存整理策略一次，四类问题同样在任务内处理；
   正常文件无需先出摘要再确认一次。文件页手动整理仍保留任务内摘要与执行确认。
@@ -107,7 +108,9 @@ recent results. Unknown admission is reconciled by exact durable identity, never
 
 **Manual organizing and follow-up:** select live ResourceLibrary files/folders → explicitly submit
 整理 → check same-source unfinished organizing work and explicit extension exclusions → admit durable
-organizing work without requiring all business rules to match. Follow discovery/stability/pipeline
+organizing work without requiring all business rules to match. Folder expansion retains the library's
+configured primary-media extension filter, defaulting to video, plus existing attachment semantics.
+Follow discovery/stability/pipeline
 progress and per-item findings in Task Center. Recognition/Metadata/Classification/Conflict problems
 enter their native task/type recovery; ready items reach the exact in-task summary and selected
 execution confirmation. Save a decision → analyze → review/confirm the eligible summary → inspect
@@ -208,12 +211,25 @@ needed for the same readable login journey; no form/authentication redesign or d
 Remove center new-organize CTAs, manual-action section and its independent source-selection entry.
 ResourceLibrary Files is the sole normal entry for new file-selection-based manual organization.
 An explicit Files 整理 command admits durable bounded organizing work before complete rule matching,
-metadata/target/conflict resolution or an executable summary exists. The two business entry checks
-are unfinished same-source organizing work and explicitly excluded extensions. A suffix absent from
-an allowlist is not an explicit exclusion. Automatic scan include/exclude/rule-match readiness must
-not silently become extra vetoes for this deliberate manual selection. Apply the same contract to
-single/multiple files and the bounded contents of folder/mixed selections; retain attachment semantics.
-MediaLibrary stays a destination, never an organizing source.
+metadata/target/conflict resolution or an executable summary exists. Directly selected files retain
+the two business entry checks: unfinished same-source organizing work and explicitly excluded
+extensions; a merely unlisted suffix is not an explicit exclusion for that deliberate file selection.
+Folder expansion (including the folder part of mixed selections) retains the ResourceLibrary's
+configured primary-media extension filter, whose default is video. This restores the existing
+folder file-type behavior and supersedes the earlier46 all-non-excluded-folder-files target.
+It does not hardcode video against explicit library configuration or restore rule-ready gating.
+Other automatic scan include/exclude/rule-match readiness must not become additional manual vetoes.
+
+Under the default media extensions, pictures/subtitles/NFO are not independent primary candidates
+merely because they were found in a selected folder or their suffix was not explicitly excluded.
+Existing policy-controlled attachment association remains: matched sidecars may follow an admitted
+primary; unassociated files stay at source and create no Recognition/Attention problem. Disabling
+artwork does not promote pictures to primaries. Preserve the existing other-same-stem option, which
+can still associate matching pictures when enabled; no image-content/ad detection or automatic
+deletion is added. Apply these folder semantics inside the admitted task's bounded discovery,
+without changing explicit single/multiple-file intent or MediaLibrary's destination-only role.
+A folder with no eligible primary explains that no eligible media was found; filtered sidecars
+do not become fabricated Recognition failures.
 
 Backend duplicate detection uses verified Storage/source identity, not just filename; include queued,
 running, paused and unresolved four-type/recovery work, across manual/Automation/continuations.
@@ -463,7 +479,7 @@ supervision redesign, new file commands or unrestricted authority is authorized.
 | AC-13 | Enabled definitions execute normal due runs without independent grants, grant pre-analysis or per-run confirmation; existing enabled/no-grant definitions need no off/on cycle and produce no missing-grant failures. Disabled/removed definitions cannot start future scheduled work or unperformed scheduled effects; live permission loss/disable/removal races fail closed without rollback. Changed enabled successors require deliberate checked publication and execution permission. Old grants/revocations/failed history do not override Enabled or replay/relabel work. Healthy empty scope reports no work; unavailable scope remains factual failure. |
 | AC-14 | Only current Recognition/Metadata/Classification/Conflict problems and their required human recovery steps enter Attention and pending-task statistics. Tasks deduplicate across types; type/file counts remain accurate across pages, filters, refresh and restart. Failure Recovery and separate Task Center failure statistics/guidance are absent, including former deep links; other terminal failures and factual reasons/effects remain accessible in All/Ended without success relabelling. |
 | AC-15 | Four-type decision → analysis → exact summary/confirmation → real outcome remains Web-completable. Save/admission alone does not imply success; after actual resolution no stale review/continuation keeps a task in Attention. If all organizing work succeeds through exact linked recovery, overall display becomes Completed/recovered while prior failed attempts remain history. A new four-type blocker changes type; a purely technical follow-up failure becomes read-only All/Ended history. Mixed successful/ignored/four-type/technical/uncertain items retain independent truth without false success or completed/uncertain replay. |
-| AC-16 | Manual entry business checks are only same-source unfinished organizing work and explicit extension exclusion; rule/include misses and non-excluded suffixes cannot demand a ready plan first. Duplicates/exclusions have truthful per-item reasons and independent siblings; source ownership is atomic across overlapping manual/Automation/continuation requests, including queued/paused/recovery work, and is not inferred from filename or any past task. Rule-miss/ambiguous-recognition, metadata-decision, classification-miss and conflict cases are admitted and reachable in their four task recovery lists/counts through real completion. Stability, bounds, RBAC/confinement/pins, exact confirmation and completed/uncertain non-replay remain enforced. |
+| AC-16 | Direct-file business checks remain same-source unfinished organizing work and explicit extension exclusion; a merely unlisted suffix does not veto explicit file selection. Folder/mixed-folder discovery retains the configured primary-media extension filter, defaulting to video, and existing attachment semantics. Default images/subtitles/NFO do not become independent primaries or generate Attention through primary admission; artwork-off does not promote images, and other-same-stem settings remain effective. Unassociated files stay at source; no ad-content classifier/deletion is added. Rule/include misses cannot demand a ready plan first. Duplicates/exclusions have truthful per-item reasons and independent siblings; source ownership is atomic across overlapping manual/Automation/continuation requests, including queued/paused/recovery work, and is not inferred from filename or any past task. Rule-miss/ambiguous-recognition, metadata-decision, classification-miss and conflict cases are admitted and reachable in their four task recovery lists/counts through real completion. Stability, bounds, RBAC/confinement/pins, exact confirmation and completed/uncertain non-replay remain enforced. |
 | AC-17 | One explicit Run once on an enabled or disabled saved definition admits a real organizing task before rule readiness and executes ready items through the same bounded pipeline, without preliminary analysis/grant or a second initial summary/execute gate. Four business blockers enter native recovery/Attention/counts and complete without successful-sibling replay; Files manual summary/confirmation remains. Saved scope/filtering/limits/pins, schedule independence, source ownership, exact unknown-request reconciliation, empty/no-work, partial/incomplete bounds, permissions and uncertain effects remain truthful across refresh/restart and simultaneous triggers. |
 | AC-18 | Scheduled execution and Run once record each not-yet-stable file as a current-run failure without media mutation or waiting for it; other files continue. A settled stable-success/unstable-failure mix is PartialSuccess, and all-unstable work is Failed rather than empty/no-work success. Instability alone adds no four-type Attention/pending count or recovery entry. A subsequent normal run uses its ordinary saved scope/filtering and stability checks, with no previous-failure retry/selection mechanism or change to old results. Configured stability/elapsed proof and Files manual waiting remain intact. |
 
@@ -499,8 +515,14 @@ B's final evidence includes:
   E2E alone does not establish backend population, persistence or Worker behavior.
 - Cover manual submission with recognition misses/ambiguity, metadata decisions, classification
   misses and conflicts: a real durable task exists before readiness, each native recovery/count
-  works through verified outcome and restart. Exercise explicit excluded vs merely unlisted suffixes,
-  automatic include-rule misses, mixed/folder selections, stability waiting and real bounds; shared
+  works through verified outcome and restart. Exercise explicit excluded vs merely unlisted suffixes
+  for direct file selection, automatic include-rule misses, mixed/folder selections, stability waiting
+  and real bounds. Folder discovery must retain configured primary extensions and default video
+  filtering: cover video with poster/fanart/same-stem images, unrelated ad images, subtitles and NFO,
+  attachments/artwork on/off and other-same-stem settings. Unassociated non-primary files stay at source,
+  create no independent Recognition/Attention item and are not promoted when artwork is off;
+  explicit library extension customization remains honored. Cover folders containing only non-primary
+  files with truthful no-eligible-media readback instead of Recognition failures. Shared
   Automation filtering stays unchanged. Overlapping/concurrent manual/Automation/recovery requests
   reserve one source once, while same-named distinct sources and terminal history are not falsely
   blocked. Preserve analysis-only zero mutation/no task authority, exact request readback, partial/
@@ -541,5 +563,5 @@ Planning started on `main` at Base above; repository/Git/governance files were w
 preflight passed. Pre-existing deletion of `docs/pics/操作与任务.png` and untracked reference images,
 logs, OS files and test/artifact directories remain unrelated, untouched and unstaged. Private
 runtime configuration/databases/user media are not planning fixtures. No push is authorized/performed.
-The current Automation-stability amendment starts from checkpoint `a3d345bf255cc812a64013a198d13a679141347c`
+The current folder-media-filter amendment starts from checkpoint `fccf0ea4ac18c2683ed2095d2cb3e943bb3b0800`
 on the same branch with the same unrelated dirty files preserved; it does not repin the Slice Base.

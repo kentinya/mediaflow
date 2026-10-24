@@ -17,8 +17,10 @@ Slice46 — **V2 Organizing Task Center and Readable Actions** — is **ACTIVE**
   RO-4 selects eight views and only four business problem types for Attention/pending-task statistics,
   removing Failure Recovery and other failures'
   separate statistics/guidance; those failures remain read-only in All/Ended. RO-2 now admits explicit
-  Files manual organizing before business-rule readiness, using only same-source unfinished work
-  and explicit extension exclusion as business entry checks. Four-type problems and exact summary/
+  Files manual organizing before business-rule readiness. Direct files retain same-source unfinished
+  work/explicit extension checks; folder/mixed-folder discovery retains configured media-type filtering
+  (default video) and existing attachment settings. Ordinary images are not promoted to independent
+  primaries/Attention problems when artwork is off. Four-type problems and exact summary/
   execution confirmation occur inside the Files manual task; baseline safety remains. AC-11–18 apply;
   B plans against all five outcomes and V2-OPS-016/017 plus V2-AUTO-010/011.
 - Next Action: **B PLANS THE FIRST TASK** after the Contract is checkpointed and governance passes.

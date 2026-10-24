@@ -20,10 +20,16 @@ Task/separate preparation readback and unknown-admission recovery stay reachable
 the center's global discovery list; shared exact-context preparation routes/components may be reused.
 
 Explicit Files 整理 now admits durable bounded organizing work before complete business-rule
-resolution or a ready plan. Admission business gates are only same-source unfinished organizing
-work and explicitly excluded extensions; automatic include/exclude/match rules and merely unlisted
-suffixes cannot recreate the old pre-task readiness gate. This is a manual-only override of the
-CURRENT discovery filter/admission order below, not a change to definition-bound Automation filters.
+resolution or a ready plan. Direct-file business gates remain same-source unfinished organizing
+work and explicitly excluded extensions; a merely unlisted suffix does not veto that file selection.
+Inside admitted folder discovery, retain the configured ResourceLibrary primary-media extension
+filter, defaulting to video, including folder portions of mixed requests. Reuse existing attachment
+association separately: default pictures/subtitles/NFO are not independent primaries/Attention
+problems; unmatched files stay at source. Artwork-off never promotes pictures; existing other-same-
+stem settings still apply. Do not add image-content/ad detection or deletion. This supersedes the
+earlier46 blanket folder-extension override while keeping direct-file intent, other automatic
+include/exclude overrides and task-before-business-resolution admission; no rule-ready gate returns.
+Definition-bound Automation filters remain unchanged.
 Preserve server-verified source intent, RBAC, library/root confinement, request bounds and immutable
 pins. Check/reserve concrete source ownership atomically across overlapping manual/Automation/
 continuation admission, including queued/paused/unresolved four-type work; do not infer duplicates

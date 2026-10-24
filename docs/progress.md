@@ -18,8 +18,10 @@ The attention amendment selects eight views and four business types for Attentio
 statistics; Failure Recovery and other failures' separate statistics/guidance are removed. Other
 terminal failures remain factual read-only records in All/Ended, not outstanding recovery tasks.
 The latest manual-entry amendment admits explicit Files organizing before business-rule readiness;
-business entry checks are same-source unfinished work and explicit extension exclusion. Four-type
-problems and exact summary/execution confirmation occur inside the Files manual task. The latest
+direct-file business checks are same-source unfinished work and explicit extension exclusion.
+Folder/mixed-folder discovery retains configured media-type filtering (default video) and existing
+attachment settings, without promoting ordinary images into independent Recognition/Attention items.
+Four-type problems and exact summary/execution confirmation occur inside the Files manual task. The latest
 V2-AUTO-010/011 amendment supplies scheduled intent through checked Enabled and one-run intent through
 Run once, with no second normal initial summary/execute gate; four-type problems use task recovery.
 Saved definition scope/filtering/limits, backend permissions/safety and historical outcomes remain.
