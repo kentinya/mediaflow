@@ -317,150 +317,163 @@ composition/style, not sample data, removed modes, validation ranges or executio
 
 ### Checkpoint
 
-- Status: **READY FOR B REVIEW**. B's 2026-10-24 FIX-REQUIRED round R1/R3 (three corrections)
-  is implemented in the working tree; the affected-test plan and the assigned native matrix were
-  executed on it. B acceptance (T3 gates, Slice Final T4) remains pending.
+- Status: **READY FOR B REVIEW**. B's 2026-10-24 FIX-REQUIRED round (R3 ×2 + T8) is implemented in
+  the working tree with its affected-test plan and the assigned native matrix executed on it. B
+  acceptance (T3 gates, Slice Final T4) remains pending; no self-PASS is claimed.
 - Task Base unchanged (`78ec108d4473e8c140174c1356d0e88a1ae42b34`); reassessment source
   `533a666860a571e61c78ac49b3e45c44acaa419e` is not a Base.
-- Implementation candidate: `29048876f0546efd3ba9c8a5cd5463b7f4b8168f` (parent
-  `383aae3d06e1fb2075d263368d67535e93541fae`). B's reviewed input was
-  `f0c42784ad3fe6b748cd9457bc440a83e37346e1` (report successor `2b75fe98362a58aaf4c7b4b01e19d1a1fd76dede`).
-  This report is a documentation successor of that candidate, so B reviews
-  `383aae3d06e1fb2075d263368d67535e93541fae..HEAD`.
+- This round starts from B's reviewed candidate `87ec86f0cdbd3c84e901594e5f0dd034f4e0cf12`
+  (implementation `29048876f0546efd3ba9c8a5cd5463b7f4b8168f`). Implementation checkpoint:
+  `d9157af` (`fix(automation): reconcile recovery per original item and read producer results`);
+  this report is its documentation successor, so B reviews
+  `87ec86f0cdbd3c84e901594e5f0dd034f4e0cf12..HEAD`. No history rewrite, no push.
+- Preserved untouched: the pre-existing `docs/pics/操作与任务.png` deletion, every untracked
+  artifact (`.DS_Store`, `.t*.log`, `output/…zip`, `web/test-results*`, untracked `15`) and both
+  untracked reference PNGs (digests below). Private config stays ignored/untracked/unstaged.
 
 ### Changed behavior — this correction round
 
-1. **R1 — one population rule excludes durable follow-up executions.**
-   `_recovery_follow_up_sql` derives a run's follow-up lineage from persisted identities only:
-   `recovery_continuations.new_task_id`, `scope_continuations.new_task_id`,
-   `metadata_correction_continuations.new_task_id`, and `manual_executions.task_id` proven to be
-   referenced by `manual_recovery_preparations` or `manual_recovery_links`. That is projected once
-   as `is_recovery_follow_up` in the shared run document, and one constant
-   `_ORIGINAL_AUTOMATION_ADMISSION_WHERE` is now the *only* Automation population rule used by the
-   records page/filtered total/status partitions (`_run_query_clauses`), `automation_run_metrics`
-   (both calendar cohorts) and `automation_latest_admitted_runs`. A supported recovery execution
-   that inherits `origin_definition_id` therefore no longer becomes another original admission,
-   while the origin is preserved on the row (no write-path change). The lineage probe is evaluated
-   only for admission-shaped rows, so the unrestricted Operations inventory pays nothing new.
-2. **R3 — handling derives from verified resolution, not completed analysis.**
-   `automation_linked_handling` now returns, per linked entry, the linked Task's own durable item
-   evidence (success/failed/active/uncertain counts, from `task_items` + latest `task_results`
-   effect certainty) and `execution_status` only from a *real* `manual_executions` row.
-   `_summarize_handling` was rewritten: queued/running/admitted/active ⇒ `handling`; only the newest
-   linked **execution** terminally settling with ≥1 success and zero failed/uncertain of its own ⇒
-   `resolved`; a settled-but-incomplete or failed/cancelled execution ⇒ `recovery_failed`; an
-   analysis-only lineage or a prepared-but-unconfirmed plan ⇒ `investigation` (never `resolved`).
-   A failed durable read is now explicitly `unavailable` for every row on the page instead of
-   falling through to `unhandled`.
-3. **R3 — the record shows the original concrete reason and known effects.**
-   New bounded read `automation_record_failure_evidence` returns, per Task on the page, the durable
-   failed/partial **Results** (newest per item — a historical fact that survives the source item
-   leaving `failed`) plus any currently failed/partial item with no such Result, a per-Task
-   `ROW_NUMBER()` sample of 10 and page/per-Task honest counts. Both the counts and the effect
-   partition (`none`/`known`/`uncertain`/`partial`) cover the whole evidence population, not the
-   sample. `_automation_record_failure_stage` now publishes the decoded bounded category/message,
-   durable state, side effects, retry safety and next action per item, the aggregate effects, the
-   truncation flag and an explicit `unavailable: true` shape — never raw exception text.
-   `reachedItemBound` is now real: `OperationsRunOverview.admitted_item_bound` is the Job's own
-   `limit_value` (a definition-occurrence containment bound, never today's Active) and
-   `reached_item_bound` requires an exactly-reached durable primary-item population; a definition
-   Run once publishes `admittedItemBound: null` because its persisted limit is the *selected* count.
-   Web consumes the new fields and renders them in the records row.
+1. **R3/P1 — resolution is reconciled per original affected item (T3/T5/T6).**
+   `automation_linked_handling` now also computes one bounded coverage read
+   (`_automation_handling_coverage_locked`) inside the same transaction. Its *affected* population is
+   the record's own durable failed/partial evidence (the Result-first set the failure stage already
+   publishes, matched case-insensitively), and an affected item counts as *resolved* only when the
+   **same source identity** carries `manual_recovery_preparations.status='confirmed'` →
+   `manual_executions` terminally completed → that execution's own
+   `manual_execution_items` row with `status='success'`, `effect_certainty='verified_complete'`,
+   empty `uncertain_effects` and a `success` Result, joined on
+   `json_extract(source_json,'$.storageId'/'$.path')` against the original TaskItem. `_summarize_handling`
+   now receives that coverage and refuses to publish `resolved` unless **every** affected item
+   carries its own proof: a successful subset of two failures publishes `investigation`
+   (`受影响条目 2 · 已确认恢复 1 · 仍未解决 1`) and an execution that left its own failed/uncertain item
+   publishes `recovery_failed`. Nothing about the write path, the execution semantics or the stored
+   outcomes changed, and no synthetic Task/Job/Result is created.
+2. **R3/P1 — durable Result vocabulary and effect certainty are read truthfully (T3/T5/T6).**
+   `automation_record_failure_evidence` compares `lower(task_results.status)` so the producer's own
+   `FAILED`/`PARTIAL` rows are included (B's reproduced defect: two known-zero-effect failures
+   published `effects.partial=2`, `none=0`). TaskItem and Result meanings are kept distinct: a
+   Result-backed entry publishes that Result's `effect_certainty`, and only an item with **no**
+   durable failure Result falls back to its current TaskItem state — which now reports
+   `effectCertainty=unknown` instead of being counted as a `partial` effect. Each entry also
+   publishes `statusSource` (`result`/`task_item`) so the two are never conflated. The failure
+   reason therefore survives the source item leaving `failed` during recovery: the historical reason
+   sample/count no longer drops while handling starts, and both original reasons stay readable
+   through analysis, preparation, execution and a durable reopen.
+3. **T8 — the real-Python workspace spec is excluded from the default fake-server suite.**
+   `web/playwright.config.ts` `testIgnore` gained `**/automation-workspace.python.spec.ts` following
+   the established convention for the other real-Python specs. Verified by `--list`: the default
+   config now collects **238 tests in 16 files** with **zero** `automation-workspace.python` entries
+   (previously all five were collected against the Node fake), while
+   `playwright.python.automation.config.ts` still collects it (**21 tests in 3 files** across the
+   workspace/lifecycle/run-once specs). No assertion, timeout, gate or fake harness control was
+   weakened or removed.
+4. **Read/Web surface.** The records row now renders the backend effect partition
+   (`已知效果：无效果 n · 已确认 n · 不确定 n · 部分 n`), an explicit unavailable-reason line, and the
+   per-item coverage (`受影响条目 / 已确认恢复 / 仍未解决`). `AutomationRecordFailureItemModel` gained
+   `statusSource` and the handling model gained `affectedItems`/`resolvedItems`/`unresolvedItems`
+   (optional-nullable, so an older document still renders and an unavailable read stays explicit).
 
 ### Affected commands and actual results
 
 ```text
-python3 scripts/check_governance.py                                    PASS
-.venv/bin/python -m unittest tests.test_automation_workspace_read_model   tests.test_operations_run_inventory tests.test_operations_run_detail   tests.test_operations_workspace tests.test_automation_definition_occurrence   tests.test_v2_automation_operations tests.test_v2_automation_lifecycle   tests.test_automation_run_once tests.test_v2_automation_run_once   tests.test_automation_api tests.test_system_settings_management   tests.test_automation_admission tests.test_automation_authorized_execution_matrix   tests.test_automation_definition_execution tests.test_operations_task_center   tests.test_operations_run_detail_plan_evidence   tests.test_operations_run_detail_log_isolation tests.test_automation_job_fencing   tests.test_automation_task_definition tests.test_automation_definition_publication   tests.test_automation_unattended_grant                                Ran 455 OK
-.venv/bin/python -m unittest tests.test_manual_organize_execution   tests.test_recovery_continuation                                     Ran 220 OK
-.venv/bin/ruff format --check mediaflow tests scripts                 350 files already formatted
-.venv/bin/ruff check mediaflow tests scripts                          All checks passed
-.venv/bin/python -m compileall -q mediaflow tests scripts             OK
-.venv/bin/mediaflow --config config/strategy.example.json config validate  PASS
-rg -n -i 'ffprobe|ffmpeg' mediaflow pyproject.toml                    no match (exit 1)
-npm --prefix web run test -- run                                      80 files / 1172 tests passed
-npm --prefix web run typecheck                                        OK
-npm --prefix web run lint                                             OK
-npm --prefix web run format:check                                     All matched files formatted
-npm --prefix web run build                                            OK (dist rebuilt)
-git diff --check                                                      clean
+python3 scripts/check_governance.py                                      PASS
+.venv/bin/python -m unittest tests.test_automation_workspace_read_model   tests.test_operations_run_inventory tests.test_operations_run_detail   tests.test_operations_workspace tests.test_automation_definition_occurrence   tests.test_v2_automation_operations tests.test_v2_automation_lifecycle   tests.test_automation_run_once tests.test_v2_automation_run_once   tests.test_automation_api tests.test_task_center_recovery_lineage   tests.test_operations_task_center                                          Ran 307 OK
+.venv/bin/python -m unittest tests.test_automation_workspace_read_model   tests.test_operations_run_detail tests.test_operations_task_center   tests.test_task_center_recovery_lineage   tests.test_operations_run_detail_plan_evidence   tests.test_operations_run_detail_log_isolation                            Ran 112 OK
+.venv/bin/ruff format --check mediaflow tests scripts                      All formatted
+.venv/bin/ruff check mediaflow tests scripts                              All checks passed
+.venv/bin/python -m compileall -q mediaflow tests scripts                 OK
+rg -n -i 'ffprobe|ffmpeg' mediaflow pyproject.toml                        no match (exit 1)
+npm --prefix web run test -- run src/entities/operations/automation.test.ts   src/entities/operations/automation-lifecycle.test.ts   src/features/operations/AutomationRouter.test.tsx   src/features/operations/AutomationLifecyclePage.test.tsx   src/features/operations/AutomationRunOncePage.test.tsx   src/features/operations/run-query.test.ts   src/features/operations/OperationsInventory.test.tsx   src/routes/router.test.tsx   src/features/operations/AutomationWorkspaceReadModel.test.tsx            9 files / 114 tests passed
+npm --prefix web run typecheck                                            OK
+npm --prefix web run lint                                                 OK
+npx --prefix web prettier --check <5 changed Web paths>                   All formatted
+npm --prefix web run build                                                OK (dist rebuilt)
+npx playwright test --config=playwright.config.ts --list                  238 tests / 16 files, 0 workspace-python
+npx playwright test --config=playwright.python.automation.config.ts --list 21 tests / 3 files, 5 workspace tests present
+git diff --check                                                         clean
 shasum -a 256 docs/pics/自动化页.png docs/pics/自动化页-全局设置.png
   d2f759ead56a30dce344ccce97e7c119e144ca728a31b3af8e9a355eefa6ba34
   68d91070e859dd363d3e45dd2d21e38783e0cfbef0867ce28c3f42eac7d6c7b9
 ```
 
-New Python coverage in `tests/test_automation_workspace_read_model.py` (24 → 31 cases): follow-up
-Task exclusion with totals/partitions/metrics/latest and Operations non-regression; the same rule
-across a reopen and the latest-outcome read; concrete item reason/effects with no raw text; the
-historical reason surviving an item leaving `failed` together with per-Task bound isolation;
-`reachedItemBound` from admitted evidence only; the five-step handling progression
-(analysis → prepared → admitted → terminal → still-failing); and `unavailable` on a failed handling
-read.
-
 Native (real Python + SQLite + Local Storage + Scheduler/Worker, rebuilt production asset, isolated
-harness):
+harness, one sequential invocation):
 
 ```text
 # cwd web, after npm run build
-npm run test:e2e -- --config=playwright.python.automation.config.ts \
+npx playwright test --config=playwright.python.automation.config.ts \
   tests/e2e/automation-workspace.python.spec.ts \
   tests/e2e/automation-lifecycle.python.spec.ts \
   tests/e2e/automation-run-once.python.spec.ts
-  20 passed  (including the 11 pre-existing lifecycle specs and 4 pre-existing Run-once specs)
+  21 passed  (28.3s wall clock)
 ```
 
-The rewritten mixed-item journey now asserts, through the real UI and the new read-only
-`/__harness__/automation-record-evidence` control on the supported repository read: the filtered
-numeric total and record identities are unchanged at *every* checkpoint (recovery admitted,
-zero-mutation analysis completed, plan summary prepared, recovery execution admitted, execution
-completed); the successful sibling keeps `success` with its source gone and its Result intact; the
-row shows the real `storage_failure` reason and the `none` effect partition before handling; the
-zero-mutation analysis is explicitly **not** reported as a completed follow-up (`需要核对`, no
-`后续处理已完成`); and only after the confirmed execution does the row report `后续处理已完成` —
-still with `partial_success` and the original statements, and still with no local control. Test wall
-clock for all native runs in this round was ≈1 minute against a ≈3.5 h round (< 30 %).
+Test wall clock for this round was ≈2 min of ≈1 h elapsed (< 30 %). Only focused/changed and
+directly affected suites were run; the full Web/default-E2E/static matrix and Slice T4 remain
+B-owned and are **not** claimed.
 
-New harness controls are test infrastructure only and use production paths:
-`GET /__harness__/automation-record-evidence` reads the same bounded window and population predicate
-the records page uses and returns the numeric total plus one run's result/bound evidence.
+New Python coverage in `tests/test_automation_workspace_read_model.py` (31 → 32 cases):
+
+- `test_handling_requires_every_original_affected_item_to_resolve` — real producer vocabulary
+  (`task_results.status='FAILED'`) for two zero-effect failures; asserts the initial
+  `effects.none=2` / `partial=0` / `uncertain=0` partition and per-item `effectCertainty='none'`;
+  recovers only one item through the actual confirmed-preparation → completed-execution →
+  verified-effect chain; asserts `affectedItems=2 / resolvedItems=1 / unresolvedItems=1` with
+  state `investigation` (never `resolved`), both original reasons intact, original outcome
+  unchanged, and the same read after a real API/runtime reopen. A follow-up with the execution's
+  own item failed reverts to `0` resolved.
+- `test_handling_progress_is_trueful_across_analysis_plan_and_execution` rewritten at step 4/5 to
+  write the real durable per-item chain (`_write_verified_recovery_effect`) instead of only flipping
+  a TaskItem status — a completed execution without its own verified effect is no longer accepted as
+  resolution.
+
+New native journey in `web/tests/e2e/automation-workspace.python.spec.ts`
+(`a recovered subset never resolves the record with a failed sibling`): a real three-item Run once
+through the browser with two genuine Executor failures, then a real Task Center recovery of exactly
+one. It asserts at the actual records page and via the read-only `/__harness__/automation-record-evidence`
+control (which calls the same repository reads the page uses): unchanged original population and
+`partial_success`, `effects.none=2` before and after analysis/preparation/execution, the rendered
+`已知效果：无效果 2 · 已确认 0 · 不确定 0 · 部分 0`, no `后续处理已完成` at any point, the durable
+failed sibling still `failed` with its source present, the successful sibling `success` with its
+source gone, `受影响条目 2 · 已确认恢复 1 · 仍未解决 1` after recovery, the identical read after a
+real `/__harness__/restart` reopen, and zero local recovery controls on the record. Harness additions
+are test infrastructure only and use production paths (`seed-run-once-two-failure-scope`,
+`run-run-once-two-failure-worker`, the extended `automation-record-evidence`, and a
+`_failure_for_named_execution_items` seam generalizing the existing one-item failure seam — the
+supported one-item journey still uses exactly one named source).
 
 ### Known failures / remaining risks
 
-- **`failureStage` naming is a Web-contract extension.** `AutomationRecordFailureStageModel` gained
-  `items`/`effects`/`itemsTruncated`/`unavailable` and `AutomationRecordResultModel` gained
-  `admittedItemBound`. The normalizer tolerates an absent `effects`/`items` (so an older document
-  still renders) but rejects a malformed one, matching the model's existing fail-closed style.
-- **Web tests were extended, not multiplied.** The failure-stage fixture in
-  `AutomationWorkspaceReadModel.test.tsx` was updated to the real projected shape; no new Web unit
-  case was added for the new fields (they are covered by the Python read contract and the native
-  journey).
-- **A definition Run once never reports a reached bound.** Its persisted `item_limit` is the
-  *selected* item count, not a containment bound, so `admittedItemBound` is explicitly `null`
-  instead of being misread as truncation. Only Scheduler-emitted occurrences publish a bound.
-- **DST/leap month-boundary rendering remains unit-level.** The counting rule is server-side.
-- **Separate read calls, not one snapshot.** Records page/total/status counts, metrics and the
-  failure sample are separate reads; each publication is internally consistent and says so.
+- **`statusSource`/coverage counts are Web-contract extensions.** `AutomationRecordFailureItemModel`
+  gained `statusSource`; the handling model gained `affectedItems`/`resolvedItems`/`unresolvedItems`.
+  The normalizer tolerates their absence (older document) but rejects a malformed value, matching the
+  model's existing fail-closed style. No Web unit case was added for the new fields beyond the
+  extended `AutomationWorkspaceReadModel.test.tsx` assertions (the read contract and the native
+  journey carry the real coverage).
+- **Coverage is a separate read from the failure sample.** The handling coverage, the failure-evidence
+  sample and the metrics are distinct reads; each publication is internally consistent and says so.
+  The coverage predicate intentionally uses the durable Result first, so a record whose *only*
+  failure evidence is a currently-failed TaskItem (no Result) still counts as affected with unknown
+  effects.
+- **A record with no durable affected item can never read `resolved`.** It publishes `investigation`
+  with `affectedItems=0`; that is deliberate (an analysis-only lineage must not imply resolution),
+  but it means a genuinely fully-successful original run is never labelled as "handled".
+- **DST/leap month-boundary rendering remains unit-level**; the counting rule is server-side.
 - **`itemsTruncatedByCap` and `stale_page`** are proven in Python, not through the browser.
 - **RO-6** (settings publication/actual resident adoption) and the settings portion of AC-1 remain
   **outside** this Task; AC-12's whole-Slice T4 gate is not satisfied by these T3 checks.
-- Pre-existing untracked artifacts (`.DS_Store`, `.t*.log`, `output/…zip`, `web/test-results*`,
-  untracked `15`) and the pre-existing `docs/pics/操作与任务.png` deletion are preserved untouched.
-  Both reference PNGs stay untracked with the verified digests.
 
 ### Reusable lesson candidates (Developer)
 
-- A shared read model that many surfaces consume needs the population predicate as a **first-class
-  query parameter**, and a follow-up execution that legitimately inherits an origin must be excluded
-  by its own persisted lineage, not by removing that origin: the write path stays honest and the
-  read path carries the rule.
-- "Handling resolved" must be decided from the linked **execution's own item evidence**, because a
-  completed analysis is a zero-mutation step and a `_summarize_handling` that accepts any completed
-  record reports a resolution before the operator ever confirmed a plan.
-- A historical failure reason belongs to the durable failed **Result**, not to the current item
-  status: once recovery starts, the item leaves `failed` and a status-only read silently erases the
-  reason the operator needs.
-- A page-wide `LIMIT` over many Tasks' child rows is a correctness bug, not a performance guard: use
-  a per-Task window for the sample and a grouped aggregate for the counts.
+- Reconciliation must be keyed on the **original affected item's own identity**, not on the newest
+  linked attempt's aggregate totals: a completed execution that resolved the subset it admitted
+  proves nothing about the sibling the operator never selected.
+- A read that compares against a persisted status column must use the **producer's** vocabulary
+  (`ExecutionStatus.value` is upper case) or compare case-insensitively; a lower-case-only filter
+  silently drops every real manual-execution failure Result.
+- "Settled successfully but the record is not done" is a third state, not a failed recovery: publish
+  it as inspection with explicit unresolved counts so the operator is sent back to the remaining item
+  instead of being told to retry something that already succeeded.
 
 ## B Review Result
 
