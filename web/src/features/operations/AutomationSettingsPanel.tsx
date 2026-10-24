@@ -26,7 +26,7 @@
  * unresolved submission survives a real reload, principal-scoped.
  */
 
-import { useMemo, useState } from "react";
+import { useEffect, useMemo, useRef, useState } from "react";
 import { useQuery } from "@tanstack/react-query";
 import { useAuthGeneration, useAuthToken } from "../../shared/api/auth-context";
 import { AuthorizedReadBoundary } from "../../shared/auth/AuthorizedReadBoundary";
@@ -105,6 +105,30 @@ function baselineOf(target: PublishedTargetView): Baseline {
 
 function sameBaseline(a: Baseline, b: Baseline): boolean {
   return a.revisionId === b.revisionId && a.digest === b.digest;
+}
+
+/**
+ * Re-base input typed during an outstanding Save onto the newly published
+ * target.
+ *
+ * Only the fields the operator actually changed after submitting are carried
+ * over; every other field takes the just-published value.  That keeps a raced
+ * keystroke instead of discarding it, while never presenting the old identity as
+ * still current.
+ */
+function rebaseOnto(
+  newer: FormState,
+  submitted: FormState,
+  published: PublishedTargetView,
+): FormState {
+  const base = publishValues(published);
+  const rebased: Record<string, string> = { ...base };
+  for (const field of AUTOMATION_ENGINE_FIELDS) {
+    if (newer[field] !== submitted[field]) {
+      rebased[field] = newer[field] ?? "";
+    }
+  }
+  return rebased;
 }
 
 /**
@@ -238,7 +262,24 @@ export function AutomationSettingsPanel() {
   // Once edited, the input *and the identity it was written against* are kept,
   // so a background readback can never silently re-arm old input for a newer
   // publication.
-  const [edit, setEdit] = useState<EditState | null>(null);
+  const [edit, setEditState] = useState<EditState | null>(null);
+  // The *live* edit, mirrored outside React state so an outstanding Save's
+  // response can compare against whatever the operator typed while it was in
+  // flight.  The `edit` captured by the submit closure is the snapshot that was
+  // actually submitted; anything newer lives only in this ref, and a response
+  // must never clear or silently rebase it.
+  const editRef = useRef<EditState | null>(null);
+  // `applyEdit` is the *interactive/async* setter: it mirrors the new value into
+  // the ref immediately, so a response that lands right after the change already
+  // sees it.  Render-time adjustment of the derived (restore) state uses
+  // `setEditState` alone; the effect below keeps the ref aligned for that path.
+  const applyEdit = (next: EditState | null) => {
+    editRef.current = next;
+    setEditState(next);
+  };
+  useEffect(() => {
+    editRef.current = edit;
+  }, [edit]);
   const [message, setMessage] = useState<string | null>(null);
   const [failure, setFailure] = useState<{
     readonly stage: string;
@@ -273,7 +314,7 @@ export function AutomationSettingsPanel() {
     setRestored({ key: restoredKey, value: pendingFromStorage });
     setUnresolved(pendingFromStorage);
     if (pendingFromStorage !== null) {
-      setEdit({
+      setEditState({
         baseline: {
           revisionId: pendingFromStorage.baselineRevisionId,
           revisionVersion: pendingFromStorage.baselineRevisionVersion,
@@ -318,6 +359,9 @@ export function AutomationSettingsPanel() {
 
   const submit = async () => {
     if (model === null || model.target === null || edit === null) return;
+    // The exact input this request submits.  Later keystrokes are compared
+    // against this snapshot when the answer arrives.
+    const submittedEdit = edit;
     const submissionId = newSubmissionId();
     if (submissionId === null || principalId === null) {
       setMessage(
@@ -360,16 +404,35 @@ export function AutomationSettingsPanel() {
         writePendingSubmission(principalId, null);
         setUnresolved(null);
         setRestored({ key: restoredKey, value: null });
-        setEdit(null);
+        // The response belongs to the input that was submitted.  The form is
+        // read-only while a Save is outstanding, but a keystroke that raced the
+        // request could still be present: those *changed* fields are preserved
+        // and explicitly re-based onto the just-published values instead of being
+        // cleared or silently rebased against the old identity.
+        const current = editRef.current;
+        const newer =
+          current !== null && current !== submittedEdit ? current : null;
+        const publishedNow = result.readback.target;
+        const rebased =
+          newer !== null && publishedNow !== null
+            ? rebaseOnto(newer.input, submittedEdit.input, publishedNow)
+            : null;
+        if (rebased !== null && publishedNow !== null) {
+          applyEdit({ baseline: baselineOf(publishedNow), input: rebased });
+        } else {
+          applyEdit(null);
+        }
         setLastPublished({
           revisionId: result.revisionId ?? edit.baseline.revisionId,
           revisionVersion: result.readback.target?.revisionVersion ?? null,
           values: edit.input,
         });
         setMessage(
-          result.unchanged
-            ? "提交值与已发布目标相同,未产生新的发布。"
-            : "已发布新的目标值。常驻进程会在各自的安全边界采用;下方逐实例显示真实采用情况。",
+          rebased !== null
+            ? "已发布新的目标值;保存期间输入的其他值已保留在表单中,尚未保存。请核对后再次保存。"
+            : result.unchanged
+              ? "提交值与已发布目标相同,未产生新的发布。"
+              : "已发布新的目标值。常驻进程会在各自的安全边界采用;下方逐实例显示真实采用情况。",
         );
         await query.refetch();
         return;
@@ -425,17 +488,27 @@ export function AutomationSettingsPanel() {
       setUnresolved(null);
       setRestored({ key: restoredKey, value: null });
       if (result.committed) {
-        setEdit(null);
+        applyEdit(null);
         setMessage(
           result.state === "superseded"
             ? `核对完成:本次提交已发布为 ${result.evidenceRevisionId ?? "一个修订"},但之后又被新的发布取代。请查看当前发布目标。`
             : `核对完成:本次提交已发布为 ${result.evidenceRevisionId ?? "当前 Active"},无需再次保存。`,
         );
       } else {
-        // A terminal non-publication: keep the operator's input for correction
-        // and state the exact next action.
+        // A terminal non-publication.  The block is cleared and the operator's
+        // typed input is re-based onto the *current* published identity, so the
+        // form is correctable again instead of staying refused as stale forever.
+        // Nothing is re-submitted: the next Save is a deliberate new action.
+        const currentTarget = published;
+        if (currentTarget !== null) {
+          applyEdit({
+            baseline: baselineOf(currentTarget),
+            input: pendingContext.input,
+          });
+        }
+        setFailure(null);
         setMessage(
-          `核对完成:本次提交没有发布(保存失败或未生效)。${result.nextAction ?? "请修正后再次保存。"}`,
+          `核对完成:本次提交没有发布,当前发布值未被本次请求改变。${result.nextAction ?? "请核对当前值后再次保存。"}`,
         );
       }
       await query.refetch();
@@ -553,14 +626,16 @@ export function AutomationSettingsPanel() {
                             ""
                           }
                           disabled={
-                            !model.canManage || pendingSubmission !== null
+                            !model.canManage ||
+                            pendingSubmission !== null ||
+                            submitting
                           }
                           onChange={(event) => {
                             const input = {
                               ...(edit?.input ?? publishedValues),
                               [field.fieldPath]: event.target.value,
                             };
-                            setEdit({
+                            applyEdit({
                               baseline: edit?.baseline ?? baselineOf(target),
                               input,
                             });
@@ -589,7 +664,7 @@ export function AutomationSettingsPanel() {
                           type="button"
                           variant="secondary"
                           onClick={() => {
-                            setEdit(null);
+                            applyEdit(null);
                             setMessage(null);
                             setFailure(null);
                           }}

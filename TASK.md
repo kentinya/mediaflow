@@ -751,3 +751,112 @@ Slice43 remains ACTIVE, not READY FOR A REVIEW. Correct these two blockers in th
 no next Task or Closure Packet is justified. Preserve original references/frozen branch, accepted45,
 A-owned SLICE/Roadmap/Progress, pre-existing dirty artifacts and ignored private configuration.
 This B checkpoint changes only `TASK.md`; no push or history rewrite.
+
+## Developer Fix Report — second correction (R2 input preservation, R5 terminal recovery)
+
+The historical Task43.4 report and both B checkpoints above are retained unchanged. This section
+reports the corrections made in the same Task/Base/Goal/Scope.
+
+```text
+Status: READY FOR B REVIEW (Developer does not self-PASS)
+Task Base: f18d2444f548b81b5892536498a1b4cdd4400be8
+Candidate: the commit carrying this report (see `git log -1` for the exact SHA)
+Scope: fix the two remaining P1 blockers (R2, R5) inside the same Task/Base/Goal/Scope
+```
+
+### Corrections delivered
+
+1. **R2 — input accepted while a Save is outstanding is never silently lost.**
+   The four inputs are now `disabled` while `submitting` (already true for an unresolved
+   submission), so the field cannot accept a keystroke that no request could carry. For the
+   remaining race — a value that still reaches state while the response is in flight — the panel
+   keeps a live `editRef` mirror and compares it with the exact `submittedEdit` snapshot when the
+   answer arrives: only the fields the operator actually changed after submitting are retained, and
+   they are explicitly **re-based onto the just-published identity** (every other field takes the
+   newly published value) instead of being cleared or silently attached to the replaced identity.
+   The page then states that those values are not yet saved. The existing background-refetch/stale
+   protection is unchanged.
+2. **R5 — a settled non-publication becomes a terminal, correctable outcome.**
+   `AutomationSettingsService` now records a bounded `automation_settings_outcome` durable audit for
+   every terminal non-publication of an *identified* submission: a stale/out-of-scope refusal (which
+   happens before any Draft exists and therefore had no revision evidence at all), a no-op Save, and
+   persist/validate/prepare/activate faults. The record carries only the submission identity, the
+   submitted four values, the ending stage/outcome, the published target it was written against and a
+   bounded next action; it is mapped by the error's own code (not just its stage) so an out-of-scope
+   candidate is not reported as a stale identity. Reconciliation walks the same submission trail but
+   now over both `draft_edit` and outcome records, and resolves `not_committed` with a correctable
+   `durableState`/`nextAction`. Truthfulness is one-directional: **any** positive publication
+   evidence for the identity wins over a later outcome record, so a request that published can never
+   be reported as unpublished. Evidence stays actor- and identity-scoped, `evidenceComplete`/
+   `identityMatched` are preserved, and an absent record still stays `unresolved` — a
+   still-in-flight original request remains fenced and equal current values alone never authorize a
+   New Save. After a terminal reconcile the page clears the block, re-bases the retained typed input
+   onto the current published identity and states that nothing was published by that request.
+3. **Coverage observation (B re-review note).** The three `test_adoption_*`/override assertions that
+   sat on the `_FakeClock` helper are now the discovered `ResidentLoopAdoptionUnitTests` TestCase, so
+   they actually run.
+
+### Affected commands and actual results
+
+| Command (cwd) | Result |
+|---|---|
+| `python3 scripts/check_governance.py` | `governance check: PASS` |
+| `.venv/bin/ruff format --check mediaflow tests scripts` | `354 files already formatted` |
+| `.venv/bin/ruff check mediaflow tests scripts` | `All checks passed!` |
+| `.venv/bin/python -m compileall -q mediaflow tests scripts` | exit 0 |
+| `git diff --check` | clean |
+| `.venv/bin/python -m unittest tests.test_automation_settings_management` | `Ran 34 tests ... OK` |
+| `.venv/bin/python -m unittest tests.test_automation_settings_resident` | `Ran 21 tests ... OK` |
+| `.venv/bin/python -m unittest tests.test_system_settings_management tests.test_resident_services tests.test_resident_correction tests.test_automation_admission tests.test_stale_job_visibility tests.test_configuration_snapshot tests.test_automation_api tests.test_task_persistence tests.test_v2_settings_rule_readiness` | `Ran 171 tests ... OK` |
+| `.venv/bin/python -m unittest tests.test_automation_workspace_read_model tests.test_v2_automation_operations tests.test_v2_automation_lifecycle tests.test_automation_definition_publication tests.test_v2_automation_run_once tests.test_operations_run_detail_plan_evidence` | `Ran 161 tests ... OK` |
+| `npm run typecheck` / `npx eslint` / `prettier --check` (cwd `web`) | all clean |
+| `npx vitest run` (cwd `web`) | `Test Files 82 passed`, `Tests 1194 passed` |
+| `npm run build` (cwd `web`) | succeeds (pre-existing chunk-size warning only) |
+| `npx playwright test` default fake suite (cwd `web`) | `242 passed` |
+| `npm run test:e2e -- --config=playwright.python.automation.config.ts tests/e2e/automation-settings.python.spec.ts` | `9 passed` |
+
+New/strengthened coverage for this correction:
+
+- Python (`tests/test_automation_settings_management.py`):
+  `test_lost_stale_rejection_reconciles_into_a_correctable_state` (the reviewed real race, repeated
+  reconciliation including the reload-equivalent), `test_lost_runtime_prepare_failure_reconciles_and_preserves_active`
+  (503/`prepare` then a terminal answer with Active 100 preserved),
+  `test_lost_validation_rejection_reconciles_as_terminal`, `test_noop_submission_reconciles_as_no_publication_needed`,
+  `test_terminal_outcome_is_principal_and_identity_scoped`,
+  `test_unresolved_identity_is_not_certified_by_an_equal_concurrent_publish`,
+  `test_delayed_original_completion_stays_fenced_until_its_own_evidence`,
+  `test_equal_values_delayed_completion_is_recorded_as_no_publication`, and
+  `test_publication_evidence_wins_over_a_later_terminal_record`.
+- Web (`AutomationSettingsPage.test.tsx`): `refuses to accept input while a Save's response is
+  outstanding` (real delayed 201, field read-only during the request, published value shown, no
+  phantom input), `never silently clears an edit that raced a finishing Save`,
+  `reconciles a lost rejection, survives a reload and allows a deliberate correction` (terminal
+  reconcile, retained value, Save re-enabled, storage cleared, and the block still enforced after a
+  genuine reload while unresolved).
+- Real Python browser (`automation-settings.python.spec.ts`): `a lost rejection response reconciles
+  into a correctable form, across a reload` — another writer publishes first, the form's own PUT is
+  processed by the real API (409 observed server-side) but its response is aborted, the page and a
+  reload keep the unresolved context and the disabled Save, reconciliation proves non-publication,
+  the typed value survives and the published Active is untouched.
+
+No test was skipped, retried or weakened and no timeout was raised. The one previously
+mis-located helper class now hosts real discovered cases, so this round strictly adds collected
+coverage. The settings `python` spec remains excluded from default fake collection by the existing
+`testIgnore` convention.
+
+### Remaining risks / disclosures for B
+
+1. **B-owned gates still not run here:** full Python discovery, wheel/installed consumer, the
+   supported 49→50 upgrade rehearsal on a real prior database with existing work/pins, Docker
+   lifecycle/security smokes and the remaining native/T4 matrix.
+2. **Outcome records are additive audit rows**, not a schema change: they use the existing
+   `configuration_change_audits` ledger with a new bounded `action`, so no migration is involved and
+   existing rows/pins are untouched. B should confirm that accepting a new `action` value in that
+   ledger matches the intended contract.
+3. **`superseded` semantics** (carried over): a submission that published and was later replaced
+   reports `committed: true` with `state: superseded`.
+4. **Deliberate limits unchanged:** no queue/supervisor replacement, no new concurrency control, no
+   auto-restart, no automatic stale/uncertain replay, no extra settings beyond the four fields.
+5. **Test cost:** the two focused modules take roughly 40s together (resident subprocess cases
+   dominate). This round's executed testing/reproduction stayed well under the 30% budget; no sleeps
+   were added to pad elapsed time.

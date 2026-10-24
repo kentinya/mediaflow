@@ -434,6 +434,92 @@ test("an unknown submission is reconciled from its own durable evidence, never b
   );
 });
 
+test("a lost rejection response reconciles into a correctable form, across a reload", async ({
+  page,
+}) => {
+  await connectOn(page, "/ui-v2/operations/automation?tab=settings");
+  const panel = page.getByRole("region", { name: "自动化引擎设置" });
+  await expect(panel).toBeVisible();
+  const before = await settingsDocument(page);
+
+  // The operator starts editing, then another writer publishes first.
+  const jobs = panel.getByLabel(/并行任务上限/);
+  const submittedCapacity =
+    before.target!.values["automation.maximumActiveJobs"] === 61 ? 62 : 61;
+  await jobs.fill(String(submittedCapacity));
+  const otherPoll =
+    before.target!.values["automation.schedulerPollSeconds"] === 9 ? 8 : 9;
+  const other = await page.request.put(SETTINGS_PATH, {
+    headers: {
+      Authorization: `Bearer ${ADMIN_TOKEN}`,
+      "Content-Type": "application/json",
+    },
+    data: {
+      settings: {
+        ...before.target!.values,
+        "automation.schedulerPollSeconds": otherPoll,
+      },
+      expectedRevisionId: before.target!.revisionId,
+      expectedDigest: before.target!.digest,
+      submissionId: "e2e-lost-rejection-winner",
+    },
+  });
+  expect(other.status()).toBe(201);
+  const winner = await settingsDocument(page);
+
+  // The form's own Save finishes 409 on the server, but *only that response* is
+  // lost (the real request still reached and was processed by the API).
+  let serverStatus: number | null = null;
+  await page.route(`**${SETTINGS_PATH}`, async (route) => {
+    if (route.request().method() !== "PUT") {
+      await route.continue();
+      return;
+    }
+    const response = await route.fetch();
+    serverStatus = response.status();
+    await route.abort("failed");
+  });
+  await panel.getByRole("button", { name: "保存设置" }).click();
+  await expect(panel.getByText(/上一次保存结果未知/)).toBeVisible({
+    timeout: 20_000,
+  });
+  expect(serverStatus).toBe(409);
+  await page.unroute(`**${SETTINGS_PATH}`);
+
+  // Nothing was published by that request.
+  expect((await settingsDocument(page)).target!.revisionId).toBe(
+    winner.target!.revisionId,
+  );
+
+  // Reloading while unresolved keeps the block in place *and* keeps the typed
+  // value; the operator then reconciles it from durable evidence.
+  await page.reload();
+  await page.getByLabel("API token").fill(ADMIN_TOKEN);
+  await page.getByRole("button", { name: "Connect" }).click();
+  const reloaded = page.getByRole("region", { name: "自动化引擎设置" });
+  await expect(reloaded.getByText(/上一次保存结果未知/)).toBeVisible({
+    timeout: 20_000,
+  });
+  await expect(
+    reloaded.getByRole("button", { name: "保存设置" }),
+  ).toBeDisabled();
+  await reloaded.getByRole("button", { name: "核实上次提交" }).click();
+  await expect(reloaded.getByText(/本次提交没有发布/)).toBeVisible({
+    timeout: 20_000,
+  });
+  // The typed value is retained and a deliberate Save is possible again.
+  await expect(reloaded.getByLabel(/并行任务上限/)).toHaveValue(
+    String(submittedCapacity),
+  );
+  await expect(
+    reloaded.getByRole("button", { name: "保存设置" }),
+  ).toBeEnabled();
+  // Reconciling proved truth, it did not publish anything.
+  expect((await settingsDocument(page)).target!.revisionId).toBe(
+    winner.target!.revisionId,
+  );
+});
+
 test("the System Settings Automation section reaches the same form and authority", async ({
   page,
 }) => {

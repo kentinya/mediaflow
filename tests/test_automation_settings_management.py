@@ -598,6 +598,51 @@ class AutomationSettingsReconcileTests(unittest.TestCase):
         self.assertEqual(reconciled["committedRevisionId"], first["revisionId"])
         self.assertFalse(reconciled["currentValuesMatchSubmission"])
 
+    def test_publication_evidence_wins_over_a_later_terminal_record(self) -> None:
+        """A submission that published is never reported as unpublished.
+
+        Once an identity's own ``draft_edit`` points at a revision that became
+        active, no statement about the same identity may downgrade the answer.
+        This is the direction that matters for truthfulness: a ``not_committed``
+        must never be produced for a request that really published.
+        """
+
+        from mediaflow.application.automation_settings import (
+            SUBMISSION_OUTCOME_ACTION,
+            AutomationSettingsService,
+        )
+        from mediaflow.domain.configuration_management import (
+            ConfigurationChangeAudit,
+            ConfigurationObjectKind,
+        )
+
+        values = self.fixture.full(**{"automation.maximumActiveJobs": 57})
+        status, published = self.fixture.submit(values, submissionId="submit-57-abc")
+        self.assertEqual(status, 201, published)
+        service = self.fixture.api._automation_settings
+        self.assertIsInstance(service, AutomationSettingsService)
+        # A later, contradictory-looking record for the same identity.
+        service._record_submission_outcome(
+            actor="admin",
+            identity="submit-57-abc",
+            outcome="stale_refused",
+            normalized=values,
+            target=None,
+            stage="compose",
+            next_action="stale",
+        )
+        audits = self.fixture.config_repository.list_recent_command_audits(
+            (SUBMISSION_OUTCOME_ACTION,), limit=10
+        )
+        self.assertTrue(audits)
+        self.assertIsInstance(audits[0].object_kind, ConfigurationObjectKind)
+        self.assertIsInstance(audits[0], ConfigurationChangeAudit)
+        status, reconciled = self.reconcile(values, submission_id="submit-57-abc")
+        self.assertEqual(status, 200, reconciled)
+        self.assertTrue(reconciled["committed"])
+        self.assertEqual(reconciled["state"], "committed")
+        self.assertEqual(reconciled["committedRevisionId"], published["revisionId"])
+
     def test_same_principal_historical_equal_values_do_not_certify_a_new_identity(self) -> None:
         values = self.fixture.full(**{"automation.maximumActiveJobs": 56})
         status, _first = self.fixture.submit(values, submissionId="submit-56-first")
@@ -609,6 +654,222 @@ class AutomationSettingsReconcileTests(unittest.TestCase):
         self.assertEqual(status, 200, reconciled)
         self.assertFalse(reconciled["committed"])
         self.assertEqual(reconciled["state"], "unresolved")
+
+    def test_lost_stale_rejection_reconciles_into_a_correctable_state(self) -> None:
+        """B43.4-R5: a settled non-publication must be reachable, not permanent.
+
+        The reviewed reproduction: the operator edits capacity 61, another writer
+        publishes first, the original PUT finishes 409 and only that response is
+        lost.  Reconciliation used to answer ``unresolved`` forever while editing
+        and Save stayed disabled, so the form had no way back.  It must now be a
+        *terminal, correctable* answer.
+        """
+
+        before = self.fixture.configuration.active()
+        # The operator's form still holds the identity it read.
+        status, published = self.fixture.submit(
+            self.fixture.full(**{"automation.maximumActiveJobs": 41}),
+            token="writer-token",
+            submissionId="winner-submit-1",
+        )
+        self.assertEqual(status, 201, published)
+        winner = self.fixture.configuration.active()
+        stale_values = self.fixture.full(**{"automation.maximumActiveJobs": 61})
+        status, refused = self.fixture.submit(
+            stale_values,
+            expectedRevisionId=before.revision_id,
+            expectedRevisionVersion=before.revision_sequence or before.version,
+            expectedDigest=before.digest,
+            submissionId="admin-lost-rejection-1",
+        )
+        self.assertEqual(status, 409, refused)
+        self.assertEqual(self.fixture.configuration.active().revision_id, winner.revision_id)
+        # Repeated reconciliation — including after a reload, which changes
+        # nothing here because the evidence is durable, not page state.
+        for attempt in range(3):
+            with self.subTest(attempt=attempt):
+                status, reconciled = self.reconcile(
+                    stale_values, submission_id="admin-lost-rejection-1"
+                )
+                self.assertEqual(status, 200, reconciled)
+                self.assertTrue(reconciled["evidence"]["evidenceComplete"])
+                self.assertTrue(reconciled["evidence"]["identityMatched"])
+                self.assertFalse(reconciled["committed"])
+                self.assertEqual(reconciled["state"], "not_committed")
+                self.assertEqual(reconciled["evidence"]["submissionOutcome"], "stale_refused")
+                self.assertIn("review the current values", reconciled["nextAction"])
+        # Current values are unchanged by the refused request, and the operator's
+        # own values were never silently published.
+        self.assertEqual(
+            self.fixture.configuration.active().document["automation"]["maximumActiveJobs"],
+            41,
+        )
+
+    def test_lost_runtime_prepare_failure_reconciles_and_preserves_active(self) -> None:
+        """B43.4-R5: a completed ``prepare`` fault also needs a terminal answer."""
+
+        original = self.fixture.api._prepare_runtime_binding_for_revision
+        before = self.fixture.configuration.active()
+
+        def failing_prepare(revision):
+            raise RuntimeError("runtime adapters could not be constructed")
+
+        self.fixture.api._prepare_runtime_binding_for_revision = failing_prepare
+        values = self.fixture.full(**{"automation.maximumActiveJobs": 62})
+        try:
+            status, failed = self.fixture.submit(values, submissionId="admin-prepare-fault-1")
+        finally:
+            self.fixture.api._prepare_runtime_binding_for_revision = original
+        self.assertEqual(status, 503, failed)
+        self.assertEqual(failed["error"]["details"]["stage"], "prepare")
+        self.assertEqual(self.fixture.configuration.active().revision_id, before.revision_id)
+
+        status, reconciled = self.reconcile(values, submission_id="admin-prepare-fault-1")
+        self.assertEqual(status, 200, reconciled)
+        self.assertFalse(reconciled["committed"])
+        self.assertEqual(reconciled["state"], "not_committed")
+        self.assertEqual(reconciled["evidence"]["submissionOutcome"], "runtime_prepare_failed")
+        self.assertEqual(reconciled["evidence"]["failureStage"], "prepare")
+
+    def test_lost_validation_rejection_reconciles_as_terminal(self) -> None:
+        original_loader = self.fixture.configuration._loader
+
+        def failing_loader(document):
+            if document.get("automation", {}).get("maximumActiveJobs") == 63:
+                raise ValueError("maximumActiveJobs is unacceptable for this deployment")
+            return original_loader(document)
+
+        self.fixture.configuration._loader = failing_loader
+        values = self.fixture.full(**{"automation.maximumActiveJobs": 63})
+        try:
+            status, failed = self.fixture.submit(values, submissionId="admin-validate-fault-1")
+        finally:
+            self.fixture.configuration._loader = original_loader
+        self.assertEqual(status, 422, failed)
+        status, reconciled = self.reconcile(values, submission_id="admin-validate-fault-1")
+        self.assertEqual(status, 200, reconciled)
+        self.assertEqual(reconciled["state"], "not_committed")
+        self.assertEqual(reconciled["evidence"]["submissionOutcome"], "validation_failed")
+
+    def test_noop_submission_reconciles_as_no_publication_needed(self) -> None:
+        before = self.fixture.configuration.active()
+        values = self.fixture.full()
+        status, data = self.fixture.submit(values, submissionId="admin-noop-1")
+        self.assertEqual(status, 200, data)
+        self.assertTrue(data["unchanged"])
+        self.assertEqual(self.fixture.configuration.active().revision_id, before.revision_id)
+        status, reconciled = self.reconcile(values, submission_id="admin-noop-1")
+        self.assertEqual(status, 200, reconciled)
+        self.assertFalse(reconciled["committed"])
+        self.assertEqual(reconciled["state"], "not_committed")
+        self.assertEqual(reconciled["evidence"]["submissionOutcome"], "unchanged_no_publication")
+
+    def test_terminal_outcome_is_principal_and_identity_scoped(self) -> None:
+        before = self.fixture.configuration.active()
+        values = self.fixture.full(**{"automation.maximumActiveJobs": 64})
+        status, _refused = self.fixture.submit(
+            values,
+            expectedRevisionId="stale-revision-id",
+            submissionId="admin-terminal-64",
+        )
+        self.assertEqual(status, 409)
+        # Another principal cannot borrow that terminal outcome.
+        status, reconciled = self.reconcile(
+            values, submission_id="admin-terminal-64", token="unicode-token"
+        )
+        self.assertEqual(status, 200, reconciled)
+        self.assertEqual(reconciled["state"], "unresolved")
+        # Nor can a different submission identity of the same principal.
+        status, reconciled = self.reconcile(values, submission_id="admin-terminal-64-other")
+        self.assertEqual(status, 200, reconciled)
+        self.assertEqual(reconciled["state"], "unresolved")
+        self.assertEqual(self.fixture.configuration.active().revision_id, before.revision_id)
+
+    def test_unresolved_identity_is_not_certified_by_an_equal_concurrent_publish(self) -> None:
+        """A still-running original request stays fenced without its own evidence."""
+
+        values = self.fixture.full(**{"automation.maximumActiveJobs": 65})
+        # Another writer publishes exactly these values before/while this
+        # principal's request is outstanding, and this principal's request has no
+        # durable evidence at all.
+        status, _published = self.fixture.submit(
+            values, token="writer-token", submissionId="writer-equal-65"
+        )
+        self.assertEqual(status, 201)
+        status, reconciled = self.reconcile(values, submission_id="admin-still-running-65")
+        self.assertEqual(status, 200, reconciled)
+        self.assertFalse(reconciled["committed"])
+        self.assertEqual(reconciled["state"], "unresolved")
+        self.assertTrue(reconciled["currentValuesMatchSubmission"])
+        self.assertTrue(reconciled["evidence"]["evidenceComplete"])
+        self.assertFalse(reconciled["evidence"]["identityMatched"])
+
+    def test_delayed_original_completion_stays_fenced_until_its_own_evidence(self) -> None:
+        """A still-in-flight original must not be replaced by a guessed outcome.
+
+        While nothing durable names this submission, reconciliation stays
+        ``unresolved``; once the original request's own terminal evidence is
+        written, the *same* identity resolves — and the resolution never comes
+        from the concurrent writer's equal publication.
+        """
+
+        before = self.fixture.configuration.active()
+        values = self.fixture.full(**{"automation.maximumActiveJobs": 66})
+        status, _won = self.fixture.submit(
+            values, token="writer-token", submissionId="writer-equal-66"
+        )
+        self.assertEqual(status, 201)
+        # The original request has not terminated yet.
+        status, first = self.reconcile(values, submission_id="admin-delayed-66")
+        self.assertEqual(status, 200, first)
+        self.assertEqual(first["state"], "unresolved")
+        # It now completes against the already-moved Active and is refused stale.
+        delayed_values = self.fixture.full(**{"automation.maximumActiveJobs": 67})
+        status, refused = self.fixture.submit(
+            delayed_values,
+            expectedRevisionId=before.revision_id,
+            expectedRevisionVersion=before.revision_sequence or before.version,
+            expectedDigest=before.digest,
+            submissionId="admin-delayed-66",
+        )
+        self.assertEqual(status, 409, refused)
+        # The retained submission context is exactly what the page sends, so the
+        # reconciliation names this request's own recorded values.
+        status, second = self.reconcile(delayed_values, submission_id="admin-delayed-66")
+        self.assertEqual(status, 200, second)
+        self.assertEqual(second["state"], "not_committed")
+        self.assertFalse(second["committed"])
+        self.assertEqual(second["evidence"]["submissionOutcome"], "stale_refused")
+        # The concurrent writer's publication is untouched by all of this.
+        self.assertEqual(
+            self.fixture.configuration.active().document["automation"]["maximumActiveJobs"],
+            66,
+        )
+
+    def test_equal_values_delayed_completion_is_recorded_as_no_publication(self) -> None:
+        """A delayed request whose values already match is a truthful no-op."""
+
+        values = self.fixture.full(**{"automation.maximumActiveJobs": 68})
+        status, _won = self.fixture.submit(
+            values, token="writer-token", submissionId="writer-equal-68"
+        )
+        self.assertEqual(status, 201)
+        status, first = self.reconcile(values, submission_id="admin-delayed-68")
+        self.assertEqual(status, 200, first)
+        self.assertEqual(first["state"], "unresolved")
+        # The original request finally arrives; it is a no-op, never a second
+        # publication of the concurrent writer's revision.
+        status, noop = self.fixture.submit(
+            values,
+            expectedRevisionId="stale-before-id",
+            submissionId="admin-delayed-68",
+        )
+        self.assertEqual(status, 200, noop)
+        self.assertTrue(noop["unchanged"])
+        status, second = self.reconcile(values, submission_id="admin-delayed-68")
+        self.assertEqual(status, 200, second)
+        self.assertEqual(second["state"], "not_committed")
+        self.assertEqual(second["evidence"]["submissionOutcome"], "unchanged_no_publication")
 
 
 if __name__ == "__main__":

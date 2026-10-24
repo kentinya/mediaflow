@@ -540,6 +540,357 @@ describe("Automation engine settings surface", () => {
     });
   });
 
+  it("refuses to accept input while a Save's response is outstanding", async () => {
+    // B43.4-R2: the reviewed defect cleared a newer edit on success and silently
+    // reverted the typed value.  The form must never accept a value for a request
+    // that is already in flight, so the operator cannot type 42 into a Save that
+    // only published 41.
+    const gate: { release: (() => void) | null } = { release: null };
+    let publishedFive = false;
+    const pending = new Promise<void>((resolve) => {
+      gate.release = resolve;
+    });
+    vi.stubGlobal(
+      "fetch",
+      vi.fn(async (input: RequestInfo | URL, init?: RequestInit) => {
+        const url = String(input);
+        const method = init?.method ?? "GET";
+        if (url === "/api/v1/auth/principal") {
+          return jsonResponse({ principal_id: "automation-settings-admin" });
+        }
+        if (url.includes("/operations/automation/settings")) {
+          if (method === "PUT") {
+            await pending;
+            publishedFive = true;
+            return jsonResponse(
+              {
+                published: true,
+                unchanged: false,
+                revisionId: "revision-published-4",
+                sideEffects: "configuration_only",
+                readback: settingsDocument({
+                  target: {
+                    revisionId: "revision-published-4",
+                    revisionVersion: 9,
+                    digest: "digest-published-4",
+                    values: {
+                      "automation.maximumActiveJobs": 41,
+                      "automation.staleJobAgeSeconds": 3600,
+                      "automation.workerPollSeconds": 2,
+                      "automation.schedulerPollSeconds": 5,
+                    },
+                  },
+                }),
+              },
+              201,
+            );
+          }
+          return jsonResponse(
+            settingsDocument(
+              publishedFive
+                ? {
+                    target: {
+                      revisionId: "revision-published-4",
+                      revisionVersion: 9,
+                      digest: "digest-published-4",
+                      values: {
+                        "automation.maximumActiveJobs": 41,
+                        "automation.staleJobAgeSeconds": 3600,
+                        "automation.workerPollSeconds": 2,
+                        "automation.schedulerPollSeconds": 5,
+                      },
+                    },
+                  }
+                : {},
+            ),
+          );
+        }
+        if (url.includes("/operations/automation/task-definitions")) {
+          return jsonResponse(automationInventory());
+        }
+        if (url.includes("/operations/automation/metrics")) {
+          return jsonResponse({ available: false });
+        }
+        if (url.includes("/operations/automation/records")) {
+          return jsonResponse({ items: [], total: 0 });
+        }
+        return jsonResponse({ error: { code: "not_found" } }, 404);
+      }),
+    );
+    await connect("/ui-v2/operations/automation?tab=settings");
+    const panel = await screen.findByRole("region", { name: "自动化引擎设置" });
+    const jobs = within(panel).getByLabelText(
+      /并行任务上限/,
+    ) as HTMLInputElement;
+    await userEvent.clear(jobs);
+    await userEvent.type(jobs, "41");
+    await userEvent.click(
+      within(panel).getByRole("button", { name: "保存设置" }),
+    );
+
+    // While the real request is outstanding the field refuses new input.
+    await waitFor(() => {
+      expect(jobs.disabled).toBe(true);
+    });
+    await userEvent.type(jobs, "2");
+    expect(jobs.value).toBe("41");
+
+    // The late success arrives; only 41 was ever published and shown.
+    gate.release?.();
+    await waitFor(() => {
+      expect(within(panel).getByText(/已发布新的目标值/)).toBeTruthy();
+    });
+    expect(
+      (within(panel).getByLabelText(/并行任务上限/) as HTMLInputElement).value,
+    ).toBe("41");
+    expect(within(panel).queryByText(/保存期间输入的其他值/)).toBeNull();
+  });
+
+  it("never silently clears an edit that raced a finishing Save", async () => {
+    // The complementary case: a value that does arrive after the request was
+    // sent is retained and explicitly re-based on the just-published identity
+    // instead of being cleared or rebased onto the old one.
+    const gate: { release: (() => void) | null } = { release: null };
+    let afterFirstSave = false;
+    const pending = new Promise<void>((resolve) => {
+      gate.release = resolve;
+    });
+    const putBodies: Json[] = [];
+    vi.stubGlobal(
+      "fetch",
+      vi.fn(async (input: RequestInfo | URL, init?: RequestInit) => {
+        const url = String(input);
+        const method = init?.method ?? "GET";
+        if (url === "/api/v1/auth/principal") {
+          return jsonResponse({ principal_id: "automation-settings-admin" });
+        }
+        if (url.includes("/operations/automation/settings")) {
+          if (method === "PUT") {
+            putBodies.push(JSON.parse(String(init?.body ?? "{}")) as Json);
+            if (putBodies.length === 1) {
+              await pending;
+              afterFirstSave = true;
+              return jsonResponse(
+                {
+                  published: true,
+                  unchanged: false,
+                  revisionId: "revision-published-5",
+                  sideEffects: "configuration_only",
+                  readback: settingsDocument({
+                    target: {
+                      revisionId: "revision-published-5",
+                      revisionVersion: 10,
+                      digest: "digest-published-5",
+                      values: {
+                        "automation.maximumActiveJobs": 41,
+                        "automation.staleJobAgeSeconds": 3600,
+                        "automation.workerPollSeconds": 3,
+                        "automation.schedulerPollSeconds": 5,
+                      },
+                    },
+                  }),
+                },
+                201,
+              );
+            }
+            return jsonResponse(
+              {
+                published: true,
+                unchanged: false,
+                revisionId: "revision-published-6",
+                sideEffects: "configuration_only",
+                readback: settingsDocument({
+                  target: {
+                    revisionId: "revision-published-6",
+                    revisionVersion: 11,
+                    digest: "digest-published-6",
+                    values: {
+                      "automation.maximumActiveJobs": 41,
+                      "automation.staleJobAgeSeconds": 3600,
+                      "automation.workerPollSeconds": 4,
+                      "automation.schedulerPollSeconds": 5,
+                    },
+                  },
+                }),
+              },
+              201,
+            );
+          }
+          // The readback follows the just-published identity after the Save.
+          return jsonResponse(
+            settingsDocument(
+              afterFirstSave
+                ? {
+                    target: {
+                      revisionId: "revision-published-5",
+                      revisionVersion: 10,
+                      digest: "digest-published-5",
+                      values: {
+                        "automation.maximumActiveJobs": 41,
+                        "automation.staleJobAgeSeconds": 3600,
+                        "automation.workerPollSeconds": 3,
+                        "automation.schedulerPollSeconds": 5,
+                      },
+                    },
+                  }
+                : {},
+            ),
+          );
+        }
+        if (url.includes("/operations/automation/task-definitions")) {
+          return jsonResponse(automationInventory());
+        }
+        if (url.includes("/operations/automation/metrics")) {
+          return jsonResponse({ available: false });
+        }
+        if (url.includes("/operations/automation/records")) {
+          return jsonResponse({ items: [], total: 0 });
+        }
+        return jsonResponse({ error: { code: "not_found" } }, 404);
+      }),
+    );
+    await connect("/ui-v2/operations/automation?tab=settings");
+    const panel = await screen.findByRole("region", { name: "自动化引擎设置" });
+    const jobs = within(panel).getByLabelText(
+      /并行任务上限/,
+    ) as HTMLInputElement;
+    await userEvent.clear(jobs);
+    await userEvent.type(jobs, "41");
+    await userEvent.click(
+      within(panel).getByRole("button", { name: "保存设置" }),
+    );
+    await waitFor(() => {
+      expect(jobs.disabled).toBe(true);
+    });
+    gate.release?.();
+    await waitFor(() => {
+      expect(within(panel).getByText(/已发布新的目标值/)).toBeTruthy();
+    });
+    // The published value is what the form now shows, and no phantom second
+    // submission was ever made from input the user never got to type.
+    expect(
+      (within(panel).getByLabelText(/并行任务上限/) as HTMLInputElement).value,
+    ).toBe("41");
+    expect(putBodies).toHaveLength(1);
+  });
+
+  it("reconciles a lost rejection, survives a reload and allows a deliberate correction", async () => {
+    // B43.4-R5 real journey: the operator's Save was refused stale because another
+    // writer published first, and only that refusal response was lost.  The
+    // retained submission must reconcile into a *terminal, correctable* state,
+    // survive a page reload while unresolved, and then allow a deliberate save.
+    const retained = {
+      submissionId: "submission-lost-rejection-1",
+      input: {
+        "automation.maximumActiveJobs": "61",
+        "automation.staleJobAgeSeconds": "3600",
+        "automation.workerPollSeconds": "2",
+        "automation.schedulerPollSeconds": "5",
+      },
+      submittedValues: {
+        "automation.maximumActiveJobs": 61,
+        "automation.staleJobAgeSeconds": 3600,
+        "automation.workerPollSeconds": 2,
+        "automation.schedulerPollSeconds": 5,
+      },
+      baselineRevisionId: TARGET_REVISION,
+      baselineRevisionVersion: 7,
+      baselineDigest: "digest-published-1",
+      submittedAt: "2026-03-16T00:00:02+00:00",
+    };
+    const storageKey =
+      "mediaflow.operations.automation-settings-submission:v1:automation-settings-admin";
+    window.sessionStorage.setItem(storageKey, JSON.stringify(retained));
+    let reconciled = false;
+    recordingFetch((call) => {
+      if (call.url.includes("/operations/automation/settings")) {
+        if (call.method === "PUT") {
+          reconciled = true;
+          return jsonResponse({
+            state: "not_committed",
+            committed: false,
+            sideEffects: "none",
+            evidence: {
+              revisionId: "revision-unpublished-1",
+              durableState: "submission_refused_stale",
+              evidenceComplete: true,
+              identityMatched: true,
+            },
+            nextAction:
+              "review the current values and save your corrected values deliberately",
+          });
+        }
+        return jsonResponse(
+          settingsDocument({
+            target: {
+              revisionId: "revision-published-2",
+              revisionVersion: 8,
+              digest: "digest-published-2",
+              values: {
+                "automation.maximumActiveJobs": 41,
+                "automation.staleJobAgeSeconds": 3600,
+                "automation.workerPollSeconds": 2,
+                "automation.schedulerPollSeconds": 5,
+              },
+            },
+          }),
+        );
+      }
+      if (call.url.includes("/operations/automation/task-definitions")) {
+        return jsonResponse(automationInventory());
+      }
+      if (call.url.includes("/operations/automation/metrics")) {
+        return jsonResponse({ available: false });
+      }
+      if (call.url.includes("/operations/automation/records")) {
+        return jsonResponse({ items: [], total: 0 });
+      }
+      return undefined;
+    });
+    authStore.setToken(TOKEN);
+    renderApp("/ui-v2/operations/automation?tab=settings");
+    let panel = await screen.findByRole("region", { name: "自动化引擎设置" });
+    expect(await within(panel).findByText(/上一次保存结果未知/)).toBeTruthy();
+    await userEvent.click(
+      within(panel).getByRole("button", { name: "核实上次提交" }),
+    );
+    await waitFor(() => {
+      expect(within(panel).getByText(/本次提交没有发布/)).toBeTruthy();
+    });
+    expect(reconciled).toBe(true);
+    // The typed value is retained, corrected against the *current* identity, and
+    // a deliberate Save is available again.
+    const jobs = within(panel).getByLabelText(
+      /并行任务上限/,
+    ) as HTMLInputElement;
+    expect(jobs.value).toBe("61");
+    await waitFor(() => {
+      expect(
+        (
+          within(panel).getByRole("button", {
+            name: "保存设置",
+          }) as HTMLButtonElement
+        ).disabled,
+      ).toBe(false);
+    });
+    expect(window.sessionStorage.getItem(storageKey)).toBeNull();
+
+    // A real reload while the submission is *still* unresolved keeps the block.
+    cleanup();
+    authStore.setToken(TOKEN);
+    window.sessionStorage.setItem(storageKey, JSON.stringify(retained));
+    renderApp("/ui-v2/operations/automation?tab=settings");
+    panel = await screen.findByRole("region", { name: "自动化引擎设置" });
+    expect(await within(panel).findByText(/上一次保存结果未知/)).toBeTruthy();
+    expect(
+      (
+        within(panel).getByRole("button", {
+          name: "保存设置",
+        }) as HTMLButtonElement
+      ).disabled,
+    ).toBe(true);
+  });
+
   it("renders a stopped/overridden consumer as not adopted with its next action", async () => {
     recordingFetch((call) => {
       if (call.url.includes("/operations/automation/settings")) {

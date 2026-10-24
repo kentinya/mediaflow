@@ -25,6 +25,7 @@ import copy
 from collections.abc import Callable, Mapping
 from datetime import UTC, datetime
 from typing import Any
+from uuid import uuid4
 
 from mediaflow.application.configuration_snapshot import (
     ManagedConfigurationService,
@@ -50,6 +51,7 @@ from mediaflow.domain.automation_settings import (
     normalize_override_source,
 )
 from mediaflow.domain.configuration_management import (
+    ConfigurationActivationConflict,
     ConfigurationVersionConflict,
     ManagedConfigurationRevision,
     RuntimeSnapshotUnavailable,
@@ -94,6 +96,76 @@ def normalize_submission_id(value: object) -> str | None:
 
 
 SETTINGS_PUBLICATION_ACTION = "automation_engine_settings_publish"
+
+#: Durable, bounded terminal-outcome records for one identified focused Save.
+#:
+#: A submission can terminate *without* ever owning a revision: a stale refusal
+#: happens before a Draft exists, a no-op publishes nothing, and a persist/
+#: validate/prepare/activate fault leaves the successor unpublished.  Without a
+#: durable record of those terminations a lost response would leave the operator
+#: with a permanently blocked form: the request cannot be re-sent safely and the
+#: exact submission could never be proven either way.  The record is scoped to
+#: the same submission identity and actor as the publication trail, so it can
+#: only ever resolve that one request.
+SUBMISSION_OUTCOME_ACTION = "automation_settings_outcome"
+SUBMISSION_OUTCOME_STALE = "stale_refused"
+SUBMISSION_OUTCOME_UNCHANGED = "unchanged_no_publication"
+SUBMISSION_OUTCOME_VALIDATION_FAILED = "validation_failed"
+SUBMISSION_OUTCOME_PREPARE_FAILED = "runtime_prepare_failed"
+SUBMISSION_OUTCOME_ACTIVATE_FAILED = "activation_failed"
+SUBMISSION_OUTCOME_PERSIST_FAILED = "persist_failed"
+
+#: The terminal outcome a bounded focused-publication failure proves.
+#:
+#: The mapping is by the error's own code rather than only its stage, because the
+#: ``compose`` stage covers both a stale identity and an out-of-scope candidate,
+#: and those two must not be reported to the operator as the same condition.
+SUBMISSION_OUTCOME_BY_CODE: dict[str, str] = {
+    "automation_settings_stale": SUBMISSION_OUTCOME_STALE,
+    "automation_settings_out_of_scope": SUBMISSION_OUTCOME_STALE,
+    "automation_settings_persistence_failed": SUBMISSION_OUTCOME_PERSIST_FAILED,
+    "automation_settings_validation_failed": SUBMISSION_OUTCOME_VALIDATION_FAILED,
+    "automation_settings_runtime_failed": SUBMISSION_OUTCOME_PREPARE_FAILED,
+    "automation_settings_activation_failed": SUBMISSION_OUTCOME_ACTIVATE_FAILED,
+}
+
+#: Stage fallback for an unexpected bounded error with no mapped code.
+SUBMISSION_OUTCOME_BY_STAGE: dict[str, str] = {
+    "persist": SUBMISSION_OUTCOME_PERSIST_FAILED,
+    "validate": SUBMISSION_OUTCOME_VALIDATION_FAILED,
+    "prepare": SUBMISSION_OUTCOME_PREPARE_FAILED,
+    "activate": SUBMISSION_OUTCOME_ACTIVATE_FAILED,
+}
+
+#: Which audit actions one submission's durable trail can consist of.
+SUBMISSION_TRAIL_ACTIONS: tuple[str, ...] = ("draft_edit", SUBMISSION_OUTCOME_ACTION)
+
+#: The recorded outcomes that prove this submission will never publish.
+TERMINAL_NON_PUBLICATION_OUTCOMES: frozenset[str] = frozenset(
+    {
+        SUBMISSION_OUTCOME_STALE,
+        SUBMISSION_OUTCOME_UNCHANGED,
+        SUBMISSION_OUTCOME_VALIDATION_FAILED,
+        SUBMISSION_OUTCOME_PREPARE_FAILED,
+        SUBMISSION_OUTCOME_ACTIVATE_FAILED,
+        SUBMISSION_OUTCOME_PERSIST_FAILED,
+    }
+)
+
+#: The bounded durable-state code each terminal outcome reports.
+TERMINAL_NON_PUBLICATION_STATES: dict[str, str] = {
+    SUBMISSION_OUTCOME_STALE: "submission_refused_stale",
+    SUBMISSION_OUTCOME_UNCHANGED: "submission_no_publication_needed",
+    SUBMISSION_OUTCOME_VALIDATION_FAILED: "submission_validation_failed",
+    SUBMISSION_OUTCOME_PREPARE_FAILED: "submission_prepare_failed",
+    SUBMISSION_OUTCOME_ACTIVATE_FAILED: "submission_activation_failed",
+    SUBMISSION_OUTCOME_PERSIST_FAILED: "submission_persist_failed",
+}
+
+#: The bounded durable-state codes that prove a settled, correctable ending.
+TERMINAL_NON_PUBLICATION_STATE_VALUES: frozenset[str] = frozenset(
+    TERMINAL_NON_PUBLICATION_STATES.values()
+)
 
 
 class _RuntimePreparationFailure(Exception):
@@ -295,6 +367,20 @@ class AutomationSettingsService:
         if all(current_values[path] == normalized[path] for path in ENGINE_FIELD_PATHS):
             # An unchanged Save must not admit work, manufacture a publication or
             # fabricate adoption evidence.  It reports the exact unchanged target.
+            #
+            # It is still a *terminal, durable* outcome for this request: it wrote
+            # nothing, so a reconciliation that arrives after a lost response must
+            # be able to clear the resubmission block deliberately instead of
+            # staying unresolved forever.
+            self._record_submission_outcome(
+                actor=actor,
+                identity=identity,
+                outcome=SUBMISSION_OUTCOME_UNCHANGED,
+                normalized=normalized,
+                target=target,
+                stage="unchanged",
+                next_action="none; the submitted values already match the published target",
+            )
             return {
                 "published": False,
                 "unchanged": True,
@@ -308,6 +394,28 @@ class AutomationSettingsService:
             or (expected_version is not None and expected_version != target.revision_version)
             or (expected_digest is not None and expected_digest != target.digest)
         ):
+            # The refusal is proven before any Draft exists, so there is no
+            # revision whose own evidence could ever resolve it.  The terminal
+            # outcome is therefore recorded against this exact submission
+            # identity here; otherwise a lost refusal response would leave the
+            # operator with a permanently blocked form and no way back.
+            self._record_submission_outcome(
+                actor=actor,
+                identity=identity,
+                outcome=SUBMISSION_OUTCOME_STALE,
+                normalized=normalized,
+                target=target,
+                stage="compose",
+                next_action=(
+                    "refresh the current published values, review the difference and save again"
+                ),
+                extra={
+                    "expectedRevisionId": expected_revision_id,
+                    "expectedDigest": expected_digest,
+                    "currentRevisionId": target.revision_id,
+                    "currentDigest": target.digest,
+                },
+            )
             raise AutomationSettingsPublicationError(
                 "automation_settings_stale",
                 "the published settings changed since this form was read; nothing was published",
@@ -319,6 +427,70 @@ class AutomationSettingsService:
             )
 
         before = {path: current_values[path] for path in ENGINE_FIELD_PATHS}
+        try:
+            return self._compose_validate_publish(
+                normalized=normalized,
+                identity=identity,
+                actor=actor,
+                target=target,
+                before=before,
+                before_publish=before_publish,
+            )
+        except AutomationSettingsPublicationError as error:
+            # Every bounded failure of this exact submission is durably terminal:
+            # it wrote nothing, or it left an unpublished revision behind.  The
+            # record is what lets a lost failure response be reconciled into a
+            # correctable state instead of a permanently blocked form.
+            self._record_submission_outcome(
+                actor=actor,
+                identity=identity,
+                outcome=SUBMISSION_OUTCOME_BY_CODE.get(
+                    error.code,
+                    SUBMISSION_OUTCOME_BY_STAGE.get(error.stage, SUBMISSION_OUTCOME_PERSIST_FAILED),
+                ),
+                normalized=normalized,
+                target=target,
+                stage=error.stage,
+                next_action=error.next_action,
+                extra={
+                    "code": error.code,
+                    "revisionId": error.revision_id,
+                    "durableState": error.durable_state,
+                },
+            )
+            raise
+        except (ConfigurationVersionConflict, ConfigurationActivationConflict):
+            # A concurrent writer won: this submission provably did not publish.
+            self._record_submission_outcome(
+                actor=actor,
+                identity=identity,
+                outcome=SUBMISSION_OUTCOME_STALE,
+                normalized=normalized,
+                target=target,
+                stage="compose",
+                next_action=(
+                    "refresh the current published values, review the difference and save again"
+                ),
+            )
+            raise
+
+    def _compose_validate_publish(
+        self,
+        *,
+        normalized: dict[str, float | int],
+        identity: str | None,
+        actor: str,
+        target: PublishedEngineTarget,
+        before: dict[str, float | int],
+        before_publish: Callable[[ManagedConfigurationRevision], object] | None,
+    ) -> dict[str, object]:
+        """Compose, validate and publish one focused successor.
+
+        Splitting this out of :meth:`save` keeps the terminal-outcome recording
+        in one place for every bounded failure stage while the success path stays
+        the single shared checked publication.
+        """
+
         try:
             draft = self._config.create_successor_draft(
                 actor=actor,
@@ -536,6 +708,78 @@ class AutomationSettingsService:
                 next_action="check configuration persistence health, then save again",
             ) from error
 
+    def _record_submission_outcome(
+        self,
+        *,
+        actor: str,
+        identity: str | None,
+        outcome: str,
+        normalized: Mapping[str, Any],
+        target: PublishedEngineTarget | None,
+        stage: str,
+        next_action: str,
+        extra: Mapping[str, object] | None = None,
+    ) -> None:
+        """Persist the terminal, non-publication outcome of one submission.
+
+        This is *evidence about this request*, not a setting and not authority:
+        it carries only the submission identity, the four values that were
+        submitted, the stage that ended the request and a bounded next action.
+        It is written best-effort — a failure to record it must never change the
+        answer the operator receives — and it can only ever resolve the one
+        actor/submission pair it names, so a later equal publication by another
+        writer still cannot certify this request.
+
+        A submission with no identity cannot be fenced, so nothing is recorded:
+        such a request must stay unresolved rather than become resumable.
+        """
+
+        if identity is None:
+            return
+        repository = self._config.repository
+        record = getattr(repository, "record_configuration_audit", None)
+        if not callable(record):
+            return
+        try:
+            from mediaflow.domain.configuration_management import (
+                ConfigurationChangeAudit,
+                ConfigurationObjectKind,
+            )
+
+            after: dict[str, object] = {
+                "objectChange": {
+                    "kind": "system_settings",
+                    "objectId": "automation_engine_settings",
+                    "action": "focused_edit",
+                    "submissionId": identity,
+                    "outcome": outcome,
+                    "stage": stage,
+                    "candidate": {path: normalized[path] for path in ENGINE_FIELD_PATHS},
+                    "publishedRevisionId": (target.revision_id if target is not None else None),
+                    "publishedRevisionDigest": (target.digest if target is not None else None),
+                    "nextAction": next_action,
+                    **(dict(extra) if extra is not None else {}),
+                }
+            }
+            record(
+                ConfigurationChangeAudit(
+                    str(uuid4()),
+                    ConfigurationObjectKind.SYSTEM_SETTINGS,
+                    identity,
+                    SUBMISSION_OUTCOME_ACTION,
+                    {},
+                    after,
+                    self._clock(),
+                    actor,
+                )
+            )
+        except Exception:
+            # The bounded failure answer is already determined; losing the
+            # reconciliation record must not turn it into a different error.  An
+            # unrecorded terminal outcome stays unresolved, which is the safe
+            # direction (it keeps the resubmission block in place).
+            return
+
     # ------------------------------------------------------------------
     # Reconciliation of an unknown submission
     # ------------------------------------------------------------------
@@ -555,9 +799,11 @@ class AutomationSettingsService:
         request's own durable trail:
 
         * the ``draft_edit`` audit that carries this submission identity names the
-          revision this request edited;
-        * that revision's own activation evidence decides whether *it* published;
-        * the persisted ``validation_failed`` audit decides a terminal rejection.
+          revision this request edited, and that revision's own status decides
+          whether *it* published;
+        * a persisted terminal-outcome record proves a termination that never
+          owned a revision at all (a stale refusal before any Draft, a no-op, or
+          a persist/validate/prepare/activate fault).
 
         A submission whose own evidence cannot be located or read completely is
         reported as ``unresolved`` — that state keeps the resubmission block in
@@ -606,8 +852,12 @@ class AutomationSettingsService:
                 "review the current target before saving your values again"
             )
         elif state == EngineSubmissionState.NOT_COMMITTED.value:
+            terminal = evidence.get("durableState")
             next_action = (
-                "this exact submission terminated without publishing; correct the reported "
+                "this exact submission is settled and did not change the published settings; "
+                "review the current values and save your corrected values deliberately"
+                if terminal in TERMINAL_NON_PUBLICATION_STATE_VALUES
+                else "this exact submission terminated without publishing; correct the reported "
                 "condition and save deliberately again"
             )
         else:
@@ -655,7 +905,7 @@ class AutomationSettingsService:
             try:
                 marker = int(latest()) + 1
                 while True:
-                    page = targeted(("draft_edit",), before_sequence=marker, limit=200)
+                    page = targeted(SUBMISSION_TRAIL_ACTIONS, before_sequence=marker, limit=200)
                     audits.extend(page)
                     if len(page) < 200:
                         complete = True
@@ -674,7 +924,7 @@ class AutomationSettingsService:
                 complete = False
         elif callable(recent):
             try:
-                audits = list(recent(("draft_edit",), limit=500))
+                audits = list(recent(SUBMISSION_TRAIL_ACTIONS, limit=500))
             except Exception:
                 audits = []
         if not audits:
@@ -688,6 +938,7 @@ class AutomationSettingsService:
                 "evidenceComplete": complete,
                 "identityMatched": False,
             }
+        matched: list[tuple[Any, Mapping[str, Any]]] = []
         for audit in audits:
             if audit.actor != actor:
                 continue
@@ -713,12 +964,72 @@ class AutomationSettingsService:
                     "occurredAt": audit.occurred_at.isoformat(),
                     "durableState": "submission_values_contradict_evidence",
                 }
-            return self._revision_submission_state(audit, complete)
-        return {
-            "state": EngineSubmissionState.UNRESOLVED.value,
+            matched.append((audit, change))
+        if not matched:
+            return {
+                "state": EngineSubmissionState.UNRESOLVED.value,
+                "evidenceComplete": complete,
+                "identityMatched": False,
+            }
+        # Positive publication evidence always wins over a later terminal record:
+        # a submission that published must never be reported as "not committed"
+        # merely because a subsequent statement about the same identity exists.
+        for audit, _change in matched:
+            if audit.action != SUBMISSION_OUTCOME_ACTION:
+                state = self._revision_submission_state(audit, complete)
+                if state.get("state") in COMMITTED_SUBMISSION_STATES:
+                    return state
+        audit, change = matched[0]
+        if audit.action == SUBMISSION_OUTCOME_ACTION:
+            return self._terminal_outcome_state(audit, change, complete)
+        return self._revision_submission_state(audit, complete)
+
+    @staticmethod
+    def _terminal_outcome_state(
+        audit: Any, change: Mapping[str, Any], complete: bool
+    ) -> dict[str, object]:
+        """One submission's recorded terminal non-publication.
+
+        The record is authoritative only for the exact actor/submission pair the
+        walk already matched, and it states that this request ended without
+        publishing.  It is therefore a *correctable* outcome: the page can clear
+        the resubmission block and let the operator review the current values and
+        save deliberately.
+        """
+
+        outcome = str(change.get("outcome") or "")
+        if outcome not in TERMINAL_NON_PUBLICATION_OUTCOMES:
+            return {
+                "state": EngineSubmissionState.UNRESOLVED.value,
+                "evidenceComplete": complete,
+                "identityMatched": True,
+                "auditId": audit.audit_id,
+                "occurredAt": audit.occurred_at.isoformat(),
+                "durableState": "submission_outcome_unknown",
+            }
+        stage = str(change.get("stage") or "")
+        evidence: dict[str, object] = {
+            "state": EngineSubmissionState.NOT_COMMITTED.value,
             "evidenceComplete": complete,
-            "identityMatched": False,
+            "identityMatched": True,
+            "auditId": audit.audit_id,
+            "occurredAt": audit.occurred_at.isoformat(),
+            "submissionOutcome": outcome,
+            "failureStage": stage or None,
+            "durableState": TERMINAL_NON_PUBLICATION_STATES[outcome],
+            "nextAction": str(change.get("nextAction") or "") or None,
+            "targetRevisionId": change.get("publishedRevisionId"),
         }
+        revision_id = change.get("revisionId")
+        if isinstance(revision_id, str) and revision_id:
+            # A persist/validate/prepare/activate fault may leave an unpublished
+            # successor behind; naming it keeps the evidence diagnosable without
+            # ever presenting that revision as a publication.
+            evidence["revisionId"] = revision_id
+        code = change.get("code")
+        if isinstance(code, str) and code:
+            evidence["failureCode"] = code
+        return evidence
 
     def _revision_submission_state(self, audit: Any, complete: bool) -> dict[str, object]:
         """Decide one submission's outcome from its own revision's evidence."""

@@ -787,6 +787,15 @@ class _FakeClock:
 
         return value
 
+
+class ResidentLoopAdoptionUnitTests(_ResidentLoopFixture):
+    """Controlled-clock proof that the loop installs *then* reports.
+
+    These are ordinary discovered cases (B43.4 review note): they belong on a
+    ``TestCase``, not on the clock helper, so their assertions are real evidence
+    rather than silently uncollected code.
+    """
+
     def test_adoption_installs_the_value_and_reports_only_after_installing(self) -> None:
         reports: list[ResidentCadence] = []
         cadence = ResidentCadence(

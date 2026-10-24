@@ -693,11 +693,22 @@ leaves both the persisted Active and the process binding unchanged and reports a
 bounded `prepare` stage.
 
 A Save carries a client-generated submission identity. Unknown outcomes are
-reconciled against that exact submission's own durable revision and activation
-evidence (`committed` / `superseded` / `not_committed` / `unresolved`); equal
-values, another writer's equal publication, or a still-Draft failed revision can
-never certify it. Only a terminal proof clears the retained resubmission block,
-which survives reload principal-scoped without storing a bearer token.
+reconciled against that exact submission's own durable evidence
+(`committed` / `superseded` / `not_committed` / `unresolved`); equal values,
+another writer's equal publication, or a still-Draft failed revision can never
+certify it. A submission that terminates without ever owning a revision — a
+stale/no-op refusal, or a persist/validate/prepare/activate fault — records its
+own bounded terminal outcome under the same actor + submission identity, so a
+lost failure response reconciles into a *terminal, correctable* state instead of
+a permanently blocked form. Only terminal evidence clears the retained
+resubmission block, which survives reload principal-scoped without storing a
+bearer token, and the operator's typed input is then re-based onto the current
+published identity for an explicit new Save.
+
+While a Save is outstanding the four inputs are read-only, so a keystroke can
+never belong to a request that already left the browser. A value that still
+races the response is retained and explicitly re-based onto the just-published
+identity rather than being cleared or silently attached to the old one.
 
 `SystemSettingsService` retains the generic Draft editor and its
 `/api/v1/system/settings` semantics unchanged; the focused command is a distinct
