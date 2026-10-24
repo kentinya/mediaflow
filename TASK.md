@@ -1461,3 +1461,94 @@ are retained in `test-time-accounting.json`; no idle wait was added to pad the r
 Slice43 remains ACTIVE. Preserve Task Base/Goal/Scope and accepted45; no next Task, A-readiness
 or Slice-closure claim. Only `TASK.md` changes in this B checkpoint; unrelated dirty/private files
 and original reference images remain untouched.
+
+## Developer Fix Report — native-spec type error (round 3)
+
+```text
+Status: READY FOR B REVIEW (Developer does not self-PASS)
+Task Base: f18d2444f548b81b5892536498a1b4cdd4400be8 (unchanged)
+Reviewed predecessor: 7b98130f6b42999bd6e7808e3be39bf0ba0e7d4d
+Correction scope: B's single blocking item — the TS2367 impossible comparison
+Candidate: the commit carrying this report (`git log -1` for the exact SHA)
+```
+
+Both previously reported form-integration failures stay corrected and untouched. This round changes
+exactly one line of test logic plus its two-line justification comment; no backend, API, persistence,
+schema, resident-loop, harness or product-form behavior changed, and no assertion, timeout, retry or
+skip was added, removed or relaxed.
+
+### 1. The impossible branch is replaced by a valid distinct value
+
+`web/tests/e2e/automation-settings.python.spec.ts:419` declared
+`const current = mine === 71 ? 72 : 71;`. Because `mine` is inferred as `61 | 62`, the comparison with
+`71` is provably false for every value the type permits, so the official typecheck rejected the
+branch with TS2367 (TS narrows the impossible comparison to `never`).
+
+The correction keeps the same fixture intent — the concurrent writer must publish a capacity that
+differs from the value the operator typed — by using `71` directly:
+
+```ts
+const mine = original === 61 ? 62 : 61;
+// The other writer's value must differ from both possible `mine` values; 71
+// differs from 61 and 62, and the harness default capacity is not 71.
+const current = 71;
+```
+
+`71 ∈ [1, 10000]` so the publication is valid, `71 !== 61` and `71 !== 62` so the same-field overlap
+the journey needs is guaranteed regardless of the harness's seeded Active capacity, and the value is
+distinct from the neighbouring declared defaults used elsewhere in this spec (61/62/77/78/88/89). No
+type widening, `as`/non-null cast, `@ts-expect-error`, `@ts-ignore` or diagnostic suppression was
+introduced to hide the dead branch; the branch itself is gone. Every conflict/reload/reconcile/
+no-write/explicit-Save assertion in the test (`当前发布值为 71,你输入的值是 61|62`, disabled Save,
+`采用当前值`/`保留我的修改` writing nothing, revision identity unchanged until the explicit Save, and
+the final published capacity = `mine`) is preserved verbatim.
+
+### 2. Official typecheck now covers the E2E sources
+
+`npm run typecheck` is the documented composite gate (`tsc -p tsconfig.json` **and**
+`tsc -p tsconfig.node.json`, whose `include` carries `tests/e2e`). It now exits 0, so the previously
+reported blocker — which the app-only project could not surface — is closed at the same authority
+the acceptance gate uses.
+
+### Affected commands and actual results
+
+| Command (cwd `web`) | Actual result |
+|---|---|
+| `npm run typecheck` | PASS, exit 0 (`tsconfig.json` + `tsconfig.node.json` incl. `tests/e2e`) |
+| `npx eslint tests/e2e/automation-settings.python.spec.ts` | PASS, exit 0, no findings |
+| `npx prettier --check tests/e2e/automation-settings.python.spec.ts` | PASS, "All matched files use Prettier code style!" |
+| `npm run build` | PASS, exit 0; only the pre-existing chunk-size warning |
+| `npm run test:e2e -- --config=playwright.python.automation.config.ts tests/e2e/automation-settings.python.spec.ts` | PASS, `11 passed (10.6s)`, 1 worker, real Python harness on port 4185 |
+| `python3 scripts/check_governance.py` | `governance check: PASS` |
+| `git diff --check` | clean |
+
+The corrected case (`a lost same-field conflict stays an explicit choice until the operator saves`)
+passes inside that native run on its real entrance (`/ui-v2/operations/automation?tab=settings` →
+real `GET/PUT /api/v1/operations/automation/settings` over the harness's SQLite runtime) — the value
+was not chosen from a hand-built route or a fabricated row. No test was skipped or retried, and the
+harness's own seeded capacity is not `71`, so the other-writer publication is a genuine distinct
+successor.
+
+As instructed, the full Python/Web/default-E2E/release matrices, wheel/installed-consumer, upgrade
+rehearsal and Docker lifecycle were **not** rerun this round; they remain B-owned T4 gates and are
+neither PASS nor claimed.
+
+### Remaining risks / disclosures for B
+
+1. **Fixture value coupling.** `current = 71` is now a literal; if a future fixture or harness seed
+   adopts `71` as the Active `automation.maximumActiveJobs`, the same-field overlap this test asserts
+   would silently degrade into a no-op publication. The comment states the invariant, but nothing
+   enforces it; the safer long-term form is a value derived from the observed baseline (e.g.
+   `original === 61 ? 71 : 61`) chosen so it can never equal `mine`. I did not take that option
+   because B specified the literal `71` and the observed harness default is 100.
+2. **Evidence scope.** Only the changed spec and its own gate chain were validated. The earlier
+   rounds' disclosures (in-process harness consumer evidence, additive schema-50 evidence upgrade
+   rehearsal, T4 process/wheel/Docker/installed-cadence acceptance) remain open and B-owned.
+3. **Scope.** No public route, result state, persistence model or generic workflow was added; Task ID/
+   Base/Goal/Scope, High/T4 and the accepted45 pins are unchanged. No next Task, no Slice closure and
+   no A-readiness claim.
+
+Test-time accounting: this round began 18:53:50 +08:00 with governance/branch orientation and source
+reading; the candidate is checkpointed at approximately 19:04 +08:00, so about 10 minutes of actual
+work precede it. Recorded test-command intervals: typecheck 27s + eslint/prettier 8s + build 3s +
+native spec 11s ≈ 49s, far below 50% of the round. No idle wait was added to pad elapsed time.

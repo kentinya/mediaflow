@@ -416,7 +416,9 @@ test("a lost same-field conflict stays an explicit choice until the operator sav
   const before = await settingsDocument(page);
   const original = before.target!.values["automation.maximumActiveJobs"];
   const mine = original === 61 ? 62 : 61;
-  const current = mine === 71 ? 72 : 71;
+  // The other writer's value must differ from both possible `mine` values; 71
+  // differs from 61 and 62, and the harness default capacity is not 71.
+  const current = 71;
 
   // The operator types a capacity the other writer will also change.
   const jobs = panel.getByLabel(/并行任务上限/);
