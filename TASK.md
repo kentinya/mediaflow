@@ -317,16 +317,18 @@ composition/style, not sample data, removed modes, validation ranges or executio
 
 ### Checkpoint
 
-- Status: **READY FOR B REVIEW**. B's 2026-10-24 FIX-REQUIRED round is implemented in the working
-  tree with its affected-test plan and the assigned native matrix executed on it. The latest round
-  corrects B's two remaining P1 findings (latest-result ordering and healthy-empty-history state).
-  B acceptance (T3 gates, Slice Final T4) remains pending; no self-PASS is claimed.
+- Status: **READY FOR B REVIEW**. B's 2026-10-24 FIX-REQUIRED round is implemented and
+  checkpointed with its affected-test plan and the assigned native matrix executed on it. The
+  latest round corrects B's two remaining P1 findings (latest-result ordering and
+  healthy-empty-history state). B acceptance (T3 gates, Slice Final T4) remains pending; no
+  self-PASS is claimed.
 - Task Base unchanged (`78ec108d4473e8c140174c1356d0e88a1ae42b34`); reassessment source
   `533a666860a571e61c78ac49b3e45c44acaa419e` is not a Base.
 - This round starts from B's reviewed candidate `94aede19095b77af0edffaa74a3da16b7492dd2a`
-  (implementation `d9157af`). Implementation changes are uncommitted in the working tree for B to
-  checkpoint with this report, so B reviews `94aede19095b77af0edffaa74a3da16b7492dd2a..HEAD` after
-  the checkpoint commit. No history rewrite, no push.
+  (implementation `d9157af`). Implementation checkpoint:
+  `eb74f36` (`fix(automation): sort by the latest admitted run and read empty history truthfully`);
+  this report is its documentation successor, so B reviews
+  `94aede19095b77af0edffaa74a3da16b7492dd2a..HEAD`. No history rewrite, no push.
 - Preserved untouched: the pre-existing `docs/pics/操作与任务.png` deletion, every untracked
   artifact (`.DS_Store`, `.t*.log`, `output/…zip`, `web/test-results*`, untracked `15`) and both
   untracked reference PNGs (digests below). Private config stays ignored/untracked/unstaged.
@@ -430,10 +432,12 @@ npx playwright test --config=playwright.python.automation.config.ts \
   23 passed  (29.9s wall clock)
 ```
 
-Test wall clock for this round was ≈1.6 min of ≈1 h elapsed (< 30 %): the Python module run (49 s),
-the Web unit run (13 s) and the single native invocation (30 s). Only focused/changed and directly
-affected suites were run; the full Web/default-E2E/static matrix and Slice T4 remain B-owned and are
-**not** claimed.
+Test wall clock for this round was ≈2.5 min of ≈14 min elapsed (< 30 %): the 310-test Python module
+run (49 s), the focused 94-case recheck (13 s), the Web unit run (13.5 s), the single native
+invocation (30 s) with two targeted re-runs after fixture adjustments, and the static
+format/lint/compile/typecheck/build/prettier checks. Only focused/changed and directly affected
+suites were run; the full Web/default-E2E/static matrix and Slice T4 remain B-owned and are **not**
+claimed.
 
 New Python coverage in `tests/test_automation_workspace_read_model.py` (32 → 35 cases, all through
 the real API/repository/temporary SQLite):
