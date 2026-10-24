@@ -317,21 +317,45 @@ composition/style, not sample data, removed modes, validation ranges or executio
 
 ### Checkpoint
 
-- Status: **READY FOR B REVIEW**. B's 2026-10-24 FIX-REQUIRED round (R3 ×2 + T8) is implemented in
-  the working tree with its affected-test plan and the assigned native matrix executed on it. B
-  acceptance (T3 gates, Slice Final T4) remains pending; no self-PASS is claimed.
+- Status: **READY FOR B REVIEW**. B's 2026-10-24 FIX-REQUIRED round is implemented in the working
+  tree with its affected-test plan and the assigned native matrix executed on it. The latest round
+  corrects B's two remaining P1 findings (latest-result ordering and healthy-empty-history state).
+  B acceptance (T3 gates, Slice Final T4) remains pending; no self-PASS is claimed.
 - Task Base unchanged (`78ec108d4473e8c140174c1356d0e88a1ae42b34`); reassessment source
   `533a666860a571e61c78ac49b3e45c44acaa419e` is not a Base.
-- This round starts from B's reviewed candidate `87ec86f0cdbd3c84e901594e5f0dd034f4e0cf12`
-  (implementation `29048876f0546efd3ba9c8a5cd5463b7f4b8168f`). Implementation checkpoint:
-  `d9157af` (`fix(automation): reconcile recovery per original item and read producer results`);
-  this report is its documentation successor, so B reviews
-  `87ec86f0cdbd3c84e901594e5f0dd034f4e0cf12..HEAD`. No history rewrite, no push.
+- This round starts from B's reviewed candidate `94aede19095b77af0edffaa74a3da16b7492dd2a`
+  (implementation `d9157af`). Implementation changes are uncommitted in the working tree for B to
+  checkpoint with this report, so B reviews `94aede19095b77af0edffaa74a3da16b7492dd2a..HEAD` after
+  the checkpoint commit. No history rewrite, no push.
 - Preserved untouched: the pre-existing `docs/pics/操作与任务.png` deletion, every untracked
   artifact (`.DS_Store`, `.t*.log`, `output/…zip`, `web/test-results*`, untracked `15`) and both
   untracked reference PNGs (digests below). Private config stays ignored/untracked/unstaged.
 
-### Changed behavior — this correction round
+### Changed behavior — latest-result and empty-history correction (last round)
+
+1. **P1/T2 — `最近结果` sorts by the actual latest admitted run.**
+   `_automation_inventory_sort_key` no longer reads the scheduled-only
+   `occurrenceState.lastOccurrenceAt`; it receives the definition's authoritative latest
+   *original admitted* run (manual or scheduled) from `_automation_latest_runs` and orders by that
+   `admittedAt`, with the definition identity as the deterministic tie. The ordering therefore uses
+   the same value the row publishes, so a manual-only history is ordered by its real admission and a
+   never-run definition sorts by the empty key instead of above it. The ordering is applied to the
+   complete filtered population **before** the page window, so filter/total/cursor/principal
+   semantics are unchanged. A never-run or unreadable row is never sorted by an ID-derived timestamp
+   and no non-admitted scheduled diagnostic is merged into the ordering basis.
+2. **P1/T1 — a healthy empty history is "no execution", not "unavailable".**
+   `_automation_latest_runs` now tracks read success separately from the returned population: the
+   durable read answering `{}` is a legitimate global-empty history, a definition absent from a
+   successful read is a legitimate per-definition "not yet run", and only a **failed/unavailable**
+   read publishes `latestAdmittedRuns[id].unavailable=true` with the refresh next action. The
+   previously merged scheduled-occurrence fallback was removed, so a blocked/disabled/scheduled
+   diagnostic can never masquerade as a processing result. A healthy empty read publishes no entry
+   at all, which the Web already renders as `尚无执行`.
+3. **No other surface changed.** No schema, endpoint, write path, admission/execution/Worker
+   semantics, permission model or Web component logic was touched; the two Web changes in this round
+   are tests only.
+
+### Changed behavior — previous correction round (retained)
 
 1. **R3/P1 — resolution is reconciled per original affected item (T3/T5/T6).**
    `automation_linked_handling` now also computes one bounded coverage read
@@ -377,19 +401,17 @@ composition/style, not sample data, removed modes, validation ranges or executio
 
 ```text
 python3 scripts/check_governance.py                                      PASS
-.venv/bin/python -m unittest tests.test_automation_workspace_read_model   tests.test_operations_run_inventory tests.test_operations_run_detail   tests.test_operations_workspace tests.test_automation_definition_occurrence   tests.test_v2_automation_operations tests.test_v2_automation_lifecycle   tests.test_automation_run_once tests.test_v2_automation_run_once   tests.test_automation_api tests.test_task_center_recovery_lineage   tests.test_operations_task_center                                          Ran 307 OK
-.venv/bin/python -m unittest tests.test_automation_workspace_read_model   tests.test_operations_run_detail tests.test_operations_task_center   tests.test_task_center_recovery_lineage   tests.test_operations_run_detail_plan_evidence   tests.test_operations_run_detail_log_isolation                            Ran 112 OK
+.venv/bin/python -m unittest tests.test_automation_workspace_read_model   tests.test_operations_run_inventory tests.test_operations_run_detail   tests.test_operations_workspace tests.test_automation_definition_occurrence   tests.test_v2_automation_operations tests.test_v2_automation_lifecycle   tests.test_automation_run_once tests.test_v2_automation_run_once   tests.test_automation_api tests.test_task_center_recovery_lineage   tests.test_operations_task_center                                          Ran 310 OK (49.5s)
+.venv/bin/python -m unittest tests.test_automation_workspace_read_model   tests.test_v2_automation_operations tests.test_operations_run_inventory       Ran 94 OK
 .venv/bin/ruff format --check mediaflow tests scripts                      All formatted
 .venv/bin/ruff check mediaflow tests scripts                              All checks passed
 .venv/bin/python -m compileall -q mediaflow tests scripts                 OK
-rg -n -i 'ffprobe|ffmpeg' mediaflow pyproject.toml                        no match (exit 1)
-npm --prefix web run test -- run src/entities/operations/automation.test.ts   src/entities/operations/automation-lifecycle.test.ts   src/features/operations/AutomationRouter.test.tsx   src/features/operations/AutomationLifecyclePage.test.tsx   src/features/operations/AutomationRunOncePage.test.tsx   src/features/operations/run-query.test.ts   src/features/operations/OperationsInventory.test.tsx   src/routes/router.test.tsx   src/features/operations/AutomationWorkspaceReadModel.test.tsx            9 files / 114 tests passed
+npm --prefix web run test -- run src/entities/operations/automation.test.ts   src/entities/operations/automation-lifecycle.test.ts   src/features/operations/AutomationRouter.test.tsx   src/features/operations/AutomationLifecyclePage.test.tsx   src/features/operations/AutomationRunOncePage.test.tsx   src/features/operations/run-query.test.ts   src/features/operations/OperationsInventory.test.tsx   src/routes/router.test.tsx   src/features/operations/AutomationWorkspaceReadModel.test.tsx            9 files / 115 tests passed (13.2s)
 npm --prefix web run typecheck                                            OK
 npm --prefix web run lint                                                 OK
-npx --prefix web prettier --check <5 changed Web paths>                   All formatted
+npx --prefix web prettier --check   web/tests/e2e/automation-workspace.python.spec.ts   web/src/features/operations/AutomationWorkspaceReadModel.test.tsx        All formatted
 npm --prefix web run build                                                OK (dist rebuilt)
 npx playwright test --config=playwright.config.ts --list                  238 tests / 16 files, 0 workspace-python
-npx playwright test --config=playwright.python.automation.config.ts --list 21 tests / 3 files, 5 workspace tests present
 git diff --check                                                         clean
 shasum -a 256 docs/pics/自动化页.png docs/pics/自动化页-全局设置.png
   d2f759ead56a30dce344ccce97e7c119e144ca728a31b3af8e9a355eefa6ba34
@@ -405,45 +427,66 @@ npx playwright test --config=playwright.python.automation.config.ts \
   tests/e2e/automation-workspace.python.spec.ts \
   tests/e2e/automation-lifecycle.python.spec.ts \
   tests/e2e/automation-run-once.python.spec.ts
-  21 passed  (28.3s wall clock)
+  23 passed  (29.9s wall clock)
 ```
 
-Test wall clock for this round was ≈2 min of ≈1 h elapsed (< 30 %). Only focused/changed and
-directly affected suites were run; the full Web/default-E2E/static matrix and Slice T4 remain
-B-owned and are **not** claimed.
+Test wall clock for this round was ≈1.6 min of ≈1 h elapsed (< 30 %): the Python module run (49 s),
+the Web unit run (13 s) and the single native invocation (30 s). Only focused/changed and directly
+affected suites were run; the full Web/default-E2E/static matrix and Slice T4 remain B-owned and are
+**not** claimed.
 
-New Python coverage in `tests/test_automation_workspace_read_model.py` (31 → 32 cases):
+New Python coverage in `tests/test_automation_workspace_read_model.py` (32 → 35 cases, all through
+the real API/repository/temporary SQLite):
 
-- `test_handling_requires_every_original_affected_item_to_resolve` — real producer vocabulary
-  (`task_results.status='FAILED'`) for two zero-effect failures; asserts the initial
-  `effects.none=2` / `partial=0` / `uncertain=0` partition and per-item `effectCertainty='none'`;
-  recovers only one item through the actual confirmed-preparation → completed-execution →
-  verified-effect chain; asserts `affectedItems=2 / resolvedItems=1 / unresolvedItems=1` with
-  state `investigation` (never `resolved`), both original reasons intact, original outcome
-  unchanged, and the same read after a real API/runtime reopen. A follow-up with the execution's
-  own item failed reverts to `0` resolved.
-- `test_handling_progress_is_trueful_across_analysis_plan_and_execution` rewritten at step 4/5 to
-  write the real durable per-item chain (`_write_verified_recovery_effect`) instead of only flipping
-  a TaskItem status — a completed execution without its own verified effect is no longer accepted as
-  resolution.
+- `test_inventory_latest_sort_uses_the_latest_admitted_run` — two published definitions, one with a
+  real manual-only admission (`origin_kind='definition-run-once'`, no scheduled occurrence) and one
+  never run, read with `sort=latest&direction=desc`; asserts the manual definition is first, the
+  never-run definition still present, `latestAdmittedRuns[manual].admittedAt` equal to the ordering
+  evidence and no fabricated entry for the never-run definition. Reverting
+  `_automation_inventory_sort_key` to the old `lastOccurrenceAt` basis fails this case with
+  `'z-review-never' != 'a-review-manual'` — B's exact reproduced defect.
+- `test_inventory_latest_sort_is_total_and_pageable` — three definitions, two sharing one admission
+  instant and one older, plus the never-run seeded definition; walks `limit=1` forward pages through
+  the real cursors asserting no duplicate/repeated boundary row, the deterministic identity tie, and
+  the never-run definition last.
+- `test_inventory_latest_run_state_distinguishes_empty_from_unreadable` — healthy global-empty read
+  (`{}`, no `unavailable` entry, available metrics), then a sibling with history beside a never-run
+  definition (only the run definition published), then a genuine fault seam on the repository method
+  publishing `unavailable=true` with the refresh action for **every** definition while the cards stay
+  available and correct. Reverting to the old `unavailable = not admitted` rule fails this case.
 
-New native journey in `web/tests/e2e/automation-workspace.python.spec.ts`
-(`a recovered subset never resolves the record with a failed sibling`): a real three-item Run once
-through the browser with two genuine Executor failures, then a real Task Center recovery of exactly
-one. It asserts at the actual records page and via the read-only `/__harness__/automation-record-evidence`
-control (which calls the same repository reads the page uses): unchanged original population and
-`partial_success`, `effects.none=2` before and after analysis/preparation/execution, the rendered
-`已知效果：无效果 2 · 已确认 0 · 不确定 0 · 部分 0`, no `后续处理已完成` at any point, the durable
-failed sibling still `failed` with its source present, the successful sibling `success` with its
-source gone, `受影响条目 2 · 已确认恢复 1 · 仍未解决 1` after recovery, the identical read after a
-real `/__harness__/restart` reopen, and zero local recovery controls on the record. Harness additions
-are test infrastructure only and use production paths (`seed-run-once-two-failure-scope`,
-`run-run-once-two-failure-worker`, the extended `automation-record-evidence`, and a
-`_failure_for_named_execution_items` seam generalizing the existing one-item failure seam — the
-supported one-item journey still uses exactly one named source).
+New/changed Web coverage:
+
+- `AutomationWorkspaceReadModel.test.tsx` gained `labels a healthy empty history as no execution, not
+  unavailable` (empty `latestAdmittedRuns` → `尚无执行`, no `最近结果不可用`, cards still published).
+- `web/tests/e2e/automation-workspace.python.spec.ts` gained two real-UI journeys:
+  `the latest-result sort uses the real admitted history` (publish `a-review-manual`, run it once
+  through the real discovery → frozen plan → explicit confirmation → Worker path, then publish the
+  never-run `z-review-never`, select `排序 → 最近结果`, assert the submitted
+  `sort=latest` GET and that the genuinely-run row precedes the never-run row while the never-run row
+  still reads `尚无执行`) and `a healthy empty history reads as no execution, not unavailable`
+  (publish a definition nobody has run, assert `尚无执行`, no `最近结果不可用`, available cards). The
+  shared `publishDefinition` helper gained an optional `definitionId` so these journeys use their own
+  definition identities instead of inheriting another test's admitted history.
+
+Retained from the previous round and re-executed here: the R3 per-original-item reconciliation, the
+producer Result vocabulary, the durable reason/effect retention, the `_failure_for_named_execution_items`
+seam, independent sibling non-replay, real reopen evidence, and the T8 default-config exclusion.
 
 ### Known failures / remaining risks
 
+- **The latest-result ordering is a read-model projection, not a new query contract.**
+  `_automation_inventory_sort_key` now consumes the same `_automation_latest_runs` projection the
+  response publishes, so ordering, the echoed `latestAdmittedRuns` and the rendered row cannot
+  disagree. That projection is still the single durable
+  `automation_latest_admitted_runs` aggregation (one SQL statement over the admitted-run population,
+  first row per definition identity) already reviewed in the previous round; no new endpoint, window
+  parameter or result store was added, and this Task's T3 scope does not authorize changing that
+  query's shape.
+- **An unreadable latest-run read degrades the `最近结果` ordering.** When the durable read fails,
+  every row sorts by the empty key plus its identity tie while each row is explicitly labelled
+  `最近结果不可用`. That is deliberate (nothing is invented) but the ordering is then effectively
+  identity order for that one request.
 - **`statusSource`/coverage counts are Web-contract extensions.** `AutomationRecordFailureItemModel`
   gained `statusSource`; the handling model gained `affectedItems`/`resolvedItems`/`unresolvedItems`.
   The normalizer tolerates their absence (older document) but rejects a malformed value, matching the
@@ -460,11 +503,22 @@ supported one-item journey still uses exactly one named source).
   but it means a genuinely fully-successful original run is never labelled as "handled".
 - **DST/leap month-boundary rendering remains unit-level**; the counting rule is server-side.
 - **`itemsTruncatedByCap` and `stale_page`** are proven in Python, not through the browser.
+- **The native latest-sort journey asserts order, not a screenshot diff.** The wide/narrow workspace
+  screenshots were inspected this round against the preserved reference and are unchanged by this
+  correction (no component code changed); pixel-level visual acceptance remains B's.
 - **RO-6** (settings publication/actual resident adoption) and the settings portion of AC-1 remain
   **outside** this Task; AC-12's whole-Slice T4 gate is not satisfied by these T3 checks.
 
 ### Reusable lesson candidates (Developer)
 
+- A sort key must be the **same published evidence** the row shows. Ordering by a sibling projection
+  (`occurrenceState.lastOccurrenceAt`) while publishing a merged manual/scheduled value produced a
+  table whose first row was contradicted by its own `最近结果` cell, and no amount of correct row
+  rendering could hide it.
+- "No rows" is an answer; "I could not read" is a different answer. Collapse them
+  (`unavailable = not admitted`) and every healthy empty history becomes an error state, while a real
+  fault becomes indistinguishable from an empty library. Track read success and read population
+  separately at the boundary where the read happens.
 - Reconciliation must be keyed on the **original affected item's own identity**, not on the newest
   linked attempt's aggregate totals: a completed execution that resolved the subset it admitted
   proves nothing about the sibling the operator never selected.

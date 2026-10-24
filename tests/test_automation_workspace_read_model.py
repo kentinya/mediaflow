@@ -1115,6 +1115,185 @@ class AutomationWorkspaceReadModelTests(unittest.TestCase):
             self.assertEqual(latest["trigger"], "manual")
             self.assertEqual(latest["admittedAt"], _NOW.isoformat())
 
+    def _publish_definitions(self, value, identities: tuple[str, ...]) -> None:
+        """Publish further enabled definitions through the real managed authority."""
+
+        active = value.managed.active()
+        draft = value.managed.create_successor_draft(actor="tester")
+        for identity in identities:
+            draft = value.objects.create_automation_task_definition(
+                draft.revision_id,
+                {
+                    "id": identity,
+                    "name": identity,
+                    "resourceLibraryId": "source",
+                    "mode": "automatic-organization",
+                    "intervalSeconds": 3600,
+                    "itemLimit": 5,
+                },
+                expected_version=draft.version,
+                actor="tester",
+            )
+            draft = value.objects.enable_automation_task_definition(
+                draft.revision_id,
+                identity,
+                expected_version=draft.version,
+                actor="tester",
+            )
+        validated = value.managed.validate(draft.revision_id, actor="tester")
+        value.managed.activate(
+            validated.revision_id,
+            expected_version=validated.version,
+            actor="tester",
+        )
+        self.assertIsNotNone(active)
+
+    def test_inventory_latest_sort_uses_the_latest_admitted_run(self) -> None:
+        """`最近结果` sorts by the real latest original admission, not schedule state.
+
+        A never-run definition and a definition whose only history is a
+        deliberate manual Run once otherwise sort by an empty scheduled
+        occurrence — the operator saw a never-run row above a genuinely newer
+        manual result. The ordering now uses the same authoritative
+        latest-admission value the row publishes, with the definition identity
+        as the deterministic tie, and stays filter/sort/cursor consistent.
+        """
+
+        with self._runtime() as value:
+            self._publish_definitions(value, ("z-review-never", "a-review-manual"))
+            # A manual-only admission: the definition was deliberately started
+            # once and has no scheduled occurrence at all.
+            value.runtime.create_task(
+                _task("a-review-manual-task", created_at=_NOW),
+                display=RunDisplayContext(
+                    source_scope="Media/电影",
+                    labels=("电影库",),
+                    origin_definition_id="a-review-manual",
+                    origin_definition_name="a-review-manual",
+                    origin_kind="definition-run-once",
+                ),
+            )
+            status, page = _request(
+                value.api, DEFINITIONS_ROUTE, query="sort=latest&direction=desc"
+            )
+            self.assertEqual(status, 200)
+            identities = [item["id"] for item in page["items"]]
+            self.assertEqual(identities[0], "a-review-manual")
+            self.assertIn("z-review-never", identities)
+            self.assertLess(identities.index("a-review-manual"), identities.index("z-review-never"))
+            # The published row value is the same evidence the order uses.
+            self.assertEqual(
+                page["latestAdmittedRuns"]["a-review-manual"]["admittedAt"],
+                _NOW.isoformat(),
+            )
+            # A never-run definition publishes no fabricated latest run.
+            self.assertNotIn("z-review-never", page["latestAdmittedRuns"])
+
+    def test_inventory_latest_sort_is_total_and_pageable(self) -> None:
+        """Tied admissions keep a deterministic identity tie across pages.
+
+        Two definitions share one admission instant while a third is older; the
+        ordering must be total (identity tie), and forward/backward paging must
+        visit every review-sorted row exactly once instead of repeating or
+        dropping a boundary row.
+        """
+
+        with self._runtime() as value:
+            self._publish_definitions(value, ("tie-b", "tie-a", "older-run"))
+            for identity, admitted_at in (
+                ("tie-b", _NOW),
+                ("tie-a", _NOW),
+                ("older-run", _NOW - timedelta(hours=2)),
+            ):
+                self._admitted_automation_run(
+                    value,
+                    identity,
+                    created_at=admitted_at,
+                    definition_id=identity,
+                    schedule_id=None,
+                    succeeded_items=1,
+                )
+            seen: list[str] = []
+            cursor = None
+            for _ in range(10):
+                query = "sort=latest&direction=desc&limit=1"
+                if cursor:
+                    query += f"&cursor={cursor}"
+                status, page = _request(value.api, DEFINITIONS_ROUTE, query=query)
+                self.assertEqual(status, 200)
+                self.assertEqual(len(page["items"]), 1)
+                seen.append(page["items"][0]["id"])
+                cursor = page["next_cursor"]
+                if cursor is None:
+                    break
+            self.assertEqual(len(seen), len(set(seen)))
+            # The newest admission comes first, then the older run. Equal
+            # admission instants keep the deterministic identity tie.
+            self.assertEqual(seen[0], "tie-b")
+            # The two tied admissions are adjacent and both precede the older run.
+            self.assertLess(seen.index("tie-a"), seen.index("older-run"))
+            self.assertLess(seen.index("tie-b"), seen.index("older-run"))
+            self.assertEqual(abs(seen.index("tie-a") - seen.index("tie-b")), 1)
+            # The seeded definition never ran, so it sorts behind every admitted
+            # run instead of borrowing another definition's history.
+            self.assertEqual(set(seen), {"tie-a", "tie-b", "older-run", _DEFINITION["id"]})
+            self.assertEqual(seen[-1], _DEFINITION["id"])
+
+    def test_inventory_latest_run_state_distinguishes_empty_from_unreadable(self) -> None:
+        """A healthy empty history is `no execution`, not `unavailable`.
+
+        The durable read answering `{}` means every authorized definition simply
+        has no admitted run yet. Only a failed/unavailable read may publish the
+        unavailable state, so the Web can label a legitimate empty history
+        `尚无执行` while a genuine fault stays explicitly unavailable.
+        """
+
+        with self._runtime() as value:
+            status, page = _request(value.api, DEFINITIONS_ROUTE)
+            self.assertEqual(status, 200)
+            # Healthy empty population: no definition carries an unavailable read.
+            self.assertEqual(page["latestAdmittedRuns"], {})
+            self.assertTrue(page["metrics"]["available"])
+            self.assertEqual(value.runtime.automation_latest_admitted_runs(), {})
+
+            # One definition gains history; its sibling stays a healthy empty read.
+            self._publish_definitions(value, ("with-history",))
+            self._admitted_automation_run(
+                value,
+                "with-history",
+                created_at=_NOW,
+                definition_id="with-history",
+                schedule_id=None,
+                succeeded_items=1,
+            )
+            status, page = _request(value.api, DEFINITIONS_ROUTE)
+            self.assertEqual(status, 200)
+            self.assertEqual(page["latestAdmittedRuns"]["with-history"]["trigger"], "scheduled")
+            # The never-run sibling publishes nothing at all — neither a
+            # fabricated run nor an unavailable marker.
+            self.assertNotIn(_DEFINITION["id"], page["latestAdmittedRuns"])
+            self.assertFalse(
+                any(
+                    entry.get("unavailable") is True
+                    for entry in page["latestAdmittedRuns"].values()
+                )
+            )
+
+            # A genuine unreadable read stays explicitly unavailable per definition.
+            def explode():
+                raise RuntimeError("durable admitted-run history is unavailable")
+
+            value.runtime.automation_latest_admitted_runs = explode
+            status, page = _request(value.api, DEFINITIONS_ROUTE)
+            self.assertEqual(status, 200)
+            unavailable = page["latestAdmittedRuns"]
+            self.assertTrue(unavailable[_DEFINITION["id"]]["unavailable"])
+            self.assertTrue(unavailable["with-history"]["unavailable"])
+            self.assertIn("could not be read", unavailable[_DEFINITION["id"]]["nextAction"])
+            # The definitions and the cards remain reachable and truthful.
+            self.assertEqual(page["inventoryCounts"]["published"], 2)
+            self.assertTrue(page["metrics"]["available"])
+
     # -- R4: directional cursors through the client ------------------------
 
     def test_record_paging_uses_the_submitted_direction(self) -> None:

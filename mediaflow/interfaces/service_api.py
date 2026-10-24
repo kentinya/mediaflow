@@ -16104,8 +16104,17 @@ class MediaFlowApi:
         }
 
     @staticmethod
-    def _automation_inventory_sort_key(document: dict, sort: str):
-        """One stable, total ordering key over a projected definition document."""
+    def _automation_inventory_sort_key(document: dict, sort: str, latest: dict | None = None):
+        """One stable, total ordering key over a projected definition document.
+
+        ``latest`` is the definition's authoritative latest *original admitted*
+        run (manual or scheduled) — the same value the row publishes — so the
+        ``最近结果`` ordering sorts by the actual latest processing outcome. A
+        manual-only history is therefore ordered by its real admission instead
+        of by an empty scheduled occurrence, and a never-run or unreadable row
+        sorts by the empty key instead of borrowing an unrelated diagnostic.
+        The definition identity is the deterministic tie in every ordering.
+        """
 
         body = document
         occurrence = document.get("occurrenceState") or {}
@@ -16114,10 +16123,12 @@ class MediaFlowApi:
         if sort == "nextRun":
             return (str(occurrence.get("nextRunAt") or ""), str(body.get("id", "")))
         if sort == "latest":
-            return (
-                str(occurrence.get("lastOccurrenceAt") or ""),
-                str(body.get("id", "")),
-            )
+            admitted_at = ""
+            if isinstance(latest, dict) and latest.get("unavailable") is not True:
+                value = latest.get("admittedAt")
+                if isinstance(value, str):
+                    admitted_at = value
+            return (admitted_at, str(body.get("id", "")))
         if sort == "limit":
             return (int(body.get("itemLimit") or 0), str(body.get("id", "")))
         return (str(body.get("name", "")).casefold(), str(body.get("id", "")))
@@ -16299,7 +16310,9 @@ class MediaFlowApi:
         filtered = [item for item in items if self._automation_definition_matches(item, query)]
         ordered = sorted(
             filtered,
-            key=lambda item: self._automation_inventory_sort_key(item, query["sort"]),
+            key=lambda item: self._automation_inventory_sort_key(
+                item, query["sort"], latest_runs.get(str(item.get("id", "")))
+            ),
             reverse=query["direction"] == "desc",
         )
         total = len(ordered)
@@ -16412,66 +16425,48 @@ class MediaFlowApi:
         }
 
     def _automation_latest_runs(self, items: list[dict]) -> dict[str, dict[str, object]]:
-        """Latest original admitted run per definition, merged from all evidence.
+        """Latest original admitted run per definition, from one durable read.
 
-        The scheduled occurrence projection answers only for scheduled runs; a
-        deliberate definition Run once is durable manual evidence.  The newest
-        admitted run wins regardless of trigger, so a manual-only definition
-        reports its real latest result instead of "no execution yet".
+        The durable read returns the newest *original admitted* run per
+        definition whether the Scheduler emitted it or the operator deliberately
+        started it once, so a manual-only history reports its real latest
+        result.  A successful read that simply holds no run for a definition is
+        a legitimate empty history ("no execution yet"), which is a different
+        fact from an unreadable history; only a failed/unavailable read is
+        published as ``unavailable``.  No scheduled-occurrence diagnostic is
+        merged in, so a blocked/disabled emission that never became an admitted
+        run can never masquerade as a processing result.
         """
 
         reader = getattr(self._repository, "automation_latest_admitted_runs", None)
-        admitted: dict[str, dict[str, object]] = {}
+        admitted: dict[str, dict[str, object]] | None = None
         if callable(reader):
             try:
-                admitted = reader()
+                value = reader()
             except Exception:
-                # An unavailable read is reported as unavailable per definition
-                # below, never silently merged into the occurrence projection.
-                admitted = {}
-        unavailable = not callable(reader) or not admitted
+                # A failed read stays explicitly unavailable per definition; it
+                # is never published as an empty ("no execution yet") history.
+                admitted = None
+            else:
+                admitted = value if isinstance(value, dict) else None
         latest: dict[str, dict[str, object]] = {}
         for item in items:
             definition_id = str(item.get("id", ""))
             if not definition_id:
                 continue
-            occurrence = item.get("occurrenceState")
-            occurrence = occurrence if isinstance(occurrence, dict) else {}
-            scheduled_at = occurrence.get("lastOccurrenceAt")
-            manual = admitted.get(definition_id)
-            scheduled: dict[str, object] = {}
-            if isinstance(scheduled_at, str) and scheduled_at:
-                scheduled = {
-                    "definitionId": definition_id,
-                    "runId": occurrence.get("lastJobId"),
-                    "taskId": occurrence.get("lastTaskId"),
-                    "admittedAt": scheduled_at,
-                    "status": occurrence.get("lastOutcome") or "unknown",
-                    "trigger": "scheduled",
-                    "organized": occurrence.get("lastOutcome") == "completed",
-                    "noWork": None,
-                    "successItems": None,
-                    "uncertainSuccessItems": None,
-                    "startedAt": None,
-                    "finishedAt": None,
-                    "definitionName": item.get("name"),
-                    "evidence": "scheduled_occurrence",
-                }
-            candidates = [value for value in (scheduled, manual) if value]
-            if not candidates:
-                if unavailable:
-                    latest[definition_id] = {
-                        "definitionId": definition_id,
-                        "unavailable": True,
-                        "nextAction": (
-                            "the durable admitted-run history could not be read; refresh "
-                            "to re-read this definition's latest result"
-                        ),
-                    }
+            run = admitted.get(definition_id) if admitted is not None else None
+            if isinstance(run, dict) and run:
+                latest[definition_id] = dict(run)
                 continue
-            latest[definition_id] = max(
-                candidates, key=lambda value: str(value.get("admittedAt") or "")
-            )
+            if admitted is None:
+                latest[definition_id] = {
+                    "definitionId": definition_id,
+                    "unavailable": True,
+                    "nextAction": (
+                        "the durable admitted-run history could not be read; refresh "
+                        "to re-read this definition's latest result"
+                    ),
+                }
         return latest
 
     @staticmethod

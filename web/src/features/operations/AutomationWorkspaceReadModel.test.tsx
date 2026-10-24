@@ -566,6 +566,26 @@ describe("V2 Automation workspace read model", () => {
     expect(screen.getByText("Nightly automation")).toBeVisible();
   });
 
+  it("labels a healthy empty history as no execution, not unavailable", async () => {
+    // A successful durable read with no admitted run is a legitimate empty
+    // history: the row must say `尚无执行`, and the page must never claim the
+    // latest-result read failed (that state is reserved for a real fault).
+    recordingFetch((call) =>
+      call.url === LIST_URL
+        ? jsonResponse(listDocument({ latestAdmittedRuns: {} }))
+        : undefined,
+    );
+    authStore.setToken(TOKEN);
+    renderApp("/ui-v2/operations/automation");
+
+    await screen.findByRole("heading", { name: "自动化" });
+    expect(await screen.findByText("尚无执行")).toBeVisible();
+    expect(screen.queryByText("最近结果不可用")).toBeNull();
+    // The cards stay available: an empty population is a real zero, not an
+    // unreadable read.
+    expect(screen.getByText("27")).toBeVisible();
+  });
+
   it("renders the original result, real window and separate handling state", async () => {
     recordingFetch((call) => {
       if (call.url === LIST_URL) {

@@ -72,13 +72,19 @@ function recordApiCalls(
 /** Publish one automatic-organization definition through the real UI. */
 async function publishDefinition(
   page: Page,
-  options: { readonly sourceScope?: string; readonly name?: string } = {},
+  options: {
+    readonly sourceScope?: string;
+    readonly name?: string;
+    readonly definitionId?: string;
+  } = {},
 ): Promise<void> {
   await connectOn(page, "/ui-v2/operations/automation/lifecycle");
   await expect(
     page.getByRole("heading", { name: "Create Automation definition" }),
   ).toBeVisible();
-  await page.getByLabel("Definition ID").fill(DEFINITION_ID);
+  await page
+    .getByLabel("Definition ID")
+    .fill(options.definitionId ?? DEFINITION_ID);
   await page.getByLabel("Name").fill(options.name ?? "Harness workspace");
   await page.getByLabel("ResourceLibrary").selectOption({ index: 1 });
   if (options.sourceScope !== undefined) {
@@ -886,6 +892,149 @@ test("a recovered subset never resolves the record with a failed sibling", async
       name: /重新分析|暂停|继续|取消|运行一次|重试/,
     }),
   ).toHaveCount(0);
+});
+
+test("the latest-result sort uses the real admitted history", async ({
+  page,
+}) => {
+  // Two definitions, one of which is genuinely run once and one that is never
+  // run. `排序 → 最近结果` must order by the actual latest admitted run: the
+  // never-run definition may not outrank a real manual result just because the
+  // scheduled-occurrence projection is empty for both.
+  await publishDefinition(page, {
+    sourceScope: "电影",
+    name: "a-review-manual",
+    definitionId: "a-review-manual",
+  });
+  await page.getByRole("button", { name: "运行一次" }).click();
+  await expect(page).toHaveURL(
+    /\/ui-v2\/operations\/automation\/run-once\/[0-9a-f-]{36}$/,
+  );
+  const discoveryId = new URL(page.url()).pathname.split("/").pop() ?? "";
+  await page.request.post(
+    `/__harness__/run-automation-run-once-worker?discoveryId=${discoveryId}`,
+  );
+  await connectOn(page, `/ui-v2/operations/automation/run-once/${discoveryId}`);
+  await page.getByRole("button", { name: "冻结清单并生成计划摘要" }).click();
+  for (let step = 0; step < 20; step += 1) {
+    const advanced = await page.request.post(
+      `/__harness__/run-automation-run-once-worker?discoveryId=${discoveryId}`,
+    );
+    const body = (await advanced.json()) as { previewId?: string | null };
+    if (body.previewId) {
+      break;
+    }
+  }
+  await page.request.post("/__harness__/register-manual-worker");
+  await connectOn(page, `/ui-v2/operations/automation/run-once/${discoveryId}`);
+  await expect(
+    page.getByRole("heading", { name: "本次运行计划的零变更摘要" }),
+  ).toBeVisible();
+  await page.getByRole("button", { name: /确认整理本次运行 \d+ 项/ }).click();
+  await expect(
+    page.getByRole("heading", { name: "整理执行情况" }),
+  ).toBeVisible();
+  const executed = await page.request.post("/__harness__/run-manual-worker");
+  const executionBody = (await executed.json()) as {
+    taskId?: string;
+    completed?: boolean;
+  };
+  expect(
+    executionBody.completed,
+    `manual worker: ${JSON.stringify(executionBody)}`,
+  ).toBe(true);
+  expect(executionBody.taskId).toBeTruthy();
+
+  // A second definition published *after* the manual run and never executed.
+  await publishDefinition(page, {
+    sourceScope: "电影",
+    name: "z-review-never",
+    definitionId: "z-review-never",
+  });
+
+  const api = recordApiCalls(page);
+  await connectOn(page, "/ui-v2/operations/automation");
+  await expect(page.getByText("a-review-manual")).toBeVisible();
+  await expect(page.getByText("z-review-never")).toBeVisible();
+  // The manual definition publishes its real admitted result.
+  const manualRow = page
+    .getByRole("row")
+    .filter({ hasText: "a-review-manual" });
+  await expect(manualRow.getByText(/手动运行一次/)).toBeVisible();
+  const neverRow = page.getByRole("row").filter({ hasText: "z-review-never" });
+  await expect(neverRow.getByText("尚无执行")).toBeVisible();
+
+  await page.getByLabel("排序").selectOption("latest");
+  await expect(page).toHaveURL(/sort=latest/);
+  // The submitted read is the real inventory GET with the review sort.
+  await expect
+    .poll(() =>
+      api.some(
+        (call) =>
+          call.method === "GET" &&
+          call.path === "/api/v1/operations/automation/task-definitions" &&
+          call.url.includes("sort=latest"),
+      ),
+    )
+    .toBe(true);
+  const rows = page.getByRole("table", { name: "自动化任务" }).getByRole("row");
+  // The genuinely-run definition is ordered above the never-run one, and the
+  // never-run row keeps its explicit "no execution" state.
+  await expect
+    .poll(async () => {
+      const names = await rows.allInnerTexts();
+      const manual = names.findIndex((value) =>
+        value.includes("a-review-manual"),
+      );
+      const never = names.findIndex((value) =>
+        value.includes("z-review-never"),
+      );
+      return manual >= 0 && never >= 0 && manual < never;
+    })
+    .toBe(true);
+  await expect(
+    page
+      .getByRole("row")
+      .filter({ hasText: "z-review-never" })
+      .getByText("尚无执行"),
+  ).toBeVisible();
+  // The manual row still reports the result it was sorted by.
+  await expect(
+    page
+      .getByRole("row")
+      .filter({ hasText: "a-review-manual" })
+      .getByText(/手动运行一次/),
+  ).toBeVisible();
+});
+
+test("a healthy empty history reads as no execution, not unavailable", async ({
+  page,
+}) => {
+  // A definition identity with no admission of its own: earlier journeys in
+  // this file execute other definition IDs, and admitted history belongs to
+  // the definition that produced it.
+  await publishDefinition(page, {
+    sourceScope: "电影",
+    name: "Never-run workspace",
+    definitionId: "harness-empty-history",
+  });
+  // The reset above removed every other definition and this one has been
+  // published but never executed: the durable admitted-run read succeeds and
+  // is simply empty. That is a legitimate "no execution yet" state, never an
+  // unreadable history and never a fabricated run.
+  await connectOn(page, "/ui-v2/operations/automation");
+  await expect(page.getByText("Never-run workspace")).toBeVisible();
+  const ownRow = page
+    .getByRole("row")
+    .filter({ hasText: "Never-run workspace" });
+  await expect(ownRow.getByText("尚无执行")).toBeVisible();
+  await expect(ownRow.getByText("最近结果不可用")).toHaveCount(0);
+  // The four cards stay available: an empty history is a real zero population,
+  // not an unavailable read.
+  await expect(
+    page.getByRole("region", { name: "自动化统计" }).getByText(/已启用 \d+/),
+  ).toBeVisible();
+  await expect(page.getByText(/指标暂不可用/)).toHaveCount(0);
 });
 
 test("the workspace keeps narrow and wide layouts usable", async ({
