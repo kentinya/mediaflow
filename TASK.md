@@ -13,8 +13,8 @@ Difficulty: High
 Test Level: T4
 Planner / Reviewer: B
 Working Branch: main
-Decision: FIX REQUIRED — R2 INPUT PRESERVATION AND R5 TERMINAL RECOVERY REMAIN INCOMPLETE
-Next Action: DEVELOPER CORRECTS THE TWO REMAINING BLOCKERS IN THIS SAME TASK; B RETAINS T4 OWNERSHIP
+Decision: FIX REQUIRED — RECOVERY REBASE CAN OVERWRITE A CONCURRENT SAVE; INVALID-INPUT RESPONSE LOSS REMAINS UNRECOVERABLE
+Next Action: DEVELOPER CORRECTS THESE RECOVERY PATHS IN THIS SAME TASK; B RETAINS T4 OWNERSHIP
 ```
 
 ## Goal
@@ -860,3 +860,119 @@ coverage. The settings `python` spec remains excluded from default fake collecti
 5. **Test cost:** the two focused modules take roughly 40s together (resident subprocess cases
    dominate). This round's executed testing/reproduction stayed well under the 30% budget; no sleeps
    were added to pad elapsed time.
+
+## B Re-review — candidate aa9efcb
+
+**Decision: FIX REQUIRED.** Reviewed candidate
+`aa9efcb2d038ef8f2c3efb753f28ba30c7831299`, Task Base unchanged at
+`f18d2444f548b81b5892536498a1b4cdd4400be8`. Cumulative range has38 changed files;
+review combines the prior complete original/correction reviews with this complete9-file
+`6595e66..aa9efcb` implementation/test/document delta and existing-entry reproductions.
+The header's prior FIX REQUIRED status is retained with the current reasons; the Developer report
+inside this candidate is the submitted review request, not a self-approval.
+
+### Corrected facts accepted by this review
+
+- **Outstanding-Save input protection:** real production Web form disables the input while its
+  successful response is held in transit; value41 stays41. The original accepted-input42→41 loss
+  is corrected. No need to reopen it or extend process tooling.
+- **Completed stale/preparation failure evidence:** a real409 whose response is lost now survives
+  reload and reconciles200/`not_committed` using this actor/submission's own outcome audit. Real
+  runtime-construction503/prepare preserves Active100 and both subsequent reconciles return
+  `not_committed`/`submission_prepare_failed`. The prior indefinite lock for these two completed
+  failures is corrected at the backend.
+- **Persistence/state scope:** this change adds a bounded action to the existing configuration
+  audit ledger, not a new schema or user-visible state. That choice is within this Task. Existing
+  `committed` / `superseded` / `not_committed` / `unresolved` remain the public outcomes.
+- The three misplaced resident tests are now collected in `ResidentLoopAdoptionUnitTests`; B ran
+  them. R1/R3/R4/R6 prior review dispositions remain corrected; their unchanged executable inputs
+  do not make the current candidate a full T4 PASS.
+
+### Remaining P1 corrections in the same Task
+
+1. **R2/R5 recovery integration — do not re-arm all stale input with a new identity (S2/S3/RO-7).**
+   `AutomationSettingsPanel.tsx:502` takes the current published identity but restores the entire
+   `pendingContext.input`, immediately enabling Save. Actual production UI/API journey:
+   edit only capacity61; another writer changes scheduler5→9; original Save finishes409 but its
+   response is lost; reload; reconcile returns `not_committed`. The recovered form has capacity61,
+   scheduler5 and Save enabled while Active scheduler is9. Click the offered Save:201 publishes
+   capacity61 **and silently restores scheduler5**, losing the other writer's change.
+   This is introduced by `aa9efcb` (2026-10-24 16:27:40 +0800), and violates the prior requirement
+   to review current values rather than automatically rebase an old four-field form. A general
+   message asking the user to review is not a difference display or a confirmation of replacement.
+   **Fix:** keep original concurrency protection until an explicit review updates it, or retain
+   the actual edited-field set/baseline values and merge only those edits into the latest target,
+   keeping unchanged fields from the other writer. An overlap requires an explicit choice.
+   Do not attach the latest identity to the whole old input automatically. Preserve typed input
+   and make the latest-versus-proposed difference visible before any intentional replacement.
+   Reconcile architecture/configuration prose that currently describes unconditional rebasing.
+   **Acceptance:** extend the real lost409→reload→reconcile test through the actual next Save;
+   assert capacity61 can publish while scheduler9 is preserved, unless the operator explicitly
+   chooses to replace9. Existing new browser test stops at enabled Save and misses this outcome;
+   its unit counterpart changes only capacity and leaves scheduler unchanged, hiding the race.
+2. **R5 input-rejection recovery — normalize for publication separately from outcome lookup
+   (S2/S3/RO-6/7).** `AutomationSettingsService.save:362` normalizes before recording submission
+   evidence; `reconcile:814` applies the same publication validation before looking up the outcome.
+   Existing ordinary form accepts the text3.5 for the integer capacity and correctly sends it to
+   the backend for rejection. Real form PUT returns422/`settings_fractional_integer`; lose only
+   this response, reload and click the existing reconcile action. Reconcile also returns422 with
+   that code; the page says `核对读取失败`, keeps3.5 disabled and blocks Save. A healthy target and
+   repeated refresh cannot make that payload pass integer validation, so there is no recovery.
+   The pre-normalization gap originates in `b3dc11f` (2026-10-24 12:47:04 +0800), remains through
+   `fa872df`, and is not covered by the terminal-outcome catch added in `aa9efcb`. This is another
+   existing required invalid-input/failure path, not a new state or independent Task.
+   **Fix:** preserve an identified, bounded, secret-free terminal rejection for requests refused
+   by four-field input validation too. Outcome lookup must be able to identify that exact failed
+   request without requiring its input to be valid for publication. Keep strict Save validation,
+   actor/submission isolation, readable field errors and absence/still-running uncertainty. Do not
+   infer termination merely because no audit was found, and do not weaken validation or auto-retry.
+   Reuse the existing ledger/public states; no generic state machine is required.
+   **Acceptance:** real form3.5→lost422→reload→reconcile reaches a terminal field error, enables
+   correcting3.5 to a valid integer, and a deliberate Save succeeds without modifying unrelated
+   settings. Cover the same boundary for the other supported finite/type/bounds rejections in
+   focused tests. Known422 and lost422 must both retain correctable input.
+
+### Actual independent evidence
+
+Local retained evidence (not remotely accessible):
+`.git/validation-evidence/aa9efcb2d038ef8f2c3efb753f28ba30c7831299/task43.4-b-review/`.
+Includes candidate/workspace manifest, complete cumulative/correction diffs, probe scripts and raw
+results, and inspected screenshots of the rebased form and invalid-input recovery lock.
+
+| B execution | Actual result |
+|---|---|
+| `python3 scripts/check_governance.py`; complete Task `git diff --check` | PASS / clean; repeated for review checkpoint. |
+| `npm --prefix web run build` | PASS; pre-existing chunk-size warning, fresh production assets served by the existing isolated Python harness. |
+| `node <evidence>/browser-probe.cjs` |1.151s; input disabled during Save; lost409 terminal recovery works; next offered Save reproduces scheduler9→5 overwrite. |
+| `node <evidence>/invalid-response-probe.cjs` |0.464s; actual form3.5→lost422→reload→reconcile422; input and Save remain disabled. |
+| `PYTHONPATH=. .venv/bin/python .git/validation-evidence/57b180864b1862b07894ab444e1b00fe8b59d287/task43.4-b-rereview/api-probe.py` |0.068s script time; real runtime-construction503 keeps Active100; exact submission now reconciles `not_committed` twice. Raw output retained in this candidate's evidence directory. |
+| `.venv/bin/python -m unittest tests.test_automation_settings_management tests.test_automation_settings_resident.ResidentLoopAdoptionUnitTests` |37 tests,2.041s, OK; includes the3 previously uncollected tests. |
+| `.venv/bin/ruff check mediaflow/application/automation_settings.py tests/test_automation_settings_management.py tests/test_automation_settings_resident.py` | All checks passed. |
+
+All probes originate at the existing production form/PUT/reconcile or the existing real WSGI
+fixture. Only actual responses are delayed/dropped; no invented route, manual state corruption,
+user media/database/private configuration, or new process framework is involved. The existing
+harness used temp SQLite/local fixtures and was stopped. Conservative test/build/check allowance
+is below20s and below50% of this substantive review round; no padding waits.
+
+Per workflow§6, proven P1s permit early FIX REQUIRED. Full Python/Web/default/native T4, wheel/
+installed consumers, real supported49→50 preservation rehearsal and Docker lifecycle/security
+remain pending and **B-owned**, not Developer implementation defects. Developer's reported full
+suite results are not relabelled as B evidence;37 passing focused tests do not waive final gates.
+
+### All-Slice reassessment
+
+| Required Outcome | Current disposition |
+|---|---|
+| RO-1 workspace/inventory/statistics | Prior43.3 review and implemented settings composition retained; whole-Slice current validation pending. |
+| RO-2 checked lifecycle | Existing delivered chain retained; current native/full acceptance pending. |
+| RO-3 shared analysis/unattended authority | Existing shared chain/accepted45 retirement retained; current final safety acceptance pending. |
+| RO-4 Run once | Existing bounded discovery/analysis/confirmation retained; final native/Worker acceptance pending. |
+| RO-5 records/Task Center recovery | Prior43.3 read-only records boundary retained; current regression pending. |
+| RO-6 settings/adoption | Publication and reviewed cadence/adoption/composition corrections retained; lost input-validation rejection recovery incomplete. |
+| RO-7 shared authority/failure/safety | Recovery can overwrite concurrent configuration and still locks on invalid submission; incomplete. |
+
+Slice43 stays ACTIVE, not READY FOR A REVIEW. Same Task/Base/Goal/Scope; no next Task or Closure
+Packet. Preserve original reference files/frozen branch, accepted45, private configuration and all
+pre-existing dirty artifacts. This B checkpoint edits only TASK; no A-owned Contract/Roadmap/Progress
+change, product implementation, push or history rewrite.
