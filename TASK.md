@@ -317,23 +317,58 @@ composition/style, not sample data, removed modes, validation ranges or executio
 
 ### Checkpoint
 
-- Status: **READY FOR B REVIEW**. B's 2026-10-24 FIX-REQUIRED round is implemented and
-  checkpointed with its affected-test plan and the assigned native matrix executed on it. The
-  latest round corrects B's two remaining P1 findings (latest-result ordering and
-  healthy-empty-history state). B acceptance (T3 gates, Slice Final T4) remains pending; no
-  self-PASS is claimed.
+- Status: **READY FOR B REVIEW**. B's 2026-10-24 FIX-REQUIRED round (T8 default fake-server
+  contract/fixture alignment) is implemented and checkpointed. Previous rounds corrected the two
+  remaining P1 findings (latest-result ordering, healthy-empty-history state), and the R3 per-item
+  reconciliation / producer-Result vocabulary corrections are retained. B acceptance (T3 gates,
+  Slice Final T4) remains pending; no self-PASS is claimed.
 - Task Base unchanged (`78ec108d4473e8c140174c1356d0e88a1ae42b34`); reassessment source
   `533a666860a571e61c78ac49b3e45c44acaa419e` is not a Base.
-- This round starts from B's reviewed candidate `94aede19095b77af0edffaa74a3da16b7492dd2a`
-  (implementation `d9157af`). Implementation checkpoint:
-  `eb74f36` (`fix(automation): sort by the latest admitted run and read empty history truthfully`);
-  this report is its documentation successor, so B reviews
-  `94aede19095b77af0edffaa74a3da16b7492dd2a..HEAD`. No history rewrite, no push.
+- This round starts from B's reviewed candidate `7e7c436` (the docs successor of implementation
+  `eb74f36`). Implementation checkpoint: `12e8b7b`
+  (`test(automation): align the default fake-server contract with the current read model`); this
+  report is its documentation successor, so B reviews `7e7c436..HEAD`. No history rewrite, no push.
 - Preserved untouched: the pre-existing `docs/pics/操作与任务.png` deletion, every untracked
   artifact (`.DS_Store`, `.t*.log`, `output/…zip`, `web/test-results*`, untracked `15`) and both
   untracked reference PNGs (digests below). Private config stays ignored/untracked/unstaged.
 
-### Changed behavior — latest-result and empty-history correction (last round)
+### Changed behavior — default fake-server contract alignment (this round)
+
+1. **T8 acceptance blocker — the fake now serves the current Automation read contract.**
+   `web/tests/fake-server.mjs` no longer advertises the retired standalone `preview` action on the
+   definition document. Both producers (`automationDefinitionActions` for the published definition
+   and the Draft-only actions block) publish the backend's actual `runOnce` action on
+   `/api/v1/operations/automation/task-definitions/{id}/run-once` instead, so
+   `normalizeAutomationDefinition` stops rejecting `actions.runOnce` and the published/Draft detail,
+   create and copy journeys are reachable again. Nothing else about those actions changed: a Draft-only
+   definition still advertises it withheld with the activation reason, and no standalone Preview
+   control was restored anywhere.
+2. **T8 acceptance blocker — the inventory document carries the current required fields.**
+   `automationListDocument` now publishes the exact public shape the workspace normalizer requires:
+   `metrics` (with its `inventory` block), `inventoryCounts`, `latestAdmittedRuns` (legitimately `{}`
+   for this population, i.e. "no execution yet", not unavailable), `query` (the echoed submitted
+   basis), `itemsTruncatedByCap`, `previous_cursor`/`next_cursor`. The card aggregates are computed
+   by the new `automationInventoryCounts(items)` helper over the same items the document serves, and
+   `automationMetricsDocument(counts)` returns the real unavailable-vs-zero discipline: a population
+   with no terminal admitted run publishes `successRate: null` and
+   `comparisonAvailable: false` rather than a fabricated `0%` or `暂无可比数据` masquerading as data.
+3. **New read-only records route.** `GET /api/v1/automation/records` (the alias the browser uses
+   after the operations rewrite) answers the real admitted-run page shape — `items: []`, `total: 0`,
+   the population/history-basis statements and the null page cursors — because this fake population
+   has admitted no original Automation run. An honest empty population replaces a route that did not
+   exist, so the `执行记录` tab can be read instead of erroring. It is GET-only and records no mutation.
+4. **Browser assertions follow the existing UI, not a restored product.** `automation.spec.ts` now
+   asserts the real `自动化` heading, the four-card `自动化统计` region, the `任务列表 / 执行记录 /
+   全局设置` tabs, the `系统设置` shortcut, the `自动化任务` table row (schedule text, source,
+   `尚无执行`, `运行一次`), the `新建自动化任务` link with its bounded return context, and the
+   detail route carrying `returnTab`. A new case drives the `执行记录` tab and asserts the read-only
+   empty history with zero non-GET requests. The lifecycle/Draft/copy/occurrence/permission/
+   malformed-grant/keyboard cases are unchanged apart from replacing the two assertions that relied
+   on the removed card composition (`Automation` heading, `every 3600 seconds`). No case was deleted,
+   skipped, retried, or had a timeout relaxed; the retired `Create exact Preview` absence assertions
+   were kept and strengthened.
+
+### Changed behavior — latest-result and empty-history correction (previous round)
 
 1. **P1/T2 — `最近结果` sorts by the actual latest admitted run.**
    `_automation_inventory_sort_key` no longer reads the scheduled-only
@@ -399,7 +434,55 @@ composition/style, not sample data, removed modes, validation ranges or executio
    `statusSource` and the handling model gained `affectedItems`/`resolvedItems`/`unresolvedItems`
    (optional-nullable, so an older document still renders and an unavailable read stays explicit).
 
-### Affected commands and actual results
+### Affected commands and actual results — this round (T8 correction)
+
+Focused/changed scope only: the two changed test-consumer files plus their directly affected suites.
+No full Web/default-E2E matrix or Slice T4 gate is claimed here (B-owned). Playwright/Python commands
+below ran under a `timeout` wrapper so a hung harness could not stall the round; the `timeout` prefix
+is omitted for readability and the assertion/exit status is what is reported.
+
+```text
+python3 scripts/check_governance.py                                    PASS
+node --check web/tests/fake-server.mjs                                 OK
+npx --prefix web prettier --check \
+  web/tests/e2e/automation.spec.ts web/tests/fake-server.mjs           All formatted
+npx --prefix web eslint \
+  web/tests/e2e/automation.spec.ts web/tests/fake-server.mjs           OK (no findings)
+npm --prefix web run typecheck                                          OK
+npx --prefix web vitest run \
+  src/entities/operations/automation.test.ts \
+  src/features/operations/AutomationRouter.test.tsx \
+  src/features/operations/AutomationWorkspaceReadModel.test.tsx        3 files / 34 tests passed (3.1s)
+# cwd web — the exact failing spec B reported, default fake-backed config
+npx playwright test tests/e2e/automation.spec.ts                       10 passed (4.1s)
+# cwd web — directly affected neighbour suites that share the fake document set
+npx playwright test tests/e2e/deep-link.spec.ts                        14 passed (4.2s)
+npx playwright test tests/e2e/operations.spec.ts                       28 passed (11.1s)
+npx --prefix web playwright test --list \
+  --config=playwright.config.ts                                        239 tests / 16 files
+  (automation.spec.ts collected: 10 cases, 0 skipped, 0 testIgnore changes)
+npx --prefix web playwright test --list \
+  --config=playwright.python.automation.config.ts                      321 tests / 24 files (unchanged)
+git diff --check                                                       clean
+shasum -a 256 docs/pics/自动化页.png docs/pics/自动化页-全局设置.png
+  d2f759ead56a30dce344ccce97e7c119e144ca728a31b3af8e9a355eefa6ba34
+  68d91070e859dd363d3e45dd2d21e38783e0cfbef0867ce28c3f42eac7d6c7b9
+```
+
+Before the correction, the same unchanged command reproduced B's blocker exactly: **7 failed /
+2 passed**, with the list document rejected by the normalizer (`自动化不可用`), the detail rejected
+(`Automation definition unavailable`), the old `Automation` heading absent, and the read-only case
+unable to find `Start successor Draft`. After the correction all 10 cases pass, including the two
+previously-passing ones (occurrence history, malformed grant evidence), so no case was silently
+dropped.
+
+Test wall clock this round ≈ 35 s of ≈ 27 min elapsed (< 30 %): one failing-spec reproduction
+(2.2 min, the dominant cost, kept because it is the real evidence), then four short iterations of the
+same 9–10 case spec (~4 s each), one unit run (3.1 s), one 14-case and one 28-case neighbour run
+(4.2 s / 11.1 s), and the static format/lint/typecheck/list checks. Nothing was re-run to hide a
+failure.
+
+### Affected commands and actual results — previous round (latest-result / empty-history)
 
 ```text
 python3 scripts/check_governance.py                                      PASS
@@ -432,12 +515,12 @@ npx playwright test --config=playwright.python.automation.config.ts \
   23 passed  (29.9s wall clock)
 ```
 
-Test wall clock for this round was ≈2.5 min of ≈14 min elapsed (< 30 %): the 310-test Python module
-run (49 s), the focused 94-case recheck (13 s), the Web unit run (13.5 s), the single native
-invocation (30 s) with two targeted re-runs after fixture adjustments, and the static
-format/lint/compile/typecheck/build/prettier checks. Only focused/changed and directly affected
-suites were run; the full Web/default-E2E/static matrix and Slice T4 remain B-owned and are **not**
-claimed.
+Test wall clock for the previous (latest-result/empty-history) round was ≈2.5 min of ≈14 min elapsed
+(< 30 %): the 310-test Python module run (49 s), the focused 94-case recheck (13 s), the Web unit run
+(13.5 s), the single native invocation (30 s) with two targeted re-runs after fixture adjustments,
+and the static format/lint/compile/typecheck/build/prettier checks. Only focused/changed and directly
+affected suites were run; the full Web/default-E2E/static matrix and Slice T4 remain B-owned and are
+**not** claimed.
 
 New Python coverage in `tests/test_automation_workspace_read_model.py` (32 → 35 cases, all through
 the real API/repository/temporary SQLite):
@@ -479,6 +562,18 @@ seam, independent sibling non-replay, real reopen evidence, and the T8 default-c
 
 ### Known failures / remaining risks
 
+- **The default fake-backed Automation fixture is a mirror, not the product.** The corrected
+  `automation.spec.ts` proves the built artifact against the fake's documents; it is not a
+  substitute for the real-Python native journeys (`automation-workspace/lifecycle/run-once
+  .python.spec.ts`), which B owns on the candidate. The fake's `latestAdmittedRuns` is deliberately
+  `{}` (no admitted run in that population), so the default suite cannot prove beyond-page
+  reachability, real dedup or the metric calendar — the real-Python spec and the Python read-model
+  suite carry those. Nothing in the fake was made to accept a document the real backend does not
+  publish, but it is still an approximation B should re-verify against the real 200 bodies.
+- **The corrected fake answers an empty admitted-run page, not a populated one.** The default suite
+  therefore proves the read-only empty-history state and zero-non-GET behaviour of `执行记录`, not
+  filter/paging/dedup of real records. Adding a hand-built multi-record fake population would be
+  fabricated evidence, so that coverage stays with the real-Python spec.
 - **The latest-result ordering is a read-model projection, not a new query contract.**
   `_automation_inventory_sort_key` now consumes the same `_automation_latest_runs` projection the
   response publishes, so ordering, the echoed `latestAdmittedRuns` and the rendered row cannot
@@ -515,6 +610,15 @@ seam, independent sibling non-replay, real reopen evidence, and the T8 default-c
 
 ### Reusable lesson candidates (Developer)
 
+- A test fixture is part of the contract. A fake that keeps serving a shape the production normalizer
+  no longer accepts does not "fail safely": every real entry point renders the malformed state and
+  the whole spec dies before its assertion, so the red gate looks like a product outage. Align the
+  fake to the current published document (and delete the retired action) instead of relaxing the
+  normalizer.
+- When a UI is rewritten reference-first, its *entry* texts change (`Automation` heading → `自动化`
+  table, `every 3600 seconds` → `每隔 3600 秒`, card → row `运行一次`, link → search-carrying link).
+  Adapt assertions to the existing entrance and keep the original guarantee; a stale assertion about
+  a removed composition is not evidence that the removed product should return.
 - A sort key must be the **same published evidence** the row shows. Ordering by a sibling projection
   (`occurrenceState.lastOccurrenceAt`) while publishing a merged manual/scheduled value produced a
   table whose first row was contradicted by its own `最近结果` cell, and no amount of correct row
