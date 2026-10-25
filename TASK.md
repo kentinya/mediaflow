@@ -417,6 +417,7 @@ Full acceptance, full regression and any PASS/FIX decision remain B-owned.
 ```text
 Reviewed Task range: 6072f50d5b2e5268c35d6729290512d1ae986104..511a0d9ae0dc2d75dac56b3b53032b2e51b8c08d
 Implementation: dde88c77baa22ace35fccb81385c46060adc3bd8
+Repair candidate: 1fa4bf55d0177e8dc0c4ab1a3a2ab16a2972e092
 Decision: FIX REQUIRED — 2026-10-25
 Task blockers: B46.2-01 / P1 remains incomplete for supported directory work and effect truth
 Slice Required Outcomes / Surfaces all satisfied: NO
@@ -562,3 +563,169 @@ semantics remain incomplete and outside Task46.2; no next Task is planned while 
 A-owned Slice/Roadmap/Progress boundaries and their stale first-Task pointers remain unchanged.
 Pre-existing reference-image deletion and all untracked/private/reference/log/test artifacts are
 preserved; only this B-owned `TASK.md` review is checkpointed.
+
+## Developer Completion Report (B46.2-01 repair round — 2026-10-25)
+
+```text
+Candidate: 1fa4bf55 (implementation; report checkpoint follows)
+Task Base: 6072f50d5b2e5268c35d6729290512d1ae986104
+Status:    READY FOR B REVIEW — no self-PASS, no push, no publication
+```
+
+Same Task46.2, same Goal/Scope/T4/acceptance. This round closes the two
+B46.2-01 / P1 blockers raised in the `511a0d9a` review (per-item access for a
+real directory Delete; truthful effects from durable transfer checkpoints) plus
+the aggregate-certainty defect in the native mixed-Delete screenshot. No next
+Task, no Slice closure, no RO-2/RO-4/RO-5 work.
+
+### 1 — every admitted item is now locally reachable (finding 1)
+
+- `SQLiteTaskRepository.library_file_operation_items_window` is a new bounded
+  read: one `(created_at, item_id)`-ordered page of one Task's TaskItems plus
+  that page's page-independent total and its newest Result per item, all inside
+  one read transaction. It resolves no configuration, opens no Storage and
+  writes nothing.
+- `LibraryFileOperationHistoryService.detail(..., limit, after)` pages over it
+  instead of returning a fixed 100-item prefix, and publishes
+  `itemTotal` (the operation's real admitted item count) and a
+  `nextItemPosition`. The old `itemsTruncated`-with-no-continuation advice is
+  gone; `itemsTruncated` now means exactly "another page exists".
+- `GET .../files/operations/{taskId}` accepts `limit`/`cursor` through the
+  shared scoped-cursor machinery under a new `library_file_operation_items`
+  kind whose scope binds `media=<kind>;principal=<id>;library=<id>;task=<id>`.
+  A cursor from another kind, library, Task or principal is refused as an
+  invalid cursor; a previous-direction cursor (never minted by this
+  forward-only surface) is refused instead of being re-read as a forward
+  position. Other consumers' query defaults are unchanged.
+- `LibraryFileOperationsDialog` reads the detail with `useInfiniteQuery`, shows
+  `已显示 N / M 项逐项证据`, and offers 加载更多逐项结果 until the backend stops
+  publishing a continuation. Aggregate facts come from the newest page, so a
+  continued list and the operation-level facts cannot disagree.
+
+### 2 — one shared interpretation of durable effects (finding 2)
+
+- New read-only module `mediaflow/application/direct_file_effects.py` now owns
+  the item disposition, the per-entry child outcomes (progress snapshot while
+  unfinished, Result annotations once terminal) and the effect certainty.
+  `direct_file_transfers.py` and the local detail read both use it, so a paused
+  folder Move has exactly one set of children and one vocabulary everywhere;
+  the previous duplicate implementations in `direct_file_transfers.py` were
+  removed (its behavior is unchanged, proven by its 100 tests).
+- An unfinished item that already recorded a real mutation reports
+  `effect: partial` / `effectCertainty: partial` and keeps its recorded
+  children (created directory, each moved file, each skipped/refused child)
+  with their own destinations, statuses and executor checkpoints. The B-reported
+  paused Move now shows `show`, `show/ep00.mkv`, `show/ep01.mkv`,
+  `show/ep02.mkv` as completed children instead of one opaque directory.
+- `aggregate_effect_certainty` replaces the old branch that collapsed every
+  non-all-verified set to `none`: uncertain dominates, all-verified is
+  `verified_complete`, a known change mixed with anything else is `partial`,
+  `none` requires every settled item to record no effect, and unproven admitted
+  work is `unknown`. A verified success beside a refused sibling can no longer
+  read as 无变更.
+- Failure evidence also carries the durable `retryCategory` when one exists,
+  still routed through `bounded_failure_document` (no raw durable text).
+
+### Actual commands and results (this round)
+
+| Area | Command | Result |
+|---|---|---|
+| Governance | `python3 scripts/check_governance.py` | PASS |
+| Whitespace | `git diff --check` | clean |
+| Python static | `.venv/bin/ruff format --check mediaflow tests scripts`; `.venv/bin/ruff check --no-cache mediaflow tests scripts` | 358 formatted, 0 findings |
+| New/affected Python | `.venv/bin/python -m unittest tests.test_library_file_operation_history` | **20 tests OK** (was 17) |
+| Affected Python | `... tests.test_direct_file_operations tests.test_media_library_direct_commands` | 88 OK |
+| Affected Python | `... tests.test_direct_file_transfers.TransferApiTests` | 7 OK |
+| Affected Python | `... tests.test_direct_file_transfers` (whole module) | 100 OK |
+| Affected Python | `... tests.test_direct_file_transfers.PauseCancelResumeTests.test_pause_inside_one_directory_is_observed_and_resumed` | 1 OK |
+| Affected Python | `... tests.test_media_library_transfers.MediaLibraryTransferTests.{test_equal_ids_cannot_exchange_transfer_authority,test_media_transfer_pause_cancel_and_resume_stay_durable,test_media_transfer_progress_survives_api_restart_during_active_outage}` | 3 OK |
+| Shared read | `... tests.test_operations_run_inventory tests.test_operations_run_detail` | 76 OK |
+| Web focused | `npm run test -- run src/features/library src/entities/library src/shared/api/{library-api,media-library-commands-api,operations-api}.test.ts src/routes/router.test.tsx` (cwd `web/`) | 18 files / 281 tests passed |
+| Web adjacent | `npx vitest run src/features/operations src/shared/navigation` | 24 files / 278 passed |
+| Web static | `npm run typecheck`; `npm run lint`; `npm run format:check`; `npm run build` | all clean; artifact `index-DJVQCfUt.js` / `index-BFNi4meT.css` |
+| Native real Python | `npm run test:e2e -- --config=playwright.direct-files.python.config.ts tests/e2e/direct-files.python.spec.ts` | **18 passed** (36.5s) |
+
+### Native evidence produced this round
+
+Both library kinds, real page controls, real Worker, one temporary SQLite file:
+
+- **121-item directory Delete (new, both kinds).** Select one real 120-file
+  directory through the page, Delete it, and the harness refuses exactly one
+  *actual* `LocalStorage.delete` near the end of the listing. The local dialog
+  states `已显示 50 / 121`, 加载更多逐项结果 continues to 100 and then 121, and
+  the refused child (`bulk-117.txt`) is reachable with its own bounded failure
+  and next action. Filesystem proves exactly one surviving file. Then a real
+  `POST /__harness__/restart` (repository + API reopen over the same SQLite
+  file) plus full page reload with no remembered Task ID reproduces the same
+  121-item population and the same refused child, with the source state
+  unchanged.
+  Artifacts: `resource|media-bulk-directory-evidence{,-desktop}.png`.
+- **Paused folder Move (new).** The harness gates the real destination
+  `LocalStorage.write` after three children of a six-file directory, the page
+  requests a pause, and the production Worker settles it `paused`. The local
+  status read shows `已记录影响: 部分已变更（其余尚未完成）` (never 无变更) and the
+  item lists its 4 recorded children — the created destination directory plus
+  the three really moved files, each `已完成变更`. A real
+  `POST /api/v1/tasks/{id}/resume` with the version just read then moves only
+  the remaining three; the filesystem ends with 6 moved and 0 remaining.
+  Artifacts: `resource-paused-move-known-effects{,-desktop}.png` and the
+  item-level `resource-paused-move-item-evidence.png`.
+- Both kinds' existing two-file mixed-batch/reopen and disabled-origin journeys
+  still pass unchanged.
+
+### Added/extended coverage (success / invalid / conflict / failure / edge)
+
+Python (`tests/test_library_file_operation_history.py`, 17 → 20):
+both kinds' 120-file directory Delete with a real refusal beyond page one,
+complete three-page traversal, no duplicated item across pages, the complete
+refused-child evidence, no absolute path/token leakage and zero-mutating reads;
+item-cursor scope refusal (foreign kind/library/Task, backward direction,
+invalid limits/queries) plus a read that leaves Task/item/Result rows byte
+identical; and the real gated-Storage paused folder Move with its recorded
+children, `partial` certainty, resume through the shared lifecycle route and
+exactly-once remaining work. The missing-reader case now covers both the list
+reader and the item reader.
+
+Web: entity model normalization for the child-entry list (closed status/effect
+vocabularies, `itemTotal`/`nextCursor`, contradiction and malformed-child
+refusal); client validation/URL contract for the item page (limit and cursor
+bounds, exact query string); and a mounted-page journey that starts at page 1,
+shows `已显示 50 / 121`, clicks 加载更多逐项结果 and then names the refused child
+that only exists on page 2 — with no mutating control submitted.
+
+Harness additions (`scripts/direct_files_browser_harness.py`): `bulkName` on the
+existing arm-fault route (one real `LocalStorage.delete` refusal inside the
+large directory), `mode: "move"` on the existing gated-worker route (one real
+destination `LocalStorage.write` gate, no DOM or product payload fabrication),
+plus the 120-file and six-file fixtures and their filesystem state keys. All
+fixtures are test-only data over temporary roots.
+
+### Known risks and remaining scope
+
+- The `Shift+F10` rename row-menu helper remains order/timing sensitive
+  (`element was detached from the DOM`). Reproduced again this round in an
+  isolated worktree at Task Base `6072f50d` with its own build, so it is
+  pre-existing and outside this Task's surface; it is reported, not retried or
+  relaxed. In the final full-spec run all 18 cases passed.
+- Per-item paging is bounded at 100 items per read and continues through the
+  cursor; the modal shows one explicit 加载更多 step per page rather than
+  virtualizing a very large list. A Delete of a 5000-entry directory therefore
+  needs ~50 explicit steps — honest and complete, but not a single-click
+  overview.
+- Child outcomes within one item reuse the existing transfer progress bound
+  (`MAX_TRANSFER_PROGRESS_ENTRIES`); `childrenTruncated` names the case where a
+  recorded payload was already truncated.
+- Still not delivered (outstanding Slice outcomes, unchanged): RO-2 manual
+  admission before rule resolution, RO-4 organizing-only Task Center
+  population/views, RO-5 Automation semantics.
+- No schema change: `task_items`, `task_results` and the progress payload
+  already carried every fact used.
+
+### Workspace
+
+Pre-existing `docs/pics/操作与任务.png` deletion, untracked reference images,
+logs, `web/test-results*` and OS artifacts are preserved and not committed.
+This round's screenshots/traces are held locally under the ignored
+`.git/validation-evidence/task46.2-fixes-round2/`. No push, no publication.
+
+Full acceptance, full regression and any PASS/FIX decision remain B-owned.
