@@ -7,7 +7,7 @@ AC-7/8; [Development Workflow](docs/development-workflow.md). Read the
 ```text
 Task ID: 46.2
 Parent Slice: 46
-Status: READY FOR B REVIEW
+Status: FIX REQUIRED
 Task Base: 6072f50d5b2e5268c35d6729290512d1ae986104
 Difficulty: High
 Test Level: T4
@@ -167,7 +167,7 @@ npm run test -- run src/features/library src/entities/library src/shared/api/lib
 npm run typecheck
 npm run lint
 npm run build
-npm run test:e2e -- --config=playwright.python.config.ts tests/e2e/direct-files.python.spec.ts
+npm run test:e2e -- --config=playwright.direct-files.python.config.ts tests/e2e/direct-files.python.spec.ts
 ```
 
 Add new local-status/component/query/normalization coverage within those library directories and
@@ -187,7 +187,8 @@ Inspect desktop/narrow modal screenshots and actual read-only/disabled/focus beh
 run the following real-Python regression for shared Task/detail navigation, results and center layout:
 
 ```bash
-npm run test:e2e -- --config=playwright.python.config.ts tests/e2e/direct-files.python.spec.ts tests/e2e/operations-inventory.python.spec.ts tests/e2e/operations-task-center-visual.python.spec.ts
+npm run test:e2e -- --config=playwright.direct-files.python.config.ts tests/e2e/direct-files.python.spec.ts
+npm run test:e2e -- --config=playwright.python.config.ts tests/e2e/operations-inventory.python.spec.ts tests/e2e/operations-task-center-visual.python.spec.ts
 ```
 
 Verify API/repository reopen and a real partial/uncertain non-replay case through supported command/
@@ -378,5 +379,92 @@ Full acceptance, regression ownership and any PASS/FIX decision are B-owned.
 
 ## B Review Result
 
-Pending implementation and independent Base..Head review. No product test or acceptance is claimed
-by this planning checkpoint. After PASS, reevaluate all Slice outcomes before selecting more work.
+**FIX REQUIRED — 2026-10-25.** Independently reviewed the complete
+`6072f50d5b2e5268c35d6729290512d1ae986104..eda531317659f3107b602239d47f683545908cf0`
+range (24 changed files), including implementation `aa4b6d2be78a497158c5e84301d42f6dec76637d`
+and its report-only handoff. Task Base/goal/scope/T4 remain unchanged. No next Task or Slice closure.
+
+### Required corrections — same Task
+
+1. **B46.2-01 / P1 — local inspection loses per-item results and failure/effect evidence.**
+   `library_file_operations.py::_row_document` and
+   `service_api.py::_library_file_operation_detail` return aggregates plus lifecycle actions;
+   `LibraryFileOperationsDialog.tsx::OperationDetail` renders those aggregates, but no item/result
+   list or bounded failure explanation. The backend never supplies the top-level `durableState`
+   or `nextAction` read by this component, and it does not render lifecycle `knownEffects` or
+   `effectCertainty`. Independently reproduced for **both** library kinds: admit a real two-file
+   Delete, refuse one actual LocalStorage Delete through the existing test fault boundary, run
+   the real Worker. Durable items are one success and one failure, the successful source is gone,
+   and the failed source remains; local detail exposes neither item's evidence. Closing/restarting
+   leaves only totals, so the operator cannot identify the failed file or its safe next step.
+   Reuse the existing kind-scoped Delete/transfer projections and bounded item/result/checkpoint
+   readers inside this local modal. Keep complete paging and exact scope; display each item's
+   source/target, stage, known/uncertain effects, bounded refusal and permitted next action without
+   requiring Task Center. Reconcile skipped/cancelled/settled counts with actual terminal items.
+   Add real mixed/uncertain and close/reopen evidence for both kinds, preserving successful and
+   uncertain non-replay and backend-only control authority.
+2. **B46.2-02 / P1 — ordinary deep links do not reliably reach exact local inspection.**
+   The sole `GET /api/v1/files/operation-origin/{taskId}` dispatch hardcodes
+   `media_library=False`; both frontend kind reads use that same URL. A real MediaLibrary command
+   therefore returns `matched=false / not_ordinary_file_work` for both reads. Native browser
+   reproduction of its existing Task detail shows zero “返回发起它的库文件页” links.
+   Also, `destination-model.ts`'s Files/MediaLibrary authentication continuation omits the new
+   `operationTaskId`: opening an exact existing local-work URL and reconnecting drops that
+   parameter and opens no inspection modal. Resolve the actual persisted kind in a supported
+   backend contract and normalize it consistently; preserve bounded exact operation selection
+   across authentication/refresh. Verify existing Task and selected-run entry paths for both kinds,
+   including foreign/stale/denied context, without a guessed library or generic organizing recovery.
+3. **B46.2-03 / P1 — historical origin is replaced by today's enabled-library selection.**
+   Both pages pass `activeLibraryId` to the modal, derived only from current eligible libraries
+   with a first-library fallback. Independent reproduction uses supported Add/Edit commands for
+   an unreferenced ResourceLibrary, a real page-created folder, then successful disable. Its
+   historical backend list remains HTTP 200 / total 1. Reopening the originating page and header
+   status instead requests `/resource-libraries/destination/file-operations` and displays
+   “Destination / 共 0 条记录”. It cannot find the known operation. Preserve a separate exact
+   historical inspection scope and a bounded local way to select/reopen known origins when the
+   live library is disabled/removed/unavailable; do not bind status to a live browse fallback or
+   require re-enabling it. Cover both kinds and missing Active/current library, including reload/
+   restart with absent browser hints; historical pin/control restrictions must remain truthful.
+
+Implement these as one complete correction to the existing local status journey. Extend current
+tests/harnesses, not a new process framework. Developer runs failing/new/directly affected checks
+and relevant static checks; B retains full T4 and native acceptance ownership. The Required Tests
+commands above now use the existing direct-files harness config for that spec; inventory/center
+specs keep their own existing config. This corrects the planning command mismatch, not product scope.
+
+### Independent evidence and outstanding gates
+
+Local evidence: `.git/validation-evidence/eda53131/b46.2-review/` (ignored, local only). It includes
+the isolated reproduction script/log, command logs, native screenshots and the disabled-origin
+1536×1024 screenshot; all work used temporary roots/example configuration, no user media or secrets.
+
+- Governance and complete-range whitespace check: PASS/clean.
+- `.venv/bin/python -m unittest tests.test_library_file_operation_history`: **13 passed**.
+- `npm run build` (cwd `web/`): PASS; produced `index-C7I0gcBz.js` / `index-YjIez-Bj.css`.
+- `npx playwright test --config=playwright.direct-files.python.config.ts tests/e2e/direct-files.python.spec.ts -g 'reopens its own durable operation status' --output=../.git/validation-evidence/eda53131/b46.2-review/native-artifacts`
+  (cwd `web/`): **2 passed**, real API/repository reopen and Worker effects. These prove successful
+  operation enumeration, not the failed/mixed/uncertain/control/old-link acceptance still missing.
+  Inspected both kinds' captured detail/narrow screenshots; the existing first detail capture is
+  760×900, so it is not evidence of the required 1536×1024 detail state.
+- Supported command/API fault reproduction confirms B46.2-01 for both kinds and B46.2-02's media
+  resolver failure. Native browser checks confirm the missing media return link, dropped operation
+  parameter on reconnect and B46.2-03's foreign-library empty history. The first attempt to disable
+  a referenced source was correctly refused (422); the unreferenced library disable succeeded
+  (200). Intermediate locator timeouts remain in raw logs; final captures show the actual state.
+- Test/build/probe subprocess times total **under 65 seconds** (overlap counted conservatively
+  twice); recorded review accounting began 05:56:47 UTC, before these runs. Testing is below 50%
+  of this review round. No deliberate waiting or redundant full-suite runs.
+- Early FIX REQUIRED: B's full Python/Web/default E2E, full native regression, packaging/installed
+  smoke and remaining safety/acceptance gates are **pending**, not waived or inherited from the
+  Developer report. Deployment/package/schema inputs did not change: Docker/security-image and
+  schema-upgrade proofs are not newly applicable for this candidate. No claim is made about the
+  Developer's reported parent keyboard flake; it was not independently rerun this round.
+
+### All Slice outcomes reevaluated
+
+RO-1 retains accepted Task46.1 coverage; no new shared action-color change was made here. RO-3 is
+partly delivered (durable scoped index, local entry and successful reopen), but incomplete for the
+three required corrections above. RO-2 early organizing admission, RO-4 organizing-only center/
+four-type population and RO-5 Automation remain incomplete and outside this Task. Preserve the
+existing dirty/untracked user artifacts. Only this B-owned Task review is checkpointed; A-owned
+Slice/Roadmap/Progress boundaries and their stale first-Task pointers remain unchanged.
