@@ -517,6 +517,41 @@ describe("Files entry state and ResourceLibrary strip", () => {
     retrySafe: true,
   });
 
+  /** Project one full discovery fixture onto the compact Files work row. */
+  function workRow(item: Record<string, unknown>): Record<string, unknown> {
+    const selection = (item["selection"] ?? {}) as Record<string, unknown>;
+    const scopes = (selection["scopes"] ?? []) as Record<string, unknown>[];
+    const progress = (item["progress"] ?? {}) as Record<string, unknown>;
+    return {
+      discoveryId: item["discoveryId"],
+      resourceLibraryId: item["resourceLibraryId"],
+      organizeTaskId: item["organizeTaskId"] ?? null,
+      intentId: item["intentId"] ?? null,
+      previewId: item["previewId"] ?? null,
+      status: item["status"],
+      phase: progress["phase"] ?? "queued",
+      autoPrepare: item["autoPrepare"] === true,
+      prepared: item["prepared"] === true,
+      scopeCount:
+        typeof selection["scopeCount"] === "number"
+          ? selection["scopeCount"]
+          : scopes.length,
+      scopes,
+      selection: {
+        ...selection,
+        scopes,
+        existing: selection["existing"] ?? [],
+        refused: selection["refused"] ?? [],
+      },
+      admissionRequestId: item["admissionRequestId"] ?? null,
+      createdAt: item["createdAt"] ?? "",
+      updatedAt: item["updatedAt"] ?? "",
+      nextAction: item["nextAction"] ?? "",
+      failure: item["failure"] ?? null,
+      version: item["version"] ?? 1,
+    };
+  }
+
   function stripFetchMock(options: {
     status: StatusFixture;
     onCommand?: (body: Record<string, unknown>) => Response;
@@ -530,8 +565,8 @@ describe("Files entry state and ResourceLibrary strip", () => {
     dropDeleteResponse?: boolean;
     /** The folder/mixed discovery admission POST. */
     onDiscovery?: (body: Record<string, unknown>) => Response;
-    /** The bounded discovery readback used for lost-response reconciliation. */
-    onDiscoveries?: () => Response;
+    /** The bounded Files organize-work readback used for reconciliation. */
+    onDiscoveries?: (query: URLSearchParams) => Response | Promise<Response>;
     /** The discovery detail read for the recovered navigation target. */
     onDiscoveryDetail?: (discoveryId: string) => Response;
     onTransferImpact?:
@@ -549,15 +584,38 @@ describe("Files entry state and ResourceLibrary strip", () => {
     return vi.fn(async (input: RequestInfo | URL, init?: RequestInit) => {
       const url = String(input);
       if (url === "/api/v1/system/status") return jsonResponse(options.status);
+      if (/\/files\/organize-work(\?|$)/.test(url)) {
+        const query = new URLSearchParams(url.split("?")[1] ?? "");
+        // The Files page's own readback (RO-2): the removed Task Center discovery
+        // section no longer serves this read.  A fixture that still describes a
+        // full discovery document is projected onto the compact work row so the
+        // cases keep asserting recovery behaviour.
+        if (!options.onDiscoveries) {
+          return jsonResponse({
+            journey: "files-organize-work",
+            items: [],
+            total: 0,
+            nextBefore: null,
+          });
+        }
+        const payload = await (await options.onDiscoveries(query)).json();
+        return jsonResponse({
+          ...payload,
+          journey: "files-organize-work",
+          items: ((payload["items"] ?? []) as Record<string, unknown>[]).map(
+            (item) => workRow(item),
+          ),
+        });
+      }
       if (url === "/api/v1/operations/organize/discoveries") {
-        return options.onDiscoveries
-          ? options.onDiscoveries()
-          : jsonResponse({
-              journey: "discovery",
-              items: [],
-              total: 0,
-              limit: 50,
-            });
+        // The removed center list: a bounded empty answer keeps an accidental
+        // consumer from failing while proving nothing depends on it.
+        return jsonResponse({
+          journey: "discovery",
+          items: [],
+          total: 0,
+          limit: 50,
+        });
       }
       if (
         /\/operations\/organize\/discoveries\/[^/?]+$/.test(url) &&

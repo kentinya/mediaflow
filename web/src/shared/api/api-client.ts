@@ -1839,6 +1839,7 @@ import {
 import {
   normalizeOrganizeDiscovery,
   type OrganizeDiscoveryModel,
+  type OrganizeDiscoveryScope,
 } from "../../entities/operations/discovery";
 import {
   normalizeAutomationActivation,
@@ -3610,16 +3611,230 @@ export async function fetchOrganizeDiscoveries(
   }
 }
 
+/** One durable Files organizing-work row (identity and real stage only). */
+export interface FilesOrganizeWorkItem {
+  readonly discoveryId: string;
+  readonly resourceLibraryId: string;
+  /** The real durable organizing Task this selection admitted, or `null`. */
+  readonly organizeTaskId: string | null;
+  readonly intentId: string | null;
+  readonly previewId: string | null;
+  readonly status: string;
+  readonly phase: string;
+  readonly autoPrepare: boolean;
+  readonly prepared: boolean;
+  readonly scopeCount: number;
+  readonly scopes: readonly OrganizeDiscoveryScope[];
+  readonly selection: OrganizeDiscoveryModel["selection"];
+  readonly admissionRequestId: string | null;
+  readonly createdAt: string;
+  readonly updatedAt: string;
+  readonly nextAction: string;
+  readonly failure: string | null;
+}
+
+export interface FilesOrganizeWorkResult {
+  readonly ok: boolean;
+  readonly status: number;
+  readonly code: string | null;
+  readonly items: readonly FilesOrganizeWorkItem[];
+  readonly nextBefore: string | null;
+}
+
+/**
+ * Read this principal's durable organizing work for one ResourceLibrary.
+ *
+ * This is the Files page's own readback after the Task Center discovery section
+ * was removed: it reopens several known runs after a reload, a re-login or a
+ * service restart, and `requestId` proves the exact admission a lost response
+ * created.  Nothing here creates, resumes or re-submits work.
+ */
+export async function fetchFilesOrganizeWork(
+  token: string | null,
+  options: {
+    readonly resourceLibraryId: string;
+    readonly requestId?: string;
+    readonly before?: string;
+    readonly limit?: number;
+  },
+  fetchImpl: FetchLike = fetch,
+): Promise<FilesOrganizeWorkResult> {
+  const query = new URLSearchParams();
+  if (options.requestId !== undefined)
+    query.set("requestId", options.requestId);
+  if (options.before !== undefined) query.set("before", options.before);
+  if (options.limit !== undefined) query.set("limit", String(options.limit));
+  const suffix = query.toString();
+  let response: Response;
+  try {
+    response = await fetchImpl(
+      `/api/v1/resource-libraries/${encodeURIComponent(options.resourceLibraryId)}/files/organize-work${
+        suffix === "" ? "" : `?${suffix}`
+      }`,
+      { headers: { ...operationsHeaders(token) } },
+    );
+  } catch {
+    return {
+      ok: false,
+      status: 0,
+      code: "transport_unavailable",
+      items: [],
+      nextBefore: null,
+    };
+  }
+  let payload: unknown;
+  try {
+    payload = await response.json();
+  } catch {
+    return {
+      ok: false,
+      status: response.status,
+      code: "malformed_response",
+      items: [],
+      nextBefore: null,
+    };
+  }
+  if (!response.ok) {
+    const failure = discoveryErrorResult(response.status, payload);
+    return {
+      ok: false,
+      status: response.status,
+      code: failure.code,
+      items: [],
+      nextBefore: null,
+    };
+  }
+  try {
+    const record = readRecord(payload, "filesOrganizeWork");
+    const rawItems = record["items"];
+    if (!Array.isArray(rawItems)) {
+      return {
+        ok: false,
+        status: response.status,
+        code: "malformed_response",
+        items: [],
+        nextBefore: null,
+      };
+    }
+    const nextBefore = record["nextBefore"];
+    return {
+      ok: true,
+      status: response.status,
+      code: null,
+      items: rawItems.map((item, index) =>
+        normalizeFilesOrganizeWorkItem(item, index),
+      ),
+      nextBefore: typeof nextBefore === "string" ? nextBefore : null,
+    };
+  } catch {
+    return {
+      ok: false,
+      status: response.status,
+      code: "malformed_response",
+      items: [],
+      nextBefore: null,
+    };
+  }
+}
+
+/**
+ * Normalize one compact Files work row.
+ *
+ * The row is deliberately smaller than a full discovery projection (it carries no
+ * budgets, worker or action advertisement), so it is validated on exactly the facts
+ * it publishes: identities, stage, scope and this request's own selection outcome.
+ */
+function normalizeFilesOrganizeWorkItem(
+  payload: unknown,
+  index: number,
+): FilesOrganizeWorkItem {
+  const where = `filesOrganizeWork.items[${index}]`;
+  const row = readRecord(payload, where);
+  const selectionRecord = readRecord(row["selection"], `${where}.selection`);
+  const text = (value: unknown) => (typeof value === "string" ? value : "");
+  const optional = (value: unknown) =>
+    typeof value === "string" && value !== "" ? value : null;
+  const scopeList = (
+    value: unknown,
+    field: string,
+  ): OrganizeDiscoveryScope[] => {
+    if (!Array.isArray(value)) return [];
+    return value.map((entry, position) => {
+      const scope = readRecord(entry, `${field}[${position}]`);
+      const kind: "file" | "directory" =
+        scope["kind"] === "directory" ? "directory" : "file";
+      return { path: text(scope["path"]), kind };
+    });
+  };
+  const scopes = scopeList(row["scopes"], `${where}.scopes`);
+  const refusedSource = Array.isArray(selectionRecord["refused"])
+    ? (selectionRecord["refused"] as unknown[])
+    : [];
+  const refused = refusedSource.map((item, position) => {
+    const field = `${where}.selection.refused[${position}]`;
+    const entry = readRecord(item, field);
+    return {
+      path: text(entry["path"]),
+      kind: (entry["kind"] === "directory" ? "directory" : "file") as
+        "file" | "directory",
+      code: text(entry["code"]),
+      reason: text(entry["reason"]),
+      message: text(entry["message"]),
+      nextAction: text(entry["nextAction"]),
+      organizing: false as const,
+      prunedAncestor: optional(entry["prunedAncestor"]),
+      existingWorkId: optional(entry["existingWorkId"]),
+      existingWorkKind: optional(entry["existingWorkKind"]),
+    };
+  });
+  return {
+    discoveryId: text(row["discoveryId"]),
+    resourceLibraryId: text(row["resourceLibraryId"]),
+    organizeTaskId: optional(row["organizeTaskId"]),
+    intentId: optional(row["intentId"]),
+    previewId: optional(row["previewId"]),
+    status: text(row["status"]),
+    phase: text(row["phase"]),
+    autoPrepare: row["autoPrepare"] === true,
+    prepared: row["prepared"] === true,
+    scopeCount:
+      typeof row["scopeCount"] === "number" ? row["scopeCount"] : scopes.length,
+    scopes,
+    selection: {
+      scopeCount:
+        typeof selectionRecord["scopeCount"] === "number"
+          ? selectionRecord["scopeCount"]
+          : scopes.length,
+      scopes: scopeList(selectionRecord["scopes"], `${where}.selection.scopes`),
+      existing: scopeList(
+        selectionRecord["existing"],
+        `${where}.selection.existing`,
+      ),
+      refused,
+    },
+    admissionRequestId: optional(row["admissionRequestId"]),
+    createdAt: text(row["createdAt"]),
+    updatedAt: text(row["updatedAt"]),
+    nextAction: text(row["nextAction"]),
+    failure: optional(row["failure"]),
+  };
+}
+
 /** Read one bounded discovery projection. */
 export async function fetchOrganizeDiscovery(
   token: string | null,
   discoveryId: string,
   fetchImpl: FetchLike = fetch,
+  requestId?: string,
 ): Promise<OrganizeDiscoveryReadResult> {
   let response: Response;
   try {
     response = await fetchImpl(
-      `/api/v1/operations/organize/discoveries/${encodeURIComponent(discoveryId)}`,
+      `/api/v1/operations/organize/discoveries/${encodeURIComponent(discoveryId)}${
+        requestId === undefined
+          ? ""
+          : `?requestId=${encodeURIComponent(requestId)}`
+      }`,
       { headers: { ...operationsHeaders(token) } },
     );
   } catch {

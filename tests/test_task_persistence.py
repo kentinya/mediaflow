@@ -906,7 +906,7 @@ class Schema42To44UpgradeTests(unittest.TestCase):
 
             with SQLiteTaskRepository(database) as repository:
                 self.assertEqual(repository.schema_version, SCHEMA_VERSION)
-                self.assertEqual(SCHEMA_VERSION, 50)
+                self.assertEqual(SCHEMA_VERSION, 51)
                 # Every pre-existing durable fact survived the additive upgrade.
                 task = repository.get_task("base-task") or next(
                     item
@@ -1075,7 +1075,8 @@ class Schema44To45DiscoveryUpgradeTests(unittest.TestCase):
                     row[0]
                     for row in connection.execute(
                         "SELECT name FROM sqlite_master WHERE type='table' "
-                        "AND name LIKE 'media_discover%'"
+                        "AND name LIKE 'media_discovery%' "
+                        "AND name NOT LIKE 'media_discovery_admission_outcomes%'"
                     ).fetchall()
                 }
             self.assertEqual(marker, 44)
@@ -1083,7 +1084,7 @@ class Schema44To45DiscoveryUpgradeTests(unittest.TestCase):
 
             with SQLiteTaskRepository(database) as repository:
                 self.assertEqual(repository.schema_version, SCHEMA_VERSION)
-                self.assertEqual(SCHEMA_VERSION, 50)
+                self.assertEqual(SCHEMA_VERSION, 51)
                 # The pre-existing admitted intent survived the additive upgrade.
                 intent = repository.get_manual_intent("intent-base")
                 self.assertIsNotNone(intent)
@@ -1097,7 +1098,17 @@ class Schema44To45DiscoveryUpgradeTests(unittest.TestCase):
                         "AND name LIKE 'media_discover%'"
                     ).fetchall()
                 }
-                self.assertEqual({"media_discoveries", "media_discovery_observations"}, tables)
+                self.assertEqual(
+                    {
+                        "media_discoveries",
+                        "media_discovery_observations",
+                        # Schema 51's additive per-request admission outcome
+                        # table: the shared work keeps every converging request's
+                        # own resolved selection.
+                        "media_discovery_admission_outcomes",
+                    },
+                    tables,
+                )
                 columns = {
                     row[1]
                     for row in repository._connection.execute(

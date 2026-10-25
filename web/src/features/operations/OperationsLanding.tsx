@@ -35,7 +35,6 @@ import {
   mutateLifecycle,
   submitRemainingScopePreview,
   type LifecycleMutationResult,
-  type OrganizeDiscoveryListResult,
   type RunOverviewRead,
 } from "../../shared/api/api-client";
 import {
@@ -73,9 +72,8 @@ import {
   runOverviewQueryKey,
   runOverviewQueryOptions,
 } from "./run-query";
-import { organizeDiscoveriesQueryOptions } from "./discoveries-query";
-import { DISCOVERY_STATUS_LABELS } from "./discovery-status";
 import { RunDetailTabs } from "./RunDetailTabs";
+import { DISCOVERY_STATUS_LABELS } from "./discovery-status";
 import { SamePagePlanSummary } from "./SamePagePlanSummary";
 import { ProblemFilePanel } from "./ProblemFilePanel";
 import {
@@ -90,7 +88,6 @@ import {
 } from "./RunLifecycleControls";
 import type { LifecycleAction } from "../../entities/operations/lifecycle";
 import { ResidentServiceStatus } from "./ResidentServiceStatus";
-import { manualActionsQueryOptions } from "./manual-actions-query";
 import {
   OPERATIONS_RETURN_KEY,
   operationsLandingSearch,
@@ -101,8 +98,6 @@ import {
 import { workerReadinessQueryOptions } from "./worker-query";
 import type { WorkerReadinessModel } from "../../entities/operations/worker";
 import { useQueryClient, type UseQueryResult } from "@tanstack/react-query";
-import type { OperationsRead } from "../../shared/api/api-client";
-import type { ManualActionMatrixModel } from "../../entities/operations/manual-actions";
 
 /** The bounded page size submitted to the server on every read. */
 const RUN_PAGE_LIMIT = 20;
@@ -384,10 +379,6 @@ export function OperationsLanding() {
   const filters = readFilters(searchParams);
   const view = readView(searchParams);
   const problem = readProblem(searchParams);
-  const chosenLibraryId = readSafeSearchValue(
-    searchParams,
-    "resourceLibraryId",
-  );
   const selectedId = readSafeSearchValue(searchParams, "run");
   const problemRunId = readSafeSearchValue(searchParams, "problemRun");
   const chosenProblemType = readProblemType(searchParams);
@@ -614,13 +605,6 @@ export function OperationsLanding() {
   const automationReturn = readAutomationReturnContext(searchParams);
   const overviewQuery = useQuery(runOverviewQueryOptions(token, selectedId));
   const readinessQuery = useQuery(workerReadinessQueryOptions(token));
-  const discoveriesQuery = useQuery(organizeDiscoveriesQueryOptions(token));
-  const matrixQuery = useQuery(
-    manualActionsQueryOptions(token, {
-      scopeKind: chosenLibraryId ? "resourceLibrary" : null,
-      resourceLibraryId: chosenLibraryId || null,
-    }),
-  );
   // The explicit header refresh re-reads every bounded landing read (the
   // inventory, the selected run overview, Worker readiness and the manual
   // action matrix); it never submits or replays any command.
@@ -634,13 +618,9 @@ export function OperationsLanding() {
       void queryClient.invalidateQueries({ queryKey: [runRecordsQueryKey] });
     }
     void readinessQuery.refetch();
-    void matrixQuery.refetch();
   };
   const anyFetching =
-    query.isFetching ||
-    overviewQuery.isFetching ||
-    readinessQuery.isFetching ||
-    matrixQuery.isFetching;
+    query.isFetching || overviewQuery.isFetching || readinessQuery.isFetching;
 
   return (
     <div className="mf-dashboard mf-operations-inventory">
@@ -960,15 +940,6 @@ export function OperationsLanding() {
               </div>
             </div>
             <WorkerReadinessSection query={readinessQuery} />
-            <DiscoveryReadbackSection query={discoveriesQuery} />
-            <ManualOperationsSection
-              matrixQuery={matrixQuery}
-              chosenLibraryId={chosenLibraryId}
-              returnContext={operationsReturnContextFromSearch({
-                ...listSearch(selectedId === "" ? undefined : selectedId),
-                ...(selectedId === "" ? {} : runDetailStateSearch(detailState)),
-              })}
-            />
           </>
         )}
       </AuthorizedReadBoundary>
@@ -2328,213 +2299,6 @@ function WorkerReadinessSection({
         </p>
       )}
       <ResidentServiceStatus />
-    </section>
-  );
-}
-
-/**
- * The principal-scoped readback of admitted bounded discoveries.
- *
- * A discovery whose admission response was lost is durable and recoverable
- * here through its native entry link — without raw identifiers and without
- * re-admitting duplicate work. The read is side-effect-free and bounded.
- */
-function DiscoveryReadbackSection({
-  query,
-}: {
-  readonly query: UseQueryResult<OrganizeDiscoveryListResult, Error>;
-}) {
-  const read = query.data;
-  const items = read?.ok === true ? read.items : [];
-  return (
-    <section className="mf-count-section" aria-label="整理发现记录">
-      <h3>整理发现</h3>
-      <p className="mf-dashboard-meta">
-        此主体近期的有界整理发现。发现只读取存储元数据,冻结清单后仍需在当前页单独确认计划摘要才会执行。
-      </p>
-      {read === undefined ? (
-        <p className="mf-dashboard-meta">正在读取发现记录。</p>
-      ) : !read.ok ? (
-        <p className="mf-dashboard-meta">
-          发现记录暂不可读,稍后可重试;已有发现的持久状态不受影响。
-        </p>
-      ) : items.length === 0 ? (
-        <p className="mf-dashboard-meta">当前没有已受理的整理发现。</p>
-      ) : (
-        <ul className="mf-discovery-list">
-          {items.map((item) => (
-            <li key={item.discoveryId}>
-              <Link
-                to="/operations/organize/discovery/$discoveryId"
-                params={{ discoveryId: item.discoveryId }}
-              >
-                {labelDiscoveryStatus(item.status)} ·{" "}
-                {item.selection.scopes.map((scope) => scope.path).join(", ")}
-              </Link>
-              <span className="mf-dashboard-meta">
-                {" "}
-                可整理 {item.progress.primarySources} · 检查{" "}
-                {item.progress.visitedEntries}
-                {item.progress.incomplete
-                  ? ` · 未完整:${item.progress.incompleteReason ?? "未知原因"}`
-                  : ""}
-              </span>
-            </li>
-          ))}
-        </ul>
-      )}
-    </section>
-  );
-}
-
-function labelDiscoveryStatus(status: string): string {
-  const labels: Record<string, string> = {
-    queued: "排队中",
-    running: "发现中",
-    paused: "已暂停",
-    waiting_stability: "等待稳定",
-    completed: "发现完成",
-    partial_success: "部分完成",
-    failed: "失败",
-    cancelled: "已取消",
-  };
-  return labels[status] ?? status;
-}
-
-function ManualOperationsSection({
-  matrixQuery,
-  chosenLibraryId,
-  returnContext,
-}: {
-  readonly matrixQuery: UseQueryResult<
-    OperationsRead<ManualActionMatrixModel>,
-    Error
-  >;
-  readonly chosenLibraryId: string;
-  readonly returnContext: string;
-}) {
-  const navigate = useNavigate();
-  const matrix = matrixQuery.data?.ok === true ? matrixQuery.data.model : null;
-  const actionable = matrix !== null && matrix.actions.preview.available;
-  const backendReason = matrix !== null ? matrix.actions.preview.reason : null;
-  return (
-    <section className="mf-count-section">
-      <h3>手动操作</h3>
-      <p className="mf-dashboard-meta">
-        从一个确定的资源库范围发起受限扫描或零变更预览。扫描与预览不修改任何文件。
-      </p>
-      {matrix === null ? (
-        <p className="mf-dashboard-meta">
-          {matrixQuery.data === undefined
-            ? "正在读取后端公告的资源库范围。"
-            : "后端操作矩阵暂不可读,因此不提供手动操作。"}
-        </p>
-      ) : matrix.resourceLibraries.length === 0 ? (
-        <p className="mf-dashboard-meta">
-          当前 Active 配置没有此主体可扫描或预览的资源库。
-        </p>
-      ) : (
-        <>
-          <p>
-            <label htmlFor="operations-resource-library">
-              ResourceLibrary scope
-            </label>{" "}
-            <select
-              id="operations-resource-library"
-              aria-label="ResourceLibrary scope"
-              value={chosenLibraryId}
-              onChange={(event) => {
-                const chosen = event.target.value;
-                void navigate({
-                  to: "/operations",
-                  search: chosen
-                    ? {
-                        scopeKind: "resourceLibrary",
-                        resourceLibraryId: chosen,
-                      }
-                    : { scopeKind: "resourceLibrary" },
-                  replace: true,
-                });
-              }}
-            >
-              <option value="">Choose a ResourceLibrary</option>
-              {matrix.resourceLibraries.map((library) => (
-                <option
-                  key={library.resourceLibraryId}
-                  value={library.resourceLibraryId}
-                  disabled={!library.enabled}
-                >
-                  {library.resourceLibraryId}
-                  {library.enabled ? "" : " (disabled)"}
-                </option>
-              ))}
-            </select>
-          </p>
-          {chosenLibraryId !== "" && !actionable && (
-            <p className="mf-dashboard-meta">
-              此范围没有后端公告的手动操作:{" "}
-              {backendReason ?? "后端未公告任何可执行操作"}
-            </p>
-          )}
-          <nav className="mf-actions" aria-label="手动操作入口">
-            {/* The Organize entry deliberately differs from the Scan/Preview
-                direct-submit entries: `新建整理任务` starts a multi-page
-                journey, not one POST. At a chosen scope its availability is
-                the scoped action fact. At discovery (no scope chosen yet) the
-                scoped fact is honestly "select a scope first", so the entry
-                gates on the two backend facts that *are* meaningful before a
-                scope exists: this is a discovery projection, and the same
-                matrix still advertises a bounded organize population for this
-                principal (`limits.organizeMaxItems`, which the real backend
-                publishes as zero without the manage-manual-organize
-                permission). A read-only principal therefore sees no entry. */}
-            {(matrix.actions.organize.available ||
-              (matrix.selectionRequired &&
-                matrix.limits.organizeMaxItems !== null &&
-                matrix.limits.organizeMaxItems > 0)) && (
-              <Link
-                className="mf-button mf-button-secondary"
-                to="/operations/organize/new"
-                search={{
-                  scopeKind: "resourceLibrary",
-                  // The chosen library (when one is chosen) is the exact
-                  // scope the new task starts from; the submitted list
-                  // context rides along so the journey can return here with
-                  // the admitted run selected. An empty-but-present context
-                  // is the valid default (unfiltered, unselected) list
-                  // origin: the marker must survive, not degrade to "no
-                  // Operations origin".
-                  resourceLibraryId:
-                    chosenLibraryId || matrix.resourceLibraryId || undefined,
-                  ...operationsReturnSearch(returnContext),
-                }}
-              >
-                新建整理任务
-              </Link>
-            )}
-          </nav>
-        </>
-      )}
-      <nav className="mf-actions" aria-label="更多工作区">
-        <Link className="mf-button mf-button-secondary" to="/operations/tasks">
-          任务列表
-        </Link>
-        <Link className="mf-button mf-button-secondary" to="/operations/jobs">
-          作业列表
-        </Link>
-        <Link
-          className="mf-button mf-button-secondary"
-          to="/operations/automation"
-        >
-          自动化
-        </Link>
-        <Link
-          className="mf-button mf-button-secondary"
-          to="/operations/notifications"
-        >
-          通知
-        </Link>
-      </nav>
     </section>
   );
 }

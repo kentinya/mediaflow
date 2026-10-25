@@ -351,6 +351,21 @@ class _PreparationFixture(unittest.TestCase):
             raise AssertionError(document)
         return document
 
+    def assert_no_executable_work(self, value) -> None:
+        """No TaskItem, Preview or execution authority exists yet.
+
+        RO-2 admits the organizing Task before business readiness, so an empty Task
+        table is no longer the right assertion.  What must still be true — and is
+        what the original cases were really asserting — is that the admitted Task has
+        produced no per-item work, no linked Preview and no execution, so no media
+        effect is possible from this state.
+        """
+
+        for task in value.repository.list_tasks(limit=50):
+            self.assertEqual("manual_organize", task.command)
+            self.assertEqual((), value.repository.list_items(task.task_id))
+        self.assertEqual((), value.repository.list_manual_executions_for_intent("none", limit=10))
+
     def admit(self, value, paths: list[str], *, library_id: str = "library"):
         status, document = self.request(
             value,
@@ -709,7 +724,10 @@ class PreparationJourneyTests(_PreparationFixture):
             )
             self.assertEqual([], value.source.mutations)
             self.assertEqual([], value.target.mutations)
-            self.assertEqual((), value.repository.list_tasks())
+            # RO-2: the organizing Task admitted with the selection is real and
+            # durable, but a paused/cancelled walk leaves no confirmable subset and
+            # no TaskItem, so nothing can ever be executed from it.
+            self.assert_no_executable_work(value)
 
             status, resumed = self.request(
                 value,
@@ -754,7 +772,10 @@ class PreparationJourneyTests(_PreparationFixture):
             self.assertFalse(readback["actions"]["prepare"]["available"], readback)
             self.assertEqual([], value.source.mutations)
             self.assertEqual([], value.target.mutations)
-            self.assertEqual((), value.repository.list_tasks())
+            # RO-2: the organizing Task admitted with the selection is real and
+            # durable, but a paused/cancelled walk leaves no confirmable subset and
+            # no TaskItem, so nothing can ever be executed from it.
+            self.assert_no_executable_work(value)
 
     def test_preparation_never_creates_execution_authority(self) -> None:
         """RO-2: confirming is separate; the preparation grants nothing."""
@@ -1571,7 +1592,10 @@ class IntentPageAnalysisTests(_PreparationFixture):
                 self.assertIsNone(durable.preview_id)
             self.assertEqual([], value.source.mutations)
             self.assertEqual([], value.target.mutations)
-            self.assertEqual((), value.repository.list_tasks())
+            # RO-2: the organizing Task admitted with the selection is real and
+            # durable, but a paused/cancelled walk leaves no confirmable subset and
+            # no TaskItem, so nothing can ever be executed from it.
+            self.assert_no_executable_work(value)
 
 
 if __name__ == "__main__":

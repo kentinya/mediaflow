@@ -2377,7 +2377,19 @@ class MediaFlowApi:
             and method == "GET"
         ):
             self._require(principal, ApiPermission.READ)
-            self._require_empty_query(environ, "operations organize discovery detail")
+            # The detail read optionally names the caller's own admission request
+            # identity, so a request that converged on this same durable work can
+            # read back *its own* admitted/existing/refused result instead of the
+            # first request's evidence.
+            query = parse_qs(str(environ.get("QUERY_STRING", "")), keep_blank_values=True)
+            if not query:
+                request_id = None
+            elif set(query) == {"requestId"} and len(query["requestId"]) == 1:
+                request_id = query["requestId"][0]
+            else:
+                raise ValueError(
+                    "operations organize discovery detail accepts only one optional requestId"
+                )
             service = getattr(self, "_media_discovery", None)
             if service is None:
                 return self._discovery_unavailable(start_response)
@@ -2386,7 +2398,9 @@ class MediaFlowApi:
             except DiscoveryError as error:
                 return self._discovery_step_error(start_response, error)
             return self._response(
-                start_response, 200, self._discovery_document(value, principal, binding)
+                start_response,
+                200,
+                self._discovery_document(value, principal, binding, requested_by=request_id),
             )
         if (
             len(parts) == 7
@@ -5882,6 +5896,65 @@ class MediaFlowApi:
             len(parts) == 6
             and parts[:3] == ["api", "v1", "resource-libraries"]
             and parts[4] == "files"
+            and parts[5] == "organize-work"
+            and method == "GET"
+        ):
+            # Files' own durable readback of its organizing work for this library.
+            # It replaces the removed Task Center discovery section: the operator can
+            # reopen several known runs (and a lost admission by its exact request
+            # identity) long after they left any recent-N window, without any page
+            # visit creating work.  Principal-bound, library-scoped and cursor-paged.
+            self._require(principal, ApiPermission.READ)
+            service = getattr(self, "_media_discovery", None)
+            if service is None:
+                return self._discovery_unavailable(start_response)
+            query = parse_qs(str(environ.get("QUERY_STRING", "")), keep_blank_values=True)
+            if set(query) - {"limit", "before", "requestId"}:
+                raise ValueError("Files organize work accepts only limit, before and requestId")
+            limit = 25
+            if "limit" in query:
+                if len(query["limit"]) != 1 or not query["limit"][0].isdigit():
+                    raise ValueError("Files organize work limit is invalid")
+                limit = int(query["limit"][0])
+            boundary = None
+            if "before" in query:
+                if len(query["before"]) != 1:
+                    raise ValueError("Files organize work cursor is invalid")
+                cursor_at, _, cursor_id = query["before"][0].partition("|")
+                if not cursor_id:
+                    raise ValueError("Files organize work cursor is invalid")
+                try:
+                    boundary = (datetime.fromisoformat(cursor_at), cursor_id)
+                except ValueError as error:
+                    raise ValueError("Files organize work cursor is invalid") from error
+            request_ids = query.get("requestId", [])
+            if len(request_ids) > 1:
+                raise ValueError("Files organize work accepts only one requestId")
+            work = self._files_organize_work(
+                principal,
+                binding,
+                resource_library_id=parts[3],
+                limit=limit,
+                before=boundary,
+                request_id=(request_ids[0] if len(request_ids) == 1 else None),
+            )
+            return self._response(
+                start_response,
+                200,
+                {
+                    "journey": "files-organize-work",
+                    "resourceLibraryId": parts[3],
+                    "items": work["items"],
+                    "total": len(work["items"]),
+                    "nextBefore": work["nextBefore"],
+                    "sideEffects": "none",
+                    "zeroMutation": True,
+                },
+            )
+        if (
+            len(parts) == 6
+            and parts[:3] == ["api", "v1", "resource-libraries"]
+            and parts[4] == "files"
             and parts[5] == "discoveries"
             and method == "POST"
         ):
@@ -5943,7 +6016,16 @@ class MediaFlowApi:
             return self._response(
                 start_response,
                 202,
-                self._discovery_document(discovery, principal, binding),
+                self._discovery_document(
+                    discovery,
+                    principal,
+                    binding,
+                    requested_by=(
+                        document.get("requestId")
+                        if isinstance(document.get("requestId"), str)
+                        else None
+                    ),
+                ),
             )
         if (
             len(parts) == 6
@@ -12064,7 +12146,15 @@ class MediaFlowApi:
             },
         )
 
-    def _discovery_document(self, discovery, principal, binding, *, include_sources: bool = True):
+    def _discovery_document(
+        self,
+        discovery,
+        principal,
+        binding,
+        *,
+        include_sources: bool = True,
+        requested_by: str | None = None,
+    ):
         """The bounded, secret-free operator projection of one discovery.
 
         It publishes exact relative scopes, progress, counters, bounded findings
@@ -12092,6 +12182,24 @@ class MediaFlowApi:
             if self._media_discovery is not None
             else (False, "discovery_not_preparation", None, False)
         )
+        # The per-request admission outcome: which items of *this* request were
+        # admitted, which already belonged to the same durable work, and which of
+        # this request's own items were refused.  A converging request is answered
+        # with its own evidence, never with the first request's; a read without a
+        # request identity falls back to the shared work evidence.
+        request_outcome = self._discovery_request_outcome(discovery, requested_by)
+        if request_outcome is not None:
+            admitted_entries = request_outcome.admitted
+            existing_entries = request_outcome.existing
+            refused_documents = [item.document() for item in request_outcome.refused]
+            selection_scope_count = len(request_outcome.scope)
+            echoed_request_id = request_outcome.request_id
+        else:
+            admitted_entries = progress.scope_entries
+            existing_entries = ()
+            refused_documents = [item.document() for item in progress.refused_entries]
+            selection_scope_count = len(progress.scope_entries)
+            echoed_request_id = discovery.admission_request_id
         document: dict[str, object] = {
             "journey": "discovery",
             "discoveryId": discovery.discovery_id,
@@ -12103,17 +12211,24 @@ class MediaFlowApi:
             "createdAt": discovery.created_at.isoformat(),
             "updatedAt": discovery.updated_at.isoformat(),
             "selection": {
-                "scopeCount": len(progress.scope_entries),
+                "scopeCount": selection_scope_count,
                 "scopes": [
-                    {"path": item.path, "kind": item.kind.value} for item in progress.scope_entries
+                    {"path": item.path, "kind": item.kind.value} for item in admitted_entries
                 ],
-                # RO-2/AC-16: the selected items this admission refused, with
-                # their own bounded reason and next action.  They are durable
-                # evidence on the admitted work, never a silent drop, so the
-                # operator sees the exact refused item beside the eligible
-                # siblings that really became organizing work.
-                "refused": [item.document() for item in progress.refused_entries],
-                "refusedCount": len(progress.refused_entries),
+                # Items of the same request that the same durable work already
+                # holds.  They are not duplicated execution and are not a refusal
+                # either: the operator sees the exact existing work.
+                "existing": [
+                    {"path": item.path, "kind": item.kind.value} for item in existing_entries
+                ],
+                "existingCount": len(existing_entries),
+                # RO-2/AC-16: the selected items this request refused, with their
+                # own bounded reason and next action.  They are durable evidence of
+                # this request, never a silent drop, so the operator sees the exact
+                # refused item beside the eligible siblings that really became
+                # organizing work.
+                "refused": refused_documents,
+                "refusedCount": len(refused_documents),
             },
             "budgets": discovery.budgets.document(),
             "progress": {
@@ -12145,7 +12260,15 @@ class MediaFlowApi:
             # that lost the admission response can prove which durable record
             # its request actually became.  It is the client's own value and
             # reveals nothing about the server, the pin or the Storage path.
-            "admissionRequestId": discovery.admission_request_id,
+            "admissionRequestId": echoed_request_id,
+            # The exact durable shape of *this* request's result, so a client can
+            # read admitted/existing/refused beside the shared progress without
+            # merging another request's evidence.
+            "request": (None if request_outcome is None else request_outcome.document()),
+            # The durable organizing Task this admitted Files selection created, so
+            # the operator (and a reload) can open the exact task context instead
+            # of inferring one from a recent list.
+            "organizeTaskId": discovery.organize_task_id,
             "autoPrepare": discovery.auto_prepare,
             "prepared": discovery.prepared,
             "previewId": discovery.preview_id,
@@ -12284,6 +12407,124 @@ class MediaFlowApi:
                 for value in discovery.sources
             ]
         return document
+
+    def _discovery_request_outcome(self, discovery, requested_by: str | None):
+        """One exact request's own resolved admission outcome, if it names one.
+
+        The lookup is principal-bound and identity-bound: a request identity proves
+        only the record it actually created, so a caller can never read another
+        principal's or another request's per-item result.  ``None`` means no
+        per-request evidence was recorded (an automatic admission, or a read without
+        an identity), and the shared work evidence is then the honest answer.
+        """
+
+        if not requested_by:
+            return None
+        reader = getattr(self._repository, "find_media_discovery_admission_outcome", None)
+        if not callable(reader):
+            return None
+        try:
+            outcome = reader(actor=discovery.actor, admission_request_id=requested_by)
+        except Exception:  # noqa: BLE001 - an unprovable outcome is a bounded absence
+            return None
+        return outcome
+
+    def _files_organize_work(
+        self,
+        principal: ResolvedApiPrincipal,
+        binding,
+        *,
+        resource_library_id: str,
+        limit: int,
+        before,
+        request_id: str | None,
+    ) -> dict[str, object]:
+        """This principal's durable Files organizing work for one library.
+
+        ``request_id`` is the lost-admission reconciliation read: it proves the exact
+        admission *this* request created.  Without it the caller gets a bounded,
+        cursor-paged list of its own work, so Files can reopen several known runs and
+        never needs a recent-N guess.  A proved absence is an honest empty answer,
+        and nothing in this read creates, resumes or re-submits work.
+        """
+
+        service = getattr(self, "_media_discovery", None)
+        if service is None:
+            return {"items": [], "nextBefore": None}
+        reader = getattr(service, "find_by_request_id", None)
+        if request_id is not None and callable(reader):
+            try:
+                found = reader(actor=principal.principal_id, admission_request_id=request_id)
+            except DiscoveryError as error:
+                raise ValueError(error.code) from error
+            if found is None or found.resource_library_id != resource_library_id:
+                return {"items": [], "nextBefore": None}
+            return {
+                "items": [self._files_organize_work_item(found, principal, binding, request_id)],
+                "nextBefore": None,
+            }
+        lister = getattr(service, "list_files_work", None)
+        if not callable(lister):
+            return {"items": [], "nextBefore": None}
+        try:
+            values = lister(
+                actor=principal.principal_id,
+                resource_library_id=resource_library_id,
+                limit=limit + 1,
+                before=before,
+            )
+        except DiscoveryError as error:
+            raise ValueError(error.code) from error
+        page = tuple(values)[:limit]
+        next_before = None
+        if len(values) > limit and page:
+            last = page[-1]
+            next_before = f"{last.created_at.isoformat()}|{last.discovery_id}"
+        return {
+            "items": [
+                self._files_organize_work_item(value, principal, binding, None) for value in page
+            ],
+            "nextBefore": next_before,
+        }
+
+    def _files_organize_work_item(
+        self,
+        discovery,
+        principal: ResolvedApiPrincipal,
+        binding,
+        request_id: str | None,
+    ) -> dict[str, object]:
+        """One bounded Files work row: identity, stage and next action only.
+
+        Files needs to reopen the exact context, so this publishes the durable
+        identities and the real stage, never a claim token, a pin digest, a
+        fingerprint or a physical Storage path.
+        """
+
+        document = self._discovery_document(
+            discovery, principal, binding, include_sources=False, requested_by=request_id
+        )
+        scope = discovery.progress.scope_entries
+        return {
+            "discoveryId": discovery.discovery_id,
+            "resourceLibraryId": discovery.resource_library_id,
+            "organizeTaskId": discovery.organize_task_id,
+            "intentId": discovery.intent_id,
+            "previewId": discovery.preview_id,
+            "status": discovery.status.value,
+            "phase": discovery.progress.phase,
+            "autoPrepare": discovery.auto_prepare,
+            "prepared": discovery.prepared,
+            "createdAt": discovery.created_at.isoformat(),
+            "updatedAt": discovery.updated_at.isoformat(),
+            "version": discovery.version,
+            "scopeCount": len(scope),
+            "scopes": [{"path": entry.path, "kind": entry.kind.value} for entry in scope[:20]],
+            "selection": document["selection"],
+            "admissionRequestId": document["admissionRequestId"],
+            "nextAction": document["nextAction"],
+            "failure": document["failure"],
+        }
 
     def _discovery_worker_evidence(self, binding) -> dict[str, object]:
         """Whether a live resident Worker can actually consume this discovery.

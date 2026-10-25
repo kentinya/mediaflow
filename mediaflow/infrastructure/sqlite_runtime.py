@@ -104,10 +104,13 @@ from mediaflow.domain.manual_safety import (
     searchable_identity_text,
 )
 from mediaflow.domain.media_discovery import (
+    DiscoveryAdmissionOutcome,
     DiscoveryConflict,
+    DiscoveryEntryKind,
     DiscoveryError,
     DiscoveryObservation,
     DiscoveryOwnershipLost,
+    DiscoveryProgress,
     DiscoveryStatus,
     DiscoveryUnavailable,
     MediaDiscovery,
@@ -157,6 +160,7 @@ from mediaflow.domain.operations_run import (
     known_command_label,
     statuses_for_disposition,
 )
+from mediaflow.domain.preview_analysis import PreviewAnalysisConflict
 from mediaflow.domain.processing_checkpoint import (
     CheckpointAudit,
     CheckpointBlocker,
@@ -204,6 +208,7 @@ from mediaflow.domain.security import SecurityAuditRecord
 from mediaflow.domain.source_reviews import FileReviewLink
 from mediaflow.domain.task_persistence import (
     MEDIA_LIBRARY_TASK_COMMAND_PREFIX,
+    SETTLED_ITEM_STATUSES,
     TRANSFER_MUTATION_IN_FLIGHT,
     ConfirmationStatus,
     ConflictConfirmation,
@@ -288,7 +293,16 @@ from mediaflow.infrastructure.task_source_schema import ensure_task_occurrence_c
 # observation and ownership evidence only: discovery performs metadata-only
 # reads, creates no execution authority, and a legacy database simply has no
 # discovery rows, so nothing is backfilled.
-SCHEMA_VERSION = 50
+# Schema 51 adds the additive ``media_discovery_admission_outcomes`` table: one
+# bounded record per caller admission request that converged on a durable
+# organizing work.  The discovery row carries the *shared* admitted work; each
+# request keeps *its own* resolved selection outcome there, so a lost-response
+# readback of request B can never be answered with request A's evidence and a
+# Worker progress publication can never erase another request's answer.  A legacy
+# database simply has no outcome rows; the exact request readback then falls back
+# to the discovery row's own recorded request identity, so nothing is backfilled
+# and no outcome is invented.
+SCHEMA_VERSION = 51
 
 #: The conservative owner generation written to ``file_locks`` rows that predate
 #: schema 38.  It is a fixed, non-guessable-looking sentinel rather than NULL so
@@ -11886,7 +11900,7 @@ class SQLiteTaskRepository:
         "pause_requested, cancel_requested, error, created_at, updated_at, "
         "next_observation_at, admission_signature, admission_request_id, "
         "auto_prepare, preview_id, definition_origin_json, recovery_source_task_id, "
-        "recovery_excluded_paths_json"
+        "recovery_excluded_paths_json, organize_task_id"
     )
 
     def create_media_discovery(self, discovery: MediaDiscovery) -> MediaDiscovery:
@@ -11960,7 +11974,7 @@ class SQLiteTaskRepository:
                 self._connection.execute(
                     f"INSERT INTO media_discoveries ({self._DISCOVERY_COLUMNS}) "
                     "VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, "
-                    "?, ?, ?, ?, ?, ?, ?, ?)",
+                    "?, ?, ?, ?, ?, ?, ?, ?, ?)",
                     self._discovery_values(discovery),
                 )
                 self._connection.commit()
@@ -12216,7 +12230,31 @@ class SQLiteTaskRepository:
                 bound["target_id"] if bound is not None else (direct_ids[0] if direct_ids else None)
             )
             if discovery_id is None:
-                return None
+                # A request that converged on an already-open admission owns no
+                # row of its own: the durable per-request outcome table is where
+                # its accepted identity lives, so its lost-response readback still
+                # proves the actual admission instead of a bounded absence.
+                outcome_rows = self._connection.execute(
+                    "SELECT discovery_id FROM media_discovery_admission_outcomes "
+                    "WHERE actor=? AND admission_request_id=? "
+                    "ORDER BY created_at DESC, discovery_id DESC LIMIT 2",
+                    (actor, admission_request_id),
+                ).fetchall()
+                if len(outcome_rows) > 1:
+                    raise DiscoveryError(
+                        "this request identity matches more than one discovery, so its "
+                        "original admission cannot be proved",
+                        code="admission_request_unresolved",
+                        status=409,
+                        next_action=(
+                            "inspect the existing discoveries in Operations; start any new "
+                            "selection with a new request ID"
+                        ),
+                        details={"requestIdAmbiguous": True},
+                    )
+                if not outcome_rows:
+                    return None
+                return self._load_media_discovery_locked(outcome_rows[0]["discovery_id"])
             return self._load_media_discovery_locked(discovery_id)
 
     def get_media_discovery(self, discovery_id: str) -> MediaDiscovery | None:
@@ -12244,6 +12282,428 @@ class SQLiteTaskRepository:
                     (actor, limit),
                 ).fetchall()
             return tuple(self._load_media_discovery_locked(row["discovery_id"]) for row in rows)
+
+    # ------------------------------------------------------------------
+    # Per-request admission outcomes of one durable organizing work
+    # ------------------------------------------------------------------
+
+    def bind_admission_request(
+        self,
+        *,
+        actor: str,
+        admission_request_id: str,
+        kind: str,
+        target_id: str,
+        created_at: datetime,
+    ) -> None:
+        """Bind one caller request identity to the durable work it provably created.
+
+        A request that converged on already-open work created no row of its own, so
+        this alias is the only durable fact naming that acceptance.  The primary
+        key is the principal plus the request identity, so one identity can never
+        be silently reused for different work: a second, different target is
+        refused instead of being accepted as a second answer to the same request.
+        """
+
+        if not isinstance(actor, str) or not actor.strip():
+            raise ValueError("admission request actor is required")
+        if not _valid_admission_request_id(admission_request_id):
+            raise ValueError("admission request identity is invalid")
+        if not isinstance(kind, str) or not kind.strip() or len(kind) > 64:
+            raise ValueError("admission request kind is invalid")
+        if not isinstance(target_id, str) or not target_id.strip():
+            raise ValueError("admission request target is required")
+        if created_at.tzinfo is None:
+            raise ValueError("admission request timestamp needs timezone")
+        with self._lock, self._connection:
+            existing = self._connection.execute(
+                "SELECT kind, target_id FROM admission_request_bindings "
+                "WHERE actor=? AND admission_request_id=? LIMIT 1",
+                (actor, admission_request_id),
+            ).fetchone()
+            if existing is not None:
+                if existing["kind"] == kind and existing["target_id"] == target_id:
+                    # An exact repetition converges on the same binding.
+                    return
+                raise PreviewAnalysisConflict(
+                    "this admission request identity is already bound to different durable work",
+                    details={
+                        "kind": existing["kind"],
+                        "targetId": existing["target_id"],
+                    },
+                )
+            self._connection.execute(
+                "INSERT INTO admission_request_bindings "
+                "(actor, admission_request_id, kind, target_id, created_at) "
+                "VALUES (?, ?, ?, ?, ?)",
+                (actor, admission_request_id, kind, target_id, created_at.isoformat()),
+            )
+
+    def record_media_discovery_admission_outcome(
+        self,
+        *,
+        discovery_id: str,
+        actor: str,
+        outcome: DiscoveryAdmissionOutcome,
+    ) -> None:
+        """Persist one caller request's own resolved selection outcome.
+
+        This table is deliberately separate from ``media_discoveries``: the
+        discovery row carries the *shared* admitted work, while each converging
+        request keeps *its own* result.  A Worker publishing discovery progress, a
+        control request, a freeze or an analysis therefore never rewrites or erases
+        another request's answer, and request B can never be answered with request
+        A's evidence.  Repeating one exact request identity replaces that identity's
+        own row and touches no other request's evidence.
+        """
+
+        if not isinstance(discovery_id, str) or not discovery_id.strip():
+            raise ValueError("media discovery ID is required")
+        if not isinstance(actor, str) or not actor.strip():
+            raise ValueError("media discovery actor is required")
+        request_id = outcome.request_id
+        if request_id is None:
+            raise ValueError("media discovery admission outcome requires a request identity")
+        if not _valid_admission_request_id(request_id):
+            raise ValueError("media discovery admission request identity is invalid")
+        created_at = (outcome.created_at or datetime.now(UTC)).isoformat()
+        with self._lock, self._connection:
+            self._connection.execute(
+                "INSERT OR REPLACE INTO media_discovery_admission_outcomes "
+                "(discovery_id, actor, admission_request_id, outcome_json, created_at) "
+                "VALUES (?, ?, ?, ?, ?)",
+                (
+                    discovery_id,
+                    actor,
+                    request_id,
+                    json.dumps(outcome.document(), ensure_ascii=False, sort_keys=True),
+                    created_at,
+                ),
+            )
+
+    def list_media_discovery_admission_outcomes(
+        self, discovery_id: str, *, limit: int = 100
+    ) -> tuple[DiscoveryAdmissionOutcome, ...]:
+        """This work's bounded per-request outcomes, newest first."""
+
+        if not isinstance(discovery_id, str) or not discovery_id.strip():
+            raise ValueError("media discovery ID is required")
+        if isinstance(limit, bool) or not 1 <= limit <= 500:
+            raise ValueError("media discovery outcome limit must be between 1 and 500")
+        with self._lock:
+            rows = self._connection.execute(
+                "SELECT outcome_json FROM media_discovery_admission_outcomes "
+                "WHERE discovery_id=? ORDER BY created_at DESC, admission_request_id DESC "
+                "LIMIT ?",
+                (discovery_id, limit),
+            ).fetchall()
+        values: list[DiscoveryAdmissionOutcome] = []
+        for row in rows:
+            try:
+                values.append(DiscoveryAdmissionOutcome.from_document(json.loads(row[0])))
+            except Exception as error:
+                raise DiscoveryUnavailable(
+                    "a durable media discovery admission outcome is corrupt",
+                    details={"discoveryId": discovery_id, "reason": type(error).__name__},
+                ) from error
+        return tuple(values)
+
+    def find_media_discovery_admission_outcome(
+        self, *, actor: str, admission_request_id: str
+    ) -> DiscoveryAdmissionOutcome | None:
+        """The exact outcome one caller request identity resolved, if any.
+
+        A request that converged on already-open work has no ``media_discoveries``
+        row of its own, so this is what makes its lost-response readback prove the
+        actual admission *and* its own per-item result.
+        """
+
+        if not isinstance(actor, str) or not actor.strip():
+            raise ValueError("media discovery actor is required")
+        if not _valid_admission_request_id(admission_request_id):
+            raise ValueError("media discovery admission request identity is invalid")
+        with self._lock:
+            row = self._connection.execute(
+                "SELECT outcome_json FROM media_discovery_admission_outcomes "
+                "WHERE actor=? AND admission_request_id=? LIMIT 1",
+                (actor, admission_request_id),
+            ).fetchone()
+        if row is None:
+            return None
+        try:
+            return DiscoveryAdmissionOutcome.from_document(json.loads(row[0]))
+        except Exception as error:
+            raise DiscoveryUnavailable(
+                "a durable media discovery admission outcome is corrupt",
+                details={"reason": type(error).__name__},
+            ) from error
+
+    def list_files_organize_work(
+        self,
+        *,
+        actor: str,
+        resource_library_id: str,
+        limit: int = 50,
+        before: tuple[datetime, str] | None = None,
+    ) -> tuple[MediaDiscovery, ...]:
+        """This principal's durable Files organizing work for one library.
+
+        The read is library-scoped, principal-scoped and cursor-paged over real
+        persisted rows, so Files can reopen multiple known runs long after they left
+        any bounded recent-N window.  It never guesses a latest run and never
+        publishes another principal's private context.
+        """
+
+        if not isinstance(actor, str) or not actor.strip():
+            raise ValueError("media discovery actor is required")
+        if not isinstance(resource_library_id, str) or not resource_library_id.strip():
+            raise ValueError("ResourceLibrary identity is required")
+        if isinstance(limit, bool) or not isinstance(limit, int) or not 1 <= limit <= 100:
+            raise ValueError("Files organize work limit must be between 1 and 100")
+        clauses = ["actor=?", "resource_library_id=?"]
+        parameters: list[object] = [actor, resource_library_id]
+        if before is not None:
+            clauses.append("(created_at < ? OR (created_at = ? AND discovery_id < ?))")
+            parameters.extend((before[0].isoformat(), before[0].isoformat(), before[1]))
+        with self._lock:
+            rows = self._connection.execute(
+                "SELECT discovery_id FROM media_discoveries "
+                f"WHERE {' AND '.join(clauses)} "
+                "ORDER BY created_at DESC, discovery_id DESC LIMIT ?",
+                (*parameters, limit),
+            ).fetchall()
+            return tuple(self._load_media_discovery_locked(row["discovery_id"]) for row in rows)
+
+    def create_files_organize_work(
+        self,
+        discovery: MediaDiscovery,
+        task: PersistentTask,
+        *,
+        display: RunDisplayContext | None = None,
+    ) -> MediaDiscovery:
+        """Commit one Files 整理 Task and its discovery admission atomically.
+
+        RO-2 requires the organizing Task to exist *before* business readiness, so
+        the Task row (with its immutable configuration pin, admitted scope and
+        execute authority) and the discovery record that owns the bounded walk are
+        one durable outcome.  A failure leaves neither behind, and the discovery can
+        never reference a Task that was not committed with it.
+
+        The Task is created in the queued state: the admitting HTTP request never
+        claims, walks or executes.  Only the resident Processing Worker advances it.
+        """
+
+        if not isinstance(discovery, MediaDiscovery):
+            raise ValueError("media discovery projection is required")
+        if not isinstance(task, PersistentTask):
+            raise ValueError("PersistentTask projection is required")
+        if discovery.organize_task_id != task.task_id:
+            raise ValueError("discovery organizing Task identity does not match")
+        with self._lock:
+            self._connection.execute("BEGIN IMMEDIATE")
+            try:
+                self._connection.execute(
+                    "INSERT INTO tasks VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)",
+                    self._task_values(task),
+                )
+                if display is not None:
+                    self._insert_run_display_locked(task.task_id, display, task.created_at)
+                admission_signature = self._admission_signature(discovery)
+                open_match = self._connection.execute(
+                    "SELECT discovery_id FROM media_discoveries "
+                    "WHERE admission_signature=? AND intent_id IS NULL AND frozen_at IS NULL "
+                    "AND status NOT IN (?, ?, ?, ?) "
+                    "ORDER BY created_at DESC, discovery_id DESC LIMIT 1",
+                    (
+                        admission_signature,
+                        DiscoveryStatus.COMPLETED.value,
+                        DiscoveryStatus.PARTIAL_SUCCESS.value,
+                        DiscoveryStatus.FAILED.value,
+                        DiscoveryStatus.CANCELLED.value,
+                    ),
+                ).fetchone()
+                if open_match is not None:
+                    raise DiscoveryConflict(
+                        "this discovery admission identity already exists",
+                        details={"discoveryId": open_match["discovery_id"]},
+                    )
+                self._connection.execute(
+                    f"INSERT INTO media_discoveries ({self._DISCOVERY_COLUMNS}) "
+                    "VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, "
+                    "?, ?, ?, ?, ?, ?, ?, ?, ?)",
+                    self._discovery_values(discovery),
+                )
+                self._connection.commit()
+            except DiscoveryConflict:
+                self._connection.rollback()
+                raise
+            except sqlite3.IntegrityError as error:
+                self._connection.rollback()
+                raise DiscoveryConflict(
+                    "this discovery admission identity already exists",
+                    details={"discoveryId": discovery.discovery_id},
+                ) from error
+            except BaseException:
+                self._connection.rollback()
+                raise
+        return self.get_media_discovery(discovery.discovery_id)
+
+    def find_owned_source_work(
+        self,
+        *,
+        storage_id: str,
+        source_path: str,
+        source_fingerprint: str | None = None,
+        exclude_task_id: str | None = None,
+        exclude_discovery_id: str | None = None,
+    ) -> dict[str, object] | None:
+        """The unfinished work that already owns one verified concrete source.
+
+        Ownership is proven by the verified Storage identity — the exact Storage
+        plus its ResourceLibrary-root-relative path *and*, whenever both sides know
+        it, the observed source fingerprint.  It is never proven by a filename, a UI
+        label or today's Active configuration.  A replaced file at the same path is
+        therefore a *different* concrete source.
+
+        A Task item owns its source from admission until it reaches a *settled*
+        state, so queued, running, paused, waiting-for-decision and saved-decision
+        work all keep their claim; a terminal item does not.  A discovery admission
+        owns the sources of its admitted selection for the same reason.
+        """
+
+        if not isinstance(storage_id, str) or not storage_id.strip():
+            raise ValueError("Storage identity is required")
+        if not isinstance(source_path, str) or not source_path.strip():
+            raise ValueError("source path is required")
+        if exclude_task_id is not None and not isinstance(exclude_task_id, str):
+            raise ValueError("excluded Task identity is invalid")
+        if exclude_discovery_id is not None and not isinstance(exclude_discovery_id, str):
+            raise ValueError("excluded discovery identity is invalid")
+        settled = tuple(item.value for item in SETTLED_ITEM_STATUSES)
+        clauses = [
+            "items.storage_id=?",
+            "items.source_path=?",
+            f"items.status NOT IN ({', '.join('?' for _ in settled)})",
+            # A known different occurrence is a different concrete source, so an
+            # old row that observed other content never blocks the replacement.
+            "(? IS NULL OR items.source_fingerprint IS NULL OR items.source_fingerprint=?)",
+        ]
+        parameters: list[object] = [
+            storage_id,
+            source_path,
+            *settled,
+            source_fingerprint,
+            source_fingerprint,
+        ]
+        if exclude_task_id is not None:
+            clauses.append("items.task_id<>?")
+            parameters.append(exclude_task_id)
+        with self._lock:
+            row = self._connection.execute(
+                "SELECT items.task_id, items.item_id, items.status, items.stage, "
+                "items.source_fingerprint, tasks.command, tasks.status AS task_status "
+                "FROM task_items items JOIN tasks ON tasks.task_id = items.task_id "
+                f"WHERE {' AND '.join(clauses)} "
+                "ORDER BY items.updated_at DESC, items.item_id DESC LIMIT 1",
+                parameters,
+            ).fetchone()
+            if row is not None:
+                return {
+                    "kind": "task",
+                    "taskId": row["task_id"],
+                    "taskItemId": row["item_id"],
+                    "taskCommand": row["command"],
+                    "taskStatus": row["task_status"],
+                    "itemStatus": row["status"],
+                    "itemStage": row["stage"],
+                }
+            return self._discovery_source_owners_locked(
+                storage_id,
+                source_path,
+                source_fingerprint=source_fingerprint,
+                exclude_discovery_id=exclude_discovery_id,
+            )
+
+    def _discovery_source_owners_locked(
+        self,
+        storage_id: str,
+        source_path: str,
+        *,
+        source_fingerprint: str | None = None,
+        exclude_discovery_id: str | None,
+    ) -> dict[str, object] | None:
+        """A durable organizing admission that still owns one concrete source.
+
+        A Files admission owns its source from admission until its organizing work
+        is really settled.  That covers the queued/running/waiting walk, a frozen
+        preparation whose exact plan summary is still waiting for the operator's
+        confirmation, and a paused record.  It stops owning the source once a manual
+        execution of its linked intent was admitted (that execution's own Task then
+        owns the concrete source through its TaskItems) and once the admission itself
+        settled as cancelled or failed.
+        """
+
+        clauses = ["d.storage_id=?", "d.status NOT IN (?, ?)"]
+        parameters: list[object] = [
+            storage_id,
+            DiscoveryStatus.CANCELLED.value,
+            DiscoveryStatus.FAILED.value,
+        ]
+        if exclude_discovery_id is not None:
+            clauses.append("d.discovery_id<>?")
+            parameters.append(exclude_discovery_id)
+        rows = self._connection.execute(
+            "SELECT d.discovery_id, d.actor, d.status, d.progress_json, "
+            "d.sources_json, d.intent_id FROM media_discoveries d "
+            "WHERE " + " AND ".join(clauses) + " "
+            "ORDER BY d.created_at DESC, d.discovery_id DESC LIMIT 50",
+            parameters,
+        ).fetchall()
+        for row in rows:
+            intent_id = row["intent_id"]
+            if isinstance(intent_id, str) and intent_id:
+                # A confirmed execution of this work owns the source through its
+                # own TaskItems, not through the admission any more.
+                executed = self._connection.execute(
+                    "SELECT 1 FROM manual_executions WHERE intent_id=? LIMIT 1",
+                    (intent_id,),
+                ).fetchone()
+                if executed is not None:
+                    continue
+            try:
+                progress = DiscoveryProgress.from_document(json.loads(row["progress_json"]))
+            except Exception:
+                continue
+            if not progress.manual_selection:
+                continue
+            owned_paths = {
+                entry.path
+                for entry in progress.scope_entries
+                if entry.kind is DiscoveryEntryKind.FILE
+            }
+            owned_fingerprints: dict[str, str] = {}
+            try:
+                for value in json.loads(row["sources_json"] or "[]"):
+                    if not isinstance(value, dict) or not isinstance(value.get("path"), str):
+                        continue
+                    owned_paths.add(value["path"])
+                    fingerprint = value.get("fingerprint")
+                    if isinstance(fingerprint, str):
+                        owned_fingerprints[value["path"]] = fingerprint
+            except Exception:
+                pass
+            if source_path in owned_paths and not (
+                source_fingerprint is not None
+                and owned_fingerprints.get(source_path) not in (None, source_fingerprint)
+            ):
+                return {
+                    "kind": "discovery",
+                    "discoveryId": row["discovery_id"],
+                    "actor": row["actor"],
+                    "status": row["status"],
+                    "path": source_path,
+                }
+        return None
 
     def find_media_discovery_for_intent(self, intent_id: str) -> MediaDiscovery | None:
         if not isinstance(intent_id, str) or not intent_id.strip():
@@ -13051,6 +13511,7 @@ class SQLiteTaskRepository:
                 ensure_ascii=False,
                 sort_keys=True,
             ),
+            discovery.organize_task_id,
         )
 
     @staticmethod
@@ -13138,6 +13599,7 @@ class SQLiteTaskRepository:
                     "recoveryExcludedPaths": json.loads(
                         row["recovery_excluded_paths_json"] or "[]"
                     ),
+                    "organizeTaskId": row["organize_task_id"],
                 }
             )
         except Exception as error:
@@ -15720,7 +16182,8 @@ class SQLiteTaskRepository:
                     admission_signature TEXT, admission_request_id TEXT,
                     auto_prepare INTEGER NOT NULL DEFAULT 0, preview_id TEXT,
                     definition_origin_json TEXT, recovery_source_task_id TEXT,
-                    recovery_excluded_paths_json TEXT NOT NULL DEFAULT '[]'
+                    recovery_excluded_paths_json TEXT NOT NULL DEFAULT '[]',
+                    organize_task_id TEXT
                 );
                 CREATE INDEX IF NOT EXISTS media_discoveries_status_created
                     ON media_discoveries(status, created_at, discovery_id);
@@ -15746,6 +16209,17 @@ class SQLiteTaskRepository:
                 );
                 CREATE INDEX IF NOT EXISTS admission_request_bindings_target
                     ON admission_request_bindings(kind, target_id, created_at);
+                CREATE TABLE IF NOT EXISTS media_discovery_admission_outcomes (
+                    discovery_id TEXT NOT NULL,
+                    actor TEXT NOT NULL,
+                    admission_request_id TEXT NOT NULL,
+                    outcome_json TEXT NOT NULL,
+                    created_at TEXT NOT NULL,
+                    PRIMARY KEY (actor, admission_request_id),
+                    FOREIGN KEY(discovery_id) REFERENCES media_discoveries(discovery_id)
+                );
+                CREATE INDEX IF NOT EXISTS media_discovery_admission_outcomes_work
+                    ON media_discovery_admission_outcomes(discovery_id, created_at);
                 CREATE TABLE IF NOT EXISTS manual_previews (
                     preview_id TEXT PRIMARY KEY, intent_id TEXT NOT NULL,
                     actor TEXT NOT NULL, configuration_snapshot_id TEXT NOT NULL,
@@ -16349,9 +16823,31 @@ class SQLiteTaskRepository:
                 "CREATE INDEX IF NOT EXISTS media_discoveries_recovery_source "
                 "ON media_discoveries(recovery_source_task_id, created_at, discovery_id)"
             )
+            if "organize_task_id" not in discovery_columns:
+                # Additive: a prior-schema discovery keeps its own existing
+                # lineage (a preparation the operator explicitly finalizes, a
+                # definition Run once or a recovery preparation).  It is never
+                # retroactively given an organizing Task, and a new explicit Files
+                # 整理 admission is always a new durable admission.
+                self._connection.execute(
+                    "ALTER TABLE media_discoveries ADD COLUMN organize_task_id TEXT"
+                )
             self._connection.execute(
                 "CREATE INDEX IF NOT EXISTS media_discoveries_request "
                 "ON media_discoveries(actor, admission_request_id)"
+            )
+            # Files needs to reopen its own durable organizing work by library,
+            # long after it left any bounded recent-N window.
+            self._connection.execute(
+                "CREATE INDEX IF NOT EXISTS media_discoveries_actor_library_created "
+                "ON media_discoveries(actor, resource_library_id, created_at, discovery_id)"
+            )
+            # Durable verified source ownership: the exact Storage plus the
+            # ResourceLibrary-root-relative Item path is the identity every
+            # overlapping request is checked against.
+            self._connection.execute(
+                "CREATE INDEX IF NOT EXISTS task_items_source_status "
+                "ON task_items(storage_id, source_path, status)"
             )
             manual_item_columns = {
                 row["name"]

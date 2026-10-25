@@ -1445,37 +1445,24 @@ describe("Operations run inventory landing", () => {
     expect(document.querySelector(".mf-run-has-detail")).toBeNull();
   });
 
-  it("starts the new-task journey with a valid empty default-list origin", async () => {
-    // The default (unfiltered, unselected) task center serializes a valid
-    // empty `returnOps=` origin. The `新建整理任务` entry must carry that
-    // marker — not drop it as "no origin" — so the journey can return here
-    // with its admitted run selected (Task 42.3 correction, AC-T3/AC-T5).
-    const requested: string[] = [];
-    stubInventoryJourney(pageDocument({ items: [], total: 0 }), requested);
+  it("offers no center creation entry and keeps the bounded list context", async () => {
+    // Task46.3 RO-2: the Task Center no longer offers a new-organize CTA, an
+    // independent library picker, a manual-action section or a discovery section.
+    // New manual file-selection work starts only from ResourceLibrary Files, so the
+    // center must advertise no such link at all — and merely visiting it must still
+    // create nothing.
+    stubInventoryJourney(pageDocument({ items: [], total: 0 }), []);
     authStore.setToken(TOKEN);
     const { router } = renderApp("/ui-v2/operations");
 
-    const entry = await screen.findByRole("link", {
-      name: "新建整理任务",
-    });
-    expect(entry).toBeVisible();
-    const href = entry.getAttribute("href") ?? "";
-    expect(href).toContain("returnOps=");
-    // The marker value is exactly the empty default-list context.
-    const query = href.slice(href.indexOf("?") + 1);
-    expect(new URLSearchParams(query).get("returnOps")).toBe("");
-
-    // The journey this entry starts resolves back to the same landing with
-    // the admitted run selected: the preserved empty context plus the run
-    // identity is exactly the bounded search the landing accepts.
-    const context = new URLSearchParams(query).get("returnOps") ?? null;
-    expect(operationsLandingSearch(context, "admitted-task-1")).toEqual({
-      run: "admitted-task-1",
-    });
-    // The router accepts this search as the landing's own continuation.
+    await screen.findByRole("heading", { name: "任务中心" });
+    expect(screen.queryByRole("link", { name: "新建整理任务" })).toBeNull();
+    expect(screen.queryByRole("heading", { name: "整理发现" })).toBeNull();
+    expect(screen.queryByRole("heading", { name: "手动操作" })).toBeNull();
+    // The landing's own bounded continuation still resolves to the same list.
     await router.navigate({
       to: "/operations",
-      search: operationsLandingSearch(context, "admitted-task-1"),
+      search: operationsLandingSearch(null, "admitted-task-1"),
     });
     await waitFor(() =>
       expect(router.history.location.search).toContain("run=admitted-task-1"),

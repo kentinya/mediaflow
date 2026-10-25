@@ -58,7 +58,7 @@ import {
   fetchRenameEvidence,
   fetchResourceLibraryRemovalPreview,
   fetchTextFile,
-  fetchOrganizeDiscoveries,
+  fetchFilesOrganizeWork,
   removeResourceLibrary,
   saveResourceLibrary,
   fetchResourceLibraryEdit,
@@ -80,6 +80,7 @@ import {
   type SavedDeleteAdmission,
 } from "./delete-admission-session";
 import { newRequestId } from "../../shared/api/request-id";
+import { filesOrganizeWorkQueryOptions } from "./organize-work-query";
 import type {
   TransferConflictMode,
   TransferImpactModel,
@@ -1500,6 +1501,104 @@ function FileBrowseView({
   );
 }
 
+/**
+ * This library's durable organizing work, read from the backend.
+ *
+ * RO-2/RO-3: the Task Center no longer owns discovery/manual-action sections, so
+ * Files is the one place the operator can reopen the original organizing context —
+ * several known runs, and the exact plan summary of each — after a close, a reload,
+ * a re-login or a service restart.  The read is side-effect-free: browsing here
+ * never creates, resumes or re-submits work.  Ordinary file operations keep their
+ * own local status dialog.
+ */
+function OrganizeWorkPanel({
+  token,
+  libraryId,
+  operationsReturn,
+}: {
+  readonly token: string | null;
+  readonly libraryId: string;
+  readonly operationsReturn: string | null;
+}) {
+  const [expanded, setExpanded] = useState(false);
+  const workQuery = useQuery(filesOrganizeWorkQueryOptions(token, libraryId));
+  const items = workQuery.data?.ok === true ? workQuery.data.items : [];
+  if (libraryId === "") return null;
+  return (
+    <section className="mf-count-section" aria-label="整理记录">
+      <header className="mf-section-head">
+        <h3>整理记录</h3>
+        <button
+          type="button"
+          className="mf-link-button"
+          onClick={() => setExpanded((value) => !value)}
+          aria-expanded={expanded}
+        >
+          {expanded ? "收起" : `查看(${items.length})`}
+        </button>
+      </header>
+      <p className="mf-dashboard-meta">
+        这里列出本资源库由本账号提交的整理工作。打开记录可查看精确计划摘要并明确确认执行;
+        浏览本页不会创建、恢复或重复提交任何工作。
+      </p>
+      {workQuery.data === undefined || workQuery.isFetching ? (
+        <p className="mf-dashboard-meta">正在读取整理记录…</p>
+      ) : !workQuery.data.ok ? (
+        <p className="mf-dashboard-meta" role="status">
+          整理记录暂时无法读取,稍后可刷新重试;已持久保存的工作不受影响。
+        </p>
+      ) : items.length === 0 ? (
+        <p className="mf-dashboard-meta">当前没有整理记录。</p>
+      ) : (
+        <ul className="mf-discovery-list">
+          {(expanded ? items : items.slice(0, 3)).map((item) => (
+            <li key={item.discoveryId}>
+              <Link
+                to="/operations/organize/new"
+                search={{
+                  discoveryId: item.discoveryId,
+                  resourceLibraryId: item.resourceLibraryId,
+                  ...operationsReturnSearch(operationsReturn),
+                }}
+              >
+                {ORGANIZE_WORK_STATUS_LABELS[item.status] ?? item.status} ·{" "}
+                {item.scopes.length > 0
+                  ? item.scopes.map((scope) => scope.path).join(", ")
+                  : `已选 ${item.scopeCount} 个来源`}
+              </Link>
+              <span className="mf-dashboard-meta">
+                {item.prepared
+                  ? " · 计划摘要已就绪,需明确确认后才执行"
+                  : item.failure !== null
+                    ? ` · ${item.failure}`
+                    : " · 处理中"}
+                {item.selection.refused.length > 0
+                  ? ` · 已排除 ${item.selection.refused.length} 项`
+                  : ""}
+                {item.selection.existing.length > 0
+                  ? ` · 已在此工作 ${item.selection.existing.length} 项`
+                  : ""}
+              </span>
+            </li>
+          ))}
+        </ul>
+      )}
+    </section>
+  );
+}
+
+const ORGANIZE_WORK_STATUS_LABELS: Record<string, string> = {
+  queued: "排队中",
+  running: "处理中",
+  waiting_stability: "等待文件稳定",
+  analyzing: "分析计划中",
+  paused: "已暂停",
+  completed: "计划摘要已就绪",
+  partial_success: "部分完成",
+  failed: "失败",
+  cancelled: "已取消",
+};
+
 function FilesHeader({
   canAddResourceLibrary,
   addDisabledReason,
@@ -2211,18 +2310,20 @@ export function StorageFilesPage() {
           // request created instead of ever resubmitting a duplicate
           // admission.  Without a client identity there is no proof at all,
           // so the honest unresolved state stands rather than a guess.
+          // Reconcile by *this* request's own durable identity, on this library's
+          // own bounded work read.  The rendered Storage/pin binding is
+          // deliberately not used as proof: a successor activation legitimately
+          // re-admits the same relative scope under a different pin, so
+          // navigating there would present another live source context as the
+          // recovered request.  Nothing here resubmits.
           const readback =
-            requestId === null ? null : await fetchOrganizeDiscoveries(token);
+            requestId === null
+              ? null
+              : await fetchFilesOrganizeWork(token, {
+                  resourceLibraryId: libraryId,
+                  requestId,
+                });
           if (readback !== null && readback.ok) {
-            // Recover only with *proof of the original admission*: the
-            // backend echoed the identity this caller created for this exact
-            // request.  The rendered Storage/pin binding is deliberately not
-            // used as proof -- a successor activation legitimately re-admits
-            // the same relative scope under a different pin, so navigating
-            // there would present another live source context as the
-            // recovered request.  When that proof is absent the honest
-            // unresolved state stands and the operator inspects it natively
-            // in Operations.
             const candidate = readback.items.find(
               (item) =>
                 item.admissionRequestId !== null &&
@@ -2235,16 +2336,16 @@ export function StorageFilesPage() {
                 id: candidate.discoveryId,
               };
             }
-            // No durable record for this exact original admission: the honest
-            // unknown state stands and the operator decides, without a
-            // promise that no work exists and without a guessed navigation.
+            // A proved absence: the honest unknown state stands and the operator
+            // decides, without a promise that no work exists and without a
+            // guessed navigation.
             throw new Error(
-              "暂时无法确认准备申请结果,也未读到本次申请创建的持久记录;" +
-                "请在任务中心查看未决的准备记录并自行处理,不会自动重复提交或进入其他来源。",
+              "暂时无法确认整理申请结果,也未读到本次申请创建的持久记录;" +
+                "可稍后在资源库文件页的整理记录中继续处理,不会自动重复提交或进入其他来源。",
             );
           }
           throw new Error(
-            "暂时无法确认准备申请结果,也无法读取准备记录;请稍后重试。不会自动重复提交。",
+            "暂时无法确认整理申请结果,也无法读取整理记录;请稍后重试。不会自动重复提交。",
           );
         }
         throw new Error(message);
@@ -3345,6 +3446,11 @@ export function StorageFilesPage() {
                     </p>
                   )}
                   {renderLibraryHeader()}
+                  <OrganizeWorkPanel
+                    token={token}
+                    libraryId={activeLibraryId}
+                    operationsReturn={operationsReturn}
+                  />
                   <FilesState title="正在读取文件">
                     正在读取{" "}
                     {effectivePath === ""
@@ -3367,6 +3473,11 @@ export function StorageFilesPage() {
                     </p>
                   )}
                   {renderLibraryHeader()}
+                  <OrganizeWorkPanel
+                    token={token}
+                    libraryId={activeLibraryId}
+                    operationsReturn={operationsReturn}
+                  />
                   <AuthorizedReadBoundary
                     query={filesQuery}
                     unavailableTitle="文件读取不可用"

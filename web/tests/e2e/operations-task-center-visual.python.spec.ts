@@ -221,15 +221,19 @@ test("capture the in-context creation summary and confirmation journey", async (
   ).toBeVisible();
   await page.setViewportSize({ width: 1536, height: 1024 });
   await page.getByRole("link", { name: "任务中心", exact: true }).click();
-  await page.getByRole("link", { name: "新建整理任务" }).click();
-  await page.getByRole("radio", { name: "source" }).check();
-  // The Worker heartbeat window is bounded, so the real Worker is registered
-  // exactly before the scoped availability read resolves.
-  await request.post(`${BASE}/__harness__/register-manual-worker`);
-  const chooseFiles = page.getByRole("button", { name: "选择文件或文件夹" });
-  await expect(chooseFiles).toBeVisible({ timeout: 15_000 });
-  await chooseFiles.click();
+  // Task46.3 RO-2: the Task Center no longer offers a creation CTA.  Files is the
+  // only entry that selects live files; the exact library is chosen on the page's
+  // own library strip, never from a second picker entry.
+  await expect(page.getByRole("link", { name: "新建整理任务" })).toHaveCount(0);
+  await page.getByRole("link", { name: "Files", exact: true }).click();
   await expect(page).toHaveURL(/\/ui-v2\/resourcelib\/files/);
+  await page
+    .getByRole("button", { name: /source/ })
+    .first()
+    .click();
+  // The Worker heartbeat window is bounded, so the real Worker is registered
+  // exactly before the bounded walk needs it.
+  await request.post(`${BASE}/__harness__/register-manual-worker`);
   await page.getByRole("checkbox", { name: "选择 Three.2003.mkv" }).check();
   await page.getByRole("button", { name: "批量整理" }).click();
   await expect(page).toHaveURL(/discoveryId=/);

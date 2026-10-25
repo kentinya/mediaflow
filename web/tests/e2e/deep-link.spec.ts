@@ -193,13 +193,14 @@ test("no supported page emits a retired Library address into the DOM", async ({
   await page.getByRole("button", { name: "Connect" }).click();
   await expect(page.getByRole("heading", { name: "Dashboard" })).toBeVisible();
 
-  // The native `新建整理任务` entry replaces the old explanation landing;
-  // memory-only authority is re-established after the direct navigation.
+  // Task46.3 RO-2: a generic creation URL now guides to ResourceLibrary Files
+  // instead of offering another library picker.  Memory-only authority is
+  // re-established after the direct navigation.
   await page.goto("/ui-v2/operations/organize/new");
   await page.getByLabel("API token").fill(VIEWER_TOKEN);
   await page.getByRole("button", { name: "Connect" }).click();
   await expect(
-    page.getByRole("heading", { name: "新建整理任务", exact: true }),
+    page.getByRole("heading", { name: "从资源库文件页开始整理" }),
   ).toBeVisible();
   await expect(
     page.getByRole("link", { name: "返回任务中心" }),

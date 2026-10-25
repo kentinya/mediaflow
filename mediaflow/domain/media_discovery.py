@@ -37,6 +37,10 @@ MAX_DISCOVERY_FINDINGS = 100
 MAX_DISCOVERY_REASONS = 32
 MAX_DISCOVERY_OBSERVATIONS = 100
 MAX_DISCOVERY_REFUSALS = 16
+#: The bounded number of per-request admission outcome rows this schema keeps
+#: reference to.  Each row is one caller request identity's own resolved
+#: selection; the cap keeps a long-lived open admission's evidence small.
+MAX_DISCOVERY_ADMISSION_OUTCOMES = 32
 
 #: The existing manual/discovery primary bound.  A definition-bound Run once may
 #: only ever freeze the *smaller* of its own item ceiling and this bound, so a
@@ -461,6 +465,22 @@ def canonical_scope(
     return tuple(sorted(entries, key=lambda entry: (entry.path, entry.kind.value)))
 
 
+def submitted_scope(
+    entries: tuple[DiscoveryScopeEntry, ...],
+) -> tuple[DiscoveryScopeEntry, ...]:
+    """The complete submitted selection of one request, without collapsing it.
+
+    Unlike :func:`canonical_scope`, a directory and an explicitly named
+    descendant of it both survive: they are two distinct items *of this request*,
+    and the per-request result must be able to say what happened to each of them.
+    """
+
+    unique: dict[tuple[str, str], DiscoveryScopeEntry] = {}
+    for entry in entries:
+        unique.setdefault((entry.path, entry.kind.value), entry)
+    return tuple(sorted(unique.values(), key=lambda entry: (entry.path, entry.kind.value)))
+
+
 def deduplicate_sources(
     sources: tuple[dict[str, object], ...],
 ) -> tuple[dict[str, object], ...]:
@@ -591,6 +611,11 @@ class DiscoveryRefusedEntry:
     #: The shallowest ancestor that is unreachable under the configured depth,
     #: when the refusal is a reachability fact rather than an exclusion.
     pruned_ancestor: str | None = None
+    #: The exact durable organizing work that already owns this source, when the
+    #: refusal is a verified duplicate.  It is the reference the operator opens
+    #: to continue or cancel the real work; it is never a second execution.
+    existing_work_id: str | None = None
+    existing_work_kind: str | None = None
 
     def document(self) -> dict[str, object]:
         value: dict[str, object] = {
@@ -604,6 +629,10 @@ class DiscoveryRefusedEntry:
         }
         if self.pruned_ancestor is not None:
             value["prunedAncestor"] = self.pruned_ancestor
+        if self.existing_work_id is not None:
+            value["existingWorkId"] = self.existing_work_id
+        if self.existing_work_kind is not None:
+            value["existingWorkKind"] = self.existing_work_kind
         return value
 
     @classmethod
@@ -625,6 +654,8 @@ class DiscoveryRefusedEntry:
             str(value.get("message", ""))[:MAX_DISCOVERY_TEXT_LENGTH],
             str(value.get("nextAction", ""))[:MAX_DISCOVERY_TEXT_LENGTH],
             (value["prunedAncestor"] if isinstance(value.get("prunedAncestor"), str) else None),
+            (value["existingWorkId"] if isinstance(value.get("existingWorkId"), str) else None),
+            (value["existingWorkKind"] if isinstance(value.get("existingWorkKind"), str) else None),
         )
 
 
@@ -647,6 +678,68 @@ class DiscoveryScopeEntry:
         if not isinstance(path, str) or not isinstance(kind, str):
             raise ValueError("discovery scope entry is invalid")
         return cls(path, DiscoveryEntryKind(kind))
+
+
+@dataclass(frozen=True)
+class DiscoveryAdmissionOutcome:
+    """The complete resolved selection of one caller admission request.
+
+    One open organizing work can be referenced by several distinct requests: an
+    operator submits a selection, then a superset/sibling selection while the
+    first work is still unfinished.  Those requests legitimately converge on the
+    same durable work, but each request has its own *result*: which of its own
+    submitted items were admitted to that work, which already belonged to it, and
+    which of its own items were refused with which bounded reason.
+
+    Persisting the per-request outcome is what keeps request B from answering with
+    request A's evidence.  The admitted source scope is shared; the per-request
+    selection outcome is not.  The record is bounded, secret-free and contains no
+    Storage fingerprint, occurrence identity or physical path.
+    """
+
+    request_id: str | None
+    scope: tuple[DiscoveryScopeEntry, ...]
+    admitted: tuple[DiscoveryScopeEntry, ...] = ()
+    existing: tuple[DiscoveryScopeEntry, ...] = ()
+    refused: tuple[DiscoveryRefusedEntry, ...] = ()
+    created_at: datetime | None = None
+
+    def document(self) -> dict[str, object]:
+        value: dict[str, object] = {
+            "scope": [item.document() for item in self.scope],
+            "admitted": [item.document() for item in self.admitted],
+            "existing": [item.document() for item in self.existing],
+            "refused": [item.document() for item in self.refused],
+        }
+        if self.request_id is not None:
+            value["requestId"] = self.request_id
+        if self.created_at is not None:
+            value["createdAt"] = self.created_at.isoformat()
+        return value
+
+    @classmethod
+    def from_document(cls, value: object) -> DiscoveryAdmissionOutcome:
+        if not isinstance(value, dict):
+            raise ValueError("discovery admission outcome is invalid")
+        raw = [
+            value.get("scope", []),
+            value.get("admitted", []),
+            value.get("existing", []),
+            value.get("refused", []),
+        ]
+        for item in raw:
+            if not isinstance(item, list):
+                raise ValueError("discovery admission outcome is invalid")
+        request_id = value.get("requestId")
+        created_at = value.get("createdAt")
+        return cls(
+            request_id if isinstance(request_id, str) else None,
+            tuple(DiscoveryScopeEntry.from_document(item) for item in raw[0]),
+            tuple(DiscoveryScopeEntry.from_document(item) for item in raw[1]),
+            tuple(DiscoveryScopeEntry.from_document(item) for item in raw[2]),
+            tuple(DiscoveryRefusedEntry.from_document(item) for item in raw[3]),
+            (datetime.fromisoformat(str(created_at)) if isinstance(created_at, str) else None),
+        )
 
 
 @dataclass(frozen=True)
@@ -1048,6 +1141,15 @@ class MediaDiscovery:
     #: bound measures only the *remaining* scope and a recorded sibling can never
     #: be re-offered or displace a genuinely remaining source.
     recovery_excluded_paths: tuple[str, ...] = ()
+    #: The durable organizing Task this admitted Files selection created, or
+    #: ``None``.  RO-2 requires the organizing Task to exist *before* business
+    #: readiness, so a Files 整理 command commits a real Task (with its
+    #: configuration pin, admitted scope and execute authority) together with this
+    #: admission.  The Task is the durable subject the operator's progress,
+    #: four-type recovery and exact confirmation belong to; a definition Run once
+    #: and a remaining-scope recovery preparation keep their own existing lineage
+    #: and record ``None``.
+    organize_task_id: str | None = None
 
     def __post_init__(self) -> None:
         if not isinstance(self.discovery_id, str) or not _SAFE_ID.fullmatch(self.discovery_id):
@@ -1091,6 +1193,11 @@ class MediaDiscovery:
             raise ValueError("discovery recovery source Task identity is invalid")
         if len(self.recovery_excluded_paths) > MAX_DISCOVERY_SCOPE_PATHS:
             raise ValueError("discovery recovery exclusions exceed their bound")
+        if self.organize_task_id is not None and (
+            not isinstance(self.organize_task_id, str)
+            or not _SAFE_ID.fullmatch(self.organize_task_id)
+        ):
+            raise ValueError("discovery organizing Task identity is invalid")
         for value in self.recovery_excluded_paths:
             if (
                 not isinstance(value, str)
@@ -1138,6 +1245,7 @@ class MediaDiscovery:
                 self.definition_origin.document() if self.definition_origin is not None else None
             ),
             "recoverySourceTaskId": self.recovery_source_task_id,
+            "organizeTaskId": self.organize_task_id,
             "recoveryExcludedPaths": list(self.recovery_excluded_paths),
             "nextObservationAt": (
                 self.next_observation_at.isoformat()
@@ -1214,6 +1322,11 @@ class MediaDiscovery:
                 tuple(str(item) for item in value["recoveryExcludedPaths"] if isinstance(item, str))
                 if isinstance(value.get("recoveryExcludedPaths"), list)
                 else ()
+            ),
+            (
+                str(value["organizeTaskId"])
+                if isinstance(value.get("organizeTaskId"), str)
+                else None
             ),
         )
 

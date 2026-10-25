@@ -667,6 +667,55 @@ combinations remains deferred. Frozen pins and completed/uncertain media effects
 or automatically replayed. Actual schema-38→45 and old schema-45 migration/reopen evidence retains
 frozen/file-only/discovery history; unsupported unfinished work has the safe-stop/new-discovery path.
 
+### CURRENT — Files-admitted organizing Task and verified source ownership (Task46.3)
+
+A Files 整理 command now commits one **durable organizing Task before business readiness**. The
+admission transaction writes the Task (command `manual_organize`, queued status, execute authority,
+the pinned configuration snapshot and the admitted primary bound) together with the discovery record
+that owns the bounded walk, so the Task and its linked work are one durable outcome: a failure leaves
+neither, and the record can never name a Task that was not committed with it. Folder materialization,
+Provider lookups, target calculation and plan readiness all happen afterwards inside the resident
+Worker, exactly as before; the Task is the durable subject the operator's progress, four-type
+recovery and exact confirmation belong to. No execution authority is created at admission: only the
+existing exact plan summary and an explicitly confirmed OrganizerExecutor call may mutate media.
+
+The Task's aggregate state follows the real discovery stage. A completed or partial *walk* keeps the
+Task running, because its decisions or its confirmation are outstanding; a failed or cancelled
+admission settles it with the recorded explanation; a settled execution keeps its own outcome. A
+later discovery publication never reopens a Task that already reached a terminal execution outcome.
+
+Admission is also a **per-request** outcome, not only a shared one. Several caller requests may
+legitimately converge on one open organizing work (a resubmission, a wider selection that contains an
+already admitted file, a different library-scoped folder). Each request therefore keeps its own durable
+row in the additive `media_discovery_admission_outcomes` table: its complete submitted selection, the
+items this request newly admitted, the items the same work already held, and its own refused items with
+their bounded reasons. The shared `media_discoveries` row still carries the one admitted scope, so a
+Worker progress publication or an operator control can never erase another request's answer, and a
+lost-response readback of request B never returns request A's evidence. The projection's
+`admissionRequestId` names the request whose result is being published, and the detail read accepts
+one optional `requestId` for the same purpose.
+
+**Verified source ownership** is separate from the short-lived execution lease. A concrete source is
+identified by its Storage plus its ResourceLibrary-root-relative path and, once both sides know it, the
+observed fingerprint — never by a filename, a UI label or today's Active configuration. A TaskItem owns
+its source from admission until it reaches a settled state (`dry_run`, `success`, `skipped`, `cancelled`,
+`failed`, `ignored`), so queued, running, paused, waiting-for-decision and saved-decision work all keep
+their claim; a finished history row is therefore never a perpetual lock. A directly selected file is
+checked at request admission; a folder is admitted as outer work *before* traversal, and its discovered
+sources are checked inside that task's own bounded walk, so no pre-task traversal and no database
+transaction spanning Storage I/O is needed. A refused source reports the exact existing work reference,
+and eligible siblings remain independently admissible. A legal continuation excludes its own lineage
+instead of conflicting with itself, and a manual execution of a linked intent takes ownership over
+through its own TaskItems.
+
+Files owns the normal readback: `GET /api/v1/resource-libraries/{id}/files/organize-work` is
+library-scoped, principal-scoped and cursor-paged over the durable rows, and its `requestId` form is the
+exact lost-admission reconciliation. The Task Center therefore exposes no new-organize CTA, no
+independent library picker, no manual-action section and no discovery section, and a generic
+`operations/organize/new` address guides to Files without offering another picker or starting work.
+Valid prepared-work deep links keep working. Removed-center population convergence, the complete
+organizing-only eight-view set and Automation's own RO-5 intent changes remain TARGET.
+
 ## Automation and unattended execution
 
 The current Automation Task Definition model is scoped to a configured ResourceLibrary and bounded

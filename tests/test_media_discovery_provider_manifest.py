@@ -237,7 +237,11 @@ class ManagedOpenListDiscoveryTests(_DiscoveryFixture):
                 self.assertEqual(409, status, refused)
                 self.assertEqual("discovery_budget_limited", refused["error"]["code"])
                 self.assertIsNone(refused.get("intentId"))
-                self.assertEqual((), value.repository.list_tasks())
+                # RO-2 admits the organizing Task before the walk, so the assertion
+                # is that no *item* was ever produced from this budget-refused walk
+                # — not that no Task row exists.
+                for task in value.repository.list_tasks(limit=20):
+                    self.assertEqual((), value.repository.list_items(task.task_id))
                 # Only bounded metadata reads reached the provider.
                 endpoints = {call["endpoint"] for call in server.calls}
                 self.assertTrue(endpoints.issubset({"/api/fs/list", "/api/fs/get"}), endpoints)

@@ -358,6 +358,32 @@ async function openInventory(page: Page): Promise<void> {
   await expect(page.getByRole("table")).toBeVisible();
 }
 
+/**
+ * Open ResourceLibrary Files and choose the organizing source there.
+ *
+ * Task46.3 RO-2: Files is the only normal entry for a new file-selection-based
+ * organizing request.  The Task Center no longer offers a creation CTA, an
+ * independent library picker or a discovery section, so every real organizing
+ * journey in this spec begins here.
+ */
+async function openOrganizingSource(
+  page: Page,
+  resourceLibraryId: string = "source",
+): Promise<void> {
+  // Files is the only entry that selects live files.  Navigating in-app keeps
+  // the authenticated shell, and the exact library is then chosen on the page's
+  // own library strip (never a second independent picker entry point).
+  await page.getByRole("link", { name: "Files", exact: true }).click();
+  await expect(page).toHaveURL(/\/ui-v2\/resourcelib\/files/);
+  if (resourceLibraryId !== "") {
+    await page
+      .getByRole("button", { name: new RegExp(resourceLibraryId) })
+      .first()
+      .click();
+  }
+  await expect(page.getByLabel("目录", { exact: true })).toBeVisible();
+}
+
 /** The server-reported run total rendered beside the bounded page. */
 async function expectRunTotal(page: Page, expected: number): Promise<void> {
   await expect(
@@ -1090,16 +1116,9 @@ test("new task selection reconciles a lost admission, completes in the Worker, a
   await page.getByLabel("操作类型").fill("manual_organize");
   await expect(page).toHaveURL(/command=manual_organize/);
 
-  // Start from the native task-center entry with an existing list filter.
-  await page.getByRole("link", { name: "新建整理任务" }).click();
-  await expect(
-    page.getByRole("heading", { name: "新建整理任务", exact: true }),
-  ).toBeVisible();
-  // This entry has no source scope selected in Operations, so the operator
-  // makes the meaningful ResourceLibrary choice here before opening Files.
-  await page.getByRole("radio", { name: "source" }).check();
-  await page.getByRole("button", { name: "选择文件或文件夹" }).click();
-  await expect(page).toHaveURL(/\/ui-v2\/resourcelib\/files/);
+  // Task46.3 RO-2: the organizing journey starts from ResourceLibrary Files,
+  // not from a task-center creation CTA.
+  await openOrganizingSource(page);
 
   // This file exists only in the harness's temporary live Local Storage. The
   // browser selects it from the actual ResourceLibrary listing; no FileIndex
@@ -1310,14 +1329,8 @@ test("a selected execution never blocks the unselected sibling's correction and 
   await connect(page, ADMIN_TOKEN);
   await openInventory(page);
 
-  await page.getByRole("link", { name: "新建整理任务" }).click();
-  await expect(
-    page.getByRole("heading", { name: "新建整理任务", exact: true }),
-  ).toBeVisible();
+  await openOrganizingSource(page);
   await request.post(`${BASE}/__harness__/register-manual-worker`);
-  await page.getByRole("radio", { name: "source" }).check();
-  await page.getByRole("button", { name: "选择文件或文件夹" }).click();
-  await expect(page).toHaveURL(/\/ui-v2\/resourcelib\/files/);
   await page.getByRole("checkbox", { name: "选择 Ninth.2009.mkv" }).check();
   await page.getByRole("checkbox", { name: "选择 Tenth.2010.mkv" }).check();
   await page.getByRole("button", { name: "批量整理" }).click();
@@ -1418,14 +1431,8 @@ test("a brand-new ambiguous source can be corrected and executed on the same pag
   await connect(page, ADMIN_TOKEN);
   await openInventory(page);
 
-  await page.getByRole("link", { name: "新建整理任务" }).click();
-  await expect(
-    page.getByRole("heading", { name: "新建整理任务", exact: true }),
-  ).toBeVisible();
+  await openOrganizingSource(page);
   await request.post(`${BASE}/__harness__/register-manual-worker`);
-  await page.getByRole("radio", { name: "source" }).check();
-  await page.getByRole("button", { name: "选择文件或文件夹" }).click();
-  await expect(page).toHaveURL(/\/ui-v2\/resourcelib\/files/);
   await page.getByRole("checkbox", { name: "选择 Eleventh.2011.mkv" }).check();
   await page.getByRole("button", { name: "批量整理" }).click();
   await expect(page).toHaveURL(/discoveryId=/);
@@ -1715,29 +1722,32 @@ test("the default unfiltered task-center origin selects its admitted run through
   await expect(page).toHaveURL(/\/ui-v2\/operations$/);
   await expectRunTotal(page, SEEDED_RUN_TOTAL + 9);
 
-  // The native entry carries the valid empty origin marker.
-  await page.getByRole("link", { name: "新建整理任务" }).click();
+  // Task46.3 RO-2: the Task Center no longer offers a creation CTA, an
+  // independent library picker or a discovery section.  A generic creation URL
+  // guides to Files instead, and exercising that address must not start work.
+  await expect(page.getByRole("link", { name: "新建整理任务" })).toHaveCount(0);
+  await page.goto(`${BASE}/ui-v2/operations/organize/new`);
   await expect(
-    page.getByRole("heading", { name: "新建整理任务", exact: true }),
+    page.getByRole("heading", { name: "从资源库文件页开始整理" }),
   ).toBeVisible();
-  await expect(page).toHaveURL(/returnOps=/);
-  expect(new URL(page.url()).searchParams.get("returnOps")).toBe("");
+  await expect(page.getByRole("radio", { name: "source" })).toHaveCount(0);
   // The Worker heartbeat window is bounded, so the real Worker is registered
-  // exactly before the operator continues past the scoped availability read.
+  // exactly before the operator continues into the real Files journey.
   await request.post(`${BASE}/__harness__/register-manual-worker`);
-  await page.getByRole("radio", { name: "source" }).check();
-  await page.getByRole("button", { name: "选择文件或文件夹" }).click();
-  await expect(page).toHaveURL(/\/ui-v2\/resourcelib\/files/);
-  await expect(page).toHaveURL(/returnOps=/);
+  await openOrganizingSource(page);
 
   // Select the live file from the actual ResourceLibrary listing.
   await page.getByRole("checkbox", { name: "选择 Four.2004.mkv" }).check();
   await page.getByRole("button", { name: "批量整理" }).click();
-  // The same-page preparation workspace keeps the preserved return origin.
+  // The same-page preparation workspace keeps the preserved return context in
+  // the journey it opened, so the operator can return to the same task-center
+  // list (an empty `returnOps=` origin does not degrade to "no origin").
   await expect(
     page.getByRole("heading", { name: "新建整理任务", exact: true }),
+  ).toBeVisible({ timeout: 30_000 });
+  await expect(
+    page.getByRole("link", { name: "返回任务中心" }).first(),
   ).toBeVisible();
-  await expect(page).toHaveURL(/returnOps=/);
   await expect(page).toHaveURL(/discoveryId=/);
   for (let step = 0; step < 20; step += 1) {
     const advanced = await request.post(

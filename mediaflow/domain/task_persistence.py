@@ -211,6 +211,29 @@ class TaskItemStatus(StrEnum):
         }
 
 
+#: The TaskItem states in which one concrete source is *settled*: the item has
+#: recorded its own durable outcome and no further organizing work of that item is
+#: pending.  Every other state — queued, processing, paused, waiting for a
+#: recognition/metadata/classification/conflict decision, and a saved decision
+#: pending its next admission — still owns its source, so a second request for the
+#: same verified source cannot start the same work again.
+#:
+#: ``FAILED`` and ``PARTIAL`` are settled on purpose: their own recorded failure
+#: and per-item next action are the durable truth, and an operator's explicit retry
+#: is the only way that source becomes work again.  ``CANCELLED`` is the operator's
+#: own completed intent.  A finished history row is therefore never a perpetual lock.
+SETTLED_ITEM_STATUSES = frozenset(
+    {
+        TaskItemStatus.DRY_RUN,
+        TaskItemStatus.SUCCESS,
+        TaskItemStatus.SKIPPED,
+        TaskItemStatus.CANCELLED,
+        TaskItemStatus.FAILED,
+        TaskItemStatus.IGNORED,
+    }
+)
+
+
 #: Hard bounds on one admission's recorded display evidence.  The row is
 #: display-only, so it must stay small, secret-free and cheap to search.
 MAX_RUN_DISPLAY_SCOPE_LENGTH = 320

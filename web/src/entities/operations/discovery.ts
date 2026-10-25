@@ -61,6 +61,13 @@ export interface OrganizeDiscoveryRefusedEntry {
   readonly organizing: false;
   /** The unreachable ancestor when the refusal is a depth fact. */
   readonly prunedAncestor: string | null;
+  /**
+   * The exact durable organizing work that already owns this source, when the
+   * refusal is a verified duplicate.  It is the reference the operator opens to
+   * continue or cancel the real work; it is never a second execution.
+   */
+  readonly existingWorkId: string | null;
+  readonly existingWorkKind: string | null;
 }
 
 export interface OrganizeDiscoveryReason {
@@ -139,6 +146,12 @@ export interface OrganizeDiscoveryModel {
   readonly selection: {
     readonly scopeCount: number;
     readonly scopes: readonly OrganizeDiscoveryScope[];
+    /**
+     * Items of *this* request that the same durable organizing work already
+     * holds.  Neither new work nor a refusal: the operator opens the exact
+     * existing run instead of starting it twice.
+     */
+    readonly existing: readonly OrganizeDiscoveryScope[];
     /** The selected items this admission refused, each with its own reason. */
     readonly refused: readonly OrganizeDiscoveryRefusedEntry[];
   };
@@ -149,6 +162,12 @@ export interface OrganizeDiscoveryModel {
   readonly autoPrepare: boolean;
   /** The exact read-only Preview linked by a completed preparation. */
   readonly previewId: string | null;
+  /**
+   * The real durable organizing Task this admitted Files selection created before
+   * any traversal or business readiness.  `null` for a definition Run once or a
+   * remaining-scope recovery preparation, which keep their own existing lineage.
+   */
+  readonly organizeTaskId: string | null;
   readonly prepared: boolean;
   readonly frozen: boolean;
   readonly pauseRequested: boolean;
@@ -289,6 +308,23 @@ export function normalizeOrganizeDiscovery(
     } as OrganizeDiscoveryScope;
   });
   const progressRecord = readRecord(record["progress"], "progress");
+  const rawExisting = selection["existing"];
+  const existing: OrganizeDiscoveryScope[] = (
+    Array.isArray(rawExisting) ? rawExisting : []
+  ).map((item, index) => {
+    const scope = readRecord(item, `selection.existing[${index}]`);
+    const kind = scope["kind"];
+    if (kind !== "file" && kind !== "directory")
+      fail(`selection.existing[${index}].kind`);
+    return {
+      path: normalizeIdentityText(
+        scope["path"],
+        `selection.existing[${index}].path`,
+        MAX_DISCOVERY_PATH,
+      ),
+      kind,
+    } as OrganizeDiscoveryScope;
+  });
   const rawRefused = selection["refused"];
   if (
     rawRefused !== undefined &&
@@ -317,6 +353,8 @@ export function normalizeOrganizeDiscovery(
       nextAction: boundedText(entry, "nextAction"),
       organizing: false,
       prunedAncestor: optionalPath(entry, "prunedAncestor"),
+      existingWorkId: optionalText(entry, "existingWorkId"),
+      existingWorkKind: optionalText(entry, "existingWorkKind"),
     } as OrganizeDiscoveryRefusedEntry;
   });
   const rawFindings = progressRecord["findings"];
@@ -345,7 +383,7 @@ export function normalizeOrganizeDiscovery(
     ),
     status: status as OrganizeDiscoveryStatus,
     version: normalizeBoundedCount(record["version"], "version"),
-    selection: { scopeCount: scopes.length, scopes, refused },
+    selection: { scopeCount: scopes.length, scopes, existing, refused },
     progress: {
       phase: boundedText(progressRecord, "phase"),
       primarySources: normalizeBoundedCount(
@@ -426,6 +464,7 @@ export function normalizeOrganizeDiscovery(
     intentId: optionalText(record, "intentId"),
     autoPrepare: record["autoPrepare"] === true,
     previewId: optionalText(record, "previewId"),
+    organizeTaskId: optionalText(record, "organizeTaskId"),
     prepared: record["prepared"] === true,
     frozen: record["frozen"] === true,
     pauseRequested: record["pauseRequested"] === true,

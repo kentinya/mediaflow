@@ -23,6 +23,7 @@ from datetime import UTC, datetime, timedelta
 from pathlib import Path
 from types import SimpleNamespace
 from unittest import mock
+from urllib.parse import quote
 
 from mediaflow.application.configuration_snapshot import ManagedConfigurationService
 from mediaflow.application.manual_organize import ManualOrganizeIntentService
@@ -453,6 +454,37 @@ class _DiscoveryFixture(unittest.TestCase):
             finally:
                 pass
 
+    def assert_zero_mutation_with_admitted_work(self, value) -> None:
+        """Discovery is metadata-only even though its organizing Task is real.
+
+        RO-2/Task46.3: the durable Task admitted with the selection is *not* a
+        media effect.  This proves both facts the older ``list_tasks() == ()``
+        assertion conflated: no Storage mutation happened, and every admitted Task
+        of this journey is still an unexecuted, non-terminal organizing Task whose
+        bounded walk has not produced a TaskItem yet.
+        """
+
+        self.assertEqual([], value.source.mutations)
+        self.assertEqual([], value.target.mutations)
+        tasks = tuple(value.repository.list_tasks(limit=50))
+        self.assertTrue(tasks)
+        for task in tasks:
+            self.assertEqual("manual_organize", task.command)
+            self.assertNotIn(task.status.value, {"completed", "partial_success", "failed"})
+            self.assertEqual((), value.repository.list_items(task.task_id))
+
+    def assert_organizing_task_admitted(self, value, document) -> None:
+        """The admitted Files selection already owns one durable organizing Task."""
+
+        task_id = document.get("organizeTaskId")
+        self.assertIsInstance(task_id, str, document)
+        task = value.repository.get_task(task_id)
+        self.assertIsNotNone(task, document)
+        self.assertEqual("manual_organize", task.command)
+        self.assertEqual("pending", task.status.value)
+        self.assertTrue(task.execute_authorized)
+        self.assertEqual(document["configurationSnapshotId"], task.configuration_snapshot_id)
+
     @staticmethod
     def request(value, path: str, method: str = "GET", body=None, *, token=OPERATOR_TOKEN):
         statuses: list[str] = []
@@ -571,7 +603,10 @@ class AdmissionAndScopeTests(_DiscoveryFixture):
                 [{"path": "Movies", "kind": "directory"}], document["selection"]["scopes"]
             )
             self.assertEqual([], value.source.mutations)
-            self.assertEqual((), value.repository.list_tasks())
+            # RO-2: the organizing Task is admitted *before* any traversal or
+            # business readiness, so exactly one durable pending Task with the
+            # admitting pin and admitted scope already exists here.
+            self.assert_organizing_task_admitted(value, document)
             encoded = json.dumps(document)
             for forbidden in ("fingerprint", "occurrenceId", SNAPSHOT_DIGEST, "Bearer "):
                 self.assertNotIn(forbidden, encoded)
@@ -648,6 +683,299 @@ class AdmissionAndScopeTests(_DiscoveryFixture):
                 self.assertEqual(code, document["error"]["code"], paths)
             # A partly invalid request never becomes a different valid scope.
             self.assertEqual((), value.repository.list_media_discoveries())
+            self.assertEqual([], value.source.mutations)
+
+    def test_files_admission_commits_a_real_pending_organizing_task(self) -> None:
+        """RO-2/B46.3-01: the organizing Task exists before business readiness.
+
+        The Files command must create observable durable organizing work
+        immediately — before the bounded walk, a Provider lookup, target calculation
+        or an executable plan.  A preparation rename or a detached placeholder is not
+        enough: the Task carries its own admitted scope, the immutable pin and
+        execute authority, and the discovery links it.
+        """
+
+        self.media("Movies/One.2001.mkv")
+        self.media("Movies/Two.2002.mkv")
+        with self.journey() as value:
+            status, admitted = self.request(
+                value,
+                "/api/v1/resource-libraries/library/files/discoveries",
+                "POST",
+                {
+                    "paths": ["Movies"],
+                    "autoPrepare": True,
+                    "requestId": "11111111-1111-4111-8111-111111111111",
+                },
+            )
+            self.assertEqual(202, status, admitted)
+            task_id = admitted["organizeTaskId"]
+            self.assertIsInstance(task_id, str, admitted)
+            task = value.repository.get_task(task_id)
+            self.assertIsNotNone(task)
+            self.assertEqual("manual_organize", task.command)
+            self.assertEqual("pending", task.status.value)
+            self.assertTrue(task.execute_authorized)
+            self.assertEqual(admitted["configurationSnapshotId"], task.configuration_snapshot_id)
+            self.assertIsNotNone(task.configuration_snapshot_digest)
+            # The Task is admitted before any item, plan or effect exists.
+            self.assertEqual((), value.repository.list_items(task_id))
+            self.assertIsNone(admitted["previewId"])
+            self.assertIsNone(admitted["intentId"])
+            # The same organizing work is reachable from the admitted record, so
+            # progress/decisions/confirmation all belong to this one Task.
+            stored = value.repository.get_media_discovery(admitted["discoveryId"])
+            self.assertEqual(task_id, stored.organize_task_id)
+            self.assertEqual([], value.source.mutations)
+            # The bounded walk then advances the same Task instead of creating a
+            # second one.
+            settled = self.run_discovery(value)
+            self.assertIn(settled["status"], {"completed", "partial_success"}, settled)
+            self.assertEqual([task_id], [item.task_id for item in value.repository.list_tasks()])
+            self.assertIn(value.repository.get_task(task_id).status.value, {"running", "pending"})
+
+    def test_a_second_request_keeps_its_own_refused_item(self) -> None:
+        """B46.3-02: a converging request never answers with the first result.
+
+        A submits `[One]`.  B submits `[One, downloading.mkv.part]` before A's work
+        runs: B legitimately converges on the same durable work, but B's own result
+        must still report A's file as *existing* work and its own `.part` sibling as
+        refused with the temporary-file reason.  An exact repetition of B reads the
+        identical answer, and nothing is executed twice.
+        """
+
+        self.media("Movies/One.2001.mkv")
+        self.media("Movies/downloading.mkv.part")
+        first = {
+            "paths": ["Movies/One.2001.mkv"],
+            "autoPrepare": True,
+            "requestId": "11111111-1111-4111-8111-111111111111",
+        }
+        second = {
+            "paths": ["Movies/One.2001.mkv", "Movies/downloading.mkv.part"],
+            "autoPrepare": True,
+            "requestId": "22222222-2222-4222-8222-222222222222",
+        }
+        with self.journey() as value:
+            status, admitted = self.request(
+                value, "/api/v1/resource-libraries/library/files/discoveries", "POST", first
+            )
+            self.assertEqual(202, status, admitted)
+            self.assertEqual([], admitted["selection"]["existing"])
+            self.assertEqual([], admitted["selection"]["refused"])
+
+            status, converged = self.request(
+                value, "/api/v1/resource-libraries/library/files/discoveries", "POST", second
+            )
+            self.assertEqual(202, status, converged)
+            self.assertEqual(admitted["discoveryId"], converged["discoveryId"])
+            # B's one still-admissible member is the already admitted file, so it
+            # appears as the *shared* admitted scope, and its excluded sibling keeps
+            # its own reason.
+            self.assertEqual(
+                [{"path": "Movies/One.2001.mkv", "kind": "file"}],
+                converged["selection"]["scopes"],
+            )
+            self.assertEqual(
+                ["Movies/downloading.mkv.part"],
+                [item["path"] for item in converged["selection"]["refused"]],
+            )
+            self.assertEqual("temporary_file", converged["selection"]["refused"][0]["reason"])
+
+            # An exact repetition of B is stable: no duplicated work, no lost
+            # refusal evidence, no rewritten first result.
+            status, repeated = self.request(
+                value, "/api/v1/resource-libraries/library/files/discoveries", "POST", second
+            )
+            self.assertEqual(202, status, repeated)
+            self.assertEqual(converged["selection"], repeated["selection"])
+
+            # The exact second request identity reads back its own result.
+            status, detail = self.request(
+                value,
+                f"/api/v1/operations/organize/discoveries/{converged['discoveryId']}"
+                "?requestId=22222222-2222-4222-8222-222222222222",
+            )
+            self.assertEqual(200, status, detail)
+            self.assertEqual(converged["selection"], detail["selection"])
+            self.assertEqual("22222222-2222-4222-8222-222222222222", detail["admissionRequestId"])
+
+            # The first request still reads its own original result.
+            status, first_detail = self.request(
+                value,
+                f"/api/v1/operations/organize/discoveries/{admitted['discoveryId']}"
+                "?requestId=11111111-1111-4111-8111-111111111111",
+            )
+            self.assertEqual(200, status, first_detail)
+            self.assertEqual([], first_detail["selection"]["refused"])
+            self.assertEqual([], first_detail["selection"]["existing"])
+            self.assertEqual(1, len(value.repository.list_tasks()))
+            self.assertEqual([], value.source.mutations)
+
+    def test_a_refused_sibling_does_not_block_an_independent_third_file(self) -> None:
+        """RO-2: eligible siblings stay independently admissible."""
+
+        self.media("Movies/One.2001.mkv")
+        self.media("Movies/Two.2002.mkv")
+        self.media("Movies/Three.2003.mkv")
+        self.media("Movies/downloading.mkv.part")
+        with self.journey() as value:
+            status, admitted = self.request(
+                value,
+                "/api/v1/resource-libraries/library/files/discoveries",
+                "POST",
+                {
+                    "paths": ["Movies/One.2001.mkv"],
+                    "autoPrepare": True,
+                    "requestId": "11111111-1111-4111-8111-111111111111",
+                },
+            )
+            self.assertEqual(202, status, admitted)
+            status, converged = self.request(
+                value,
+                "/api/v1/resource-libraries/library/files/discoveries",
+                "POST",
+                {
+                    "paths": [
+                        "Movies/One.2001.mkv",
+                        "Movies/downloading.mkv.part",
+                        "Movies/Three.2003.mkv",
+                    ],
+                    "autoPrepare": True,
+                    "requestId": "22222222-2222-4222-8222-222222222222",
+                },
+            )
+            self.assertEqual(202, status, converged)
+            self.assertEqual(
+                [{"path": "Movies/Three.2003.mkv", "kind": "file"}],
+                converged["selection"]["scopes"],
+            )
+            self.assertEqual(
+                ["Movies/One.2001.mkv"],
+                [item["path"] for item in converged["selection"]["existing"]],
+            )
+            self.assertEqual(
+                ["Movies/downloading.mkv.part"],
+                [item["path"] for item in converged["selection"]["refused"]],
+            )
+            self.assertEqual([], value.source.mutations)
+
+    def test_files_work_readback_reopens_multiple_runs_by_request_identity(self) -> None:
+        """RO-2: Files reads several known runs and one exact lost request."""
+
+        self.media("Movies/One.2001.mkv")
+        self.media("Other/Two.2002.mkv")
+        with self.journey() as value:
+            for index in range(3):
+                status, admitted = self.request(
+                    value,
+                    "/api/v1/resource-libraries/library/files/discoveries",
+                    "POST",
+                    {
+                        "paths": ["Movies/One.2001.mkv" if index == 0 else "Other/Two.2002.mkv"],
+                        "autoPrepare": True,
+                        "requestId": f"1111111{index}-1111-4111-8111-111111111111",
+                    },
+                )
+                self.assertEqual(202, status, admitted)
+            status, page = self.request(
+                value, "/api/v1/resource-libraries/library/files/organize-work?limit=1"
+            )
+            self.assertEqual(200, status, page)
+            self.assertEqual(1, len(page["items"]))
+            self.assertIsNotNone(page["nextBefore"], page)
+            status, next_page = self.request(
+                value,
+                "/api/v1/resource-libraries/library/files/organize-work"
+                f"?limit=1&before={quote(page['nextBefore'], safe='')}",
+            )
+            self.assertEqual(200, status, next_page)
+            self.assertEqual(1, len(next_page["items"]))
+            self.assertNotEqual(
+                page["items"][0]["discoveryId"], next_page["items"][0]["discoveryId"]
+            )
+            status, exact = self.request(
+                value,
+                "/api/v1/resource-libraries/library/files/organize-work"
+                "?requestId=11111111-1111-4111-8111-111111111111",
+            )
+            self.assertEqual(200, status, exact)
+            self.assertEqual(1, len(exact["items"]))
+            self.assertEqual(
+                "11111111-1111-4111-8111-111111111111",
+                exact["items"][0]["admissionRequestId"],
+            )
+            status, missing = self.request(
+                value,
+                "/api/v1/resource-libraries/library/files/organize-work"
+                "?requestId=99999999-9999-4999-8999-999999999999",
+            )
+            self.assertEqual(200, status, missing)
+            self.assertEqual([], missing["items"])
+            self.assertEqual([], value.source.mutations)
+
+    def test_a_folder_walk_does_not_admit_an_already_owned_source_again(self) -> None:
+        """RO-2/AC-3: verified source ownership across overlapping requests.
+
+        A directly selected file is refused at admission when an unfinished
+        organizing work owns it.  A *folder* is deliberately admitted as outer work
+        before traversal, so its discovered sources are checked inside its own
+        bounded walk: the owned file is kept out of that manifest with the exact
+        existing-work reference, while a genuinely free sibling in the same folder is
+        still admitted.  No concrete source can be organized twice, and no pre-task
+        traversal is required.
+        """
+
+        self.media("Movies/One.2001.mkv")
+        self.media("Movies/Two.2002.mkv")
+        with self.journey() as value:
+            status, admitted = self.request(
+                value,
+                "/api/v1/resource-libraries/library/files/discoveries",
+                "POST",
+                {
+                    "paths": ["Movies/One.2001.mkv"],
+                    "autoPrepare": True,
+                    "requestId": "11111111-1111-4111-8111-111111111111",
+                },
+            )
+            self.assertEqual(202, status, admitted)
+            settled_first = self.run_discovery(value)
+            self.assertEqual("completed", settled_first["status"], settled_first)
+            self.assertIsNotNone(settled_first["intentId"])
+            self.assertEqual(
+                ["Movies/One.2001.mkv"],
+                [item["path"] for item in settled_first["sources"]],
+            )
+
+            status, folder = self.request(
+                value,
+                "/api/v1/resource-libraries/library/files/discoveries",
+                "POST",
+                {
+                    "paths": ["Movies"],
+                    "autoPrepare": True,
+                    "requestId": "22222222-2222-4222-8222-222222222222",
+                },
+            )
+            self.assertEqual(202, status, folder)
+            self.assertNotEqual(admitted["discoveryId"], folder["discoveryId"])
+            settled_folder = self.run_discovery(value)
+            self.assertEqual(
+                ["Movies/Two.2002.mkv"],
+                [item["path"] for item in settled_folder["sources"]],
+            )
+            owned = [
+                item
+                for item in settled_folder["selection"]["refused"]
+                if item["path"] == "Movies/One.2001.mkv"
+            ]
+            self.assertEqual(1, len(owned), settled_folder["selection"])
+            self.assertEqual("source_already_organizing", owned[0]["reason"])
+            # The exact existing work is named (a durable Task when a confirmed
+            # execution owns it, otherwise the unfinished organizing admission).
+            self.assertIn(owned[0]["existingWorkKind"], {"task", "discovery"})
+            self.assertIsNotNone(owned[0]["existingWorkId"])
             self.assertEqual([], value.source.mutations)
 
     def test_symlink_and_root_selection_fail_closed(self) -> None:
@@ -1044,7 +1372,7 @@ class ManualFolderExpansionTests(_DiscoveryFixture):
             # rather than as unreadable or failed sources.
             reasons = {item["reason"]: item["count"] for item in settled["progress"]["reasons"]}
             self.assertEqual(6, reasons.get("unsupported_extension"), settled)
-            self.assertEqual((), value.repository.list_tasks())
+            self.assert_zero_mutation_with_admitted_work(value)
             # Every non-primary file is still at its source path.
             self.assertEqual([], value.source.mutations)
 
@@ -1120,7 +1448,7 @@ class ManualFolderExpansionTests(_DiscoveryFixture):
             self.assertEqual([], settled["sources"], settled)
             self.assertEqual("empty_excluded", settled["progress"]["phase"], settled)
             self.assertEqual(3, settled["progress"]["excludedEntries"], settled)
-            self.assertEqual((), value.repository.list_tasks())
+            self.assert_zero_mutation_with_admitted_work(value)
             self.assertEqual([], value.source.mutations)
 
     def test_a_mixed_selection_keeps_folder_filtering_and_direct_files(self) -> None:
@@ -1271,7 +1599,7 @@ class DiscoveryWalkTests(_DiscoveryFixture):
             )
             self.assertEqual(409, status, refused)
             self.assertEqual("discovery_budget_limited", refused["error"]["code"])
-            self.assertEqual((), value.repository.list_tasks())
+            self.assert_zero_mutation_with_admitted_work(value)
 
     def test_real_stability_requires_an_elapsed_unchanged_observation(self) -> None:
         self.media("Movies/One.2001.mkv", modified_at=datetime(2025, 12, 31, tzinfo=UTC))
@@ -1441,7 +1769,7 @@ class BudgetTests(_DiscoveryFixture):
             self.assertEqual("discovery_budget_limited", refused["error"]["code"])
             # Nothing was frozen and no intent exists.
             self.assertIsNone(refused.get("intentId"))
-            self.assertEqual((), value.repository.list_tasks())
+            self.assert_zero_mutation_with_admitted_work(value)
 
     def test_the_entry_budget_stops_the_walk_honestly(self) -> None:
         for index in range(20):
@@ -1633,7 +1961,7 @@ class WorkerOwnershipTests(_DiscoveryFixture):
                 sorted(item["path"] for item in settled["sources"]),
                 settled,
             )
-            self.assertEqual((), value.repository.list_tasks())
+            self.assert_zero_mutation_with_admitted_work(value)
             self.assertEqual([], value.source.mutations)
 
     def test_a_pause_racing_the_publication_keeps_the_bounded_work(self) -> None:
@@ -1727,7 +2055,7 @@ class WorkerOwnershipTests(_DiscoveryFixture):
             )
             self.assertEqual(409, status, refused)
             self.assertEqual("discovery_budget_limited", refused["error"]["code"])
-            self.assertEqual((), value.repository.list_tasks())
+            self.assert_zero_mutation_with_admitted_work(value)
             self.assertEqual([], value.source.mutations)
 
     def test_a_continue_racing_the_publication_is_refused_until_acknowledged(self) -> None:
@@ -1826,7 +2154,7 @@ class WorkerOwnershipTests(_DiscoveryFixture):
             self.assertEqual(["primary_limit"], settled["progress"]["refusalReasons"], settled)
             self.assertFalse(settled["actions"]["finalize"]["available"], settled)
             self.assertEqual(100, len(settled["sources"]), settled["sources"])
-            self.assertEqual((), value.repository.list_tasks())
+            self.assert_zero_mutation_with_admitted_work(value)
             self.assertEqual([], value.source.mutations)
 
     def test_a_premature_continue_never_strands_the_pause_acknowledgement(self) -> None:
@@ -1934,7 +2262,7 @@ class WorkerOwnershipTests(_DiscoveryFixture):
             self.assertEqual(
                 ["Movies/Film.2001.mkv"], [item["path"] for item in settled["sources"]]
             )
-            self.assertEqual((), value.repository.list_tasks())
+            self.assert_zero_mutation_with_admitted_work(value)
             self.assertEqual([], value.source.mutations)
 
     def test_an_open_cancellation_left_by_an_earlier_build_is_recovered(self) -> None:
@@ -1983,7 +2311,7 @@ class WorkerOwnershipTests(_DiscoveryFixture):
             self.assertTrue(readback["cancelRequested"])
             self.assertIsNone(value.repository.media_discovery_claim(identifier)["claimToken"])
             self.assertEqual([], value.source.mutations)
-            self.assertEqual((), value.repository.list_tasks())
+            self.assert_zero_mutation_with_admitted_work(value)
 
     def test_resume_cannot_undo_an_accepted_cancellation(self) -> None:
         """AC3: cancellation is terminal; every later control refuses actionably."""
@@ -2051,7 +2379,7 @@ class WorkerOwnershipTests(_DiscoveryFixture):
             self.assertTrue(detail["cancelRequested"])
             self.assertFalse(detail["actions"]["finalize"]["available"])
             self.assertEqual("not_available_from_discovery", detail["execution"])
-            self.assertEqual((), value.repository.list_tasks())
+            self.assert_zero_mutation_with_admitted_work(value)
 
     def test_a_stale_owner_cannot_publish_progress(self) -> None:
         self.media("Movies/One.2001.mkv")
@@ -2133,7 +2461,7 @@ class WorkerOwnershipTests(_DiscoveryFixture):
                 {"paths": ["Movies"]},
             )
             self.assertNotEqual(identifier, successor["discoveryId"])
-            self.assertEqual((), value.repository.list_tasks())
+            self.assert_zero_mutation_with_admitted_work(value)
             self.assertEqual([], value.source.mutations)
 
     def test_cancellation_during_an_in_flight_walk_reaches_terminal(self) -> None:
@@ -2189,7 +2517,7 @@ class WorkerOwnershipTests(_DiscoveryFixture):
             self.assertTrue(readback["cancelRequested"])
             self.assertFalse(readback["actions"]["finalize"]["available"])
             self.assertEqual([], value.source.mutations)
-            self.assertEqual((), value.repository.list_tasks())
+            self.assert_zero_mutation_with_admitted_work(value)
 
     def test_a_stale_owner_cannot_clear_a_successor_claim(self) -> None:
         """A44-5: takeover must leave the successor's claim and state untouched."""
@@ -2258,7 +2586,7 @@ class WorkerOwnershipTests(_DiscoveryFixture):
             self.assertIn(
                 advanced.status.value, {"completed", "waiting_stability", "partial_success"}
             )
-            self.assertEqual((), value.repository.list_tasks())
+            self.assert_zero_mutation_with_admitted_work(value)
 
     def test_cancellation_and_takeover_are_durable_across_connections(self) -> None:
         """AC1/AC2/AC3: real SQLite transactions, separate connections and restart."""
@@ -2354,7 +2682,7 @@ class WorkerOwnershipTests(_DiscoveryFixture):
                     reopened.media_discovery_claim(other["discoveryId"])["claimToken"],
                 )
             self.assertEqual([], value.source.mutations)
-            self.assertEqual((), value.repository.list_tasks())
+            self.assert_zero_mutation_with_admitted_work(value)
 
     def test_control_requires_the_exact_current_version(self) -> None:
         self.media("Movies/One.2001.mkv")
@@ -2637,7 +2965,7 @@ class ZeroMutationTests(_DiscoveryFixture):
             kinds = {kind for kind, _ in value.source.reads}
             self.assertNotIn("read", kinds)
             self.assertTrue(kinds.issubset({"stat", "list_page", "list", "exists"}), kinds)
-            self.assertEqual((), value.repository.list_tasks())
+            self.assert_zero_mutation_with_admitted_work(value)
 
     def test_a_reconciled_scope_returns_the_durable_record_once_terminal(self) -> None:
         """Actor/scope/pin reconciliation and distinct successor work.
@@ -3074,7 +3402,7 @@ class ConfinedProviderEntryTests(_DiscoveryFixture):
                 {"expectedVersion": settled["version"]},
             )
             self.assertEqual(409, status, refused)
-            self.assertEqual((), value.repository.list_tasks())
+            self.assert_zero_mutation_with_admitted_work(value)
             self.assertEqual([], value.source.mutations)
 
     def test_ancestor_and_traversal_entries_are_refused(self) -> None:
@@ -3245,7 +3573,7 @@ class DurableRefusalMonotonicityTests(_DiscoveryFixture):
             self.assertEqual(409, status, refused)
             self.assertEqual("discovery_budget_limited", refused["error"]["code"])
             self.assertIsNone(refused.get("intentId"))
-            self.assertEqual((), value.repository.list_tasks())
+            self.assert_zero_mutation_with_admitted_work(value)
 
     def test_read_failure_before_the_cursor_refusal_is_equally_durable(self) -> None:
         self.media("Loop/A.2001.mkv")
@@ -3354,7 +3682,11 @@ class FinalizeHandoffFencingTests(_DiscoveryFixture):
         """
 
         for attempt in range(3):
-            self.media("Movies/A.2001.mkv")
+            # Each attempt needs its own concrete source: Task46.3 RO-2 source
+            # ownership legitimately keeps one unfinished work per verified source,
+            # so reusing one path across attempts would be a real refusal instead of
+            # the finalize race this case studies.
+            self.media(f"Movies/A{attempt}.2001.mkv")
             with self.journey() as value:
                 admitted, settled = self._admit_and_settle(value)
                 before = len(value.repository.list_manual_intents())
@@ -3384,7 +3716,9 @@ class FinalizeHandoffFencingTests(_DiscoveryFixture):
                     before + 1, len(durable), (attempt, [i.intent_id for i in durable])
                 )
                 created = next(item for item in durable if item.intent_id == winner["intentId"])
-                self.assertEqual(["Movies/A.2001.mkv"], [i.source.path for i in created.items])
+                self.assertEqual(
+                    [f"Movies/A{attempt}.2001.mkv"], [i.source.path for i in created.items]
+                )
                 # The authenticated listing exposes exactly the one linked
                 # intent, never a hidden duplicate.
                 status, listed = self.request(value, "/api/v1/manual-intents")
@@ -3393,8 +3727,8 @@ class FinalizeHandoffFencingTests(_DiscoveryFixture):
                 self.assertEqual(1, ids.count(winner["intentId"]), (attempt, ids))
                 # Discovery grants no execution authority and mutates no media.
                 self.assertEqual([], value.source.mutations)
-                self.assertEqual((), value.repository.list_tasks())
-                self.assertTrue((self.source_root / "Movies" / "A.2001.mkv").is_file())
+                self.assert_zero_mutation_with_admitted_work(value)
+                self.assertTrue((self.source_root / "Movies" / f"A{attempt}.2001.mkv").is_file())
 
     def test_two_repository_linkers_race_to_one_intent(self) -> None:
         """The durable one-shot link guard fences two simultaneous writers."""
@@ -3892,7 +4226,7 @@ class A44BlockingDefectRegressions(_DiscoveryFixture):
                 second["selection"]["scopes"],
             )
             self.assertEqual([], value.source.mutations)
-            self.assertEqual((), value.repository.list_tasks())
+            self.assert_zero_mutation_with_admitted_work(value)
 
     def test_concurrent_equivalent_admissions_serialize_across_sqlite_connections(self) -> None:
         """A44-6: concurrent reads cannot both create the same open admission."""
@@ -4185,7 +4519,7 @@ class A44BlockingDefectRegressions(_DiscoveryFixture):
             # counters are exactly the ones the one real walk established.
             stored = value.repository.get_media_discovery(old["discoveryId"])
             self.assertEqual(observed_entries, stored.progress.counters.visited_entries)
-            self.assertEqual((), value.repository.list_tasks())
+            self.assert_zero_mutation_with_admitted_work(value)
 
     def test_a_due_waiting_discovery_is_re_observed_and_proves_stability(self) -> None:
         """A44-8: once due, a later real observation proves the interval."""
@@ -4485,7 +4819,7 @@ class A44BlockingDefectRegressions(_DiscoveryFixture):
                 sorted(f"Movies/Film{index:03d}.2001.mkv" for index in range(51)), sorted(paths)
             )
             self.assertEqual([], value.source.mutations)
-            self.assertEqual((), value.repository.list_tasks())
+            self.assert_zero_mutation_with_admitted_work(value)
             # The frozen manifest still hands the existing attachment semantics
             # to the ordinary intent/Preview boundary.
             status, frozen = self.request(
@@ -4529,7 +4863,7 @@ class A44BlockingDefectRegressions(_DiscoveryFixture):
             self.assertEqual("unsupported_command", admitted["worker"]["condition"], admitted)
             self.assertIn("discovery", admitted["worker"]["nextAction"])
             self.assertEqual([], value.source.mutations)
-            self.assertEqual((), value.repository.list_tasks())
+            self.assert_zero_mutation_with_admitted_work(value)
 
 
 class A44BReviewCorrections(_DiscoveryFixture):
@@ -4617,9 +4951,16 @@ class A44BReviewCorrections(_DiscoveryFixture):
             )
             self.assertEqual(202, status, refused)
             blocked_settled = self.run_discovery(value)
+            # Task46.3 RO-2 source ownership: this exact file is already owned by
+            # the unfinished preparation admitted above, so the folder walk keeps it
+            # out of a second manifest and reports that existing work.  The earlier
+            # ancestor veto is gone; the ownership fact is what applies now, and it
+            # is a per-item result rather than a scope failure.
+            self.assertEqual([], [i["path"] for i in blocked_settled["sources"]])
             self.assertEqual(
                 ["Blocked/Sub/Film.2001.mkv"],
-                [i["path"] for i in blocked_settled["sources"]],
+                [item["path"] for item in blocked_settled["selection"]["refused"]],
+                blocked_settled["selection"],
             )
             _, keep_admitted = self.request(
                 value,
@@ -4752,11 +5093,24 @@ class A44BReviewCorrections(_DiscoveryFixture):
             self.assertEqual([relative_main], [item.source.path for item in folder_intent.items])
             self.assertEqual([], value.source.mutations)
             self.assertEqual([], value.target.mutations)
-            self.assertEqual((), value.repository.list_tasks())
+            self.assert_zero_mutation_with_admitted_work(value)
 
+            # Task46.3 RO-2 source ownership keeps one unfinished work per verified
+            # concrete source, so each traversal in this journey uses its own pair of
+            # files.  That is the real production rule; the association behaviour
+            # under test is unchanged.
+            self.media("Mixed/Film.2001.mkv")
+            self.media("Mixed/Film.2001-trailer.mp4")
+            self.media("Other/Film.2001.mkv", second=True)
+            self.media("Other/Film.2001-trailer.mp4", second=True)
+            (self.source_root / "Mixed" / "Other").mkdir(parents=True)
+            (self.second_root / "Other" / "Other").mkdir(parents=True)
             selections = (
-                ("library", ["Movies/Other", relative_main, relative_trailer]),
-                ("library2", [relative_trailer, relative_main, "Movies/Other"]),
+                (
+                    "library",
+                    ["Mixed/Other", "Mixed/Film.2001.mkv", "Mixed/Film.2001-trailer.mp4"],
+                ),
+                ("library2", ["Other", "Other/Film.2001-trailer.mp4", "Other/Film.2001.mkv"]),
             )
             settled_by_library = {}
             for library_id, paths in selections:
@@ -4770,15 +5124,15 @@ class A44BReviewCorrections(_DiscoveryFixture):
                 settled = self.run_discovery(value)
                 self.assertEqual("completed", settled["status"], settled)
                 self.assertEqual(1, settled["progress"]["primarySources"], settled)
-                self.assertEqual(
-                    [relative_main],
-                    [item["path"] for item in settled["sources"]],
-                    settled,
-                )
-                settled_by_library[library_id] = (admitted, settled)
+                # The trailer is associated with its admitted main file, so the
+                # manifest holds exactly one primary in this library's own root.
+                manifest = [item["path"] for item in settled["sources"]]
+                self.assertEqual(1, len(manifest), settled)
+                self.assertIn(manifest[0], {"Mixed/Film.2001.mkv", "Other/Film.2001.mkv"}, settled)
+                settled_by_library[library_id] = (admitted, settled, manifest[0])
 
-            admitted, settled = settled_by_library["library"]
-            reverse_admitted, reverse_settled = settled_by_library["library2"]
+            admitted, settled, expected_main = settled_by_library["library"]
+            reverse_admitted, reverse_settled, reverse_main = settled_by_library["library2"]
             status, reverse_frozen = self.request(
                 value,
                 f"/api/v1/operations/organize/discoveries/{reverse_admitted['discoveryId']}/finalize",
@@ -4787,7 +5141,7 @@ class A44BReviewCorrections(_DiscoveryFixture):
             )
             self.assertEqual(201, status, reverse_frozen)
             reverse_intent = value.repository.get_manual_intent(reverse_frozen["intentId"])
-            self.assertEqual([relative_main], [item.source.path for item in reverse_intent.items])
+            self.assertEqual([reverse_main], [item.source.path for item in reverse_intent.items])
             self.assertEqual(
                 {"A"}, {item.choice.recognition_type_id for item in reverse_intent.items}
             )
@@ -4800,11 +5154,11 @@ class A44BReviewCorrections(_DiscoveryFixture):
             )
             self.assertEqual(201, status, frozen)
             intent = value.repository.get_manual_intent(frozen["intentId"])
-            self.assertEqual([relative_main], [item.source.path for item in intent.items])
+            self.assertEqual([expected_main], [item.source.path for item in intent.items])
             self.assertEqual({"A"}, {item.choice.recognition_type_id for item in intent.items})
             self.assertEqual([], value.source.mutations)
             self.assertEqual([], value.target.mutations)
-            self.assertEqual((), value.repository.list_tasks())
+            self.assert_zero_mutation_with_admitted_work(value)
 
             # Ground one valid offline metadata identity so Preview can produce
             # the exact plan without contacting a MetadataProvider.
@@ -4827,7 +5181,7 @@ class A44BReviewCorrections(_DiscoveryFixture):
                     task_id,
                     "mixed-trailer-preview-item",
                     "source",
-                    relative_main,
+                    expected_main,
                     "target",
                     "Movies/Film (2001)/Film (2001).mkv",
                     "A",
@@ -4871,9 +5225,14 @@ class A44BReviewCorrections(_DiscoveryFixture):
             self.assertEqual(201, status, preview)
             self.assertEqual("previewed", preview["status"], preview)
             preview_item = preview["items"][0]
-            self.assertEqual(relative_main, preview_item["source"]["path"])
+            self.assertEqual(expected_main, preview_item["source"]["path"])
             self.assertEqual(
-                [("trailer", relative_trailer)],
+                [
+                    (
+                        "trailer",
+                        expected_main.replace("Film.2001.mkv", "Film.2001-trailer.mp4"),
+                    )
+                ],
                 [
                     (attachment["type"], attachment["source"]["path"])
                     for attachment in preview_item["plan"]["attachments"]
@@ -4908,7 +5267,7 @@ class A44BReviewCorrections(_DiscoveryFixture):
             )
             self.assertEqual(1, settled["progress"]["primarySources"], settled)
             self.assertEqual([], value.source.mutations)
-            self.assertEqual((), value.repository.list_tasks())
+            self.assert_zero_mutation_with_admitted_work(value)
 
     def test_a_disabled_trailer_policy_keeps_both_videos_as_primaries(self) -> None:
         """B-P1/AC4/AC5: a policy that does not classify a trailer admits both.
@@ -5095,7 +5454,7 @@ class A44BReviewCorrections(_DiscoveryFixture):
             )
             self.assertEqual(1, settled["progress"]["primarySources"], settled)
             self.assertEqual([], value.source.mutations)
-            self.assertEqual((), value.repository.list_tasks())
+            self.assert_zero_mutation_with_admitted_work(value)
 
     def test_a_three_member_same_stem_group_keeps_exactly_one_primary(self) -> None:
         """B-P1/AC4/AC5: a wider mutual group is resolved deterministically.
@@ -5237,7 +5596,7 @@ class A44BReviewCorrections(_DiscoveryFixture):
             self.assertEqual(expected, {item["source"]["path"] for item in preview["items"]})
             self.assertEqual([], value.source.mutations)
             self.assertEqual([], value.target.mutations)
-            self.assertEqual((), value.repository.list_tasks())
+            self.assert_zero_mutation_with_admitted_work(value)
 
     def test_nondefault_rule_type_keeps_sources_through_the_manual_default_preview(self) -> None:
         """A discovery rule cannot hide a source from the later manual default choice.
@@ -5443,7 +5802,7 @@ class A44BReviewCorrections(_DiscoveryFixture):
             self.assertEqual(first["discoveryId"], retried["discoveryId"], retried)
             self.assertEqual(original_pin, retried["configurationSnapshotId"], retried)
             self.assertEqual([], value.source.mutations)
-            self.assertEqual((), value.repository.list_tasks())
+            self.assert_zero_mutation_with_admitted_work(value)
 
     def test_a_retried_request_reconciles_before_statting_a_changed_root(self) -> None:
         """A proved retry survives even when its old relative path is gone."""
@@ -5687,7 +6046,7 @@ class A44BReviewCorrections(_DiscoveryFixture):
             )
             self.assertEqual(1, settled["progress"]["primarySources"], settled)
             self.assertEqual([], value.source.mutations)
-            self.assertEqual((), value.repository.list_tasks())
+            self.assert_zero_mutation_with_admitted_work(value)
 
     def test_a_chain_of_related_stems_never_keeps_an_attachment_as_a_primary(self) -> None:
         """B-P1/AC4: the retained set must be a true fixpoint.

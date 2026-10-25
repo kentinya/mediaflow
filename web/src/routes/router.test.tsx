@@ -54,22 +54,27 @@ describe("retired Library routes", () => {
     },
   );
 
-  it("renders the native new-task entry without any retired Library address", async () => {
-    // The new-task page reads the bounded action matrix; a failed read keeps
-    // its bounded unavailable state and starts no work. Nothing on the page
-    // may address a retired Library route.
+  it("guides a generic creation URL to Files without starting work", async () => {
+    // Task46.3 RO-2: ResourceLibrary Files is the only normal entry for a new
+    // file-selection-based organizing request.  A generic new-organize URL
+    // therefore guides to Files, offers no independent library picker and starts
+    // nothing — it must not read a work matrix or admit any work.
     stubJson({ error: { code: "unexpected" } }, 500);
     authStore.setToken("route-separation-token");
     renderApp("/ui-v2/operations/organize/new");
 
     expect(
-      await screen.findByRole("heading", { name: "新建整理任务" }),
+      await screen.findByRole("heading", { name: "从资源库文件页开始整理" }),
     ).toBeVisible();
     expect(screen.getByRole("link", { name: "返回任务中心" })).toHaveAttribute(
       "href",
       "/ui-v2/operations",
     );
     expect(document.querySelector('a[href^="/ui-v2/library"]')).toBeNull();
+    // A generic URL never starts work: no admission POST reached the backend.
+    for (const [input] of vi.mocked(fetch).mock.calls) {
+      expect(String(input)).not.toMatch(/files\/discoveries/);
+    }
   });
 });
 

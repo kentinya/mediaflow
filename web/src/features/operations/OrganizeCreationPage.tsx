@@ -31,11 +31,9 @@ import type {
   OrganizeIntentItemModel,
   OrganizePreviewModel,
 } from "../../entities/operations/organize";
-import { AuthorizedReadBoundary } from "../../shared/auth/AuthorizedReadBoundary";
 import { RefreshControl } from "../../shared/ui/RefreshControl";
 import { StatusBanner } from "../../shared/ui/StatusBanner";
 import { Button } from "../../shared/ui/Button";
-import { manualActionsQueryOptions } from "./manual-actions-query";
 import { organizeDiscoveryQueryOptions } from "./discovery-query";
 import {
   organizeExecutionListQueryKey,
@@ -123,36 +121,9 @@ export function OrganizeCreationPage() {
     typeof searchParams["path"] === "string" ? searchParams["path"] : "";
   const filesReturn = readFilesReturnContext(searchParams);
   const operationsReturn = readOperationsReturnContext(searchParams);
-  const [chosenLibraryId, setChosenLibraryId] = useState("");
-  const effectiveLibraryId =
-    chosenLibraryId !== "" ? chosenLibraryId : requestedLibraryId;
-
-  const discoveryQuery = useQuery(
-    manualActionsQueryOptions(token, {
-      scopeKind: null,
-      fileId: null,
-      resourceLibraryId: null,
-    }),
-  );
-  const scopedQuery = useQuery(
-    manualActionsQueryOptions(
-      token,
-      {
-        scopeKind: "resourceLibrary",
-        fileId: null,
-        resourceLibraryId: effectiveLibraryId,
-      },
-      effectiveLibraryId !== "",
-    ),
-  );
   const preparationQuery = useQuery(
     organizeDiscoveryQueryOptions(token, discoveryId, discoveryId !== ""),
   );
-
-  const discovery =
-    discoveryQuery.data?.ok === true ? discoveryQuery.data.model : undefined;
-  const scoped =
-    scopedQuery.data?.ok === true ? scopedQuery.data.model : undefined;
   const preparation =
     preparationQuery.data?.ok === true
       ? preparationQuery.data.model
@@ -545,12 +516,16 @@ export function OrganizeCreationPage() {
     }
   }
 
-  const startWith = (libraryId: string) => {
+  // RO-2: Files is the only normal entry for a new file-selection-based
+  // organizing request, so a request without exact prepared-work context simply
+  // returns there.  It never opens an independent library picker.
+  const openFiles = () => {
     void navigate({
       to: "/resourcelib/files",
       search: {
-        resourceLibraryId: libraryId,
-        organize: "1",
+        ...(requestedLibraryId === ""
+          ? {}
+          : { resourceLibraryId: requestedLibraryId }),
         ...operationsReturnSearch(operationsReturn),
       },
     });
@@ -578,178 +553,41 @@ export function OrganizeCreationPage() {
     });
   };
 
-  // ---- no preparation yet: choose the bounded live scope -------------------
+  // ---- no preparation context: guide to Files, never start work ------------
   if (discoveryId === "") {
+    // RO-2: ResourceLibrary Files is the only normal entry for a new
+    // file-selection-based organizing request.  This route stays reachable for
+    // *exact* valid prepared-work deep links, but a generic creation URL must not
+    // offer another independent library picker and must not start any work.
     return (
       <div className="mf-dashboard">
         <header className="mf-dashboard-head">
           <div>
-            <h2>新建整理任务</h2>
+            <h2>从资源库文件页开始整理</h2>
             <p className="mf-dashboard-meta">
-              从资源库中选择实际存在的媒体文件或文件夹，明确“准备整理”后在同一页面查看精确计划摘要，
-              再选择就绪项并明确确认执行。准备阶段不会修改任何文件。
+              整理志愿只能在资源库文件页中明确选定实际存在的文件或文件夹后提交；
+              本页没有选库入口，也不会因为访问页面而创建任何工作。
             </p>
           </div>
-          <RefreshControl
-            onRefresh={() => {
-              void discoveryQuery.refetch();
-              if (effectiveLibraryId !== "") void scopedQuery.refetch();
-            }}
-            refreshing={discoveryQuery.isFetching || scopedQuery.isFetching}
-          />
         </header>
-        <AuthorizedReadBoundary
-          query={discoveryQuery}
-          unavailableTitle="整理入口暂不可用"
-        >
-          {() => {
-            if (discovery === undefined) {
-              return (
-                <StatusBanner variant="info" title="正在读取整理可用性">
-                  <p>正在读取当前配置、资源库与处理 Worker 状态。</p>
-                </StatusBanner>
-              );
-            }
-            const choices = discovery.resourceLibraries;
-            const enabled = choices.filter((choice) => choice.enabled);
-            const discoveryRefusal =
-              !discovery.selectionRequired &&
-              !discovery.actions.organize.available
-                ? discovery.actions.organize
-                : null;
-            if (discoveryRefusal !== null) {
-              return (
-                <StatusBanner variant="warning" title="暂不能新建整理任务">
-                  <p>
-                    {discoveryRefusal.reason ??
-                      "后端未公告可执行的整理操作，当前状态没有创建任何工作。"}
-                  </p>
-                  {discoveryRefusal.nextAction && (
-                    <p className="mf-dashboard-meta">
-                      {discoveryRefusal.nextAction}
-                    </p>
-                  )}
-                  <div className="mf-actions">
-                    <Link
-                      className="mf-button"
-                      to="/operations"
-                      search={operationsLandingSearch(operationsReturn, null)}
-                    >
-                      返回任务中心
-                    </Link>
-                  </div>
-                </StatusBanner>
-              );
-            }
-            if (enabled.length === 0) {
-              return (
-                <StatusBanner variant="warning" title="没有可用的资源库">
-                  <p>
-                    当前配置没有启用的资源库作为整理来源；媒体库只作为整理目标，
-                    不会成为新的整理来源。本页没有创建任何工作。
-                  </p>
-                  {!discovery.runtime.ready && discovery.runtime.nextAction && (
-                    <p className="mf-dashboard-meta">
-                      {discovery.runtime.nextAction}
-                    </p>
-                  )}
-                  <div className="mf-actions">
-                    <Link
-                      className="mf-button mf-button-secondary"
-                      to="/configuration"
-                    >
-                      前往设置补充资源库
-                    </Link>
-                  </div>
-                </StatusBanner>
-              );
-            }
-            return (
-              <>
-                <section className="mf-count-section" aria-label="选择资源库">
-                  <h3>选择资源库</h3>
-                  <p className="mf-dashboard-meta">
-                    整理来源是资源库中的实际文件；文件浏览、可整理资格与单次上限由后端权威给出。
-                  </p>
-                  <div
-                    className="mf-run-filter-bar"
-                    role="radiogroup"
-                    aria-label="可整理的资源库"
-                  >
-                    {enabled.map((choice) => (
-                      <label key={choice.resourceLibraryId}>
-                        <input
-                          type="radio"
-                          name="organize-source-library"
-                          value={choice.resourceLibraryId}
-                          checked={
-                            choice.resourceLibraryId === effectiveLibraryId
-                          }
-                          onChange={(event) =>
-                            setChosenLibraryId(event.target.value)
-                          }
-                        />{" "}
-                        {choice.resourceLibraryId}
-                      </label>
-                    ))}
-                    {choices
-                      .filter((choice) => !choice.enabled)
-                      .map((choice) => (
-                        <span
-                          className="mf-dashboard-meta"
-                          key={`disabled-${choice.resourceLibraryId}`}
-                        >
-                          {choice.resourceLibraryId}(未启用
-                          {choice.reason ? `:${choice.reason}` : ""})
-                        </span>
-                      ))}
-                  </div>
-                  <div className="mf-actions">
-                    {effectiveLibraryId === "" ? (
-                      <span className="mf-dashboard-meta">
-                        请先选择一个资源库；未选择时本页不创建任何工作。
-                      </span>
-                    ) : scoped === undefined ? (
-                      <span className="mf-dashboard-meta">
-                        {scopedQuery.isError || scopedQuery.data?.ok === false
-                          ? "该范围的可用性暂时无法读取；未确认前不能开始选择文件。"
-                          : "正在读取该范围的整理可用性…"}
-                      </span>
-                    ) : scoped.actions.organize.available ? (
-                      <Button
-                        type="button"
-                        onClick={() => startWith(effectiveLibraryId)}
-                      >
-                        选择文件或文件夹
-                      </Button>
-                    ) : (
-                      <span
-                        className="mf-dashboard-meta"
-                        role="status"
-                        data-testid="organize-scope-refusal"
-                      >
-                        {scoped.actions.organize.reason ??
-                          "后端未在该范围公告可执行的整理操作"}
-                        {scoped.actions.organize.nextAction
-                          ? `;${scoped.actions.organize.nextAction}`
-                          : ""}
-                      </span>
-                    )}
-                  </div>
-                </section>
-              </>
-            );
-          }}
-        </AuthorizedReadBoundary>
-        <nav className="mf-actions" aria-label="整理入口返回">
-          <Link
-            className="mf-button mf-button-secondary"
-            to="/operations"
-            search={operationsLandingSearch(operationsReturn, null)}
-          >
-            返回任务中心
-          </Link>
-        </nav>
+        <StatusBanner variant="info" title="请在资源库文件页选择要整理的文件">
+          <p>
+            打开资源库文件页，进入目标目录，选择文件或文件夹后使用“整理”提交。
+            提交后可以在这里查看精确计划摘要，并明确确认要执行的就绪项。
+          </p>
+          <div className="mf-actions">
+            <Button type="button" onClick={() => openFiles()}>
+              前往资源库文件页
+            </Button>
+            <Link
+              className="mf-button mf-button-secondary"
+              to="/operations"
+              search={operationsLandingSearch(operationsReturn, null)}
+            >
+              返回任务中心
+            </Link>
+          </div>
+        </StatusBanner>
       </div>
     );
   }

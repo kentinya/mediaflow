@@ -9,6 +9,18 @@ from tests.test_organize_preparation import _PreparationFixture
 
 
 class ScanRetirementStabilityTests(_PreparationFixture):
+    def assert_waiting_work_only(self, value) -> None:
+        """Only the admitted organizing Task exists, with no item or authority.
+
+        RO-2: the Task is committed before the bounded walk, so waiting work is a
+        real durable Task rather than an empty table.  What must still hold is that
+        it produced no TaskItem, no plan and no media effect.
+        """
+
+        for task in value.repository.list_tasks(limit=50):
+            self.assertEqual("manual_organize", task.command)
+            self.assertEqual((), value.repository.list_items(task.task_id))
+
     def test_fresh_scopes_wait_without_scan_then_confirm_only_exact_subset(self):
         for paths in (
             ["Movies"],
@@ -31,7 +43,10 @@ class ScanRetirementStabilityTests(_PreparationFixture):
                     first = value.discovery.claim_and_run(worker_id="first", claim_token="first")
                     self.assertEqual("waiting_stability", first.status.value)
                     self.assertEqual((), first.sources)
-                    self.assertEqual((), value.repository.list_tasks())
+                    # RO-2: the organizing Task is admitted before business
+                    # readiness, but a still-waiting walk has produced no item and
+                    # no job — nothing can be executed from it.
+                    self.assert_waiting_work_only(value)
                     self.assertEqual((), value.repository.list_jobs())
                     self.assertEqual([], value.source.mutations)
                     self.assertEqual([], value.target.mutations)
@@ -45,7 +60,9 @@ class ScanRetirementStabilityTests(_PreparationFixture):
                         admitted["configurationSnapshotId"], settled["configurationSnapshotId"]
                     )
                     self.assertIsNotNone(settled["previewId"])
-                    self.assertEqual((), value.repository.list_tasks())
+                    # The admitted organizing Task stays durable while its exact
+                    # summary waits for the operator's explicit confirmation.
+                    self.assert_waiting_work_only(value)
                     preview = value.repository.get_manual_preview(settled["previewId"])
                     chosen = preview.items[0].item_id
                     result = self.execute(value, {"previewId": preview.preview_id}, [chosen])
@@ -82,8 +99,8 @@ class ScanRetirementStabilityTests(_PreparationFixture):
             self.assertIsNone(value.discovery.claim_and_run(worker_id="early", claim_token="early"))
             self.assertEqual([], value.source.mutations)
             self.assertEqual([], value.target.mutations)
-            self.assertEqual((), value.repository.list_tasks())
+            self.assert_waiting_work_only(value)
             self.clock_value += timedelta(seconds=1)
             settled = self.run_worker(value)
             self.assertIsNotNone(settled["previewId"])
-            self.assertEqual((), value.repository.list_tasks())
+            self.assert_waiting_work_only(value)

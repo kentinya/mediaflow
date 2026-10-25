@@ -68,6 +68,7 @@ from mediaflow.domain.media_discovery import (
     MAX_DISCOVERY_REFUSALS,
     MAX_DISCOVERY_TEXT_LENGTH,
     DefinitionRunOnceOrigin,
+    DiscoveryAdmissionOutcome,
     DiscoveryBudgets,
     DiscoveryConflict,
     DiscoveryCounters,
@@ -96,6 +97,7 @@ from mediaflow.domain.media_discovery import (
     discovery_scope_signature,
     effective_primary_limit,
     is_settlement_status,
+    submitted_scope,
 )
 from mediaflow.domain.organizer import StorageLocation
 from mediaflow.domain.preview_analysis import PreviewAnalysisConflict
@@ -109,6 +111,12 @@ from mediaflow.domain.storage import (
     StorageEntry,
     StorageEntryType,
     StorageError,
+)
+from mediaflow.domain.task_persistence import (
+    MANUAL_ORGANIZE_TASK_COMMAND,
+    PersistentTask,
+    PersistentTaskStatus,
+    RunDisplayContext,
 )
 
 DEFAULT_DISCOVERY_LEASE_SECONDS = 300.0
@@ -145,6 +153,10 @@ _REASON_CURSOR = "repeated_provider_cursor"
 #: the configured library-root depth so an exhausted safety budget is never
 #: presented as a configured policy exclusion.
 _REASON_SAFETY_DEPTH = "safety_depth_limit"
+#: A discovered source an *unfinished* organizing work already owns.  Inside a
+#: folder expansion this is why that source is not admitted a second time; the
+#: exact existing work travels with it, never a fabricated failure.
+_REASON_ALREADY_OWNED = "source_already_organizing"
 
 _TEMPORARY_SUFFIXES = TEMPORARY_SUFFIXES
 
@@ -351,6 +363,72 @@ class MediaDiscoveryService:
         # the durable record (and therefore the frozen manifest) is identical
         # whichever equivalent request won.  Names are never trimmed.
         deduplicated = canonical_scope(deduplicated)
+        # A *directly selected file* can be checked against verified durable
+        # source ownership here: its exact Storage path was resolved from live
+        # Storage above, so a queued/running/paused/decision-pending organizing
+        # work of that same concrete source is refused with the exact existing
+        # work reference instead of starting it twice.  A folder is admitted as
+        # outer work before traversal, so its discovered sources are checked
+        # inside the task itself (no pre-task traversal, no Storage I/O inside a
+        # database transaction).
+        deduplicated, duplicate_refusals = self._refuse_owned_sources(deduplicated, library)
+        if not deduplicated:
+            first = duplicate_refusals[0]
+            raise DiscoveryError(
+                first.message,
+                code=first.code,
+                status=409,
+                next_action=first.next_action,
+                details={
+                    "relativePath": first.path,
+                    "reason": first.reason,
+                    **(
+                        {"existingWorkId": first.existing_work_id}
+                        if first.existing_work_id is not None
+                        else {}
+                    ),
+                },
+            )
+        refused.extend(duplicate_refusals)
+        refused_entries = canonical_refusals(tuple(refused))
+        outcome = DiscoveryAdmissionOutcome(
+            admission_request_id,
+            submitted_scope(tuple(resolved) + tuple(refused)),
+            deduplicated,
+            (),
+            refused_entries,
+            self._clock(),
+        )
+        # An open organizing work of this exact library may already hold part of
+        # this selection under a narrower scope.  Converging on that work is the
+        # only way the same verified source cannot be organized twice; it still
+        # keeps *this* request's own admitted/refused evidence.  A *complete*
+        # overlap is not a partial one: the exact admission reconciliation below
+        # answers it with the shared work's own evidence.
+        overlapping = self._reconcile_library_work(
+            actor,
+            deduplicated,
+            snapshot_id,
+            snapshot_digest,
+            resource_library_id,
+            library.storage_id,
+            auto_prepare=auto_prepare,
+        )
+        if overlapping is not None:
+            record, already = overlapping
+            return self._accept_onto_existing(
+                record,
+                replace(
+                    outcome,
+                    admitted=canonical_scope(
+                        tuple(entry for entry in deduplicated if entry.path not in already)
+                    ),
+                    existing=canonical_scope(
+                        tuple(entry for entry in deduplicated if entry.path in already)
+                    ),
+                ),
+                admission_request_id=admission_request_id,
+            )
         # Actor/scope/pin-bound admission identity: an identical open
         # submission for the same principal, the same enabled
         # ResourceLibrary/Storage binding, the same deduplicated scope and
@@ -369,11 +447,23 @@ class MediaDiscoveryService:
         )
         if reconciliation is not None:
             # This new request identity converged on the already durable open
-            # discovery, so it stays readable by its own ID for reconciliation.
-            self._bind_request(admission_request_id, reconciliation)
-            return reconciliation
+            # discovery, so it stays readable by its own ID *and* keeps its own
+            # resolved selection outcome.  A different request against the same
+            # work must never be answered with the first request's evidence
+            # (B46.3-02): the admitted scope is shared, the per-request result
+            # is not.
+            return self._accept_onto_existing(
+                reconciliation, outcome, admission_request_id=admission_request_id
+            )
         now = self._clock()
         discovery_id = str(uuid4())
+        # RO-2: the organizing Task is admitted *here*, before any folder
+        # traversal, rule match, Provider call or target calculation exists.  It
+        # is a real durable Task with the admitted scope, the immutable
+        # configuration pin and execute authority, so the operator's progress,
+        # four-type recovery and exact confirmation all belong to it.  Execution
+        # still requires the existing exact summary and explicit confirmation.
+        organize_task_id = str(uuid4())
         progress = DiscoveryProgress(
             "queued",
             deduplicated,
@@ -393,7 +483,7 @@ class MediaDiscoveryService:
             (),
             "queued for bounded discovery by the resident Processing Worker",
             (),
-            canonical_refusals(tuple(refused)),
+            refused_entries,
             True,
         )
         discovery = MediaDiscovery(
@@ -421,12 +511,36 @@ class MediaDiscoveryService:
             None,
             admission_request_id=admission_request_id,
             auto_prepare=auto_prepare,
+            organize_task_id=organize_task_id,
         )
-        creator = getattr(self._repository, "create_media_discovery", None)
+        organize_task = PersistentTask(
+            organize_task_id,
+            MANUAL_ORGANIZE_TASK_COMMAND,
+            PersistentTaskStatus.PENDING,
+            True,
+            now,
+            now,
+            None,
+            None,
+            0,
+            0,
+            0,
+            None,
+            False,
+            library.root_path,
+            self._budgets.max_primary_sources,
+            snapshot_id,
+            snapshot_digest,
+        )
+        creator = getattr(self._repository, "create_files_organize_work", None)
+        if not callable(creator):
+            creator = getattr(self._repository, "create_media_discovery", None)
         if not callable(creator):
             raise DiscoveryUnavailable("durable media discovery storage is unavailable")
         try:
-            return creator(discovery)
+            created = self._create_work(
+                creator, discovery, organize_task, library=library, scope=deduplicated
+            )
         except DiscoveryConflict:
             # A concurrent equivalent admission won the durable identity race.
             # The correct outcome is the one already durable record, not a
@@ -452,15 +566,308 @@ class MediaDiscoveryService:
                 library.storage_id,
                 auto_prepare=auto_prepare,
             )
-            if winner is not None:
-                # The winner was admitted by a concurrent equivalent request
-                # with its own identity.  This request was accepted onto that
-                # same durable record, so its identity must stay readable too;
-                # otherwise its lost-response lookup reports a bounded absence
-                # for work that was actually accepted (B43.2-R4-2).
-                self._bind_request(admission_request_id, winner)
-                return winner
+            if winner is None:
+                overlapping = self._reconcile_library_work(
+                    actor,
+                    deduplicated,
+                    snapshot_id,
+                    snapshot_digest,
+                    resource_library_id,
+                    library.storage_id,
+                    auto_prepare=auto_prepare,
+                )
+                if overlapping is not None:
+                    record, already = overlapping
+                    return self._accept_onto_existing(
+                        record,
+                        replace(
+                            outcome,
+                            admitted=canonical_scope(
+                                tuple(entry for entry in deduplicated if entry.path not in already)
+                            ),
+                            existing=canonical_scope(
+                                tuple(entry for entry in deduplicated if entry.path in already)
+                            ),
+                        ),
+                        admission_request_id=admission_request_id,
+                    )
+                raise
+            # The winner was admitted by a concurrent equivalent request
+            # with its own identity.  This request was accepted onto that
+            # same durable record, so its identity must stay readable too;
+            # otherwise its lost-response lookup reports a bounded absence
+            # for work that was actually accepted (B43.2-R4-2).
+            return self._accept_onto_existing(
+                winner, outcome, admission_request_id=admission_request_id
+            )
+        return self._record_outcome(created, outcome)
+
+    def _create_work(
+        self,
+        creator,
+        discovery: MediaDiscovery,
+        organize_task,
+        *,
+        library,
+        scope: tuple[DiscoveryScopeEntry, ...],
+    ) -> MediaDiscovery:
+        """Commit the admitted organizing work through the available boundary.
+
+        A repository with the atomic Task+discovery admission commits both; a
+        repository without it still records the discovery, and the returned record
+        then has no organizing Task identity instead of referring to a Task that was
+        never persisted.
+        """
+
+        accepts_task = getattr(self._repository, "create_files_organize_work", None)
+        if callable(accepts_task) and organize_task is not None:
+            return accepts_task(
+                discovery,
+                organize_task,
+                display=self._organize_display(library, scope),
+            )
+        if discovery.organize_task_id is not None:
+            # Fail closed rather than advertising an organizing Task identity that
+            # no repository committed.
+            discovery = replace(discovery, organize_task_id=None)
+        return creator(discovery)
+
+    def _organize_display(
+        self, library, scope: tuple[DiscoveryScopeEntry, ...]
+    ) -> RunDisplayContext | None:
+        """The bounded business identity recorded with one admitted organizing Task.
+
+        Display/search evidence only: the pinned library display name and the
+        admitted relative scope.  It grants no authority and is never derived at
+        read time from a later Active configuration.
+        """
+
+        name = getattr(library, "name", None)
+        label = name if isinstance(name, str) and name else None
+        paths = [entry.path for entry in scope]
+        relative: str | None = None
+        if len(paths) == 1 and scope[0].kind is DiscoveryEntryKind.DIRECTORY:
+            relative = scope[0].path
+        elif paths:
+            common = paths[0]
+            while common and not all(
+                path == common or path.startswith(common.rstrip("/") + "/") for path in paths
+            ):
+                common = common.rsplit("/", 1)[0] if "/" in common else ""
+            relative = common or None
+        if label is not None:
+            source_scope = f"{label}/{relative}" if relative else label
+        else:
+            source_scope = relative
+        if source_scope is None and label is None:
+            return None
+        return RunDisplayContext(source_scope=source_scope, labels=(label,) if label else ())
+
+    def _accept_onto_existing(
+        self,
+        discovery: MediaDiscovery,
+        outcome: DiscoveryAdmissionOutcome,
+        *,
+        admission_request_id: str | None,
+    ) -> MediaDiscovery:
+        """Keep this request's own identity and its own resolved outcome.
+
+        The shared durable work stays exactly what it was; only this request's answer
+        is added.  A terminal record is returned as its honest outcome and never
+        re-opened, and an outcome publication that loses a race is settled by
+        re-reading the durable record instead of overwriting another writer.
+        """
+
+        self._bind_request(admission_request_id, discovery)
+        return self._record_outcome(discovery, outcome)
+
+    def _record_outcome(
+        self, discovery: MediaDiscovery, outcome: DiscoveryAdmissionOutcome
+    ) -> MediaDiscovery:
+        """Persist one request's resolved outcome beside the shared work."""
+
+        if outcome.request_id is None:
+            # Without a caller identity there is no request outcome to associate;
+            # the admitted work itself is the complete answer.
+            return discovery
+        recorder = getattr(self._repository, "record_media_discovery_admission_outcome", None)
+        if not callable(recorder):
+            return discovery
+        try:
+            recorder(
+                discovery_id=discovery.discovery_id,
+                actor=discovery.actor,
+                outcome=outcome,
+            )
+        except DiscoveryConflict:
+            # Another writer settled this request identity or the shared row first.
+            # The durable readback is the honest answer, never an overwrite of the
+            # winning evidence.
+            current = self._read(discovery.discovery_id)
+            if current is not None:
+                return current
             raise
+        return discovery
+
+    def _refuse_owned_sources(
+        self,
+        scope: tuple[DiscoveryScopeEntry, ...],
+        library,
+    ) -> tuple[tuple[DiscoveryScopeEntry, ...], list[DiscoveryRefusedEntry]]:
+        """Split one selection into still-admissible items and owned refusals.
+
+        Only *directly selected files* are judged here: their exact Storage path was
+        resolved from live Storage, so the durable TaskItem identity
+        ``(storage_id, ResourceLibrary-root-relative path)`` is verified evidence of
+        the same concrete source.  Folders are admitted as outer work and their
+        discovered sources are checked inside the task, so no pre-task traversal and
+        no Storage I/O inside a database transaction is needed.
+
+        An open *discovery* that already holds this exact path is not a conflict
+        here: the library-wide reconciliation converges this request onto that same
+        durable work and reports the item as ``existing``.  A real unfinished Task is
+        the ownership fact this check exists for.
+        """
+
+        finder = getattr(self._repository, "find_owned_source_work", None)
+        if not callable(finder):
+            return scope, []
+        kept: list[DiscoveryScopeEntry] = []
+        refusals: list[DiscoveryRefusedEntry] = []
+        for entry in scope:
+            if entry.kind is not DiscoveryEntryKind.FILE:
+                kept.append(entry)
+                continue
+            owned = finder(
+                storage_id=library.storage_id,
+                source_path=entry.path,
+            )
+            if owned is None or owned.get("kind") != "task":
+                kept.append(entry)
+                continue
+            refusals.append(self._owned_source_refusal(entry, owned))
+        return tuple(kept), refusals
+
+    @staticmethod
+    def _owned_source_refusal(
+        entry: DiscoveryScopeEntry, owned: Mapping[str, object]
+    ) -> DiscoveryRefusedEntry:
+        """The bounded refusal of one file an existing organizing work already owns."""
+
+        task_id = owned.get("taskId")
+        discovery_id = owned.get("discoveryId")
+        if isinstance(task_id, str):
+            reference: str | None = task_id
+            kind: str | None = "task"
+            detail = (
+                "this file already belongs to an unfinished organizing Task; continue that "
+                "task instead of starting the same source again"
+            )
+        elif isinstance(discovery_id, str):
+            reference = discovery_id
+            kind = "discovery"
+            detail = (
+                "this file already belongs to an unfinished Files organizing admission; open "
+                "that work instead of starting the same source again"
+            )
+        else:
+            reference = None
+            kind = None
+            detail = "this file already belongs to unfinished organizing work"
+        return DiscoveryRefusedEntry(
+            entry.path,
+            entry.kind,
+            "source_already_organizing",
+            _REASON_ALREADY_OWNED,
+            detail,
+            (
+                "open the reported existing work and continue or cancel it; this request did "
+                "not start a second organizing task for the same file"
+            ),
+            existing_work_id=reference,
+            existing_work_kind=kind,
+        )
+
+    def _reconcile_library_work(
+        self,
+        actor: str,
+        scope: tuple[DiscoveryScopeEntry, ...],
+        snapshot_id: str,
+        snapshot_digest: str,
+        resource_library_id: str,
+        storage_id: str,
+        *,
+        auto_prepare: bool = False,
+    ) -> tuple[MediaDiscovery, frozenset[str]] | None:
+        """One already durable open work of this library that holds part of this scope.
+
+        A selection is not only identical or unrelated: a second request can resubmit
+        one file of a wider folder walk, or add a sibling to a file that is already
+        queued.  Both requests are the *same* organizing work for the overlapping
+        source, so admitting a second walk would let one verified concrete source be
+        executed twice.
+
+        The returned set names this library's exact already-admitted paths, so the
+        caller can report which items of *this* request already have work and which
+        are newly admitted to it.  The match is bound to the principal, the exact
+        library/Storage binding, the immutable pin and the admission kind, so a
+        different library, a different pin, a definition Run once or a
+        remaining-scope recovery preparation is never reused for an ordinary Files
+        selection.
+
+        A *complete* overlap is not reported here: that is an exact admission
+        reconciliation, which the exact-scope path answers with the shared work's own
+        evidence.  Nothing here traverses Storage or resolves a folder.
+        """
+
+        finder = getattr(self._repository, "find_open_media_discovery", None)
+        if callable(finder):
+            candidates: tuple[MediaDiscovery, ...] = ()
+            for path in scope:
+                found = finder(
+                    actor=actor,
+                    resource_library_id=resource_library_id,
+                    storage_id=storage_id,
+                    snapshot_id=snapshot_id,
+                    snapshot_digest=snapshot_digest,
+                    scope_signature=discovery_scope_signature((path,)),
+                    auto_prepare=auto_prepare,
+                )
+                if found is not None:
+                    candidates = (found,)
+                    break
+            if not candidates:
+                return None
+        else:
+            lister = getattr(self._repository, "list_media_discoveries", None)
+            if not callable(lister):
+                return None
+            candidates = tuple(
+                value
+                for value in lister(actor=actor, limit=50)
+                if not value.terminal
+                and not value.frozen
+                and value.auto_prepare == auto_prepare
+                and value.definition_origin is None
+                and value.recovery_source_task_id is None
+                and value.resource_library_id == resource_library_id
+                and value.storage_id == storage_id
+                and value.snapshot_id == snapshot_id
+                and value.snapshot_digest == snapshot_digest
+            )
+        wanted = {entry.path for entry in scope}
+        existing: set[str] = set()
+        winner: MediaDiscovery | None = None
+        for candidate in candidates:
+            shared = wanted & {entry.path for entry in candidate.progress.scope_entries}
+            if not shared:
+                continue
+            existing |= shared
+            if winner is None:
+                winner = candidate
+        if winner is None or not existing or existing == wanted:
+            return None
+        return winner, frozenset(existing)
 
     def admit_definition_run_once(
         self,
@@ -1486,7 +1893,25 @@ class MediaDiscoveryService:
         # lost-response retry of the same selection must therefore reconcile on
         # the union of both instead of being reported as a different selection.
         stored_paths |= {entry.path for entry in requested.progress.refused_entries}
+        # B46.3-02: a request that *converged* on already-open work created no row
+        # of its own, so its complete submitted selection lives only in its own
+        # durable outcome.  Comparing this request against the shared work's
+        # admitted scope would report a genuinely different selection (a refused
+        # sibling, an overlapping folder) as request-identity reuse, so the
+        # request's own recorded selection is the authority whenever it exists.
+        reader = getattr(self._repository, "find_media_discovery_admission_outcome", None)
+        recorded = (
+            reader(actor=actor, admission_request_id=admission_request_id)
+            if callable(reader)
+            else None
+        )
+        if recorded is not None:
+            stored_paths = {entry.path for entry in recorded.scope}
         selected_paths = set(submitted_paths or ())
+        if recorded is not None:
+            # A converged request keeps its own exact selection: no directory
+            # subsumption is needed because the outcome already recorded it.
+            selected_paths = set(submitted_paths or ())
         # A selected directory canonically subsumes any explicitly selected
         # descendants. Use the old persisted entry kinds for that comparison:
         # the current root may have changed or disappeared, and is not proof of
@@ -1637,6 +2062,42 @@ class MediaDiscoveryService:
         if not callable(lister):
             return ()
         return tuple(lister(actor=actor, limit=limit))
+
+    def list_files_work(
+        self,
+        *,
+        actor: str,
+        resource_library_id: str,
+        limit: int = 25,
+        before: tuple[datetime, str] | None = None,
+    ) -> tuple[MediaDiscovery, ...]:
+        """This principal's durable Files organizing work for one library.
+
+        Library-scoped, principal-scoped and cursor-paged over real persisted rows,
+        so Files reopens multiple known runs (and their exact context) after a
+        reload, a re-login or a service restart without any recent-N window, a
+        guessed latest run or a page visit that creates work.
+        """
+
+        actor = self._actor(actor)
+        if not self._valid_scope_id(resource_library_id):
+            raise DiscoveryError(
+                "Files organize work requires one enabled ResourceLibrary",
+                code="malformed_selection",
+                status=400,
+                next_action="refresh Files and choose an enabled ResourceLibrary",
+            )
+        reader = getattr(self._repository, "list_files_organize_work", None)
+        if not callable(reader):
+            return ()
+        return tuple(
+            reader(
+                actor=actor,
+                resource_library_id=resource_library_id,
+                limit=limit,
+                before=before,
+            )
+        )
 
     def find_by_request_id(self, *, actor: str, admission_request_id: str) -> MediaDiscovery | None:
         """The durable admission one exact client request identity created.
@@ -2796,6 +3257,29 @@ class MediaDiscoveryService:
                 )
             )
 
+        # Sources discovered inside this admitted walk that an existing unfinished
+        # organizing work already owns.  They are refused per source with that
+        # work's own reference and never execute twice.
+        retained: list[DiscoveryRefusedEntry] = []
+        owner_finder = getattr(self._repository, "find_owned_source_work", None)
+
+        def refusal_for_owned_source(
+            relative: str, observed_fingerprint: str | None
+        ) -> DiscoveryRefusedEntry | None:
+            if not callable(owner_finder):
+                return None
+            owned = owner_finder(
+                storage_id=library.storage_id,
+                source_path=relative,
+                source_fingerprint=observed_fingerprint,
+                exclude_task_id=discovery.organize_task_id,
+                exclude_discovery_id=discovery.discovery_id,
+            )
+            if owned is None:
+                return None
+            entry_scope = DiscoveryScopeEntry(relative, DiscoveryEntryKind.FILE)
+            return self._owned_source_refusal(entry_scope, owned)
+
         def observe(
             relative: str,
             depth: int,
@@ -2931,6 +3415,27 @@ class MediaDiscoveryService:
                 )
             )
             if verdict is StabilityVerdict.STABLE:
+                # RO-2/AC-3: a source an *unfinished* organizing work already owns
+                # is not admitted a second time.  A folder is admitted as outer work
+                # before traversal, so this per-source check happens here, inside the
+                # admitted task's own bounded walk — never as a pre-task traversal and
+                # never inside a database transaction that spans Storage I/O.  The
+                # exact existing work is reported so the operator opens it instead of
+                # starting a duplicate.
+                owner = refusal_for_owned_source(relative, observed.value)
+                if owner is not None:
+                    bump(_REASON_ALREADY_OWNED, relative)
+                    note(
+                        DiscoveryFindingKind.EXCLUDED,
+                        relative,
+                        _REASON_ALREADY_OWNED,
+                        entry,
+                        depth,
+                    )
+                    counters = replace(counters, excluded_entries=counters.excluded_entries + 1)
+                    sources.pop(relative, None)
+                    retained.append(owner)
+                    return entry
                 # One exact source per admitted Storage/ResourceLibrary/path:
                 # a repeated page or a repeated observation pass keeps the first
                 # durable identity and never appends a second copy.
@@ -3335,7 +3840,11 @@ class MediaDiscoveryService:
                 tuple(seen_cursors),
                 self._phase_message(status, incomplete),
                 tuple(refusals),
-                progress.refused_entries,
+                # Sources this walk found already owned by an unfinished organizing
+                # work are kept as their own durable per-item refusals beside the
+                # ones this request resolved at admission, so the outcome stays
+                # complete and reopenable.
+                canonical_refusals(tuple(progress.refused_entries) + tuple(retained)),
                 progress.manual_selection,
             ),
         )
@@ -4925,16 +5434,101 @@ class MediaDiscoveryService:
     ) -> MediaDiscovery:
         recorder = getattr(self._repository, "record_media_discovery_progress", None)
         if callable(recorder):
-            return recorder(
+            persisted = recorder(
                 discovery,
                 expected_version=expected_version,
                 claim_token=claim_token,
                 observations=observations,
             )
-        updater = getattr(self._repository, "update_media_discovery", None)
-        if callable(updater):
-            return updater(discovery, expected_version=expected_version)
-        raise DiscoveryUnavailable("durable media discovery storage is unavailable")
+        else:
+            updater = getattr(self._repository, "update_media_discovery", None)
+            if not callable(updater):
+                raise DiscoveryUnavailable("durable media discovery storage is unavailable")
+            persisted = updater(discovery, expected_version=expected_version)
+        self._sync_organize_task(persisted)
+        return persisted
+
+    #: How one discovery lifecycle maps onto its durable organizing Task.
+    _ORGANIZE_TASK_STATUS = {
+        DiscoveryStatus.QUEUED: PersistentTaskStatus.PENDING,
+        DiscoveryStatus.RUNNING: PersistentTaskStatus.RUNNING,
+        DiscoveryStatus.WAITING_STABILITY: PersistentTaskStatus.RUNNING,
+        DiscoveryStatus.ANALYZING: PersistentTaskStatus.RUNNING,
+        DiscoveryStatus.PAUSED: PersistentTaskStatus.PAUSED,
+        DiscoveryStatus.COMPLETED: PersistentTaskStatus.RUNNING,
+        DiscoveryStatus.PARTIAL_SUCCESS: PersistentTaskStatus.RUNNING,
+        DiscoveryStatus.FAILED: PersistentTaskStatus.FAILED,
+        DiscoveryStatus.CANCELLED: PersistentTaskStatus.CANCELLED,
+    }
+
+    def _sync_organize_task(self, discovery: MediaDiscovery) -> None:
+        """Keep the admitted organizing Task's aggregate state truthful.
+
+        The Task admitted with this selection is the durable subject the operator
+        sees in Running/All, so its status follows the real discovery stage instead
+        of a fabricated one.  A completed or partial *walk* stays a running Task: the
+        organizing work is not finished while its four-type decisions or its exact
+        confirmation are still outstanding, and only a real execution outcome may
+        settle it.
+
+        This is an aggregate projection only.  It never grants execution authority,
+        never creates an item and never mutates Storage.  A Task that already reached
+        a terminal execution outcome is never reopened by a later publication.
+        """
+
+        task_id = discovery.organize_task_id
+        if task_id is None:
+            return
+        getter = getattr(self._repository, "get_task", None)
+        updater = getattr(self._repository, "update_task", None)
+        if not callable(getter) or not callable(updater):
+            return
+        try:
+            task = getter(task_id)
+        except Exception:  # noqa: BLE001 - a missing Task is an honest absence
+            return
+        if task is None:
+            return
+        wanted = self._ORGANIZE_TASK_STATUS.get(discovery.status)
+        if wanted is None or task.status is wanted:
+            return
+        terminal_task = {
+            PersistentTaskStatus.COMPLETED,
+            PersistentTaskStatus.PARTIAL_SUCCESS,
+            PersistentTaskStatus.CANCELLED,
+            PersistentTaskStatus.FAILED,
+        }
+        if task.status in terminal_task and wanted in {
+            PersistentTaskStatus.PENDING,
+            PersistentTaskStatus.RUNNING,
+        }:
+            # A real execution already settled the Task.
+            return
+        now = self._clock()
+        started = task.started_at
+        if wanted is PersistentTaskStatus.RUNNING and started is None:
+            started = now
+        terminal = wanted in {
+            PersistentTaskStatus.FAILED,
+            PersistentTaskStatus.CANCELLED,
+        }
+        try:
+            updater(
+                replace(
+                    task,
+                    status=wanted,
+                    updated_at=now,
+                    started_at=started,
+                    completed_at=now if terminal else task.completed_at,
+                    error=(
+                        (discovery.error or discovery.progress.message or None)
+                        if terminal
+                        else task.error
+                    ),
+                )
+            )
+        except Exception:  # noqa: BLE001 - a lost Task update is not a media fault
+            return
 
     def _settle_control(
         self,
