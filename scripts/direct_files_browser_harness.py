@@ -578,6 +578,26 @@ def application(environ, start_response):
                 )
                 if (root / "destination" / "Movies" / "Browser-Bulk-Media-Directory").is_dir()
                 else [],
+                "resourceLiveDirectoryExists": (
+                    root / "source" / "Browser-Live-Resource-Directory"
+                ).is_dir(),
+                "resourceLiveSurvivingFiles": sorted(
+                    entry.name
+                    for entry in (root / "source" / "Browser-Live-Resource-Directory").glob("*.txt")
+                )
+                if (root / "source" / "Browser-Live-Resource-Directory").is_dir()
+                else [],
+                "mediaLiveDirectoryExists": (
+                    root / "destination" / "Movies" / "Browser-Live-Media-Directory"
+                ).is_dir(),
+                "mediaLiveSurvivingFiles": sorted(
+                    entry.name
+                    for entry in (
+                        root / "destination" / "Movies" / "Browser-Live-Media-Directory"
+                    ).glob("*.txt")
+                )
+                if (root / "destination" / "Movies" / "Browser-Live-Media-Directory").is_dir()
+                else [],
                 "resourcePausedMoveMoved": sorted(
                     entry.name
                     for entry in (
@@ -679,6 +699,16 @@ def main(argv: list[str] | None = None) -> int:
         for index in range(120):
             (bulk / f"bulk-{index:03d}.txt").write_text(
                 f"{kind.lower()} bulk fixture {index}", encoding="utf-8"
+            )
+        # A second, smaller directory for the live-progress journey: the
+        # operator opens the local status while the Delete is still queued, the
+        # real Worker then finishes it, and the same open panel must converge
+        # (61 admitted items keep a continuation page available).
+        live = library_root / f"Browser-Live-{kind}-Directory"
+        live.mkdir()
+        for index in range(60):
+            (live / f"live-{index:03d}.txt").write_text(
+                f"{kind.lower()} live fixture {index}", encoding="utf-8"
             )
     # A folder whose Move is paused at the shared cooperative boundary after
     # some children already moved: the local status read must show the moved

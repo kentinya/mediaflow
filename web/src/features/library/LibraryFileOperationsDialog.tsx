@@ -27,10 +27,11 @@ import {
   LIBRARY_OPERATION_CERTAINTY_LABELS,
   LIBRARY_OPERATION_EFFECT_LABELS,
   LIBRARY_OPERATION_ITEM_STATUS_LABELS,
+  isOlderLibraryOperationSnapshot,
   libraryOperationHasProgress,
+  libraryOperationSnapshotKey,
   libraryOperationStateLabel,
   type LibraryFileOperationChild,
-  type LibraryFileOperationDetail,
   type LibraryFileOperationEntry,
   type LibraryFileOperationItem,
 } from "../../entities/library/file-operations";
@@ -46,6 +47,8 @@ import { ModalDialog } from "./FileCommandDialogs";
 const PAGE_LIMIT = 20;
 /** The bounded item page the local detail reads (and continues). */
 const ITEM_PAGE_LIMIT = 50;
+/** How often a still-running operation's own snapshot is re-read. */
+const POLL_INTERVAL_MS = 2000;
 
 /** The bounded copy of one read failure; never raw server text. */
 function readFailureMessage(code: string): string {
@@ -80,6 +83,41 @@ function controlFailureMessage(code: string): string {
     default:
       return "控制请求被拒绝；没有自动重试，请刷新后核对当前状态。";
   }
+}
+
+/** A short bounded label of one read failure cause, for an inline sentence. */
+function readFailureLabel(code: string): string {
+  switch (code) {
+    case "forbidden":
+      return "当前账号没有读取权限";
+    case "library_file_operations_unavailable":
+      return "持久操作记录不可用";
+    case "invalid_request":
+      return "读取参数无效";
+    case "malformed_response":
+      return "服务返回了无法理解的记录";
+    case "transport_unavailable":
+      return "无法连接服务";
+    default:
+      return "读取失败";
+  }
+}
+
+/**
+ * The bounded failure code of one read, from its answered document or its throw.
+ *
+ * A read that *threw* (rather than answering with a bounded failure document)
+ * only means "no read arrived"; a answered-and-failed read keeps its own code
+ * so the operator sees the real cause instead of a generic one.
+ */
+function readFailureCodeOf(
+  isError: boolean,
+  data: { readonly ok: boolean; readonly code?: string } | undefined,
+): string | null {
+  if (data !== undefined) {
+    return data.ok ? null : (data.code ?? "malformed_response");
+  }
+  return isError ? "transport_unavailable" : null;
 }
 
 const ACTION_LABELS: Record<string, string> = {
@@ -239,12 +277,67 @@ function OperationDetail({
 }) {
   const queryClient = useQueryClient();
   const [controlError, setControlError] = useState<string | null>(null);
-  // One item page at a time, over the backend's own exact continuation
+  // The *operation snapshot*: one page-independent read of the selected
+  // operation that owns its stage, whole-operation counts, effect certainty,
+  // next action, Task version and therefore its lifecycle controls.  The
+  // backend folds those facts over every admitted item, so any page of this
+  // read reports the same aggregate at the same durable state.
+  //
+  // It polls on its own: a live operation therefore converges here even when
+  // the item evidence below was read earlier (and would otherwise keep saying
+  // 排队等待 Worker after the real work finished).  Polling is decided by *this*
+  // read's own terminal flag, never by a page of item evidence.
+  const snapshotQueryKey = useMemo(
+    () => ["library-file-operation-snapshot", kind, libraryId, taskId] as const,
+    [kind, libraryId, taskId],
+  );
+  const snapshotQuery = useQuery({
+    queryKey: snapshotQueryKey,
+    queryFn: async () => {
+      const read = await fetchLibraryFileOperationDetail(
+        token,
+        kind,
+        libraryId,
+        taskId,
+        { limit: 1 },
+      );
+      // Two reads of one operation can resolve out of order.  A Task that
+      // already reported a terminal outcome cannot become unfinished again, and
+      // its admitted population cannot shrink, so such an answer is older and
+      // must not overwrite the state the operator already saw.  The guard lives
+      // in the read itself, so no render path and no control can be fed a
+      // regressed snapshot.
+      const cached =
+        queryClient.getQueryData<
+          Awaited<ReturnType<typeof fetchLibraryFileOperationDetail>>
+        >(snapshotQueryKey);
+      const accepted = cached !== undefined && cached.ok ? cached.model : null;
+      if (read.ok && isOlderLibraryOperationSnapshot(accepted, read.model)) {
+        return cached as NonNullable<typeof cached>;
+      }
+      return read;
+    },
+    enabled: token !== null && libraryId !== "" && taskId !== "",
+    retry: false,
+    refetchInterval: (query) => {
+      const data = query.state.data;
+      // Only a still-running operation is polled; a terminal Task is final, so
+      // re-reading it forever would only repeat a settled answer.
+      if (data !== undefined && data.ok && data.model.terminal) return false;
+      return POLL_INTERVAL_MS;
+    },
+  });
+  const detail =
+    snapshotQuery.data !== undefined && snapshotQuery.data.ok
+      ? snapshotQuery.data.model
+      : null;
+  // One bounded item page at a time, over the backend's own exact continuation
   // position: a legitimate directory Delete owns one admitted item per child,
   // so the operator must be able to reach every recorded result — including a
   // refused child that settled after the first page — without leaving the
   // local dialog.  Each page is a separate read; loading more never re-runs or
-  // replays any operation.
+  // replays any operation.  This read does not poll: the snapshot above owns
+  // progress, so a background read can never cancel the operator's continuation.
   const itemPages = useInfiniteQuery({
     queryKey: ["library-file-operation-detail", kind, libraryId, taskId],
     queryFn: ({ pageParam }) =>
@@ -257,48 +350,87 @@ function OperationDetail({
       last.ok ? (last.model.nextCursor ?? undefined) : undefined,
     enabled: token !== null && libraryId !== "" && taskId !== "",
     retry: false,
-    refetchInterval: (query) => {
-      const pages = query.state.data?.pages;
-      const last = pages === undefined ? undefined : pages[pages.length - 1];
-      // Only a still-running operation is polled; a terminal one keeps its
-      // recorded outcome and stops the read.
-      if (last !== undefined && last.ok && last.model.terminal) return false;
-      return 2000;
-    },
   });
   const pages = useMemo(() => itemPages.data?.pages ?? [], [itemPages.data]);
   const firstPage = pages.length > 0 ? pages[0] : undefined;
   const lastPage = pages.length > 0 ? pages[pages.length - 1] : undefined;
-  const read = firstPage;
-  const detail: LibraryFileOperationDetail | null =
-    firstPage !== undefined && firstPage.ok ? firstPage.model : null;
   // The pages are consecutive continuations of one operation, so the item list
-  // is their exact concatenation; the last page owns the aggregate state, its
-  // certainty and the remaining continuation.
+  // is their exact concatenation; a failed continuation keeps the evidence that
+  // was already read.
   const items = useMemo(
     () => pages.flatMap((page) => (page.ok ? page.model.items : [])),
     [pages],
   );
   const lastDetail =
     lastPage !== undefined && lastPage.ok ? lastPage.model : null;
-  const lifecycle = firstPage?.ok ? firstPage.model.lifecycle : null;
+  const lifecycle = detail?.lifecycle ?? null;
+  // Read failures are kept apart, and none of them is ever rendered as "nothing
+  // happened":
+  //
+  // * the *snapshot* read owns stage/counts/certainty/controls.  When it fails
+  //   while an earlier answer is still on screen, that earlier answer is
+  //   disclosed as an older state instead of being silently reused as current.
+  // * the *item evidence* read is independent: a failed first page or a failed
+  //   continuation keeps the items already read and offers one explicit re-read.
+  const snapshotFailureCode = readFailureCodeOf(
+    snapshotQuery.isError,
+    snapshotQuery.data,
+  );
+  const evidenceFailureCode = readFailureCodeOf(
+    itemPages.isError,
+    itemPages.data === undefined ? undefined : firstPage,
+  );
+  // Nothing readable at all: the operator must see the bounded failure and be
+  // able to read the same selected operation again.
   const readFailureCode =
-    firstPage !== undefined
-      ? firstPage.ok
-        ? null
-        : firstPage.code
-      : // A query that *threw* (rather than answering with a bounded failure
-        // document) only means "no read arrived": it is a failure the operator
-        // must see while nothing has been read yet.  Once pages exist, a failed
-        // continuation or poll is disclosed separately and never discards the
-        // evidence already on screen.
-        itemPages.isError
-        ? "transport_unavailable"
-        : null;
+    detail === null ? (snapshotFailureCode ?? evidenceFailureCode) : null;
+  const staleSnapshotFailureCode = detail === null ? null : snapshotFailureCode;
+  const evidenceReadFailureCode = detail === null ? null : evidenceFailureCode;
   const continuationFailure =
     pages.length > 1 && lastPage !== undefined && !lastPage.ok
       ? lastPage.code
       : null;
+  // The operation snapshot and the already-read item evidence are two reads of
+  // the same durable operation, taken at different times.  A real Worker run
+  // between them leaves the item evidence describing an older state, and a
+  // continuation page can equally reveal a newer one.  When they describe
+  // different states both are re-read once (each read is guarded against
+  // regressing), so an open panel converges without closing or reopening it;
+  // after two bounded attempts the disagreement is disclosed instead of
+  // re-reading forever.
+  const snapshotKey =
+    detail === null ? null : libraryOperationSnapshotKey(detail);
+  const evidenceKey =
+    lastDetail === null ? null : libraryOperationSnapshotKey(lastDetail);
+  const evidenceBehind =
+    snapshotKey !== null && evidenceKey !== null && snapshotKey !== evidenceKey;
+  const refetchItems = itemPages.refetch;
+  const refetchSnapshot = snapshotQuery.refetch;
+  const coordinated = useRef<{ key: string; attempts: number }>({
+    key: "",
+    attempts: 0,
+  });
+  // The left-hand list summarises each operation with the same durable counts.
+  // When those facts change (the Worker finished an item, a control settled),
+  // the summary is re-read once so the selected row cannot keep advertising an
+  // older state than the panel beside it.
+  const listedSnapshotKey = useRef<string | null>(null);
+  useEffect(() => {
+    if (snapshotKey === null) return;
+    if (listedSnapshotKey.current === snapshotKey) return;
+    listedSnapshotKey.current = snapshotKey;
+    onRefreshList();
+  }, [snapshotKey, onRefreshList]);
+  useEffect(() => {
+    if (!evidenceBehind || snapshotKey === null || evidenceKey === null) return;
+    const key = `${snapshotKey}|${evidenceKey}`;
+    const attempts =
+      coordinated.current.key === key ? coordinated.current.attempts : 0;
+    if (attempts >= 2) return;
+    coordinated.current = { key, attempts: attempts + 1 };
+    void refetchSnapshot();
+    void refetchItems();
+  }, [evidenceBehind, snapshotKey, evidenceKey, refetchSnapshot, refetchItems]);
   const available = useMemo(
     () => (lifecycle?.actions ?? []).filter((item) => item.available),
     [lifecycle],
@@ -319,11 +451,14 @@ function OperationDetail({
     onSuccess: (result) => {
       if (!result.ok) {
         setControlError(controlFailureMessage(result.code));
+        void snapshotQuery.refetch();
         void itemPages.refetch();
         return;
       }
-      // A refused or accepted control never repeats itself: the detail read
-      // reconciles the durable state and the page refreshes its live files.
+      // A refused or accepted control never repeats itself: the snapshot read
+      // reconciles the durable state (and the evidence behind it) while the
+      // page refreshes its live files.
+      void snapshotQuery.refetch();
       void itemPages.refetch();
       onRefreshList();
       void queryClient.invalidateQueries({ queryKey: ["storage-files"] });
@@ -348,26 +483,30 @@ function OperationDetail({
           <button
             type="button"
             className="mf-link-button"
-            disabled={itemPages.isFetching}
-            onClick={() => void itemPages.refetch()}
+            disabled={snapshotQuery.isFetching || itemPages.isFetching}
+            onClick={() => {
+              void snapshotQuery.refetch();
+              void itemPages.refetch();
+            }}
           >
-            {itemPages.isFetching ? "正在重新读取该操作…" : "重新读取该操作"}
+            {snapshotQuery.isFetching || itemPages.isFetching
+              ? "正在重新读取该操作…"
+              : "重新读取该操作"}
           </button>
         </p>
       </>
     );
   }
-  if (read === undefined || detail === null) {
+  if (detail === null) {
     return (
       <p className="mf-dialog-hint" role="status">
         正在读取该操作的持久状态…
       </p>
     );
   }
-  // The operation-level facts are folded by the backend over *every* admitted
-  // item, so they are identical on every page: taking them from the first page
-  // means loading more evidence can never change what the operation is said to
-  // have done.  `lastDetail` remains the page that knows the continuation.
+  // The operation-level facts are the page-independent snapshot: stage, counts,
+  // certainty, next action and controls always describe the operation's current
+  // durable state, never the item page that happened to be read first.
   const aggregate = detail;
   const uncertain = aggregate.durableState === "mutation_effect_uncertain";
   return (
@@ -427,6 +566,18 @@ function OperationDetail({
       {aggregate.nextAction !== null && (
         <p className="mf-dialog-hint">{aggregate.nextAction}</p>
       )}
+      {staleSnapshotFailureCode !== null && (
+        <p className="mf-dialog-error" role="alert">
+          暂时无法重新读取该操作的当前状态（
+          {readFailureLabel(staleSnapshotFailureCode)}
+          ）；下方是上一次成功读取的结果，请核对后再决定下一步。
+        </p>
+      )}
+      {evidenceReadFailureCode !== null && (
+        <p className="mf-dialog-error" role="alert">
+          {readFailureMessage(evidenceReadFailureCode)}
+        </p>
+      )}
       {items.length > 0 && (
         <div className="mf-operation-items">
           <h5>逐项结果</h5>
@@ -455,23 +606,35 @@ function OperationDetail({
               仍有逐项证据未显示；请重新读取该操作以继续。
             </p>
           )}
+          {evidenceBehind && !itemPages.isFetching && (
+            <p className="mf-dialog-hint" role="status">
+              逐项证据仍早于该操作的当前状态；可继续“加载更多”或重新读取逐项结果。
+            </p>
+          )}
+          {(evidenceReadFailureCode !== null ||
+            continuationFailure !== null) && (
+            <p className="mf-dialog-hint">
+              已读取的逐项证据保留在下方；
+              <button
+                type="button"
+                className="mf-link-button"
+                disabled={itemPages.isFetching || itemPages.isFetchingNextPage}
+                onClick={() =>
+                  evidenceReadFailureCode === null
+                    ? void itemPages.fetchNextPage()
+                    : void itemPages.refetch()
+                }
+              >
+                {evidenceReadFailureCode === null
+                  ? "重新读取后续逐项结果"
+                  : "重新读取逐项结果"}
+              </button>
+            </p>
+          )}
           {continuationFailure !== null && (
-            <>
-              <p className="mf-dialog-error" role="alert">
-                {readFailureMessage(continuationFailure)}
-              </p>
-              <p className="mf-dialog-hint">
-                已读取的逐项证据保留在下方；
-                <button
-                  type="button"
-                  className="mf-link-button"
-                  disabled={itemPages.isFetchingNextPage}
-                  onClick={() => void itemPages.fetchNextPage()}
-                >
-                  重新读取后续逐项结果
-                </button>
-              </p>
-            </>
+            <p className="mf-dialog-error" role="alert">
+              {readFailureMessage(continuationFailure)}
+            </p>
           )}
         </div>
       )}

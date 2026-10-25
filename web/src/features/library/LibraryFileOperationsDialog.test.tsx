@@ -2,6 +2,10 @@ import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import { cleanup, screen, waitFor, within } from "@testing-library/react";
 import userEvent from "@testing-library/user-event";
 import { authStore } from "../../shared/api/auth-store";
+import {
+  isOlderLibraryOperationSnapshot,
+  normalizeLibraryFileOperationDetail,
+} from "../../entities/library/file-operations";
 import { renderWithProviders } from "../../../tests/utils";
 import { StorageFilesPage } from "./StorageFilesPage";
 
@@ -17,6 +21,38 @@ import { StorageFilesPage } from "./StorageFilesPage";
  */
 
 const TOKEN = "library-operations-page-token";
+
+/** One still-queued item of a live operation. */
+function queuedItem(itemId: string, path: string) {
+  return {
+    itemId,
+    path,
+    destination: path,
+    status: "QUEUED",
+    stage: "pending",
+    attempts: 0,
+    effect: "in_progress",
+    effectCertainty: "unknown",
+    knownEffects: [],
+    nextAction: "等待 Worker 执行；不会自动重试",
+  };
+}
+
+/** The same item after the real work finished. */
+function finishedItem(itemId: string, path: string) {
+  return {
+    itemId,
+    path,
+    destination: path,
+    status: "SUCCESS",
+    stage: "completed",
+    attempts: 1,
+    effect: "transferred",
+    effectCertainty: "verified_complete",
+    knownEffects: [`delete:${path}`],
+    nextAction: "无需操作；刷新目录即可看到当前状态",
+  };
+}
 
 function jsonResponse(payload: unknown, status = 200): Response {
   return new Response(JSON.stringify(payload), {
@@ -202,6 +238,22 @@ interface StubOptions {
   readonly detailErrorCode?: string;
   readonly lifecycle?: ReturnType<typeof lifecycleFor>;
   readonly detail?: Record<string, unknown>;
+  /**
+   * A live operation whose durable facts change between reads, exactly as the
+   * real Worker's completion does.  When present it wins over ``detail`` /
+   * ``detailPages``, so a test can move one selected operation from pending to
+   * terminal *while* the dialog is open — no fabricated DOM state, no invented
+   * product route.
+   */
+  readonly live?: () => {
+    readonly detail: Record<string, unknown>;
+    readonly pages: readonly {
+      readonly cursor: string;
+      readonly items: readonly unknown[];
+      readonly nextCursor?: string | null;
+    }[];
+    readonly lifecycle?: ReturnType<typeof lifecycleFor>;
+  };
   readonly originIds?: readonly string[];
   /**
    * Further item pages of the selected operation, keyed by the cursor that
@@ -267,8 +319,12 @@ function stubPage(items: readonly unknown[], options: StubOptions = {}) {
             503,
           );
         }
-        const detailPages = options.detailPages ?? [];
-        const requested = options.detail ?? {};
+        // A ``live`` operation re-reads its own durable facts on every request,
+        // so a test can let the real Worker's completion land between two
+        // reads of the same selected operation.
+        const live = options.live?.();
+        const detailPages = live?.pages ?? options.detailPages ?? [];
+        const requested = live?.detail ?? options.detail ?? {};
         const itemPage =
           cursor === null
             ? (requested.items ?? [])
@@ -278,6 +334,7 @@ function stubPage(items: readonly unknown[], options: StubOptions = {}) {
             ? (detailPages[0]?.cursor ?? null)
             : (detailPages.find((item) => item.cursor === cursor)?.nextCursor ??
               null);
+        const lifecycle = live?.lifecycle ?? options.lifecycle;
         return jsonResponse(
           operation({
             taskId,
@@ -285,9 +342,7 @@ function stubPage(items: readonly unknown[], options: StubOptions = {}) {
             items: itemPage,
             itemsTruncated: nextCursor !== null,
             nextCursor,
-            ...(options.lifecycle === undefined
-              ? {}
-              : { lifecycle: options.lifecycle }),
+            ...(lifecycle === undefined ? {} : { lifecycle }),
           }),
         );
       }
@@ -876,6 +931,215 @@ describe("current page operation status", () => {
     ).toBeVisible();
     // Loading more changed the item list, not the operation's effect.
     expect(certaintyFact()).toHaveTextContent("效果不确定");
+  });
+
+  it("converges an open panel when the real work finishes between two reads", async () => {
+    // B reproduced this: the operator opens a queued operation, the real Worker
+    // completes it, and the panel keeps saying 排队等待 Worker with 成功 0 /
+    // 待处理 121 and 效果未知 forever — because polling was stopped by a newer
+    // item page while stage/counts/certainty/controls came from an older one.
+    // Here the same operation is read twice: queued first, then terminal.  No
+    // closing, reloading or fabricated DOM state is involved.
+    const user = userEvent.setup();
+    let phase: "queued" | "finished" = "queued";
+    // The operation owns two admitted items: one on the page the operator
+    // already read, one on the page they are about to continue.
+    const queuedItems = [
+      queuedItem("item-1", "batch/file-0.txt"),
+      queuedItem("item-2", "batch/file-1.txt"),
+    ];
+    const finishedItems = [
+      finishedItem("item-1", "batch/file-0.txt"),
+      finishedItem("item-2", "batch/file-1.txt"),
+    ];
+    const pendingLifecycle = lifecycleFor("task-1", [
+      { action: "pause", available: true },
+      { action: "cancel", available: true },
+    ]);
+    stubPage(
+      [
+        operation({
+          taskId: "task-1",
+          operation: "delete",
+          operationLabel: "删除",
+          command: "files_delete",
+          commandLabel: "删除",
+          status: "pending",
+          terminal: false,
+          settled: false,
+          allSucceeded: false,
+          totalItems: 2,
+          settledItems: 0,
+          succeededItems: 0,
+          failedItems: 0,
+          pendingItems: 2,
+        }),
+      ],
+      {
+        live: () =>
+          phase === "queued"
+            ? {
+                detail: {
+                  taskId: "task-1",
+                  operation: "delete",
+                  operationLabel: "删除",
+                  command: "files_delete",
+                  commandLabel: "删除",
+                  status: "pending",
+                  terminal: false,
+                  settled: false,
+                  allSucceeded: false,
+                  totalItems: 2,
+                  itemTotal: 2,
+                  settledItems: 0,
+                  succeededItems: 0,
+                  failedItems: 0,
+                  pendingItems: 2,
+                  durableState: "task_in_progress",
+                  effectCertainty: "unknown",
+                  nextAction: "等待 Worker 执行；关闭本窗口不会取消或重放它",
+                  items: [queuedItems[0]],
+                },
+                pages: [
+                  {
+                    cursor: "cursor-2",
+                    items: [queuedItems[1]],
+                    nextCursor: null,
+                  },
+                ],
+                lifecycle: pendingLifecycle,
+              }
+            : {
+                detail: {
+                  taskId: "task-1",
+                  operation: "delete",
+                  operationLabel: "删除",
+                  command: "files_delete",
+                  commandLabel: "删除",
+                  status: "completed",
+                  terminal: true,
+                  settled: true,
+                  allSucceeded: true,
+                  totalItems: 2,
+                  itemTotal: 2,
+                  settledItems: 2,
+                  succeededItems: 2,
+                  failedItems: 0,
+                  pendingItems: 0,
+                  durableState: "task_completed",
+                  effectCertainty: "verified_complete",
+                  nextAction: "已无待处理条目；刷新目录即可看到当前状态",
+                  items: [finishedItems[0]],
+                },
+                pages: [
+                  {
+                    cursor: "cursor-2",
+                    items: [finishedItems[1]],
+                    nextCursor: null,
+                  },
+                ],
+                lifecycle: lifecycleFor("task-1", [
+                  { action: "pause", available: false, reason: "已完成" },
+                  { action: "cancel", available: false, reason: "已完成" },
+                ]),
+              },
+      },
+    );
+    authStore.setToken(TOKEN);
+    renderWithProviders(<StorageFilesPage />);
+    const dialog = await openStatusDialog(user);
+    await user.click(
+      await within(dialog).findByRole("button", { name: /操作 删除 task-1/ }),
+    );
+    const selected = within(dialog).getByLabelText("所选操作状态");
+    const stageFact = () =>
+      within(selected).getByText("阶段").parentElement as HTMLElement;
+    const countsFact = () =>
+      within(selected).getByText("项目结果").parentElement as HTMLElement;
+    const certaintyFact = () =>
+      within(selected).getByText("已记录影响").parentElement as HTMLElement;
+    // The panel really starts on the queued snapshot, with its legal controls.
+    expect(await stageFact()).toHaveTextContent("排队等待 Worker");
+    expect(countsFact()).toHaveTextContent("成功 0");
+    expect(countsFact()).toHaveTextContent("待处理 2");
+    expect(certaintyFact()).toHaveTextContent("效果未知");
+    expect(
+      within(selected).getByRole("button", { name: "请求暂停" }),
+    ).toBeVisible();
+
+    // The real work finished: the next continuation read already reports the
+    // terminal operation, exactly as the durable Task does.
+    phase = "finished";
+    await user.click(
+      within(selected).getByRole("button", { name: "加载更多逐项结果" }),
+    );
+    // The same open panel converges: stage, whole-operation counts, certainty,
+    // next action and the loaded items all describe the terminal state, and no
+    // stale control survives it.
+    await waitFor(() => expect(stageFact()).toHaveTextContent("已完成"));
+    expect(countsFact()).toHaveTextContent("成功 2");
+    expect(countsFact()).toHaveTextContent("待处理 0");
+    expect(certaintyFact()).toHaveTextContent("已核实完成");
+    expect(within(selected).getByText(/已无待处理条目/)).toBeVisible();
+    expect(within(selected).getAllByText(/已完成变更/).length).toBeGreaterThan(
+      0,
+    );
+    expect(
+      within(selected).queryByRole("button", { name: "请求暂停" }),
+    ).toBeNull();
+    expect(
+      within(selected).getByText(/后端未对该操作和当前账号提供任何可用的/),
+    ).toBeVisible();
+    // Every loaded item, not just this page's, describes the finished work; the
+    // continuation keeps the complete set accessible after the re-read.
+    expect(
+      within(selected).getByText(/已显示 2 \/ 2 项逐项证据/),
+    ).toBeVisible();
+    expect(within(selected).getAllByText(/已完成变更/).length).toBe(2);
+  });
+
+  it("never regresses a terminal snapshot to an older in-flight answer", () => {
+    // Two reads of the same operation can resolve out of order.  A Task that
+    // already reported every item settled cannot become unfinished again, and
+    // its admitted population cannot shrink, so such an answer is refused.
+    const finished = normalizeLibraryFileOperationDetail(
+      {
+        ...operation({ status: "completed", terminal: true }),
+        durableState: "task_completed",
+        effectCertainty: "verified_complete",
+        itemTotal: 1,
+        items: [],
+      },
+      "resource",
+      "source",
+      "task-1",
+    );
+    const slower = normalizeLibraryFileOperationDetail(
+      {
+        ...operation({
+          status: "pending",
+          terminal: false,
+          settled: false,
+          allSucceeded: false,
+          settledItems: 0,
+          succeededItems: 0,
+          pendingItems: 1,
+        }),
+        durableState: "task_in_progress",
+        effectCertainty: "unknown",
+        itemTotal: 1,
+        items: [],
+      },
+      "resource",
+      "source",
+      "task-1",
+    );
+    expect(isOlderLibraryOperationSnapshot(finished, slower)).toBe(true);
+    expect(isOlderLibraryOperationSnapshot(slower, finished)).toBe(false);
+    // Another operation is never "older": it replaces the view outright.
+    expect(
+      isOlderLibraryOperationSnapshot(finished, { ...slower, taskId: "x" }),
+    ).toBe(false);
   });
 
   it("reaches the read-error state and recovery when the first detail read fails", async () => {

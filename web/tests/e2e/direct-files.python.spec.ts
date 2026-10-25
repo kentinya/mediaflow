@@ -1163,6 +1163,176 @@ async function bulkDirectoryLocalEvidence(
   expect(library).not.toBe("");
 }
 
+/**
+ * A queued operation converges in the *same open* panel when the real Worker
+ * finishes it.
+ *
+ * B reproduced the defect this covers: the operator confirms a directory
+ * Delete, opens 当前页面操作状态 while it is still queued (成功 0 / 待处理 N,
+ * 效果未知), the real Worker completes it, and — after clicking 加载更多逐项结果 —
+ * the panel still showed the queued stage, the queued counts and the queued
+ * items while polling had already stopped.  Nothing here fabricates a product
+ * payload: the operation is admitted through the page's own Delete command, the
+ * durable change comes from the production Worker over temporary Storage, and
+ * only the *reading* is observed.
+ */
+async function liveSnapshotConvergence(
+  page: Page,
+  testInfo: TestInfo,
+  kind: "resource" | "media",
+): Promise<void> {
+  const prefix = kind === "resource" ? "Resource" : "Media";
+  const folder = `Browser-Live-${prefix}-Directory`;
+  const mutations: string[] = [];
+  page.on("request", (request) => {
+    if (request.method() === "POST" && request.url().includes("/files/")) {
+      mutations.push(request.url());
+    }
+  });
+
+  await page.getByRole("button", { name: "列表视图" }).click();
+  await expect(page.getByRole("checkbox", { name: "选择全部" })).toBeVisible();
+  await page.getByRole("checkbox", { name: `选择 ${folder}` }).check();
+  const footer = page.locator("footer.mf-files-footer");
+  await footer.getByRole("button", { name: "删除", exact: true }).click();
+  const confirmation = page.getByRole("dialog", { name: "删除确认" });
+  await expect(confirmation).toBeVisible();
+  await confirmation.getByRole("button", { name: "删除", exact: true }).click();
+  const progress = page.getByRole("dialog", { name: "删除进度" });
+  await expect(progress).toBeVisible();
+  const admitted = mutations.length;
+  expect(admitted).toBe(1);
+
+  // Put the progress dialog into the background without waiting for the Worker:
+  // the operation is still queued, so the durable stage really is pending.
+  await progress.getByRole("button", { name: "关闭", exact: true }).click();
+  await expect(progress).toHaveCount(0);
+  // The header entry has exactly this accessible name; the guidance link inside
+  // a result dialog has different wording.
+  await page
+    .getByRole("button", { name: "当前页面操作状态", exact: true })
+    .click();
+  const dialog = page.getByRole("dialog", { name: /当前页面操作状态/ });
+  await expect(dialog).toBeVisible();
+  const deleteEntry = dialog.getByRole("button", { name: /操作 删除/ }).first();
+  await expect(deleteEntry).toBeVisible();
+  await deleteEntry.click();
+  const selected = dialog.getByLabel("所选操作状态");
+  await expect(selected).toBeVisible();
+  const stageFact = selected
+    .getByText("阶段")
+    .locator("xpath=following-sibling::dd[1]");
+  const countsFact = selected
+    .getByText("项目结果")
+    .locator("xpath=following-sibling::dd[1]");
+  const certaintyFact = selected
+    .getByText("已记录影响")
+    .locator("xpath=following-sibling::dd[1]");
+  await expect(stageFact).toContainText("排队等待 Worker");
+  await expect(countsFact).toContainText("成功 0");
+  await expect(certaintyFact).toHaveText("效果未知");
+  // A queued Task's backend-advertised control is Cancel; Pause is only offered
+  // for a running Task.  The panel must offer exactly what the backend allows.
+  await expect(selected.getByRole("button", { name: "取消" })).toBeVisible();
+  await expect(selected.getByRole("button", { name: "请求暂停" })).toHaveCount(
+    0,
+  );
+  await page.screenshot({
+    path: testInfo.outputPath(`${kind}-live-operation-queued.png`),
+    fullPage: false,
+  });
+
+  // The production Worker really executes the admitted Delete.
+  const worker = await page.request.post("/__harness__/run-files-worker");
+  expect(worker.ok()).toBe(true);
+  expect(await worker.json()).toMatchObject({ ran: true, status: "completed" });
+  const stateAfter = await page.request.get("/__harness__/files-state");
+  const stateDocument = (await stateAfter.json()) as {
+    resourceLiveSurvivingFiles: string[];
+    mediaLiveSurvivingFiles: string[];
+    resourceLiveDirectoryExists: boolean;
+    mediaLiveDirectoryExists: boolean;
+  };
+  const surviving =
+    kind === "resource"
+      ? stateDocument.resourceLiveSurvivingFiles
+      : stateDocument.mediaLiveSurvivingFiles;
+  expect(surviving).toEqual([]);
+
+  // The item list really starts as one bounded page of the whole operation.
+  await expect(selected.getByText(/已显示 50 \/ 61 项逐项证据/)).toBeVisible();
+  // B's exact trigger: the operator continues the item list right after the
+  // real Worker finished and before the next scheduled poll.  That continuation
+  // already reports the terminal operation, so the panel must not keep showing
+  // the older queued snapshot — and it must not stop updating either.
+  const more = selected.getByRole("button", { name: "加载更多逐项结果" });
+  await expect(more).toBeVisible();
+  await more.click();
+  // The same open panel now reports the real terminal state: stage,
+  // whole-operation counts, effect certainty, next action and the items already
+  // read while the operation was still queued.
+  await expect(stageFact).toContainText("已完成", { timeout: 20_000 });
+  await expect(countsFact).toContainText("成功 61");
+  await expect(countsFact).toContainText("待处理 0");
+  await expect(certaintyFact).toHaveText("已核实完成");
+  await expect(selected.getByText(/已无待处理条目/)).toBeVisible();
+  await expect(selected.getByText("排队中", { exact: true })).toHaveCount(0);
+  // The control projection moved with the state: a finished operation offers no
+  // cancel or pause button.
+  await expect(selected.getByRole("button", { name: "取消" })).toHaveCount(0);
+  await expect(selected.getByRole("button", { name: "请求暂停" })).toHaveCount(
+    0,
+  );
+  await expect(
+    selected.getByText(/后端未对该操作和当前账号提供任何可用的/),
+  ).toBeVisible();
+  // Every admitted item stays reachable: the continued page completed the
+  // whole admitted population.
+  await expect(selected.getByText("已显示 61 / 61 项逐项证据")).toBeVisible();
+  await expect(selected.getByText("排队中", { exact: true })).toHaveCount(0);
+  await dialog.screenshot({
+    path: testInfo.outputPath(`${kind}-live-operation-converged.png`),
+  });
+  // The whole-operation facts of the converged state, captured directly so the
+  // evidence is not hidden by the dialog's own scroll position.
+  await selected.locator("dl.mf-operation-facts").screenshot({
+    path: testInfo.outputPath(`${kind}-live-operation-converged-facts.png`),
+  });
+  await page.setViewportSize({ width: 1536, height: 1024 });
+  await page.screenshot({
+    path: testInfo.outputPath(`${kind}-live-operation-converged-desktop.png`),
+    fullPage: false,
+  });
+  await dialog.getByRole("button", { name: "关闭", exact: true }).click();
+  await expect(dialog).toHaveCount(0);
+
+  // Reading converged the panel; it never admitted or replayed a command, and
+  // the real directory is gone exactly once.
+  expect(mutations).toHaveLength(admitted);
+  const finalState = await page.request.get("/__harness__/files-state");
+  expect(await finalState.json()).toMatchObject({
+    ...(kind === "resource"
+      ? { resourceLiveDirectoryExists: false }
+      : { mediaLiveDirectoryExists: false }),
+  });
+}
+
+test("ResourceLibrary Files converges an open queued operation when the Worker finishes it", async ({
+  page,
+}, testInfo) => {
+  test.setTimeout(180_000);
+  await openFiles(page, "resource");
+  await liveSnapshotConvergence(page, testInfo, "resource");
+});
+
+test("MediaLibrary Files converges an open queued operation when the Worker finishes it", async ({
+  page,
+}, testInfo) => {
+  test.setTimeout(180_000);
+  await openFiles(page, "media");
+  await liveSnapshotConvergence(page, testInfo, "media");
+});
+
 test("ResourceLibrary Files reaches every item of a large directory Delete", async ({
   page,
 }, testInfo) => {

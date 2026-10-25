@@ -595,6 +595,56 @@ export function libraryOperationHasProgress(
   return !entry.terminal || entry.failedItems > 0 || entry.pendingItems > 0;
 }
 
+/**
+ * The durable facts that decide whether one operation snapshot describes the
+ * same state as another.
+ *
+ * The local dialog reads the operation aggregate (stage, counts, certainty,
+ * next action, controls) and its per-item evidence as two bounded reads of the
+ * *same* durable operation.  Every page of the aggregate read reports the same
+ * whole-operation facts at one durable state, so these facts — not the item
+ * page that happened to be read — decide whether the evidence on screen is
+ * already up to date or has to be re-read.  Nothing here is authority.
+ */
+export function libraryOperationSnapshotKey(
+  entry: LibraryFileOperationEntry,
+): string {
+  return [
+    entry.taskId,
+    entry.status,
+    String(entry.terminal),
+    String(entry.totalItems),
+    String(entry.succeededItems),
+    String(entry.failedItems),
+    String(entry.skippedItems),
+    String(entry.cancelledItems),
+    String(entry.pendingItems),
+    String(entry.allSucceeded),
+  ].join("|");
+}
+
+/**
+ * Whether one operation snapshot is provably older than the accepted one.
+ *
+ * Two reads of the same operation can resolve out of order.  A Task that
+ * already reported a terminal outcome cannot legitimately become unfinished
+ * again, and its admitted item population cannot shrink, so such an answer is
+ * older and must not overwrite the state the operator already saw.  A different
+ * Task (another selection) is never older — it simply replaces the view.
+ *
+ * This decides rendering only; it is never authority and never admits or
+ * replays a command.
+ */
+export function isOlderLibraryOperationSnapshot(
+  previous: LibraryFileOperationDetail | null,
+  incoming: LibraryFileOperationDetail | null,
+): boolean {
+  if (previous === null || incoming === null) return false;
+  if (previous.taskId !== incoming.taskId) return false;
+  if (previous.terminal && !incoming.terminal) return true;
+  return incoming.totalItems < previous.totalItems;
+}
+
 /** Bounded operator wording for one item's factual disposition. */
 export const LIBRARY_OPERATION_ITEM_STATUS_LABELS: Readonly<
   Record<string, string>
