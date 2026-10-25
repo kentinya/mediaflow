@@ -8,7 +8,7 @@ confirmation/readback and safety portions of AC-5/7/8/14/15;
 ```text
 Task ID: 46.3
 Parent Slice: 46
-Status: PLANNED
+Status: FIX REQUIRED
 Task Base: 83144be20c6c7bc787a0fafad7fabb3e177bde6a
 Difficulty: High
 Test Level: T4
@@ -385,6 +385,98 @@ center creation/discovery/manual-action removals) are **not implemented**.
 
 ## B Review Result
 
-Pending implementation. No new implementation candidate is reviewed or accepted by this plan.
-B will independently review the complete Task Base..Head and record PASS or FIX REQUIRED, actual
-acceptance evidence/blockers, all five Slice outcome assessments and the next lifecycle action.
+```text
+Reviewed Task range: 83144be20c6c7bc787a0fafad7fabb3e177bde6a..d675594f5cc5bb504aa47668c14ca700d41f1ed6
+Implementation / partial handoff: d675594f5cc5bb504aa47668c14ca700d41f1ed6
+Decision: FIX REQUIRED — 2026-10-25
+Task blockers: B46.3-01/02/03 (P1)
+Slice Required Outcomes / Surfaces all satisfied: NO
+Next: SAME TASK FIX LOOP; complete Task46.3, no new Task or Slice closure
+```
+
+B independently inspected the complete nine-file Task Base..Head manifest/diff, including the plan,
+partial report, production predicates/admission/walk, tests, Web consumers and architecture text.
+The checkpoint is a partial increment, not Task acceptance. Task Base/Goal/Scope/High/T4 and all
+acceptance criteria remain unchanged. Existing direct-file filtering work can be retained while
+completing the same coherent task; do not split remaining scopes into new Tasks or mark Scope 2 PASS.
+
+### Required corrections
+
+1. **B46.3-01 / P1 — deliver the admitted organizing journey, not preparation alone.**
+   The actual Files request (`POST /api/v1/resource-libraries/library/files/discoveries`,
+   `autoPrepare: true`) returns 202 with one discovery and zero Tasks immediately after submission.
+   Implement Scopes 1/3/4/5/6 and necessary Scope 7 integration: durable organizing admission before
+   discovery/business readiness, atomic concrete-source ownership across existing entrances and
+   continuation, native four-type recovery, exact normal summary/confirmation in Running/All,
+   durable Files task/preparation/unknown-request readback and removal of center creation/manual/
+   discovery entries and their exclusive reads. Preserve analysis-only preparation, exact pins,
+   full bounds/stability, explicit effect confirmation and completed/uncertain non-replay. The
+   Developer's remaining-scope report cannot move this Task's RO-2 delivery into later RO-4 work.
+2. **B46.3-02 / P1 — preserve eligible siblings on business refusal.**
+   Through the same Files command, selecting `Movies/One.2001.mkv` together with
+   `Movies/downloading.mkv.part` returns 409 `source_excluded/temporary_file`, with no durable work
+   for the eligible file. Change the all-or-nothing business refusal in
+   `MediaDiscoveryService.admit` / `_resolve_entry_kind` into independent admitted/refused item
+   outcomes. Retain full structural/RBAC/root/bounds validation and truthful original scope; do not
+   silently drop exclusions or claim they were organized. Show the refused item's reason and the
+   eligible sibling's actual task/progress. Replace
+   `ManualEntrySemanticsTests.test_a_partly_refused_selection_is_never_a_different_scope`, which
+   currently asserts the contract violation, with coverage for independent outcomes and zero
+   mutation before confirmation. Add the equivalent existing-task duplicate plus eligible sibling
+   case when source ownership is implemented.
+3. **B46.3-03 / P1 — remove automatic manual-entry vetoes for folder selections too.**
+   A real published `directory: Movies` automatic exclusion still makes an explicit Files selection
+   of `Movies` return 409 `source_excluded/configured_exclude` before any task exists.
+   `_refuse_unselectable_directory`, ancestor checks and the folder walk still apply the automatic
+   include/exclude gates. Follow RO-2/AC-16 and Task Scope 2: keep configured primary extensions
+   (default video), explicit extension exclusions, attachment semantics and hard traversal/source
+   safety; do not retain other automatic include/exclude/match conditions as extra manual vetoes.
+   Preserve unchanged automatic Scanner/definition-bound filtering through an explicit admission
+   context, not a global weakening. Cover folder and mixed-folder paths, including unrelated
+   images/subtitles/NFO, custom primary extensions and artwork/other-same-stem settings. Correct
+   the new tests and CURRENT architecture text that currently describe retained automatic folder
+   vetoes as the complete Slice46 rule. Map the actual bounded reason in Web refusal copy: the
+   current generic `source_excluded` copy incorrectly calls this directory-rule refusal a temporary
+   or extension exclusion.
+
+### Independent checks and evidence
+
+Evidence is local, ignored and durable in
+`.git/validation-evidence/d675594f/b46.3-review/`:
+
+| Check | Actual result |
+| --- | --- |
+| Governance; full-range `git diff 83144be2..d675594f --check` | PASS / clean |
+| `.venv/bin/python -m unittest tests.test_media_discovery.ManualEntrySemanticsTests` | 5 tests OK, 0.362 s test runtime / 0.58 s process wall; `changed-tests.log`; unclosed-SQLite ResourceWarnings remain visible |
+| `.venv/bin/python .git/validation-evidence/d675594f/b46.3-review/entry_probe.py` | Three required behaviors above reproduced through existing authenticated Files API, real temporary Local Storage/SQLite; no mutation; `entry-probe.log`, 0.223 s probe body |
+| `.venv/bin/ruff check mediaflow/application/media_discovery.py mediaflow/application/scan_filters.py tests/test_media_discovery.py` | All checks passed |
+
+The probe reuses the existing discovery fixture and its validated/published test configuration;
+it creates no invented route or impossible database state and uses no production media/secrets.
+The five green tests establish only their asserted filtering behavior; they do not establish the
+admitted-task journey or validate the contradictory all-or-nothing expectation. Developer-reported
+suite results above are not relabelled as independent B runs.
+
+Workflow §6 permits early FIX REQUIRED on proven P1 blockers. Full T4 Python/Web/native/packaging/
+resident-restart acceptance remains pending for the corrected candidate; no gate is waived and no
+product/visual/full-suite PASS is claimed. Developer runs failing/new/affected tests and hands off
+the complete Task; B retains full acceptance ownership. No optional consumer labels, unrelated
+row-menu issue or process-tool improvement is promoted to a new Task.
+
+Review started at 12:18:18 UTC. Tests/probes/static/governance commands together consumed less than
+5 seconds of subprocess wall time, inside more than two minutes of contract/code/evidence review
+before reconciliation; testing is strictly below 50%. No deliberate waiting or repeated full suite.
+
+### All Slice outcomes reevaluated
+
+| Outcome | Assessment at reviewed Head |
+| --- | --- |
+| RO-1 readable shared actions | Prior Task46.1 acceptance retained; no readability/style change here |
+| RO-2 Files-first organizing | Incomplete; partial direct-file predicate change only, B46.3-01/02/03 block this Task |
+| RO-3 local ordinary operations | Prior Task46.2 acceptance/evidence limits retained; local status implementation unchanged |
+| RO-4 organizing-only center/four-type truth | Incomplete; no complete population/view/recovery delivery in this checkpoint |
+| RO-5 Automation detail/Enabled/Run once | Incomplete; unchanged, remains outside Task46.3 except shared source-ownership integration |
+
+Slice remains ACTIVE. Only B-owned TASK.md changes in this review checkpoint; Slice/Roadmap/Progress
+and all pre-existing dirty/untracked/private/reference files are preserved. No product implementation,
+push, publication, new Task, history rewriting or Slice closure by B.
