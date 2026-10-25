@@ -65,6 +65,14 @@ import {
   type TransferResultModel,
 } from "../../entities/library/direct-files";
 import {
+  normalizeLibraryFileOperationDetail,
+  normalizeLibraryFileOperationOrigin,
+  normalizeLibraryFileOperationPage,
+  type LibraryFileOperationDetail,
+  type LibraryFileOperationOrigin,
+  type LibraryFileOperationPage,
+} from "../../entities/library/file-operations";
+import {
   ApiReadError,
   type ApiReadErrorCategory,
   DashboardApiError,
@@ -8453,5 +8461,217 @@ export async function controlAutomationRunOnce(
       status: response.status,
       code: "malformed_response",
     };
+  }
+}
+
+// --- One library's durable ordinary file-operation history (Task 46.2) ---
+
+/**
+ * The kind-scoped route of one library's ordinary work index.
+ *
+ * The route carries the library kind and ID on the path, so a ResourceLibrary
+ * read can never address a MediaLibrary's work (or the reverse) even when the
+ * two configured libraries carry the same ID.
+ */
+function libraryFileOperationsBase(
+  kind: DirectCommandLibraryKind,
+  libraryId: string,
+): string {
+  const collection =
+    kind === "media" ? "media-libraries" : "resource-libraries";
+  return `/api/v1/${collection}/${encodeURIComponent(libraryId)}/file-operations`;
+}
+
+export interface LibraryFileOperationListOptions {
+  readonly kind: DirectCommandLibraryKind;
+  readonly libraryId: string;
+  readonly limit?: number;
+  readonly cursor?: string | null;
+}
+
+export type LibraryFileOperationListRead =
+  | { readonly ok: true; readonly model: LibraryFileOperationPage }
+  | {
+      readonly ok: false;
+      readonly status: number;
+      readonly code: string;
+      readonly details?: AutomationMutationFailureDetails;
+    };
+
+/**
+ * Read one bounded page of this library's own ordinary file operations.
+ *
+ * A durable read: it resolves no configuration, touches no Storage and creates
+ * no work.  Opening, polling, refreshing and reopening the page therefore stay
+ * side-effect free.
+ */
+export async function fetchLibraryFileOperations(
+  token: string | null,
+  options: LibraryFileOperationListOptions,
+  fetchImpl: FetchLike = fetch,
+): Promise<LibraryFileOperationListRead> {
+  if (
+    options.libraryId.trim().length === 0 ||
+    options.libraryId.length > 256 ||
+    (options.limit !== undefined &&
+      (!Number.isInteger(options.limit) ||
+        options.limit < 1 ||
+        options.limit > 100)) ||
+    (options.cursor !== null &&
+      options.cursor !== undefined &&
+      (options.cursor.length === 0 || options.cursor.length > 512))
+  ) {
+    return { ok: false, status: 400, code: "invalid_request" };
+  }
+  const params = new URLSearchParams();
+  if (options.limit !== undefined) params.set("limit", String(options.limit));
+  if (options.cursor) params.set("cursor", options.cursor);
+  const query = params.toString();
+  let response: Response;
+  try {
+    response = await fetchImpl(
+      `${libraryFileOperationsBase(options.kind, options.libraryId)}${query ? `?${query}` : ""}`,
+      { headers: directFilesReadHeaders(token) },
+    );
+  } catch {
+    return { ok: false, status: 0, code: "transport_unavailable" };
+  }
+  if (!response.ok) {
+    const envelope = await readErrorEnvelope(response);
+    return {
+      ok: false,
+      status: response.status,
+      code:
+        typeof envelope.code === "string" && envelope.code.length > 0
+          ? envelope.code
+          : "request_rejected",
+      ...failureDetailsSpread(envelope.details),
+    };
+  }
+  try {
+    return {
+      ok: true,
+      model: normalizeLibraryFileOperationPage(
+        await response.json(),
+        options.kind,
+        options.libraryId,
+      ),
+    };
+  } catch {
+    return { ok: false, status: response.status, code: "malformed_response" };
+  }
+}
+
+export type LibraryFileOperationDetailRead =
+  | { readonly ok: true; readonly model: LibraryFileOperationDetail }
+  | {
+      readonly ok: false;
+      readonly status: number;
+      readonly code: string;
+      readonly details?: AutomationMutationFailureDetails;
+    };
+
+/** Read one exact ordinary operation of this library. */
+export async function fetchLibraryFileOperationDetail(
+  token: string | null,
+  kind: DirectCommandLibraryKind,
+  libraryId: string,
+  taskId: string,
+  fetchImpl: FetchLike = fetch,
+): Promise<LibraryFileOperationDetailRead> {
+  if (!isSafeIdentifier(taskId) || libraryId.trim().length === 0) {
+    return { ok: false, status: 400, code: "invalid_request" };
+  }
+  const base = libraryFileOperationsBase(kind, libraryId).replace(
+    "/file-operations",
+    "/files/operations/",
+  );
+  let response: Response;
+  try {
+    response = await fetchImpl(`${base}${encodeURIComponent(taskId)}`, {
+      headers: directFilesReadHeaders(token),
+    });
+  } catch {
+    return { ok: false, status: 0, code: "transport_unavailable" };
+  }
+  if (!response.ok) {
+    const envelope = await readErrorEnvelope(response);
+    return {
+      ok: false,
+      status: response.status,
+      code:
+        typeof envelope.code === "string" && envelope.code.length > 0
+          ? envelope.code
+          : "request_rejected",
+      ...failureDetailsSpread(envelope.details),
+    };
+  }
+  try {
+    return {
+      ok: true,
+      model: normalizeLibraryFileOperationDetail(
+        await response.json(),
+        kind,
+        libraryId,
+        taskId,
+      ),
+    };
+  } catch {
+    return { ok: false, status: response.status, code: "malformed_response" };
+  }
+}
+
+/**
+ * Resolve one existing ordinary Task/run deep link to its exact library page.
+ *
+ * The backend answers from durable admitted evidence; a non-match keeps the
+ * operator on a bounded explanation instead of a guessed library or a generic
+ * organizing recovery surface.
+ */
+export async function fetchLibraryFileOperationOrigin(
+  token: string | null,
+  kind: DirectCommandLibraryKind,
+  taskId: string,
+  fetchImpl: FetchLike = fetch,
+): Promise<
+  | { readonly ok: true; readonly model: LibraryFileOperationOrigin }
+  | {
+      readonly ok: false;
+      readonly status: number;
+      readonly code: string;
+      readonly details?: AutomationMutationFailureDetails;
+    }
+> {
+  if (!isSafeIdentifier(taskId)) {
+    return { ok: false, status: 400, code: "invalid_request" };
+  }
+  let response: Response;
+  try {
+    response = await fetchImpl(
+      `/api/v1/files/operation-origin/${encodeURIComponent(taskId)}`,
+      { headers: directFilesReadHeaders(token) },
+    );
+  } catch {
+    return { ok: false, status: 0, code: "transport_unavailable" };
+  }
+  if (!response.ok) {
+    const envelope = await readErrorEnvelope(response);
+    return {
+      ok: false,
+      status: response.status,
+      code:
+        typeof envelope.code === "string" && envelope.code.length > 0
+          ? envelope.code
+          : "request_rejected",
+      ...failureDetailsSpread(envelope.details),
+    };
+  }
+  try {
+    return {
+      ok: true,
+      model: normalizeLibraryFileOperationOrigin(await response.json(), kind),
+    };
+  } catch {
+    return { ok: false, status: response.status, code: "malformed_response" };
   }
 }

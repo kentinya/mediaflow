@@ -301,6 +301,18 @@ def application(environ, start_response):
                 "mediaBatchTwoExists": (
                     root / "destination" / "Movies" / "Browser-Batch-Media-Two.txt"
                 ).exists(),
+                "resourceStatusOneExists": (
+                    root / "source" / "Browser-StatusOne-Resource.txt"
+                ).exists(),
+                "resourceStatusTwoExists": (
+                    root / "source" / "Browser-StatusTwo-Resource.txt"
+                ).exists(),
+                "mediaStatusOneExists": (
+                    root / "destination" / "Movies" / "Browser-StatusOne-Media.txt"
+                ).exists(),
+                "mediaStatusTwoExists": (
+                    root / "destination" / "Movies" / "Browser-StatusTwo-Media.txt"
+                ).exists(),
             },
         )
     return inventory.application(environ, start_response)
@@ -364,6 +376,12 @@ def main(argv: list[str] | None = None) -> int:
         recursive = library_root / f"Browser-Recursive-{kind}-Directory"
         recursive.mkdir()
         (recursive / "child.txt").write_text("recursive child", encoding="utf-8")
+        # Dedicated fixtures for the current-page operation-status journey, so
+        # its own batch Delete never consumes another journey's source files.
+        for suffix in ("StatusOne", "StatusTwo"):
+            (library_root / f"Browser-{suffix}-{kind}.txt").write_text(
+                f"{kind.lower()} status fixture {suffix}", encoding="utf-8"
+            )
     (managed_root / "source" / "Browser-Move-Resource.txt").write_text(
         "resource cross-storage move fixture", encoding="utf-8"
     )
@@ -392,6 +410,7 @@ def main(argv: list[str] | None = None) -> int:
         repository=repository,
         api=api,
         managed=managed,
+        storage_adapters=storage_adapters,
     )
     with make_server(
         args.host,

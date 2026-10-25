@@ -50,6 +50,7 @@ import {
   type TextEditorState,
 } from "./FileCommandDialogs";
 import { TransferDialog } from "./TransferDialog";
+import { LibraryFileOperationsDialog } from "./LibraryFileOperationsDialog";
 import { RowActionMenu } from "./RowActionMenu";
 import {
   fetchDeleteImpact,
@@ -117,6 +118,7 @@ type FilesDialog =
     }
   | { readonly kind: "editor"; readonly path: string }
   | { readonly kind: "remove_library"; readonly id: string }
+  | { readonly kind: "operations" }
   | null;
 
 interface EntryVersionEvidenceVm {
@@ -151,6 +153,18 @@ interface InitialBrowseState {
   readonly path: string;
   readonly invalidPath: boolean;
   readonly requestedLibraryId: string;
+  /**
+   * An exact ordinary operation Task a Tasks/run deep link proved belongs to
+   * this library.  It only pre-selects the local status entry; the read still
+   * resolves the durable document under this library's own authority.
+   */
+  readonly requestedOperationTaskId: string | null;
+}
+
+/** One Task identifier usable as a local selection hint, or nothing. */
+function readOperationTaskHint(value: string | null): string | null {
+  if (value === null || value.length === 0 || value.length > 128) return null;
+  return /^[A-Za-z0-9][A-Za-z0-9._:-]*$/.test(value) ? value : null;
 }
 
 const DIRECTORY_PRESENTATION_ORDER = [
@@ -304,7 +318,12 @@ export function removalFailureMessage(
 
 function readInitialBrowseState(): InitialBrowseState {
   if (typeof window === "undefined") {
-    return { path: "", invalidPath: false, requestedLibraryId: "" };
+    return {
+      path: "",
+      invalidPath: false,
+      requestedLibraryId: "",
+      requestedOperationTaskId: null,
+    };
   }
   const search = new URLSearchParams(window.location.search);
   const value = search.get("path") ?? "";
@@ -313,6 +332,9 @@ function readInitialBrowseState(): InitialBrowseState {
     path: isSafeRelativePath(value) ? value : "",
     invalidPath: value !== "" && !isSafeRelativePath(value),
     requestedLibraryId,
+    requestedOperationTaskId: readOperationTaskHint(
+      search.get("operationTaskId"),
+    ),
   };
 }
 
@@ -1429,10 +1451,12 @@ function FilesHeader({
   canAddResourceLibrary,
   addDisabledReason,
   onOpenDrawer,
+  onOpenOperations,
 }: {
   readonly canAddResourceLibrary: boolean;
   readonly addDisabledReason: string | null;
   readonly onOpenDrawer: () => void;
+  readonly onOpenOperations: () => void;
 }) {
   return (
     <header className="mf-files-header">
@@ -1443,6 +1467,16 @@ function FilesHeader({
         </p>
       </div>
       <div className="mf-files-header-actions">
+        {/* Reading this library's own durable operation status never depends on
+            the Add permission or on a resolvable Storage: a viewer keeps it. */}
+        <button
+          id="mf-files-operation-status-button"
+          className="mf-button mf-button-primary"
+          type="button"
+          onClick={onOpenOperations}
+        >
+          当前页面操作状态
+        </button>
         <button
           id="mf-add-resource-library-button"
           className="mf-button mf-button-primary"
@@ -1986,7 +2020,17 @@ export function StorageFilesPage() {
       }
     | undefined
   >();
-  const [dialog, setDialog] = useState<FilesDialog>(null);
+  // A proven Tasks/run deep link pre-selects the exact local operation.  The
+  // browser hint only selects; the durable read under this library's own
+  // authority still decides whether the operation is readable and what it says.
+  const [dialog, setDialog] = useState<FilesDialog>(() =>
+    initialBrowse.requestedOperationTaskId === null
+      ? null
+      : { kind: "operations" },
+  );
+  const [operationSelection, setOperationSelection] = useState<string | null>(
+    initialBrowse.requestedOperationTaskId,
+  );
   const [commandError, setCommandError] = useState<string | null>(null);
   const [commandResult, setCommandResult] =
     useState<DirectFileCommandResult | null>(null);
@@ -3030,6 +3074,10 @@ export function StorageFilesPage() {
               : "当前 Active 配置没有可用的已启用 Storage，请先启用 Storage"
         }
         onOpenDrawer={() => openDrawer("mf-add-resource-library-button")}
+        onOpenOperations={() => {
+          setOperationSelection(null);
+          setDialog({ kind: "operations" });
+        }}
       />
       {editLoadError !== null && (
         <div className="mf-files-banner" role="alert">
@@ -3641,6 +3689,18 @@ export function StorageFilesPage() {
             if (impact === null) return;
             confirmDelete(dialog.paths, impact.scopeDigest);
           }}
+          onInspectOperation={() => {
+            // The Delete result stays visible in its own dialog; the local
+            // status entry reads the same durable Task in this library.
+            setCommandError(null);
+            setCommandResult(null);
+            setPendingDelete(null);
+            setOperationSelection(
+              commandResult?.taskId ?? deleteStatusModel?.taskId ?? null,
+            );
+            setDialog({ kind: "operations" });
+            void queryClient.invalidateQueries({ queryKey: ["storage-files"] });
+          }}
           onClose={() => {
             setCommandError(null);
             setCommandResult(null);
@@ -3662,6 +3722,12 @@ export function StorageFilesPage() {
           admittedTaskId={admittedTransferId}
           error={transferError}
           onTerminal={handleTransferTerminal}
+          onInspectOperation={(taskId) => {
+            setTransferError(null);
+            setOperationSelection(taskId);
+            setDialog({ kind: "operations" });
+            void queryClient.invalidateQueries({ queryKey: ["storage-files"] });
+          }}
           onSubmit={({
             impact,
             conflictMode,
@@ -3688,6 +3754,19 @@ export function StorageFilesPage() {
             setDialog(null);
             void queryClient.invalidateQueries({ queryKey: ["storage-files"] });
             void queryClient.invalidateQueries({ queryKey: ["system-status"] });
+          }}
+        />
+      )}
+      {dialog?.kind === "operations" && (
+        <LibraryFileOperationsDialog
+          kind="resource"
+          libraryId={activeLibraryId}
+          libraryName={activeLibrary?.name ?? null}
+          initialTaskId={operationSelection}
+          onClose={() => {
+            setDialog(null);
+            setOperationSelection(null);
+            void queryClient.invalidateQueries({ queryKey: ["storage-files"] });
           }}
         />
       )}

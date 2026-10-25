@@ -45,6 +45,10 @@ from mediaflow.application.direct_file_transfers import (
     durable_transfer_read_service,
 )
 from mediaflow.application.execution_authorization import ExecutionAuthorizationService
+from mediaflow.application.library_file_operations import (
+    LibraryFileOperationError,
+    LibraryFileOperationHistoryService,
+)
 from mediaflow.application.manual_organize import ManualOrganizeIntentService
 from mediaflow.application.manual_organize_execution import ManualOrganizeExecutionService
 from mediaflow.application.manual_organize_preview import ManualOrganizePreviewService
@@ -960,6 +964,24 @@ class MediaFlowApi:
                 str(error),
                 details=error.details,
             )
+        except LibraryFileOperationError as error:
+            self._safe_audit(
+                environ,
+                request_id,
+                locals().get("principal"),
+                method,
+                path,
+                "library-file-operations",
+                "conflict" if error.status < 500 else "error",
+                error.status,
+            )
+            return self._error(
+                start_response,
+                error.status,
+                error.code,
+                str(error),
+                details={"sideEffects": "none", "retrySafe": error.status >= 500},
+            )
         except AutomationSettingsPublicationError as error:
             # Focused engine-settings publication failure: the four-field scope,
             # preserved previous Active and bounded next action stay explicit.
@@ -1676,6 +1698,35 @@ class MediaFlowApi:
             and method == "GET"
         )
         worker_route = parts[:3] == ["api", "v1", "workers"]
+        # The originating library's ordinary file-operation history, one exact
+        # operation and the deep-link origin resolution are durable reads of
+        # already-admitted work: they resolve no configuration, so a missing,
+        # unreadable, disabled or removed current Active must never hide them.
+        library_file_operation_route = method == "GET" and (
+            (
+                len(parts) == 5
+                and tuple(parts[:3])
+                in {
+                    ("api", "v1", "resource-libraries"),
+                    ("api", "v1", "media-libraries"),
+                }
+                and parts[4] == "file-operations"
+            )
+            or (
+                len(parts) == 7
+                and tuple(parts[:3])
+                in {
+                    ("api", "v1", "resource-libraries"),
+                    ("api", "v1", "media-libraries"),
+                }
+                and parts[4:6] == ["files", "operations"]
+            )
+            or (
+                len(parts) == 5
+                and parts[:3] == ["api", "v1", "files"]
+                and parts[3] == "operation-origin"
+            )
+        )
         resource_library_save_route = (
             parts == ["api", "v1", "resource-libraries"] and method == "POST"
         )
@@ -1693,6 +1744,7 @@ class MediaFlowApi:
             and not task_read_route
             and not worker_route
             and not operations_runs_read_route
+            and not library_file_operation_route
         ):
             # Transfer observation is a durable read of an already-admitted
             # task.  Keep the last published binding so a missing current
@@ -6011,6 +6063,90 @@ class MediaFlowApi:
             )
         if (
             len(parts) == 5
+            and parts[:3] == ["api", "v1", "resource-libraries"]
+            and parts[4] == "file-operations"
+            and method == "GET"
+        ):
+            # The originating library's own ordinary file-operation history.
+            # A durable read: it resolves no Active runtime, opens no Storage
+            # and creates no work, so a fresh page (or a process restarted
+            # during an Active outage) still lists exactly the operations this
+            # library admitted.
+            self._require(principal, ApiPermission.READ)
+            return self._library_file_operations_page(
+                start_response,
+                environ,
+                principal,
+                parts[3],
+                media_library=False,
+            )
+        if (
+            len(parts) == 5
+            and parts[:3] == ["api", "v1", "media-libraries"]
+            and parts[4] == "file-operations"
+            and method == "GET"
+        ):
+            # The MediaLibrary twin of the library-owned history read: the same
+            # durable behavior under the media kind's own authority, so an
+            # equal ResourceLibrary ID can never supply or read media work.
+            self._require(principal, ApiPermission.READ)
+            return self._library_file_operations_page(
+                start_response,
+                environ,
+                principal,
+                parts[3],
+                media_library=True,
+            )
+        if (
+            len(parts) == 7
+            and parts[:3] == ["api", "v1", "resource-libraries"]
+            and parts[4:6] == ["files", "operations"]
+            and method == "GET"
+        ):
+            # One ordinary operation of this exact library, rebuilt from its
+            # durable Task evidence.  A Task of another library or the other
+            # kind is a bounded refusal, never a rebound document.
+            self._require(principal, ApiPermission.READ)
+            return self._library_file_operation_detail(
+                start_response,
+                environ,
+                principal,
+                parts[3],
+                parts[6],
+                media_library=False,
+                binding=binding,
+            )
+        if (
+            len(parts) == 7
+            and parts[:3] == ["api", "v1", "media-libraries"]
+            and parts[4:6] == ["files", "operations"]
+            and method == "GET"
+        ):
+            self._require(principal, ApiPermission.READ)
+            return self._library_file_operation_detail(
+                start_response,
+                environ,
+                principal,
+                parts[3],
+                parts[6],
+                media_library=True,
+                binding=binding,
+            )
+        if (
+            len(parts) == 5
+            and parts[:3] == ["api", "v1", "files"]
+            and parts[3] == "operation-origin"
+            and method == "GET"
+        ):
+            # Resolve one existing ordinary Task/run deep link to the exact
+            # owning library page, or to a bounded non-match.  The read uses
+            # durable admitted evidence only and never guesses a library.
+            self._require(principal, ApiPermission.READ)
+            return self._library_file_operation_origin(
+                start_response, environ, parts[4], media_library=False
+            )
+        if (
+            len(parts) == 5
             and parts[:3] == ["api", "v1", "files"]
             and parts[4] == "previews"
             and method == "GET"
@@ -9525,6 +9661,34 @@ class MediaFlowApi:
         ):
             return "/api/v1/resource-libraries/{id}/files/deletes/{taskId}"
         if (
+            len(parts) == 5
+            and tuple(parts[:3])
+            in {
+                ("api", "v1", "resource-libraries"),
+                ("api", "v1", "media-libraries"),
+            }
+            and parts[4] == "file-operations"
+        ):
+            # The library-owned ordinary file-operation history names no Task
+            # identity in security audit route evidence.
+            return f"/api/v1/{parts[2]}/{{id}}/file-operations"
+        if (
+            len(parts) == 7
+            and tuple(parts[:3])
+            in {
+                ("api", "v1", "resource-libraries"),
+                ("api", "v1", "media-libraries"),
+            }
+            and parts[4:6] == ["files", "operations"]
+        ):
+            return f"/api/v1/{parts[2]}/{{id}}/files/operations/{{taskId}}"
+        if (
+            len(parts) == 5
+            and parts[:3] == ["api", "v1", "files"]
+            and parts[3] == "operation-origin"
+        ):
+            return "/api/v1/files/operation-origin/{taskId}"
+        if (
             len(parts) == 7
             and parts[:3] == ["api", "v1", "media-libraries"]
             and parts[4:6] == ["files", "deletes"]
@@ -10671,6 +10835,191 @@ class MediaFlowApi:
             200,
             self._with_transfer_worker_readiness(projection, media_library=media_library),
         )
+
+    def _library_file_operation_history(self, *, media_library: bool):
+        """The kind-pinned durable history reader over this process's rows."""
+
+        if self._repository is None:
+            return None
+        return LibraryFileOperationHistoryService(
+            self._repository,
+            library_kind=(LibraryKind.MEDIA if media_library else LibraryKind.RESOURCE),
+        )
+
+    def _library_file_operations_page(
+        self,
+        start_response: Callable,
+        environ: dict,
+        principal: ResolvedApiPrincipal,
+        library_id: str,
+        *,
+        media_library: bool,
+    ):
+        """One bounded page of this library's ordinary file operations.
+
+        The submitted cursor (if any) is bound to the exact library kind/ID it
+        was minted for and to the reading principal, so a cursor from another
+        kind, library or principal is refused as an invalid cursor instead of
+        being re-bound to a different population.
+        """
+
+        history = self._library_file_operation_history(media_library=media_library)
+        if history is None:
+            return self._error(
+                start_response,
+                503,
+                "library_file_operations_unavailable",
+                "the durable library file-operation history is unavailable",
+                details={
+                    "sideEffects": "none",
+                    "retrySafe": True,
+                    "nextAction": "restore database access, then refresh this page",
+                },
+            )
+        scope = (
+            f"media={int(media_library)};principal={principal.principal_id};library={library_id}"
+        )
+        limit, cursor = self._scoped_page_query(
+            environ, "library_file_operations", scope, "Library file operations"
+        )
+        try:
+            if cursor is not None and cursor.direction is CursorDirection.PREVIOUS:
+                document = history.window(
+                    library_id=library_id, limit=limit, before=cursor.position
+                )
+            else:
+                document = history.window(
+                    library_id=library_id,
+                    limit=limit,
+                    after=cursor.position if cursor else None,
+                )
+        except LibraryFileOperationError as error:
+            return self._error(
+                start_response,
+                error.status,
+                error.code,
+                str(error),
+                details={"sideEffects": "none", "retrySafe": True},
+            )
+        items = document.pop("items") if isinstance(document.get("items"), list) else []
+        previous_cursor = None
+        next_cursor = None
+        if items and document.get("hasPrevious"):
+            previous_cursor = encode_cursor(
+                "library_file_operations",
+                datetime.fromisoformat(str(items[0]["createdAt"])),
+                str(items[0]["taskId"]),
+                CursorDirection.PREVIOUS,
+                scope=scope,
+            )
+        if items and document.get("hasNext"):
+            next_cursor = encode_cursor(
+                "library_file_operations",
+                datetime.fromisoformat(str(items[-1]["createdAt"])),
+                str(items[-1]["taskId"]),
+                CursorDirection.NEXT,
+                scope=scope,
+            )
+        return self._response(
+            start_response,
+            200,
+            {
+                **document,
+                "items": items,
+                "previousCursor": previous_cursor,
+                "nextCursor": next_cursor,
+            },
+        )
+
+    def _library_file_operation_detail(
+        self,
+        start_response: Callable,
+        environ: dict,
+        principal: ResolvedApiPrincipal,
+        library_id: str,
+        task_id: str,
+        *,
+        media_library: bool,
+        binding=None,
+    ):
+        """One exact ordinary operation of this library.
+
+        The document is the durable read plus the backend-computed lifecycle
+        projection for this exact Task and principal.  A control therefore
+        exists only when the backend advertises it for the current durable
+        state; the read itself performs no Storage work, and this route never
+        executes the control it advertises.
+        """
+
+        self._require_empty_query(environ, "Library file operation detail")
+        history = self._library_file_operation_history(media_library=media_library)
+        if history is None:
+            return self._error(
+                start_response,
+                503,
+                "library_file_operations_unavailable",
+                "the durable library file-operation history is unavailable",
+                details={"sideEffects": "none", "retrySafe": True},
+            )
+        try:
+            document = history.detail(library_id=library_id, task_id=task_id)
+        except LibraryFileOperationError as error:
+            return self._error(
+                start_response,
+                error.status,
+                error.code,
+                str(error),
+                details={"sideEffects": "none", "retrySafe": True},
+            )
+        task = self._repository.get_task(str(document["taskId"]))
+        if task is not None:
+            service = TaskLifecycleService(
+                self._repository,
+                snapshot_validator=self._scope_continuations._snapshot_validator,
+                mutation_authority=(
+                    binding.scope_continuation_authority if binding is not None else None
+                ),
+            )
+            results = service.results(task.task_id)
+            document["lifecycle"] = self._task_lifecycle(
+                service,
+                task,
+                principal,
+                results=results,
+            )
+        return self._response(start_response, 200, document)
+
+    def _library_file_operation_origin(
+        self,
+        start_response: Callable,
+        environ: dict,
+        task_id: str,
+        *,
+        media_library: bool,
+    ):
+        """Resolve one Task deep link to its proven ordinary library origin."""
+
+        self._require_empty_query(environ, "Library file operation origin")
+        history = self._library_file_operation_history(media_library=media_library)
+        if history is None:
+            return self._error(
+                start_response,
+                503,
+                "library_file_operations_unavailable",
+                "the durable library file-operation history is unavailable",
+                details={"sideEffects": "none", "retrySafe": True},
+            )
+        try:
+            document = history.resolve(task_id=task_id)
+        except LibraryFileOperationError as error:
+            return self._error(
+                start_response,
+                error.status,
+                error.code,
+                str(error),
+                details={"sideEffects": "none", "retrySafe": True},
+            )
+        return self._response(start_response, 200, document)
 
     @classmethod
     def _files_direct_text_query(cls, environ: dict) -> str:

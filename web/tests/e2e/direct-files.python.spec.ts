@@ -602,3 +602,196 @@ for (const kind of ["resource", "media"] as const) {
     );
   });
 }
+
+/**
+ * 当前页面操作状态: one library page must be able to reopen its own durable
+ * ordinary operations after the browser hint is gone, after a real API restart
+ * and with independent per-operation outcomes.  Every command is admitted
+ * through the page's own toolbar/footer controls; nothing is seeded by
+ * inventing an entry point.
+ */
+async function statusBatchDeleteThroughNativePage(
+  page: Page,
+  kind: "resource" | "media",
+): Promise<void> {
+  // This journey's own two files only: another journey's batch Delete must
+  // never consume the fixtures that prove independent outcomes here.
+  await page.getByRole("button", { name: "列表视图" }).click();
+  await expect(page.getByRole("checkbox", { name: "选择全部" })).toBeVisible();
+  for (const suffix of ["StatusOne", "StatusTwo"]) {
+    await page
+      .getByRole("checkbox", {
+        name: `选择 Browser-${suffix}-${kind === "resource" ? "Resource" : "Media"}.txt`,
+      })
+      .check();
+  }
+  const submissions: string[] = [];
+  page.on("request", (request) => {
+    if (
+      request.method() === "POST" &&
+      request.url().includes("/files/commands")
+    ) {
+      submissions.push(request.url());
+    }
+  });
+  const footer = page.locator("footer.mf-files-footer");
+  await footer.getByRole("button", { name: "删除", exact: true }).click();
+  const confirmation = page.getByRole("dialog", { name: "删除确认" });
+  await expect(confirmation).toBeVisible();
+  await confirmation.getByRole("button", { name: "删除", exact: true }).click();
+  await expect(page.getByRole("dialog", { name: "删除进度" })).toBeVisible();
+  await expect.poll(() => submissions.length).toBe(1);
+  const worker = await page.request.post("/__harness__/run-files-worker");
+  expect(worker.ok()).toBe(true);
+  expect(await worker.json()).toMatchObject({ ran: true, status: "completed" });
+  const result = page.getByRole("dialog", { name: "删除结果" });
+  await expect(result).toBeVisible();
+  await expect(result.getByText(/删除已完成 2 项/)).toBeVisible();
+  await result.getByRole("button", { name: "关闭", exact: true }).click();
+  await expect(page.getByRole("checkbox", { name: "选择全部" })).toBeVisible();
+  // The real filesystem proves the independent effects.
+  const after = await page.request.get("/__harness__/files-state");
+  expect(after.ok()).toBe(true);
+  const state = (await after.json()) as Record<string, boolean>;
+  const prefix = kind === "resource" ? "resource" : "media";
+  expect(state[`${prefix}StatusOneExists`]).toBe(false);
+  expect(state[`${prefix}StatusTwoExists`]).toBe(false);
+}
+
+async function createFolderThroughNativePage(
+  page: Page,
+  kind: "resource" | "media",
+): Promise<string> {
+  const name = `Browser-Status-${kind === "resource" ? "Resource" : "Media"}`;
+  await page.getByRole("button", { name: "新建文件夹" }).click();
+  const dialog = page.getByRole("dialog", { name: "新建文件夹" });
+  await expect(dialog).toBeVisible();
+  await dialog.getByLabel("名称").fill(name);
+  await dialog.getByRole("button", { name: "创建", exact: true }).click();
+  await expect(dialog).toHaveCount(0);
+  // The grid tile carries the exact entry identity for both kinds.
+  await expect(
+    page.getByLabel(`文件条目 ${name}`, { exact: true }),
+  ).toBeVisible();
+  return name;
+}
+
+async function readOperationStatus(
+  page: Page,
+  testInfo: TestInfo,
+  kind: "resource" | "media",
+): Promise<void> {
+  const listUrl = `/api/v1/${
+    kind === "resource" ? "resource-libraries/source" : "media-libraries/movies"
+  }/file-operations`;
+  const dialog = page.getByRole("dialog", { name: /当前页面操作状态/ });
+  const authHeaders = { Authorization: `Bearer ${ADMIN_TOKEN}` };
+
+  // Two independent ordinary operations of this same library, both admitted
+  // through real page controls: one synchronous creation and one durable
+  // Worker-owned batch Delete.
+  await createFolderThroughNativePage(page, kind);
+  await statusBatchDeleteThroughNativePage(page, kind);
+
+  const open = page.getByRole("button", { name: "当前页面操作状态" });
+  await expect(open).toBeVisible();
+  await open.click();
+  await expect(dialog).toBeVisible();
+
+  // The creation is not hidden behind the Delete: both keep their own identity.
+  const createEntry = dialog.getByRole("button", { name: /操作 新建文件夹/ });
+  await expect(createEntry.first()).toBeVisible();
+  await expect(
+    dialog.getByRole("button", { name: /操作 删除/ }).first(),
+  ).toBeVisible();
+
+  // Selecting an operation reads its exact durable detail: stage, source,
+  // destination and the real item result.
+  await createEntry.first().click();
+  const selected = dialog.getByLabel("所选操作状态");
+  await expect(selected).toBeVisible();
+  await expect(selected.getByText("新建文件夹", { exact: true })).toBeVisible();
+  await expect(selected.getByText(/成功 1 \/ 失败 0/)).toBeVisible();
+  await expect(selected.getByText(/共 1 项/)).toBeVisible();
+  // The terminal creation advertises no further control.
+  await expect(selected.getByRole("button", { name: "请求暂停" })).toHaveCount(
+    0,
+  );
+  await dialog.screenshot({
+    path: testInfo.outputPath(`${kind}-operation-status-detail.png`),
+  });
+
+  // A narrow viewport keeps the same centered dialog usable and unclipped.
+  await page.setViewportSize({ width: 390, height: 844 });
+  await expect(dialog).toBeVisible();
+  await expect(
+    dialog.getByRole("button", { name: "关闭", exact: true }),
+  ).toBeVisible();
+  expect(
+    await page.evaluate(
+      () => document.documentElement.scrollWidth <= window.innerWidth + 1,
+    ),
+  ).toBe(true);
+  await dialog.screenshot({
+    path: testInfo.outputPath(`${kind}-operation-status-narrow.png`),
+  });
+  await page.setViewportSize({ width: 1536, height: 1024 });
+  await dialog.getByRole("button", { name: "关闭", exact: true }).click();
+  await expect(dialog).toHaveCount(0);
+
+  // Closing the dialog neither cancels nor replays anything: the durable list
+  // is unchanged, and a fresh page reads it again with no browser hint.
+  const beforeRestart = await page.request.get(listUrl, {
+    headers: authHeaders,
+  });
+  expect(beforeRestart.ok()).toBe(true);
+  const beforeDocument = (await beforeRestart.json()) as { total: number };
+  expect(beforeDocument.total).toBeGreaterThanOrEqual(2);
+
+  const restart = await page.request.post("/__harness__/restart");
+  expect(restart.ok()).toBe(true);
+  expect(await restart.json()).toMatchObject({ restarted: true });
+
+  await page.reload();
+  await page.getByLabel("API token").fill(ADMIN_TOKEN);
+  await page.getByRole("button", { name: "Connect" }).click();
+  await expect(
+    page.getByRole("heading", {
+      name: kind === "resource" ? "文件" : "媒体库",
+      exact: true,
+    }),
+  ).toBeVisible();
+  await page.getByRole("button", { name: "当前页面操作状态" }).click();
+  const reopened = page.getByRole("dialog", { name: /当前页面操作状态/ });
+  await expect(reopened).toBeVisible();
+  await expect(
+    reopened.getByRole("button", { name: /操作 新建文件夹/ }).first(),
+  ).toBeVisible();
+  await expect(
+    reopened.getByRole("button", { name: /操作 删除/ }).first(),
+  ).toBeVisible();
+  const afterRestart = await page.request.get(listUrl, {
+    headers: authHeaders,
+  });
+  expect(afterRestart.ok()).toBe(true);
+  expect(await afterRestart.json()).toMatchObject({
+    total: beforeDocument.total,
+  });
+  await reopened.getByRole("button", { name: "关闭", exact: true }).click();
+}
+
+test("ResourceLibrary Files reopens its own durable operation status", async ({
+  page,
+}, testInfo) => {
+  test.setTimeout(90_000);
+  await openFiles(page, "resource");
+  await readOperationStatus(page, testInfo, "resource");
+});
+
+test("MediaLibrary Files reopens its own durable operation status", async ({
+  page,
+}, testInfo) => {
+  test.setTimeout(90_000);
+  await openFiles(page, "media");
+  await readOperationStatus(page, testInfo, "media");
+});

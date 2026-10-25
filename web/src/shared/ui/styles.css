@@ -6082,3 +6082,115 @@ tr[aria-selected="true"] {
   padding-left: 18px;
   list-style: disc;
 }
+
+/* ------------------------------------------------------------------ */
+/* Library: current-page ordinary operation status                     */
+/* ------------------------------------------------------------------ */
+
+.mf-files-header-actions {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+}
+
+.mf-operation-list {
+  list-style: none;
+  margin: 0;
+  padding: 0;
+  display: grid;
+  gap: 8px;
+  max-height: 280px;
+  overflow-y: auto;
+}
+
+.mf-operation-entry {
+  display: grid;
+  gap: 4px;
+  width: 100%;
+  padding: 10px 12px;
+  border: 1px solid #d7e0ed;
+  border-radius: 8px;
+  background: #ffffff;
+  color: #14223c;
+  font: inherit;
+  text-align: left;
+  cursor: pointer;
+}
+
+.mf-operation-entry:hover,
+.mf-operation-entry:focus-visible {
+  border-color: var(--files-accent);
+  background: #f3f7ff;
+}
+
+.mf-operation-entry-selected,
+.mf-operation-entry-selected:hover,
+.mf-operation-entry-selected:focus-visible {
+  border-color: var(--files-accent);
+  background: #e6f0ff;
+}
+
+.mf-operation-entry-title {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 12px;
+}
+
+.mf-operation-entry-meta {
+  color: #53698e;
+  font-size: 13px;
+}
+
+.mf-operation-pager {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 12px;
+}
+
+.mf-operation-detail {
+  display: grid;
+  gap: 10px;
+  padding: 12px;
+  border: 1px solid #d7e0ed;
+  border-radius: 8px;
+  background: #fafbfc;
+}
+
+.mf-operation-detail h4 {
+  margin: 0;
+  font-size: 15px;
+}
+
+.mf-operation-facts {
+  display: grid;
+  grid-template-columns: minmax(84px, max-content) 1fr;
+  gap: 6px 14px;
+  margin: 0;
+  font-size: 14px;
+}
+
+.mf-operation-facts > div {
+  display: contents;
+}
+
+.mf-operation-facts dt {
+  color: #53698e;
+}
+
+.mf-operation-facts dd {
+  margin: 0;
+  color: #14223c;
+  overflow-wrap: anywhere;
+}
+
+@media (max-width: 640px) {
+  .mf-files-header-actions {
+    flex-wrap: wrap;
+  }
+
+  .mf-operation-facts {
+    grid-template-columns: 1fr;
+  }
+}

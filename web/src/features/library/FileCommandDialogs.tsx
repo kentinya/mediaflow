@@ -1,5 +1,4 @@
 import { useEffect, useRef, useState, type ReactNode } from "react";
-import { Link } from "@tanstack/react-router";
 import {
   MAX_TEXT_BYTES,
   isTextFileName,
@@ -401,6 +400,7 @@ export function DeleteImpactDialog({
   onRepeatAdmission,
   onClose,
   onRefreshImpact,
+  onInspectOperation,
 }: {
   readonly impact: DeleteImpactModel | null;
   readonly loading: boolean;
@@ -423,6 +423,13 @@ export function DeleteImpactDialog({
   readonly onRepeatAdmission?: () => void;
   readonly onClose: () => void;
   readonly onRefreshImpact: () => void;
+  /**
+   * Opens this page's own durable operation status with the exact admitted
+   * Delete pre-selected.  When the page supplies it, ordinary Delete results
+   * never send the operator to the Task Center: the same library page owns the
+   * read, the progress and the recovery.
+   */
+  readonly onInspectOperation?: (taskId: string) => void;
 }) {
   const done = result !== null;
   const unknown = admissionUnknown && result === null;
@@ -547,19 +554,23 @@ export function DeleteImpactDialog({
                 : " 页面会读取任务进度；刷新或重新连接不会再次提交删除。"}
             </p>
           )}
-          {result.taskId && (
+          {result.taskId !== undefined && onInspectOperation !== undefined && (
             <p className="mf-dialog-hint">
-              <Link
-                to="/operations/tasks/$taskId"
-                params={{ taskId: result.taskId }}
+              <button
+                type="button"
+                className="mf-link-button"
+                onClick={() => onInspectOperation(result.taskId as string)}
               >
-                在操作与任务中查看和恢复
-              </Link>
+                查看当前页面操作状态
+              </button>
             </p>
           )}
           {error !== null && (
             <p className="mf-dialog-error" role="alert">
-              {error} 已保存的任务不会重新提交；可前往操作与任务查看状态。
+              {error}{" "}
+              {onInspectOperation === undefined
+                ? "已保存的任务不会重新提交；请查看当前页面操作状态核对进度。"
+                : "已保存的任务不会重新提交；请通过“查看当前页面操作状态”核对进度。"}
             </p>
           )}
           {terminal && (result.failedItems ?? 0) > 0 && (

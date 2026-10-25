@@ -41,6 +41,7 @@ import {
   TextEditorDialog,
   type TextEditorState,
 } from "./FileCommandDialogs";
+import { LibraryFileOperationsDialog } from "./LibraryFileOperationsDialog";
 import { RowActionMenu } from "./RowActionMenu";
 import {
   MEDIA_LIBRARY_DELETE_IMPACT_QUERY_KEY,
@@ -112,6 +113,7 @@ type MediaFilesDialog =
       readonly operation: "copy" | "move";
       readonly paths: readonly string[];
     }
+  | { readonly kind: "operations" }
   | null;
 
 /** The row-local version facts Rename admission needs to echo back. */
@@ -144,6 +146,18 @@ interface InitialBrowseState {
   readonly path: string;
   readonly invalidPath: boolean;
   readonly requestedLibraryId: string;
+  /**
+   * An exact ordinary operation Task a Tasks/run deep link proved belongs to
+   * this library.  It only pre-selects the local status entry; the read still
+   * resolves the durable document under this library's own authority.
+   */
+  readonly requestedOperationTaskId: string | null;
+}
+
+/** One Task identifier usable as a local selection hint, or nothing. */
+function readOperationTaskHint(value: string | null): string | null {
+  if (value === null || value.length === 0 || value.length > 128) return null;
+  return /^[A-Za-z0-9][A-Za-z0-9._:-]*$/.test(value) ? value : null;
 }
 
 function isSafeRelativePath(value: string): boolean {
@@ -164,7 +178,12 @@ function isSafeRelativePath(value: string): boolean {
 
 function readInitialBrowseState(): InitialBrowseState {
   if (typeof window === "undefined") {
-    return { path: "", invalidPath: false, requestedLibraryId: "" };
+    return {
+      path: "",
+      invalidPath: false,
+      requestedLibraryId: "",
+      requestedOperationTaskId: null,
+    };
   }
   const search = new URLSearchParams(window.location.search);
   const value = search.get("path") ?? "";
@@ -173,6 +192,9 @@ function readInitialBrowseState(): InitialBrowseState {
     path: isSafeRelativePath(value) ? value : "",
     invalidPath: value !== "" && !isSafeRelativePath(value),
     requestedLibraryId,
+    requestedOperationTaskId: readOperationTaskHint(
+      search.get("operationTaskId"),
+    ),
   };
 }
 
@@ -625,7 +647,7 @@ export function mediaLibraryCommandFailure(
     case "files_direct_path_locked":
       return "目标正被其他任务占用,未做修改;请稍后重试。";
     case "files_direct_task_paused":
-      return "该命令的任务已在执行前被暂停,未做修改;请在操作与任务中继续该任务。";
+      return "该命令的任务已在执行前被暂停,未做修改;请在“当前页面操作状态”中查看并继续该任务。";
     case "files_direct_storage_unavailable":
     case "files_direct_connection_failed":
     case "files_direct_timeout":
@@ -1766,10 +1788,12 @@ function MediaLibraryHeader({
   canAdd,
   addDisabledReason,
   onOpenDrawer,
+  onOpenOperations,
 }: {
   readonly canAdd: boolean;
   readonly addDisabledReason: string | null;
   readonly onOpenDrawer: () => void;
+  readonly onOpenOperations: () => void;
 }) {
   return (
     <header className="mf-files-header">
@@ -1780,6 +1804,16 @@ function MediaLibraryHeader({
         </p>
       </div>
       <div className="mf-files-header-actions">
+        {/* Reading this library's own durable operation status never depends on
+            the Add permission or a resolvable Storage: a viewer keeps it. */}
+        <button
+          id="mf-media-library-operation-status-button"
+          className="mf-button mf-button-primary"
+          type="button"
+          onClick={onOpenOperations}
+        >
+          当前页面操作状态
+        </button>
         <button
           id="mf-add-media-library-button"
           className="mf-button mf-button-primary"
@@ -1846,7 +1880,17 @@ export function MediaLibraryFilesPage() {
   // Direct-file command state.  A command dialog is operator-invoked only: it
   // never survives mount, reload or authentication reconnect, and an admitted
   // command is never re-submitted automatically.
-  const [dialog, setDialog] = useState<MediaFilesDialog>(null);
+  // A proven Tasks/run deep link pre-selects the exact local operation.  The
+  // browser hint only selects; the durable read under this library's own
+  // authority still decides whether the operation is readable and what it says.
+  const [dialog, setDialog] = useState<MediaFilesDialog>(() =>
+    initialBrowse.requestedOperationTaskId === null
+      ? null
+      : { kind: "operations" },
+  );
+  const [operationSelection, setOperationSelection] = useState<string | null>(
+    initialBrowse.requestedOperationTaskId,
+  );
   const [commandError, setCommandError] = useState<string | null>(null);
   const [commandResult, setCommandResult] =
     useState<DirectFileCommandResult | null>(null);
@@ -2852,6 +2896,10 @@ export function MediaLibraryFilesPage() {
         canAdd={canAddMediaLibrary}
         addDisabledReason={addDisabledReason}
         onOpenDrawer={() => openDrawer("mf-add-media-library-button")}
+        onOpenOperations={() => {
+          setOperationSelection(null);
+          setDialog({ kind: "operations" });
+        }}
       />
       {editLoadError !== null && (
         <div className="mf-files-banner" role="alert">
@@ -3333,6 +3381,18 @@ export function MediaLibraryFilesPage() {
             if (impactModel === null) return;
             confirmDelete(dialog.paths, impactModel.scopeDigest);
           }}
+          onInspectOperation={() => {
+            setCommandError(null);
+            setCommandResult(null);
+            setPendingDelete(null);
+            setOperationSelection(
+              commandResult?.taskId ?? deleteStatusModel?.taskId ?? null,
+            );
+            setDialog({ kind: "operations" });
+            void queryClient.invalidateQueries({
+              queryKey: [MEDIA_LIBRARY_FILES_QUERY_KEY],
+            });
+          }}
           onClose={() => {
             setCommandError(null);
             setCommandResult(null);
@@ -3357,6 +3417,15 @@ export function MediaLibraryFilesPage() {
           admittedTaskId={admittedTransferId}
           error={transferError}
           onTerminal={handleTransferTerminal}
+          onInspectOperation={(taskId) => {
+            setTransferError(null);
+            setAdmittedTransferId(null);
+            setOperationSelection(taskId);
+            setDialog({ kind: "operations" });
+            void queryClient.invalidateQueries({
+              queryKey: [MEDIA_LIBRARY_FILES_QUERY_KEY],
+            });
+          }}
           onSubmit={({
             impact,
             conflictMode,
@@ -3385,6 +3454,21 @@ export function MediaLibraryFilesPage() {
               queryKey: [MEDIA_LIBRARY_FILES_QUERY_KEY],
             });
             void queryClient.invalidateQueries({ queryKey: ["system-status"] });
+          }}
+        />
+      )}
+      {dialog?.kind === "operations" && (
+        <LibraryFileOperationsDialog
+          kind="media"
+          libraryId={activeLibraryId}
+          libraryName={activeLibrary?.name ?? null}
+          initialTaskId={operationSelection}
+          onClose={() => {
+            setDialog(null);
+            setOperationSelection(null);
+            void queryClient.invalidateQueries({
+              queryKey: [MEDIA_LIBRARY_FILES_QUERY_KEY],
+            });
           }}
         />
       )}

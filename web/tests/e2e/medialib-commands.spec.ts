@@ -263,8 +263,9 @@ test("deleting requires one explicit confirmation of the bounded impact", async 
   const result = page.getByRole("dialog", { name: "删除结果" });
   await expect(result).toBeVisible();
   await expect(result.getByText(/已删除/)).toBeVisible();
+  // The ordinary Delete result stays on its own library page.
   await expect(
-    result.getByRole("link", { name: "在操作与任务中查看和恢复" }),
+    result.getByRole("button", { name: "查看当前页面操作状态" }),
   ).toBeVisible();
   await expect(result.getByRole("alert")).toHaveCount(0);
   await result.getByRole("button", { name: "关闭", exact: true }).click();

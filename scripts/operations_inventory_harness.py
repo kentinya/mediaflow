@@ -808,8 +808,14 @@ class AppState:
         repository: SQLiteTaskRepository,
         api: MediaFlowApi,
         managed: ManagedHarnessContext,
+        storage_adapters: dict[str, object] | None = None,
     ) -> None:
         self._database = database
+        #: The Active Storage adapters this isolated harness serves.  A restart
+        #: rebuilds the API object over the same durable rows, so the same
+        #: adapters must be re-bound; otherwise the reopened API would serve
+        #: different Storage than the fixture it just admitted work against.
+        self.storage_adapters = storage_adapters
         self._lock = threading.Lock()
         self._manual_lock = threading.Lock()
         self._pipeline_lock = threading.Lock()
@@ -848,6 +854,7 @@ class AppState:
             self.api = build_api(
                 self.repository,
                 managed=self.managed,
+                storage_adapters=self.storage_adapters,
             )
             # The registered Worker's heartbeat must stay claimable across a
             # harness restart; a real resident worker heartbeats continuously.

@@ -13467,6 +13467,113 @@ class SQLiteTaskRepository:
             ).fetchone()
         return self._files_transfer(row) if row else None
 
+    def library_file_operations_window(
+        self,
+        *,
+        commands: tuple[str, ...],
+        library_identity: str,
+        limit: int = 50,
+        after: tuple[datetime, str] | None = None,
+        before: tuple[datetime, str] | None = None,
+    ) -> tuple[tuple[PersistentTask, ...], int, bool, bool]:
+        """One bounded page of ordinary file work originating in one library.
+
+        The population is derived from durable admitted evidence only.  A row
+        belongs to a library when *any* of its TaskItems was admitted under
+        that library's exact scoped identity (``media:``-namespaced for a
+        MediaLibrary, bare for a ResourceLibrary) and its Task command is one
+        of the submitted ordinary command families (or a derived
+        ``<family>:<identity>`` continuation of one).  The identity therefore
+        survives an Active-configuration change, a removed/disabled library,
+        a directory change and a process restart, and it is never inferred
+        from a display label, a filename, a Job link or today's Active.
+
+        ``limit+1`` rows are fetched internally, both page directions keep one
+        newest-first ordering, and the reported total counts the same exact
+        predicate without the cursor, so paging never narrows the population.
+        """
+
+        if isinstance(limit, bool) or not isinstance(limit, int) or not 1 <= limit <= 100:
+            raise ValueError("library file operation page limit must be between 1 and 100")
+        if not commands:
+            raise ValueError("library file operation page requires a command family")
+        if not isinstance(library_identity, str) or not library_identity:
+            raise ValueError("library file operation page requires a library identity")
+        if after is not None and before is not None:
+            raise ValueError("after and before are mutually exclusive")
+        families: list[str] = []
+        parameters: list[object] = []
+        for command in dict.fromkeys(commands):
+            families.append("(tasks.command = ? OR tasks.command LIKE ? ESCAPE '\\')")
+            parameters.extend((command, _command_family_pattern(command)))
+        predicate = (
+            f"({' OR '.join(families)}) AND EXISTS (SELECT 1 FROM task_items origin_item "
+            "WHERE origin_item.task_id = tasks.task_id "
+            "AND origin_item.resource_library_id = ?)"
+        )
+        parameters.append(library_identity)
+        page_clauses = [predicate]
+        page_parameters = list(parameters)
+        reverse = before is not None
+        if after is not None:
+            timestamp = after[0].isoformat()
+            page_clauses.append(
+                "(tasks.created_at < ? OR (tasks.created_at = ? AND tasks.task_id < ?))"
+            )
+            page_parameters.extend((timestamp, timestamp, after[1]))
+        elif before is not None:
+            timestamp = before[0].isoformat()
+            page_clauses.append(
+                "(tasks.created_at > ? OR (tasks.created_at = ? AND tasks.task_id > ?))"
+            )
+            page_parameters.extend((timestamp, timestamp, before[1]))
+        order = "ASC" if reverse else "DESC"
+        page_sql = (
+            "SELECT tasks.* FROM tasks WHERE "
+            + " AND ".join(page_clauses)
+            + f" ORDER BY tasks.created_at {order}, tasks.task_id {order} LIMIT ?"
+        )
+        count_sql = f"SELECT COUNT(*) AS total FROM tasks WHERE {predicate}"
+        with self._lock:
+            self._connection.execute("BEGIN")
+            try:
+                rows = self._connection.execute(page_sql, (*page_parameters, limit + 1)).fetchall()
+                total = int(self._connection.execute(count_sql, parameters).fetchone()["total"])
+            except BaseException:
+                self._connection.execute("ROLLBACK")
+                raise
+            else:
+                self._connection.execute("COMMIT")
+        if reverse:
+            has_previous = len(rows) > limit
+            rows = list(reversed(rows[:limit]))
+            has_next = bool(rows)
+        else:
+            has_next = len(rows) > limit
+            rows = rows[:limit]
+            has_previous = after is not None
+        return tuple(self._task(row) for row in rows), total, has_next, has_previous
+
+    def library_file_operation_display(
+        self, task_ids: tuple[str, ...]
+    ) -> dict[str, tuple[str | None, str | None]]:
+        """The recorded display scope of each submitted Task, when admitted.
+
+        Legacy rows without display evidence simply contribute nothing: the
+        read never backfills a scope from today's Active configuration.
+        """
+
+        if not task_ids:
+            return {}
+        placeholders = ", ".join("?" for _ in task_ids)
+        with self._lock:
+            rows = self._connection.execute(
+                "SELECT task_id, source_scope, target_scope FROM operations_run_display "
+                f"WHERE task_id IN ({placeholders})",
+                tuple(task_ids),
+            ).fetchall()
+        return {str(row["task_id"]): (row["source_scope"], row["target_scope"]) for row in rows}
+
     def find_files_delete_transfer(
         self,
         *,

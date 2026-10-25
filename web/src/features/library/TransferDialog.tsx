@@ -236,6 +236,7 @@ export function TransferDialog({
   onSubmit,
   onImpactFailure,
   onTerminal,
+  onInspectOperation,
   onClose,
 }: {
   readonly state: TransferDialogState;
@@ -255,6 +256,12 @@ export function TransferDialog({
   readonly onImpactFailure: (message: string) => void;
   /** Fired once when the followed transfer reaches a terminal projection. */
   readonly onTerminal: (projection: TransferProjectionModel) => void;
+  /**
+   * Opens this page's own durable operation status with the admitted transfer
+   * pre-selected.  A Copy/Move result therefore stays inside its originating
+   * library page instead of sending the operator to the Task Center.
+   */
+  readonly onInspectOperation?: (taskId: string) => void;
   readonly onClose: () => void;
 }) {
   const queryClient = useQueryClient();
@@ -491,6 +498,8 @@ export function TransferDialog({
   const availableActions = (projection?.actions ?? []).filter(
     (action) => action.available,
   );
+  const inspectable =
+    done && admittedTaskId !== null && onInspectOperation !== undefined;
   return (
     <ModalDialog
       title={title}
@@ -645,6 +654,17 @@ export function TransferDialog({
                 </div>
               )}
               <p className="mf-dialog-hint">{projection.nextAction}</p>
+              {inspectable && (
+                <p className="mf-dialog-hint">
+                  <button
+                    type="button"
+                    className="mf-link-button"
+                    onClick={() => onInspectOperation(admittedTaskId as string)}
+                  >
+                    查看当前页面操作状态
+                  </button>
+                </p>
+              )}
             </>
           )}
         </>

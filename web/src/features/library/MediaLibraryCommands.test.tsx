@@ -827,8 +827,10 @@ describe("MediaLibrary Files command surface", () => {
       await within(dialog).findByRole("heading", { name: "删除结果" }),
     ).toBeVisible();
     expect(within(dialog).getByText(/已删除/)).toBeVisible();
+    // The ordinary Delete result stays on its own library page: the durable
+    // readback is the local operation status, never the Task Center.
     expect(
-      within(dialog).getByRole("link", { name: /在操作与任务中查看和恢复/ }),
+      within(dialog).getByRole("button", { name: "查看当前页面操作状态" }),
     ).toBeVisible();
     await user.click(within(dialog).getByRole("button", { name: "关闭" }));
   });
@@ -931,7 +933,7 @@ describe("MediaLibrary Files command surface", () => {
     const status = within(dialog).getByRole("status");
     expect(collapse(status.textContent)).toContain("删除已完成2项");
     expect(collapse(status.textContent)).toContain("失败或待核实1项");
-    expect(dialogText(dialog)).toContain("在操作与任务中查看和恢复");
+    expect(dialogText(dialog)).toContain("查看当前页面操作状态");
     expect(
       await within(dialog).findByText(/部分项目失败或结果待核实；未自动重试/),
     ).toBeVisible();
