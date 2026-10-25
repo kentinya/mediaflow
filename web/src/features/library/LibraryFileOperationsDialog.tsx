@@ -16,7 +16,12 @@
  */
 
 import { useEffect, useMemo, useRef, useState } from "react";
-import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
+import {
+  useInfiniteQuery,
+  useMutation,
+  useQuery,
+  useQueryClient,
+} from "@tanstack/react-query";
 import type { DirectCommandLibraryKind } from "../../entities/library/direct-files";
 import {
   LIBRARY_OPERATION_CERTAINTY_LABELS,
@@ -24,6 +29,8 @@ import {
   LIBRARY_OPERATION_ITEM_STATUS_LABELS,
   libraryOperationHasProgress,
   libraryOperationStateLabel,
+  type LibraryFileOperationChild,
+  type LibraryFileOperationDetail,
   type LibraryFileOperationEntry,
   type LibraryFileOperationItem,
 } from "../../entities/library/file-operations";
@@ -37,6 +44,8 @@ import { useAuthToken } from "../../shared/api/auth-context";
 import { ModalDialog } from "./FileCommandDialogs";
 
 const PAGE_LIMIT = 20;
+/** The bounded item page the local detail reads (and continues). */
+const ITEM_PAGE_LIMIT = 50;
 
 /** The bounded copy of one read failure; never raw server text. */
 function readFailureMessage(code: string): string {
@@ -122,6 +131,41 @@ function StageList({
   );
 }
 
+function ChildEvidence({
+  child,
+}: {
+  readonly child: LibraryFileOperationChild;
+}) {
+  const statusLabel =
+    LIBRARY_OPERATION_ITEM_STATUS_LABELS[child.status] ?? child.status;
+  const effectLabel =
+    LIBRARY_OPERATION_EFFECT_LABELS[child.effect] ?? child.effect;
+  return (
+    <li className="mf-operation-child">
+      <span className="mf-operation-entry-title">
+        <strong>{child.path}</strong>
+        <span className="mf-status-badge">{statusLabel}</span>
+      </span>
+      {child.destination !== "" && child.destination !== child.path && (
+        <span className="mf-operation-entry-meta">
+          目标：{child.destination}
+        </span>
+      )}
+      <span className="mf-operation-entry-meta">效果：{effectLabel}</span>
+      {child.checkpoints.length > 0 && (
+        <span className="mf-operation-entry-meta">
+          已完成步骤：{child.checkpoints.join("、")}
+        </span>
+      )}
+      {child.failure !== null && (
+        <span className="mf-operation-item-failure">
+          {child.failure.message}
+        </span>
+      )}
+    </li>
+  );
+}
+
 function ItemEvidence({ item }: { readonly item: LibraryFileOperationItem }) {
   const statusLabel =
     LIBRARY_OPERATION_ITEM_STATUS_LABELS[item.status] ?? item.status;
@@ -155,6 +199,26 @@ function ItemEvidence({ item }: { readonly item: LibraryFileOperationItem }) {
           {item.failure.message}
         </span>
       )}
+      {item.children.length > 0 && (
+        <>
+          <span className="mf-operation-entry-meta">
+            已记录的子项（{item.children.length} 项）：
+          </span>
+          <ul className="mf-operation-child-list">
+            {item.children.map((child) => (
+              <ChildEvidence
+                key={`${item.itemId}:${child.path}`}
+                child={child}
+              />
+            ))}
+          </ul>
+          {item.childrenTruncated && (
+            <span className="mf-operation-entry-meta">
+              该条目的子项记录已按上限截断。
+            </span>
+          )}
+        </>
+      )}
       <span className="mf-operation-entry-meta">下一步：{item.nextAction}</span>
     </li>
   );
@@ -175,23 +239,55 @@ function OperationDetail({
 }) {
   const queryClient = useQueryClient();
   const [controlError, setControlError] = useState<string | null>(null);
-  const detailQuery = useQuery({
+  // One item page at a time, over the backend's own exact continuation
+  // position: a legitimate directory Delete owns one admitted item per child,
+  // so the operator must be able to reach every recorded result — including a
+  // refused child that settled after the first page — without leaving the
+  // local dialog.  Each page is a separate read; loading more never re-runs or
+  // replays any operation.
+  const itemPages = useInfiniteQuery({
     queryKey: ["library-file-operation-detail", kind, libraryId, taskId],
-    queryFn: () =>
-      fetchLibraryFileOperationDetail(token, kind, libraryId, taskId),
+    queryFn: ({ pageParam }) =>
+      fetchLibraryFileOperationDetail(token, kind, libraryId, taskId, {
+        limit: ITEM_PAGE_LIMIT,
+        cursor: pageParam,
+      }),
+    initialPageParam: null as string | null,
+    getNextPageParam: (last) =>
+      last.ok ? (last.model.nextCursor ?? undefined) : undefined,
     enabled: token !== null && libraryId !== "" && taskId !== "",
     retry: false,
     refetchInterval: (query) => {
-      const data = query.state.data;
+      const pages = query.state.data?.pages;
+      const last = pages === undefined ? undefined : pages[pages.length - 1];
       // Only a still-running operation is polled; a terminal one keeps its
       // recorded outcome and stops the read.
-      if (data && data.ok && data.model.terminal) return false;
+      if (last !== undefined && last.ok && last.model.terminal) return false;
       return 2000;
     },
   });
-  const read = detailQuery.data;
-  const detail = read !== undefined && read.ok ? read.model : null;
-  const lifecycle = detail?.lifecycle ?? null;
+  const pages = useMemo(() => itemPages.data?.pages ?? [], [itemPages.data]);
+  const firstPage = pages.length > 0 ? pages[0] : undefined;
+  const lastPage = pages.length > 0 ? pages[pages.length - 1] : undefined;
+  const read = firstPage;
+  const detail: LibraryFileOperationDetail | null =
+    firstPage !== undefined && firstPage.ok ? firstPage.model : null;
+  // The pages are consecutive continuations of one operation, so the item list
+  // is their exact concatenation; the last page owns the aggregate state, its
+  // certainty and the remaining continuation.
+  const items = useMemo(
+    () => pages.flatMap((page) => (page.ok ? page.model.items : [])),
+    [pages],
+  );
+  const lastDetail =
+    lastPage !== undefined && lastPage.ok ? lastPage.model : null;
+  const lifecycle = firstPage?.ok ? firstPage.model.lifecycle : null;
+  const readFailureCode =
+    firstPage !== undefined && !firstPage.ok ? firstPage.code : null;
+  const continuationFailure =
+    pages.length > 1 && lastPage !== undefined && !lastPage.ok
+      ? lastPage.code
+      : null;
   const available = useMemo(
     () => (lifecycle?.actions ?? []).filter((item) => item.available),
     [lifecycle],
@@ -212,12 +308,12 @@ function OperationDetail({
     onSuccess: (result) => {
       if (!result.ok) {
         setControlError(controlFailureMessage(result.code));
-        void detailQuery.refetch();
+        void itemPages.refetch();
         return;
       }
       // A refused or accepted control never repeats itself: the detail read
       // reconciles the durable state and the page refreshes its live files.
-      void detailQuery.refetch();
+      void itemPages.refetch();
       onRefreshList();
       void queryClient.invalidateQueries({ queryKey: ["storage-files"] });
       void queryClient.invalidateQueries({ queryKey: ["media-library-files"] });
@@ -227,24 +323,24 @@ function OperationDetail({
     },
   });
 
-  if (read === undefined) {
+  if (read === undefined || detail === null) {
     return (
       <p className="mf-dialog-hint" role="status">
         正在读取该操作的持久状态…
       </p>
     );
   }
-  if (!read.ok) {
+  if (readFailureCode !== null) {
     return (
       <>
         <p className="mf-dialog-error" role="alert">
-          {readFailureMessage(read.code)}
+          {readFailureMessage(readFailureCode)}
         </p>
         <p className="mf-dialog-hint">
           <button
             type="button"
             className="mf-link-button"
-            onClick={() => void detailQuery.refetch()}
+            onClick={() => void itemPages.refetch()}
           >
             重新读取该操作
           </button>
@@ -252,8 +348,10 @@ function OperationDetail({
       </>
     );
   }
-  if (detail === null) return null;
-  const uncertain = detail.durableState === "mutation_effect_uncertain";
+  // The aggregate state and certainty always come from the newest page, so a
+  // continued item list and the operation-level facts can never disagree.
+  const aggregate = lastDetail ?? detail;
+  const uncertain = aggregate.durableState === "mutation_effect_uncertain";
   return (
     <>
       <dl className="mf-operation-facts">
@@ -281,18 +379,19 @@ function OperationDetail({
         <div>
           <dt>项目结果</dt>
           <dd>
-            成功 {detail.succeededItems} / 失败 {detail.failedItems} / 跳过{" "}
-            {detail.skippedItems} / 取消 {detail.cancelledItems} / 待处理{" "}
-            {detail.pendingItems} / 共 {detail.totalItems} 项
+            成功 {aggregate.succeededItems} / 失败 {aggregate.failedItems} /
+            跳过 {aggregate.skippedItems} / 取消 {aggregate.cancelledItems} /
+            待处理 {aggregate.pendingItems} / 共 {aggregate.totalItems} 项
           </dd>
         </div>
         <div>
           <dt>已记录影响</dt>
           <dd>
-            {detail.effectCertainty === null
+            {aggregate.effectCertainty === null
               ? "不可用（未记录影响确定性）"
-              : (LIBRARY_OPERATION_CERTAINTY_LABELS[detail.effectCertainty] ??
-                detail.effectCertainty)}
+              : (LIBRARY_OPERATION_CERTAINTY_LABELS[
+                  aggregate.effectCertainty
+                ] ?? aggregate.effectCertainty)}
           </dd>
         </div>
         <div>
@@ -307,31 +406,50 @@ function OperationDetail({
           该操作存在结果不确定的项目；系统不会自动重试。请刷新来源与目标目录核实实际状态后再决定下一步。
         </p>
       )}
-      {detail.nextAction !== null && (
-        <p className="mf-dialog-hint">{detail.nextAction}</p>
+      {aggregate.nextAction !== null && (
+        <p className="mf-dialog-hint">{aggregate.nextAction}</p>
       )}
-      {detail.items.length > 0 && (
+      {items.length > 0 && (
         <div className="mf-operation-items">
           <h5>逐项结果</h5>
           <ul className="mf-operation-item-list">
-            {detail.items.map((item) => (
+            {items.map((item) => (
               <ItemEvidence key={item.itemId} item={item} />
             ))}
           </ul>
-          {detail.itemsTruncated && (
+          <p className="mf-dialog-hint" role="status">
+            已显示 {items.length} / {aggregate.itemTotal} 项逐项证据。
+          </p>
+          {itemPages.hasNextPage && (
             <p className="mf-dialog-hint">
-              仅显示前 {detail.items.length}{" "}
-              项的逐项证据；更早的记录仍保留在任务中。
+              <button
+                type="button"
+                className="mf-button mf-button-secondary"
+                disabled={itemPages.isFetchingNextPage}
+                onClick={() => void itemPages.fetchNextPage()}
+              >
+                加载更多逐项结果
+              </button>
+            </p>
+          )}
+          {!itemPages.hasNextPage && lastDetail?.itemsTruncated === true && (
+            <p className="mf-dialog-hint">
+              仍有逐项证据未显示；请重新读取该操作以继续。
+            </p>
+          )}
+          {continuationFailure !== null && (
+            <p className="mf-dialog-error" role="alert">
+              {readFailureMessage(continuationFailure)}
             </p>
           )}
         </div>
       )}
-      {detail.items.length === 0 && (
+      {items.length === 0 && (
         <p className="mf-dialog-hint">
           该操作尚未记录任何逐项结果；这不代表它已成功。
         </p>
       )}
-      {libraryOperationHasProgress(detail) && !detail.terminal && (
+      {libraryOperationHasProgress(aggregate) && !aggregate.terminal && (
         <p className="mf-dialog-hint" role="status">
           该操作仍在进行；关闭本窗口不会取消或重放它。
         </p>
@@ -351,7 +469,7 @@ function OperationDetail({
               onClick={() =>
                 controlMutation.mutate({
                   action: action.action,
-                  expectedVersion: lifecycle?.version ?? detail.version,
+                  expectedVersion: lifecycle?.version ?? aggregate.version,
                 })
               }
             >

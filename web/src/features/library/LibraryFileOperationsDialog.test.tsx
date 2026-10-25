@@ -203,6 +203,15 @@ interface StubOptions {
   readonly lifecycle?: ReturnType<typeof lifecycleFor>;
   readonly detail?: Record<string, unknown>;
   readonly originIds?: readonly string[];
+  /**
+   * Further item pages of the selected operation, keyed by the cursor that
+   * requests them.  The page's own items stay in ``detail.items``.
+   */
+  readonly detailPages?: readonly {
+    readonly cursor: string;
+    readonly items: readonly unknown[];
+    readonly nextCursor?: string | null;
+  }[];
   readonly historicalOrigins?: readonly {
     readonly libraryId: string;
     readonly items: readonly unknown[];
@@ -227,11 +236,30 @@ function stubPage(items: readonly unknown[], options: StubOptions = {}) {
             options.detailStatus,
           );
         }
-        const taskId = url.split("/").pop() as string;
+        // The real detail route accepts one bounded item page, so the stub
+        // reads the Task identity from the path and answers with the next page
+        // the caller's cursor names.
+        const [path, query = ""] = url.split("?");
+        const taskId = path.split("/").pop() as string;
+        const cursor = new URLSearchParams(query).get("cursor");
+        const detailPages = options.detailPages ?? [];
+        const requested = options.detail ?? {};
+        const itemPage =
+          cursor === null
+            ? (requested.items ?? [])
+            : (detailPages.find((item) => item.cursor === cursor)?.items ?? []);
+        const nextCursor =
+          cursor === null
+            ? (detailPages[0]?.cursor ?? null)
+            : (detailPages.find((item) => item.cursor === cursor)?.nextCursor ??
+              null);
         return jsonResponse(
           operation({
             taskId,
-            ...(options.detail ?? {}),
+            ...requested,
+            items: itemPage,
+            itemsTruncated: nextCursor !== null,
+            nextCursor,
             ...(options.lifecycle === undefined
               ? {}
               : { lifecycle: options.lifecycle }),
@@ -586,9 +614,135 @@ describe("current page operation status", () => {
     expect(within(selected).getAllByText(/已完成变更/).length).toBeGreaterThan(
       0,
     );
-    // The known-effect certainty of the whole operation is shown.
-    expect(within(selected).getByText("效果不确定")).toBeVisible();
+    // The known-effect certainty of the whole operation is shown as its own
+    // fact, so a verified sibling never collapses it to "no change".
+    const certaintyFact = within(selected)
+      .getByText("已记录影响")
+      .closest("div") as HTMLElement;
+    expect(within(certaintyFact).getByText("效果不确定")).toBeVisible();
     // Nothing mutating was submitted by reading it.
+    expect(within(selected).queryByRole("button", { name: "取消" })).toBeNull();
+  });
+
+  it("continues a large operation's per-item results instead of truncating them", async () => {
+    // B reproduced this: a directory Delete admits one item per child (121 for
+    // a 120-file directory), so the refused child can settle beyond the first
+    // page.  The local dialog must continue through the backend's own cursor
+    // instead of presenting a fixed prefix as the whole result.
+    const user = userEvent.setup();
+    const firstPageItems = Array.from({ length: 50 }, (_value, index) => ({
+      itemId: `item-${index}`,
+      path: `batch/file-${index}.txt`,
+      destination: `batch/file-${index}.txt`,
+      status: "SUCCESS",
+      stage: "completed",
+      attempts: 1,
+      effect: "transferred",
+      effectCertainty: "verified_complete",
+      knownEffects: [`delete:batch/file-${index}.txt`],
+      nextAction: "无需操作；刷新目录即可看到当前状态",
+    }));
+    stubPage(
+      [
+        operation({
+          taskId: "task-1",
+          operation: "delete",
+          operationLabel: "删除",
+          command: "files_delete",
+          commandLabel: "删除",
+          status: "partial_success",
+          totalItems: 121,
+          settledItems: 121,
+          succeededItems: 120,
+          failedItems: 1,
+          allSucceeded: false,
+        }),
+      ],
+      {
+        detail: {
+          taskId: "task-1",
+          operation: "delete",
+          operationLabel: "删除",
+          command: "files_delete",
+          commandLabel: "删除",
+          status: "partial_success",
+          terminal: true,
+          totalItems: 121,
+          itemTotal: 121,
+          settledItems: 121,
+          succeededItems: 120,
+          failedItems: 1,
+          pendingItems: 0,
+          allSucceeded: false,
+          durableState: "mutation_effect_uncertain",
+          effectCertainty: "partial",
+          nextAction:
+            "查看逐项结果以确认哪些条目失败或部分完成（可用“加载更多”翻到后续条目）",
+          items: firstPageItems,
+        },
+        detailPages: [
+          {
+            cursor: "cursor-2",
+            items: [
+              {
+                itemId: "item-refused",
+                path: "batch/file-093.txt",
+                destination: "batch/file-093.txt",
+                status: "UNCERTAIN",
+                stage: "failed",
+                attempts: 1,
+                effect: "uncertain",
+                effectCertainty: "uncertain",
+                knownEffects: ["uncertain:mutation_outcome"],
+                failure: {
+                  category: "workflow_failure",
+                  message: "bounded provider refusal during delete",
+                  durableState: "TaskItem is durable with a failed outcome",
+                  sideEffects: "none",
+                  retrySafe: false,
+                  nextAction: "inspect the source before repeating",
+                },
+                nextAction:
+                  "刷新来源与目标目录核实实际效果；不确定结果不会被自动重试",
+              },
+            ],
+            nextCursor: null,
+          },
+        ],
+      },
+    );
+    authStore.setToken(TOKEN);
+    renderWithProviders(<StorageFilesPage />);
+    const dialog = await openStatusDialog(user);
+    await user.click(
+      await within(dialog).findByRole("button", { name: /操作 删除 task-1/ }),
+    );
+    const selected = within(dialog).getByLabelText("所选操作状态");
+    expect(await within(selected).findByText("batch/file-0.txt")).toBeVisible();
+    // Only the first page is shown, and the count says how many remain.
+    expect(within(selected).queryByText("batch/file-093.txt")).toBeNull();
+    expect(
+      within(selected).getByText(/已显示 50 \/ 121 项逐项证据/),
+    ).toBeVisible();
+    const more = within(selected).getByRole("button", {
+      name: "加载更多逐项结果",
+    });
+    await user.click(more);
+    // The refused child that settled beyond the first page is now reachable
+    // with its own bounded explanation and next action.
+    expect(
+      await within(selected).findByText("batch/file-093.txt"),
+    ).toBeVisible();
+    expect(
+      within(selected).getByText("bounded provider refusal during delete"),
+    ).toBeVisible();
+    expect(
+      within(selected).getByText(/已显示 51 \/ 121 项逐项证据/),
+    ).toBeVisible();
+    expect(
+      within(selected).queryByRole("button", { name: "加载更多逐项结果" }),
+    ).toBeNull();
+    // Reading and continuing submitted nothing.
     expect(within(selected).queryByRole("button", { name: "取消" })).toBeNull();
   });
 

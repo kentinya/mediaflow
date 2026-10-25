@@ -972,6 +972,330 @@ test("MediaLibrary Files keeps a mixed batch's per-item evidence", async ({
 });
 
 /**
+ * Every admitted item of a large directory Delete stays locally reachable.
+ *
+ * One selected directory legitimately admits one item per child (121 for the
+ * harness's 120-file directory).  The harness refuses exactly one *actual*
+ * Storage Delete of a child near the end of the listing, so its durable result
+ * settles beyond the first local item page.  The operator must reach it from
+ * the local dialog — and again after a real API/SQLite reopen — with no Task
+ * Center detour.
+ */
+async function bulkDirectoryLocalEvidence(
+  page: Page,
+  testInfo: TestInfo,
+  kind: "resource" | "media",
+): Promise<void> {
+  const prefix = kind === "resource" ? "Resource" : "Media";
+  const library = kind === "resource" ? "source" : "movies";
+  const listUrl = `/api/v1/${
+    kind === "resource" ? "resource-libraries/source" : "media-libraries/movies"
+  }/file-operations`;
+  const authHeaders = { Authorization: `Bearer ${ADMIN_TOKEN}` };
+  const folder = `Browser-Bulk-${prefix}-Directory`;
+  const refused = "bulk-117.txt";
+
+  const armed = await page.request.post("/__harness__/arm-files-delete-fault", {
+    data: { bulkName: refused },
+  });
+  expect(armed.ok()).toBe(true);
+  expect(await armed.json()).toMatchObject({ bulkArmed: true });
+
+  await page.getByRole("button", { name: "列表视图" }).click();
+  await expect(page.getByRole("checkbox", { name: "选择全部" })).toBeVisible();
+  await page.getByRole("checkbox", { name: `选择 ${folder}` }).check();
+  const footer = page.locator("footer.mf-files-footer");
+  await footer.getByRole("button", { name: "删除", exact: true }).click();
+  const confirmation = page.getByRole("dialog", { name: "删除确认" });
+  await expect(confirmation).toBeVisible();
+  await expect(confirmation.getByText(/120/)).toBeVisible();
+  await confirmation.getByRole("button", { name: "删除", exact: true }).click();
+  await expect(page.getByRole("dialog", { name: "删除进度" })).toBeVisible();
+  const worker = await page.request.post("/__harness__/run-files-worker");
+  expect(worker.ok()).toBe(true);
+  const result = page.getByRole("dialog", { name: "删除结果" });
+  await expect(result).toBeVisible();
+  await result.getByRole("button", { name: "关闭", exact: true }).click();
+  // The real filesystem proves the refused child survived and its siblings did
+  // not: the durable outcome is not fabricated by the browser.
+  const stateAfter = await page.request.get("/__harness__/files-state");
+  const stateDocument = (await stateAfter.json()) as {
+    resourceBulkSurvivingFiles: string[];
+    mediaBulkSurvivingFiles: string[];
+  };
+  expect(
+    kind === "resource"
+      ? stateDocument.resourceBulkSurvivingFiles
+      : stateDocument.mediaBulkSurvivingFiles,
+  ).toEqual([refused]);
+
+  await page.getByRole("button", { name: "当前页面操作状态" }).click();
+  const dialog = page.getByRole("dialog", { name: /当前页面操作状态/ });
+  await expect(dialog).toBeVisible();
+  const deleteEntry = dialog.getByRole("button", { name: /操作 删除/ }).first();
+  await expect(deleteEntry).toBeVisible();
+  await deleteEntry.click();
+  const selected = dialog.getByLabel("所选操作状态");
+  await expect(selected).toBeVisible();
+  // The operation really owns 121 admitted items, and the local read starts
+  // with one bounded page rather than the whole result.
+  await expect(selected.getByText(/已显示 50 \/ 121 项逐项证据/)).toBeVisible();
+  const more = selected.getByRole("button", { name: "加载更多逐项结果" });
+  await expect(more).toBeVisible();
+  await more.click();
+  await expect(
+    selected.getByText(/已显示 100 \/ 121 项逐项证据/),
+  ).toBeVisible();
+  await selected.getByRole("button", { name: "加载更多逐项结果" }).click();
+  // The complete admitted population is now locally reachable, including the
+  // refused child wherever the durable ordering placed it.
+  await expect(
+    selected.getByText(/已显示 121 \/ 121 项逐项证据/),
+  ).toBeVisible();
+  const refusedItem = selected
+    .locator("li.mf-operation-item", { has: page.getByText(/bulk-117\.txt$/) })
+    .first();
+  await expect(refusedItem).toBeVisible();
+  await expect(refusedItem).toContainText(/失败|效果不确定/);
+  await expect(
+    selected.getByRole("button", { name: "加载更多逐项结果" }),
+  ).toHaveCount(0);
+  await dialog.screenshot({
+    path: testInfo.outputPath(`${kind}-bulk-directory-evidence.png`),
+  });
+  await page.setViewportSize({ width: 1536, height: 1024 });
+  await expect(dialog).toBeVisible();
+  await page.screenshot({
+    path: testInfo.outputPath(`${kind}-bulk-directory-evidence-desktop.png`),
+    fullPage: false,
+  });
+  expect(
+    await page.evaluate(
+      () => document.documentElement.scrollWidth <= window.innerWidth + 1,
+    ),
+  ).toBe(true);
+  await dialog.getByRole("button", { name: "关闭", exact: true }).click();
+
+  // A real API/SQLite reopen over the same file, then a fresh page with no
+  // remembered Task ID: the same 121 items are still reachable.
+  const beforeRestart = await page.request.get(listUrl, {
+    headers: authHeaders,
+  });
+  const beforeTotal = ((await beforeRestart.json()) as { total: number }).total;
+  const restart = await page.request.post("/__harness__/restart");
+  expect(restart.ok()).toBe(true);
+  await page.reload();
+  await page.getByLabel("API token").fill(ADMIN_TOKEN);
+  await page.getByRole("button", { name: "Connect" }).click();
+  await expect(
+    page.getByRole("heading", {
+      name: kind === "resource" ? "文件" : "媒体库",
+      exact: true,
+    }),
+  ).toBeVisible();
+  await page.getByRole("button", { name: "当前页面操作状态" }).click();
+  const reopened = page.getByRole("dialog", { name: /当前页面操作状态/ });
+  await expect(reopened).toBeVisible();
+  await reopened
+    .getByRole("button", { name: /操作 删除/ })
+    .first()
+    .click();
+  const reopenedSelected = reopened.getByLabel("所选操作状态");
+  await expect(reopenedSelected).toBeVisible();
+  await reopenedSelected
+    .getByRole("button", { name: "加载更多逐项结果" })
+    .click();
+  await reopenedSelected
+    .getByRole("button", { name: "加载更多逐项结果" })
+    .click();
+  await expect(
+    reopenedSelected.getByText(/已显示 121 \/ 121 项逐项证据/),
+  ).toBeVisible();
+  await expect(
+    reopenedSelected
+      .locator("li.mf-operation-item", {
+        has: page.getByText(/bulk-117\.txt$/),
+      })
+      .first(),
+  ).toBeVisible();
+  const afterRestart = await page.request.get(listUrl, {
+    headers: authHeaders,
+  });
+  expect(await afterRestart.json()).toMatchObject({ total: beforeTotal });
+  // Reading replayed nothing: the refused child is still there.
+  const stateReopened = await page.request.get("/__harness__/files-state");
+  const reopenedDocument = (await stateReopened.json()) as {
+    resourceBulkSurvivingFiles: string[];
+    mediaBulkSurvivingFiles: string[];
+  };
+  expect(
+    kind === "resource"
+      ? reopenedDocument.resourceBulkSurvivingFiles
+      : reopenedDocument.mediaBulkSurvivingFiles,
+  ).toEqual([refused]);
+  await reopened.getByRole("button", { name: "关闭", exact: true }).click();
+  await page.request.post("/__harness__/arm-files-delete-fault", { data: {} });
+  expect(library).not.toBe("");
+}
+
+test("ResourceLibrary Files reaches every item of a large directory Delete", async ({
+  page,
+}, testInfo) => {
+  test.setTimeout(180_000);
+  await openFiles(page, "resource");
+  await bulkDirectoryLocalEvidence(page, testInfo, "resource");
+});
+
+test("MediaLibrary Files reaches every item of a large directory Delete", async ({
+  page,
+}, testInfo) => {
+  test.setTimeout(180_000);
+  await openFiles(page, "media");
+  await bulkDirectoryLocalEvidence(page, testInfo, "media");
+});
+
+/**
+ * A paused folder Move keeps its recorded known effects locally.
+ *
+ * The harness gates the real Storage move so the transfer is paused at the
+ * shared cooperative boundary after three children already moved.  The local
+ * status read must name those moved children — never one opaque directory with
+ * an aggregate "no change" — and a safe continuation must move only the rest.
+ */
+test("ResourceLibrary Files keeps a paused folder Move's known effects locally", async ({
+  page,
+}, testInfo) => {
+  test.setTimeout(180_000);
+  await openFiles(page, "resource");
+  const folder = "Browser-Paused-Move-Resource-Directory";
+  await page.getByRole("button", { name: "列表视图" }).click();
+  await expect(page.getByRole("checkbox", { name: "选择全部" })).toBeVisible();
+  await page.getByRole("checkbox", { name: `选择 ${folder}` }).check();
+  const footer = page.locator("footer.mf-files-footer");
+  await footer.getByRole("button", { name: "移动", exact: true }).click();
+  const dialog = page.getByRole("dialog", { name: "移动到…" });
+  await expect(dialog).toBeVisible();
+  await dialog.getByLabel("目标资源库").selectOption("destination");
+  await expect(
+    dialog.getByRole("listbox", { name: "目标子目录" }),
+  ).toBeVisible();
+  await dialog.getByRole("button", { name: "移动", exact: true }).click();
+  const progress = page.getByRole("dialog", { name: "移动进度" });
+  await expect(progress).toBeVisible();
+  const gated = await page.request.post(
+    "/__harness__/start-gated-files-worker",
+    { data: { mode: "move" } },
+  );
+  expect(gated.ok()).toBe(true);
+  await expect(
+    progress.getByRole("button", { name: "请求暂停" }),
+  ).toBeVisible();
+  await progress.getByRole("button", { name: "请求暂停" }).click();
+  const released = await page.request.post(
+    "/__harness__/release-gated-files-worker",
+  );
+  expect(released.ok()).toBe(true);
+  expect(await released.json()).toMatchObject({
+    released: true,
+    status: "paused",
+  });
+  await expect(progress.getByText(/传输已在安全边界暂停/)).toBeVisible();
+  const pausedState = await page.request.get("/__harness__/files-state");
+  const pausedDocument = (await pausedState.json()) as Record<string, unknown>;
+  const moved = pausedDocument["resourcePausedMoveMoved"] as string[];
+  expect(moved.length).toBe(3);
+  // A paused transfer is not terminal, so its dialog offers background
+  // tracking rather than a plain close.
+  await progress.getByRole("button", { name: "后台跟踪", exact: true }).click();
+
+  // The local header entry — not the transfer dialog — must show the moved
+  // children of the paused item.
+  await page.getByRole("button", { name: "当前页面操作状态" }).click();
+  const status = page.getByRole("dialog", { name: /当前页面操作状态/ });
+  await expect(status).toBeVisible();
+  // An unfinished transfer has no terminal Result yet, so its durable family
+  // label identifies it: this is the paused Move of this journey.
+  await status
+    .getByRole("button", { name: /操作 复制\/移动/ })
+    .first()
+    .click();
+  const selected = status.getByLabel("所选操作状态");
+  await expect(selected).toBeVisible();
+  // The aggregate certainty names the partial known effect: it is not "no
+  // change" even though the item is still paused.
+  const certaintyFact = selected
+    .getByText("已记录影响")
+    .locator("xpath=following-sibling::dd[1]");
+  await expect(certaintyFact).toHaveText("部分已变更（其余尚未完成）");
+  const item = selected
+    .locator("li.mf-operation-item", {
+      has: page.getByText(new RegExp(`^${folder}$`)),
+    })
+    .first();
+  await expect(item).toBeVisible();
+  for (const name of moved) {
+    // Each moved child keeps its own source-relative path and its own effect.
+    await expect(
+      item.locator("li.mf-operation-child", {
+        has: page.getByText(`${folder}/${name}`, { exact: true }),
+      }),
+    ).toBeVisible();
+  }
+  await expect(item.getByText(/已记录的子项（4 项）/)).toBeVisible();
+  // An element capture of the item proves the recorded children are really
+  // rendered (the tall dialog body scrolls, so a viewport shot would clip them).
+  await item.screenshot({
+    path: testInfo.outputPath("resource-paused-move-item-evidence.png"),
+  });
+  await status.screenshot({
+    path: testInfo.outputPath("resource-paused-move-known-effects.png"),
+  });
+  await page.setViewportSize({ width: 1536, height: 1024 });
+  await page.screenshot({
+    path: testInfo.outputPath("resource-paused-move-known-effects-desktop.png"),
+    fullPage: false,
+  });
+  await status.getByRole("button", { name: "关闭", exact: true }).click();
+
+  // A safe continuation moves only the remaining children.
+  const operations = await page.request.get(
+    "/api/v1/resource-libraries/source/file-operations",
+    { headers: { Authorization: `Bearer ${ADMIN_TOKEN}` } },
+  );
+  const operationsDocument = (await operations.json()) as {
+    items: { taskId: string; command: string; status: string }[];
+  };
+  // An unfinished transfer has no terminal Result yet, so it is identified by
+  // its durable command family and paused status.
+  const paused = operationsDocument.items.find(
+    (entry) => entry.command === "files_transfer" && entry.status === "paused",
+  );
+  expect(paused).toBeTruthy();
+  const detail = await page.request.get(
+    `/api/v1/resource-libraries/source/files/operations/${paused?.taskId}`,
+    { headers: { Authorization: `Bearer ${ADMIN_TOKEN}` } },
+  );
+  const detailDocument = (await detail.json()) as { version: string };
+  const resumed = await page.request.post(
+    `/api/v1/tasks/${paused?.taskId}/resume`,
+    {
+      headers: { Authorization: `Bearer ${ADMIN_TOKEN}` },
+      data: { expectedUpdatedAt: detailDocument.version },
+    },
+  );
+  expect(resumed.status()).toBe(202);
+  const worker = await page.request.post("/__harness__/run-files-worker");
+  expect(worker.ok()).toBe(true);
+  const finalState = await page.request.get("/__harness__/files-state");
+  const finalDocument = (await finalState.json()) as {
+    resourcePausedMoveMoved: string[];
+    resourcePausedMoveRemaining: string[];
+  };
+  expect(finalDocument.resourcePausedMoveMoved).toHaveLength(6);
+  expect(finalDocument.resourcePausedMoveRemaining).toHaveLength(0);
+});
+
+/**
  * A disabled historical origin: the operations were admitted in a library that
  * the next published Active no longer enables.  Its work must stay reachable
  * from the header entry — the live library list no longer contains it, so the

@@ -215,6 +215,135 @@ describe("library file-operation normalization", () => {
     ).toThrow(LibraryFileOperationNormalizationError);
   });
 
+  it("keeps every recorded child entry and the item continuation truthful", () => {
+    // A paused folder Move really moved some children: the document names each
+    // one with its own destination, status and recorded checkpoints, and the
+    // aggregate certainty never collapses a known change to "no change".
+    const detail = normalizeLibraryFileOperationDetail(
+      entryDocument({
+        status: "paused",
+        terminal: false,
+        settled: false,
+        allSucceeded: false,
+        totalItems: 3,
+        settledItems: 1,
+        succeededItems: 1,
+        pendingItems: 2,
+        durableState: "task_paused",
+        effectCertainty: "partial",
+        itemTotal: 3,
+        itemsTruncated: true,
+        nextCursor: "cursor-2",
+        items: [
+          {
+            itemId: "item-1",
+            path: "show",
+            destination: "Movies/show",
+            status: "PAUSED",
+            stage: "paused",
+            attempts: 1,
+            effect: "partial",
+            effectCertainty: "partial",
+            knownEffects: [],
+            children: [
+              {
+                path: "show",
+                destination: "Movies/show",
+                status: "SUCCESS",
+                effect: "transferred",
+                checkpoints: [],
+              },
+              {
+                path: "show/ep00.mkv",
+                destination: "Movies/show/ep00.mkv",
+                status: "SUCCESS",
+                effect: "transferred",
+                checkpoints: [],
+              },
+              {
+                path: "show/ep01.mkv",
+                destination: "Movies/show/ep01.mkv",
+                status: "FAILED",
+                effect: "retained",
+                checkpoints: [],
+                failure: {
+                  category: "storage_failure",
+                  message: "bounded provider refusal",
+                  durableState: "TaskItem is durable",
+                  sideEffects: "none",
+                  retrySafe: false,
+                  nextAction: "inspect the source",
+                },
+              },
+            ],
+            childrenTruncated: false,
+            nextAction: "在确认剩余范围安全后再明确继续该操作",
+          },
+        ],
+      }),
+      "resource",
+      "source",
+      "task-1",
+    );
+    expect(detail.itemTotal).toBe(3);
+    expect(detail.itemsTruncated).toBe(true);
+    expect(detail.nextCursor).toBe("cursor-2");
+    expect(detail.effectCertainty).toBe("partial");
+    expect(detail.items[0].children).toHaveLength(3);
+    expect(detail.items[0].children[1]).toMatchObject({
+      path: "show/ep00.mkv",
+      destination: "Movies/show/ep00.mkv",
+      effect: "transferred",
+    });
+    expect(detail.items[0].children[2].failure?.message).toBe(
+      "bounded provider refusal",
+    );
+    // A page whose item population contradicts the operation's own count is
+    // malformed, never silently accepted as a truncated page.
+    expect(() =>
+      normalizeLibraryFileOperationDetail(
+        entryDocument({ itemTotal: 0 }),
+        "resource",
+        "source",
+        "task-1",
+      ),
+    ).toThrow(LibraryFileOperationNormalizationError);
+    // An unknown child status/effect is malformed rather than rendered.
+    expect(() =>
+      normalizeLibraryFileOperationDetail(
+        entryDocument({
+          items: [
+            {
+              itemId: "item-1",
+              path: "show",
+              destination: "Movies/show",
+              status: "PAUSED",
+              stage: "paused",
+              attempts: 1,
+              effect: "partial",
+              effectCertainty: "partial",
+              knownEffects: [],
+              children: [
+                {
+                  path: "show/x.mkv",
+                  destination: "",
+                  status: "MYSTERY",
+                  effect: "transferred",
+                  checkpoints: [],
+                },
+              ],
+              childrenTruncated: false,
+              nextAction: "inspect",
+            },
+          ],
+        }),
+        "resource",
+        "source",
+        "task-1",
+      ),
+    ).toThrow(LibraryFileOperationNormalizationError);
+  });
+
   it("normalizes a proven origin and a bounded non-match", () => {
     const matched = normalizeLibraryFileOperationOrigin({
       matched: true,

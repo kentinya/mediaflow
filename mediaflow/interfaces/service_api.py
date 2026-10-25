@@ -10999,7 +10999,6 @@ class MediaFlowApi:
         executes the control it advertises.
         """
 
-        self._require_empty_query(environ, "Library file operation detail")
         history = self._library_file_operation_history(media_library=media_library)
         if history is None:
             return self._error(
@@ -11009,8 +11008,30 @@ class MediaFlowApi:
                 "the durable library file-operation history is unavailable",
                 details={"sideEffects": "none", "retrySafe": True},
             )
+        # The per-item page of this exact operation.  Its cursor is bound to the
+        # library kind/ID, the Task and the reading principal, so a cursor
+        # minted for another operation or another caller is refused as an
+        # invalid cursor instead of being re-bound to a different item window.
+        scope = (
+            f"media={int(media_library)};principal={principal.principal_id};"
+            f"library={library_id};task={task_id}"
+        )
+        limit, cursor = self._scoped_page_query(
+            environ, "library_file_operation_items", scope, "Library file operation item"
+        )
+        if cursor is not None and cursor.direction is CursorDirection.PREVIOUS:
+            # An item page only ever publishes a forward continuation, so a
+            # previous-direction cursor was not minted for this surface.  It is
+            # refused as an invalid cursor instead of being read as a forward
+            # position, which would silently re-serve the wrong item window.
+            raise ValueError("Library file operation item cursor direction is invalid")
         try:
-            document = history.detail(library_id=library_id, task_id=task_id)
+            document = history.detail(
+                library_id=library_id,
+                task_id=task_id,
+                limit=limit,
+                after=cursor.position if cursor is not None else None,
+            )
         except LibraryFileOperationError as error:
             return self._error(
                 start_response,
@@ -11035,7 +11056,20 @@ class MediaFlowApi:
                 principal,
                 results=results,
             )
-        return self._response(start_response, 200, document)
+        position = document.pop("nextItemPosition", None)
+        next_cursor = None
+        if isinstance(position, dict):
+            try:
+                next_cursor = encode_cursor(
+                    "library_file_operation_items",
+                    datetime.fromisoformat(str(position["createdAt"])),
+                    str(position["itemId"]),
+                    CursorDirection.NEXT,
+                    scope=scope,
+                )
+            except (KeyError, TypeError, ValueError):
+                next_cursor = None
+        return self._response(start_response, 200, {**document, "nextCursor": next_cursor})
 
     def _library_file_operation_origins(
         self,

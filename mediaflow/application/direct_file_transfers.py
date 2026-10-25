@@ -38,6 +38,17 @@ from mediaflow.application.direct_file_commands import (
     DirectFileError,
     project_direct_delete,
 )
+from mediaflow.application.direct_file_effects import (
+    ITEM_TASK_INVERSE,
+    ITEM_TASK_STATUS,
+    PROJECTION_EFFECT,
+    TERMINAL_RESULT_STATUSES,
+    has_completed_mutation,
+    item_known_mutation,
+    progress_payload,
+    projection_item_outcomes,
+    projection_item_status,
+)
 from mediaflow.application.organizer import OrganizerExecutor
 from mediaflow.application.storage_browser import (
     _confined_directory_child,
@@ -299,20 +310,21 @@ _TASK_STATUS_AGGREGATE = {
     PersistentTaskStatus.PAUSED: "FAILED",
 }
 
-_TERMINAL_STATUSES = {"SUCCESS", "SKIPPED", "PARTIAL", "FAILED", "DRY_RUN"}
+_TERMINAL_STATUSES = TERMINAL_RESULT_STATUSES
 
-
-#: Result annotations that describe an entry's aggregate state rather than a
-#: completed executor mutation.
-_ANNOTATION_MARKERS = frozenset({"entry", "entry_error", "skip_conflict"})
-
-
-def _completed_operations_have_mutation(operations) -> bool:
-    """Whether a Result's bounded annotations contain a real completed mutation."""
-
-    return any(
-        str(operation).partition(":")[0] not in _ANNOTATION_MARKERS for operation in operations
-    )
+#: The one read-only interpretation of durable direct-file work is shared with
+#: the per-library local status read (``direct_file_effects``), so a paused or
+#: partially executed Move has exactly one set of per-entry outcomes and one
+#: effect vocabulary in every surface.  These names are this module's local
+#: aliases of that single implementation.
+_ITEM_TASK_INVERSE = ITEM_TASK_INVERSE
+_ITEM_TASK_STATUS = ITEM_TASK_STATUS
+_PROJECTION_EFFECT = PROJECTION_EFFECT
+_completed_operations_have_mutation = has_completed_mutation
+_item_known_mutation = item_known_mutation
+_progress_payload = progress_payload
+_projection_item_status = projection_item_status
+_projection_item_outcomes = projection_item_outcomes
 
 
 def _terminal_item_signal(
@@ -365,40 +377,12 @@ def _item_checkpoint_evidence(entries: list[dict[str, object]]) -> tuple[str, ..
     return tuple(values)
 
 
-_ITEM_TASK_STATUS = {
-    "SUCCESS": TaskItemStatus.SUCCESS,
-    "SKIPPED": TaskItemStatus.SKIPPED,
-    "PARTIAL": TaskItemStatus.PARTIAL,
-    "UNCERTAIN": TaskItemStatus.PARTIAL,
-    "FAILED": TaskItemStatus.FAILED,
-}
-
-#: The inverse projection of a terminal TaskItem status that has no Result
-#: record (a legacy or externally written row): the projection still names a
-#: truthful state instead of fabricating success.
-_ITEM_TASK_INVERSE = {value: key for key, value in _ITEM_TASK_STATUS.items()}
-
 _ITEM_KNOWN_EFFECT = {
     "SUCCESS": "transferred",
     "SKIPPED": "skipped",
     "PARTIAL": "partial",
     "UNCERTAIN": "uncertain",
     "FAILED": "retained",
-}
-
-#: The durable projection's effect vocabulary for one item.  Items still
-#: queued, running or paused are reported as in progress — never as
-#: transferred.
-_PROJECTION_EFFECT = {
-    "SUCCESS": "transferred",
-    "SKIPPED": "skipped",
-    "PARTIAL": "partial",
-    "UNCERTAIN": "uncertain",
-    "FAILED": "retained",
-    "CANCELLED": "retained",
-    "RUNNING": "in_progress",
-    "QUEUED": "in_progress",
-    "PAUSED": "in_progress",
 }
 
 
@@ -4512,18 +4496,6 @@ def _confirmed_entries(
     return tuple(values[:MAX_TRANSFER_PROGRESS_ENTRIES]), truncated
 
 
-def _progress_payload(item: PersistentTaskItem) -> dict[str, object] | None:
-    """The parsed bounded progress snapshot of one transfer item, if any."""
-
-    if not item.progress:
-        return None
-    try:
-        payload = json.loads(item.progress)
-    except ValueError:
-        return None
-    return payload if isinstance(payload, dict) else None
-
-
 def _destination_root_of(authority: dict[str, object], top_level: str) -> str:
     """The admitted top-level destination path of one selected root."""
 
@@ -4637,41 +4609,6 @@ def _bounded_transfer_error(error: BaseException | None, code: str | None = None
     if isinstance(error, DirectFileTransferError):
         return error.code
     return f"files_transfer_worker_failed_{type(error).__name__}"
-
-
-def _item_known_mutation(
-    item: PersistentTaskItem, record: PersistentResultRecord | None
-) -> tuple[bool, bool]:
-    """Whether one item already recorded a known mutation, and its certainty.
-
-    The durable per-entry progress of a started item is the authoritative
-    known-effect evidence after an unexpected failure: an entry marked
-    ``UNCERTAIN`` (or an item already carrying the uncertain marker) means the
-    effect cannot be proven and must be investigation-only; any other recorded
-    non-skipped entry means a mutation may already have happened.
-    """
-
-    if item.error == "mutation_outcome":
-        return True, True
-    if record is not None:
-        if record.effect_certainty == ExecutionEffectCertainty.ATTEMPTED_UNVERIFIED.value:
-            return True, True
-        if record.effect_certainty == ExecutionEffectCertainty.VERIFIED_COMPLETE.value:
-            return True, False
-    payload = _progress_payload(item)
-    if payload is None:
-        return False, False
-    statuses = {
-        str(value.get("status", ""))
-        for value in payload.get("entries") or ()
-        if isinstance(value, dict)
-    }
-    if "UNCERTAIN" in statuses:
-        return True, True
-    completed = payload.get("completedEntries")
-    if statuses & {"SUCCESS", "PARTIAL"} or (isinstance(completed, int) and completed > 0):
-        return True, False
-    return False, False
 
 
 def _interrupted_terminal_item(
@@ -4946,123 +4883,8 @@ def _queued_document(
     }
 
 
-def _projection_item_status(item: PersistentTaskItem, record: PersistentResultRecord | None) -> str:
-    """The truthful projection status of one transfer item."""
-
-    if item.status is TaskItemStatus.PENDING:
-        return "QUEUED"
-    if item.status in {TaskItemStatus.PROCESSING}:
-        return "RUNNING"
-    if item.status is TaskItemStatus.PAUSED:
-        return "PAUSED"
-    if item.status is TaskItemStatus.CANCELLED:
-        return "CANCELLED"
-    if record is not None:
-        record_status = record.status.upper()
-        if record_status == "PARTIAL":
-            return "PARTIAL"
-        if record_status == "SKIPPED":
-            return "SKIPPED"
-        if record_status == "FAILED":
-            return "FAILED"
-        if record_status == "SUCCESS":
-            return "SUCCESS"
-    return _ITEM_TASK_INVERSE.get(item.status, "FAILED")
-
-
 #: The bounded per-entry outcome surface of one projection.
 _MAX_PROJECTION_OUTCOMES = MAX_TRANSFER_PATHS * 64
-
-
-def _projection_item_outcomes(
-    item: PersistentTaskItem,
-    payload: dict[str, object] | None,
-    record: PersistentResultRecord | None,
-    outcome_status: str,
-) -> tuple[list[dict[str, object]], bool]:
-    """The durable per-entry outcomes of one transfer item.
-
-    A started item's recorded per-entry progress is the source of truth while
-    it stays unfinished; a finished item's Result annotations (completed
-    executor checkpoints plus the retained skipped-child evidence) reproduce
-    the same per-entry truth after the progress marker was consumed.
-    """
-
-    outcomes: list[dict[str, object]] = []
-    if payload is not None and item.status in {
-        TaskItemStatus.PROCESSING,
-        TaskItemStatus.PAUSED,
-        TaskItemStatus.PENDING,
-    }:
-        for entry in payload.get("entries") or ():
-            if not isinstance(entry, dict):
-                continue
-            outcome: dict[str, object] = {
-                "path": str(entry.get("path", "")),
-                "destination": str(entry.get("destination", "")),
-                "status": str(entry.get("status", "")),
-                "checkpoints": [],
-            }
-            if entry.get("errorCategory"):
-                outcome["errorCategory"] = str(entry.get("errorCategory"))
-            outcomes.append(outcome)
-        return outcomes, bool(payload.get("truncated"))
-    if record is None:
-        return outcomes, False
-    destination = item.destination_path or ""
-    if not record.completed_operations:
-        # A refused/failed item records no executor checkpoint: its single
-        # truthful outcome is the item's own durable failure evidence.
-        outcomes.append(
-            {
-                "path": item.source_display,
-                "destination": destination,
-                "status": outcome_status,
-                "checkpoints": [],
-                **({"errorCategory": record.error} if record.error else {}),
-            }
-        )
-        return outcomes, False
-    # The Result annotations group into one outcome per entry path, keeping
-    # each compound checkpoint order (copy_written, destination_verified,
-    # source_deleted), the exact per-entry status and the skipped-child
-    # evidence beside the entry it belongs to.
-    grouped: dict[str, dict[str, object]] = {}
-
-    def entry_for(path: str) -> dict[str, object]:
-        return grouped.setdefault(
-            path,
-            {
-                "path": path,
-                "destination": destination,
-                "status": outcome_status,
-                "checkpoints": [],
-            },
-        )
-
-    for annotation in record.completed_operations:
-        name, separator, rest = str(annotation).partition(":")
-        if not separator or not rest:
-            entry_for(item.source_display)["checkpoints"].append(name)
-            continue
-        if name == "entry":
-            status, _, path = rest.partition(":")
-            if path:
-                entry_for(path)["status"] = status or outcome_status
-            continue
-        if name == "entry_error":
-            category, _, path = rest.partition(":")
-            if path:
-                entry_for(path)["errorCategory"] = category
-            continue
-        if name == "skip_conflict":
-            entry = entry_for(rest)
-            entry["status"] = "SKIPPED"
-            entry["errorCategory"] = "target_exists"
-            continue
-        entry_for(rest)["checkpoints"].append(name)
-    outcomes.extend(grouped.values())
-    return outcomes, False
 
 
 def _projection_transfer_status(

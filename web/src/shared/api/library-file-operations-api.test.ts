@@ -228,6 +228,42 @@ describe("fetchLibraryFileOperationDetail", () => {
     );
     expect(mismatched).toMatchObject({ ok: false, code: "malformed_response" });
   });
+
+  it("requests one bounded item page with the exact continuation cursor", async () => {
+    const fetchMock = stubFetch(async () =>
+      jsonResponse(entry({ resourceLibraryId: "source" })),
+    );
+    const read = await fetchLibraryFileOperationDetail(
+      TOKEN,
+      "resource",
+      "source",
+      "task-1",
+      { limit: 50, cursor: "cursor-2" },
+    );
+    expect(read.ok).toBe(true);
+    expect(fetchMock.mock.calls[0][0]).toBe(
+      "/api/v1/resource-libraries/source/files/operations/task-1?limit=50&cursor=cursor-2",
+    );
+
+    // A cursor or limit outside the backend's bound is refused locally: no
+    // request is made and no guessed item window is read.
+    for (const options of [
+      { limit: 0 },
+      { limit: 101 },
+      { cursor: "" },
+      { cursor: "x".repeat(513) },
+    ]) {
+      const refused = await fetchLibraryFileOperationDetail(
+        TOKEN,
+        "resource",
+        "source",
+        "task-1",
+        options,
+      );
+      expect(refused).toMatchObject({ ok: false, status: 400 });
+    }
+    expect(fetchMock).toHaveBeenCalledTimes(1);
+  });
 });
 
 describe("fetchLibraryFileOperationOrigin", () => {

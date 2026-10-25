@@ -13574,6 +13574,80 @@ class SQLiteTaskRepository:
             ).fetchall()
         return {str(row["task_id"]): (row["source_scope"], row["target_scope"]) for row in rows}
 
+    def library_file_operation_items_window(
+        self,
+        task_id: str,
+        *,
+        limit: int = 50,
+        after: tuple[datetime, str] | None = None,
+    ) -> tuple[
+        tuple[PersistentTaskItem, ...],
+        int,
+        bool,
+        dict[str, PersistentResultRecord],
+    ]:
+        """One bounded newest-last page of the items of one ordinary operation.
+
+        A directly selected directory is expanded by the shared requests into
+        one TaskItem per child, so a single legitimate Delete admits hundreds
+        of items.  The local detail read must therefore page them instead of
+        returning a fixed prefix: the page, its page-independent total and the
+        continuation flag come from one read transaction over the same
+        ``(created_at, item_id)`` ordering the cursor is minted for, so a
+        cursor can never skip or repeat an item while the Worker keeps
+        settling siblings.
+
+        The newest Result of every listed item is returned beside it, so the
+        caller never has to guess which attempt is the factual outcome.
+        """
+
+        if isinstance(limit, bool) or not isinstance(limit, int) or not 1 <= limit <= 100:
+            raise ValueError("library file operation item page limit must be between 1 and 100")
+        page_clauses = ["task_id = ?"]
+        page_parameters: list[object] = [task_id]
+        if after is not None:
+            timestamp = after[0].isoformat()
+            page_clauses.append("(created_at > ? OR (created_at = ? AND item_id > ?))")
+            page_parameters.extend((timestamp, timestamp, after[1]))
+        with self._lock:
+            self._connection.execute("BEGIN")
+            try:
+                total = int(
+                    self._connection.execute(
+                        "SELECT COUNT(*) AS total FROM task_items WHERE task_id = ?",
+                        (task_id,),
+                    ).fetchone()["total"]
+                )
+                rows = self._connection.execute(
+                    "SELECT * FROM task_items WHERE "
+                    + " AND ".join(page_clauses)
+                    + " ORDER BY created_at, item_id LIMIT ?",
+                    (*page_parameters, limit + 1),
+                ).fetchall()
+                items = [self._item(row) for row in rows[:limit]]
+                results = self._latest_results_locked([item.item_id for item in items])
+            except BaseException:
+                self._connection.execute("ROLLBACK")
+                raise
+            else:
+                self._connection.execute("COMMIT")
+        return tuple(items), total, len(rows) > limit, results
+
+    def _latest_results_locked(self, item_ids: list[str]) -> dict[str, PersistentResultRecord]:
+        """The newest Result of each submitted item, inside one read snapshot."""
+
+        if not item_ids:
+            return {}
+        placeholders = ", ".join("?" for _ in item_ids)
+        rows = self._connection.execute(
+            f"SELECT * FROM task_results WHERE item_id IN ({placeholders})"
+            " ORDER BY created_at, result_id",
+            tuple(item_ids),
+        ).fetchall()
+        # The last row of one item is its newest attempt: earlier attempts stay
+        # durable history and are never presented as the outcome.
+        return {str(row["item_id"]): self._result(row) for row in rows}
+
     def library_file_operation_origins(
         self,
         *,

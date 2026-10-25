@@ -8573,26 +8573,49 @@ export type LibraryFileOperationDetailRead =
       readonly details?: AutomationMutationFailureDetails;
     };
 
-/** Read one exact ordinary operation of this library. */
+/**
+ * Read one item page of one exact ordinary operation of this library.
+ *
+ * A directly selected directory is expanded into one admitted item per child,
+ * so a legitimate Delete of a large directory owns many items.  ``cursor`` is
+ * the exact continuation position the previous page published; the backend
+ * binds it to the library kind/ID, the Task and the reading principal, so a
+ * cursor from another operation or another caller is refused rather than
+ * re-bound.  One page is never presented as the whole result.
+ */
 export async function fetchLibraryFileOperationDetail(
   token: string | null,
   kind: DirectCommandLibraryKind,
   libraryId: string,
   taskId: string,
+  options: { readonly limit?: number; readonly cursor?: string | null } = {},
   fetchImpl: FetchLike = fetch,
 ): Promise<LibraryFileOperationDetailRead> {
-  if (!isSafeIdentifier(taskId) || libraryId.trim().length === 0) {
+  const limit = options.limit;
+  const cursor = options.cursor ?? null;
+  if (
+    !isSafeIdentifier(taskId) ||
+    libraryId.trim().length === 0 ||
+    (limit !== undefined &&
+      (!Number.isInteger(limit) || limit < 1 || limit > 100)) ||
+    (cursor !== null && (cursor.length === 0 || cursor.length > 512))
+  ) {
     return { ok: false, status: 400, code: "invalid_request" };
   }
+  const params = new URLSearchParams();
+  if (limit !== undefined) params.set("limit", String(limit));
+  if (cursor !== null) params.set("cursor", cursor);
+  const query = params.toString();
   const base = libraryFileOperationsBase(kind, libraryId).replace(
     "/file-operations",
     "/files/operations/",
   );
   let response: Response;
   try {
-    response = await fetchImpl(`${base}${encodeURIComponent(taskId)}`, {
-      headers: directFilesReadHeaders(token),
-    });
+    response = await fetchImpl(
+      `${base}${encodeURIComponent(taskId)}${query ? `?${query}` : ""}`,
+      { headers: directFilesReadHeaders(token) },
+    );
   } catch {
     return { ok: false, status: 0, code: "transport_unavailable" };
   }

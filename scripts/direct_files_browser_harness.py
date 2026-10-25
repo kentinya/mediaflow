@@ -43,6 +43,12 @@ GATED_WORKER_STATE: dict[str, object] | None = None
 #: rather than from a fabricated Task row.  ``None`` means no fault is armed.
 REFUSED_DELETE_NAME: str | None = None
 
+#: The one fixture file refused inside a large-directory Delete.  It is chosen
+#: from the end of the directory listing so its durable result settles beyond
+#: the first local item page — exactly the B-reproduced case where a fixed
+#: prefix hid the failed child.
+REFUSED_BULK_DELETE_NAME: str | None = None
+
 #: Set by ``/__harness__/disable-resource-library``: the exact ResourceLibrary
 #: this run disabled through the managed configuration service, so the browser
 #: journey can prove a historical origin stays readable after the live list lost
@@ -138,7 +144,31 @@ def _request_document(environ) -> dict[str, object]:
     return value if isinstance(value, dict) else {}
 
 
-def _start_gated_files_worker(start_response):
+def _refused_delete_matcher():
+    """The one real-LocalStorage Delete refusal armed for this run, if any."""
+
+    if REFUSED_DELETE_NAME is not None:
+        wanted = REFUSED_DELETE_NAME
+
+        def refuse_named(_storage, target, *args, **kwargs):
+            if Path(str(target)).name == wanted:
+                raise RuntimeError("isolated provider refusal")
+            return None
+
+        return refuse_named
+    if REFUSED_BULK_DELETE_NAME is not None:
+        wanted = REFUSED_BULK_DELETE_NAME
+
+        def refuse_bulk(_storage, target, *args, **kwargs):
+            if Path(str(target)).name == wanted:
+                raise RuntimeError("isolated provider refusal")
+            return None
+
+        return refuse_bulk
+    return None
+
+
+def _start_gated_files_worker(start_response, *, mode: str = "write"):
     global GATED_WORKER_STATE
     state = inventory.STATE
     if state is None:
@@ -152,14 +182,26 @@ def _start_gated_files_worker(start_response):
     release = threading.Event()
     worker_state: dict[str, object] = {"entered": entered, "release": release}
     original_write = LocalStorage.write
+    #: How many real per-entry mutations of the paused folder must happen first.
+    gate_after = 3
+    folder_writes = 0
+    folder = "Browser-Paused-Move-Resource-Directory"
 
     def gated_write(storage, path, data, *, overwrite: bool = False):
-        if (
-            Path(path).name
-            in {
-                "Browser-Move-Resource-Second.txt",
-                "Browser-Move-Media-Second.txt",
-            }
+        nonlocal folder_writes
+        name = Path(path).name
+        if mode == "move":
+            # A cross-Storage folder Move writes each child into the destination
+            # provider; gate the third one so the transfer pauses with three
+            # children already durably moved.
+            if folder in str(path) and not entered.is_set():
+                folder_writes += 1
+                if folder_writes == gate_after:
+                    entered.set()
+                    if not release.wait(timeout=30):
+                        raise TimeoutError("test Worker move gate was not released")
+        elif (
+            name in {"Browser-Move-Resource-Second.txt", "Browser-Move-Media-Second.txt"}
             and not entered.is_set()
         ):
             entered.set()
@@ -167,9 +209,11 @@ def _start_gated_files_worker(start_response):
                 raise TimeoutError("test Worker write gate was not released")
         return original_write(storage, path, data, overwrite=overwrite)
 
+    gate = patch.object(LocalStorage, "write", gated_write)
+
     def run_worker() -> None:
         try:
-            with patch.object(LocalStorage, "write", gated_write):
+            with gate:
                 with _files_transfer_worker_context(
                     state.managed.runtime,
                     str(state.managed.config_path),
@@ -223,7 +267,7 @@ def _release_gated_files_worker(start_response):
 
 def application(environ, start_response):
     path = str(environ.get("PATH_INFO", ""))
-    global REFUSED_DELETE_NAME, DISABLED_ORIGIN
+    global REFUSED_DELETE_NAME, REFUSED_BULK_DELETE_NAME, DISABLED_ORIGIN
     if path == "/__harness__/register-files-worker" and environ.get("REQUEST_METHOD") == "POST":
         state = inventory.STATE
         if state is None:
@@ -245,7 +289,9 @@ def application(environ, start_response):
         )
         return _json_response(start_response, "200 OK", {"registered": True})
     if path == "/__harness__/start-gated-files-worker" and environ.get("REQUEST_METHOD") == "POST":
-        return _start_gated_files_worker(start_response)
+        document = _request_document(environ)
+        mode = document.get("mode")
+        return _start_gated_files_worker(start_response, mode=mode if mode == "move" else "write")
     if (
         path == "/__harness__/release-gated-files-worker"
         and environ.get("REQUEST_METHOD") == "POST"
@@ -255,15 +301,16 @@ def application(environ, start_response):
         state = inventory.STATE
         if state is None:
             return _json_response(start_response, "503 Service Unavailable", {"ran": False})
-        fault = REFUSED_DELETE_NAME
+        fault = REFUSED_DELETE_NAME or REFUSED_BULK_DELETE_NAME
         original_delete = LocalStorage.delete
+        matcher = _refused_delete_matcher()
 
         def refuse_named(storage, target, *args, **kwargs):
             # A real provider refusal on exactly one selected fixture: the
             # durable item outcome, its effect certainty and the safe next
             # action are produced by the production Worker path.
-            if fault is not None and Path(str(target)).name == fault:
-                raise RuntimeError("isolated provider refusal")
+            if matcher is not None:
+                matcher(storage, target)
             return original_delete(storage, target, *args, **kwargs)
 
         with patch.object(LocalStorage, "delete", refuse_named) if fault else _null_context():
@@ -280,8 +327,17 @@ def application(environ, start_response):
     if path == "/__harness__/arm-files-delete-fault" and environ.get("REQUEST_METHOD") == "POST":
         document = _request_document(environ)
         name = document.get("name")
+        bulk = document.get("bulkName")
         REFUSED_DELETE_NAME = name if isinstance(name, str) and name else None
-        return _json_response(start_response, "200 OK", {"armed": REFUSED_DELETE_NAME is not None})
+        REFUSED_BULK_DELETE_NAME = bulk if isinstance(bulk, str) and bulk else None
+        return _json_response(
+            start_response,
+            "200 OK",
+            {
+                "armed": REFUSED_DELETE_NAME is not None,
+                "bulkArmed": REFUSED_BULK_DELETE_NAME is not None,
+            },
+        )
     if path == "/__harness__/add-unreferenced-origin" and environ.get("REQUEST_METHOD") == "POST":
         # Admit a real unreferenced ResourceLibrary through the same supported
         # Add command the operator's drawer uses.  It references nothing (no
@@ -502,8 +558,43 @@ def application(environ, start_response):
                 "mediaMixedRemoveExists": (
                     root / "destination" / "Movies" / "Browser-Mixed-Remove-Media.txt"
                 ).exists(),
+                "resourceBulkDirectoryExists": (
+                    root / "source" / "Browser-Bulk-Resource-Directory"
+                ).is_dir(),
+                "resourceBulkSurvivingFiles": sorted(
+                    entry.name
+                    for entry in (root / "source" / "Browser-Bulk-Resource-Directory").glob("*.txt")
+                )
+                if (root / "source" / "Browser-Bulk-Resource-Directory").is_dir()
+                else [],
+                "mediaBulkDirectoryExists": (
+                    root / "destination" / "Movies" / "Browser-Bulk-Media-Directory"
+                ).is_dir(),
+                "mediaBulkSurvivingFiles": sorted(
+                    entry.name
+                    for entry in (
+                        root / "destination" / "Movies" / "Browser-Bulk-Media-Directory"
+                    ).glob("*.txt")
+                )
+                if (root / "destination" / "Movies" / "Browser-Bulk-Media-Directory").is_dir()
+                else [],
+                "resourcePausedMoveMoved": sorted(
+                    entry.name
+                    for entry in (
+                        root / "destination" / "Browser-Paused-Move-Resource-Directory"
+                    ).glob("*.txt")
+                ),
+                "resourcePausedMoveRemaining": sorted(
+                    entry.name
+                    for entry in (root / "source" / "Browser-Paused-Move-Resource-Directory").glob(
+                        "*.txt"
+                    )
+                )
+                if (root / "source" / "Browser-Paused-Move-Resource-Directory").is_dir()
+                else [],
                 "disabledOrigin": DISABLED_ORIGIN,
                 "refusedDeleteName": REFUSED_DELETE_NAME,
+                "refusedBulkDeleteName": REFUSED_BULK_DELETE_NAME,
             },
         )
     return inventory.application(environ, start_response)
@@ -579,6 +670,25 @@ def main(argv: list[str] | None = None) -> int:
             (library_root / f"Browser-Mixed-{suffix}-{kind}.txt").write_text(
                 f"{kind.lower()} mixed batch fixture {suffix}", encoding="utf-8"
             )
+        # A 120-file directory for the "every admitted item stays reachable"
+        # journey: one selected directory legitimately admits 121 items, and the
+        # refused child is chosen from the end of the listing so its result
+        # settles beyond the first local item page.
+        bulk = library_root / f"Browser-Bulk-{kind}-Directory"
+        bulk.mkdir()
+        for index in range(120):
+            (bulk / f"bulk-{index:03d}.txt").write_text(
+                f"{kind.lower()} bulk fixture {index}", encoding="utf-8"
+            )
+    # A folder whose Move is paused at the shared cooperative boundary after
+    # some children already moved: the local status read must show the moved
+    # children, not one opaque directory with "no change".
+    paused_folder = managed_root / "source" / "Browser-Paused-Move-Resource-Directory"
+    paused_folder.mkdir()
+    for index in range(6):
+        (paused_folder / f"paused-{index:02d}.txt").write_text(
+            f"resource paused move fixture {index}", encoding="utf-8"
+        )
     (managed_root / "source" / "Browser-Move-Resource.txt").write_text(
         "resource cross-storage move fixture", encoding="utf-8"
     )

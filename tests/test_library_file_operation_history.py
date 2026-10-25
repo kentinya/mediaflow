@@ -13,9 +13,11 @@ from __future__ import annotations
 
 import json
 import tempfile
+import threading
 import unittest
 import unittest.mock
 from dataclasses import replace
+from datetime import UTC, datetime
 from pathlib import Path
 
 from mediaflow.application.configuration_objects import ConfigurationObjectService
@@ -35,9 +37,11 @@ from mediaflow.infrastructure.sqlite_configuration_management import (
     SQLiteConfigurationRepository,
 )
 from mediaflow.infrastructure.sqlite_runtime import SQLiteTaskRepository
+from mediaflow.interfaces.pagination import CursorDirection, encode_cursor
 from mediaflow.interfaces.service_api import MediaFlowApi
 from tests.test_configuration_objects import example_document
 from tests.test_direct_file_operations import MutationFreeStorage, request
+from tests.test_direct_file_transfers import _GatedSource
 
 
 class LibraryFileOperationHistoryTests(unittest.TestCase):
@@ -132,6 +136,13 @@ class LibraryFileOperationHistoryTests(unittest.TestCase):
         binding = api._prepare_runtime_binding_for_revision(active)
         return binding.direct_files
 
+    @staticmethod
+    def _transfers(api, active):
+        binding = api._prepare_runtime_binding_for_revision(active)
+        return DirectFileTransferService(
+            direct_files=binding.direct_files, executor=binding.direct_files._executor
+        )
+
     # ------------------------------------------------------------------
     # Request helpers
     # ------------------------------------------------------------------
@@ -147,11 +158,20 @@ class LibraryFileOperationHistoryTests(unittest.TestCase):
         )
 
     @staticmethod
-    def _detail(api, kind: str, library_id: str, task_id: str, *, token="admin-token"):
+    def _detail(
+        api,
+        kind: str,
+        library_id: str,
+        task_id: str,
+        *,
+        query: str = "",
+        token="admin-token",
+    ):
         base = "resource-libraries" if kind == "resource" else "media-libraries"
+        suffix = f"?{query}" if query else ""
         return request(
             api,
-            f"/api/v1/{base}/{library_id}/files/operations/{task_id}",
+            f"/api/v1/{base}/{library_id}/files/operations/{task_id}{suffix}",
             token=token,
         )
 
@@ -430,14 +450,25 @@ class LibraryFileOperationHistoryTests(unittest.TestCase):
             # A repository without the history window (an older or foreign
             # reader) answers with one bounded, actionable refusal instead of a
             # raw exception or a fabricated empty page.
+            created = self._service(api, _active).create_directory(
+                library_id="source", parent_path="", name="reader"
+            )
             with unittest.mock.patch.object(
                 runtime, "library_file_operations_window", None, create=True
             ):
                 code, refused = self._list(api, "resource", "source")
+                self.assertEqual(503, code, refused)
+                self.assertEqual("library_file_operations_unavailable", refused["error"]["code"])
+                self.assertEqual("none", refused["error"]["details"]["sideEffects"])
+                self.assertTrue(refused["error"]["details"]["retrySafe"])
+            # The per-item page needs its own bounded reader: without it the
+            # detail read refuses instead of presenting an empty item list.
+            with unittest.mock.patch.object(
+                runtime, "library_file_operation_items_window", None, create=True
+            ):
+                code, refused = self._detail(api, "resource", "source", created["taskId"])
             self.assertEqual(503, code, refused)
             self.assertEqual("library_file_operations_unavailable", refused["error"]["code"])
-            self.assertEqual("none", refused["error"]["details"]["sideEffects"])
-            self.assertTrue(refused["error"]["details"]["retrySafe"])
 
     def test_viewer_reads_history_and_a_read_mutates_nothing(self) -> None:
         with tempfile.TemporaryDirectory() as directory:
@@ -828,3 +859,292 @@ class LibraryFileOperationHistoryTests(unittest.TestCase):
             self.assertEqual("none", page["sideEffects"])
             for adapter in adapters.values():
                 self.assertEqual([], adapter.mutations)
+
+    # ------------------------------------------------------------------
+    # B46.2-01: complete per-item access, including beyond the first page
+    # ------------------------------------------------------------------
+
+    def test_large_directory_delete_keeps_every_item_locally_reachable(self) -> None:
+        """A real directory Delete owns one item per child on both kinds.
+
+        B reproduced this: deleting a 120-file directory admits 121 items, one
+        actual Storage Delete is refused beyond the first page, and the local
+        detail stopped at a fixed prefix, so the refused child's result was not
+        reachable at all.  The page must continue instead of truncating, and the
+        exact evidence must survive a fresh repository.
+        """
+
+        for kind, library, base in (
+            ("resource", "source", ("source",)),
+            ("media", "movies", ("target", "Movies")),
+        ):
+            with self.subTest(kind=kind), tempfile.TemporaryDirectory() as directory:
+                root = Path(directory)
+                api, _objects, active, runtime = self._activate(root)
+                binding = api._prepare_runtime_binding_for_revision(active)
+                service = binding.direct_files if kind == "resource" else binding.direct_media_files
+                folder = Path(*base) / "batch"
+                target = root.joinpath(*base) / "batch"
+                target.mkdir(parents=True)
+                for index in range(120):
+                    (target / f"file-{index:03}.txt").write_text("fixture", encoding="utf-8")
+
+                digest = service.delete_impact(library_id=library, paths=["batch"]).scope_digest
+                admitted = service.execute_delete(
+                    library_id=library, paths=["batch"], confirmation_digest=digest
+                )
+                items = runtime.list_items(admitted["taskId"])
+                self.assertEqual(121, len(items), (kind, len(items)))
+                # The refused child is deliberately beyond the first page.
+                hidden = next(
+                    item for item in items[100:] if (item.source_display or "").endswith(".txt")
+                )
+                original_delete = LocalStorage.delete
+
+                def refuse_one(storage, path, *args, **kwargs):
+                    if str(path).endswith(hidden.source_display):
+                        raise StorageError("isolated provider refusal")
+                    return original_delete(storage, path, *args, **kwargs)
+
+                transfers = DirectFileTransferService(
+                    direct_files=service, executor=service._executor
+                )
+                command = str(admitted["taskCommand"])
+                with unittest.mock.patch.object(LocalStorage, "delete", refuse_one):
+                    worker = FilesTransferWorker(
+                        None,
+                        runtime,
+                        service_factory=lambda selected, _transfer: (
+                            transfers if selected == command else None
+                        ),
+                        supported_commands=(command,),
+                    )
+                    self.assertIsNotNone(worker.run_next())
+
+                # The refused child really stayed on disk while its siblings
+                # were deleted: the durable outcome matches the real effect.
+                self.assertTrue((target / Path(hidden.source_display).name).exists())
+                self.assertEqual(1, len(list(target.glob("*.txt"))), list(target.glob("*.txt")))
+                del folder
+
+                collected: list[dict[str, object]] = []
+                code, page = self._detail(api, kind, library, admitted["taskId"], query="limit=50")
+                self.assertEqual(200, code, page)
+                self.assertEqual(121, page["totalItems"], page)
+                self.assertEqual(121, page["itemTotal"], page)
+                self.assertEqual(50, len(page["items"]), page)
+                self.assertTrue(page["itemsTruncated"], page)
+                self.assertIsNotNone(page["nextCursor"], page)
+                collected.extend(page["items"])
+                cursor = page["nextCursor"]
+                pages = 1
+                while cursor is not None:
+                    code, following = self._detail(
+                        api, kind, library, admitted["taskId"], query=f"limit=50&cursor={cursor}"
+                    )
+                    self.assertEqual(200, code, following)
+                    self.assertEqual(121, following["totalItems"], following)
+                    collected.extend(following["items"])
+                    cursor = following["nextCursor"]
+                    pages += 1
+                self.assertEqual(3, pages, pages)
+                self.assertEqual(121, len(collected), (kind, len(collected)))
+                self.assertEqual(
+                    len({item["itemId"] for item in collected}), 121, (kind, "duplicate item")
+                )
+                # No item was ever left out of the page continuation.
+                self.assertEqual(
+                    {item.item_id for item in items},
+                    {item["itemId"] for item in collected},
+                )
+                refused = next(
+                    item for item in collected if str(item["path"]).endswith(hidden.source_display)
+                )
+                # The refused child is reachable beyond page one with its own
+                # bounded evidence and its own safe next action.
+                self.assertIn(refused["status"], {"FAILED", "UNCERTAIN"}, refused)
+                self.assertEqual("uncertain", refused["effectCertainty"], refused)
+                self.assertTrue(refused.get("failure"), refused)
+                self.assertTrue(refused["nextAction"])
+                self.assertFalse(
+                    any(
+                        item["status"] == "SUCCESS" and item["path"] == refused["path"]
+                        for item in collected
+                    )
+                )
+                # Nothing raw or absolute reaches the document.
+                rendered = json.dumps(collected)
+                self.assertNotIn(str(root), rendered)
+                self.assertNotIn("admin-token", rendered)
+                self.assertEqual("none", page["sideEffects"])
+                del items, admitted
+
+    def test_item_cursor_and_scope_fail_closed_and_reads_mutate_nothing(self) -> None:
+        with tempfile.TemporaryDirectory() as directory:
+            root = Path(directory)
+            api, _objects, active, runtime = self._activate(root)
+            resource = self._service(api, active)
+            first = resource.create_directory(library_id="source", parent_path="", name="one")
+            second = resource.create_directory(library_id="source", parent_path="", name="two")
+            media = api._prepare_runtime_binding_for_revision(active).direct_media_files
+            media_created = media.create_directory(library_id="movies", parent_path="", name="one")
+
+            code, page = self._detail(api, "resource", "source", first["taskId"])
+            self.assertEqual(200, code, page)
+            self.assertIsNone(page["nextCursor"])
+
+            # An item cursor is bound to the exact library kind/ID, the Task and
+            # the reading principal.
+            code, other = self._detail(api, "resource", "source", second["taskId"])
+            self.assertEqual(200, code, other)
+            for kind, library, task_id in (
+                ("media", "movies", media_created["taskId"]),
+                ("resource", "source", second["taskId"]),
+            ):
+                code, refused = self._detail(
+                    api, kind, library, task_id, query="limit=10&cursor=not-a-cursor"
+                )
+                self.assertEqual(400, code, (kind, refused))
+            # A backwards-direction item cursor was never minted for this
+            # forward-only surface, so it is refused rather than re-read as a
+            # forward position.
+            backwards = encode_cursor(
+                "library_file_operation_items",
+                datetime.fromisoformat(str(page["createdAt"])),
+                str(page["taskId"]),
+                CursorDirection.PREVIOUS,
+                scope=f"media=0;principal=admin;library=source;task={first['taskId']}",
+            )
+            code, refused = self._detail(
+                api, "resource", "source", first["taskId"], query=f"limit=10&cursor={backwards}"
+            )
+            self.assertEqual(400, code, refused)
+            for query in ("limit=0", "limit=101", "unknown=1", "limit=1&limit=2"):
+                code, refused = self._detail(
+                    api, "resource", "source", first["taskId"], query=query
+                )
+                self.assertEqual(400, code, (query, refused))
+
+            # Reading never mutates a Task, item or Result.
+            before_task = runtime.get_task(first["taskId"])
+            before_items = runtime.list_items(first["taskId"])
+            before_results = runtime.list_results(first["taskId"])
+            self._detail(api, "resource", "source", first["taskId"], token="viewer-token")
+            self.assertEqual(before_task, runtime.get_task(first["taskId"]))
+            self.assertEqual(before_items, runtime.list_items(first["taskId"]))
+            self.assertEqual(before_results, runtime.list_results(first["taskId"]))
+
+    # ------------------------------------------------------------------
+    # B46.2-01: a paused folder Move keeps its recorded known effects
+    # ------------------------------------------------------------------
+
+    def test_paused_folder_move_keeps_its_recorded_known_effects(self) -> None:
+        """A paused directory Move reports the children that really moved.
+
+        B reproduced this: a folder Move was paused at the cooperative boundary
+        after three files had moved, and the local detail returned only the
+        top-level directory with no known effects and an aggregate certainty of
+        "no change".  The durable per-entry progress of the unfinished item is
+        the factual evidence and must be read through the same projection the
+        transfer dialog uses.
+        """
+
+        with tempfile.TemporaryDirectory() as directory:
+            root = Path(directory)
+            (root / "source" / "Movies").mkdir(parents=True, exist_ok=True)
+            source = _GatedSource("source-storage", root / "source", gate_after=3)
+            api, _objects, active, runtime = self._activate(
+                root, storage_adapters={"source-storage": source}
+            )
+            tree = root / "source" / "show"
+            tree.mkdir(parents=True)
+            for index in range(6):
+                (tree / f"ep{index:02d}.mkv").write_bytes(b"episode" * (index + 1))
+            transfers = self._transfers(api, active)
+            impact = transfers.transfer_impact(
+                resource_library_id="source",
+                paths=["show"],
+                destination_resource_library_id="source",
+                destination_directory="Movies",
+                operation="move",
+                conflict_mode="fail",
+            )
+            queued = transfers.submit_transfer(
+                resource_library_id="source",
+                paths=["show"],
+                destination_resource_library_id="source",
+                destination_directory="Movies",
+                operation="move",
+                conflict_mode="fail",
+                manifest_digest=impact.manifest.digest,
+            )
+            task_id = queued["taskId"]
+
+            # A separately invoked Worker claim executes in its own thread while
+            # this stack writes the same durable pause request the lifecycle API
+            # writes, then releases the gated Storage call.
+            worker_results: list = []
+
+            def run() -> None:
+                worker = FilesTransferWorker(
+                    transfers, runtime, lease_seconds=3600.0, worker_id="worker-test"
+                )
+                worker_results.append(worker.run_next())
+
+            thread = threading.Thread(target=run, daemon=True)
+            thread.start()
+            self.assertTrue(source.reached.wait(30))
+            self.assertIsNotNone(
+                runtime.pause_task_if_current(task_id, updated_at=datetime.now(UTC))
+            )
+            source.release.set()
+            thread.join(30)
+            self.assertFalse(thread.is_alive())
+            self.assertEqual(["paused"], [value.status.value for value in worker_results if value])
+            moved = list((root / "source" / "Movies" / "show").glob("*.mkv"))
+            self.assertEqual(3, len(moved))
+
+            code, detail = self._detail(api, "resource", "source", task_id)
+            self.assertEqual(200, code, detail)
+            self.assertEqual("task_paused", detail["durableState"], detail)
+            self.assertEqual("partial", detail["effectCertainty"], detail)
+            self.assertNotEqual("none", detail["effectCertainty"], detail)
+            self.assertEqual(1, len(detail["items"]), detail)
+            item = detail["items"][0]
+            self.assertEqual("PAUSED", item["status"], item)
+            self.assertEqual("partial", item["effect"], item)
+            self.assertEqual("partial", item["effectCertainty"], item)
+            children = {child["path"]: child for child in item["children"]}
+            # The destination directory and the three really moved files are
+            # named as completed children with their executor checkpoints.
+            self.assertIn("show", children, children)
+            moved_children = sorted(
+                path for path, child in children.items() if child["status"] == "SUCCESS"
+            )
+            self.assertEqual(
+                ["show", "show/ep00.mkv", "show/ep01.mkv", "show/ep02.mkv"], moved_children
+            )
+            # Each moved child keeps its own destination and its own recorded
+            # effect: nothing collapses into one opaque directory outcome.
+            for path in moved_children[1:]:
+                self.assertEqual("transferred", children[path]["effect"], children[path])
+                self.assertTrue(children[path]["destination"].startswith("Movies/show/"))
+
+            # A safe continuation is offered and moves only the remaining files.
+            # The control is the exact shared Task lifecycle route with the
+            # version the operator just read.
+            code, resume = request(
+                api,
+                f"/api/v1/tasks/{task_id}/resume",
+                method="POST",
+                body={"expectedUpdatedAt": detail["version"]},
+            )
+            self.assertEqual(202, code, resume)
+            worker = FilesTransferWorker(
+                transfers, runtime, lease_seconds=3600.0, worker_id="worker-test"
+            )
+            self.assertIsNotNone(worker.run_next())
+            code, finished = self._detail(api, "resource", "source", task_id)
+            self.assertEqual(200, code, finished)
+            self.assertEqual("verified_complete", finished["effectCertainty"], finished)
+            self.assertEqual(6, len(list((root / "source" / "Movies" / "show").glob("*.mkv"))))

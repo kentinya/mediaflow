@@ -31,6 +31,13 @@ from __future__ import annotations
 
 from datetime import datetime
 
+from mediaflow.application.direct_file_effects import (
+    aggregate_effect_certainty,
+    item_effect_signal,
+    progress_payload,
+    projection_effect,
+    projection_item_outcomes,
+)
 from mediaflow.application.operations_lifecycle import bounded_failure_document
 from mediaflow.domain.direct_files import LibraryKind, scoped_library_id
 from mediaflow.domain.file_operation_history import (
@@ -40,7 +47,6 @@ from mediaflow.domain.file_operation_history import (
     ordinary_operation_command_name,
     ordinary_operation_label,
 )
-from mediaflow.domain.organizer import ExecutionEffectCertainty
 from mediaflow.domain.task_persistence import (
     FILES_DELETE_TASK_COMMAND,
     FILES_DIRECT_COMMAND_TASK,
@@ -51,43 +57,22 @@ from mediaflow.domain.task_persistence import (
 __all__ = ["LibraryFileOperationHistoryService", "LibraryFileOperationError"]
 
 _MAX_IDENTIFIER = 256
-#: The bounded per-operation item evidence of one local detail read.  An
-#: ordinary command admits one item per selected source (bounded by the domain's
-#: own ``MAX_TRANSFER_PATHS``/``MAX_DELETE_PATHS``), so this cap is a defensive
-#: bound rather than a routine truncation; when it does apply, the document says
-#: so instead of silently dropping evidence.
-_MAX_DETAIL_ITEMS = 100
-_MAX_DETAIL_OUTCOMES = 400
+#: The bounded per-page item evidence of one local detail read.  A directly
+#: selected directory is expanded into one admitted item per child (a 120-file
+#: directory Delete owns 121 items), so this is only a *page* size: the caller
+#: continues through ``nextItemPosition`` until ``itemsTruncated`` is false and
+#: never has to accept a fixed prefix as the whole result.
+_DEFAULT_DETAIL_ITEMS = 50
+#: The hard bound of one item's recorded child entries.  It mirrors the shared
+#: transfer progress bound, so a legitimate directory transfer's entries are
+#: reported; ``childrenTruncated`` names the (defensive) case where a payload
+#: was already truncated.
+_MAX_DETAIL_OUTCOMES = 512
 _MAX_EFFECT_TEXT = 256
 _FAMILY_LABELS = {
     FILES_DIRECT_COMMAND_TASK: "文件维护",
     FILES_TRANSFER_TASK_COMMAND: "复制/移动",
     FILES_DELETE_TASK_COMMAND: "删除",
-}
-
-#: The durable item status → the bounded disposition vocabulary the local detail
-#: publishes.  The words are the same ones the Delete/transfer projections use,
-#: so one ordinary operation never has two spellings in the page.
-_DISPOSITIONS = {
-    TaskItemStatus.SUCCESS: "SUCCESS",
-    TaskItemStatus.PARTIAL: "PARTIAL",
-    TaskItemStatus.FAILED: "FAILED",
-    TaskItemStatus.SKIPPED: "SKIPPED",
-    TaskItemStatus.IGNORED: "SKIPPED",
-    TaskItemStatus.CANCELLED: "CANCELLED",
-    TaskItemStatus.PAUSED: "PAUSED",
-    TaskItemStatus.PROCESSING: "RUNNING",
-    TaskItemStatus.PENDING: "QUEUED",
-    TaskItemStatus.WAITING_CONFIRM: "QUEUED",
-}
-
-#: The durable effect certainty of one item, in the lifecycle projection's own
-#: closed vocabulary so the dialog can render both with one label set.
-_CERTAINTY = {
-    ExecutionEffectCertainty.VERIFIED_COMPLETE.value: "verified_complete",
-    ExecutionEffectCertainty.ATTEMPTED_UNVERIFIED.value: "uncertain",
-    ExecutionEffectCertainty.NONE.value: "none",
-    ExecutionEffectCertainty.UNKNOWN.value: "unknown",
 }
 
 
@@ -160,16 +145,36 @@ class LibraryFileOperationHistoryService:
     # One exact entry and its deep-link resolution
     # ------------------------------------------------------------------
 
-    def detail(self, *, library_id: str, task_id: str) -> dict[str, object]:
+    def detail(
+        self,
+        *,
+        library_id: str,
+        task_id: str,
+        limit: int = _DEFAULT_DETAIL_ITEMS,
+        after: tuple[datetime, str] | None = None,
+    ) -> dict[str, object]:
         """One ordinary operation of this library, or a bounded refusal.
 
-        The document carries the Task aggregate *and* the exact per-item
-        outcomes: an operator who reopened the page after a restart must be able
-        to identify which selected file failed, what effect is known or
-        uncertain and which safe next action applies — without the Task Center
-        and without a raw durable error.
+        The document carries the Task aggregate *and* one bounded page of the
+        exact per-item outcomes: an operator who reopened the page after a
+        restart must be able to identify which selected file failed, what effect
+        is known or uncertain and which safe next action applies — without the
+        Task Center and without a raw durable error.
+
+        A directly selected directory is expanded into one admitted item per
+        child, so a legitimate Delete of a 120-file directory owns 121 items.
+        The page therefore continues instead of stopping at a fixed prefix: the
+        ``items`` page, its page-independent ``totalItems`` and the exact
+        continuation position come from one durable read over the same ordering
+        the cursor is minted for, so every result — including a refused child
+        that settled after the first page — stays locally reachable.
         """
 
+        if isinstance(limit, bool) or not isinstance(limit, int) or not 1 <= limit <= 100:
+            raise LibraryFileOperationError(
+                "library_file_operation_invalid_request",
+                "a bounded item limit is required",
+            )
         resolved_library = self._library_id(library_id)
         resolved_task = self._task_id(task_id)
         task = self._repository.get_task(resolved_task)
@@ -190,7 +195,7 @@ class LibraryFileOperationHistoryService:
         document["libraryIdField"] = self._library_id_field()
         document["sideEffects"] = "none"
         document["retrySafe"] = True
-        document.update(self._item_evidence(task))
+        document.update(self._item_evidence(task, limit=limit, after=after))
         return document
 
     def resolve(self, *, task_id: str) -> dict[str, object]:
@@ -431,86 +436,60 @@ class LibraryFileOperationHistoryService:
     # Per-item evidence of one selected operation
     # ------------------------------------------------------------------
 
-    def _item_evidence(self, task) -> dict[str, object]:
-        """The exact per-item outcomes, effects and safe next action.
+    def _item_evidence(
+        self,
+        task,
+        *,
+        limit: int = _DEFAULT_DETAIL_ITEMS,
+        after: tuple[datetime, str] | None = None,
+    ) -> dict[str, object]:
+        """One bounded page of exact per-item outcomes, effects and next actions.
 
         Everything here is rebuilt from the durable TaskItem rows plus the
-        Result each item already owns.  No Storage adapter, configuration
-        resolution or Provider is consulted, so this survives a restart, a
-        removed/disabled library and a currently unreachable Storage — and a
-        read can never replay or complete anything.
+        newest Result each item already owns, together with the item's recorded
+        in-flight progress through the ONE shared interpretation in
+        ``direct_file_effects`` (the same one the transfer/Delete projections
+        use).  No Storage adapter, configuration resolution or Provider is
+        consulted, so this survives a restart, a removed/disabled library and a
+        currently unreachable Storage — and a read can never replay or complete
+        anything.
+
+        An unfinished item keeps the per-entry checkpoints it already recorded:
+        a paused folder Move whose first three files really moved still shows
+        those files as transferred children rather than one opaque directory
+        with "no change".
         """
 
-        items = tuple(self._repository.list_items(task.task_id))
-        truncated = len(items) > _MAX_DETAIL_ITEMS
-        selected = items[:_MAX_DETAIL_ITEMS]
-        results: dict[str, object] = {}
-        for record in self._repository.list_results(task.task_id):
-            # The newest Result of one item is its factual outcome; an earlier
-            # attempt stays durable history and is never replayed here.
-            results.setdefault(record.item_id, record)
-        outcomes: list[dict[str, object]] = []
-        uncertain = False
-        for item in selected:
-            record = results.get(item.item_id)
-            disposition = _DISPOSITIONS.get(item.status, "FAILED")
-            certainty = _CERTAINTY.get(
-                getattr(record, "effect_certainty", None)
-                if record is not None
-                else ExecutionEffectCertainty.UNKNOWN.value,
-                "unknown",
+        window = getattr(self._repository, "library_file_operation_items_window", None)
+        if not callable(window):
+            raise LibraryFileOperationError(
+                "library_file_operations_unavailable",
+                "the durable library file-operation history is unavailable",
+                status=503,
             )
-            if certainty == "uncertain":
-                uncertain = True
-                # A refused/partial mutation whose net effect could not be
-                # verified is *uncertain*, never a settled failure: the existing
-                # Delete/transfer projections call it the same thing, and the
-                # operator must not read it as "nothing happened".
-                if disposition in {"FAILED", "PARTIAL"}:
-                    disposition = "UNCERTAIN"
-            entry: dict[str, object] = {
-                "itemId": item.item_id,
-                "path": item.source_display or item.source_path,
-                "destination": item.destination_path
-                or (
-                    ""
-                    if item.status in {TaskItemStatus.PENDING, TaskItemStatus.PROCESSING}
-                    else item.source_display
-                ),
-                "status": disposition,
-                "stage": _bounded_text(item.stage),
-                "attempts": item.attempts,
-                "effect": _item_effect(disposition, certainty),
-                "effectCertainty": certainty,
-                "knownEffects": _known_effects(record, disposition),
-            }
-            failure = _item_failure(record, item, disposition)
-            if failure is not None:
-                entry["failure"] = failure
-            entry["nextAction"] = _item_next_action(disposition, certainty, bool(failure))
-            outcomes.append(entry)
-            if len(outcomes) >= _MAX_DETAIL_OUTCOMES:
-                truncated = True
-                break
+        items, total, has_next, results = window(task.task_id, limit=limit, after=after)
+        signals: list[dict[str, object]] = []
+        outcomes: list[dict[str, object]] = []
+        for item in items:
+            record = results.get(item.item_id)
+            signal = item_effect_signal(item, record)
+            signals.append(signal)
+            outcomes.append(_item_entry(item, record, signal))
         document: dict[str, object] = {
             "items": outcomes,
-            "itemsTruncated": truncated,
-            "itemLimit": _MAX_DETAIL_ITEMS,
-            "durableState": _durable_state(task, uncertain, outcomes),
-            "effectCertainty": (
-                "uncertain"
-                if uncertain
-                else (
-                    "verified_complete"
-                    if outcomes
-                    and all(entry["effectCertainty"] == "verified_complete" for entry in outcomes)
-                    else "unknown"
-                    if not outcomes
-                    else "none"
-                )
-            ),
+            "itemLimit": limit,
+            "itemTotal": total,
+            "itemsTruncated": has_next,
+            "durableState": _durable_state(task, signals),
+            "effectCertainty": aggregate_effect_certainty(signals),
         }
-        document["nextAction"] = _operation_next_action(task, outcomes, uncertain)
+        if outcomes and has_next:
+            last = items[-1]
+            document["nextItemPosition"] = {
+                "createdAt": last.created_at.isoformat(),
+                "itemId": last.item_id,
+            }
+        document["nextAction"] = _operation_next_action(task, signals, total)
         return document
 
     def _row_document(self, row: OrdinaryFileOperationRow, library_id: str) -> dict[str, object]:
@@ -598,23 +577,72 @@ def _bounded_text(value: object, *, limit: int = _MAX_EFFECT_TEXT) -> str | None
     return value[:limit]
 
 
-def _item_effect(disposition: str, certainty: str) -> str:
-    """The net known effect of one item, in the projections' vocabulary."""
+def _item_entry(item, record, signal: dict[str, object]) -> dict[str, object]:
+    """One item's durable outcome plus its recorded child entries."""
 
-    if disposition == "SUCCESS":
-        return "transferred" if certainty != "uncertain" else "uncertain"
-    if disposition == "SKIPPED":
-        return "skipped"
-    if disposition == "PARTIAL":
-        return "partial"
-    if disposition == "UNCERTAIN" or certainty == "uncertain":
-        return "uncertain"
-    if disposition in {"RUNNING", "QUEUED", "PAUSED"}:
-        return "in_progress"
-    return "retained"
+    disposition = signal["status"]
+    certainty = signal["effectCertainty"]
+    entry: dict[str, object] = {
+        "itemId": item.item_id,
+        "path": item.source_display or item.source_path,
+        "destination": item.destination_path
+        or (
+            ""
+            if item.status in {TaskItemStatus.PENDING, TaskItemStatus.PROCESSING}
+            else item.source_display
+        ),
+        "status": disposition,
+        "stage": _bounded_text(item.stage),
+        "attempts": item.attempts,
+        "effect": signal["effect"],
+        "effectCertainty": certainty,
+        "knownEffects": _known_effects(record),
+    }
+    failure = _item_failure(record, item, disposition)
+    if failure is not None:
+        entry["failure"] = failure
+    children, children_truncated = _child_outcomes(item, record, disposition)
+    entry["children"] = children
+    entry["childrenTruncated"] = children_truncated
+    entry["nextAction"] = _item_next_action(disposition, certainty, bool(failure))
+    return entry
 
 
-def _known_effects(record, disposition: str) -> list[str]:
+def _child_outcomes(item, record, disposition: str) -> tuple[list[dict[str, object]], bool]:
+    """The bounded recorded per-entry outcomes of one item.
+
+    A started transfer's progress snapshot is authoritative while the item is
+    unfinished; a terminal item's Result annotations reproduce the same
+    per-entry truth.  Each child names its own destination, status and the
+    executor checkpoints already proven, so nothing is collapsed into one
+    opaque directory outcome.
+    """
+
+    payload = progress_payload(item)
+    outcomes, truncated = projection_item_outcomes(item, payload, record, disposition)
+    children: list[dict[str, object]] = []
+    for outcome in outcomes[:_MAX_DETAIL_OUTCOMES]:
+        status = str(outcome.get("status", ""))
+        child: dict[str, object] = {
+            "path": _bounded_text(outcome.get("path")) or "",
+            "destination": _bounded_text(outcome.get("destination")) or "",
+            "status": status,
+            "effect": projection_effect(status),
+            "checkpoints": [
+                _bounded_text(value) or ""
+                for value in outcome.get("checkpoints") or ()
+                if isinstance(value, str)
+            ][:16],
+        }
+        if outcome.get("errorCategory"):
+            child["failure"] = bounded_failure_document(str(outcome["errorCategory"]))
+        children.append(child)
+    if len(outcomes) > _MAX_DETAIL_OUTCOMES:
+        truncated = True
+    return children, truncated
+
+
+def _known_effects(record) -> list[str]:
     """The bounded completed/uncertain checkpoints one Result already records."""
 
     effects: list[str] = []
@@ -626,7 +654,6 @@ def _known_effects(record, disposition: str) -> list[str]:
     for value in uncertain_effects:
         if isinstance(value, str) and value and len(effects) < 32:
             effects.append(f"uncertain:{value[:_MAX_EFFECT_TEXT]}")
-    del disposition
     return effects
 
 
@@ -643,7 +670,11 @@ def _item_failure(record, item, disposition: str) -> dict[str, object] | None:
     raw = getattr(record, "error", None) if record is not None else None
     if not raw:
         raw = item.error
-    return bounded_failure_document(raw if isinstance(raw, str) else None)
+    category = getattr(record, "retry_category", None) if record is not None else None
+    document = bounded_failure_document(raw if isinstance(raw, str) else None)
+    if document is not None and isinstance(category, str) and category:
+        document = {**document, "retryCategory": category[:_MAX_EFFECT_TEXT]}
+    return document
 
 
 def _item_next_action(disposition: str, certainty: str, has_failure: bool) -> str:
@@ -668,34 +699,36 @@ def _item_next_action(disposition: str, certainty: str, has_failure: bool) -> st
     return "核实该条目当前状态后再决定下一步"
 
 
-def _durable_state(task, uncertain: bool, outcomes: list[dict[str, object]]) -> str:
+def _durable_state(task, signals: list[dict[str, object]]) -> str:
     """The bounded durable-state name of one selected operation."""
 
-    if uncertain or task.error == "mutation_outcome":
+    if any(signal["uncertain"] for signal in signals) or task.error == "mutation_outcome":
         return "mutation_effect_uncertain"
     if task.status.value in {"completed", "partial_success", "failed", "cancelled"}:
         return f"task_{task.status.value}"
     if task.status.value == "paused":
         return "task_paused"
-    if not outcomes:
+    if not signals:
         return "no_admitted_item"
     return "task_in_progress"
 
 
-def _operation_next_action(task, outcomes: list[dict[str, object]], uncertain: bool) -> str:
+def _operation_next_action(task, signals: list[dict[str, object]], total: int) -> str:
     """The one safe next action of the whole selected operation."""
 
-    if uncertain or task.error == "mutation_outcome":
+    if any(signal["uncertain"] for signal in signals) or task.error == "mutation_outcome":
         return "刷新来源目录核实实际状态；结果不确定的项目不会自动重试，也不会回滚已完成的成功项目"
     status = task.status.value
     if status in {"completed", "partial_success", "failed", "cancelled"}:
-        failed = any(entry["status"] in {"FAILED", "PARTIAL"} for entry in outcomes)
+        failed = any(signal["status"] in {"FAILED", "PARTIAL", "UNCERTAIN"} for signal in signals)
         if failed:
             return (
-                "查看下方逐项结果以确认哪些条目失败或部分完成；"
+                "查看逐项结果以确认哪些条目失败或部分完成（可用“加载更多”翻到后续条目）；"
                 "刷新目录核实当前状态后，明确选择需要的后续操作"
             )
         return "已无待处理条目；刷新目录即可看到当前状态"
     if status == "paused":
         return "确认剩余范围仍安全后，使用后端提供的继续控制；不会自动重试已完成项目"
+    if total == 0:
+        return "该操作没有受理任何条目；刷新目录确认当前状态"
     return "等待 Worker 在安全边界处理；关闭本窗口不会取消或重放该操作"

@@ -30,6 +30,11 @@ _KINDS = frozenset(
         # The originating library's ordinary file-operation history (Task
         # 46.2).
         "library_file_operations",
+        # The per-item page of one selected ordinary operation: bound to the
+        # exact library kind/ID, the Task and the reading principal, so a
+        # cursor from another operation, operation kind or caller is refused
+        # rather than re-bound to a different item window.
+        "library_file_operation_items",
     }
 )
 # Kinds whose cursors may carry a scope that binds the submitted query.  Task
@@ -55,12 +60,14 @@ _SCOPED_KINDS = frozenset(
         "run_items",
         "run_problem_items",
         "run_records",
-        # The originating library's ordinary file-operation history (Task
-        # 46.2): every page is bound to the exact library kind/ID it was
-        # minted for and to the reading principal, so a cursor from another
-        # kind, library or principal is refused instead of being re-bound to a
-        # different population.
+        # The originating library's ordinary file-operation history and its
+        # per-operation item page (Task 46.2): every page is bound to the exact
+        # library kind/ID (and the Task, for items) and to the reading
+        # principal, so a cursor from another kind, library, operation or
+        # principal is refused instead of being re-bound to a different
+        # population.
         "library_file_operations",
+        "library_file_operation_items",
     }
 )
 MAX_CURSOR_LENGTH = 512

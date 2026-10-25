@@ -140,8 +140,29 @@ export interface LibraryFileOperationItem {
   readonly effect: string;
   readonly effectCertainty: string;
   readonly knownEffects: readonly string[];
+  readonly children: readonly LibraryFileOperationChild[];
+  readonly childrenTruncated: boolean;
   readonly failure: LibraryFileOperationFailure | null;
   readonly nextAction: string;
+}
+
+/**
+ * One recorded child entry of an item, e.g. a file inside a transferred or
+ * deleted directory.
+ *
+ * A directly selected directory is expanded into one admitted item per child,
+ * and a started transfer records each child's own destination, status and
+ * completed executor checkpoints.  Exposing them keeps a paused or partially
+ * executed folder Move truthful locally instead of collapsing it into one
+ * opaque directory row.
+ */
+export interface LibraryFileOperationChild {
+  readonly path: string;
+  readonly destination: string;
+  readonly status: string;
+  readonly effect: string;
+  readonly checkpoints: readonly string[];
+  readonly failure: LibraryFileOperationFailure | null;
 }
 
 /** The bounded, secret-free failure explanation of one item. */
@@ -152,6 +173,7 @@ export interface LibraryFileOperationFailure {
   readonly sideEffects: string;
   readonly retrySafe: boolean;
   readonly nextAction: string;
+  readonly retryCategory: string | null;
 }
 
 export interface LibraryFileOperationPage {
@@ -256,7 +278,11 @@ export interface LibraryFileOperationDetail extends LibraryFileOperationEntry {
   readonly durableState: string | null;
   readonly effectCertainty: string | null;
   readonly items: readonly LibraryFileOperationItem[];
+  /** How many admitted items this operation really owns (all pages). */
+  readonly itemTotal: number;
   readonly itemsTruncated: boolean;
+  /** The exact durable position of the next item page, when one exists. */
+  readonly nextCursor: string | null;
   readonly lifecycle: LifecycleProjection | null;
 }
 
@@ -265,7 +291,31 @@ const OPERATION_EFFECT_CERTAINTIES = [
   "verified_complete",
   "uncertain",
   "unknown",
+  "partial",
 ] as const;
+
+/** The closed set of recorded child-entry statuses. */
+const CHILD_STATUSES: Readonly<Record<string, true>> = {
+  SUCCESS: true,
+  PARTIAL: true,
+  FAILED: true,
+  SKIPPED: true,
+  CANCELLED: true,
+  UNCERTAIN: true,
+  PAUSED: true,
+  RUNNING: true,
+  QUEUED: true,
+};
+
+/** The closed set of recorded child-entry effects. */
+const CHILD_EFFECTS: Readonly<Record<string, true>> = {
+  transferred: true,
+  skipped: true,
+  partial: true,
+  uncertain: true,
+  retained: true,
+  in_progress: true,
+};
 
 const OPERATION_DURABLE_STATES = [
   "mutation_effect_uncertain",
@@ -299,7 +349,39 @@ function readFailureEvidence(
     sideEffects: boundedText(source["sideEffects"], 256),
     retrySafe: flag(source["retrySafe"]),
     nextAction: boundedText(source["nextAction"], 256),
+    retryCategory: optionalText(source["retryCategory"], 64),
   };
+}
+
+/**
+ * One recorded child entry.
+ *
+ * The vocabulary is closed on purpose: an unknown child status or effect means
+ * the document is malformed, and the dialog must not invent a meaning for an
+ * entry whose real effect it cannot name.
+ */
+function readChild(value: unknown): LibraryFileOperationChild {
+  const source = recordOf(value);
+  const status = boundedText(source["status"], 32);
+  if (!(status in CHILD_STATUSES)) fail();
+  const effect = boundedText(source["effect"], 32);
+  if (!(effect in CHILD_EFFECTS)) fail();
+  const checkpoints = source["checkpoints"];
+  if (!Array.isArray(checkpoints) || checkpoints.length > 16) fail();
+  return {
+    path: boundedText(source["path"], 4096),
+    destination: optionalText(source["destination"], 4096) ?? "",
+    status,
+    effect,
+    checkpoints: checkpoints.map((checkpoint) => boundedText(checkpoint, 256)),
+    failure: readFailureEvidence(source["failure"]),
+  };
+}
+
+function readChildren(value: unknown): readonly LibraryFileOperationChild[] {
+  if (value === null || value === undefined) return [];
+  if (!Array.isArray(value) || value.length > 512) fail();
+  return value.map(readChild);
 }
 
 function readItem(value: unknown): LibraryFileOperationItem {
@@ -316,6 +398,8 @@ function readItem(value: unknown): LibraryFileOperationItem {
     effect: boundedText(source["effect"], 32),
     effectCertainty: boundedText(source["effectCertainty"], 32),
     knownEffects: effects.map((effect) => boundedText(effect, 256)),
+    children: readChildren(source["children"]),
+    childrenTruncated: source["childrenTruncated"] === true,
     failure: readFailureEvidence(source["failure"]),
     nextAction: boundedText(source["nextAction"], 256),
   };
@@ -342,6 +426,15 @@ export function normalizeLibraryFileOperationDetail(
   if (rawItems !== undefined && !Array.isArray(rawItems)) fail();
   const items = (rawItems ?? []).map(readItem);
   if (items.length > 100) fail();
+  const rawTotal = source["itemTotal"];
+  const itemTotal =
+    rawTotal === undefined ? entry.totalItems : boundedCount(rawTotal);
+  if (itemTotal < items.length) fail();
+  if (itemTotal !== entry.totalItems) {
+    // The item population is the durable TaskItem count the operation itself
+    // reports; a page that contradicts it is malformed, never a truncation.
+    fail();
+  }
   return {
     ...entry,
     libraryKind: kind,
@@ -356,7 +449,9 @@ export function normalizeLibraryFileOperationDetail(
       OPERATION_EFFECT_CERTAINTIES,
     ),
     items,
+    itemTotal,
     itemsTruncated: source["itemsTruncated"] === true,
+    nextCursor: optionalText(source["nextCursor"], 512),
     lifecycle: optionalLifecycle(source["lifecycle"]),
   };
 }
@@ -512,6 +607,7 @@ export const LIBRARY_OPERATION_ITEM_STATUS_LABELS: Readonly<
   PAUSED: "已暂停",
   RUNNING: "执行中",
   QUEUED: "排队中",
+  UNCERTAIN: "效果不确定",
 };
 
 /** Bounded operator wording for one item's known net effect. */
@@ -519,7 +615,7 @@ export const LIBRARY_OPERATION_EFFECT_LABELS: Readonly<Record<string, string>> =
   {
     transferred: "已完成变更",
     skipped: "未修改",
-    partial: "部分变更",
+    partial: "部分完成",
     uncertain: "效果不确定",
     retained: "来源保留",
     in_progress: "尚未完成",
@@ -530,6 +626,7 @@ export const LIBRARY_OPERATION_CERTAINTY_LABELS: Readonly<
   Record<string, string>
 > = {
   verified_complete: "已核实完成",
+  partial: "部分已变更（其余尚未完成）",
   uncertain: "效果不确定",
   none: "无变更",
   unknown: "效果未知",
