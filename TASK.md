@@ -880,3 +880,148 @@ roughly 8 minutes of subprocess time inside a round of about 40 minutes elapsed,
 i.e. below the 30% ceiling. Full T4 regression remains B-owned.
 
 Full acceptance, full regression and any PASS/FIX decision remain B-owned.
+
+## Developer Completion Report (B46.2-01 live-snapshot repair — 2026-10-25)
+
+```text
+Candidate: 2541d0c8 (implementation; report checkpoint follows)
+Task Base: 6072f50d5b2e5268c35d6729290512d1ae986104
+Range:     d9bc34e6..2541d0c8
+Status:    READY FOR B REVIEW — no self-PASS, no push, no publication
+```
+
+Same Task46.2, same Goal/Scope/T4/acceptance. This round repairs the one open
+B46.2-01 / P1 blocker from the `d9bc34e6` review — the panel froze on an older
+snapshot after real execution — plus the sibling freeze of the operation-list
+counts. No next Task, no Slice closure, no RO-2/RO-4/RO-5 work.
+
+### Cause and correction
+
+- **Cause.** `OperationDetail` derived stage/counts/certainty/controls from the
+  *first* item page while polling was decided by the *last* one, and the
+  `884c88f7` repair pinned the aggregate to page one. Once a continuation
+  returned a newer terminal page, polling stopped and the older first-page facts
+  became permanent: 排队等待 Worker / 成功 0 / 待处理 121 / 效果未知 with only
+  queued items, exactly as B reproduced on both kinds.
+- **One snapshot owns the operation facts.** The selected operation now has a
+  dedicated `library-file-operation-snapshot` read of the same authenticated
+  route. It supplies stage, whole-operation counts, effect certainty, next
+  action, Task version and therefore the lifecycle controls, and it polls by
+  *its own* terminal flag (2 s). A queued operation can no longer be frozen by an
+  item page, and a terminal one stops polling.
+- **The item evidence is a separate, non-polling bounded page read.** Items stay
+  independently paged through the backend continuation, so a background read can
+  never cancel 加载更多 and every admitted item stays reachable.
+- **Stale evidence is re-read, not left standing.** When the snapshot and the
+  loaded evidence describe different whole-operation facts
+  (`libraryOperationSnapshotKey`: Task, status, terminal flag and every count),
+  both are re-read — bounded to two attempts per state pair, after which the
+  disagreement is disclosed with an explicit 重新读取逐项结果 action. Newly read
+  pages therefore also show their real post-execution outcome.
+- **Out-of-order answers cannot regress.** `isOlderLibraryOperationSnapshot`
+  refuses an answer that would turn a terminal Task back into an unfinished one
+  or shrink its admitted population; the guard sits inside the snapshot queryFn,
+  so no render path and no control can be fed a regressed snapshot. Another
+  Task's snapshot always replaces the view.
+- **The list follows the same state.** The bounded operation list is re-read when
+  the snapshot key changes, so a selected row cannot keep advertising older
+  counts beside a converged panel.
+- **Read failures stayed truthful and are now separated.** The snapshot read and
+  the evidence read have independent bounded failures: nothing readable keeps the
+  existing alert + 重新读取该操作; an unreadable snapshot behind a known older
+  answer is disclosed as 上一次成功读取的结果 rather than silently shown as
+  current; a failed evidence page keeps the loaded items with one explicit
+  re-read.
+- No backend/API/schema change was needed: the aggregate was already folded over
+  every admitted item, the continuation was already exact and the lifecycle
+  projection already came from the durable Task.
+
+### Actual commands and results (this round)
+
+| Area | Command | Result |
+|---|---|---|
+| Governance | `python3 scripts/check_governance.py` | PASS |
+| Whitespace | `git diff --check` (pre-commit) | clean |
+| Python static | `.venv/bin/ruff format --check mediaflow tests scripts`; `.venv/bin/ruff check mediaflow tests scripts` | 358 formatted, 0 findings |
+| Python compile | `.venv/bin/python -m compileall -q mediaflow tests scripts` | OK |
+| New/affected Python | `.venv/bin/python -m unittest tests.test_library_file_operation_history` | 21 tests OK (unchanged module) |
+| Affected Python | `.venv/bin/python -m unittest tests.test_direct_file_operations tests.test_media_library_direct_commands` | 88 tests OK |
+| Affected Python | `.venv/bin/python -m unittest tests.test_direct_file_transfers.TransferApiTests` | 7 tests OK |
+| Affected Python | `.venv/bin/python -m unittest tests.test_media_library_transfers.MediaLibraryTransferTests.{test_equal_ids_cannot_exchange_transfer_authority,test_media_transfer_pause_cancel_and_resume_stay_durable,test_media_transfer_progress_survives_api_restart_during_active_outage}` | 3 tests OK |
+| Shared read | `.venv/bin/python -m unittest tests.test_operations_run_inventory tests.test_operations_run_detail` | 76 tests OK |
+| Web focused | `npm run test -- run src/features/library src/entities/library src/shared/api/library-api.test.ts src/shared/api/media-library-commands-api.test.ts src/shared/api/operations-api.test.ts src/routes/router.test.tsx` | 18 files / 286 tests passed (was 279) |
+| Web adjacent | `npx vitest run src/features/operations src/shared/navigation` | 24 files / 278 tests passed |
+| Web static | `npm run typecheck`; `npm run lint`; `npx prettier --check` (changed files); `npm run build` | all clean; artifact `index-BU1rCvjP.js` / `index-BFNi4meT.css` |
+| Native real Python | `npx playwright test --config=playwright.direct-files.python.config.ts tests/e2e/direct-files.python.spec.ts` | **19 passed / 3 failed** — see below |
+
+### Native evidence and the pre-fix reproduction
+
+New journey on both kinds (real page confirmation → real production
+`FilesTransferWorker` → the same open panel):
+
+1. Confirm Delete of the 60-file `Browser-Live-{Resource,Media}-Directory`
+   through the page (61 admitted items); exactly one admission POST.
+2. Open **当前页面操作状态** while the Task is still `pending`: 阶段 排队等待
+   Worker, 成功 0 / 待处理 61 / 共 61 项, 已记录影响 效果未知, and the
+   backend-legal **取消** button.
+3. Run the harness Worker; temporary Storage really loses the directory.
+4. Click 加载更多逐项结果 (a continuation that already reports the terminal Task).
+5. The same open panel reaches 已完成, 成功 61 / 失败 0 / 待处理 0 / 共 61 项,
+   已核实完成, 已无待处理条目; **取消/请求暂停 disappear** and the unavailable
+   explanation appears; no item still says 排队中; the previously queued items
+   now read 已完成变更; 已显示 61 / 61 项逐项证据 after the final page.
+6. Reading converged the panel: mutation count unchanged (still one), the
+   directory is gone, no second admission or control POST.
+
+Verified against pre-fix code with the same test file and a rebuilt artifact:
+**both kinds fail** at `阶段` (`排队等待 Worker` vs `已完成`) after 21 s, i.e. the
+new case reproduces B's blocker rather than passing on both revisions.
+Artifacts (ignored, local): `.git/validation-evidence/task46.2-live-snapshot/`
+with `{resource,media}-live-operation-{queued,converged,converged-facts,converged-desktop}.png`
+and `pre-fix-repro/`.
+
+### Web coverage added
+
+- `LibraryFileOperationsDialog.test.tsx` (12 → 14): a `live` operation whose
+  durable facts change between reads — queued 阶段/计数/效果未知 with 请求暂停 →
+  the next continuation reports terminal → the same mounted page converges to
+  已完成 / 成功 2 / 待处理 0 / 已核实完成 / 已无待处理条目, the pause control
+  disappears, the unavailable-control explanation appears and both loaded items
+  read 已完成变更 with 已显示 2 / 2; and a unit case proving
+  `isOlderLibraryOperationSnapshot` refuses a terminal→in-flight or shrinking
+  answer while another Task is never treated as older.
+
+### Known risks and remaining Slice outcomes
+
+- Convergence relies on the 2 s snapshot poll plus the bounded re-read pair; a
+  provisional 逐项证据仍早于该操作的当前状态 hint is shown while a re-read is in
+  flight (and stays if it does not answer), rather than silently mixing states.
+  That state is simply "read again"; it never executes anything.
+- Three native cases failed in this round's full-spec run and in an independent
+  pre-fix run of the same cases at the same file state: MediaLibrary
+  confirms-once/renames and ResourceLibrary lost-admission Delete, all at the
+  `RowActionMenu` Shift+F10 `menuitem` click (detached/unstable element). Already
+  attributed to Base in the previous round and outside this Task's surface; they
+  are reported, not retried or relaxed. The other 19 cases pass, including the
+  six new/repaired operation-status journeys.
+- Provided the fix stays inside RO-3; RO-2 manual admission, RO-4
+  organizing-only Task Center population and RO-5 Automation semantics remain
+  outstanding and untouched. Center list/count/Attention populations were not
+  narrowed.
+- No schema or packaging change: Docker/deployment proof is not applicable to
+  this round's inputs and is not claimed.
+
+### Workspace
+
+Branch `main`, implementation checkpoint `2541d0c8`. Pre-existing
+`docs/pics/操作与任务.png` deletion, untracked reference images/logs/OS files and
+`web/test-results*` are preserved and not committed. Native screenshots/traces
+are held under the ignored `.git/validation-evidence/task46.2-live-snapshot/`.
+No push, no publication.
+
+**Testing wall time:** the affected static/Python/Web/native commands above,
+including the three pre-fix reproduction runs, total roughly 12 minutes of
+subprocess time inside a round of about 45 minutes elapsed, i.e. below the 30%
+ceiling. No deliberate waiting; full T4 regression remains B-owned.
+
+Full acceptance, full regression and any PASS/FIX decision remain B-owned.
