@@ -228,8 +228,8 @@ ACTIVE Contract and accepted46.1 result without changing their boundaries/status
 ## Developer Completion Report (fix round — 2026-10-25)
 
 ```text
-Candidate: <to be filled after checkpoint>
-Range:     ad25d4379e6e13a6b21ea6ed1bbdb4dde84084ee..<Head>
+Candidate: dde88c77 (implementation; report checkpoint follows)
+Range:     ad25d4379e6e13a6b21ea6ed1bbdb4dde84084ee..dde88c77
 Status:    READY FOR B REVIEW — no self-PASS, no push, no publication
 ```
 
