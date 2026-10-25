@@ -45,6 +45,24 @@ export interface OrganizeDiscoveryScope {
   readonly kind: "file" | "directory";
 }
 
+/**
+ * One deliberately selected item this admission refused while its eligible
+ * siblings became organizing work (RO-2/AC-16).  It carries the backend's own
+ * bounded reason and next action so no page has to invent one.
+ */
+export interface OrganizeDiscoveryRefusedEntry {
+  readonly path: string;
+  readonly kind: "file" | "directory";
+  readonly code: string;
+  readonly reason: string;
+  readonly message: string;
+  readonly nextAction: string;
+  /** Always `false`: a refused item never became organizing work. */
+  readonly organizing: false;
+  /** The unreachable ancestor when the refusal is a depth fact. */
+  readonly prunedAncestor: string | null;
+}
+
 export interface OrganizeDiscoveryReason {
   readonly reason: string;
   readonly count: number;
@@ -121,6 +139,8 @@ export interface OrganizeDiscoveryModel {
   readonly selection: {
     readonly scopeCount: number;
     readonly scopes: readonly OrganizeDiscoveryScope[];
+    /** The selected items this admission refused, each with its own reason. */
+    readonly refused: readonly OrganizeDiscoveryRefusedEntry[];
   };
   readonly progress: OrganizeDiscoveryProgress;
   readonly primarySourceCount: number;
@@ -269,6 +289,36 @@ export function normalizeOrganizeDiscovery(
     } as OrganizeDiscoveryScope;
   });
   const progressRecord = readRecord(record["progress"], "progress");
+  const rawRefused = selection["refused"];
+  if (
+    rawRefused !== undefined &&
+    (!Array.isArray(rawRefused) || rawRefused.length > MAX_DISCOVERY_SCOPES)
+  )
+    fail("selection.refused");
+  const refused = ((rawRefused ?? []) as unknown[]).map((item, index) => {
+    const entry = readRecord(item, `selection.refused[${index}]`);
+    const kind = entry["kind"];
+    if (kind !== "file" && kind !== "directory")
+      fail(`selection.refused[${index}].kind`);
+    return {
+      path: normalizeIdentityText(
+        entry["path"],
+        `selection.refused[${index}].path`,
+        MAX_DISCOVERY_PATH,
+      ),
+      kind,
+      code: normalizeIdentityText(
+        entry["code"],
+        `selection.refused[${index}].code`,
+        MAX_DISCOVERY_TEXT,
+      ),
+      reason: boundedText(entry, "reason"),
+      message: boundedText(entry, "message"),
+      nextAction: boundedText(entry, "nextAction"),
+      organizing: false,
+      prunedAncestor: optionalPath(entry, "prunedAncestor"),
+    } as OrganizeDiscoveryRefusedEntry;
+  });
   const rawFindings = progressRecord["findings"];
   if (
     !Array.isArray(rawFindings) ||
@@ -295,7 +345,7 @@ export function normalizeOrganizeDiscovery(
     ),
     status: status as OrganizeDiscoveryStatus,
     version: normalizeBoundedCount(record["version"], "version"),
-    selection: { scopeCount: scopes.length, scopes },
+    selection: { scopeCount: scopes.length, scopes, refused },
     progress: {
       phase: boundedText(progressRecord, "phase"),
       primarySources: normalizeBoundedCount(

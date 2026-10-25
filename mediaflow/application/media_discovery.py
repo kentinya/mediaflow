@@ -34,6 +34,7 @@ from mediaflow.application.attachments import AttachmentDiscovery
 from mediaflow.application.scan_filters import (
     TEMPORARY_SUFFIXES,
     ManualEntryVerdict,
+    ManualFolderPolicy,
     ObservedSource,
     PrunedAncestorReason,
     ScanEntryVerdict,
@@ -79,11 +80,13 @@ from mediaflow.domain.media_discovery import (
     DiscoveryOwnershipLost,
     DiscoveryProgress,
     DiscoveryReasonCount,
+    DiscoveryRefusedEntry,
     DiscoveryScopeEntry,
     DiscoveryStatus,
     DiscoveryUnavailable,
     MediaDiscovery,
     bounded_path,
+    canonical_refusals,
     canonical_scope,
     deduplicate_scope,
     deduplicate_sources,
@@ -114,6 +117,12 @@ DEFAULT_DISCOVERY_LEASE_SECONDS = 300.0
 #: machine value; the operator copy lives in the Web projection.
 _REASON_TEMPORARY = "temporary_file"
 _REASON_UNSUPPORTED_EXTENSION = "unsupported_extension"
+#: A file found by expanding a *deliberately selected* folder whose suffix is
+#: not part of the configured primary-media extension set (video by default).
+#: It is reported with the same bounded "not a primary media extension"
+#: vocabulary as an automatic walk, because it is the one automatic filter RO-2
+#: keeps inside a deliberate folder expansion.
+_REASON_PRIMARY_EXTENSION = "unsupported_extension"
 _REASON_EXCLUDED_RULE = "configured_exclude"
 #: A configured *extension* exclusion that applied to a deliberately selected
 #: file.  It is kept distinct from a generic rule exclusion so the operator can
@@ -232,6 +241,16 @@ class MediaDiscoveryService:
         than a browser claim.  It never recurses, never enumerates a directory
         and never calls a Provider, so admission stays prompt.
 
+        RO-2/AC-16: a refusal of one *selected item* is that item's own bounded
+        outcome, never a veto on the rest of the request.  Structural, RBAC,
+        root-confinement and budget validation still refuse the whole request
+        (a partly invalid or oversized request must never silently become a
+        different valid scope), but an explicitly excluded selected file or a
+        folder outside the hard traversal bounds is recorded as a durable
+        ``refusedEntries`` finding while every genuinely eligible sibling is
+        admitted and organized.  When nothing at all is admissible the request
+        is refused with the first item's reason instead of admitting empty work.
+
         ``admission_request_id`` is the caller's own identity for this exact
         request.  The immutable Active pin is resolved *here*, at admission
         time, so a browser that rendered an older pin cannot prove which
@@ -293,8 +312,33 @@ class MediaDiscoveryService:
         library = self._runtime_library(runtime, resource_library_id)
         storage = self._guarded_storage(runtime, library.storage_id)
         resolved: list[DiscoveryScopeEntry] = []
+        refused: list[DiscoveryRefusedEntry] = []
         for entry in submitted:
-            resolved.append(self._resolve_entry_kind(storage, library, entry))
+            outcome = self._resolve_entry_kind(storage, library, entry, automatic=False)
+            if isinstance(outcome, DiscoveryRefusedEntry):
+                refused.append(outcome)
+                continue
+            resolved.append(outcome)
+        if not resolved:
+            # Nothing in the submitted selection is admissible.  Refusing with
+            # the first item's own reason keeps the truthful per-item
+            # explanation the operator needs while creating no empty work.
+            first = refused[0]
+            raise DiscoveryError(
+                first.message,
+                code=first.code,
+                status=409,
+                next_action=first.next_action,
+                details={
+                    "relativePath": first.path,
+                    "reason": first.reason,
+                    **(
+                        {"prunedAncestor": first.pruned_ancestor}
+                        if first.pruned_ancestor is not None
+                        else {}
+                    ),
+                },
+            )
         deduplicated = deduplicate_scope(tuple(resolved))
         if not deduplicated:
             raise DiscoveryError(
@@ -348,6 +392,9 @@ class MediaDiscoveryService:
             None,
             (),
             "queued for bounded discovery by the resident Processing Worker",
+            (),
+            canonical_refusals(tuple(refused)),
+            True,
         )
         discovery = MediaDiscovery(
             discovery_id,
@@ -526,6 +573,17 @@ class MediaDiscoveryService:
             definition.source_scope or "", DiscoveryEntryKind.DIRECTORY
         )
         resolved = self._resolve_entry_kind(storage, library, scope_entry)
+        if isinstance(resolved, DiscoveryRefusedEntry):
+            # A definition-bound Run once keeps the unchanged automatic policy,
+            # so a scope the pinned configuration excludes is a request-level
+            # refusal with its exact bounded reason (never a silently empty run).
+            raise DiscoveryError(
+                resolved.message,
+                code=resolved.code,
+                status=409,
+                next_action=resolved.next_action,
+                details={"relativePath": resolved.path, "reason": resolved.reason},
+            )
         deduplicated = canonical_scope((resolved,))
         origin = DefinitionRunOnceOrigin(
             definition.definition_id,
@@ -764,7 +822,19 @@ class MediaDiscoveryService:
         storage = self._guarded_storage(runtime, library.storage_id)
         directory_entry = DiscoveryScopeEntry(relative_scope, DiscoveryEntryKind.DIRECTORY)
         if relative_scope:
-            directory_entry = self._resolve_entry_kind(storage, library, directory_entry)
+            resolved_directory = self._resolve_entry_kind(storage, library, directory_entry)
+            if isinstance(resolved_directory, DiscoveryRefusedEntry):
+                raise DiscoveryError(
+                    resolved_directory.message,
+                    code=resolved_directory.code,
+                    status=409,
+                    next_action=resolved_directory.next_action,
+                    details={
+                        "relativePath": resolved_directory.path,
+                        "reason": resolved_directory.reason,
+                    },
+                )
+            directory_entry = resolved_directory
         # When the original admission is fully recorded there is no unrecorded
         # budget left, so the only work a preparation may legitimately observe is
         # the recorded-but-undecided set itself.  Observing those exact sources
@@ -1410,6 +1480,12 @@ class MediaDiscoveryService:
                 details={"requestIdReuse": True},
             )
         stored_paths = {entry.path for entry in requested.progress.scope_entries}
+        # RO-2/AC-16: a refused member of the original request is still part of
+        # the selection that identity names.  It never became a source, so it
+        # appears in ``refused_entries`` rather than in the admitted scope; a
+        # lost-response retry of the same selection must therefore reconcile on
+        # the union of both instead of being reported as a different selection.
+        stored_paths |= {entry.path for entry in requested.progress.refused_entries}
         selected_paths = set(submitted_paths or ())
         # A selected directory canonically subsumes any explicitly selected
         # descendants. Use the old persisted entry kinds for that comparison:
@@ -2592,6 +2668,13 @@ class MediaDiscoveryService:
                 sources[path] = dict(item)
         findings = list(progress.findings)
         reasons = {item.reason: item for item in progress.reasons}
+        # RO-2: a deliberate Files selection keeps the configured primary-media
+        # extension set (video by default) inside its folder expansion while
+        # dropping the automatic include/exclude/match vetoes.  Every other
+        # admission (definition-bound Run once, remaining-scope recovery, and
+        # every record written before this amendment) keeps `automatic=True`
+        # and therefore the completely unchanged filtering.
+        folder_policy = ManualFolderPolicy(library, automatic=not progress.manual_selection)
         # Material refusals are durable and monotonic: an ordinary read failure
         # in another subtree must never erase an earlier budget/safety/cursor
         # refusal, in either order or across a restart.  They are persisted
@@ -2782,15 +2865,13 @@ class MediaDiscoveryService:
                 counters = replace(counters, excluded_entries=counters.excluded_entries + 1)
                 sources.pop(relative, None)
                 return None
-            verdict = (
-                classify_manual_file_selection(library, relative, entry)
-                if direct
-                else classify_entry(library, relative, entry)
-            )
+            verdict = folder_policy.file_verdict(relative, entry, direct=direct)
             # A deliberate selection is admitted unless it is explicitly
             # excluded, so `ManualEntryVerdict.ADMITTED` is not a refusal.
-            admitted = (direct and verdict is ManualEntryVerdict.ADMITTED) or (
-                not direct and verdict is ScanEntryVerdict.CANDIDATE
+            admitted = (
+                verdict is ManualEntryVerdict.ADMITTED
+                if isinstance(verdict, ManualEntryVerdict)
+                else verdict is ScanEntryVerdict.CANDIDATE
             )
             if not admitted:
                 why = self._exclusion_reason(verdict, entry)
@@ -3061,26 +3142,17 @@ class MediaDiscoveryService:
                     degraded = True
                     continue
                 if raw.entry_type is StorageEntryType.DIRECTORY:
-                    if excluded_directory(library, relative, raw):
-                        bump(_REASON_EXCLUDED_RULE, relative)
-                        note(
-                            DiscoveryFindingKind.EXCLUDED,
-                            relative,
-                            _REASON_EXCLUDED_RULE,
-                            raw,
-                            depth,
+                    if not folder_policy.may_enter_directory(relative, raw):
+                        # Only an automatic walk can answer False here; a
+                        # deliberate folder expansion keeps the hard traversal
+                        # and depth bounds below instead of a business veto.
+                        reason = (
+                            _REASON_EXCLUDED_RULE
+                            if excluded_directory(library, relative, raw)
+                            else _REASON_NOT_INCLUDED
                         )
-                        counters = replace(counters, excluded_entries=counters.excluded_entries + 1)
-                        continue
-                    if not directory_may_match(library.include_rules, relative):
-                        bump(_REASON_NOT_INCLUDED, relative)
-                        note(
-                            DiscoveryFindingKind.EXCLUDED,
-                            relative,
-                            _REASON_NOT_INCLUDED,
-                            raw,
-                            depth,
-                        )
+                        bump(reason, relative)
+                        note(DiscoveryFindingKind.EXCLUDED, relative, reason, raw, depth)
                         counters = replace(counters, excluded_entries=counters.excluded_entries + 1)
                         continue
                     if library.max_depth is not None and depth >= library.max_depth:
@@ -3263,6 +3335,8 @@ class MediaDiscoveryService:
                 tuple(seen_cursors),
                 self._phase_message(status, incomplete),
                 tuple(refusals),
+                progress.refused_entries,
+                progress.manual_selection,
             ),
         )
         # A finished observation is never frozen automatically.  Completing a
@@ -4220,6 +4294,12 @@ class MediaDiscoveryService:
             return _REASON_TEMPORARY
         if verdict is ManualEntryVerdict.EXCLUDED_EXTENSION:
             return _REASON_EXCLUDED_EXTENSION
+        if verdict is ManualEntryVerdict.EXCLUDED_PRIMARY_EXTENSION:
+            # Inside a deliberately selected folder, the configured primary-media
+            # extension set is the one automatic filter RO-2 keeps, so a picture,
+            # subtitle or NFO is reported with the same "not a primary media
+            # extension" vocabulary an automatic walk uses.
+            return _REASON_PRIMARY_EXTENSION
         if verdict is ScanEntryVerdict.EXCLUDED_EXTENSION:
             return (
                 _REASON_TEMPORARY
@@ -4232,7 +4312,26 @@ class MediaDiscoveryService:
             return _REASON_NOT_INCLUDED
         return _REASON_UNSUPPORTED_TYPE
 
-    def _resolve_entry_kind(self, storage: Storage, library, entry: DiscoveryScopeEntry):
+    def _resolve_entry_kind(
+        self, storage: Storage, library, entry: DiscoveryScopeEntry, *, automatic: bool = True
+    ) -> DiscoveryScopeEntry | DiscoveryRefusedEntry:
+        """Resolve one submitted selection to its real kind *or* its own refusal.
+
+        ``automatic`` keeps the pre-amendment semantics for a walk the operator
+        did not select by hand: a definition-bound Run once and a remaining-scope
+        recovery preparation keep the unchanged automatic include/exclude/
+        extension gates, so this Task never weakens Scanner or definition-bound
+        filtering.  A deliberate Files selection (``automatic=False``) instead
+        receives a :class:`DiscoveryRefusedEntry` for an item the pinned policy
+        explicitly excludes, so ``admit`` can keep the eligible siblings of the
+        same request.
+
+        Structural and technical conditions still raise in both modes: a
+        missing source, an unavailable Storage, a symlink and an unsupported
+        entry type are request-level facts, never a business decision about one
+        item.
+        """
+
         path = self._join(library.root_path, entry.path)
         try:
             observed = storage.stat(path)
@@ -4272,10 +4371,20 @@ class MediaDiscoveryService:
                 details={"relativePath": entry.path},
             )
         if observed.entry_type is StorageEntryType.DIRECTORY:
-            self._refuse_unselectable_directory(library, entry.path, observed)
+            if automatic:
+                self._refuse_automatic_directory(library, entry.path, observed)
+                return DiscoveryScopeEntry(entry.path, DiscoveryEntryKind.DIRECTORY)
+            refusal = self._directory_refusal(library, entry.path, observed)
+            if refusal is not None:
+                return refusal
             return DiscoveryScopeEntry(entry.path, DiscoveryEntryKind.DIRECTORY)
         if observed.entry_type is StorageEntryType.FILE:
-            self._refuse_unselectable_file(library, entry.path, observed)
+            if automatic:
+                self._refuse_automatic_file(library, entry.path, observed)
+                return DiscoveryScopeEntry(entry.path, DiscoveryEntryKind.FILE)
+            refusal = self._file_refusal(library, entry.path, observed)
+            if refusal is not None:
+                return refusal
             return DiscoveryScopeEntry(entry.path, DiscoveryEntryKind.FILE)
         raise DiscoveryError(
             "the selected source has an unsupported entry type",
@@ -4285,65 +4394,41 @@ class MediaDiscoveryService:
             details={"relativePath": entry.path},
         )
 
-    def _refuse_pruned_ancestor(self, library, relative: str, *, deliberate: bool = False) -> None:
-        """Refuse a directly selected entry the configured *safety* bounds exclude.
+    def _refuse_automatic_directory(self, library, relative: str, observed: StorageEntry) -> None:
+        """Refuse an *automatically* selected folder under the unchanged policy.
 
-        A direct selection shares the *root-relative* meaning of the configured
-        exclude/include/depth policy: if an ancestor directory would be pruned
-        by a walk that starts at the ResourceLibrary root, then the operator
-        browsing into that subtree and clicking the descendant cannot make it
-        admissible.  This closes the leaf-only gap without introducing a second
-        filter language: ``pruned_ancestor`` is the same pure predicate the walk
-        applies to every directory it visits.
-
-        ``deliberate`` marks a *file* the operator selected by name.  Such a
-        selection is the operator's own inclusion decision, so an include-rule
-        miss or a match rule above it no longer vetoes it (Slice46 RO-2); only
-        the configured *depth* bound and configured extension/temporary
-        exclusions do (checked by the caller).
+        A definition-bound Run once and a recovery preparation walk a scope the
+        operator did not select by hand, so the same include/exclude/depth gates
+        a library walk applies still decide whether that scope is a legal entry
+        point.  Nothing here changed in Task46.3: the deliberate Files selection
+        is the only entrance whose business vetoes were removed.
         """
 
         pruned = pruned_ancestor(library, relative)
-        if pruned is None:
-            return
-        ancestor, reason = pruned
-        if deliberate and reason is not PrunedAncestorReason.DEPTH:
-            return
-        code = {
-            PrunedAncestorReason.EXCLUDED_RULE: "source_excluded",
-            PrunedAncestorReason.NOT_INCLUDED: "source_not_included",
-            PrunedAncestorReason.DEPTH: "source_excluded",
-        }[reason]
-        why = {
-            PrunedAncestorReason.EXCLUDED_RULE: _REASON_EXCLUDED_RULE,
-            PrunedAncestorReason.NOT_INCLUDED: _REASON_NOT_INCLUDED,
-            PrunedAncestorReason.DEPTH: _REASON_DEPTH,
-        }[reason]
-        raise DiscoveryError(
-            "the selected source is inside a folder the pinned ResourceLibrary policy excludes",
-            code=code,
-            status=409,
-            next_action=(
-                "select a source the configured policy admits, or update the ResourceLibrary "
-                "policy and publish it"
-            ),
-            details={"relativePath": relative, "reason": why, "prunedAncestor": ancestor},
-        )
-
-    def _refuse_unselectable_directory(
-        self, library, relative: str, observed: StorageEntry
-    ) -> None:
-        """Refuse a directly selected folder the pinned policy already excludes.
-
-        Filtering must not depend on *how* a source was selected.  A directory
-        the configured exclude rules, include rules or configured depth reject
-        is not a legal entry point: selecting it directly must not walk past the
-        same policy that prunes it during a parent walk, and it must not
-        silently become an empty "complete" discovery either.  The refusal is
-        bounded, actionable and creates no durable record.
-        """
-
-        self._refuse_pruned_ancestor(library, relative)
+        if pruned is not None:
+            ancestor, reason = pruned
+            raise DiscoveryError(
+                "the selected source is inside a folder the pinned ResourceLibrary policy excludes",
+                code=(
+                    "source_not_included"
+                    if reason is PrunedAncestorReason.NOT_INCLUDED
+                    else "source_excluded"
+                ),
+                status=409,
+                next_action=(
+                    "select a source the configured policy admits, or update the "
+                    "ResourceLibrary policy and publish it"
+                ),
+                details={
+                    "relativePath": relative,
+                    "reason": {
+                        PrunedAncestorReason.EXCLUDED_RULE: _REASON_EXCLUDED_RULE,
+                        PrunedAncestorReason.NOT_INCLUDED: _REASON_NOT_INCLUDED,
+                        PrunedAncestorReason.DEPTH: _REASON_DEPTH,
+                    }[reason],
+                    "prunedAncestor": ancestor,
+                },
+            )
         if excluded_directory(library, relative, observed):
             raise DiscoveryError(
                 "the selected folder is excluded by the pinned ResourceLibrary policy",
@@ -4377,35 +4462,52 @@ class MediaDiscoveryService:
                 details={"relativePath": relative, "reason": _REASON_DEPTH},
             )
 
-    def _refuse_unselectable_file(self, library, relative: str, observed: StorageEntry) -> None:
-        """Refuse a directly selected file only for a deliberate exclusion.
+    def _refuse_automatic_file(self, library, relative: str, observed: StorageEntry) -> None:
+        """Refuse an *automatically* selected file under the unchanged policy."""
 
-        A direct Files selection is the operator's own inclusion decision, so
-        the automatic scan filters do not veto it (Slice46 RO-2 amendment): a
-        suffix merely missing from the configured allowlist, an include-rule
-        miss or a non-extension exclude/match rule keeps its meaning for
-        *folder expansion* without becoming an extra manual veto.  What a
-        deliberate selection still obeys is what the operator explicitly
-        excluded for that exact file: the built-in temporary/download suffixes
-        and a configured extension exclusion.  Technical safety stays: an
-        unresolved ancestor, a symlink and an entry outside the configured
-        *depth* are refused exactly as before.
-        """
-
-        self._refuse_pruned_ancestor(library, relative, deliberate=True)
-        verdict = classify_manual_file_selection(library, relative, observed)
-        if verdict is not ManualEntryVerdict.ADMITTED:
-            reason = self._exclusion_reason(verdict, observed)
+        pruned = pruned_ancestor(library, relative)
+        if pruned is not None:
+            ancestor, reason = pruned
             raise DiscoveryError(
-                "the selected file is explicitly excluded by the pinned ResourceLibrary policy",
-                code="source_excluded",
+                "the selected source is inside a folder the pinned ResourceLibrary policy excludes",
+                code=(
+                    "source_not_included"
+                    if reason is PrunedAncestorReason.NOT_INCLUDED
+                    else "source_excluded"
+                ),
                 status=409,
                 next_action=(
-                    "select a file that is not a temporary download and not explicitly "
-                    "excluded by an extension rule, or wait until the download has "
-                    "finished and select it again"
+                    "select a source the configured policy admits, or update the "
+                    "ResourceLibrary policy and publish it"
                 ),
-                details={"relativePath": relative, "reason": reason},
+                details={
+                    "relativePath": relative,
+                    "reason": {
+                        PrunedAncestorReason.EXCLUDED_RULE: _REASON_EXCLUDED_RULE,
+                        PrunedAncestorReason.NOT_INCLUDED: _REASON_NOT_INCLUDED,
+                        PrunedAncestorReason.DEPTH: _REASON_DEPTH,
+                    }[reason],
+                    "prunedAncestor": ancestor,
+                },
+            )
+        verdict = classify_entry(library, relative, observed)
+        if verdict is not ScanEntryVerdict.CANDIDATE:
+            raise DiscoveryError(
+                "the selected file is excluded by the pinned ResourceLibrary policy",
+                code=(
+                    "source_not_included"
+                    if verdict is ScanEntryVerdict.NOT_INCLUDED
+                    else "source_excluded"
+                ),
+                status=409,
+                next_action=(
+                    "select a file the configured policy admits, or update the "
+                    "ResourceLibrary policy and publish it"
+                ),
+                details={
+                    "relativePath": relative,
+                    "reason": self._exclusion_reason(verdict, observed),
+                },
             )
         if not self._within_configured_depth(library, relative, DiscoveryEntryKind.FILE):
             raise DiscoveryError(
@@ -4418,6 +4520,95 @@ class MediaDiscoveryService:
                 ),
                 details={"relativePath": relative, "reason": _REASON_DEPTH},
             )
+
+    def _directory_refusal(
+        self, library, relative: str, observed: StorageEntry
+    ) -> DiscoveryRefusedEntry | None:
+        """The bounded per-item refusal of one deliberately selected folder.
+
+        RO-2 keeps only the hard, non-negotiable bounds for a deliberate folder
+        expansion: the configured *depth* (a walk could never reach it) and the
+        root-relative reachability of the selection itself.  The automatic
+        include/exclude/match rules still shape every Scanner/definition-bound
+        walk, but they are no longer an extra veto on the tree the operator
+        deliberately selected — the configured primary-media extension set
+        applied inside the walk is what keeps pictures, subtitles and NFO from
+        becoming independent primaries.
+        """
+
+        ancestor = pruned_ancestor(library, relative)
+        if ancestor is not None and ancestor[1] is PrunedAncestorReason.DEPTH:
+            return DiscoveryRefusedEntry(
+                relative,
+                DiscoveryEntryKind.DIRECTORY,
+                "source_excluded",
+                _REASON_DEPTH,
+                "the selected folder is deeper than the configured ResourceLibrary depth",
+                "select a shallower folder, or raise the configured depth and publish it",
+                ancestor[0],
+            )
+        if not self._within_configured_depth(library, relative, DiscoveryEntryKind.DIRECTORY):
+            return DiscoveryRefusedEntry(
+                relative,
+                DiscoveryEntryKind.DIRECTORY,
+                "source_excluded",
+                _REASON_DEPTH,
+                "the selected folder is deeper than the configured ResourceLibrary depth",
+                "select a shallower folder, or raise the configured depth and publish it",
+            )
+        return None
+
+    def _file_refusal(
+        self, library, relative: str, observed: StorageEntry
+    ) -> DiscoveryRefusedEntry | None:
+        """The bounded per-item refusal of one deliberately selected file.
+
+        A direct Files selection is the operator's own inclusion decision, so
+        only an exclusion the operator configured *for that exact entry* (a
+        temporary/download suffix or a configured extension exclusion) and the
+        configured depth can refuse it.  An unlisted suffix, an include-rule
+        miss and a non-extension exclude/match rule keep their unchanged
+        meaning for folder expansion without becoming additional manual vetoes.
+        """
+
+        ancestor = pruned_ancestor(library, relative)
+        if ancestor is not None and ancestor[1] is PrunedAncestorReason.DEPTH:
+            return DiscoveryRefusedEntry(
+                relative,
+                DiscoveryEntryKind.FILE,
+                "source_excluded",
+                _REASON_DEPTH,
+                "the selected file is deeper than the configured ResourceLibrary depth",
+                "select a file inside the configured depth, or raise the configured depth "
+                "and publish it",
+                ancestor[0],
+            )
+        verdict = classify_manual_file_selection(library, relative, observed)
+        if verdict is not ManualEntryVerdict.ADMITTED:
+            reason = self._exclusion_reason(verdict, observed)
+            return DiscoveryRefusedEntry(
+                relative,
+                DiscoveryEntryKind.FILE,
+                "source_excluded",
+                reason,
+                "the selected file is explicitly excluded by the pinned ResourceLibrary policy",
+                (
+                    "select a file that is not a temporary download and not explicitly "
+                    "excluded by an extension rule, or wait until the download has "
+                    "finished and select it again"
+                ),
+            )
+        if not self._within_configured_depth(library, relative, DiscoveryEntryKind.FILE):
+            return DiscoveryRefusedEntry(
+                relative,
+                DiscoveryEntryKind.FILE,
+                "source_excluded",
+                _REASON_DEPTH,
+                "the selected file is deeper than the configured ResourceLibrary depth",
+                "select a file inside the configured depth, or raise the configured depth "
+                "and publish it",
+            )
+        return None
 
     @staticmethod
     def _within_configured_depth(library, relative: str, kind: DiscoveryEntryKind) -> bool:

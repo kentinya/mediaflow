@@ -439,6 +439,51 @@ class RunOnceApiTests(unittest.TestCase):
             self.assertEqual([], value.source.mutations)
             self.assertEqual([], value.target.mutations)
 
+    def test_definition_run_once_keeps_the_unchanged_automatic_folder_filtering(self) -> None:
+        """B46.3-03: the deliberate Files rule never weakens the automatic one.
+
+        A definition-bound Run once walks a scope the operator did not select by
+        hand, so the published exclude/include/match rules keep exactly their
+        previous meaning.  The same policy under which a deliberate Files folder
+        selection is now admitted still prunes this automatic walk.
+        """
+
+        self.media("Movies/One.2001.mkv")
+        self.media("Movies/Kept.2002.mkv")
+        with self.journey(source_scope="Movies") as value:
+            library = value.runtime.resource_libraries[0]
+            from dataclasses import replace as _replace
+
+            from mediaflow.domain.library import ScanRule, ScanRuleKind
+
+            excluded = _replace(
+                library,
+                exclude_rules=(
+                    *library.exclude_rules,
+                    ScanRule(ScanRuleKind.GLOB, "**/Kept*"),
+                ),
+            )
+            runtime = _replace(value.runtime, resource_libraries=(excluded,))
+            value.discovery._runtime_resolver = lambda sid, digest: runtime
+            _status, body = self.request(
+                value,
+                "POST",
+                "/api/v1/operations/automation/task-definitions/nightly/run-once",
+                {},
+            )
+            settled = self.drive(value)
+            self.assertEqual(
+                ["Movies/One.2001.mkv"],
+                [item["path"] for item in settled.sources],
+                settled,
+            )
+            self.assertIn(
+                "configured_exclude",
+                {item.reason for item in settled.progress.reasons},
+            )
+            self.assertIsNotNone(body["discoveryId"])
+            self.assertEqual([], value.source.mutations)
+
     def test_pause_request_during_analysis_is_a_continuable_stop_without_a_plan(
         self,
     ) -> None:

@@ -44,20 +44,27 @@ TEMPORARY_SUFFIXES = (".part", ".tmp", ".download", ".crdownload", ".!qb")
 
 
 class ManualEntryVerdict(StrEnum):
-    """Why one *deliberately selected* file is or is not a legal manual source.
+    """Why one *deliberately selected* source is or is not a legal manual source.
 
     A direct Files selection is a human decision, not a scan.  The configured
     extension allowlist, include rules and non-extension exclude/match rules
     answer the different question "would a library walk have offered this?",
-    so they cannot veto it.  What a deliberate selection still obeys is what
-    the operator explicitly configured as an *exclusion of that exact kind*:
-    a configured extension exclusion and the built-in temporary/download
-    suffixes.
+    so they cannot veto a *directly named* file.  What a deliberate selection
+    still obeys is what the operator explicitly configured as an *exclusion of
+    that exact kind*: a configured extension exclusion and the built-in
+    temporary/download suffixes.
+
+    ``EXCLUDED_PRIMARY_EXTENSION`` is the one folder-expansion rule: inside a
+    deliberately selected folder the configured primary-media extension set
+    (default video) still decides which files are primaries, exactly as RO-2
+    requires, while every other automatic include/exclude/match condition loses
+    its veto there.
     """
 
     ADMITTED = "admitted"
     EXCLUDED_TEMPORARY = "excluded_temporary"
     EXCLUDED_EXTENSION = "excluded_extension"
+    EXCLUDED_PRIMARY_EXTENSION = "excluded_primary_extension"
 
 
 class StabilityVerdict(StrEnum):
@@ -123,6 +130,36 @@ def classify_manual_file_selection(
     return ManualEntryVerdict.ADMITTED
 
 
+def classify_manual_folder_entry(
+    library: ResourceLibrary,
+    relative_path: str,
+    entry: StorageEntry,
+) -> ManualEntryVerdict:
+    """Classify one file found by expanding a *deliberately selected* folder.
+
+    RO-2 keeps exactly one automatic file filter inside a deliberate folder
+    expansion: the ResourceLibrary's configured primary-media extension set
+    (video by default).  That is what stops pictures, subtitles and NFO files
+    from becoming independent primaries merely because they sat in the selected
+    folder.  The include rules, the non-extension exclude/match rules and the
+    "is this suffix in the allowlist" short-circuit keep their unchanged
+    automatic meaning for Scanner/definition-bound walks without becoming extra
+    manual vetoes here.
+
+    Explicit exclusions still apply unchanged: the built-in temporary/download
+    suffixes and a configured *extension* exclude rule.  ``relative_path`` is
+    accepted for the same reason as in :func:`classify_manual_file_selection`.
+    """
+
+    if entry.name.lower().endswith(TEMPORARY_SUFFIXES):
+        return ManualEntryVerdict.EXCLUDED_TEMPORARY
+    if extension_exclusion_rule(library, entry):
+        return ManualEntryVerdict.EXCLUDED_EXTENSION
+    if entry_extension(entry) not in library.file_extensions:
+        return ManualEntryVerdict.EXCLUDED_PRIMARY_EXTENSION
+    return ManualEntryVerdict.ADMITTED
+
+
 def extension_exclusion_rule(
     library: ResourceLibrary,
     entry: StorageEntry,
@@ -145,6 +182,54 @@ def excluded_directory(
     """Whether a directory entry is pruned by the configured exclude rules."""
 
     return excluded(library.exclude_rules, relative_path, entry.name, "", True)
+
+
+@dataclass(frozen=True)
+class ManualFolderPolicy:
+    """The pinned policy one deliberate folder expansion applies.
+
+    It is a value, not a second rule engine: :meth:`file_verdict` and
+    :meth:`may_enter_directory` are the only two questions the bounded walk asks
+    per entry, and both delegate to the shared predicates above.  ``automatic``
+    selects the original Scanner-equal semantics so an ordinary library walk, a
+    definition-bound Run once and a recovery preparation keep exactly the
+    filtering they had.
+    """
+
+    library: ResourceLibrary
+    automatic: bool = True
+
+    def file_verdict(
+        self, relative_path: str, entry: StorageEntry, *, direct: bool
+    ) -> ManualEntryVerdict | ScanEntryVerdict:
+        """The verdict for one observed file.
+
+        A directly named file is judged by :func:`classify_manual_file_selection`
+        and a file reached by expanding a selected folder by
+        :func:`classify_manual_folder_entry`; an automatic walk keeps
+        :func:`classify_entry` unchanged.
+        """
+
+        if direct:
+            return classify_manual_file_selection(self.library, relative_path, entry)
+        if self.automatic:
+            return classify_entry(self.library, relative_path, entry)
+        return classify_manual_folder_entry(self.library, relative_path, entry)
+
+    def may_enter_directory(self, relative_path: str, entry: StorageEntry) -> bool:
+        """Whether the walk may descend into one observed child directory.
+
+        A deliberate folder expansion still honours the hard traversal bounds
+        (configured depth is checked by the caller, the Task safety depth inside
+        the walk) but no longer applies the automatic exclude/include rule vetoes
+        to the selected tree.
+        """
+
+        if self.automatic:
+            if excluded_directory(self.library, relative_path, entry):
+                return False
+            return directory_may_match(self.library.include_rules, relative_path)
+        return True
 
 
 class PrunedAncestorReason(StrEnum):

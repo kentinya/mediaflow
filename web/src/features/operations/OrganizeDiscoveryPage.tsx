@@ -289,6 +289,23 @@ export function OrganizeDiscoveryPage() {
                     </li>
                   ))}
                 </ul>
+                {model.selection.refused.length > 0 && (
+                  <div role="status" aria-label="未受理的所选条目">
+                    <h4>未受理（{model.selection.refused.length}）</h4>
+                    <p>其余所选条目已独立受理；下列条目未创建整理工作：</p>
+                    <ul>
+                      {model.selection.refused.map((refused) => (
+                        <li key={`${refused.kind}:${refused.path}`}>
+                          <code className="mf-exact-identity">
+                            {refused.path}
+                          </code>{" "}
+                          — {label(REASON_LABELS, refused.reason)} ·{" "}
+                          {refused.nextAction}
+                        </li>
+                      ))}
+                    </ul>
+                  </div>
+                )}
               </section>
 
               <section aria-label="发现进度">

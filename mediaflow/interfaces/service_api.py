@@ -12107,6 +12107,13 @@ class MediaFlowApi:
                 "scopes": [
                     {"path": item.path, "kind": item.kind.value} for item in progress.scope_entries
                 ],
+                # RO-2/AC-16: the selected items this admission refused, with
+                # their own bounded reason and next action.  They are durable
+                # evidence on the admitted work, never a silent drop, so the
+                # operator sees the exact refused item beside the eligible
+                # siblings that really became organizing work.
+                "refused": [item.document() for item in progress.refused_entries],
+                "refusedCount": len(progress.refused_entries),
             },
             "budgets": discovery.budgets.document(),
             "progress": {

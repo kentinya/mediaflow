@@ -993,6 +993,27 @@ export function OrganizeCreationPage() {
                 · {displayEnum(preview.status)} ·{" "}
                 {preview.current ? "当前方案" : "历史方案"} · 不会修改 Storage
               </p>
+              {preparation.selection.refused.length > 0 && (
+                <div
+                  className="mf-dashboard-meta"
+                  role="status"
+                  aria-label="未受理的所选条目"
+                >
+                  <p>
+                    已独立受理其余条目，以下{" "}
+                    {preparation.selection.refused.length}{" "}
+                    项未受理(未创建整理工作):
+                  </p>
+                  <ul>
+                    {preparation.selection.refused.map((refused) => (
+                      <li key={`${refused.kind}:${refused.path}`}>
+                        {refused.path} — {label(REASON_LABELS, refused.reason)}{" "}
+                        · {refused.nextAction}
+                      </li>
+                    ))}
+                  </ul>
+                </div>
+              )}
               <p className="mf-dashboard-meta">
                 发现完整性：
                 {preparation.progress.incomplete

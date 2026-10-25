@@ -393,7 +393,10 @@ function updateDirectoryRouteState(relativePath: string): void {
   );
 }
 
-function discoveryAdmissionFailureMessage(code: string): string {
+function discoveryAdmissionFailureMessage(
+  code: string,
+  reason?: string | null,
+): string {
   switch (code) {
     case "source_missing":
       return "所选文件夹或文件已不存在，请刷新后重试。";
@@ -402,10 +405,42 @@ function discoveryAdmissionFailureMessage(code: string): string {
     case "source_unsupported":
       return "所选条目的类型不支持整理，请选择普通文件夹或文件。";
     case "source_excluded":
-      return (
-        "所选条目被配置明确排除(临时/下载中的文件或配置的扩展名排除规则)，" +
-        "未创建任何整理工作；请选择其他文件，或结束下载后再提交。"
-      );
+      // The refusal reason is what the operator must read: a temporary download,
+      // a configured extension exclusion, a depth bound and a directory rule are
+      // different problems with different next actions.  Only the first two are
+      // deliberate exclusions; a depth refusal is a reachability fact.
+      switch (reason) {
+        case "temporary_file":
+          return (
+            "所选文件仍在下载或写入(临时后缀)，未创建整理工作；" +
+            "请等下载结束后再选择该文件。"
+          );
+        case "excluded_extension_rule":
+          return (
+            "所选文件命中配置的扩展名排除规则，未创建整理工作；" +
+            "请选择其他文件，或调整资源库策略并重新发布。"
+          );
+        case "configured_depth_exceeded":
+          return (
+            "所选条目超出资源库配置的深度上限，整理不会进入该层级，未创建整理工作；" +
+            "请选择更浅的文件夹，或提高配置深度并重新发布。"
+          );
+        case "configured_exclude":
+          return (
+            "所选条目被资源库配置的排除规则排除，未创建整理工作；" +
+            "请选择其他条目，或调整资源库策略并重新发布。"
+          );
+        case "not_included":
+          return (
+            "所选条目不在资源库配置的包含范围内，未创建整理工作；" +
+            "请选择其他条目，或调整资源库策略并重新发布。"
+          );
+        default:
+          return (
+            "所选条目被配置明确排除(临时/下载中的文件或配置的扩展名排除规则)，" +
+            "未创建任何整理工作；请选择其他文件，或结束下载后再提交。"
+          );
+      }
     case "source_not_included":
       return "所选文件夹不满足配置的包含规则，未创建任何整理工作；请选择其他文件夹，或更新资源库策略后重新发布。";
     case "invalid_path":
@@ -2162,7 +2197,10 @@ export function StorageFilesPage() {
         ...(requestId === null ? {} : { requestId }),
       });
       if (!admitted.ok) {
-        const message = discoveryAdmissionFailureMessage(admitted.code);
+        const message = discoveryAdmissionFailureMessage(
+          admitted.code,
+          admitted.reason,
+        );
         if (
           admitted.status === 0 ||
           admitted.status >= 500 ||

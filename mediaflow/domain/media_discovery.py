@@ -572,6 +572,63 @@ class DiscoveryOwnershipLost(DiscoveryError):
 
 
 @dataclass(frozen=True)
+class DiscoveryRefusedEntry:
+    """One deliberately selected scope entry this admission refused.
+
+    RO-2/AC-16 requires independent per-item outcomes: an explicit exclusion of
+    one selected source must not erase a genuinely eligible sibling from the
+    same request.  The refusal is durable evidence on the admitted work — never
+    a silent drop — so the operator can see the exact item, the bounded reason
+    and its own next action while the eligible siblings proceed.
+    """
+
+    path: str
+    kind: DiscoveryEntryKind
+    code: str
+    reason: str
+    message: str
+    next_action: str
+    #: The shallowest ancestor that is unreachable under the configured depth,
+    #: when the refusal is a reachability fact rather than an exclusion.
+    pruned_ancestor: str | None = None
+
+    def document(self) -> dict[str, object]:
+        value: dict[str, object] = {
+            "path": self.path,
+            "kind": self.kind.value,
+            "code": self.code,
+            "reason": self.reason,
+            "message": self.message,
+            "nextAction": self.next_action,
+            "organizing": False,
+        }
+        if self.pruned_ancestor is not None:
+            value["prunedAncestor"] = self.pruned_ancestor
+        return value
+
+    @classmethod
+    def from_document(cls, value: object) -> DiscoveryRefusedEntry:
+        if not isinstance(value, dict):
+            raise ValueError("discovery refused entry is invalid")
+        path = value.get("path")
+        code = value.get("code")
+        reason = value.get("reason")
+        if not isinstance(path, str) or not path or not isinstance(code, str):
+            raise ValueError("discovery refused entry is invalid")
+        if not isinstance(reason, str):
+            raise ValueError("discovery refused entry is invalid")
+        return cls(
+            path,
+            DiscoveryEntryKind(str(value.get("kind", "file"))),
+            code,
+            reason,
+            str(value.get("message", ""))[:MAX_DISCOVERY_TEXT_LENGTH],
+            str(value.get("nextAction", ""))[:MAX_DISCOVERY_TEXT_LENGTH],
+            (value["prunedAncestor"] if isinstance(value.get("prunedAncestor"), str) else None),
+        )
+
+
+@dataclass(frozen=True)
 class DiscoveryScopeEntry:
     """One submitted ResourceLibrary-relative selection with its real entry type."""
 
@@ -834,9 +891,21 @@ class DiscoveryProgress:
     #: never erased by a later ordinary read failure or a later pass, so a
     #: truncated prefix can never be presented as a complete, freezable scope.
     refusal_reasons: tuple[DiscoveryIncompleteReason, ...] = ()
+    #: The exact selected entries this admission refused while its eligible
+    #: siblings were admitted.  Empty for a fully admissible selection and for
+    #: every automatic (Scanner/definition/recovery) admission.
+    refused_entries: tuple[DiscoveryRefusedEntry, ...] = ()
+    #: Whether this admission came from a *deliberate* Files selection.
+    #: A deliberate selection keeps the configured primary-media extension set
+    #: (default video) for folder expansion while dropping the automatic
+    #: include/exclude/match vetoes; an automatic walk keeps them unchanged.
+    #: Stored inside the durable progress document, so no schema column and no
+    #: backfill of existing rows is needed: a pre-existing record round-trips as
+    #: exactly the automatic admission it was.
+    manual_selection: bool = False
 
     def document(self) -> dict[str, object]:
-        return {
+        value: dict[str, object] = {
             "phase": self.phase,
             "scopeEntries": [item.document() for item in self.scope_entries],
             "counters": self.counters.document(),
@@ -851,6 +920,13 @@ class DiscoveryProgress:
             "activeCursorsSeen": list(self.active_cursors_seen),
             "message": self.message,
         }
+        if self.refused_entries:
+            value["refusedEntries"] = [item.document() for item in self.refused_entries]
+        if self.manual_selection:
+            # Only present when true, so a record written before this amendment
+            # keeps a byte-identical progress document.
+            value["manualSelection"] = True
+        return value
 
     @classmethod
     def from_document(cls, value: object) -> DiscoveryProgress:
@@ -863,7 +939,17 @@ class DiscoveryProgress:
         pending = value.get("pendingDirectories", [])
         seen = value.get("activeCursorsSeen", [])
         refusals = value.get("refusalReasons", [])
-        for raw in (scope, findings, reasons, pending_files, pending, seen, refusals):
+        refused_entries = value.get("refusedEntries", [])
+        for raw in (
+            scope,
+            findings,
+            reasons,
+            pending_files,
+            pending,
+            seen,
+            refusals,
+            refused_entries,
+        ):
             if not isinstance(raw, list):
                 raise ValueError("discovery progress is invalid")
         active_directory = value.get("activeDirectory")
@@ -886,6 +972,8 @@ class DiscoveryProgress:
             tuple(str(item) for item in seen),
             str(value.get("message", ""))[:MAX_DISCOVERY_TEXT_LENGTH],
             tuple(DiscoveryIncompleteReason(str(item)) for item in refusals),
+            tuple(DiscoveryRefusedEntry.from_document(item) for item in refused_entries),
+            bool(value.get("manualSelection", False)),
         )
 
 
@@ -1203,6 +1291,24 @@ def deduplicate_scope(entries: tuple[DiscoveryScopeEntry, ...]) -> tuple[Discove
 
 def _covers(parent: str, child: str) -> bool:
     return child == parent or child.startswith(parent.rstrip("/") + "/")
+
+
+def canonical_refusals(
+    entries: tuple[DiscoveryRefusedEntry, ...],
+) -> tuple[DiscoveryRefusedEntry, ...]:
+    """The set-canonical, bounded refused-entry list of one admission.
+
+    A refused item is recorded once per exact ``(path, kind)`` with the first
+    bounded reason, so a repeated submission or a resumed Worker can never
+    accumulate duplicates and the durable evidence stays inside
+    ``MAX_DISCOVERY_SCOPE_PATHS`` (the same bound as the admitted scope).
+    """
+
+    unique: dict[tuple[str, str], DiscoveryRefusedEntry] = {}
+    for entry in entries:
+        unique.setdefault((entry.path, entry.kind.value), entry)
+    ordered = sorted(unique.items(), key=lambda item: item[0])
+    return tuple(value for _, value in ordered[:MAX_DISCOVERY_SCOPE_PATHS])
 
 
 def is_confined(path: str, root: str) -> bool:

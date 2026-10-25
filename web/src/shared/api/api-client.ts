@@ -3417,6 +3417,14 @@ export type FilesDiscoveryAdmissionResult =
       readonly status: number;
       readonly code: string;
       readonly nextAction: string | null;
+      /**
+       * The backend's bounded refusal reason from `error.details.reason`, when
+       * it published one.  A refusal of a whole selection (nothing was
+       * admissible) is explained by its own reason instead of the generic code
+       * copy: a directory-rule or depth refusal is not a temporary/download or
+       * extension exclusion.
+       */
+      readonly reason?: string | null;
     };
 
 /**
@@ -3482,6 +3490,11 @@ export async function submitFilesDiscovery(
   if (!response.ok) {
     const record = readRecord(payload, "discoveryError");
     const error = readRecord(record["error"], "discoveryError.error");
+    const detailRecord = error["details"];
+    const reason =
+      detailRecord !== null && typeof detailRecord === "object"
+        ? (detailRecord as Record<string, unknown>)["reason"]
+        : null;
     return {
       ok: false,
       status: response.status,
@@ -3491,6 +3504,7 @@ export async function submitFilesDiscovery(
           : "discovery_rejected",
       nextAction:
         typeof error["nextAction"] === "string" ? error["nextAction"] : null,
+      reason: typeof reason === "string" && reason.length > 0 ? reason : null,
     };
   }
   const record = readRecord(payload, "discovery");

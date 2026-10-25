@@ -206,6 +206,40 @@ class _DiscoveryFixture(unittest.TestCase):
             os.utime(path, (stamp, stamp))
         return path
 
+    def publish_policy(self, value, *, document: dict) -> None:
+        """Load one real published policy revision into a running journey.
+
+        The revision goes through the production managed authority and loader,
+        exactly like the Web/API Save surface, so every policy assertion below
+        reads a genuinely published and loaded configuration rather than an
+        injected object.
+        """
+
+        from mediaflow.infrastructure.runtime_configuration import (
+            load_managed_runtime_configuration,
+            with_managed_snapshot,
+        )
+
+        revision = _activate(
+            ManagedConfigurationService(
+                SQLiteConfigurationRepository(self.database),
+                bootstrap_database_path=str(self.database),
+            ),
+            document,
+        )
+        runtime = with_managed_snapshot(
+            load_managed_runtime_configuration(
+                revision.document, bootstrap_database_path=str(self.database)
+            ),
+            snapshot_id=revision.revision_id,
+            digest=revision.digest,
+        )
+        value.configuration = runtime
+        value.discovery._runtime_resolver = lambda sid, digest: runtime
+        value.previews._runtime_resolver = lambda sid, digest: runtime
+        value.intents._runtime_resolver = lambda sid, digest: runtime
+        return revision, runtime
+
     def document(
         self,
         *,
@@ -670,33 +704,6 @@ class ManualEntrySemanticsTests(_DiscoveryFixture):
     bounded Worker and real Local Storage.
     """
 
-    def _publish_policy(self, value, *, document: dict) -> None:
-        """Load one real published policy revision into the running journey."""
-
-        from mediaflow.infrastructure.runtime_configuration import (
-            load_managed_runtime_configuration,
-            with_managed_snapshot,
-        )
-
-        revision = _activate(
-            ManagedConfigurationService(
-                SQLiteConfigurationRepository(self.database),
-                bootstrap_database_path=str(self.database),
-            ),
-            document,
-        )
-        runtime = with_managed_snapshot(
-            load_managed_runtime_configuration(
-                revision.document, bootstrap_database_path=str(self.database)
-            ),
-            snapshot_id=revision.revision_id,
-            digest=revision.digest,
-        )
-        value.configuration = runtime
-        value.discovery._runtime_resolver = lambda sid, digest: runtime
-        value.previews._runtime_resolver = lambda sid, digest: runtime
-        value.intents._runtime_resolver = lambda sid, digest: runtime
-
     def test_directly_selected_unlisted_suffix_is_admitted(self) -> None:
         """A `.txt` file clicked by name is admitted; a folder walk still skips it."""
 
@@ -740,21 +747,24 @@ class ManualEntrySemanticsTests(_DiscoveryFixture):
     def test_directly_selected_file_ignores_include_and_match_rules(self) -> None:
         """An include-rule miss and a file-level exclude rule do not veto a click.
 
-        Both rules keep their unchanged meaning for a folder expansion: the
-        contract only removes them as *additional manual vetoes* on the file the
-        operator selected by name.
+        RO-2/B46.3-03: a deliberate Files selection is the operator's own
+        inclusion decision, so those automatic conditions no longer veto either a
+        directly named file *or* the tree of a deliberately selected folder.  The
+        configured primary-media extension set is the one automatic file filter
+        that remains inside a deliberate folder expansion.
         """
 
         self.media("Kept.2001.mkv")
         self.media("Movies/One.2001.mkv")
         self.media("Movies/Kept.2002.mkv")
+        self.media("Movies/notes.txt")
         document = self.document()
         document["resourceLibraries"][0]["includeRules"] = [
             {"kind": "glob", "pattern": "Movies/**"}
         ]
         document["resourceLibraries"][0]["excludeRules"] = [{"kind": "glob", "pattern": "**/Kept*"}]
         with self.journey() as value:
-            self._publish_policy(value, document=document)
+            self.publish_policy(value, document=document)
             status, admitted = self.request(
                 value,
                 "/api/v1/resource-libraries/library/files/discoveries",
@@ -764,8 +774,9 @@ class ManualEntrySemanticsTests(_DiscoveryFixture):
             self.assertEqual(202, status, admitted)
             settled = self.run_discovery(value)
             self.assertEqual(["Kept.2001.mkv"], [item["path"] for item in settled["sources"]])
-            # The same two rules still shape a folder expansion exactly as
-            # before this Task: only the unmatched, non-excluded file survives.
+            # A deliberately selected folder keeps its configured primary-media
+            # extension set and drops the automatic include/match vetoes, so both
+            # `mkv` files are primaries while the unlisted `.txt` suffix is not.
             _, folder = self.request(
                 value,
                 "/api/v1/resource-libraries/library/files/discoveries",
@@ -774,11 +785,13 @@ class ManualEntrySemanticsTests(_DiscoveryFixture):
             )
             folder_settled = self.run_discovery(value)
             self.assertEqual(
-                ["Movies/One.2001.mkv"],
+                ["Movies/Kept.2002.mkv", "Movies/One.2001.mkv"],
                 [item["path"] for item in folder_settled["sources"]],
             )
             reasons = {item["reason"] for item in folder_settled["progress"]["reasons"]}
-            self.assertIn("configured_exclude", reasons)
+            self.assertIn("unsupported_extension", reasons)
+            self.assertNotIn("configured_exclude", reasons)
+            self.assertNotIn("not_included", reasons)
             self.assertEqual([], value.source.mutations)
 
     def test_directly_selected_temporary_and_explicit_extension_are_refused(self) -> None:
@@ -789,7 +802,7 @@ class ManualEntrySemanticsTests(_DiscoveryFixture):
         document = self.document(extensions=("mkv",))
         document["resourceLibraries"][0]["excludeRules"] = [{"kind": "extension", "pattern": "mkv"}]
         with self.journey() as value:
-            self._publish_policy(value, document=document)
+            self.publish_policy(value, document=document)
             status, temporary = self.request(
                 value,
                 "/api/v1/resource-libraries/library/files/discoveries",
@@ -839,22 +852,318 @@ class ManualEntrySemanticsTests(_DiscoveryFixture):
             self.assertIsNone(settled["progress"]["incompleteReason"], settled)
             self.assertEqual([], value.source.mutations)
 
-    def test_a_partly_refused_selection_is_never_a_different_scope(self) -> None:
-        """A refused member refuses the whole request, with zero durable work."""
+    def test_a_partly_refused_selection_keeps_eligible_siblings(self) -> None:
+        """B46.3-02: a refused member is its own outcome, not a scope veto.
+
+        Selecting an eligible file together with an explicitly excluded one must
+        create real organizing work for the eligible sibling and record the
+        refused item's own bounded reason, with zero mutation before the
+        operator's explicit confirmation.
+        """
 
         self.media("Movies/One.2001.mkv")
+        self.media("Movies/downloading.mkv.part")
+        with self.journey() as value:
+            status, admitted = self.request(
+                value,
+                "/api/v1/resource-libraries/library/files/discoveries",
+                "POST",
+                {"paths": ["Movies/One.2001.mkv", "Movies/downloading.mkv.part"]},
+            )
+            self.assertEqual(202, status, admitted)
+            self.assertEqual(
+                [{"path": "Movies/One.2001.mkv", "kind": "file"}],
+                admitted["selection"]["scopes"],
+            )
+            self.assertEqual(
+                [
+                    {
+                        "path": "Movies/downloading.mkv.part",
+                        "kind": "file",
+                        "code": "source_excluded",
+                        "reason": "temporary_file",
+                        "organizing": False,
+                        "message": (
+                            "the selected file is explicitly excluded by the pinned "
+                            "ResourceLibrary policy"
+                        ),
+                        "nextAction": (
+                            "select a file that is not a temporary download and not explicitly "
+                            "excluded by an extension rule, or wait until the download has "
+                            "finished and select it again"
+                        ),
+                    }
+                ],
+                admitted["selection"]["refused"],
+            )
+            self.assertEqual(1, admitted["selection"]["refusedCount"])
+            settled = self.run_discovery(value)
+            self.assertEqual(["Movies/One.2001.mkv"], [item["path"] for item in settled["sources"]])
+            # The refusal survives the durable round-trip (a reload/restart reads
+            # exactly the same evidence) and no media effect happened.
+            self.assertEqual(1, settled["selection"]["refusedCount"])
+            self.assertEqual([], value.source.mutations)
+
+    def test_a_refused_sibling_stays_inside_its_admission_request_identity(self) -> None:
+        """A lost-response retry of a partly refused selection reconciles.
+
+        The refused member never became a source, so it lives in
+        ``refusedEntries``.  Retrying the same request identity with the same
+        selection must return the original durable work instead of claiming a
+        different selection (RO-2/AC-16 + the existing exact-request contract).
+        """
+
+        self.media("Movies/One.2001.mkv")
+        self.media("Movies/downloading.mkv.part")
+        body = {
+            "paths": ["Movies/One.2001.mkv", "Movies/downloading.mkv.part"],
+            "requestId": "11111111-1111-4111-8111-111111111111",
+        }
+        with self.journey() as value:
+            status, admitted = self.request(
+                value,
+                "/api/v1/resource-libraries/library/files/discoveries",
+                "POST",
+                body,
+            )
+            self.assertEqual(202, status, admitted)
+            status, reconciled = self.request(
+                value,
+                "/api/v1/resource-libraries/library/files/discoveries",
+                "POST",
+                body,
+            )
+            self.assertEqual(202, status, reconciled)
+            self.assertEqual(admitted["discoveryId"], reconciled["discoveryId"])
+            # A genuinely different selection still refuses request-ID reuse.
+            status, conflicted = self.request(
+                value,
+                "/api/v1/resource-libraries/library/files/discoveries",
+                "POST",
+                {
+                    "paths": ["Movies/One.2001.mkv"],
+                    "requestId": "11111111-1111-4111-8111-111111111111",
+                },
+            )
+            self.assertEqual(409, status, conflicted)
+            self.assertEqual("admission_request_conflict", conflicted["error"]["code"], conflicted)
+            self.assertEqual(1, len(value.repository.list_media_discoveries()))
+            self.assertEqual([], value.source.mutations)
+
+    def test_refused_entries_survive_a_sqlite_repository_reopen(self) -> None:
+        """The per-item refusal evidence is durable, not page-local.
+
+        A close/reload/reconnect/restart reads the same refused item and the same
+        bounded reason back from the admitted work, so the operator never loses
+        the explanation of which selected item did *not* become organizing work.
+        """
+
+        self.media("Movies/One.2001.mkv")
+        self.media("Movies/downloading.mkv.part")
+        with self.journey() as value:
+            status, admitted = self.request(
+                value,
+                "/api/v1/resource-libraries/library/files/discoveries",
+                "POST",
+                {"paths": ["Movies/One.2001.mkv", "Movies/downloading.mkv.part"]},
+            )
+            self.assertEqual(202, status, admitted)
+            reopened = SQLiteTaskRepository(self.database)
+            try:
+                stored = reopened.get_media_discovery(admitted["discoveryId"])
+            finally:
+                reopened.close()
+            self.assertIsNotNone(stored)
+            refused = stored.progress.refused_entries
+            self.assertEqual(1, len(refused))
+            self.assertEqual("Movies/downloading.mkv.part", refused[0].path)
+            self.assertEqual("temporary_file", refused[0].reason)
+            self.assertEqual("source_excluded", refused[0].code)
+            self.assertTrue(stored.progress.manual_selection)
+            self.assertEqual([], value.source.mutations)
+
+    def test_a_wholly_refused_selection_creates_no_work(self) -> None:
+        """When no submitted item is admissible, the request refuses truthfully."""
+
         self.media("Movies/downloading.mkv.part")
         with self.journey() as value:
             status, refused = self.request(
                 value,
                 "/api/v1/resource-libraries/library/files/discoveries",
                 "POST",
-                {"paths": ["Movies/One.2001.mkv", "Movies/downloading.mkv.part"]},
+                {"paths": ["Movies/downloading.mkv.part"]},
             )
             self.assertEqual(409, status, refused)
             self.assertEqual("source_excluded", refused["error"]["code"], refused)
             self.assertEqual("temporary_file", refused["error"]["details"]["reason"], refused)
             self.assertEqual((), value.repository.list_media_discoveries())
+            self.assertEqual([], value.source.mutations)
+
+
+class ManualFolderExpansionTests(_DiscoveryFixture):
+    """B46.3-03 / RO-2 AC-16: the deliberate folder expansion contract.
+
+    A folder the operator selects by hand keeps only the configured
+    primary-media extension set (video by default) plus the explicit
+    temporary/download and extension exclusions.  The automatic include/exclude/
+    match rules keep their unchanged meaning for a library walk, and default
+    images/subtitles/NFO never become independent primaries.  Every case runs
+    through the real authenticated Files command, the bounded Worker and real
+    Local Storage/SQLite.
+    """
+
+    def test_default_folder_expansion_skips_pictures_subtitles_and_nfo(self) -> None:
+        """Default video extensions: sidecars stay out of the manifest.
+
+        A folder holding a movie with poster/fanart, subtitles, an NFO and two
+        unrelated advertising images produces exactly one admitted primary.  The
+        non-primary files stay at source and create no fabricated Recognition
+        item, so the count is truthful rather than an attention backlog.
+        """
+
+        self.media("Movies/Film.2001.mkv")
+        self.media("Movies/Film.2001.poster.jpg")
+        self.media("Movies/Film.2001-fanart.jpg")
+        self.media("Movies/Film.2001.zh.srt")
+        self.media("Movies/Film.2001.nfo")
+        self.media("Movies/ad-banner-1.png")
+        self.media("Movies/ad-banner-2.jpg")
+        with self.journey() as value:
+            status, admitted = self.request(
+                value,
+                "/api/v1/resource-libraries/library/files/discoveries",
+                "POST",
+                {"paths": ["Movies"]},
+            )
+            self.assertEqual(202, status, admitted)
+            settled = self.run_discovery(value)
+            self.assertEqual("completed", settled["status"], settled)
+            self.assertEqual(["Movies/Film.2001.mkv"], [i["path"] for i in settled["sources"]])
+            self.assertEqual(1, settled["progress"]["primarySources"], settled)
+            # The non-primary suffixes are explained as non-primary extensions
+            # rather than as unreadable or failed sources.
+            reasons = {item["reason"]: item["count"] for item in settled["progress"]["reasons"]}
+            self.assertEqual(6, reasons.get("unsupported_extension"), settled)
+            self.assertEqual((), value.repository.list_tasks())
+            # Every non-primary file is still at its source path.
+            self.assertEqual([], value.source.mutations)
+
+    def test_artwork_off_does_not_promote_pictures_to_primaries(self) -> None:
+        """Disabling artwork keeps images out of the primary manifest."""
+
+        self.media("Movies/Film.2001.mkv")
+        self.media("Movies/Film.2001.poster.jpg")
+        document = self.document(attachments=True)
+        for policy in document["organizePolicies"]:
+            attachments = policy["attachments"]
+            attachments["enabled"] = True
+            attachments["artwork"] = False
+        with self.journey() as value:
+            _revision, runtime = self.publish_policy(value, document=document)
+            self.assertFalse(
+                any(
+                    policy.organize_policy.attachments.artwork
+                    for policy in runtime.strategy.recognition_type_policies
+                ),
+                runtime.strategy.recognition_type_policies,
+            )
+            status, admitted = self.request(
+                value,
+                "/api/v1/resource-libraries/library/files/discoveries",
+                "POST",
+                {"paths": ["Movies"]},
+            )
+            self.assertEqual(202, status, admitted)
+            settled = self.run_discovery(value)
+            self.assertEqual(["Movies/Film.2001.mkv"], [i["path"] for i in settled["sources"]])
+            self.assertEqual(1, settled["progress"]["primarySources"], settled)
+            self.assertEqual([], value.source.mutations)
+
+    def test_a_custom_primary_extension_set_is_honoured(self) -> None:
+        """A deliberately configured extension set decides folder primaries."""
+
+        self.media("Movies/Film.2001.mkv")
+        self.media("Movies/Film.2001.iso")
+        with self.journey(extensions=("mkv", "iso")) as value:
+            status, admitted = self.request(
+                value,
+                "/api/v1/resource-libraries/library/files/discoveries",
+                "POST",
+                {"paths": ["Movies"]},
+            )
+            self.assertEqual(202, status, admitted)
+            settled = self.run_discovery(value)
+            self.assertEqual(
+                ["Movies/Film.2001.iso", "Movies/Film.2001.mkv"],
+                sorted(i["path"] for i in settled["sources"]),
+                settled,
+            )
+            self.assertEqual(2, settled["progress"]["primarySources"], settled)
+            self.assertEqual([], value.source.mutations)
+
+    def test_a_folder_with_no_eligible_primary_explains_empty(self) -> None:
+        """A folder of only non-primary files is empty, not a failure."""
+
+        self.media("Movies/Readme.txt")
+        self.media("Movies/ad.jpg")
+        self.media("Movies/Film.2001.srt")
+        with self.journey() as value:
+            status, admitted = self.request(
+                value,
+                "/api/v1/resource-libraries/library/files/discoveries",
+                "POST",
+                {"paths": ["Movies"]},
+            )
+            self.assertEqual(202, status, admitted)
+            settled = self.run_discovery(value)
+            self.assertEqual("completed", settled["status"], settled)
+            self.assertEqual([], settled["sources"], settled)
+            self.assertEqual("empty_excluded", settled["progress"]["phase"], settled)
+            self.assertEqual(3, settled["progress"]["excludedEntries"], settled)
+            self.assertEqual((), value.repository.list_tasks())
+            self.assertEqual([], value.source.mutations)
+
+    def test_a_mixed_selection_keeps_folder_filtering_and_direct_files(self) -> None:
+        """A mixed selection keeps each entrance's own deliberate meaning."""
+
+        self.media("Movies/Film.2001.mkv")
+        self.media("Movies/Film.2001.poster.jpg")
+        self.media("Movies/Film.2001.srt")
+        self.media("Movies/notes.txt")
+        with self.journey() as value:
+            status, admitted = self.request(
+                value,
+                "/api/v1/resource-libraries/library/files/discoveries",
+                "POST",
+                {"paths": ["Movies", "Movies/notes.txt"]},
+            )
+            self.assertEqual(202, status, admitted)
+            settled = self.run_discovery(value)
+            self.assertEqual("completed", settled["status"], settled)
+            # `Movies/notes.txt` is subsumed by the selected folder, so the
+            # folder's configured primary-extension filter decides it.  The
+            # direct-file entrance is covered by ManualEntrySemanticsTests.
+            self.assertEqual(["Movies/Film.2001.mkv"], [i["path"] for i in settled["sources"]])
+            self.assertEqual(1, settled["progress"]["primarySources"], settled)
+            self.assertEqual([], value.source.mutations)
+
+    def test_an_explicitly_excluded_folder_member_is_reported_per_item(self) -> None:
+        """A temporary suffix inside a deliberate folder is its own refusal."""
+
+        self.media("Movies/Film.2001.mkv")
+        self.media("Movies/downloading.mkv.part")
+        with self.journey() as value:
+            status, admitted = self.request(
+                value,
+                "/api/v1/resource-libraries/library/files/discoveries",
+                "POST",
+                {"paths": ["Movies"]},
+            )
+            self.assertEqual(202, status, admitted)
+            settled = self.run_discovery(value)
+            self.assertEqual(["Movies/Film.2001.mkv"], [i["path"] for i in settled["sources"]])
+            reasons = {item["reason"] for item in settled["progress"]["reasons"]}
+            self.assertIn("temporary_file", reasons)
             self.assertEqual([], value.source.mutations)
 
 
@@ -3800,24 +4109,24 @@ class A44BlockingDefectRegressions(_DiscoveryFixture):
             )
             self.assertEqual(60, library.stability_policy.stable_size_duration_seconds)
             value.discovery._runtime_resolver = lambda sid, digest: runtime
-            # A directly selected excluded directory is refused by the same
-            # policy that prunes it during a parent walk.
-            status, refused = self.request(
+            # B46.3-03: a directory exclude rule keeps its unchanged automatic
+            # meaning for a library walk, but it no longer vetoes the folder the
+            # operator deliberately selected.  The deliberately selected
+            # excluded folder is therefore admitted as organizing work.
+            status, admitted_folder = self.request(
                 value,
                 "/api/v1/resource-libraries/library/files/discoveries",
                 "POST",
                 {"paths": ["Movies/Excluded"]},
             )
-            self.assertEqual(409, status, refused)
-            self.assertEqual("source_excluded", refused["error"]["code"], refused)
-            # The published nonzero stability policy is genuinely consumed: the
-            # first observation cannot fabricate the interval.
-            _, admitted = self.request(
-                value,
-                "/api/v1/resource-libraries/library/files/discoveries",
-                "POST",
-                {"paths": ["Movies"]},
+            self.assertEqual(202, status, admitted_folder)
+            self.assertEqual(
+                [{"kind": "directory", "path": "Movies/Excluded"}],
+                admitted_folder["selection"]["scopes"],
             )
+            # The published nonzero stability policy is genuinely consumed: the
+            # first observation of that admitted folder cannot fabricate the
+            # interval, so nothing is published as a primary yet.
             first = self.advance_once(value)
             self.assertEqual("waiting_stability", first["status"], first)
             self.assertEqual(0, first["progress"]["primarySources"], first)
@@ -4272,9 +4581,9 @@ class A44BReviewCorrections(_DiscoveryFixture):
 
         A configured directory exclude rule shapes automatic folder walks.  It
         is no longer an additional veto on the exact file the operator selected
-        by name: that selection is their own inclusion decision, so it is
-        admitted and analysed, while a folder walk under the same policy still
-        prunes the subtree.
+        by name, nor on the tree of the folder they deliberately selected
+        (B46.3-03): the configured primary-media extension set is the one
+        automatic file filter left inside a deliberate folder expansion.
         """
 
         self.media("Blocked/Sub/Film.2001.mkv")
@@ -4296,16 +4605,22 @@ class A44BReviewCorrections(_DiscoveryFixture):
             self.assertEqual(202, status, admitted)
             settled = self.run_discovery(value)
             self.assertEqual(["Blocked/Sub/Film.2001.mkv"], [i["path"] for i in settled["sources"]])
-            # A folder selection under the same policy still prunes the
-            # excluded subtree: the rule keeps its automatic meaning.
+            # A deliberately selected folder below the same excluded ancestor is
+            # now admitted as organizing work: the directory rule keeps its
+            # automatic meaning for a library walk without vetoing the tree the
+            # operator selected by hand.
             status, refused = self.request(
                 value,
                 "/api/v1/resource-libraries/library/files/discoveries",
                 "POST",
                 {"paths": ["Blocked"]},
             )
-            self.assertEqual(409, status, refused)
-            self.assertEqual("source_excluded", refused["error"]["code"], refused)
+            self.assertEqual(202, status, refused)
+            blocked_settled = self.run_discovery(value)
+            self.assertEqual(
+                ["Blocked/Sub/Film.2001.mkv"],
+                [i["path"] for i in blocked_settled["sources"]],
+            )
             _, keep_admitted = self.request(
                 value,
                 "/api/v1/resource-libraries/library/files/discoveries",
@@ -4316,24 +4631,34 @@ class A44BReviewCorrections(_DiscoveryFixture):
             self.assertEqual(["Keep/Good.2001.mkv"], [i["path"] for i in keep_settled["sources"]])
             self.assertEqual([], value.source.mutations)
 
-    def test_a_directly_selected_nested_folder_cannot_bypass_a_pruned_ancestor(self) -> None:
-        """B-P1/AC2: a nested folder below an excluded ancestor is refused."""
+    def test_a_directly_selected_nested_folder_below_an_excluded_ancestor_is_admitted(
+        self,
+    ) -> None:
+        """B46.3-03: an exclude rule no longer vetoes a deliberate folder choice.
+
+        The rule keeps its unchanged automatic meaning for a library walk, so it
+        is still asserted through the Scanner-equivalent walk in
+        :mod:`tests.test_scanner` and through a definition-bound Run once; here
+        the deliberate selection is what must be admitted.
+        """
 
         self.media("Blocked/Sub/Film.2001.mkv")
         document = self._excluded_ancestor_document()
         with self.journey() as value:
             revision, runtime = self._production_journey(document)
             value.discovery._runtime_resolver = lambda sid, digest: runtime
-            status, refused = self.request(
+            status, admitted = self.request(
                 value,
                 "/api/v1/resource-libraries/library/files/discoveries",
                 "POST",
                 {"paths": ["Blocked/Sub"]},
             )
-            self.assertEqual(409, status, refused)
-            self.assertEqual("source_excluded", refused["error"]["code"], refused)
-            self.assertEqual("Blocked", refused["error"]["details"]["prunedAncestor"], refused)
-            self.assertEqual((), value.repository.list_media_discoveries())
+            self.assertEqual(202, status, admitted)
+            settled = self.run_discovery(value)
+            self.assertEqual(
+                ["Blocked/Sub/Film.2001.mkv"],
+                [i["path"] for i in settled["sources"]],
+            )
             self.assertEqual([], value.source.mutations)
 
     def test_a_directly_selected_file_below_a_depth_pruned_ancestor_is_refused(self) -> None:
@@ -4697,16 +5022,17 @@ class A44BReviewCorrections(_DiscoveryFixture):
 
         The association is only against *admitted* main files, so a trailer
         whose apparent owner is excluded by policy is not silently absorbed.
+        RO-2/B46.3-03 keeps the *explicit extension exclusion* as a real veto
+        inside a deliberate folder expansion, so this case still produces an
+        unadmitted main file — a non-extension exclude/match rule no longer does.
         """
 
         self.media("Movies/Film.2001.mkv")
         self.media("Movies/Film.2001-trailer.mp4")
-        self.media("Movies/Drop.2001.mkv")
+        self.media("Movies/Drop.2001.wmv")
         self.media("Movies/Drop.2001-trailer.mp4")
-        document = self.document(attachments=True)
-        document["resourceLibraries"][0]["excludeRules"] = [
-            {"kind": "filename", "pattern": "Drop.2001.mkv"}
-        ]
+        document = self.document(attachments=True, extensions=("mkv", "mp4", "wmv"))
+        document["resourceLibraries"][0]["excludeRules"] = [{"kind": "extension", "pattern": "wmv"}]
         with self.journey() as value:
             revision, runtime = self._production_journey(document)
             value.discovery._runtime_resolver = lambda sid, digest: runtime

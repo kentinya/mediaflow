@@ -3636,4 +3636,56 @@ describe("Files entry state and ResourceLibrary strip", () => {
     expect(discoveryPosts).toHaveLength(1);
     expect(screen.queryByRole("heading", { name: "新建整理任务" })).toBeNull();
   });
+
+  it("names the depth refusal instead of calling it a temporary-file exclusion", async () => {
+    // B46.3-03: the page must map the backend's real bounded reason.  A
+    // configured-depth refusal is a reachability fact, never a temporary
+    // download or an extension exclusion.
+    const user = userEvent.setup();
+    const discoveryPosts: Record<string, unknown>[] = [];
+    vi.stubGlobal(
+      "fetch",
+      stripFetchMock({
+        status: activeStatus([libraryItem("lib-a", "local-1")]),
+        onFiles: () => jsonResponse(filesPayload("lib-a", "Deep")),
+        onDiscovery: (body) => {
+          discoveryPosts.push(body);
+          return jsonResponse(
+            {
+              error: {
+                code: "source_excluded",
+                message:
+                  "the selected folder is deeper than the configured ResourceLibrary depth",
+                details: {
+                  relativePath: "Deep/Movies",
+                  reason: "configured_depth_exceeded",
+                  prunedAncestor: "Deep",
+                  sideEffects: "none",
+                },
+                nextAction: "select a shallower folder",
+              },
+            },
+            409,
+          );
+        },
+      }),
+    );
+    authStore.setToken("test-token");
+    renderWithProviders(<StorageFilesPage />);
+
+    await screen.findAllByText("Deep");
+    await user.click(
+      within(screen.getByRole("row", { name: /文件条目 Deep/ })).getByRole(
+        "checkbox",
+      ),
+    );
+    await user.click(screen.getByRole("button", { name: "批量整理" }));
+
+    await waitFor(() => expect(discoveryPosts).toHaveLength(1));
+    await waitFor(() =>
+      expect(screen.getByRole("status")).toHaveTextContent(/深度上限/),
+    );
+    expect(screen.getByRole("status")).not.toHaveTextContent(/临时/);
+    expect(discoveryPosts).toHaveLength(1);
+  });
 });

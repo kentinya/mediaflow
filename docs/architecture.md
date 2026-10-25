@@ -630,7 +630,19 @@ every entrance. A directly selected file is instead the operator's own inclusion
 admitted unless it is explicitly excluded for that exact file (the built-in temporary/download
 suffixes or a configured extension exclusion) or outside the configured depth. A suffix merely
 absent from the configured allowlist, an include-rule miss and a non-extension exclude/match rule
-therefore keep their unchanged automatic meaning without becoming an additional manual veto. Folder
+therefore keep their unchanged automatic meaning without becoming an additional manual veto. The
+same deliberate rule governs the expansion of a folder the operator selected by hand: inside it the
+*one* retained automatic file filter is the ResourceLibrary's configured primary-media extension set
+(video by default), so pictures, subtitles and NFO cannot become independent primaries merely because
+they sat in the selected folder, artwork-off never promotes them, and the existing other-same-stem
+attachment setting keeps working. Automatic walks (Scanner, definition-bound Run once, remaining-scope
+recovery) keep the complete include/exclude/match filtering unchanged; the distinction is carried by
+the durable admission mode of the record, not by a global weakening of the shared predicates. A
+refusal of one deliberately selected item is that item's own durable `refusedEntries` outcome with its
+bounded reason and next action, never a veto on its eligible siblings; structural, RBAC, root and
+budget validation still refuse the whole request, and a selection in which nothing is admissible is
+refused with its first item's reason instead of admitting empty work.
+Folder
 participation, safety/traversal budgets and real stability are unaffected.
 Size stability is re-observed after real elapsed time; waiting releases the claim until its due
 observation rather than consuming idle budgets or busy-looping. Explicit and walked regular-file
