@@ -115,6 +115,17 @@ class _PreviewOutcome:
     error: str | None = None
     next_action: str = "request a fresh Preview for this item"
     truncated: bool = False
+    #: The *business* kind of one blocked outcome: ``recognition``,
+    #: ``metadata``, ``metadata_correction``, ``classification`` or
+    #: ``conflict``.  ``None`` means the item is not one of the four native
+    #: organizing problems (a technical failure, an unavailable provider or a
+    #: genuinely tracable input).  The Worker uses this to give the admitted
+    #: organizing Task its real per-item problem instead of leaving an operator
+    #: with a summary they can never resolve.
+    problem: str | None = None
+    #: The analysis evidence the native review is created from.  It is only
+    #: populated together with ``problem`` and is never persisted as such.
+    strategy: object | None = None
 
 
 @dataclass(frozen=True)
@@ -193,6 +204,7 @@ class ManualOrganizePreviewService:
         recovery_source_task_id: str | None = None,
         tolerate_unready_sources: bool = False,
         persist: bool = True,
+        problem_task_id: str | None = None,
         analysis_checkpoint: Callable[[str, int, int, int], None] | None = None,
     ) -> ManualOrganizePreview:
         """Create one durable zero-mutation Preview.
@@ -203,6 +215,14 @@ class ManualOrganizePreviewService:
         recovery path must review the plan under that pin rather than under the
         current Active revision.  The ordinary Files path keeps the strict
         current-Active rule.
+
+        ``problem_task_id`` names the admitted organizing Task whose own per-item
+        four-type problems this analysis should publish.  It is supplied only by
+        the bounded discovery Worker for a Files-admitted run, so the Task the
+        operator sees in Running/Attention really owns the problem its own analysis
+        found; the ordinary Preview path leaves it ``None`` and publishes nothing.
+        The live analysis objects are used directly, so no domain value is ever
+        reconstructed from a document.
 
         ``tolerate_unready_sources`` is the one explicit opt-in for the RO-2
         same-page preparation re-analysis: one source that is missing or has
@@ -328,6 +348,7 @@ class ManualOrganizePreviewService:
                         visited_entries=len(selected),
                         analysed_items=position,
                         total_items=len(selected),
+                        problem_task_id=problem_task_id,
                     )
             except PreviewAnalysisControlRequested:
                 raise
@@ -1465,6 +1486,7 @@ class ManualOrganizePreviewService:
         visited_entries: int = 0,
         analysed_items: int = 0,
         total_items: int = 0,
+        problem_task_id: str | None = None,
     ) -> _PreviewOutcome:
         runtime = self._load_runtime(intent.snapshot_id, intent.snapshot_digest)
         type_policy = next(
@@ -1620,6 +1642,17 @@ class ManualOrganizePreviewService:
         )
         runner = self._runner(runtime, providers, source_storage, configured_storages)
         classification_selection = self._bound_classification_decision(bound, item, type_policy)
+        # The pinned policy objects this analysis is actually running under.  They
+        # are passed to the problem publisher so a native review is built from the
+        # exact same authority, never from a re-resolved or defaulted policy.
+        classification_policy = next(
+            (
+                value
+                for value in runtime.strategy.classification_policies
+                if value.policy_id == type_policy.classification_policy_id
+            ),
+            None,
+        )
         self._analysis_checkpoint(
             analysis_checkpoint, "provider", visited_entries, analysed_items, total_items
         )
@@ -1643,13 +1676,32 @@ class ManualOrganizePreviewService:
             analysis_checkpoint, "provider", visited_entries, analysed_items, total_items
         )
         if strategy.recognition.status is not RecognitionStatus.MATCHED:
-            return _PreviewOutcome(
+            outcome = _PreviewOutcome(
                 ManualPreviewItemStatus.BLOCKED,
                 plan=self._partial_plan(strategy, item, type_policy),
                 error="RecognitionType could not be resolved under the pinned choice",
                 next_action=(
                     "open the linked Recognition review or choose a valid RecognitionType, "
                     "then rerun Preview"
+                ),
+                # RO-2/AC-16: a source whose RecognitionType really could not be
+                # resolved under its own pinned policy is one of the four native
+                # organizing problems, never a silent preparation dead end.  A
+                # provider/technical condition keeps its own technical outcome.
+                problem="recognition",
+            )
+            return self._publish_problem(
+                problem_task_id,
+                outcome,
+                strategy=strategy,
+                source=item.source,
+                type_policy=type_policy,
+                metadata_policy=metadata_policy,
+                classification_policy=classification_policy,
+                recognition_types=tuple(
+                    value.recognition_type
+                    for value in runtime.strategy.recognition_type_policies
+                    if getattr(value, "enabled", False)
                 ),
             )
         metadata = strategy.metadata
@@ -1666,6 +1718,59 @@ class ManualOrganizePreviewService:
                     ),
                     next_action=(
                         "inspect the configured Metadata Provider, then explicitly rerun Preview"
+                    ),
+                )
+            if status in {
+                MetadataIdentificationStatus.NEED_CONFIRM,
+                MetadataIdentificationStatus.AMBIGUOUS,
+            }:
+                outcome = _PreviewOutcome(
+                    ManualPreviewItemStatus.BLOCKED,
+                    plan=self._partial_plan(strategy, item, type_policy),
+                    error="metadata identity needs an explicit candidate selection",
+                    next_action=(
+                        "choose one of this source's grounded metadata candidates on this page, "
+                        "then rerun the analysis"
+                    ),
+                    problem="metadata",
+                )
+                return self._publish_problem(
+                    problem_task_id,
+                    outcome,
+                    strategy=strategy,
+                    source=item.source,
+                    type_policy=type_policy,
+                    metadata_policy=metadata_policy,
+                    classification_policy=classification_policy,
+                    recognition_types=tuple(
+                        value.recognition_type
+                        for value in runtime.strategy.recognition_type_policies
+                        if getattr(value, "enabled", False)
+                    ),
+                )
+            if status is MetadataIdentificationStatus.NOT_FOUND:
+                outcome = _PreviewOutcome(
+                    ManualPreviewItemStatus.BLOCKED,
+                    plan=self._partial_plan(strategy, item, type_policy),
+                    error="metadata identity was not found under the pinned MetadataPolicy",
+                    next_action=(
+                        "correct the metadata search title/year or choose a Provider identity "
+                        "for this source, then rerun the analysis"
+                    ),
+                    problem="metadata_correction",
+                )
+                return self._publish_problem(
+                    problem_task_id,
+                    outcome,
+                    strategy=strategy,
+                    source=item.source,
+                    type_policy=type_policy,
+                    metadata_policy=metadata_policy,
+                    classification_policy=classification_policy,
+                    recognition_types=tuple(
+                        value.recognition_type
+                        for value in runtime.strategy.recognition_type_policies
+                        if getattr(value, "enabled", False)
                     ),
                 )
             return _PreviewOutcome(
@@ -1688,6 +1793,35 @@ class ManualOrganizePreviewService:
             strategy.classification is None
             or strategy.classification.status is not ClassificationStatus.CLASSIFIED
         ):
+            if (
+                strategy.classification is not None
+                and strategy.classification.status is ClassificationStatus.UNCLASSIFIED
+            ):
+                outcome = _PreviewOutcome(
+                    ManualPreviewItemStatus.BLOCKED,
+                    plan=self._partial_plan(strategy, item, type_policy),
+                    error=strategy.classification_error
+                    or "ClassificationPolicy did not select a MediaLibrary",
+                    next_action=(
+                        "choose a configured classification rule for this source, then rerun "
+                        "the analysis"
+                    ),
+                    problem="classification",
+                )
+                return self._publish_problem(
+                    problem_task_id,
+                    outcome,
+                    strategy=strategy,
+                    source=item.source,
+                    type_policy=type_policy,
+                    metadata_policy=metadata_policy,
+                    classification_policy=classification_policy,
+                    recognition_types=tuple(
+                        value.recognition_type
+                        for value in runtime.strategy.recognition_type_policies
+                        if getattr(value, "enabled", False)
+                    ),
+                )
             return _PreviewOutcome(
                 ManualPreviewItemStatus.BLOCKED,
                 plan=self._partial_plan(strategy, item, type_policy),
@@ -1764,13 +1898,18 @@ class ManualOrganizePreviewService:
             or capability.get("verdict") == "capability_gap"
         )
         if blocked:
-            return _PreviewOutcome(
+            capability_gap = capability.get("verdict") == "capability_gap"
+            # Only a genuine destination conflict is one of the four native
+            # organizing problems.  A Storage capability gap is a technical
+            # condition and keeps its factual, non-business outcome.
+            conflict_problem = bool(plan.conflicts) and not capability_gap
+            outcome = _PreviewOutcome(
                 ManualPreviewItemStatus.BLOCKED,
                 plan_document,
                 plan_fingerprint,
                 error=(
                     "exact plan contains unresolved conflicts or a Storage capability gap"
-                    if plan.conflicts or capability.get("verdict") == "capability_gap"
+                    if plan.conflicts or capability_gap
                     else "exact plan is invalid"
                 ),
                 next_action=(
@@ -1778,6 +1917,22 @@ class ManualOrganizePreviewService:
                     "then request a fresh Preview"
                 ),
                 truncated=truncated,
+                problem="conflict" if conflict_problem else None,
+            )
+            return self._publish_problem(
+                problem_task_id,
+                outcome,
+                strategy=strategy,
+                source=item.source,
+                type_policy=type_policy,
+                metadata_policy=metadata_policy,
+                classification_policy=classification_policy,
+                recognition_types=tuple(
+                    value.recognition_type
+                    for value in runtime.strategy.recognition_type_policies
+                    if getattr(value, "enabled", False)
+                ),
+                plan=plan,
             )
         if truncated:
             return _PreviewOutcome(
@@ -2574,6 +2729,49 @@ class ManualOrganizePreviewService:
             "missing": missing,
             "verdict": "capability_gap" if missing else "ok" if required else "not_applicable",
         }
+
+    def _publish_problem(
+        self,
+        problem_task_id: str | None,
+        outcome: _PreviewOutcome,
+        *,
+        strategy,
+        source,
+        type_policy,
+        metadata_policy=None,
+        classification_policy=None,
+        recognition_types=(),
+        plan=None,
+    ) -> _PreviewOutcome:
+        """Publish one native problem on the owning Task from live analysis objects.
+
+        Called at the exact boundary where the shared pipeline concluded the
+        problem, so the review is created from the *live* strategy/plan rather than
+        reconstructed from a persisted document.  Nothing is published for an
+        ordinary Preview (``problem_task_id`` is ``None``) and nothing is published
+        for a technical cause.
+        """
+
+        if problem_task_id is None or outcome.problem is None:
+            return outcome
+        projector = getattr(self._repository, "publish_task_item_problem", None)
+        if not callable(projector):
+            return outcome
+        try:
+            projector(
+                task_id=problem_task_id,
+                problem=outcome.problem,
+                strategy=strategy,
+                source=source,
+                type_policy=type_policy,
+                metadata_policy=metadata_policy,
+                classification_policy=classification_policy,
+                recognition_types=recognition_types,
+                plan=plan,
+            )
+        except Exception:  # noqa: BLE001 - one bounded projection, never a media fault
+            return outcome
+        return outcome
 
     def _persist_create(self, preview):
         method = getattr(self._repository, "create_manual_preview", None)

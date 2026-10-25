@@ -1057,8 +1057,11 @@ class PreparationJourneyTests(_PreparationFixture):
             settled = self.run_worker(value)
             self.assertEqual("completed", settled["status"], settled)
 
-            # The preparation is a zero-mutation finding, not a durable failed
-            # execution item, and it links no formal recovery review.
+            # The preparation remains a zero-mutation finding, but RO-2/AC-16
+            # requires the admitted organizing Task to carry the *real* problem its
+            # own analysis found: an ambiguous Metadata identity is one of the four
+            # native organizing problems, so it appears as that Task's own review
+            # instead of a preparation dead end the operator can never resolve.
             preview = value.repository.get_manual_preview(settled["previewId"])
             item = preview.items[0]
             self.assertEqual("blocked", item.status.value, item.error)
@@ -1066,7 +1069,17 @@ class PreparationJourneyTests(_PreparationFixture):
             self.assertEqual("ambiguous", item.plan["analysis"]["metadata"]["match"]["status"])
             self.assertEqual([], value.source.mutations)
             self.assertEqual([], value.target.mutations)
-            self.assertEqual((), tuple(value.repository.list_metadata_reviews(limit=100)))
+            reviews = tuple(value.repository.list_metadata_reviews(limit=100))
+            self.assertEqual(1, len(reviews), reviews)
+            self.assertEqual("pending", reviews[0].status.value)
+            self.assertEqual("Movies/One.2001.mkv", reviews[0].source_path)
+            # The review belongs to the *admitted* organizing Task, not to a
+            # second Task the preparation invented.
+            organize_task_id = settled["organizeTaskId"]
+            self.assertEqual(organize_task_id, reviews[0].task_id)
+            task_item = value.repository.get_item(reviews[0].item_id)
+            self.assertEqual("waiting_metadata", task_item.status.value)
+            self.assertEqual(organize_task_id, task_item.task_id)
 
             status, intent_document = self.request(
                 value, f"/api/v1/operations/organize/intents/{settled['intentId']}"
@@ -1080,7 +1093,9 @@ class PreparationJourneyTests(_PreparationFixture):
                 intent_item,
             )
 
-            # The published item failure is truthful about the durable state.
+            # The published item stays a truthful zero-mutation finding, and the
+            # operator is pointed at the Task's own native Metadata decision rather
+            # than at a dead-end retry.
             status, preview_document = self.request(
                 value, f"/api/v1/operations/organize/previews/{settled['previewId']}"
             )
@@ -1090,7 +1105,9 @@ class PreparationJourneyTests(_PreparationFixture):
             self.assertNotIn(
                 "TaskItem and Result are durable", published["failure"]["durableState"]
             )
-            self.assertIn("candidate", published["nextAction"])
+            # The exact bounded identities stay selectable on this page, so the
+            # ambiguity is resolvable without inventing a provider payload.
+            self.assertEqual({"201", "999"}, {value["providerId"] for value in identities})
 
             # A cross-source identity is still refused without mutation.
             status, rejected = self.request(

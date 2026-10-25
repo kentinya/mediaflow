@@ -676,6 +676,57 @@ class ManualOrganizeExecutionService:
             preparation_id=preparation_id,
         )
 
+    def _adopted_organize_task(self, intent, authority) -> str | None:
+        """The exact pre-admitted organizing Task this execution may adopt.
+
+        RO-2 admits durable organizing work *with* the Files selection.  When the
+        operator later confirms that same work's exact summary, the execution must
+        settle that Task instead of creating a parallel one.  The adoption is
+        bound to the exact recorded admission: the discovery that owns this intent,
+        its organizing Task, the unchanged configuration pin and the principal, and
+        the Task must still be unfinished.  Anything else — a plain manual intent
+        with no Files admission, a foreign pin, a settled Task — returns ``None``
+        so the ordinary new-Task admission is unchanged.
+        """
+
+        finder = getattr(self._repository, "find_media_discovery_for_intent", None)
+        if not callable(finder):
+            return None
+        try:
+            discovery = finder(intent.intent_id)
+        except Exception:  # noqa: BLE001 - an unreadable link keeps the ordinary path
+            return None
+        if discovery is None:
+            return None
+        task_id = getattr(discovery, "organize_task_id", None)
+        if not isinstance(task_id, str) or not task_id:
+            return None
+        if getattr(discovery, "actor", None) != authority.actor:
+            return None
+        if (
+            getattr(discovery, "resource_library_id", None) is None
+            or getattr(discovery, "snapshot_id", None) != authority.configuration_snapshot_id
+            or getattr(discovery, "snapshot_digest", None)
+            != authority.configuration_snapshot_digest
+        ):
+            return None
+        reader = getattr(self._repository, "get_task", None)
+        task = reader(task_id) if callable(reader) else None
+        if task is None:
+            return None
+        if task.status in {
+            PersistentTaskStatus.COMPLETED,
+            PersistentTaskStatus.PARTIAL_SUCCESS,
+            PersistentTaskStatus.FAILED,
+            PersistentTaskStatus.CANCELLED,
+        }:
+            return None
+        if task.configuration_snapshot_id != authority.configuration_snapshot_id:
+            return None
+        if task.configuration_snapshot_digest != authority.configuration_snapshot_digest:
+            return None
+        return task_id
+
     def _with_definition_origin(self, display, *, intent):
         """Attach the durable manual definition origin of one Run once.
 
@@ -895,7 +946,15 @@ class ManualOrganizeExecutionService:
             prepared[item.item_id] = (execution_item, plan, locks)
         plan_by_item = {item_id: value[1] for item_id, value in prepared.items()}
         execution_id = str(uuid4())
-        task_id = str(uuid4())
+        # RO-2/B46.3-01: an organizing Task was already admitted with the Files
+        # selection, before any rule/metadata/target resolution existed.  That Task
+        # is the durable subject the operator sees in Running/All, so the confirmed
+        # execution runs *as* it instead of minting a second Task and leaving the
+        # admitted one stranded at `running` with zero items.  It is adopted only
+        # when it is the exact unfinished Task of this same library/Storage binding
+        # and pin; anything else keeps its own new Task, so history is never merged.
+        adopted_task_id = self._adopted_organize_task(intent, authority)
+        task_id = adopted_task_id or str(uuid4())
         now = self._clock()
         execution_items = tuple(
             replace(
@@ -963,6 +1022,7 @@ class ManualOrganizeExecutionService:
             display=display,
             preparation_id=preparation_id,
             checkpoint_projector=self._checkpoint_service._project,
+            adopt_task_id=adopted_task_id,
         )
         if admit_only:
             # The durable execution is committed and waiting for the resident

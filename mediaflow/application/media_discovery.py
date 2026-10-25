@@ -372,7 +372,9 @@ class MediaDiscoveryService:
         # outer work before traversal, so its discovered sources are checked
         # inside the task itself (no pre-task traversal, no Storage I/O inside a
         # database transaction).
-        deduplicated, duplicate_refusals = self._refuse_owned_sources(deduplicated, library)
+        deduplicated, duplicate_refusals = self._refuse_owned_sources(
+            deduplicated, library, storage=storage
+        )
         if not deduplicated:
             first = duplicate_refusals[0]
             raise DiscoveryError(
@@ -804,6 +806,8 @@ class MediaDiscoveryService:
         self,
         scope: tuple[DiscoveryScopeEntry, ...],
         library,
+        *,
+        storage=None,
     ) -> tuple[tuple[DiscoveryScopeEntry, ...], list[DiscoveryRefusedEntry]]:
         """Split one selection into still-admissible items and owned refusals.
 
@@ -829,11 +833,17 @@ class MediaDiscoveryService:
             if entry.kind is not DiscoveryEntryKind.FILE:
                 kept.append(entry)
                 continue
+            # The *observed* fingerprint of this exact selection is part of the
+            # identity: a replaced file at the same path is a different concrete
+            # source, so it is admitted instead of being refused for the previous
+            # occurrence.  Only a metadata stat is used — never a read.
+            observed = self._observed_fingerprint(storage, library, entry.path)
             owned = finder(
                 storage_id=library.storage_id,
                 source_path=entry.path,
                 storage_path=canonical_source_path(library.root_path, entry.path),
                 resource_library_id=library.library_id,
+                source_fingerprint=observed,
             )
             if owned is None:
                 kept.append(entry)
@@ -849,6 +859,25 @@ class MediaDiscoveryService:
                 continue
             refusals.append(self._owned_source_refusal(entry, owned))
         return tuple(kept), refusals
+
+    def _observed_fingerprint(self, storage, library, relative: str) -> str | None:
+        """The verified fingerprint of one selected source, or ``None``.
+
+        A bounded ``stat`` only: no read, no Provider, no traversal.  ``None``
+        means the identity could not be proven from this observation, in which
+        case ownership falls back to path identity — the conservative answer.
+        """
+
+        if storage is None:
+            return None
+        try:
+            entry = storage.stat(self._join(library.root_path, relative))
+        except Exception:  # noqa: BLE001 - an unprovable identity is not a refusal
+            return None
+        observed = source_fingerprint(library.storage_id, library.library_id, entry)
+        if observed.state is not OccurrenceState.VERIFIED:
+            return None
+        return observed.value
 
     @staticmethod
     def _owned_source_refusal(
@@ -4140,6 +4169,10 @@ class MediaDiscoveryService:
                 # resolves exactly as the inline path's did.  It still grants no
                 # execution authority.
                 recovery_source_task_id=discovery.recovery_source_task_id,
+                # RO-2/AC-16: give the admitted organizing Task its real per-item
+                # four-type problems.  The ordinary Preview path passes nothing, so
+                # only a Files-admitted run publishes native reviews here.
+                problem_task_id=discovery.organize_task_id,
                 source_scope="resource_library" if discovery.recovery_source_task_id else None,
                 source_scope_id=(
                     discovery.resource_library_id if discovery.recovery_source_task_id else None
@@ -4156,6 +4189,13 @@ class MediaDiscoveryService:
         preview_id = getattr(preview, "preview_id", None)
         if not isinstance(preview_id, str) or not preview_id:
             return self._fail(discovery, claim_token, "preview_unavailable")
+        # RO-2/AC-16: the admitted organizing Task must carry the *real* per-item
+        # organizing problems its own analysis found.  A source whose
+        # RecognitionType, Metadata identity, Classification or destination
+        # conflict genuinely blocked becomes a native review on that Task, so the
+        # operator resolves it through the existing four-type forms instead of
+        # being handed a summary they can never make ready.
+
         # A completed analysis always yields one complete plan, whether the
         # *walk* proved every admitted source or only a known, explicitly
         # reviewable subset.  Completeness decides the run status and which

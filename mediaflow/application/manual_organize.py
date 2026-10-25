@@ -1302,7 +1302,7 @@ class ManualOrganizeIntentService:
                         item.get("year"),
                     )
 
-        for review in self._source_metadata_reviews(record):
+        for review in self._source_metadata_reviews(record, snapshot):
             review_ref = getattr(review, "review_id", None)
             candidates = self._review_candidates(review_ref)
             for candidate in candidates:
@@ -1527,7 +1527,17 @@ class ManualOrganizeIntentService:
         except Exception:
             return ()
 
-    def _source_metadata_reviews(self, record) -> tuple[object, ...]:
+    def _source_metadata_reviews(self, record, snapshot=None) -> tuple[object, ...]:
+        """The metadata reviews of this exact source *under this item's own pin*.
+
+        A review is grounded authority for an identity selection, so it must have
+        been produced by an analysis whose Task carries the same immutable
+        published configuration this item is pinned to.  A review produced under
+        an earlier Active revision is not evidence for a new pin: borrowing it
+        would let a successor revision inherit candidate authority it never
+        reviewed.
+        """
+
         values: tuple[object, ...] = ()
         method = getattr(self._repository, "list_metadata_reviews", None)
         if callable(method):
@@ -1535,12 +1545,24 @@ class ManualOrganizeIntentService:
                 values = tuple(method(limit=100))
             except Exception:
                 values = ()
+        values = self._reviews_under_snapshot(values, snapshot)
+        # The review must also belong to this exact source *occurrence* under this
+        # pin.  A same-path replacement keeps the path, so a path-only match would
+        # re-offer the previous version's candidates for a different file.
+        occurrence_id = getattr(record, "occurrence_id", None)
+        if occurrence_id:
+            values = tuple(
+                value
+                for value in values
+                if getattr(value, "item_id", None)
+                and self._review_item_occurrence(value) in (None, occurrence_id)
+            )
         if not values:
             links = getattr(self._repository, "list_file_review_links", None)
             get_review = getattr(self._repository, "get_metadata_review", None)
             if callable(links) and callable(get_review):
                 try:
-                    values = tuple(
+                    candidates_ = tuple(
                         review
                         for link in links(record.storage_id, record.path, limit=100)
                         if getattr(link, "kind", None) == "metadata"
@@ -1548,13 +1570,69 @@ class ManualOrganizeIntentService:
                         if review is not None
                     )
                 except Exception:
-                    values = ()
+                    candidates_ = ()
+                # The legacy source-link index carries no pin or occurrence of its
+                # own, so it is filtered through the same owning-Task pin rule and
+                # the same exact-occurrence rule as the direct review list: a review
+                # produced under another Active revision, or for a replaced file at
+                # the same path, is never borrowed as authority for this item.
+                candidates_ = self._reviews_under_snapshot(candidates_, snapshot)
+                if occurrence_id:
+                    candidates_ = tuple(
+                        review
+                        for review in candidates_
+                        if getattr(review, "item_id", None)
+                        and self._review_item_occurrence(review) in (None, occurrence_id)
+                    )
+                values = candidates_
         return tuple(
             value
             for value in values
             if getattr(value, "source_storage_id", None) == record.storage_id
             and getattr(value, "source_path", None) == record.path
         )
+
+    def _review_item_occurrence(self, review) -> str | None:
+        """The verified source occurrence the reviewed TaskItem recorded."""
+
+        reader = getattr(self._repository, "get_item", None)
+        item_id = getattr(review, "item_id", None)
+        if not callable(reader) or not isinstance(item_id, str):
+            return None
+        item = reader(item_id)
+        return getattr(item, "source_occurrence_id", None) if item is not None else None
+
+    def _reviews_under_snapshot(self, values, snapshot) -> tuple[object, ...]:
+        """Keep only reviews whose own analysis ran under this item's exact pin.
+
+        Each review belongs to one Task, whose row records the immutable published
+        configuration the analysis actually used.  A review produced under another
+        revision is not evidence for this one, so it is never borrowed.  A
+        pin-less legacy Task keeps its existing eligibility, and a review whose
+        owning Task cannot be resolved fails closed instead of grounding authority
+        it cannot prove.
+        """
+
+        if snapshot is None:
+            return tuple(values)
+        reader = getattr(self._repository, "get_task", None)
+        snapshot_id = getattr(snapshot, "snapshot_id", None)
+        digest = getattr(snapshot, "digest", None)
+        retained: list[object] = []
+        for value in values:
+            task_id = getattr(value, "task_id", None)
+            task = reader(task_id) if callable(reader) and task_id else None
+            if task is None:
+                continue
+            if task.configuration_snapshot_id is None:
+                retained.append(value)
+                continue
+            if (
+                task.configuration_snapshot_id == snapshot_id
+                and task.configuration_snapshot_digest == digest
+            ):
+                retained.append(value)
+        return tuple(retained)
 
     def _review_candidates(self, review_id: str | None) -> tuple[object, ...]:
         if not review_id:

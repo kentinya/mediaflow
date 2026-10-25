@@ -9,7 +9,7 @@ from collections.abc import Iterable, Mapping
 from dataclasses import dataclass, replace
 from datetime import UTC, datetime, timedelta
 from pathlib import Path
-from uuid import UUID, uuid4
+from uuid import NAMESPACE_URL, UUID, uuid4, uuid5
 
 from mediaflow.domain.automation import (
     AutomationClaimLost,
@@ -4475,6 +4475,154 @@ class SQLiteTaskRepository:
         if continuation is None:
             raise LookupError(f"metadata correction continuation for Job {job_id!r} was not found")
         return continuation
+
+    def publish_task_item_problem(
+        self,
+        *,
+        task_id: str,
+        problem: str,
+        strategy=None,
+        source=None,
+        type_policy=None,
+        metadata_policy=None,
+        classification_policy=None,
+        recognition_types=(),
+        plan=None,
+    ) -> str | None:
+        """Publish one native organizing problem on the admitted Task.
+
+        The Files-admitted organizing Task is the durable subject the operator
+        sees in Running/Attention, so the exact problem its own bounded analysis
+        found becomes that Task's own review row and TaskItem state.  Only the
+        four native organizing problems reach here; a technical cause
+        (Provider/Storage/configuration) is never turned into a business
+        decision.
+
+        The review is created from the live analysis objects the shared pipeline
+        produced, so no default RecognitionType, identity, target or conflict
+        choice is fabricated.  The review/choice/audit rows and the waiting
+        TaskItem state are one transaction, so a reader never observes a waiting
+        item whose review is missing (or a review whose item is still pending).
+        """
+
+        if problem not in {
+            "recognition",
+            "metadata",
+            "metadata_correction",
+            "classification",
+            "conflict",
+        }:
+            raise ValueError("unsupported organizing problem type")
+        if source is None:
+            raise ValueError("the analyzed source identity is required")
+        storage_path = source.path
+        task = self.get_task(task_id)
+        if task is None:
+            raise ValueError("the admitted organizing Task was not found")
+        # The TaskItem identity includes the verified *occurrence*, exactly like
+        # the shared coordinator's `transition` identity: a same-path replacement
+        # is a different concrete source and must never inherit the previous
+        # version's review, while a repeated analysis of the same occurrence keeps
+        # converging on the one item.
+        occurrence = getattr(source, "occurrence_id", None) or getattr(source, "fingerprint", None)
+        item_id = str(
+            uuid5(
+                NAMESPACE_URL,
+                f"{task_id}:{source.storage_id}:{storage_path}:{occurrence or ''}",
+            )
+        )
+        with self._lock:
+            self._connection.execute("BEGIN IMMEDIATE")
+            try:
+                existing = self._connection.execute(
+                    "SELECT * FROM task_items WHERE item_id=?", (item_id,)
+                ).fetchone()
+                now = datetime.now(UTC)
+                if existing is None:
+                    item = PersistentTaskItem(
+                        item_id,
+                        task_id,
+                        source.storage_id,
+                        source.resource_library_id,
+                        storage_path,
+                        f"{source.storage_id}:{storage_path}",
+                        TaskItemStatus.PENDING,
+                        "analyzed",
+                        0,
+                        now,
+                        now,
+                        source_occurrence_id=getattr(source, "occurrence_id", None),
+                        source_fingerprint=getattr(source, "fingerprint", None),
+                        source_fingerprint_state=(
+                            "verified"
+                            if getattr(source, "fingerprint", None)
+                            and getattr(source, "occurrence_state", "unverified") == "verified"
+                            else "unverified"
+                        ),
+                        source_observed_at=getattr(source, "observed_at", None),
+                    )
+                    self._connection.execute(_TASK_ITEM_INSERT, self._item_values(item))
+                self._connection.commit()
+            except BaseException:
+                self._connection.rollback()
+                raise
+        # The native review services own their own atomic item+review write and
+        # require the item to be in the analysis state, so this run publishes that
+        # exact state first.  The item was admitted by this same analysis under
+        # this Task, so the transition is the shared pipeline's own boundary and
+        # never reopens a settled item.
+        item = self.get_item(item_id)
+        if item is None:
+            return None
+        if item.status in SETTLED_ITEM_STATUSES:
+            return item_id
+        if item.status is not TaskItemStatus.PROCESSING:
+            item = replace(
+                item,
+                status=TaskItemStatus.PROCESSING,
+                stage="analysis",
+                updated_at=datetime.now(UTC),
+            )
+            self.upsert_item(item)
+        if problem == "recognition":
+            from mediaflow.application.recognition_review import RecognitionReviewService
+
+            RecognitionReviewService(self, tuple(recognition_types)).create(
+                item, strategy.recognition
+            )
+        elif problem == "metadata":
+            from mediaflow.application.metadata_review import MetadataReviewService
+
+            MetadataReviewService(self).create(
+                item, strategy.metadata, type_policy.metadata_policy_id
+            )
+        elif problem == "metadata_correction":
+            from mediaflow.application.metadata_correction import MetadataCorrectionService
+
+            if metadata_policy is None:
+                raise ValueError("the pinned MetadataPolicy is unavailable")
+            MetadataCorrectionService(self, (metadata_policy,)).create(
+                item, strategy.metadata, metadata_policy, strategy.parsed
+            )
+        elif problem == "classification":
+            from mediaflow.application.classification_review import ClassificationReviewService
+
+            if classification_policy is None:
+                raise ValueError("the pinned ClassificationPolicy is unavailable")
+            ClassificationReviewService(self).create(
+                item, strategy.classification, classification_policy, strategy.metadata.identity
+            )
+        elif problem == "conflict":
+            from mediaflow.application.conflict_resolution import ConfirmationService
+
+            ConfirmationService(self).create(
+                task_id=task_id,
+                item_id=item_id,
+                plan=plan,
+                policy=type_policy.organize_policy,
+                item=item,
+            )
+        return item_id
 
     def create_recognition_review(self, review, choices, item) -> None:
         with self._lock, self._connection:
@@ -11421,6 +11569,7 @@ class SQLiteTaskRepository:
         display: RunDisplayContext | None = None,
         preparation_id: str | None = None,
         checkpoint_projector=None,
+        adopt_task_id: str | None = None,
     ) -> ManualExecution:
         """Atomically consume exact authority, create Task scope, and fence paths.
 
@@ -11644,12 +11793,63 @@ class SQLiteTaskRepository:
                     execution.configuration_snapshot_id,
                     execution.configuration_snapshot_digest,
                 )
-                self._connection.execute(
-                    "INSERT INTO tasks VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)",
-                    self._task_values(task),
-                )
-                if display is not None:
-                    self._insert_run_display_locked(task.task_id, display, execution.created_at)
+                if adopt_task_id is not None:
+                    # RO-2/B46.3-01: this execution settles the organizing Task the
+                    # Files selection already admitted.  The row must still be the
+                    # exact unfinished Task of this pin, or the adoption is refused
+                    # and the whole admission rolls back: adopting a settled or
+                    # foreign Task would rewrite another run's history.
+                    existing = self._connection.execute(
+                        "SELECT status, command, configuration_snapshot_id, "
+                        "configuration_snapshot_digest FROM tasks WHERE task_id=?",
+                        (adopt_task_id,),
+                    ).fetchone()
+                    if (
+                        existing is None
+                        or existing["status"]
+                        in {
+                            PersistentTaskStatus.COMPLETED.value,
+                            PersistentTaskStatus.PARTIAL_SUCCESS.value,
+                            PersistentTaskStatus.FAILED.value,
+                            PersistentTaskStatus.CANCELLED.value,
+                        }
+                        or existing["configuration_snapshot_id"]
+                        != execution.configuration_snapshot_id
+                        or existing["configuration_snapshot_digest"]
+                        != execution.configuration_snapshot_digest
+                    ):
+                        raise ManualExecutionError(
+                            "the admitted organizing work is no longer adoptable",
+                            code="admission_changed",
+                            next_action=(
+                                "reopen the Files organizing work and request a fresh summary"
+                            ),
+                        )
+                    self._connection.execute(
+                        "UPDATE tasks SET status=?, execute_authorized=1, updated_at=?, "
+                        "started_at=COALESCE(started_at, ?), total_items=?, "
+                        "completed_items=0, failed_items=0, error=NULL "
+                        "WHERE task_id=?",
+                        (
+                            PersistentTaskStatus.RUNNING.value,
+                            now.isoformat(),
+                            now.isoformat(),
+                            len(items),
+                            adopt_task_id,
+                        ),
+                    )
+                    if display is not None:
+                        self._insert_run_display_locked(
+                            adopt_task_id, display, execution.created_at
+                        )
+                else:
+                    self._connection.execute(
+                        "INSERT INTO tasks VALUES "
+                        "(?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)",
+                        self._task_values(task),
+                    )
+                    if display is not None:
+                        self._insert_run_display_locked(task.task_id, display, execution.created_at)
                 self._connection.execute(
                     """INSERT INTO manual_executions (
                         execution_id, preview_id, intent_id, authorization_id, task_id,
@@ -11666,8 +11866,24 @@ class SQLiteTaskRepository:
                 for item in items:
                     task_item = self._manual_task_item(item, execution, now)
                     task_item = self._bind_item_to_current_occurrence(task_item)
+                    # The admitted organizing Task may already hold an analysis
+                    # TaskItem for this same concrete source (its own four-type
+                    # problem).  The confirmed execution is the same durable work
+                    # continuing, so it supersedes that row in place instead of
+                    # colliding with the unique source identity: one source has one
+                    # item, and the shared review/plan rows keep their own history.
                     self._connection.execute(
-                        _TASK_ITEM_INSERT,
+                        "DELETE FROM task_items WHERE task_id=? AND storage_id=? "
+                        "AND source_path=? AND item_id<>?",
+                        (
+                            task_item.task_id,
+                            task_item.storage_id,
+                            task_item.source_path,
+                            task_item.item_id,
+                        ),
+                    )
+                    self._connection.execute(
+                        _TASK_ITEM_UPSERT,
                         self._item_values(task_item),
                     )
                     self._connection.execute(
