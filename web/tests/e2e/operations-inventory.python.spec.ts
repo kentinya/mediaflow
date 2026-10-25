@@ -5019,7 +5019,15 @@ test("unknown routes and fresh organization retain real elapsed stability and ex
   const unchanged = await (
     await request.get(BASE + "/__harness__/retirement-state")
   ).json();
-  expect(unchanged.counts).toEqual(before.counts);
+  // A Files 整理 command admits exactly one durable organizing Task before any
+  // rule/metadata/target readiness exists, so `tasks` is the one count this
+  // journey is *expected* to add.  Everything else stays untouched, and a
+  // repeated Worker pass over a still-unstable scope creates no further work.
+  expect(unchanged.counts.tasks).toBe(before.counts.tasks + 1);
+  expect(unchanged.counts.automation_jobs).toBe(before.counts.automation_jobs);
+  expect(unchanged.counts.manual_execution_authorizations).toBe(
+    before.counts.manual_execution_authorizations,
+  );
   expect(unchanged.targets).toEqual([]);
   expect(unchanged.observations).toHaveLength(2);
   await request.post(BASE + "/__harness__/retirement-change");
@@ -5032,7 +5040,10 @@ test("unknown routes and fresh organization retain real elapsed stability and ex
   const afterChange = await (
     await request.get(BASE + "/__harness__/retirement-state")
   ).json();
-  expect(afterChange.counts).toEqual(before.counts);
+  // A changed source inside a still-waiting scope creates no further durable
+  // work: the same single admitted Task is the only count difference, and no
+  // destination/target was touched.
+  expect(afterChange.counts).toEqual(unchanged.counts);
   expect(afterChange.targets).toEqual([]);
   expect(
     (
@@ -5061,10 +5072,13 @@ test("unknown routes and fresh organization retain real elapsed stability and ex
     path: TASK45_RECOVERY_EVIDENCE + "/retirement-summary-380.png",
     fullPage: true,
   });
+  // Reviewing the exact summary mutates nothing: the durable work is still the
+  // one organizing Task the Files command admitted, and no execution authority
+  // has been consumed yet.
   expect(
     (await (await request.get(BASE + "/__harness__/retirement-state")).json())
       .counts,
-  ).toEqual(before.counts);
+  ).toEqual(unchanged.counts);
   await page.getByRole("button", { name: "确认整理 1 项" }).click();
   await expect(page).toHaveURL(/organize\/execution\//);
   const executed = await (
