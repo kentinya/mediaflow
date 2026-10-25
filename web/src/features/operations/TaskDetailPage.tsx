@@ -157,40 +157,23 @@ export function TaskDetailPage() {
   const [pendingAction, setPendingAction] = useState<string | null>(null);
   // An existing ordinary Files/MediaLibrary Task/run link resolves to the exact
   // local inspection context that owns it, when durable admitted evidence proves
-  // the origin.  The read is bounded and performs no mutation; a non-match keeps
-  // this generic detail (and its bounded guidance) instead of guessing.
+  // the origin.  One bounded read answers for both library kinds because the
+  // backend publishes the originating kind from the Task's own durable command;
+  // a non-match keeps this generic detail (and its bounded guidance) instead of
+  // guessing.
   const originQuery = useQuery({
     queryKey: ["library-file-operation-origin", taskId],
-    queryFn: () => fetchLibraryFileOperationOrigin(token, "resource", taskId),
+    queryFn: () => fetchLibraryFileOperationOrigin(token, taskId),
     enabled: token !== null,
     retry: false,
     staleTime: 30_000,
   });
-  const resourceOrigin =
-    originQuery.data !== undefined && originQuery.data.ok
+  const provenOrigin =
+    originQuery.data !== undefined &&
+    originQuery.data.ok &&
+    originQuery.data.model.matched
       ? originQuery.data.model
       : null;
-  const mediaOriginQuery = useQuery({
-    queryKey: ["library-file-operation-origin", "media", taskId],
-    queryFn: () => fetchLibraryFileOperationOrigin(token, "media", taskId),
-    enabled:
-      token !== null &&
-      originQuery.data !== undefined &&
-      originQuery.data.ok &&
-      !originQuery.data.model.matched,
-    retry: false,
-    staleTime: 30_000,
-  });
-  const mediaOrigin =
-    mediaOriginQuery.data !== undefined && mediaOriginQuery.data.ok
-      ? mediaOriginQuery.data.model
-      : null;
-  const provenOrigin =
-    resourceOrigin !== null && resourceOrigin.matched
-      ? { kind: "resource" as const, model: resourceOrigin }
-      : mediaOrigin !== null && mediaOrigin.matched
-        ? { kind: "media" as const, model: mediaOrigin }
-        : null;
 
   const query = useQuery(
     taskDetailQueryOptions(token, { taskId, itemLimit: 20, resultLimit: 20 }),
@@ -290,7 +273,7 @@ export function TaskDetailPage() {
               <StatusBanner variant="info" title="这是一个文件操作任务">
                 <p>
                   该任务由
-                  {provenOrigin.kind === "media" ? "媒体库" : "资源库"}
+                  {provenOrigin.libraryKind === "media" ? "媒体库" : "资源库"}
                   文件页发起。
                   请在原库页面的“当前页面操作状态”中查看它的阶段、来源、目标和可执行控制。
                 </p>
@@ -298,22 +281,20 @@ export function TaskDetailPage() {
                   <Link
                     className="mf-button mf-button-primary"
                     to={
-                      provenOrigin.kind === "media"
+                      provenOrigin.libraryKind === "media"
                         ? "/medialib/files"
                         : "/resourcelib/files"
                     }
                     search={{
-                      ...(provenOrigin.model.libraryId === ""
+                      ...(provenOrigin.libraryId === ""
                         ? {}
-                        : provenOrigin.kind === "media"
-                          ? { mediaLibraryId: provenOrigin.model.libraryId }
-                          : {
-                              resourceLibraryId: provenOrigin.model.libraryId,
-                            }),
-                      ...(provenOrigin.model.path === null
+                        : provenOrigin.libraryKind === "media"
+                          ? { mediaLibraryId: provenOrigin.libraryId }
+                          : { resourceLibraryId: provenOrigin.libraryId }),
+                      ...(provenOrigin.path === null
                         ? {}
-                        : { path: provenOrigin.model.path }),
-                      operationTaskId: provenOrigin.model.taskId,
+                        : { path: provenOrigin.path }),
+                      operationTaskId: provenOrigin.taskId,
                     }}
                   >
                     返回发起它的库文件页

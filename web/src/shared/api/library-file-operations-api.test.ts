@@ -2,6 +2,7 @@ import { afterEach, describe, expect, it, vi } from "vitest";
 import {
   fetchLibraryFileOperationDetail,
   fetchLibraryFileOperationOrigin,
+  fetchLibraryFileOperationOrigins,
   fetchLibraryFileOperations,
 } from "./api-client";
 
@@ -52,6 +53,8 @@ function entry(overrides: Record<string, unknown> = {}) {
     settledItems: 1,
     succeededItems: 1,
     failedItems: 0,
+    skippedItems: 0,
+    cancelledItems: 0,
     pendingItems: 0,
     allSucceeded: true,
     settled: true,
@@ -228,7 +231,7 @@ describe("fetchLibraryFileOperationDetail", () => {
 });
 
 describe("fetchLibraryFileOperationOrigin", () => {
-  it("returns the proven origin for one Task", async () => {
+  it("returns the proven origin for one Task, keeping its published kind", async () => {
     const fetchMock = stubFetch(async () =>
       jsonResponse({
         matched: true,
@@ -242,11 +245,9 @@ describe("fetchLibraryFileOperationOrigin", () => {
         retrySafe: true,
       }),
     );
-    const result = await fetchLibraryFileOperationOrigin(
-      TOKEN,
-      "media",
-      "task-1",
-    );
+    // One read serves both kinds: the backend resolves the originating kind
+    // from the Task's own durable command.
+    const result = await fetchLibraryFileOperationOrigin(TOKEN, "task-1");
     expect(result.ok).toBe(true);
     expect(fetchMock.mock.calls[0][0]).toBe(
       "/api/v1/files/operation-origin/task-1",
@@ -254,12 +255,13 @@ describe("fetchLibraryFileOperationOrigin", () => {
     if (result.ok) {
       expect(result.model).toMatchObject({
         matched: true,
+        libraryKind: "media",
         libraryId: "movies",
       });
     }
   });
 
-  it("keeps a bounded non-match and refuses the other kind's claim", async () => {
+  it("keeps a bounded non-match and refuses a split identity", async () => {
     stubFetch(async () =>
       jsonResponse({
         matched: false,
@@ -269,11 +271,7 @@ describe("fetchLibraryFileOperationOrigin", () => {
         sideEffects: "none",
       }),
     );
-    const unmatched = await fetchLibraryFileOperationOrigin(
-      TOKEN,
-      "resource",
-      "task-2",
-    );
+    const unmatched = await fetchLibraryFileOperationOrigin(TOKEN, "task-2");
     expect(unmatched.ok).toBe(true);
     if (unmatched.ok) {
       expect(unmatched.model).toMatchObject({ matched: false });
@@ -287,14 +285,77 @@ describe("fetchLibraryFileOperationOrigin", () => {
         libraryIdField: "resourceLibraryId",
         libraryId: "source",
         resourceLibraryId: "source",
+        mediaLibraryId: "movies",
         sideEffects: "none",
       }),
     );
-    const wrongKind = await fetchLibraryFileOperationOrigin(
-      TOKEN,
-      "media",
-      "task-2",
+    const split = await fetchLibraryFileOperationOrigin(TOKEN, "task-2");
+    expect(split).toMatchObject({ ok: false, code: "malformed_response" });
+  });
+});
+
+describe("fetchLibraryFileOperationOrigins", () => {
+  it("reads the bounded origin index of one kind", async () => {
+    const fetchMock = stubFetch(async () =>
+      jsonResponse({
+        items: [
+          {
+            libraryKind: "resource",
+            libraryIdField: "resourceLibraryId",
+            libraryId: "source",
+            resourceLibraryId: "source",
+          },
+        ],
+        libraryKind: "resource",
+        libraryIdField: "resourceLibraryId",
+        total: 1,
+        truncated: false,
+        sideEffects: "none",
+        retrySafe: true,
+      }),
     );
-    expect(wrongKind).toMatchObject({ ok: false, code: "malformed_response" });
+    const result = await fetchLibraryFileOperationOrigins(TOKEN, "resource", {
+      limit: 20,
+    });
+    expect(result.ok).toBe(true);
+    expect(fetchMock.mock.calls[0][0]).toBe(
+      "/api/v1/resource-libraries/operation-origins?limit=20",
+    );
+    if (result.ok) {
+      expect(result.model.items).toEqual([
+        { libraryKind: "resource", libraryId: "source" },
+      ]);
+    }
+  });
+
+  it("refuses a document that publishes the other kind", async () => {
+    stubFetch(async () =>
+      jsonResponse({
+        items: [
+          {
+            libraryKind: "media",
+            libraryIdField: "mediaLibraryId",
+            libraryId: "movies",
+            mediaLibraryId: "movies",
+          },
+        ],
+        libraryKind: "media",
+        libraryIdField: "mediaLibraryId",
+        total: 1,
+        truncated: false,
+        sideEffects: "none",
+      }),
+    );
+    const result = await fetchLibraryFileOperationOrigins(TOKEN, "resource");
+    expect(result).toMatchObject({ ok: false, code: "malformed_response" });
+  });
+
+  it("rejects an unbounded limit without a request", async () => {
+    const fetchMock = stubFetch(async () => jsonResponse({}));
+    const result = await fetchLibraryFileOperationOrigins(TOKEN, "resource", {
+      limit: 101,
+    });
+    expect(result).toMatchObject({ ok: false, code: "invalid_request" });
+    expect(fetchMock).not.toHaveBeenCalled();
   });
 });

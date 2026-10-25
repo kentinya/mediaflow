@@ -112,12 +112,46 @@ export interface LibraryFileOperationEntry {
   readonly settledItems: number;
   readonly succeededItems: number;
   readonly failedItems: number;
+  readonly skippedItems: number;
+  readonly cancelledItems: number;
   readonly pendingItems: number;
   readonly allSucceeded: boolean;
   readonly settled: boolean;
   readonly sourceScope: string | null;
   readonly targetScope: string | null;
   readonly configurationSnapshotId: string | null;
+}
+
+/**
+ * One item's durable outcome inside a selected operation.
+ *
+ * This is the evidence an operator needs to identify which selected file
+ * failed after a restart: its exact source/destination, disposition, real
+ * effect and the one safe next action.  It is never authority — nothing here
+ * can be replayed from the dialog.
+ */
+export interface LibraryFileOperationItem {
+  readonly itemId: string;
+  readonly path: string;
+  readonly destination: string;
+  readonly status: string;
+  readonly stage: string | null;
+  readonly attempts: number;
+  readonly effect: string;
+  readonly effectCertainty: string;
+  readonly knownEffects: readonly string[];
+  readonly failure: LibraryFileOperationFailure | null;
+  readonly nextAction: string;
+}
+
+/** The bounded, secret-free failure explanation of one item. */
+export interface LibraryFileOperationFailure {
+  readonly category: string;
+  readonly message: string;
+  readonly durableState: string;
+  readonly sideEffects: string;
+  readonly retrySafe: boolean;
+  readonly nextAction: string;
 }
 
 export interface LibraryFileOperationPage {
@@ -168,6 +202,8 @@ function readEntry(
     settledItems: boundedCount(source["settledItems"]),
     succeededItems: boundedCount(source["succeededItems"]),
     failedItems: boundedCount(source["failedItems"]),
+    skippedItems: boundedCount(source["skippedItems"]),
+    cancelledItems: boundedCount(source["cancelledItems"]),
     pendingItems: boundedCount(source["pendingItems"]),
     allSucceeded: flag(source["allSucceeded"]),
     settled: flag(source["settled"]),
@@ -218,7 +254,71 @@ export interface LibraryFileOperationDetail extends LibraryFileOperationEntry {
   readonly libraryId: string;
   readonly nextAction: string | null;
   readonly durableState: string | null;
+  readonly effectCertainty: string | null;
+  readonly items: readonly LibraryFileOperationItem[];
+  readonly itemsTruncated: boolean;
   readonly lifecycle: LifecycleProjection | null;
+}
+
+const OPERATION_EFFECT_CERTAINTIES = [
+  "none",
+  "verified_complete",
+  "uncertain",
+  "unknown",
+] as const;
+
+const OPERATION_DURABLE_STATES = [
+  "mutation_effect_uncertain",
+  "task_completed",
+  "task_partial_success",
+  "task_failed",
+  "task_cancelled",
+  "task_paused",
+  "task_in_progress",
+  "no_admitted_item",
+] as const;
+
+function optionalEnum(
+  value: unknown,
+  allowed: readonly string[],
+): string | null {
+  if (value === null || value === undefined) return null;
+  if (typeof value !== "string" || !allowed.includes(value)) fail();
+  return value;
+}
+
+function readFailureEvidence(
+  value: unknown,
+): LibraryFileOperationFailure | null {
+  if (value === null || value === undefined) return null;
+  const source = recordOf(value);
+  return {
+    category: boundedText(source["category"], 64),
+    message: boundedText(source["message"], 256),
+    durableState: boundedText(source["durableState"], 256),
+    sideEffects: boundedText(source["sideEffects"], 256),
+    retrySafe: flag(source["retrySafe"]),
+    nextAction: boundedText(source["nextAction"], 256),
+  };
+}
+
+function readItem(value: unknown): LibraryFileOperationItem {
+  const source = recordOf(value);
+  const effects = source["knownEffects"];
+  if (!Array.isArray(effects) || effects.length > 64) fail();
+  return {
+    itemId: boundedText(source["itemId"], 128),
+    path: boundedText(source["path"], 4096),
+    destination: optionalText(source["destination"], 4096) ?? "",
+    status: boundedText(source["status"], 32),
+    stage: optionalText(source["stage"], 64),
+    attempts: boundedCount(source["attempts"]),
+    effect: boundedText(source["effect"], 32),
+    effectCertainty: boundedText(source["effectCertainty"], 32),
+    knownEffects: effects.map((effect) => boundedText(effect, 256)),
+    failure: readFailureEvidence(source["failure"]),
+    nextAction: boundedText(source["nextAction"], 256),
+  };
 }
 
 function optionalLifecycle(value: unknown): LifecycleProjection | null {
@@ -238,17 +338,37 @@ export function normalizeLibraryFileOperationDetail(
   const source = recordOf(payload);
   const entry = readEntry(source, kind, libraryId);
   if (entry.taskId !== taskId) fail();
+  const rawItems = source["items"];
+  if (rawItems !== undefined && !Array.isArray(rawItems)) fail();
+  const items = (rawItems ?? []).map(readItem);
+  if (items.length > 100) fail();
   return {
     ...entry,
     libraryKind: kind,
     libraryId,
     nextAction: optionalText(source["nextAction"], 1024),
-    durableState: optionalText(source["durableState"], 128),
+    durableState: optionalEnum(
+      source["durableState"],
+      OPERATION_DURABLE_STATES,
+    ),
+    effectCertainty: optionalEnum(
+      source["effectCertainty"],
+      OPERATION_EFFECT_CERTAINTIES,
+    ),
+    items,
+    itemsTruncated: source["itemsTruncated"] === true,
     lifecycle: optionalLifecycle(source["lifecycle"]),
   };
 }
 
-/** The proven ordinary origin of one Task deep link. */
+/**
+ * The proven ordinary origin of one Task deep link.
+ *
+ * The backend resolves the originating *kind* from the Task's own durable
+ * command, so one read answers for either library kind and the caller never
+ * has to guess which page to open.  The published kind is therefore part of
+ * the result rather than an input the frontend asserts.
+ */
 export type LibraryFileOperationOrigin =
   | {
       readonly matched: true;
@@ -266,7 +386,6 @@ export type LibraryFileOperationOrigin =
 
 export function normalizeLibraryFileOperationOrigin(
   payload: unknown,
-  kind: DirectCommandLibraryKind,
 ): LibraryFileOperationOrigin {
   const source = recordOf(payload);
   if (source["sideEffects"] !== "none") fail();
@@ -280,7 +399,8 @@ export function normalizeLibraryFileOperationOrigin(
     };
   }
   if (source["matched"] !== true) fail();
-  if (source["libraryKind"] !== kind) fail();
+  const kind = source["libraryKind"];
+  if (kind !== "resource" && kind !== "media") fail();
   const libraryId = boundedText(source["libraryId"], 256);
   readIdentity(source, kind, libraryId);
   return {
@@ -289,6 +409,49 @@ export function normalizeLibraryFileOperationOrigin(
     libraryKind: kind,
     libraryId,
     path: optionalText(source["path"], 4096),
+  };
+}
+
+export interface LibraryFileOperationOriginEntry {
+  readonly libraryKind: DirectCommandLibraryKind;
+  readonly libraryId: string;
+}
+
+export interface LibraryFileOperationOrigins {
+  readonly libraryKind: DirectCommandLibraryKind;
+  readonly items: readonly LibraryFileOperationOriginEntry[];
+  readonly total: number;
+  readonly truncated: boolean;
+}
+
+/**
+ * Normalize the bounded index of one kind's durable ordinary-work origins.
+ *
+ * A document claiming the other kind, a split identity or an item outside the
+ * kind's own single identity field fails closed: the page must never offer a
+ * selector entry that would inspect a foreign kind's work.
+ */
+export function normalizeLibraryFileOperationOrigins(
+  payload: unknown,
+  kind: DirectCommandLibraryKind,
+): LibraryFileOperationOrigins {
+  const source = recordOf(payload);
+  if (source["sideEffects"] !== "none") fail();
+  if (source["libraryKind"] !== kind) fail();
+  const raw = source["items"];
+  if (!Array.isArray(raw) || raw.length > 200) fail();
+  const items = raw.map((value) => {
+    const entry = recordOf(value);
+    if (entry["libraryKind"] !== kind) fail();
+    const libraryId = boundedText(entry["libraryId"], 256);
+    readIdentity(entry, kind, libraryId);
+    return { libraryKind: kind, libraryId } as const;
+  });
+  return {
+    libraryKind: kind,
+    items,
+    total: boundedCount(source["total"]),
+    truncated: flag(source["truncated"]),
   };
 }
 
@@ -336,3 +499,38 @@ export function libraryOperationHasProgress(
 ): boolean {
   return !entry.terminal || entry.failedItems > 0 || entry.pendingItems > 0;
 }
+
+/** Bounded operator wording for one item's factual disposition. */
+export const LIBRARY_OPERATION_ITEM_STATUS_LABELS: Readonly<
+  Record<string, string>
+> = {
+  SUCCESS: "成功",
+  PARTIAL: "部分完成",
+  FAILED: "失败",
+  SKIPPED: "已跳过",
+  CANCELLED: "已取消",
+  PAUSED: "已暂停",
+  RUNNING: "执行中",
+  QUEUED: "排队中",
+};
+
+/** Bounded operator wording for one item's known net effect. */
+export const LIBRARY_OPERATION_EFFECT_LABELS: Readonly<Record<string, string>> =
+  {
+    transferred: "已完成变更",
+    skipped: "未修改",
+    partial: "部分变更",
+    uncertain: "效果不确定",
+    retained: "来源保留",
+    in_progress: "尚未完成",
+  };
+
+/** Bounded operator wording for a bounded effect-certainty value. */
+export const LIBRARY_OPERATION_CERTAINTY_LABELS: Readonly<
+  Record<string, string>
+> = {
+  verified_complete: "已核实完成",
+  uncertain: "效果不确定",
+  none: "无变更",
+  unknown: "效果未知",
+};

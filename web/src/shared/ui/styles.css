@@ -3630,6 +3630,19 @@ button.mf-grid-button {
   grid-template-rows: auto 1fr auto;
 }
 
+.mf-dialog-wide {
+  width: min(960px, 100%);
+  max-height: min(90vh, 860px);
+}
+
+@media (max-width: 720px) {
+  /* A narrow viewport keeps the ordinary centered modal, never a clipped one. */
+  .mf-dialog-wide {
+    width: min(520px, 100%);
+    max-height: min(84vh, 720px);
+  }
+}
+
 .mf-dialog-header {
   display: flex;
   align-items: center;
@@ -6183,6 +6196,38 @@ tr[aria-selected="true"] {
   margin: 0;
   color: #14223c;
   overflow-wrap: anywhere;
+}
+
+.mf-operation-items {
+  display: grid;
+  gap: 8px;
+}
+
+.mf-operation-items h5 {
+  margin: 0;
+  font-size: 14px;
+}
+
+.mf-operation-item-list {
+  display: grid;
+  gap: 8px;
+  margin: 0;
+  padding: 0;
+  list-style: none;
+}
+
+.mf-operation-item {
+  display: grid;
+  gap: 4px;
+  padding: 10px 12px;
+  border: 1px solid #d7e0ed;
+  border-radius: 8px;
+  background: #ffffff;
+}
+
+.mf-operation-item-failure {
+  color: #8c1f2b;
+  font-size: 13px;
 }
 
 @media (max-width: 640px) {

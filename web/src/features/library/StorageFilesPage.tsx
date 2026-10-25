@@ -118,7 +118,18 @@ type FilesDialog =
     }
   | { readonly kind: "editor"; readonly path: string }
   | { readonly kind: "remove_library"; readonly id: string }
-  | { readonly kind: "operations" }
+  | {
+      readonly kind: "operations";
+      /**
+       * The exact durable origin being inspected.
+       *
+       * It is normally the browsed library, but the status dialog may select a
+       * historical origin that today's Active no longer enables — that origin's
+       * work must stay inspectable without re-enabling it or silently inspecting
+       * another enabled library.
+       */
+      readonly originId?: string;
+    }
   | null;
 
 interface EntryVersionEvidenceVm {
@@ -2020,13 +2031,21 @@ export function StorageFilesPage() {
       }
     | undefined
   >();
-  // A proven Tasks/run deep link pre-selects the exact local operation.  The
-  // browser hint only selects; the durable read under this library's own
-  // authority still decides whether the operation is readable and what it says.
+  // A proven Tasks/run deep link pre-selects the exact local operation *and*
+  // its exact originating library.  The browser hint only selects; the durable
+  // read under that library's own authority still decides whether the operation
+  // is readable and what it says.  Using the URL's proven identity (rather than
+  // today's first enabled library) keeps the journey correct when the
+  // originating library has since been disabled or removed.
   const [dialog, setDialog] = useState<FilesDialog>(() =>
     initialBrowse.requestedOperationTaskId === null
       ? null
-      : { kind: "operations" },
+      : {
+          kind: "operations",
+          ...(initialBrowse.requestedLibraryId === ""
+            ? {}
+            : { originId: initialBrowse.requestedLibraryId }),
+        },
   );
   const [operationSelection, setOperationSelection] = useState<string | null>(
     initialBrowse.requestedOperationTaskId,
@@ -3760,9 +3779,20 @@ export function StorageFilesPage() {
       {dialog?.kind === "operations" && (
         <LibraryFileOperationsDialog
           kind="resource"
-          libraryId={activeLibraryId}
-          libraryName={activeLibrary?.name ?? null}
+          libraryId={dialog.originId ?? activeLibraryId}
+          libraryName={
+            (dialog.originId ?? activeLibraryId) === activeLibraryId
+              ? (activeLibrary?.name ?? null)
+              : null
+          }
           initialTaskId={operationSelection}
+          onSelectOrigin={(originId) => {
+            // A historical origin is only a read scope: the dialog keeps
+            // listing that exact library's work and the page's live browse
+            // location is not rebound to it.
+            setOperationSelection(null);
+            setDialog({ kind: "operations", originId });
+          }}
           onClose={() => {
             setDialog(null);
             setOperationSelection(null);

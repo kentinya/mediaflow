@@ -225,157 +225,192 @@ and user media are not fixtures; no push/publication is authorized or performed.
 A-owned Slice/Roadmap/Progress first-Task pointers remain stale; this plan follows the committed
 ACTIVE Contract and accepted46.1 result without changing their boundaries/status.
 
-## Developer Completion Report
+## Developer Completion Report (fix round — 2026-10-25)
 
 ```text
-Candidate: aa4b6d2be78a497158c5e84301d42f6dec76637d
-Range:     6072f50d5b2e5268c35d6729290512d1ae986104..aa4b6d2b  (Task Base..Head)
+Candidate: <to be filled after checkpoint>
+Range:     ad25d4379e6e13a6b21ea6ed1bbdb4dde84084ee..<Head>
 Status:    READY FOR B REVIEW — no self-PASS, no push, no publication
 ```
 
-### Changed behavior
+This round corrects the three B-blocking findings of the `eda53131` review
+(B46.2-01/02/03) inside the same Task46.2 local status journey. Task Base, Goal,
+Scope, T4 and acceptance are unchanged. No next Task, no Slice closure.
 
-- **Durable per-library ordinary work index.** New
-  `mediaflow/domain/file_operation_history.py` names the closed ordinary command
-  families (`files_direct_command`, `files_transfer`, `files_delete` plus their
-  `media_` twins), their derived `<family>:<identity>` continuations, the exact
-  origin identity every admitted TaskItem already records and the operator
-  wording of one persisted operation value (including the `WRITE` ambiguity,
-  resolved only by the recorded display scope). `SQLiteTaskRepository`
-  `library_file_operations_window` / `library_file_operation_display` decide
-  membership *before* paging from that durable evidence only — never a Result
-  path, display label, filename, Job link or today's Active — and return a
-  count/page-consistent, both-direction, bounded page.
-- **Bounded application read.** `mediaflow/application/library_file_operations.py`
-  is a kind-pinned, side-effect-free reader: it resolves no library, opens no
-  Storage, calls no Provider. `window`, `detail` and `resolve` refuse a foreign
-  kind, foreign library, mixed-origin or unknown Task rather than rebind it; the
-  detail adds the backend-computed lifecycle projection for the exact Task and
-  principal, so a control exists only when the backend advertises it.
-- **API routes** on both kinds: `GET /resource-libraries/{id}/file-operations` and
-  `/media-libraries/{id}/file-operations`, `.../files/operations/{taskId}` and
-  `GET /files/operation-origin/{taskId}`. All are READ-permission durable reads
-  that skip the Active refresh, so a removed, disabled, root-changed or
-  currently-unavailable library keeps its history; the page cursor is bound to
-  kind + library + principal through the shared scoped cursor kind
-  `library_file_operations`. Audit routes are templated (no Task identity).
-- **Web.** New strict kind-bound entity (`entities/library/file-operations`) and
-  client reads refuse a foreign kind/library document; the shared
-  `LibraryFileOperationsDialog` reuses `ModalDialog` (centered, Escape, focus
-  return), lists only this library's operations, keeps independent selection,
-  shows stage/source/destination/per-item results and offers only advertised
-  pause/cancel/resume. Both headers now have **当前页面操作状态** immediately left
-  of Add with the Add button's exact class; reading never depends on the Add
-  permission or a resolvable Storage. Ordinary Delete and Copy/Move results now
-  offer local inspection instead of a Task Center link, and an existing
-  ordinary Task/run deep link resolves to its proven library page or keeps
-  bounded guidance. Delete's request-ID reconciliation is unchanged.
+### B46.2-01 — per-item results and failure/effect evidence are now local
 
-### Actual commands and results (this round)
+- `mediaflow/application/library_file_operations.py::detail` now also returns the
+  exact per-item evidence of the selected operation: `items[]` with each item's
+  `path`/`destination`, `status`, `stage`, `attempts`, `effect`,
+  `effectCertainty`, `knownEffects`, a bounded `failure` document and its own
+  `nextAction`, plus operation-level `durableState`, `effectCertainty`,
+  `nextAction` and `itemsTruncated` with a hard `_MAX_DETAIL_ITEMS=100` /
+  `_MAX_DETAIL_OUTCOMES=400` bound. Everything is rebuilt from durable
+  TaskItem/Result rows only (no Storage, Provider or Active resolution), and the
+  newest Result per item is used, so attempts stay history and never replay.
+- A refused `PARTIAL`/`FAILED` item whose Result effect certainty is
+  `attempted_unverified` is reported as `UNCERTAIN`/`effect: uncertain` — the
+  same vocabulary the Delete/transfer projections already use — so the operator
+  cannot read it as "nothing happened".
+- Failure text goes through the existing `bounded_failure_document`, so a raw
+  durable error is never published.
+- Counts reconcile: `skippedItems`/`cancelledItems` are now counted from
+  `SKIPPED`/`IGNORED`/`CANCELLED` items, and `OrdinaryFileOperationRow.item_pending`
+  subtracts them, so a skipped/cancelled batch is settled instead of showing
+  phantom pending items.
+- `LibraryFileOperationsDialog.tsx` renders a 逐项结果 list (status, effect +
+  certainty, recorded effects, bounded failure, per-item next action) and the
+  operation-level 已记录影响/next action. `ModalDialog` gained a `wide` variant
+  (960px, one scroll region, narrow viewport still 520px) so the two-column
+  evidence is not hidden below the fold at 1536×1024.
 
-Every command below was run in this round from the stated cwd; nothing is quoted
-from an earlier round.
+### B46.2-02 — one shared deep-link resolver that reads the persisted kind
+
+- The `GET /api/v1/files/operation-origin/{taskId}` route no longer hardcodes
+  `media_library=False`. `LibraryFileOperationHistoryService.resolve` now derives
+  the kind from the Task's own durable command (`_origin_for`), so a
+  MediaLibrary Task resolves to its MediaLibrary page and a ResourceLibrary Task
+  to its ResourceLibrary page. `media_library=None` means "read the persisted
+  kind"; an explicit caller kind still refuses the other kind's work.
+- `normalizeLibraryFileOperationOrigin(payload)` no longer takes an asserted kind:
+  the published `libraryKind` is part of the result, and a split/unknown identity
+  still fails closed.
+- `TaskDetailPage` makes one origin read instead of a resource-then-media pair,
+  and builds the return link from the published kind.
+- `destination-model.ts` now replays a bounded `operationTaskId`
+  (`/^[A-Za-z0-9][A-Za-z0-9._:-]{0,127}$/`) through authentication continuation
+  on both `/resourcelib/files` and `/medialib/files`, so reconnecting on an exact
+  local-work URL no longer drops the parameter and opens no inspection.
+
+### B46.2-03 — a historical inspection scope that survives a disabled library
+
+- New bounded repository read `SQLiteTaskRepository.library_file_operation_origins`
+  (distinct persisted scoped identities per kind, decided by the `media:` namespace),
+  new application read `LibraryFileOperationHistoryService.origins`, and the
+  authenticated routes `GET /api/v1/resource-libraries/operation-origins` and
+  `/api/v1/media-libraries/operation-origins` (`limit` 1..100). They are durable
+  reads: no Active resolution, no Storage, no Provider; the audit template carries
+  no library or Task identity.
+- Both pages now carry an explicit `originId` in the `operations` dialog state and
+  pass `onSelectOrigin`, so the dialog lists exactly the selected historical
+  library's work. The dialog shows a bounded 历史操作所属库 selector whenever the
+  index holds more than one origin or the current origin is not in it, and its
+  header explains when the current library holds no records.
+- The proven deep link seeds `originId` from the URL's own proven library identity
+  instead of today's first enabled library, so a disabled origin reopens from its
+  Task link.
+- Reading a disabled origin never re-enables it, never rebinds the live browse
+  location and never creates work; the live page heading and library cards stay
+  exactly as before.
+
+### Actual commands and results (this round, from the stated cwd)
 
 | Area | Command | Result |
 |---|---|---|
-| Governance | `python3 scripts/check_governance.py` | PASS (before and after the checkpoint) |
+| Governance | `python3 scripts/check_governance.py` | PASS |
 | Whitespace | `git diff --check` | clean |
-| Python formatting/lint | `.venv/bin/ruff format --check mediaflow tests scripts`; `.venv/bin/ruff check mediaflow tests scripts` | 357 formatted, 0 findings |
+| Python static | `.venv/bin/ruff format --check mediaflow tests scripts`; `.venv/bin/ruff check mediaflow tests scripts` | 357 formatted, 0 findings |
 | Python compile | `.venv/bin/python -m compileall -q mediaflow tests scripts` | OK |
-| New module | `.venv/bin/python -m unittest tests.test_library_file_operation_history` | 13 tests, OK |
-| Affected Python | `.venv/bin/python -m unittest tests.test_direct_file_operations tests.test_media_library_direct_commands` | 88 tests, OK |
-| Affected Python | `.venv/bin/python -m unittest tests.test_direct_file_transfers.TransferApiTests` | 7 tests, OK |
-| Affected Python | `.venv/bin/python -m unittest tests.test_media_library_transfers.MediaLibraryTransferTests.test_equal_ids_cannot_exchange_transfer_authority tests...test_media_transfer_pause_cancel_and_resume_stay_durable tests...test_media_transfer_progress_survives_api_restart_during_active_outage` | 3 tests, OK |
-| Shared read | `.venv/bin/python -m unittest tests.test_operations_run_inventory tests.test_operations_run_detail` | 76 tests, OK |
-| Python full | `.venv/bin/python -m unittest discover -s tests -t .` | 2818 tests, OK (7 skipped) — run after the affected set, incidental to this round's 30% budget |
-| Web focused | `npm run test -- run` (cwd `web/`) | 87 files / 1245 tests, passed |
-| Web static | `npm run typecheck`; `npm run lint`; `npm run format:check`; `npm run build` | all clean |
-| Web default E2E | `npm run test:e2e` (cwd `web/`) | 242 passed |
-| Native real Python | `npx playwright test --config=playwright.direct-files.python.config.ts tests/e2e/direct-files.python.spec.ts` | 10 passed, 2 failed |
+| New/affected Python | `.venv/bin/python -m unittest tests.test_library_file_operation_history` | 17 tests OK (was 13) — still the only module change |
+| Affected Python | `.venv/bin/python -m unittest tests.test_direct_file_operations tests.test_media_library_direct_commands` | 88 tests OK |
+| Affected Python | `.venv/bin/python -m unittest tests.test_direct_file_transfers.TransferApiTests` | 7 tests OK |
+| Affected Python | `.venv/bin/python -m unittest tests.test_media_library_transfers.MediaLibraryTransferTests.{test_equal_ids_cannot_exchange_transfer_authority,test_media_transfer_pause_cancel_and_resume_stay_durable,test_media_transfer_progress_survives_api_restart_during_active_outage}` | 3 tests OK |
+| Shared read | `.venv/bin/python -m unittest tests.test_operations_run_inventory tests.test_operations_run_detail` | 76 tests OK |
+| Web focused | `npm run test -- run src/features/library src/entities/library src/shared/api/library-api.test.ts src/shared/api/media-library-commands-api.test.ts src/shared/api/operations-api.test.ts src/routes/router.test.tsx` (cwd `web/`) | 18 files / 279 tests passed |
+| Web adjacent | `npx vitest run src/features/operations src/shared/navigation` (cwd `web/`) | 24 files / 278 tests passed |
+| Web static | `npm run typecheck`; `npm run lint`; `npm run format:check`; `npm run build` | all clean; artifact `index-ak474z5z.js` / `index-BFNi4meT.css` |
+| Native real Python | `npx playwright test --config=playwright.direct-files.python.config.ts tests/e2e/direct-files.python.spec.ts` (cwd `web/`) | **15 passed** |
 
-### Native E2E: exact failures, and the parent-reproduction evidence
+### Native evidence produced this round
 
-The two failures are pre-existing headless-macOS keyboard flakes in the
-`Shift+F10` row-menu helper (`renameThroughNativePage`), not this Task's
-behavior:
+Both library kinds, real page controls, real Worker, same temporary SQLite file:
 
-- `MediaLibrary Files confirms once, waits for the real Worker, and refreshes`
-- `MediaLibrary Files renames a file and directory through real Python commands`
+- **Mixed/uncertain batch (new, both kinds).** Select two real files → the harness
+  refuses exactly one *actual* `LocalStorage.delete` → run the production
+  `FilesTransferWorker` → the local detail names both files, the refused one with
+  its bounded `workflow_failure` reason, `来源保留`/无变更 effect and per-item next
+  action, the successful sibling as `已完成变更`/已核实完成, and the operation-level
+  next action. Filesystem proves `Keep` still exists and `Remove` is gone. Then a
+  real `POST /__harness__/restart` (repository + API reopen over the same SQLite
+  file) + full page reload with no remembered Task ID reproduces the same evidence,
+  the count is unchanged, and neither source state changed.
+  Artifacts: `resource|media-mixed-operation-evidence{,-desktop}.png`
+  (desktop is a real 1536×1024 viewport capture).
+- **Disabled origin (new).** A real unreferenced ResourceLibrary is added through
+  the supported `save_resource_library` command, work is created through the page,
+  and the library is disabled through a real managed successor publication
+  (draft → edit → validate → activate). After reload the live list no longer offers
+  it, its `/file-operations` total is unchanged, `operation-origins` still names it,
+  the 历史操作所属库 selector lists it, and selecting it shows the real operation.
+  The exact Task's shared deep link then resolves `matched: true`,
+  `libraryKind: resource`, `resourceLibraryId: b-review-history` and reopening that
+  URL reopens local inspection with the exact operation preselected.
+  Artifacts: `resource-disabled-origin-history{,-desktop}.png`,
+  `resource-disabled-origin-deep-link.png`.
+- Both kinds' existing `reopens its own durable operation status` journeys still
+  pass, with the narrow capture now a real 390×844 viewport shot.
 
-Reproduced at the planning HEAD (`0e3b50e6`, clean worktree, same built artifact
-and harness) with `npx playwright test --config=playwright.direct-files.python.config.ts
-tests/e2e/direct-files.python.spec.ts -g "MediaLibrary Files renames a file"` →
-same 30 s timeout at the same `menuitem "重命名"` click. The identical Resource
-MediaLibrary Delete/Copy-Move journeys, the two new `...reopens its own durable
-operation status` journeys and all Resource journeys pass. The new journeys
-deliberately use toolbar/footer controls rather than the flaky keyboard menu.
+### Added/extended coverage (success / invalid / conflict / failure / edge)
 
-Note: `--config=playwright.python.config.ts` (the config named in Required Tests)
-starts the operations-inventory harness, which does not mount the direct-files
-fixtures, so `/__harness__/register-files-worker` answers 503 there for *every*
-case including unchanged ones. The direct-files spec's own committed config is
-`playwright.direct-files.python.config.ts`; that is what was run. This is a
-fingerprint mismatch in the Task text, not a product defect — B should decide
-whether to fix the command or the doc.
+Python (`tests/test_library_file_operation_history.py`, 13 → 17): mixed two-file
+Delete with one real Storage refusal asserting per-item dispositions, effects,
+bounded failure, per-item and operation next actions, count reconciliation,
+no absolute path/token leakage, and byte-identical evidence from a fresh
+repository with no Active binding; skipped/cancelled reconciliation; the
+per-kind origin index (both kinds, viewer read, invalid limits, zero Storage
+mutation) including a disabled unreferenced library staying in the index and
+readable; and the corrected kind-resolving deep link (resource + media +
+unknown Task).
 
-### Durable-reopen evidence produced by the new native journeys
+Web: entity model/detail normalization for per-item evidence and the closed
+`durableState`/`effectCertainty` vocabularies; the untouched-origin index model
+refusing the other kind; client URL/refusal contracts for the origin index and
+the kind-publishing origin read; the mounted-page dialog showing real per-item
+evidence of a mixed batch (failed/uncertain + successful sibling, no mutating
+control) and the disabled historical origin selector; and
+`destination-model.test.ts` proving `operationTaskId` survives reconnect while a
+tampered/credential-shaped value is dropped.
 
-For each kind: real creation through the toolbar → real Worker-owned batch
-Delete of two dedicated files → status dialog lists both → exact detail read
-(source, destination, stage, `成功 1 / 失败 0`, no invented control for a
-terminal creation) → narrow 390×844 and desktop 1536×1024 screenshots with no
-horizontal overflow → close → `POST /__harness__/restart` (real repository + API
-reopen over the same SQLite file) → full page reload with no remembered Task ID
-→ the same operations are readable again and the authorized list `total` is
-unchanged. `tests/test_library_file_operation_history.py` additionally proves
-reopen from a fresh `SQLiteTaskRepository` + `MediaFlowApi` with **no** Active
-binding at all.
-
-### Added test coverage (success / invalid / conflict / failure / edge)
-
-Python (13): both kinds keep their own operations with kind-specific identity
-fields; equal IDs cannot exchange history/detail; unknown library reads empty and
-is never rebound; mixed ordinary work pages correctly with a real organizing Job
-in the same runtime and the shared run inventory is not narrowed; an ordinary
-Delete joins the population; the cursor is refused across kind/library/principal
-and accepted for its own scope; invalid query/limit/Task identities fail closed;
-a repository without the reader answers one bounded 503; a viewer reads and the
-read mutates no Task/item/Result; history survives a real Active successor that
-removes the library; a pre-change row without display evidence stays readable
-with no invented scope; reopen from a fresh repository/API with no Active
-binding; deep-link resolution matches or explains; reads never touch Storage
-(`MutationFreeStorage`).
-
-Web: model normalization (foreign kind/library/split identity/unknown
-operation/negative counts/mutation claim/mismatched Task), state copy (never
-claims completion for a non-successful terminal Task), client URL and
-normalization contracts, and the mounted-page dialog journeys (entry placement
-and style, multiple operations, exact detail, only advertised controls, empty,
-403 read error with real retry, reopen with no hint, unavailable control
-projection).
+Harness additions (`scripts/direct_files_browser_harness.py`): a bounded
+`POST /__harness__/arm-files-delete-fault` that arms one real `LocalStorage.delete`
+refusal for the next Worker run (cleared by posting no name), and
+`POST /__harness__/add-unreferenced-origin` +
+`POST /__harness__/disable-resource-library` that publish a real managed successor
+Active. Both are test-only fixtures over temporary roots; no product payload is
+fabricated and no DOM state is toggled to prove recovery.
 
 ### Known risks and remaining Slice outcomes
 
-- The `Shift+F10` keyboard-menu flake above is pre-existing and outside this
-  Task's surface; it remains visible rather than being retried or relaxed.
-- The Task's `playwright.python.config.ts` command cannot serve the direct-files
-  fixtures (harness mismatch described above). B owns the call on correcting the
-  Task text; no product behavior depends on it.
-- `OperationDetail` polls every 2 s only while the selected operation is
-  non-terminal; a terminal selection performs a single read. No polling admits
-  commands.
-- The dialog lists the current page's operations; older pages are reachable by
-  explicit paging, not by an infinite scroll. If B expects a first-preview plus
-  census hybrid, that is a follow-up within RO-3.
-- Centre list/count/Attention population narrowing (RO-4), RO-2 early manual
-  admission, RO-5 Automation changes and the organizing-only Task Center are
-  **not** delivered here and remain outstanding Slice outcomes.
-- Pre-existing untracked artifacts (`.DS_Store`, `*.log`, `15`,
-  `output/imagegen/*.zip`, `web/test-results-*`), the `docs/pics/操作与任务.png`
-  deletion and all untracked reference images were preserved and are **not**
-  committed. `mediaflow/.DS_Store` was accidentally staged and then unstaged.
+- The `Shift+F10` keyboard row-menu helper is still order/timing sensitive: in a
+  full-spec run this round it passed all 15 cases, while in an earlier run
+  `MediaLibrary Files renames…` timed out at the same `menuitem "重命名"` click.
+  Reproduced at Task Base `6072f50d` in an isolated worktree (its own venv, built
+  artifact and the committed harness) and it fails there too, so it is pre-existing
+  and outside this Task's surface. It remains visible rather than retried or
+  relaxed.
+- Per-item evidence is bounded (`_MAX_DETAIL_ITEMS`/`_MAX_DETAIL_OUTCOMES`) rather
+  than paged. An ordinary command admits one item per selected source and the
+  domain caps a selection at `MAX_TRANSFER_PATHS`/`MAX_DELETE_PATHS` (50), so the
+  bound is defensive; `itemsTruncated` is explicit if it ever applies. If B wants
+  per-item cursor paging inside the modal, that is a follow-up within RO-3.
+- `origins` returns up to 100 origins per kind ordered by persisted identity,
+  with `truncated`. The selector is a bounded `<select>`; a library with hundreds
+  of historical origins would need search/paging (not required by the Task).
+- Still not delivered (outstanding Slice outcomes): RO-2 manual admission before
+  rule resolution, RO-4 organizing-only Task Center population/views, RO-5
+  Automation semantics. Center list/count/Attention populations were deliberately
+  not narrowed here.
+- No schema change was needed: `operations_run_display`, `task_items`,
+  `task_results` and `files_transfers` already carried every fact used.
 
-Full acceptance, regression ownership and any PASS/FIX decision are B-owned.
+### Workspace
+
+All pre-existing untracked artifacts, the `docs/pics/操作与任务.png` deletion,
+reference images, logs and `web/test-results*` builds are preserved and not
+committed. Native screenshots/artifacts from this round are held locally under
+the ignored `.git/validation-evidence/task46.2-fixes/`. No push, no publication.
+
+Full acceptance, full regression and any PASS/FIX decision remain B-owned.
 
 ## B Review Result
 

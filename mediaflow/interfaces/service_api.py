@@ -1726,6 +1726,15 @@ class MediaFlowApi:
                 and parts[:3] == ["api", "v1", "files"]
                 and parts[3] == "operation-origin"
             )
+            or (
+                len(parts) == 4
+                and tuple(parts[:3])
+                in {
+                    ("api", "v1", "resource-libraries"),
+                    ("api", "v1", "media-libraries"),
+                }
+                and parts[3] == "operation-origins"
+            )
         )
         resource_library_save_route = (
             parts == ["api", "v1", "resource-libraries"] and method == "POST"
@@ -6098,6 +6107,27 @@ class MediaFlowApi:
                 media_library=True,
             )
         if (
+            len(parts) == 4
+            and parts[:3] == ["api", "v1", "resource-libraries"]
+            and parts[3] == "operation-origins"
+            and method == "GET"
+        ):
+            # The bounded set of origins this library kind still owns.  It keeps
+            # the header entry usable when the current live library list no
+            # longer contains a disabled/removed origin.
+            self._require(principal, ApiPermission.READ)
+            return self._library_file_operation_origins(
+                start_response, environ, media_library=False
+            )
+        if (
+            len(parts) == 4
+            and parts[:3] == ["api", "v1", "media-libraries"]
+            and parts[3] == "operation-origins"
+            and method == "GET"
+        ):
+            self._require(principal, ApiPermission.READ)
+            return self._library_file_operation_origins(start_response, environ, media_library=True)
+        if (
             len(parts) == 7
             and parts[:3] == ["api", "v1", "resource-libraries"]
             and parts[4:6] == ["files", "operations"]
@@ -6140,10 +6170,12 @@ class MediaFlowApi:
         ):
             # Resolve one existing ordinary Task/run deep link to the exact
             # owning library page, or to a bounded non-match.  The read uses
-            # durable admitted evidence only and never guesses a library.
+            # durable admitted evidence only and never guesses a library; the
+            # originating kind comes from the Task's own persisted command, so
+            # both library kinds share this one route.
             self._require(principal, ApiPermission.READ)
             return self._library_file_operation_origin(
-                start_response, environ, parts[4], media_library=False
+                start_response, environ, parts[4], media_library=None
             )
         if (
             len(parts) == 5
@@ -9673,6 +9705,17 @@ class MediaFlowApi:
             # identity in security audit route evidence.
             return f"/api/v1/{parts[2]}/{{id}}/file-operations"
         if (
+            len(parts) == 4
+            and tuple(parts[:3])
+            in {
+                ("api", "v1", "resource-libraries"),
+                ("api", "v1", "media-libraries"),
+            }
+            and parts[3] == "operation-origins"
+        ):
+            # The bounded origin index names no library or Task identity.
+            return f"/api/v1/{parts[2]}/operation-origins"
+        if (
             len(parts) == 7
             and tuple(parts[:3])
             in {
@@ -10836,8 +10879,13 @@ class MediaFlowApi:
             self._with_transfer_worker_readiness(projection, media_library=media_library),
         )
 
-    def _library_file_operation_history(self, *, media_library: bool):
-        """The kind-pinned durable history reader over this process's rows."""
+    def _library_file_operation_history(self, *, media_library: bool | None = False):
+        """The kind-pinned durable history reader over this process's rows.
+
+        ``media_library=None`` builds a reader whose scope is still decided by the
+        exact kind-pinned query, but whose *deep-link resolution* reads the kind
+        from the Task's own durable command (see ``resolve``).
+        """
 
         if self._repository is None:
             return None
@@ -10989,18 +11037,57 @@ class MediaFlowApi:
             )
         return self._response(start_response, 200, document)
 
+    def _library_file_operation_origins(
+        self,
+        start_response: Callable,
+        environ: dict,
+        *,
+        media_library: bool,
+    ):
+        """The bounded distinct origins of this kind's ordinary work."""
+
+        history = self._library_file_operation_history(media_library=media_library)
+        if history is None:
+            return self._error(
+                start_response,
+                503,
+                "library_file_operations_unavailable",
+                "the durable library file-operation history is unavailable",
+                details={"sideEffects": "none", "retrySafe": True},
+            )
+        values = parse_qs(str(environ.get("QUERY_STRING", "")), keep_blank_values=True)
+        if set(values).difference({"limit"}) or any(len(value) != 1 for value in values.values()):
+            raise ValueError("Library file operation origins accepts only one limit")
+        limit = self._parse_bounded_limit(values.get("limit", ["50"])[0], "origin")
+        try:
+            document = history.origins(limit=limit)
+        except LibraryFileOperationError as error:
+            return self._error(
+                start_response,
+                error.status,
+                error.code,
+                str(error),
+                details={"sideEffects": "none", "retrySafe": True},
+            )
+        return self._response(start_response, 200, document)
+
     def _library_file_operation_origin(
         self,
         start_response: Callable,
         environ: dict,
         task_id: str,
         *,
-        media_library: bool,
+        media_library: bool | None,
     ):
-        """Resolve one Task deep link to its proven ordinary library origin."""
+        """Resolve one Task deep link to its proven ordinary library origin.
+
+        ``media_library=None`` means the caller submitted no kind: the origin is
+        then read from the Task's own durable command, so one shared route serves
+        both library kinds and neither can claim the other's work.
+        """
 
         self._require_empty_query(environ, "Library file operation origin")
-        history = self._library_file_operation_history(media_library=media_library)
+        history = self._library_file_operation_history(media_library=None)
         if history is None:
             return self._error(
                 start_response,
@@ -11019,6 +11106,19 @@ class MediaFlowApi:
                 str(error),
                 details={"sideEffects": "none", "retrySafe": True},
             )
+        if media_library is not None and document.get("matched") is True:
+            expected = "media" if media_library else "resource"
+            if document.get("libraryKind") != expected:
+                # A caller that submitted its own kind is answered in that kind's
+                # terms: a Task of the other kind is a bounded non-match, never a
+                # foreign origin.
+                document = {
+                    "matched": False,
+                    "taskId": document["taskId"],
+                    "reason": "not_ordinary_file_work",
+                    "nextAction": "open the exact Task detail in Operations",
+                    "sideEffects": "none",
+                }
         return self._response(start_response, 200, document)
 
     @classmethod

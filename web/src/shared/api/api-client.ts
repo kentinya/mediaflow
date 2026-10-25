@@ -67,9 +67,11 @@ import {
 import {
   normalizeLibraryFileOperationDetail,
   normalizeLibraryFileOperationOrigin,
+  normalizeLibraryFileOperationOrigins,
   normalizeLibraryFileOperationPage,
   type LibraryFileOperationDetail,
   type LibraryFileOperationOrigin,
+  type LibraryFileOperationOrigins,
   type LibraryFileOperationPage,
 } from "../../entities/library/file-operations";
 import {
@@ -8621,16 +8623,83 @@ export async function fetchLibraryFileOperationDetail(
   }
 }
 
+export type LibraryFileOperationOriginsRead =
+  | { readonly ok: true; readonly model: LibraryFileOperationOrigins }
+  | {
+      readonly ok: false;
+      readonly status: number;
+      readonly code: string;
+      readonly details?: AutomationMutationFailureDetails;
+    };
+
+/**
+ * Read the bounded index of origins this library kind still owns.
+ *
+ * A page header entry needs this because its live library list only contains
+ * *enabled* libraries: an origin that was later disabled, removed or made
+ * unavailable must remain selectable so its durable work stays inspectable
+ * without re-enabling it.  The read resolves no configuration and touches no
+ * Storage.
+ */
+export async function fetchLibraryFileOperationOrigins(
+  token: string | null,
+  kind: DirectCommandLibraryKind,
+  options: { readonly limit?: number } = {},
+  fetchImpl: FetchLike = fetch,
+): Promise<LibraryFileOperationOriginsRead> {
+  const limit = options.limit;
+  if (
+    limit !== undefined &&
+    (!Number.isInteger(limit) || limit < 1 || limit > 100)
+  ) {
+    return { ok: false, status: 400, code: "invalid_request" };
+  }
+  const collection =
+    kind === "media" ? "media-libraries" : "resource-libraries";
+  const query = limit === undefined ? "" : `?limit=${limit}`;
+  let response: Response;
+  try {
+    response = await fetchImpl(
+      `/api/v1/${collection}/operation-origins${query}`,
+      { headers: directFilesReadHeaders(token) },
+    );
+  } catch {
+    return { ok: false, status: 0, code: "transport_unavailable" };
+  }
+  if (!response.ok) {
+    const envelope = await readErrorEnvelope(response);
+    return {
+      ok: false,
+      status: response.status,
+      code:
+        typeof envelope.code === "string" && envelope.code.length > 0
+          ? envelope.code
+          : "request_rejected",
+      ...failureDetailsSpread(envelope.details),
+    };
+  }
+  try {
+    return {
+      ok: true,
+      model: normalizeLibraryFileOperationOrigins(await response.json(), kind),
+    };
+  } catch {
+    return { ok: false, status: response.status, code: "malformed_response" };
+  }
+}
+
 /**
  * Resolve one existing ordinary Task/run deep link to its exact library page.
  *
- * The backend answers from durable admitted evidence; a non-match keeps the
- * operator on a bounded explanation instead of a guessed library or a generic
- * organizing recovery surface.
+ * The backend answers from durable admitted evidence and publishes the
+ * originating *kind* itself, so one request serves both library kinds: a
+ * MediaLibrary Task resolves to its MediaLibrary page and a ResourceLibrary
+ * Task to its ResourceLibrary page.  A non-match keeps the operator on a
+ * bounded explanation instead of a guessed library or a generic organizing
+ * recovery surface.
  */
 export async function fetchLibraryFileOperationOrigin(
   token: string | null,
-  kind: DirectCommandLibraryKind,
   taskId: string,
   fetchImpl: FetchLike = fetch,
 ): Promise<
@@ -8669,7 +8738,7 @@ export async function fetchLibraryFileOperationOrigin(
   try {
     return {
       ok: true,
-      model: normalizeLibraryFileOperationOrigin(await response.json(), kind),
+      model: normalizeLibraryFileOperationOrigin(await response.json()),
     };
   } catch {
     return { ok: false, status: response.status, code: "malformed_response" };

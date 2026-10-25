@@ -732,8 +732,9 @@ async function readOperationStatus(
       () => document.documentElement.scrollWidth <= window.innerWidth + 1,
     ),
   ).toBe(true);
-  await dialog.screenshot({
+  await page.screenshot({
     path: testInfo.outputPath(`${kind}-operation-status-narrow.png`),
+    fullPage: false,
   });
   await page.setViewportSize({ width: 1536, height: 1024 });
   await dialog.getByRole("button", { name: "关闭", exact: true }).click();
@@ -794,4 +795,322 @@ test("MediaLibrary Files reopens its own durable operation status", async ({
   test.setTimeout(90_000);
   await openFiles(page, "media");
   await readOperationStatus(page, testInfo, "media");
+});
+
+/**
+ * A mixed/uncertain batch: the operator selects two real files, the isolated
+ * harness refuses exactly one *actual* LocalStorage Delete, and the production
+ * Worker records the durable outcome.  The local status dialog must name the
+ * refused file, its bounded evidence and one safe next action — and must do so
+ * again after a real API/SQLite reopen with no browser hint.
+ */
+async function mixedBatchLocalEvidence(
+  page: Page,
+  testInfo: TestInfo,
+  kind: "resource" | "media",
+): Promise<void> {
+  const prefix = kind === "resource" ? "Resource" : "Media";
+  const listUrl = `/api/v1/${
+    kind === "resource" ? "resource-libraries/source" : "media-libraries/movies"
+  }/file-operations`;
+  const authHeaders = { Authorization: `Bearer ${ADMIN_TOKEN}` };
+  const keep = `Browser-Mixed-Keep-${prefix}.txt`;
+  const remove = `Browser-Mixed-Remove-${prefix}.txt`;
+
+  const armed = await page.request.post("/__harness__/arm-files-delete-fault", {
+    data: { name: keep },
+  });
+  expect(armed.ok()).toBe(true);
+  expect(await armed.json()).toMatchObject({ armed: true });
+
+  await page.getByRole("button", { name: "列表视图" }).click();
+  await expect(page.getByRole("checkbox", { name: "选择全部" })).toBeVisible();
+  for (const name of [keep, remove]) {
+    await page.getByRole("checkbox", { name: `选择 ${name}` }).check();
+  }
+  const footer = page.locator("footer.mf-files-footer");
+  await footer.getByRole("button", { name: "删除", exact: true }).click();
+  const confirmation = page.getByRole("dialog", { name: "删除确认" });
+  await expect(confirmation).toBeVisible();
+  await confirmation.getByRole("button", { name: "删除", exact: true }).click();
+  await expect(page.getByRole("dialog", { name: "删除进度" })).toBeVisible();
+
+  const worker = await page.request.post("/__harness__/run-files-worker");
+  expect(worker.ok()).toBe(true);
+  const result = page.getByRole("dialog", { name: "删除结果" });
+  await expect(result).toBeVisible();
+  // The real filesystem proves the independent effects before the UI is read.
+  const stateAfter = await page.request.get("/__harness__/files-state");
+  const stateDocument = (await stateAfter.json()) as Record<string, unknown>;
+  expect(stateDocument[`${kind}MixedKeepExists`]).toBe(true);
+  expect(stateDocument[`${kind}MixedRemoveExists`]).toBe(false);
+  await result.getByRole("button", { name: "关闭", exact: true }).click();
+
+  const dialog = page.getByRole("dialog", { name: /当前页面操作状态/ });
+  await page.getByRole("button", { name: "当前页面操作状态" }).click();
+  await expect(dialog).toBeVisible();
+  const deleteEntry = dialog.getByRole("button", { name: /操作 删除/ }).first();
+  await expect(deleteEntry).toBeVisible();
+  await deleteEntry.click();
+  const selected = dialog.getByLabel("所选操作状态");
+  await expect(selected).toBeVisible();
+  // Per-item evidence: both files are identifiable, the refused one keeps its
+  // bounded explanation and its own next action, and the successful sibling is
+  // not hidden behind it.  The refusal here happens before any Storage write,
+  // so the durable effect is provably "nothing changed" rather than uncertain.
+  const keepItem = selected
+    .locator("li", { has: page.getByText(keep, { exact: true }) })
+    .first();
+  const removeItem = selected
+    .locator("li", { has: page.getByText(remove, { exact: true }) })
+    .first();
+  await expect(keepItem).toBeVisible();
+  await expect(removeItem).toBeVisible();
+  await expect(keepItem).toContainText("失败");
+  await expect(keepItem).toContainText("来源保留");
+  await expect(keepItem).toContainText(/不会自动重试/);
+  await expect(removeItem).toContainText("成功");
+  await expect(removeItem).toContainText("已完成变更");
+  // The operation-level next action explains the mixed outcome.
+  await expect(selected.getByText(/确认哪些条目失败或部分完成/)).toBeVisible();
+  await dialog.screenshot({
+    path: testInfo.outputPath(`${kind}-mixed-operation-evidence.png`),
+  });
+  await page.setViewportSize({ width: 1536, height: 1024 });
+  await expect(dialog).toBeVisible();
+  // A real 1536×1024 viewport capture, not an element clip: the modal must stay
+  // centered and unclipped at the required desktop size.
+  await page.screenshot({
+    path: testInfo.outputPath(`${kind}-mixed-operation-evidence-desktop.png`),
+    fullPage: false,
+  });
+  expect(
+    await page.evaluate(
+      () => document.documentElement.scrollWidth <= window.innerWidth + 1,
+    ),
+  ).toBe(true);
+  await dialog.getByRole("button", { name: "关闭", exact: true }).click();
+  await expect(dialog).toHaveCount(0);
+
+  const beforeRestart = await page.request.get(listUrl, {
+    headers: authHeaders,
+  });
+  expect(beforeRestart.ok()).toBe(true);
+  const beforeTotal = ((await beforeRestart.json()) as { total: number }).total;
+  expect(beforeTotal).toBeGreaterThanOrEqual(1);
+
+  // Real API/repository reopen over the same SQLite file, then a fresh page
+  // with no remembered Task ID: the same per-item evidence must be readable.
+  const restart = await page.request.post("/__harness__/restart");
+  expect(restart.ok()).toBe(true);
+  await page.reload();
+  await page.getByLabel("API token").fill(ADMIN_TOKEN);
+  await page.getByRole("button", { name: "Connect" }).click();
+  await expect(
+    page.getByRole("heading", {
+      name: kind === "resource" ? "文件" : "媒体库",
+      exact: true,
+    }),
+  ).toBeVisible();
+  await page.getByRole("button", { name: "当前页面操作状态" }).click();
+  const reopened = page.getByRole("dialog", { name: /当前页面操作状态/ });
+  await expect(reopened).toBeVisible();
+  const reopenedDelete = reopened
+    .getByRole("button", { name: /操作 删除/ })
+    .first();
+  await expect(reopenedDelete).toBeVisible();
+  await reopenedDelete.click();
+  const reopenedSelected = reopened.getByLabel("所选操作状态");
+  const reopenedKeep = reopenedSelected
+    .locator("li", { has: page.getByText(keep, { exact: true }) })
+    .first();
+  await expect(reopenedKeep).toBeVisible();
+  await expect(reopenedKeep).toContainText("失败");
+  await expect(reopenedKeep).toContainText(/不会自动重试/);
+  await expect(
+    reopenedSelected
+      .locator("li", { has: page.getByText(remove, { exact: true }) })
+      .first(),
+  ).toContainText("已完成变更");
+  // Nothing was replayed by reading: the refused source is still present and
+  // the successful source is still gone.
+  const stateReopened = await page.request.get("/__harness__/files-state");
+  const reopenedDocument = (await stateReopened.json()) as Record<
+    string,
+    unknown
+  >;
+  expect(reopenedDocument[`${kind}MixedKeepExists`]).toBe(true);
+  expect(reopenedDocument[`${kind}MixedRemoveExists`]).toBe(false);
+  const afterRestart = await page.request.get(listUrl, {
+    headers: authHeaders,
+  });
+  expect(await afterRestart.json()).toMatchObject({ total: beforeTotal });
+  await reopened.getByRole("button", { name: "关闭", exact: true }).click();
+  const cleared = await page.request.post(
+    "/__harness__/arm-files-delete-fault",
+    {
+      data: {},
+    },
+  );
+  expect(await cleared.json()).toMatchObject({ armed: false });
+}
+
+test("ResourceLibrary Files keeps a mixed batch's per-item evidence", async ({
+  page,
+}, testInfo) => {
+  test.setTimeout(120_000);
+  await openFiles(page, "resource");
+  await mixedBatchLocalEvidence(page, testInfo, "resource");
+});
+
+test("MediaLibrary Files keeps a mixed batch's per-item evidence", async ({
+  page,
+}, testInfo) => {
+  test.setTimeout(120_000);
+  await openFiles(page, "media");
+  await mixedBatchLocalEvidence(page, testInfo, "media");
+});
+
+/**
+ * A disabled historical origin: the operations were admitted in a library that
+ * the next published Active no longer enables.  Its work must stay reachable
+ * from the header entry — the live library list no longer contains it, so the
+ * bounded origin index is what keeps the exact historical scope selectable
+ * instead of silently inspecting another enabled library.
+ */
+test.describe("disabled origin stays inspectable", () => {
+  test("ResourceLibrary Files reaches a disabled origin's work", async ({
+    page,
+  }, testInfo) => {
+    test.setTimeout(120_000);
+    const headers = { Authorization: `Bearer ${ADMIN_TOKEN}` };
+    const origin = "b-review-history";
+
+    // A real unreferenced ResourceLibrary, added through the supported Add
+    // command, so it can legally be disabled later.
+    const added = await page.request.post(
+      "/__harness__/add-unreferenced-origin",
+      {
+        data: { libraryId: origin, name: "B review history" },
+      },
+    );
+    expect(added.ok()).toBe(true);
+    expect(await added.json()).toMatchObject({ added: true });
+
+    await openFiles(page, "resource");
+    // The origin is browsable while enabled: select it and create real work.
+    await page.getByRole("button", { name: "B review history" }).click();
+    await expect(
+      page.getByRole("heading", { name: "文件", exact: true }),
+    ).toBeVisible();
+    await createFolderThroughNativePage(page, "resource");
+    const before = await page.request.get(
+      `/api/v1/resource-libraries/${origin}/file-operations`,
+      { headers },
+    );
+    expect(before.ok()).toBe(true);
+    const beforeTotal = ((await before.json()) as { total: number }).total;
+    expect(beforeTotal).toBeGreaterThanOrEqual(1);
+
+    const disabled = await page.request.post(
+      "/__harness__/disable-resource-library",
+      { data: { libraryId: origin } },
+    );
+    const disabledBody = await disabled.text();
+    expect(disabledBody, disabledBody).toContain('"disabled": true');
+
+    // The live page no longer offers the library, but its durable history is
+    // intact and the origin index still names it.
+    await page.reload();
+    await page.getByLabel("API token").fill(ADMIN_TOKEN);
+    await page.getByRole("button", { name: "Connect" }).click();
+    await expect(
+      page.getByRole("heading", { name: "文件", exact: true }),
+    ).toBeVisible();
+    const history = await page.request.get(
+      `/api/v1/resource-libraries/${origin}/file-operations`,
+      { headers },
+    );
+    expect(history.ok()).toBe(true);
+    expect(await history.json()).toMatchObject({ total: beforeTotal });
+
+    const origins = await page.request.get(
+      "/api/v1/resource-libraries/operation-origins",
+      { headers },
+    );
+    expect(origins.ok()).toBe(true);
+    const originsDocument = (await origins.json()) as {
+      items: { resourceLibraryId: string }[];
+    };
+    expect(
+      originsDocument.items.map((item) => item.resourceLibraryId),
+    ).toContain(origin);
+
+    await page.getByRole("button", { name: "当前页面操作状态" }).click();
+    const dialog = page.getByRole("dialog", { name: /当前页面操作状态/ });
+    await expect(dialog).toBeVisible();
+    const selector = dialog.getByLabel("历史操作所属库");
+    await expect(selector).toBeVisible();
+    await selector.selectOption(origin);
+    await expect(
+      dialog.getByRole("button", { name: /操作 新建文件夹/ }).first(),
+    ).toBeVisible();
+    await dialog.screenshot({
+      path: testInfo.outputPath("resource-disabled-origin-history.png"),
+    });
+    await page.setViewportSize({ width: 1536, height: 1024 });
+    await expect(dialog).toBeVisible();
+    await page.screenshot({
+      path: testInfo.outputPath("resource-disabled-origin-history-desktop.png"),
+      fullPage: false,
+    });
+    // Reading the disabled origin's history created nothing and re-enabled
+    // nothing: the backend still reports it disabled and the operation count is
+    // unchanged.
+    const afterRead = await page.request.get(
+      `/api/v1/resource-libraries/${origin}/file-operations`,
+      { headers },
+    );
+    expect(await afterRead.json()).toMatchObject({ total: beforeTotal });
+    await dialog.getByRole("button", { name: "关闭", exact: true }).click();
+
+    // The exact ordinary Task's Task-detail deep link resolves back to this
+    // disabled origin's local inspection — through the ONE shared resolver,
+    // which reads the persisted kind.  Following it reopens local inspection
+    // with no mutation and no live library rebinding.
+    const operations = await page.request.get(
+      `/api/v1/resource-libraries/${origin}/file-operations`,
+      { headers },
+    );
+    const operationsDocument = (await operations.json()) as {
+      items: { taskId: string }[];
+    };
+    const taskId = operationsDocument.items[0].taskId;
+    const resolved = await page.request.get(
+      `/api/v1/files/operation-origin/${taskId}`,
+      { headers },
+    );
+    expect(resolved.ok()).toBe(true);
+    expect(await resolved.json()).toMatchObject({
+      matched: true,
+      libraryKind: "resource",
+      resourceLibraryId: origin,
+      sideEffects: "none",
+    });
+    const deepLink = `/ui-v2/resourcelib/files?resourceLibraryId=${origin}&operationTaskId=${taskId}`;
+    await page.goto(new URL(deepLink, "http://127.0.0.1:4185").toString());
+    await page.getByLabel("API token").fill(ADMIN_TOKEN);
+    await page.getByRole("button", { name: "Connect" }).click();
+    const reopened = page.getByRole("dialog", { name: /当前页面操作状态/ });
+    await expect(reopened).toBeVisible();
+    await expect(
+      reopened.getByRole("button", { name: /操作 新建文件夹/ }).first(),
+    ).toBeVisible();
+    // The exact operation is selected from the deep link, not from a guess.
+    await expect(reopened.getByLabel("所选操作状态")).toBeVisible();
+    await reopened.screenshot({
+      path: testInfo.outputPath("resource-disabled-origin-deep-link.png"),
+    });
+    await reopened.getByRole("button", { name: "关闭", exact: true }).click();
+  });
 });

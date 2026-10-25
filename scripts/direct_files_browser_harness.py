@@ -11,6 +11,7 @@ configuration, media, Storage or credentials are involved.
 from __future__ import annotations
 
 import argparse
+import contextlib
 import json
 import sys
 import tempfile
@@ -36,6 +37,17 @@ from mediaflow.interfaces.v2_ui import asset_root  # noqa: E402
 from scripts import operations_inventory_harness as inventory  # noqa: E402
 
 GATED_WORKER_STATE: dict[str, object] | None = None
+
+#: The one fixture file the mixed-batch journey asks the *real* LocalStorage
+#: adapter to refuse, so durable outcome truth comes from the production Worker
+#: rather than from a fabricated Task row.  ``None`` means no fault is armed.
+REFUSED_DELETE_NAME: str | None = None
+
+#: Set by ``/__harness__/disable-resource-library``: the exact ResourceLibrary
+#: this run disabled through the managed configuration service, so the browser
+#: journey can prove a historical origin stays readable after the live list lost
+#: it.  ``None`` means nothing was disabled by the harness.
+DISABLED_ORIGIN: dict[str, object] | None = None
 
 
 class QuietHandler(inventory.QuietHandler):
@@ -84,6 +96,46 @@ def _json_response(start_response, status: str, document: dict[str, object]):
         ],
     )
     return [body]
+
+
+def _refresh_managed_active(state) -> None:
+    """Re-read the harness context's Active revision after a real publication.
+
+    ``ManagedHarnessContext`` is a frozen value, so the whole context is
+    replaced with the same paths/service and the newly published Active.  This
+    mirrors what a real process does on its next configuration refresh.
+    """
+
+    active = state.managed.configuration_service.active()
+    if active is None:
+        return
+    state.managed = replace(state.managed, active=active)
+
+
+def _null_context():
+    """A no-op context manager for a journey with no armed fault."""
+
+    return contextlib.nullcontext()
+
+
+def _request_document(environ) -> dict[str, object]:
+    """Read one bounded test-only JSON request body."""
+
+    length = str(environ.get("CONTENT_LENGTH", "")).strip()
+    if not length:
+        return {}
+    try:
+        payload = int(length)
+    except ValueError:
+        return {}
+    if payload <= 0 or payload > 65536:
+        return {}
+    raw = environ["wsgi.input"].read(payload)
+    try:
+        value = json.loads(raw.decode("utf-8"))
+    except (UnicodeDecodeError, json.JSONDecodeError):
+        return {}
+    return value if isinstance(value, dict) else {}
 
 
 def _start_gated_files_worker(start_response):
@@ -171,6 +223,7 @@ def _release_gated_files_worker(start_response):
 
 def application(environ, start_response):
     path = str(environ.get("PATH_INFO", ""))
+    global REFUSED_DELETE_NAME, DISABLED_ORIGIN
     if path == "/__harness__/register-files-worker" and environ.get("REQUEST_METHOD") == "POST":
         state = inventory.STATE
         if state is None:
@@ -202,16 +255,140 @@ def application(environ, start_response):
         state = inventory.STATE
         if state is None:
             return _json_response(start_response, "503 Service Unavailable", {"ran": False})
-        with _files_transfer_worker_context(
-            state.managed.runtime,
-            str(state.managed.config_path),
-            state.repository,
-        ) as worker:
-            result = worker.run_next()
+        fault = REFUSED_DELETE_NAME
+        original_delete = LocalStorage.delete
+
+        def refuse_named(storage, target, *args, **kwargs):
+            # A real provider refusal on exactly one selected fixture: the
+            # durable item outcome, its effect certainty and the safe next
+            # action are produced by the production Worker path.
+            if fault is not None and Path(str(target)).name == fault:
+                raise RuntimeError("isolated provider refusal")
+            return original_delete(storage, target, *args, **kwargs)
+
+        with patch.object(LocalStorage, "delete", refuse_named) if fault else _null_context():
+            with _files_transfer_worker_context(
+                state.managed.runtime,
+                str(state.managed.config_path),
+                state.repository,
+            ) as worker:
+                result = worker.run_next()
         status = getattr(getattr(result, "status", None), "value", None)
         return _json_response(
             start_response, "200 OK", {"ran": result is not None, "status": status}
         )
+    if path == "/__harness__/arm-files-delete-fault" and environ.get("REQUEST_METHOD") == "POST":
+        document = _request_document(environ)
+        name = document.get("name")
+        REFUSED_DELETE_NAME = name if isinstance(name, str) and name else None
+        return _json_response(start_response, "200 OK", {"armed": REFUSED_DELETE_NAME is not None})
+    if path == "/__harness__/add-unreferenced-origin" and environ.get("REQUEST_METHOD") == "POST":
+        # Admit a real unreferenced ResourceLibrary through the same supported
+        # Add command the operator's drawer uses.  It references nothing (no
+        # Automation definition, no recipe), which is exactly what makes it
+        # disableable later — that is the B-reproduced historical origin.
+        state = inventory.STATE
+        if state is None:
+            return _json_response(start_response, "503 Service Unavailable", {"added": False})
+        document = _request_document(environ)
+        library_id = document.get("libraryId")
+        if not isinstance(library_id, str) or not library_id:
+            return _json_response(
+                start_response, "400 Bad Request", {"added": False, "reason": "libraryId"}
+            )
+        objects = state.api._configuration_objects
+        if objects is None:
+            return _json_response(start_response, "503 Service Unavailable", {"added": False})
+        storage_path = str(document.get("storagePath") or library_id)
+        # The configured root must exist on the isolated fixture Storage, exactly
+        # as an operator's chosen directory would.
+        (state.managed.root / "source" / storage_path).mkdir(parents=True, exist_ok=True)
+        try:
+            objects.save_resource_library(
+                {
+                    "id": library_id,
+                    "name": str(document.get("name") or library_id),
+                    "storageId": "source-storage",
+                    "storagePath": storage_path,
+                    "enabled": True,
+                },
+                actor="harness-unreferenced-origin",
+            )
+        except Exception as error:
+            return _json_response(
+                start_response,
+                "409 Conflict",
+                {"added": False, "reason": type(error).__name__},
+            )
+        _refresh_managed_active(state)
+        state.restart()
+        return _json_response(start_response, "200 OK", {"added": True, "libraryId": library_id})
+    if path == "/__harness__/disable-resource-library" and environ.get("REQUEST_METHOD") == "POST":
+        state = inventory.STATE
+        if state is None:
+            return _json_response(start_response, "503 Service Unavailable", {"disabled": False})
+        document = _request_document(environ)
+        library_id = document.get("libraryId")
+        if not isinstance(library_id, str) or not library_id:
+            return _json_response(
+                start_response, "400 Bad Request", {"disabled": False, "reason": "libraryId"}
+            )
+        service = state.managed.configuration_service
+        _refresh_managed_active(state)
+        current = state.managed.active
+        successor = json.loads(json.dumps(current.document))
+        found = False
+        for library in successor.get("resourceLibraries", []):
+            if isinstance(library, dict) and library.get("id") == library_id:
+                library["enabled"] = False
+                found = True
+        if not found:
+            return _json_response(
+                start_response, "404 Not Found", {"disabled": False, "reason": "not_found"}
+            )
+        # Publish a real successor through the managed lifecycle (draft → edit →
+        # validate → activate), the same path the operator's configuration Save
+        # uses.  Nothing is seeded directly into Active.
+        draft = service.create_successor_draft(
+            actor="harness-disabled-origin",
+            expected_active_revision_id=current.revision_id,
+            expected_active_version=current.revision_sequence or current.version,
+            expected_active_digest=current.digest,
+            verified_active=current,
+        )
+        edited = service.edit_draft(
+            draft.revision_id,
+            successor,
+            expected_version=draft.version,
+            actor="harness-disabled-origin",
+            audit_context={
+                "kind": "resourceLibrary",
+                "objectId": library_id,
+                "action": "disable",
+                "before": None,
+                "after": None,
+            },
+        )
+        validated = service.validate(edited.revision_id, actor="harness-disabled-origin")
+        if getattr(validated.status, "value", "") != "validated":
+            return _json_response(
+                start_response,
+                "409 Conflict",
+                {
+                    "disabled": False,
+                    "reason": "validation_failed",
+                    "errors": list(validated.validation_errors),
+                },
+            )
+        activated = service.activate(
+            validated.revision_id,
+            expected_version=validated.version,
+            actor="harness-disabled-origin",
+        )
+        _refresh_managed_active(state)
+        DISABLED_ORIGIN = {"libraryId": library_id, "revisionId": activated.revision_id}
+        state.restart()
+        return _json_response(start_response, "200 OK", {"disabled": True, **DISABLED_ORIGIN})
     if path == "/__harness__/files-state" and environ.get("REQUEST_METHOD") == "GET":
         state = inventory.STATE
         if state is None:
@@ -313,6 +490,20 @@ def application(environ, start_response):
                 "mediaStatusTwoExists": (
                     root / "destination" / "Movies" / "Browser-StatusTwo-Media.txt"
                 ).exists(),
+                "resourceMixedKeepExists": (
+                    root / "source" / "Browser-Mixed-Keep-Resource.txt"
+                ).exists(),
+                "resourceMixedRemoveExists": (
+                    root / "source" / "Browser-Mixed-Remove-Resource.txt"
+                ).exists(),
+                "mediaMixedKeepExists": (
+                    root / "destination" / "Movies" / "Browser-Mixed-Keep-Media.txt"
+                ).exists(),
+                "mediaMixedRemoveExists": (
+                    root / "destination" / "Movies" / "Browser-Mixed-Remove-Media.txt"
+                ).exists(),
+                "disabledOrigin": DISABLED_ORIGIN,
+                "refusedDeleteName": REFUSED_DELETE_NAME,
             },
         )
     return inventory.application(environ, start_response)
@@ -381,6 +572,12 @@ def main(argv: list[str] | None = None) -> int:
         for suffix in ("StatusOne", "StatusTwo"):
             (library_root / f"Browser-{suffix}-{kind}.txt").write_text(
                 f"{kind.lower()} status fixture {suffix}", encoding="utf-8"
+            )
+        # The mixed/uncertain batch journey's own two sources: the operator
+        # selects both and the harness refuses exactly one real Storage Delete.
+        for suffix in ("Keep", "Remove"):
+            (library_root / f"Browser-Mixed-{suffix}-{kind}.txt").write_text(
+                f"{kind.lower()} mixed batch fixture {suffix}", encoding="utf-8"
             )
     (managed_root / "source" / "Browser-Move-Resource.txt").write_text(
         "resource cross-storage move fixture", encoding="utf-8"

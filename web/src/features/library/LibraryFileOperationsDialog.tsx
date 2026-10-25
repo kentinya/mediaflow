@@ -19,13 +19,18 @@ import { useEffect, useMemo, useRef, useState } from "react";
 import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
 import type { DirectCommandLibraryKind } from "../../entities/library/direct-files";
 import {
+  LIBRARY_OPERATION_CERTAINTY_LABELS,
+  LIBRARY_OPERATION_EFFECT_LABELS,
+  LIBRARY_OPERATION_ITEM_STATUS_LABELS,
   libraryOperationHasProgress,
   libraryOperationStateLabel,
   type LibraryFileOperationEntry,
+  type LibraryFileOperationItem,
 } from "../../entities/library/file-operations";
 import {
   fetchLibraryFileOperationDetail,
   fetchLibraryFileOperations,
+  fetchLibraryFileOperationOrigins,
   mutateLifecycle,
 } from "../../shared/api/api-client";
 import { useAuthToken } from "../../shared/api/auth-context";
@@ -113,6 +118,44 @@ function StageList({
           {entry.totalItems} 项
         </span>
       </button>
+    </li>
+  );
+}
+
+function ItemEvidence({ item }: { readonly item: LibraryFileOperationItem }) {
+  const statusLabel =
+    LIBRARY_OPERATION_ITEM_STATUS_LABELS[item.status] ?? item.status;
+  const effectLabel =
+    LIBRARY_OPERATION_EFFECT_LABELS[item.effect] ?? item.effect;
+  const certaintyLabel =
+    LIBRARY_OPERATION_CERTAINTY_LABELS[item.effectCertainty] ??
+    item.effectCertainty;
+  return (
+    <li className="mf-operation-item">
+      <span className="mf-operation-entry-title">
+        <strong>{item.path}</strong>
+        <span className="mf-status-badge">{statusLabel}</span>
+      </span>
+      {item.destination !== "" && item.destination !== item.path && (
+        <span className="mf-operation-entry-meta">
+          目标：{item.destination}
+        </span>
+      )}
+      <span className="mf-operation-entry-meta">
+        效果：{effectLabel}（{certaintyLabel}）
+        {item.stage === null ? "" : ` · 阶段：${item.stage}`}
+      </span>
+      {item.knownEffects.length > 0 && (
+        <span className="mf-operation-entry-meta">
+          已记录影响：{item.knownEffects.join("、")}
+        </span>
+      )}
+      {item.failure !== null && (
+        <span className="mf-operation-item-failure">
+          {item.failure.message}
+        </span>
+      )}
+      <span className="mf-operation-entry-meta">下一步：{item.nextAction}</span>
     </li>
   );
 }
@@ -238,8 +281,18 @@ function OperationDetail({
         <div>
           <dt>项目结果</dt>
           <dd>
-            成功 {detail.succeededItems} / 失败 {detail.failedItems} / 待处理{" "}
+            成功 {detail.succeededItems} / 失败 {detail.failedItems} / 跳过{" "}
+            {detail.skippedItems} / 取消 {detail.cancelledItems} / 待处理{" "}
             {detail.pendingItems} / 共 {detail.totalItems} 项
+          </dd>
+        </div>
+        <div>
+          <dt>已记录影响</dt>
+          <dd>
+            {detail.effectCertainty === null
+              ? "不可用（未记录影响确定性）"
+              : (LIBRARY_OPERATION_CERTAINTY_LABELS[detail.effectCertainty] ??
+                detail.effectCertainty)}
           </dd>
         </div>
         <div>
@@ -256,6 +309,27 @@ function OperationDetail({
       )}
       {detail.nextAction !== null && (
         <p className="mf-dialog-hint">{detail.nextAction}</p>
+      )}
+      {detail.items.length > 0 && (
+        <div className="mf-operation-items">
+          <h5>逐项结果</h5>
+          <ul className="mf-operation-item-list">
+            {detail.items.map((item) => (
+              <ItemEvidence key={item.itemId} item={item} />
+            ))}
+          </ul>
+          {detail.itemsTruncated && (
+            <p className="mf-dialog-hint">
+              仅显示前 {detail.items.length}{" "}
+              项的逐项证据；更早的记录仍保留在任务中。
+            </p>
+          )}
+        </div>
+      )}
+      {detail.items.length === 0 && (
+        <p className="mf-dialog-hint">
+          该操作尚未记录任何逐项结果；这不代表它已成功。
+        </p>
       )}
       {libraryOperationHasProgress(detail) && !detail.terminal && (
         <p className="mf-dialog-hint" role="status">
@@ -319,8 +393,14 @@ export function LibraryFileOperationsDialog({
   libraryName,
   initialTaskId = null,
   onClose,
+  onSelectOrigin,
 }: {
   readonly kind: DirectCommandLibraryKind;
+  /**
+   * The exact origin this page is inspecting.  It may be a library the current
+   * Active configuration no longer enables: the read is durable, so an origin
+   * the operator created work in stays inspectable without re-enabling it.
+   */
   readonly libraryId: string;
   readonly libraryName: string | null;
   /**
@@ -331,6 +411,14 @@ export function LibraryFileOperationsDialog({
    */
   readonly initialTaskId?: string | null;
   readonly onClose: () => void;
+  /**
+   * Select a different durable origin from the bounded index.
+   *
+   * This never inspects a *live* library; the page passes the exact selected
+   * historical library back so the same durable read runs under that origin's
+   * own kind/ID authority.  Closing/selecting never admits a command.
+   */
+  readonly onSelectOrigin?: (libraryId: string) => void;
 }) {
   const token = useAuthToken();
   const [cursor, setCursor] = useState<string | null>(null);
@@ -347,6 +435,26 @@ export function LibraryFileOperationsDialog({
       setCursor(null);
     }
   }, [identity]);
+
+  // The bounded index of origins this kind still owns.  It is what keeps a
+  // disabled/removed/unavailable origin reachable: the page's live library list
+  // only contains *enabled* libraries, so without this the header entry would
+  // silently inspect today's first enabled library instead of the historical
+  // scope whose work the operator is looking for.
+  const originsQuery = useQuery({
+    queryKey: ["library-file-operation-origins", kind],
+    queryFn: () => fetchLibraryFileOperationOrigins(token, kind, { limit: 50 }),
+    enabled: token !== null,
+    retry: false,
+  });
+  const origins =
+    originsQuery.data !== undefined && originsQuery.data.ok
+      ? originsQuery.data.model
+      : null;
+  const currentOriginKnown =
+    origins === null ||
+    origins.items.length === 0 ||
+    origins.items.some((item) => item.libraryId === libraryId);
 
   const listQuery = useQuery({
     queryKey: ["library-file-operations", kind, libraryId, cursor],
@@ -391,6 +499,7 @@ export function LibraryFileOperationsDialog({
     <ModalDialog
       title={title}
       onClose={onClose}
+      wide
       footer={
         <button
           type="button"
@@ -402,9 +511,45 @@ export function LibraryFileOperationsDialog({
       }
     >
       <p className="mf-dialog-hint">
-        这里只列出在本页所属库中发起的文件操作（新建、重命名、编辑、复制、移动、删除）。
+        这里只列出本库中发起的文件操作（新建、重命名、编辑、复制、移动、删除）。
         关闭本窗口不会取消或重放任何操作；刷新或重启后仍可在此找回。
       </p>
+      {!currentOriginKnown && (
+        <p className="mf-dialog-error" role="alert">
+          当前所选库不在现有操作记录中；下方列出的是历史记录里的实际库。
+          浏览新的库不会丢弃其它库的记录，也不会改写它们的历史归属。
+        </p>
+      )}
+      {origins !== null &&
+        (origins.items.length > 1 || !currentOriginKnown) && (
+          <>
+            <label className="mf-dialog-field" htmlFor="mf-operation-origin">
+              历史操作所属库
+            </label>
+            <select
+              id="mf-operation-origin"
+              value={
+                origins.items.some((item) => item.libraryId === libraryId)
+                  ? libraryId
+                  : ""
+              }
+              onChange={(event) => {
+                const next = event.target.value;
+                if (next === "" || next === libraryId) return;
+                onSelectOrigin?.(next);
+              }}
+            >
+              {!origins.items.some((item) => item.libraryId === libraryId) && (
+                <option value="">请选择要查看的历史库（当前库没有记录）</option>
+              )}
+              {origins.items.map((item) => (
+                <option key={item.libraryId} value={item.libraryId}>
+                  {item.libraryId}
+                </option>
+              ))}
+            </select>
+          </>
+        )}
       <label className="mf-dialog-field" htmlFor="mf-operation-search">
         筛选
       </label>

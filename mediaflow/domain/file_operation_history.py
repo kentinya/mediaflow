@@ -223,6 +223,12 @@ class OrdinaryFileOperationRow:
     target_scope: str | None = None
     pause_requested: bool = False
     configuration_snapshot_id: str | None = None
+    #: Items a decision/policy left untouched (`skipped`) or an explicit human
+    #: cancellation settled.  They are factual terminal outcomes, so an
+    #: aggregate that only added success+failed would report them as still
+    #: pending and misstate the settled progress of a real batch.
+    item_skipped: int = 0
+    item_cancelled: int = 0
 
     @property
     def terminal(self) -> bool:
@@ -230,7 +236,7 @@ class OrdinaryFileOperationRow:
 
     @property
     def item_pending(self) -> int:
-        settled = self.item_success + self.item_failed
+        settled = self.item_success + self.item_failed + self.item_skipped + self.item_cancelled
         return max(0, self.item_total - settled)
 
     @property
@@ -252,5 +258,10 @@ SETTLED_ITEM_STATUSES = frozenset(
         TaskItemStatus.FAILED,
         TaskItemStatus.SKIPPED,
         TaskItemStatus.CANCELLED,
+        TaskItemStatus.IGNORED,
     }
 )
+
+#: The statuses counted as the operator-visible ``skippedItems`` aggregate: an
+#: untouched item from a policy/conflict decision or an explicit ignore.
+SKIPPED_ITEM_STATUSES = frozenset({TaskItemStatus.SKIPPED, TaskItemStatus.IGNORED})

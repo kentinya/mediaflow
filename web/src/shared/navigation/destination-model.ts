@@ -564,6 +564,15 @@ const RUN_PROBLEM_TOKEN =
 const RETURN_PATH_TOKEN =
   // eslint-disable-next-line no-control-regex
   /^(?!\/)(?!.*\.\.)(?!.*\\)[^\u0000-\u001f\u007f]{0,4096}$/;
+/**
+ * The bounded ordinary-operation Task identity a library page may carry.
+ *
+ * It is only a *selection hint* for the page-local status dialog (the durable
+ * read still decides what may be seen), but it must survive authentication
+ * continuation: otherwise reconnecting on an exact local-work URL silently
+ * drops the operation and opens no inspection.
+ */
+const OPERATION_TASK_TOKEN = /^[A-Za-z0-9][A-Za-z0-9._:-]{0,127}$/;
 
 /**
  * Return only the first safe values of allowlisted query keys for the
@@ -776,6 +785,12 @@ export function allowlistedDestinationSearch(
       allowed.set("organize", "1");
     }
     setJourneyOperationsContext(allowed, current);
+    setFilterToken(
+      allowed,
+      "operationTaskId",
+      current.get("operationTaskId"),
+      OPERATION_TASK_TOKEN,
+    );
     return allowed.toString().length > 0 ? allowed.toString() : null;
   }
   if (path === "/medialib/files") {
@@ -788,6 +803,14 @@ export function allowlistedDestinationSearch(
       const value = current.get(key);
       setSafe(allowed, key, value);
     }
+    // The exact local operation a proven deep link selected must survive a
+    // reconnect too, so reconnecting never silently drops local inspection.
+    setFilterToken(
+      allowed,
+      "operationTaskId",
+      current.get("operationTaskId"),
+      OPERATION_TASK_TOKEN,
+    );
     return allowed.toString().length > 0 ? allowed.toString() : null;
   }
   if (path === "/operations/notifications/deliveries") {

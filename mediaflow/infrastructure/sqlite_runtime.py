@@ -13574,6 +13574,60 @@ class SQLiteTaskRepository:
             ).fetchall()
         return {str(row["task_id"]): (row["source_scope"], row["target_scope"]) for row in rows}
 
+    def library_file_operation_origins(
+        self,
+        *,
+        commands: tuple[str, ...],
+        media_library: bool,
+        media_prefix: str,
+        limit: int = 200,
+    ) -> tuple[tuple[str, ...], int]:
+        """The distinct ordinary-file origins of one library kind.
+
+        An operator whose library is disabled, removed or currently unavailable
+        still needs a bounded way back to the work that originated in it.  This
+        read answers exactly one question: which exact scoped library identities
+        have durable admitted ordinary work of this kind?  It reads only the
+        persisted Task command and the scoped identity every TaskItem recorded, so
+        it resolves no configuration, opens no Storage and never guesses a
+        library from a filename, a label or today's Active.
+
+        The returned identities are the *persisted* ones (``media:``-namespaced
+        for a MediaLibrary), so the caller keeps the kind's own namespace and can
+        never mix the two kinds' equal IDs.
+        """
+
+        if isinstance(limit, bool) or not isinstance(limit, int) or not 1 <= limit <= 1000:
+            raise ValueError("library origin limit must be between 1 and 1000")
+        if not commands:
+            raise ValueError("library origins require a command family")
+        families: list[str] = []
+        parameters: list[object] = []
+        for command in dict.fromkeys(commands):
+            families.append("(tasks.command = ? OR tasks.command LIKE ? ESCAPE '\\')")
+            parameters.extend((command, _command_family_pattern(command)))
+        # The kind is decided by the persisted namespace, never by the caller's
+        # claim: a bare identity is ResourceLibrary work and a ``media:``-prefixed
+        # one is MediaLibrary work, so equal configured IDs stay separate.
+        prefix = media_prefix.replace("\\", "\\\\").replace("%", "\\%").replace("_", "\\_")
+        kind_clause = (
+            "origin_item.resource_library_id LIKE ? ESCAPE '\\'"
+            if media_library
+            else "origin_item.resource_library_id NOT LIKE ? ESCAPE '\\'"
+        )
+        parameters.append(f"{prefix}%")
+        predicate = f"({' OR '.join(families)}) AND {kind_clause}"
+        with self._lock:
+            rows = self._connection.execute(
+                "SELECT DISTINCT origin_item.resource_library_id AS identity "
+                "FROM tasks JOIN task_items origin_item ON origin_item.task_id = tasks.task_id "
+                f"WHERE {predicate} "
+                "ORDER BY origin_item.resource_library_id LIMIT ?",
+                (*parameters, limit + 1),
+            ).fetchall()
+        identities = tuple(str(row["identity"]) for row in rows)
+        return identities[:limit], len(identities)
+
     def find_files_delete_transfer(
         self,
         *,

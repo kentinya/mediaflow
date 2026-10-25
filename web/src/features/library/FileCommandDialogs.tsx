@@ -20,12 +20,22 @@ export function ModalDialog({
   children,
   footer,
   busy,
+  wide = false,
 }: {
   readonly title: string;
   readonly onClose: () => void;
   readonly children: ReactNode;
   readonly footer: ReactNode;
   readonly busy?: boolean;
+  /**
+   * Render the wider dialog variant.
+   *
+   * The centered placement, Escape/close behaviour and focus return stay
+   * identical; only the bounded width increases so a dialog whose body is a
+   * real two-column record (operation list + per-item evidence) does not hide
+   * its own content below the fold at desktop sizes.
+   */
+  readonly wide?: boolean;
 }) {
   const dialogRef = useRef<HTMLDivElement | null>(null);
   // The invoking control is captured while the dialog first renders — before
@@ -66,7 +76,7 @@ export function ModalDialog({
     <div className="mf-dialog-overlay">
       <div
         ref={dialogRef}
-        className="mf-dialog"
+        className={wide ? "mf-dialog mf-dialog-wide" : "mf-dialog"}
         role="dialog"
         aria-modal="true"
         aria-label={title}

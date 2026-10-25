@@ -167,6 +167,38 @@ describe("destination model", () => {
       ).toBe("mediaLibraryId=movies");
     });
 
+    it("keeps an exact bounded ordinary-operation selection through reconnect", () => {
+      // An existing local-work deep link must not lose its operation on a 401
+      // continuation: otherwise reconnecting drops local inspection entirely.
+      for (const path of ["/resourcelib/files", "/medialib/files"] as const) {
+        const identity =
+          path === "/medialib/files"
+            ? "mediaLibraryId=movies"
+            : "resourceLibraryId=resources";
+        expect(
+          allowlistedDestinationSearch(
+            path,
+            `${identity}&path=shows&operationTaskId=f93a7d0c-744c-43da-9432-c0f59d36744c`,
+          ),
+        ).toBe(
+          `${identity}&path=shows&operationTaskId=f93a7d0c-744c-43da-9432-c0f59d36744c`,
+        );
+        // A tampered or credential-shaped value is dropped, never replayed.
+        expect(
+          allowlistedDestinationSearch(
+            path,
+            `${identity}&operationTaskId=../../etc/passwd`,
+          ),
+        ).toBe(identity);
+        expect(
+          allowlistedDestinationSearch(
+            path,
+            `${identity}&operationTaskId=Bearer%20abc`,
+          ),
+        ).toBe(identity);
+      }
+    });
+
     it("drops unknown and credential-like query keys", () => {
       const search = allowlistedDestinationSearch(
         "/resourcelib/files",

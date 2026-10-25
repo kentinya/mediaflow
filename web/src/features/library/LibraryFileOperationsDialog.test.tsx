@@ -102,6 +102,8 @@ function operation(overrides: Record<string, unknown> = {}) {
     settledItems: 1,
     succeededItems: 1,
     failedItems: 0,
+    skippedItems: 0,
+    cancelledItems: 0,
     pendingItems: 0,
     allSucceeded: true,
     settled: true,
@@ -132,6 +134,24 @@ function page(
     sideEffects: "none",
     retrySafe: true,
     ...overrides,
+  };
+}
+
+/** The bounded origin index this page kind owns (all enabled + historical). */
+function origins(libraryIds: readonly string[] = ["source"]) {
+  return {
+    items: libraryIds.map((libraryId) => ({
+      libraryKind: "resource",
+      libraryIdField: "resourceLibraryId",
+      libraryId,
+      resourceLibraryId: libraryId,
+    })),
+    libraryKind: "resource",
+    libraryIdField: "resourceLibraryId",
+    total: libraryIds.length,
+    truncated: false,
+    sideEffects: "none",
+    retrySafe: true,
   };
 }
 
@@ -182,6 +202,11 @@ interface StubOptions {
   readonly detailErrorCode?: string;
   readonly lifecycle?: ReturnType<typeof lifecycleFor>;
   readonly detail?: Record<string, unknown>;
+  readonly originIds?: readonly string[];
+  readonly historicalOrigins?: readonly {
+    readonly libraryId: string;
+    readonly items: readonly unknown[];
+  }[];
 }
 
 function stubPage(items: readonly unknown[], options: StubOptions = {}) {
@@ -190,6 +215,9 @@ function stubPage(items: readonly unknown[], options: StubOptions = {}) {
     async (input: RequestInfo | URL, init?: RequestInit) => {
       const url = String(input);
       if (url === "/api/v1/system/status") return jsonResponse(status);
+      if (url.startsWith("/api/v1/resource-libraries/operation-origins")) {
+        return jsonResponse(origins(options.originIds));
+      }
       if (
         url.startsWith("/api/v1/resource-libraries/source/files/operations/")
       ) {
@@ -218,6 +246,21 @@ function stubPage(items: readonly unknown[], options: StubOptions = {}) {
           );
         }
         return jsonResponse(page(items));
+      }
+      // A historical (e.g. now-disabled) origin keeps its own durable list.
+      for (const historical of options.historicalOrigins ?? []) {
+        if (
+          url.startsWith(
+            `/api/v1/resource-libraries/${historical.libraryId}/file-operations`,
+          )
+        ) {
+          return jsonResponse(
+            page(historical.items, {
+              libraryId: historical.libraryId,
+              resourceLibraryId: historical.libraryId,
+            }),
+          );
+        }
       }
       if (url.startsWith("/api/v1/resource-libraries/source/files"))
         return jsonResponse(files);
@@ -344,7 +387,9 @@ describe("current page operation status", () => {
     // A real stage, not a fabricated success.
     expect(within(selected).getByText(/已暂停/)).toBeVisible();
     expect(
-      within(selected).getByText(/成功 1 \/ 失败 0 \/ 待处理 2 \/ 共 3 项/),
+      within(selected).getByText(
+        /成功 1 \/ 失败 0 \/ 跳过 0 \/ 取消 0 \/ 待处理 2 \/ 共 3 项/,
+      ),
     ).toBeVisible();
     // Only the backend-advertised actions are actionable; the withheld pause
     // keeps its own bounded reason instead of a disabled button.
@@ -438,6 +483,156 @@ describe("current page operation status", () => {
       await within(selected).findByText(
         /当前无法读取该操作的控制投影，因此未提供/,
       ),
+    ).toBeVisible();
+  });
+
+  it("shows the independent per-item evidence of a mixed batch", async () => {
+    // The journey B reproduced: a two-file batch where one item is uncertain
+    // and one succeeded.  The operator must be able to identify each file, its
+    // effect/certainty and its own safe next action locally.
+    const user = userEvent.setup();
+    stubPage(
+      [
+        operation({
+          taskId: "task-1",
+          operation: "delete",
+          operationLabel: "删除",
+          command: "files_delete",
+          commandLabel: "删除",
+          status: "partial_success",
+          terminal: true,
+          totalItems: 2,
+          settledItems: 2,
+          succeededItems: 1,
+          failedItems: 1,
+          pendingItems: 0,
+          allSucceeded: false,
+        }),
+      ],
+      {
+        detail: {
+          taskId: "task-1",
+          operation: "delete",
+          operationLabel: "删除",
+          command: "files_delete",
+          commandLabel: "删除",
+          status: "partial_success",
+          terminal: true,
+          totalItems: 2,
+          settledItems: 2,
+          succeededItems: 1,
+          failedItems: 1,
+          pendingItems: 0,
+          allSucceeded: false,
+          durableState: "mutation_effect_uncertain",
+          effectCertainty: "uncertain",
+          nextAction: "刷新来源目录核实实际状态；结果不确定的项目不会自动重试",
+          items: [
+            {
+              itemId: "item-1",
+              path: "keep-me.txt",
+              destination: "keep-me.txt",
+              status: "UNCERTAIN",
+              stage: "failed",
+              attempts: 1,
+              effect: "uncertain",
+              effectCertainty: "uncertain",
+              knownEffects: ["uncertain:mutation_outcome"],
+              failure: {
+                category: "workflow_failure",
+                message: "bounded provider refusal during delete",
+                durableState: "TaskItem is durable with a failed outcome",
+                sideEffects: "none",
+                retrySafe: false,
+                nextAction: "inspect the source before repeating",
+              },
+              nextAction:
+                "刷新来源与目标目录核实实际效果；不确定结果不会被自动重试",
+            },
+            {
+              itemId: "item-2",
+              path: "remove-me.txt",
+              destination: "remove-me.txt",
+              status: "SUCCESS",
+              stage: "completed",
+              attempts: 1,
+              effect: "transferred",
+              effectCertainty: "verified_complete",
+              knownEffects: ["entry:SUCCESS:remove-me.txt"],
+              nextAction: "无需操作；刷新目录即可看到当前状态",
+            },
+          ],
+        },
+      },
+    );
+    authStore.setToken(TOKEN);
+    renderWithProviders(<StorageFilesPage />);
+    const dialog = await openStatusDialog(user);
+    await user.click(
+      await within(dialog).findByRole("button", { name: /操作 删除 task-1/ }),
+    );
+    const selected = within(dialog).getByLabelText("所选操作状态");
+    expect(await within(selected).findByText("逐项结果")).toBeVisible();
+    // The failed/uncertain file is named with its own bounded evidence.
+    expect(within(selected).getByText("keep-me.txt")).toBeVisible();
+    expect(
+      within(selected).getByText("bounded provider refusal during delete"),
+    ).toBeVisible();
+    expect(
+      within(selected).getAllByText(/不确定结果不会被自动重试/).length,
+    ).toBeGreaterThan(0);
+    // The successful sibling is not hidden behind the failure.
+    expect(within(selected).getByText("remove-me.txt")).toBeVisible();
+    expect(within(selected).getAllByText(/已完成变更/).length).toBeGreaterThan(
+      0,
+    );
+    // The known-effect certainty of the whole operation is shown.
+    expect(within(selected).getByText("效果不确定")).toBeVisible();
+    // Nothing mutating was submitted by reading it.
+    expect(within(selected).queryByRole("button", { name: "取消" })).toBeNull();
+  });
+
+  it("keeps a disabled historical origin reachable from the status entry", async () => {
+    // B reproduced this: the originating library was disabled, so the live
+    // library list no longer contains it and the modal silently inspected
+    // another enabled library and showed zero records.  The bounded origin
+    // index must keep the historical scope selectable instead.
+    const user = userEvent.setup();
+    stubPage([], {
+      originIds: ["source", "b-review-history"],
+      historicalOrigins: [
+        {
+          libraryId: "b-review-history",
+          items: [
+            operation({
+              taskId: "task-history",
+              resourceLibraryId: "b-review-history",
+              sourceScope: "B review",
+              targetScope: "B review/shows",
+            }),
+          ],
+        },
+      ],
+    });
+    authStore.setToken(TOKEN);
+    renderWithProviders(<StorageFilesPage />);
+    const dialog = await openStatusDialog(user);
+    // The current (empty) library explains itself, and the historical origin is
+    // offered as an explicit, differently-scoped read.
+    expect(
+      await within(dialog).findByText(/本库还没有任何文件操作记录/),
+    ).toBeVisible();
+    const selector = within(dialog).getByLabelText("历史操作所属库");
+    expect(selector).toBeVisible();
+    await user.selectOptions(selector, "b-review-history");
+    expect(
+      await within(dialog).findByRole("button", {
+        name: /操作 新建文件夹 task-history/,
+      }),
+    ).toBeVisible();
+    // The read stayed scoped to that origin: no live library was rebound.
+    expect(
+      screen.getByRole("heading", { name: "文件", level: 2 }),
     ).toBeVisible();
   });
 });

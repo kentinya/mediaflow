@@ -5,6 +5,7 @@ import {
   libraryOperationStateLabel,
   normalizeLibraryFileOperationDetail,
   normalizeLibraryFileOperationOrigin,
+  normalizeLibraryFileOperationOrigins,
   normalizeLibraryFileOperationPage,
   type LibraryFileOperationEntry,
 } from "./file-operations";
@@ -27,6 +28,8 @@ function entryDocument(overrides: Record<string, unknown> = {}) {
     settledItems: 1,
     succeededItems: 1,
     failedItems: 0,
+    skippedItems: 0,
+    cancelledItems: 0,
     pendingItems: 0,
     allSucceeded: true,
     settled: true,
@@ -148,14 +151,50 @@ describe("library file-operation normalization", () => {
     expect(model.items[0].sourceScope).toBeNull();
   });
 
-  it("normalizes one exact detail and refuses a mismatched Task", () => {
+  it("normalizes one exact detail, its per-item evidence and a mismatched Task", () => {
     const detail = normalizeLibraryFileOperationDetail(
-      entryDocument({ nextAction: "刷新目录", durableState: null }),
+      entryDocument({
+        nextAction: "刷新目录",
+        durableState: "task_partial_success",
+        effectCertainty: "uncertain",
+        itemsTruncated: false,
+        items: [
+          {
+            itemId: "item-1",
+            path: "a.mkv",
+            destination: "a.mkv",
+            status: "UNCERTAIN",
+            stage: "failed",
+            attempts: 1,
+            effect: "uncertain",
+            effectCertainty: "uncertain",
+            knownEffects: ["entry:UNCERTAIN:a.mkv"],
+            failure: {
+              category: "workflow_failure",
+              message: "bounded refusal",
+              durableState: "TaskItem is durable",
+              sideEffects: "none",
+              retrySafe: false,
+              nextAction: "inspect before repeating",
+            },
+            nextAction: "刷新来源与目标目录核实实际效果",
+          },
+        ],
+      }),
       "resource",
       "source",
       "task-1",
     );
     expect(detail.nextAction).toBe("刷新目录");
+    expect(detail.durableState).toBe("task_partial_success");
+    expect(detail.effectCertainty).toBe("uncertain");
+    expect(detail.items).toHaveLength(1);
+    expect(detail.items[0]).toMatchObject({
+      path: "a.mkv",
+      status: "UNCERTAIN",
+      effect: "uncertain",
+    });
+    expect(detail.items[0].failure?.category).toBe("workflow_failure");
     expect(detail.lifecycle).toBeNull();
     expect(() =>
       normalizeLibraryFileOperationDetail(
@@ -165,44 +204,103 @@ describe("library file-operation normalization", () => {
         "task-2",
       ),
     ).toThrow(LibraryFileOperationNormalizationError);
+    // An unknown durable state is malformed rather than rendered verbatim.
+    expect(() =>
+      normalizeLibraryFileOperationDetail(
+        entryDocument({ durableState: "something-else" }),
+        "resource",
+        "source",
+        "task-1",
+      ),
+    ).toThrow(LibraryFileOperationNormalizationError);
   });
 
   it("normalizes a proven origin and a bounded non-match", () => {
-    const matched = normalizeLibraryFileOperationOrigin(
-      {
+    const matched = normalizeLibraryFileOperationOrigin({
+      matched: true,
+      taskId: "task-1",
+      libraryKind: "media",
+      libraryIdField: "mediaLibraryId",
+      libraryId: "movies",
+      mediaLibraryId: "movies",
+      path: "shows",
+      sideEffects: "none",
+      retrySafe: true,
+    });
+    // The published kind is part of the result: one read serves both kinds.
+    expect(matched).toMatchObject({
+      matched: true,
+      libraryKind: "media",
+      libraryId: "movies",
+    });
+    const unmatched = normalizeLibraryFileOperationOrigin({
+      matched: false,
+      taskId: "task-9",
+      reason: "origin_unavailable",
+      nextAction: "open the exact Task detail in Operations",
+      sideEffects: "none",
+    });
+    expect(unmatched).toMatchObject({
+      matched: false,
+      reason: "origin_unavailable",
+    });
+    // A split identity is rejected instead of being rebound to one kind.
+    expect(() =>
+      normalizeLibraryFileOperationOrigin({
         matched: true,
         taskId: "task-1",
         libraryKind: "resource",
         libraryIdField: "resourceLibraryId",
         libraryId: "source",
         resourceLibraryId: "source",
-        path: "shows",
+        mediaLibraryId: "movies",
+        path: null,
         sideEffects: "none",
-        retrySafe: true,
-      },
-      "resource",
-    );
-    expect(matched).toMatchObject({ matched: true, libraryId: "source" });
-    const unmatched = normalizeLibraryFileOperationOrigin(
-      {
-        matched: false,
-        taskId: "task-9",
-        reason: "origin_unavailable",
-        nextAction: "open the exact Task detail in Operations",
-        sideEffects: "none",
-      },
-      "resource",
-    );
-    expect(unmatched).toMatchObject({
-      matched: false,
-      reason: "origin_unavailable",
-    });
+      }),
+    ).toThrow(LibraryFileOperationNormalizationError);
+  });
+
+  it("normalizes the bounded origin index and refuses the other kind", () => {
     expect(() =>
-      normalizeLibraryFileOperationOrigin(
-        { matched: true, taskId: "task-1", libraryKind: "media" },
+      normalizeLibraryFileOperationOrigins(
+        {
+          items: [
+            {
+              libraryKind: "media",
+              libraryId: "movies",
+              mediaLibraryId: "movies",
+            },
+          ],
+          libraryKind: "media",
+          libraryIdField: "mediaLibraryId",
+          total: 1,
+          truncated: false,
+          sideEffects: "none",
+        },
         "resource",
       ),
     ).toThrow(LibraryFileOperationNormalizationError);
+    const model = normalizeLibraryFileOperationOrigins(
+      {
+        items: [
+          {
+            libraryKind: "media",
+            libraryIdField: "mediaLibraryId",
+            libraryId: "movies",
+            mediaLibraryId: "movies",
+          },
+        ],
+        libraryKind: "media",
+        libraryIdField: "mediaLibraryId",
+        total: 1,
+        truncated: false,
+        sideEffects: "none",
+      },
+      "media",
+    );
+    expect(model.items).toEqual([
+      { libraryKind: "media", libraryId: "movies" },
+    ]);
   });
 });
 
@@ -223,6 +321,8 @@ describe("library operation state copy", () => {
     settledItems: 2,
     succeededItems: 2,
     failedItems: 0,
+    skippedItems: 0,
+    cancelledItems: 0,
     pendingItems: 2,
     allSucceeded: false,
     settled: false,
