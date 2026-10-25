@@ -1,3 +1,10 @@
+# NO ACTIVE IMPLEMENTATION TASK
+
+Task46.2: **PASS**. B reviewed `6072f50d5b2e5268c35d6729290512d1ae986104..bb176f2f36c92d5f5298c19e8d1c9eed45c1a9e5`.
+See [B Review Result](#b-review-result) for accepted delivery, actual validation and known limits.
+Slice46 remains ACTIVE; RO-2/4/5 require subsequent Task planning. No next Task is authorized by
+this notice. The reviewed Task contract/reports below are retained for handoff, not active work.
+
 # Task 46.2 — Durable ordinary-file status on both library pages
 
 Authority: committed [Slice46](SLICE.md) RO-3, AC-4 and the local ordinary-work portions of
@@ -7,7 +14,7 @@ AC-7/8; [Development Workflow](docs/development-workflow.md). Read the
 ```text
 Task ID: 46.2
 Parent Slice: 46
-Status: FIX REQUIRED
+Status: PASS
 Task Base: 6072f50d5b2e5268c35d6729290512d1ae986104
 Difficulty: High
 Test Level: T4
@@ -107,28 +114,28 @@ population removal; it does not claim delivery of organizing-only Task Center.
 
 ## Acceptance Criteria
 
-- [ ] Both headers have the required adjacent, same-style status entry. Its centered modal works
+- [x] Both headers have the required adjacent, same-style status entry. Its centered modal works
   with mouse/keyboard at desktop 1536×1024 and narrow 390×844, including focus restoration,
   empty/loading/read-error/401/403 states. Viewing has no new work/media/Provider/Storage effects.
-- [ ] All seven ordinary operations show real outcomes locally. Multiple operations are independently
+- [x] All seven ordinary operations show real outcomes locally. Multiple operations are independently
   selectable; switching entries/libraries does not overwrite siblings or mix either library kind.
   No normal ordinary-command result/recovery guidance requires Task Center.
-- [ ] Backend list/detail/counts/cursors use the same exact authorized ordinary scope before paging.
+- [x] Backend list/detail/counts/cursors use the same exact authorized ordinary scope before paging.
   Mixed organizing/notification/unknown work never leaks into it. Multiple pages and per-item results
   remain reachable; same-ID opposite-kind, foreign-library and foreign-principal cursor/hint/selection
   tampering is refused rather than rendered empty or rebound. Existing allowed read policy is preserved.
-- [ ] Closing/reloading/reconnecting and reopening API/SQLite retains multiple operations, including
+- [x] Closing/reloading/reconnecting and reopening API/SQLite retains multiple operations, including
   supported work admitted before this change and operations whose browser hints are absent. Changed/
   missing Active/root/library cannot overwrite the historical origin/pin; unprovable context explains
   restricted inspection/control. Browser state is neither authority nor the sole recovery index.
-- [ ] Actual queued/running/paused Copy/Move/Delete and mixed-success batches expose backend-legal
+- [x] Actual queued/running/paused Copy/Move/Delete and mixed-success batches expose backend-legal
   controls and independent results. Safe continuation affects only known-safe remaining work;
   partial/uncertain/error/display-failure states retain their factual effects and legal next action.
   Read-only viewers and stale/concurrent controls cannot change media or expand authority.
-- [ ] Lost Delete admission and unknown command/control responses reconcile without automatic replay,
+- [x] Lost Delete admission and unknown command/control responses reconcile without automatic replay,
   guessed identity or false success. Successful/uncertain items do not replay after close/restart or
   duplicate control attempts. Cross-Storage Move verification failure preserves source.
-- [ ] Ordinary Task/run deep links reopen exact local inspection or bounded refusal with no mutation;
+- [x] Ordinary Task/run deep links reopen exact local inspection or bounded refusal with no mutation;
   organizing routes/returns and administrative consumers remain functional. Live refresh updates only
   affected browse/selection state. Required native screenshots and tests prove actual backend state.
 
@@ -415,153 +422,140 @@ Full acceptance, full regression and any PASS/FIX decision remain B-owned.
 ## B Review Result
 
 ```text
-Reviewed Task range: 6072f50d5b2e5268c35d6729290512d1ae986104..79f67b4d1670cedd94371978b0b0e8cfa97c11da
-Implementation: 884c88f75d17c3d2e9960f055280a241a6bc8158
-Decision: FIX REQUIRED — 2026-10-25
-Task blocker: B46.2-01 / P1 (live operation snapshot freezes across item pages)
-B46.2-04: corrected (first detail read-error recovery)
+Reviewed Task range: 6072f50d5b2e5268c35d6729290512d1ae986104..bb176f2f36c92d5f5298c19e8d1c9eed45c1a9e5
+Implementation: 2541d0c89d70a965cfac4d9f45580fb6147a71cb
+Decision: PASS — 2026-10-25
+Task blockers: NONE; B46.2-01/02/03/04 corrected
 Slice Required Outcomes / Surfaces all satisfied: NO
-Next: SAME TASK FIX LOOP
+Next: NEXT TASK for remaining RO-2/4/5; no next implementation Task planned here
 ```
 
-Independent review covers the complete 28-file Task Base..Head range, including original scope,
-history, controls and deep-link paths, plus the current repair. The report-only successor
-`884c88f7..79f67b4d` changes only `TASK.md`; executable review/test inputs match the implementation.
-Task Base, Goal, Scope, Difficulty and T4 remain unchanged. Previous review/guidance is retained
-in Git at `8fa3fd0c:TASK.md`. This checkpoint changes only B-owned `TASK.md`.
+B independently reviewed the complete 28-file Task Base..Head range and the latest live-snapshot
+repair against the committed Slice. The report-only successor `2541d0c8..bb176f2f` changes only
+`TASK.md`; executable inputs match the implementation checkpoint. Task Base, Goal, Scope, Difficulty
+and T4 are unchanged. The superseded FIX REQUIRED and repair guide remain in Git at
+`d9bc34e6:TASK.md`. This review changes only B-owned `TASK.md`; it does not close Slice46.
 
-### Corrections verified
+### Delivery and corrections accepted
 
-- **B46.2-01, whole-operation backend aggregate:** the real 121-item directory Delete with one
-  actual Storage refusal now returns the same `uncertain` certainty, durable state, next action
-  and totals (success 119 / failed 2 / total 121) on all three pages for both library kinds.
-  The refused `batch/file-117.txt` is the only remaining file. Detail reads leave Task/item/Result
-  rows unchanged. The independent history module and both native large-directory/reopen cases
-  pass. Complete item access, paused folder Move child effects and mixed batches also pass.
-  This corrects static page-dependent aggregation; the live update defect below remains open.
-- **B46.2-04:** both native pages now show the bounded error and explicit **重新读取该操作**
-  after an aborted first detail GET. Restoring transport and rereading retrieves the same real
-  operation without mutation. Inspected the actual failure screenshot; the loading-only branch
-  is corrected.
-- **B46.2-02 / -03:** exact-kind deep-link and historical-origin causes remain corrected on
-  complete-range inspection. Disabled-origin/reopen native cases pass. Remaining comprehensive
-  link/permission/control acceptance and the full T4 gate are not declared complete.
+- **Live state / B46.2-01:** the selected operation has an independently polled durable snapshot
+  for stage, whole-operation counts/effects/next action and lifecycle/version. Item pagination no
+  longer stops that polling. When snapshot and item evidence disagree, bounded rereads refresh the
+  loaded evidence; a known terminal snapshot cannot regress to an unfinished one. Both new native
+  61-item queued-to-completed cases pass. B also used the existing page Delete and real Worker on
+  separate 121-item directories of both kinds: the same open panel reaches success 121 / pending 0,
+  verified-complete effects, no queued loaded items and all 121 results, without closing/reopening.
+  Resource continuation was read across the actual Worker transition. Media's old Cancel was
+  rejected after real completion and the panel reconciled to terminal state; it was not repeated.
+- **Complete effects/items:** the real 121-item partial-Delete cases retain success 119 / failed 2,
+  operation-wide uncertainty and every item's reachable result. The real refused file remains at
+  source. Paused folder Move shows actual completed child effects and safe remaining-work guidance.
+  The shared effect interpretation preserves existing transfer projections; reads do not execute.
+- **Scope/reopening / B46.2-02/03:** durable command kind and admitted item/library identity scope
+  history before paging; cursor validation binds kind/library/principal/Task. Both page headers
+  expose the same-style local entry beside Add. Multiple independent commands, absent browser hints,
+  reload/reconnect, fresh repository/API over the same SQLite data, pre-change records and disabled
+  historical origins remain inspectable. No current-Active reconstruction or Storage/Provider read
+  is added to durable history. Existing admission, claims, pins and execution authority stay intact.
+- **Old links and permissions:** with fresh browser contexts and the existing read principal lacking
+  configuration/execute grants, both real ordinary Task links return to the exact kind/library/
+  `operationTaskId` and display the correct completed operation. Existing selected-run links traverse
+  their actual **打开 Task 详情 → 返回发起它的库文件页** route to the same local inspection. Captured
+  navigation/read requests contain zero writes. The existing missing-directory recovery remains
+  available when the operation has deleted its original directory; history itself remains readable.
+  Backend/component coverage also checks read denial, malformed/foreign scope and withheld controls.
+- **Read errors / B46.2-04 and presentation:** both native first-detail transport failures show a
+  bounded error and explicit reread, then recover the same operation without replay. Inspected actual
+  desktop/narrow local modals, mixed/paused evidence, first-read error, viewer deep links and shared
+  center/creation screenshots. Existing modal focus/dismissal tests pass. Close, inspect and refresh
+  are reads; the UI adds no retry/undo authority and successful/uncertain work is not resubmitted.
 
-### Required correction — B46.2-01 / P1
+The seven acceptance criteria above are accepted within this Task's scope, with the pre-existing
+row-menu issue and exact validation limits below explicitly retained.
 
-**A newer terminal item page stops polling while the selected operation retains an older snapshot.**
+### Independent validation
 
-Real operator trigger, reproduced on both ResourceLibrary and MediaLibrary:
-
-1. Through the existing file page, confirm Delete of the existing temporary 120-file directory
-   (121 admitted items including the directory). Close Delete progress, open **当前页面操作状态**
-   and select this queued operation before Worker executes. The first detail page reports
-   `pending`, success 0 / pending 121, `unknown` effects.
-2. Run the existing harness Worker against that admitted command; it completes the real Delete.
-   Before the next normal poll, click **加载更多逐项结果** in the same open dialog.
-3. That cursor GET reports `completed`, `terminal=true`, success 121 / pending 0 and
-   `verified_complete`. The selected panel nevertheless remains **排队等待 Worker**,
-   **成功 0 / 待处理 121**, **效果未知**, and its earlier loaded items remain queued.
-   Observe another 4.5 seconds (more than two configured polling intervals): there are still
-   only the two detail requests. No closing/reopening or fabricated product response is involved.
-
-Cause: `LibraryFileOperationsDialog.tsx::OperationDetail` stops polling from the **last** page's
-`terminal` (lines 260–266), but derives `detail`, `lifecycle` and aggregate from the **first** page
-(lines 270–284, 367–371), and concatenates stale earlier item pages. Global summaries are independent
-of item-page scope **at the same durable state**; snapshots read before and after real execution
-need not be identical. The `884c88f7` change (2026-10-25 17:18:06 +08:00) newly pins aggregate effects
-to page one. First-page stage/lifecycle and last-page polling termination already existed in
-`1fa4bf55`; their combination now also permanently freezes the repaired aggregate. This is an
-unmet RO-3 / AC-4 live progress/effect/recovery result, not a request for another Task or new authority.
-
-### Developer repair guide — same Task
-
-1. 修正 `OperationDetail` 的快照更新关系：阶段、全操作计数、效果确定性、下一步和
-   lifecycle/version 必须来自一致且会更新的操作快照。保留后端全操作折叠与精确作用域分页；
-   不要将“与页范围无关”解释成“第一页数据永不变化”。新页读到较新终态时，不能一边据此停止
-   轮询，一边继续展示旧快照/旧控制；并发读取也不能让旧响应覆盖已知的新状态。
-2. 同步已加载逐项证据，再结束更新。采用现有查询/重读能力协调刷新或失效旧页，使先前排队的
-   项目最终显示真实结果；不要只换 aggregate 为末页而留下旧 stage、lifecycle 或 item。
-   保留逐项完整可达、已有失败读取提示、所选操作/库身份和只读重读语义，不新增执行重试、
-   自动重放或全局中心，也不为修复引入通用进程工具。
-3. 扩展现有 dialog/query 测试：第一页 pending → 后端完成 → continuation 返回 terminal，
-   断言不关闭弹窗即可收敛到终态、正确全量计数/效果/下一步、最新合法控制与已加载 item。
-   覆盖一次读取跨越状态变化，以及旧响应不能回退已知终态；静止操作跨页聚合仍应一致。
-4. 扩展 `direct-files.python.spec.ts` 中两类库的真实目录 Delete：通过现有页面提交，先打开
-   pending 明细，再用既有 harness Worker 完成，加载更多并检查同一弹窗自动更新。核对真实
-   临时文件效果、所有页可达、没有额外 admission/control mutation；不能只测试 Worker 完成后
-   才打开详情。保留部分失败/不确定、暂停 Move、安全继续、首次读取失败与 reopen 回归。
-
-Developer 只运行新增、修改、直接受影响测试及相关静态检查，提交连贯 checkpoint 并报告实际
-结果后交 **READY FOR B REVIEW**。完整回归、原生证据和未完成验收仍由 B 负责。
-
-### Independent acceptance this round
-
-Evidence: `.git/validation-evidence/79f67b4d/b46.2-review/` (ignored, local only). It contains raw logs,
-`paging_probe.py`, `live_paging_probe.mjs`, both kinds' live-stale JSON/screenshots and native traces.
-Inspected the live-stale screenshots and corrected read-error UI. Probes use existing commands,
-actual page controls/routes and existing test-only Worker hooks, temporary SQLite/Storage roots;
-no invented product entry, impossible seeded row, user media or production service is used.
+Evidence: `.git/validation-evidence/bb176f2f/b46.2-review/` (ignored, local only). Native artifacts,
+raw logs, independent probe sources/JSON and screenshots are retained there; shared screenshots
+were copied into `shared-visual/`. All probes use existing routes, native page controls, supported
+commands and existing test-only Worker hooks against temporary SQLite/Storage. No production media,
+private configuration, invented endpoint or fabricated successful product response was used.
 
 | Command / cwd | Actual result |
 | --- | --- |
-| `python3 scripts/check_governance.py`; complete-range `git diff --check` | PASS / clean |
-| `.venv/bin/python -m unittest tests.test_library_file_operation_history` | 21 passed, 2.294s (`history-tests.log`) |
-| `PYTHONPATH=. .venv/bin/python .git/validation-evidence/79f67b4d/b46.2-review/paging_probe.py` | Both kinds: all three pages retain global uncertainty and 119/2/121 totals; actual retained file and zero-write reads verified |
-| `node .git/validation-evidence/79f67b4d/b46.2-review/live_paging_probe.mjs` | Both kinds reproduce the persistent live-state defect above (`live-paging-probe.log`, JSON and PNG); reproduction success is not product PASS |
-| `.venv/bin/ruff format --check .`; `.venv/bin/ruff check .` | 387 formatted / PASS |
-| `.venv/bin/python -m compileall -q mediaflow tests scripts`; `.venv/bin/python -m pip check`; both documented example config validations; forbidden-dependency search | PASS; no FFmpeg/FFprobe match |
-| `npm run typecheck`; `npm run lint`; `npm run format:check`; `npm run build` (`web/`) | PASS; `index-BYlwlmy9.js` / `index-BFNi4meT.css`; existing chunk-size warning |
-| `npm run test -- run` (`web/`) | 87 files / 1258 passed, 111.95s (`web-full.log`); existing jsdom scrollTo notices |
+| `python3 scripts/check_governance.py`; full-range `git diff --check` | PASS / clean |
+| `.venv/bin/python -m unittest tests.test_library_file_operation_history` | 21 passed, 2.643s (`history-tests.log`) |
+| `.venv/bin/python -m unittest discover -s tests` | 2826 run; OK, 7 skipped; 342.507s (`python-full.log`) |
+| `.venv/bin/ruff format --check .`; `.venv/bin/ruff check .`; compileall; pip check; both documented example-config validations | 387 formatted / all exit 0 (`python-quality.log`); forbidden-dependency search has no match |
+| `npm run typecheck`; `npm run lint`; `npm run format:check`; `npm run build` (`web/`) | PASS; production assets `index-BU1rCvjP.js` / `index-BFNi4meT.css`; existing chunk warning |
+| `npm run test -- run` (`web/`) | 87 files / 1260 passed, 107.36s (`web-full.log`); jsdom scrollTo notices retained |
 | `npm run test:e2e -- --output=<evidence>/default-e2e-artifacts` (`web/`) | 242 passed, 2.0m (`default-e2e.log`) |
-| `npx playwright test --config=playwright.direct-files.python.config.ts tests/e2e/direct-files.python.spec.ts --output=<evidence>/native-artifacts` (`web/`) | 19 passed / 1 failed, 1.3m (`native.log`); failure described below |
-| `npx playwright test --config=playwright.python.config.ts tests/e2e/operations-inventory.python.spec.ts tests/e2e/operations-task-center-visual.python.spec.ts --workers=1 --output=<evidence>/operations-native-artifacts-serial` (`web/`) | 42 passed / 1 failed, 2.2m (`operations-native.log`); failure described below |
-| `.venv/bin/python -m unittest discover -s tests` | Interrupted on confirmed blocker, no final totals or PASS (`python-full.log`); full Python remains pending |
-| `.venv/bin/python -m pip wheel . --no-deps -w <evidence>/wheels`; `.venv/bin/python scripts/wheel_smoke_test.py <exact-wheel>` | Both exit 0 (`wheel-build.log`, `wheel-smoke.log`); installed consumers run outside source; wheel SHA-256 `1fb58c1b550d0dea13263734e604f7dc4f17b63aa0660684a3e1660c127a5bf5` |
+| `npx playwright test --config=playwright.direct-files.python.config.ts tests/e2e/direct-files.python.spec.ts --output=<evidence>/native-artifacts` (`web/`) | 21 passed / 1 failed, 53.8s (`native.log`); see known issue below |
+| `npx playwright test --config=playwright.python.config.ts tests/e2e/operations-inventory.python.spec.ts --workers=1 --output=<evidence>/operations-native-artifacts` (`web/`) | 41 passed, 1.6m (`operations-native.log`) |
+| `npx playwright test --config=playwright.python.config.ts tests/e2e/operations-task-center-visual.python.spec.ts --workers=1 --output=<evidence>/visual-native-artifacts` (`web/`) | 2 passed, 9.4s (`visual-native.log`); isolated fixture verifies the previously pending creation-summary journey |
+| `.venv/bin/python -m pip wheel . --no-deps -w <evidence>/wheels`; installed `scripts/wheel_smoke_test.py <exact-wheel>` | Both exit 0; installed consumers outside source, configuration and backup/rehearsal/restore/upgrade checks pass (`wheel-build.log`, `wheel-smoke.log`) |
+| Independent live/links probes | Both kinds' 121-item convergence JSON/screenshots; Media one refused stale control; both Task/run return paths and zero-write viewer reads (`resource-convergence.json`, `media-convergence.json`, `viewer-links-probe-final.log`, `*-viewer-readonly.json`) |
 
-`<evidence>` denotes the directory above; native `--output` paths were relative to `web/` as
-`../.git/validation-evidence/79f67b4d/b46.2-review/...`. Packaging/deployment/schema/dependency inputs
-are unchanged; Docker deployment/restart/security proof is **not applicable**, not claimed passed.
+`<evidence>` is the directory above; native output paths are passed relative to `web/` as
+`../.git/validation-evidence/bb176f2f/b46.2-review/...`. Wheel SHA-256:
+`20a05c558ff97f3743f63d43b2f4afb7dd3b9ec3122f62b8fbe4baa8e6856a73`.
+Full Python includes the applicable RBAC, identity C→A, confinement, pin/fence, persisted reopening,
+Copy→verify→Delete-source and completed/uncertain non-replay coverage. No schema, dependency,
+deployment or production-runtime packaging change: Docker deployment/restart/security proof is
+**not applicable**, not claimed passed. SQLite/API reconstruction is covered by the actual history
+integration tests, not inferred from browser reload. No required gate remains unexecuted.
 
-Actual failures and limits remain visible:
+### Known non-blocking issue and evidence limits
 
-- Direct-files native MediaLibrary Rename fails at the menuitem click (spec line 322), detached/
-  unstable element before the command is sent. Independently archived original Task Base `6072f50d`,
-  built its own assets, and ran its own ten-case spec against an isolated harness: **8 passed / 2
-  failed**, including the same row-menu detachment/instability mechanism in ResourceLibrary Rename
-  and MediaLibrary confirmation (`base-native.log`, `base-native-artifacts/`, `base-build.log`).
-  `RowActionMenu.tsx` is unchanged in Base..Head. This supports an existing menu issue; it does not
-  turn the candidate's failed case into PASS. No assertions/retries/timeouts were weakened.
-- Shared real-Python inventory/visual run: all 41 inventory tests and the first visual case pass;
-  the final creation-summary journey cannot find **选择 Three.2003.mkv** at line 233 after preceding
-  tests mutate the shared fixture. Base attribution is not established. The gate is **not passed**;
-  B must verify that journey with an isolated fixture on the corrected candidate. This is not an
-  additional speculative product blocker or a new Developer process-tool assignment.
-- Two earlier shared-harness invocations were stopped (one had an extra spec with another port;
-  one overlapped fixture-mutating files). Their retained logs are not acceptance evidence. Their
-  elapsed time is included in test accounting; successful totals above refer to the serial run.
-- Full Python was stopped at 09:45:46 UTC under workflow §6 early FIX REQUIRED, with no complete
-  result. Remaining Task-link/permission/stale-control coverage and all missing T4 safety/full
-  gates remain **pending**. They are not waived or inherited from Developer/another candidate.
+The full direct-files native run is **not all green**. Resource Rename fails at spec helper line318:
+after `Shift+F10`, the menu is not visible, before the Rename command is sent. A focused isolated
+rerun also fails at that assertion (`rename-isolated.log`). A separate existing pointer-menu journey
+reaches the Rename menuitem but it becomes unstable/detached before click (`rename-pointer-probe.log`).
+Neither attempt establishes a successful Resource Rename; they are not counted as passes.
 
-Test/build/probe wall time is conservatively under six minutes, counting overlapping execution
-once, including the interrupted/abandoned runs and independent Base build/run. Conservative elapsed
-review accounting starts at 09:39:27 UTC after initial reading; code/evidence reconciliation and
-Task writing continue after all test processes stop. Testing remains below 50% of this round;
-there is no deliberate waiting or reduction of the required PASS coverage.
+B's prior independent original-Base build/run is retained at
+`.git/validation-evidence/79f67b4d/b46.2-review/base-native.log` and `base-native-artifacts/`:
+8 passed / 2 failed, including the same Resource Rename journey and menuitem instability/detachment
+before submission. `RowActionMenu.tsx` and the existing entry keyboard/context-menu handlers are
+unchanged in this Task range. The current keyboard failure stack differs from that Base click
+failure, so exact equality of those stacks/root causes is not claimed. B accepts this as the known
+pre-existing row-menu interaction issue outside the new durable-status delivery, not a reason to
+expand this Task into menu redesign. Candidate Media Rename and the new status/recovery cases pass;
+backend/consumer regression covers unchanged command/result semantics. No assertion, timeout or
+retry was weakened to hide the failure.
+
+Independent probe attempts also retain their actual limits: an initial pagination helper clicked
+again after the final continuation disappeared; another same-tab return first restored the exact
+saved Delete result, which offers the existing local-inspection button. Fresh-context link runs
+then verify the durable deep-link path independently. Two viewer helpers incorrectly expected Add
+to be absent/disabled; the pre-existing Add CTA remains available in that fixture, while backend
+configuration authority is separate. Those helper assertions are not product requirements and are
+not reported as permission failures or successful acceptance runs. Final viewer evidence proves
+read access without configuration/execute grants, correct scope and zero write requests; it does
+not claim the old Add CTA is hidden. These attempts and the focused menu checks count in test time.
+
+Review work started at 11:00:40 UTC. Build/full regression overlaps from approximately 11:01:40
+through 11:09:37; later short acceptance/failure probes are counted in addition, including failed
+helpers. Total testing/build/probe wall time is conservatively below 9.5 minutes, counting overlap
+once. Code/contract review, visual/evidence inspection and Task reconciliation continue beyond
+11:19:40 UTC, keeping testing below 50% of elapsed work. There was no deliberate waiting, repeated
+full suite or reduced safety coverage to meet that allocation.
 
 ### All Slice outcomes reevaluated
 
-RO-1 retains accepted Task46.1 coverage; additive modal styles preserve the shared palette on
-inspection. RO-3 now has complete paged item access, whole-operation backend effects, paused child
-evidence and explicit first-read failure recovery, but remains **incomplete** for live progress,
-effect and legal-control snapshot freshness. RO-2 early manual admission, RO-4 organizing-only
-views/population and RO-5 Automation semantics remain incomplete and outside Task46.2. Keep the
-same Task; no next Task or Slice closure. A-owned Slice/Roadmap/Progress boundaries and stale
-first-Task pointers are unchanged. Branch `main`, reviewed candidate `79f67b4d`; the pre-existing
-`docs/pics/操作与任务.png` deletion and all untracked/private/reference/log/test artifacts are
-preserved. No product code change, push or publication is part of this B checkpoint.
+| Outcome | Current assessment |
+| --- | --- |
+| RO-1 readable shared actions | Accepted Task46.1 retained; new modal uses the shared palette |
+| RO-2 Files-only early manual organizing admission | Incomplete; not implemented by Task46.2 |
+| RO-3 ordinary-file progress/results/recovery stay local | Complete for Task46.2; PASS with the known baseline issue above |
+| RO-4 organizing-only center and truthful eight-view queries | Incomplete; center population/block removal is not this Task |
+| RO-5 Automation detail/Enabled/Run once | Incomplete; not this Task |
 
+Decision after Task PASS: **NEXT TASK**, not SLICE READY FOR A REVIEW and not Slice closure.
+No new implementation unit is planned in this review. A-owned Slice/Roadmap/Progress boundaries
+and stale first-Task pointers are preserved; no product code, push or publication is included.
+Branch `main`; the pre-existing `docs/pics/操作与任务.png` deletion and all untracked/private/
+reference/log/test artifacts remain untouched and unstaged.
 
 ## Developer Completion Report (B46.2-01 repair round — 2026-10-25)
 
