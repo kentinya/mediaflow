@@ -11868,10 +11868,11 @@ class SQLiteTaskRepository:
                     task_item = self._bind_item_to_current_occurrence(task_item)
                     # The admitted organizing Task may already hold an analysis
                     # TaskItem for this same concrete source (its own four-type
-                    # problem).  The confirmed execution is the same durable work
-                    # continuing, so it supersedes that row in place instead of
-                    # colliding with the unique source identity: one source has one
-                    # item, and the shared review/plan rows keep their own history.
+                    # problem).  The confirmed execution is that same durable work
+                    # continuing, so the older wrapper row of this exact
+                    # Task/source is retired before the execution item is written:
+                    # one source keeps one item, and the shared review/plan rows
+                    # keep their own history.
                     self._connection.execute(
                         "DELETE FROM task_items WHERE task_id=? AND storage_id=? "
                         "AND source_path=? AND item_id<>?",

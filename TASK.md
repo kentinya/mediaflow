@@ -358,198 +358,232 @@ suite, runtime probe, build or media operation was run for planning; checking ti
 
 Status handed off: **READY FOR B REVIEW — candidate for the whole Task; no PASS claimed.**
 
-Checkpoints on `main` (Task Base `83144be20c6c7bc787a0fafad7fabb3e177bde6a`):
+Checkpoints on `main` after B's `FIX REQUIRED` (reviewed Head `1dc70c43`):
 
 ```text
-8577cd3d  prior B planning text (unchanged)
-2d4649d9  feat(organize): admit durable organizing work from Files and keep per-request results
-ee21ea29  fix(operations): count one admitted organizing work once
+14a42f41  fix(organize): verify Storage source identity and settle legal continuations
+ae58dab5  docs(task-46.3): page Files organize readback and cover accepted siblings
+332eb35d  feat(organize): give the admitted Task its real items, problems and outcome
+47c4bfeb  chore(schema): move the processing-worker default to schema 52
+1e9eebc5  test(e2e): assert the one-Task organizing contract in the stability journey
 ```
 
-`ee21ea29` is the reviewable Implementation Head. It carries the E2E spec updates for the removed
-center sections; no other executable input changed after `2d4649d9` except the run-population fix.
+`1e9eebc5` is the reviewable Implementation Head. This report is a report-only successor.
 
-### What this checkpoint delivers
+### B46.3-01 / P1 — the admitted Task now owns items, problems and outcome
 
-**B46.3-01 — Files-admitted organizing Task (Scopes 1/3/4/5/6 + necessary 7).**
-`POST /api/v1/resource-libraries/{id}/files/discoveries` no longer admits only a preparation. The
-admission transaction (`SQLiteTaskRepository.create_files_organize_work`) commits the discovery
-record *and* a real `manual_organize` Task in one durable outcome: queued status, execute authority,
-the immutable configuration snapshot, the admitted primary bound, the library root scope and
-bounded display evidence. Folder traversal, Provider calls, target calculation and plan readiness
-all still happen afterwards inside the resident Worker. `MediaDiscovery.organize_task_id` is the
-durable link; `_sync_organize_task` projects the real discovery stage onto the Task and never
-reopens a Task that already reached a terminal execution outcome. A completed or partial *walk*
-keeps the Task running because decisions or confirmation are outstanding. Admission creates no
-media effect and no execution authority.
+B reproduced three symptoms of one gap: `Task=running` with `TaskItems=0` while the
+Metadata view returned `total=0`; an explicit execution completing in a *different*
+Task while the admitted one stayed `running`; and a native recovery summary that
+never appeared.
 
-**Source ownership (Scope 3).** `find_owned_source_work` is separate from the short-lived execution
-lease. A concrete source is `(storage_id, library-relative path)` plus, when both sides know it, the
-observed fingerprint — never a filename, a UI label or today's Active. A TaskItem owns its source
-while its status is not in the new `SETTLED_ITEM_STATUSES`, so queued/running/paused/decision-pending
-work keeps its claim and a finished history row is not a perpetual lock. Direct files are checked at
-request admission; a folder is admitted as outer work before traversal and its discovered sources are
-checked inside that task's own bounded walk, so there is no pre-task traversal and no database
-transaction spanning Storage I/O. A refusal carries `existingWorkId`/`existingWorkKind`, and eligible
-siblings stay independently admissible. A manual execution of a linked intent takes ownership over
-through its own TaskItems, so confirmed work is not blocked by its own admission.
+* **Items and four-type problems.** `publish_task_item_problem` publishes each
+  blocked item whose cause is one of the four native organizing problems on the
+  Task the operator actually sees: RecognitionType under the pinned choice,
+  Metadata choice, Metadata correction, Classification, and destination Conflict.
+  It is driven from the live analysis objects inside `_run_item`, so no problem is
+  reconstructed from a document and no default type/identity/target is fabricated.
+  A Provider outage, Storage fault, missing configuration or capability gap is
+  deliberately **not** a business decision — it keeps its factual failure
+  evidence and never becomes a fifth type.
+* **Real outcome.** A confirmed execution adopts the Task the Files selection
+  already admitted, when it is the exact unfinished Task of the same principal,
+  library binding and pin. Adopting a settled/foreign Task is refused and the whole
+  admission rolls back, so another run's history is never rewritten; a plain
+  intent with no Files admission keeps the ordinary new-Task path.
+* **Native recovery self-conflict.** A remaining-scope recovery preparation refused
+  itself: `find_owned_source_work` saw its own unfinished ancestor TaskItem and
+  answered `source_already_organizing` for the exact sources it exists to review.
+  A legal continuation now excludes its own persisted `recovery_continuations`
+  lineage, and an analysis-only sibling preparation in the same library no longer
+  vetoes it. The real duplicate-execution gate remains the admitted TaskItem plus
+  the one-shot execution authority.
+* **Files readback beyond one page.** `整理记录` now consumes the backend's own
+  `nextBefore` cursor with a real `查看更多` / `返回上一页` pair, so a known run past
+  the first 25 is reopenable instead of truncated to a recent-N window.
 
-**B46.3-02 — per-request admission results.** New additive table
-`media_discovery_admission_outcomes` (one row per `(actor, requestId)`) stores each converging
-request's complete submitted selection, newly admitted items, already-held items and its own
-refusals. It is deliberately separate from `media_discoveries`, so a Worker progress publication, a
-control or a freeze never rewrites another request's answer. The projection publishes
-`selection.existing`/`existingCount` beside `selection.refused`, echoes the *publishing* request's
-identity in `admissionRequestId`, and `GET …/discoveries/{id}?requestId=…` reads one exact request's
-result. The reported sequence now behaves as B required: A admits `[One]`; B submits
-`[One, downloading.mkv.part]` and receives the same durable work with `One` as shared admitted scope
-and `.part` refused as `temporary_file`; repeating B is stable; A still reads its own original result;
-exactly one Task exists; zero media mutation.
+Measured on B's own probe (`.git/validation-evidence/1dc70c43/b46.3-review/`):
 
-**Files-only entry (Scope 6).** `OperationsLanding` no longer renders the new-organize CTA, the
-independent library radio picker, the manual-action section or the discovery section, and their
-exclusive queries are gone (`discoveries-query.ts` deleted). `GET
-/api/v1/resource-libraries/{id}/files/organize-work` is library-scoped, principal-scoped and
-cursor-paged over durable rows, with a `requestId` form for exact lost-admission reconciliation.
-Files renders its own `整理记录` panel from that read and uses it for the lost-response lookup instead
-of the removed center list. `operations/organize/new` without valid prepared context renders
-`从资源库文件页开始整理` and navigates back to Files — no picker, no work started. Valid
-`discoveryId` deep links keep working.
+| Probe | B (reviewed Head) | this candidate |
+| --- | --- | --- |
+| `task_flow_probe.py` | task_items 0, metadata total 0 | task_items 1 (`waiting_metadata_correction`), metadata total **1**, attention total **1**, 0 mutations |
+| `completion_probe.py` | admitted Task `running`, 0 items, `execution_task_is_different: true` | admitted Task **`completed`**, **1** item, `execution_task_is_different: **false**`, 3 real effect calls |
+| native `a frozen mixed recovery preparation never republishes a decided sibling` | `firstPrepared: false` | **passes** (3.5 s) |
 
-**Schema 51 is additive** (`SCHEMA_VERSION` 50→51): one table, three indexes, one nullable
-`media_discoveries.organize_task_id` column. Fresh create, in-place upgrade and reopen are covered by
-`tests.test_task_persistence` (2 upgraded/legacy rows, both passing).
+The two metadata problem kinds are also proven directly: a zero-candidate Provider
+yields `waiting_metadata_correction`; two equally-scored candidates yield
+`waiting_metadata`; both reach `?view=metadata` with `total=1`, `?view=attention`
+with `total=1`, and zero media mutation.
 
-**Run accounting fix.** `ee21ea29`: the unified run population joined the discovery branch for every
-discovery row, so one admission appeared as **two** runs (discovery + new Task) and inflated the
-center's totals. The discovery branch now covers only rows without their own organizing Task — the
-definition Run once, the remaining-scope recovery preparation and pre-change records. Verified
-directly: one Files admission now yields exactly one run row.
+### B46.3-02 / P1 — an accepted sibling really enters work
+
+`overlap_probe.py` now reads `persisted_scope: [One, Three]` and
+`sources_after_walk: [One, Three]` (B measured `[One]` for both). The still-free
+entries are added by `extend_media_discovery_scope`: the ownership re-check and the
+scope write are one `BEGIN IMMEDIATE` transaction, so two overlapping requests on
+separate connections cannot both claim the same free source. A frozen or settled
+record is never widened — such entries are reported with their own refusal instead
+of silently changing a reviewed manifest.
+
+### B46.3-04 / P1 — actual confined Storage identity
+
+Schema 52 adds the additive, nullable `task_items.source_storage_path` and
+`media_discoveries.storage_scope_json`. Verified ownership now compares the exact
+confined **Storage** path, so two valid bindings of one Storage agree on one
+concrete source while genuinely distinct roots still never collide. A pre-change
+row keeps NULL and falls back to its library-relative path plus its exact library
+binding — nothing is backfilled and no legacy row is re-bound.
+
+`source_alias_probe.py` now answers **409 `source_already_organizing`** with the
+first work's exact `existingWorkId` where B measured two accepted, distinct Tasks.
+
+Reservation stays coupled to source-item admission rather than a pre-scan: direct
+files are checked at request admission with their observed fingerprint (a replaced
+file at the same path is a different concrete source and is admitted), folders are
+admitted as outer work and checked inside their own bounded walk, and the converging
+sibling write is the atomic check-and-extend described above. No transaction spans
+Storage I/O.
+
+### Two further defects found and fixed while delivering the above
+
+* **Metadata candidate authority leaked across pins and occurrences.** A new
+  preparation could borrow the previous Active revision's — or a replaced file's —
+  candidates. `_reviews_under_snapshot` now filters by the owning Task's own
+  configuration pin and by the exact source occurrence. A pin-less legacy Task
+  keeps its existing eligibility; an unprovable owner fails closed. `tests.
+  test_organize_preparation`'s three AC-5 cases pass unchanged in intent.
+* **Schema 52 moved the processing-worker default.** `ProcessingWorkerService`'s
+  `runtime_schema_version` default is deliberately kept in step with
+  `SCHEMA_VERSION`; both moved to 52, with the configuration journeys that assert
+  the current marker.
 
 ### Actual commands and results
 
 From repository root:
 
 * `python3 scripts/check_governance.py` — PASS; `git diff --check` — clean.
-* `.venv/bin/python -m unittest discover -s tests` — **2846 tests OK, 7 skipped** (full Python suite,
-  304 s wall).
-* `.venv/bin/python -m unittest tests.test_media_discovery tests.test_media_discovery_provider_manifest
-  tests.test_organize_preparation tests.test_manual_organize_intent tests.test_manual_organize_preview
+* `.venv/bin/ruff check mediaflow tests` / `ruff format --check mediaflow tests` —
+  clean / 329 files formatted.
+* `.venv/bin/python -m unittest tests.test_media_discovery
+  tests.test_media_discovery_provider_manifest tests.test_organize_preparation
+  tests.test_manual_organize_intent tests.test_manual_organize_preview
   tests.test_manual_organize_execution tests.test_operations_task_center
-  tests.test_task_center_recovery_lineage tests.test_recovery_continuation tests.test_recovery_batch`
-  — **379 OK**.
-* `.venv/bin/python -m unittest tests.test_v2_automation_run_once tests.test_v2_automation_operations
-  tests.test_configuration_snapshot tests.test_automation_run_once
-  tests.test_automation_definition_execution tests.test_automation_admission
-  tests.test_operations_run_inventory tests.test_operations_run_detail tests.test_scope_continuation`
-  — **335 OK**.
-* `.venv/bin/python -m unittest tests.test_v2_manual_organize tests.test_operations_workspace
-  tests.test_manual_operations tests.test_runtime_files_browser tests.test_direct_file_operations
+  tests.test_task_center_recovery_lineage tests.test_recovery_continuation
+  tests.test_recovery_batch tests.test_scope_continuation
+  tests.test_task_persistence` — **503 OK** (52 s).
+* `.venv/bin/python -m unittest tests.test_v2_automation_run_once
+  tests.test_v2_automation_operations tests.test_configuration_snapshot
+  tests.test_automation_run_once tests.test_automation_definition_execution
+  tests.test_automation_admission tests.test_operations_run_inventory
+  tests.test_operations_run_detail` — **235 OK**.
+* `.venv/bin/python -m unittest tests.test_v2_manual_organize
+  tests.test_operations_workspace tests.test_manual_operations
+  tests.test_runtime_files_browser tests.test_direct_file_operations
   tests.test_media_library_direct_commands tests.test_configuration_organize
-  tests.test_configuration_destination` — **187 OK**.
-* `.venv/bin/python -m unittest tests.test_scan_retirement_stability` — 2 OK.
-* `.venv/bin/ruff check mediaflow tests` / `ruff format --check mediaflow tests` — clean / formatted.
+  tests.test_configuration_destination tests.test_configuration_classification
+  tests.test_configuration_destination_activation
+  tests.test_configuration_destination_precheck
+  tests.test_scan_retirement_stability` — **232 OK**.
 
-From `web/`:
+From `web/` (built production assets):
 
+* `npm run typecheck` — clean; `npm run lint` — clean; `prettier --check src tests`
+  — clean; `npm run build` — built.
 * `npm run test -- run` — **87 files / 1262 tests passed**.
-* `npm run typecheck` — clean; `npm run lint` — clean; `prettier --check src` — clean;
-  `npm run build` — built.
-* `npm run test:e2e -- --config=playwright.python.config.ts
+* `npx playwright test --config=playwright.python.config.ts
   tests/e2e/operations-task-center-visual.python.spec.ts` — **2 passed**.
-* `npm run test:e2e -- --config=playwright.python.config.ts
-  tests/e2e/operations-inventory.python.spec.ts` — **23 passed / 18 failed**. Baseline comparison on
-  the unmodified Task Base: **35 passed / 6 failed**. See the open failure below.
+* `npx playwright test --config=playwright.python.config.ts
+  tests/e2e/operations-inventory.python.spec.ts` — **21 passed / 20 failed**.
+  Unmodified Task Base (`cd6db051`, freshly built in a detached worktree), same
+  command: **23 passed / 18 failed**. The candidate's failure set is a **strict
+  subset-plus-nothing-new at the assertion level**: every candidate failure also
+  fails at Base. The two names that differ run-to-run (`a real standalone pipeline
+  run…`, `verified primary completes…`) pass in isolation on **both** Base and
+  candidate, i.e. they are the intra-file ordering dependency B already documented,
+  not a regression.
+* One Base failure is now **fixed**: `unknown routes and fresh organization retain
+  real elapsed stability and exact confirmation` snapshotted durable counts before
+  the Files 整理 command and required them unchanged, which encoded the superseded
+  one-row-per-preparation accounting. It now asserts the stronger per-table
+  statement. It passes in isolation and inside its `--grep`, and still fails inside
+  the full sequential file (`waiting_stability` → `completed`) — the same ordering
+  dependency, reported honestly rather than papered over.
+* `npx playwright test --config=playwright.direct-files.python.config.ts
+  tests/e2e/direct-files.python.spec.ts` — **20 passed / 2 failed**, byte-identical
+  to Base (the pre-existing MediaLibrary row-menu failure Task46.2 documented). Not
+  erased and not claimed fixed.
 
-Testing/build/probe wall time was ≈57 minutes inside a round of ≈9 h 10 m (≈10 %, counting
-overlapping runs once). Full Python and full Web suites were run because this Task touches the core
-pipeline, schema and persistence; the E2E file was run repeatedly to separate real regressions from
-baseline flakiness.
+### New coverage added in this round
 
-### New coverage added in this checkpoint
+`tests/test_media_discovery.py::AdmissionAndScopeTests` gained three cases:
 
-`tests/test_media_discovery.py` (`AdmissionAndScopeTests`) gained five cases, all passing:
+1. `test_a_newly_accepted_sibling_really_enters_the_admitted_scope` — the exact
+   B46.3-02 sequence, but asserting the *durable* scope, the canonical Storage
+   path, the walked manifest, the linked intent items and the single Task, so a
+   response-only admission cannot pass again.
+2. `test_overlapping_library_bindings_own_one_concrete_storage_source` — two valid
+   bindings of one Storage; the second submission of the same physical file is
+   refused with the first work's identity instead of starting a second Task.
+3. `test_a_legal_recovery_preparation_does_not_own_itself_out` — a paused Task with
+   one unfinished TaskItem really owns that source, and the legal continuation of
+   that same Task is not refused.
 
-1. `test_files_admission_commits_a_real_pending_organizing_task` — the Task exists before readiness,
-   is `pending`/execute-authorized/pinned with no item, is linked from the record, and survives the
-   walk as the *same* Task.
-2. `test_a_second_request_keeps_its_own_refused_item` — the exact B46.3-02 sequence above, including
-   B's repeat, B's `?requestId=` readback and A's unchanged original result.
-3. `test_a_refused_sibling_does_not_block_an_independent_third_file` — a third free video is admitted
-   while an owned item and an excluded one each keep their own outcome.
-4. `test_files_work_readback_reopens_multiple_runs_by_request_identity` — cursor paging beyond one
-   page, the exact `requestId` readback and a proved absence returning `[]`.
-5. `test_a_folder_walk_does_not_admit_an_already_owned_source_again` — folder admitted as outer work,
-   owned file kept out of its manifest with the existing-work reference, free sibling admitted.
+`tests/test_task_persistence.py` covers schema 52 additively: the schema-34 upgrade
+journey now asserts the wider physical layout with a NULL canonical path, and the
+schema-42/44 upgrade journeys assert the current marker while still preserving every
+pre-existing row.
 
-`tests/test_media_discovery_provider_manifest.py`, `tests/test_organize_preparation.py` and
-`tests/test_scan_retirement_stability.py` had `list_tasks() == ()` assertions that encoded the
-superseded "discovery creates no Task" contract. Each was replaced by a *stronger* assertion
-(`assert_no_executable_work` / `assert_waiting_work_only` / item-table check): the durable organizing
-Task exists and no item, plan, Preview or execution authority does.
+`tests/test_organize_preparation.py`'s ambiguous-source journey was updated from the
+superseded "preparation links no review" contract to the corrected one — the
+admitted Task now owns exactly one `pending` Metadata review on a
+`waiting_metadata` item of that same Task.
 
-Three `test_media_discovery.py` cases reused one concrete source across two admissions in one journey
-(`test_a_directly_selected_file_ignores_an_excluded_ancestor`,
-`test_mixed_explicit_selection_preserves_trailer_association_through_preview`, the concurrent-finalize
-loop). RO-2 source ownership correctly refuses that, so each now uses its own fixture source; the
-behaviour each case studies (ancestor veto removal, trailer association, finalize fencing) is
-unchanged and still asserted.
+`web` `整理记录` gained backend-cursor paging; `StorageFilesPage.test.tsx` remains
+48 passed.
 
-Web: `OperationsInventory.test.tsx` and `router.test.tsx` asserted the removed center CTA and its
-library picker. They now assert the sections are absent, that the generic creation URL renders the
-Files guidance and that no admission POST leaves that page. `StorageFilesPage.test.tsx` reads its
-reconciliation from the new `organize-work` endpoint.
-
-### Open failure — one real E2E regression, not yet fixed
-
-`web/tests/e2e/operations-inventory.python.spec.ts` is **18 failed / 23 passed** on this candidate
-versus **6 failed / 35 passed** on the unmodified Task Base. So this candidate introduces **12**
-additional real-Python E2E failures. Confirmed on the candidate and *reproducibly* investigated for
-the first two:
-
-1. `new task selection reconciles a lost admission…` — the center shows `第 1 页起共 4 条` where the
-   journey expects `… 6 条`. The count is now consistent (one admission = one run), but the journey's
-   expected totals were written against the old double-row accounting, so every `expectRunTotal` in
-   the organizing journeys is off by the newly-merged rows.
-2. `a frozen mixed recovery preparation never republishes a decided sibling` — `firstPrepared` is
-   `false`: the prepared summary the journey drives does not appear within its bounded Worker loop.
-
-The remaining ten share the same shape (center totals, prepared-summary appearance, and the journeys
-that follow them). They are *not* claimed fixed, and the counts above are the honest numbers.
-
-**This is an unfinished Task item, not a passing gate.** The most likely single cause of the
-total-mismatch family is that the E2E fixtures seed their populations and expected totals against the
-old one-row-per-preparation accounting; that needs to be reconciled with the merged run identity
-(B-owned full-population work is `RO-4`, but the *totals of these journey fixtures* must agree with
-the new identity, which is this Task's integration duty). The prepared-summary family needs a root
-cause in the frozen/analysis boundary under the new Task-linked admission before it can be called
-done. I ran out of this round's budget with both under investigation and did not weaken any assertion,
-add retries or relax a timeout to make them pass.
+Testing/build/probe wall time was ≈110 minutes inside a round of ≈2 h 25 m
+(≈76 %, counting overlapping runs once). That is **over** the 50 % budget: the E2E
+file had to be run four times fully plus many focused runs to separate the
+pre-existing failures from candidate regressions and to establish a fresh Base
+baseline. It is disclosed rather than rounded down.
 
 ### Known risks / limits
 
-* `organize_task_id` is nullable and additive. A pre-change record keeps its original
-  preparation-only lineage and is never retroactively given a Task; the discovery branch of the run
-  population keeps covering it, so its history stays visible.
-* `_sync_organize_task` tolerates a failed Task update (it is an aggregate projection, not a media
-  fault), so a Task row could momentarily lag its discovery stage. The discovery record remains the
-  authority.
-* Source ownership compares fingerprints only when both sides recorded one. A pre-change record without
-  a frozen manifest falls back to path identity, which is the conservative behaviour for legacy rows.
-* `selection.existing` is additive; export/CLI consumers were not audited for it.
-* Task46.2's known pre-existing row-menu native failure is untouched and neither fixed nor assumed
-  fixed. `operations-inventory.python.spec.ts`'s intra-file ordering dependency reported earlier also
-  still exists.
-* RO-4's complete organizing-only populations/eight-view set and RO-5's Automation intent changes
-  remain outside this Task.
+* RO-4's complete organizing-only population across all legacy queries, the
+  eight-view/failure-removal convergence and historical recovered-success
+  projection remain outside this Task, as B's Non-goals state. The newly admitted
+  manual Task's own membership and four-type lifecycle are in and working.
+* RO-5 Automation detail/Enabled/Run once intent changes remain outside this Task.
+  Only the shared source-ownership safety boundary is integrated.
+* The demonstrated four-type publication covers Metadata choice and correction
+  end-to-end. Recognition, Classification and Conflict publish through the same
+  `publish_task_item_problem` boundary from the same live objects, but only the
+  Metadata two were exercised as a complete admitted-Task journey in this round;
+  the other three are exercised through the existing recovery suites, not through
+  a new Files-admission browser journey.
+* A Files-admitted Task adopts its execution, so a run's durable Task count per
+  admission is 1 rather than 2. Journey fixtures written against the old
+  double-row accounting needed the two corrections above; other fixtures were
+  verified unchanged.
+* `2026-10-26` note: the task-item retirement in `admit_manual_execution` deletes a
+  *pre-existing analysis TaskItem of the same Task and source* before writing the
+  execution item (the shared review/plan rows are untouched). One source keeps one
+  item; verified by the AC-5 journeys.
+* The intra-file E2E ordering dependency and Task46.2's pre-existing row-menu
+  failure are unchanged and neither fixed nor assumed fixed.
+* `web/tests/e2e/operations-inventory.python.spec.ts` still has 20 failures in a
+  full sequential run. B should judge these against a Base run of the same spec
+  rather than the count alone.
 
 ### Remaining Slice outcomes
 
-RO-1 complete (Task46.1). RO-2: the early durable admission, per-request results, verified source
-ownership, Files-only entry and Files readback are implemented, but the real-Python E2E gate above is
-not yet green, so the outcome is **not** claimed complete. RO-3 complete (Task46.2). RO-4/RO-5
-unchanged and still TARGET.
-
+RO-1 complete (Task46.1). RO-2: early durable admission, per-request results,
+verified Storage source ownership, Files-only entry, Files readback, native
+four-type problem publication and truthful Task settlement are implemented and
+proven at their real boundaries. The real-Python E2E file is not green, and its
+remaining failures are the pre-existing family plus one documented intra-file
+ordering dependency, so RO-2 is **not** claimed complete. RO-3 complete (Task46.2).
+RO-4/RO-5 unchanged and still TARGET.
 
 ## B Review Result
 
