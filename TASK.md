@@ -415,139 +415,152 @@ Full acceptance, full regression and any PASS/FIX decision remain B-owned.
 ## B Review Result
 
 ```text
-Reviewed Task range: 6072f50d5b2e5268c35d6729290512d1ae986104..8049549b0955390a5461bda17f53cd9109bccfe3
-Implementation: 1fa4bf55d0177e8dc0c4ab1a3a2ab16a2972e092
+Reviewed Task range: 6072f50d5b2e5268c35d6729290512d1ae986104..79f67b4d1670cedd94371978b0b0e8cfa97c11da
+Implementation: 884c88f75d17c3d2e9960f055280a241a6bc8158
 Decision: FIX REQUIRED — 2026-10-25
-Task blockers: B46.2-01 / P1 (page-dependent aggregate); B46.2-04 / P1 (detail read-error recovery)
+Task blocker: B46.2-01 / P1 (live operation snapshot freezes across item pages)
+B46.2-04: corrected (first detail read-error recovery)
 Slice Required Outcomes / Surfaces all satisfied: NO
 Next: SAME TASK FIX LOOP
 ```
 
-Review covers the complete Task Base..Head manifest and implementation paths, including original
-history/scope/deep-link delivery and both correction rounds, not only the latest patch. Task Base,
-Goal, Scope, Difficulty and T4 remain unchanged. Prior reviews/guidance remain in Git at
-`ad25d437:TASK.md`, `ad7045b2:TASK.md` and `7d384b3d:TASK.md`. No product fix, next Task, Slice
-closure, push or publication is part of this B checkpoint.
+Independent review covers the complete 28-file Task Base..Head range, including original scope,
+history, controls and deep-link paths, plus the current repair. The report-only successor
+`884c88f7..79f67b4d` changes only `TASK.md`; executable review/test inputs match the implementation.
+Task Base, Goal, Scope, Difficulty and T4 remain unchanged. Previous review/guidance is retained
+in Git at `8fa3fd0c:TASK.md`. This checkpoint changes only B-owned `TASK.md`.
 
-### Delivered corrections and evidence limits
+### Corrections verified
 
-- **B46.2-01, complete local access:** independently reran both native >100-entry directory
-  Delete cases against real Python/API/SQLite/Worker and the current production build. All 121
-  admitted items are now locally reachable across three pages, including the refused child;
-  the same evidence remains reachable after real API/repository reopen. This part is corrected.
-- **B46.2-01, paused effects:** the native folder Move case now shows the created destination
-  directory and three moved files, aggregate `partial`, then safely resumes the remaining work.
-  Independently inspected its desktop screenshot. Small mixed-batch cases pass for both kinds.
-  Shared `direct_file_effects.py` removes the duplicate interpretation; the remaining aggregate
-  defect below prevents accepting the whole finding.
-- **B46.2-02 / -03:** their exact-kind deep-link and historical-origin causes remain corrected
-  on inspection of the full range; the previous independent evidence remains in Git. This
-  round's changed executable inputs do not inherit full acceptance from that evidence. Complete
-  Task/run-link, denied-context and historical-origin native acceptance remains pending with T4.
+- **B46.2-01, whole-operation backend aggregate:** the real 121-item directory Delete with one
+  actual Storage refusal now returns the same `uncertain` certainty, durable state, next action
+  and totals (success 119 / failed 2 / total 121) on all three pages for both library kinds.
+  The refused `batch/file-117.txt` is the only remaining file. Detail reads leave Task/item/Result
+  rows unchanged. The independent history module and both native large-directory/reopen cases
+  pass. Complete item access, paused folder Move child effects and mixed batches also pass.
+  This corrects static page-dependent aggregation; the live update defect below remains open.
+- **B46.2-04:** both native pages now show the bounded error and explicit **重新读取该操作**
+  after an aborted first detail GET. Restoring transport and rereading retrieves the same real
+  operation without mutation. Inspected the actual failure screenshot; the loading-only branch
+  is corrected.
+- **B46.2-02 / -03:** exact-kind deep-link and historical-origin causes remain corrected on
+  complete-range inspection. Disabled-origin/reopen native cases pass. Remaining comprehensive
+  link/permission/control acceptance and the full T4 gate are not declared complete.
 
-### Required corrections — same Task
+### Required correction — B46.2-01 / P1
 
-1. **B46.2-01 / P1 — operation effects must be independent of the selected item page.**
-   Existing supported `delete_impact` → confirmed `execute_delete` → `FilesTransferWorker`
-   deletes one temporary 120-file directory on each library kind. Refuse exactly the actual
-   Storage deletion of `batch/file-117.txt`; filesystem proves 119 children deleted and that
-   one file retained, while durable totals are success **119**, failed **2** (file and directory).
-   Read the implemented local detail API with the UI's own `limit=50` and its returned cursors:
-   ResourceLibrary aggregate certainty is **partial → uncertain → verified_complete**;
-   MediaLibrary is **uncertain → partial → verified_complete** in the recorded run. Ordering
-   uses generated item IDs, so the affected page can vary. Counts remain 119/2/121 throughout.
-   The task-level uncertain marker remains visible in this reproduction; it does not repair
-   the contradictory `verified_complete` effect shown as **已核实完成** for the same operation.
-   `_item_evidence` builds its `signals` only from `library_file_operation_items_window`'s
-   current page, then uses them for operation-level certainty/state/next action. The frontend
-   takes those facts from `lastDetail`, so loading more changes the operation's asserted effect.
-   Compute operation-level facts over **all admitted items and their current durable evidence**,
-   separately from bounded item delivery. Never infer global success/no-change from a page of
-   successes/refusals, or wait for the operator to load all pages to learn the operation's truth.
+**A newer terminal item page stops polling while the selected operation retains an older snapshot.**
 
-2. **B46.2-04 / P1 — a failed first detail read must reach error and recovery UI.**
-   On both actual library pages, create a folder using the existing dialog, open header
-   当前页面操作状态 and select its new operation. Abort only that real detail GET at the browser
-   transport boundary; the history list and durable operation remain available. After two
-   failed reads, the selected panel still says **正在读取该操作的持久状态…**, with zero alerts
-   and zero **重新读取该操作** buttons. No mutation requests are made. Restoring transport lets
-   normal polling recover the real successful detail; the issue is the missing failure/recovery
-   state while reads fail. In `OperationDetail`, a failed first page sets `detail=null`, and
-   `if (read === undefined || detail === null)` returns before `readFailureCode` is rendered.
-   Distinguish pending reads from completed failed reads. Render the existing bounded failure
-   explanation and explicit read-only recovery, preserving the selected Task/library identity,
-   existing durable work and no-replay behavior. Also retain valid loaded pages on continuation
-   failure; fixing first-read ordering must not fabricate successful data.
+Real operator trigger, reproduced on both ResourceLibrary and MediaLibrary:
 
-Both defects are in `1fa4bf55` (2026-10-25 16:37:50 +08:00): the new item-window aggregate and
-the `useInfiniteQuery` migration, respectively. Neither requires another Task or expanded scope.
+1. Through the existing file page, confirm Delete of the existing temporary 120-file directory
+   (121 admitted items including the directory). Close Delete progress, open **当前页面操作状态**
+   and select this queued operation before Worker executes. The first detail page reports
+   `pending`, success 0 / pending 121, `unknown` effects.
+2. Run the existing harness Worker against that admitted command; it completes the real Delete.
+   Before the next normal poll, click **加载更多逐项结果** in the same open dialog.
+3. That cursor GET reports `completed`, `terminal=true`, success 121 / pending 0 and
+   `verified_complete`. The selected panel nevertheless remains **排队等待 Worker**,
+   **成功 0 / 待处理 121**, **效果未知**, and its earlier loaded items remain queued.
+   Observe another 4.5 seconds (more than two configured polling intervals): there are still
+   only the two detail requests. No closing/reopening or fabricated product response is involved.
 
-### Developer repair guide — B46.2-01 / B46.2-04
+Cause: `LibraryFileOperationsDialog.tsx::OperationDetail` stops polling from the **last** page's
+`terminal` (lines 260–266), but derives `detail`, `lifecycle` and aggregate from the **first** page
+(lines 270–284, 367–371), and concatenates stale earlier item pages. Global summaries are independent
+of item-page scope **at the same durable state**; snapshots read before and after real execution
+need not be identical. The `884c88f7` change (2026-10-25 17:18:06 +08:00) newly pins aggregate effects
+to page one. First-page stage/lifecycle and last-page polling termination already existed in
+`1fa4bf55`; their combination now also permanently freezes the repaired aggregate. This is an
+unmet RO-3 / AC-4 live progress/effect/recovery result, not a request for another Task or new authority.
 
-1. 从 `library_file_operations.py::_item_evidence` 与
-   `sqlite_runtime.py::library_file_operation_items_window` 入手：保留每页 1–100 项和现有
-   精确作用域游标；单独读取/折叠整个操作的持久效果摘要，再投影当前明细页。复用
-   `direct_file_effects.py` 的共享解释，采用有界仓储查询/分批折叠，避免一次无界返回所有
-   item/Result。静止操作在不同 limit、第一页/中间页/末页和数据库重开后，汇总必须一致；
-   运行中仅因真实持久状态更新而变化。汇总覆盖已知变化、未知/不确定效果、状态及下一步，
-   不得让当前页替代整个操作，也不得因 `task.error` 已提示不确定就忽略效果字段矛盾。
-2. 调整 `LibraryFileOperationsDialog.tsx::OperationDetail` 的状态分支，先分清未收到结果与
-   收到失败结果，再读取成功模型；使已有 `readFailureMessage` 和“重新读取该操作”可达。
-   保留已读取证据与所选操作，不把读取失败当成操作失败、成功或重提命令的理由。不新增
-   重试执行引擎、授权、普通文件任务中心入口或破坏性自动恢复。
-3. 扩展现有 `tests/test_library_file_operation_history.py`：两类库通过真实命令创建同一
-   121-item Delete，注入真实 Storage 拒绝，遍历每一页并断言汇总始终包含全操作的不确定
-   效果；核对固定总数、全量逐项可达、文件真实剩余状态、读取零写入及 reopen 后一致。
-   断言不能依赖随机 item ID 恰好把失败放在某页。保留已通过的暂停 Move 及安全继续覆盖。
-4. 扩展既有 model/API/dialog 测试和 real-Python native spec：加载更多前后汇总不被页内成功
-   覆盖；两类库首次详情 transport/拒绝/服务不可用时显示对应有界错误与重读动作，恢复后
-   读取同一操作且不产生 mutation。至少用实际页面操作加真实请求中断证明原生失败恢复，
-   不以虚构产品响应替代唯一验收。保留现有大目录、混合批次、深链接及历史库回归。
+### Developer repair guide — same Task
 
-Developer 执行新增、修改、直接受影响测试及相关静态检查后，提交连贯 checkpoint，报告实际
-命令/结果和剩余风险，交付 **READY FOR B REVIEW**。本轮实际命令见下方；完整 T4 仍由 B
-承担，不把全仓回归改派 Developer，也不新增治理工具或下一 Task。
+1. 修正 `OperationDetail` 的快照更新关系：阶段、全操作计数、效果确定性、下一步和
+   lifecycle/version 必须来自一致且会更新的操作快照。保留后端全操作折叠与精确作用域分页；
+   不要将“与页范围无关”解释成“第一页数据永不变化”。新页读到较新终态时，不能一边据此停止
+   轮询，一边继续展示旧快照/旧控制；并发读取也不能让旧响应覆盖已知的新状态。
+2. 同步已加载逐项证据，再结束更新。采用现有查询/重读能力协调刷新或失效旧页，使先前排队的
+   项目最终显示真实结果；不要只换 aggregate 为末页而留下旧 stage、lifecycle 或 item。
+   保留逐项完整可达、已有失败读取提示、所选操作/库身份和只读重读语义，不新增执行重试、
+   自动重放或全局中心，也不为修复引入通用进程工具。
+3. 扩展现有 dialog/query 测试：第一页 pending → 后端完成 → continuation 返回 terminal，
+   断言不关闭弹窗即可收敛到终态、正确全量计数/效果/下一步、最新合法控制与已加载 item。
+   覆盖一次读取跨越状态变化，以及旧响应不能回退已知终态；静止操作跨页聚合仍应一致。
+4. 扩展 `direct-files.python.spec.ts` 中两类库的真实目录 Delete：通过现有页面提交，先打开
+   pending 明细，再用既有 harness Worker 完成，加载更多并检查同一弹窗自动更新。核对真实
+   临时文件效果、所有页可达、没有额外 admission/control mutation；不能只测试 Worker 完成后
+   才打开详情。保留部分失败/不确定、暂停 Move、安全继续、首次读取失败与 reopen 回归。
+
+Developer 只运行新增、修改、直接受影响测试及相关静态检查，提交连贯 checkpoint 并报告实际
+结果后交 **READY FOR B REVIEW**。完整回归、原生证据和未完成验收仍由 B 负责。
 
 ### Independent acceptance this round
 
-Evidence: `.git/validation-evidence/8049549b/b46.2-review/` (ignored, local only): raw logs,
-`paging_probe.py`, `read_failure_probe.mjs`, both kinds' failure screenshots/JSON and native
-screenshots. All probes start at existing commands/pages/routes over temporary fixture roots;
-there are no guessed endpoints, seeded impossible rows, user media or production services.
+Evidence: `.git/validation-evidence/79f67b4d/b46.2-review/` (ignored, local only). It contains raw logs,
+`paging_probe.py`, `live_paging_probe.mjs`, both kinds' live-stale JSON/screenshots and native traces.
+Inspected the live-stale screenshots and corrected read-error UI. Probes use existing commands,
+actual page controls/routes and existing test-only Worker hooks, temporary SQLite/Storage roots;
+no invented product entry, impossible seeded row, user media or production service is used.
 
 | Command / cwd | Actual result |
 | --- | --- |
-| `python3 scripts/check_governance.py` | PASS |
-| `.venv/bin/python -m unittest tests.test_library_file_operation_history` | 20 passed (2.101s) |
-| `npx vitest run src/entities/library/file-operations.test.ts src/features/library/LibraryFileOperationsDialog.test.tsx src/shared/api/library-file-operations-api.test.ts src/shared/navigation/destination-model.test.ts` (`web/`) | 4 files / 59 passed (3.35s); existing jsdom scrollTo notices |
-| `npm run build` (`web/`) | PASS; `index-DJVQCfUt.js` / `index-BFNi4meT.css`; existing chunk-size warning |
-| `npx playwright test --config=playwright.direct-files.python.config.ts tests/e2e/direct-files.python.spec.ts -g 'large directory Delete\|paused folder Move\|mixed batch' --output=../.git/validation-evidence/8049549b/b46.2-review/native-artifacts` (`web/`) | 5 passed (14.5s), real Python/API/SQLite/Worker/current build |
-| `PYTHONPATH=. .venv/bin/python .git/validation-evidence/8049549b/b46.2-review/paging_probe.py` | Both kinds reproduce page-dependent operation certainty; actual retained file and unchanged Task/item/Result rows verified |
-| `node .git/validation-evidence/8049549b/b46.2-review/read_failure_probe.mjs` | Both native pages reproduce loading-only state after repeated detail GET failures; no mutation; restoring transport recovers exact detail |
+| `python3 scripts/check_governance.py`; complete-range `git diff --check` | PASS / clean |
+| `.venv/bin/python -m unittest tests.test_library_file_operation_history` | 21 passed, 2.294s (`history-tests.log`) |
+| `PYTHONPATH=. .venv/bin/python .git/validation-evidence/79f67b4d/b46.2-review/paging_probe.py` | Both kinds: all three pages retain global uncertainty and 119/2/121 totals; actual retained file and zero-write reads verified |
+| `node .git/validation-evidence/79f67b4d/b46.2-review/live_paging_probe.mjs` | Both kinds reproduce the persistent live-state defect above (`live-paging-probe.log`, JSON and PNG); reproduction success is not product PASS |
+| `.venv/bin/ruff format --check .`; `.venv/bin/ruff check .` | 387 formatted / PASS |
+| `.venv/bin/python -m compileall -q mediaflow tests scripts`; `.venv/bin/python -m pip check`; both documented example config validations; forbidden-dependency search | PASS; no FFmpeg/FFprobe match |
+| `npm run typecheck`; `npm run lint`; `npm run format:check`; `npm run build` (`web/`) | PASS; `index-BYlwlmy9.js` / `index-BFNi4meT.css`; existing chunk-size warning |
+| `npm run test -- run` (`web/`) | 87 files / 1258 passed, 111.95s (`web-full.log`); existing jsdom scrollTo notices |
+| `npm run test:e2e -- --output=<evidence>/default-e2e-artifacts` (`web/`) | 242 passed, 2.0m (`default-e2e.log`) |
+| `npx playwright test --config=playwright.direct-files.python.config.ts tests/e2e/direct-files.python.spec.ts --output=<evidence>/native-artifacts` (`web/`) | 19 passed / 1 failed, 1.3m (`native.log`); failure described below |
+| `npx playwright test --config=playwright.python.config.ts tests/e2e/operations-inventory.python.spec.ts tests/e2e/operations-task-center-visual.python.spec.ts --workers=1 --output=<evidence>/operations-native-artifacts-serial` (`web/`) | 42 passed / 1 failed, 2.2m (`operations-native.log`); failure described below |
+| `.venv/bin/python -m unittest discover -s tests` | Interrupted on confirmed blocker, no final totals or PASS (`python-full.log`); full Python remains pending |
+| `.venv/bin/python -m pip wheel . --no-deps -w <evidence>/wheels`; `.venv/bin/python scripts/wheel_smoke_test.py <exact-wheel>` | Both exit 0 (`wheel-build.log`, `wheel-smoke.log`); installed consumers run outside source; wheel SHA-256 `1fb58c1b550d0dea13263734e604f7dc4f17b63aa0660684a3e1660c127a5bf5` |
 
-The probes intentionally confirm the defects; their exit zero means reproduction assertions held,
-not product acceptance. Existing passing tests miss the page-independent aggregate and first-read
-error branches. Independent screenshots confirm paused child evidence and the missing read-error UI.
-Test/build/probe subprocess time is conservatively **under 90 seconds**, counting overlapping runs
-twice and both browser-probe executions. Conservative elapsed accounting starts **08:41:18 UTC**
-after initial reading; review was still ongoing at **08:45:19 UTC**. Testing is below 50%, without
-waiting to increase the denominator or weakening acceptance.
+`<evidence>` denotes the directory above; native `--output` paths were relative to `web/` as
+`../.git/validation-evidence/79f67b4d/b46.2-review/...`. Packaging/deployment/schema/dependency inputs
+are unchanged; Docker deployment/restart/security proof is **not applicable**, not claimed passed.
 
-Early FIX REQUIRED under workflow §6: full Python/Web/static/default E2E, remaining native
-Task-link/permission/control/historical-origin acceptance, packaging/installed-consumer and T4
-safety gates remain **pending**, not waived or inherited as PASS from Developer/previous candidate.
-Complete-range and working-document whitespace/governance checks accompany this B checkpoint.
+Actual failures and limits remain visible:
+
+- Direct-files native MediaLibrary Rename fails at the menuitem click (spec line 322), detached/
+  unstable element before the command is sent. Independently archived original Task Base `6072f50d`,
+  built its own assets, and ran its own ten-case spec against an isolated harness: **8 passed / 2
+  failed**, including the same row-menu detachment/instability mechanism in ResourceLibrary Rename
+  and MediaLibrary confirmation (`base-native.log`, `base-native-artifacts/`, `base-build.log`).
+  `RowActionMenu.tsx` is unchanged in Base..Head. This supports an existing menu issue; it does not
+  turn the candidate's failed case into PASS. No assertions/retries/timeouts were weakened.
+- Shared real-Python inventory/visual run: all 41 inventory tests and the first visual case pass;
+  the final creation-summary journey cannot find **选择 Three.2003.mkv** at line 233 after preceding
+  tests mutate the shared fixture. Base attribution is not established. The gate is **not passed**;
+  B must verify that journey with an isolated fixture on the corrected candidate. This is not an
+  additional speculative product blocker or a new Developer process-tool assignment.
+- Two earlier shared-harness invocations were stopped (one had an extra spec with another port;
+  one overlapped fixture-mutating files). Their retained logs are not acceptance evidence. Their
+  elapsed time is included in test accounting; successful totals above refer to the serial run.
+- Full Python was stopped at 09:45:46 UTC under workflow §6 early FIX REQUIRED, with no complete
+  result. Remaining Task-link/permission/stale-control coverage and all missing T4 safety/full
+  gates remain **pending**. They are not waived or inherited from Developer/another candidate.
+
+Test/build/probe wall time is conservatively under six minutes, counting overlapping execution
+once, including the interrupted/abandoned runs and independent Base build/run. Conservative elapsed
+review accounting starts at 09:39:27 UTC after initial reading; code/evidence reconciliation and
+Task writing continue after all test processes stop. Testing remains below 50% of this round;
+there is no deliberate waiting or reduction of the required PASS coverage.
 
 ### All Slice outcomes reevaluated
 
-RO-1 retains accepted Task46.1 coverage; current additive modal styles preserve shared palette
-rules on inspection. RO-3 now provides complete local directory-item access and paused child
-evidence, but remains **incomplete** for truthful operation effects and explicit detail read-error
-recovery. RO-2 early manual admission, RO-4 organizing-only eight views/four-type population and
-RO-5 Automation semantics remain incomplete and outside Task46.2. No next Task or Slice closure.
-A-owned Slice/Roadmap/Progress boundaries and stale first-Task pointers remain unchanged.
-Branch `main`, candidate `8049549b`; the pre-existing `docs/pics/操作与任务.png` deletion and all
-untracked/private/reference/log/test artifacts are preserved. Only B-owned `TASK.md` is checkpointed.
+RO-1 retains accepted Task46.1 coverage; additive modal styles preserve the shared palette on
+inspection. RO-3 now has complete paged item access, whole-operation backend effects, paused child
+evidence and explicit first-read failure recovery, but remains **incomplete** for live progress,
+effect and legal-control snapshot freshness. RO-2 early manual admission, RO-4 organizing-only
+views/population and RO-5 Automation semantics remain incomplete and outside Task46.2. Keep the
+same Task; no next Task or Slice closure. A-owned Slice/Roadmap/Progress boundaries and stale
+first-Task pointers are unchanged. Branch `main`, reviewed candidate `79f67b4d`; the pre-existing
+`docs/pics/操作与任务.png` deletion and all untracked/private/reference/log/test artifacts are
+preserved. No product code change, push or publication is part of this B checkpoint.
 
 
 ## Developer Completion Report (B46.2-01 repair round — 2026-10-25)
