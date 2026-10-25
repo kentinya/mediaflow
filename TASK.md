@@ -491,6 +491,34 @@ No next Task, product implementation, Slice closure, push or publication is incl
    dialog/API normalization tests and changed-file static checks. B retains full acceptance;
    do not run or assign B's full suite as a prerequisite for Developer handoff.
 
+### Developer repair guide — B46.2-01
+
+按以下顺序完成同一次修复，保留已修复的深链接及历史库选择能力：
+
+1. **补齐本地逐项访问。** 从 `library_file_operations.py::_item_evidence` 的 100 项截断处
+   入手，复用仓储 `list_items` 的有界分页能力及现有游标约定；让 API 和
+   `LibraryFileOperationsDialog.tsx` 协同支持翻页或加载更多。每页保持精确库类型、库 ID、
+   Task 和读取权限校验，总数、排序与游标一致。目录展开结果全部可达；不能降低原 Delete
+   限制、一次无界返回全部结果，或要求用户转到任务中心找被截断的失败项。
+2. **复用检查点解释。** 对照 `direct_file_transfers.py::transfer_projection` 和
+   `_projection_item_outcomes`，复用或提取其中已有的只读投影逻辑。未结束 TaskItem 的
+   `progress` 与最终 Result 分别提供对应阶段的真实证据；运行中、暂停、部分完成及不确定
+   状态都要保留实际子文件的来源、目标、状态和已完成步骤。不要另建一套传输结果解释器。
+   `list_results` 默认按时间正序返回，选择每个 item 的最新 Result 时不要用 `setdefault`
+   留住第一条；同时保留先前已完成检查点的事实。状态读取不调用 Storage、不准入或重放工作。
+3. **统一效果语义。** 修正 `_item_evidence` 的汇总分支：已知部分效果不能因另一个条目失败
+   而消失；未知/不确定效果不能落入 `none`。只有持久证据证明没有变化时才能显示“无变更”。
+   同步更新 `web/src/entities/library/file-operations.ts` 的类型、归一化和标签，以及弹窗展示；
+   不改变既有安全控制、成功兄弟项非重放及显式破坏性授权。
+4. **证明用户结果再交付。** 扩展上方指定的现有测试和 harness，覆盖两类库的 120 文件目录
+   Delete、第一页之外的真实拒绝、完整本地翻页及重开；覆盖目录 Move 已移动 3 个文件后暂停、
+   本地检查点展示及安全继续不重复移动；覆盖一成功一失败 Delete 的汇总不能是“无变更”。
+   创建工作和注入故障都使用已有真实命令/Storage 边界，不能只用前端伪造结果证明完成。
+
+运行新增、修改及直接受影响测试和静态检查后，提交一个连贯 checkpoint，并报告实际命令/
+结果及剩余风险，状态为 **READY FOR B REVIEW**。完整 T4 仍由 B 执行；不新增重试权限、
+执行引擎或下一 Task。
+
 ### Independent acceptance this round
 
 Evidence: `.git/validation-evidence/511a0d9a/b46.2-review/` (ignored, local only), containing
