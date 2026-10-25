@@ -3679,7 +3679,9 @@ button.mf-grid-button {
   color: var(--muted);
 }
 
-.mf-button-danger {
+/* Files' shared white action surface must not erase destructive intent. */
+.mf-button-danger,
+.mf-files-page .mf-button-danger {
   background: #c2413b;
   color: #ffffff;
   border: 1px solid #c2413b;

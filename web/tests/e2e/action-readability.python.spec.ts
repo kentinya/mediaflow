@@ -18,8 +18,8 @@
  * test-output path); no binary evidence is committed.
  */
 
-import { expect, test, type Page } from "@playwright/test";
-import { mkdirSync } from "node:fs";
+import { expect, test, type Page, type Locator } from "@playwright/test";
+import { mkdirSync, writeFileSync } from "node:fs";
 
 const ADMIN_TOKEN = "harness-admin-token";
 const READONLY_TOKEN = "harness-viewer-token";
@@ -45,37 +45,37 @@ const MEASURE = `
         a: parts.length > 3 ? parts[3] : 1,
       };
     };
-    const layers = [];
+    const over = (front, back) => {
+      const a = front.a + back.a * (1 - front.a);
+      if (a === 0) return { r: 0, g: 0, b: 0, a: 0 };
+      return {
+        r: (front.r * front.a + back.r * back.a * (1 - front.a)) / a,
+        g: (front.g * front.a + back.g * back.a * (1 - front.a)) / a,
+        b: (front.b * front.a + back.b * back.a * (1 - front.a)) / a,
+        a,
+      };
+    };
+    const computed = window.getComputedStyle(element);
+    let visible = toRgba(computed.color);
+    let backdrop = { r: 0, g: 0, b: 0, a: 0 };
     let node = element;
     let opacity = 1;
     while (node) {
-      const computed = window.getComputedStyle(node);
-      opacity *= Number(computed.opacity);
-      const rgba = toRgba(computed.backgroundColor);
-      if (rgba && rgba.a > 0) layers.push(rgba);
+      const style = window.getComputedStyle(node);
+      const background = toRgba(style.backgroundColor);
+      // Opacity composites a whole element subtree onto its parent: apply it
+      // to both pixels (text and adjacent background), before the parent fill.
+      visible = over(visible, background);
+      backdrop = over(backdrop, background);
+      const alpha = Number(style.opacity);
+      visible.a *= alpha;
+      backdrop.a *= alpha;
+      opacity *= alpha;
       node = node.parentElement;
     }
-    // Painted back-to-front from the page canvas so every translucent ancestor
-    // contributes its real share of the visible backdrop.
-    let backdrop = { r: 255, g: 255, b: 255, a: 1 };
-    for (let index = layers.length - 1; index >= 0; index -= 1) {
-      const layer = layers[index];
-      backdrop = {
-        r: layer.r * layer.a + backdrop.r * (1 - layer.a),
-        g: layer.g * layer.a + backdrop.g * (1 - layer.a),
-        b: layer.b * layer.a + backdrop.b * (1 - layer.a),
-        a: 1,
-      };
-    }
-    const computed = window.getComputedStyle(element);
-    const foreground = toRgba(computed.color);
-    // The browser paints text with the element's own opacity, so the visible
-    // foreground is the label blended toward its backdrop by that factor.
-    const visible = {
-      r: foreground.r * opacity + backdrop.r * (1 - opacity),
-      g: foreground.g * opacity + backdrop.g * (1 - opacity),
-      b: foreground.b * opacity + backdrop.b * (1 - opacity),
-    };
+    const canvas = { r: 255, g: 255, b: 255, a: 1 };
+    visible = over(visible, canvas);
+    backdrop = over(backdrop, canvas);
     const channel = (value) => {
       const s = value / 255;
       return s <= 0.03928 ? s / 12.92 : Math.pow((s + 0.055) / 1.055, 2.4);
@@ -92,8 +92,8 @@ const MEASURE = `
       largeText: fontSize >= 24 || (fontSize >= 18.66 && fontWeight >= 700),
       color: computed.color,
       backdrop:
-        'rgb(' + Math.round(backdrop.r) + ',' + Math.round(backdrop.g) + ')' +
-        ',' + Math.round(backdrop.b),
+        'rgb(' + Math.round(backdrop.r) + ',' + Math.round(backdrop.g) +
+        ',' + Math.round(backdrop.b) + ')',
       opacity: Math.round(opacity * 100) / 100,
       outlineStyle: computed.outlineStyle,
       outlineWidth: computed.outlineWidth,
@@ -133,12 +133,44 @@ async function measure(page: Page, selector: string): Promise<Measured> {
 }
 
 /** Assert one measured action is readable for its own text size. */
+const readings: { label: string; measured: Measured }[] = [];
+
 function expectReadable(label: string, measured: Measured): void {
+  readings.push({ label, measured });
   const floor = measured.largeText ? MIN_LARGE_CONTRAST : MIN_CONTRAST;
   expect(
     measured.contrast,
     `${label} rendered ${measured.contrast}:1 (${measured.color} on ${measured.backdrop}, effective opacity ${measured.opacity}); needs ${floor}:1`,
   ).toBeGreaterThanOrEqual(floor);
+}
+
+/** Exercise existing controls without dispatching clicks or submitting work. */
+async function expectActionStates(
+  action: Locator,
+  label: string,
+): Promise<void> {
+  const read = async (state: string) => {
+    const measured = (await action.evaluate(
+      new Function(`return (${MEASURE})(arguments[0]);`) as never,
+    )) as Measured;
+    expectReadable(`${label} · ${state}`, measured);
+    return measured;
+  };
+  await expect(action).toBeVisible();
+  await action.page().mouse.move(0, 0);
+  await action.evaluate((element) => (element as HTMLElement).blur());
+  await read("normal");
+  await action.hover();
+  await read("hover");
+  if (await action.isEnabled()) {
+    await action.page().mouse.move(0, 0);
+    await action.page().keyboard.press("Tab");
+    await action.focus();
+    const focused = await read("keyboard focus");
+    expect(focused.outlineStyle).not.toBe("none");
+    expect(Number.parseFloat(focused.outlineWidth)).toBeGreaterThanOrEqual(2);
+    await action.evaluate((element) => (element as HTMLElement).blur());
+  }
 }
 
 /** Every visible action on the surface, measured where it is really painted. */
@@ -148,7 +180,13 @@ async function expectSurfaceReadable(
 ): Promise<number> {
   const selector =
     'button:visible, a.mf-button:visible, [role="menuitem"]:visible';
-  const actions = page.locator(selector);
+  // The modal owns interaction while open; its backdrop dims/inerts the page.
+  // Measure the reachable dialog rather than controls behind a sibling overlay.
+  const dialog = page.getByRole("dialog");
+  const actions =
+    (await dialog.count()) > 0
+      ? dialog.locator(selector)
+      : page.locator(selector);
   const total = await actions.count();
   expect(total, `${surface} exposes no actions to measure`).toBeGreaterThan(0);
   for (let index = 0; index < total; index += 1) {
@@ -202,6 +240,17 @@ async function openSurface(page: Page, path: string): Promise<void> {
 }
 
 test.describe("readable V2 actions", () => {
+  test.beforeEach(() => {
+    readings.length = 0;
+  });
+  test.afterEach(async ({ page }, testInfo) => {
+    const path = `${OUTPUT}/${testInfo.title.replace(/[^a-z0-9]+/gi, "-")}.json`;
+    writeFileSync(path, JSON.stringify({ url: page.url(), readings }, null, 2));
+    await testInfo.attach("rendered-action-states", {
+      path,
+      contentType: "application/json",
+    });
+  });
   test.beforeAll(() => {
     mkdirSync(OUTPUT, { recursive: true });
   });
@@ -215,7 +264,7 @@ test.describe("readable V2 actions", () => {
     // The token field and its label are part of the same login journey.
     const field = await measure(page, "#api-token");
     expectReadable("Entry token field value", field);
-    expect(field.backdrop).not.toBe("rgb(32,43,36)");
+
     const fieldLabel = await measure(page, "label[for='api-token']");
     expectReadable("Entry token field label", fieldLabel);
 
@@ -226,6 +275,26 @@ test.describe("readable V2 actions", () => {
     expectReadable("Entry Connect", connectAction);
     expect(connectAction.disabled).toBe(false);
     await page.screenshot({ path: `${OUTPUT}/entry-desktop.png` });
+    await expectActionStates(
+      page.getByRole("button", { name: "Connect", exact: true }),
+      "Entry Connect",
+    );
+    // Entry has no placeholder or asynchronous submitting state in production.
+    await expect(page.getByLabel("API token")).not.toHaveAttribute(
+      "placeholder",
+    );
+    await page.setViewportSize({ width: 390, height: 844 });
+    await expectActionStates(
+      page.getByRole("button", { name: "Connect", exact: true }),
+      "Entry narrow Connect",
+    );
+    expect(
+      await page.evaluate(
+        () => document.documentElement.scrollWidth <= innerWidth,
+      ),
+    ).toBe(true);
+    await page.screenshot({ path: `${OUTPUT}/entry-narrow.png` });
+    await page.setViewportSize({ width: 1536, height: 1024 });
 
     // Invalid input is rejected by the real form; the alert stays readable.
     await page.getByRole("button", { name: "Connect", exact: true }).click();
@@ -303,13 +372,43 @@ test.describe("readable V2 actions", () => {
       { label: "Storage", path: "/storage" },
       { label: "Rules", path: "/rules" },
       { label: "Automation", path: "/operations/automation" },
+      {
+        label: "Automation settings",
+        path: "/operations/automation?tab=settings",
+      },
+      { label: "Automation create", path: "/operations/automation/lifecycle" },
+      {
+        label: "Automation edit",
+        path: "/operations/automation/lifecycle/harness-scheduled",
+      },
       { label: "Task Center", path: "/operations" },
       { label: "Settings", path: "/configuration" },
     ];
     const counts: Record<string, number> = {};
     for (const surface of surfaces) {
       await openSurface(page, surface.path);
+      if (
+        surface.label === "Automation create" ||
+        surface.label === "Automation edit"
+      ) {
+        await expect(
+          page.getByRole("heading", {
+            name:
+              surface.label === "Automation create"
+                ? "Create Automation definition"
+                : "Edit Automation definition",
+            exact: true,
+          }),
+        ).toBeVisible();
+      }
       counts[surface.label] = await expectSurfaceReadable(page, surface.label);
+      for (const variant of [".mf-button-primary", ".mf-button-secondary"]) {
+        const action = page
+          .locator(`${variant}:visible:not(:disabled)`)
+          .first();
+        if (await action.count())
+          await expectActionStates(action, `${surface.label} ${variant}`);
+      }
       await page.screenshot({
         path: `${OUTPUT}/${surface.label.replace(/\W+/g, "-").toLowerCase()}-desktop.png`,
       });
@@ -409,6 +508,104 @@ test.describe("readable V2 actions", () => {
     await page.screenshot({ path: `${OUTPUT}/files-dialog-narrow.png` });
   });
 
+  test("both library kinds expose readable Rename, text, Delete and transfer dialogs without submitting", async ({
+    page,
+  }) => {
+    await page.setViewportSize({ width: 1536, height: 1024 });
+    const writes: string[] = [];
+    page.on("request", (request) => {
+      if (request.url().includes("/api/") && request.method() !== "GET")
+        writes.push(request.url());
+    });
+    for (const kind of ["resource", "media"] as const) {
+      await openSurface(
+        page,
+        kind === "resource"
+          ? "/resourcelib/files?resourceLibraryId=source&path=Live"
+          : "/medialib/files?mediaLibraryId=movies&path=Live",
+      );
+      await page.getByRole("button", { name: "网格视图", exact: true }).click();
+      const tile = page.getByLabel("文件条目 Beta.txt", { exact: true });
+      await expect(tile).toBeVisible();
+      for (const [command, title] of [
+        ["重命名", "重命名"],
+        ["编辑", "编辑文本 — Beta.txt"],
+        ["删除", "删除确认"],
+        ["复制", "复制到…"],
+        ["移动", "移动到…"],
+      ]) {
+        let releaseImpact: (() => void) | undefined;
+        const impactPattern = `**/api/v1/${kind === "resource" ? "resource-libraries/source" : "media-libraries/movies"}/files/delete-impact*`;
+        if (command === "删除") {
+          const held = new Promise<void>((resolve) => {
+            releaseImpact = resolve;
+          });
+          await page.route(impactPattern, async (route) => {
+            await held;
+            await route.continue();
+          });
+        }
+        await tile.focus();
+        await page.keyboard.press("Shift+F10");
+        await page
+          .getByRole("menu")
+          .getByRole("menuitem", { name: command, exact: true })
+          .click();
+        const dialog = page.getByRole("dialog", { name: title, exact: true });
+        await expect(dialog).toBeVisible();
+        if (command === "编辑")
+          await expect(dialog.getByRole("textbox")).toHaveValue(
+            "live beta text",
+          );
+        if (command === "删除") {
+          const danger = dialog.getByRole("button", {
+            name: "删除",
+            exact: true,
+          });
+          await expect(danger).toBeDisabled();
+          expectReadable(
+            `${kind} disabled danger while impact read is held`,
+            await measure(page, ".mf-dialog-footer .mf-button-danger"),
+          );
+          releaseImpact?.();
+          await expect(danger).toBeEnabled();
+          await page.unroute(impactPattern);
+          const cancel = await measure(
+            page,
+            ".mf-dialog-footer .mf-button-secondary",
+          );
+          const destructive = await measure(
+            page,
+            ".mf-dialog-footer .mf-button-danger",
+          );
+          expect(
+            destructive.backdrop,
+            `${kind} Delete must differ from Cancel`,
+          ).not.toBe(cancel.backdrop);
+          expect(destructive.color).not.toBe(cancel.color);
+        }
+        await expectSurfaceReadable(page, `${kind} ${title}`);
+        for (const action of await dialog
+          .locator(".mf-dialog-footer button, .mf-dialog-close")
+          .all()) {
+          await expectActionStates(
+            action,
+            `${kind} ${title} ${await action.textContent()}`,
+          );
+        }
+        await page.screenshot({
+          path: `${OUTPUT}/${kind}-${command}-dialog.png`,
+        });
+        await page.keyboard.press("Escape");
+        await expect(dialog).toHaveCount(0);
+      }
+    }
+    expect(
+      writes,
+      "opening, hover, focus and dismissal must not submit commands",
+    ).toEqual([]);
+  });
+
   test("primary, secondary and danger stay distinguishable with visible focus", async ({
     page,
   }) => {
@@ -417,6 +614,17 @@ test.describe("readable V2 actions", () => {
     await connect(page);
     await expect(page.locator("#main-content")).toBeVisible();
     await page.waitForTimeout(400);
+
+    for (const selector of [
+      ".mf-view-toggle.is-active",
+      ".mf-library-card-select.is-selected",
+      "#primary-navigation a.is-active",
+    ]) {
+      await expectActionStates(
+        page.locator(selector).first(),
+        `selected ${selector}`,
+      );
+    }
 
     // The three kinds of action must not collapse onto one background.
     const primary = await measure(page, ".mf-files-page .mf-button-primary");
@@ -541,9 +749,24 @@ test.describe("readable V2 actions", () => {
     // A read-only principal keeps its permission guards: no new command
     // authority appears merely because actions became readable.
     await page.goto("/ui-v2/resourcelib/files?resourceLibraryId=source");
-    await page.evaluate(() => window.localStorage.clear());
     await connect(page, READONLY_TOKEN);
     await page.waitForTimeout(600);
+    // This principal can read, but the actual command endpoint refuses it.
+    // Enter through the same visible create-folder action as the admin.
+    await page.getByRole("button", { name: "新建文件夹", exact: true }).click();
+    const deniedDialog = page.getByRole("dialog");
+    await deniedDialog.getByLabel("名称").fill("Viewer-Must-Not-Create");
+    const refused = page.waitForResponse(
+      (response) =>
+        response.request().method() === "POST" &&
+        response.url().includes("/files/commands"),
+    );
+    await deniedDialog
+      .getByRole("button", { name: "创建", exact: true })
+      .click();
+    expect((await refused).status()).toBe(403);
+    await expect(deniedDialog.getByRole("alert")).toBeVisible();
+    await expectSurfaceReadable(page, "actual permission refusal");
     const body = (await page.textContent("body")) ?? "";
     expect(body).not.toContain(ADMIN_TOKEN);
     expect(body).not.toContain(READONLY_TOKEN);
