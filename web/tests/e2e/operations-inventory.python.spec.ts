@@ -449,7 +449,12 @@ test("the inventory renders real producer runs with truthful labels", async ({
   // Worker waiting: no Worker is registered yet, and the landing reports the
   // backend's own condition instead of inventing readiness.
   await expect(page.getByText(/Worker 未就绪/)).toBeVisible();
-  await expect(page.getByRole("heading", { name: "手动操作" })).toBeVisible();
+  // Task46.3 RO-2: the center's new-organize CTA, independent library picker,
+  // manual-action and discovery sections are removed.  New file-selection work
+  // starts from ResourceLibrary Files, so none of them may render here.
+  await expect(page.getByRole("heading", { name: "手动操作" })).toHaveCount(0);
+  await expect(page.getByRole("heading", { name: "整理发现" })).toHaveCount(0);
+  await expect(page.getByRole("link", { name: "新建整理任务" })).toHaveCount(0);
 
   // Privacy: neither the harness's host database path, an absolute host root
   // nor the throwaway token ever reaches the DOM.

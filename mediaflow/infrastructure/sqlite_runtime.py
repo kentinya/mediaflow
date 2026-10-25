@@ -5548,6 +5548,13 @@ class SQLiteTaskRepository:
                NULL AS source_scope, media_discoveries.resource_library_id,
                media_discoveries.claim_worker_id, media_discoveries.status AS job_status
         FROM media_discoveries media_discoveries
+        -- RO-2: an admission that admitted its own durable organizing Task is
+        -- represented by that Task row.  Emitting both would count and list the
+        -- same operator work twice, so the discovery branch covers only the
+        -- admissions that keep their original preparation-only lineage (a
+        -- definition Run once, a remaining-scope recovery preparation and any
+        -- pre-change record).
+        WHERE media_discoveries.organize_task_id IS NULL
     """
 
     @staticmethod
