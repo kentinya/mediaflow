@@ -356,272 +356,6 @@ suite, runtime probe, build or media operation was run for planning; checking ti
 
 ## Developer Completion Report
 
-Status handed off: **PARTIAL — B46.3-02 and B46.3-03 delivered; B46.3-01 remains
-unimplemented. The Task is NOT complete, and no PASS is claimed.**
-
-Checkpoint: `1be609121614e322df8c3abd4c2984c51a00602d` (Task Base
-`83144be20c6c7bc787a0fafad7fabb3e177bde6a`, on top of reviewed `d675594f`).
-
-### What this checkpoint changes
-
-**B46.3-02 — independent per-item admission outcomes.** `MediaDiscoveryService.admit`
-no longer refuses a whole selection because one selected item is excluded. Each submitted
-path resolves to either its real kind or its own `DiscoveryRefusedEntry`; eligible
-siblings are admitted as real organizing work and the refused items are persisted with
-their bounded `code`/`reason`/`message`/`nextAction`. Structural, RBAC, root-confinement
-and budget validation still refuse the entire request, and a selection in which *nothing*
-is admissible is refused with the first item's own reason instead of admitting empty work.
-A lost-response retry of the same partly-refused selection now reconciles on the union of
-admitted scope and refused entries, so it converges instead of claiming a different
-selection. The refusal evidence round-trips through SQLite reopen.
-
-**B46.3-03 — no automatic business vetoes on a deliberate folder selection.** The two
-manual entrances are now distinct in the single shared predicate module:
-`classify_manual_file_selection` keeps its exact-file meaning and the new
-`classify_manual_folder_entry` applies only the configured primary-media extension set
-(video by default) inside a folder the operator selected by hand, plus the unchanged
-temporary/download and extension exclusions. `ManualFolderPolicy` carries the
-automatic/deliberate distinction as a value, so the bounded walk asks one question and
-`Scanner`/definition-bound filtering is untouched. `_refuse_automatic_directory` /
-`_refuse_automatic_file` keep the pre-amendment include/exclude/match gates for
-definition-bound Run once and remaining-scope recovery, so this is a per-admission
-context and not a global weakening. The mode is stored inside the durable progress
-document (`manualSelection`), so no schema column, no migration and no backfill of
-existing rows is required: a pre-existing record round-trips as exactly the automatic
-admission it was.
-
-Deliberately selected folder and file selections now record only the hard bounds as
-refusals: the configured depth (with its `prunedAncestor`) and the explicit
-temporary/extension exclusions. Default images, subtitles and NFO never become
-independent primaries or fabricated Recognition problems; artwork-off does not promote
-them; the existing other-same-stem attachment setting is untouched; a folder of only
-non-primary files settles as `empty_excluded` rather than a failure.
-
-Web: refused entries render beside the admitted scope in both the discovery and the
-summary workspace views, and the Files page now maps the backend's real bounded reason
-(temporary / `excluded_extension_rule` / `configured_depth_exceeded` / `configured_exclude`
-/ `not_included`) instead of describing every `source_excluded` as a temporary-file or
-extension exclusion. `docs/architecture.md` CURRENT bounded-discovery text states the
-deliberate folder rule, the durable admission mode and the per-item refusal contract.
-
-### Files and checkpoints
-
-- `mediaflow/application/scan_filters.py`: `ManualEntryVerdict.EXCLUDED_PRIMARY_EXTENSION`,
-  `classify_manual_folder_entry`, `ManualFolderPolicy`.
-- `mediaflow/application/media_discovery.py`: per-item `admit` outcomes, the new
-  `_directory_refusal`/`_file_refusal` and `_refuse_automatic_*` split (the old
-  `_refuse_unselectable_*`/`_refuse_pruned_ancestor` helpers were removed), refusal
-  propagation at the definition and recovery entrances, `folder_policy` in `_advance`,
-  `_REASON_PRIMARY_EXTENSION`, request-ID reconciliation over refused siblings.
-- `mediaflow/domain/media_discovery.py`: `DiscoveryRefusedEntry`, `canonical_refusals`,
-  `DiscoveryProgress.refused_entries` / `.manual_selection` (document-level, additive).
-- `mediaflow/interfaces/service_api.py`: `selection.refused` / `selection.refusedCount`.
-- `web/src/entities/operations/discovery.ts`, `web/src/shared/api/api-client.ts`,
-  `web/src/features/library/StorageFilesPage.tsx`,
-  `web/src/features/operations/OrganizeCreationPage.tsx`,
-  `web/src/features/operations/OrganizeDiscoveryPage.tsx`.
-- Tests: `tests/test_media_discovery.py` (`ManualEntrySemanticsTests` rewritten to the
-  independent-outcome contract, new `ManualFolderExpansionTests`),
-  `tests/test_v2_automation_run_once.py` (unchanged automatic veto),
-  `web/src/features/library/StorageFilesPage.test.tsx` (reason-specific copy).
-
-### Actual affected commands and results
-
-From repository root:
-
-- `python3 scripts/check_governance.py` — PASS; `git diff --check` — clean.
-- `.venv/bin/python -m unittest tests.test_media_discovery tests.test_media_discovery_provider_manifest tests.test_organize_preparation tests.test_scanner tests.test_attachments tests.test_v2_automation_run_once` — **208 tests OK**.
-- `.venv/bin/python -m unittest tests.test_manual_organize_intent tests.test_manual_organize_preview tests.test_manual_organize_execution tests.test_operations_task_center tests.test_task_center_recovery_lineage tests.test_recovery_continuation tests.test_recovery_batch tests.test_automation_run_once tests.test_automation_definition_execution tests.test_automation_admission` — **298 tests OK**.
-- `.venv/bin/python -m unittest tests.test_v2_manual_organize tests.test_operations_workspace tests.test_manual_operations tests.test_operations_run_inventory` — **121 tests OK**.
-- `.venv/bin/python -m unittest tests.test_v2_automation_run_once tests.test_v2_automation_operations tests.test_configuration_snapshot` — **83 tests OK**.
-- `.venv/bin/python -m unittest tests.test_runtime_files_browser tests.test_direct_file_operations tests.test_media_library_direct_commands tests.test_operations_run_detail` — **129 tests OK**.
-- `.venv/bin/ruff check` / `ruff format --check` on all six changed Python files — clean.
-
-From `web/`:
-
-- `npm run test -- run` on the 10 named Files/Operations/entities/API/router suites —
-  **176 tests passed**.
-- `npm run typecheck` — clean; `npm run lint` — clean; `npm run build` — built;
-  Prettier clean on every changed Web file.
-- `npm run test:e2e -- --config=playwright.python.config.ts tests/e2e/operations-inventory.python.spec.ts`
-  — **41 passed** (real Python API/SQLite/Worker/built assets).
-- `npm run test:e2e -- --config=playwright.python.config.ts tests/e2e/operations-task-center-visual.python.spec.ts`
-  — **2 passed**.
-
-Testing/build/probe wall time was ≈5.5 minutes of an ≈69-minute round (≈8%), counting
-overlapping runs once. No full Python discovery, no full Web suite, no packaging/release
-matrix and no direct-files release matrix was run; those stay B-owned. No assertion was
-weakened and no retry was added.
-
-### Tests that had to change, and why
-
-Five pre-existing expectations encoded the contract B46.3-03 explicitly overrules. Each was
-rewritten to assert the *new* contract plus the retained automatic behaviour, never a
-weakening:
-
-1. `test_directly_selected_file_ignores_include_and_match_rules` — a deliberate folder now
-   keeps its `mkv` files despite an exclude/include rule.
-2. `test_a_directly_selected_file_ignores_an_excluded_ancestor` — the deliberately selected
-   folder below the excluded ancestor is now admitted.
-3. `test_a_directly_selected_nested_folder_cannot_bypass_a_pruned_ancestor` →
-   `test_a_directly_selected_nested_folder_below_an_excluded_ancestor_is_admitted`.
-4. `test_published_exclude_and_stability_policy_reach_the_worker` — the deliberate
-   `Movies/Excluded` selection is admitted; the published stability policy is still proven.
-5. `test_a_trailer_of_an_unadmitted_main_file_keeps_ordinary_processing` — swapped the
-   non-extension `filename` exclusion for a genuine `extension` exclusion, so the case
-   still proves attachment association only against admitted primaries.
-6. `test_a_partly_refused_selection_is_never_a_different_scope` (B46.3-02's named
-   violation) → `test_a_partly_refused_selection_keeps_eligible_siblings` plus
-   `test_a_wholly_refused_selection_creates_no_work`.
-
-`test_a_directly_selected_file_below_a_depth_pruned_ancestor_is_refused` was kept and still
-passes: depth is a hard reachability bound, not a business rule, and its `prunedAncestor`
-detail is preserved through the new per-item refusal (`DiscoveryRefusedEntry.pruned_ancestor`).
-
-### Remaining work — B46.3-01 (not implemented)
-
-The Task's primary blocker is untouched by this checkpoint: the Files command
-(`POST /api/v1/resource-libraries/{id}/files/discoveries`, `autoPrepare: true`) still admits
-a *preparation*, and no durable organizing Task exists at submission. Still required:
-Scopes 1/3/4/5/6 and the necessary Scope 7 integration — early durable organizing
-admission before discovery/business readiness, verified atomic concrete-source ownership
-across manual/Automation/continuation entrances with settlement, native four-type recovery
-inside the admitted work, exact normal summary/confirmation membership in Running/All after
-restart, durable Files task/preparation/unknown-request readback, and removal of the center
-creation/manual-action/discovery entries and their exclusive reads. All acceptance bullets
-except the direct-file/folder filtering ones remain unmet.
-
-### Known risks / limits
-
-- `selection.refused` is additive. The export/CLI/legacy consumers were not audited for a
-  refused-entry projection; only the Web discovery/summary views and the API document
-  consume it here.
-- The primary-extension refusal inside a deliberate folder reuses the existing
-  `unsupported_extension` reason string. That is deliberate (it is the same "not a primary
-  media extension" fact an automatic walk reports), but a reader cannot tell from the
-  reason alone whether the suffix came from a folder expansion or a direct selection; the
-  per-item refused list is the only place a *direct* file refusal carries a distinct code.
-- A deliberate folder selection no longer honours a configured `directory`/`glob` exclude
-  rule. This is the intended RO-2/B46.3-03 semantics, but it is a real behaviour change for
-  a library that used a directory rule as a manual veto; the automatic Scanner/definition
-  path is unchanged and asserted.
-- The `operations-inventory.python.spec.ts` intra-file ordering dependency reported in the
-  previous handoff still exists; the whole file in order passes.
-- Task46.2's known pre-existing row-menu native failure is untouched and neither fixed nor
-  assumed fixed.
-
-### Remaining Slice outcomes
-
-RO-1 complete (Task46.1). RO-2 partially: direct-file *and* folder eligibility/filtering
-plus independent per-item admission now match RO-2; early durable organizing admission,
-source ownership, four-type recovery membership and the Files-only center removal are not
-delivered. RO-3 complete (Task46.2). RO-4/RO-5 unchanged and still outside this checkpoint.
-
-## B Review Result
-
-```text
-Reviewed Task range: 83144be20c6c7bc787a0fafad7fabb3e177bde6a..62df5ca402b007f364b6a53df1a85c154d278526
-Implementation: 1be609121614e322df8c3abd4c2984c51a00602d
-Report-only successor: 62df5ca402b007f364b6a53df1a85c154d278526
-Decision: FIX REQUIRED — 2026-10-25
-Open Task blockers: B46.3-01 and B46.3-02 (P1)
-B46.3-03: original folder-rule veto corrected in the checked path
-Slice Required Outcomes / Surfaces all satisfied: NO
-Next: SAME TASK FIX LOOP; complete Task46.3, no new Task or Slice closure
-```
-
-B inspected the full fourteen-file Task Base..Head manifest/diff, retaining the previously reviewed
-unchanged facts and checking the incremental application/domain/API/Web/test/architecture changes.
-`1be60912..62df5ca4` changes only TASK.md; executable inputs are the implementation above.
-Developer explicitly hands off PARTIAL with B46.3-01 unimplemented. No scope reduction, Task PASS
-or acceptance of the whole organizing journey follows from the filtering repairs. Earlier review
-and evidence remain at `bccdbc3a:TASK.md`; Task Base/Goal/Scope/High/T4 are unchanged.
-
-### Required corrections
-
-1. **B46.3-01 / P1 remains open — complete early durable organizing and its Web journey.**
-   A normal Files request to `POST /api/v1/resource-libraries/library/files/discoveries` with
-   `autoPrepare: true` still returns 202 with one preparation and zero Tasks immediately after
-   submission. Implement the still-missing original Scopes 1/3/4/5/6 and necessary Scope 7:
-   organizing admission before folder traversal/business readiness; atomic verified source
-   ownership across queued/paused/decision/Automation/continuation work; native four-type decisions
-   and recovery; exact in-task summary/selected confirmation reachable in Running/All after restart;
-   durable Files task/preparation/unknown-request readback; removal of center creation/manual/
-   discovery entries and their exclusive reads. Preserve analysis-only preparation, full bounds,
-   real stability, pins, current permissions/effect confirmation and completed/uncertain non-replay.
-   These are already Task46.3 obligations, not a later Task or optional RO-4 cleanup. Do not describe
-   eligible siblings as admitted organizing Tasks while only preparation exists.
-2. **B46.3-02 / P1 remains open for repeated selection — retain this request's refused items.**
-   Fresh mixed admission now correctly keeps an eligible video and records its excluded sibling.
-   However, the existing-open-admission path still loses that evidence:
-   - Submit `[Movies/One.2001.mkv]` with request ID A and `autoPrepare: true`.
-   - Before that preparation runs, submit `[Movies/One.2001.mkv, Movies/downloading.mkv.part]`
-     with distinct request ID B and the same mode through the same Files API.
-   - Both return 202 with the same discovery identity; B returns `selection.refused: []` instead
-     of the excluded item's `temporary_file` reason. Exact repetition of B also returns 202 and
-     the same empty refusal list. No media mutation occurs, but the selected item's result vanishes.
-   Reconcile the complete submitted selection and refusal evidence, not only its eligible scope.
-   `admit` currently calls `_reconcile_admission` with `deduplicated` admitted entries before
-   storing new refusals; the durable lookup's scope signature omits those refused entries.
-   Return/persist bounded per-request admission outcomes or distinguish genuinely different
-   selections while preserving exact request identity and original immutable evidence. Do not
-   overwrite A's history, silently reuse its different outcomes, or create duplicate effective
-   source execution merely to preserve refusal text. Cover changed excluded siblings, same-request
-   readback, reopen and the overlapping/concurrent path; keep structural/RBAC/root/bounds checks.
-   Keep the original duplicate-plus-eligible-sibling coverage when source ownership is implemented.
-
-**Verified progress:** the original B46.3-03 automatic-directory veto is corrected. A deliberately
-selected folder under a real published `directory: Movies` exclusion now admits; its walk keeps the
-video while filtering unrelated image/subtitle/NFO suffixes. Focused tests verify artwork-off,
-custom primary extensions, empty non-primary folders, per-item refusal/reopen/request identity and
-unchanged definition-bound automatic filtering. Web source now renders refused entries and uses
-reason-specific copy. This does not establish final visual/native/full-T4 acceptance, nor complete
-all manual/mixed-selection/attachment/recovery outcomes of the Task.
-
-### Independent checks and evidence
-
-Durable local ignored evidence: `.git/validation-evidence/62df5ca4/b46.3-review/`.
-
-| Check | Actual result |
-| --- | --- |
-| Governance; `git diff 83144be2..62df5ca4 --check` | PASS / clean |
-| `.venv/bin/python -m unittest tests.test_media_discovery.ManualEntrySemanticsTests tests.test_media_discovery.ManualFolderExpansionTests tests.test_v2_automation_run_once.RunOnceApiTests.test_definition_run_once_keeps_the_unchanged_automatic_folder_filtering` | 15 OK, 1.27 s process wall; `focused-python.log`; SQLite ResourceWarnings retained |
-| `npm run test -- run src/features/library/StorageFilesPage.test.tsx src/entities/operations/discovery.test.ts` in `web/` | 2 files / 59 tests passed, 6.22 s process wall; `focused-web.log`; existing scrollTo warnings retained |
-| `entry_probe.py` in the evidence directory | Actual Files body with `autoPrepare: true`: zero Tasks remains; fresh mixed selection has its refused item; excluded manual folder admits and retains video-only primary; `entry-probe.log` |
-| `repeated_selection_probe.py` in the evidence directory | B46.3-02 missing refusal reproduced, including exact B request readback; `repeated-selection.log`; zero mutation |
-| `.venv/bin/ruff check` on the six changed Python files | All checks passed |
-
-Probes use the existing authenticated Files API fixture, real temporary Local Storage/SQLite and
-production-validated/published configuration. No guessed route, invented database state, user media
-or secret is used. The initial repeated-selection helper additionally assumed that B's readback
-would return 409; actual status was 202, so that helper assertion failed. Its raw output is retained
-in `repeated-selection-initial.log`. The corrected probe asserts the observed missing evidence;
-no request conflict or execution replay is claimed. All probe attempts count in testing time.
-
-Workflow §6 permits early FIX REQUIRED on proven blockers. Full T4 Python/Web/native/packaging/
-resident-restart acceptance remains pending on a corrected complete candidate. No gate is waived,
-no Developer-reported full result becomes B evidence, and no browser/visual pass is claimed here.
-Developer runs failing/new/changed/affected checks; B retains full acceptance ownership.
-Review started at 13:33:52 UTC. Tests/probes/static/governance used less than 15 seconds subprocess
-wall time inside more than two minutes of code/contract/evidence review before reconciliation,
-strictly below 50%; no deliberate waiting, repeated full suites or weakened assertions/timeouts.
-
-### All Slice outcomes reevaluated
-
-| Outcome | Assessment at reviewed Head |
-| --- | --- |
-| RO-1 readable shared actions | Prior Task46.1 acceptance retained; shared palette unchanged |
-| RO-2 Files-first organizing | Incomplete: folder/filtering repairs progress, B46.3-01/02 still block |
-| RO-3 local ordinary operations | Prior Task46.2 acceptance/evidence limits retained; local status implementation unchanged |
-| RO-4 organizing-only center/four-type truth | Incomplete; complete population/view/recovery delivery remains outstanding |
-| RO-5 Automation detail/Enabled/Run once | Incomplete; unchanged semantics apart from filtering-preservation safety work |
-
-Slice stays ACTIVE. Continue this same Task through all original acceptance criteria. This review
-changes only B-owned TASK.md; A-owned Slice/Roadmap/Progress and all pre-existing dirty/untracked/
-private/reference files remain preserved. No product implementation, new Task, push or closure by B.
-
-## Developer Completion Report
-
 Status handed off: **READY FOR B REVIEW — candidate for the whole Task; no PASS claimed.**
 
 Checkpoints on `main` (Task Base `83144be20c6c7bc787a0fafad7fabb3e177bde6a`):
@@ -815,3 +549,151 @@ RO-1 complete (Task46.1). RO-2: the early durable admission, per-request results
 ownership, Files-only entry and Files readback are implemented, but the real-Python E2E gate above is
 not yet green, so the outcome is **not** claimed complete. RO-3 complete (Task46.2). RO-4/RO-5
 unchanged and still TARGET.
+
+
+## B Review Result
+
+```text
+Reviewed Task range: 83144be20c6c7bc787a0fafad7fabb3e177bde6a..1dc70c43180aa50b285798ace4ef5e92529b9500
+Implementation: ee21ea29 (with 2d4649d9); report-only successor 1dc70c43
+Decision: FIX REQUIRED — 2026-10-26
+Open Task blockers: B46.3-01/02/04 (P1)
+B46.3-03: prior folder-filtering correction retained
+Slice Required Outcomes / Surfaces all satisfied: NO
+Next: SAME TASK FIX LOOP; complete Task46.3, no new Task or Slice closure
+```
+
+B reviewed the full 35-file Task Base..Head manifest and changes, retaining previous verified facts
+and checking the new admission, source ownership, schema, API, Web and test integration. The current
+report-only successor changes TASK.md; B tests below use the executable candidate identified above.
+The original Base/Goal/Scope/High/T4 and acceptance criteria remain unchanged. Earlier partial reports
+and B decisions remain in Git (`8577cd3d:TASK.md`); this file retains the current handoff and decision.
+
+### Verified progress
+
+Early admission now creates a real persisted Task and discovery together. The focused admission
+suite passes 12 tests, including the original repeated-request exclusion sequence, library-local
+backend paging and an independently eligible sibling's admission response. Files-only creation and
+removal of the center discovery/manual-action reads are implemented. Per-request outcome persistence
+and backend exact readback are present. These are useful changes, but the complete required journey
+is still not delivered by a Task row and response assertions alone.
+
+### Required corrections
+
+1. **B46.3-01 / P1 — connect the admitted Task to actual items, recovery and outcomes.**
+   Through the existing Files command with `autoPrepare: true`, followed by the real discovery
+   Worker and a synthetic Provider returning no candidates, the result is:
+   `Task=running`, `TaskItems=0`, discovery `prepared/completed`, blocked Preview; the authenticated
+   Metadata view returns 200 with `total=0` while Running has one run. The unready file remains
+   preparation rather than a native task problem. In a separate successful journey, explicit plan
+   confirmation and the real execution Worker complete a different execution Task, but the original
+   admitted Task remains `running` with zero items. Both are reproducible user journeys, not timing
+   or optional display issues.
+   - Integrate the shared processing pipeline and durable per-item checkpoints/problems with the
+     early admitted work. Real Recognition/Metadata/Classification/Conflict problems must populate
+     native task forms/lists/counts and finish through legal analysis and exact confirmation. Do not
+     substitute a default type or target, or treat technical errors as business decisions.
+   - Reuse actual durable admission/intent/plan/execution/continuation links so one operator work
+     has truthful progress, recovery, summary access and final result. Existing child execution
+     Tasks may retain their history; a verified completed execution must settle/project the original
+     work correctly. Updating a discovery-stage aggregate alone is insufficient.
+   - Keep normal initial confirmation in Running/All with an exact summary link after restart,
+     outside Attention without four-type lineage. Keep known prepared/unknown work reachable from
+     Files, including backend pages beyond the first 25: the new `OrganizeWorkPanel` currently
+     fetches one page and only toggles 3/all loaded items, without consuming `nextBefore`.
+   - Repair the supported remaining-scope summary journey. B independently reproduces the existing
+     real-Python test `a frozen mixed recovery preparation never republishes a decided sibling`:
+     `firstPrepared` remains false at line 2675. Trace the actual admission/freeze/analysis/source
+     ownership boundary and preserve its supported pin/decision/non-replay behavior. Do not simply
+     raise the Worker loop limit, timeout or retry count. Reconcile other reported E2E failures by
+     actual links/populations; change obsolete totals only when the authoritative records prove
+     the new expectation. Do not assume all 18 reported failures share one cause.
+2. **B46.3-02 / P1 — a newly accepted sibling must really enter work.**
+   The earlier missing `.part` refusal is corrected in the tested fresh/repeated-request case.
+   However, submitting `[One]`, then `[One, Three]` before the first work runs returns 202 twice
+   with the same discovery identity. The second response claims `Three` is newly admitted, but the
+   stored scope remains `[One]`; after the real Worker walk the manifest still contains only `One`
+   and there is no second discovery for `Three`. The existing new sibling test asserts the response
+   but never advances the Worker to catch this loss.
+   `_reconcile_library_work` / `_accept_onto_existing` persist an outcome saying the free sibling
+   was admitted without adding it to executable/discoverable scope. Either independently admit
+   genuinely free siblings with their own durable work while linking existing sources, or legally
+   and atomically extend an unfrozen work's actual scope with full completeness/budget validation.
+   Do not silently widen frozen work or merely change response text. Preserve each request's exact
+   immutable result and real work links. Extend the existing sibling test through Worker discovery,
+   summary/explicit selected execution, actual result, exact readback and reopen; prove the new
+   file completes and the already-owned file never replays.
+3. **B46.3-04 / P1 — use actual confined Storage source identity and atomic ownership.**
+   A single temporary file `source:Movies/One.2001.mkv` is exposed through two valid ResourceLibrary
+   bindings on the same Storage: `nested` rooted at `Movies` and `whole` rooted at the Storage root.
+   Sequential normal Files submissions of `nested/One.2001.mkv` and
+   `whole/Movies/One.2001.mkv` both return 202 with distinct Tasks and no existing/refused item.
+   They are the same physical source. `find_owned_source_work` currently compares library-relative
+   path strings, so overlapping root bindings do not agree on identity.
+   - Resolve the immutable library/root binding to the exact confined Storage-relative source path
+     before ownership comparison; keep library/principal/pin context separately. Distinct actual
+     roots with equal relative names must not falsely collide either.
+   - Replace check-then-publish ownership with an atomic check/reservation coupled to source-item
+     admission across separate SQLite connections. Current calls read ownership before later scope/
+     manifest writes; admission's `BEGIN IMMEDIATE` only checks an actor/scope admission signature.
+     Preserve legitimate continuation ownership and current execution fences, without a transaction
+     spanning Storage I/O. A recent-50 discovery scan is not a complete ownership index.
+   - Cover overlapping bindings and concurrent direct/folder/Automation/continuation paths using
+     supported admissions and real source identities. Include queued, paused and unresolved human
+     work, settlement, legacy supported work and completed/uncertain non-replay. Do not fix this by
+     blocking unrelated libraries or by issuing broader execution authority.
+
+Reconcile the new CURRENT architecture claims after these fixes: Task-native recovery/outcome and
+verified source ownership are not yet established by the current implementation. No unrelated
+refactor, additional command/queue, next governance Task or Slice rescope is required.
+
+### Independent validation and evidence
+
+Local ignored evidence: `.git/validation-evidence/1dc70c43/b46.3-review/`.
+
+| Check | Actual result |
+| --- | --- |
+| Governance; full-range `git diff 83144be2..1dc70c43 --check` | PASS / clean |
+| `.venv/bin/python -m unittest tests.test_media_discovery.AdmissionAndScopeTests` | 12 OK, 0.90 s process wall; `admission-tests.log` |
+| `task_flow_probe.py` | Native Files admission + actual Worker + zero-candidate fake Provider: blocked plan, zero TaskItems, Metadata total 0; zero effects; `task-flow.log` |
+| `completion_probe.py` | Actual explicitly confirmed execution completes; separate original admission Task stays running/empty; three real temporary Storage effect calls; `completion.log` |
+| `overlap_probe.py` | Newly accepted `Three` absent from persisted scope and real walked manifest; no effects; `overlap.log` |
+| `source_alias_probe.py` | Same Storage source through overlapping library roots admitted twice to distinct Tasks; no effects; `source-alias.log` |
+| `npm run build` in `web/` | PASS; production `index-BwL35e0c.js` / `index-BFNi4meT.css`; existing chunk warning; `native.log` |
+| `npm run test:e2e -- --config=playwright.python.config.ts tests/e2e/operations-inventory.python.spec.ts --grep 'a frozen mixed recovery preparation never republishes a decided sibling' --output=../.git/validation-evidence/1dc70c43/b46.3-review/native-artifacts` in `web/` | 1 failed at `firstPrepared`, 2.02 s process wall; real Python/API/SQLite/Worker/built assets; `native.log`, trace and error context retained |
+
+All probes use existing authenticated Files/plan/run APIs and existing test fixtures over temporary
+Local Storage/SQLite; no guessed endpoint, fabricated successful payload or production media is used.
+The Provider response is an isolated supported no-candidate boundary. The successful execution probe
+uses the existing explicit confirmation and OrganizerExecutor path; its effects stay in temporary roots.
+A separate attempted two-Worker barrier probe ended with `BrokenBarrierError` (5.28 s); it is retained
+in `source-race.log` and establishes no duplicate execution or successful race reproduction. The
+source-identity blocker above is independently proven by sequential public admissions, while the
+missing atomic reservation is a code-review finding. No media loss or actual double mutation is claimed.
+
+Developer's 2846-test/1262-test/full native results remain its report, not independent B acceptance.
+B did not rerun full suites after reproducing required-journey blockers. The reported Base comparison
+and claim of twelve additional E2E failures were not independently rerun here; only the exact native
+failure above is independently established. An expected-total mismatch by itself is not classified
+as a product defect without durable population evidence.
+
+Workflow §6 permits early FIX REQUIRED. Full T4 Python/Web/default/native/packaging/installed-consumer/
+upgrade/failure-atomicity/resident-restart/safety gates remain pending on a corrected candidate, not
+waived or transferred to Developer. Required acceptance is not satisfied by the 12 admission tests.
+Review started at 17:14:29 UTC (2026-10-26 local). Tests/build/probes, including the failed barrier
+attempt, total less than 20 seconds subprocess wall time inside more than four minutes of review
+before reconciliation, strictly below 50%; no deliberate waiting or repeated full suites.
+
+### All Slice outcomes reevaluated
+
+| Outcome | Assessment at reviewed Head |
+| --- | --- |
+| RO-1 readable shared actions | Prior Task46.1 acceptance retained; no shared palette changes |
+| RO-2 Files-first organizing | Incomplete: early row/request evidence/entry removal progress; native recovery, actual accepted scope, truthful completion and source ownership still block |
+| RO-3 local ordinary operations | Prior Task46.2 acceptance/evidence limits retained; no complete re-acceptance claimed for shared query changes |
+| RO-4 organizing-only center/four-type truth | Incomplete; full population/eight-view work remains outside this Task, while new manual integration must be fixed here |
+| RO-5 Automation detail/Enabled/Run once | Incomplete; unchanged intent contract, shared ownership safety must still integrate |
+
+Slice remains ACTIVE; continue the same Task with original acceptance. This review updates only
+B-owned TASK.md, keeps old reports reachable in Git, and preserves all pre-existing untracked/private/
+reference artifacts. No product implementation, push, new Task or Slice closure by B.
