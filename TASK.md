@@ -158,10 +158,11 @@ OS files and test/artifact directories. Keep private runtime state ignored/untra
 ## Developer Completion Report
 
 Status: READY FOR B REVIEW; no Developer acceptance or Slice closure. Task Base remains
-`725458f83862d12362fe4d9da57d0ceb9437398e`. Review that Base through this round's source candidate
-recorded at the end of this section. Earlier candidate `f99a5856c0941b4c847de83d5395ad2245b45657`
-and its report `f820a8db2f68c38348caf8579eb1965964606f98` remain history; no push, tag, release or
-publication was performed.
+`725458f83862d12362fe4d9da57d0ceb9437398e`. Review that Base through source candidate
+**`951cc318`** (`fix(web): keep disabled variants visibly unavailable`) on `main`; this successor
+changes only this report. Earlier candidates `f99a5856c0941b4c847de83d5395ad2245b45657` /
+`f820a8db2f68c38348caf8579eb1965964606f98` remain history. No push, tag, release or publication was
+performed.
 
 ### Changes and actual defect (B46.1-01 correction)
 
