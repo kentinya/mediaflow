@@ -764,6 +764,22 @@ body {
   color: var(--ink);
 }
 
+/* A variant palette has the same specificity as the shared `.mf-button:disabled`
+   rule but is declared later, so a disabled variant kept the enabled surface and
+   only changed its pointer cursor: Settings' secondary export looked available
+   while its read was in flight, and the Rules drawer's primary Save/添加规则 kept
+   their enabled fill while a Save was running. Restating the shared unavailable
+   palette per variant wins that cascade for every consumer of the plain variant
+   class, while a consumer with its own extra ancestor keeps its scoped palette. */
+.mf-button.mf-button-primary:disabled,
+.mf-button.mf-button-secondary:disabled {
+  border-color: var(--disabled-line);
+  background: var(--disabled-surface);
+  color: var(--disabled-ink);
+  opacity: 1;
+  cursor: default;
+}
+
 .mf-button.mf-button-secondary:not(:disabled):hover,
 .mf-button.mf-button-secondary:not(:disabled):focus {
   border-color: var(--accent-strong);

@@ -7,7 +7,7 @@ Authority: committed [Slice46](SLICE.md) RO-1 / AC-1 and
 ```text
 Task ID: 46.1
 Parent Slice: 46
-Status: FIX REQUIRED
+Status: READY FOR B REVIEW
 Task Base: 725458f83862d12362fe4d9da57d0ceb9437398e
 Difficulty: Medium
 Test Level: T3
@@ -158,119 +158,144 @@ OS files and test/artifact directories. Keep private runtime state ignored/untra
 ## Developer Completion Report
 
 Status: READY FOR B REVIEW; no Developer acceptance or Slice closure. Task Base remains
-`725458f83862d12362fe4d9da57d0ceb9437398e`. Review that Base through source candidate
-**`f99a5856c0941b4c847de83d5395ad2245b45657`** on `main`. The subsequent report-only checkpoint
-changes this section only. Original implementation/report: `f820a8db2f68c38348caf8579eb1965964606f98`.
-No push, tag, release or publication was performed.
+`725458f83862d12362fe4d9da57d0ceb9437398e`. Review that Base through this round's source candidate
+recorded at the end of this section. Earlier candidate `f99a5856c0941b4c847de83d5395ad2245b45657`
+and its report `f820a8db2f68c38348caf8579eb1965964606f98` remain history; no push, tag, release or
+publication was performed.
 
-### Changes and actual defect
+### Changes and actual defect (B46.1-01 correction)
 
-The original checkpoint repaired shared light primary/secondary/disabled palettes, Entry inputs,
-selected states and conflicting Files/Rules/Task Center/Automation overrides. This follow-up found
-one remaining real cascade defect: `.mf-files-page .mf-button` painted Delete white with dark text,
-identical to Cancel. Its label was readable, so the previous contrast-only check did not catch the
-lost danger distinction. The small scoped danger selector now preserves white-on-red Delete on
-both library kinds, with the existing disabled and hover/focus states intact. No handler, permission,
-API, Storage behavior, component API, layout or RO-2–5 behavior changed.
+B's finding reproduced exactly. `.mf-button.mf-button-secondary` (0,2,0) and the shared
+`.mf-button:disabled` (0,2,0) have equal specificity, and the variant rule is declared later, so a
+disabled secondary action inherited the enabled palette and only swapped `pointer` for `default`.
+I found the same defect on the primary variant: the Rules drawer's 保存 (and 添加规则) kept the enabled
+accent fill while the drawer's form-authority read had not returned, and `disabled` was true.
 
-The browser spec now measures actual normal/hover/keyboard-focus and selected controls, both library
-kinds' Rename/text/Delete/Copy/Move dialogs, actual disabled Delete during a held impact read, and
-Automation's native create/edit/settings contexts. It uses existing `Live/Beta.txt` and
-`harness-scheduled` fixtures; no new harness route or fabricated successful business payload exists.
-Opening, hovering, focusing and dismissing these dialogs is checked for zero non-GET product calls.
-The viewer test submits through the visible Create Folder dialog and observes the real backend
-403 and retained error, instead of merely checking token text is absent.
+The repair is one shared-cascade rule in `styles.css` that restates the existing unavailable palette
+at variant specificity for both variants:
 
-Contrast measurement now composites text and adjacent background through each ancestor's alpha/
-opacity in paint order. A modal measurement covers the reachable dialog, not the page behind its
-sibling overlay. Each reading includes element/state, computed text/backdrop, opacity and focus.
-A malformed backdrop diagnostic string and an obsolete source-color literal guard were replaced
-by actual computed contrast evidence. Existing semantic/behavior assertions remain.
+```css
+.mf-button.mf-button-primary:disabled,
+.mf-button.mf-button-secondary:disabled { … }
+```
+
+No new colour token, no component API change, no handler/permission/authority change. Consumers with
+their own extra ancestor selector (Files, Operations inventory, Automation settings, Rules drawer's
+own primary) keep their scoped palettes; the shared rule only decides the plain-variant cascade that
+was broken. Enabled normal/hover/focus, danger red, selected states and all disabled labels are
+unchanged: every disabled reading remains `rgb(70,85,107)` on `rgb(237,241,246)` = 6.68:1.
+
+Test-side change: one new focused case in the committed real-Python spec,
+`web/tests/e2e/action-readability.python.spec.ts`, that drives three actual consumers:
+
+1. Automation inventory 上一页 — statically disabled shared secondary action;
+2. Settings 查看 Active JSON → 导出脱敏配置包 — the exact journey from B46.1-01, holding the real
+   `GET /api/v1/configuration/packages/export/configuration` while it is in flight, continuing it, and
+   reading the authoritative package afterwards;
+3. Rules drawer 添加分类规则 — the real `GET /api/v1/operations/rules/form-authority` held, so the
+   primary 保存 is genuinely disabled, then released.
+
+Each measures computed composited colour/backdrop/opacity, asserts disabled is visually distinct from
+the unfocused enabled state, asserts hover on the unavailable control paints no hover state, asserts
+exactly one request survives an attempted second activation (`dispatchEvent('click')` + `Enter`), and
+asserts availability is restored after the real response arrives. Nothing is fabricated: no DOM
+`disabled` toggling, no fulfilled fake success, no test-only endpoint.
+
+Harness change (`scripts/operations_inventory_harness.py`): the fixture previously replaced the API's
+package exchange with `PackageExchangeService(None, repository)`, so the real configuration export
+answered 503 in this harness even though the temporary managed Active configuration exists. It now
+keeps the API's own exchange when a managed fixture is present, so the journey exercises the real
+export authority and returns a real `mediaflow.configuration.v1` package. The repository-only
+fallback is unchanged for the no-managed-fixture path. No product code, route or authority changed.
 
 ### Real-browser evidence
 
-All six focused tests pass against the production build served by the temporary Python/SQLite/
-Local harness. Final output has **458 readings**, minimum **4.69:1**, over the visited controls;
-this is a measured fixture matrix, not a claim about every possible data-dependent screen.
+Seven focused tests pass against the production build served by the temporary Python/SQLite/Local
+harness: **473 readings**, minimum **4.69:1**. Distinct disabled/busy states:
 
-| Actual context/state | Contrast |
-|---|---|
-| Entry Connect normal / hover / focus | 4.86 / 7.43 / 7.43 |
-| Both libraries' Delete normal / hover / focus | 5.11 / 8.22 / 8.22 |
-| Both libraries' disabled Delete during held impact read | 6.68 |
-| Selected view toggle normal / hover / focus | 5.62 / 6.67 / 5.62 |
-| Selected library card / current navigation | 6.78 / 6.40 |
-| Real held Create Folder busy label | 6.68 |
+| Actual context/state | Contrast | Paint |
+|---|---|---|
+| Automation inventory disabled 上一页 | 6.68 | rgb(70,85,107) on rgb(237,241,246) |
+| Settings export enabled (unfocused) | 15.51 | rgb(24,36,59) on rgb(255,255,255) |
+| Settings export disabled while held | 6.68 | rgb(70,85,107) on rgb(237,241,246) |
+| Settings export hovered while held | 6.68 | unchanged (no hover paint) |
+| Settings export restored | 15.51 | rgb(24,36,59) on rgb(255,255,255) |
+| Rules drawer Save while authority read held | 6.68 | rgb(70,85,107) on rgb(237,241,246) |
+| Rules drawer Save after authority read | 4.86 | white on rgb(18,104,245) |
+| Files disabled batch action / pagination / busy submit | 6.68 | unavailable palette, `aria-busy` true |
 
-The held command retains `disabled`, `aria-busy`, its real submitting label and one submission after
-another attempted activation. The original Entry/validation/connected/disconnect/privacy and
-read-failure checks remain. Entry has neither a placeholder nor an asynchronous submitting state;
-no nonexistent Entry state was introduced to test it. Transport 503 is injected only on the actual
-Task Center read route; no successful business state is invented.
+Regression proof on the actual pre-repair production CSS (`HEAD:web/src/shared/ui/styles.css`, same
+JS and same harness): the new case **fails** — `disabled export backdrop rgb(255,255,255) must differ
+from the enabled rgb(255,255,255)`. With only the secondary selector applied, the same case **fails**
+instead at the Rules drawer assertion (`Expected: not "rgb(18,104,245)"`), which is why both variants
+are covered. With the committed rule both pass. These two failed runs and their traces are retained.
 
-Before rebuilding the repair, the new distinction assertion ran against the actual pre-repair
-production CSS (`f820a8db` product source) and **failed**: ResourceLibrary Delete and Cancel both
-painted `rgb(255,255,255)`. After rebuilding, both kinds pass. The earlier original-dark-palette
-reproduction in `f820a8db:TASK.md` was not rerun this round; B still owns its independent check.
+Screenshots (`settings-export-enabled/disabled`, `rules-drawer-save-pending/ready`, plus the existing
+Entry/Files/dialog matrix at 1536×1024 and 390×844) were visually inspected: the held export is faded
+grey-blue and clearly unavailable, the pending Rules 保存 is grey while 取消 stays white, and the
+released state returns to blue.
 
-Desktop **1536×1024** and narrow **390×844** screenshots include Entry and Files/dialog contexts.
-Visually inspected final Entry desktop/narrow, Files narrow create dialog, ResourceLibrary text
-editor and MediaLibrary Delete: labels are readable, and the red Delete differs from Cancel.
-The focused spec also captures all visited business surfaces and both kinds' five dialog contexts.
+Local evidence (not tracked, not published): `.git/validation-evidence/task-46.1-fix2/`.
+`final-readability-artifacts-readings/` holds PNGs plus per-test JSON readings;
+`disabled-before-artifacts/` retains the failed pre-repair runs and traces; `readability.log`,
+`before-fix.log`, `deep-link.log`, `operations-inventory.log` are raw outputs; `build-digests.txt`,
+`source-digests.txt` and `timing.json` bind identities and timings.
 
-Local durable evidence (not tracked or remotely published):
-`.git/validation-evidence/task-46.1-followup/`. `final-readability-artifacts/` contains PNGs and
-per-test JSON readings; `danger-before-artifacts/` retains the failed reproduction/trace.
-`runs.jsonl` records exact commands, exits and wall times; matching `*.log` retain raw output.
-`source-artifact-sha256.json` binds source/spec/harness/config/lockfile and built asset identities;
-`candidate-sha.txt` records the source candidate. These are local handoff files, not CI links.
-
-Built artifact: CSS `index-Bg1MEjGx.css`, SHA-256
-`63afadfc239fa84e8af9eb4c81bd43136730d6ac809434c642d01e090e50da57`;
-JS `index-CVVvyMuv.js`, SHA-256
-`6e8ae999f577bb23f7e61df4568f359806211d3fa5e68e5c41ce888d10d3d376`.
+Built artifact: CSS `index-CZMLnjln.css`, SHA-256
+`3bd012ead0e9763cc3d7322493b2a1d512d1496678c17dbd7f1a985ec31bfa63`;
+JS `index-Co8SVpwu.js`, SHA-256
+`6e8ae999f577bb23f7e61df4568f359806211d3fa5e68e5c41ce888d10d3d376` (unchanged — no JS changed).
 
 ### Actual checks this round
 
-Commands below run from `web/`, except governance/whitespace from repository root. Final browser,
-static/build and 21 unit results use the source candidate's executable inputs. A report-only
-successor does not change those inputs.
+From `web/` unless stated. Every result below is from the executable inputs of this checkpoint.
 
 | Command | Actual result |
 |---|---|
-| `python3 scripts/check_governance.py`; `git diff --check` | clean |
+| `python3 scripts/check_governance.py`; `git diff --check` | PASS / clean |
+| `.venv/bin/ruff format --check` + `ruff check` on the harness | clean |
 | `npx prettier --check src/shared/ui/styles.css tests/e2e/action-readability.python.spec.ts playwright.config.ts` | clean |
 | `npm run typecheck` | clean |
 | `npx eslint tests/e2e/action-readability.python.spec.ts` | clean |
-| `npm run test -- run src/features/entry/EntryPage.test.tsx src/shared/auth/AuthBoundary.test.tsx src/shared/ui/AppShell.test.tsx` | 3 files, 21 passed |
+| `npm run test -- run` (Entry/AuthBoundary/AppShell/ConfigurationPage) | 4 files, 42 passed |
+| `npm run test -- run` (RulesWorkspacePage/RulesObjectForm) | 1 file, 49 passed |
+| `npm run test -- run` (files-toolbar/rules-form style guards) | 2 files / 9 tests, plus 2 files pass |
 | `npm run build` | built; existing >500 kB chunk warning |
-| `npm run test:e2e -- --config=playwright.python.config.ts tests/e2e/action-readability.python.spec.ts` | 6 passed, 22.5 s Playwright total |
-| `npm run test:e2e -- tests/e2e/deep-link.spec.ts` | 14 passed on final build, 3.9 s Playwright total |
+| `npm run test:e2e -- --config=playwright.python.config.ts tests/e2e/action-readability.python.spec.ts` | 7 passed, 24.4 s |
+| same spec, new case only, on pre-repair CSS | **failed** (export backdrop identical) |
+| same spec, new case only, secondary-only repair | **failed** (Rules primary still enabled-looking) |
+| `npm run test:e2e -- --config=playwright.python.config.ts tests/e2e/operations-inventory.python.spec.ts` | 41 passed, 1 m 28 s (final run) |
+| `npm run test:e2e -- --config=playwright.python.config.ts tests/e2e/automation-settings.python.spec.ts` | 12 passed, 11.5 s |
+| `npm run test:e2e -- tests/e2e/deep-link.spec.ts` | 14 passed, 4.1 s |
+| `npm run test:e2e -- tests/e2e/rules-readiness.spec.ts` | 13 passed, 6.1 s |
+| `.venv/bin/python -m unittest tests.test_task_center_recovery_lineage` | 5 tests OK (harness still builds its fixtures) |
 
-Failures retained: first lint caught an empty fixture destructuring pattern in the new report hook;
-it was corrected, and lint/type/format checks subsequently passed. The deliberate pre-repair
-Delete-distinction reproduction failed as described above. No failures, skips or timeouts were
-suppressed. No full Python/Web/E2E/packaging matrix was run this round; B owns acceptance.
+One process-management hiccup is retained: a leftover local harness on 4173 made two fake-server runs
+report `port already used`; it was stopped and both runs then passed. No assertion was removed,
+skipped, retried or loosened. No full Python suite, all-E2E run, packaging or Docker gate was run this
+round; B owns those.
 
-Timed verification commands total **85.890 s**, including failed checks, static checks, builds and
-browser/unit reruns. The recorded elapsed lower bound was already **493.8 s** at evidence review
-(started after initial document reading), giving an upper bound of **17.4%** for timed verification
-versus this round. Raw monotonic command times and the wall-clock lower-bound marker are retained.
-No deliberate waiting was added to increase the denominator.
+Timed verification totals **369.5 s (6.2 min)** including the deliberate failed reproductions. The
+recorded elapsed lower bound is **2030 s**, making timed verification **18.2%** of this round, under
+the 30% limit. No deliberate waiting inflated the denominator.
 
 ### Workspace, remaining risk and B handoff
 
-Started on `main` at `f820a8db2f68c38348caf8579eb1965964606f98`; governance passed. Only the two
-source/test files above and this report changed. The pre-existing `docs/pics/操作与任务.png` deletion,
-all untracked images/logs/OS files/test-output directories and private runtime state remain unstaged.
-No Slice/Roadmap/Progress boundary or B decision changed. Acceptance checkboxes remain B-owned.
+Started on `main` at `1343e1da070c579ea1ab9e7e0dbfb1d9394f2813`; governance passed. Only the three
+files above plus this report changed. The pre-existing `docs/pics/操作与任务.png` deletion, all
+untracked images/logs/OS files/test-output directories and private runtime state remain untouched and
+unstaged. No Slice/Roadmap/Progress boundary, B decision or A-owned field changed; acceptance
+checkboxes remain B-owned.
 
-B should independently review Base..candidate, inspect retained desktop/narrow screenshots and
-readings, rerun the assigned browser/static/unit acceptance, and reproduce the original palette
-failure. Automation detail/Enabled defects remain RO-5, not repaired or hidden here. The pre-existing
-low-contrast non-action warning badge remains out of scope. The solid-background color measurement
-does not model glyph antialiasing, gradients or arbitrary sibling overlays; no such effect is claimed
-as validated. Arbitrary data-dependent/provider states and Slice-final T4 remain outstanding.
+Remaining risk: the contrast measurement models solid painted backgrounds, not glyph antialiasing,
+gradients or arbitrary sibling overlays. The new case covers two variant classes on three real
+consumers, not every data-dependent combination; the previously noted low-contrast non-action warning
+badge stays out of scope. Automation detail/Enabled defects remain RO-5. Slice-final T4 remains
+outstanding.
+
+B should review Base..this candidate, inspect the retained desktop/narrow screenshots and readings,
+rerun the assigned browser/static/unit acceptance, and re-check its own B46.1-01 journey plus the
+Rules drawer released/pending pair.
 
 ## B Review Result
 

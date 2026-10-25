@@ -297,7 +297,14 @@ def build_api(
         principals=(PRINCIPAL, ADMIN_PRINCIPAL),
         **managed_options,
     )
-    api._package_exchange = PackageExchangeService(None, repository)
+    if managed is None:
+        # Without a managed fixture the API composes no configuration service,
+        # so only the repository-backed result export can be served. With the
+        # temporary Active fixture the API's own package exchange already owns
+        # both the real configuration revision store and this repository; it
+        # must not be replaced, or the real configuration package export would
+        # report a service that the fixture actually provides.
+        api._package_exchange = PackageExchangeService(None, repository)
     return api
 
 

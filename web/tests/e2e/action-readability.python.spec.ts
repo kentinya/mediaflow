@@ -807,4 +807,175 @@ test.describe("readable V2 actions", () => {
     ).toBeVisible();
     await expectSurfaceReadable(page, "Task Center after read failure");
   });
+
+  test("a disabled shared secondary action stays visibly unavailable through the real Settings export", async ({
+    page,
+  }) => {
+    await page.setViewportSize({ width: 1536, height: 1024 });
+    await page.goto("/ui-v2/configuration");
+    await connect(page);
+    await expect(page.locator("#main-content")).toBeVisible();
+    await page.waitForTimeout(400);
+
+    // The shared secondary palette has the same specificity as the shared
+    // disabled palette, so a plain `.mf-button-secondary` consumer could keep
+    // the enabled white surface with `cursor: default` as its only unavailable
+    // cue. Measure that real cascade on two different consumers.
+    //
+    // 1. A statically disabled shared secondary action: the Automation
+    //    definition inventory's first-page boundary.
+    await openSurface(page, "/operations/automation");
+    const inventoryBack = page
+      .getByRole("button", { name: "上一页", exact: true })
+      .first();
+    await expect(inventoryBack).toBeDisabled();
+    const inventoryDisabled = (await inventoryBack.evaluate(
+      new Function(`return (${MEASURE})(arguments[0]);`) as never,
+    )) as Measured;
+    expectReadable("Automation inventory disabled 上一页", inventoryDisabled);
+    expect(inventoryDisabled.disabled).toBe(true);
+    expect(inventoryDisabled.opacity).toBeGreaterThanOrEqual(0.5);
+
+    // 2. A shared secondary action disabled by a real in-flight command: the
+    //    Settings configuration-package export. Open its panel the way an
+    //    operator does, hold the real GET, then continue it.
+    await openSurface(page, "/configuration");
+    await page
+      .getByRole("button", { name: "查看 Active JSON", exact: true })
+      .click();
+    const exportAction = page.getByRole("button", {
+      name: "导出脱敏配置包",
+      exact: true,
+    });
+    await expect(exportAction).toBeEnabled();
+    // Read the enabled palette in the same unhovered, unfocused condition the
+    // disabled reading is compared against.
+    await page.mouse.move(0, 0);
+    await exportAction.evaluate((element) => (element as HTMLElement).blur());
+    const enabledExport = (await exportAction.evaluate(
+      new Function(`return (${MEASURE})(arguments[0]);`) as never,
+    )) as Measured;
+    expectReadable("Settings export enabled", enabledExport);
+    expect(enabledExport.disabled).toBe(false);
+    await exportAction.scrollIntoViewIfNeeded();
+    await page.screenshot({ path: `${OUTPUT}/settings-export-enabled.png` });
+
+    let exportRequests = 0;
+    const hold: { release: (() => void) | undefined } = { release: undefined };
+    const held = new Promise<void>((resolve) => {
+      hold.release = resolve;
+    });
+    const exportPattern =
+      "**/api/v1/configuration/packages/export/configuration*";
+    await page.route(exportPattern, async (route) => {
+      exportRequests += 1;
+      await held;
+      await route.continue();
+    });
+    await exportAction.click();
+    await expect
+      .poll(() => exportRequests, { message: "the held export was requested" })
+      .toBe(1);
+    await expect(exportAction).toBeDisabled();
+    const disabledExport = (await exportAction.evaluate(
+      new Function(`return (${MEASURE})(arguments[0]);`) as never,
+    )) as Measured;
+    expectReadable("Settings export disabled while held", disabledExport);
+    expect(disabledExport.disabled).toBe(true);
+    expect(disabledExport.text).toBe(enabledExport.text);
+    // Disabled must be visible without relying on the pointer cursor alone.
+    expect(
+      disabledExport.backdrop,
+      `disabled export backdrop ${disabledExport.backdrop} must differ from the enabled ${enabledExport.backdrop}`,
+    ).not.toBe(enabledExport.backdrop);
+    expect(disabledExport.color).not.toBe(enabledExport.color);
+    await exportAction.scrollIntoViewIfNeeded();
+    // Hovering an unavailable control must not paint a hover state either.
+    await exportAction.hover();
+    const hoveredDisabled = (await exportAction.evaluate(
+      new Function(`return (${MEASURE})(arguments[0]);`) as never,
+    )) as Measured;
+    expectReadable("Settings export hovered while held", hoveredDisabled);
+    expect(hoveredDisabled.backdrop).toBe(disabledExport.backdrop);
+    expect(hoveredDisabled.color).toBe(disabledExport.color);
+    await page.mouse.move(0, 0);
+    await page.screenshot({ path: `${OUTPUT}/settings-export-disabled.png` });
+
+    // No second command path while the export is in flight.
+    await exportAction.dispatchEvent("click");
+    await page.keyboard.press("Enter");
+    expect(exportRequests).toBe(1);
+
+    // Continuing the real response restores availability and renders the
+    // authoritative package; nothing was replayed.
+    hold.release?.();
+    await expect(exportAction).toBeEnabled();
+    await page.unroute(exportPattern);
+    expect(exportRequests).toBe(1);
+    const restoredExport = (await exportAction.evaluate(
+      new Function(`return (${MEASURE})(arguments[0]);`) as never,
+    )) as Measured;
+    expectReadable("Settings export restored", restoredExport);
+    expect(restoredExport.disabled).toBe(false);
+    await expect(page.getByLabel("配置 JSON")).toContainText(
+      "mediaflow.configuration.v1",
+    );
+    await expectSurfaceReadable(page, "Settings after export readback");
+
+    // 3. A primary variant disabled by an unfinished real read: the Rules
+    //    drawer's Save stays unavailable until its own form authority arrives.
+    //    It must not keep the enabled blue fill while it cannot be used.
+    let authorityReads = 0;
+    const authorityHold: { release: (() => void) | undefined } = {
+      release: undefined,
+    };
+    const authorityHeld = new Promise<void>((resolve) => {
+      authorityHold.release = resolve;
+    });
+    const authorityPattern = "**/api/v1/operations/rules/form-authority";
+    await openSurface(page, "/rules?section=classificationPolicies");
+    await page.route(authorityPattern, async (route) => {
+      authorityReads += 1;
+      await authorityHeld;
+      await route.continue();
+    });
+    await page
+      .getByRole("button", { name: "添加分类规则", exact: true })
+      .first()
+      .click();
+    const drawer = page.getByRole("dialog", { name: "添加分类规则" });
+    await expect(drawer).toBeVisible();
+    const drawerSave = drawer
+      .locator(".mf-rules-drawer-actions .mf-button-primary")
+      .first();
+    await expect(drawerSave).toBeDisabled();
+    await expect
+      .poll(() => authorityReads, { message: "the authority read was issued" })
+      .toBe(1);
+    const pendingSave = (await drawerSave.evaluate(
+      new Function(`return (${MEASURE})(arguments[0]);`) as never,
+    )) as Measured;
+    expectReadable(
+      "Rules drawer Save while its authority read is held",
+      pendingSave,
+    );
+    expect(pendingSave.disabled).toBe(true);
+    expect(pendingSave.text).toBe("保存");
+    // The enabled primary fill is the accent blue; the unavailable one is not.
+    expect(pendingSave.backdrop).not.toBe("rgb(18,104,245)");
+    await page.screenshot({ path: `${OUTPUT}/rules-drawer-save-pending.png` });
+
+    // The real authority arrives: the same control becomes usable again.
+    authorityHold.release?.();
+    await expect(drawerSave).toBeEnabled();
+    await page.unroute(authorityPattern);
+    expect(authorityReads).toBe(1);
+    const readySave = (await drawerSave.evaluate(
+      new Function(`return (${MEASURE})(arguments[0]);`) as never,
+    )) as Measured;
+    expectReadable("Rules drawer Save after its authority read", readySave);
+    expect(readySave.disabled).toBe(false);
+    expect(readySave.backdrop).not.toBe(pendingSave.backdrop);
+    await page.screenshot({ path: `${OUTPUT}/rules-drawer-save-ready.png` });
+  });
 });
