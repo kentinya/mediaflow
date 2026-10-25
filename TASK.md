@@ -715,3 +715,155 @@ This round's screenshots/traces are held locally under the ignored
 `.git/validation-evidence/task46.2-fixes-round2/`. No push, no publication.
 
 Full acceptance, full regression and any PASS/FIX decision remain B-owned.
+
+## Developer Completion Report (B46.2-01 / B46.2-04 repair round — 2026-10-25)
+
+```text
+Candidate: 884c88f75d17c3d2e9960f055280a241a6bc8158
+Range:     8049549b0955390a5461bda17f53cd9109bccfe3..884c88f7
+Task Base: 6072f50d5b2e5268c35d6729290512d1ae986104
+Status:    READY FOR B REVIEW — no self-PASS, no push, no publication
+```
+
+Same Task46.2, same Goal/Scope/T4/acceptance. This round fixes only the two
+P1 blockers of the `8049549b` review (B46.2-01 page-dependent aggregate,
+B46.2-04 unreachable detail read-error recovery). No next Task, no Slice
+closure, no RO-2/RO-4/RO-5 work.
+
+### B46.2-01 — operation effects are independent of the selected item page
+
+- `EffectCertaintyFold` in `mediaflow/application/direct_file_effects.py` now
+  owns the one precedence rule (uncertain → verified_complete → partial → none →
+  unknown) as a *streaming* fold, so an operation can be folded over any number
+  of items in bounded batches. `aggregate_effect_certainty` is the list form of
+  the same fold; there is no second implementation that can drift.
+- New read `SQLiteTaskRepository.library_file_operation_item_signals` pages over
+  the same `(created_at, item_id)` ordering as the item window in batches of 100,
+  each in its own short read transaction, returning every item with its newest
+  Result. It resolves no configuration, opens no Storage, calls no Provider and
+  writes nothing — so an operation of any size is folded without one unbounded
+  query or an unbounded in-memory document.
+- `LibraryFileOperationHistoryService.detail` now delivers the bounded item page
+  *and* folds `durableState` / `effectCertainty` / `nextAction` over **all**
+  admitted items. `_durable_state` and `_operation_next_action` take the fold, and
+  `fold.any_failed` replaces the page-local failed scan.
+- A repository without the batch reader is folded page-by-page through the same
+  item window (`_folded_item_pages`), i.e. still the complete population — never
+  the delivered page. A new test proves both paths publish identical facts.
+- `LibraryFileOperationsDialog` reads the operation-level facts from the first
+  page (they are now page-independent by construction) instead of
+  `lastDetail ?? detail`, so loading more items cannot change the asserted
+  effect. `lastDetail` remains only the page that knows the continuation.
+- Counts were already whole-operation; they stay unchanged (119/2/121 in B's
+  reproduction) and now agree with the certainty instead of contradicting it.
+
+### B46.2-04 — a failed first detail read reaches error and recovery
+
+- `OperationDetail` in `LibraryFileOperationsDialog.tsx` now distinguishes
+  *pending* from *completed-but-failed* reads: the failure branch is evaluated
+  before the loading branch, so the existing bounded
+  `readFailureMessage(...)` explanation and **重新读取该操作** are reachable. The
+  button is disabled while a re-read is in flight and labels itself
+  正在重新读取该操作….
+- A query that *threw* instead of answering with a bounded failure document (the
+  exact shape of an aborted detail GET) is treated as `transport_unavailable`
+  when no page has arrived, so a real transport failure is never rendered as an
+  endless loading hint.
+- Already-loaded evidence is never discarded: pages exist ⇒ `readFailureCode` is
+  null, and a failed *continuation* is disclosed separately with
+  **重新读取后续逐项结果** while the loaded item results stay on screen.
+- Selection, library identity and durable work are untouched by any of this; no
+  new retry/execute engine, no replay, no fabricated success.
+
+### Actual commands and results (this round, from the stated cwd)
+
+| Area | Command | Result |
+|---|---|---|
+| Governance | `python3 scripts/check_governance.py` | PASS |
+| Whitespace | `git diff --check` | clean |
+| Python static | `.venv/bin/ruff format --check mediaflow tests`; `.venv/bin/ruff check --no-cache mediaflow tests` | 329 formatted, 0 findings |
+| New/affected Python | `.venv/bin/python -m unittest tests.test_library_file_operation_history` | **21 tests OK** (was 20) |
+| Affected Python | `... tests.test_direct_file_operations tests.test_media_library_direct_commands` | 88 OK |
+| Affected Python | `... tests.test_direct_file_transfers` (whole module) | 100 OK |
+| Affected Python | `... tests.test_media_library_transfers` (whole module) | 27 OK |
+| Shared read | `... tests.test_operations_run_inventory tests.test_operations_run_detail` | 76 OK |
+| Web focused | `npm run test -- run src/features/library src/entities/library src/shared/api/{library-api,media-library-commands-api,operations-api}.test.ts src/routes/router.test.tsx` (cwd `web/`) | 18 files / 284 tests passed |
+| Web static | `npm run typecheck`; `npm run lint`; `npm run format:check`; `npm run build` | all clean; artifact `index-BYlwlmy9.js` / `index-BFNi4meT.css` |
+| Native real Python | `npm run test:e2e -- --config=playwright.direct-files.python.config.ts tests/e2e/direct-files.python.spec.ts` | **18 passed, 2 failed** (see risk below); the 18 include both new journeys |
+| Native focused | `npx playwright test ... -g 'recovers from a failed first detail read\|reaches every item of a large directory Delete\|mixed batch'` | **6 passed** (17.9s) |
+
+### Native evidence produced this round
+
+Real page controls, real Worker, same temporary SQLite file, both kinds:
+
+- **121-item directory Delete aggregate (extended).** After the real refused
+  child settles, the dialog's 已记录影响 is asserted *not* to be 已核实完成 /
+  无变更 on the first page, captured, then re-asserted byte-identical after
+  加载更多 → 121/121. Filesystem still proves exactly one surviving file; restart
+  + reload reproduces the same population. Artifacts
+  `resource|media-bulk-directory-evidence{,-desktop}.png`.
+- **Failed first detail read (new, both kinds).** Create a folder through the
+  real dialog, open the header entry, then abort only `**/files/operations/*` at
+  the browser transport boundary. The panel shows the bounded alert
+  (无法连接服务…) with 重新读取该操作, never 正在读取…; restoring the transport and
+  clicking it reads the same selected operation and shows the real
+  `成功 1 / 失败 0`. A request listener asserts **zero non-GET requests** across
+  the whole journey. Artifacts `resource|media-detail-read-failure.png`
+  (inspected: alert + re-read button visible, no loading hint).
+- The existing mixed-batch, paused-Move, disabled-origin and status-reopen
+  journeys pass unchanged; the mixed-batch journey additionally asserts the
+  aggregate is not 已核实完成.
+
+### Added/extended coverage (success / invalid / conflict / failure / edge)
+
+Python (20 → 21): the 121-item Delete now asserts the same whole-operation
+certainty/state/next action on page 1, page 2, page 3 and with `limit=100`,
+that a page of pure successes never reads 已核实完成, that a fresh repository over
+the same database reproduces it, and that the whole fold plus reopen left Task,
+item and Result rows byte-identical; plus a new case proving the page-by-page
+fold (no batch reader) equals the batched fold on the same real mixed Delete.
+
+Web (12 in this file): aggregate stays 效果不确定 across 加载更多; first-read
+transport failure renders the alert + 重新读取该操作 with zero POSTs; a failed
+continuation keeps the loaded `shows/a` row and explains the failure.
+
+### Known risks and remaining scope
+
+- **Pre-existing native flake (not this Task).** In the full-spec run two
+  `Shift+F10` row-menu cases fail intermittently — `MediaLibrary Files renames…`
+  and (this run) `ResourceLibrary Files confirms once…` — with
+  `element was detached from the DOM` / `element is not stable` at the
+  `menuitem` click. Reproduced at the unmodified HEAD `8fa3fd0c` in an isolated
+  worktree with its own build and harness (2 failed there too:
+  `MediaLibrary Files confirms once…`, `MediaLibrary Files renames…`), and each
+  also passes when run in isolation. It is a test-helper timing issue in
+  `RowActionMenu`'s portal measurement, outside this Task's surface; it remains
+  visible rather than retried or relaxed. Logs/traces are kept under the ignored
+  `.git/validation-evidence/task46.2-fixes-round3/` (including
+  `base-8fa3fd0c-test-results/`).
+- The whole-operation fold is read on every detail request (one bounded batch
+  query per 100 items). For the domain-capped selection
+  (`MAX_TRANSFER_PATHS`/`MAX_DELETE_PATHS` = 50 top-level, one item per child)
+  this is a handful of indexed reads; no cache or paging of the aggregate is
+  introduced, because a stale aggregate would be the very defect being fixed.
+- Per-item evidence remains paged at 100 per read with explicit 加载更多
+  (unchanged from the previous accepted round).
+- Still not delivered (outstanding Slice outcomes, unchanged): RO-2 manual
+  admission before rule resolution, RO-4 organizing-only Task Center
+  population/views, RO-5 Automation semantics.
+- No schema change: `task_items`, `task_results` and the progress payload already
+  carried every fact used.
+
+### Workspace
+
+Branch `main`, candidate `884c88f7`. Pre-existing `docs/pics/操作与任务.png`
+deletion, untracked reference images/logs/OS files and `web/test-results*` are
+preserved and not committed. The temporary base-check worktree used to prove the
+flake was removed. Screenshots/traces are held locally under the ignored
+`.git/validation-evidence/task46.2-fixes-round3/`. No push, no publication.
+
+**Testing wall time:** the affected static/Python/Web/native runs above total
+roughly 8 minutes of subprocess time inside a round of about 40 minutes elapsed,
+i.e. below the 30% ceiling. Full T4 regression remains B-owned.
+
+Full acceptance, full regression and any PASS/FIX decision remain B-owned.
