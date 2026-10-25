@@ -588,146 +588,161 @@ RO-4/RO-5 unchanged and still TARGET.
 ## B Review Result
 
 ```text
-Reviewed Task range: 83144be20c6c7bc787a0fafad7fabb3e177bde6a..1dc70c43180aa50b285798ace4ef5e92529b9500
-Implementation: ee21ea29 (with 2d4649d9); report-only successor 1dc70c43
+Reviewed Task range: 83144be20c6c7bc787a0fafad7fabb3e177bde6a..2998b7e3bbc4b7afb46060f5755c261cdcf970b1
+Executable candidate: 1e9eebc5; 2998b7e3 adds TASK.md and Python comments only
 Decision: FIX REQUIRED — 2026-10-26
-Open Task blockers: B46.3-01/02/04 (P1)
+Open Task blockers: B46.3-01/02/04 (P1); narrower remaining causes below
 B46.3-03: prior folder-filtering correction retained
 Slice Required Outcomes / Surfaces all satisfied: NO
 Next: SAME TASK FIX LOOP; complete Task46.3, no new Task or Slice closure
 ```
 
-B reviewed the full 35-file Task Base..Head manifest and changes, retaining previous verified facts
-and checking the new admission, source ownership, schema, API, Web and test integration. The current
-report-only successor changes TASK.md; B tests below use the executable candidate identified above.
-The original Base/Goal/Scope/High/T4 and acceptance criteria remain unchanged. Earlier partial reports
-and B decisions remain in Git (`8577cd3d:TASK.md`); this file retains the current handoff and decision.
+B reviewed the full 41-file Base..Head manifest/change set, retaining prior verified unchanged facts
+and independently checking the new Task/problem/execution, source/transaction/schema and Web paging
+changes. `1e9eebc5..2998b7e3` also changes comments in sqlite_runtime.py; inspection confirms no
+executable successor difference. Original Task Base/Goal/Scope/High/T4/acceptance remain unchanged.
+The previous review and probes remain at `cd6db051:TASK.md` and its ignored evidence directory.
 
 ### Verified progress
 
-Early admission now creates a real persisted Task and discovery together. The focused admission
-suite passes 12 tests, including the original repeated-request exclusion sequence, library-local
-backend paging and an independently eligible sibling's admission response. Files-only creation and
-removal of the center discovery/manual-action reads are implemented. Per-request outcome persistence
-and backend exact readback are present. These are useful changes, but the complete required journey
-is still not delivered by a Task row and response assertions alone.
+The previous simple cases are corrected on this candidate:
+
+- A no-candidate Metadata outcome now creates one TaskItem and Metadata total 1, with zero effects.
+- A ready file's explicitly confirmed execution completes the same originally admitted Task with
+  one item; the old empty-running Task symptom is fixed in that successful single-file journey.
+- Sequential `[One]` then `[One, Three]` really persists and discovers both files.
+- The original real-Python remaining-scope test `a frozen mixed recovery preparation never
+  republishes a decided sibling` independently passes after building the current production assets.
+- Files now consumes backend cursors for its organizing history rather than only toggling the
+  first loaded page. The new source-path columns and explicit library bindings are present.
+
+These successes narrow the open blockers; they do not establish all four native recovery journeys,
+all interleavings or full T4 acceptance. The three remaining findings below are the same original
+no-forced-type, truthful admission and atomic concrete-source requirements, not new scope.
 
 ### Required corrections
 
-1. **B46.3-01 / P1 — connect the admitted Task to actual items, recovery and outcomes.**
-   Through the existing Files command with `autoPrepare: true`, followed by the real discovery
-   Worker and a synthetic Provider returning no candidates, the result is:
-   `Task=running`, `TaskItems=0`, discovery `prepared/completed`, blocked Preview; the authenticated
-   Metadata view returns 200 with `total=0` while Running has one run. The unready file remains
-   preparation rather than a native task problem. In a separate successful journey, explicit plan
-   confirmation and the real execution Worker complete a different execution Task, but the original
-   admitted Task remains `running` with zero items. Both are reproducible user journeys, not timing
-   or optional display issues.
-   - Integrate the shared processing pipeline and durable per-item checkpoints/problems with the
-     early admitted work. Real Recognition/Metadata/Classification/Conflict problems must populate
-     native task forms/lists/counts and finish through legal analysis and exact confirmation. Do not
-     substitute a default type or target, or treat technical errors as business decisions.
-   - Reuse actual durable admission/intent/plan/execution/continuation links so one operator work
-     has truthful progress, recovery, summary access and final result. Existing child execution
-     Tasks may retain their history; a verified completed execution must settle/project the original
-     work correctly. Updating a discovery-stage aggregate alone is insufficient.
-   - Keep normal initial confirmation in Running/All with an exact summary link after restart,
-     outside Attention without four-type lineage. Keep known prepared/unknown work reachable from
-     Files, including backend pages beyond the first 25: the new `OrganizeWorkPanel` currently
-     fetches one page and only toggles 3/all loaded items, without consuming `nextBefore`.
-   - Repair the supported remaining-scope summary journey. B independently reproduces the existing
-     real-Python test `a frozen mixed recovery preparation never republishes a decided sibling`:
-     `firstPrepared` remains false at line 2675. Trace the actual admission/freeze/analysis/source
-     ownership boundary and preserve its supported pin/decision/non-replay behavior. Do not simply
-     raise the Worker loop limit, timeout or retry count. Reconcile other reported E2E failures by
-     actual links/populations; change obsolete totals only when the authoritative records prove
-     the new expectation. Do not assume all 18 reported failures share one cause.
-2. **B46.3-02 / P1 — a newly accepted sibling must really enter work.**
-   The earlier missing `.part` refusal is corrected in the tested fresh/repeated-request case.
-   However, submitting `[One]`, then `[One, Three]` before the first work runs returns 202 twice
-   with the same discovery identity. The second response claims `Three` is newly admitted, but the
-   stored scope remains `[One]`; after the real Worker walk the manifest still contains only `One`
-   and there is no second discovery for `Three`. The existing new sibling test asserts the response
-   but never advances the Worker to catch this loss.
-   `_reconcile_library_work` / `_accept_onto_existing` persist an outcome saying the free sibling
-   was admitted without adding it to executable/discoverable scope. Either independently admit
-   genuinely free siblings with their own durable work while linking existing sources, or legally
-   and atomically extend an unfrozen work's actual scope with full completeness/budget validation.
-   Do not silently widen frozen work or merely change response text. Preserve each request's exact
-   immutable result and real work links. Extend the existing sibling test through Worker discovery,
-   summary/explicit selected execution, actual result, exact readback and reopen; prove the new
-   file completes and the already-owned file never replays.
-3. **B46.3-04 / P1 — use actual confined Storage source identity and atomic ownership.**
-   A single temporary file `source:Movies/One.2001.mkv` is exposed through two valid ResourceLibrary
-   bindings on the same Storage: `nested` rooted at `Movies` and `whole` rooted at the Storage root.
-   Sequential normal Files submissions of `nested/One.2001.mkv` and
-   `whole/Movies/One.2001.mkv` both return 202 with distinct Tasks and no existing/refused item.
-   They are the same physical source. `find_owned_source_work` currently compares library-relative
-   path strings, so overlapping root bindings do not agree on identity.
-   - Resolve the immutable library/root binding to the exact confined Storage-relative source path
-     before ownership comparison; keep library/principal/pin context separately. Distinct actual
-     roots with equal relative names must not falsely collide either.
-   - Replace check-then-publish ownership with an atomic check/reservation coupled to source-item
-     admission across separate SQLite connections. Current calls read ownership before later scope/
-     manifest writes; admission's `BEGIN IMMEDIATE` only checks an actor/scope admission signature.
-     Preserve legitimate continuation ownership and current execution fences, without a transaction
-     spanning Storage I/O. A recent-50 discovery scan is not a complete ownership index.
-   - Cover overlapping bindings and concurrent direct/folder/Automation/continuation paths using
-     supported admissions and real source identities. Include queued, paused and unresolved human
-     work, settlement, legacy supported work and completed/uncertain non-replay. Do not fix this by
-     blocking unrelated libraries or by issuing broader execution authority.
+1. **B46.3-01 / P1 — rule misses must remain Recognition problems, not forced default types.**
+   In a real validated/published configuration with `recognitionRules: []` and enabled compatible
+   policies, submit `Movies/One.2001.mkv` through the existing Files API, then run the real discovery
+   Worker with the fixture's local synthetic Provider. Without an operator choosing any type,
+   the intent assigns type A, the plan is `previewed`, Recognition total is 0 and the Task has no
+   problem item. This violates RO-2/AC-16's explicit prohibition on default types making work ready.
+   `_default_choice` still selects `snapshot.recognition_types[0]`, and `_run_item` passes that
+   value as `forced_recognition_type_id`, so the new Recognition publication branch is bypassed.
+   - Separate an actual explicit human type decision from an automatically initialized editor
+     value. For new Files work, run RecognitionRule against the pinned source before selecting its
+     type policy; persist a genuine unresolved/ambiguous Recognition item when no type is known.
+   - Only force a type when a legal source-bound explicit decision already authorizes that choice.
+     Preserve existing explicit manual edits and old prepared work without treating their defaults
+     as a new Files user's choice. Do not repair this by disabling valid empty-rule publication,
+     rejecting the Files request before creating its Task, or inventing a catch-all rule.
+   - Add a real Files-admission journey for rule miss/ambiguity → native Recognition selection →
+     analysis → exact selected confirmation → actual result. Also exercise Classification and
+     Conflict through their required native paths and keep C→A identity, immutable pins and
+     independent completed/uncertain siblings. Metadata list membership alone is not proof that
+     all four business journeys are complete.
+2. **B46.3-02 / P1 — do not acknowledge a scope extension that lost its write.**
+   The simple sequential accepted-sibling case now works. However, use the same public sequence
+   `[One]` then `[One, Three]` and let the real Worker finish/freeze One between the second
+   request's open-work lookup and `extend_media_discovery_scope`. The second request returns 202
+   saying Three is admitted, but the frozen durable scope is still only One and no second work
+   holds Three. `_extend_scope` catches `DiscoveryConflict` and returns `(current, ())`, which
+   falsely tells `_accept_onto_existing` that every proposed admission succeeded. Runtime-resolution
+   failure and an unavailable extender similarly return apparent success.
+   - Preserve an explicit accepted/refused/conflicted result from the actual transaction; derive
+     the response/outcome row from committed scope, never from the proposed list after a failed
+     write. No successful admission may refer to a file no durable work actually holds.
+   - On a legal version change, re-read and perform only a bounded valid re-evaluation, or return
+     the accurate outcome. If old work froze/settled, independently admit the still-free sibling
+     through the existing boundary or report its real non-admission and explicit next action;
+     never widen the frozen manifest or call a technical failure a duplicate source.
+   - Extend the existing accepted-sibling test by scheduling a real Worker at the check/write
+     boundary, and cover simultaneous extensions, exact request readback/reopen, bounds and stale
+     pins. Assert the final scope and actual result, not just a 202 or JSON selection.
+3. **B46.3-04 / P1 — complete exact path identity and atomic initial ownership.**
+   The simple `nested/One` versus `whole/Movies/One` check is improved, but two supported cases
+   still admit the same physical source to distinct Tasks:
+   - Root `Movies`, relative selection `Movies/One.2001.mkv`, actual file
+     `source:Movies/Movies/One.2001.mkv`: `canonical_source_path` guesses the relative value is
+     already Storage-relative because it starts with `Movies/`, and stores the wrong canonical
+     value `Movies/One.2001.mkv`. Submitting the same file through the whole-root library as
+     `Movies/Movies/One.2001.mkv` then also returns 202 with a different Task and no existing-work
+     refusal. Remove this ambiguous prefix inference. A library-relative input always joins its
+     known pinned root; already-Storage-relative callers must have an explicit separate contract.
+   - With the ordinary `source:Movies/One.2001.mkv`, two normal admission calls on separate SQLite
+     connections and overlapping library bindings both observe that exact canonical path free.
+     Synchronizing the real ownership reads before their writes yields two distinct admitted Tasks
+     with identical canonical source identity. `extend_media_discovery_scope` has an atomic recheck,
+     but `create_files_organize_work` still only checks an actor/scope admission signature inside
+     its transaction. An atomic Task+discovery insert is not an atomic source check/reservation.
+   Recheck/reserve each verified direct source with initial admission in the same transaction, and
+   use the equivalent source-item boundary for discovered files and other existing entrances.
+   Keep pin/principal/library context distinct from physical source identity, preserve safe legal
+   continuation, and make competing requests return truthful per-item existing-work references.
+   Cover initial direct admissions, folder item admission and extension, not only the extension
+   path; test concurrent aliases, repeated directory names, distinct actual roots and reopen.
+   Never span Storage I/O with the reservation transaction, silently rebind legacy evidence or
+   permit successful/uncertain effects to replay.
 
-Reconcile the new CURRENT architecture claims after these fixes: Task-native recovery/outcome and
-verified source ownership are not yet established by the current implementation. No unrelated
-refactor, additional command/queue, next governance Task or Slice rescope is required.
+Keep these corrections in Task46.3 and its existing components. Do not create additional governance
+Tasks, a second queue, a source catalog or a generic process framework. Update architecture claims
+only to reflect behavior actually delivered and verified; the existing Source/Task guarantees are
+not weakened by documenting the current defects.
 
-### Independent validation and evidence
+### Independent checks and evidence
 
-Local ignored evidence: `.git/validation-evidence/1dc70c43/b46.3-review/`.
+Local durable ignored evidence: `.git/validation-evidence/2998b7e3/b46.3-review/`.
 
 | Check | Actual result |
 | --- | --- |
-| Governance; full-range `git diff 83144be2..1dc70c43 --check` | PASS / clean |
-| `.venv/bin/python -m unittest tests.test_media_discovery.AdmissionAndScopeTests` | 12 OK, 0.90 s process wall; `admission-tests.log` |
-| `task_flow_probe.py` | Native Files admission + actual Worker + zero-candidate fake Provider: blocked plan, zero TaskItems, Metadata total 0; zero effects; `task-flow.log` |
-| `completion_probe.py` | Actual explicitly confirmed execution completes; separate original admission Task stays running/empty; three real temporary Storage effect calls; `completion.log` |
-| `overlap_probe.py` | Newly accepted `Three` absent from persisted scope and real walked manifest; no effects; `overlap.log` |
-| `source_alias_probe.py` | Same Storage source through overlapping library roots admitted twice to distinct Tasks; no effects; `source-alias.log` |
-| `npm run build` in `web/` | PASS; production `index-BwL35e0c.js` / `index-BFNi4meT.css`; existing chunk warning; `native.log` |
-| `npm run test:e2e -- --config=playwright.python.config.ts tests/e2e/operations-inventory.python.spec.ts --grep 'a frozen mixed recovery preparation never republishes a decided sibling' --output=../.git/validation-evidence/1dc70c43/b46.3-review/native-artifacts` in `web/` | 1 failed at `firstPrepared`, 2.02 s process wall; real Python/API/SQLite/Worker/built assets; `native.log`, trace and error context retained |
+| Governance; `git diff 83144be2..2998b7e3 --check` | PASS / clean |
+| `.venv/bin/python -m unittest tests.test_media_discovery.AdmissionAndScopeTests` | 15 OK, 1.04 s process wall; `admission-tests.log`; SQLite ResourceWarning retained |
+| `recognition_probe.py` | Published no-rule configuration → automatic type A, `previewed` plan, Recognition total 0 / TaskItems 0; zero effects; `recognition.log` |
+| Prior `task_flow_probe.py` against current source | Metadata total 1 / TaskItems 1; zero effects; `task-flow.log` |
+| Prior `completion_probe.py` against current source | Same admitted Task completed, one item, three actual temporary Storage effect calls; `completion.log` |
+| Prior `overlap_probe.py` against current source | Sequential One+Three persists and walks both; zero effects; `overlap.log` |
+| `scope_race_probe.py` | Actual Worker freezes old work before extension; Three falsely reported admitted with frozen scope still One; zero effects; `scope-race.log` |
+| `repeated_root_probe.py` | Incorrect canonical path for repeated root name; same physical source accepted twice to distinct Tasks; zero effects; `repeated-root.log` |
+| `concurrent_source_probe.py` | Two separate SQLite connections both see canonical `Movies/One.2001.mkv` free, both admit distinct Tasks for it; zero effects; `concurrent-source.log` |
+| `npm run build` (`web/`) | PASS, existing chunk warning; `native.log` |
+| `npm run test:e2e -- --config=playwright.python.config.ts tests/e2e/operations-inventory.python.spec.ts --grep 'a frozen mixed recovery preparation never republishes a decided sibling' --output=../.git/validation-evidence/2998b7e3/b46.3-review/native-artifacts` (`web/`) | 1 passed, 7.49 s process wall; real Python/API/SQLite/Worker/current production build; `native.log` |
 
-All probes use existing authenticated Files/plan/run APIs and existing test fixtures over temporary
-Local Storage/SQLite; no guessed endpoint, fabricated successful payload or production media is used.
-The Provider response is an isolated supported no-candidate boundary. The successful execution probe
-uses the existing explicit confirmation and OrganizerExecutor path; its effects stay in temporary roots.
-A separate attempted two-Worker barrier probe ended with `BrokenBarrierError` (5.28 s); it is retained
-in `source-race.log` and establishes no duplicate execution or successful race reproduction. The
-source-identity blocker above is independently proven by sequential public admissions, while the
-missing atomic reservation is a code-review finding. No media loss or actual double mutation is claimed.
+All scenarios start at existing Files application/API/Worker entries over temporary Local Storage
+and SQLite. Empty Recognition rules pass the production configuration validation/publication path;
+no impossible state or invented route is used. Race probes delay an actual ownership read or scope
+write while the other real admission/Worker proceeds; no fabricated success payload, direct state
+insertion or DOM manipulation proves their result. The successful completion probe explicitly
+confirms the existing exact plan and confines real effects to temporary roots. Duplicate admissions
+are proven; actual double mutation, data loss or exploitation is not claimed.
 
-Developer's 2846-test/1262-test/full native results remain its report, not independent B acceptance.
-B did not rerun full suites after reproducing required-journey blockers. The reported Base comparison
-and claim of twelve additional E2E failures were not independently rerun here; only the exact native
-failure above is independently established. An expected-total mismatch by itself is not classified
-as a product defect without durable population evidence.
+The developer-reported full E2E failures remain visible. Its comparison baseline `cd6db051` is a
+prior rejected review checkpoint, not immutable Task Base `83144be2` or an accepted waiver. No claim
+that the remaining 20 failures are harmless or baseline-only is independently accepted here. Native
+results/counts from different full-file runs do not by themselves establish causation; analyze exact
+failure behavior and required outcomes. B independently establishes only the focused success above.
+The report also discloses testing/build/probe time about 76% of its round, exceeding the user's
+50% ceiling. This is recorded as a process deviation, not a fabricated product failure or a new
+Task; future fixes use the affected-test plan, with full T4 acceptance still B-owned.
 
-Workflow §6 permits early FIX REQUIRED. Full T4 Python/Web/default/native/packaging/installed-consumer/
-upgrade/failure-atomicity/resident-restart/safety gates remain pending on a corrected candidate, not
-waived or transferred to Developer. Required acceptance is not satisfied by the 12 admission tests.
-Review started at 17:14:29 UTC (2026-10-26 local). Tests/build/probes, including the failed barrier
-attempt, total less than 20 seconds subprocess wall time inside more than four minutes of review
-before reconciliation, strictly below 50%; no deliberate waiting or repeated full suites.
+Workflow §6 permits early FIX REQUIRED after proven blockers. Full T4 regression/static/default/native/
+packaging/installed-consumer/schema/failure-atomicity/resident-restart/safety gates remain pending on
+a corrected complete candidate; no gate is waived, no Developer full results become independent B
+acceptance, and no full visual/native success is claimed. B's review started at 23:07:03 UTC on
+2026-10-25 (2026-10-26 local); tests/build/probes took less than 20 seconds subprocess wall time
+inside more than three minutes of code/contract/evidence review before reconciliation, strictly
+below 50%. No deliberate waiting, repeated full suite, retries or weakened assertions/timeouts.
 
 ### All Slice outcomes reevaluated
 
 | Outcome | Assessment at reviewed Head |
 | --- | --- |
-| RO-1 readable shared actions | Prior Task46.1 acceptance retained; no shared palette changes |
-| RO-2 Files-first organizing | Incomplete: early row/request evidence/entry removal progress; native recovery, actual accepted scope, truthful completion and source ownership still block |
-| RO-3 local ordinary operations | Prior Task46.2 acceptance/evidence limits retained; no complete re-acceptance claimed for shared query changes |
-| RO-4 organizing-only center/four-type truth | Incomplete; full population/eight-view work remains outside this Task, while new manual integration must be fixed here |
-| RO-5 Automation detail/Enabled/Run once | Incomplete; unchanged intent contract, shared ownership safety must still integrate |
+| RO-1 readable shared actions | Prior Task46.1 acceptance retained; small paging CSS change has no final visual claim |
+| RO-2 Files-first organizing | Incomplete: tested Metadata/basic completion/sequential sibling paths improve; no-forced-type, truthful concurrent admission and source ownership still block |
+| RO-3 local ordinary operations | Prior Task46.2 acceptance/evidence limits retained; shared persistence changes still await full acceptance |
+| RO-4 organizing-only center/four-type truth | Incomplete; broad eight-view/population/failure-removal remains outside this Task, new manual-task integration is still this Task's duty |
+| RO-5 Automation detail/Enabled/Run once | Incomplete; unchanged intent semantics, shared ownership must remain safe across entrances |
 
-Slice remains ACTIVE; continue the same Task with original acceptance. This review updates only
-B-owned TASK.md, keeps old reports reachable in Git, and preserves all pre-existing untracked/private/
-reference artifacts. No product implementation, push, new Task or Slice closure by B.
+Slice stays ACTIVE. Only B-owned TASK.md changes in this checkpoint; all pre-existing dirty/untracked/
+private/reference artifacts and A-owned boundaries remain preserved. No product implementation,
+new Task, push, publication or Slice closure by B.
