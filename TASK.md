@@ -7,7 +7,7 @@ Authority: committed [Slice46](SLICE.md) RO-1 / AC-1 and
 ```text
 Task ID: 46.1
 Parent Slice: 46
-Status: READY FOR B REVIEW
+Status: FIX REQUIRED
 Task Base: 725458f83862d12362fe4d9da57d0ceb9437398e
 Difficulty: Medium
 Test Level: T3
@@ -274,5 +274,87 @@ as validated. Arbitrary data-dependent/provider states and Slice-final T4 remain
 
 ## B Review Result
 
-Not started. Review the actual Task Base..candidate, record PASS or actionable FIX REQUIRED in this
-same Task, then reevaluate all Slice outcomes. RO-2–5 are not satisfied by this readability Task.
+**FIX REQUIRED — B, 2026-10-25.** Independently reviewed the complete Task range
+`725458f83862d12362fe4d9da57d0ceb9437398e..379ad3e0521012c42928d488eb14b06a5ec7079a`,
+including both implementation checkpoints, the browser spec, test configuration and all Task/report
+changes. Executable candidate is `f99a5856c0941b4c847de83d5395ad2245b45657`; its successor changes
+only the Developer report. Task ID/Base/Goal, Medium/T3 and parent Contract remain unchanged.
+
+### B46.1-01 — disabled shared secondary actions look enabled (P1)
+
+RO-1 / AC-1 and the Task's third acceptance criterion require disabled actions to remain visibly
+unavailable. Through the real Settings page, click **查看 Active JSON → 导出脱敏配置包**. Hold the
+existing configuration-package export GET while it is in flight. The actual export button becomes
+disabled, but retains the exact enabled text, text color `rgb(24,36,59)`, white background,
+`rgb(226,232,240)` border and opacity `1`. Only the pointer cursor changes to default; there is no
+visible unavailable/busy treatment on the button. Backend refusal/duplicate-submit protection still
+works; this finding does not claim an authority bypass.
+
+In `web/src/shared/ui/styles.css:753–764`, `.mf-button:disabled` and
+`.mf-button.mf-button-secondary` have equal specificity; the later secondary rule wins all three
+palette properties after disabled opacity was changed to 1. The existing Files and Automation
+settings scoped disabled rules mask this defect in the current disabled-state tests. A successful
+contrast reading alone cannot establish availability distinction.
+
+Correct within **this same Task**:
+
+1. Make the shared secondary disabled palette win the cascade while retaining readable text and
+   enabled normal/hover/focus distinctions. Keep the existing scoped Files/Automation variants and
+   danger distinction correct; do not redesign component APIs, alter handlers or add export logic.
+2. Extend the existing real-Python readability spec through the Settings entry above. Hold and then
+   continue the real export response; assert actual disabled state, readable computed contrast,
+   visible distinction from the unfocused enabled state, no second request on attempted activation,
+   and restored availability after readback. Do not fabricate successful responses, toggle DOM
+   disabled attributes, or create a new test-only product endpoint.
+3. Run the new/failing focused browser case, changed-file checks and directly affected regressions,
+   then hand off another coherent checkpoint for B. Full Web acceptance remains B-owned; no new
+   Task or Slice-boundary changes are needed.
+
+### Independent acceptance evidence
+
+All commands ran on the submitted candidate's executable inputs, from `web/` unless stated.
+Local raw logs, scripts, computed readings, screenshots and source/build hashes are retained at
+`.git/validation-evidence/task-46.1-b-review/`; these are local evidence, not published CI links.
+
+| Check | Actual result |
+|---|---|
+| `npm run typecheck`; `npm run lint`; `npm run format:check` | All passed |
+| `npm run test -- run` | 84 files / 1,221 tests passed; no skips |
+| `npm run build` | Passed; existing >500 kB chunk warning |
+| `npm run test:e2e -- --config=playwright.python.config.ts tests/e2e/action-readability.python.spec.ts` | 6 passed; 458 readings, minimum 4.69:1 |
+| `npm run test:e2e -- tests/e2e/deep-link.spec.ts` | 14 passed |
+| Independent Entry baseline reproduction | Actual Entry with Task-Base stylesheet: Connect 1.06:1; candidate stylesheet: 4.86:1 |
+| Independent Settings export reproduction | B46.1-01 reproduced through native controls and existing GET; enabled/disabled paint values identical |
+
+Playwright used explicit output directories under the evidence folder. The Entry baseline comparison
+served the complete committed Task-Base stylesheet in place of the observed CSS asset, with the
+same production JS and real Entry; no source checkout or business response was changed. B visually
+inspected desktop/narrow Entry, narrow Files create dialog, MediaLibrary Delete and the Settings
+disabled export screenshot. Text and danger distinction improve; disabled export remains the blocker.
+Rebuilt CSS/JS hashes match the Developer's recorded final artifact. Static/1,221-unit/20-browser
+passes do not override the independently reproduced failure.
+
+No full Python, all-E2E, wheel or Docker gate is assigned or claimed for this T3 review. Slice-final
+T4 remains pending. A convenience contact-sheet attempt lacked Pillow; individual PNGs were inspected
+directly instead, without changing dependencies or skipping the visual review.
+
+Timed verification commands total 150.2 s; overlapping command intervals occupy 97.8 s of wall
+time. The recorded review lower bound, starting after initial document/source inspection, is
+281.9 s: verification occupies at most 34.7% of that wall interval, below the user's 50% limit.
+Exact command timings and the interval calculation are retained in `timing-summary.json`;
+no deliberate waiting was added. Final governance and whitespace checks passed as well.
+
+### All Slice outcomes reassessed
+
+RO-1 is substantially delivered but **incomplete** until B46.1-01 is corrected. RO-2 (early manual
+admission), RO-3 (durable library-local ordinary work), RO-4 (eight organizing-only views/four-type
+Attention) and RO-5 (Automation detail/Enabled/real Run once) remain incomplete. The Task range has
+no business/API/persistence changes; current `OperationsLanding.tsx` still reads discovery/manual
+actions and renders global Worker state, while `AutomationDetailPage.tsx` and
+`automation_definition_execution.py` still depend on separate grant eligibility/authority. Existing
+accepted foundations are reuse, not delivery of those TARGET outcomes.
+
+Next action: **Developer corrects B46.1-01 in Task 46.1**. Do not plan a successor or submit Slice46
+to A yet. B has not closed the Slice or changed A-owned Slice/Roadmap/Progress fields. Review started
+on `main` at `379ad3e0`; governance passed. All pre-existing deleted/untracked files remain untouched
+and unstaged; only this B Task record is checkpointed. No push or publication is authorized/performed.
