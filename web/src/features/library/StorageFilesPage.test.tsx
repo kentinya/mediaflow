@@ -3581,4 +3581,59 @@ describe("Files entry state and ResourceLibrary strip", () => {
       /^[a-f0-9]{8}-[a-f0-9]{4}-[a-f0-9]{4}-[a-f0-9]{4}-[a-f0-9]{12}$/,
     );
   });
+
+  it("explains an explicit extension exclusion instead of a generic failure", async () => {
+    // Task46.3 RO-2: a deliberate file selection is admitted unless it is
+    // *explicitly* excluded (temporary suffix or a configured extension
+    // exclusion).  When the backend refuses it, the page states exactly that
+    // disclosure and what to do, instead of the generic "无法开始整理发现".
+    const user = userEvent.setup();
+    const discoveryPosts: Record<string, unknown>[] = [];
+    vi.stubGlobal(
+      "fetch",
+      stripFetchMock({
+        status: activeStatus([libraryItem("lib-a", "local-1")]),
+        onFiles: () => jsonResponse(filesPayload("lib-a", "Recover")),
+        onDiscovery: (body) => {
+          discoveryPosts.push(body);
+          return jsonResponse(
+            {
+              error: {
+                code: "source_excluded",
+                message:
+                  "the selected file is explicitly excluded by the pinned ResourceLibrary policy",
+                details: {
+                  relativePath: "notes.txt",
+                  reason: "excluded_extension_rule",
+                  sideEffects: "none",
+                },
+                nextAction: "select another file",
+              },
+            },
+            409,
+          );
+        },
+      }),
+    );
+    authStore.setToken("test-token");
+    renderWithProviders(<StorageFilesPage />);
+
+    await screen.findAllByText("notes.txt");
+    await user.click(
+      within(screen.getByRole("row", { name: /文件条目 notes.txt/ })).getByRole(
+        "checkbox",
+      ),
+    );
+    await user.click(screen.getByRole("button", { name: "批量整理" }));
+
+    await waitFor(() => expect(discoveryPosts).toHaveLength(1));
+    await waitFor(() =>
+      expect(screen.getByRole("status")).toHaveTextContent(
+        /配置的扩展名排除规则/,
+      ),
+    );
+    // The refusal created no work and is never silently resubmitted.
+    expect(discoveryPosts).toHaveLength(1);
+    expect(screen.queryByRole("heading", { name: "新建整理任务" })).toBeNull();
+  });
 });

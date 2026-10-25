@@ -36,6 +36,30 @@ class ScanEntryVerdict(StrEnum):
     UNSUPPORTED_TYPE = "unsupported_type"
 
 
+#: The configured temporary/download suffixes.  A file still carrying one of
+#: these suffixes is an *explicit* exclusion for every entrance (automatic walk
+#: and deliberate manual selection alike): it is by definition still being
+#: written, so it is never a stable source.
+TEMPORARY_SUFFIXES = (".part", ".tmp", ".download", ".crdownload", ".!qb")
+
+
+class ManualEntryVerdict(StrEnum):
+    """Why one *deliberately selected* file is or is not a legal manual source.
+
+    A direct Files selection is a human decision, not a scan.  The configured
+    extension allowlist, include rules and non-extension exclude/match rules
+    answer the different question "would a library walk have offered this?",
+    so they cannot veto it.  What a deliberate selection still obeys is what
+    the operator explicitly configured as an *exclusion of that exact kind*:
+    a configured extension exclusion and the built-in temporary/download
+    suffixes.
+    """
+
+    ADMITTED = "admitted"
+    EXCLUDED_TEMPORARY = "excluded_temporary"
+    EXCLUDED_EXTENSION = "excluded_extension"
+
+
 class StabilityVerdict(StrEnum):
     """The bounded stability conclusion for one media candidate."""
 
@@ -71,6 +95,46 @@ def classify_entry(
     if not included(library.include_rules, relative_path, entry.name, extension):
         return ScanEntryVerdict.NOT_INCLUDED
     return ScanEntryVerdict.CANDIDATE
+
+
+def classify_manual_file_selection(
+    library: ResourceLibrary,
+    relative_path: str,
+    entry: StorageEntry,
+) -> ManualEntryVerdict:
+    """Classify one deliberately selected *file* against explicit exclusions only.
+
+    The difference from :func:`classify_entry` is deliberate and is the whole
+    point of the Slice46 amendment: an operator who clicks one exact file has
+    already made the inclusion decision a walk would otherwise make.  A suffix
+    that is merely absent from ``file_extensions``, an include-rule miss and a
+    non-extension exclude/match rule therefore keep their automatic meaning for
+    folder expansion without becoming additional manual vetoes.
+
+    ``relative_path`` is still accepted so a future explicit path exclusion can
+    reuse this boundary without a second signature; the current rule kinds that
+    veto a deliberate selection are the extension and temporary-suffix ones.
+    """
+
+    if entry.name.lower().endswith(TEMPORARY_SUFFIXES):
+        return ManualEntryVerdict.EXCLUDED_TEMPORARY
+    if extension_exclusion_rule(library, entry):
+        return ManualEntryVerdict.EXCLUDED_EXTENSION
+    return ManualEntryVerdict.ADMITTED
+
+
+def extension_exclusion_rule(
+    library: ResourceLibrary,
+    entry: StorageEntry,
+) -> ScanRule | None:
+    """The configured *extension* exclude rule that excludes this entry, if any."""
+
+    extension = entry_extension(entry)
+    for raw_rule in library.exclude_rules:
+        rule = raw_rule if isinstance(raw_rule, ScanRule) else ScanRule(ScanRuleKind.GLOB, raw_rule)
+        if rule.kind is ScanRuleKind.EXTENSION and rule.pattern.lower().lstrip(".") == extension:
+            return rule
+    return None
 
 
 def excluded_directory(

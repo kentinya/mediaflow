@@ -401,6 +401,13 @@ function discoveryAdmissionFailureMessage(code: string): string {
       return "符号链接不会被整理，请选择真实的文件夹或文件。";
     case "source_unsupported":
       return "所选条目的类型不支持整理，请选择普通文件夹或文件。";
+    case "source_excluded":
+      return (
+        "所选条目被配置明确排除(临时/下载中的文件或配置的扩展名排除规则)，" +
+        "未创建任何整理工作；请选择其他文件，或结束下载后再提交。"
+      );
+    case "source_not_included":
+      return "所选文件夹不满足配置的包含规则，未创建任何整理工作；请选择其他文件夹，或更新资源库策略后重新发布。";
     case "invalid_path":
     case "malformed_selection":
       return "所选范围无效，请重新选择资源库内的文件夹或文件。";

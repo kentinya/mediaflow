@@ -56,6 +56,7 @@ const REASON_LABELS: Readonly<Record<string, string>> = {
   temporary_file: "临时/下载中的文件",
   unsupported_extension: "非媒体扩展名",
   configured_exclude: "命中配置排除规则",
+  excluded_extension_rule: "命中配置的扩展名排除规则",
   not_included: "不满足配置包含规则",
   unsupported_entry_type: "不支持的条目类型",
   symbolic_link: "符号链接",

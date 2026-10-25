@@ -32,11 +32,14 @@ from uuid import UUID, uuid4
 
 from mediaflow.application.attachments import AttachmentDiscovery
 from mediaflow.application.scan_filters import (
+    TEMPORARY_SUFFIXES,
+    ManualEntryVerdict,
     ObservedSource,
     PrunedAncestorReason,
     ScanEntryVerdict,
     StabilityVerdict,
     classify_entry,
+    classify_manual_file_selection,
     directory_may_match,
     entry_extension,
     excluded_directory,
@@ -112,6 +115,12 @@ DEFAULT_DISCOVERY_LEASE_SECONDS = 300.0
 _REASON_TEMPORARY = "temporary_file"
 _REASON_UNSUPPORTED_EXTENSION = "unsupported_extension"
 _REASON_EXCLUDED_RULE = "configured_exclude"
+#: A configured *extension* exclusion that applied to a deliberately selected
+#: file.  It is kept distinct from a generic rule exclusion so the operator can
+#: tell "your library excludes this suffix" apart from an exclude/match rule
+#: that only ever shapes automatic walks (and therefore never vetoed the manual
+#: selection in the first place).
+_REASON_EXCLUDED_EXTENSION = "excluded_extension_rule"
 _REASON_NOT_INCLUDED = "not_included"
 _REASON_UNSUPPORTED_TYPE = "unsupported_entry_type"
 _REASON_SYMLINK = "symbolic_link"
@@ -128,7 +137,7 @@ _REASON_CURSOR = "repeated_provider_cursor"
 #: presented as a configured policy exclusion.
 _REASON_SAFETY_DEPTH = "safety_depth_limit"
 
-_TEMPORARY_SUFFIXES = (".part", ".tmp", ".download", ".crdownload", ".!qb")
+_TEMPORARY_SUFFIXES = TEMPORARY_SUFFIXES
 
 #: How many times one returning owner re-reads and re-applies the reconciliation
 #: rule when a concurrent operator control keeps moving the record.  The loop is
@@ -1014,7 +1023,15 @@ class MediaDiscoveryService:
                     return _RemainingScopeProbe.INCOMPLETE
                 if entry.entry_type is not StorageEntryType.FILE:
                     continue
-                if classify_entry(library, relative, entry) is ScanEntryVerdict.CANDIDATE:
+                # These are exact sources the original admission already
+                # selected by name, so the probe applies the same deliberate
+                # selection rule the durable walk applies to them: an unlisted
+                # suffix is part of the remaining scope, an explicitly excluded
+                # one is not.
+                if (
+                    classify_manual_file_selection(library, relative, entry)
+                    is ManualEntryVerdict.ADMITTED
+                ):
                     return _RemainingScopeProbe.REMAINING
             return _RemainingScopeProbe.NONE
         started = self._monotonic()
@@ -2696,8 +2713,21 @@ class MediaDiscoveryService:
                 )
             )
 
-        def observe(relative: str, depth: int, entry: StorageEntry | None) -> StorageEntry | None:
-            """Observe one candidate and return its exact file entry for association."""
+        def observe(
+            relative: str,
+            depth: int,
+            entry: StorageEntry | None,
+            *,
+            direct: bool = False,
+        ) -> StorageEntry | None:
+            """Observe one candidate and return its exact file entry for association.
+
+            ``direct`` marks a path the operator selected by name rather than one
+            a folder walk found.  A deliberate selection is admitted unless it is
+            explicitly excluded (temporary suffix or configured extension rule);
+            the automatic extension allowlist/include/match filters keep their
+            unchanged meaning for folder expansion only.
+            """
 
             nonlocal counters, observation_degraded
             if relative in recovery_excluded or recovery_excludes(relative):
@@ -2752,18 +2782,18 @@ class MediaDiscoveryService:
                 counters = replace(counters, excluded_entries=counters.excluded_entries + 1)
                 sources.pop(relative, None)
                 return None
-            verdict = classify_entry(library, relative, entry)
-            if verdict is not ScanEntryVerdict.CANDIDATE:
-                why = {
-                    ScanEntryVerdict.EXCLUDED_EXTENSION: (
-                        _REASON_TEMPORARY
-                        if entry.name.lower().endswith(_TEMPORARY_SUFFIXES)
-                        else _REASON_UNSUPPORTED_EXTENSION
-                    ),
-                    ScanEntryVerdict.EXCLUDED_RULE: _REASON_EXCLUDED_RULE,
-                    ScanEntryVerdict.NOT_INCLUDED: _REASON_NOT_INCLUDED,
-                    ScanEntryVerdict.UNSUPPORTED_TYPE: _REASON_UNSUPPORTED_TYPE,
-                }[verdict]
+            verdict = (
+                classify_manual_file_selection(library, relative, entry)
+                if direct
+                else classify_entry(library, relative, entry)
+            )
+            # A deliberate selection is admitted unless it is explicitly
+            # excluded, so `ManualEntryVerdict.ADMITTED` is not a refusal.
+            admitted = (direct and verdict is ManualEntryVerdict.ADMITTED) or (
+                not direct and verdict is ScanEntryVerdict.CANDIDATE
+            )
+            if not admitted:
+                why = self._exclusion_reason(verdict, entry)
                 bump(why, relative)
                 note(DiscoveryFindingKind.EXCLUDED, relative, why, entry, depth)
                 counters = replace(counters, excluded_entries=counters.excluded_entries + 1)
@@ -2914,7 +2944,7 @@ class MediaDiscoveryService:
                 break
             if pending_files:
                 relative = pending_files.pop(0)
-                observed_entry = observe(relative, 0, None)
+                observed_entry = observe(relative, 0, None, direct=True)
                 if observed_entry is not None:
                     observed_file_entries.setdefault(relative, (relative, 0, observed_entry))
                 continue
@@ -4177,6 +4207,31 @@ class MediaDiscoveryService:
             raise DiscoveryUnavailable("the selected Storage adapter does not match the pin")
         return _DiscoveryReadOnlyStorage(storage)
 
+    @staticmethod
+    def _exclusion_reason(verdict: object, entry: StorageEntry) -> str:
+        """Map one entry verdict onto the bounded reason vocabulary.
+
+        The two verdict enums are mapped separately on purpose: both describe
+        an extension/rule exclusion with overlapping string values, so folding
+        them into one dict would silently pick the wrong operator reason.
+        """
+
+        if verdict is ManualEntryVerdict.EXCLUDED_TEMPORARY:
+            return _REASON_TEMPORARY
+        if verdict is ManualEntryVerdict.EXCLUDED_EXTENSION:
+            return _REASON_EXCLUDED_EXTENSION
+        if verdict is ScanEntryVerdict.EXCLUDED_EXTENSION:
+            return (
+                _REASON_TEMPORARY
+                if entry.name.lower().endswith(_TEMPORARY_SUFFIXES)
+                else _REASON_UNSUPPORTED_EXTENSION
+            )
+        if verdict is ScanEntryVerdict.EXCLUDED_RULE:
+            return _REASON_EXCLUDED_RULE
+        if verdict is ScanEntryVerdict.NOT_INCLUDED:
+            return _REASON_NOT_INCLUDED
+        return _REASON_UNSUPPORTED_TYPE
+
     def _resolve_entry_kind(self, storage: Storage, library, entry: DiscoveryScopeEntry):
         path = self._join(library.root_path, entry.path)
         try:
@@ -4230,8 +4285,8 @@ class MediaDiscoveryService:
             details={"relativePath": entry.path},
         )
 
-    def _refuse_pruned_ancestor(self, library, relative: str) -> None:
-        """Refuse a directly selected entry no root walk could ever reach.
+    def _refuse_pruned_ancestor(self, library, relative: str, *, deliberate: bool = False) -> None:
+        """Refuse a directly selected entry the configured *safety* bounds exclude.
 
         A direct selection shares the *root-relative* meaning of the configured
         exclude/include/depth policy: if an ancestor directory would be pruned
@@ -4240,12 +4295,20 @@ class MediaDiscoveryService:
         admissible.  This closes the leaf-only gap without introducing a second
         filter language: ``pruned_ancestor`` is the same pure predicate the walk
         applies to every directory it visits.
+
+        ``deliberate`` marks a *file* the operator selected by name.  Such a
+        selection is the operator's own inclusion decision, so an include-rule
+        miss or a match rule above it no longer vetoes it (Slice46 RO-2); only
+        the configured *depth* bound and configured extension/temporary
+        exclusions do (checked by the caller).
         """
 
         pruned = pruned_ancestor(library, relative)
         if pruned is None:
             return
         ancestor, reason = pruned
+        if deliberate and reason is not PrunedAncestorReason.DEPTH:
+            return
         code = {
             PrunedAncestorReason.EXCLUDED_RULE: "source_excluded",
             PrunedAncestorReason.NOT_INCLUDED: "source_not_included",
@@ -4315,32 +4378,32 @@ class MediaDiscoveryService:
             )
 
     def _refuse_unselectable_file(self, library, relative: str, observed: StorageEntry) -> None:
-        """Refuse a directly selected file the pinned policy excludes.
+        """Refuse a directly selected file only for a deliberate exclusion.
 
-        An explicit file is a legal entry point only when the same
-        root-relative extension/include/exclude/depth policy that governs a
-        folder walk admits it.  A temporary/download file, an excluded path or
-        a file the configured depth never reaches stays excluded instead of
-        becoming a primary source merely because the operator clicked it
-        directly.
+        A direct Files selection is the operator's own inclusion decision, so
+        the automatic scan filters do not veto it (Slice46 RO-2 amendment): a
+        suffix merely missing from the configured allowlist, an include-rule
+        miss or a non-extension exclude/match rule keeps its meaning for
+        *folder expansion* without becoming an extra manual veto.  What a
+        deliberate selection still obeys is what the operator explicitly
+        excluded for that exact file: the built-in temporary/download suffixes
+        and a configured extension exclusion.  Technical safety stays: an
+        unresolved ancestor, a symlink and an entry outside the configured
+        *depth* are refused exactly as before.
         """
 
-        self._refuse_pruned_ancestor(library, relative)
-        verdict = classify_entry(library, relative, observed)
-        if verdict is not ScanEntryVerdict.CANDIDATE:
-            reason = {
-                ScanEntryVerdict.EXCLUDED_EXTENSION: _REASON_UNSUPPORTED_EXTENSION,
-                ScanEntryVerdict.EXCLUDED_RULE: _REASON_EXCLUDED_RULE,
-                ScanEntryVerdict.NOT_INCLUDED: _REASON_NOT_INCLUDED,
-                ScanEntryVerdict.UNSUPPORTED_TYPE: _REASON_UNSUPPORTED_TYPE,
-            }[verdict]
+        self._refuse_pruned_ancestor(library, relative, deliberate=True)
+        verdict = classify_manual_file_selection(library, relative, observed)
+        if verdict is not ManualEntryVerdict.ADMITTED:
+            reason = self._exclusion_reason(verdict, observed)
             raise DiscoveryError(
-                "the selected file is excluded by the pinned ResourceLibrary policy",
+                "the selected file is explicitly excluded by the pinned ResourceLibrary policy",
                 code="source_excluded",
                 status=409,
                 next_action=(
-                    "select a file the configured policy admits, or update the ResourceLibrary "
-                    "policy and publish it"
+                    "select a file that is not a temporary download and not explicitly "
+                    "excluded by an extension rule, or wait until the download has "
+                    "finished and select it again"
                 ),
                 details={"relativePath": relative, "reason": reason},
             )

@@ -625,7 +625,13 @@ The concrete bounds are 100 selected scopes, 100 primary sources, 10,000 visited
 1,000 directories, 2,000 page fetches, 100 entries per page, safety depth 32 and 600 active seconds.
 Provider entries/cursors and exact relative paths are confined and deduplicated; metadata calls
 stay outside SQLite write transactions. The pinned production configuration loader and shared
-pure filters apply extension/include/exclude/depth/stability rules to every selection entrance.
+pure filters apply extension/include/exclude/depth/stability rules to automatic folder expansion at
+every entrance. A directly selected file is instead the operator's own inclusion decision: it is
+admitted unless it is explicitly excluded for that exact file (the built-in temporary/download
+suffixes or a configured extension exclusion) or outside the configured depth. A suffix merely
+absent from the configured allowlist, an include-rule miss and a non-extension exclude/match rule
+therefore keep their unchanged automatic meaning without becoming an additional manual veto. Folder
+participation, safety/traversal budgets and real stability are unaffected.
 Size stability is re-observed after real elapsed time; waiting releases the claim until its due
 observation rather than consuming idle budgets or busy-looping. Explicit and walked regular-file
 observations share the existing same-directory attachment matcher under the retained main's actual

@@ -657,6 +657,207 @@ class AdmissionAndScopeTests(_DiscoveryFixture):
             self.assertEqual("resource_library_not_found", document["error"]["code"])
 
 
+class ManualEntrySemanticsTests(_DiscoveryFixture):
+    """Slice46 RO-2/Task46.3 Scope 2: deliberate selection vs automatic scan.
+
+    A directly selected file is the operator's own inclusion decision.  A
+    suffix that is merely absent from the configured allowlist, an include-rule
+    miss or a non-extension exclude/match rule keeps its unchanged meaning for
+    a *folder expansion* without becoming an additional manual veto.  A
+    deliberate selection still obeys what was explicitly excluded for that
+    exact file: the built-in temporary/download suffixes and a configured
+    extension exclusion.  Every case here runs through the real API, the real
+    bounded Worker and real Local Storage.
+    """
+
+    def _publish_policy(self, value, *, document: dict) -> None:
+        """Load one real published policy revision into the running journey."""
+
+        from mediaflow.infrastructure.runtime_configuration import (
+            load_managed_runtime_configuration,
+            with_managed_snapshot,
+        )
+
+        revision = _activate(
+            ManagedConfigurationService(
+                SQLiteConfigurationRepository(self.database),
+                bootstrap_database_path=str(self.database),
+            ),
+            document,
+        )
+        runtime = with_managed_snapshot(
+            load_managed_runtime_configuration(
+                revision.document, bootstrap_database_path=str(self.database)
+            ),
+            snapshot_id=revision.revision_id,
+            digest=revision.digest,
+        )
+        value.configuration = runtime
+        value.discovery._runtime_resolver = lambda sid, digest: runtime
+        value.previews._runtime_resolver = lambda sid, digest: runtime
+        value.intents._runtime_resolver = lambda sid, digest: runtime
+
+    def test_directly_selected_unlisted_suffix_is_admitted(self) -> None:
+        """A `.txt` file clicked by name is admitted; a folder walk still skips it."""
+
+        self.media("Movies/notes.txt")
+        self.media("Movies/One.2001.mkv")
+        with self.journey() as value:
+            status, admitted = self.request(
+                value,
+                "/api/v1/resource-libraries/library/files/discoveries",
+                "POST",
+                {"paths": ["Movies/notes.txt"]},
+            )
+            self.assertEqual(202, status, admitted)
+            self.assertEqual(
+                [{"path": "Movies/notes.txt", "kind": "file"}],
+                admitted["selection"]["scopes"],
+            )
+            settled = self.run_discovery(value)
+            self.assertEqual(["Movies/notes.txt"], [item["path"] for item in settled["sources"]])
+            self.assertEqual([], value.source.mutations)
+
+            # The same suffix reached *through a folder* keeps the automatic
+            # extension allowlist meaning: it is still excluded there.
+            _, folder = self.request(
+                value,
+                "/api/v1/resource-libraries/library/files/discoveries",
+                "POST",
+                {"paths": ["Movies"]},
+            )
+            folder_settled = self.run_discovery(value)
+            self.assertEqual(
+                ["Movies/One.2001.mkv"],
+                [item["path"] for item in folder_settled["sources"]],
+            )
+            self.assertIn(
+                "unsupported_extension",
+                {item["reason"] for item in folder_settled["progress"]["reasons"]},
+            )
+            self.assertNotEqual(folder["discoveryId"], admitted["discoveryId"])
+
+    def test_directly_selected_file_ignores_include_and_match_rules(self) -> None:
+        """An include-rule miss and a file-level exclude rule do not veto a click.
+
+        Both rules keep their unchanged meaning for a folder expansion: the
+        contract only removes them as *additional manual vetoes* on the file the
+        operator selected by name.
+        """
+
+        self.media("Kept.2001.mkv")
+        self.media("Movies/One.2001.mkv")
+        self.media("Movies/Kept.2002.mkv")
+        document = self.document()
+        document["resourceLibraries"][0]["includeRules"] = [
+            {"kind": "glob", "pattern": "Movies/**"}
+        ]
+        document["resourceLibraries"][0]["excludeRules"] = [{"kind": "glob", "pattern": "**/Kept*"}]
+        with self.journey() as value:
+            self._publish_policy(value, document=document)
+            status, admitted = self.request(
+                value,
+                "/api/v1/resource-libraries/library/files/discoveries",
+                "POST",
+                {"paths": ["Kept.2001.mkv"]},
+            )
+            self.assertEqual(202, status, admitted)
+            settled = self.run_discovery(value)
+            self.assertEqual(["Kept.2001.mkv"], [item["path"] for item in settled["sources"]])
+            # The same two rules still shape a folder expansion exactly as
+            # before this Task: only the unmatched, non-excluded file survives.
+            _, folder = self.request(
+                value,
+                "/api/v1/resource-libraries/library/files/discoveries",
+                "POST",
+                {"paths": ["Movies"]},
+            )
+            folder_settled = self.run_discovery(value)
+            self.assertEqual(
+                ["Movies/One.2001.mkv"],
+                [item["path"] for item in folder_settled["sources"]],
+            )
+            reasons = {item["reason"] for item in folder_settled["progress"]["reasons"]}
+            self.assertIn("configured_exclude", reasons)
+            self.assertEqual([], value.source.mutations)
+
+    def test_directly_selected_temporary_and_explicit_extension_are_refused(self) -> None:
+        """A temporary suffix and a configured extension exclusion still refuse."""
+
+        self.media("Movies/downloading.mkv.part")
+        self.media("Movies/Trailer.mkv")
+        document = self.document(extensions=("mkv",))
+        document["resourceLibraries"][0]["excludeRules"] = [{"kind": "extension", "pattern": "mkv"}]
+        with self.journey() as value:
+            self._publish_policy(value, document=document)
+            status, temporary = self.request(
+                value,
+                "/api/v1/resource-libraries/library/files/discoveries",
+                "POST",
+                {"paths": ["Movies/downloading.mkv.part"]},
+            )
+            self.assertEqual(409, status, temporary)
+            self.assertEqual("source_excluded", temporary["error"]["code"], temporary)
+            self.assertEqual("temporary_file", temporary["error"]["details"]["reason"], temporary)
+            status, extension = self.request(
+                value,
+                "/api/v1/resource-libraries/library/files/discoveries",
+                "POST",
+                {"paths": ["Movies/Trailer.mkv"]},
+            )
+            self.assertEqual(409, status, extension)
+            self.assertEqual("source_excluded", extension["error"]["code"], extension)
+            self.assertEqual(
+                "excluded_extension_rule", extension["error"]["details"]["reason"], extension
+            )
+            self.assertEqual((), value.repository.list_media_discoveries())
+            self.assertEqual([], value.source.mutations)
+
+    def test_a_mixed_direct_selection_admits_every_deliberate_file(self) -> None:
+        """Single/multiple direct selections admit exactly the chosen files once."""
+
+        self.media("Movies/One.2001.mkv")
+        self.media("Movies/Two.2002.mkv")
+        self.media("Movies/notes.txt")
+        with self.journey() as value:
+            status, admitted = self.request(
+                value,
+                "/api/v1/resource-libraries/library/files/discoveries",
+                "POST",
+                {"paths": ["Movies/One.2001.mkv", "Movies/notes.txt", "Movies/Two.2002.mkv"]},
+            )
+            self.assertEqual(202, status, admitted)
+            self.assertEqual(
+                {"Movies/One.2001.mkv", "Movies/notes.txt", "Movies/Two.2002.mkv"},
+                {scope["path"] for scope in admitted["selection"]["scopes"]},
+            )
+            settled = self.run_discovery(value)
+            self.assertEqual(
+                {"Movies/One.2001.mkv", "Movies/Two.2002.mkv", "Movies/notes.txt"},
+                {item["path"] for item in settled["sources"]},
+            )
+            self.assertIsNone(settled["progress"]["incompleteReason"], settled)
+            self.assertEqual([], value.source.mutations)
+
+    def test_a_partly_refused_selection_is_never_a_different_scope(self) -> None:
+        """A refused member refuses the whole request, with zero durable work."""
+
+        self.media("Movies/One.2001.mkv")
+        self.media("Movies/downloading.mkv.part")
+        with self.journey() as value:
+            status, refused = self.request(
+                value,
+                "/api/v1/resource-libraries/library/files/discoveries",
+                "POST",
+                {"paths": ["Movies/One.2001.mkv", "Movies/downloading.mkv.part"]},
+            )
+            self.assertEqual(409, status, refused)
+            self.assertEqual("source_excluded", refused["error"]["code"], refused)
+            self.assertEqual("temporary_file", refused["error"]["details"]["reason"], refused)
+            self.assertEqual((), value.repository.list_media_discoveries())
+            self.assertEqual([], value.source.mutations)
+
+
 class DiscoveryWalkTests(_DiscoveryFixture):
     """Scope 3 and AC3: pinned filters, depth, temp files and real stability."""
 
@@ -4066,51 +4267,54 @@ class A44BReviewCorrections(_DiscoveryFixture):
         )
         return revision, runtime
 
-    def test_a_directly_selected_file_cannot_bypass_an_excluded_ancestor(self) -> None:
-        """B-P1/AC2: a nested file under an excluded directory is refused.
+    def test_a_directly_selected_file_ignores_an_excluded_ancestor(self) -> None:
+        """Task46.3 RO-2 supersedes the earlier ancestor-veto for a direct file.
 
-        B proved that selecting ``Blocked`` returns 409 while selecting its
-        descendant file was admitted and completed as a primary.  A direct
-        selection must share the same root-relative exclude policy as a parent
-        walk, so the descendant is refused with a bounded, actionable error and
-        no durable record.
+        A configured directory exclude rule shapes automatic folder walks.  It
+        is no longer an additional veto on the exact file the operator selected
+        by name: that selection is their own inclusion decision, so it is
+        admitted and analysed, while a folder walk under the same policy still
+        prunes the subtree.
         """
 
         self.media("Blocked/Sub/Film.2001.mkv")
         self.media("Keep/Good.2001.mkv")
         document = self._excluded_ancestor_document()
         with self.journey() as value:
-            revision, runtime = self._production_journey(document)
+            _revision, runtime = self._production_journey(document)
             self.assertEqual(
                 ("Blocked",),
                 tuple(rule.pattern for rule in runtime.resource_libraries[0].exclude_rules),
             )
             value.discovery._runtime_resolver = lambda sid, digest: runtime
-            status, refused = self.request(
+            status, admitted = self.request(
                 value,
                 "/api/v1/resource-libraries/library/files/discoveries",
                 "POST",
                 {"paths": ["Blocked/Sub/Film.2001.mkv"]},
             )
+            self.assertEqual(202, status, admitted)
+            settled = self.run_discovery(value)
+            self.assertEqual(["Blocked/Sub/Film.2001.mkv"], [i["path"] for i in settled["sources"]])
+            # A folder selection under the same policy still prunes the
+            # excluded subtree: the rule keeps its automatic meaning.
+            status, refused = self.request(
+                value,
+                "/api/v1/resource-libraries/library/files/discoveries",
+                "POST",
+                {"paths": ["Blocked"]},
+            )
             self.assertEqual(409, status, refused)
             self.assertEqual("source_excluded", refused["error"]["code"], refused)
-            self.assertEqual("configured_exclude", refused["error"]["details"]["reason"], refused)
-            self.assertEqual("Blocked", refused["error"]["details"]["prunedAncestor"], refused)
-            self.assertEqual("none", refused["error"]["details"]["sideEffects"], refused)
-            # No durable record was created for the refused selection.
-            self.assertEqual((), value.repository.list_media_discoveries())
-            # The same file reached through an admitted parent is still pruned
-            # by the walk, so the policy has one meaning regardless of entrance.
-            _, admitted = self.request(
+            _, keep_admitted = self.request(
                 value,
                 "/api/v1/resource-libraries/library/files/discoveries",
                 "POST",
                 {"paths": ["Keep"]},
             )
-            settled = self.run_discovery(value)
-            self.assertEqual(["Keep/Good.2001.mkv"], [i["path"] for i in settled["sources"]])
+            keep_settled = self.run_discovery(value)
+            self.assertEqual(["Keep/Good.2001.mkv"], [i["path"] for i in keep_settled["sources"]])
             self.assertEqual([], value.source.mutations)
-            self.assertEqual((), value.repository.list_tasks())
 
     def test_a_directly_selected_nested_folder_cannot_bypass_a_pruned_ancestor(self) -> None:
         """B-P1/AC2: a nested folder below an excluded ancestor is refused."""
