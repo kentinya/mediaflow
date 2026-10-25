@@ -1150,6 +1150,16 @@ class MediaDiscovery:
     #: and a remaining-scope recovery preparation keep their own existing lineage
     #: and record ``None``.
     organize_task_id: str | None = None
+    #: The exact confined *Storage*-relative path of every admitted scope entry,
+    #: keyed by its ResourceLibrary-relative path.  Verified source ownership
+    #: compares this canonical form, so two valid ResourceLibrary bindings of the
+    #: same Storage (a nested root and the whole root) agree on one concrete
+    #: source.  Empty for a record written before this amendment, whose
+    #: library-relative paths plus its exact library binding remain the
+    #: conservative legacy identity; nothing is backfilled.  It is durable
+    #: admission evidence only: it grants no authority and is never published as a
+    #: physical path.
+    storage_scope: tuple[tuple[str, str], ...] = ()
 
     def __post_init__(self) -> None:
         if not isinstance(self.discovery_id, str) or not _SAFE_ID.fullmatch(self.discovery_id):
@@ -1247,6 +1257,7 @@ class MediaDiscovery:
             "recoverySourceTaskId": self.recovery_source_task_id,
             "organizeTaskId": self.organize_task_id,
             "recoveryExcludedPaths": list(self.recovery_excluded_paths),
+            "storageScope": [list(item) for item in self.storage_scope],
             "nextObservationAt": (
                 self.next_observation_at.isoformat()
                 if self.next_observation_at is not None
@@ -1327,6 +1338,15 @@ class MediaDiscovery:
                 str(value["organizeTaskId"])
                 if isinstance(value.get("organizeTaskId"), str)
                 else None
+            ),
+            (
+                tuple(
+                    (str(item[0]), str(item[1]))
+                    for item in value["storageScope"]
+                    if isinstance(item, (list, tuple)) and len(item) == 2
+                )
+                if isinstance(value.get("storageScope"), list)
+                else ()
             ),
         )
 

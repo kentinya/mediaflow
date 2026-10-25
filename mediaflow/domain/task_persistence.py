@@ -403,6 +403,14 @@ class PersistentTaskItem:
     # in-flight marker: once the terminal item outcome is persisted, the field
     # is cleared and the Result carries the authoritative identity/checkpoints.
     progress: str | None = None
+    # Added in runtime schema 52: the exact *Storage*-relative path of this
+    # source.  ``source_path`` stays the ResourceLibrary-relative value the
+    # existing projections publish, so two valid bindings of one Storage (a
+    # nested root and the whole root) now agree on one concrete source instead
+    # of comparing incomparable library-relative strings.  ``None`` for a
+    # pre-change row: its library-relative path plus its exact library binding
+    # is then the conservative legacy identity.
+    source_storage_path: str | None = None
     # In-memory only (never a ``task_items`` column and never an operator
     # document): the exact owner generation of the source-operation lock this
     # execution frame acquired in ``begin_item``.  Two Workers that process the

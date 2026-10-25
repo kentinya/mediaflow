@@ -16,6 +16,11 @@ import sqlite3
 
 _TASK_SOURCE_COLUMNS: dict[str, dict[str, str]] = {
     "task_items": {
+        # Schema 52: the exact Storage-relative source path.  Ownership compares
+        # this value, so two valid ResourceLibrary bindings of the same Storage
+        # agree on one concrete source.  A legacy row keeps NUL and falls back to
+        # its library-relative path plus exact library binding.
+        "source_storage_path": "TEXT",
         "source_occurrence_id": "TEXT",
         "source_fingerprint": "TEXT",
         "source_fingerprint_state": "TEXT NOT NULL DEFAULT 'unverified'",
@@ -47,6 +52,10 @@ def ensure_task_occurrence_columns(connection: sqlite3.Connection) -> None:
     connection.execute(
         "CREATE INDEX IF NOT EXISTS task_items_source_occurrence "
         "ON task_items(storage_id, source_path, source_occurrence_id)"
+    )
+    connection.execute(
+        "CREATE INDEX IF NOT EXISTS task_items_source_storage_path "
+        "ON task_items(storage_id, source_storage_path)"
     )
     connection.execute(
         "CREATE INDEX IF NOT EXISTS task_results_source_occurrence "

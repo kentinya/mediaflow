@@ -361,11 +361,15 @@ class Schema34To35UpgradeTests(unittest.TestCase):
                         for row in connection.execute("PRAGMA table_info(task_items)").fetchall()
                     ]
                 self.assertEqual(after[-1], "progress")
+                # Schema 52 appends the exact Storage-relative source path to the
+                # additive source-evidence columns.  A pre-change row keeps NULL
+                # there, so the upgraded layout is only wider, never rewritten.
                 self.assertEqual(
-                    after[-4:-1],
+                    after[-5:-1],
                     [
                         "source_fingerprint",
                         "source_fingerprint_state",
+                        "source_storage_path",
                         "source_observed_at",
                     ],
                 )
@@ -906,7 +910,7 @@ class Schema42To44UpgradeTests(unittest.TestCase):
 
             with SQLiteTaskRepository(database) as repository:
                 self.assertEqual(repository.schema_version, SCHEMA_VERSION)
-                self.assertEqual(SCHEMA_VERSION, 51)
+                self.assertEqual(SCHEMA_VERSION, 52)
                 # Every pre-existing durable fact survived the additive upgrade.
                 task = repository.get_task("base-task") or next(
                     item
@@ -1084,7 +1088,7 @@ class Schema44To45DiscoveryUpgradeTests(unittest.TestCase):
 
             with SQLiteTaskRepository(database) as repository:
                 self.assertEqual(repository.schema_version, SCHEMA_VERSION)
-                self.assertEqual(SCHEMA_VERSION, 51)
+                self.assertEqual(SCHEMA_VERSION, 52)
                 # The pre-existing admitted intent survived the additive upgrade.
                 intent = repository.get_manual_intent("intent-base")
                 self.assertIsNotNone(intent)

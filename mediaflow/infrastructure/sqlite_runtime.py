@@ -111,6 +111,7 @@ from mediaflow.domain.media_discovery import (
     DiscoveryObservation,
     DiscoveryOwnershipLost,
     DiscoveryProgress,
+    DiscoveryScopeEntry,
     DiscoveryStatus,
     DiscoveryUnavailable,
     MediaDiscovery,
@@ -302,7 +303,14 @@ from mediaflow.infrastructure.task_source_schema import ensure_task_occurrence_c
 # database simply has no outcome rows; the exact request readback then falls back
 # to the discovery row's own recorded request identity, so nothing is backfilled
 # and no outcome is invented.
-SCHEMA_VERSION = 51
+# Schema 52 adds ``task_items.source_storage_path``: the exact *Storage*-relative
+# path of one TaskItem's source.  Verified source ownership compares this value,
+# so two valid ResourceLibrary bindings of the same Storage (a nested root and the
+# whole root) agree on one concrete source instead of comparing incomparable
+# library-relative strings.  It is additive and nullable: a pre-change row keeps
+# NULL and falls back to its library-relative path plus its exact library binding,
+# so nothing is backfilled and no legacy row is re-bound.
+SCHEMA_VERSION = 52
 
 #: The conservative owner generation written to ``file_locks`` rows that predate
 #: schema 38.  It is a fixed, non-guessable-looking sentinel rather than NULL so
@@ -339,6 +347,10 @@ _TASK_ITEM_COLUMNS = (
     "source_fingerprint",
     "source_fingerprint_state",
     "source_observed_at",
+    # Schema 52: the exact Storage-relative source path used for verified
+    # ownership identity.  Appended last so every pre-existing named-column
+    # INSERT keeps its exact order.
+    "source_storage_path",
 )
 
 _TASK_ITEM_INSERT = (
@@ -371,6 +383,9 @@ _TASK_ITEM_UPSERT = (
         END,
         source_observed_at=COALESCE(
             excluded.source_observed_at, task_items.source_observed_at
+        ),
+        source_storage_path=COALESCE(
+            excluded.source_storage_path, task_items.source_storage_path
         )"""
 )
 
@@ -11907,7 +11922,7 @@ class SQLiteTaskRepository:
         "pause_requested, cancel_requested, error, created_at, updated_at, "
         "next_observation_at, admission_signature, admission_request_id, "
         "auto_prepare, preview_id, definition_origin_json, recovery_source_task_id, "
-        "recovery_excluded_paths_json, organize_task_id"
+        "recovery_excluded_paths_json, organize_task_id, storage_scope_json"
     )
 
     def create_media_discovery(self, discovery: MediaDiscovery) -> MediaDiscovery:
@@ -11981,7 +11996,7 @@ class SQLiteTaskRepository:
                 self._connection.execute(
                     f"INSERT INTO media_discoveries ({self._DISCOVERY_COLUMNS}) "
                     "VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, "
-                    "?, ?, ?, ?, ?, ?, ?, ?, ?)",
+                    "?, ?, ?, ?, ?, ?, ?, ?, ?, ?)",
                     self._discovery_values(discovery),
                 )
                 self._connection.commit()
@@ -12537,7 +12552,7 @@ class SQLiteTaskRepository:
                 self._connection.execute(
                     f"INSERT INTO media_discoveries ({self._DISCOVERY_COLUMNS}) "
                     "VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, "
-                    "?, ?, ?, ?, ?, ?, ?, ?, ?)",
+                    "?, ?, ?, ?, ?, ?, ?, ?, ?, ?)",
                     self._discovery_values(discovery),
                 )
                 self._connection.commit()
@@ -12555,14 +12570,175 @@ class SQLiteTaskRepository:
                 raise
         return self.get_media_discovery(discovery.discovery_id)
 
+    def extend_media_discovery_scope(
+        self,
+        discovery: MediaDiscovery,
+        entries: tuple[DiscoveryScopeEntry, ...],
+        storage_scope: tuple[tuple[str, str], ...],
+        *,
+        expected_version: int,
+    ) -> tuple[MediaDiscovery, tuple[DiscoveryScopeEntry, ...]]:
+        """Atomically add still-free siblings to one *unfrozen* admitted work.
+
+        A converging request may legitimately contain sources the open work did
+        not hold yet.  Reporting them as "admitted" without adding them to the
+        discoverable scope would be a lost admission (B46.3-02), while silently
+        widening frozen work would change a reviewed manifest.  This boundary
+        therefore extends only an open, unfrozen record and only with sources that
+        no other unfinished work owns *at this instant*: the ownership re-check and
+        the scope write are one ``BEGIN IMMEDIATE`` transaction, so two overlapping
+        requests on separate connections can never both claim the same free source.
+
+        Every accepted entry keeps its exact canonical Storage path, so ownership
+        stays comparable across library bindings.  Entries refused here are
+        returned to the caller with their own reason; no Storage call is made
+        inside the transaction, so a slow provider can never hold the write lock.
+        """
+
+        if not isinstance(discovery, MediaDiscovery):
+            raise ValueError("media discovery projection is required")
+        if (
+            isinstance(expected_version, bool)
+            or not isinstance(expected_version, int)
+            or expected_version < 1
+        ):
+            raise ValueError("media discovery expected version is invalid")
+        canonical = dict(storage_scope)
+        accepted: list[DiscoveryScopeEntry] = []
+        refused: list[DiscoveryScopeEntry] = []
+        with self._lock:
+            self._connection.execute("BEGIN IMMEDIATE")
+            try:
+                row = self._connection.execute(
+                    "SELECT version, status, intent_id, frozen_at FROM media_discoveries "
+                    "WHERE discovery_id=?",
+                    (discovery.discovery_id,),
+                ).fetchone()
+                if row is None:
+                    raise DiscoveryConflict(
+                        "the organizing work is no longer available",
+                        details={"discoveryId": discovery.discovery_id},
+                    )
+                if (
+                    int(row["version"]) != expected_version
+                    or row["intent_id"] is not None
+                    or row["frozen_at"] is not None
+                    or row["status"]
+                    in {
+                        DiscoveryStatus.COMPLETED.value,
+                        DiscoveryStatus.PARTIAL_SUCCESS.value,
+                        DiscoveryStatus.FAILED.value,
+                        DiscoveryStatus.CANCELLED.value,
+                    }
+                ):
+                    # The reviewed manifest is no longer extensible; the caller
+                    # must admit the free siblings as their own durable work.
+                    raise DiscoveryConflict(
+                        "this organizing work already froze or settled its reviewed scope",
+                        details={"discoveryId": discovery.discovery_id},
+                    )
+                for entry in entries:
+                    storage_path = canonical.get(entry.path)
+                    owned = self.find_owned_source_work(
+                        storage_id=discovery.storage_id,
+                        source_path=entry.path,
+                        storage_path=storage_path,
+                        resource_library_id=discovery.resource_library_id,
+                        exclude_discovery_id=discovery.discovery_id,
+                        exclude_lineage_task_id=discovery.recovery_source_task_id,
+                    )
+                    if owned is None:
+                        accepted.append(entry)
+                    else:
+                        refused.append(entry)
+                if not accepted:
+                    self._connection.rollback()
+                    return discovery, tuple(refused)
+                progress = DiscoveryProgress.from_document(
+                    json.loads(
+                        self._connection.execute(
+                            "SELECT progress_json FROM media_discoveries WHERE discovery_id=?",
+                            (discovery.discovery_id,),
+                        ).fetchone()["progress_json"]
+                    )
+                )
+                scope = tuple(dict.fromkeys((*progress.scope_entries, *accepted)))
+                if len(scope) > int(discovery.budgets.max_scope_paths):
+                    # The admission bound is never silently exceeded: the caller
+                    # reports the refusal and admits the siblings separately.
+                    self._connection.rollback()
+                    return discovery, tuple(refused) + tuple(accepted)
+                recorded_scope = json.loads(
+                    self._connection.execute(
+                        "SELECT storage_scope_json FROM media_discoveries WHERE discovery_id=?",
+                        (discovery.discovery_id,),
+                    ).fetchone()["storage_scope_json"]
+                    or "[]"
+                )
+                merged_scope = {
+                    str(item[0]): str(item[1])
+                    for item in recorded_scope
+                    if isinstance(item, (list, tuple)) and len(item) == 2
+                }
+                for entry in accepted:
+                    storage_path = canonical.get(entry.path)
+                    if storage_path is not None:
+                        merged_scope.setdefault(entry.path, storage_path)
+                updated_progress = replace(
+                    progress,
+                    scope_entries=scope,
+                    pending_files=progress.pending_files
+                    + tuple(
+                        entry.path for entry in accepted if entry.kind is DiscoveryEntryKind.FILE
+                    ),
+                    pending_directories=progress.pending_directories
+                    + tuple(
+                        entry.path
+                        for entry in accepted
+                        if entry.kind is DiscoveryEntryKind.DIRECTORY
+                    ),
+                )
+                self._connection.execute(
+                    "UPDATE media_discoveries SET version=?, progress_json=?, "
+                    "storage_scope_json=? WHERE discovery_id=? AND version=?",
+                    (
+                        expected_version + 1,
+                        json.dumps(updated_progress.document(), ensure_ascii=False, sort_keys=True),
+                        json.dumps(
+                            [[key, value] for key, value in sorted(merged_scope.items())],
+                            ensure_ascii=False,
+                            sort_keys=True,
+                        ),
+                        discovery.discovery_id,
+                        expected_version,
+                    ),
+                )
+                self._connection.commit()
+            except DiscoveryConflict:
+                self._connection.rollback()
+                raise
+            except BaseException:
+                self._connection.rollback()
+                raise
+        current = self.get_media_discovery(discovery.discovery_id)
+        if current is None:
+            raise DiscoveryConflict(
+                "the organizing work is no longer readable",
+                details={"discoveryId": discovery.discovery_id},
+            )
+        return current, tuple(refused)
+
     def find_owned_source_work(
         self,
         *,
         storage_id: str,
         source_path: str,
+        storage_path: str | None = None,
+        resource_library_id: str | None = None,
         source_fingerprint: str | None = None,
         exclude_task_id: str | None = None,
         exclude_discovery_id: str | None = None,
+        exclude_lineage_task_id: str | None = None,
     ) -> dict[str, object] | None:
         """The unfinished work that already owns one verified concrete source.
 
@@ -12576,6 +12752,11 @@ class SQLiteTaskRepository:
         state, so queued, running, paused, waiting-for-decision and saved-decision
         work all keep their claim; a terminal item does not.  A discovery admission
         owns the sources of its admitted selection for the same reason.
+
+        ``exclude_lineage_task_id`` names the Task whose own remaining scope this
+        work legally continues.  Its still-unsettled items are the *source* of that
+        continuation, not a competing owner, so they can never make a legal
+        remaining-scope preparation refuse itself.
         """
 
         if not isinstance(storage_id, str) or not storage_id.strip():
@@ -12587,9 +12768,20 @@ class SQLiteTaskRepository:
         if exclude_discovery_id is not None and not isinstance(exclude_discovery_id, str):
             raise ValueError("excluded discovery identity is invalid")
         settled = tuple(item.value for item in SETTLED_ITEM_STATUSES)
+        # One concrete source is identified by its path *inside the Storage*, not by
+        # the ResourceLibrary binding that happens to expose it.  Two valid library
+        # bindings of the same Storage (a nested root and the whole root) therefore
+        # agree on identity, while equal relative names under genuinely distinct
+        # roots still resolve to different Storage paths and never collide.
         clauses = [
             "items.storage_id=?",
-            "items.source_path=?",
+            "("
+            "items.source_storage_path=? "
+            # A pre-change row carries no Storage-relative path; its library-relative
+            # path plus its exact library binding is the conservative legacy identity.
+            "OR (items.source_storage_path IS NULL AND items.source_path=? "
+            "AND items.resource_library_id=?)"
+            ")",
             f"items.status NOT IN ({', '.join('?' for _ in settled)})",
             # A known different occurrence is a different concrete source, so an
             # old row that observed other content never blocks the replacement.
@@ -12597,14 +12789,26 @@ class SQLiteTaskRepository:
         ]
         parameters: list[object] = [
             storage_id,
+            storage_path if storage_path is not None else source_path,
             source_path,
+            resource_library_id or "",
             *settled,
             source_fingerprint,
             source_fingerprint,
         ]
+        excluded_tasks: set[str] = set()
         if exclude_task_id is not None:
-            clauses.append("items.task_id<>?")
-            parameters.append(exclude_task_id)
+            excluded_tasks.add(exclude_task_id)
+        if exclude_lineage_task_id is not None:
+            excluded_tasks.add(exclude_lineage_task_id)
+        if exclude_task_id is not None:
+            # A legal continuation inherits its own lineage: the still-unsettled
+            # ancestors of this Task are its admitted source, never a competing
+            # owner, so it can never refuse itself.
+            excluded_tasks |= self._recovery_lineage_task_ids_locked(exclude_task_id)
+        if excluded_tasks:
+            clauses.append("items.task_id NOT IN (" + ", ".join("?" for _ in excluded_tasks) + ")")
+            parameters.extend(sorted(excluded_tasks))
         with self._lock:
             row = self._connection.execute(
                 "SELECT items.task_id, items.item_id, items.status, items.stage, "
@@ -12627,17 +12831,51 @@ class SQLiteTaskRepository:
             return self._discovery_source_owners_locked(
                 storage_id,
                 source_path,
+                storage_path=storage_path,
+                resource_library_id=resource_library_id,
                 source_fingerprint=source_fingerprint,
                 exclude_discovery_id=exclude_discovery_id,
+                exclude_lineage_task_id=exclude_lineage_task_id,
             )
+
+    def _recovery_lineage_task_ids_locked(self, task_id: str, *, limit: int = 16) -> set[str]:
+        """The Tasks whose own work this Task legally continues.
+
+        A remaining-scope recovery preparation reviews exactly the still-undecided
+        sources of the Task it was admitted for.  Those ancestor TaskItems are the
+        continuation's admitted *source*, so they can never be a competing owner of
+        the same concrete source.  The walk follows the persisted
+        ``recovery_continuations`` chain, both directions, bounded to the same depth
+        the decision collector uses.
+        """
+
+        lineage: set[str] = set()
+        pending = [task_id]
+        while pending and len(lineage) < limit:
+            current = pending.pop()
+            if current in lineage:
+                continue
+            lineage.add(current)
+            for row in self._connection.execute(
+                "SELECT source_task_id, new_task_id FROM recovery_continuations "
+                "WHERE source_task_id=? OR new_task_id=? LIMIT ?",
+                (current, current, limit),
+            ).fetchall():
+                for value in (row["source_task_id"], row["new_task_id"]):
+                    if isinstance(value, str) and value and value not in lineage:
+                        pending.append(value)
+        return lineage
 
     def _discovery_source_owners_locked(
         self,
         storage_id: str,
         source_path: str,
         *,
+        storage_path: str | None = None,
+        resource_library_id: str | None = None,
         source_fingerprint: str | None = None,
         exclude_discovery_id: str | None,
+        exclude_lineage_task_id: str | None = None,
     ) -> dict[str, object] | None:
         """A durable organizing admission that still owns one concrete source.
 
@@ -12656,16 +12894,63 @@ class SQLiteTaskRepository:
             DiscoveryStatus.CANCELLED.value,
             DiscoveryStatus.FAILED.value,
         ]
+        if resource_library_id is not None and exclude_lineage_task_id is not None:
+            # A *legal continuation* reviews its own unfinished Task's remaining
+            # scope.  Another analysis-only preparation of the same library (a
+            # frozen summary awaiting its own confirmation) cannot mutate media and
+            # must not veto that remaining scope: two preparations may coexist, and
+            # the real double-execution gate is the admitted TaskItem plus the
+            # one-shot execution authority.  A different library binding, and a
+            # record whose own intent already reached an execution, stay owners.
+            clauses.append(
+                "(d.resource_library_id<>? OR (d.intent_id IS NOT NULL AND EXISTS ("
+                "SELECT 1 FROM manual_executions execution WHERE execution.intent_id="
+                "d.intent_id)))"
+            )
+            parameters.append(resource_library_id)
+        elif resource_library_id is not None and exclude_lineage_task_id is not None:
+            # A *legal continuation* reviews its own unfinished Task's remaining
+            # scope.  Another analysis-only preparation of the same library cannot
+            # mutate media, so its reviewed-but-unconfirmed manifest must not veto
+            # that remaining scope; the real duplicate-execution gate is the
+            # admitted TaskItem plus the one-shot execution authority.  A different
+            # binding of the same Storage, and a same-library admission whose
+            # intent already reached an execution, remain owners.
+            clauses.append(
+                "(d.resource_library_id<>? OR (d.intent_id IS NOT NULL AND EXISTS ("
+                "SELECT 1 FROM manual_executions execution "
+                "WHERE execution.intent_id=d.intent_id)))"
+            )
+            parameters.append(resource_library_id)
+        elif resource_library_id is not None:
+            # A same-library admission is a competing owner once its own work is
+            # durable and no longer purely open: it froze a reviewed manifest
+            # awaiting confirmation, or it finished a walk that holds these exact
+            # sources.  A still-queued admission is answered by the library-wide
+            # convergence instead, never by this branch.
+            clauses.append(
+                "(d.resource_library_id<>? OR d.intent_id IS NOT NULL "
+                "OR d.frozen_at IS NOT NULL OR d.status IN (?, ?))"
+            )
+            parameters.extend(
+                (
+                    resource_library_id,
+                    DiscoveryStatus.COMPLETED.value,
+                    DiscoveryStatus.PARTIAL_SUCCESS.value,
+                )
+            )
         if exclude_discovery_id is not None:
             clauses.append("d.discovery_id<>?")
             parameters.append(exclude_discovery_id)
         rows = self._connection.execute(
-            "SELECT d.discovery_id, d.actor, d.status, d.progress_json, "
-            "d.sources_json, d.intent_id FROM media_discoveries d "
+            "SELECT d.discovery_id, d.actor, d.status, d.resource_library_id, "
+            "d.progress_json, d.sources_json, d.intent_id, d.storage_scope_json "
+            "FROM media_discoveries d "
             "WHERE " + " AND ".join(clauses) + " "
             "ORDER BY d.created_at DESC, d.discovery_id DESC LIMIT 50",
             parameters,
         ).fetchall()
+        wanted = storage_path if storage_path is not None else source_path
         for row in rows:
             intent_id = row["intent_id"]
             if isinstance(intent_id, str) and intent_id:
@@ -12683,11 +12968,23 @@ class SQLiteTaskRepository:
                 continue
             if not progress.manual_selection:
                 continue
-            owned_paths = {
-                entry.path
-                for entry in progress.scope_entries
-                if entry.kind is DiscoveryEntryKind.FILE
+            # The exactly recorded Storage-relative scope is the identity when the
+            # record has one.  A record written before that amendment falls back to
+            # its library-relative paths, which is the conservative legacy answer
+            # for rows that never recorded the canonical form.
+            try:
+                recorded_scope = json.loads(row["storage_scope_json"] or "[]")
+            except Exception:
+                continue
+            canonical = {
+                str(item[0]): str(item[1])
+                for item in (recorded_scope if isinstance(recorded_scope, list) else [])
+                if isinstance(item, (list, tuple)) and len(item) == 2
             }
+            # Every admitted entry's exact confined Storage path, plus the exact
+            # sources a completed walk already recorded.  Comparing these makes two
+            # valid bindings of one Storage agree on the concrete source.
+            owned_paths: set[str] = set(canonical.values())
             owned_fingerprints: dict[str, str] = {}
             try:
                 for value in json.loads(row["sources_json"] or "[]"):
@@ -12699,15 +12996,29 @@ class SQLiteTaskRepository:
                         owned_fingerprints[value["path"]] = fingerprint
             except Exception:
                 pass
-            if source_path in owned_paths and not (
+            matched = wanted if wanted in owned_paths else None
+            if matched is None:
+                # A pre-change record carries no canonical scope; its
+                # library-relative file paths plus its exact library binding are
+                # the conservative legacy identity.
+                legacy = {
+                    entry.path
+                    for entry in progress.scope_entries
+                    if entry.kind is DiscoveryEntryKind.FILE
+                }
+                if source_path in legacy:
+                    matched = source_path
+            matched_fingerprint = owned_fingerprints.get(matched) if matched else None
+            if matched is not None and not (
                 source_fingerprint is not None
-                and owned_fingerprints.get(source_path) not in (None, source_fingerprint)
+                and matched_fingerprint not in (None, source_fingerprint)
             ):
                 return {
                     "kind": "discovery",
                     "discoveryId": row["discovery_id"],
                     "actor": row["actor"],
                     "status": row["status"],
+                    "resourceLibraryId": row["resource_library_id"],
                     "path": source_path,
                 }
         return None
@@ -12847,7 +13158,7 @@ class SQLiteTaskRepository:
                 "UPDATE media_discoveries SET status=?, version=?, budgets_json=?, "
                 "progress_json=?, sources_json=?, intent_id=?, frozen_at=?, attempts=?, "
                 "pause_requested=?, cancel_requested=?, error=?, updated_at=?, "
-                "next_observation_at=?, preview_id=? "
+                "next_observation_at=?, preview_id=?, storage_scope_json=? "
                 "WHERE discovery_id=? AND version=?",
                 (
                     discovery.status.value,
@@ -12868,6 +13179,11 @@ class SQLiteTaskRepository:
                         else None
                     ),
                     discovery.preview_id,
+                    json.dumps(
+                        [list(item) for item in discovery.storage_scope],
+                        ensure_ascii=False,
+                        sort_keys=True,
+                    ),
                     discovery.discovery_id,
                     expected_version,
                 ),
@@ -13164,7 +13480,7 @@ class SQLiteTaskRepository:
         columns = (
             "status=?, version=?, budgets_json=?, progress_json=?, sources_json=?, "
             "intent_id=?, frozen_at=?, attempts=?, error=?, updated_at=?, "
-            "next_observation_at=?, preview_id=?"
+            "next_observation_at=?, preview_id=?, storage_scope_json=?"
         )
         parameters: list[object] = [
             discovery.status.value,
@@ -13183,6 +13499,11 @@ class SQLiteTaskRepository:
                 else None
             ),
             discovery.preview_id,
+            json.dumps(
+                [list(item) for item in discovery.storage_scope],
+                ensure_ascii=False,
+                sort_keys=True,
+            ),
         ]
         if claim_token is None:
             columns += ", pause_requested=?, cancel_requested=?"
@@ -13519,6 +13840,11 @@ class SQLiteTaskRepository:
                 sort_keys=True,
             ),
             discovery.organize_task_id,
+            json.dumps(
+                [list(item) for item in discovery.storage_scope],
+                ensure_ascii=False,
+                sort_keys=True,
+            ),
         )
 
     @staticmethod
@@ -13607,6 +13933,7 @@ class SQLiteTaskRepository:
                         row["recovery_excluded_paths_json"] or "[]"
                     ),
                     "organizeTaskId": row["organize_task_id"],
+                    "storageScope": json.loads(row["storage_scope_json"] or "[]"),
                 }
             )
         except Exception as error:
@@ -15974,7 +16301,7 @@ class SQLiteTaskRepository:
                     attempts INTEGER NOT NULL, created_at TEXT NOT NULL, updated_at TEXT NOT NULL,
                     plan_id TEXT, destination_storage_id TEXT, destination_path TEXT,
                     execution_status TEXT, error TEXT, progress TEXT,
-                    source_observed_at TEXT,
+                    source_observed_at TEXT, source_storage_path TEXT,
                     UNIQUE(task_id, storage_id, source_path),
                     FOREIGN KEY(task_id) REFERENCES tasks(task_id)
                 );
@@ -16190,7 +16517,8 @@ class SQLiteTaskRepository:
                     auto_prepare INTEGER NOT NULL DEFAULT 0, preview_id TEXT,
                     definition_origin_json TEXT, recovery_source_task_id TEXT,
                     recovery_excluded_paths_json TEXT NOT NULL DEFAULT '[]',
-                    organize_task_id TEXT
+                    organize_task_id TEXT,
+                    storage_scope_json TEXT NOT NULL DEFAULT '[]'
                 );
                 CREATE INDEX IF NOT EXISTS media_discoveries_status_created
                     ON media_discoveries(status, created_at, discovery_id);
@@ -16838,6 +17166,16 @@ class SQLiteTaskRepository:
                 # 整理 admission is always a new durable admission.
                 self._connection.execute(
                     "ALTER TABLE media_discoveries ADD COLUMN organize_task_id TEXT"
+                )
+            if "storage_scope_json" not in discovery_columns:
+                # Additive schema 52: the exact confined Storage-relative path of
+                # each admitted scope entry.  A prior-schema discovery keeps an
+                # empty list and therefore its conservative legacy identity (its
+                # library-relative paths plus its exact library binding); nothing
+                # is backfilled and no row is silently re-bound.
+                self._connection.execute(
+                    "ALTER TABLE media_discoveries ADD COLUMN storage_scope_json "
+                    "TEXT NOT NULL DEFAULT '[]'"
                 )
             self._connection.execute(
                 "CREATE INDEX IF NOT EXISTS media_discoveries_request "
@@ -17677,6 +18015,7 @@ class SQLiteTaskRepository:
             item.source_fingerprint,
             item.source_fingerprint_state,
             item.source_observed_at.isoformat() if item.source_observed_at else None,
+            item.source_storage_path,
         )
 
     @staticmethod
@@ -17731,6 +18070,9 @@ class SQLiteTaskRepository:
                 else None
             ),
             row["progress"] if "progress" in row.keys() else None,
+            source_storage_path=(
+                row["source_storage_path"] if "source_storage_path" in row.keys() else None
+            ),
         )
 
     @staticmethod

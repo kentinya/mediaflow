@@ -103,6 +103,7 @@ from mediaflow.domain.organizer import StorageLocation
 from mediaflow.domain.preview_analysis import PreviewAnalysisConflict
 from mediaflow.domain.source_evidence import (
     OccurrenceState,
+    canonical_source_path,
     occurrence_id_for,
     source_fingerprint,
 )
@@ -512,6 +513,7 @@ class MediaDiscoveryService:
             admission_request_id=admission_request_id,
             auto_prepare=auto_prepare,
             organize_task_id=organize_task_id,
+            storage_scope=self._storage_scope(library, deduplicated),
         )
         organize_task = PersistentTask(
             organize_task_id,
@@ -632,6 +634,23 @@ class MediaDiscoveryService:
             discovery = replace(discovery, organize_task_id=None)
         return creator(discovery)
 
+    @staticmethod
+    def _storage_scope(
+        library, scope: tuple[DiscoveryScopeEntry, ...]
+    ) -> tuple[tuple[str, str], ...]:
+        """The exact confined Storage-relative path of every admitted entry.
+
+        Recorded at admission so verified source ownership compares the concrete
+        file inside its Storage rather than a library-relative string: two valid
+        bindings of the same Storage (a nested root and the whole root) then agree
+        on one source, and genuinely distinct roots still never collide.  Nothing
+        here reads Storage, mutates anything or grants authority.
+        """
+
+        return tuple(
+            (entry.path, canonical_source_path(library.root_path, entry.path)) for entry in scope
+        )
+
     def _organize_display(
         self, library, scope: tuple[DiscoveryScopeEntry, ...]
     ) -> RunDisplayContext | None:
@@ -678,8 +697,80 @@ class MediaDiscoveryService:
         re-reading the durable record instead of overwriting another writer.
         """
 
+        # A converging request may legitimately carry siblings the open work does
+        # not hold yet.  Reporting them as admitted while leaving them out of the
+        # discoverable scope would be a lost admission (B46.3-02), so the still-free
+        # entries are added to that work's real scope atomically.  A frozen or
+        # settled record is never widened; the caller then receives the honest
+        # per-item refusal instead.
+        if outcome.admitted:
+            discovery, refused = self._extend_scope(discovery, outcome.admitted)
+            if refused:
+                existing_refusals = {(item.path, item.kind.value): item for item in outcome.refused}
+                for entry in refused:
+                    existing_refusals.setdefault(
+                        (entry.path, entry.kind.value),
+                        DiscoveryRefusedEntry(
+                            entry.path,
+                            entry.kind,
+                            "source_already_organizing",
+                            _REASON_ALREADY_OWNED,
+                            (
+                                "this source became owned by another unfinished organizing work "
+                                "before it could join this one"
+                            ),
+                            (
+                                "open the reported existing work instead; this request did not "
+                                "start a second organizing task for the same source"
+                            ),
+                        ),
+                    )
+                outcome = replace(
+                    outcome,
+                    admitted=canonical_scope(
+                        tuple(
+                            entry
+                            for entry in outcome.admitted
+                            if (entry.path, entry.kind.value)
+                            not in {(item.path, item.kind.value) for item in refused}
+                        )
+                    ),
+                    refused=canonical_refusals(tuple(existing_refusals.values())),
+                )
         self._bind_request(admission_request_id, discovery)
         return self._record_outcome(discovery, outcome)
+
+    def _extend_scope(
+        self,
+        discovery: MediaDiscovery,
+        entries: tuple[DiscoveryScopeEntry, ...],
+    ) -> tuple[MediaDiscovery, tuple[DiscoveryScopeEntry, ...]]:
+        """Add still-free siblings to this open work, or report them refused."""
+
+        extender = getattr(self._repository, "extend_media_discovery_scope", None)
+        if not callable(extender):
+            return discovery, ()
+        try:
+            runtime = self._load_runtime(discovery.snapshot_id, discovery.snapshot_digest)
+            library = self._runtime_library(runtime, discovery.resource_library_id)
+        except Exception:  # noqa: BLE001 - an unresolvable binding keeps the honest refusal
+            return discovery, ()
+        canonical = {
+            entry.path: canonical_source_path(library.root_path, entry.path) for entry in entries
+        }
+        try:
+            current, refused = extender(
+                discovery,
+                canonical_scope(entries),
+                tuple(canonical.items()),
+                expected_version=discovery.version,
+            )
+        except DiscoveryConflict:
+            # Another writer extended or settled this work first.  The durable
+            # readback is the honest answer; nothing is guessed or re-played.
+            current = self._read(discovery.discovery_id) or discovery
+            return current, ()
+        return current, refused
 
     def _record_outcome(
         self, discovery: MediaDiscovery, outcome: DiscoveryAdmissionOutcome
@@ -741,8 +832,19 @@ class MediaDiscoveryService:
             owned = finder(
                 storage_id=library.storage_id,
                 source_path=entry.path,
+                storage_path=canonical_source_path(library.root_path, entry.path),
+                resource_library_id=library.library_id,
             )
-            if owned is None or owned.get("kind") != "task":
+            if owned is None:
+                kept.append(entry)
+                continue
+            same_library = owned.get("resourceLibraryId") == library.library_id
+            if owned.get("kind") == "discovery" and same_library:
+                # An open admission of *this* library that already holds the exact
+                # source is not a conflict: the library-wide reconciliation below
+                # converges this request onto that same durable work and reports
+                # the item as ``existing``.  Only a competed source outside that
+                # convergence path is a real refusal here.
                 kept.append(entry)
                 continue
             refusals.append(self._owned_source_refusal(entry, owned))
@@ -3271,9 +3373,15 @@ class MediaDiscoveryService:
             owned = owner_finder(
                 storage_id=library.storage_id,
                 source_path=relative,
+                storage_path=canonical_source_path(library.root_path, relative),
+                resource_library_id=library.library_id,
                 source_fingerprint=observed_fingerprint,
                 exclude_task_id=discovery.organize_task_id,
                 exclude_discovery_id=discovery.discovery_id,
+                # This walk's own still-unsettled ancestor sources are its legal
+                # origin, not a competing owner: a remaining-scope recovery
+                # preparation must never refuse the work it exists to review.
+                exclude_lineage_task_id=discovery.recovery_source_task_id,
             )
             if owned is None:
                 return None

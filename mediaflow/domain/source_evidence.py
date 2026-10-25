@@ -131,6 +131,31 @@ def source_fingerprint(storage_id: str, resource_library_id: str, entry) -> Sour
     return SourceFingerprint("storage-entry-sha256", digest, evidence, OccurrenceState.VERIFIED)
 
 
+def canonical_source_path(root_path: str | None, relative_path: str) -> str:
+    """The exact confined Storage-relative path of one library-relative source.
+
+    Two valid ResourceLibrary bindings of the same Storage expose the same
+    concrete file under different library-relative paths (``One.mkv`` from a root
+    at ``Movies`` and ``Movies/One.mkv`` from the Storage root).  Verified source
+    ownership must compare the file itself, so every identity boundary converts to
+    this one canonical form instead of comparing incomparable relative strings.
+    Distinct roots still yield distinct values, so equal relative names in
+    genuinely different subtrees never collide.  Pure: no Storage access.
+    """
+
+    root = (root_path or "").strip("/")
+    value = (relative_path or "").strip("/")
+    if not root:
+        return value
+    if not value:
+        return root
+    if value == root or value.startswith(root + "/"):
+        # Callers occasionally hold an already-Storage-relative value; never
+        # double-prefix it into a path that does not exist.
+        return value
+    return f"{root}/{value}"
+
+
 def occurrence_id_for(
     storage_id: str, resource_library_id: str, path: str, fingerprint: str | None
 ) -> str:
@@ -157,6 +182,7 @@ def _datetime_value(value: object) -> str | None:
 __all__ = [
     "OccurrenceState",
     "SourceFingerprint",
+    "canonical_source_path",
     "occurrence_id_for",
     "source_fingerprint",
 ]
