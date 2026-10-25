@@ -414,92 +414,123 @@ Full acceptance, full regression and any PASS/FIX decision remain B-owned.
 
 ## B Review Result
 
-**FIX REQUIRED — 2026-10-25.** Independently reviewed the complete
-`6072f50d5b2e5268c35d6729290512d1ae986104..eda531317659f3107b602239d47f683545908cf0`
-range (24 changed files), including implementation `aa4b6d2be78a497158c5e84301d42f6dec76637d`
-and its report-only handoff. Task Base/goal/scope/T4 remain unchanged. No next Task or Slice closure.
+```text
+Reviewed Task range: 6072f50d5b2e5268c35d6729290512d1ae986104..511a0d9ae0dc2d75dac56b3b53032b2e51b8c08d
+Implementation: dde88c77baa22ace35fccb81385c46060adc3bd8
+Decision: FIX REQUIRED — 2026-10-25
+Task blockers: B46.2-01 / P1 remains incomplete for supported directory work and effect truth
+Slice Required Outcomes / Surfaces all satisfied: NO
+Next: SAME TASK FIX LOOP
+```
 
-### Required corrections — same Task
+Independently reviewed the full Task Base..Head manifest and implementation, including the
+original local-history delivery and correction, not only the last fix diff. Task Base, goal,
+scope, Difficulty and T4 are unchanged. Prior review remains in Git at `ad25d437:TASK.md`.
+No next Task, product implementation, Slice closure, push or publication is included here.
 
-1. **B46.2-01 / P1 — local inspection loses per-item results and failure/effect evidence.**
-   `library_file_operations.py::_row_document` and
-   `service_api.py::_library_file_operation_detail` return aggregates plus lifecycle actions;
-   `LibraryFileOperationsDialog.tsx::OperationDetail` renders those aggregates, but no item/result
-   list or bounded failure explanation. The backend never supplies the top-level `durableState`
-   or `nextAction` read by this component, and it does not render lifecycle `knownEffects` or
-   `effectCertainty`. Independently reproduced for **both** library kinds: admit a real two-file
-   Delete, refuse one actual LocalStorage Delete through the existing test fault boundary, run
-   the real Worker. Durable items are one success and one failure, the successful source is gone,
-   and the failed source remains; local detail exposes neither item's evidence. Closing/restarting
-   leaves only totals, so the operator cannot identify the failed file or its safe next step.
-   Reuse the existing kind-scoped Delete/transfer projections and bounded item/result/checkpoint
-   readers inside this local modal. Keep complete paging and exact scope; display each item's
-   source/target, stage, known/uncertain effects, bounded refusal and permitted next action without
-   requiring Task Center. Reconcile skipped/cancelled/settled counts with actual terminal items.
-   Add real mixed/uncertain and close/reopen evidence for both kinds, preserving successful and
-   uncertain non-replay and backend-only control authority.
-2. **B46.2-02 / P1 — ordinary deep links do not reliably reach exact local inspection.**
-   The sole `GET /api/v1/files/operation-origin/{taskId}` dispatch hardcodes
-   `media_library=False`; both frontend kind reads use that same URL. A real MediaLibrary command
-   therefore returns `matched=false / not_ordinary_file_work` for both reads. Native browser
-   reproduction of its existing Task detail shows zero “返回发起它的库文件页” links.
-   Also, `destination-model.ts`'s Files/MediaLibrary authentication continuation omits the new
-   `operationTaskId`: opening an exact existing local-work URL and reconnecting drops that
-   parameter and opens no inspection modal. Resolve the actual persisted kind in a supported
-   backend contract and normalize it consistently; preserve bounded exact operation selection
-   across authentication/refresh. Verify existing Task and selected-run entry paths for both kinds,
-   including foreign/stale/denied context, without a guessed library or generic organizing recovery.
-3. **B46.2-03 / P1 — historical origin is replaced by today's enabled-library selection.**
-   Both pages pass `activeLibraryId` to the modal, derived only from current eligible libraries
-   with a first-library fallback. Independent reproduction uses supported Add/Edit commands for
-   an unreferenced ResourceLibrary, a real page-created folder, then successful disable. Its
-   historical backend list remains HTTP 200 / total 1. Reopening the originating page and header
-   status instead requests `/resource-libraries/destination/file-operations` and displays
-   “Destination / 共 0 条记录”. It cannot find the known operation. Preserve a separate exact
-   historical inspection scope and a bounded local way to select/reopen known origins when the
-   live library is disabled/removed/unavailable; do not bind status to a live browse fallback or
-   require re-enabling it. Cover both kinds and missing Active/current library, including reload/
-   restart with absent browser hints; historical pin/control restrictions must remain truthful.
+### Corrected findings and evidence limits
 
-Implement these as one complete correction to the existing local status journey. Extend current
-tests/harnesses, not a new process framework. Developer runs failing/new/directly affected checks
-and relevant static checks; B retains full T4 and native acceptance ownership. The Required Tests
-commands above now use the existing direct-files harness config for that spec; inventory/center
-specs keep their own existing config. This corrects the planning command mismatch, not product scope.
+- **B46.2-02:** the shared resolver now reads the persisted command kind. Independent backend
+  acceptance resolves real ResourceLibrary and MediaLibrary commands correctly; frontend
+  navigation tests retain bounded `operationTaskId` across authentication continuation. The
+  original hardcoded-resource dispatch and dropped-parameter causes are removed. Full native
+  Task/run-link/denied-context acceptance remains B-owned and pending with the T4 gates.
+- **B46.2-03:** historical inspection is now separate from live browse selection. Independent
+  native disabled-ResourceLibrary history and exact deep-link reopening pass after real managed
+  publication. Both kinds' history survives real API/SQLite reopen without browser hints. This
+  confirms the original fallback scenario is repaired; it is not a claim that every remaining
+  historical-scope/permission/control acceptance case has passed.
+- **B46.2-01:** two selected files now have readable independent outcomes and bounded failures;
+  both native mixed-batch cases pass. The required directory and known-effect behavior below is
+  still missing, so this finding stays open rather than creating a new Task or optional follow-up.
 
-### Independent evidence and outstanding gates
+### Required corrections — B46.2-01 / P1, same Task
 
-Local evidence: `.git/validation-evidence/eda53131/b46.2-review/` (ignored, local only). It includes
-the isolated reproduction script/log, command logs, native screenshots and the disabled-origin
-1536×1024 screenshot; all work used temporary roots/example configuration, no user media or secrets.
+1. **Keep every admitted Delete item's result locally reachable.** Through existing supported
+   `delete_impact` → confirmed `execute_delete` → real `FilesTransferWorker` → existing local
+   detail routes, independently deleted a selected directory containing 120 temporary files on
+   **both** library kinds. It admits **121 TaskItems** (directory plus children), not one item per
+   top-level selection. Refusing one actual Storage Delete outside the returned window leaves
+   that file present and records two failures (file plus non-empty directory). Local detail
+   returns only 100 items with `itemsTruncated=true`; the refused child's path/result is absent.
+   The detail endpoint rejects paging query fields and the modal has no item continuation.
+   Its advice that older evidence remains in the Task cannot complete the required local journey.
+   Add bounded complete per-item access in this exact local scope, including a usable continuation
+   in the modal. Reuse durable scoped readers and existing paging conventions; preserve kind,
+   library, Task, principal and immutable admitted context before counts/page/detail. Do not lower
+   supported Delete limits, send ordinary recovery to Task Center, fetch all media or silently
+   present a prefix as complete. `MAX_DELETE_PATHS=50` bounds top-level selection only;
+   `MAX_IMPACT_ENTRIES=5000` governs its expanded entries. The Developer report's assertion that
+   the 100-item cutoff is merely defensive is incorrect; complete access is existing scope.
+2. **Reuse durable transfer checkpoints and report effects truthfully.** An independent supported
+   folder Move was paused at the existing gated-Storage/cooperative-control boundary. Three files
+   had actually moved; the existing `transfer_projection` returned four successful per-entry
+   outcomes (destination directory plus three files). The new local detail returned only the
+   top-level directory with `knownEffects=[]`, item certainty `unknown` and aggregate certainty
+   **`none`**, rendered as **无变更**. Its new reader only consults final Result rows and discards
+   the unfinished TaskItem's persisted progress. Reuse existing kind-scoped transfer/Delete
+   checkpoint/result projections so running/paused/partial/uncertain work retains exact known
+   effects and independent source/target outcomes locally, including after reopen. Also correct
+   aggregate certainty: the native mixed Delete screenshot shows one verified successful deletion
+   and one refused deletion while the aggregate still says 无变更. Unknown or mixed known effects
+   must never collapse to no change. Preserve no-replay, existing safe controls and explicit
+   destructive authority; this correction adds no new retry or execution engine.
+3. Extend the current affected tests/harness, with **both kinds' >100-entry directory Delete**
+   (failure beyond page one, complete local traversal and reopen), real paused folder transfer
+   checkpoint evidence, mixed-success aggregate effects and no duplicate effects on safe resume.
+   Use supported commands and actual temporary Storage faults, not fabricated result payloads
+   as the sole proof. Keep current successful two-file/reopen/deep-link tests. Developer runs
+   the affected plan above plus:
 
-- Governance and complete-range whitespace check: PASS/clean.
-- `.venv/bin/python -m unittest tests.test_library_file_operation_history`: **13 passed**.
-- `npm run build` (cwd `web/`): PASS; produced `index-C7I0gcBz.js` / `index-YjIez-Bj.css`.
-- `npx playwright test --config=playwright.direct-files.python.config.ts tests/e2e/direct-files.python.spec.ts -g 'reopens its own durable operation status' --output=../.git/validation-evidence/eda53131/b46.2-review/native-artifacts`
-  (cwd `web/`): **2 passed**, real API/repository reopen and Worker effects. These prove successful
-  operation enumeration, not the failed/mixed/uncertain/control/old-link acceptance still missing.
-  Inspected both kinds' captured detail/narrow screenshots; the existing first detail capture is
-  760×900, so it is not evidence of the required 1536×1024 detail state.
-- Supported command/API fault reproduction confirms B46.2-01 for both kinds and B46.2-02's media
-  resolver failure. Native browser checks confirm the missing media return link, dropped operation
-  parameter on reconnect and B46.2-03's foreign-library empty history. The first attempt to disable
-  a referenced source was correctly refused (422); the unreferenced library disable succeeded
-  (200). Intermediate locator timeouts remain in raw logs; final captures show the actual state.
-- Test/build/probe subprocess times total **under 65 seconds** (overlap counted conservatively
-  twice); recorded review accounting began 05:56:47 UTC, before these runs. Testing is below 50%
-  of this review round. No deliberate waiting or redundant full-suite runs.
-- Early FIX REQUIRED: B's full Python/Web/default E2E, full native regression, packaging/installed
-  smoke and remaining safety/acceptance gates are **pending**, not waived or inherited from the
-  Developer report. Deployment/package/schema inputs did not change: Docker/security-image and
-  schema-upgrade proofs are not newly applicable for this candidate. No claim is made about the
-  Developer's reported parent keyboard flake; it was not independently rerun this round.
+   ```bash
+   .venv/bin/python -m unittest tests.test_direct_file_transfers.PauseCancelResumeTests.test_pause_inside_one_directory_is_observed_and_resumed
+   ```
+
+   Extend `tests.test_library_file_operation_history` and the existing real-Python direct-files
+   native spec for these exact local readback failures. Run those new/changed cases, library model/
+   dialog/API normalization tests and changed-file static checks. B retains full acceptance;
+   do not run or assign B's full suite as a prerequisite for Developer handoff.
+
+### Independent acceptance this round
+
+Evidence: `.git/validation-evidence/511a0d9a/b46.2-review/` (ignored, local only), containing
+`probe.py` / `probe.log`, focused-test/build/native logs and native screenshots. The probes use
+existing fixture constructors, supported application commands, actual Worker/Storage boundaries
+and the implemented read routes; no guessed production route, user media, private configuration
+or runtime database is used. Paused work resumes successfully with already-moved files preserved.
+
+- `python3 scripts/check_governance.py`: PASS. Complete-range `git diff --check`: clean.
+- `.venv/bin/python -m unittest tests.test_library_file_operation_history`: **17 passed**.
+- From `web/`, `npx vitest run src/entities/library/file-operations.test.ts src/features/library/LibraryFileOperationsDialog.test.tsx src/shared/api/library-file-operations-api.test.ts src/shared/navigation/destination-model.test.ts`:
+  **4 files / 56 passed**; jsdom emits its existing unimplemented `scrollTo` notices.
+- From `web/`, `npm run build`: PASS; production assets `index-ak474z5z.js` /
+  `index-BFNi4meT.css`; Vite's large-chunk warning remains visible.
+- From `web/`, `npx playwright test --config=playwright.direct-files.python.config.ts tests/e2e/direct-files.python.spec.ts -g 'reopens its own durable operation status|mixed batch|disabled origin' --output=../.git/validation-evidence/511a0d9a/b46.2-review/native-artifacts`:
+  **5 passed** (12.8 seconds), real Python/API/SQLite/Worker and built assets. Independently inspected
+  MediaLibrary mixed detail at 1536×1024 and ResourceLibrary centered modal at 390×844.
+- `PYTHONPATH=. .venv/bin/python .git/validation-evidence/511a0d9a/b46.2-review/probe.py`:
+  both kinds reproduce 121 admitted / 100 returned with an omitted failed child; the real paused
+  Move reproduces three moved files with no local checkpoint evidence and a false no-change
+  aggregate. These are observed product blockers despite the existing tests passing.
+- Conservative combined test/build/probe subprocess time is **under 30 seconds**, counting
+  overlapping runs twice. A conservative elapsed denominator starts at recorded **07:22:20 UTC**,
+  after the initial governance/document/code review; review was still ongoing at **07:27:37 UTC**.
+  Thus testing is below 50% without deliberate waiting or reduced safety assertions.
+
+Early FIX REQUIRED under workflow §6: full Python/Web/static/default E2E, complete native inventory/
+Task-link/control acceptance, wheel/installed smoke and remaining T4 safety gates are **pending**,
+not waived, not PASS and not inherited from Developer. No schema/dependency/deployment inputs changed;
+there is no new schema-upgrade or Docker-image proof to claim. B will run applicable complete
+acceptance on the corrected candidate. The reported keyboard flake was not independently tested
+this round and has no bearing on these reproduced blockers.
 
 ### All Slice outcomes reevaluated
 
-RO-1 retains accepted Task46.1 coverage; no new shared action-color change was made here. RO-3 is
-partly delivered (durable scoped index, local entry and successful reopen), but incomplete for the
-three required corrections above. RO-2 early organizing admission, RO-4 organizing-only center/
-four-type population and RO-5 Automation remain incomplete and outside this Task. Preserve the
-existing dirty/untracked user artifacts. Only this B-owned Task review is checkpointed; A-owned
-Slice/Roadmap/Progress boundaries and their stale first-Task pointers remain unchanged.
+RO-1 retains accepted Task46.1 coverage; this Task's additive modal styles do not alter shared
+palette rules. RO-3 has durable local enumeration, historical-origin selection, exact-kind return
+and small-batch evidence, but remains **incomplete** for full directory results and factual effects.
+RO-2 early manual admission, RO-4 organizing-only eight views/four-type population and RO-5 Automation
+semantics remain incomplete and outside Task46.2; no next Task is planned while this fix is open.
+A-owned Slice/Roadmap/Progress boundaries and their stale first-Task pointers remain unchanged.
+Pre-existing reference-image deletion and all untracked/private/reference/log/test artifacts are
+preserved; only this B-owned `TASK.md` review is checkpointed.
