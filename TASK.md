@@ -451,97 +451,102 @@ delivered. RO-3 complete (Task46.2). RO-4/RO-5 unchanged and still outside this 
 ## B Review Result
 
 ```text
-Reviewed Task range: 83144be20c6c7bc787a0fafad7fabb3e177bde6a..d675594f5cc5bb504aa47668c14ca700d41f1ed6
-Implementation / partial handoff: d675594f5cc5bb504aa47668c14ca700d41f1ed6
+Reviewed Task range: 83144be20c6c7bc787a0fafad7fabb3e177bde6a..62df5ca402b007f364b6a53df1a85c154d278526
+Implementation: 1be609121614e322df8c3abd4c2984c51a00602d
+Report-only successor: 62df5ca402b007f364b6a53df1a85c154d278526
 Decision: FIX REQUIRED — 2026-10-25
-Task blockers: B46.3-01/02/03 (P1)
+Open Task blockers: B46.3-01 and B46.3-02 (P1)
+B46.3-03: original folder-rule veto corrected in the checked path
 Slice Required Outcomes / Surfaces all satisfied: NO
 Next: SAME TASK FIX LOOP; complete Task46.3, no new Task or Slice closure
 ```
 
-B independently inspected the complete nine-file Task Base..Head manifest/diff, including the plan,
-partial report, production predicates/admission/walk, tests, Web consumers and architecture text.
-The checkpoint is a partial increment, not Task acceptance. Task Base/Goal/Scope/High/T4 and all
-acceptance criteria remain unchanged. Existing direct-file filtering work can be retained while
-completing the same coherent task; do not split remaining scopes into new Tasks or mark Scope 2 PASS.
+B inspected the full fourteen-file Task Base..Head manifest/diff, retaining the previously reviewed
+unchanged facts and checking the incremental application/domain/API/Web/test/architecture changes.
+`1be60912..62df5ca4` changes only TASK.md; executable inputs are the implementation above.
+Developer explicitly hands off PARTIAL with B46.3-01 unimplemented. No scope reduction, Task PASS
+or acceptance of the whole organizing journey follows from the filtering repairs. Earlier review
+and evidence remain at `bccdbc3a:TASK.md`; Task Base/Goal/Scope/High/T4 are unchanged.
 
 ### Required corrections
 
-1. **B46.3-01 / P1 — deliver the admitted organizing journey, not preparation alone.**
-   The actual Files request (`POST /api/v1/resource-libraries/library/files/discoveries`,
-   `autoPrepare: true`) returns 202 with one discovery and zero Tasks immediately after submission.
-   Implement Scopes 1/3/4/5/6 and necessary Scope 7 integration: durable organizing admission before
-   discovery/business readiness, atomic concrete-source ownership across existing entrances and
-   continuation, native four-type recovery, exact normal summary/confirmation in Running/All,
-   durable Files task/preparation/unknown-request readback and removal of center creation/manual/
-   discovery entries and their exclusive reads. Preserve analysis-only preparation, exact pins,
-   full bounds/stability, explicit effect confirmation and completed/uncertain non-replay. The
-   Developer's remaining-scope report cannot move this Task's RO-2 delivery into later RO-4 work.
-2. **B46.3-02 / P1 — preserve eligible siblings on business refusal.**
-   Through the same Files command, selecting `Movies/One.2001.mkv` together with
-   `Movies/downloading.mkv.part` returns 409 `source_excluded/temporary_file`, with no durable work
-   for the eligible file. Change the all-or-nothing business refusal in
-   `MediaDiscoveryService.admit` / `_resolve_entry_kind` into independent admitted/refused item
-   outcomes. Retain full structural/RBAC/root/bounds validation and truthful original scope; do not
-   silently drop exclusions or claim they were organized. Show the refused item's reason and the
-   eligible sibling's actual task/progress. Replace
-   `ManualEntrySemanticsTests.test_a_partly_refused_selection_is_never_a_different_scope`, which
-   currently asserts the contract violation, with coverage for independent outcomes and zero
-   mutation before confirmation. Add the equivalent existing-task duplicate plus eligible sibling
-   case when source ownership is implemented.
-3. **B46.3-03 / P1 — remove automatic manual-entry vetoes for folder selections too.**
-   A real published `directory: Movies` automatic exclusion still makes an explicit Files selection
-   of `Movies` return 409 `source_excluded/configured_exclude` before any task exists.
-   `_refuse_unselectable_directory`, ancestor checks and the folder walk still apply the automatic
-   include/exclude gates. Follow RO-2/AC-16 and Task Scope 2: keep configured primary extensions
-   (default video), explicit extension exclusions, attachment semantics and hard traversal/source
-   safety; do not retain other automatic include/exclude/match conditions as extra manual vetoes.
-   Preserve unchanged automatic Scanner/definition-bound filtering through an explicit admission
-   context, not a global weakening. Cover folder and mixed-folder paths, including unrelated
-   images/subtitles/NFO, custom primary extensions and artwork/other-same-stem settings. Correct
-   the new tests and CURRENT architecture text that currently describe retained automatic folder
-   vetoes as the complete Slice46 rule. Map the actual bounded reason in Web refusal copy: the
-   current generic `source_excluded` copy incorrectly calls this directory-rule refusal a temporary
-   or extension exclusion.
+1. **B46.3-01 / P1 remains open — complete early durable organizing and its Web journey.**
+   A normal Files request to `POST /api/v1/resource-libraries/library/files/discoveries` with
+   `autoPrepare: true` still returns 202 with one preparation and zero Tasks immediately after
+   submission. Implement the still-missing original Scopes 1/3/4/5/6 and necessary Scope 7:
+   organizing admission before folder traversal/business readiness; atomic verified source
+   ownership across queued/paused/decision/Automation/continuation work; native four-type decisions
+   and recovery; exact in-task summary/selected confirmation reachable in Running/All after restart;
+   durable Files task/preparation/unknown-request readback; removal of center creation/manual/
+   discovery entries and their exclusive reads. Preserve analysis-only preparation, full bounds,
+   real stability, pins, current permissions/effect confirmation and completed/uncertain non-replay.
+   These are already Task46.3 obligations, not a later Task or optional RO-4 cleanup. Do not describe
+   eligible siblings as admitted organizing Tasks while only preparation exists.
+2. **B46.3-02 / P1 remains open for repeated selection — retain this request's refused items.**
+   Fresh mixed admission now correctly keeps an eligible video and records its excluded sibling.
+   However, the existing-open-admission path still loses that evidence:
+   - Submit `[Movies/One.2001.mkv]` with request ID A and `autoPrepare: true`.
+   - Before that preparation runs, submit `[Movies/One.2001.mkv, Movies/downloading.mkv.part]`
+     with distinct request ID B and the same mode through the same Files API.
+   - Both return 202 with the same discovery identity; B returns `selection.refused: []` instead
+     of the excluded item's `temporary_file` reason. Exact repetition of B also returns 202 and
+     the same empty refusal list. No media mutation occurs, but the selected item's result vanishes.
+   Reconcile the complete submitted selection and refusal evidence, not only its eligible scope.
+   `admit` currently calls `_reconcile_admission` with `deduplicated` admitted entries before
+   storing new refusals; the durable lookup's scope signature omits those refused entries.
+   Return/persist bounded per-request admission outcomes or distinguish genuinely different
+   selections while preserving exact request identity and original immutable evidence. Do not
+   overwrite A's history, silently reuse its different outcomes, or create duplicate effective
+   source execution merely to preserve refusal text. Cover changed excluded siblings, same-request
+   readback, reopen and the overlapping/concurrent path; keep structural/RBAC/root/bounds checks.
+   Keep the original duplicate-plus-eligible-sibling coverage when source ownership is implemented.
+
+**Verified progress:** the original B46.3-03 automatic-directory veto is corrected. A deliberately
+selected folder under a real published `directory: Movies` exclusion now admits; its walk keeps the
+video while filtering unrelated image/subtitle/NFO suffixes. Focused tests verify artwork-off,
+custom primary extensions, empty non-primary folders, per-item refusal/reopen/request identity and
+unchanged definition-bound automatic filtering. Web source now renders refused entries and uses
+reason-specific copy. This does not establish final visual/native/full-T4 acceptance, nor complete
+all manual/mixed-selection/attachment/recovery outcomes of the Task.
 
 ### Independent checks and evidence
 
-Evidence is local, ignored and durable in
-`.git/validation-evidence/d675594f/b46.3-review/`:
+Durable local ignored evidence: `.git/validation-evidence/62df5ca4/b46.3-review/`.
 
 | Check | Actual result |
 | --- | --- |
-| Governance; full-range `git diff 83144be2..d675594f --check` | PASS / clean |
-| `.venv/bin/python -m unittest tests.test_media_discovery.ManualEntrySemanticsTests` | 5 tests OK, 0.362 s test runtime / 0.58 s process wall; `changed-tests.log`; unclosed-SQLite ResourceWarnings remain visible |
-| `.venv/bin/python .git/validation-evidence/d675594f/b46.3-review/entry_probe.py` | Three required behaviors above reproduced through existing authenticated Files API, real temporary Local Storage/SQLite; no mutation; `entry-probe.log`, 0.223 s probe body |
-| `.venv/bin/ruff check mediaflow/application/media_discovery.py mediaflow/application/scan_filters.py tests/test_media_discovery.py` | All checks passed |
+| Governance; `git diff 83144be2..62df5ca4 --check` | PASS / clean |
+| `.venv/bin/python -m unittest tests.test_media_discovery.ManualEntrySemanticsTests tests.test_media_discovery.ManualFolderExpansionTests tests.test_v2_automation_run_once.RunOnceApiTests.test_definition_run_once_keeps_the_unchanged_automatic_folder_filtering` | 15 OK, 1.27 s process wall; `focused-python.log`; SQLite ResourceWarnings retained |
+| `npm run test -- run src/features/library/StorageFilesPage.test.tsx src/entities/operations/discovery.test.ts` in `web/` | 2 files / 59 tests passed, 6.22 s process wall; `focused-web.log`; existing scrollTo warnings retained |
+| `entry_probe.py` in the evidence directory | Actual Files body with `autoPrepare: true`: zero Tasks remains; fresh mixed selection has its refused item; excluded manual folder admits and retains video-only primary; `entry-probe.log` |
+| `repeated_selection_probe.py` in the evidence directory | B46.3-02 missing refusal reproduced, including exact B request readback; `repeated-selection.log`; zero mutation |
+| `.venv/bin/ruff check` on the six changed Python files | All checks passed |
 
-The probe reuses the existing discovery fixture and its validated/published test configuration;
-it creates no invented route or impossible database state and uses no production media/secrets.
-The five green tests establish only their asserted filtering behavior; they do not establish the
-admitted-task journey or validate the contradictory all-or-nothing expectation. Developer-reported
-suite results above are not relabelled as independent B runs.
+Probes use the existing authenticated Files API fixture, real temporary Local Storage/SQLite and
+production-validated/published configuration. No guessed route, invented database state, user media
+or secret is used. The initial repeated-selection helper additionally assumed that B's readback
+would return 409; actual status was 202, so that helper assertion failed. Its raw output is retained
+in `repeated-selection-initial.log`. The corrected probe asserts the observed missing evidence;
+no request conflict or execution replay is claimed. All probe attempts count in testing time.
 
-Workflow §6 permits early FIX REQUIRED on proven P1 blockers. Full T4 Python/Web/native/packaging/
-resident-restart acceptance remains pending for the corrected candidate; no gate is waived and no
-product/visual/full-suite PASS is claimed. Developer runs failing/new/affected tests and hands off
-the complete Task; B retains full acceptance ownership. No optional consumer labels, unrelated
-row-menu issue or process-tool improvement is promoted to a new Task.
-
-Review started at 12:18:18 UTC. Tests/probes/static/governance commands together consumed less than
-5 seconds of subprocess wall time, inside more than two minutes of contract/code/evidence review
-before reconciliation; testing is strictly below 50%. No deliberate waiting or repeated full suite.
+Workflow §6 permits early FIX REQUIRED on proven blockers. Full T4 Python/Web/native/packaging/
+resident-restart acceptance remains pending on a corrected complete candidate. No gate is waived,
+no Developer-reported full result becomes B evidence, and no browser/visual pass is claimed here.
+Developer runs failing/new/changed/affected checks; B retains full acceptance ownership.
+Review started at 13:33:52 UTC. Tests/probes/static/governance used less than 15 seconds subprocess
+wall time inside more than two minutes of code/contract/evidence review before reconciliation,
+strictly below 50%; no deliberate waiting, repeated full suites or weakened assertions/timeouts.
 
 ### All Slice outcomes reevaluated
 
 | Outcome | Assessment at reviewed Head |
 | --- | --- |
-| RO-1 readable shared actions | Prior Task46.1 acceptance retained; no readability/style change here |
-| RO-2 Files-first organizing | Incomplete; partial direct-file predicate change only, B46.3-01/02/03 block this Task |
+| RO-1 readable shared actions | Prior Task46.1 acceptance retained; shared palette unchanged |
+| RO-2 Files-first organizing | Incomplete: folder/filtering repairs progress, B46.3-01/02 still block |
 | RO-3 local ordinary operations | Prior Task46.2 acceptance/evidence limits retained; local status implementation unchanged |
-| RO-4 organizing-only center/four-type truth | Incomplete; no complete population/view/recovery delivery in this checkpoint |
-| RO-5 Automation detail/Enabled/Run once | Incomplete; unchanged, remains outside Task46.3 except shared source-ownership integration |
+| RO-4 organizing-only center/four-type truth | Incomplete; complete population/view/recovery delivery remains outstanding |
+| RO-5 Automation detail/Enabled/Run once | Incomplete; unchanged semantics apart from filtering-preservation safety work |
 
-Slice remains ACTIVE. Only B-owned TASK.md changes in this review checkpoint; Slice/Roadmap/Progress
-and all pre-existing dirty/untracked/private/reference files are preserved. No product implementation,
-push, publication, new Task, history rewriting or Slice closure by B.
+Slice stays ACTIVE. Continue this same Task through all original acceptance criteria. This review
+changes only B-owned TASK.md; A-owned Slice/Roadmap/Progress and all pre-existing dirty/untracked/
+private/reference files remain preserved. No product implementation, new Task, push or closure by B.
