@@ -9,6 +9,10 @@
  * Reads are side-effect-free.  Opening, refreshing or reconnecting never creates,
  * resumes or re-submits work, and a bounded poll only keeps the readback current
  * while real work is still active.
+ *
+ * ``before`` is the backend's own cursor, so a page beyond the first 25 known runs
+ * is a real durable read instead of a recent-N window: the operator can always
+ * reopen work that left the first page.
  */
 
 import { queryOptions } from "@tanstack/react-query";
@@ -19,10 +23,17 @@ export const filesOrganizeWorkQueryKey = "files.organize-work" as const;
 export function filesOrganizeWorkQueryOptions(
   token: string | null,
   resourceLibraryId: string,
+  before: string | null = null,
+  limit = 25,
 ) {
   return queryOptions({
-    queryKey: [filesOrganizeWorkQueryKey, resourceLibraryId],
-    queryFn: () => fetchFilesOrganizeWork(token, { resourceLibraryId }),
+    queryKey: [filesOrganizeWorkQueryKey, resourceLibraryId, before, limit],
+    queryFn: () =>
+      fetchFilesOrganizeWork(token, {
+        resourceLibraryId,
+        limit,
+        ...(before === null ? {} : { before }),
+      }),
     enabled: token !== null && resourceLibraryId !== "",
     retry: false,
     refetchOnWindowFocus: false,

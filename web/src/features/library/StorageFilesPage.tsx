@@ -1521,8 +1521,17 @@ function OrganizeWorkPanel({
   readonly operationsReturn: string | null;
 }) {
   const [expanded, setExpanded] = useState(false);
-  const workQuery = useQuery(filesOrganizeWorkQueryOptions(token, libraryId));
+  // The backend's own cursor, so "查看更多" reads the next durable page rather
+  // than truncating a recent-N window: work that left the first page stays
+  // reachable after close/reload/restart.
+  const [cursors, setCursors] = useState<readonly (string | null)[]>([null]);
+  const cursor = cursors[cursors.length - 1] ?? null;
+  const workQuery = useQuery(
+    filesOrganizeWorkQueryOptions(token, libraryId, cursor),
+  );
   const items = workQuery.data?.ok === true ? workQuery.data.items : [];
+  const nextBefore =
+    workQuery.data?.ok === true ? workQuery.data.nextBefore : null;
   if (libraryId === "") return null;
   return (
     <section className="mf-count-section" aria-label="整理记录">
@@ -1583,6 +1592,28 @@ function OrganizeWorkPanel({
           ))}
         </ul>
       )}
+      {workQuery.data?.ok === true && items.length > 0 ? (
+        <footer className="mf-section-foot">
+          {cursors.length > 1 ? (
+            <button
+              type="button"
+              className="mf-link-button"
+              onClick={() => setCursors((value) => value.slice(0, -1))}
+            >
+              返回上一页
+            </button>
+          ) : null}
+          {nextBefore === null ? null : (
+            <button
+              type="button"
+              className="mf-link-button"
+              onClick={() => setCursors((value) => [...value, nextBefore])}
+            >
+              查看更多
+            </button>
+          )}
+        </footer>
+      ) : null}
     </section>
   );
 }

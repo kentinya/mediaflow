@@ -39,7 +39,7 @@ from mediaflow.domain.media_discovery import (
     DiscoveryObservation,
 )
 from mediaflow.domain.security import ApiPermission, ResolvedApiPrincipal
-from mediaflow.domain.source_evidence import source_fingerprint
+from mediaflow.domain.source_evidence import occurrence_id_for, source_fingerprint
 from mediaflow.domain.storage import (
     StorageEntry,
     StorageEntryType,
@@ -47,6 +47,7 @@ from mediaflow.domain.storage import (
     StorageErrorCode,
     StoragePage,
 )
+from mediaflow.domain.task_persistence import TaskItemStatus
 from mediaflow.infrastructure.local_storage import LocalStorage
 from mediaflow.infrastructure.sqlite_configuration_management import (
     SQLiteConfigurationRepository,
@@ -913,6 +914,218 @@ class AdmissionAndScopeTests(_DiscoveryFixture):
             self.assertEqual(200, status, missing)
             self.assertEqual([], missing["items"])
             self.assertEqual([], value.source.mutations)
+
+    def test_a_newly_accepted_sibling_really_enters_the_admitted_scope(self) -> None:
+        """B46.3-02: an accepted sibling must reach discovery, not just the reply.
+
+        A submits `[One]`.  B submits `[One, Three]` before the walk runs.  B's
+        response says `Three` was admitted, so the *durable* work must really hold
+        it: the very next Worker pass has to discover it, and the exact readback of
+        each request keeps its own evidence.  A response-only "admission" is a lost
+        admission — the operator would wait forever for work that never ran.
+        """
+
+        self.media("Movies/One.2001.mkv")
+        self.media("Movies/Three.2003.mkv")
+        with self.journey() as value:
+            status, first = self.request(
+                value,
+                "/api/v1/resource-libraries/library/files/discoveries",
+                "POST",
+                {
+                    "paths": ["Movies/One.2001.mkv"],
+                    "autoPrepare": True,
+                    "requestId": "11111111-1111-4111-8111-111111111111",
+                },
+            )
+            self.assertEqual(202, status, first)
+            status, second = self.request(
+                value,
+                "/api/v1/resource-libraries/library/files/discoveries",
+                "POST",
+                {
+                    "paths": ["Movies/One.2001.mkv", "Movies/Three.2003.mkv"],
+                    "autoPrepare": True,
+                    "requestId": "22222222-2222-4222-8222-222222222222",
+                },
+            )
+            self.assertEqual(202, status, second)
+            self.assertEqual(first["discoveryId"], second["discoveryId"])
+            self.assertEqual(
+                [{"kind": "file", "path": "Movies/Three.2003.mkv"}],
+                second["selection"]["scopes"],
+            )
+            self.assertEqual(
+                ["Movies/One.2001.mkv"],
+                [item["path"] for item in second["selection"]["existing"]],
+            )
+
+            # The durable scope — not only the reply — really holds the sibling.
+            stored = value.repository.get_media_discovery(first["discoveryId"])
+            self.assertEqual(
+                ["Movies/One.2001.mkv", "Movies/Three.2003.mkv"],
+                sorted(entry.path for entry in stored.progress.scope_entries),
+            )
+            self.assertEqual(
+                "Movies/Three.2003.mkv", dict(stored.storage_scope)["Movies/Three.2003.mkv"]
+            )
+
+            # The real Worker discovers both, so the accepted sibling really runs.
+            settled = self.run_discovery(value)
+            self.assertIn(settled["status"], {"completed", "partial_success"}, settled)
+            self.assertEqual(
+                ["Movies/One.2001.mkv", "Movies/Three.2003.mkv"],
+                sorted(item["path"] for item in settled["sources"]),
+            )
+            self.assertIsNotNone(settled["intentId"])
+            intent = value.repository.get_manual_intent(settled["intentId"])
+            self.assertEqual(
+                ["Movies/One.2001.mkv", "Movies/Three.2003.mkv"],
+                sorted(item.source.path for item in intent.items),
+            )
+            # Exactly one durable organizing Task: converging requests never
+            # duplicate the admitted work.
+            self.assertEqual(1, len(value.repository.list_tasks()))
+            self.assertEqual([], value.source.mutations)
+
+    def test_overlapping_library_bindings_own_one_concrete_storage_source(self) -> None:
+        """B46.3-04: identity is the confined Storage path, not the binding.
+
+        One temporary file is exposed through two valid ResourceLibrary bindings of
+        the same Storage: `nested` rooted at `Movies` and `whole` rooted at the
+        Storage root.  Submitting `nested/One.2001.mkv` and then
+        `whole/Movies/One.2001.mkv` names the same concrete source, so the second
+        request must be refused with the exact existing work instead of starting a
+        second organizing Task.
+        """
+
+        self.media("Movies/One.2001.mkv")
+        document = self.document()
+        # Two valid bindings of the *same* Storage: the whole Storage root and a
+        # root nested at `Movies`.
+        document["resourceLibraries"] = [
+            {
+                "id": "whole",
+                "name": "Whole",
+                "storageId": "source",
+                "storagePath": "",
+                "enabled": True,
+                "extensions": ["mkv", "mp4"],
+                "maxDepth": None,
+                "excludeRules": [],
+            },
+            {
+                "id": "nested",
+                "name": "Nested",
+                "storageId": "source",
+                "storagePath": "Movies",
+                "enabled": True,
+                "extensions": ["mkv", "mp4"],
+                "maxDepth": None,
+                "excludeRules": [],
+            },
+        ]
+        with self.journey() as value:
+            self.publish_policy(value, document=document)
+            status, first = self.request(
+                value,
+                "/api/v1/resource-libraries/nested/files/discoveries",
+                "POST",
+                {
+                    "paths": ["One.2001.mkv"],
+                    "autoPrepare": True,
+                    "requestId": "11111111-1111-4111-8111-111111111111",
+                },
+            )
+            self.assertEqual(202, status, first)
+            stored = value.repository.get_media_discovery(first["discoveryId"])
+            self.assertEqual("Movies/One.2001.mkv", dict(stored.storage_scope)["One.2001.mkv"])
+            status, second = self.request(
+                value,
+                "/api/v1/resource-libraries/whole/files/discoveries",
+                "POST",
+                {"paths": ["Movies/One.2001.mkv"], "autoPrepare": True},
+            )
+            self.assertEqual(409, status, second)
+            self.assertEqual("source_already_organizing", second["error"]["code"])
+            # The refusal names exactly the work that already owns that concrete
+            # source, so the operator opens it instead of starting a duplicate.
+            self.assertEqual(first["discoveryId"], second["error"]["details"]["existingWorkId"])
+            # Exactly one admitted organizing work exists for that source.
+            self.assertEqual(1, len(value.repository.list_tasks()))
+            self.assertEqual([], value.source.mutations)
+
+    def test_a_legal_recovery_preparation_does_not_own_itself_out(self) -> None:
+        """B46.3-01: a continuation's own lineage is not a competing owner.
+
+        A remaining-scope recovery preparation reviews exactly the still-undecided
+        sources of the paused Task it was admitted for.  Those ancestor TaskItems
+        must never make the preparation refuse its own remaining scope, otherwise
+        the native recovery journey can never reach a summary at all.
+        """
+
+        from datetime import UTC
+        from datetime import datetime as _datetime
+
+        from mediaflow.application.task_runtime import PersistentTaskCoordinator
+
+        self.media("Movies/One.2001.mkv")
+        with self.journey() as value:
+            self.assertEqual((), value.repository.list_tasks())
+            snapshot_id, digest = value.discovery._active_pin()
+            coordinator = PersistentTaskCoordinator(value.repository, value.repository)
+            paused = coordinator.create(
+                "organize",
+                execute_authorized=True,
+                scope_path="Movies",
+                item_limit=2,
+                configuration_snapshot_id=snapshot_id,
+                configuration_snapshot_digest=digest,
+                require_configuration_snapshot=True,
+            )
+            recorded = coordinator.record_discovered(
+                paused.task_id,
+                "source",
+                "library",
+                "Movies/One.2001.mkv",
+                "source:Movies/One.2001.mkv",
+            )
+            entry = value.source.stat("Movies/One.2001.mkv")
+            fingerprint = source_fingerprint("source", "library", entry)
+            value.repository.upsert_item(
+                replace(
+                    recorded,
+                    status=TaskItemStatus.PENDING,
+                    stage="pending",
+                    source_fingerprint=fingerprint.value,
+                    source_fingerprint_state="verified",
+                    source_occurrence_id=occurrence_id_for(
+                        "source", "library", "Movies/One.2001.mkv", fingerprint.value
+                    ),
+                    source_observed_at=_datetime.now(UTC),
+                )
+            )
+            value.repository.request_task_pause(paused.task_id, value.discovery._clock())
+            coordinator.acknowledge_pause(paused.task_id)
+            current = value.repository.get_task(paused.task_id)
+            self.assertEqual("paused", current.status.value)
+            # The ancestor TaskItem really is unfinished work of that source.
+            self.assertIsNotNone(
+                value.repository.find_owned_source_work(
+                    storage_id="source",
+                    source_path="Movies/One.2001.mkv",
+                    resource_library_id="library",
+                )
+            )
+            # ...yet the legal continuation of that very Task is not refused.
+            self.assertIsNone(
+                value.repository.find_owned_source_work(
+                    storage_id="source",
+                    source_path="Movies/One.2001.mkv",
+                    resource_library_id="library",
+                    exclude_lineage_task_id=current.task_id,
+                )
+            )
 
     def test_a_folder_walk_does_not_admit_an_already_owned_source_again(self) -> None:
         """RO-2/AC-3: verified source ownership across overlapping requests.
