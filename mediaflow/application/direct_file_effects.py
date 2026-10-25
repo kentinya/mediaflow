@@ -45,6 +45,7 @@ __all__ = [
     "projection_item_status",
     "PROJECTION_EFFECT",
     "aggregate_effect_certainty",
+    "EffectCertaintyFold",
     "TERMINAL_RESULT_STATUSES",
 ]
 
@@ -334,6 +335,79 @@ def item_effect_signal(item, record) -> dict[str, object]:
     }
 
 
+class EffectCertaintyFold:
+    """The streaming fold of one whole operation's item effect signals.
+
+    An operation-level fact (its recorded effect, its durable state and its safe
+    next action) describes *every* admitted item, not the page of items that
+    happens to be delivered to the operator.  This fold therefore accepts the
+    signals one item at a time, so a caller can read a large operation in bounded
+    batches and still publish one page-independent truth; loading more items can
+    never change what the operation is said to have done.
+
+    Precedence is intentional and identical to ``aggregate_effect_certainty``.
+    """
+
+    __slots__ = (
+        "count",
+        "_any_failed",
+        "_any_known_mutation",
+        "_any_uncertain",
+        "_every_settled_none",
+        "_every_verified",
+    )
+
+    def __init__(self) -> None:
+        self.count = 0
+        self._any_uncertain = False
+        self._every_verified = True
+        self._any_known_mutation = False
+        self._every_settled_none = True
+        self._any_failed = False
+
+    def add(self, signal) -> None:
+        self.count += 1
+        certainty = signal["effectCertainty"]
+        if signal["uncertain"] or certainty == "uncertain":
+            self._any_uncertain = True
+        if certainty != "verified_complete":
+            self._every_verified = False
+        if signal["knownMutation"]:
+            self._any_known_mutation = True
+        if not (signal["settled"] and certainty == "none"):
+            self._every_settled_none = False
+        if signal["status"] in {"FAILED", "PARTIAL", "UNCERTAIN"}:
+            self._any_failed = True
+
+    @property
+    def any_uncertain(self) -> bool:
+        """Whether any admitted item's effect cannot be proven."""
+
+        return self._any_uncertain
+
+    @property
+    def any_failed(self) -> bool:
+        """Whether any admitted item settled failed/partial/uncertain."""
+
+        return self._any_failed
+
+    @property
+    def certainty(self) -> str:
+        """The truthful aggregate certainty of every folded item."""
+
+        if self.count == 0:
+            return "unknown"
+        if self._any_uncertain:
+            return "uncertain"
+        if self._every_verified:
+            return "verified_complete"
+        if self._any_known_mutation:
+            return "partial"
+        if self._every_settled_none:
+            return "none"
+        return "unknown"
+
+
 def aggregate_effect_certainty(signals) -> str:
     """The truthful aggregate certainty of one operation's item signals.
 
@@ -344,19 +418,12 @@ def aggregate_effect_certainty(signals) -> str:
     with a recorded "no effect"), and ``unknown`` is reserved for admitted work
     that records no provable effect yet.  In particular an unfinished item
     without recorded checkpoints is ``unknown``, never ``none``.
+
+    This is the list form of :class:`EffectCertaintyFold`; both must stay in one
+    place so a paged read and a whole-operation read cannot disagree.
     """
 
-    entries = list(signals)
-    if not entries:
-        return "unknown"
-    if any(entry["uncertain"] for entry in entries):
-        return "uncertain"
-    if any(entry["effectCertainty"] == "uncertain" for entry in entries):
-        return "uncertain"
-    if all(entry["effectCertainty"] == "verified_complete" for entry in entries):
-        return "verified_complete"
-    if any(entry["knownMutation"] for entry in entries):
-        return "partial"
-    if all(entry["settled"] and entry["effectCertainty"] == "none" for entry in entries):
-        return "none"
-    return "unknown"
+    fold = EffectCertaintyFold()
+    for entry in signals:
+        fold.add(entry)
+    return fold.certainty

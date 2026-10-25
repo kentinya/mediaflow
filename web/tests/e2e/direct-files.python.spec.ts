@@ -1,4 +1,10 @@
-import { expect, test, type Page, type TestInfo } from "@playwright/test";
+import {
+  expect,
+  test,
+  type Page,
+  type Route,
+  type TestInfo,
+} from "@playwright/test";
 
 const ADMIN_TOKEN = "harness-admin-token";
 
@@ -661,8 +667,9 @@ async function statusBatchDeleteThroughNativePage(
 async function createFolderThroughNativePage(
   page: Page,
   kind: "resource" | "media",
+  suffix = "",
 ): Promise<string> {
-  const name = `Browser-Status-${kind === "resource" ? "Resource" : "Media"}`;
+  const name = `Browser-Status-${kind === "resource" ? "Resource" : "Media"}${suffix}`;
   await page.getByRole("button", { name: "新建文件夹" }).click();
   const dialog = page.getByRole("dialog", { name: "新建文件夹" });
   await expect(dialog).toBeVisible();
@@ -873,6 +880,12 @@ async function mixedBatchLocalEvidence(
   await expect(removeItem).toContainText("已完成变更");
   // The operation-level next action explains the mixed outcome.
   await expect(selected.getByText(/确认哪些条目失败或部分完成/)).toBeVisible();
+  // The operation's recorded effect describes every admitted item, so it is
+  // never "verified complete" just because this page's items look settled.
+  const aggregateFact = selected
+    .getByText("已记录影响")
+    .locator("xpath=following-sibling::dd[1]");
+  await expect(aggregateFact).not.toHaveText("已核实完成");
   await dialog.screenshot({
     path: testInfo.outputPath(`${kind}-mixed-operation-evidence.png`),
   });
@@ -1040,6 +1053,15 @@ async function bulkDirectoryLocalEvidence(
   // The operation really owns 121 admitted items, and the local read starts
   // with one bounded page rather than the whole result.
   await expect(selected.getByText(/已显示 50 \/ 121 项逐项证据/)).toBeVisible();
+  // The whole-operation effect is folded over all 121 items, so it is decided by
+  // the refused child wherever it settled — never "verified complete" just
+  // because this page's items succeeded.  Loading more items must not change it.
+  const certaintyFact = selected
+    .getByText("已记录影响")
+    .locator("xpath=following-sibling::dd[1]");
+  await expect(certaintyFact).not.toHaveText("已核实完成");
+  await expect(certaintyFact).not.toHaveText("无变更");
+  const aggregateBefore = (await certaintyFact.textContent()) ?? "";
   const more = selected.getByRole("button", { name: "加载更多逐项结果" });
   await expect(more).toBeVisible();
   await more.click();
@@ -1052,6 +1074,9 @@ async function bulkDirectoryLocalEvidence(
   await expect(
     selected.getByText(/已显示 121 \/ 121 项逐项证据/),
   ).toBeVisible();
+  // Loading the remaining items changed the item list, not the operation's
+  // recorded effect.
+  await expect(certaintyFact).toHaveText(aggregateBefore);
   const refusedItem = selected
     .locator("li.mf-operation-item", { has: page.getByText(/bulk-117\.txt$/) })
     .first();
@@ -1302,6 +1327,88 @@ test("ResourceLibrary Files keeps a paused folder Move's known effects locally",
  * bounded origin index is what keeps the exact historical scope selectable
  * instead of silently inspecting another enabled library.
  */
+/**
+ * A failed first detail read reaches the bounded failure/recovery UI.
+ *
+ * The operation really exists (created through the page), the history list keeps
+ * working, and only the detail GET is aborted at the browser transport
+ * boundary — the exact shape B reproduced, where the panel stayed on
+ * 正在读取… with no alert and no re-read action.  Restoring the transport must
+ * read the same selected operation again without any mutation.
+ */
+async function detailReadFailureEvidence(
+  page: Page,
+  testInfo: TestInfo,
+  kind: "resource" | "media",
+): Promise<void> {
+  // A distinct name from the shared status journey: this test runs after it on
+  // the same temporary fixture, and a duplicate directory would be refused by
+  // the real command rather than created.
+  const name = await createFolderThroughNativePage(page, kind, "-ReadFault");
+  const mutations: string[] = [];
+  page.on("request", (request) => {
+    if (request.method() !== "GET") mutations.push(request.url());
+  });
+  let aborted = 0;
+  const handler = async (route: Route) => {
+    aborted += 1;
+    await route.abort("failed");
+  };
+  await page.route("**/files/operations/*", handler);
+
+  await page.getByRole("button", { name: "当前页面操作状态" }).click();
+  const dialog = page.getByRole("dialog", { name: /当前页面操作状态/ });
+  await expect(dialog).toBeVisible();
+  const entry = dialog.getByRole("button", { name: /操作 新建文件夹/ }).first();
+  await expect(entry).toBeVisible();
+  await entry.click();
+  const selected = dialog.getByLabel("所选操作状态");
+  // The read really failed more than once (the page polls a non-terminal read),
+  // and the failure — not an endless loading hint — is what the operator sees.
+  await expect.poll(() => aborted).toBeGreaterThan(1);
+  const alert = selected.getByRole("alert");
+  await expect(alert).toBeVisible();
+  await expect(alert).toContainText(/无法连接服务|运行数据库不可用/);
+  await expect(
+    selected.getByText("正在读取该操作的持久状态…", { exact: true }),
+  ).toHaveCount(0);
+  const retry = selected.getByRole("button", { name: "重新读取该操作" });
+  await expect(retry).toBeVisible();
+  await page.screenshot({
+    path: testInfo.outputPath(`${kind}-detail-read-failure.png`),
+    fullPage: false,
+  });
+
+  // Restoring the transport lets the same explicitly re-read operation show its
+  // real durable evidence: the folder really was created.
+  await page.unroute("**/files/operations/*", handler);
+  await retry.click();
+  await expect(selected.getByText(/成功 1 \/ 失败 0/)).toBeVisible();
+  await expect(
+    selected.getByText(name, { exact: false }).first(),
+  ).toBeVisible();
+  // Reading, failing and re-reading submitted no command.
+  expect(mutations).toEqual([]);
+  await dialog.getByRole("button", { name: "关闭", exact: true }).click();
+  await expect(dialog).toHaveCount(0);
+}
+
+test("ResourceLibrary Files recovers from a failed first detail read", async ({
+  page,
+}, testInfo) => {
+  test.setTimeout(120_000);
+  await openFiles(page, "resource");
+  await detailReadFailureEvidence(page, testInfo, "resource");
+});
+
+test("MediaLibrary Files recovers from a failed first detail read", async ({
+  page,
+}, testInfo) => {
+  test.setTimeout(120_000);
+  await openFiles(page, "media");
+  await detailReadFailureEvidence(page, testInfo, "media");
+});
+
 test.describe("disabled origin stays inspectable", () => {
   test("ResourceLibrary Files reaches a disabled origin's work", async ({
     page,

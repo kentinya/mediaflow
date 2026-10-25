@@ -13633,6 +13633,46 @@ class SQLiteTaskRepository:
                 self._connection.execute("COMMIT")
         return tuple(items), total, len(rows) > limit, results
 
+    def library_file_operation_item_signals(
+        self,
+        task_id: str,
+        *,
+        batch_size: int = 100,
+    ) -> tuple[tuple[PersistentTaskItem, PersistentResultRecord | None], ...]:
+        """Every admitted item of one ordinary operation, in bounded batches.
+
+        The operation-level facts of a local status read (its recorded effect,
+        its durable state and its safe next action) must describe *all* admitted
+        items, not the item page the operator currently sees: a 121-item Delete
+        whose only refused child settled beyond the first page may never be
+        reported as a verified complete operation.  Reading them through the
+        delivered page is therefore wrong by construction.
+
+        This read pages over the same ``(created_at, item_id)`` ordering as
+        ``library_file_operation_items_window`` in bounded batches, each inside
+        its own short read transaction, so an operation of any size can be folded
+        without one unbounded query or an unbounded in-memory document.  It opens
+        no Storage, resolves no configuration and writes nothing.
+        """
+
+        if (
+            isinstance(batch_size, bool)
+            or not isinstance(batch_size, int)
+            or not 1 <= batch_size <= 100
+        ):
+            raise ValueError("library file operation signal batch size must be between 1 and 100")
+        collected: list[tuple[PersistentTaskItem, PersistentResultRecord | None]] = []
+        after: tuple[datetime, str] | None = None
+        while True:
+            items, _total, _has_next, results = self.library_file_operation_items_window(
+                task_id, limit=batch_size, after=after
+            )
+            if not items:
+                return tuple(collected)
+            collected.extend((item, results.get(item.item_id)) for item in items)
+            last = items[-1]
+            after = (last.created_at, last.item_id)
+
     def _latest_results_locked(self, item_ids: list[str]) -> dict[str, PersistentResultRecord]:
         """The newest Result of each submitted item, inside one read snapshot."""
 

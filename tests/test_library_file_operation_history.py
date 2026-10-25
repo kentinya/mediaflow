@@ -470,6 +470,51 @@ class LibraryFileOperationHistoryTests(unittest.TestCase):
             self.assertEqual(503, code, refused)
             self.assertEqual("library_file_operations_unavailable", refused["error"]["code"])
 
+    def test_detail_aggregates_over_every_item_even_without_the_batch_reader(self) -> None:
+        """A repository without the batched fold still reports the whole operation.
+
+        The operation-level facts must never fall back to "the page the operator
+        is looking at".  A reader that only offers the bounded item window is
+        folded page by page through the same shared interpretation, so both paths
+        publish one identical truth.
+        """
+
+        with tempfile.TemporaryDirectory() as directory:
+            root = Path(directory)
+            api, _objects, active, runtime = self._activate(root)
+            resource = self._service(api, active)
+            for name in ("keep-me.txt", "remove-me.txt"):
+                (root / "source" / name).write_text(name, encoding="utf-8")
+            digest = resource.delete_impact(
+                library_id="source", paths=["keep-me.txt", "remove-me.txt"]
+            ).scope_digest
+            original_delete = LocalStorage.delete
+
+            def refuse_one(storage, path, *args, **kwargs):
+                if path.endswith("keep-me.txt"):
+                    raise StorageError("isolated provider refusal")
+                return original_delete(storage, path, *args, **kwargs)
+
+            with unittest.mock.patch.object(LocalStorage, "delete", refuse_one):
+                outcome = self._run_delete(
+                    resource,
+                    library_id="source",
+                    paths=["keep-me.txt", "remove-me.txt"],
+                    confirmation_digest=digest,
+                )
+            code, batched = self._detail(api, "resource", "source", outcome["taskId"])
+            self.assertEqual(200, code, batched)
+            self.assertEqual("uncertain", batched["effectCertainty"], batched)
+            with unittest.mock.patch.object(
+                runtime, "library_file_operation_item_signals", None, create=True
+            ):
+                code, paged = self._detail(api, "resource", "source", outcome["taskId"])
+            self.assertEqual(200, code, paged)
+            self.assertEqual(batched["effectCertainty"], paged["effectCertainty"])
+            self.assertEqual(batched["durableState"], paged["durableState"])
+            self.assertEqual(batched["nextAction"], paged["nextAction"])
+            self.assertEqual(batched["items"], paged["items"])
+
     def test_viewer_reads_history_and_a_read_mutates_nothing(self) -> None:
         with tempfile.TemporaryDirectory() as directory:
             root = Path(directory)
@@ -935,6 +980,16 @@ class LibraryFileOperationHistoryTests(unittest.TestCase):
                 self.assertEqual(50, len(page["items"]), page)
                 self.assertTrue(page["itemsTruncated"], page)
                 self.assertIsNotNone(page["nextCursor"], page)
+                # The operation's recorded effect describes *every* admitted
+                # item.  One refused child must therefore be visible from the
+                # first page onward — never `verified_complete` on a page of
+                # successes, and never dependent on how many pages were loaded.
+                self.assertEqual("uncertain", page["effectCertainty"], page)
+                self.assertEqual("mutation_effect_uncertain", page["durableState"], page)
+                self.assertIn("不确定", page["nextAction"], page)
+                aggregates: list[tuple[object, object, object]] = [
+                    (page["effectCertainty"], page["durableState"], page["nextAction"])
+                ]
                 collected.extend(page["items"])
                 cursor = page["nextCursor"]
                 pages = 1
@@ -944,10 +999,24 @@ class LibraryFileOperationHistoryTests(unittest.TestCase):
                     )
                     self.assertEqual(200, code, following)
                     self.assertEqual(121, following["totalItems"], following)
+                    # Every page publishes the same whole-operation truth, even
+                    # a page that contains no failing item at all.
+                    self.assertEqual("uncertain", following["effectCertainty"], following)
+                    self.assertEqual(
+                        "mutation_effect_uncertain", following["durableState"], following
+                    )
+                    aggregates.append(
+                        (
+                            following["effectCertainty"],
+                            following["durableState"],
+                            following["nextAction"],
+                        )
+                    )
                     collected.extend(following["items"])
                     cursor = following["nextCursor"]
                     pages += 1
                 self.assertEqual(3, pages, pages)
+                self.assertEqual(1, len(set(aggregates)), aggregates)
                 self.assertEqual(121, len(collected), (kind, len(collected)))
                 self.assertEqual(
                     len({item["itemId"] for item in collected}), 121, (kind, "duplicate item")
@@ -977,6 +1046,53 @@ class LibraryFileOperationHistoryTests(unittest.TestCase):
                 self.assertNotIn(str(root), rendered)
                 self.assertNotIn("admin-token", rendered)
                 self.assertEqual("none", page["sideEffects"])
+
+                # A different page size yields the same whole-operation truth:
+                # the aggregate is folded over all 121 items, so whichever item
+                # the page happens to contain (generated IDs decide the order,
+                # so a refused child can land on any page) cannot change it.
+                code, whole = self._detail(
+                    api, kind, library, admitted["taskId"], query="limit=100"
+                )
+                self.assertEqual(200, code, whole)
+                self.assertEqual(100, len(whole["items"]), whole)
+                self.assertEqual("uncertain", whole["effectCertainty"], whole)
+                self.assertEqual("mutation_effect_uncertain", whole["durableState"], whole)
+                self.assertIn("不确定", whole["nextAction"], whole)
+                self.assertEqual(page["nextAction"], whole["nextAction"])
+                if all(item["status"] == "SUCCESS" for item in whole["items"]):
+                    # A page of pure successes must still report the operation's
+                    # real uncertain effect instead of claiming 已核实完成.
+                    self.assertEqual("uncertain", whole["effectCertainty"], whole)
+
+                # A fresh repository over the same database reproduces exactly
+                # the same aggregate on its first page.
+                before_task = runtime.get_task(admitted["taskId"])
+                before_items = runtime.list_items(admitted["taskId"])
+                before_results = runtime.list_results(admitted["taskId"])
+                runtime.close()
+                reopened = SQLiteTaskRepository(root / "runtime.sqlite3")
+                self.addCleanup(reopened.close)
+                restarted = MediaFlowApi(
+                    reopened,
+                    None,
+                    principals=(
+                        ResolvedApiPrincipal("admin", "admin-token", frozenset(ApiPermission)),
+                    ),
+                )
+                code, again = self._detail(
+                    restarted, kind, library, admitted["taskId"], query="limit=50"
+                )
+                self.assertEqual(200, code, again)
+                self.assertEqual("uncertain", again["effectCertainty"], again)
+                self.assertEqual("mutation_effect_uncertain", again["durableState"], again)
+                self.assertEqual(page["nextAction"], again["nextAction"])
+                # The whole-operation fold is a read: paging over every item and
+                # reopening the database left the Task, its items and its Results
+                # byte identical.
+                self.assertEqual(before_task, reopened.get_task(admitted["taskId"]))
+                self.assertEqual(before_items, reopened.list_items(admitted["taskId"]))
+                self.assertEqual(before_results, reopened.list_results(admitted["taskId"]))
                 del items, admitted
 
     def test_item_cursor_and_scope_fail_closed_and_reads_mutate_nothing(self) -> None:

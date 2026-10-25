@@ -32,7 +32,7 @@ from __future__ import annotations
 from datetime import datetime
 
 from mediaflow.application.direct_file_effects import (
-    aggregate_effect_certainty,
+    EffectCertaintyFold,
     item_effect_signal,
     progress_payload,
     projection_effect,
@@ -468,20 +468,22 @@ class LibraryFileOperationHistoryService:
                 status=503,
             )
         items, total, has_next, results = window(task.task_id, limit=limit, after=after)
-        signals: list[dict[str, object]] = []
         outcomes: list[dict[str, object]] = []
         for item in items:
             record = results.get(item.item_id)
-            signal = item_effect_signal(item, record)
-            signals.append(signal)
-            outcomes.append(_item_entry(item, record, signal))
+            outcomes.append(_item_entry(item, record, item_effect_signal(item, record)))
+        # The operation-level facts are folded over *every* admitted item, never
+        # over the page being delivered: loading more items (or a refused child
+        # that settled on a later page) must not change what the operation is
+        # said to have done.
+        fold = self._operation_fold(task)
         document: dict[str, object] = {
             "items": outcomes,
             "itemLimit": limit,
             "itemTotal": total,
             "itemsTruncated": has_next,
-            "durableState": _durable_state(task, signals),
-            "effectCertainty": aggregate_effect_certainty(signals),
+            "durableState": _durable_state(task, fold),
+            "effectCertainty": fold.certainty,
         }
         if outcomes and has_next:
             last = items[-1]
@@ -489,8 +491,44 @@ class LibraryFileOperationHistoryService:
                 "createdAt": last.created_at.isoformat(),
                 "itemId": last.item_id,
             }
-        document["nextAction"] = _operation_next_action(task, signals, total)
+        document["nextAction"] = _operation_next_action(task, fold, total)
         return document
+
+    def _operation_fold(self, task) -> EffectCertaintyFold:
+        """The effect fold of every admitted item of one operation.
+
+        A whole-operation read is used when the repository offers it, so a large
+        operation is folded in bounded batches instead of one unbounded query.
+        A repository without that read is folded page by page through the same
+        item window, which is still the complete population — never only the
+        page the operator happens to be looking at.
+        """
+
+        fold = EffectCertaintyFold()
+        read_all = getattr(self._repository, "library_file_operation_item_signals", None)
+        if callable(read_all):
+            entries = read_all(task.task_id)
+        else:
+            entries = self._folded_item_pages(task.task_id)
+        for item, record in entries:
+            fold.add(item_effect_signal(item, record))
+        return fold
+
+    def _folded_item_pages(self, task_id: str):
+        """Every item of one Task through successive bounded item windows."""
+
+        window = getattr(self._repository, "library_file_operation_items_window", None)
+        if not callable(window):
+            return ()
+        collected: list[object] = []
+        after = None
+        while True:
+            items, _total, _has_next, results = window(task_id, limit=100, after=after)
+            if not items:
+                return tuple(collected)
+            collected.extend((item, results.get(item.item_id)) for item in items)
+            last = items[-1]
+            after = (last.created_at, last.item_id)
 
     def _row_document(self, row: OrdinaryFileOperationRow, library_id: str) -> dict[str, object]:
         split = ordinary_operation_command(row.command)
@@ -699,29 +737,32 @@ def _item_next_action(disposition: str, certainty: str, has_failure: bool) -> st
     return "核实该条目当前状态后再决定下一步"
 
 
-def _durable_state(task, signals: list[dict[str, object]]) -> str:
-    """The bounded durable-state name of one selected operation."""
+def _durable_state(task, fold: EffectCertaintyFold) -> str:
+    """The bounded durable-state name of one selected operation.
 
-    if any(signal["uncertain"] for signal in signals) or task.error == "mutation_outcome":
+    The state is decided over every admitted item (``fold``), so a page of
+    successes can never hide an uncertain sibling elsewhere in the operation.
+    """
+
+    if fold.any_uncertain or task.error == "mutation_outcome":
         return "mutation_effect_uncertain"
     if task.status.value in {"completed", "partial_success", "failed", "cancelled"}:
         return f"task_{task.status.value}"
     if task.status.value == "paused":
         return "task_paused"
-    if not signals:
+    if fold.count == 0:
         return "no_admitted_item"
     return "task_in_progress"
 
 
-def _operation_next_action(task, signals: list[dict[str, object]], total: int) -> str:
+def _operation_next_action(task, fold: EffectCertaintyFold, total: int) -> str:
     """The one safe next action of the whole selected operation."""
 
-    if any(signal["uncertain"] for signal in signals) or task.error == "mutation_outcome":
+    if fold.any_uncertain or task.error == "mutation_outcome":
         return "刷新来源目录核实实际状态；结果不确定的项目不会自动重试，也不会回滚已完成的成功项目"
     status = task.status.value
     if status in {"completed", "partial_success", "failed", "cancelled"}:
-        failed = any(signal["status"] in {"FAILED", "PARTIAL", "UNCERTAIN"} for signal in signals)
-        if failed:
+        if fold.any_failed:
             return (
                 "查看逐项结果以确认哪些条目失败或部分完成（可用“加载更多”翻到后续条目）；"
                 "刷新目录核实当前状态后，明确选择需要的后续操作"

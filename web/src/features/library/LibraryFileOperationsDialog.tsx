@@ -283,7 +283,18 @@ function OperationDetail({
     lastPage !== undefined && lastPage.ok ? lastPage.model : null;
   const lifecycle = firstPage?.ok ? firstPage.model.lifecycle : null;
   const readFailureCode =
-    firstPage !== undefined && !firstPage.ok ? firstPage.code : null;
+    firstPage !== undefined
+      ? firstPage.ok
+        ? null
+        : firstPage.code
+      : // A query that *threw* (rather than answering with a bounded failure
+        // document) only means "no read arrived": it is a failure the operator
+        // must see while nothing has been read yet.  Once pages exist, a failed
+        // continuation or poll is disclosed separately and never discards the
+        // evidence already on screen.
+        itemPages.isError
+        ? "transport_unavailable"
+        : null;
   const continuationFailure =
     pages.length > 1 && lastPage !== undefined && !lastPage.ok
       ? lastPage.code
@@ -323,14 +334,11 @@ function OperationDetail({
     },
   });
 
-  if (read === undefined || detail === null) {
-    return (
-      <p className="mf-dialog-hint" role="status">
-        正在读取该操作的持久状态…
-      </p>
-    );
-  }
   if (readFailureCode !== null) {
+    // A *completed* read that failed is not a read still in progress: the
+    // operator must be told what happened and be able to read the same
+    // selected operation again.  The selection, the library identity and all
+    // durable work stay untouched — this only re-runs a read.
     return (
       <>
         <p className="mf-dialog-error" role="alert">
@@ -340,17 +348,27 @@ function OperationDetail({
           <button
             type="button"
             className="mf-link-button"
+            disabled={itemPages.isFetching}
             onClick={() => void itemPages.refetch()}
           >
-            重新读取该操作
+            {itemPages.isFetching ? "正在重新读取该操作…" : "重新读取该操作"}
           </button>
         </p>
       </>
     );
   }
-  // The aggregate state and certainty always come from the newest page, so a
-  // continued item list and the operation-level facts can never disagree.
-  const aggregate = lastDetail ?? detail;
+  if (read === undefined || detail === null) {
+    return (
+      <p className="mf-dialog-hint" role="status">
+        正在读取该操作的持久状态…
+      </p>
+    );
+  }
+  // The operation-level facts are folded by the backend over *every* admitted
+  // item, so they are identical on every page: taking them from the first page
+  // means loading more evidence can never change what the operation is said to
+  // have done.  `lastDetail` remains the page that knows the continuation.
+  const aggregate = detail;
   const uncertain = aggregate.durableState === "mutation_effect_uncertain";
   return (
     <>
@@ -438,9 +456,22 @@ function OperationDetail({
             </p>
           )}
           {continuationFailure !== null && (
-            <p className="mf-dialog-error" role="alert">
-              {readFailureMessage(continuationFailure)}
-            </p>
+            <>
+              <p className="mf-dialog-error" role="alert">
+                {readFailureMessage(continuationFailure)}
+              </p>
+              <p className="mf-dialog-hint">
+                已读取的逐项证据保留在下方；
+                <button
+                  type="button"
+                  className="mf-link-button"
+                  disabled={itemPages.isFetchingNextPage}
+                  onClick={() => void itemPages.fetchNextPage()}
+                >
+                  重新读取后续逐项结果
+                </button>
+              </p>
+            </>
           )}
         </div>
       )}

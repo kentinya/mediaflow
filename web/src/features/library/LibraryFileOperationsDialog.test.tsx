@@ -212,6 +212,19 @@ interface StubOptions {
     readonly items: readonly unknown[];
     readonly nextCursor?: string | null;
   }[];
+  /**
+   * Cursors whose *continuation* read is answered with a bounded failure, while
+   * the already loaded pages stay available.  This mirrors a real connection
+   * that drops between two item pages.
+   */
+  readonly failingCursors?: readonly string[];
+  /**
+   * The first detail read of the selected operation fails at the *transport*
+   * boundary (the browser cannot reach the service), while the history list and
+   * the durable operation stay readable — the exact shape B reproduced when a
+   * detail GET was aborted.
+   */
+  readonly detailTransportFailure?: boolean;
   readonly historicalOrigins?: readonly {
     readonly libraryId: string;
     readonly items: readonly unknown[];
@@ -236,12 +249,24 @@ function stubPage(items: readonly unknown[], options: StubOptions = {}) {
             options.detailStatus,
           );
         }
+        if (options.detailTransportFailure === true) {
+          throw new TypeError("detail read aborted at the transport boundary");
+        }
         // The real detail route accepts one bounded item page, so the stub
         // reads the Task identity from the path and answers with the next page
         // the caller's cursor names.
         const [path, query = ""] = url.split("?");
         const taskId = path.split("/").pop() as string;
         const cursor = new URLSearchParams(query).get("cursor");
+        if (
+          cursor !== null &&
+          (options.failingCursors ?? []).includes(cursor)
+        ) {
+          return jsonResponse(
+            { error: { code: "library_file_operations_unavailable" } },
+            503,
+          );
+        }
         const detailPages = options.detailPages ?? [];
         const requested = options.detail ?? {};
         const itemPage =
@@ -744,6 +769,203 @@ describe("current page operation status", () => {
     ).toBeNull();
     // Reading and continuing submitted nothing.
     expect(within(selected).queryByRole("button", { name: "取消" })).toBeNull();
+  });
+
+  it("keeps the operation's recorded effect when more item pages are loaded", async () => {
+    // B reproduced this: the operation-level certainty was derived from the
+    // *current item page*, so a page of successes reported 已核实完成 while the
+    // same operation's refused child sat on another page.  The backend folds the
+    // aggregate over every admitted item, so it is identical on each page and
+    // loading more evidence can never change it.
+    const user = userEvent.setup();
+    const successes = (offset: number, count: number) =>
+      Array.from({ length: count }, (_value, index) => ({
+        itemId: `item-${offset + index}`,
+        path: `batch/file-${offset + index}.txt`,
+        destination: `batch/file-${offset + index}.txt`,
+        status: "SUCCESS",
+        stage: "completed",
+        attempts: 1,
+        effect: "transferred",
+        effectCertainty: "verified_complete",
+        knownEffects: [`delete:batch/file-${offset + index}.txt`],
+        nextAction: "无需操作；刷新目录即可看到当前状态",
+      }));
+    stubPage(
+      [
+        operation({
+          taskId: "task-1",
+          operation: "delete",
+          operationLabel: "删除",
+          command: "files_delete",
+          commandLabel: "删除",
+          status: "partial_success",
+          totalItems: 52,
+          settledItems: 52,
+          succeededItems: 51,
+          failedItems: 1,
+          allSucceeded: false,
+        }),
+      ],
+      {
+        detail: {
+          taskId: "task-1",
+          operation: "delete",
+          operationLabel: "删除",
+          command: "files_delete",
+          commandLabel: "删除",
+          status: "partial_success",
+          terminal: true,
+          totalItems: 52,
+          itemTotal: 52,
+          settledItems: 52,
+          succeededItems: 51,
+          failedItems: 1,
+          pendingItems: 0,
+          allSucceeded: false,
+          // The whole-operation facts, identical on both pages.
+          durableState: "mutation_effect_uncertain",
+          effectCertainty: "uncertain",
+          nextAction: "刷新来源目录核实实际状态；结果不确定的项目不会自动重试",
+          items: successes(0, 50),
+        },
+        detailPages: [
+          {
+            cursor: "cursor-2",
+            items: [
+              ...successes(50, 1),
+              {
+                itemId: "item-refused",
+                path: "batch/file-093.txt",
+                destination: "batch/file-093.txt",
+                status: "UNCERTAIN",
+                stage: "failed",
+                attempts: 1,
+                effect: "uncertain",
+                effectCertainty: "uncertain",
+                knownEffects: ["uncertain:mutation_outcome"],
+                nextAction:
+                  "刷新来源与目标目录核实实际效果；不确定结果不会被自动重试",
+              },
+            ],
+            nextCursor: null,
+          },
+        ],
+      },
+    );
+    authStore.setToken(TOKEN);
+    renderWithProviders(<StorageFilesPage />);
+    const dialog = await openStatusDialog(user);
+    await user.click(
+      await within(dialog).findByRole("button", { name: /操作 删除 task-1/ }),
+    );
+    const selected = within(dialog).getByLabelText("所选操作状态");
+    const certaintyFact = () => {
+      const term = within(selected)
+        .getByText("已记录影响")
+        .closest("div") as HTMLElement;
+      return within(term).getByText(/效果不确定|已核实完成|部分已变更/);
+    };
+    // A page of pure successes still reports the operation's real effect.
+    expect(await certaintyFact()).toHaveTextContent("效果不确定");
+    await user.click(
+      within(selected).getByRole("button", { name: "加载更多逐项结果" }),
+    );
+    expect(
+      await within(selected).findByText("batch/file-093.txt"),
+    ).toBeVisible();
+    // Loading more changed the item list, not the operation's effect.
+    expect(certaintyFact()).toHaveTextContent("效果不确定");
+  });
+
+  it("reaches the read-error state and recovery when the first detail read fails", async () => {
+    // B reproduced this: a failed first detail GET left the panel on 正在读…
+    // forever with no alert and no way to read the same operation again.  A
+    // started-but-unfinished read and a completed failed read are different
+    // states; only the second is a failure the operator must see and recover
+    // from.  Nothing here executes or replays work.
+    const user = userEvent.setup();
+    const { fetchMock } = stubPage([operation()], {
+      detailTransportFailure: true,
+    });
+    authStore.setToken(TOKEN);
+    renderWithProviders(<StorageFilesPage />);
+    const dialog = await openStatusDialog(user);
+    await user.click(
+      await within(dialog).findByRole("button", {
+        name: /操作 新建文件夹 task-1/,
+      }),
+    );
+    const selected = within(dialog).getByLabelText("所选操作状态");
+    // The bounded failure explanation is really rendered, not the loading hint.
+    expect(await within(selected).findByRole("alert")).toHaveTextContent(
+      "无法连接服务",
+    );
+    expect(within(selected).queryByText(/正在读取该操作的持久状态/)).toBeNull();
+    const retry = within(selected).getByRole("button", {
+      name: "重新读取该操作",
+    });
+    const before = fetchMock.mock.calls.length;
+    await user.click(retry);
+    // Recovery is one explicit read of the same selected operation.
+    await waitFor(() =>
+      expect(fetchMock.mock.calls.length).toBeGreaterThan(before),
+    );
+    // No mutating request was made by reading, failing or reading again.
+    const mutations = fetchMock.mock.calls.filter(
+      ([, init]) => (init as RequestInit | undefined)?.method === "POST",
+    );
+    expect(mutations).toHaveLength(0);
+  });
+
+  it("keeps loaded pages and explains a continuation read failure", async () => {
+    const user = userEvent.setup();
+    stubPage([operation({ taskId: "task-1" })], {
+      detail: {
+        taskId: "task-1",
+        status: "completed",
+        terminal: true,
+        totalItems: 2,
+        itemTotal: 2,
+        effectCertainty: "verified_complete",
+        durableState: "task_completed",
+        nextAction: "已无待处理条目；刷新目录即可看到当前状态",
+        items: [
+          {
+            itemId: "item-1",
+            path: "shows/a",
+            destination: "shows/a",
+            status: "SUCCESS",
+            stage: "completed",
+            attempts: 1,
+            effect: "transferred",
+            effectCertainty: "verified_complete",
+            knownEffects: [],
+            nextAction: "无需操作；刷新目录即可看到当前状态",
+          },
+        ],
+      },
+      detailPages: [{ cursor: "cursor-2", items: [] }],
+      failingCursors: ["cursor-2"],
+    });
+    authStore.setToken(TOKEN);
+    renderWithProviders(<StorageFilesPage />);
+    const dialog = await openStatusDialog(user);
+    await user.click(
+      await within(dialog).findByRole("button", {
+        name: /操作 新建文件夹 task-1/,
+      }),
+    );
+    const selected = within(dialog).getByLabelText("所选操作状态");
+    expect(await within(selected).findByText("shows/a")).toBeVisible();
+    await user.click(
+      within(selected).getByRole("button", { name: "加载更多逐项结果" }),
+    );
+    // The already-read evidence stays; the failed continuation is disclosed.
+    expect(await within(selected).findByText("shows/a")).toBeVisible();
+    expect(await within(selected).findByRole("alert")).toHaveTextContent(
+      /运行数据库不可用|无法连接服务/,
+    );
   });
 
   it("keeps a disabled historical origin reachable from the status entry", async () => {
