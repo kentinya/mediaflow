@@ -287,101 +287,166 @@ suite, runtime probe, build or media operation was run for planning; checking ti
 
 ## Developer Completion Report
 
-Status handed off: **PARTIAL — Scope 2 delivered; the Task is NOT complete.** This is one coherent,
-self-contained checkpoint of the deliberate-selection/folder-filtering contract only. Scopes 1, 3,
-4, 5, 6 and 7 of this Task are still unimplemented, so most AC bullets are unmet. B decides whether
-that increment is accepted as the Task's first checkpoint or whether the remaining Scopes must be
-implemented before any PASS; no PASS is claimed here.
+Status handed off: **PARTIAL — B46.3-02 and B46.3-03 delivered; B46.3-01 remains
+unimplemented. The Task is NOT complete, and no PASS is claimed.**
 
-### Delivered behavior (Scope 2 only)
+Checkpoint: `1be609121614e322df8c3abd4c2984c51a00602d` (Task Base
+`83144be20c6c7bc787a0fafad7fabb3e177bde6a`, on top of reviewed `d675594f`).
 
-A directly selected regular file is now the operator's own inclusion decision. It is admitted unless
-it is *explicitly* excluded for that exact file — the built-in temporary/download suffixes
-(`.part`, `.tmp`, `.download`, `.crdownload`, `.!qb`) or a configured `extension` exclude rule — or
-it lies outside the configured depth. A suffix merely absent from `file_extensions`, an include-rule
-miss and a non-extension exclude/match rule keep their unchanged automatic meaning for folder
-expansion only; they are no longer additional manual vetoes. The same deliberate rule is applied to
-the pre-admission `no_remaining_scope` existence probe for already-selected recorded sources, so a
-recovery preparation cannot claim "nothing remains" for a source the walk will still admit.
+### What this checkpoint changes
 
-The two entrances are now explicitly separated in code (`classify_entry` for automatic walks vs
-`classify_manual_file_selection` for deliberate selections, both in the single shared
-`scan_filters` predicate module — no second filter language). Folder expansion, attachments, real
-stability, traversal/safety budgets and read-only confinement are unchanged; refusal of a member
-still refuses the whole submitted request with zero durable work.
+**B46.3-02 — independent per-item admission outcomes.** `MediaDiscoveryService.admit`
+no longer refuses a whole selection because one selected item is excluded. Each submitted
+path resolves to either its real kind or its own `DiscoveryRefusedEntry`; eligible
+siblings are admitted as real organizing work and the refused items are persisted with
+their bounded `code`/`reason`/`message`/`nextAction`. Structural, RBAC, root-confinement
+and budget validation still refuse the entire request, and a selection in which *nothing*
+is admissible is refused with the first item's own reason instead of admitting empty work.
+A lost-response retry of the same partly-refused selection now reconciles on the union of
+admitted scope and refused entries, so it converges instead of claiming a different
+selection. The refusal evidence round-trips through SQLite reopen.
 
-New bounded operator reason `excluded_extension_rule` distinguishes "your library excludes this
-suffix" from a rule that only shapes automatic walks; the Web Files page maps `source_excluded` and
-`source_not_included` to explicit non-creation copy instead of the generic failure.
+**B46.3-03 — no automatic business vetoes on a deliberate folder selection.** The two
+manual entrances are now distinct in the single shared predicate module:
+`classify_manual_file_selection` keeps its exact-file meaning and the new
+`classify_manual_folder_entry` applies only the configured primary-media extension set
+(video by default) inside a folder the operator selected by hand, plus the unchanged
+temporary/download and extension exclusions. `ManualFolderPolicy` carries the
+automatic/deliberate distinction as a value, so the bounded walk asks one question and
+`Scanner`/definition-bound filtering is untouched. `_refuse_automatic_directory` /
+`_refuse_automatic_file` keep the pre-amendment include/exclude/match gates for
+definition-bound Run once and remaining-scope recovery, so this is a per-admission
+context and not a global weakening. The mode is stored inside the durable progress
+document (`manualSelection`), so no schema column, no migration and no backfill of
+existing rows is required: a pre-existing record round-trips as exactly the automatic
+admission it was.
+
+Deliberately selected folder and file selections now record only the hard bounds as
+refusals: the configured depth (with its `prunedAncestor`) and the explicit
+temporary/extension exclusions. Default images, subtitles and NFO never become
+independent primaries or fabricated Recognition problems; artwork-off does not promote
+them; the existing other-same-stem attachment setting is untouched; a folder of only
+non-primary files settles as `empty_excluded` rather than a failure.
+
+Web: refused entries render beside the admitted scope in both the discovery and the
+summary workspace views, and the Files page now maps the backend's real bounded reason
+(temporary / `excluded_extension_rule` / `configured_depth_exceeded` / `configured_exclude`
+/ `not_included`) instead of describing every `source_excluded` as a temporary-file or
+extension exclusion. `docs/architecture.md` CURRENT bounded-discovery text states the
+deliberate folder rule, the durable admission mode and the per-item refusal contract.
 
 ### Files and checkpoints
 
-- `mediaflow/application/scan_filters.py`: `TEMPORARY_SUFFIXES`, `ManualEntryVerdict`,
-  `classify_manual_file_selection`, `extension_exclusion_rule`.
-- `mediaflow/application/media_discovery.py`: deliberate-selection admission
-  (`_refuse_unselectable_file`, `_refuse_pruned_ancestor(deliberate=True)`), `direct=True`
-  observation for operator-selected file scopes, `_exclusion_reason` (two enums mapped separately
-  because they share string values), new `excluded_extension_rule` reason, and the remaining-scope
-  probe using the deliberate rule for recorded file scopes.
-- `web/src/features/library/StorageFilesPage.tsx`: per-code refusal copy for `source_excluded` /
-  `source_not_included`.
-- `web/src/features/operations/OrganizeCreationPage.tsx`,
-  `web/src/features/operations/OrganizeDiscoveryPage.tsx`: label for the new reason.
-- `tests/test_media_discovery.py`: new `ManualEntrySemanticsTests` (5 API+Worker+Local-Storage
-  cases) and two pre-amendment expectations replaced (direct file under an excluded ancestor,
-  folder-vs-direct filtering) because §RO-2 supersedes them.
-- `web/src/features/library/StorageFilesPage.test.tsx`: the explicit-exclusion refusal journey.
-- `docs/architecture.md`: CURRENT bounded-discovery contract now states the two entrances.
+- `mediaflow/application/scan_filters.py`: `ManualEntryVerdict.EXCLUDED_PRIMARY_EXTENSION`,
+  `classify_manual_folder_entry`, `ManualFolderPolicy`.
+- `mediaflow/application/media_discovery.py`: per-item `admit` outcomes, the new
+  `_directory_refusal`/`_file_refusal` and `_refuse_automatic_*` split (the old
+  `_refuse_unselectable_*`/`_refuse_pruned_ancestor` helpers were removed), refusal
+  propagation at the definition and recovery entrances, `folder_policy` in `_advance`,
+  `_REASON_PRIMARY_EXTENSION`, request-ID reconciliation over refused siblings.
+- `mediaflow/domain/media_discovery.py`: `DiscoveryRefusedEntry`, `canonical_refusals`,
+  `DiscoveryProgress.refused_entries` / `.manual_selection` (document-level, additive).
+- `mediaflow/interfaces/service_api.py`: `selection.refused` / `selection.refusedCount`.
+- `web/src/entities/operations/discovery.ts`, `web/src/shared/api/api-client.ts`,
+  `web/src/features/library/StorageFilesPage.tsx`,
+  `web/src/features/operations/OrganizeCreationPage.tsx`,
+  `web/src/features/operations/OrganizeDiscoveryPage.tsx`.
+- Tests: `tests/test_media_discovery.py` (`ManualEntrySemanticsTests` rewritten to the
+  independent-outcome contract, new `ManualFolderExpansionTests`),
+  `tests/test_v2_automation_run_once.py` (unchanged automatic veto),
+  `web/src/features/library/StorageFilesPage.test.tsx` (reason-specific copy).
 
 ### Actual affected commands and results
 
 From repository root:
 
 - `python3 scripts/check_governance.py` — PASS; `git diff --check` — clean.
-- `.venv/bin/python -m unittest tests.test_media_discovery tests.test_media_discovery_provider_manifest tests.test_organize_preparation` — 142 tests OK.
-- `.venv/bin/python -m unittest tests.test_manual_organize_intent tests.test_manual_organize_preview tests.test_manual_organize_execution tests.test_operations_task_center tests.test_task_center_recovery_lineage tests.test_recovery_continuation tests.test_recovery_batch` — 223 tests OK.
-- Also run green: `tests.test_scanner tests.test_attachments tests.test_direct_file_operations` (100),
-  `tests.test_automation_run_once tests.test_automation_definition_execution` (67),
-  `tests.test_automation_admission tests.test_automation_job_fencing` (19),
-  `tests.test_v2_manual_organize tests.test_operations_workspace tests.test_manual_operations` (79),
-  `tests.test_operations_run_inventory tests.test_operations_run_detail` (76).
-- `.venv/bin/ruff check` / `ruff format --check` on both changed Python files — clean.
+- `.venv/bin/python -m unittest tests.test_media_discovery tests.test_media_discovery_provider_manifest tests.test_organize_preparation tests.test_scanner tests.test_attachments tests.test_v2_automation_run_once` — **208 tests OK**.
+- `.venv/bin/python -m unittest tests.test_manual_organize_intent tests.test_manual_organize_preview tests.test_manual_organize_execution tests.test_operations_task_center tests.test_task_center_recovery_lineage tests.test_recovery_continuation tests.test_recovery_batch tests.test_automation_run_once tests.test_automation_definition_execution tests.test_automation_admission` — **298 tests OK**.
+- `.venv/bin/python -m unittest tests.test_v2_manual_organize tests.test_operations_workspace tests.test_manual_operations tests.test_operations_run_inventory` — **121 tests OK**.
+- `.venv/bin/python -m unittest tests.test_v2_automation_run_once tests.test_v2_automation_operations tests.test_configuration_snapshot` — **83 tests OK**.
+- `.venv/bin/python -m unittest tests.test_runtime_files_browser tests.test_direct_file_operations tests.test_media_library_direct_commands tests.test_operations_run_detail` — **129 tests OK**.
+- `.venv/bin/ruff check` / `ruff format --check` on all six changed Python files — clean.
 
 From `web/`:
 
-- `npm run test -- run` on the 9 named Files/Operations/API/router suites — 164 tests passed.
-- `npm run typecheck` — clean; `npm run lint` — clean; `npm run build` — built.
+- `npm run test -- run` on the 10 named Files/Operations/entities/API/router suites —
+  **176 tests passed**.
+- `npm run typecheck` — clean; `npm run lint` — clean; `npm run build` — built;
   Prettier clean on every changed Web file.
-- `npx playwright test --config=playwright.python.config.ts tests/e2e/operations-inventory.python.spec.ts`
-  — 41 passed (real Python API/SQLite/Worker/built assets).
-- `npx playwright test --config=playwright.python.config.ts tests/e2e/operations-task-center-visual.python.spec.ts`
-  — 2 passed.
-- `npm run test:e2e -- --config=playwright.config.ts tests/e2e/library-files.spec.ts` — 48 passed.
+- `npm run test:e2e -- --config=playwright.python.config.ts tests/e2e/operations-inventory.python.spec.ts`
+  — **41 passed** (real Python API/SQLite/Worker/built assets).
+- `npm run test:e2e -- --config=playwright.python.config.ts tests/e2e/operations-task-center-visual.python.spec.ts`
+  — **2 passed**.
 
-Testing/build/probe wall time was ≈6 minutes of an ≈75-minute round (≈8%), counting overlapping runs
-once. No full Python discovery, no full Web suite and no packaging/release matrix was run; those stay
-B-owned. No fault injection, no weakened assertion and no retry was used.
+Testing/build/probe wall time was ≈5.5 minutes of an ≈69-minute round (≈8%), counting
+overlapping runs once. No full Python discovery, no full Web suite, no packaging/release
+matrix and no direct-files release matrix was run; those stay B-owned. No assertion was
+weakened and no retry was added.
+
+### Tests that had to change, and why
+
+Five pre-existing expectations encoded the contract B46.3-03 explicitly overrules. Each was
+rewritten to assert the *new* contract plus the retained automatic behaviour, never a
+weakening:
+
+1. `test_directly_selected_file_ignores_include_and_match_rules` — a deliberate folder now
+   keeps its `mkv` files despite an exclude/include rule.
+2. `test_a_directly_selected_file_ignores_an_excluded_ancestor` — the deliberately selected
+   folder below the excluded ancestor is now admitted.
+3. `test_a_directly_selected_nested_folder_cannot_bypass_a_pruned_ancestor` →
+   `test_a_directly_selected_nested_folder_below_an_excluded_ancestor_is_admitted`.
+4. `test_published_exclude_and_stability_policy_reach_the_worker` — the deliberate
+   `Movies/Excluded` selection is admitted; the published stability policy is still proven.
+5. `test_a_trailer_of_an_unadmitted_main_file_keeps_ordinary_processing` — swapped the
+   non-extension `filename` exclusion for a genuine `extension` exclusion, so the case
+   still proves attachment association only against admitted primaries.
+6. `test_a_partly_refused_selection_is_never_a_different_scope` (B46.3-02's named
+   violation) → `test_a_partly_refused_selection_keeps_eligible_siblings` plus
+   `test_a_wholly_refused_selection_creates_no_work`.
+
+`test_a_directly_selected_file_below_a_depth_pruned_ancestor_is_refused` was kept and still
+passes: depth is a hard reachability bound, not a business rule, and its `prunedAncestor`
+detail is preserved through the new per-item refusal (`DiscoveryRefusedEntry.pruned_ancestor`).
+
+### Remaining work — B46.3-01 (not implemented)
+
+The Task's primary blocker is untouched by this checkpoint: the Files command
+(`POST /api/v1/resource-libraries/{id}/files/discoveries`, `autoPrepare: true`) still admits
+a *preparation*, and no durable organizing Task exists at submission. Still required:
+Scopes 1/3/4/5/6 and the necessary Scope 7 integration — early durable organizing
+admission before discovery/business readiness, verified atomic concrete-source ownership
+across manual/Automation/continuation entrances with settlement, native four-type recovery
+inside the admitted work, exact normal summary/confirmation membership in Running/All after
+restart, durable Files task/preparation/unknown-request readback, and removal of the center
+creation/manual-action/discovery entries and their exclusive reads. All acceptance bullets
+except the direct-file/folder filtering ones remain unmet.
 
 ### Known risks / limits
 
-- The `excluded_extension_rule` reason and its Web labels are additive; B should confirm no other
-  consumer (export/CLI) needs the label.
-- Two pre-existing tests were rewritten because RO-2 deliberately supersedes them; both rewrites
-  assert the *new* contract plus the retained folder behaviour, not a weakening.
-- `operations-inventory.python.spec.ts` has a pre-existing intra-file ordering dependency
-  (`new task selection reconciles a lost admission` expects the previous test's runs). Running it in
-  isolation fails on its precondition; the whole file in order passes. Not introduced here.
-- Deliberate selection no longer honours a configured non-extension exclude rule; this is the
-  intended RO-2 semantics but is a real behaviour change for a library that used a
-  `directory`/`glob` rule as a manual veto.
+- `selection.refused` is additive. The export/CLI/legacy consumers were not audited for a
+  refused-entry projection; only the Web discovery/summary views and the API document
+  consume it here.
+- The primary-extension refusal inside a deliberate folder reuses the existing
+  `unsupported_extension` reason string. That is deliberate (it is the same "not a primary
+  media extension" fact an automatic walk reports), but a reader cannot tell from the
+  reason alone whether the suffix came from a folder expansion or a direct selection; the
+  per-item refused list is the only place a *direct* file refusal carries a distinct code.
+- A deliberate folder selection no longer honours a configured `directory`/`glob` exclude
+  rule. This is the intended RO-2/B46.3-03 semantics, but it is a real behaviour change for
+  a library that used a directory rule as a manual veto; the automatic Scanner/definition
+  path is unchanged and asserted.
+- The `operations-inventory.python.spec.ts` intra-file ordering dependency reported in the
+  previous handoff still exists; the whole file in order passes.
+- Task46.2's known pre-existing row-menu native failure is untouched and neither fixed nor
+  assumed fixed.
 
-### Remaining Slice outcomes (unchanged by this checkpoint)
+### Remaining Slice outcomes
 
-RO-1 complete (Task46.1). RO-2 partially: only the eligibility/filtering half. RO-3 complete
-(Task46.2). RO-4 incomplete: Task46.3 Scope 1/3/4/5/6/7 (Files-first durable organizing admission
-before readiness, verified source ownership/atomic reservation and settlement, four-type recovery
-inside the admitted task, Running/All summary membership after restart, Files-only entry with the
-center creation/discovery/manual-action removals) are **not implemented**.
+RO-1 complete (Task46.1). RO-2 partially: direct-file *and* folder eligibility/filtering
+plus independent per-item admission now match RO-2; early durable organizing admission,
+source ownership, four-type recovery membership and the Files-only center removal are not
+delivered. RO-3 complete (Task46.2). RO-4/RO-5 unchanged and still outside this checkpoint.
 
 ## B Review Result
 
