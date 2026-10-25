@@ -7,7 +7,7 @@ AC-7/8; [Development Workflow](docs/development-workflow.md). Read the
 ```text
 Task ID: 46.2
 Parent Slice: 46
-Status: PLANNED
+Status: READY FOR B REVIEW
 Task Base: 6072f50d5b2e5268c35d6729290512d1ae986104
 Difficulty: High
 Test Level: T4
@@ -226,8 +226,155 @@ ACTIVE Contract and accepted46.1 result without changing their boundaries/status
 
 ## Developer Completion Report
 
-Pending implementation. Hand off one coherent READY FOR B REVIEW checkpoint with actual changed
-behavior, affected-test results, risks and remaining Slice outcomes. Full acceptance is B-owned.
+```text
+Candidate: aa4b6d2be78a497158c5e84301d42f6dec76637d
+Range:     6072f50d5b2e5268c35d6729290512d1ae986104..aa4b6d2b  (Task Base..Head)
+Status:    READY FOR B REVIEW — no self-PASS, no push, no publication
+```
+
+### Changed behavior
+
+- **Durable per-library ordinary work index.** New
+  `mediaflow/domain/file_operation_history.py` names the closed ordinary command
+  families (`files_direct_command`, `files_transfer`, `files_delete` plus their
+  `media_` twins), their derived `<family>:<identity>` continuations, the exact
+  origin identity every admitted TaskItem already records and the operator
+  wording of one persisted operation value (including the `WRITE` ambiguity,
+  resolved only by the recorded display scope). `SQLiteTaskRepository`
+  `library_file_operations_window` / `library_file_operation_display` decide
+  membership *before* paging from that durable evidence only — never a Result
+  path, display label, filename, Job link or today's Active — and return a
+  count/page-consistent, both-direction, bounded page.
+- **Bounded application read.** `mediaflow/application/library_file_operations.py`
+  is a kind-pinned, side-effect-free reader: it resolves no library, opens no
+  Storage, calls no Provider. `window`, `detail` and `resolve` refuse a foreign
+  kind, foreign library, mixed-origin or unknown Task rather than rebind it; the
+  detail adds the backend-computed lifecycle projection for the exact Task and
+  principal, so a control exists only when the backend advertises it.
+- **API routes** on both kinds: `GET /resource-libraries/{id}/file-operations` and
+  `/media-libraries/{id}/file-operations`, `.../files/operations/{taskId}` and
+  `GET /files/operation-origin/{taskId}`. All are READ-permission durable reads
+  that skip the Active refresh, so a removed, disabled, root-changed or
+  currently-unavailable library keeps its history; the page cursor is bound to
+  kind + library + principal through the shared scoped cursor kind
+  `library_file_operations`. Audit routes are templated (no Task identity).
+- **Web.** New strict kind-bound entity (`entities/library/file-operations`) and
+  client reads refuse a foreign kind/library document; the shared
+  `LibraryFileOperationsDialog` reuses `ModalDialog` (centered, Escape, focus
+  return), lists only this library's operations, keeps independent selection,
+  shows stage/source/destination/per-item results and offers only advertised
+  pause/cancel/resume. Both headers now have **当前页面操作状态** immediately left
+  of Add with the Add button's exact class; reading never depends on the Add
+  permission or a resolvable Storage. Ordinary Delete and Copy/Move results now
+  offer local inspection instead of a Task Center link, and an existing
+  ordinary Task/run deep link resolves to its proven library page or keeps
+  bounded guidance. Delete's request-ID reconciliation is unchanged.
+
+### Actual commands and results (this round)
+
+Every command below was run in this round from the stated cwd; nothing is quoted
+from an earlier round.
+
+| Area | Command | Result |
+|---|---|---|
+| Governance | `python3 scripts/check_governance.py` | PASS (before and after the checkpoint) |
+| Whitespace | `git diff --check` | clean |
+| Python formatting/lint | `.venv/bin/ruff format --check mediaflow tests scripts`; `.venv/bin/ruff check mediaflow tests scripts` | 357 formatted, 0 findings |
+| Python compile | `.venv/bin/python -m compileall -q mediaflow tests scripts` | OK |
+| New module | `.venv/bin/python -m unittest tests.test_library_file_operation_history` | 13 tests, OK |
+| Affected Python | `.venv/bin/python -m unittest tests.test_direct_file_operations tests.test_media_library_direct_commands` | 88 tests, OK |
+| Affected Python | `.venv/bin/python -m unittest tests.test_direct_file_transfers.TransferApiTests` | 7 tests, OK |
+| Affected Python | `.venv/bin/python -m unittest tests.test_media_library_transfers.MediaLibraryTransferTests.test_equal_ids_cannot_exchange_transfer_authority tests...test_media_transfer_pause_cancel_and_resume_stay_durable tests...test_media_transfer_progress_survives_api_restart_during_active_outage` | 3 tests, OK |
+| Shared read | `.venv/bin/python -m unittest tests.test_operations_run_inventory tests.test_operations_run_detail` | 76 tests, OK |
+| Python full | `.venv/bin/python -m unittest discover -s tests -t .` | 2818 tests, OK (7 skipped) — run after the affected set, incidental to this round's 30% budget |
+| Web focused | `npm run test -- run` (cwd `web/`) | 87 files / 1245 tests, passed |
+| Web static | `npm run typecheck`; `npm run lint`; `npm run format:check`; `npm run build` | all clean |
+| Web default E2E | `npm run test:e2e` (cwd `web/`) | 242 passed |
+| Native real Python | `npx playwright test --config=playwright.direct-files.python.config.ts tests/e2e/direct-files.python.spec.ts` | 10 passed, 2 failed |
+
+### Native E2E: exact failures, and the parent-reproduction evidence
+
+The two failures are pre-existing headless-macOS keyboard flakes in the
+`Shift+F10` row-menu helper (`renameThroughNativePage`), not this Task's
+behavior:
+
+- `MediaLibrary Files confirms once, waits for the real Worker, and refreshes`
+- `MediaLibrary Files renames a file and directory through real Python commands`
+
+Reproduced at the planning HEAD (`0e3b50e6`, clean worktree, same built artifact
+and harness) with `npx playwright test --config=playwright.direct-files.python.config.ts
+tests/e2e/direct-files.python.spec.ts -g "MediaLibrary Files renames a file"` →
+same 30 s timeout at the same `menuitem "重命名"` click. The identical Resource
+MediaLibrary Delete/Copy-Move journeys, the two new `...reopens its own durable
+operation status` journeys and all Resource journeys pass. The new journeys
+deliberately use toolbar/footer controls rather than the flaky keyboard menu.
+
+Note: `--config=playwright.python.config.ts` (the config named in Required Tests)
+starts the operations-inventory harness, which does not mount the direct-files
+fixtures, so `/__harness__/register-files-worker` answers 503 there for *every*
+case including unchanged ones. The direct-files spec's own committed config is
+`playwright.direct-files.python.config.ts`; that is what was run. This is a
+fingerprint mismatch in the Task text, not a product defect — B should decide
+whether to fix the command or the doc.
+
+### Durable-reopen evidence produced by the new native journeys
+
+For each kind: real creation through the toolbar → real Worker-owned batch
+Delete of two dedicated files → status dialog lists both → exact detail read
+(source, destination, stage, `成功 1 / 失败 0`, no invented control for a
+terminal creation) → narrow 390×844 and desktop 1536×1024 screenshots with no
+horizontal overflow → close → `POST /__harness__/restart` (real repository + API
+reopen over the same SQLite file) → full page reload with no remembered Task ID
+→ the same operations are readable again and the authorized list `total` is
+unchanged. `tests/test_library_file_operation_history.py` additionally proves
+reopen from a fresh `SQLiteTaskRepository` + `MediaFlowApi` with **no** Active
+binding at all.
+
+### Added test coverage (success / invalid / conflict / failure / edge)
+
+Python (13): both kinds keep their own operations with kind-specific identity
+fields; equal IDs cannot exchange history/detail; unknown library reads empty and
+is never rebound; mixed ordinary work pages correctly with a real organizing Job
+in the same runtime and the shared run inventory is not narrowed; an ordinary
+Delete joins the population; the cursor is refused across kind/library/principal
+and accepted for its own scope; invalid query/limit/Task identities fail closed;
+a repository without the reader answers one bounded 503; a viewer reads and the
+read mutates no Task/item/Result; history survives a real Active successor that
+removes the library; a pre-change row without display evidence stays readable
+with no invented scope; reopen from a fresh repository/API with no Active
+binding; deep-link resolution matches or explains; reads never touch Storage
+(`MutationFreeStorage`).
+
+Web: model normalization (foreign kind/library/split identity/unknown
+operation/negative counts/mutation claim/mismatched Task), state copy (never
+claims completion for a non-successful terminal Task), client URL and
+normalization contracts, and the mounted-page dialog journeys (entry placement
+and style, multiple operations, exact detail, only advertised controls, empty,
+403 read error with real retry, reopen with no hint, unavailable control
+projection).
+
+### Known risks and remaining Slice outcomes
+
+- The `Shift+F10` keyboard-menu flake above is pre-existing and outside this
+  Task's surface; it remains visible rather than being retried or relaxed.
+- The Task's `playwright.python.config.ts` command cannot serve the direct-files
+  fixtures (harness mismatch described above). B owns the call on correcting the
+  Task text; no product behavior depends on it.
+- `OperationDetail` polls every 2 s only while the selected operation is
+  non-terminal; a terminal selection performs a single read. No polling admits
+  commands.
+- The dialog lists the current page's operations; older pages are reachable by
+  explicit paging, not by an infinite scroll. If B expects a first-preview plus
+  census hybrid, that is a follow-up within RO-3.
+- Centre list/count/Attention population narrowing (RO-4), RO-2 early manual
+  admission, RO-5 Automation changes and the organizing-only Task Center are
+  **not** delivered here and remain outstanding Slice outcomes.
+- Pre-existing untracked artifacts (`.DS_Store`, `*.log`, `15`,
+  `output/imagegen/*.zip`, `web/test-results-*`), the `docs/pics/操作与任务.png`
+  deletion and all untracked reference images were preserved and are **not**
+  committed. `mediaflow/.DS_Store` was accidentally staged and then unstaged.
+
+Full acceptance, regression ownership and any PASS/FIX decision are B-owned.
 
 ## B Review Result
 
