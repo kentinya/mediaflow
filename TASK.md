@@ -354,7 +354,192 @@ pointers in Slice/Roadmap/Progress are not changed by B or used to negate accept
 Planning validation: `python3 scripts/check_governance.py` PASS; `git diff --check` clean. No product
 suite, runtime probe, build or media operation was run for planning; checking time is below 50%.
 
-## Developer Completion Report (this round — Files return context)
+## Developer Completion Report (this round — physical source ownership across stages)
+
+Status handed off: **READY FOR B REVIEW — candidate for the whole Task; no PASS claimed.**
+
+Implementation Head for this fix round: **`eb11c241`** (`test(organize): cover cross-binding and
+folder-walk source ownership`, on top of the fix `b7513ce4`), on top of B's reviewed `6d79858a`.  This report is a report-only successor: B's contract correction and review at
+`6d79858a:TASK.md`, the earlier reviewed ranges and their ignored evidence directories are
+unchanged.
+
+### B46.3-04 / P1 (1) — `source_fingerprint` 是库绑定的，不是物理来源
+
+**B 的真实顺序（原样复现，未改动任何探测）：** 同一 Storage 上两个合法 ResourceLibrary 绑定
+（`whole` 根为空、`nested` 根为 `Movies`）。先通过 whole 提交 `Movies/One.2001.mkv`，真实 Worker
+完成分析产出 `previewed` 摘要且原 Task 仍 `running`；再通过 nested 提交 `One.2001.mkv`。
+B 的 `alias_after_analysis_identity_probe.py` 在 `6d79858a` 上：
+
+```json
+{"first_status":"completed","first_preview_status":"previewed","first_task_status":"running",
+ "observed_file_unchanged":true,"same_entry_fingerprints_differ_by_library":true,
+ "first_storage_scope":[["Movies/One.2001.mkv","Movies/One.2001.mkv"]],
+ "second_storage_scope":[["One.2001.mkv","Movies/One.2001.mkv"]],
+ "second_status":202,"second_task":"…","works":2,"mutations":0}
+```
+
+同一探测在本候选上：
+
+```json
+{"first_status":"completed","first_preview_status":"previewed","first_task_status":"running",
+ "observed_file_unchanged":true,"same_entry_fingerprints_differ_by_library":true,
+ "second_status":409,"second_task":null,"works":1,"mutations":0,
+ "second_error":{"code":"source_already_organizing",
+   "details":{"existingWorkId":"…","reason":"source_already_organizing"}}}
+```
+
+**根因：** `source_fingerprint()` 的摘要刻意包含 `resourceLibraryId`（它是“是否仍是我审阅的那次
+occurrence”的库绑定证据）。`_discovery_source_owners_locked` 与 `find_owned_source_work` 的
+TaskItem 分支却把它当成“物理来源是否被替换”的证据：一次来源完成分析、指纹持久化之后，两个绑定
+的摘要天然不同，于是被判为“来源已替换”，有效 owner 被排除，第二份未完成任务被建出来。队列初期旧
+来源尚无指纹，所以此前“刚提交就从别名再提交”的用例没覆盖到该阶段。
+
+**修复（区分事实，不统一改写历史）：**
+
+* `mediaflow/domain/source_evidence.py` 新增 `SourceVersionEvidence`（观测 size、modifiedAt、
+  存在的 provider validator 名称）与 `source_version_evidence(entry)`、
+  `stored_source_version_evidence(persisted_evidence)`：**物理来源 + 可比较内容版本**，不含库、
+  主体、配置 pin 或计划上下文。
+* `source_version_is_known_different(observed, stored)` 是唯一的“是否真的被替换”判定：只有两侧
+  都有可比较证据且不相等才算替换；**任一侧未知一律不是不同**，因此不可比的观测绝不会释放仍然
+  有效的占用。
+* `find_owned_source_work` 增加 `source_version` 参数。TaskItem 分支：同一绑定内持久指纹仍可直接
+  比较（替换即释放，旧记录证据不完整也不被永久锁死）；跨绑定时改用该 Task 自己 admission
+  记录的持久证据（`_linked_task_source_version_locked`），只有它证明替换才排除 owner。
+  discovery 分支同样用 `fingerprintEvidence` 里持久化的 size/modifiedAt/validator 名称比较，
+  不再比较两个不可比的摘要。
+* 归属判断路径的 primary 路径统一用已 admitted/pinned root 的 canonical Storage 路径；反向
+  `storage_scope` 映射只用于 TaskItem 的 legacy 回退，没有重新引入 `startswith` 根猜测。
+* **没有**新增字段/表：可比较证据从记录里已有的 `fingerprintEvidence` 与 TaskItem 指纹重建，
+  没有迁移、没有旧行回填、没有重绑历史 pin。
+
+### B46.3-04 / P1 (2) — 文件夹来源的查重与接纳不是同一个原子决定
+
+**B 的真实顺序（原样复现）：** 同一 ResourceLibrary 通过现有 Files API 分别提交文件夹 `Movies`
+与 `Movies/Sub`（实际只有 `Movies/Sub/One.2001.mkv`）。两个真实 Worker 先后领取这两条实际排队
+记录，两次都读到来源空闲，随后两条 discovering 各自持久 `sources` 都含该 primary。
+B 的 `folder_ownership_sequential_claims_probe.py` 在 `6d79858a` 上：
+
+```json
+{"ownership_reads":[{"path":"Movies/Sub/One.2001.mkv","free":true},
+                    {"path":"Movies/Sub/One.2001.mkv","free":true}],
+ "durable_sources":[["Movies/Sub/One.2001.mkv"],["Movies/Sub/One.2001.mkv"]],
+ "phases":["analyzing","analyzing"],"mutations":0}
+```
+
+同一探测在本候选上：
+
+```json
+{"ownership_reads":[{"path":"Movies/Sub/One.2001.mkv","free":true},
+                    {"path":"Movies/Sub/One.2001.mkv","free":true}],
+ "durable_sources":[[],["Movies/Sub/One.2001.mkv"]],
+ "phases":["empty_excluded","analyzing"],"mutations":0}
+```
+
+**根因：** `_walk::refusal_for_owned_source` 只在应用层先读 owner 再写入内存集合；
+`record_media_discovery_progress` 在自己的事务内只按本 discovery 的 claim/version 写 sources，
+**没有**在同一事务里对其他未完成工作重新检查同一 concrete source。两条 discovery 的 CAS 都能
+成功，各自持有合法 Worker fence 并不等于同一来源只有一个 owner。
+
+**修复：**
+
+* `record_media_discovery_progress` 在写入 manifest 的同一个 `BEGIN IMMEDIATE` 内调用新的
+  `_reserve_discovered_sources_locked`：对本次要拥有的每个来源重新做 `find_owned_source_work`
+  （排除自身 discovery、自身 organize Task 与合法 lineage）。`SQLite` 的 reserved lock 使同一数据库
+  两个连接上的两个 Worker 串行化，第二个一定看到第一个已提交的 manifest。
+* 命中即**整体回滚**并抛 `DiscoveryConflict(..., refused_sources=…)`；`DiscoveryConflict` 新增
+  `refused_sources` 属性，只携带相对路径与可公开的 owner 引用/主体事实（**不含**指纹、claim、pin
+  或物理 Storage 路径，`reserved_refusals()` 是唯一构造点）。
+* 应用层 `_publish_without_reserved_sources` 把这些来源从 manifest、findings、counters 中移除，
+  逐个写入真实拒绝（共用 domain 的 `owned_source_refusal`），并在同一 claim 下重发其余兄弟；
+  一个来源都没留下时 phase 是 `empty_excluded`（不是伪造的 `empty` 或成功），随后照常释放 claim，
+  若仍是完整的可准备清单则照常进入分析。
+* 只对**明确 Files 选择**（`progress.manual_selection`）生效，与“只有它创建外层整理任务”的边界
+  一致；definition Run once 与 remaining-scope recovery 的既有准入/lineage 规则不变。
+* Storage `stat`/`list` 全部在事务外，事务内只比较已验证证据并保持 claim/version fence。
+
+### 新增/扩展的永久回归
+
+`tests/test_media_discovery.py`（`AdmissionAndScopeTests`，146 → 151）：
+
+| 测试 | `6d79858a` 上 | 本候选 |
+| --- | --- | --- |
+| `test_a_cross_binding_alias_after_analysis_owns_one_physical_source` | 失败（202 + 第二 Task） | 通过 |
+| `test_the_reverse_cross_binding_alias_order_also_owns_one_source` | 失败 | 通过 |
+| `test_a_replaced_cross_binding_source_is_a_new_content_version` | 通过 | 通过 |
+| `test_two_folder_walks_never_admit_one_source_twice` | 失败（两份都持有） | 通过 |
+| `test_a_loser_republishes_its_free_siblings_after_a_reservation` | 失败 | 通过 |
+
+第一/第三条覆盖 B 指定的真实顺序（whole → 实际分析到等待确认 → nested），并断言同一实际文件
+不归两份未完成工作、准确拒绝/已有工作结论、`reopen` 后状态；第二条覆盖反向绑定；第三条覆盖
+真实文件替换；第四/第五条用两个真实 `claim_and_run`/`MediaDiscoveryWorker` 入口、两个 SQLite
+连接和一次刻意的 owner-read 延迟，让两次真的都读到空闲，再断言最终持久 `sources`/`TaskItem`
+归属最多一个、失败竞争者的结论真实、独立兄弟保留，并覆盖 `reopen`。
+
+`tests/test_task_persistence.py` 新增 `SourceOwnershipEvidenceTests`（24 → 24 tests，3 个新用例）：
+两个绑定的摘要确实不同而可比较版本相同、TaskItem 跨绑定仍占用/同绑定替换释放/不可比不释放、
+已结算项不再占用、legacy 无证据行保持占用。该模块在 `6d79858a` 上因缺少新 API 而 error（即
+新 API 确为本次新增）。
+
+### 实际命令与结果（本轮）
+
+仓库根目录：
+
+* `python3 scripts/check_governance.py` — PASS；`git diff --check` — clean。
+* `.venv/bin/ruff check mediaflow tests scripts` — clean；
+  `ruff format --check mediaflow tests scripts` — 358 files formatted。
+* `.venv/bin/python -m compileall -q mediaflow tests scripts` — clean；`pip check` — 无冲突依赖。
+* Required Tests 的十个套件 — **396 OK**（45.7 s；此前 391 + 5 个新回归）。
+* `.venv/bin/python -m unittest tests.test_media_discovery.AdmissionAndScopeTests` — **25 OK**（原 20）。
+* `.venv/bin/python -m unittest tests.test_task_persistence.SourceOwnershipEvidenceTests` — **3 OK**。
+* 直接受影响的 Automation/持久化/续作十二套件（含 `tests.test_scope_continuation`、
+  `tests.test_task_persistence`）— **359 OK**（27.9 s）。
+* 直接受影响的 Files/普通操作/配置十二套件 — **232 OK**（11.7 s）。
+
+`web/`（当前生产 build：`index-Cw7c73S-.js` sha256 `7e315a9c…`、`index-9CMd6NZ6.css`
+sha256 `6431101f…`，均由本候选源码 `npm run build` 生成，与 `fe0aa281` 审阅时同一身份）：
+
+* `npm run typecheck` / `npm run lint` / `npm run format:check` — clean；`npm run build` — built。
+* `npm run test -- run`（九份 Required Tests spec）— **9 files / 166 tests passed**。
+* `npm run test -- run`（全量）— **87 files / 1265 tests passed**。
+* `npx playwright test --config=playwright.python.config.ts tests/e2e/operations-inventory.python.spec.ts`
+  — **41 passed**（1.5 m），包含 B 记录的原首错旅程与四个原生恢复类型、并列兄弟独立性、未知准入、
+  C→A 身份与真实 Worker 结果/重启断言。
+* `npx playwright test --config=playwright.python.config.ts
+  tests/e2e/operations-task-center-visual.python.spec.ts` — **2 passed**。
+
+B 的两个探测未改动重跑（见上面的 JSON）：`alias_after_analysis_identity_probe.py` 与
+`folder_ownership_sequential_claims_probe.py`。
+
+证据目录（本地 ignored）：`.git/validation-evidence/dev-46.3-fix5/`（`required-tests.log`、
+`automation-and-persistence.log`、`files-and-configuration.log`、`native-inventory.log`、
+`native-visual.log`、`asset-digests.log`、`alias-after-analysis.log`、
+`folder-sequential-claims.log`、两个未更改的 B 探测脚本及 `*-artifacts/`）。
+
+### Known risks / limits
+
+* 本轮两项修复在真实 Files API、真实 Worker 入口、两连接 SQLite 与真实 `reopen` 上取证；文件夹
+  竞争用例的两个 Worker 是**先后**进入竞争边界（第二个在第一已完成来源观察之后启动），并对
+  owner-read 加了有限延迟让两者都读到空闲——这与 B 记录的真实 Worker 轮询形状一致，但不是
+  同一瞬间的双线程 barrier 竞争（B 的首次 barrier 尝试本身是 inconclusive）。
+* 未新增 schema，故无迁移/旧行回填/reopen 迁移旅程；沿用 schema 52。
+* 跨绑定“替换”判定依赖旧记录自身持久化的 `fingerprintEvidence`；一个既无该证据、又跨绑定提供
+  新观测来源的情况按“未知”保留占用（保守、避免重放），此时需要人工取消旧工作才能复用该路径。
+* RO-4 的 organizing-only population/八视图/failure 移除与 RO-5 的 Automation 意图变更仍按
+  Non-goals 保持 TARGET；完整 T4 门禁仍由 B 执行。
+
+### Remaining Slice outcomes
+
+RO-1 complete（Task46.1）。RO-2：B 指定的两项同一物理来源全阶段唯一归属已交付并在真实边界
+取证；真实原生 E2E 文件在单一 spec 默认配置下 **41 passed**（与 B 的验收一致），但完整 T4 门禁仍由
+B 执行，因此 RO-2 仍**不**声明完成。RO-3 complete（Task46.2，证据限制照旧保留）。RO-4/RO-5
+仍 TARGET。
+
+时间分布：本轮约 95 分钟，其中 build/测试/浏览器运行合计约 20–21 分钟（含 2 次原生 E2E、
+2 次全量 Web 单测与若干聚焦重跑，重叠只计一次），远低于 50%；未故意等待、未重复全量套件、
+未放宽断言或超时。
+
+## Developer Completion Report (previous round — Files return context)
 
 Status handed off: **READY FOR B REVIEW — candidate for the whole Task; no PASS claimed.**
 
