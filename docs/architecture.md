@@ -729,6 +729,22 @@ eligible siblings remain independently admissible. A legal continuation excludes
 of conflicting with itself, and a manual execution of a linked intent takes ownership over through its
 own TaskItems.
 
+A refused source has **two different recorded strings**, and pruning must respect both. The manifest is
+keyed by the exact Storage-relative path the walk recorded, while findings and the operator-facing
+refusal use the ResourceLibrary-relative path; a non-empty library root (root `Movies`, source
+`Movies/Sub/One.mkv` shown as `Sub/One.mkv`) makes them differ, so pruning by the display path alone
+removes nothing and leaves the duplicate. The refusal therefore carries the operator-facing path plus
+the exact manifest key as an internal value — never inside the public `details` projection — and pruning
+removes the manifest row, the matching stability observation, the primary finding and the counters by
+whichever coordinate actually matches, while recording one refusal per exact `(path, kind)`.
+
+The reservation and its prune are **one decision, not a veto on one write**. A control or reconcile
+settlement republishes the very projection a refused walk attempted (``_merge_attempted_work``), so a
+settlement's `BEGIN IMMEDIATE` repeats the same per-source ownership check: an in-transaction refusal
+is never silently written back by the fallback that acknowledges a pause, a cancel or a lapsed lease.
+The settled record keeps its accepted control *and* the pruned manifest with its per-item refusals, so
+neither an operator control nor a Worker lease change can restore a source another unfinished work owns.
+
 A **same-library** admission owns its sources by the same concrete-source evidence as any other
 ResourceLibrary binding. There is no library-identity exemption: two concurrent submissions of one
 effective library/pin selection each re-check every already-observed direct source inside their own

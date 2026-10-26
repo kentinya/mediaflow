@@ -1466,20 +1466,34 @@ def canonical_refusals(
 def reserved_refusals(
     refused: list[tuple[str, str | None, dict[str, object]]],
 ) -> tuple[dict[str, object], ...]:
-    """One bounded, secret-free refusal projection per reserved source.
+    """One bounded per-source refusal projection for a reserved source.
 
     A repository raises it with a :class:`DiscoveryConflict` when a source it
-    would otherwise publish is already owned by *other* unfinished work.  Only the
-    exact relative path plus the publishable owner reference/principal fact travel;
-    no fingerprint, claim, pin or physical Storage path ever does.  That keeps the
-    physical Storage path out of a refusal the API may publish.
+    would otherwise publish is already owned by *other* unfinished work.
+
+    Two different things travel here, and they must never be confused:
+
+    * ``path`` is the **operator-facing** ResourceLibrary-relative path plus the
+      publishable owner reference/principal fact.  This is the only part a public
+      projection may ever show, and ``details`` never carries any of it: a
+      refusal must not publish a fingerprint, a claim token, a pin or a physical
+      Storage path.
+    * ``storagePath`` is the exact **manifest** key of the same source — the
+      confined Storage-relative path the durable ``sources`` row is recorded
+      under.  A non-empty library root makes the two coordinates different
+      strings (root ``Movies`` shows ``Sub/One.mkv`` and records
+      ``Movies/Sub/One.mkv``), so the caller cannot locate the manifest row from
+      the display path.  It is an internal value only: it never enters
+      ``details`` and never reaches the operator projection.
     """
 
     values: list[dict[str, object]] = []
-    for path, _storage_path, reserved in refused[:MAX_DISCOVERY_SCOPE_PATHS]:
+    for path, storage_path, reserved in refused[:MAX_DISCOVERY_SCOPE_PATHS]:
         owned = reserved.get("owner")
         source = owned if isinstance(owned, Mapping) else {}
         value: dict[str, object] = {"path": path}
+        if isinstance(storage_path, str) and storage_path:
+            value["storagePath"] = storage_path
         for key in ("kind", "taskId", "discoveryId", "actor"):
             candidate = source.get(key)
             if isinstance(candidate, str):

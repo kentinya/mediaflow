@@ -4608,14 +4608,20 @@ class MediaDiscoveryService:
         """Republish a walk without the sources another work really owns.
 
         The conflicting sources are dropped from the manifest *together with* their
-        prepared identity, their findings and their counters, and one truthful
-        per-item refusal with the exact existing work is recorded instead.  Nothing
-        is silently lost: the operator sees the source, why it was not admitted and
-        which work already holds it, while every eligible sibling still proceeds
-        under the same claim and the same durable scope.
+        prepared identity, their findings, their counters and their stability
+        observations, and one truthful per-item refusal with the exact existing
+        work is recorded instead.  Nothing is silently lost: the operator sees the
+        source, why it was not admitted and which work already holds it, while
+        every eligible sibling still proceeds under the same claim and the same
+        durable scope.
+
+        Dropping the stability observation matters as much as dropping the manifest
+        row.  An observation that outlived its source would be replayed into the
+        next pass, and the content evidence it carries is exactly what the next
+        reservation compares — a source this pass refused must not come back as
+        "already observed".
         """
 
-        refused_paths = {path for path, _storage_path, _owned in reserved}
         current = self._read(claim_owner.discovery_id) or claim_owner
         if current.claim_token != claim_token:
             # A successor owned the record while we reconciled: stop without writing.
@@ -4623,61 +4629,14 @@ class MediaDiscoveryService:
                 "this Worker no longer owns the discovery claim",
                 details={"discoveryId": claim_owner.discovery_id},
             )
-        refusals = list(updated.progress.refused_entries)
-        for path, _storage_path, owned in reserved:
-            refusals.append(
-                self._owned_source_refusal(
-                    DiscoveryScopeEntry(path, DiscoveryEntryKind.FILE),
-                    owned,
-                    actor=claim_owner.actor,
-                )
-            )
-        counters = replace(
-            updated.progress.counters,
-            primary_sources=max(0, updated.progress.counters.primary_sources - len(refused_paths)),
-            excluded_entries=updated.progress.counters.excluded_entries + len(refused_paths),
-        )
-        reasons = {item.reason: item for item in updated.progress.reasons}
-        retained = [
-            finding
-            for finding in updated.progress.findings
-            if not (finding.path in refused_paths and finding.kind is DiscoveryFindingKind.PRIMARY)
-        ]
-        for path in sorted(refused_paths):
-            existing = reasons.get(_REASON_ALREADY_OWNED)
-            reasons[_REASON_ALREADY_OWNED] = DiscoveryReasonCount(
-                _REASON_ALREADY_OWNED,
-                1 if existing is None else existing.count + 1,
-                existing.example_path if existing is not None else path,
-            )
-        remaining = tuple(
-            source for source in updated.sources if source.get("path") not in refused_paths
-        )
-        # A manifest that lost every observed source kept its truthful conclusion:
-        # no eligible primary was admitted because the concrete sources already
-        # belong to other unfinished work.  That is neither an empty scope nor a
-        # successful discovery, so the phase says exactly that.
-        phase = updated.progress.phase
-        if not remaining and refusals:
-            phase = "empty_excluded"
-        stripped = replace(
-            updated,
-            version=current.version + 1,
-            sources=remaining,
-            progress=replace(
-                updated.progress,
-                phase=phase,
-                counters=counters,
-                findings=tuple(retained),
-                reasons=tuple(reasons.values()),
-                refused_entries=canonical_refusals(tuple(refusals)),
-            ),
-        )
+        stripped, removed = self._without_reserved_sources(updated, reserved)
         persisted = self._persist(
-            stripped,
+            replace(stripped, version=current.version + 1),
             expected_version=current.version,
             claim_token=claim_token,
-            observations=observations,
+            observations=tuple(
+                observation for observation in observations if observation.path not in removed
+            ),
         )
         # The republished pass settles exactly like any other bounded step: the claim
         # is yielded so the resident Worker continues the same durable scope, and a
@@ -4693,6 +4652,114 @@ class MediaDiscoveryService:
         ):
             return self._begin_preparation_analysis(persisted)
         return persisted
+
+    def _without_reserved_sources(
+        self,
+        updated: MediaDiscovery,
+        reserved: tuple[tuple[str, str | None, Mapping[str, object]], ...],
+    ) -> tuple[MediaDiscovery, frozenset[str]]:
+        """One projection with the reserved sources really removed.
+
+        One decision serves both the first publication of a walk and every later
+        settlement of that walk.  An in-transaction reservation alone only vetoes
+        the single attempted write: the attempted projection is then carried into
+        ``_merge_attempted_work`` and republished by a control/reconcile path that
+        knows nothing about ownership.  Pruning here means a refused manifest can
+        never be re-offered by any publication of this record.
+
+        Two coordinates meet in this method and are deliberately kept apart:
+
+        * ``path`` is the operator-facing ResourceLibrary-relative path, which is
+          what a refusal publishes and what the operator recognises.
+        * the manifest is keyed by the exact *Storage*-relative path
+          (``Movies/Sub/One.mkv`` under root ``Movies``).  The repository now
+          reports it, and a record without it falls back to matching the display
+          path — the pre-amendment rows that were stored unprefixed.
+
+        Returns the pruned projection and the exact manifest keys that were
+        removed, so the caller can drop their matching stability observations.
+        """
+
+        manifest_paths = {
+            source["path"]
+            for source in updated.sources
+            if isinstance(source, dict) and isinstance(source.get("path"), str)
+        }
+        refusals = list(updated.progress.refused_entries)
+        known = {(item.path, item.kind.value) for item in refusals}
+        removed: set[str] = set()
+        # The same source has two *different* recorded strings: the manifest stores
+        # its Storage-relative key, while findings are recorded against the
+        # library-relative path the walk observed.  Both have to go.
+        pruned_relative: set[str] = set()
+        for path, storage_path, owned in reserved:
+            candidates = {path}
+            if isinstance(storage_path, str) and storage_path:
+                candidates.add(storage_path)
+            matched = candidates & manifest_paths
+            # Remove what this manifest actually holds under either coordinate.
+            # An empty intersection still records the refusal: the source was
+            # observed and refused even when another attempt had already dropped
+            # the row.
+            removed |= matched
+            pruned_relative.add(path)
+            entry = DiscoveryScopeEntry(path, DiscoveryEntryKind.FILE)
+            if (entry.path, entry.kind.value) in known:
+                continue
+            refusals.append(self._owned_source_refusal(entry, owned, actor=updated.actor))
+            known.add((entry.path, entry.kind.value))
+        if not removed:
+            # Nothing to prune: keep the projection exactly as it was so a
+            # republish without a real manifest conflict never rewrites one.
+            return updated, frozenset()
+        counters = replace(
+            updated.progress.counters,
+            primary_sources=max(0, updated.progress.counters.primary_sources - len(removed)),
+            excluded_entries=updated.progress.counters.excluded_entries + len(removed),
+        )
+        reasons = {item.reason: item for item in updated.progress.reasons}
+        retained = [
+            finding
+            for finding in updated.progress.findings
+            if not (
+                finding.kind is DiscoveryFindingKind.PRIMARY
+                and (finding.path in removed or finding.path in pruned_relative)
+            )
+        ]
+        for path in sorted(removed | pruned_relative):
+            existing = reasons.get(_REASON_ALREADY_OWNED)
+            reasons[_REASON_ALREADY_OWNED] = DiscoveryReasonCount(
+                _REASON_ALREADY_OWNED,
+                1 if existing is None else existing.count + 1,
+                existing.example_path if existing is not None else path,
+            )
+        remaining = tuple(
+            source
+            for source in updated.sources
+            if not (isinstance(source.get("path"), str) and source["path"] in removed)
+        )
+        # A manifest that lost every observed source kept its truthful conclusion:
+        # no eligible primary was admitted because the concrete sources already
+        # belong to other unfinished work.  That is neither an empty scope nor a
+        # successful discovery, so the phase says exactly that.
+        phase = updated.progress.phase
+        if not remaining and refusals:
+            phase = "empty_excluded"
+        return (
+            replace(
+                updated,
+                sources=remaining,
+                progress=replace(
+                    updated.progress,
+                    phase=phase,
+                    counters=counters,
+                    findings=tuple(retained),
+                    reasons=tuple(reasons.values()),
+                    refused_entries=canonical_refusals(tuple(refusals)),
+                ),
+            ),
+            frozenset(removed | pruned_relative),
+        )
 
     def _begin_preparation_analysis(self, discovery: MediaDiscovery) -> MediaDiscovery:
         """Freeze a completed preparation's sources and enter analysis.
@@ -6487,22 +6554,48 @@ class MediaDiscoveryService:
         supplied the settlement is fenced by the exact current claim, so a
         Worker that already lost its lease cannot pause, fail or cancel the
         successor's work.
+
+        A settlement publishes a manifest too, so it obeys the same per-source
+        ownership decision as the walk that produced it.  When the durable boundary
+        refuses a source another unfinished work owns, that source is removed with
+        its per-item refusal and the settlement is retried once; it is never
+        reported as a control failure, because the operator's pause/cancel/fail is
+        still legitimate and the record still has to be settled.
         """
 
         settler = getattr(self._repository, "settle_media_discovery_control", None)
-        if callable(settler):
+        if not callable(settler):
+            return self._persist(
+                discovery,
+                expected_version=expected_version,
+                claim_token=claim_token,
+                observations=observations,
+            )
+        try:
             return settler(
                 discovery,
                 expected_version=expected_version,
                 claim_token=claim_token,
                 observations=observations,
             )
-        return self._persist(
-            discovery,
-            expected_version=expected_version,
-            claim_token=claim_token,
-            observations=observations,
-        )
+        except DiscoveryConflict as conflict:
+            reserved = _reserved_refusals(conflict)
+            if not reserved:
+                raise
+            pruned, removed = self._without_reserved_sources(discovery, reserved)
+            if not removed:
+                # The manifest does not hold the refused row (a repeated
+                # settlement or a record whose row was already dropped), so the
+                # refusal is already durable and the settlement adds nothing.
+                return discovery
+            return settler(
+                pruned,
+                expected_version=expected_version,
+                claim_token=claim_token,
+                observations=tuple(
+                    observation for observation in observations if observation.path not in removed
+                ),
+            )
 
     def _read(self, discovery_id: str) -> MediaDiscovery | None:
         reader = getattr(self._repository, "get_media_discovery", None)

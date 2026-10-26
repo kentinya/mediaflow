@@ -14314,6 +14314,24 @@ class SQLiteTaskRepository:
                     self._raise_discovery_write_conflict(
                         current, discovery, claim_token, observations=values
                     )
+                refused = self._reserve_discovered_sources_locked(discovery)
+                if refused:
+                    # B46.3-04: this settlement would republish a manifest that
+                    # names a source another unfinished work owns.  A control or
+                    # reconcile settlement is exactly how the refused projection of
+                    # a walk gets carried forward (`_merge_attempted_work`), so the
+                    # same reservation decides here too: without it the first
+                    # in-transaction refusal is only a veto on one attempted write
+                    # and the very same manifest is written back by the fallback.
+                    # Nothing is published; the caller reports the source per item
+                    # and republishes its free siblings.
+                    raise DiscoveryConflict(
+                        "a source of this settlement is already owned by another unfinished work",
+                        details={"discoveryId": discovery.discovery_id},
+                        attempted=discovery,
+                        attempted_observations=values,
+                        refused_sources=reserved_refusals(refused),
+                    )
                 for observation in values:
                     self._connection.execute(
                         "INSERT INTO media_discovery_observations "
