@@ -12981,6 +12981,15 @@ class SQLiteTaskRepository:
         before traversal and its discovered sources are reserved one by one inside
         the walk, so no pre-task traversal and no Storage call happens here.
 
+        B46.3-04: a *same-library* admission that still holds a source is a real
+        competing owner here, exactly like another library's.  Skipping it let two
+        concurrent Files submissions of one library both commit a Task for the same
+        file, because each treated the other as the mergeable open-work case without
+        ever proving the merge inside a transaction.  The service layer converges
+        on an open work *before* it reaches this boundary, and the convergence is
+        idempotent, so a duplicate never needs an exemption to become legal: it is
+        simply refused with the exact winning work.
+
         The exact ``(path, kind)`` of every refused entry is returned; a non-empty
         answer means the whole admission must roll back, because admitting a
         *different* (truncated) scope under the operator's deliberate selection
@@ -13005,14 +13014,6 @@ class SQLiteTaskRepository:
                 discovery.resource_library_id,
             )
             if observed is None:
-                continue
-            if (
-                observed.get("kind") == "discovery"
-                and observed.get("resourceLibraryId") == discovery.resource_library_id
-            ):
-                # An open admission of this same library holding the exact source
-                # is the convergence case the service layer reconciles onto one
-                # durable record; it is not a competing owner here.
                 continue
             refused.append(entry)
         return tuple(refused)
@@ -13228,23 +13229,14 @@ class SQLiteTaskRepository:
                 "WHERE execution.intent_id=d.intent_id)))"
             )
             parameters.append(resource_library_id)
-        elif resource_library_id is not None:
-            # A same-library admission is a competing owner once its own work is
-            # durable and no longer purely open: it froze a reviewed manifest
-            # awaiting confirmation, or it finished a walk that holds these exact
-            # sources.  A still-queued admission is answered by the library-wide
-            # convergence instead, never by this branch.
-            clauses.append(
-                "(d.resource_library_id<>? OR d.intent_id IS NOT NULL "
-                "OR d.frozen_at IS NOT NULL OR d.status IN (?, ?))"
-            )
-            parameters.extend(
-                (
-                    resource_library_id,
-                    DiscoveryStatus.COMPLETED.value,
-                    DiscoveryStatus.PARTIAL_SUCCESS.value,
-                )
-            )
+        # B46.3-04: a *same-library* admission owns the sources it holds exactly
+        # like any other library binding does.  The previous same-library exemption
+        # (owner only once frozen/intent-linked/completed) is the proven hole: two
+        # concurrent Files submissions of one library each read the other's *queued*
+        # work as free and both committed a Task for one concrete source.  Ownership
+        # is therefore decided only by the verified Storage identity below; the
+        # service layer converges on an open work before it reaches the admission
+        # boundary, so no exemption is needed for the normal merge case.
         if exclude_discovery_id is not None:
             clauses.append("d.discovery_id<>?")
             parameters.append(exclude_discovery_id)

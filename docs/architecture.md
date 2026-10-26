@@ -708,6 +708,19 @@ and eligible siblings remain independently admissible. A legal continuation excl
 instead of conflicting with itself, and a manual execution of a linked intent takes ownership over
 through its own TaskItems.
 
+A **same-library** admission owns its sources by the same concrete-source evidence as any other
+ResourceLibrary binding. There is no library-identity exemption: two concurrent submissions of one
+effective library/pin selection each re-check every already-observed direct source inside their own
+`BEGIN IMMEDIATE` transaction, so at most one durable Task is committed for one verified source. The
+loser converges on the winning open work before it reaches that boundary — the still-free siblings of
+its own selection join that same work's committed scope, and the items it already held are reported as
+existing — instead of being answered with a second overlapping Task. A request whose whole selection is
+already held converges the same way while publishing its own per-item evidence; a frozen or settled
+manifest is never widened, so a competing source keeps its truthful refusal. Nothing is dropped: an
+extension that could not commit is reported as `admission_not_committed` beside the refusals the same
+request had already resolved itself (for example an explicitly excluded temporary suffix), one truthful
+conclusion per exact `(path, kind)`.
+
 Files owns the normal readback: `GET /api/v1/resource-libraries/{id}/files/organize-work` is
 library-scoped, principal-scoped and cursor-paged over the durable rows, and its `requestId` form is the
 exact lost-admission reconciliation. The Task Center therefore exposes no new-organize CTA, no

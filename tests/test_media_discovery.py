@@ -1027,6 +1027,204 @@ class AdmissionAndScopeTests(_DiscoveryFixture):
             self.assertEqual(1, len(value.repository.list_tasks()))
             self.assertEqual([], value.source.mutations)
 
+    def test_two_concurrent_selections_of_one_library_own_each_source_once(self) -> None:
+        """B46.3-04: two SQLite connections cannot both admit one source.
+
+        Two independent Files submissions of the *same* effective
+        ResourceLibrary/Storage/pin selection reach the admission boundary over two
+        SQLite connections: `[One]` and `[One, Three]`.  Each may read every source
+        as free before either commits, so the atomic admission must decide one
+        effective owner per verified concrete source.  The corrected behaviour is
+        one durable organizing work: One belongs to it once and Three is either
+        truthfully added to that same work or reported not admitted — never a second
+        Task holding One, and never a silently dropped Three.
+        """
+
+        for order in (("one", "one_three"), ("one_three", "one")):
+            with self.subTest(order=order):
+                self.media("Movies/One.2001.mkv")
+                self.media("Movies/Three.2003.mkv")
+                with self.journey() as value:
+                    second_repository = SQLiteTaskRepository(self.database)
+                    second = MediaDiscoveryService(
+                        second_repository,
+                        value.intents,
+                        configuration=value.configuration,
+                        runtime_resolver=value.discovery._runtime_resolver,
+                        preview_service=value.previews,
+                        storages=value.storages,
+                        clock=self.clock,
+                    )
+                    barrier = threading.Barrier(2)
+                    seen: set[int] = set()
+                    lock = threading.Lock()
+
+                    def synchronize(repository) -> None:
+                        original = repository.find_owned_source_work
+
+                        def find(**kwargs):
+                            answer = original(**kwargs)
+                            with lock:
+                                first = id(repository) not in seen
+                                seen.add(id(repository))
+                            if first:
+                                barrier.wait(timeout=5)
+                            return answer
+
+                        repository.find_owned_source_work = find
+
+                    synchronize(value.repository)
+                    synchronize(second_repository)
+                    scopes = {
+                        "one": ("meanwhile", ["Movies/One.2001.mkv"]),
+                        "one_three": (
+                            "meanwhile",
+                            ["Movies/One.2001.mkv", "Movies/Three.2003.mkv"],
+                        ),
+                    }
+
+                    def admit(args):
+                        service, key, request_id = args
+                        _, paths = scopes[key]
+                        try:
+                            return service.admit(
+                                resource_library_id="library",
+                                relative_paths=paths,
+                                actor="operator",
+                                auto_prepare=True,
+                                admission_request_id=request_id,
+                            )
+                        except DiscoveryError as error:
+                            return error
+
+                    requests = (
+                        (value.discovery, "one", "11111111-1111-4111-8111-111111111111"),
+                        (
+                            second,
+                            "one_three",
+                            "22222222-2222-4222-8222-222222222222",
+                        ),
+                    )
+                    if order == ("one_three", "one"):
+                        requests = requests[::-1]
+                    try:
+                        with ThreadPoolExecutor(max_workers=2) as pool:
+                            records = list(pool.map(admit, requests))
+                    finally:
+                        second_repository.close()
+                    accepted = [
+                        record for record in records if not isinstance(record, DiscoveryError)
+                    ]
+                    self.assertTrue(accepted, records)
+                    # One concrete source, one effective owner: no second durable
+                    # Task can hold One.
+                    self.assertEqual(
+                        1, len({record.organize_task_id for record in accepted}), accepted
+                    )
+                    works = value.repository.list_media_discoveries(limit=20)
+                    self.assertEqual(1, len(works), works)
+                    self.assertEqual(1, len(value.repository.list_tasks()))
+                    owners: dict[str, list[str]] = {}
+                    for work in works:
+                        for entry in work.progress.scope_entries:
+                            owners.setdefault(entry.path, []).append(work.discovery_id)
+                    self.assertTrue(owners["Movies/One.2001.mkv"])
+                    self.assertEqual(1, len(owners["Movies/One.2001.mkv"]), owners)
+                    # Three is never silently dropped: it either joined the same
+                    # work or is answered with its own truthful per-item reason.
+                    conclusive = set()
+                    for record in accepted:
+                        stored = value.repository.list_media_discovery_admission_outcomes(
+                            record.discovery_id
+                        )
+                        for outcome in stored:
+                            for entry in outcome.admitted:
+                                conclusive.add(entry.path)
+                            for entry in outcome.existing:
+                                conclusive.add(entry.path)
+                            for entry in outcome.refused:
+                                conclusive.add(entry.path)
+                    self.assertIn("Movies/Three.2003.mkv", conclusive, conclusive)
+                    self.assertEqual([], value.source.mutations)
+                self.tearDown()
+                self.setUp()
+
+    def test_a_lost_extension_keeps_this_requests_own_exclusion(self) -> None:
+        """B46.3-02: a lost write never erases an already-resolved refusal.
+
+        One is admitted first.  A second request submits `[One, Three, Excluded.part]`
+        and a real Worker freezes One before the extension write, so Three cannot
+        join the frozen manifest.  The second request still has to report *its* three
+        items truthfully: One as existing work, Three as not admitted, and
+        `.part` with its own temporary-file exclusion.  The normal control (the
+        extension commits) keeps the same `.part` conclusion.
+        """
+
+        self.media("Movies/One.2001.mkv")
+        self.media("Movies/Three.2003.mkv")
+        self.media("Movies/Excluded.part")
+        with self.journey() as value:
+            endpoint = "/api/v1/resource-libraries/library/files/discoveries"
+            status, first = self.request(
+                value,
+                endpoint,
+                "POST",
+                {
+                    "paths": ["Movies/One.2001.mkv"],
+                    "autoPrepare": True,
+                    "requestId": "11111111-1111-4111-8111-111111111111",
+                },
+            )
+            self.assertEqual(202, status, first)
+            extend = value.repository.extend_media_discovery_scope
+
+            def worker_wins(*args, **kwargs):
+                advanced = value.discovery.claim_and_run(
+                    worker_id="actual-worker", claim_token="actual-claim"
+                )
+                self.assertIsNotNone(advanced)
+                return extend(*args, **kwargs)
+
+            value.repository.extend_media_discovery_scope = worker_wins
+            selection = {
+                "paths": [
+                    "Movies/One.2001.mkv",
+                    "Movies/Three.2003.mkv",
+                    "Movies/Excluded.part",
+                ],
+                "autoPrepare": True,
+                "requestId": "22222222-2222-4222-8222-222222222222",
+            }
+            status, second = self.request(value, endpoint, "POST", selection)
+            self.assertEqual(202, status, second)
+            value.repository.extend_media_discovery_scope = extend
+            refused = {item["path"]: item for item in second["selection"]["refused"]}
+            self.assertEqual(["Movies/Excluded.part", "Movies/Three.2003.mkv"], sorted(refused))
+            self.assertEqual("temporary_file", refused["Movies/Excluded.part"]["reason"])
+            self.assertEqual("admission_not_committed", refused["Movies/Three.2003.mkv"]["reason"])
+            self.assertEqual(
+                ["Movies/One.2001.mkv"],
+                [item["path"] for item in second["selection"]["existing"]],
+            )
+            self.assertEqual([], second["selection"]["scopes"])
+            # The exact request identity reads back the same three conclusions
+            # after the repository is reopened, and the first request is unchanged.
+            with SQLiteTaskRepository(self.database) as reopened:
+                stored = reopened.get_media_discovery(first["discoveryId"])
+                self.assertIsNotNone(stored)
+                outcomes = reopened.list_media_discovery_admission_outcomes(stored.discovery_id)
+                by_request = {item.request_id: item for item in outcomes}
+                replay = by_request["22222222-2222-4222-8222-222222222222"]
+                self.assertEqual([], list(replay.admitted))
+                self.assertEqual(["Movies/One.2001.mkv"], [item.path for item in replay.existing])
+                self.assertEqual(
+                    ["Movies/Excluded.part", "Movies/Three.2003.mkv"],
+                    sorted(item.path for item in replay.refused),
+                )
+                original = by_request["11111111-1111-4111-8111-111111111111"]
+                self.assertEqual([], list(original.refused))
+            self.assertEqual([], value.source.mutations)
+
     def test_overlapping_library_bindings_own_one_concrete_storage_source(self) -> None:
         """B46.3-04: identity is the confined Storage path, not the binding.
 

@@ -440,8 +440,8 @@ class MediaDiscoveryService:
                     ),
                 ),
                 admission_request_id=admission_request_id,
-            )  # Actor/scope/pin-bound admission identity: an identical open
-        # submission for the same principal, the same enabled
+            )
+        # Actor/scope/pin-bound admission identity: an identical open
         # ResourceLibrary/Storage binding, the same deduplicated scope and
         # the same immutable Active pin is reconciled to its durable record
         # instead of admitting a second duplicate walk.  A *terminal* record
@@ -692,6 +692,29 @@ class MediaDiscoveryService:
                 continue
             refusals.append(self._owned_source_refusal(entry, owned))
             known.add((entry.path, entry.kind.value))
+        # B46.3-04: a *same-library* open work that already holds one of these
+        # sources is the owner this request converges on, exactly like the
+        # pre-commit library reconciliation.  Admitting a second work for the free
+        # siblings would leave one library with two overlapping organizing works,
+        # which is the duplicate ownership this Task exists to prevent.  The
+        # convergence adds the still-free siblings to that work's committed scope
+        # and reports its own per-item evidence; a frozen or settled record is never
+        # widened and keeps the truthful per-item refusal instead.
+        converged = self._converge_owned_sources(
+            actor,
+            scope,
+            refusals,
+            remaining,
+            outcome,
+            library=library,
+            resource_library_id=resource_library_id,
+            snapshot_id=snapshot_id,
+            snapshot_digest=snapshot_digest,
+            auto_prepare=auto_prepare,
+            admission_request_id=admission_request_id,
+        )
+        if converged is not None:
+            return converged
         if not remaining:
             first = refusals[0]
             raise DiscoveryError(
@@ -814,6 +837,73 @@ class MediaDiscoveryService:
             )
         self._bind_request(admission_request_id, created)
         return self._record_outcome(created, settled_outcome)
+
+    def _converge_owned_sources(
+        self,
+        actor: str,
+        scope: tuple[DiscoveryScopeEntry, ...],
+        refusals: list[DiscoveryRefusedEntry],
+        remaining: tuple[DiscoveryScopeEntry, ...],
+        outcome: DiscoveryAdmissionOutcome,
+        *,
+        library,
+        resource_library_id: str,
+        snapshot_id: str,
+        snapshot_digest: str,
+        auto_prepare: bool,
+        admission_request_id: str | None,
+    ) -> MediaDiscovery | None:
+        """Converge a partly/fully competed selection onto the work that holds it.
+
+        B46.3-04: when a source of this request is already owned, the honest answer
+        may still be the *shared* work rather than a second overlapping work — but
+        only when that owner is one open work of this same library/Storage binding
+        under this request's immutable pin.  The convergence publishes this
+        request's own admitted/existing/refused evidence and never widens a frozen
+        or settled manifest, so no reviewed scope changes behind the operator.
+        """
+
+        owned_ids = {
+            item.existing_work_id
+            for item in refusals
+            if item.reason == _REASON_ALREADY_OWNED and item.existing_work_kind == "discovery"
+        }
+        if len(owned_ids) != 1:
+            return None
+        reader = getattr(self._repository, "get_media_discovery", None)
+        if not callable(reader):
+            return None
+        record = reader(next(iter(owned_ids)))
+        if (
+            record is None
+            or record.terminal
+            or record.frozen
+            or record.resource_library_id != resource_library_id
+            or record.storage_id != library.storage_id
+            or record.snapshot_id != snapshot_id
+            or record.snapshot_digest != snapshot_digest
+            or record.auto_prepare != auto_prepare
+        ):
+            return None
+        held = {entry.path for entry in _durable_scope(record)}
+        existing = canonical_scope(tuple(entry for entry in scope if entry.path in held))
+        existing_keys = {(entry.path, entry.kind.value) for entry in existing}
+        return self._accept_onto_existing(
+            record,
+            replace(
+                outcome,
+                admitted=canonical_scope(remaining),
+                existing=existing,
+                refused=canonical_refusals(
+                    tuple(
+                        item
+                        for item in refusals
+                        if (item.path, item.kind.value) not in existing_keys
+                    )
+                ),
+            ),
+            admission_request_id=admission_request_id,
+        )
 
     def _organize_work_boundary(self):
         boundary = getattr(self._repository, "create_files_organize_work", None)
@@ -969,10 +1059,17 @@ class MediaDiscoveryService:
                 refused=refused,
             )
             if not_admitted or refused:
+                # B46.3-02: this request may have already resolved *its own*
+                # refusals at admission (an explicitly excluded temporary
+                # suffix, a configured extension exclusion).  A sibling whose
+                # extension lost its write must never overwrite them: the
+                # request's complete outcome is the union of the refusals it
+                # resolved itself and the ones this convergence discovered, one
+                # truthful conclusion per exact ``(path, kind)``.
                 outcome = replace(
                     outcome,
                     admitted=canonical_scope(admitted),
-                    refused=canonical_refusals(tuple(not_admitted)),
+                    refused=canonical_refusals(tuple(outcome.refused) + tuple(not_admitted)),
                 )
         self._bind_request(admission_request_id, discovery)
         return self._record_outcome(discovery, outcome)
