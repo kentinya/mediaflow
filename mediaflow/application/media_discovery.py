@@ -158,6 +158,11 @@ _REASON_SAFETY_DEPTH = "safety_depth_limit"
 #: folder expansion this is why that source is not admitted a second time; the
 #: exact existing work travels with it, never a fabricated failure.
 _REASON_ALREADY_OWNED = "source_already_organizing"
+#: A proposed source whose admission was never proved by a committed durable
+#: scope (a version race or an unresolvable binding).  It is deliberately not
+#: called a duplicate: no existing work holds it, and the operator's next action
+#: is to resubmit it, not to open something else.
+_REASON_ADMISSION_NOT_COMMITTED = "admission_not_committed"
 
 _TEMPORARY_SUFFIXES = TEMPORARY_SUFFIXES
 
@@ -372,8 +377,12 @@ class MediaDiscoveryService:
         # outer work before traversal, so its discovered sources are checked
         # inside the task itself (no pre-task traversal, no Storage I/O inside a
         # database transaction).
+        observed_fingerprints = self._observed_fingerprints(storage, library, deduplicated)
         deduplicated, duplicate_refusals = self._refuse_owned_sources(
-            deduplicated, library, storage=storage
+            deduplicated,
+            library,
+            storage=storage,
+            observed_fingerprints=observed_fingerprints,
         )
         if not deduplicated:
             first = duplicate_refusals[0]
@@ -431,8 +440,7 @@ class MediaDiscoveryService:
                     ),
                 ),
                 admission_request_id=admission_request_id,
-            )
-        # Actor/scope/pin-bound admission identity: an identical open
+            )  # Actor/scope/pin-bound admission identity: an identical open
         # submission for the same principal, the same enabled
         # ResourceLibrary/Storage binding, the same deduplicated scope and
         # the same immutable Active pin is reconciled to its durable record
@@ -536,6 +544,7 @@ class MediaDiscoveryService:
             snapshot_id,
             snapshot_digest,
         )
+        reserve_sources = self._reserve_sources_callback(library, observed_fingerprints)
         creator = getattr(self._repository, "create_files_organize_work", None)
         if not callable(creator):
             creator = getattr(self._repository, "create_media_discovery", None)
@@ -543,14 +552,46 @@ class MediaDiscoveryService:
             raise DiscoveryUnavailable("durable media discovery storage is unavailable")
         try:
             created = self._create_work(
-                creator, discovery, organize_task, library=library, scope=deduplicated
+                creator,
+                discovery,
+                organize_task,
+                library=library,
+                scope=deduplicated,
+                reserve_sources=reserve_sources,
             )
-        except DiscoveryConflict:
-            # A concurrent equivalent admission won the durable identity race.
-            # The correct outcome is the one already durable record, not a
-            # duplicate walk: re-read the exact admission identity and return
-            # it.  When the winner is not readable as this exact open
-            # admission, the conflict is reported rather than guessed away.
+        except DiscoveryConflict as conflict:
+            # A concurrent admission won the durable identity race.  The two
+            # shapes of that race are answered differently, because they mean
+            # different things to the operator:
+            #
+            # * the durable boundary named a *source* it refused (B46.3-04) —
+            #   another unfinished organizing work really holds that concrete
+            #   Storage path, so this request's honest answer is a per-item
+            #   refusal with that work's exact reference.  Eligible siblings are
+            #   then admitted as their own durable work (B46.3-02) instead of
+            #   being silently acknowledged as part of a scope nobody holds.
+            # * the boundary named an equivalent open *admission* — this request
+            #   is the same deliberate submission, so it converges on that one
+            #   durable record and keeps its own per-item evidence.
+            # Anything else is reported rather than guessed away.
+            refused_sources = tuple(
+                entry
+                for entry in (conflict.details or {}).get("refusedSources", ())
+                if isinstance(entry, DiscoveryScopeEntry)
+            )
+            if refused_sources:
+                return self._admit_remaining_sources(
+                    actor,
+                    deduplicated,
+                    refused_sources,
+                    outcome,
+                    library=library,
+                    resource_library_id=resource_library_id,
+                    snapshot_id=snapshot_id,
+                    snapshot_digest=snapshot_digest,
+                    auto_prepare=auto_prepare,
+                    admission_request_id=admission_request_id,
+                )
             if admission_request_id is not None:
                 requested = self._reconcile_admission_request(
                     actor,
@@ -606,6 +647,207 @@ class MediaDiscoveryService:
             )
         return self._record_outcome(created, outcome)
 
+    def _admit_remaining_sources(
+        self,
+        actor: str,
+        scope: tuple[DiscoveryScopeEntry, ...],
+        refused_sources: tuple[DiscoveryScopeEntry, ...],
+        outcome: DiscoveryAdmissionOutcome,
+        *,
+        library,
+        resource_library_id: str,
+        snapshot_id: str,
+        snapshot_digest: str,
+        auto_prepare: bool,
+        admission_request_id: str | None,
+    ) -> MediaDiscovery:
+        """Admit the siblings one lost source reservation left genuinely free.
+
+        B46.3-02: no successful admission may refer to a file no durable work
+        actually holds.  A reservation that failed is therefore never answered
+        with a blanket 202: the refused source keeps its own bounded refusal
+        (with the reference of the work that really owns it), and the still-free
+        siblings are admitted through the ordinary durable boundary as their own
+        bounded work.  Nothing is truncated — a remaining set that cannot be
+        admitted is reported per item, and an empty remaining set is answered
+        with nothing but those refusals.
+        """
+
+        refused_keys = {(entry.path, entry.kind.value) for entry in refused_sources}
+        remaining = tuple(
+            entry for entry in scope if (entry.path, entry.kind.value) not in refused_keys
+        )
+        refusals: list[DiscoveryRefusedEntry] = list(outcome.refused)
+        known = {(item.path, item.kind.value) for item in refusals}
+        for entry in refused_sources:
+            if (entry.path, entry.kind.value) in known:
+                continue
+            owned = self._owned_source_work(library, entry)
+            if owned is None:
+                # The reservation was held at the boundary but is already free
+                # again (its work settled in between).  That source is not
+                # refused: admit it with its siblings instead of inventing a
+                # permanent failure.
+                remaining = (*remaining, entry)
+                continue
+            refusals.append(self._owned_source_refusal(entry, owned))
+            known.add((entry.path, entry.kind.value))
+        if not remaining:
+            first = refusals[0]
+            raise DiscoveryError(
+                first.message,
+                code=first.code,
+                status=409,
+                next_action=first.next_action,
+                details={
+                    "relativePath": first.path,
+                    "reason": first.reason,
+                    **(
+                        {"existingWorkId": first.existing_work_id}
+                        if first.existing_work_id is not None
+                        else {}
+                    ),
+                },
+            )
+        now = self._clock()
+        organize_task_id = str(uuid4())
+        discovery_id = str(uuid4())
+        progress = DiscoveryProgress(
+            "queued",
+            remaining,
+            DiscoveryCounters(),
+            DiscoveryIncompleteReason.NONE,
+            (),
+            (),
+            tuple(entry.path for entry in remaining if entry.kind is DiscoveryEntryKind.FILE),
+            tuple(entry.path for entry in remaining if entry.kind is DiscoveryEntryKind.DIRECTORY),
+            None,
+            None,
+            (),
+            "queued for bounded discovery by the resident Processing Worker",
+            (),
+            canonical_refusals(tuple(refusals)),
+            True,
+        )
+        discovery = MediaDiscovery(
+            discovery_id,
+            actor,
+            library.library_id,
+            library.storage_id,
+            snapshot_id,
+            snapshot_digest,
+            DiscoveryStatus.QUEUED,
+            1,
+            self._budgets,
+            progress,
+            now,
+            now,
+            (),
+            None,
+            None,
+            None,
+            None,
+            None,
+            0,
+            False,
+            False,
+            None,
+            admission_request_id=admission_request_id,
+            auto_prepare=auto_prepare,
+            organize_task_id=organize_task_id,
+            storage_scope=self._storage_scope(library, remaining),
+        )
+        organize_task = PersistentTask(
+            organize_task_id,
+            MANUAL_ORGANIZE_TASK_COMMAND,
+            PersistentTaskStatus.PENDING,
+            True,
+            now,
+            now,
+            None,
+            None,
+            0,
+            0,
+            0,
+            None,
+            False,
+            library.root_path,
+            self._budgets.max_primary_sources,
+            snapshot_id,
+            snapshot_digest,
+        )
+        boundary = self._organize_work_boundary()
+        if not callable(boundary):
+            raise DiscoveryUnavailable("durable media discovery storage is unavailable")
+        settled_outcome = replace(
+            outcome,
+            admitted=canonical_scope(remaining),
+            refused=canonical_refusals(tuple(refusals)),
+        )
+        try:
+            created = self._create_work(
+                boundary, discovery, organize_task, library=library, scope=remaining
+            )
+        except DiscoveryConflict as conflict:
+            # A second concurrent claim on this remaining set: converge on the
+            # durable record the boundary names, or report the bounded refusal.
+            refused_here = tuple(
+                entry
+                for entry in (conflict.details or {}).get("refusedSources", ())
+                if isinstance(entry, DiscoveryScopeEntry)
+            )
+            if refused_here:
+                raise MediaDiscoveryService._scope_owned_error(refused_here) from conflict
+            winner = self._reconcile_admission(
+                actor,
+                remaining,
+                snapshot_id,
+                snapshot_digest,
+                resource_library_id,
+                library.storage_id,
+                auto_prepare=auto_prepare,
+            )
+            if winner is None:
+                raise
+            return self._accept_onto_existing(
+                winner, settled_outcome, admission_request_id=admission_request_id
+            )
+        self._bind_request(admission_request_id, created)
+        return self._record_outcome(created, settled_outcome)
+
+    def _organize_work_boundary(self):
+        boundary = getattr(self._repository, "create_files_organize_work", None)
+        if callable(boundary):
+            return boundary
+        return getattr(self._repository, "create_media_discovery", None)
+
+    def _owned_source_work(self, library, entry: DiscoveryScopeEntry):
+        """The unfinished work a durable boundary proves it holds for one source."""
+
+        finder = getattr(self._repository, "find_owned_source_work", None)
+        if not callable(finder):
+            return None
+        return finder(
+            storage_id=library.storage_id,
+            source_path=entry.path,
+            storage_path=canonical_source_path(library.root_path, entry.path),
+            resource_library_id=library.library_id,
+        )
+
+    @staticmethod
+    def _scope_owned_error(refused: tuple[DiscoveryScopeEntry, ...]) -> DiscoveryError:
+        first = refused[0]
+        return DiscoveryError(
+            "this source is already owned by an unfinished organizing work",
+            code="source_already_organizing",
+            status=409,
+            next_action=(
+                "open the reported existing organizing work instead; this request did not start "
+                "a second organizing task for the same source"
+            ),
+            details={"relativePath": first.path, "reason": _REASON_ALREADY_OWNED},
+        )
+
     def _create_work(
         self,
         creator,
@@ -614,6 +856,7 @@ class MediaDiscoveryService:
         *,
         library,
         scope: tuple[DiscoveryScopeEntry, ...],
+        reserve_sources=None,
     ) -> MediaDiscovery:
         """Commit the admitted organizing work through the available boundary.
 
@@ -625,11 +868,22 @@ class MediaDiscoveryService:
 
         accepts_task = getattr(self._repository, "create_files_organize_work", None)
         if callable(accepts_task) and organize_task is not None:
-            return accepts_task(
-                discovery,
-                organize_task,
-                display=self._organize_display(library, scope),
-            )
+            options = {"display": self._organize_display(library, scope)}
+            if reserve_sources is not None:
+                options["reserve_sources"] = reserve_sources
+            try:
+                return accepts_task(discovery, organize_task, **options)
+            except TypeError:
+                if reserve_sources is None:
+                    raise
+                # A boundary that cannot re-check the concrete source is never
+                # silently treated as if it had: the admission then keeps only the
+                # pre-commit check it already performed.
+                return accepts_task(
+                    discovery,
+                    organize_task,
+                    display=options["display"],
+                )
         if discovery.organize_task_id is not None:
             # Fail closed rather than advertising an organizing Task identity that
             # no repository committed.
@@ -704,59 +958,117 @@ class MediaDiscoveryService:
         # discoverable scope would be a lost admission (B46.3-02), so the still-free
         # entries are added to that work's real scope atomically.  A frozen or
         # settled record is never widened; the caller then receives the honest
-        # per-item refusal instead.
+        # per-item refusal instead.  A failed extension admits nothing, so its
+        # entries are reported as non-admitted with their real reason rather than
+        # being acknowledged for a scope no durable work holds.
         if outcome.admitted:
-            discovery, refused = self._extend_scope(discovery, outcome.admitted)
-            if refused:
-                existing_refusals = {(item.path, item.kind.value): item for item in outcome.refused}
-                for entry in refused:
-                    existing_refusals.setdefault(
-                        (entry.path, entry.kind.value),
-                        DiscoveryRefusedEntry(
-                            entry.path,
-                            entry.kind,
-                            "source_already_organizing",
-                            _REASON_ALREADY_OWNED,
-                            (
-                                "this source became owned by another unfinished organizing work "
-                                "before it could join this one"
-                            ),
-                            (
-                                "open the reported existing work instead; this request did not "
-                                "start a second organizing task for the same source"
-                            ),
-                        ),
-                    )
+            discovery, refused, _unpublished = self._extend_scope(discovery, outcome.admitted)
+            admitted, not_admitted = self._split_admitted(
+                discovery,
+                outcome.admitted,
+                refused=refused,
+            )
+            if not_admitted or refused:
                 outcome = replace(
                     outcome,
-                    admitted=canonical_scope(
-                        tuple(
-                            entry
-                            for entry in outcome.admitted
-                            if (entry.path, entry.kind.value)
-                            not in {(item.path, item.kind.value) for item in refused}
-                        )
-                    ),
-                    refused=canonical_refusals(tuple(existing_refusals.values())),
+                    admitted=canonical_scope(admitted),
+                    refused=canonical_refusals(tuple(not_admitted)),
                 )
         self._bind_request(admission_request_id, discovery)
         return self._record_outcome(discovery, outcome)
+
+    def _split_admitted(
+        self,
+        discovery: MediaDiscovery,
+        proposed: tuple[DiscoveryScopeEntry, ...],
+        *,
+        refused: tuple[DiscoveryScopeEntry, ...],
+    ) -> tuple[tuple[DiscoveryScopeEntry, ...], tuple[DiscoveryRefusedEntry, ...]]:
+        """Split proposed entries into the ones durable work really holds and not.
+
+        An entry is admitted only when its exact ``(path, kind)`` is inside the
+        committed durable scope of this work.  A source another unfinished work
+        owns keeps that work's exact reference; an extension that never committed
+        is reported as an unpublished admission with an explicit next action.  No
+        entry becomes ``admitted`` on the strength of a proposed list.
+        """
+
+        durable = {(entry.path, entry.kind.value): entry for entry in _durable_scope(discovery)}
+        refused_by_key = {(entry.path, entry.kind.value): entry for entry in refused}
+        admitted: list[DiscoveryScopeEntry] = []
+        not_admitted: list[DiscoveryRefusedEntry] = []
+        library = None
+        runtime_resolved = False
+        for entry in proposed:
+            key = (entry.path, entry.kind.value)
+            if key in durable:
+                # The committed scope really holds this source, so this request's
+                # own admission of it is truthful.
+                admitted.append(entry)
+                continue
+            owned = None
+            if key in refused_by_key:
+                if not runtime_resolved:
+                    runtime_resolved = True
+                    try:
+                        runtime = self._load_runtime(
+                            discovery.snapshot_id, discovery.snapshot_digest
+                        )
+                        library = self._runtime_library(runtime, discovery.resource_library_id)
+                    except Exception:  # noqa: BLE001 - the entry keeps its own bounded refusal
+                        library = None
+                owned = self._owned_source_work(library, entry) if library is not None else None
+            if owned is not None:
+                not_admitted.append(self._owned_source_refusal(entry, owned))
+                continue
+            # Nothing durable holds this entry: the extension never committed, the
+            # boundary refused a source that is free again, or another writer
+            # settled the work first.  Either way it is reported as not admitted
+            # with its own next action instead of being acknowledged for work
+            # nobody holds.
+            not_admitted.append(self._unpublished_admission_refusal(entry))
+        return tuple(admitted), canonical_refusals(tuple(not_admitted))
+
+    @staticmethod
+    def _unpublished_admission_refusal(entry: DiscoveryScopeEntry) -> DiscoveryRefusedEntry:
+        """One proposed source whose admission was never proved by durable scope."""
+
+        return DiscoveryRefusedEntry(
+            entry.path,
+            entry.kind,
+            "admission_not_committed",
+            _REASON_ADMISSION_NOT_COMMITTED,
+            (
+                "this source was not added to an organizing work: the admitted scope changed "
+                "before it could be committed"
+            ),
+            "refresh the selection and submit these sources again with the same deliberate intent",
+        )
 
     def _extend_scope(
         self,
         discovery: MediaDiscovery,
         entries: tuple[DiscoveryScopeEntry, ...],
-    ) -> tuple[MediaDiscovery, tuple[DiscoveryScopeEntry, ...]]:
-        """Add still-free siblings to this open work, or report them refused."""
+    ) -> tuple[MediaDiscovery, tuple[DiscoveryScopeEntry, ...], bool]:
+        """Add still-free siblings to this open work, or report them refused.
+
+        Returns ``(durable work, refused entries, unpublished)``.  ``unpublished``
+        is the third truthful outcome B46.3-02 requires: the extension was
+        attempted but the durable write could not be performed (an unresolvable
+        binding, a missing boundary or a version race), so *none* of the proposed
+        entries joined this work.  The caller must then report those entries as
+        non-admitted with their real reason instead of acknowledging work no
+        durable scope holds.
+        """
 
         extender = getattr(self._repository, "extend_media_discovery_scope", None)
         if not callable(extender):
-            return discovery, ()
+            return discovery, (), True
         try:
             runtime = self._load_runtime(discovery.snapshot_id, discovery.snapshot_digest)
             library = self._runtime_library(runtime, discovery.resource_library_id)
-        except Exception:  # noqa: BLE001 - an unresolvable binding keeps the honest refusal
-            return discovery, ()
+        except Exception:  # noqa: BLE001 - an unresolvable binding admits nothing
+            return discovery, (), True
         canonical = {
             entry.path: canonical_source_path(library.root_path, entry.path) for entry in entries
         }
@@ -768,11 +1080,13 @@ class MediaDiscoveryService:
                 expected_version=discovery.version,
             )
         except DiscoveryConflict:
-            # Another writer extended or settled this work first.  The durable
-            # readback is the honest answer; nothing is guessed or re-played.
+            # Another writer extended or settled this work first, so none of this
+            # request's entries are proved to be inside a durable scope.  The
+            # durable readback is the honest answer; nothing is guessed, widened
+            # or re-played.
             current = self._read(discovery.discovery_id) or discovery
-            return current, ()
-        return current, refused
+            return current, (), True
+        return current, refused, False
 
     def _record_outcome(
         self, discovery: MediaDiscovery, outcome: DiscoveryAdmissionOutcome
@@ -808,6 +1122,7 @@ class MediaDiscoveryService:
         library,
         *,
         storage=None,
+        observed_fingerprints: Mapping[str, str | None] | None = None,
     ) -> tuple[tuple[DiscoveryScopeEntry, ...], list[DiscoveryRefusedEntry]]:
         """Split one selection into still-admissible items and owned refusals.
 
@@ -837,7 +1152,11 @@ class MediaDiscoveryService:
             # identity: a replaced file at the same path is a different concrete
             # source, so it is admitted instead of being refused for the previous
             # occurrence.  Only a metadata stat is used — never a read.
-            observed = self._observed_fingerprint(storage, library, entry.path)
+            observed = (
+                observed_fingerprints.get(entry.path)
+                if observed_fingerprints is not None
+                else self._observed_fingerprint(storage, library, entry.path)
+            )
             owned = finder(
                 storage_id=library.storage_id,
                 source_path=entry.path,
@@ -859,6 +1178,46 @@ class MediaDiscoveryService:
                 continue
             refusals.append(self._owned_source_refusal(entry, owned))
         return tuple(kept), refusals
+
+    def _reserve_sources_callback(self, library, observed: Mapping[str, str | None]):
+        """The per-source reservation the atomic admission re-checks under its lock.
+
+        The observed fingerprint is part of the *verified* identity, so a file that
+        was replaced at the same path since admission is a different concrete source
+        and must not be reported as a duplicate of the earlier occurrence (B46.3-04).
+        The callback carries exactly the bounded evidence this request observed;
+        the repository performs the ownership read inside its own write transaction.
+        """
+
+        def reserve(
+            storage_id: str,
+            source_path: str,
+            storage_path: str | None,
+            resource_library_id: str,
+        ):
+            finder = getattr(self._repository, "find_owned_source_work", None)
+            if not callable(finder):
+                return None
+            return finder(
+                storage_id=storage_id,
+                source_path=source_path,
+                storage_path=storage_path,
+                resource_library_id=resource_library_id,
+                source_fingerprint=observed.get(source_path),
+            )
+
+        return reserve
+
+    def _observed_fingerprints(
+        self, storage, library, scope: tuple[DiscoveryScopeEntry, ...]
+    ) -> dict[str, str | None]:
+        """One bounded ``stat`` per directly selected file, never a read."""
+
+        return {
+            entry.path: self._observed_fingerprint(storage, library, entry.path)
+            for entry in scope
+            if entry.kind is DiscoveryEntryKind.FILE
+        }
 
     def _observed_fingerprint(self, storage, library, relative: str) -> str | None:
         """The verified fingerprint of one selected source, or ``None``.
@@ -918,6 +1277,14 @@ class MediaDiscoveryService:
             existing_work_id=reference,
             existing_work_kind=kind,
         )
+
+    @staticmethod
+    def _refusal_for_owned_source(
+        entry: DiscoveryScopeEntry, owned: Mapping[str, object]
+    ) -> DiscoveryRefusedEntry:
+        """The bounded refusal of one source an unfinished work already owns."""
+
+        return MediaDiscoveryService._owned_source_refusal(entry, owned)
 
     def _reconcile_library_work(
         self,
@@ -4130,6 +4497,16 @@ class MediaDiscoveryService:
         remaining = self._remaining_intent_item_ids(intent)
         if discovery.recovery_source_task_id is not None:
             remaining = self._undecided_intent_item_ids(intent, discovery)
+        # RO-2/AC-15: a native decision the operator saved on this Task's own item is
+        # the decision for that exact source.  It is applied to the linked intent
+        # item through the ordinary optimistic choice save, which records the pinned
+        # policy mapping and its audit — so the re-analysis plans the type the
+        # operator actually chose instead of publishing the same problem again.
+        # Nothing is applied for a source whose decision is still pending, and a
+        # decision that cannot be applied leaves its item undecided (and therefore
+        # still one of the four native problems) rather than being forced.
+        if remaining and discovery.organize_task_id is not None:
+            intent, remaining = self._apply_native_decisions(discovery, intent, remaining)
         if not remaining:
             # Every item of this preparation has already been admitted to an
             # execution.  Re-running the analysis would only re-review work the
@@ -4328,6 +4705,99 @@ class MediaDiscoveryService:
             discarder(intent_id, preview_id)
         except Exception:  # noqa: BLE001 - retiring a never-published plan is best effort
             return
+
+    def _apply_native_decisions(
+        self, discovery: MediaDiscovery, intent, remaining: tuple[str, ...]
+    ) -> tuple[object, tuple[str, ...]]:
+        """Fold resolved native decisions on this Task into its linked intent.
+
+        Only a *resolved* Recognition/Classification review or a resolved Metadata
+        candidate/correction is applied, and only when it belongs to a TaskItem of
+        this exact organizing Task and its exact source.  Recognition additionally
+        requires this item to be undecided: a rule-resolved or operator-saved type is
+        never overwritten by a review of another attempt.
+
+        The application goes through the ordinary ``update_choice`` optimistic save,
+        so it persists the pinned policy mapping with its own audit and version.  A
+        decision that cannot be applied (a stale version, a removed policy) is left
+        alone: the item stays a real native problem instead of being forced ready.
+        """
+
+        updates: list[tuple[str, dict[str, object]]] = []
+        item_ids = self._organize_task_item_ids(discovery.organize_task_id)
+        for intent_item in intent.items:
+            if intent_item.item_id not in remaining:
+                continue
+            linked = self._native_decision_for(intent_item, item_ids)
+            if linked is None:
+                continue
+            updates.append((intent_item.item_id, linked))
+        if not updates:
+            return intent, remaining
+        current = intent
+        for item_id, patch in updates:
+            item = next((value for value in current.items if value.item_id == item_id), None)
+            if item is None:
+                continue
+            try:
+                current = self._intent_service.update_choice(
+                    current.intent_id,
+                    item_id,
+                    patch,
+                    expected_version=current.version,
+                    actor=discovery.actor,
+                    expected_item_version=item.version,
+                )
+            except Exception:  # noqa: BLE001 - an unapplied decision stays a real problem
+                continue
+        still_remaining = tuple(
+            value.item_id for value in current.items if value.item_id in set(remaining)
+        )
+        return current, still_remaining
+
+    def _organize_task_item_ids(self, task_id: str | None) -> tuple[str, ...]:
+        reader = getattr(self._repository, "list_items", None)
+        if task_id is None or not callable(reader):
+            return ()
+        try:
+            return tuple(value.item_id for value in reader(task_id))
+        except Exception:  # noqa: BLE001 - an unreadable Task holds no decision authority
+            return ()
+
+    def _native_decision_for(self, intent_item, item_ids: tuple[str, ...]) -> dict[str, object]:
+        """The one bounded choice patch this item's own resolved review justifies.
+
+        Only a *type* decision can make an undecided item decidable.  Metadata,
+        Classification and Conflict reviews are only reachable once a type exists,
+        so they are never a substitute for one and are handled by the analysis that
+        runs after this decision (and by the existing recovery continuation).
+        """
+
+        if intent_item.choice.decided:
+            # A rule-resolved or operator-saved type is a real decision; a review of
+            # another attempt must never overwrite it.
+            return None
+        for item_id in item_ids:
+            review = self._safe_call("get_recognition_review_for_item", item_id)
+            if review is None:
+                continue
+            if getattr(review, "source_path", None) != intent_item.source.path:
+                continue
+            if getattr(getattr(review, "status", None), "value", None) != "resolved":
+                continue
+            selected = getattr(review, "selected_recognition_type", None)
+            if isinstance(selected, str) and selected:
+                return {"recognitionTypeId": selected}
+        return None
+
+    def _safe_call(self, name: str, *arguments):
+        reader = getattr(self._repository, name, None)
+        if not callable(reader):
+            return None
+        try:
+            return reader(*arguments)
+        except Exception:  # noqa: BLE001 - one bounded read, never a media fault
+            return None
 
     def _remaining_intent_item_ids(self, intent) -> tuple[str, ...]:
         """The intent items a fresh preparation analysis may still review.
@@ -5316,6 +5786,13 @@ class MediaDiscoveryService:
                 snapshot_id=discovery.snapshot_id,
                 snapshot_digest=discovery.snapshot_digest,
                 pinned_snapshot=True,
+                # RO-2/AC-16: only an *explicit Files 整理 selection* resolves each
+                # source through its pinned RecognitionRule, so a rule miss becomes
+                # this task's own native Recognition problem instead of a forced
+                # default type.  A definition-bound Run once and a remaining-scope
+                # recovery preparation keep their existing intent admission; their
+                # changed execution intent is RO-5's own scope.
+                files_admission=discovery.progress.manual_selection,
             )
         except ManualIntentError as error:
             return self._fail(discovery, claim_token, error.code)
@@ -5800,6 +6277,18 @@ class MediaDiscoveryService:
         if status is DiscoveryStatus.PARTIAL_SUCCESS:
             return f"bounded discovery stopped at a limit: {incomplete.value}"
         return "bounded discovery is running"
+
+
+def _durable_scope(discovery: MediaDiscovery) -> tuple[DiscoveryScopeEntry, ...]:
+    """The exact scope entries this durable work really committed.
+
+    A per-request ``admitted`` list is only a proposal until it is proved to be
+    inside the committed scope.  Reading the committed record (the live projection
+    the re-read repository returns) is what makes that proof possible without
+    re-parsing a response.
+    """
+
+    return tuple(discovery.progress.scope_entries)
 
 
 class _DiscoveryReadOnlyStorage:

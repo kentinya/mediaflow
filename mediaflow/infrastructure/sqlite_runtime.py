@@ -12719,6 +12719,7 @@ class SQLiteTaskRepository:
         task: PersistentTask,
         *,
         display: RunDisplayContext | None = None,
+        reserve_sources=None,
     ) -> MediaDiscovery:
         """Commit one Files 整理 Task and its discovery admission atomically.
 
@@ -12730,6 +12731,16 @@ class SQLiteTaskRepository:
 
         The Task is created in the queued state: the admitting HTTP request never
         claims, walks or executes.  Only the resident Processing Worker advances it.
+
+        B46.3-04: the verified *source* reservation happens inside this same
+        ``BEGIN IMMEDIATE`` transaction.  Checking an admission signature inside a
+        transaction is not a source check: two concurrent requests that both read
+        the source as free for an identical/different admission would still each
+        commit their own Task.  Every already-observed direct file of the admitted
+        scope is therefore re-checked against live durable ownership here, under
+        the write lock, and a source another unfinished work owns is never
+        committed twice.  Nothing is backfilled, no Storage call happens inside the
+        transaction, and a pre-change row keeps its conservative legacy identity.
         """
 
         if not isinstance(discovery, MediaDiscovery):
@@ -12741,6 +12752,18 @@ class SQLiteTaskRepository:
         with self._lock:
             self._connection.execute("BEGIN IMMEDIATE")
             try:
+                refused_sources = self._reserve_admitted_sources_locked(
+                    discovery, reserve_sources=reserve_sources
+                )
+                if refused_sources:
+                    # The Task, its display row and the discovery are never
+                    # committed for a scope that lost a source: the caller
+                    # reports the per-item refusal and admits the still-free
+                    # siblings as their own durable work.
+                    raise DiscoveryConflict(
+                        "a source of this admission is already owned by unfinished work",
+                        details={"refusedSources": refused_sources},
+                    )
                 self._connection.execute(
                     "INSERT INTO tasks VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)",
                     self._task_values(task),
@@ -12944,6 +12967,72 @@ class SQLiteTaskRepository:
                 details={"discoveryId": discovery.discovery_id},
             )
         return current, tuple(refused)
+
+    def _reserve_admitted_sources_locked(
+        self, discovery: MediaDiscovery, *, reserve_sources=None
+    ) -> tuple[DiscoveryScopeEntry, ...]:
+        """The already-observed direct sources of an admission another work owns.
+
+        Called inside the caller's ``BEGIN IMMEDIATE`` transaction so the ownership
+        read and the Task/discovery insert are one decision.  Only *directly
+        selected files* are judged: their exact confined Storage path came from a
+        real ``stat`` at admission, so this is verified identity rather than a
+        library-relative string or a filename.  A folder is admitted as outer work
+        before traversal and its discovered sources are reserved one by one inside
+        the walk, so no pre-task traversal and no Storage call happens here.
+
+        The exact ``(path, kind)`` of every refused entry is returned; a non-empty
+        answer means the whole admission must roll back, because admitting a
+        *different* (truncated) scope under the operator's deliberate selection
+        would silently change what they asked to organize.
+        """
+
+        recorded = {
+            str(item[0]): str(item[1])
+            for item in discovery.storage_scope
+            if isinstance(item, (list, tuple)) and len(item) == 2
+        }
+        refused: list[DiscoveryScopeEntry] = []
+        for entry in discovery.progress.scope_entries:
+            if entry.kind is not DiscoveryEntryKind.FILE:
+                continue
+            storage_path = recorded.get(entry.path)
+            finder = reserve_sources if callable(reserve_sources) else self._find_owned_source_work
+            observed = finder(
+                discovery.storage_id,
+                entry.path,
+                storage_path,
+                discovery.resource_library_id,
+            )
+            if observed is None:
+                continue
+            if (
+                observed.get("kind") == "discovery"
+                and observed.get("resourceLibraryId") == discovery.resource_library_id
+            ):
+                # An open admission of this same library holding the exact source
+                # is the convergence case the service layer reconciles onto one
+                # durable record; it is not a competing owner here.
+                continue
+            refused.append(entry)
+        return tuple(refused)
+
+    def _find_owned_source_work(
+        self,
+        storage_id: str,
+        source_path: str,
+        storage_path: str | None,
+        resource_library_id: str,
+    ) -> dict[str, object] | None:
+        """Positional adapter for the supplier-shaped reservation callback."""
+
+        return self.find_owned_source_work(
+            storage_id=storage_id,
+            source_path=source_path,
+            storage_path=storage_path,
+            resource_library_id=resource_library_id,
+            exclude_discovery_id=None,
+        )
 
     def find_owned_source_work(
         self,

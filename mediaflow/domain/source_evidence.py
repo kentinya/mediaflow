@@ -141,19 +141,32 @@ def canonical_source_path(root_path: str | None, relative_path: str) -> str:
     this one canonical form instead of comparing incomparable relative strings.
     Distinct roots still yield distinct values, so equal relative names in
     genuinely different subtrees never collide.  Pure: no Storage access.
+
+    The input is *always* library-relative: :func:`join_library_path` is the one
+    join the Storage adapters themselves use, and the result is therefore the
+    same value the provider reports for that entry.  A textual ``startswith``
+    shortcut is deliberately *not* used: with a root of ``Movies`` and a
+    library-relative ``Movies/One.mkv`` under a Storage whose real file is
+    ``Movies/Movies/One.mkv`` the shortcut would return the unprefixed (and
+    therefore wrong) path and let the same concrete source be admitted twice
+    under two bindings.  A caller that already holds a Storage-relative value
+    must pass an empty root instead of relying on prefix inference.
     """
 
-    root = (root_path or "").strip("/")
-    value = (relative_path or "").strip("/")
-    if not root:
-        return value
-    if not value:
-        return root
-    if value == root or value.startswith(root + "/"):
-        # Callers occasionally hold an already-Storage-relative value; never
-        # double-prefix it into a path that does not exist.
-        return value
-    return f"{root}/{value}"
+    return join_library_path(root_path, relative_path)
+
+
+def join_library_path(root_path: str | None, relative_path: str) -> str:
+    """Join one ResourceLibrary root and one library-relative path, exactly once.
+
+    This mirrors the Storage adapters' own join (``PurePosixPath(root) / value``
+    with empty parts dropped), so an identity computed here and a provider path
+    observed from real Storage agree on the same concrete entry.
+    """
+
+    parts = [part for part in (root_path or "").strip("/").split("/") if part]
+    parts.extend(part for part in (relative_path or "").strip("/").split("/") if part)
+    return "/".join(parts)
 
 
 def occurrence_id_for(
@@ -183,6 +196,7 @@ __all__ = [
     "OccurrenceState",
     "SourceFingerprint",
     "canonical_source_path",
+    "join_library_path",
     "occurrence_id_for",
     "source_fingerprint",
 ]
