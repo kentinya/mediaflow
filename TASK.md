@@ -1204,164 +1204,133 @@ still TARGET.
 ## B Review Result
 
 ```text
-Reviewed Task range: 83144be20c6c7bc787a0fafad7fabb3e177bde6a..fe0aa2811f84d03b2d7c37809d6ff864bd5f629f
-Executable candidate: e3393a9d; e3393a9d..fe0aa281 changes TASK.md only
+Reviewed Task range: 83144be20c6c7bc787a0fafad7fabb3e177bde6a..1ae2f5c1b34ffeb0531be471fb0c090436a71e17
+Executable candidate: eb11c241 (implementation b7513ce4)
+Report-only successors: eb11c241..1ae2f5c1 changes TASK.md only
 Decision: FIX REQUIRED — 2026-10-26
-Prior return-context blocker: corrected; real sequential native file 41/41 passed
-Remaining B46.3-04 / P1: physical source identity after analysis and atomic folder-source admission
-Full T4 acceptance: not complete; no waiver or Task PASS
-Slice Required Outcomes / Surfaces all satisfied: NO
-Next: SAME TASK FIX LOOP; no new Task or Slice closure
+Prior cross-binding-after-analysis trigger: corrected in the verified case
+Prior empty-root folder competition trigger: corrected in the verified case
+Remaining B46.3-04 / P1: nonempty library-root loser path and conflict-settlement bypass
+Full T4 acceptance: pending; no Task PASS or Slice closure
+Next: SAME TASK FIX LOOP
 ```
 
-B reassessed the complete 45-file immutable Task Base..Head range, retaining unchanged verified facts
-and independently inspecting the Shell fix, new router tests and source-ownership delivery against
-original Scope §3/AC-16. The exact successor diff is report-only. The Task Base, Goal, Scope, High/T4
-and committed Slice boundaries remain unchanged. This is not A Final Review. Prior exact reviews
-and evidence remain in Git, most recently `a60bab03:TASK.md`.
+B reassessed the entire 45-file immutable Task Base..Head change set against original Scope §3 and
+RO-2/AC-16, retaining previously verified unchanged facts and inspecting this round's version evidence,
+source publication transaction, conflict handling and tests. The report-only range is verified by its
+exact diff. Task Base/Goal/Scope/High/T4 and the committed Slice boundaries remain unchanged. This is
+not A Final Review. The prior exact review and evidence remain at `6d79858a:TASK.md`.
 
-### Accepted progress on this candidate
+### Verified progress
 
-- The Shell uses the router's committed search consistently. The previously failing real Files
-  lost-response/return-context journey now passes inside the full sequential inventory file.
-- B independently ran the unchanged `operations-inventory.python.spec.ts`: **41 passed**, including
-  the original first failure, all four native recovery kinds, selected-sibling independence,
-  unknown admission, C→A identity and actual Worker results/restart assertions in that file.
-- B then ran `operations-task-center-visual.python.spec.ts` against a separate fresh harness:
-  **2 passed**. The two files do not share their mutable database/media and are not run concurrently
-  against one fixture. This is acceptance isolation, not an assertion/counter/retry change.
-- Full Web unit regression: **87 files / 1265 tests passed**. Web typecheck/lint/format, full Python
-  formatting/lint/compile, dependency check, both example-config validations and forbidden-dependency
-  scan pass. The known direct-files row-menu limitation is not silently marked resolved.
-- Previously verified same-principal initial admission, mixed per-request refusals, principal-bound
-  convergence and no-forced-type facts remain valid within their recorded evidence limits.
+- B's unmodified cross-binding-after-analysis probe now returns **409**, no second Task, one work;
+  the original Task remains unfinished with its previewed summary and unchanged actual file.
+- B's unmodified two-folder/two-connection Worker probe with an empty ResourceLibrary root now
+  persists the primary in exactly one work; the competitor has no sources and phase `empty_excluded`.
+- The 25 AdmissionAndScope tests and 3 SourceOwnershipEvidence tests independently pass: **28 OK**.
+- Shared ownership refusal construction and the transaction's first reservation check are present;
+  no Storage I/O is introduced inside that transaction and no schema/old-pin rewrite is delivered.
+- Web/Shell source, tests, harness and dependencies are unchanged from `fe0aa281`. Prior B full Web
+  unit/static and return-context code facts remain applicable to those matching inputs. The backend
+  has changed, so prior native/Python acceptance is not treated as a fresh complete current gate.
 
-The remaining findings below concern the original source-ownership outcome. They are not caused by
-the new Shell fix, not new features, and not a request to reimplement the accepted return-context fix.
+These successes narrow the existing source-ownership blocker. Do not redo the accepted return-context,
+principal isolation or original alias correction to address the remaining publication failure below.
 
-### Required corrections — B46.3-04 / P1: 完成同一物理来源的全阶段唯一归属
+### Required correction — B46.3-04 / P1: 非空库根下仍可把被拒绝的来源写回两份工作
 
-**1. 已分析待确认后，跨资源库别名仍可重复建任务。**
+**真实使用与实际表现：** 一个合法资源库的 root 为 `Movies`，操作者从它的 Files 页分别提交
+`Sub` 与 `Sub/Deep` 两个文件夹，实际主文件为 Storage 中的
+`Movies/Sub/Deep/One.2001.mkv`。两个现有 Worker 分别领取真实外层任务并交错来源检查，
+均读到空闲。最后两条记录的 `sources` **都持久保留同一个主文件**；一份进入 `analyzing`，
+另一份已写“source_already_organizing”拒绝却仍保留该文件。实际 Task 分别仍 `running` /
+`pending`，不是两个已结束历史记录；该观察不把 discovery 的 `completed` 当成整理 Task 已完成。
+两份外层 Task 允许先存在，违反要求的是同一个 primary 被保留到两份未结束工作。
+零媒体效果；不声称实际重复执行、删除或数据损坏。
 
-真实使用：同一 Storage 有两个合法资源库绑定，whole 根为空、nested 根为 `Movies`。
-操作者先通过 whole 的 Files 提交 `Movies/One.2001.mkv`，让真实 Worker 完成分析并生成
-`previewed` 摘要，尚未确认执行（原整理 Task 仍为 `running`）。再通过 nested 的 Files 提交
-`One.2001.mkv`。第二次返回 **202 + 新 Task**；两条记录的 Storage-relative 路径都明确是
-`Movies/One.2001.mkv`，同一实际文件的 path/size/modifiedAt 没变，却已有两份未完成工作。
-本轮探测零媒体效果；不声称双重变更、越权执行或数据损坏。
+本场景只把已验证的原文件夹触发器换成**正常非空资源库根目录**，没有新增入口或权限、
+篡改数据库、改 DOM/响应或制造不可能状态。源文件和两个文件夹都确实存在，配置通过生产
+验证/发布，Worker 通过 `claim_and_run` 真实领取任务。根为空时两种路径恰好相同，先前回归
+没有暴露下面的路径空间混用。
 
-根因：`source_fingerprint` 的原有摘要包含 `resourceLibraryId`，它是库/执行证据的一部分，
-不同绑定的摘要天然不同。`_discovery_source_owners_locked` 在原来源已分析、指纹已持久化后，
-把这两个不可直接比较的摘要不同解释成“来源已替换”，于是排除了仍有效的 owner；
-`find_owned_source_work` 的 TaskItem 分支也直接用同一种摘要判断。队列初期旧来源尚无指纹，
-因此先前“刚提交就从别名再提交”的成功测试没有覆盖这个阶段。
+**已确认的两段根因：**
 
-开发修改要求：
+1. `_reserve_discovered_sources_locked` 用 Storage-relative path 判断物理来源，返回的是供操作者
+   使用的 library-relative 拒绝路径；`reserved_refusals` 又主动不携带 Storage path。
+   `_publish_without_reserved_sources` 却直接用 `refused_paths` 过滤 `updated.sources[*].path`。
+   本例拿 `Sub/Deep/One...` 去删除 `Movies/Sub/Deep/One...`，删不掉；拒绝原因和计数已更新，
+   来源却仍在清单里。findings/refusals 与 source manifest 需要各自正确的路径语义。
+2. 第二次进 `_persist` 时仓储再次检测到 owner，抛出 reservation `DiscoveryConflict`。
+   它随后被通用 `run_claimed → _settle_after_conflict → _merge_attempted_work` 当作普通版本/
+   控制冲突保留 attempted sources，再经 `_settle_control → settle_media_discovery_control`
+   写回；后者会更新 `sources_json`，却不执行同一个来源占用检查。因此前面的原子拒绝被实际
+   后备写入绕过。只修首次 reservation SELECT，或只加另一个局部判重，不能完成原保证。
 
-1. 在现有来源证据/应用/仓储边界中区分“物理来源及其可比较的内容版本证据”与“资源库、
-   主体、配置 pin、执行计划上下文”。同一 Storage + 准确 Storage-relative 路径的未完成来源，
-   不能仅因 ResourceLibrary ID 不同、其执行指纹不同就被认为是新文件。
-2. 统一 discovery 与 TaskItem 两条 ownership 路径的比较语义；不同库的摘要不可比不等于文件
-   被替换。只有有实际、同语义的来源版本证据，才允许认定原来源已被新内容替换。保留真实
-   替换文件可重新处理、不同实际根同名文件互不占用、已结束历史不是永久锁的已有规则。
-3. 规范化所有用于归属判断的已发现 primary 路径，使用其实际 admitted/pinned root；不要只
-   规范化外层 scope，或拿 library-relative sources 与 Storage-relative path 混比，也不要重新
-   引入 startswith 根路径猜测。保留精确主体现有拒绝、合法续作和原请求的逐项事实。
-4. 不要全局改写旧计划/授权/Result 的指纹或重绑历史 pin 来“统一”身份。复用已有组件与事务，
-   不新增来源目录、第二队列或泛化幂等框架；如确需加字段，执行原 T4 的旧行/迁移/reopen要求。
+**本轮开发步骤（现有组件内完成）：**
 
-受影响回归必须加入上述真实顺序：whole 提交 → 实际分析到等待确认 → nested 再提交，
-断言同一实际文件不归两份未完成工作、准确拒绝/已有工作结论及 reopen 后状态；覆盖反向绑定、
-真实文件替换、不同实际根同名文件，以及 TaskItem 已存在时的同一比较边界。只测排队初始状态
-或比对文件名不能证明此修复。
+1. 在拒绝后重发分支中明确区分库内相对路径和 Storage-relative 来源键。按准确 admitted/pinned
+   root 或已有可靠映射找到并删除被拒绝的 source，保持 findings、primary counter、refusals
+   与剩余 manifest 一致。空根与非空根必须同语义，不使用猜测前缀/重复拼接，也不把物理路径
+   暴露到操作者错误详情。若内部需要两种坐标，通过现有内部值传递，公开投影仍保持边界。
+2. 将来源竞争与普通 version/control 冲突区别处理：来源已被他人持有时，不能把原 attempted
+   manifest 当成可恢复进度直接写回。所有会让未完成工作继续持有/分析/执行来源的持久发布
+   路径，包括当前 settle/reconcile 回退，必须维持同一个占用决定，不能绕开 reservation。
+3. 竞争失败项保留准确 existing-work/权限受限理由；可用兄弟仍处理，无 primary 时明确归结
+   排除原因。保留独立结果、真实预算/稳定性、合法 lineage 和主体隔离；不因新增检查破坏
+   已接受的 pause/cancel/lease 交接或丢弃已完成/效果未知记录。Storage I/O 留在事务外。
+4. 在现有 `tests/test_media_discovery.py` 的两个连接/真实 Worker 回归中加入此非空根用例，
+   同时保留空根对照。断言最终持久 primary 最多归一份未完成工作，拒绝项已从 loser 的 sources
+   真正移除，findings/counters/逐项拒绝一致，独立兄弟不丢失；SQLite/API reopen 后仍成立。
+   让真实 reservation 冲突经过上述 reconcile/settle 路径，不能只测首次抛错或异常字符串。
+   直接相关控制/租约回归沿用已有入口；不靠修改期望值、禁用非空根或禁止正常重叠配置通过。
 
-**2. 文件夹发现的查重和来源接纳仍不是一个原子决定。**
+以上是原 Scope §3 和 AC-16 的文件夹原子来源接纳及“有效兄弟独立”要求的剩余部分，不是新
+产品功能。继续同一个 Task46.3，不新增治理 Task/来源目录/队列或通用过程框架。必要架构事实
+随实际实现更正，不用 CURRENT 文档声明替代行为；原 Base 和 Slice 边界不变。
 
-同一资源库通过现有 Files API 分别提交文件夹 `Movies`、`Movies/Sub`，实际只有
-`Movies/Sub/One.2001.mkv`。两份外层 Task 先创建是合法的；原合同要求发现其中的同一个
-primary 时，只有一份工作能持久接纳它。让两个真实 Worker 分别领取这两条实际排队记录，
-在普通来源检查边界交错：两次都看到 One 空闲，随后两个任务均进入 `analyzing`，各自持久
-`sources` 都包含 **`Movies/Sub/One.2001.mkv`**，零媒体效果。没有跨库指纹差异，此例独立
-证明原子边界不足，不能仅靠修正第1项的摘要比较解决。
+### Independent checks and evidence
 
-根因：`_walk::refusal_for_owned_source` 在应用层先读 owner，随后把 source 加入内存集合；
-`record_media_discovery_progress` 虽在事务内按本 discovery 的 claim/version 写 sources，
-却没有在该来源接纳事务中对其他工作重新检查/保留同一 concrete source。两条不同 discovery
-的 CAS 都能成功；它们各自有合法 Worker fence，不等于同一来源只有一个 owner。
+Local durable ignored evidence: `.git/validation-evidence/1ae2f5c1/b46.3-review/`.
 
-开发修改要求：把每个已发现 primary 的来源判断/保留与其实际持久接纳放在现有事务边界内，
-使两个不同 Task/discovery 不能同时拥有同一未完成来源。复用 TaskItem/发现记录/仓储能力，
-选择现有架构内的最小可靠实现，不要求新框架。Storage list/stat/版本观察继续在事务外；
-事务使用这些已验证证据并保持 claim/version fence，不能持锁等待网络或遍历。
-
-失败竞争者逐项报告真实 owner/权限受限的占用原因，仍空闲的独立兄弟正常保留；外层任务
-即使没有接纳任何 primary，也保留真实发现/拒绝结论。不能拿错误摘要绕过占用、静默丢文件、
-扩大冻结范围或把竞争失败报成成功。合法续作排除自身 lineage，成功/不确定效果不重放。
-
-受影响回归：沿现有 Files API 建上述两个文件夹任务，用两个 SQLite 连接与真实 Worker
-入口交错“读空闲 → 提交”。断言最终持久 sources/TaskItem 的实际 primary 归属最多一个，
-竞争失败者及独立兄弟的结论真实，并覆盖 reopen/并发直接文件与文件夹的同一提交边界。
-无需提前遍历文件夹或禁止合法的重叠资源库配置来规避问题。
-
-以上两项共同完成原 Scope §3、SLICE RO-2/AC-16 的“同一实际来源、各入口、各未结束阶段、
-原子查重与接纳”。在同一 Task46.3 修复，不扩展 RO-4/RO-5 产品边界，不另开治理 Task。
-交付修正后的整个候选，保留本轮已通过的 UI/原生结果与其证据身份； changed inputs 的完整
-T4 验收仍由 B 执行，Developer 只运行失败/新加/直接受影响的测试及静态检查。
-
-### Independent validation and evidence
-
-Local durable ignored evidence: `.git/validation-evidence/fe0aa281/b46.3-review/`.
-
-| Command / scenario | B actual result |
+| Check / command | B actual result |
 | --- | --- |
-| Governance; exact Task Base..fe0aa281 `git diff --check` | PASS / clean |
-| Full `.venv/bin/ruff format --check .`, `ruff check .`, compileall, pip check, both documented example `config validate`, forbidden FFprobe/FFmpeg scan | PASS; `python-quality.log`, `python-quality-results.json`; forbidden scan correctly has exit1/no match |
-| `npm run typecheck`, `npm run lint`, `npm run format:check`, `npm run test -- run` (`web/`) | all PASS; **87 files / 1265 tests**; `web-*.log`, `web-results.json` |
-| `npm run build` (`web/`) | PASS; `native.log`; existing bundle-size warning retained |
-| `npm run test:e2e -- --config=playwright.python.config.ts tests/e2e/operations-inventory.python.spec.ts --output=../.git/validation-evidence/fe0aa281/b46.3-review/inventory-artifacts` | **41 passed**, exit0, 92.363 s process wall |
-| Same config, separate fresh invocation of `tests/e2e/operations-task-center-visual.python.spec.ts`, output `visual-artifacts` | **2 passed**, exit0, 9.529 s; `native.log`, `native-results.json` |
-| `alias_after_analysis_probe.py` and refined identity-evidence version | first Task running / previewed, exact same canonical source unchanged, second202/distinct Task; `alias-after-analysis.log`, `alias-after-analysis-identity.log` |
-| `folder_ownership_sequential_claims_probe.py` | two real owners read source free; two distinct Tasks both persist the same primary and enter analyzing; zero effects; `folder-sequential-claims.log` |
-| `.venv/bin/python -m unittest discover -s tests` | **INTERRUPTED / NOT COMPLETE**, subprocess exit-2 after171.800 s; `python-full.log`, `python-results.json`; no complete suite result/count or Python PASS claimed |
+| `python3 scripts/check_governance.py`; full Task Base..1ae2f5c1 `git diff --check` | PASS / clean |
+| Prior unmodified `alias_after_analysis_identity_probe.py` | second409, no second Task, one unchanged physical source; `alias-after-analysis.log` |
+| Prior unmodified `folder_ownership_sequential_claims_probe.py` | empty root: one manifest holds the source, competitor empty_excluded; `folder-ownership.log` |
+| `nested_root_folder_probe.py` | same real Worker scenario with root Movies: both manifests retain Movies/Sub/Deep/One; zero effects; `nested-root-folder.log` |
+| `nested_root_folder_diagnostic_probe.py` | ordinary read/transaction rechecks see the actual owner, yet loser persists source plus refusal through settlement; original Task running / pending; `nested-root-folder-diagnostic.log` |
+| `.venv/bin/python -m unittest tests.test_media_discovery.AdmissionAndScopeTests tests.test_task_persistence.SourceOwnershipEvidenceTests` | **28 OK**, 4.452 s process wall; `focused-tests.log`; ResourceWarning retained |
+| `.venv/bin/ruff check mediaflow/application/media_discovery.py mediaflow/domain/media_discovery.py mediaflow/domain/source_evidence.py mediaflow/infrastructure/sqlite_runtime.py tests/test_media_discovery.py tests/test_task_persistence.py` | PASS; `ruff.log` |
 
-The Python full run was started for T4 and explicitly stopped after the concrete P1 was established,
-as workflow §6 allows early FIX REQUIRED. Its KeyboardInterrupt is B's cancellation, not a fabricated
-product failure. The new physical-source and folder evidence uses ordinary actual API/admission/
-Worker boundaries over validated/published fixture configuration, temporary Local Storage and real
-SQLite; first-plan readiness and first Task unfinished state are read from durable records.
-Alias evidence re-stats the same source and proves unchanged path/size/modifiedAt; two different
-ResourceLibrary fingerprints for that exact observed entry do not prove replacement.
+The authoritative probes enter through the existing Files API/application and real Worker claim
+entry over isolated temporary Local Storage and real SQLite. A bounded delay after the normal
+ownership read schedules the second real claim; no fabricated claim/success payload, direct DB
+mutation, guessed route or DOM manipulation establishes a finding. The diagnostic records returned
+ownership facts and durable results; it does not change the application decision. Both probes prove
+conflicting admitted manifests, not actual double media mutation or data loss.
 
-The folder proof only delays a real ownership read while the other legitimate Worker proceeds.
-Claims occur through the existing Worker entry, not hand-written DB claims. An initial simultaneous-
-claim attempt returned one no-claim and one BrokenBarrierError; it is retained in `folder-ownership.log`
-as an **inconclusive probe**, not product evidence. The authoritative follow-up schedules the second
-real claim after the first Worker has actually reached observation, reflecting a normal later Worker
-poll. Both durable source collections prove its result; no guessed endpoint, direct DB insertion,
-forged response or DOM manipulation is used. No actual double mutation is claimed.
+Full current Python/native/default/visual/packaging/installed-consumer/resident-restart/schema/
+failure-atomicity/RBAC/pins/non-replay acceptance is pending and B-owned. The Developer's 41 native
+passes on this candidate are reported evidence, not independent B acceptance. Prior B 41 inventory /
+2 visual passes were at `fe0aa281`; changed backend inputs require current coverage before PASS.
+Workflow §6 permits early FIX REQUIRED on the concrete remaining P1, so B did not repeat expensive
+full gates here; none is waived or relabelled green. Developer runs the failing/new/directly affected
+cases and changed-file checks; B completes full T4 on the corrected complete candidate.
 
-Full Python/default browser/direct-files/packaging/installed-consumer/resident-restart/security and
-remaining schema/failure-atomicity gates are pending; no Docker/wheel/consumer success is claimed.
-Docker availability was only checked read-only. Full native success does not waive the concrete
-source-ownership failure or authorize Task PASS. Developer need not rerun full matrices; B will
-complete the required gates on a corrected complete candidate.
-
-B review started at 08:04:24 UTC on 2026-10-26 and continued after the user's “继续”. The long
-intervening idle gap is excluded from the testing-allocation comparison. Build/tests/probes occupied
-less than 195 seconds wall time with overlapping runs counted once (including the failed 5.244 s
-probe); recorded active review exceeds seven minutes, strictly below 50%. No deliberate waiting,
-repeated full suite, assertion/counter/timeout relaxation or transfer of B's gates was used.
+B review started at 13:03:57 UTC on 2026-10-26. All product tests/probes consumed less than 8 seconds
+subprocess wall time inside more than five minutes of code/contract/real-entry evidence review,
+strictly below 50%. No deliberate waiting, repeated full suite or relaxed assertion/timeout.
 
 ### All Slice outcomes reevaluated
 
 | Outcome | Assessment at reviewed Head |
 | --- | --- |
-| RO-1 readable shared actions | Task46.1 acceptance retained; visual journeys pass within their existing coverage, no blanket final visual claim |
-| RO-2 Files-first organizing | Incomplete: return context/full native journey now pass; cross-binding identity after analysis and folder-source atomic admission still violate AC-16 |
-| RO-3 local ordinary operations | Task46.2 acceptance/evidence limits retained, including known row-menu native limitation; no new closure claim |
-| RO-4 organizing-only center/four-type truth | Incomplete; broader query/population/eight-view/failure-removal remains deferred; native integration for new manual work passes the tested file |
-| RO-5 Automation detail/Enabled/Run once | Incomplete; intent changes remain TARGET, shared source-safety requirements are not waived |
+| RO-1 readable shared actions | Task46.1 acceptance retained; no new full visual claim |
+| RO-2 Files-first organizing | Incomplete: original two triggers improve, but nonempty-root source pruning and settlement still permit duplicate ownership |
+| RO-3 local ordinary operations | Task46.2 acceptance/evidence limits retained, including existing row-menu native limitation |
+| RO-4 organizing-only center/four-type truth | Incomplete; broader population/eight-view/failure-removal stays outside this Task; new manual-work integration still requires complete acceptance |
+| RO-5 Automation detail/Enabled/Run once | Incomplete; intent semantics remain TARGET; shared source-safety promises not waived |
 
-Slice remains ACTIVE. Only B-owned TASK.md is changed in this checkpoint; pre-existing untracked,
-private and reference files and A-owned boundaries remain preserved. No product implementation,
-next Task, push/publication or Slice closure by B.
+Slice remains ACTIVE. This checkpoint changes only B-owned TASK.md; pre-existing untracked/private/
+reference files and A-owned boundaries remain preserved. No product implementation, next Task,
+push/publication or Slice closure by B.
