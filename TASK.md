@@ -358,6 +358,160 @@ suite, runtime probe, build or media operation was run for planning; checking ti
 
 Status handed off: **READY FOR B REVIEW — candidate for the whole Task; no PASS claimed.**
 
+Implementation Head for this fix round: **`0ad89131`** (`fix(organize): own one source once across
+same-library admissions`), on top of B's reviewed `4678a2a2`.  This report is a report-only
+successor.  B's contract correction at `4678a2a2:TASK.md`, its review at `8b4f8819:TASK.md`, the
+earlier reviewed ranges and their ignored evidence directories are unchanged.
+
+### B46.3-04 / P1 — one source, one owner, in the same library too
+
+B's own probe (`same_library_concurrent_probe.py`, unmodified) on `4678a2a2`:
+
+```json
+{"distinct_task_count":2,"canonical_scopes":[[["Movies/One.2001.mkv","Movies/One.2001.mkv"]],
+ [["Movies/One.2001.mkv","Movies/One.2001.mkv"],["Movies/Three.2003.mkv","Movies/Three.2003.mkv"]]],
+ "mutations":0}
+```
+
+Same probe on this candidate:
+
+```json
+{"distinct_task_count":1,
+ "durable_scopes":[[["Movies/One.2001.mkv","Movies/One.2001.mkv"],["Movies/Three.2003.mkv","Movies/Three.2003.mkv"]],
+                   [["Movies/One.2001.mkv","Movies/One.2001.mkv"],["Movies/Three.2003.mkv","Movies/Three.2003.mkv"]]],
+ "mutations":0}
+```
+
+Root cause and fix:
+
+* `_discovery_source_owners_locked` granted a same-library owner only once its record was
+  frozen/intent-linked/completed, and `_reserve_admitted_sources_locked` skipped a same-library
+  *discovery* outright — while the service layer assumed the other request would merge.  Two
+  concurrent submissions could therefore each observe every source free and each commit a Task.
+* The library-identity exemption is **removed**, not replaced by a wider query: ownership is decided
+  only by the verified concrete-source evidence (Storage plus its ResourceLibrary-root-relative path
+  and observed fingerprint, with cancelled/failed and already-executed work excluded as before).
+* The service layer now converges on the winning open work *before* that boundary — the pre-commit
+  `_reconcile_library_work` path, additionally reached from `_admit_remaining_sources` through the new
+  `_converge_owned_sources`.  The loser's still-free siblings join the winner's committed scope via
+  the existing atomic `extend_media_discovery_scope`, and the sources it already holds are reported as
+  `existing`.  A frozen or settled manifest is never widened, so a genuinely competing source keeps
+  its `source_already_organizing` refusal.  Storage I/O stays outside every transaction; no schema
+  column, queue, catalog or global idempotency layer was added.
+* `_reserve_admitted_sources_locked` now refuses **any** owner the boundary finds, so the transaction
+  can no longer accept a source the durable state already proves is held.
+
+The new `AdmissionAndScopeTests.test_two_concurrent_selections_of_one_library_own_each_source_once`
+reproduces B's race over two SQLite connections in both submission orders.  It asserts: one durable
+Task/scope, at most one owner per concrete source, and that `Three` is never silently dropped (it is
+conclusive as either admitted-to-the-same-work or an explicit per-item reason).  On `4678a2a2` this
+test fails with two works and two Tasks for one source; on this candidate it passes.
+
+### B46.3-02 / P1 — a lost extension keeps this request's own refusals
+
+B's `mixed_scope_race_probe.py` on `4678a2a2` reported `second_refused` holding only `Three`:
+`Movies/Excluded.part`'s `source_excluded / temporary_file` was gone from both the response and its
+request readback.  On this candidate:
+
+```json
+{"second_refused":[
+  {"path":"Movies/Excluded.part","reason":"temporary_file","code":"source_excluded"},
+  {"path":"Movies/Three.2003.mkv","reason":"admission_not_committed","code":"admission_not_committed"}],
+ "replay_selection":{"existing":[{"path":"Movies/One.2001.mkv"}],
+                     "refused":["Movies/Excluded.part","Movies/Three.2003.mkv"],"scopes":[]},
+ "persisted_scope_after_actual_worker_wins":["Movies/One.2001.mkv"],
+ "actual_work_count":1,"mutations":0}
+```
+
+`_accept_onto_existing` replaced `outcome.refused` with only the extension's `not_admitted` set.  The
+complete per-request outcome is now `canonical_refusals(outcome.refused + not_admitted)`, so each exact
+`(path, kind)` keeps one truthful conclusion: the refusal this request already resolved (explicit
+temporary suffix / extension exclusion) *and* the extension result.  No other request's evidence is
+read or rewritten.  The control run (extension commits normally) retains the same `.part` conclusion.
+
+The new `test_a_lost_extension_keeps_this_requests_own_exclusion` drives the same real API/Worker race
+and additionally reopens the SQLite repository to prove both request identities read back their own
+stable outcomes after a restart.  On `4678a2a2` it fails (`.part` missing); on this candidate it passes.
+
+### Actual commands and results (this round)
+
+From the repository root:
+
+* `python3 scripts/check_governance.py` — PASS; `git diff --check` — clean.
+* `.venv/bin/ruff check` and `ruff format --check` on the three changed Python files — clean/formatted
+  (one over-long test line fixed, then `ruff format` applied).
+* `.venv/bin/python -m unittest tests.test_media_discovery
+  tests.test_media_discovery_provider_manifest tests.test_organize_preparation
+  tests.test_manual_organize_intent tests.test_manual_organize_preview
+  tests.test_manual_organize_execution tests.test_operations_task_center
+  tests.test_task_center_recovery_lineage tests.test_recovery_continuation
+  tests.test_recovery_batch` — **388 OK** (44.8 s), i.e. the previously reported 386 plus the two new
+  regressions.
+* `.venv/bin/python -m unittest tests.test_media_discovery.AdmissionAndScopeTests` — **17 OK**
+  (was 15).
+* `.venv/bin/python -m unittest tests.test_v2_automation_run_once tests.test_v2_automation_operations
+  tests.test_configuration_snapshot tests.test_automation_run_once
+  tests.test_automation_definition_execution tests.test_automation_admission
+  tests.test_operations_run_inventory tests.test_operations_run_detail tests.test_scope_continuation
+  tests.test_task_persistence` — **356 OK** (27.8 s); the shared source-ownership boundary still
+  preserves every existing Automation entrance.
+* `.venv/bin/python -m unittest tests.test_v2_manual_organize tests.test_operations_workspace
+  tests.test_manual_operations tests.test_runtime_files_browser tests.test_direct_file_operations
+  tests.test_media_library_direct_commands tests.test_configuration_organize
+  tests.test_configuration_destination tests.test_configuration_classification
+  tests.test_configuration_destination_activation tests.test_configuration_destination_precheck
+  tests.test_scan_retirement_stability` — **232 OK** (11.5 s).
+
+B's probes re-run unmodified against this candidate: `same_library_concurrent_probe.py` (one Task,
+zero mutations), `mixed_scope_race_probe.py` and `mixed_scope_control_probe.py` (complete per-item
+refusals, zero mutations), a repeated-root/overlapping-binding check (409 with the winner's exact
+`existingWorkId`, one work, one Task, zero mutations).
+
+### The real-Python E2E file is still not green — unchanged, and not caused here
+
+`npx playwright test --config=playwright.python.config.ts
+ tests/e2e/operations-inventory.python.spec.ts` (built production assets): **22 passed / 19 failed** on
+this candidate.  I ran the same command on the same tree with my four files stashed: **22 passed /
+19 failed, the identical 19 journeys**.  The failing set is therefore unchanged by this round, and I am
+not claiming it is harmless or base-only.
+
+Reproduced failure shapes, all order-dependent and each passing in isolation:
+
+* `new task selection reconciles a lost admission …` — the pre-journey `expectRunTotal(SEEDED_RUN_TOTAL +
+  2)` assertion sees 4 instead of 6 because an earlier journey's analysis run was not published in this
+  sequence; the later steps then fail on `command=manual_organize` in the URL.  It passes standalone.
+* `unknown routes and fresh organization retain real elapsed stability …` — fails as `waiting_stability`
+  in the full sequence and passes standalone in 11.6 s.
+* The remaining four business-blocker native-recovery journeys, the batch-summary, technical-recovery,
+  attachment-collision and stability journeys show the same pattern.
+
+These journeys encode per-journey `SEEDED_RUN_TOTAL + N` counts and an "the summary came from the
+analysis run" sequence that the Task46.3 one-Task accounting (correctly) shifted.  Reconciling that
+shared counting sequence across the whole sequential file is the remaining work; I did not guess at
+assertion values and did not weaken any assertion to make them pass.
+
+### Known risks / limits
+
+* The real-Python `operations-inventory` E2E file is not green (19 order-dependent failures, identical
+  with and without this round's change).  This remains the largest open risk for RO-2/AC-16 and is the
+  reason RO-2 is still not claimed complete.
+* The two fixed blockers are proven at the real API/application, real Worker and two-connection SQLite
+  boundaries, and by new permanent regressions; they are *not* proven through a browser journey.
+* `docs/architecture.md`'s Task46.3 CURRENT section now states the delivered same-library ownership and
+  complete-outcome facts.  No schema change was needed, so no migration or old-row backfill applies.
+* RO-4's organizing-only population/eight-view/failure-removal and RO-5's Automation intent changes
+  remain outside this Task, per B's Non-goals.
+
+### Remaining Slice outcomes
+
+RO-1 complete (Task46.1).  RO-2: same-library atomic source ownership and complete per-request
+admission outcomes are now delivered and covered; the real-Python E2E file is still not green, so RO-2
+is **not** claimed complete.  RO-3 complete (Task46.2).  RO-4/RO-5 unchanged and still TARGET.
+
+## Developer Completion Report (previous round)
+
+Status handed off: **READY FOR B REVIEW — candidate for the whole Task; no PASS claimed.**
+
 Checkpoints on `main` after B's `FIX REQUIRED` (reviewed Head `2998b7e3`):
 
 ```text
