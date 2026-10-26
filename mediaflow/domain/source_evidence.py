@@ -39,6 +39,46 @@ class OccurrenceState(StrEnum):
     LEGACY = "legacy"
 
 
+#: The provider attributes (in the fixed order :func:`source_fingerprint` reads
+#: them) that can carry an opaque content validator.  Only their *names* are
+#: published as evidence; their values stay inside the fingerprint digest.
+PROVIDER_VALIDATOR_NAMES = (
+    "fingerprint",
+    "validator",
+    "etag",
+    "checksum",
+    "content_hash",
+    "version_id",
+    "generation",
+)
+
+
+@dataclass(frozen=True)
+class SourceVersionEvidence:
+    """The *binding-independent* content version of one observed source.
+
+    :func:`source_fingerprint` answers "is this still the exact occurrence I
+    reviewed?" for one ResourceLibrary binding: its digest intentionally covers
+    the library identity, so two valid bindings of the same Storage produce two
+    different, mutually incomparable digests for the very same file.
+
+    Source *ownership* needs a weaker but comparable question: "is this the same
+    content version, or a genuinely replaced file?".  This value carries exactly
+    the observed facts that are comparable across bindings — the observed size,
+    modification instant and the set of provider validators that were present —
+    and nothing about the library, principal, configuration pin or plan context.
+    Equal values therefore mean an unchanged source; different values are real
+    evidence that the file at that path was replaced.
+
+    A side that cannot produce this evidence is *unknown*, never "different":
+    an incomparable version must not release a live ownership claim.
+    """
+
+    size: int
+    modified_at: str
+    validators: tuple[str, ...]
+
+
 @dataclass(frozen=True)
 class SourceFingerprint:
     """A bounded, secret-free fingerprint obtained from a Storage listing entry."""
@@ -90,15 +130,7 @@ def source_fingerprint(storage_id: str, resource_library_id: str, entry) -> Sour
         and canonical["modifiedAt"] is not None
     )
     validators: dict[str, str | int] = {}
-    for name in (
-        "fingerprint",
-        "validator",
-        "etag",
-        "checksum",
-        "content_hash",
-        "version_id",
-        "generation",
-    ):
+    for name in PROVIDER_VALIDATOR_NAMES:
         value = getattr(entry, name, None)
         if isinstance(value, (str, int)) and not isinstance(value, bool) and str(value):
             text = str(value)
@@ -129,6 +161,73 @@ def source_fingerprint(storage_id: str, resource_library_id: str, entry) -> Sour
         }
     )
     return SourceFingerprint("storage-entry-sha256", digest, evidence, OccurrenceState.VERIFIED)
+
+
+def source_version_evidence(entry) -> SourceVersionEvidence | None:
+    """The comparable content version of one bounded Storage entry.
+
+    Pure: nothing is read beyond the attributes of the entry the caller already
+    observed, and no library/principal/pin context enters the value.  ``None``
+    means the observation cannot prove a comparable version at all, which keeps
+    ownership conservative instead of inventing a replacement.
+    """
+
+    size = getattr(entry, "size", None)
+    modified = _datetime_value(getattr(entry, "modified_at", None))
+    if isinstance(size, bool) or not isinstance(size, int) or size < 0 or modified is None:
+        return None
+    present: list[str] = []
+    for name in PROVIDER_VALIDATOR_NAMES:
+        value = getattr(entry, name, None)
+        if isinstance(value, (str, int)) and not isinstance(value, bool) and str(value):
+            if len(str(value)) <= 256:
+                present.append(name)
+    return SourceVersionEvidence(size, modified, tuple(sorted(present)))
+
+
+def stored_source_version_evidence(evidence: object) -> SourceVersionEvidence | None:
+    """Rebuild the comparable version from one persisted fingerprint evidence.
+
+    The durable evidence document already carries the observed size, the
+    modification instant and the validator *names*, so a record written under
+    another ResourceLibrary binding of the same Storage stays comparable.  A
+    record without that bounded evidence (a legacy row, or an unverified
+    observation) answers ``None`` — unknown, never "replaced".
+    """
+
+    if not isinstance(evidence, dict):
+        return None
+    size = evidence.get("size")
+    modified = evidence.get("modifiedAt")
+    names = evidence.get("providerValidators")
+    if isinstance(size, bool) or not isinstance(size, int) or size < 0:
+        return None
+    if not isinstance(modified, str) or not modified:
+        return None
+    if not isinstance(names, (list, tuple)) or not all(isinstance(item, str) for item in names):
+        return None
+    return SourceVersionEvidence(size, modified, tuple(sorted(names)))
+
+
+def source_version_is_known_different(
+    observed: SourceVersionEvidence | None,
+    stored: SourceVersionEvidence | None,
+) -> bool:
+    """Whether two observations really prove a *replaced* source.
+
+    Only comparable evidence on both sides can prove a replacement.  An unknown
+    side (a legacy row, an unverified observation, a provider without any bounded
+    version facts) answers ``False`` here, so it keeps the live ownership claim
+    instead of releasing it for a file that was never proven to change.
+
+    The ResourceLibrary binding, the admitting principal and the configuration pin
+    deliberately take no part: they describe *context*, not content, and two valid
+    bindings of one Storage must agree about one physical file.
+    """
+
+    if observed is None or stored is None:
+        return False
+    return observed != stored
 
 
 def canonical_source_path(root_path: str | None, relative_path: str) -> str:
@@ -193,10 +292,15 @@ def _datetime_value(value: object) -> str | None:
 
 
 __all__ = [
+    "PROVIDER_VALIDATOR_NAMES",
     "OccurrenceState",
     "SourceFingerprint",
+    "SourceVersionEvidence",
     "canonical_source_path",
     "join_library_path",
     "occurrence_id_for",
     "source_fingerprint",
+    "source_version_evidence",
+    "source_version_is_known_different",
+    "stored_source_version_evidence",
 ]

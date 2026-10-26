@@ -15,6 +15,7 @@ from __future__ import annotations
 
 import json
 import re
+from collections.abc import Mapping
 from dataclasses import dataclass
 from datetime import datetime
 from enum import StrEnum
@@ -37,6 +38,16 @@ MAX_DISCOVERY_FINDINGS = 100
 MAX_DISCOVERY_REASONS = 32
 MAX_DISCOVERY_OBSERVATIONS = 100
 MAX_DISCOVERY_REFUSALS = 16
+
+#: The bounded refusal reason of a source another unfinished work already owns.
+#: It is the same reason on every entry point (request admission, an in-task walk,
+#: the atomic per-source reservation), so one concrete source keeps one truthful
+#: conclusion wherever it is judged.
+REASON_SOURCE_ALREADY_OWNED = "source_already_organizing"
+#: A source held by *another principal's* unfinished work.  It is a different
+#: reason from :data:`REASON_SOURCE_ALREADY_OWNED` because the holder's identity
+#: is that operator's private context and must not be published.
+REASON_SOURCE_OWNED_BY_ANOTHER_PRINCIPAL = "source_owned_by_another_operator"
 #: The bounded number of per-request admission outcome rows this schema keeps
 #: reference to.  Each row is one caller request identity's own resolved
 #: selection; the cap keeps a long-lived open admission's evidence small.
@@ -536,6 +547,12 @@ class DiscoveryConflict(DiscoveryError):
     discarding it; a lost claim ignores it entirely.  Neither is part of
     ``details``: the operator projection must never publish a claim token, a
     fingerprint or a physical Storage path.
+
+    ``refused_sources`` names the exact discovered sources an in-transaction
+    reservation found owned by *other* unfinished work (B46.3-04).  It is not a
+    version CAS at all: the publication was refused because one concrete source
+    would otherwise be owned twice, and the caller must report those sources as
+    their own per-item refusals while its free siblings proceed normally.
     """
 
     def __init__(
@@ -545,6 +562,7 @@ class DiscoveryConflict(DiscoveryError):
         details: dict[str, object] | None = None,
         attempted: object | None = None,
         attempted_observations: tuple = (),
+        refused_sources: tuple[dict[str, object], ...] = (),
     ) -> None:
         super().__init__(
             message,
@@ -555,6 +573,7 @@ class DiscoveryConflict(DiscoveryError):
         )
         self.attempted = attempted
         self.attempted_observations = attempted_observations
+        self.refused_sources = tuple(refused_sources)
 
 
 class DiscoveryUnavailable(DiscoveryError):
@@ -1442,6 +1461,102 @@ def canonical_refusals(
         unique.setdefault((entry.path, entry.kind.value), entry)
     ordered = sorted(unique.items(), key=lambda item: item[0])
     return tuple(value for _, value in ordered[:MAX_DISCOVERY_SCOPE_PATHS])
+
+
+def reserved_refusals(
+    refused: list[tuple[str, str | None, dict[str, object]]],
+) -> tuple[dict[str, object], ...]:
+    """One bounded, secret-free refusal projection per reserved source.
+
+    A repository raises it with a :class:`DiscoveryConflict` when a source it
+    would otherwise publish is already owned by *other* unfinished work.  Only the
+    exact relative path plus the publishable owner reference/principal fact travel;
+    no fingerprint, claim, pin or physical Storage path ever does.  That keeps the
+    physical Storage path out of a refusal the API may publish.
+    """
+
+    values: list[dict[str, object]] = []
+    for path, _storage_path, reserved in refused[:MAX_DISCOVERY_SCOPE_PATHS]:
+        owned = reserved.get("owner")
+        source = owned if isinstance(owned, Mapping) else {}
+        value: dict[str, object] = {"path": path}
+        for key in ("kind", "taskId", "discoveryId", "actor"):
+            candidate = source.get(key)
+            if isinstance(candidate, str):
+                value[key] = candidate
+        values.append(value)
+    return tuple(values)
+
+
+def owned_source_refusal(
+    entry: DiscoveryScopeEntry,
+    owned: Mapping[str, object],
+    *,
+    actor: str | None = None,
+) -> DiscoveryRefusedEntry:
+    """The bounded refusal of one source an existing unfinished work owns.
+
+    This is the one builder every ownership decision uses — request admission, an
+    in-task walk and the atomic per-source reservation — so a source never gets two
+    different conclusions depending on which boundary noticed it first.
+
+    ``actor`` is this request's principal.  When the holder is another principal's
+    work the refusal publishes the fact and its own next action but **not** the
+    holder's Task/discovery identity: a foreign Task is that operator's private
+    context, and handing it over would let one operator discover (and later try to
+    drive) another operator's work.
+    """
+
+    owner_actor = owned.get("actor")
+    foreign = isinstance(owner_actor, str) and actor is not None and owner_actor != actor
+    if foreign:
+        return DiscoveryRefusedEntry(
+            entry.path,
+            entry.kind,
+            REASON_SOURCE_OWNED_BY_ANOTHER_PRINCIPAL,
+            REASON_SOURCE_OWNED_BY_ANOTHER_PRINCIPAL,
+            (
+                "this file already belongs to another operator's unfinished organizing "
+                "work; this request did not start a second organizing task for it"
+            ),
+            (
+                "select other files, or wait for the other operator's work to finish or "
+                "be cancelled; this request did not start a second organizing task"
+            ),
+        )
+    task_id = owned.get("taskId")
+    discovery_id = owned.get("discoveryId")
+    if isinstance(task_id, str):
+        reference: str | None = task_id
+        kind: str | None = "task"
+        detail = (
+            "this file already belongs to an unfinished organizing Task; continue that "
+            "task instead of starting the same source again"
+        )
+    elif isinstance(discovery_id, str):
+        reference = discovery_id
+        kind = "discovery"
+        detail = (
+            "this file already belongs to an unfinished Files organizing admission; open "
+            "that work instead of starting the same source again"
+        )
+    else:
+        reference = None
+        kind = None
+        detail = "this file already belongs to unfinished organizing work"
+    return DiscoveryRefusedEntry(
+        entry.path,
+        entry.kind,
+        REASON_SOURCE_ALREADY_OWNED,
+        REASON_SOURCE_ALREADY_OWNED,
+        detail,
+        (
+            "open the reported existing work and continue or cancel it; this request did "
+            "not start a second organizing task for the same file"
+        ),
+        existing_work_id=reference,
+        existing_work_kind=kind,
+    )
 
 
 def is_confined(path: str, root: str) -> bool:

@@ -696,17 +696,38 @@ lost-response readback of request B never returns request A's evidence. The proj
 one optional `requestId` for the same purpose.
 
 **Verified source ownership** is separate from the short-lived execution lease. A concrete source is
-identified by its Storage plus its ResourceLibrary-root-relative path and, once both sides know it, the
-observed fingerprint — never by a filename, a UI label or today's Active configuration. A TaskItem owns
-its source from admission until it reaches a settled state (`dry_run`, `success`, `skipped`, `cancelled`,
-`failed`, `ignored`), so queued, running, paused, waiting-for-decision and saved-decision work all keep
-their claim; a finished history row is therefore never a perpetual lock. A directly selected file is
-checked at request admission; a folder is admitted as outer work *before* traversal, and its discovered
-sources are checked inside that task's own bounded walk, so no pre-task traversal and no database
-transaction spanning Storage I/O is needed. A refused source reports the exact existing work reference,
-and eligible siblings remain independently admissible. A legal continuation excludes its own lineage
-instead of conflicting with itself, and a manual execution of a linked intent takes ownership over
-through its own TaskItems.
+identified by its Storage plus its exact Storage-relative path and its *comparable content version* —
+never by a filename, a UI label or today's Active configuration. A TaskItem owns its source from
+admission until it reaches a settled state (`dry_run`, `success`, `skipped`, `cancelled`, `failed`,
+`ignored`), so queued, running, paused, waiting-for-decision and saved-decision work all keep their
+claim; a finished history row is therefore never a perpetual lock.
+
+The two questions "is this still the occurrence I reviewed?" and "is this still the same physical
+source, or a genuinely replaced file?" are deliberately answered by different evidence. The reviewed
+occurrence keeps the ResourceLibrary-scoped fingerprint digest, which covers the library identity and is
+therefore incomparable across two valid bindings of one Storage. Ownership needs a weaker, comparable
+fact: the observed size, modification instant and the set of provider validators that were present —
+no library, principal, pin or plan context. Equal comparable versions are one source even when the two
+digests differ; a differing comparable version is real proof of a replacement (`source_evidence`'s
+`source_version_evidence` / `stored_source_version_evidence`); an unknown side is never "different", so
+an incomparable observation can never release a live claim. Inside one binding the stored digest is
+itself comparable and still proves a replacement, so a record whose comparable evidence is incomplete
+is not locked forever. A replaced file at the same path is a different concrete source and may be
+organized again; equal relative names under genuinely distinct roots still never collide.
+
+A directly selected file is checked at request admission, and the same decision is re-proved inside the
+admission's own `BEGIN IMMEDIATE` transaction so two concurrent submissions can never both commit one
+concrete source. A folder is admitted as outer work *before* traversal, and each source its walk
+discovers is reserved inside the same transaction that writes the manifest: the publication rolls back
+if another unfinished work really owns it, and the caller republishes its manifest without exactly that
+source plus one truthful per-item refusal naming the existing work. Storage ``stat``/``list`` calls all
+stay outside every transaction, so a slow provider never holds the write lock; two Workers on two
+connections are serialized by the reserved lock, so the second one observes the first one's durable
+manifest instead of the free state it read before either committed. A refused source reports the exact
+existing work reference (or, for another principal's work, only the bounded fact and next action), and
+eligible siblings remain independently admissible. A legal continuation excludes its own lineage instead
+of conflicting with itself, and a manual execution of a linked intent takes ownership over through its
+own TaskItems.
 
 A **same-library** admission owns its sources by the same concrete-source evidence as any other
 ResourceLibrary binding. There is no library-identity exemption: two concurrent submissions of one

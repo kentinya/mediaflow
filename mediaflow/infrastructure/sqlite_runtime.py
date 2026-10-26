@@ -117,6 +117,7 @@ from mediaflow.domain.media_discovery import (
     MediaDiscovery,
     discovery_admission_identity,
     discovery_scope_signature,
+    reserved_refusals,
 )
 from mediaflow.domain.media_evidence import (
     PipelineEvidence,
@@ -206,6 +207,11 @@ from mediaflow.domain.scope_continuation import (
     ScopeRecoveryLink,
 )
 from mediaflow.domain.security import SecurityAuditRecord
+from mediaflow.domain.source_evidence import (
+    SourceVersionEvidence,
+    source_version_is_known_different,
+    stored_source_version_evidence,
+)
 from mediaflow.domain.source_reviews import FileReviewLink
 from mediaflow.domain.task_persistence import (
     MEDIA_LIBRARY_TASK_COMMAND_PREFIX,
@@ -310,6 +316,13 @@ from mediaflow.infrastructure.task_source_schema import ensure_task_occurrence_c
 # library-relative strings.  It is additive and nullable: a pre-change row keeps
 # NULL and falls back to its library-relative path plus its exact library binding,
 # so nothing is backfilled and no legacy row is re-bound.
+# B46.3-04 adds no column at all.  The *comparable content version* ownership
+# compares is rebuilt from evidence the records already keep — the observed size,
+# modification instant and provider-validator names in the persisted fingerprint
+# evidence document of a discovery source (``fingerprintEvidence``) and the
+# TaskItem's own stored fingerprint inside its binding.  A record without that
+# evidence answers "unknown" instead of "replaced", so no migration, backfill or
+# re-binding of any historical plan/authorization/Result pin is involved.
 SCHEMA_VERSION = 52
 
 #: The conservative owner generation written to ``file_locks`` rows that predate
@@ -13024,6 +13037,7 @@ class SQLiteTaskRepository:
         source_path: str,
         storage_path: str | None,
         resource_library_id: str,
+        source_version: SourceVersionEvidence | None = None,
     ) -> dict[str, object] | None:
         """Positional adapter for the supplier-shaped reservation callback."""
 
@@ -13032,6 +13046,7 @@ class SQLiteTaskRepository:
             source_path=source_path,
             storage_path=storage_path,
             resource_library_id=resource_library_id,
+            source_version=source_version,
             exclude_discovery_id=None,
         )
 
@@ -13043,6 +13058,7 @@ class SQLiteTaskRepository:
         storage_path: str | None = None,
         resource_library_id: str | None = None,
         source_fingerprint: str | None = None,
+        source_version: SourceVersionEvidence | None = None,
         exclude_task_id: str | None = None,
         exclude_discovery_id: str | None = None,
         exclude_lineage_task_id: str | None = None,
@@ -13050,10 +13066,19 @@ class SQLiteTaskRepository:
         """The unfinished work that already owns one verified concrete source.
 
         Ownership is proven by the verified Storage identity — the exact Storage
-        plus its ResourceLibrary-root-relative path *and*, whenever both sides know
-        it, the observed source fingerprint.  It is never proven by a filename, a UI
-        label or today's Active configuration.  A replaced file at the same path is
-        therefore a *different* concrete source.
+        plus its ResourceLibrary-root-relative path *and* the observed content
+        version.  It is never proven by a filename, a UI label or today's Active
+        configuration.
+
+        B46.3-04: the observed content version is deliberately *not* the
+        ResourceLibrary-scoped fingerprint digest.  That digest intentionally covers
+        the library binding, so two valid bindings of one Storage produce two
+        different digests for the very same physical file; comparing them would
+        report an unchanged source as "replaced" and let a second work start.  Only
+        comparable, same-semantic evidence — the observed size, modification instant
+        and the provider validators that were present — may prove a replacement.  A
+        side that cannot produce that evidence answers "unknown", never "different",
+        so a live claim is never released on incomparable evidence.
 
         A Task item owns its source from admission until it reaches a *settled*
         state, so queued, running, paused, waiting-for-decision and saved-decision
@@ -13090,9 +13115,6 @@ class SQLiteTaskRepository:
             "AND items.resource_library_id=?)"
             ")",
             f"items.status NOT IN ({', '.join('?' for _ in settled)})",
-            # A known different occurrence is a different concrete source, so an
-            # old row that observed other content never blocks the replacement.
-            "(? IS NULL OR items.source_fingerprint IS NULL OR items.source_fingerprint=?)",
         ]
         parameters: list[object] = [
             storage_id,
@@ -13100,8 +13122,6 @@ class SQLiteTaskRepository:
             source_path,
             resource_library_id or "",
             *settled,
-            source_fingerprint,
-            source_fingerprint,
         ]
         excluded_tasks: set[str] = set()
         if exclude_task_id is not None:
@@ -13117,14 +13137,29 @@ class SQLiteTaskRepository:
             clauses.append("items.task_id NOT IN (" + ", ".join("?" for _ in excluded_tasks) + ")")
             parameters.extend(sorted(excluded_tasks))
         with self._lock:
-            row = self._connection.execute(
+            rows = self._connection.execute(
                 "SELECT items.task_id, items.item_id, items.status, items.stage, "
-                "items.source_fingerprint, tasks.command, tasks.status AS task_status "
+                "items.source_path, items.source_storage_path, items.source_fingerprint, "
+                "items.resource_library_id, tasks.command, tasks.status AS task_status "
                 "FROM task_items items JOIN tasks ON tasks.task_id = items.task_id "
                 f"WHERE {' AND '.join(clauses)} "
-                "ORDER BY items.updated_at DESC, items.item_id DESC LIMIT 1",
+                "ORDER BY items.updated_at DESC, items.item_id DESC LIMIT 25",
                 parameters,
-            ).fetchone()
+            ).fetchall()
+            row = next(
+                (
+                    candidate
+                    for candidate in rows
+                    if not self._task_item_observed_a_replaced_source_locked(
+                        candidate,
+                        storage_path=storage_path if storage_path is not None else source_path,
+                        resource_library_id=resource_library_id,
+                        source_fingerprint=source_fingerprint,
+                        source_version=source_version,
+                    )
+                ),
+                None,
+            )
             if row is not None:
                 return {
                     "kind": "task",
@@ -13147,9 +13182,79 @@ class SQLiteTaskRepository:
                 storage_path=storage_path,
                 resource_library_id=resource_library_id,
                 source_fingerprint=source_fingerprint,
+                source_version=source_version,
                 exclude_discovery_id=exclude_discovery_id,
                 exclude_lineage_task_id=exclude_lineage_task_id,
             )
+
+    def _task_item_observed_a_replaced_source_locked(
+        self,
+        row: sqlite3.Row,
+        *,
+        storage_path: str,
+        resource_library_id: str | None,
+        source_fingerprint: str | None,
+        source_version: SourceVersionEvidence | None,
+    ) -> bool:
+        """Whether one owning TaskItem observed a genuinely *replaced* source.
+
+        Only same-semantic evidence may prove a replacement:
+
+        * Inside the *same* ResourceLibrary binding the stored fingerprint digest
+          and the observed one are directly comparable, so an unequal digest is
+          real proof that the file was replaced.
+        * Across two valid bindings of one Storage those digests are incomparable
+          by construction (the digest covers the library identity).  The comparable
+          evidence then comes from the Task's own durable admission — the Files
+          discovery linked to it records every observed source with its size,
+          modification instant and validator names, which two bindings agree on.
+
+        Anything unprovable answers ``False``: the live claim holds, and the item's
+        own confirmation/continuation still re-observes the exact source before any
+        effect, so no stale source is ever executed.
+        """
+
+        if source_version is None and source_fingerprint is None:
+            return False
+        binding = row["resource_library_id"]
+        if (
+            source_fingerprint is not None
+            and isinstance(row["source_fingerprint"], str)
+            and binding == resource_library_id
+        ):
+            return row["source_fingerprint"] != source_fingerprint
+        stored = self._linked_task_source_version_locked(row["task_id"], storage_path)
+        return source_version_is_known_different(source_version, stored)
+
+    def _linked_task_source_version_locked(
+        self, task_id: str, storage_path: str
+    ) -> SourceVersionEvidence | None:
+        """The comparable version a Task's own admission recorded for one source."""
+
+        row = self._connection.execute(
+            "SELECT sources_json, storage_scope_json FROM media_discoveries "
+            "WHERE organize_task_id=? ORDER BY created_at DESC, discovery_id DESC LIMIT 1",
+            (task_id,),
+        ).fetchone()
+        if row is None:
+            return None
+        try:
+            sources = json.loads(row["sources_json"] or "[]")
+            scope = json.loads(row["storage_scope_json"] or "[]")
+        except ValueError:
+            return None
+        relative = {
+            str(item[0]): str(item[1])
+            for item in (scope if isinstance(scope, list) else [])
+            if isinstance(item, (list, tuple)) and len(item) == 2
+        }
+        for value in sources if isinstance(sources, list) else []:
+            if not isinstance(value, dict):
+                continue
+            if relative.get(str(value.get("path"))) != storage_path:
+                continue
+            return stored_source_version_evidence(value.get("fingerprintEvidence"))
+        return None
 
     def _task_admitting_actor_locked(self, task_id: str) -> str | None:
         """The principal that admitted one owning Task, when it has one.
@@ -13212,6 +13317,7 @@ class SQLiteTaskRepository:
         storage_path: str | None = None,
         resource_library_id: str | None = None,
         source_fingerprint: str | None = None,
+        source_version: SourceVersionEvidence | None = None,
         exclude_discovery_id: str | None,
         exclude_lineage_task_id: str | None = None,
     ) -> dict[str, object] | None:
@@ -13314,15 +13420,20 @@ class SQLiteTaskRepository:
             # sources a completed walk already recorded.  Comparing these makes two
             # valid bindings of one Storage agree on the concrete source.
             owned_paths: set[str] = set(canonical.values())
-            owned_fingerprints: dict[str, str] = {}
+            # The comparable content version every recorded source proves, keyed by
+            # its Storage path.  It comes from the durable fingerprint evidence
+            # (size, modification instant, present provider validators), which is
+            # the only same-semantic evidence two ResourceLibrary bindings of one
+            # Storage can compare.  A record without it stays unknown.
+            owned_versions: dict[str, SourceVersionEvidence] = {}
             try:
                 for value in json.loads(row["sources_json"] or "[]"):
                     if not isinstance(value, dict) or not isinstance(value.get("path"), str):
                         continue
                     owned_paths.add(value["path"])
-                    fingerprint = value.get("fingerprint")
-                    if isinstance(fingerprint, str):
-                        owned_fingerprints[value["path"]] = fingerprint
+                    version = stored_source_version_evidence(value.get("fingerprintEvidence"))
+                    if version is not None:
+                        owned_versions[value["path"]] = version
             except Exception:
                 pass
             matched = wanted if wanted in owned_paths else None
@@ -13337,11 +13448,29 @@ class SQLiteTaskRepository:
                 }
                 if source_path in legacy:
                     matched = source_path
-            matched_fingerprint = owned_fingerprints.get(matched) if matched else None
-            if matched is not None and not (
-                source_fingerprint is not None
-                and matched_fingerprint not in (None, source_fingerprint)
-            ):
+            matched_version = owned_versions.get(matched) if matched else None
+            # A replaced file is a *different* concrete source, so this work no
+            # longer owns the physical file -- but only comparable evidence may
+            # prove that.  Inside one binding the fingerprint is comparable too, so
+            # an old record whose evidence document is incomplete still releases on
+            # a proven different version instead of holding the path forever.
+            replaced = source_version_is_known_different(source_version, matched_version)
+            if not replaced and matched is not None and source_version is None:
+                replaced = bool(
+                    source_fingerprint is not None
+                    and row["resource_library_id"] == resource_library_id
+                    and matched_version is None
+                    and (row["sources_json"] or "[]") != "[]"
+                    and source_fingerprint
+                    not in {
+                        str(value.get("fingerprint"))
+                        for value in json.loads(row["sources_json"] or "[]")
+                        if isinstance(value, dict)
+                        and value.get("path") == matched
+                        and isinstance(value.get("fingerprint"), str)
+                    }
+                )
+            if matched is not None and not replaced:
                 return {
                     "kind": "discovery",
                     "discoveryId": row["discovery_id"],
@@ -13781,6 +13910,17 @@ class SQLiteTaskRepository:
     ) -> MediaDiscovery:
         """Publish discovery progress, findings and observations atomically.
 
+        Every source this publication would own is re-checked against unfinished
+        work *inside* the same ``BEGIN IMMEDIATE`` transaction that writes the
+        manifest (B46.3-04).  Two Workers of two different discoveries can each
+        observe one free source before either commits; without this in-transaction
+        reservation both publications succeed and the same concrete source ends up
+        inside two unfinished organizing works.  A conflicting source is therefore
+        never published: the write rolls back and the caller receives the refused
+        sources with the work that really owns them, so it can report them as their
+        own per-item refusals while independent siblings proceed.  Storage I/O stays
+        outside the transaction; only the already-observed evidence is compared.
+
         With a ``claim_token`` the write is fenced by the *exact current
         persisted claim* in the same statement as the version CAS, so a Worker
         whose lease was taken over cannot publish status, progress, findings,
@@ -13853,6 +13993,19 @@ class SQLiteTaskRepository:
                     self._raise_discovery_write_conflict(
                         current, discovery, claim_token, observations=values
                     )
+                refused = self._reserve_discovered_sources_locked(discovery)
+                if refused:
+                    # Roll the whole publication back: a manifest that names a
+                    # source another unfinished work owns is exactly the duplicate
+                    # ownership this boundary exists to prevent.  The caller reports
+                    # these sources per item and republishes its free siblings.
+                    raise DiscoveryConflict(
+                        "a discovered source is already owned by another unfinished work",
+                        details={"discoveryId": discovery.discovery_id},
+                        attempted=discovery,
+                        attempted_observations=values,
+                        refused_sources=reserved_refusals(refused),
+                    )
                 for observation in values:
                     self._connection.execute(
                         "INSERT INTO media_discovery_observations "
@@ -13881,6 +14034,80 @@ class SQLiteTaskRepository:
                 self._connection.rollback()
                 raise
         return self.get_media_discovery(discovery.discovery_id)
+
+    def _reserve_discovered_sources_locked(
+        self, discovery: MediaDiscovery
+    ) -> list[tuple[str, str | None, dict[str, object]]]:
+        """Re-check each source of one publication against unfinished work.
+
+        Called only inside the caller's ``BEGIN IMMEDIATE``, so the ownership read
+        and the manifest write are one decision.  ``SQLite`` takes a reserved lock
+        for that transaction, so two Workers on two connections of the same database
+        are serialized here: the second one always observes the first one's durable
+        manifest instead of the free state it read before either committed.
+
+        Only a *deliberate Files selection* reserves, exactly as only it creates the
+        outer organizing work whose sources these are.  A definition-bound Run once
+        and a remaining-scope recovery preparation keep their own admission and
+        lineage rules unchanged, and a record written before this amendment still
+        round-trips as the automatic admission it was.
+        """
+
+        if not discovery.progress.manual_selection or not discovery.sources:
+            return []
+        # ``discovery.sources`` records each admitted source by its exact *Storage*
+        # path, while a TaskItem keeps the ResourceLibrary-relative one; the
+        # admission's own recorded storage scope is the mapping between them.  The
+        # concrete-source comparison always uses the canonical Storage path, and the
+        # library-relative value is only the conservative legacy fallback for a
+        # TaskItem row that predates the Storage-relative column.
+        recorded_scope = dict(discovery.storage_scope)
+
+        def library_relative(storage_value: str) -> str:
+            if storage_value in recorded_scope:
+                return storage_value
+            best: tuple[int, str] | None = None
+            for relative, recorded in recorded_scope.items():
+                prefix = f"{recorded.rstrip('/')}/" if recorded else ""
+                if not prefix or not storage_value.startswith(prefix):
+                    continue
+                candidate = f"{relative.rstrip('/')}/{storage_value[len(prefix) :]}"
+                if best is None or len(recorded) > best[0]:
+                    best = (len(recorded), candidate)
+            return storage_value if best is None else best[1]
+
+        refused: list[tuple[str, str | None, dict[str, object]]] = []
+        for source in discovery.sources:
+            storage_value = source.get("path")
+            if not isinstance(storage_value, str) or not storage_value:
+                continue
+            storage_path = storage_value
+            relative = library_relative(storage_value)
+            recorded_fingerprint = source.get("fingerprint")
+            owned = self.find_owned_source_work(
+                storage_id=discovery.storage_id,
+                source_path=relative,
+                storage_path=storage_path,
+                resource_library_id=discovery.resource_library_id,
+                source_fingerprint=(
+                    recorded_fingerprint if isinstance(recorded_fingerprint, str) else None
+                ),
+                source_version=stored_source_version_evidence(source.get("fingerprintEvidence")),
+                # This work's own admission and its own organizing Task are the
+                # source of the manifest, never a competing owner: a re-analysis
+                # pass of the same run must not refuse the sources it itself
+                # already admitted.
+                exclude_task_id=discovery.organize_task_id,
+                exclude_discovery_id=discovery.discovery_id,
+                exclude_lineage_task_id=discovery.recovery_source_task_id,
+            )
+            if owned is not None:
+                entry: dict[str, object] = {"path": relative}
+                if storage_path is not None:
+                    entry["storagePath"] = storage_path
+                entry["owner"] = dict(owned)
+                refused.append((relative, storage_path, entry))
+        return refused
 
     def publish_media_discovery_plan(
         self,

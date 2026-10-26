@@ -67,6 +67,8 @@ from mediaflow.domain.media_discovery import (
     BUDGET_LIMITED_REASONS,
     MAX_DISCOVERY_REFUSALS,
     MAX_DISCOVERY_TEXT_LENGTH,
+    REASON_SOURCE_ALREADY_OWNED,
+    REASON_SOURCE_OWNED_BY_ANOTHER_PRINCIPAL,
     DefinitionRunOnceOrigin,
     DiscoveryAdmissionOutcome,
     DiscoveryBudgets,
@@ -97,15 +99,18 @@ from mediaflow.domain.media_discovery import (
     discovery_scope_signature,
     effective_primary_limit,
     is_settlement_status,
+    owned_source_refusal,
     submitted_scope,
 )
 from mediaflow.domain.organizer import StorageLocation
 from mediaflow.domain.preview_analysis import PreviewAnalysisConflict
 from mediaflow.domain.source_evidence import (
     OccurrenceState,
+    SourceVersionEvidence,
     canonical_source_path,
     occurrence_id_for,
     source_fingerprint,
+    source_version_evidence,
 )
 from mediaflow.domain.storage import (
     Storage,
@@ -156,8 +161,10 @@ _REASON_CURSOR = "repeated_provider_cursor"
 _REASON_SAFETY_DEPTH = "safety_depth_limit"
 #: A discovered source an *unfinished* organizing work already owns.  Inside a
 #: folder expansion this is why that source is not admitted a second time; the
-#: exact existing work travels with it, never a fabricated failure.
-_REASON_ALREADY_OWNED = "source_already_organizing"
+#: exact existing work travels with it, never a fabricated failure.  The literal
+#: is owned by the domain (``owned_source_refusal``) so every boundary decides
+#: identically.
+_REASON_ALREADY_OWNED = REASON_SOURCE_ALREADY_OWNED
 #: A proposed source whose admission was never proved by a committed durable
 #: scope (a version race or an unresolvable binding).  It is deliberately not
 #: called a duplicate: no existing work holds it, and the operator's next action
@@ -169,7 +176,7 @@ _REASON_ADMISSION_NOT_COMMITTED = "admission_not_committed"
 #: without naming it.  It is a *different* reason from ``source_already_organizing``
 #: because the operator cannot open the holder; the only resolution is to pick
 #: other sources or wait for the other operator's work to settle.
-_REASON_OWNED_BY_ANOTHER_PRINCIPAL = "source_owned_by_another_operator"
+_REASON_OWNED_BY_ANOTHER_PRINCIPAL = REASON_SOURCE_OWNED_BY_ANOTHER_PRINCIPAL
 
 _TEMPORARY_SUFFIXES = TEMPORARY_SUFFIXES
 
@@ -180,6 +187,33 @@ _TEMPORARY_SUFFIXES = TEMPORARY_SUFFIXES
 #: pass continues.  It never spins on a live lock and never overwrites a
 #: successor's ownership.
 _CONTROL_RECONCILE_ATTEMPTS = 4
+
+
+def _reserved_refusals(
+    conflict: DiscoveryConflict,
+) -> tuple[tuple[str, str | None, Mapping[str, object]], ...]:
+    """The exact sources one in-transaction reservation found already owned.
+
+    The repository publishes only bounded, secret-free evidence — the relative
+    path and the publishable owner reference/principal fact — so nothing here can
+    leak a fingerprint, a claim token, a pin or a physical Storage path.
+    """
+
+    reserved: list[tuple[str, str | None, Mapping[str, object]]] = []
+    for value in getattr(conflict, "refused_sources", ()):
+        if not isinstance(value, Mapping):
+            continue
+        path = value.get("path")
+        if not isinstance(path, str) or not path:
+            continue
+        reserved.append(
+            (
+                path,
+                value.get("storagePath") if isinstance(value.get("storagePath"), str) else None,
+                dict(value),
+            )
+        )
+    return tuple(reserved)
 
 
 class _RemainingScopeProbe(StrEnum):
@@ -385,12 +419,14 @@ class MediaDiscoveryService:
         # inside the task itself (no pre-task traversal, no Storage I/O inside a
         # database transaction).
         observed_fingerprints = self._observed_fingerprints(storage, library, deduplicated)
+        observed_versions = self._observed_versions(storage, library, deduplicated)
         deduplicated, duplicate_refusals = self._refuse_owned_sources(
             deduplicated,
             library,
             actor=actor,
             storage=storage,
             observed_fingerprints=observed_fingerprints,
+            observed_versions=observed_versions,
         )
         if not deduplicated:
             first = duplicate_refusals[0]
@@ -552,7 +588,7 @@ class MediaDiscoveryService:
             snapshot_id,
             snapshot_digest,
         )
-        reserve_sources = self._reserve_sources_callback(library, observed_fingerprints)
+        reserve_sources = self._reserve_sources_callback(library, observed_versions)
         creator = getattr(self._repository, "create_files_organize_work", None)
         if not callable(creator):
             creator = getattr(self._repository, "create_media_discovery", None)
@@ -1263,6 +1299,7 @@ class MediaDiscoveryService:
         actor: str | None = None,
         storage=None,
         observed_fingerprints: Mapping[str, str | None] | None = None,
+        observed_versions: Mapping[str, SourceVersionEvidence | None] | None = None,
     ) -> tuple[tuple[DiscoveryScopeEntry, ...], list[DiscoveryRefusedEntry]]:
         """Split one selection into still-admissible items and owned refusals.
 
@@ -1303,6 +1340,9 @@ class MediaDiscoveryService:
                 storage_path=canonical_source_path(library.root_path, entry.path),
                 resource_library_id=library.library_id,
                 source_fingerprint=observed,
+                source_version=(
+                    observed_versions.get(entry.path) if observed_versions is not None else None
+                ),
             )
             if owned is None:
                 kept.append(entry)
@@ -1321,14 +1361,19 @@ class MediaDiscoveryService:
             refusals.append(self._owned_source_refusal(entry, owned, actor=actor))
         return tuple(kept), refusals
 
-    def _reserve_sources_callback(self, library, observed: Mapping[str, str | None]):
+    def _reserve_sources_callback(
+        self, library, observed: Mapping[str, SourceVersionEvidence | None]
+    ):
         """The per-source reservation the atomic admission re-checks under its lock.
 
-        The observed fingerprint is part of the *verified* identity, so a file that
-        was replaced at the same path since admission is a different concrete source
-        and must not be reported as a duplicate of the earlier occurrence (B46.3-04).
-        The callback carries exactly the bounded evidence this request observed;
-        the repository performs the ownership read inside its own write transaction.
+        The observed *comparable content version* is part of the verified identity,
+        so a file that was really replaced at the same path since admission is a
+        different concrete source and is not reported as a duplicate of the earlier
+        occurrence (B46.3-04).  It is deliberately not the ResourceLibrary-scoped
+        fingerprint: two valid bindings of one Storage expose one physical file and
+        must agree about it.  The callback carries exactly the bounded evidence this
+        request observed; the repository performs the ownership read inside its own
+        write transaction.
         """
 
         def reserve(
@@ -1345,7 +1390,7 @@ class MediaDiscoveryService:
                 source_path=source_path,
                 storage_path=storage_path,
                 resource_library_id=resource_library_id,
-                source_fingerprint=observed.get(source_path),
+                source_version=observed.get(source_path),
             )
 
         return reserve
@@ -1360,6 +1405,32 @@ class MediaDiscoveryService:
             for entry in scope
             if entry.kind is DiscoveryEntryKind.FILE
         }
+
+    def _observed_versions(
+        self, storage, library, scope: tuple[DiscoveryScopeEntry, ...]
+    ) -> dict[str, SourceVersionEvidence | None]:
+        """The comparable content version of each directly selected file.
+
+        One bounded ``stat`` per file (the same observation the fingerprint uses),
+        never a read and never a Provider call.  This is the evidence ownership
+        compares: it carries no ResourceLibrary, principal or pin context, so two
+        valid bindings of one Storage agree about one physical file.
+        """
+
+        versions: dict[str, SourceVersionEvidence | None] = {}
+        for entry in scope:
+            if entry.kind is not DiscoveryEntryKind.FILE:
+                continue
+            if storage is None:
+                versions[entry.path] = None
+                continue
+            try:
+                observed_entry = storage.stat(self._join(library.root_path, entry.path))
+            except Exception:  # noqa: BLE001 - an unprovable version is not a refusal
+                versions[entry.path] = None
+                continue
+            versions[entry.path] = source_version_evidence(observed_entry)
+        return versions
 
     def _observed_fingerprint(self, storage, library, relative: str) -> str | None:
         """The verified fingerprint of one selected source, or ``None``.
@@ -1389,64 +1460,13 @@ class MediaDiscoveryService:
     ) -> DiscoveryRefusedEntry:
         """The bounded refusal of one file an existing work already owns.
 
-        ``actor`` is this request's principal.  When the holder is another
-        principal's work the refusal must not publish its identity: a foreign Task
-        or discovery ID is private context, and handing it over would let one
-        operator discover (and later try to drive) another operator's work.  The
-        fact of the conflict and a truthful next action are still published, so the
-        operator knows the source is not available and why.
+        The decision itself lives in the domain (``owned_source_refusal``) so the
+        request-admission check, the in-task walk and the per-source reservation
+        can never disagree about what "already owned" means or what the operator
+        is told.
         """
 
-        owner_actor = owned.get("actor")
-        foreign = isinstance(owner_actor, str) and actor is not None and owner_actor != actor
-        if foreign:
-            return DiscoveryRefusedEntry(
-                entry.path,
-                entry.kind,
-                "source_owned_by_another_operator",
-                _REASON_OWNED_BY_ANOTHER_PRINCIPAL,
-                (
-                    "this file already belongs to another operator's unfinished organizing "
-                    "work; this request did not start a second organizing task for it"
-                ),
-                (
-                    "select other files, or wait for the other operator's work to finish or "
-                    "be cancelled; this request did not start a second organizing task"
-                ),
-            )
-        task_id = owned.get("taskId")
-        discovery_id = owned.get("discoveryId")
-        if isinstance(task_id, str):
-            reference: str | None = task_id
-            kind: str | None = "task"
-            detail = (
-                "this file already belongs to an unfinished organizing Task; continue that "
-                "task instead of starting the same source again"
-            )
-        elif isinstance(discovery_id, str):
-            reference = discovery_id
-            kind = "discovery"
-            detail = (
-                "this file already belongs to an unfinished Files organizing admission; open "
-                "that work instead of starting the same source again"
-            )
-        else:
-            reference = None
-            kind = None
-            detail = "this file already belongs to unfinished organizing work"
-        return DiscoveryRefusedEntry(
-            entry.path,
-            entry.kind,
-            "source_already_organizing",
-            _REASON_ALREADY_OWNED,
-            detail,
-            (
-                "open the reported existing work and continue or cancel it; this request did "
-                "not start a second organizing task for the same file"
-            ),
-            existing_work_id=reference,
-            existing_work_kind=kind,
-        )
+        return owned_source_refusal(entry, owned, actor=actor)
 
     @staticmethod
     def _refusal_for_owned_source(
@@ -3932,7 +3952,9 @@ class MediaDiscoveryService:
         owner_finder = getattr(self._repository, "find_owned_source_work", None)
 
         def refusal_for_owned_source(
-            relative: str, observed_fingerprint: str | None
+            relative: str,
+            observed_fingerprint: str | None,
+            observed_version: SourceVersionEvidence | None,
         ) -> DiscoveryRefusedEntry | None:
             if not callable(owner_finder):
                 return None
@@ -3942,6 +3964,7 @@ class MediaDiscoveryService:
                 storage_path=canonical_source_path(library.root_path, relative),
                 resource_library_id=library.library_id,
                 source_fingerprint=observed_fingerprint,
+                source_version=observed_version,
                 exclude_task_id=discovery.organize_task_id,
                 exclude_discovery_id=discovery.discovery_id,
                 # This walk's own still-unsettled ancestor sources are its legal
@@ -4096,7 +4119,11 @@ class MediaDiscoveryService:
                 # never inside a database transaction that spans Storage I/O.  The
                 # exact existing work is reported so the operator opens it instead of
                 # starting a duplicate.
-                owner = refusal_for_owned_source(relative, observed.value)
+                owner = refusal_for_owned_source(
+                    relative,
+                    observed.value,
+                    source_version_evidence(entry),
+                )
                 if owner is not None:
                     bump(_REASON_ALREADY_OWNED, relative)
                     note(
@@ -4526,12 +4553,31 @@ class MediaDiscoveryService:
         # walk does not make an executable subset: the operator must explicitly
         # finalize the reviewed findings, and an incomplete walk especially must
         # never silently become an executable first-N prefix.
-        persisted = self._persist(
-            updated,
-            expected_version=discovery.version,
-            claim_token=claim_token,
-            observations=tuple(observations),
-        )
+        try:
+            persisted = self._persist(
+                updated,
+                expected_version=discovery.version,
+                claim_token=claim_token,
+                observations=tuple(observations),
+            )
+        except DiscoveryConflict as conflict:
+            reserved = _reserved_refusals(conflict)
+            if not reserved:
+                raise
+            # B46.3-04: another unfinished work proved, inside the publication's own
+            # transaction, that it already owns one of the sources this pass
+            # observed.  Two Workers of two different discoveries can each see one
+            # source free before either commits; without this the same concrete
+            # source would end up inside two unfinished organizing works.  The
+            # conflicting sources become this work's own per-item refusals with the
+            # exact owner, and the free siblings are republished as usual.
+            return self._publish_without_reserved_sources(
+                discovery,
+                updated,
+                reserved,
+                claim_token=claim_token,
+                observations=tuple(observations),
+            )
         # A non-terminal step yields its claim so the resident Worker can
         # continue the same durable scope on its next pass.  The stage is zero
         # mutation and every publication is a version CAS fenced by this exact
@@ -4547,6 +4593,104 @@ class MediaDiscoveryService:
             # moves into the analysis stage.  A budget/safety-refused walk is
             # deliberately not frozen: its recorded sources are a truncated
             # prefix, so the operator must narrow the scope instead.
+            return self._begin_preparation_analysis(persisted)
+        return persisted
+
+    def _publish_without_reserved_sources(
+        self,
+        claim_owner: MediaDiscovery,
+        updated: MediaDiscovery,
+        reserved: tuple[tuple[str, str | None, Mapping[str, object]], ...],
+        *,
+        claim_token: str,
+        observations: tuple[DiscoveryObservation, ...],
+    ) -> MediaDiscovery:
+        """Republish a walk without the sources another work really owns.
+
+        The conflicting sources are dropped from the manifest *together with* their
+        prepared identity, their findings and their counters, and one truthful
+        per-item refusal with the exact existing work is recorded instead.  Nothing
+        is silently lost: the operator sees the source, why it was not admitted and
+        which work already holds it, while every eligible sibling still proceeds
+        under the same claim and the same durable scope.
+        """
+
+        refused_paths = {path for path, _storage_path, _owned in reserved}
+        current = self._read(claim_owner.discovery_id) or claim_owner
+        if current.claim_token != claim_token:
+            # A successor owned the record while we reconciled: stop without writing.
+            raise DiscoveryOwnershipLost(
+                "this Worker no longer owns the discovery claim",
+                details={"discoveryId": claim_owner.discovery_id},
+            )
+        refusals = list(updated.progress.refused_entries)
+        for path, _storage_path, owned in reserved:
+            refusals.append(
+                self._owned_source_refusal(
+                    DiscoveryScopeEntry(path, DiscoveryEntryKind.FILE),
+                    owned,
+                    actor=claim_owner.actor,
+                )
+            )
+        counters = replace(
+            updated.progress.counters,
+            primary_sources=max(0, updated.progress.counters.primary_sources - len(refused_paths)),
+            excluded_entries=updated.progress.counters.excluded_entries + len(refused_paths),
+        )
+        reasons = {item.reason: item for item in updated.progress.reasons}
+        retained = [
+            finding
+            for finding in updated.progress.findings
+            if not (finding.path in refused_paths and finding.kind is DiscoveryFindingKind.PRIMARY)
+        ]
+        for path in sorted(refused_paths):
+            existing = reasons.get(_REASON_ALREADY_OWNED)
+            reasons[_REASON_ALREADY_OWNED] = DiscoveryReasonCount(
+                _REASON_ALREADY_OWNED,
+                1 if existing is None else existing.count + 1,
+                existing.example_path if existing is not None else path,
+            )
+        remaining = tuple(
+            source for source in updated.sources if source.get("path") not in refused_paths
+        )
+        # A manifest that lost every observed source kept its truthful conclusion:
+        # no eligible primary was admitted because the concrete sources already
+        # belong to other unfinished work.  That is neither an empty scope nor a
+        # successful discovery, so the phase says exactly that.
+        phase = updated.progress.phase
+        if not remaining and refusals:
+            phase = "empty_excluded"
+        stripped = replace(
+            updated,
+            version=current.version + 1,
+            sources=remaining,
+            progress=replace(
+                updated.progress,
+                phase=phase,
+                counters=counters,
+                findings=tuple(retained),
+                reasons=tuple(reasons.values()),
+                refused_entries=canonical_refusals(tuple(refusals)),
+            ),
+        )
+        persisted = self._persist(
+            stripped,
+            expected_version=current.version,
+            claim_token=claim_token,
+            observations=observations,
+        )
+        # The republished pass settles exactly like any other bounded step: the claim
+        # is yielded so the resident Worker continues the same durable scope, and a
+        # completed full preparation still enters its analysis.  A pass whose whole
+        # manifest was reserved owns nothing to freeze, so it stops here with its
+        # truthful per-item refusals.
+        self._release_claim(persisted.discovery_id, claim_token)
+        if (
+            claim_owner.auto_prepare
+            and persisted.status in {DiscoveryStatus.COMPLETED, DiscoveryStatus.PARTIAL_SUCCESS}
+            and persisted.sources
+            and discovery_material_refusal(persisted.progress) is None
+        ):
             return self._begin_preparation_analysis(persisted)
         return persisted
 
