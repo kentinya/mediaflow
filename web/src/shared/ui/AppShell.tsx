@@ -123,12 +123,14 @@ export function AppShell({ children }: AppShellProps) {
   // preserved.  Only grammar-validated keys travel, so a tampered value degrades
   // to the default list view rather than another page or population.
   const filesJourneyReturnContext = useMemo(() => {
-    // The live query string is the authority: a route without its own
-    // ``validateSearch`` may not surface an arbitrary key through the parsed
-    // location, and the context is exactly what the browser is currently on.
-    const raw =
-      typeof window === "undefined" ? searchStr : window.location.search;
-    const search = Object.fromEntries(new URLSearchParams(raw));
+    // One consistent source of truth: the router's own committed search.  The
+    // router publishes the new location state as soon as it renders the target
+    // route, while the browser's address bar is only updated when that history
+    // action flushes; reading ``window.location`` here therefore raced the very
+    // filter submission this link must carry and produced an empty context.
+    // The router search is also the only value a route's own validation has
+    // already admitted, so this memo cannot pick up an unvalidated key.
+    const search = Object.fromEntries(new URLSearchParams(searchStr));
     const existing = readOperationsReturnContext(search);
     if (pathname !== "/operations") return existing;
     return operationsReturnContextFromSearch({

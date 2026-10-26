@@ -737,6 +737,14 @@ independent library picker, no manual-action section and no discovery section, a
 Valid prepared-work deep links keep working. Removed-center population convergence, the complete
 organizing-only eight-view set and Automation's own RO-5 intent changes remain TARGET.
 
+The shell's carry-over of that context has one source of truth: the router's own committed search for
+the current route. Deriving it from the browser's address bar mixed two differently-timed copies of
+the same state — the router publishes a new location when it renders the target route, while the URL
+is only rewritten when that history action flushes — so the sidebar Files link could lose a filter the
+operator had just submitted. The single routed value is also the only one a route's own search
+validation has already admitted, so no unvalidated key can travel; an existing bounded context is
+preserved verbatim and a credential-shaped or oversized one is still dropped by the existing grammar.
+
 ## Automation and unattended execution
 
 The current Automation Task Definition model is scoped to a configured ResourceLibrary and bounded
