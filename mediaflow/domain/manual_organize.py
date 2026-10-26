@@ -194,13 +194,27 @@ class ManualMetadataReference:
 
 @dataclass(frozen=True)
 class ManualChoice:
-    recognition_type_id: str
+    recognition_type_id: str | None
     metadata: ManualMetadataReference | None
-    naming_policy_id: str
-    classification_policy_id: str
-    organize_policy_id: str
+    naming_policy_id: str | None
+    classification_policy_id: str | None
+    organize_policy_id: str | None
 
     def __post_init__(self) -> None:
+        # RO-2/AC-16: an unresolved RecognitionType is a real, durable business
+        # problem, not a missing field a default may fill in.  A choice whose
+        # RecognitionType is still unknown therefore carries *no* downstream
+        # policy identity either; the downstream policies are exactly the pinned
+        # mapping of a chosen type and cannot exist before that choice is made.
+        # Every other field stays a valid bounded identifier when present.
+        if self.recognition_type_id is None:
+            if (
+                self.naming_policy_id is not None
+                or self.classification_policy_id is not None
+                or self.organize_policy_id is not None
+            ):
+                raise ValueError("manual downstream policies require a decided RecognitionType")
+            return
         for name, value in (
             ("recognition type", self.recognition_type_id),
             ("naming policy", self.naming_policy_id),
@@ -209,6 +223,12 @@ class ManualChoice:
         ):
             if not isinstance(value, str) or not _SAFE_ID.fullmatch(value):
                 raise ValueError(f"manual {name} ID is invalid")
+
+    @property
+    def decided(self) -> bool:
+        """Whether this choice names one configured RecognitionType."""
+
+        return self.recognition_type_id is not None
 
     @classmethod
     def from_document(cls, value: object) -> ManualChoice:
@@ -224,16 +244,24 @@ class ManualChoice:
         unknown = set(value).difference(allowed)
         if unknown:
             raise ValueError(f"manual choice field {sorted(unknown)[0]!r} is not supported")
-        required = allowed.difference({"metadata"})
-        if required.difference(value):
-            raise ValueError("manual choice requires all policy IDs")
+        recognition_type_id = value.get("recognitionTypeId")
+        if recognition_type_id is None:
+            # An undecided choice is persisted exactly as stored; its downstream
+            # policy fields are absent, never an empty string.
+            for name in ("namingPolicyId", "classificationPolicyId", "organizePolicyId"):
+                if value.get(name) is not None:
+                    raise ValueError("manual downstream policies require a decided RecognitionType")
+        else:
+            required = allowed.difference({"metadata"})
+            if required.difference(value):
+                raise ValueError("manual choice requires all policy IDs")
         metadata = value.get("metadata")
         return cls(
-            value["recognitionTypeId"],
+            recognition_type_id,
             ManualMetadataReference.from_document(metadata) if metadata is not None else None,
-            value["namingPolicyId"],
-            value["classificationPolicyId"],
-            value["organizePolicyId"],
+            value.get("namingPolicyId"),
+            value.get("classificationPolicyId"),
+            value.get("organizePolicyId"),
         )
 
     def document(self) -> dict[str, object]:

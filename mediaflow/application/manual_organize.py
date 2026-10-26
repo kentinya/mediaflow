@@ -5,6 +5,9 @@ from datetime import UTC, datetime
 from uuid import uuid4
 
 from mediaflow.application.manual_source_validation import ManualSourceValidator
+from mediaflow.application.media_parser import MediaParserService
+from mediaflow.application.recognition import RecognitionRuleEngine
+from mediaflow.application.strategy_test import file_context_from_path
 from mediaflow.domain.configuration_management import RuntimeSnapshotUnavailable
 from mediaflow.domain.manual_organize import (
     MAX_MANUAL_INTENT_ITEMS,
@@ -23,6 +26,19 @@ from mediaflow.domain.manual_organize import (
     ManualRecognitionOption,
     ManualSourceIdentity,
 )
+from mediaflow.domain.recognition import RecognitionContext, RecognitionStatus
+
+
+def _names_only_the_type(patch: dict[str, object]) -> bool:
+    """Whether a choice patch names the RecognitionType and no downstream policy."""
+
+    if not isinstance(patch.get("recognitionTypeId"), str):
+        return False
+    return not {
+        "namingPolicyId",
+        "classificationPolicyId",
+        "organizePolicyId",
+    }.intersection(patch)
 
 
 def _validate_snapshot_pair(snapshot_id: str | None, snapshot_digest: str | None) -> None:
@@ -154,6 +170,8 @@ class ManualOrganizeIntentService:
         snapshot_id: str | None,
         snapshot_digest: str | None,
         pinned_snapshot: bool = False,
+        resolve_scoped_choices: bool = False,
+        files_admission: bool = True,
     ) -> tuple[ManualOrganizeIntent, ManualIntentAudit]:
         if pinned_snapshot:
             # The pinned path never consults the current Active revision: the
@@ -186,8 +204,22 @@ class ManualOrganizeIntentService:
         now = self._clock()
         intent_id = str(uuid4())
         items: list[ManualIntentItem] = []
+        # RO-2/AC-16: a *Storage-scoped* admission resolves each source through its
+        # own pinned RecognitionRule.  A rule miss or ambiguity therefore persists a
+        # genuinely undecided choice, which the Worker publishes as the native
+        # Recognition problem.  The historical metadata-free `create` path keeps its
+        # initialized editor default, and an explicit operator choice is never
+        # overwritten by either path.
+        runtime = (
+            self._runtime_for_pinned(snapshot_id, snapshot_digest)
+            if resolve_scoped_choices
+            else None
+        )
         for position, source in enumerate(values):
-            choice = self.default_choice_for_source(source, snapshot)
+            if runtime is not None and files_admission:
+                choice = self.files_choice_for_source(source, runtime, snapshot)
+            else:
+                choice = self.default_choice_for_source(source, snapshot)
             items.append(
                 ManualIntentItem(
                     str(uuid4()),
@@ -250,6 +282,7 @@ class ManualOrganizeIntentService:
         snapshot_id: str | None = None,
         snapshot_digest: str | None = None,
         pinned_snapshot: bool = False,
+        files_admission: bool = True,
     ) -> tuple[ManualOrganizeIntent, ManualIntentAudit]:
         """Build one manual intent projection without persisting it.
 
@@ -298,6 +331,8 @@ class ManualOrganizeIntentService:
             snapshot_id=snapshot_id,
             snapshot_digest=snapshot_digest,
             pinned_snapshot=pinned_snapshot,
+            resolve_scoped_choices=True,
+            files_admission=files_admission,
         )
 
     def create_from_sources(
@@ -331,6 +366,12 @@ class ManualOrganizeIntentService:
             snapshot_id=snapshot_id,
             snapshot_digest=snapshot_digest,
             pinned_snapshot=pinned_snapshot,
+            # This is the pre-RO-2 (analysis-only) intent entry.  Its initialized
+            # editor default is the historic behaviour and is deliberately *not*
+            # treated as a new Files operator's decision.  The RO-2 Files 整理
+            # submission goes through the discovery Worker's own finalize, which
+            # resolves each source through its pinned RecognitionRule instead.
+            files_admission=False,
         )
         persisted = self._persist_create(intent, audit)
         return self._with_options(
@@ -480,7 +521,7 @@ class ManualOrganizeIntentService:
                 )
         record = self._resolve_choice_source(item, intent)
         if isinstance(choice, dict):
-            normalized = self._choice_from_patch(item.choice, choice)
+            normalized = self._choice_from_patch(item.choice, choice, intent.options)
         elif isinstance(choice, ManualChoice):
             normalized = choice
         else:
@@ -688,6 +729,21 @@ class ManualOrganizeIntentService:
             runtime_resolver=resolver,
             storage_factory=self._storage_factory,
         )
+
+    def _runtime_for_pinned(self, snapshot_id: str | None, snapshot_digest: str | None):
+        """The pinned runtime the Files choice is resolved under, if available.
+
+        The choice resolution is read-only; an unavailable runtime leaves the
+        historical default in place instead of inventing a type from nothing.
+        """
+
+        resolver = self._effective_runtime_resolver()
+        if resolver is None or snapshot_id is None or snapshot_digest is None:
+            return None
+        try:
+            return resolver(snapshot_id, snapshot_digest)
+        except Exception:  # noqa: BLE001 - unreadable runtime keeps the historic path
+            return None
 
     def _managed_runtime_resolver(self, snapshot_id: str, snapshot_digest: str):
         """Reconstruct one pinned managed runtime snapshot without adapters."""
@@ -906,23 +962,39 @@ class ManualOrganizeIntentService:
         )
 
     def _default_choice(self, source, snapshot: ManualConfigurationSnapshot) -> ManualChoice:
-        result = None
-        results = self._source_results(source)
-        if results:
-            ordered = sorted(
-                results,
-                key=lambda value: (
-                    getattr(value, "created_at", None),
-                    getattr(value, "result_id", ""),
-                ),
-            )
-            result = ordered[-1]
+        """The ordinary (non-Files) initialized choice for one source.
+
+        This is the historic behaviour of an intent admitted without a Files
+        RecognitionRule run: a prior durable Result's type, otherwise the pinned
+        snapshot's first configured type.  It is an *editor* initial value for the
+        explicit manual entry points that existed before RO-2, never a decision the
+        Files journey may treat as the operator's own (see
+        :meth:`create_from_sources`).
+        """
+
+        result = self._latest_source_result(source)
         by_type = {item.type_id: item for item in snapshot.recognition_types}
         selected_type = None
         if result is not None and result.recognition_type in by_type:
             selected_type = by_type[result.recognition_type]
         if selected_type is None:
             selected_type = snapshot.recognition_types[0]
+        return self._choice_for_type(selected_type, result, snapshot)
+
+    def _latest_source_result(self, source):
+        results = self._source_results(source)
+        if not results:
+            return None
+        ordered = sorted(
+            results,
+            key=lambda value: (
+                getattr(value, "created_at", None),
+                getattr(value, "result_id", ""),
+            ),
+        )
+        return ordered[-1]
+
+    def _choice_for_type(self, selected_type, result, snapshot: ManualConfigurationSnapshot):
         metadata = None
         provider = getattr(result, "provider", None) if result is not None else None
         provider_id = getattr(result, "provider_id", None) if result is not None else None
@@ -968,16 +1040,73 @@ class ManualOrganizeIntentService:
         snapshot_id: str,
         snapshot_digest: str,
     ) -> ManualChoice:
-        """Resolve a Storage source's default choice under an already pinned runtime.
+        """Resolve a Storage source's *Files* choice under an already pinned runtime.
 
-        Discovery uses this read-only projection before it associates attachments.
-        It must make that decision using the same default the later manual intent
-        will consume, without substituting the RecognitionRule's output type for
-        the operator's still-editable choice.
+        Discovery uses this read-only projection before it associates attachments,
+        and the Files intent admission uses the identical resolution, so the plan
+        the operator later confirms is planned under the type the walk already
+        assumed.
+
+        RO-2/AC-16: the pinned RecognitionRule decides the type — the same rule
+        engine the ordinary pipeline uses — so a source whose rule does not match
+        (or matches ambiguously) stays *undecided* instead of borrowing the first
+        configured type.  Nothing is forced, defaulted or fabricated, and a real
+        rule match is not an execution authority: the operator still reviews the
+        editable choice and must explicitly confirm the exact summary.
         """
 
         snapshot = self._snapshot_from_runtime(runtime, snapshot_id, snapshot_digest)
-        return self.default_choice_for_source(source, snapshot)
+        return self.files_choice_for_source(source, runtime, snapshot)
+
+    def files_choice_for_source(
+        self,
+        source: ManualSourceIdentity,
+        runtime,
+        snapshot: ManualConfigurationSnapshot,
+    ) -> ManualChoice:
+        """The Files journey's initialized choice: the pinned rule's own outcome."""
+
+        resolved_type = self._resolved_recognition_type(source, runtime, snapshot)
+        if resolved_type is None:
+            # No rule matched, or several legal types tied: this is the operator's
+            # decision to make, published later as the native Recognition problem.
+            return ManualChoice(None, None, None, None, None)
+        result = self._latest_source_result(source)
+        if result is not None and result.recognition_type != resolved_type.type_id:
+            # A prior Result under a different type is not this source's evidence
+            # for the rule's answer; keep only the rule-decided type.
+            result = None
+        return self._choice_for_type(resolved_type, result, snapshot)
+
+    @staticmethod
+    def _resolved_recognition_type(source: ManualSourceIdentity, runtime, snapshot):
+        """The one configured type the pinned RecognitionRule selects, if any.
+
+        The rule engine and the parsed context are the production ones, so this is
+        the same decision the pipeline makes; the parser reads only the local
+        path/filename/directory/extension, never Storage content or a Provider.
+        """
+
+        strategy = getattr(runtime, "strategy", None)
+        if strategy is None:
+            return None
+        context = file_context_from_path(
+            source.path,
+            resource_library_id=source.resource_library_id,
+            storage_id=source.storage_id,
+        )
+        parsed = MediaParserService().parse(context)
+        engine = RecognitionRuleEngine(
+            tuple(strategy.recognition_types), tuple(strategy.recognition_rules)
+        )
+        recognised = engine.recognize(RecognitionContext(context, parsed))
+        if recognised.status is not RecognitionStatus.MATCHED:
+            return None
+        type_id = recognised.recognition_type_id
+        return next(
+            (item for item in snapshot.recognition_types if item.type_id == type_id),
+            None,
+        )
 
     def allowed_metadata_identities(
         self, item, intent: ManualOrganizeIntent
@@ -1062,7 +1191,11 @@ class ManualOrganizeIntentService:
         return tuple(bounded)
 
     @staticmethod
-    def _choice_from_patch(current: ManualChoice, patch: dict[str, object]) -> ManualChoice:
+    def _choice_from_patch(
+        current: ManualChoice,
+        patch: dict[str, object],
+        snapshot: ManualConfigurationSnapshot | None = None,
+    ) -> ManualChoice:
         allowed = {
             "recognitionTypeId",
             "metadata",
@@ -1079,6 +1212,19 @@ class ManualOrganizeIntentService:
             )
         values: dict[str, object] = current.document()
         values.update(patch)
+        if snapshot is not None and _names_only_the_type(patch):
+            # RO-2: an undecided choice becomes decidable by naming its type.  The
+            # downstream policies are exactly the pinned mapping of that type, so a
+            # patch that names only the type is completed from that same mapping (and
+            # is then validated unchanged).  A caller that names policies explicitly
+            # is never rewritten.
+            selected = snapshot.option_maps()["recognitionType"].get(
+                str(patch["recognitionTypeId"])
+            )
+            if selected is not None:
+                values["namingPolicyId"] = selected.naming_policy_id
+                values["classificationPolicyId"] = selected.classification_policy_id
+                values["organizePolicyId"] = selected.organize_policy_id
         try:
             return ManualChoice.from_document(values)
         except ValueError as error:
@@ -1091,6 +1237,12 @@ class ManualOrganizeIntentService:
     def _validate_choice(
         self, choice: ManualChoice, snapshot: ManualConfigurationSnapshot, record
     ) -> None:
+        if not choice.decided:
+            # An undecided choice is not an invalid choice: the pinned rules did not
+            # determine a type, and the operator must decide.  Nothing downstream can
+            # be validated (or planned) before that decision, and this method must not
+            # treat the absence of a type as a reason to substitute one.
+            return
         maps = snapshot.option_maps()
         selected_type = maps["recognitionType"].get(choice.recognition_type_id)
         if selected_type is None:

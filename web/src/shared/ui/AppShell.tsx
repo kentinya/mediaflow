@@ -23,6 +23,12 @@ import {
   RULES_WORKSPACE_DESCRIPTION,
   RULES_WORKSPACE_TITLE,
 } from "../../entities/rules/rules-workspace";
+import {
+  operationsReturnContextFromSearch,
+  operationsReturnSearch,
+  parseOperationsReturnContext,
+  readOperationsReturnContext,
+} from "../navigation/operations-return";
 import { Icon } from "./Icons";
 
 export interface AppShellProps {
@@ -108,6 +114,28 @@ export function AppShell({ children }: AppShellProps) {
     filesSearchListeners.current.add(listener);
     return () => filesSearchListeners.current.delete(listener);
   }, []);
+  // RO-2: ResourceLibrary Files is the only normal entry for a new
+  // file-selection-based organizing request.  A journey that began in the task
+  // center must therefore keep that exact bounded return context when the
+  // operator continues through the shell instead of the removed creation CTA:
+  // on the task-center route the current, already-validated list filters become
+  // the context, and everywhere else the context this journey already carries is
+  // preserved.  Only grammar-validated keys travel, so a tampered value degrades
+  // to the default list view rather than another page or population.
+  const filesJourneyReturnContext = useMemo(() => {
+    // The live query string is the authority: a route without its own
+    // ``validateSearch`` may not surface an arbitrary key through the parsed
+    // location, and the context is exactly what the browser is currently on.
+    const raw =
+      typeof window === "undefined" ? searchStr : window.location.search;
+    const search = Object.fromEntries(new URLSearchParams(raw));
+    const existing = readOperationsReturnContext(search);
+    if (pathname !== "/operations") return existing;
+    return operationsReturnContextFromSearch({
+      ...parseOperationsReturnContext(existing),
+      ...search,
+    });
+  }, [pathname, searchStr]);
   const pageTitle =
     destination?.title ??
     (pathname === "/" ? "Connect | MediaFlow" : "MediaFlow");
@@ -239,10 +267,22 @@ export function AppShell({ children }: AppShellProps) {
         >
           {shellDestinations.map((item) => {
             const active = item.isActive(pathname);
+            // RO-2: ResourceLibrary Files is the only normal entry for a new
+            // file-selection-based organizing request, so a journey that began in
+            // the task center must keep that exact bounded return context when the
+            // operator continues through the shell instead of a removed creation
+            // CTA.  Only the already-parsed, grammar-validated context is carried;
+            // every other destination keeps its plain link, and a tampered context
+            // degrades to no context (never to another page or population).
+            const carried =
+              item.id === "files"
+                ? operationsReturnSearch(filesJourneyReturnContext)
+                : {};
             return (
               <Link
                 key={item.id}
                 to={item.path as string}
+                search={carried}
                 aria-label={item.ariaLabel}
                 aria-current={active ? "page" : undefined}
                 className={`mf-nav-link${active ? " is-active" : ""}`}

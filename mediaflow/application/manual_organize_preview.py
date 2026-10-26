@@ -15,6 +15,7 @@ import re
 from collections.abc import Callable, Mapping, Sequence
 from dataclasses import dataclass, replace
 from datetime import UTC, datetime
+from types import SimpleNamespace
 from uuid import uuid4
 
 from mediaflow.application.attachments import (
@@ -24,16 +25,19 @@ from mediaflow.application.attachments import (
 )
 from mediaflow.application.conflict_resolution import ConflictResolver
 from mediaflow.application.duplicates import apply_hash_duplicate_detection
+from mediaflow.application.media_parser import MediaParserService
 from mediaflow.application.metadata import MetadataProviderRegistry
 from mediaflow.application.organizer import OrganizePlanner, OrganizerExecutor
 from mediaflow.application.read_only_storage import (
     ReadOnlyStorageGuard,
     ReadOnlyStorageMutationError,
 )
+from mediaflow.application.recognition import RecognitionRuleEngine
 from mediaflow.application.scan_filters import StabilityVerdict, stability_decision
 from mediaflow.application.strategy_test import (
     StrategyConfigurationError,
     StrategyTestRunner,
+    file_context_from_path,
     strategy_runner_from_configuration,
 )
 from mediaflow.domain.classification import ClassificationStatus
@@ -76,7 +80,7 @@ from mediaflow.domain.organizer import (
     StorageLocation,
 )
 from mediaflow.domain.preview_analysis import PreviewAnalysisControlRequested
-from mediaflow.domain.recognition import RecognitionStatus
+from mediaflow.domain.recognition import RecognitionContext, RecognitionStatus
 from mediaflow.domain.source_evidence import (
     OccurrenceState,
     occurrence_id_for,
@@ -1489,6 +1493,19 @@ class ManualOrganizePreviewService:
         problem_task_id: str | None = None,
     ) -> _PreviewOutcome:
         runtime = self._load_runtime(intent.snapshot_id, intent.snapshot_digest)
+        if not item.choice.decided:
+            # RO-2/AC-16: the pinned RecognitionRule did not determine a type for this
+            # source, so the item stays a genuine native Recognition problem.  The
+            # analysis runs the ordinary rule engine over this exact source — it does
+            # not force, default or invent a type — and publishes the operator's
+            # decision as the item's own review.  Nothing is planned, targeted or
+            # mutated before that decision, and a rule that resolves later changes the
+            # problem type instead of silently rewriting the item.
+            return self._recognition_problem_outcome(
+                item,
+                runtime,
+                problem_task_id=problem_task_id,
+            )
         type_policy = next(
             (
                 value
@@ -2729,6 +2746,108 @@ class ManualOrganizePreviewService:
             "missing": missing,
             "verdict": "capability_gap" if missing else "ok" if required else "not_applicable",
         }
+
+    def _recognition_problem_outcome(
+        self,
+        item,
+        runtime,
+        *,
+        problem_task_id: str | None,
+    ) -> _PreviewOutcome:
+        """Publish one undecided source as its own native Recognition problem.
+
+        The rule engine is the production one and reads only the local path/
+        filename/directory/extension, so this performs no Provider call, no Storage
+        read beyond the already observed identity and no mutation.  The outcome keeps
+        whatever the rules really concluded — a miss or an ambiguity — as the
+        operator-visible reason, and the review's choices are the pinned enabled
+        RecognitionTypes.  No type, identity, target or plan is fabricated, so a
+        later confirmation cannot exist before the decision.
+        """
+
+        context = file_context_from_path(
+            item.source.path,
+            resource_library_id=item.source.resource_library_id,
+            storage_id=item.source.storage_id,
+        )
+        parsed = MediaParserService().parse(context)
+        engine = RecognitionRuleEngine(
+            tuple(runtime.strategy.recognition_types),
+            tuple(runtime.strategy.recognition_rules),
+        )
+        recognition = engine.recognize(RecognitionContext(context, parsed))
+        type_policies = {
+            policy.recognition_type_id: policy
+            for policy in runtime.strategy.recognition_type_policies
+            if policy.enabled and policy.recognition_type.enabled
+        }
+        # The partial plan carries no destination, operation or policy identity: this
+        # item has no decided type, so there is nothing to plan and nothing to confirm.
+        plan_document = {
+            "source": item.source.document(),
+            "recognitionType": None,
+            "policies": {
+                "recognitionTypePolicyId": None,
+                "metadataPolicyId": None,
+                "namingPolicyId": None,
+                "classificationPolicyId": None,
+                "organizePolicyId": None,
+            },
+            "analysis": {
+                "stage": "recognition",
+                "status": (
+                    "ambiguous"
+                    if recognition.status is RecognitionStatus.AMBIGUOUS
+                    else "unrecognized"
+                ),
+                "matchedRules": [value.rule_id for value in recognition.matched_rules],
+                "alternatives": [
+                    {"recognitionType": value.recognition_type_id, "score": value.score}
+                    for value in recognition.alternatives
+                ],
+            },
+            "destination": None,
+            "operation": None,
+            "attachments": [],
+            "executionPlan": None,
+            "capabilities": {
+                "verdict": "not_determined",
+                "required": [],
+                "declared": [],
+                "missing": [],
+            },
+            "conflicts": [],
+            "warnings": [],
+            "planStatus": "invalid",
+            "zeroMutation": True,
+            "executionState": "not_available_in_this_task",
+            "bounded": True,
+            "deterministic": True,
+        }
+        outcome = _PreviewOutcome(
+            ManualPreviewItemStatus.BLOCKED,
+            plan_document,
+            error=(
+                "several RecognitionTypes match this source with equal priority and score"
+                if recognition.status is RecognitionStatus.AMBIGUOUS
+                else "no enabled RecognitionRule matched this source"
+            ),
+            next_action=(
+                "choose one enabled RecognitionType for this exact source on this page, then "
+                "rerun the analysis"
+            ),
+            problem="recognition",
+        )
+        return self._publish_problem(
+            problem_task_id,
+            outcome,
+            strategy=SimpleNamespace(recognition=recognition, parsed=parsed),
+            source=item.source,
+            type_policy=next(iter(type_policies.values()), None),
+            metadata_policy=None,
+            classification_policy=None,
+            recognition_types=tuple(policy.recognition_type for policy in type_policies.values()),
+        )
 
     def _publish_problem(
         self,

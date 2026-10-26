@@ -442,6 +442,14 @@ function discoveryAdmissionFailureMessage(
             "未创建任何整理工作；请选择其他文件，或结束下载后再提交。"
           );
       }
+    case "source_already_organizing":
+      // One verified concrete source is already held by an unfinished organizing
+      // work.  The operator opens that real work; nothing here starts a second one.
+      return "所选文件已有未结束的整理工作,未创建重复任务;请打开已有整理继续或取消。";
+    case "admission_not_committed":
+      // The scope changed before this source could be committed.  No durable work
+      // holds it, so the truthful next action is to submit it again.
+      return "所选范围在提交前发生变化,该文件未加入整理工作;请刷新后重新提交这次选择。";
     case "source_not_included":
       return "所选文件夹不满足配置的包含规则，未创建任何整理工作；请选择其他文件夹，或更新资源库策略后重新发布。";
     case "invalid_path":

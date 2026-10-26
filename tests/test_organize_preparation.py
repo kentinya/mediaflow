@@ -151,6 +151,25 @@ class _PreparationFixture(unittest.TestCase):
         document["resourceLibraries"] = (
             list(resource_libraries) if resource_libraries is not None else [library]
         )
+        # RO-2/AC-16: the Files journey resolves each source through its pinned
+        # RecognitionRule, so this fixture publishes the ordinary video rule.  A
+        # source with *no* matching rule is now its own native Recognition problem
+        # and is covered by dedicated journeys in tests.test_media_discovery.
+        document["recognitionRules"] = [
+            {
+                "id": "preparation-video-fixture",
+                "name": "Preparation video fixture",
+                "priority": 100,
+                "score": 100,
+                "stopOnMatch": True,
+                "condition": {
+                    "field": "extension",
+                    "operator": "in",
+                    "value": ["mkv", "mp4"],
+                },
+                "outputRecognitionType": "A",
+            }
+        ]
         document["mediaLibraries"] = [
             {
                 "id": "movies",
