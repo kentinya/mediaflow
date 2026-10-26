@@ -1778,6 +1778,445 @@ class AdmissionAndScopeTests(_DiscoveryFixture):
             self.assertIsNotNone(owned[0]["existingWorkId"])
             self.assertEqual([], value.source.mutations)
 
+    def _cross_binding_alias_document(self) -> dict:
+        """One Storage exposed through a whole-root and a nested `Movies` binding."""
+
+        document = self.document()
+        document["resourceLibraries"] = [
+            {
+                "id": "whole",
+                "name": "Whole",
+                "storageId": "source",
+                "storagePath": "",
+                "enabled": True,
+                "extensions": ["mkv", "mp4"],
+                "maxDepth": None,
+                "excludeRules": [],
+            },
+            {
+                "id": "nested",
+                "name": "Nested",
+                "storageId": "source",
+                "storagePath": "Movies",
+                "enabled": True,
+                "extensions": ["mkv", "mp4"],
+                "maxDepth": None,
+                "excludeRules": [],
+            },
+        ]
+        return document
+
+    def test_a_cross_binding_alias_after_analysis_owns_one_physical_source(self) -> None:
+        """B46.3-04: an alias submission after analysis still owns one source.
+
+        One Storage is exposed through two valid ResourceLibrary bindings: `whole`
+        at the Storage root and `nested` at `Movies`.  The operator first submits
+        `Movies/One.2001.mkv` through `whole` and lets the real Worker finish its
+        analysis, so the source has a persisted fingerprint and a `previewed`
+        summary while the original organizing Task is still unfinished.  A second
+        submission of the same physical file through `nested` must not start a
+        second organizing Task.
+
+        The old behaviour compared the two ResourceLibrary-scoped fingerprint
+        digests, which differ by construction for one physical file, read that as
+        "replaced", released the live claim and admitted a second Task.  Ownership
+        now compares only same-semantic content evidence, so the exact existing
+        work is reported and its state is untouched.  The reverse binding order and
+        a genuinely replaced file are covered beside it.
+        """
+
+        from mediaflow.domain.source_evidence import source_fingerprint
+
+        endpoint = "/api/v1/resource-libraries/{}/files/discoveries"
+        self.media("Movies/One.2001.mkv", size=64)
+        with self.journey() as value:
+            self.publish_policy(value, document=self._cross_binding_alias_document())
+            status, first = self.request(
+                value,
+                endpoint.format("whole"),
+                "POST",
+                {
+                    "paths": ["Movies/One.2001.mkv"],
+                    "autoPrepare": True,
+                    "requestId": "11111111-1111-4111-8111-111111111111",
+                },
+            )
+            self.assertEqual(202, status, first)
+            settled = self.run_discovery(value)
+            self.assertEqual("completed", settled["status"], settled)
+            # The original Task is still unfinished and its summary is previewed.
+            original = value.repository.get_media_discovery(first["discoveryId"])
+            self.assertIsNotNone(original.preview_id)
+            self.assertEqual(
+                "running", value.repository.get_task(first["organizeTaskId"]).status.value
+            )
+            self.assertEqual(
+                1, len(value.repository.list_items(first["organizeTaskId"])), "one analyzed item"
+            )
+
+            # Both bindings really do disagree about the fingerprint of the *same*
+            # physical file: that is exactly why it cannot decide ownership.
+            entry = value.source.stat("Movies/One.2001.mkv")
+            self.assertNotEqual(
+                source_fingerprint("source", "whole", entry).value,
+                source_fingerprint("source", "nested", entry).value,
+            )
+
+            status, second = self.request(
+                value,
+                endpoint.format("nested"),
+                "POST",
+                {
+                    "paths": ["One.2001.mkv"],
+                    "autoPrepare": True,
+                    "requestId": "22222222-2222-4222-8222-222222222222",
+                },
+            )
+            self.assertEqual(409, status, second)
+            self.assertEqual("source_already_organizing", second["error"]["code"])
+            self.assertEqual(first["discoveryId"], second["error"]["details"]["existingWorkId"])
+            # Exactly one durable organizing work still holds that one file, and the
+            # winner's state is untouched.
+            self.assertEqual(1, len(value.repository.list_tasks()))
+            self.assertEqual(1, len(value.repository.list_media_discoveries(limit=20)))
+            unchanged = value.repository.get_media_discovery(first["discoveryId"])
+            self.assertEqual(original.version, unchanged.version)
+            self.assertEqual(original.preview_id, unchanged.preview_id)
+            self.assertEqual(first["organizeTaskId"], unchanged.organize_task_id)
+            self.assertEqual([], value.source.mutations)
+            self.assertEqual([], value.target.mutations)
+
+    def test_the_reverse_cross_binding_alias_order_also_owns_one_source(self) -> None:
+        """The nested-first, whole-second order reaches the same conclusion."""
+
+        endpoint = "/api/v1/resource-libraries/{}/files/discoveries"
+        self.media("Movies/One.2001.mkv", size=64)
+        with self.journey() as value:
+            self.publish_policy(value, document=self._cross_binding_alias_document())
+            status, first = self.request(
+                value,
+                endpoint.format("nested"),
+                "POST",
+                {
+                    "paths": ["One.2001.mkv"],
+                    "autoPrepare": True,
+                    "requestId": "33333333-3333-4333-8333-333333333333",
+                },
+            )
+            self.assertEqual(202, status, first)
+            self.assertEqual("completed", self.run_discovery(value)["status"])
+            status, second = self.request(
+                value,
+                endpoint.format("whole"),
+                "POST",
+                {
+                    "paths": ["Movies/One.2001.mkv"],
+                    "autoPrepare": True,
+                    "requestId": "44444444-4444-4444-8444-444444444444",
+                },
+            )
+            self.assertEqual(409, status, second)
+            self.assertEqual("source_already_organizing", second["error"]["code"])
+            self.assertEqual(first["discoveryId"], second["error"]["details"]["existingWorkId"])
+            self.assertEqual(1, len(value.repository.list_tasks()))
+            self.assertEqual([], value.source.mutations)
+
+    def test_a_replaced_cross_binding_source_is_a_new_content_version(self) -> None:
+        """A genuinely replaced file is not locked by the previous version.
+
+        The old work observed a different size and modification instant for that
+        path, which is real same-semantic evidence of a replacement: the new
+        version is admitted as its own work instead of being refused forever.
+        """
+
+        endpoint = "/api/v1/resource-libraries/{}/files/discoveries"
+        self.media("Movies/One.2001.mkv", size=64)
+        with self.journey() as value:
+            self.publish_policy(value, document=self._cross_binding_alias_document())
+            status, first = self.request(
+                value,
+                endpoint.format("whole"),
+                "POST",
+                {
+                    "paths": ["Movies/One.2001.mkv"],
+                    "autoPrepare": True,
+                    "requestId": "55555555-5555-4555-8555-555555555555",
+                },
+            )
+            self.assertEqual(202, status, first)
+            self.assertEqual("completed", self.run_discovery(value)["status"])
+            self.media("Movies/One.2001.mkv", size=512)
+            self.clock.advance(2)
+            status, second = self.request(
+                value,
+                endpoint.format("nested"),
+                "POST",
+                {
+                    "paths": ["One.2001.mkv"],
+                    "autoPrepare": True,
+                    "requestId": "66666666-6666-4666-8666-666666666666",
+                },
+            )
+            self.assertEqual(202, status, second)
+            self.assertNotEqual(first["discoveryId"], second["discoveryId"])
+            self.assertEqual(2, len(value.repository.list_media_discoveries(limit=20)))
+            self.assertEqual([], value.source.mutations)
+
+    def test_two_folder_walks_never_admit_one_source_twice(self) -> None:
+        """B46.3-04: folder discovery reserves each source inside its transaction.
+
+        Two Files folder submissions (`Movies` and `Movies/Sub`) are both
+        legitimate *outer* work: a folder is admitted before traversal.  Only
+        `Movies/Sub/One.2001.mkv` exists, so when both real Workers discover it the
+        concrete source may end up inside at most one unfinished organizing work.
+
+        The application-level owner read alone cannot guarantee that: two Workers
+        of two different discoveries can each observe the source free before either
+        publishes.  Each discovery therefore re-checks every source it is about to
+        own *inside* the same `BEGIN IMMEDIATE` transaction that writes its
+        manifest, so the second publication rolls back and records its own per-item
+        refusal instead.  The loser's conclusion is real — never a silent drop and
+        never a second owner.
+
+        The race is reproduced exactly as it happens: two SQLite connections, two
+        real `MediaDiscoveryWorker`/`claim_and_run` entries, and one deliberately
+        delayed *ownership read* so both really observe the source free before either
+        commits.  Claims happen through the production Worker entry, not through
+        hand-written database rows.
+        """
+
+        self.media("Movies/Sub/One.2001.mkv")
+        with self.journey() as value:
+            status, outer = self.request(
+                value,
+                "/api/v1/resource-libraries/library/files/discoveries",
+                "POST",
+                {
+                    "paths": ["Movies"],
+                    "autoPrepare": True,
+                    "requestId": "66666666-6666-4666-8666-666666666666",
+                },
+            )
+            self.assertEqual(202, status, outer)
+            status, inner = self.request(
+                value,
+                "/api/v1/resource-libraries/library/files/discoveries",
+                "POST",
+                {
+                    "paths": ["Movies/Sub"],
+                    "autoPrepare": True,
+                    "requestId": "77777777-7777-4777-8777-777777777777",
+                },
+            )
+            self.assertEqual(202, status, inner)
+            self.assertNotEqual(outer["discoveryId"], inner["discoveryId"])
+
+            second_repository = SQLiteTaskRepository(self.database)
+            second = MediaDiscoveryService(
+                second_repository,
+                value.intents,
+                configuration=value.configuration,
+                runtime_resolver=value.discovery._runtime_resolver,
+                preview_service=value.previews,
+                storages=value.storages,
+                clock=self.clock,
+            )
+            barrier = threading.Barrier(2)
+            entered = threading.Event()
+            reads: list[bool] = []
+
+            def instrument(repository) -> None:
+                original = repository.find_owned_source_work
+                first = [True]
+
+                def find(**kwargs):
+                    answer = original(**kwargs)
+                    if (
+                        first[0]
+                        and kwargs.get("exclude_discovery_id")
+                        and kwargs.get("storage_path") == "Movies/Sub/One.2001.mkv"
+                    ):
+                        first[0] = False
+                        reads.append(answer is None)
+                        entered.set()
+                        barrier.wait(timeout=5)
+                    return answer
+
+                repository.find_owned_source_work = find
+
+            instrument(value.repository)
+            instrument(second_repository)
+            try:
+                with ThreadPoolExecutor(max_workers=2) as pool:
+                    initial = pool.submit(
+                        value.discovery.claim_and_run,
+                        worker_id="folder-a",
+                        claim_token="claim-a",
+                    )
+                    self.assertTrue(
+                        entered.wait(10), "the first real Worker never observed the source"
+                    )
+                    following = pool.submit(
+                        second.claim_and_run,
+                        worker_id="folder-b",
+                        claim_token="claim-b",
+                    )
+                    results = [initial.result(), following.result()]
+            finally:
+                second_repository.close()
+            # Both real owners really read the source as free before either committed.
+            self.assertEqual([True, True], reads, reads)
+            self.assertEqual(2, len([item for item in results if item is not None]))
+
+            works = value.repository.list_media_discoveries(limit=20)
+            self.assertEqual(2, len(works))
+            owners: dict[str, list[str]] = {}
+            for work in works:
+                for source in work.sources:
+                    owners.setdefault(source["path"], []).append(work.discovery_id)
+            self.assertEqual(1, len(owners["Movies/Sub/One.2001.mkv"]), works)
+            loser = next(
+                work for work in works if work.discovery_id not in owners["Movies/Sub/One.2001.mkv"]
+            )
+            refusal = [
+                item
+                for item in loser.progress.refused_entries
+                if item.path == "Movies/Sub/One.2001.mkv"
+            ]
+            self.assertEqual(1, len(refusal), loser.progress.refused_entries)
+            self.assertEqual("source_already_organizing", refusal[0].reason)
+            self.assertIn(refusal[0].existing_work_kind, {"task", "discovery"})
+            self.assertIsNotNone(refusal[0].existing_work_id)
+            # The loser is not a false success and not an invented empty scope.
+            self.assertFalse(loser.sources)
+            self.assertEqual("empty_excluded", loser.progress.phase)
+            self.assertEqual([], value.source.mutations)
+            self.assertEqual([], value.target.mutations)
+
+            # The single owner and the loser's own refusal survive a real reopen.
+            with SQLiteTaskRepository(self.database) as reopened:
+                stored = reopened.get_media_discovery(loser.discovery_id)
+                self.assertEqual(
+                    ["Movies/Sub/One.2001.mkv"],
+                    [item.path for item in stored.progress.refused_entries],
+                )
+                self.assertFalse(stored.sources)
+                holder = reopened.get_media_discovery(owners["Movies/Sub/One.2001.mkv"][0])
+                self.assertEqual(
+                    ["Movies/Sub/One.2001.mkv"], [item["path"] for item in holder.sources]
+                )
+
+    def test_a_loser_republishes_its_free_siblings_after_a_reservation(self) -> None:
+        """A reserved sibling never costs the loser its own independent sources.
+
+        Both folder submissions (`Movies` and `Movies/Sub`) observe
+        `Movies/Sub/One.2001.mkv` free before either commits, and both also contain
+        `Movies/Sub/Three.2003.mkv` that no other work holds.  The loser keeps its
+        eligible sibling: the in-transaction reservation removes exactly the source
+        another work proved it owns, records one truthful refusal for it, and
+        republishes the rest of its manifest under the same claim — never a silently
+        truncated scope and never a false success.
+        """
+
+        self.media("Movies/Sub/One.2001.mkv")
+        self.media("Movies/Sub/Three.2003.mkv")
+        with self.journey() as value:
+            status, outer = self.request(
+                value,
+                "/api/v1/resource-libraries/library/files/discoveries",
+                "POST",
+                {
+                    "paths": ["Movies"],
+                    "autoPrepare": True,
+                    "requestId": "88888888-8888-4888-8888-888888888888",
+                },
+            )
+            self.assertEqual(202, status, outer)
+            status, inner = self.request(
+                value,
+                "/api/v1/resource-libraries/library/files/discoveries",
+                "POST",
+                {
+                    "paths": ["Movies/Sub"],
+                    "autoPrepare": True,
+                    "requestId": "99999999-9999-4999-8999-999999999999",
+                },
+            )
+            self.assertEqual(202, status, inner)
+            second_repository = SQLiteTaskRepository(self.database)
+            second = MediaDiscoveryService(
+                second_repository,
+                value.intents,
+                configuration=value.configuration,
+                runtime_resolver=value.discovery._runtime_resolver,
+                preview_service=value.previews,
+                storages=value.storages,
+                clock=self.clock,
+            )
+            barrier = threading.Barrier(2)
+            entered = threading.Event()
+            reads: list[bool] = []
+
+            def instrument(repository) -> None:
+                original = repository.find_owned_source_work
+                first = [True]
+
+                def find(**kwargs):
+                    answer = original(**kwargs)
+                    if (
+                        first[0]
+                        and kwargs.get("exclude_discovery_id")
+                        and kwargs.get("storage_path") == "Movies/Sub/One.2001.mkv"
+                    ):
+                        first[0] = False
+                        reads.append(answer is None)
+                        entered.set()
+                        barrier.wait(timeout=5)
+                    return answer
+
+                repository.find_owned_source_work = find
+
+            instrument(value.repository)
+            instrument(second_repository)
+            try:
+                with ThreadPoolExecutor(max_workers=2) as pool:
+                    initial = pool.submit(
+                        value.discovery.claim_and_run,
+                        worker_id="sibling-a",
+                        claim_token="sib-a",
+                    )
+                    self.assertTrue(entered.wait(10))
+                    following = pool.submit(
+                        second.claim_and_run,
+                        worker_id="sibling-b",
+                        claim_token="sib-b",
+                    )
+                    initial.result()
+                    following.result()
+            finally:
+                second_repository.close()
+            self.assertEqual([True, True], reads, reads)
+
+            works = value.repository.list_media_discoveries(limit=20)
+            self.assertEqual(2, len(works))
+            owners: dict[str, list[str]] = {}
+            for work in works:
+                for source in work.sources:
+                    owners.setdefault(source["path"], []).append(work.discovery_id)
+            # One owner for the shared source, and the independent sibling admitted.
+            self.assertEqual(1, len(owners["Movies/Sub/One.2001.mkv"]), owners)
+            self.assertEqual(1, len(owners["Movies/Sub/Three.2003.mkv"]), owners)
+            refused = [
+                (work.discovery_id, item.path)
+                for work in works
+                for item in work.progress.refused_entries
+                if item.path == "Movies/Sub/One.2001.mkv"
+            ]
+            self.assertEqual(1, len(refused), works)
+            # Neither work invents a media effect.
+            self.assertEqual([], value.source.mutations)
+            self.assertEqual([], value.target.mutations)
+
     def test_symlink_and_root_selection_fail_closed(self) -> None:
         self.media("Movies/One.2001.mkv")
         os.symlink(

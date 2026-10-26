@@ -1582,6 +1582,199 @@ class DiscoveryAdmissionIdentityTests(unittest.TestCase):
                 assert found.discovery_id == "discovery-legacy"
 
 
+class SourceOwnershipEvidenceTests(unittest.TestCase):
+    """One physical source keeps one owner, judged only by comparable evidence.
+
+    B46.3-04 required the comparison itself to separate the *physical source and
+    its comparable content version* from the library/principal/pin/plan context.
+    These are the two ownership paths that exist in the repository — a TaskItem and
+    a Files discovery admission — asserted over one durable database.
+    """
+
+    @staticmethod
+    def _entry(path: str, size: int, modified: datetime):
+        from mediaflow.domain.storage import StorageEntry, StorageEntryType
+
+        return StorageEntry(path.rsplit("/", 1)[-1], path, StorageEntryType.FILE, size, modified)
+
+    def _version(self, path: str, size: int, modified: datetime):
+        from mediaflow.domain.source_evidence import source_version_evidence
+
+        return source_version_evidence(self._entry(path, size, modified))
+
+    def test_two_library_bindings_of_one_entry_share_one_content_version(self) -> None:
+        """The binding enters the digest but never the comparable version."""
+
+        from mediaflow.domain.source_evidence import (
+            source_fingerprint,
+            stored_source_version_evidence,
+        )
+
+        modified = datetime(2026, 10, 20, 12, 0, tzinfo=UTC)
+        entry = self._entry("Movies/One.2001.mkv", 64, modified)
+        whole = source_fingerprint("source", "whole", entry)
+        nested = source_fingerprint("source", "nested", entry)
+        # The reviewed-occurrence digests really differ by binding...
+        self.assertNotEqual(whole.value, nested.value)
+        # ...while the comparable content version agrees, and it round-trips
+        # through the durable evidence document of *either* binding.
+        self.assertEqual(source_version_evidence_from(whole), source_version_evidence_from(nested))
+        self.assertEqual(
+            source_version_evidence_from(whole), stored_source_version_evidence(whole.evidence)
+        )
+
+    def test_a_task_item_owner_holds_across_bindings_and_releases_on_replacement(
+        self,
+    ) -> None:
+        from mediaflow.domain.source_evidence import (
+            source_version_is_known_different,
+            stored_source_version_evidence,
+        )
+
+        modified = datetime(2026, 10, 20, 12, 0, tzinfo=UTC)
+        with tempfile.TemporaryDirectory() as directory:
+            database = Path(directory, "ownership.sqlite3")
+            with SQLiteTaskRepository(database) as repository:
+                coordinator = PersistentTaskCoordinator(repository, repository)
+                task = coordinator.create("manual_organize", execute_authorized=True)
+                entry = self._entry("Movies/One.2001.mkv", 64, modified)
+                from mediaflow.domain.source_evidence import source_fingerprint
+
+                fingerprint = source_fingerprint("source", "nested", entry)
+                item = coordinator.begin_item(
+                    task.task_id,
+                    "source",
+                    "nested",
+                    "One.2001.mkv",
+                    "One.2001.mkv",
+                    source_occurrence_id="occ-1",
+                    source_fingerprint=fingerprint.value,
+                    source_fingerprint_state="verified",
+                )
+                repository.upsert_item(
+                    replace(
+                        item,
+                        source_storage_path="Movies/One.2001.mkv",
+                        status=TaskItemStatus.PENDING,
+                        stage="waiting_metadata",
+                    )
+                )
+
+                # The same physical source under another binding is the same owner:
+                # the two fingerprints are incomparable, not different content.
+                owned = repository.find_owned_source_work(
+                    storage_id="source",
+                    source_path="Movies/One.2001.mkv",
+                    storage_path="Movies/One.2001.mkv",
+                    resource_library_id="whole",
+                    source_version=self._version("Movies/One.2001.mkv", 64, modified),
+                )
+                self.assertIsNotNone(owned, "an unchanged source under another binding")
+                self.assertEqual(task.task_id, owned["taskId"])
+                # The same binding's digest is directly comparable, so an unchanged
+                # source is owned there too.
+                self.assertIsNotNone(
+                    repository.find_owned_source_work(
+                        storage_id="source",
+                        source_path="One.2001.mkv",
+                        storage_path="Movies/One.2001.mkv",
+                        resource_library_id="nested",
+                        source_fingerprint=fingerprint.value,
+                        source_version=self._version("Movies/One.2001.mkv", 64, modified),
+                    )
+                )
+                # A really replaced file is different content.  Inside the binding
+                # that observed it the stored digest is directly comparable, so the
+                # claim is released for the new version instead of blocking it.
+                replaced = self._version("Movies/One.2001.mkv", 512, modified)
+                self.assertTrue(
+                    source_version_is_known_different(
+                        replaced,
+                        stored_source_version_evidence(fingerprint.evidence),
+                    )
+                )
+                from mediaflow.domain.source_evidence import source_fingerprint
+
+                self.assertIsNone(
+                    repository.find_owned_source_work(
+                        storage_id="source",
+                        source_path="One.2001.mkv",
+                        storage_path="Movies/One.2001.mkv",
+                        resource_library_id="nested",
+                        source_fingerprint=source_fingerprint(
+                            "source",
+                            "nested",
+                            self._entry("Movies/One.2001.mkv", 512, modified),
+                        ).value,
+                        source_version=replaced,
+                    )
+                )
+                # No comparable version is ever "different": instead of releasing a
+                # live claim on incomparable evidence, the claim is kept.
+                self.assertFalse(source_version_is_known_different(None, None))
+                self.assertFalse(source_version_is_known_different(replaced, None))
+                self.assertIsNotNone(
+                    repository.find_owned_source_work(
+                        storage_id="source",
+                        source_path="Movies/One.2001.mkv",
+                        storage_path="Movies/One.2001.mkv",
+                        resource_library_id="whole",
+                        source_version=replaced,
+                    )
+                )
+                # A settled item no longer owns the source.
+                repository.upsert_item(
+                    replace(
+                        item,
+                        source_storage_path="Movies/One.2001.mkv",
+                        status=TaskItemStatus.SUCCESS,
+                        stage="success",
+                    )
+                )
+                self.assertIsNone(
+                    repository.find_owned_source_work(
+                        storage_id="source",
+                        source_path="Movies/One.2001.mkv",
+                        storage_path="Movies/One.2001.mkv",
+                        resource_library_id="whole",
+                        source_version=self._version("Movies/One.2001.mkv", 64, modified),
+                    )
+                )
+
+    def test_a_legacy_task_item_without_evidence_keeps_its_claim(self) -> None:
+        """A pre-change row proves no version, so it never reads as replaced."""
+
+        with tempfile.TemporaryDirectory() as directory:
+            database = Path(directory, "legacy.sqlite3")
+            with SQLiteTaskRepository(database) as repository:
+                coordinator = PersistentTaskCoordinator(repository, repository)
+                task = coordinator.create("manual_organize", execute_authorized=True)
+                item = coordinator.begin_item(
+                    task.task_id, "source", "library", "Movies/One.2001.mkv", "One.2001.mkv"
+                )
+                repository.upsert_item(
+                    replace(item, status=TaskItemStatus.PENDING, stage="waiting_metadata")
+                )
+                # An observed version with nothing comparable on the stored side is
+                # unknown, not "different".
+                self.assertIsNotNone(
+                    repository.find_owned_source_work(
+                        storage_id="source",
+                        source_path="Movies/One.2001.mkv",
+                        resource_library_id="library",
+                        source_version=self._version(
+                            "Movies/One.2001.mkv", 512, datetime(2026, 10, 21, tzinfo=UTC)
+                        ),
+                    )
+                )
+
+
+def source_version_evidence_from(fingerprint):
+    from mediaflow.domain.source_evidence import stored_source_version_evidence
+
+    return stored_source_version_evidence(fingerprint.evidence)
+
+
 class ManualRecoveryPreparationPersistenceTests(unittest.TestCase):
     def test_preparation_round_trips_and_supersedes_without_authority(self) -> None:
         """A prepared summary persists, supersedes and never invents authority."""
