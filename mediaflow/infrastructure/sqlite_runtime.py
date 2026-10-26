@@ -13050,6 +13050,56 @@ class SQLiteTaskRepository:
             exclude_discovery_id=None,
         )
 
+    def claim_task_item_with_ownership(
+        self,
+        item,
+        *,
+        source_version: SourceVersionEvidence | None = None,
+        exclude_discovery_id: str | None = None,
+        exclude_lineage_task_id: str | None = None,
+    ) -> dict[str, object] | None:
+        """Persist one admitted TaskItem only while its source is still free.
+
+        B46.3-05: the ownership decision and this attempt's item write are one
+        ``BEGIN IMMEDIATE`` transaction, so a scheduled, Run-once or continuation
+        entrance cannot pass a check made before its own admission and then
+        consume a source a *concurrent* Files admission claimed in the gap.  The
+        caller still asks once before consuming a lock (a fast refusal) but this
+        boundary is the deciding one: it never writes the item, never analyzes and
+        never mutates Storage for a source another unfinished work owns.
+
+        Returns the durable owner when the source is taken (nothing written), or
+        ``None`` after the item row is committed.  No Storage call happens inside
+        the transaction, so a slow provider can never hold the write lock.
+        """
+
+        if item.source_storage_path is None:
+            raise ValueError("Task item source Storage identity is required")
+        with self._lock:
+            self._connection.execute("BEGIN IMMEDIATE")
+            try:
+                owner = self._find_owned_source_work_locked(
+                    storage_id=item.storage_id,
+                    source_path=item.source_path,
+                    storage_path=item.source_storage_path,
+                    resource_library_id=item.resource_library_id,
+                    source_fingerprint=item.source_fingerprint,
+                    source_version=source_version,
+                    exclude_task_id=item.task_id,
+                    exclude_discovery_id=exclude_discovery_id,
+                    exclude_lineage_task_id=exclude_lineage_task_id,
+                )
+                if owner is not None:
+                    self._connection.rollback()
+                    return owner
+                bound = self._bind_item_to_current_occurrence(item)
+                self._connection.execute(_TASK_ITEM_UPSERT, self._item_values(bound))
+                self._connection.commit()
+            except BaseException:
+                self._connection.rollback()
+                raise
+        return None
+
     def find_owned_source_work(
         self,
         *,
@@ -13099,6 +13149,39 @@ class SQLiteTaskRepository:
             raise ValueError("excluded Task identity is invalid")
         if exclude_discovery_id is not None and not isinstance(exclude_discovery_id, str):
             raise ValueError("excluded discovery identity is invalid")
+        with self._lock:
+            return self._find_owned_source_work_locked(
+                storage_id=storage_id,
+                source_path=source_path,
+                storage_path=storage_path,
+                resource_library_id=resource_library_id,
+                source_fingerprint=source_fingerprint,
+                source_version=source_version,
+                exclude_task_id=exclude_task_id,
+                exclude_discovery_id=exclude_discovery_id,
+                exclude_lineage_task_id=exclude_lineage_task_id,
+            )
+
+    def _find_owned_source_work_locked(
+        self,
+        *,
+        storage_id: str,
+        source_path: str,
+        storage_path: str | None = None,
+        resource_library_id: str | None = None,
+        source_fingerprint: str | None = None,
+        source_version: SourceVersionEvidence | None = None,
+        exclude_task_id: str | None = None,
+        exclude_discovery_id: str | None = None,
+        exclude_lineage_task_id: str | None = None,
+    ) -> dict[str, object] | None:
+        """The ownership answer itself, without taking the read lock again.
+
+        Called by :meth:`find_owned_source_work` for an ordinary read and by
+        :meth:`claim_task_item_with_ownership` inside the caller's own
+        ``BEGIN IMMEDIATE`` transaction, so both ask exactly one question.
+        """
+
         settled = tuple(item.value for item in SETTLED_ITEM_STATUSES)
         # One concrete source is identified by its path *inside the Storage*, not by
         # the ResourceLibrary binding that happens to expose it.  Two valid library
@@ -13136,56 +13219,55 @@ class SQLiteTaskRepository:
         if excluded_tasks:
             clauses.append("items.task_id NOT IN (" + ", ".join("?" for _ in excluded_tasks) + ")")
             parameters.extend(sorted(excluded_tasks))
-        with self._lock:
-            rows = self._connection.execute(
-                "SELECT items.task_id, items.item_id, items.status, items.stage, "
-                "items.source_path, items.source_storage_path, items.source_fingerprint, "
-                "items.resource_library_id, tasks.command, tasks.status AS task_status "
-                "FROM task_items items JOIN tasks ON tasks.task_id = items.task_id "
-                f"WHERE {' AND '.join(clauses)} "
-                "ORDER BY items.updated_at DESC, items.item_id DESC LIMIT 25",
-                parameters,
-            ).fetchall()
-            row = next(
-                (
-                    candidate
-                    for candidate in rows
-                    if not self._task_item_observed_a_replaced_source_locked(
-                        candidate,
-                        storage_path=storage_path if storage_path is not None else source_path,
-                        resource_library_id=resource_library_id,
-                        source_fingerprint=source_fingerprint,
-                        source_version=source_version,
-                    )
-                ),
-                None,
-            )
-            if row is not None:
-                return {
-                    "kind": "task",
-                    "taskId": row["task_id"],
-                    "taskItemId": row["item_id"],
-                    "taskCommand": row["command"],
-                    "taskStatus": row["task_status"],
-                    "itemStatus": row["status"],
-                    "itemStage": row["stage"],
-                    # The admitting principal, when this Task is a principal's own
-                    # work.  It lets the caller publish a permission-bounded
-                    # refusal to a *different* operator instead of handing over
-                    # another operator's Task identity.  A scheduled/Run-once Task
-                    # has no admitting operator and honestly reports ``None``.
-                    "actor": self._task_admitting_actor_locked(row["task_id"]),
-                }
-            return self._discovery_source_owners_locked(
-                storage_id,
-                source_path,
-                storage_path=storage_path,
-                resource_library_id=resource_library_id,
-                source_fingerprint=source_fingerprint,
-                source_version=source_version,
-                exclude_discovery_id=exclude_discovery_id,
-                exclude_lineage_task_id=exclude_lineage_task_id,
-            )
+        rows = self._connection.execute(
+            "SELECT items.task_id, items.item_id, items.status, items.stage, "
+            "items.source_path, items.source_storage_path, items.source_fingerprint, "
+            "items.resource_library_id, tasks.command, tasks.status AS task_status "
+            "FROM task_items items JOIN tasks ON tasks.task_id = items.task_id "
+            f"WHERE {' AND '.join(clauses)} "
+            "ORDER BY items.updated_at DESC, items.item_id DESC LIMIT 25",
+            parameters,
+        ).fetchall()
+        row = next(
+            (
+                candidate
+                for candidate in rows
+                if not self._task_item_observed_a_replaced_source_locked(
+                    candidate,
+                    storage_path=storage_path if storage_path is not None else source_path,
+                    resource_library_id=resource_library_id,
+                    source_fingerprint=source_fingerprint,
+                    source_version=source_version,
+                )
+            ),
+            None,
+        )
+        if row is not None:
+            return {
+                "kind": "task",
+                "taskId": row["task_id"],
+                "taskItemId": row["item_id"],
+                "taskCommand": row["command"],
+                "taskStatus": row["task_status"],
+                "itemStatus": row["status"],
+                "itemStage": row["stage"],
+                # The admitting principal, when this Task is a principal's own
+                # work.  It lets the caller publish a permission-bounded
+                # refusal to a *different* operator instead of handing over
+                # another operator's Task identity.  A scheduled/Run-once Task
+                # has no admitting operator and honestly reports ``None``.
+                "actor": self._task_admitting_actor_locked(row["task_id"]),
+            }
+        return self._discovery_source_owners_locked(
+            storage_id,
+            source_path,
+            storage_path=storage_path,
+            resource_library_id=resource_library_id,
+            source_fingerprint=source_fingerprint,
+            source_version=source_version,
+            exclude_discovery_id=exclude_discovery_id,
+            exclude_lineage_task_id=exclude_lineage_task_id,
+        )
 
     def _task_item_observed_a_replaced_source_locked(
         self,

@@ -1340,6 +1340,17 @@ def final_main(
                 retry_policy=configuration.workflow_retry_policy,
                 retry_cancellation_check=workflow_stop,
                 analysis_only=analysis_only,
+                # B46.3-05: only a run that may really consume a source asks the
+                # shared durable ownership boundary.  A zero-mutation analysis
+                # (``execute`` false) creates no organizing work, gains no
+                # execution authority and mutates nothing, so it must stay
+                # readable even while another work owns the file.  A retried or
+                # resumed attempt passes the Task whose own remaining scope it
+                # continues, so it can never refuse itself.
+                enforce_source_ownership=execute,
+                ownership_lineage_task_ids=(
+                    (original.task_id,) if arguments.command == "tasks" else ()
+                ),
             )
             if retry_items is not None:
                 libraries = {item.library_id: item for item in configuration.resource_libraries}
@@ -2801,6 +2812,11 @@ def _run_metadata_correction_continuation(
                 retry_policy=configuration.workflow_retry_policy,
                 retry_cancellation_check=workflow_stop,
                 secret_free_errors=True,
+                # A correction continuation only re-analyzes the exact source it
+                # was admitted for, so it gains no execution authority and its own
+                # lineage is the source of the attempt, not a competing owner.
+                enforce_source_ownership=False,
+                ownership_lineage_task_ids=(prepared.continuation.source_task_id,),
             )
             item = service.process_file(
                 # ``source_display`` is an operator-facing, Storage-qualified
@@ -3115,6 +3131,12 @@ def _run_recovery_continuation(
                 retry_policy=configuration.workflow_retry_policy,
                 retry_cancellation_check=workflow_stop,
                 secret_free_errors=True,
+                # A recovery continuation re-analyzes exactly one still-undecided
+                # source of the Task it continues.  It is analysis-only, so it
+                # creates no organizing work and its lineage is that source Task,
+                # never a competing owner of the same source.
+                enforce_source_ownership=False,
+                ownership_lineage_task_ids=(prepared.continuation.source_task_id,),
             )
             item = service.process_file(
                 # The display label is Storage-qualified; parsing must use the
@@ -3365,6 +3387,14 @@ def _run_scope_continuation(
                 retry_cancellation_check=workflow_stop,
                 secret_free_errors=True,
                 mutation_authority=mutation_authority,
+                # B46.3-05: a scope continuation may really consume a source, so
+                # it asks the same durable ownership boundary.  Its legitimate
+                # lineage is the paused Task whose own remaining scope it
+                # completes, so that ancestor's still-unsettled items can never
+                # make it refuse itself; any *other* unfinished work that owns one
+                # of the same sources still refuses it per item.
+                enforce_source_ownership=original.execute_authorized,
+                ownership_lineage_task_ids=(original.task_id,),
             )
             summary = _continue_scope_from_admission(
                 organizer,

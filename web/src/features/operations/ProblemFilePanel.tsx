@@ -158,6 +158,11 @@ const FAILURE_COPY: Readonly<
     reason: "无法证明来源仍是原来源",
     nextAction: "回到当前文件页重新选择来源，并生成新的摘要后再继续。",
   },
+  source_already_organizing: {
+    reason: "该文件已属于未结束的整理工作",
+    nextAction:
+      "打开并继续或取消那份文件页整理工作；本次运行保留自己的范围，不会接管、确认或取消它。",
+  },
   recognition_failure: {
     reason: "未能完成媒体识别",
     nextAction: "检查识别证据并处理待确认决定，再继续此文件。",

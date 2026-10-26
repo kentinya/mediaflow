@@ -33,6 +33,27 @@ class TaskLockError(RuntimeError):
     pass
 
 
+class TaskSourceOwnedError(RuntimeError):
+    """One concrete source still belongs to another unfinished organizing work.
+
+    A short-lived execution lease is *not* unfinished-work ownership: a queued,
+    paused or decision-pending Files admission holds no ``file_locks`` row, so an
+    execution lock alone can never prove a source is free.  This boundary refuses
+    the second attempt with the durable owner it found, before any Provider call
+    or mutation, and publishes that refusal as the item's own failed outcome.
+    """
+
+    def __init__(self, owner: dict[str, object] | None = None) -> None:
+        super().__init__(
+            "source already organizing: this file still belongs to an unfinished "
+            "organizing work, so this run did not take it over"
+        )
+        # The authorized existing-work reference, already bounded by the
+        # repository: it names the owning work only when this principal is
+        # allowed to read it and is otherwise just the fact of ownership.
+        self.owner = dict(owner or {})
+
+
 class TaskPauseRequested(RuntimeError):
     pass
 
@@ -171,12 +192,44 @@ class PersistentTaskCoordinator:
         source_fingerprint: str | None = None,
         source_fingerprint_state: str = "unverified",
         source_observed_at: datetime | None = None,
+        source_storage_path: str | None = None,
+        source_version: object | None = None,
+        ownership_lineage_task_ids: tuple[str, ...] = (),
+        enforce_source_ownership: bool = False,
     ) -> PersistentTaskItem:
         task = self.require(task_id)
         if task.status is not PersistentTaskStatus.RUNNING:
             raise RuntimeError(f"task {task_id!r} is not running")
         if task.pause_requested or self.repository.task_pause_requested(task_id):
             raise TaskPauseRequested(f"task {task_id!r} pause was requested")
+        claimant = (
+            getattr(self.repository, "claim_task_item_with_ownership", None)
+            if enforce_source_ownership and source_storage_path is not None
+            else None
+        )
+        if enforce_source_ownership and not callable(claimant):
+            # A repository that cannot make the ownership decision and this
+            # item's own admission one decision is never silently treated as if
+            # it had: ask the read-only boundary instead of assuming the source
+            # is free.  The atomic boundary is the production one.
+            finder = getattr(self.repository, "find_owned_source_work", None)
+            if callable(finder):
+                owner = finder(
+                    storage_id=storage_id,
+                    source_path=source_path,
+                    storage_path=source_storage_path,
+                    resource_library_id=resource_library_id,
+                    source_version=source_version,
+                    # This Task's own rows and the ancestors it legally continues
+                    # are the source of this attempt, never a competing owner, so
+                    # a resumed/continued attempt can never refuse itself.
+                    exclude_task_id=task_id,
+                    exclude_lineage_task_id=(
+                        ownership_lineage_task_ids[0] if ownership_lineage_task_ids else None
+                    ),
+                )
+                if owner is not None:
+                    raise TaskSourceOwnedError(owner)
         item_id = str(uuid5(NAMESPACE_URL, f"{task_id}:{storage_id}:{source_path}"))
         previous = self.repository.get_item(item_id)
         now = datetime.now(UTC)
@@ -265,6 +318,11 @@ class PersistentTaskCoordinator:
                 source_observed_at=(
                     source_observed_at if source_occurrence_id else previous.source_observed_at
                 ),
+                # The exact Storage-relative identity this attempt is admitted
+                # under.  It is what makes ownership comparable across library
+                # bindings; a caller that cannot prove it keeps the predecessor's
+                # value instead of inventing one.
+                source_storage_path=(source_storage_path or previous.source_storage_path),
             )
         else:
             started = PersistentTaskItem(
@@ -283,7 +341,26 @@ class PersistentTaskCoordinator:
                 source_fingerprint=source_fingerprint,
                 source_fingerprint_state=source_fingerprint_state,
                 source_observed_at=source_observed_at,
+                source_storage_path=source_storage_path,
             )
+        if callable(claimant) and fenced is None:
+            # The deciding boundary: the ownership answer and this item's own
+            # admission are one transaction, so a competing work admitted in the
+            # gap is never lost to this attempt.
+            owner = claimant(
+                started,
+                source_version=source_version,
+                exclude_lineage_task_id=(
+                    ownership_lineage_task_ids[0] if ownership_lineage_task_ids else None
+                ),
+            )
+            if owner is not None:
+                self.locks.release(storage_id, source_path, task_id, owner_token=lock_owner_token)
+                raise TaskSourceOwnedError(owner)
+            persisted_item = self.repository.get_item(item_id)
+            if persisted_item is not None:
+                started = persisted_item
+            return replace(started, lock_owner_token=lock_owner_token)
         if not self._publish_item_start(started, fenced):
             # The claim lapsed between the acquisition and this publication.
             # Release **only** this frame's exact generation and stop: if a

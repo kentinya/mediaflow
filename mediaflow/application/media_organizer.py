@@ -64,7 +64,12 @@ from mediaflow.domain.scanner import (
     ScanError,
     Scanner,
 )
-from mediaflow.domain.source_evidence import OccurrenceState, occurrence_id_for, source_fingerprint
+from mediaflow.domain.source_evidence import (
+    OccurrenceState,
+    occurrence_id_for,
+    source_fingerprint,
+    source_version_evidence,
+)
 from mediaflow.domain.storage import (
     Storage,
     StorageEntryType,
@@ -199,6 +204,8 @@ class MediaOrganizerService:
         persist_failure_explanations: bool = False,
         mutation_authority: Callable[[OrganizePlan, str], object] | None = None,
         analysis_only: bool = False,
+        enforce_source_ownership: bool = False,
+        ownership_lineage_task_ids: tuple[str, ...] = (),
     ) -> None:
         self._strategy = strategy
         self._scanner = scanner
@@ -230,6 +237,15 @@ class MediaOrganizerService:
         self._persist_failure_explanations = persist_failure_explanations
         self._mutation_authority = mutation_authority
         self._analysis_only = bool(analysis_only)
+        # B46.3-05: one concrete source belongs to exactly one unfinished
+        # organizing work, whichever entrance is running.  Executors that may
+        # mutate or consume a source ask the shared durable boundary before their
+        # own item is admitted; the read-only CLI strategy path leaves this off.
+        self._enforce_source_ownership = bool(enforce_source_ownership)
+        # The Tasks whose still-unsettled items this attempt legally continues.
+        # Those are the source of this work, never a competing owner, so a resumed
+        # or continued attempt can never refuse itself.
+        self._ownership_lineage_task_ids = tuple(ownership_lineage_task_ids)
 
     def process_file(
         self,
@@ -313,17 +329,53 @@ class MediaOrganizerService:
                         deadline,
                     )
             if self._task_coordinator and self._task_id:
-                tracked_item = self._task_coordinator.begin_item(
-                    self._task_id,
-                    resource_library.storage_id,
-                    resource_library.library_id,
-                    storage_path,
-                    source,
-                    source_occurrence_id=source_occurrence_id,
-                    source_fingerprint=source_fingerprint,
-                    source_fingerprint_state=source_fingerprint_state,
-                    source_observed_at=source_observed_at,
-                )
+                try:
+                    tracked_item = self._task_coordinator.begin_item(
+                        self._task_id,
+                        resource_library.storage_id,
+                        resource_library.library_id,
+                        storage_path,
+                        source,
+                        source_occurrence_id=source_occurrence_id,
+                        source_fingerprint=source_fingerprint,
+                        source_fingerprint_state=source_fingerprint_state,
+                        source_observed_at=source_observed_at,
+                        # Every admitted TaskItem keeps the exact Storage-relative
+                        # identity and comparable content version it was admitted
+                        # under.  ``storage_path`` is already Storage-relative at
+                        # every caller (a scanner entry path or a persisted
+                        # TaskItem path), so it is recorded verbatim: that is what
+                        # makes one concrete source comparable across library
+                        # bindings, and what lets a later request prove the file
+                        # was genuinely replaced instead of holding the path
+                        # forever.
+                        source_storage_path=storage_path,
+                        source_version=self._source_version_evidence(
+                            resource_library, storage_path
+                        ),
+                        ownership_lineage_task_ids=self._ownership_lineage_task_ids,
+                        enforce_source_ownership=self._enforce_source_ownership,
+                    )
+                except Exception as error:  # noqa: BLE001 - one bounded refusal
+                    from mediaflow.application.task_runtime import TaskSourceOwnedError
+
+                    if not isinstance(error, TaskSourceOwnedError):
+                        raise
+                    # Another unfinished organizing work owns this exact source,
+                    # so this attempt gains no analysis and no mutation.  The
+                    # refusal is still published as this attempt's own durable
+                    # failed item: the item write is deliberately not re-gated by
+                    # the ownership boundary (that would refuse the record of the
+                    # refusal itself) while the source keeps its exact identity.
+                    return self._owned_source_item(
+                        source,
+                        resource_library,
+                        storage_path,
+                        source_occurrence_id,
+                        source_fingerprint,
+                        source_fingerprint_state,
+                        source_observed_at,
+                    )
             retry_outcome = self._retry_controller.execute(
                 lambda: self._run_read_only_strategy(
                     source, resource_library=resource_library, storage_path=storage_path
@@ -844,6 +896,71 @@ class MediaOrganizerService:
         failure = classify_failure(stage="scanning")
         return self._complete(
             MediaOrganizerItemResult(source, error=failure.message, failure=failure), tracked
+        )
+
+    def _source_version_evidence(self, resource_library: ResourceLibrary, storage_path: str):
+        """The comparable content version of one admitted source, or ``None``.
+
+        One bounded ``stat`` (never a read, never a Provider call) turned into the
+        binding-independent version the ownership boundary compares.  ``None``
+        means this observation cannot prove a comparable version at all, which
+        keeps ownership conservative instead of releasing a live claim.
+        """
+
+        storage = self._storages.get(resource_library.storage_id)
+        if storage is None:
+            return None
+        entry = self._stat_entry(storage, storage_path)
+        if entry is None or entry.entry_type is not StorageEntryType.FILE:
+            return None
+        return source_version_evidence(entry)
+
+    def _owned_source_item(
+        self,
+        source: str,
+        resource_library: ResourceLibrary,
+        storage_path: str,
+        occurrence: str | None,
+        fingerprint: str | None,
+        state: str,
+        observed_at: datetime | None,
+    ) -> MediaOrganizerItemResult:
+        """Publish one source another unfinished work holds as this attempt's item.
+
+        The refusal happens before any Provider call or mutation: another
+        queued/running/paused/decision-pending organizing work already owns this
+        exact concrete source, so consuming it here would take work away from the
+        operator who admitted it first.  The refusal is still this attempt's own
+        durable TaskItem and Result with a bounded reason and next action, so a
+        reopened Task explains itself instead of reading a false Completed/0 run.
+        The owner's identity is never published (it can be another principal's
+        private context); only the fact of ownership and its safe next action are.
+        """
+
+        tracked: PersistentTaskItem | None = None
+        if self._task_coordinator and self._task_id:
+            # The record of the refusal is written with the ownership check off:
+            # the owning work is exactly what this row must describe, and the
+            # row's own source identity stays truthful.
+            tracked = self._task_coordinator.begin_item(
+                self._task_id,
+                resource_library.storage_id,
+                resource_library.library_id,
+                storage_path,
+                source,
+                source_occurrence_id=occurrence,
+                source_fingerprint=fingerprint,
+                source_fingerprint_state=state,
+                source_observed_at=observed_at,
+                # ``storage_path`` is already the Storage-relative source path.
+                source_storage_path=storage_path,
+            )
+        return self._failed(
+            source,
+            None,
+            failure_explanation("source_already_organizing", durable="failed", side_effects="none"),
+            tracked,
+            (),
         )
 
     def _refused_source_item(

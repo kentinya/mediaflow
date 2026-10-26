@@ -32,6 +32,10 @@ _MESSAGES = {
     "source_unverified": (
         "source unverified: the reviewed source cannot prove its original occurrence"
     ),
+    "source_already_organizing": (
+        "source already organizing: this file still belongs to another unfinished organizing "
+        "work, so this run did not take it over"
+    ),
     "recognition_failure": "recognition failure: no durable RecognitionType was selected",
     "metadata_failure": "metadata failure: no durable media identity was selected",
     "naming_failure": "naming failure: a safe target name was not produced",
@@ -86,6 +90,10 @@ _NEXT = {
     "source_missing": ("restore the original source or re-select it from the current Files view"),
     "source_unverified": (
         "re-select the source from the current Files view and prepare a new summary"
+    ),
+    "source_already_organizing": (
+        "open that Files organizing work and continue or cancel it; this run keeps its own "
+        "remaining scope and never cancels, confirms or takes over the other work"
     ),
     "recognition_failure": "resolve Recognition review for this item, then continue it explicitly",
     "metadata_failure": (
@@ -269,6 +277,8 @@ def _category_from_text(text: str) -> str | None:
         return "source_missing"
     if "cannot prove its original occurrence" in text or "source unverified" in text:
         return "source_unverified"
+    if "source already organizing" in text:
+        return "source_already_organizing"
     if "attachment destination already exists" in text:
         return "attachment_collision"
     if "destination already exists" in text or "target collision" in text:

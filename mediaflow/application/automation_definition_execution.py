@@ -439,6 +439,15 @@ class DefinitionScopedExecutionService:
             retry_cancellation_check=workflow_stop,
             secret_free_errors=True,
             persist_failure_explanations=True,
+            # B46.3-05: a scheduled occurrence is an existing entrance into the
+            # same concrete sources a Files admission may already own.  Its own
+            # item admission therefore asks the shared durable ownership boundary
+            # inside the same decision, so a queued/paused/decision-pending Files
+            # source can never be consumed (moved, deleted on the source side or
+            # re-analyzed as this run's own work) by a later occurrence.  A source
+            # that is genuinely free still runs exactly as before, and the
+            # refused sibling is published as its own per-item outcome.
+            enforce_source_ownership=True,
             mutation_authority=(
                 (lambda _plan, _boundary: self._unattended_grants.assert_live(job, definition))
                 if execute and self._unattended_grants is not None

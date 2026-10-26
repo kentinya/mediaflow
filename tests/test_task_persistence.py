@@ -1741,6 +1741,138 @@ class SourceOwnershipEvidenceTests(unittest.TestCase):
                     )
                 )
 
+    def test_the_ownership_decision_and_the_item_admission_are_one_transaction(
+        self,
+    ) -> None:
+        """B46.3-05: the deciding check is the one that also writes the item.
+
+        A read-only check made before the admission can pass and then lose the
+        source to a concurrent owner between the check and the item write.  The
+        production boundary therefore asks and writes inside one
+        ``BEGIN IMMEDIATE``: a second connection that committed the source in
+        between makes the write refuse instead of committing a competing item,
+        and the item table stays untouched for the loser.
+        """
+
+        from mediaflow.domain.source_evidence import source_fingerprint
+
+        modified = datetime(2026, 10, 20, 12, 0, tzinfo=UTC)
+        with tempfile.TemporaryDirectory() as directory:
+            database = Path(directory, "ownership.sqlite3")
+            with (
+                SQLiteTaskRepository(database) as first,
+                SQLiteTaskRepository(database) as second,
+            ):
+                entry = self._entry("Movies/One.2001.mkv", 64, modified)
+                version = self._version("Movies/One.2001.mkv", 64, modified)
+                owner_task = PersistentTaskCoordinator(first, first).create(
+                    "manual_organize", execute_authorized=True
+                )
+                owner_item = PersistentTaskCoordinator(first, first).begin_item(
+                    owner_task.task_id,
+                    "source",
+                    "library",
+                    "Movies/One.2001.mkv",
+                    "Movies/One.2001.mkv",
+                    source_fingerprint=source_fingerprint("source", "library", entry).value,
+                    source_fingerprint_state="verified",
+                    source_storage_path="Movies/One.2001.mkv",
+                )
+                first.upsert_item(
+                    replace(
+                        owner_item,
+                        status=TaskItemStatus.PENDING,
+                        stage="waiting_metadata",
+                    )
+                )
+
+                contender = PersistentTaskCoordinator(second, second).create(
+                    "organize", execute_authorized=True
+                )
+                candidate = replace(
+                    owner_item,
+                    item_id="contender-item",
+                    task_id=contender.task_id,
+                    attempts=1,
+                )
+                # The item is never written for a source another unfinished work
+                # owns, and the exact owner is reported instead.
+                refused = second.claim_task_item_with_ownership(candidate, source_version=version)
+                self.assertIsNotNone(refused)
+                self.assertEqual(owner_task.task_id, refused["taskId"])
+                self.assertIsNone(second.get_item("contender-item"))
+                self.assertEqual(
+                    ("pending", "waiting_metadata"),
+                    (
+                        second.get_item(owner_item.item_id).status.value,
+                        second.get_item(owner_item.item_id).stage,
+                    ),
+                )
+
+                # The owner's own row is never its own competitor, so a retry of
+                # the same Task still admits (at no point does the boundary make a
+                # legal owner refuse its own remaining work).
+                self.assertIsNone(
+                    second.claim_task_item_with_ownership(owner_item, source_version=version)
+                )
+                self.assertEqual(owner_task.task_id, second.get_item(owner_item.item_id).task_id)
+
+    def test_a_legal_continuation_lineage_is_not_its_own_owner(self) -> None:
+        """A continuation's ancestors are its source, never a competing owner."""
+
+        from mediaflow.domain.source_evidence import source_fingerprint
+
+        modified = datetime(2026, 10, 20, 12, 0, tzinfo=UTC)
+        with tempfile.TemporaryDirectory() as directory:
+            database = Path(directory, "lineage.sqlite3")
+            with SQLiteTaskRepository(database) as repository:
+                coordinator = PersistentTaskCoordinator(repository, repository)
+                entry = self._entry("Movies/One.2001.mkv", 64, modified)
+                version = self._version("Movies/One.2001.mkv", 64, modified)
+                ancestor = coordinator.create("manual_organize", execute_authorized=True)
+                ancestor_item = coordinator.begin_item(
+                    ancestor.task_id,
+                    "source",
+                    "library",
+                    "Movies/One.2001.mkv",
+                    "Movies/One.2001.mkv",
+                    source_fingerprint=source_fingerprint("source", "library", entry).value,
+                    source_fingerprint_state="verified",
+                    source_storage_path="Movies/One.2001.mkv",
+                )
+                repository.upsert_item(
+                    replace(ancestor_item, status=TaskItemStatus.PAUSED, stage="paused")
+                )
+                continuation = coordinator.create(
+                    "organize", execute_authorized=False, item_limit=1
+                )
+                # Without the lineage the ancestor really owns the source...
+                self.assertIsNotNone(
+                    repository.claim_task_item_with_ownership(
+                        replace(
+                            ancestor_item,
+                            item_id="lineage-item",
+                            task_id=continuation.task_id,
+                            attempts=1,
+                        ),
+                        source_version=version,
+                    )
+                )
+                # ...and with it the continuation admits its own remaining scope.
+                self.assertIsNone(
+                    repository.claim_task_item_with_ownership(
+                        replace(
+                            ancestor_item,
+                            item_id="lineage-item",
+                            task_id=continuation.task_id,
+                            attempts=1,
+                        ),
+                        source_version=version,
+                        exclude_lineage_task_id=ancestor.task_id,
+                    )
+                )
+                self.assertEqual(continuation.task_id, repository.get_item("lineage-item").task_id)
+
     def test_a_legacy_task_item_without_evidence_keeps_its_claim(self) -> None:
         """A pre-change row proves no version, so it never reads as replaced."""
 

@@ -39,6 +39,8 @@ from mediaflow.application.processing_checkpoint import ProcessingCheckpointServ
 from mediaflow.application.strategy_test import (
     SyntheticMetadataProvider,
 )
+from mediaflow.application.task_runtime import PersistentTaskCoordinator
+from mediaflow.domain.failure import decode_failure_explanation
 from mediaflow.domain.media_discovery import (
     DiscoveryBudgets,
     DiscoveryConflict,
@@ -47,6 +49,7 @@ from mediaflow.domain.media_discovery import (
 )
 from mediaflow.domain.metadata import MediaCandidate, MediaType
 from mediaflow.domain.security import ApiPermission, ResolvedApiPrincipal
+from mediaflow.domain.task_persistence import PersistentTaskItem, TaskItemStatus
 from mediaflow.infrastructure.local_storage import LocalStorage
 from mediaflow.infrastructure.sqlite_configuration_management import (
     SQLiteConfigurationRepository,
@@ -1632,6 +1635,378 @@ class IntentPageAnalysisTests(_PreparationFixture):
             # durable, but a paused/cancelled walk leaves no confirmable subset and
             # no TaskItem, so nothing can ever be executed from it.
             self.assert_no_executable_work(value)
+
+
+class AdmittedSourceOwnershipTests(_PreparationFixture):
+    """B46.3-05: an admitted Files source is never consumed by another entrance.
+
+    The whole scenario is the real supported journey: one published definition,
+    its real Run once finalize/analysis, an explicit unattended grant, the real
+    interval scheduler and Worker, the production ``DefinitionScopedExecution``
+    handoff and real Local Storage/SQLite.  Only the Metadata answers use the
+    existing ``SyntheticMetadataProvider`` fixture boundary.
+    """
+
+    def document(self, **kwargs) -> dict:
+        document = super().document(**kwargs)
+        document["automationTaskDefinitions"] = [
+            {
+                "id": "shared",
+                "name": "Shared source",
+                "resourceLibraryId": "library",
+                "sourceScope": "Movies",
+                "mode": "automatic-organization",
+                "intervalSeconds": 3600,
+                "itemLimit": 10,
+                "enabled": True,
+            }
+        ]
+        return document
+
+    def _automatic_long_runs(self, value):
+        """The real granted definition, its scheduler and its Worker handoff."""
+
+        from datetime import UTC as _UTC
+        from datetime import datetime as _datetime
+
+        from mediaflow.application.automation import AutomationWorker, IntervalScheduler
+        from mediaflow.application.automation_definition_execution import (
+            DefinitionScopedExecutionService,
+        )
+        from mediaflow.application.automation_run_once import AutomationRunOnceService
+        from mediaflow.application.strategy_test import strategy_runner_from_configuration
+        from mediaflow.application.unattended_execution import (
+            UnattendedExecutionGrantService,
+        )
+        from mediaflow.final_cli import (
+            _ConfiguredPermissionAuthority,
+            _scheduler_snapshot_from_runtime,
+        )
+        from mediaflow.infrastructure.json_history import JsonLinesOperationHistoryRepository
+        from mediaflow.infrastructure.runtime_configuration import with_managed_snapshot
+
+        active = value.managed.active()
+        runtime = with_managed_snapshot(
+            value.discovery._configuration,
+            snapshot_id=active.revision_id,
+            digest=active.digest,
+            version=active.version,
+        )
+        # The exact Run once the operator reviewed: real discovery admission, real
+        # bounded walk, the explicit Finalize, then the shared zero-mutation
+        # analysis of that frozen scope.
+        analysis = value.discovery.admit_definition_run_once(
+            definition_id="shared", actor="local-admin"
+        )
+        for step in range(12):
+            value.discovery.claim_and_run(
+                worker_id=f"grant-walk-{step}", claim_token=f"walk-{step}"
+            )
+            analysis = value.repository.get_media_discovery(analysis.discovery_id)
+            if analysis.status.value not in {"queued", "running", "waiting_stability"}:
+                break
+        self.assertEqual("completed", analysis.status.value, analysis.progress.message)
+        AutomationRunOnceService(value.discovery, value.previews, clock=self.clock).finalize(
+            analysis.discovery_id,
+            actor="local-admin",
+            expected_version=analysis.version,
+        )
+        value.discovery.claim_and_run(worker_id="grant-analysis", claim_token="analysis")
+        analysis = value.repository.get_media_discovery(analysis.discovery_id)
+        self.assertIsNotNone(analysis.preview_id, analysis.progress.message)
+        self.assertEqual(
+            "previewed", value.repository.get_manual_preview(analysis.preview_id).status.value
+        )
+        origin = analysis.definition_origin
+        definition = runtime.automation_task_definitions[0]
+        grants = UnattendedExecutionGrantService(
+            value.repository,
+            discovery_service=value.discovery,
+            preview_service=value.previews,
+            permission_authority=_ConfiguredPermissionAuthority(lambda: runtime),
+        )
+        grants.grant(
+            definition,
+            configuration_snapshot_id=origin.configuration_revision_id,
+            configuration_snapshot_digest=origin.configuration_revision_digest,
+            configuration_snapshot_version=origin.configuration_revision_version,
+            actor="local-admin",
+            confirmation=True,
+            storage_id="source",
+        )
+
+        def factory(external=None, storage_ids=None):
+            values = {"source": value.source, "target": value.target}
+            return values if storage_ids is None else {key: values[key] for key in storage_ids}
+
+        def provider_factory(provider_ids):
+            return MetadataProviderRegistry((value.previews._providers._providers["tmdb"],))
+
+        service = DefinitionScopedExecutionService(
+            value.repository,
+            runtime,
+            storage_factory=factory,
+            provider_factory=provider_factory,
+            strategy_factory=strategy_runner_from_configuration,
+            history_factory=JsonLinesOperationHistoryRepository,
+            unattended_grant_service=grants,
+        )
+        IntervalScheduler(
+            value.repository,
+            (),
+            configuration_snapshot_resolver=lambda: _scheduler_snapshot_from_runtime(runtime),
+        ).tick(_datetime.now(_UTC))
+        return AutomationWorker(
+            value.repository, lambda job, cancelled: service.run(job, cancelled)
+        )
+
+    def test_a_scheduled_occurrence_never_consumes_an_admitted_files_source(self) -> None:
+        """The queued Files owner keeps its source, its Task and its zero effect.
+
+        B's proven order, unchanged: the operator admits one real file through
+        Files, so the Task is ``pending`` and the discovery ``queued``, and the
+        repository already reports that admission as the source's owner.  A later
+        interval occurrence must not move, delete or re-analyze that file as its
+        own work.
+        """
+
+        self.media("Movies/One.2001.mkv", size=64)
+        with self.journey() as value:
+            worker = self._automatic_long_runs(value)
+            manual = self.admit(value, ["Movies/One.2001.mkv"])
+            self.assertEqual(
+                "pending", value.repository.get_task(manual["organizeTaskId"]).status.value
+            )
+            owner = value.repository.find_owned_source_work(
+                storage_id="source",
+                source_path="Movies/One.2001.mkv",
+                storage_path="Movies/One.2001.mkv",
+                resource_library_id="library",
+            )
+            self.assertIsNotNone(owner)
+            self.assertEqual(manual["discoveryId"], owner["discoveryId"])
+            self.assertEqual("queued", owner["status"])
+
+            result = worker.run_next()
+            self.assertIsNotNone(result)
+            self.assertEqual("completed", result.status.value, result.error)
+            items = value.repository.list_items(result.task_id)
+            self.assertEqual(["Movies/One.2001.mkv"], [item.source_path for item in items])
+            self.assertEqual("failed", items[0].status.value)
+            # The durable reason is the shared, bounded ownership refusal — not a
+            # fabricated success and not an opaque adapter error.
+            failure = decode_failure_explanation(items[0].error)
+            self.assertIsNotNone(failure, items[0].error)
+            self.assertEqual("source_already_organizing", failure.category)
+            self.assertEqual("none", failure.side_effects)
+            self.assertFalse(failure.retry_safe)
+            # The first owner is untouched: same Task state, same source, and no
+            # mutation anywhere.
+            self.assertEqual(
+                "pending", value.repository.get_task(manual["organizeTaskId"]).status.value
+            )
+            self.assertTrue(value.source.exists("Movies/One.2001.mkv"))
+            self.assertEqual([], value.source.mutations)
+            self.assertEqual([], value.target.mutations)
+
+    def test_a_free_sibling_still_organizes_and_the_owner_survives(self) -> None:
+        """One owned source never blocks an independent sibling of the same run.
+
+        The scheduled occurrence runs both seeds of its scope.  Exactly one is
+        already admitted through Files, so it must be refused per item while the
+        other really completes; a whole-batch refusal that silently claimed
+        success (or blocked everything) would both hide the conflict and lose the
+        free source.
+        """
+
+        self.media("Movies/One.2001.mkv", size=64)
+        self.media("Movies/Two.2002.mkv", size=64)
+        with self.journey() as value:
+            worker = self._automatic_long_runs(value)
+            manual = self.admit(value, ["Movies/One.2001.mkv"])
+            result = worker.run_next()
+            self.assertIsNotNone(result)
+            self.assertEqual("completed", result.status.value, result.error)
+            items = {item.source_path: item for item in value.repository.list_items(result.task_id)}
+            self.assertEqual({"Movies/One.2001.mkv", "Movies/Two.2002.mkv"}, set(items))
+            self.assertEqual("failed", items["Movies/One.2001.mkv"].status.value)
+            self.assertEqual("success", items["Movies/Two.2002.mkv"].status.value)
+            # The refused sibling keeps the Files owner; the free sibling really
+            # moved, and only the free sibling did.
+            self.assertEqual(
+                "pending", value.repository.get_task(manual["organizeTaskId"]).status.value
+            )
+            self.assertTrue(value.source.exists("Movies/One.2001.mkv"))
+            self.assertFalse(value.source.exists("Movies/Two.2002.mkv"))
+            moved = [(operation, path) for operation, path in value.source.mutations]
+            self.assertEqual([("delete", "Movies/Two.2002.mkv")], moved)
+            self.assertTrue(
+                value.target.exists("Organized/Movies/Movies/Anime/Two (2002) [tmdbid-202]")
+            )
+
+    def test_a_paused_files_admission_still_owns_its_source(self) -> None:
+        """A paused Files work holds no execution lease and still owns the source.
+
+        The operator pauses the admitted work *before* the Worker ever walks it,
+        so no ``file_locks`` row and no TaskItem exist and the record only carries
+        a pending cooperative pause.  Ownership must still answer from the durable
+        admission: neither a control request nor the absence of an execution lease
+        releases an unresolved source.
+        """
+
+        self.media("Movies/One.2001.mkv", size=64)
+        with self.journey() as value:
+            worker = self._automatic_long_runs(value)
+            manual = self.admit(value, ["Movies/One.2001.mkv"])
+            status, detail = self.request(
+                value,
+                f"/api/v1/operations/organize/discoveries/{manual['discoveryId']}",
+            )
+            self.assertEqual(200, status, detail)
+            status, paused = self.request(
+                value,
+                f"/api/v1/operations/organize/discoveries/{manual['discoveryId']}/pause",
+                "POST",
+                {"expectedVersion": detail["version"]},
+            )
+            self.assertEqual(200, status, paused)
+            self.assertTrue(paused["pauseRequested"], paused)
+            # No execution lease and no TaskItem exist yet, so a lease cannot be
+            # what answers this ownership question.
+            self.assertEqual((), value.repository.list_items(manual["organizeTaskId"]))
+
+            result = worker.run_next()
+            self.assertIsNotNone(result)
+            items = value.repository.list_items(result.task_id)
+            self.assertEqual("failed", items[0].status.value)
+            self.assertEqual(
+                "source_already_organizing",
+                decode_failure_explanation(items[0].error).category,
+            )
+            self.assertTrue(value.source.exists("Movies/One.2001.mkv"))
+            current = value.repository.get_task(manual["organizeTaskId"]).status.value
+            self.assertIn(current, {"pending", "running", "paused"})
+            self.assertNotIn(
+                current,
+                {"completed", "partial_success", "failed", "cancelled"},
+                "the paused owner keeps its unfinished state",
+            )
+            self.assertEqual([], value.source.mutations)
+            self.assertEqual([], value.target.mutations)
+
+    def test_two_sqlite_connections_admit_one_owner_per_source(self) -> None:
+        """The same source cannot be admitted twice across two live connections.
+
+        Both connections ask the same durable question while the Files admission
+        is committed by the first.  Whoever commits first owns the source; the
+        other is refused, so the "admitted at most one effective owner" rule
+        holds for concurrent entrances and not only sequential ones.
+        """
+
+        self.media("Movies/One.2001.mkv", size=64)
+        with self.journey() as value:
+            worker = self._automatic_long_runs(value)
+            manual = self.admit(value, ["Movies/One.2001.mkv"])
+            with SQLiteTaskRepository(self.database) as second_repository:
+                owner = second_repository.find_owned_source_work(
+                    storage_id="source",
+                    source_path="Movies/One.2001.mkv",
+                    storage_path="Movies/One.2001.mkv",
+                    resource_library_id="library",
+                )
+                self.assertIsNotNone(owner)
+                self.assertEqual(manual["discoveryId"], owner["discoveryId"])
+                # A second connection asking on behalf of its own Task is refused
+                # by the same atomic boundary the Worker uses.
+                coordinator = PersistentTaskCoordinator(second_repository, second_repository)
+                competing = coordinator.create("organize", execute_authorized=True)
+                item = PersistentTaskItem(
+                    "probe-item",
+                    competing.task_id,
+                    "source",
+                    "library",
+                    "Movies/One.2001.mkv",
+                    "Movies/One.2001.mkv",
+                    TaskItemStatus.PROCESSING,
+                    "pipeline",
+                    1,
+                    datetime(2026, 10, 16, 12, 0, tzinfo=UTC),
+                    datetime(2026, 10, 16, 12, 0, tzinfo=UTC),
+                    source_storage_path="Movies/One.2001.mkv",
+                )
+                refused = second_repository.claim_task_item_with_ownership(item)
+                self.assertIsNotNone(refused)
+                self.assertIsNone(second_repository.get_item("probe-item"))
+            result = worker.run_next()
+            self.assertIsNotNone(result)
+            items = value.repository.list_items(result.task_id)
+            self.assertEqual("failed", items[0].status.value)
+            self.assertTrue(value.source.exists("Movies/One.2001.mkv"))
+            self.assertEqual([], value.source.mutations)
+
+    def test_a_replaced_source_is_admitted_as_a_new_version(self) -> None:
+        """A really replaced file is a new concrete source, not the old owner.
+
+        The Files walk records the content version it actually observed.  Once the
+        file at that path is genuinely replaced, no comparable evidence says it is
+        still that source, so the old claim no longer holds the path and the new
+        content can be organized.  A claim is never held forever by a path string —
+        and it is never released on incomparable evidence either (covered below).
+        """
+
+        path = self.media("Movies/One.2001.mkv", size=64)
+        with self.journey() as value:
+            worker = self._automatic_long_runs(value)
+            manual = self.admit(value, ["Movies/One.2001.mkv"])
+            # Let the Files work really observe the source, so its recorded
+            # content version is comparable evidence rather than "unknown".
+            self.run_worker(value)
+            observed = value.repository.get_media_discovery(manual["discoveryId"])
+            self.assertTrue(
+                [source for source in observed.sources if source.get("path")],
+                observed.progress.message,
+            )
+            path.write_bytes(b"r" * 4096)
+            result = worker.run_next()
+            self.assertIsNotNone(result)
+            items = value.repository.list_items(result.task_id)
+            self.assertEqual("success", items[0].status.value, items[0].error)
+            self.assertFalse(value.source.exists("Movies/One.2001.mkv"))
+            self.assertTrue(
+                value.target.exists("Organized/Movies/Movies/Anime/One (2001) [tmdbid-201]")
+            )
+            # The Files work itself is never cancelled, confirmed or rewritten by
+            # the other entrance: it keeps its own pin, state and source list.
+            self.assertNotIn(
+                value.repository.get_task(manual["organizeTaskId"]).status.value,
+                {"cancelled", "failed"},
+            )
+
+    def test_an_unproven_version_never_releases_a_live_claim(self) -> None:
+        """An owner with no comparable version keeps its claim.
+
+        A Files admission the Worker has not walked yet recorded no content
+        version.  A changed file then proves nothing about the *reviewed* source,
+        so the claim holds: an unknown side answers "unknown", never "different".
+        """
+
+        path = self.media("Movies/One.2001.mkv", size=64)
+        with self.journey() as value:
+            worker = self._automatic_long_runs(value)
+            manual = self.admit(value, ["Movies/One.2001.mkv"])
+            self.assertEqual((), value.repository.list_items(manual["organizeTaskId"]))
+            path.write_bytes(b"r" * 4096)
+            result = worker.run_next()
+            self.assertIsNotNone(result)
+            items = value.repository.list_items(result.task_id)
+            self.assertEqual("failed", items[0].status.value)
+            self.assertEqual(
+                "source_already_organizing",
+                decode_failure_explanation(items[0].error).category,
+            )
+            self.assertTrue(value.source.exists("Movies/One.2001.mkv"))
+            self.assertEqual([], value.source.mutations)
+            self.assertEqual([], value.target.mutations)
 
 
 if __name__ == "__main__":

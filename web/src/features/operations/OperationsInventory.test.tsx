@@ -957,6 +957,26 @@ describe("Operations run inventory landing", () => {
               "re-select the source from the current Files view and prepare a new summary",
           },
         },
+        {
+          ...problemItems.items[0],
+          item_id: "item-c",
+          source_path: "Movies/c.mkv",
+          // B46.3-05: a scheduled occurrence refused because a Files admission
+          // still owns the source persists its own bounded category.
+          failure: {
+            category: "source_already_organizing",
+            message:
+              "source already organizing: this file still belongs to another unfinished " +
+              "organizing work, so this run did not take it over",
+            durableState:
+              "TaskItem and Result are durable with a failed outcome",
+            sideEffects: "none",
+            retrySafe: false,
+            nextAction:
+              "open that Files organizing work and continue or cancel it; this run keeps " +
+              "its own remaining scope and never cancels, confirms or takes over the other work",
+          },
+        },
       ],
       truncated: false,
       previous_cursor: "page-one",
@@ -1031,6 +1051,16 @@ describe("Operations run inventory landing", () => {
     expect(within(panel).getByText(/已核查的来源已被替换/)).toBeVisible();
     expect(within(panel).getByText(/回到当前文件页重新选择来源/)).toBeVisible();
     expect(within(panel).queryByText("source_changed")).toBeNull();
+    // The refused duplicate-owner reason of a scheduled occurrence is its own
+    // bounded category: the panel shows the readable reason and next step that
+    // points back to the Files work, never the raw token.
+    expect(
+      within(panel).getByText(/该文件已属于未结束的整理工作/),
+    ).toBeVisible();
+    expect(
+      within(panel).getByText(/打开并继续或取消那份文件页整理工作/),
+    ).toBeVisible();
+    expect(within(panel).queryByText("source_already_organizing")).toBeNull();
     await waitFor(() =>
       expect(router.history.location.search).toContain(
         "problemCursor=page-two",
@@ -1051,9 +1081,9 @@ describe("Operations run inventory landing", () => {
       (await within(panel).findAllByText(/Movies\/b\.mkv/)).length,
     ).toBeGreaterThan(0);
     await user.click(
-      within(panel).getByRole("button", {
+      within(panel).getAllByRole("button", {
         name: "查看该文件证据与恢复记录",
-      }),
+      })[0]!,
     );
     await waitFor(() =>
       expect(router.history.location.pathname).toBe("/ui-v2/operations"),
