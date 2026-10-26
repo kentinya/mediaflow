@@ -422,6 +422,67 @@ def build_managed_fixture(
             },
         }
     )
+    # RO-2/AC-16: a Files 整理 selection resolves each source's RecognitionType
+    # through the *pinned* RecognitionRule.  A library whose sources are meant to
+    # be organized therefore publishes its own rule here, exactly like a real
+    # configured library; a source with no matching rule is now its own native
+    # Recognition problem instead of being forced into the first configured type.
+    document["recognitionRules"].append(
+        {
+            "id": "retirement-library",
+            "name": "Retirement stability resource library",
+            "priority": 150,
+            "score": 100,
+            "stopOnMatch": True,
+            "condition": {
+                "operator": "and",
+                "children": [
+                    {"field": "resource_library_id", "operator": "equals", "value": "retirement"},
+                    {
+                        "field": "extension",
+                        "operator": "in",
+                        "value": ["mkv", "mp4"],
+                    },
+                ],
+            },
+            "outputRecognitionType": "A",
+        }
+    )
+    # RO-2/AC-16: a Files 整理 selection resolves each source's RecognitionType
+    # through the *pinned* RecognitionRule, so the ordinary Files journey fixtures
+    # publish their own video rule here exactly like a real configured library.  It
+    # is deliberately narrow: the native recovery fixtures are reached through the
+    # analysis-only `/files/organize` preparation, whose DryRun continuation applies
+    # an operator-recognised type and therefore requires an *unrecognized* rule
+    # outcome.  A broad rule would make that legal manual selection impossible.
+    document["recognitionRules"].append(
+        {
+            "id": "files-journey-video",
+            "name": "Files journey video fixtures",
+            "priority": 120,
+            "score": 100,
+            "stopOnMatch": True,
+            "condition": {
+                "operator": "and",
+                "children": [
+                    {
+                        "field": "resource_library_id",
+                        "operator": "equals",
+                        "value": "source",
+                    },
+                    {
+                        "field": "filename",
+                        "operator": "regex",
+                        "value": (
+                            "^(?:One|Two|Three|Four|Ninth|Tenth|Eleventh|"
+                            "Thirteenth|Fourteenth)\\.[0-9]{4}\\.(?:mkv|mp4)$"
+                        ),
+                    },
+                ],
+            },
+            "outputRecognitionType": "A",
+        }
+    )
     document["organizePolicies"][0]["attachments"] = {"enabled": True}
     # A real COPY+Rename policy.  COPY is the exact shape in which a verified
     # success leaves the source file in place, so a repeated execution of the

@@ -27,17 +27,24 @@ from urllib.parse import quote
 
 from mediaflow.application.configuration_snapshot import ManagedConfigurationService
 from mediaflow.application.manual_organize import ManualOrganizeIntentService
+from mediaflow.application.manual_organize_execution import ManualOrganizeExecutionService
 from mediaflow.application.manual_organize_preview import ManualOrganizePreviewService
+from mediaflow.application.manual_organize_worker import ManualOrganizeExecutionWorker
 from mediaflow.application.media_discovery import MediaDiscoveryService
 from mediaflow.application.media_discovery_worker import MediaDiscoveryWorker
+from mediaflow.application.metadata import MetadataProviderRegistry
+from mediaflow.application.processing_checkpoint import ProcessingCheckpointService
+from mediaflow.application.strategy_test import SyntheticMetadataProvider
 from mediaflow.domain.library import FileStabilityPolicy
 from mediaflow.domain.manual_organize import ManualSourceIdentity
+from mediaflow.domain.manual_organize_preview import ManualPreviewItemStatus
 from mediaflow.domain.media_discovery import (
     DiscoveryBudgets,
     DiscoveryConflict,
     DiscoveryError,
     DiscoveryObservation,
 )
+from mediaflow.domain.metadata import MediaCandidate, MediaType
 from mediaflow.domain.security import ApiPermission, ResolvedApiPrincipal
 from mediaflow.domain.source_evidence import occurrence_id_for, source_fingerprint
 from mediaflow.domain.storage import (
@@ -74,7 +81,12 @@ class _Clock:
 
 
 class _RecordingStorage:
-    """Wrap Local Storage and record every call so mutation can be proven absent."""
+    """Delegate Storage that records every call and performs real effects.
+
+    Reads and effects are delegated to the wrapped real provider, so a confirmed
+    execution journey exercises the production effect path; the recorded call
+    list is what proves a zero-mutation stage performed no mutation.
+    """
 
     def __init__(self, storage) -> None:
         self._storage = storage
@@ -87,21 +99,12 @@ class _RecordingStorage:
 
         self._unreadable.add(prefix.strip("/"))
 
+    def __getattr__(self, name):
+        return getattr(self._storage, name)
+
     @property
     def storage_id(self) -> str:
         return self._storage.storage_id
-
-    @property
-    def name(self) -> str:
-        return self._storage.name
-
-    @property
-    def read_only(self) -> bool:
-        return self._storage.read_only
-
-    @property
-    def capabilities(self):
-        return self._storage.capabilities
 
     def list(self, path: str):
         self.reads.append(("list", path))
@@ -133,24 +136,31 @@ class _RecordingStorage:
 
     def write(self, path: str, data, *, overwrite: bool = False) -> None:
         self.mutations.append(("write", path))
+        self._storage.write(path, data, overwrite=overwrite)
 
     def create_directory(self, path: str) -> None:
         self.mutations.append(("create_directory", path))
+        self._storage.create_directory(path)
 
     def move(self, source: str, target: str, *, overwrite: bool = False) -> None:
         self.mutations.append(("move", source))
+        self._storage.move(source, target, overwrite=overwrite)
 
     def copy(self, source: str, target: str, *, overwrite: bool = False) -> None:
         self.mutations.append(("copy", source))
+        self._storage.copy(source, target, overwrite=overwrite)
 
     def delete(self, path: str) -> None:
         self.mutations.append(("delete", path))
+        self._storage.delete(path)
 
     def hard_link(self, source: str, target: str) -> None:
         self.mutations.append(("hard_link", source))
+        self._storage.hard_link(source, target)
 
     def soft_link(self, source: str, target: str) -> None:
         self.mutations.append(("soft_link", source))
+        self._storage.soft_link(source, target)
 
 
 class _DiscoveryFixture(unittest.TestCase):
@@ -328,17 +338,22 @@ class _DiscoveryFixture(unittest.TestCase):
             # same owner policy as the later manual Preview.
             for policy in document.get("organizePolicies", []):
                 policy["attachments"]["enabled"] = True
+            # RO-2/AC-16: the Files journey resolves each source's type through the
+            # pinned RecognitionRule, and only that resolved type's policy can
+            # associate a sidecar.  The fixture therefore publishes the ordinary
+            # video rule (every configured video suffix) so an attachment journey
+            # starts from a real decided type instead of an invented default.
             document["recognitionRules"].append(
                 {
-                    "id": "discovery-movie-fixture",
-                    "name": "Discovery movie fixture",
+                    "id": "discovery-video-fixture",
+                    "name": "Discovery video fixture",
                     "priority": 200,
                     "score": 100,
                     "stopOnMatch": True,
                     "condition": {
-                        "field": "path",
-                        "operator": "contains",
-                        "value": "Movies/",
+                        "field": "extension",
+                        "operator": "in",
+                        "value": ["mkv", "mp4", "wmv", "avi"],
                     },
                     "outputRecognitionType": "A",
                 }
@@ -358,6 +373,7 @@ class _DiscoveryFixture(unittest.TestCase):
         attachments: bool = False,
         metadata_query_type: str | None = None,
         source_storage=None,
+        provider=None,
     ):
 
         document = self.document(
@@ -397,12 +413,24 @@ class _DiscoveryFixture(unittest.TestCase):
                 runtime_resolver=lambda snapshot_id, digest: runtime,
                 storage_factory=lambda value, ids: dict(storages),
             )
+            providers = MetadataProviderRegistry((provider,)) if provider is not None else None
             previews = ManualOrganizePreviewService(
                 repository,
                 intents,
                 configuration=runtime,
+                providers=providers,
                 storages=dict(storages),
                 clock=self.clock,
+            )
+            executions = ManualOrganizeExecutionService(
+                repository,
+                previews,
+                intents,
+                checkpoint_service=ProcessingCheckpointService(repository),
+                storages=dict(storages),
+            )
+            execution_worker = ManualOrganizeExecutionWorker(
+                executions, worker_id="execution-worker", notice=lambda line: None
             )
             discovery = MediaDiscoveryService(
                 repository,
@@ -426,6 +454,14 @@ class _DiscoveryFixture(unittest.TestCase):
                                 ApiPermission.READ,
                                 ApiPermission.MANAGE_MANUAL_ORGANIZE,
                                 ApiPermission.EXECUTE_MANUAL_ORGANIZE,
+                                # RO-2/AC-15: the native four-type recovery this
+                                # journey exercises is the operator's own decision
+                                # surface, so the fixture principal carries exactly
+                                # the documented operator permissions.
+                                ApiPermission.RESOLVE_RECOGNITION_REVIEW,
+                                ApiPermission.RESOLVE_METADATA_REVIEW,
+                                ApiPermission.RESOLVE_CLASSIFICATION_REVIEW,
+                                ApiPermission.RESOLVE_CONFIRMATION,
                             }
                         ),
                     ),
@@ -435,6 +471,7 @@ class _DiscoveryFixture(unittest.TestCase):
                 bootstrap_document=document,
                 manual_intent_service=intents,
                 manual_preview_service=previews,
+                manual_execution_service=executions,
                 media_discovery_service=discovery,
                 storage_adapters=dict(storages),
             )
@@ -444,6 +481,8 @@ class _DiscoveryFixture(unittest.TestCase):
                     repository=repository,
                     intents=intents,
                     previews=previews,
+                    executions=executions,
+                    execution_worker=execution_worker,
                     discovery=discovery,
                     configuration=runtime,
                     clock=self.clock,
@@ -5811,13 +5850,15 @@ class A44BReviewCorrections(_DiscoveryFixture):
             self.assertEqual([], value.target.mutations)
             self.assert_zero_mutation_with_admitted_work(value)
 
-    def test_nondefault_rule_type_keeps_sources_through_the_manual_default_preview(self) -> None:
-        """A discovery rule cannot hide a source from the later manual default choice.
+    def test_a_rule_resolved_type_governs_the_later_exact_preview(self) -> None:
+        """RO-2/AC-16: the pinned rule's type is the Files item's real choice.
 
-        The folder rule recognizes B and B enables Trailer attachments, but the
-        existing manual-intent journey still defaults a new unindexed source to
-        A. Discovery must preserve the Trailer as an ordinary reviewed source;
-        the exact Preview then plans both sources under the unchanged A choice.
+        The folder rule recognizes B and B enables Trailer attachments, so the
+        walk associates the trailer under B and the *intent* carries B as this
+        source's decision.  The exact Preview then plans under that same pinned B
+        policy, so the reviewed plan and the associated sidecar agree.  Nothing
+        here is a default: a source with no matching rule stays undecided and is
+        covered by its own native Recognition journey.
         """
 
         from mediaflow.domain.task_persistence import (
@@ -5856,7 +5897,11 @@ class A44BReviewCorrections(_DiscoveryFixture):
             }
             self.assertFalse(policies["A"].enabled)
             self.assertTrue(policies["B"].enabled)
+            # The walk, the intent admission and the analysis all resolve under the
+            # one published pin, exactly as the production assembly composes them.
             value.discovery._runtime_resolver = lambda _sid, _digest: runtime
+            value.intents._runtime_resolver = lambda _sid, _digest: runtime
+            value.previews._runtime_resolver = lambda _sid, _digest: runtime
             status, admitted = self.request(
                 value,
                 "/api/v1/resource-libraries/library/files/discoveries",
@@ -5866,9 +5911,12 @@ class A44BReviewCorrections(_DiscoveryFixture):
             self.assertEqual(202, status, admitted)
             settled = self.run_discovery(value)
             self.assertEqual("completed", settled["status"], settled)
-            expected = {"Movies/Film.2001.mkv", "Movies/Film.2001-trailer.mp4"}
-            self.assertEqual(expected, {item["path"] for item in settled["sources"]})
-            self.assertEqual(2, settled["progress"]["primarySources"], settled)
+            # B associates the trailer under its own policy, so the walk keeps one
+            # primary and the trailer as an attachment of it.
+            self.assertEqual(
+                {"Movies/Film.2001.mkv"}, {item["path"] for item in settled["sources"]}
+            )
+            self.assertEqual(1, settled["progress"]["primarySources"], settled)
 
             status, frozen = self.request(
                 value,
@@ -5878,72 +5926,69 @@ class A44BReviewCorrections(_DiscoveryFixture):
             )
             self.assertEqual(201, status, frozen)
             intent = value.repository.get_manual_intent(frozen["intentId"])
-            self.assertEqual(expected, {item.source.path for item in intent.items})
-            self.assertEqual({"A"}, {item.choice.recognition_type_id for item in intent.items})
-            self.assertIn(
-                "B",
-                {item.type_id for item in intent.options.recognition_types},
-                "the non-default type remains available for explicit operator review",
-            )
+            self.assertEqual({"Movies/Film.2001.mkv"}, {item.source.path for item in intent.items})
+            # The rule's own answer, not the first configured type, is the item's
+            # decision, and its downstream policies are that type's exact mapping.
+            self.assertEqual({"B"}, {item.choice.recognition_type_id for item in intent.items})
+            self.assertEqual({"B"}, {item.choice.naming_policy_id for item in intent.items})
 
-            # Ground the same valid metadata identity for both source-linked
-            # Preview choices, as a completed offline result would, without
-            # admitting execution authority or contacting a Provider.
+            # Ground one valid offline metadata identity so Preview can produce the
+            # exact plan without contacting a MetadataProvider.
             now = value.clock()
-            for index, item in enumerate(intent.items):
-                task_id = f"preview-proof-task-{index}"
-                value.repository.create_task(
-                    PersistentTask(
-                        task_id,
-                        "organize",
-                        PersistentTaskStatus.COMPLETED,
-                        False,
-                        now,
-                        now,
-                    )
+            item = intent.items[0]
+            task_id = "preview-proof-task"
+            value.repository.create_task(
+                PersistentTask(
+                    task_id,
+                    "organize",
+                    PersistentTaskStatus.COMPLETED,
+                    False,
+                    now,
+                    now,
                 )
-                value.repository.append_result(
-                    PersistentResultRecord(
-                        f"preview-proof-result-{index}",
-                        task_id,
-                        f"preview-proof-item-{index}",
-                        "source",
-                        item.source.path,
-                        "target",
-                        f"Movies/Film (2001)/Film {index}.mkv",
-                        "A",
-                        "tmdb",
-                        "909",
-                        "A",
-                        "A",
-                        "A",
-                        "A",
-                        "MOVE",
-                        "dry_run",
-                        now,
-                        title="Film",
-                    )
+            )
+            value.repository.append_result(
+                PersistentResultRecord(
+                    "preview-proof-result",
+                    task_id,
+                    "preview-proof-item",
+                    "source",
+                    item.source.path,
+                    "target",
+                    "Movies/Film (2001)/Film.mkv",
+                    "B",
+                    "tmdb",
+                    "909",
+                    "B",
+                    "A",
+                    "A",
+                    "A",
+                    "MOVE",
+                    "dry_run",
+                    now,
+                    title="Film",
                 )
-            for item in intent.items:
-                status, _choice = self.request(
-                    value,
-                    f"/api/v1/operations/organize/intents/{intent.intent_id}/items/{item.item_id}/choice",
-                    "POST",
-                    {
-                        "expectedVersion": intent.version,
-                        "expectedItemVersion": item.version,
-                        "recognitionTypeId": "A",
-                        "metadata": {
-                            "provider": "tmdb",
-                            "providerId": "909",
-                            "mediaType": "movie",
-                            "title": "Film",
-                        },
+            )
+            status, _choice = self.request(
+                value,
+                f"/api/v1/operations/organize/intents/{intent.intent_id}/items/{item.item_id}/choice",
+                "POST",
+                {
+                    "expectedVersion": intent.version,
+                    "expectedItemVersion": item.version,
+                    "recognitionTypeId": "B",
+                    "metadata": {
+                        "provider": "tmdb",
+                        "providerId": "909",
+                        # RecognitionType B is the TV type in this pinned policy, so
+                        # its grounded identity keeps that media type.
+                        "mediaType": "tv",
+                        "title": "Film",
                     },
-                )
-                self.assertEqual(200, status)
-                intent = value.repository.get_manual_intent(intent.intent_id)
-
+                },
+            )
+            self.assertEqual(200, status, _choice)
+            intent = value.repository.get_manual_intent(intent.intent_id)
             status, preview = self.request(
                 value,
                 f"/api/v1/manual-intents/{intent.intent_id}/preview",
@@ -5952,12 +5997,21 @@ class A44BReviewCorrections(_DiscoveryFixture):
             )
             self.assertEqual(201, status, preview)
             self.assertEqual("previewed", preview["status"], preview)
-            self.assertEqual(expected, {item["source"]["path"] for item in preview["items"]})
-            self.assertTrue(all(item["status"] == "previewed" for item in preview["items"]))
-            main = next(
-                item for item in preview["items"] if item["source"]["path"].endswith(".mkv")
+            main = preview["items"][0]
+            self.assertEqual("Movies/Film.2001.mkv", main["source"]["path"])
+            self.assertEqual("B", main["plan"]["recognitionType"])
+            self.assertEqual(
+                [
+                    (
+                        "trailer",
+                        "Movies/Film.2001-trailer.mp4",
+                    )
+                ],
+                [
+                    (attachment["type"], attachment["source"]["path"])
+                    for attachment in main["plan"]["attachments"]
+                ],
             )
-            self.assertEqual([], main["plan"]["attachments"])
             self.assertEqual([], value.source.mutations)
             self.assertEqual([], value.target.mutations)
 
@@ -6332,3 +6386,294 @@ class A44BReviewCorrections(_DiscoveryFixture):
             )
             self.assertEqual(1, settled["progress"]["primarySources"], settled)
             self.assertEqual([], value.source.mutations)
+
+
+class NativeRecognitionJourneyTests(_DiscoveryFixture):
+    """RO-2/AC-16: a rule miss is a real Recognition problem, never a default type."""
+
+    def setUp(self) -> None:
+        super().setUp()
+        self._no_rules = True
+
+    def document(self, **kwargs) -> dict:
+        document = super().document(**kwargs)
+        if self._no_rules:
+            document["recognitionRules"] = []
+        return document
+
+    def _production_journey(self, document: dict):
+        """Publish one document through the real managed loader."""
+
+        from mediaflow.infrastructure.runtime_configuration import (
+            load_managed_runtime_configuration,
+            with_managed_snapshot,
+        )
+
+        revision = _activate(
+            ManagedConfigurationService(
+                SQLiteConfigurationRepository(self.database),
+                bootstrap_database_path=str(self.database),
+            ),
+            document,
+        )
+        runtime = with_managed_snapshot(
+            load_managed_runtime_configuration(
+                revision.document, bootstrap_database_path=str(self.database)
+            ),
+            snapshot_id=revision.revision_id,
+            digest=revision.digest,
+        )
+        return revision, runtime
+
+    def _admit_and_settle(self, value, paths: list[str]):
+        status, admitted = self.request(
+            value,
+            "/api/v1/resource-libraries/library/files/discoveries",
+            "POST",
+            {"paths": paths, "autoPrepare": True},
+        )
+        self.assertEqual(202, status, admitted)
+        settled = self.run_discovery(value)
+        return admitted, settled
+
+    def _reanalysed_preview(self, value, admitted, settled):
+        current = value.repository.get_media_discovery(settled["discoveryId"])
+        status, accepted = self.request(
+            value,
+            f"/api/v1/operations/organize/discoveries/{settled['discoveryId']}/analyze",
+            "POST",
+            {"expectedVersion": current.version},
+        )
+        self.assertEqual(200, status, accepted)
+        for index in range(8):
+            result = value.discovery.claim_and_run(
+                worker_id=f"reanalysis-{index}", claim_token=f"reanalysis-token-{index}"
+            )
+            self.assertIsNotNone(result)
+            if result.terminal or result.preview_id is not None:
+                break
+        return value.repository.get_media_discovery(admitted["discoveryId"])
+
+    def test_a_rule_miss_stays_an_undecided_native_recognition_problem(self) -> None:
+        """B46.3-01: no type is forced when the pinned rules match nothing.
+
+        The Files selection is admitted, walked and analyzed with the published
+        configuration whose rule set is empty.  The admitted Task must carry one
+        ``waiting_recognition`` item, the Recognition view must count it, and no
+        plan, target or media effect may exist — the operator decides the type.
+        """
+
+        self.media("Movies/One.2001.mkv")
+        with self.journey() as value:
+            admitted, settled = self._admit_and_settle(value, ["Movies/One.2001.mkv"])
+            self.assertEqual("prepared", settled["progress"]["phase"], settled)
+            preview = value.repository.get_manual_preview(settled["previewId"])
+            self.assertIsNotNone(preview)
+            self.assertEqual(
+                [ManualPreviewItemStatus.BLOCKED],
+                [item.status for item in preview.items],
+            )
+            self.assertIsNone(preview.items[0].plan["recognitionType"])
+            self.assertIsNone(preview.items[0].plan["destination"])
+            self.assertIsNone(preview.items[0].plan["operation"])
+
+            task_id = admitted["organizeTaskId"]
+            items = value.repository.list_items(task_id)
+            self.assertEqual(["waiting_recognition"], [item.status.value for item in items])
+            intent = value.repository.get_manual_intent(settled["intentId"])
+            self.assertEqual([None], [item.choice.recognition_type_id for item in intent.items])
+            self.assertEqual([None], [item.choice.naming_policy_id for item in intent.items])
+
+            status, recognition = self.request(value, "/api/v1/operations/runs?view=recognition")
+            self.assertEqual(200, status, recognition)
+            self.assertEqual(1, recognition["total"], recognition)
+            status, attention = self.request(value, "/api/v1/operations/runs?view=attention")
+            self.assertEqual(200, status, attention)
+            self.assertEqual(1, attention["total"], attention)
+            self.assertEqual([], value.source.mutations)
+            self.assertEqual([], value.target.mutations)
+
+    def test_an_ambiguous_rule_match_is_not_a_forced_choice(self) -> None:
+        """RO-2/AC-16: two equally-scored types stay the operator's decision."""
+
+        self.media("Movies/One.2001.mkv")
+        self._no_rules = False
+        document = self.document()
+        document["recognitionRules"] = [
+            {
+                "id": "movie-type",
+                "name": "Movie type",
+                "priority": 100,
+                "score": 100,
+                "stopOnMatch": False,
+                "condition": {"field": "extension", "operator": "in", "value": ["mkv"]},
+                "outputRecognitionType": "A",
+            },
+            {
+                "id": "tv-type",
+                "name": "TV type",
+                "priority": 100,
+                "score": 100,
+                "stopOnMatch": False,
+                "condition": {"field": "extension", "operator": "in", "value": ["mkv"]},
+                "outputRecognitionType": "B",
+            },
+        ]
+        with self.journey() as value:
+            _revision, runtime = self._production_journey(document)
+            value.discovery._runtime_resolver = lambda sid, digest: runtime
+            value.intents._runtime_resolver = lambda sid, digest: runtime
+            value.previews._runtime_resolver = lambda sid, digest: runtime
+            admitted, settled = self._admit_and_settle(value, ["Movies/One.2001.mkv"])
+            preview = value.repository.get_manual_preview(settled["previewId"])
+            self.assertIsNotNone(preview)
+            item = preview.items[0]
+            self.assertEqual(ManualPreviewItemStatus.BLOCKED, item.status)
+            self.assertIsNone(item.plan["recognitionType"])
+            self.assertEqual("ambiguous", item.plan["analysis"]["status"], item.plan)
+            intent = value.repository.get_manual_intent(settled["intentId"])
+            self.assertEqual([None], [value.choice.recognition_type_id for value in intent.items])
+            self.assertEqual([], value.source.mutations)
+            self.assertEqual([], value.target.mutations)
+
+    def test_a_rule_match_selects_that_type_and_its_policy_mapping(self) -> None:
+        """The inverse case: one real rule answer is the item's own decision."""
+
+        self.media("Movies/One.2001.mkv")
+        self._no_rules = False
+        document = self.document()
+        document["recognitionRules"] = [
+            {
+                "id": "bluray-tv",
+                "name": "Bluray TV",
+                "priority": 100,
+                "score": 100,
+                "stopOnMatch": True,
+                "condition": {"field": "filename", "operator": "contains", "value": "One"},
+                "outputRecognitionType": "B",
+            }
+        ]
+        with self.journey() as value:
+            _revision, runtime = self._production_journey(document)
+            value.discovery._runtime_resolver = lambda sid, digest: runtime
+            value.intents._runtime_resolver = lambda sid, digest: runtime
+            value.previews._runtime_resolver = lambda sid, digest: runtime
+            _admitted, settled = self._admit_and_settle(value, ["Movies/One.2001.mkv"])
+            intent = value.repository.get_manual_intent(settled["intentId"])
+            self.assertEqual({"B"}, {item.choice.recognition_type_id for item in intent.items})
+            self.assertEqual({"B"}, {item.choice.naming_policy_id for item in intent.items})
+            self.assertEqual({"B"}, {item.choice.classification_policy_id for item in intent.items})
+            self.assertEqual([], value.source.mutations)
+            self.assertEqual([], value.target.mutations)
+
+    def test_a_native_recognition_decision_reaches_a_real_confirmed_result(self) -> None:
+        """RO-2/AC-16 journey: decision → analysis → exact summary → execution.
+
+        The whole native chain runs through its real entries: the operator saves a
+        Recognition decision on the admitted Task's own item, the run re-analyzes
+        under the same pin, links the exact summary and confirms one selected
+        subset, and the resident execution Worker performs exactly that effect.
+        The decision and the summary before it grant no execution authority.
+        """
+
+        self.media("Movies/One.2001.mkv")
+        provider = SyntheticMetadataProvider(
+            (
+                MediaCandidate(
+                    "tmdb",
+                    "201",
+                    MediaType.MOVIE,
+                    "One",
+                    year=2001,
+                    genres=("Animation",),
+                    countries=("JP",),
+                ),
+            )
+        )
+        with self.journey(provider=provider) as value:
+            admitted, settled = self._admit_and_settle(value, ["Movies/One.2001.mkv"])
+            task_id = admitted["organizeTaskId"]
+            item = value.repository.list_items(task_id)[0]
+            self.assertEqual("waiting_recognition", item.status.value)
+
+            status, checkpoint = self.request(
+                value, f"/api/v1/tasks/{task_id}/items/{item.item_id}"
+            )
+            self.assertEqual(200, status, checkpoint)
+            self.assertIn("resolve_recognition", checkpoint["permitted_action_ids"])
+            status, decision = self.request(
+                value,
+                f"/api/v1/tasks/{task_id}/items/{item.item_id}/recovery/decision",
+                "POST",
+                {
+                    "kind": "recognition",
+                    "expectedCheckpointVersion": checkpoint["checkpoint_version"],
+                    "recognitionTypeId": "A",
+                },
+            )
+            self.assertEqual(200, status, decision)
+            # A saved decision is not success and grants no authority.
+            self.assertEqual([], value.source.mutations)
+            self.assertEqual([], value.target.mutations)
+
+            preview_discovery = self._reanalysed_preview(value, admitted, settled)
+            self.assertIsNotNone(preview_discovery.preview_id)
+            intent = value.repository.get_manual_intent(preview_discovery.intent_id)
+            self.assertEqual({"A"}, {value.choice.recognition_type_id for value in intent.items})
+
+            status, preview = self.request(
+                value,
+                f"/api/v1/operations/organize/previews/{preview_discovery.preview_id}",
+            )
+            self.assertEqual(200, status, preview)
+            ready = [
+                value["itemId"] for value in preview["items"] if value["status"] == "previewed"
+            ]
+            self.assertEqual(1, len(ready), preview)
+            self.assertEqual([], value.source.mutations)
+            self.assertEqual([], value.target.mutations)
+
+            status, admitted_execution = self.request(
+                value,
+                f"/api/v1/operations/organize/previews/{preview_discovery.preview_id}/execute",
+                "POST",
+                {
+                    "confirmation": True,
+                    "itemIds": ready,
+                    "expectedIntentVersion": preview["intentVersion"],
+                    "allowOverwrite": False,
+                    "allowSourceCleanup": False,
+                },
+            )
+            self.assertIn(status, (200, 202), admitted_execution)
+            completed = value.execution_worker.run_next()
+            self.assertIsNotNone(completed)
+            execution = value.repository.get_manual_execution(completed.execution_id)
+            # Every selected item really succeeded.
+            self.assertEqual(["success"], [value.status.value for value in execution.items])
+            # Exactly the reviewed cross-Storage move: one verified copy to the
+            # target directory, then the source delete.  No sibling or extra path
+            # is touched.
+            self.assertEqual(
+                ["create_directory", "write"],
+                [kind for kind, _path in value.target.mutations],
+                value.target.mutations,
+            )
+            self.assertEqual(
+                [("read", "Movies/One.2001.mkv"), ("delete", "Movies/One.2001.mkv")],
+                value.source.mutations,
+                value.source.mutations,
+            )
+            self.assertFalse((self.source_root / "Movies/One.2001.mkv").exists())
+            self.assertEqual(
+                [
+                    Path(
+                        self.target_root,
+                        "Organized/Movies/Movies/Anime/One (2001) [tmdbid-201]",
+                        "One (2001).mkv",
+                    ).read_bytes()
+                ],
+                [b"m" * 512],
+            )
+            # The Task the Files selection admitted is the one that settled.
+            self.assertEqual("completed", value.repository.get_task(task_id).status.value)

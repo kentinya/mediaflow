@@ -944,8 +944,9 @@ test("a real Manual Organize Worker run keeps its reviewed plan through detail, 
   // Select the exact new Task through the visible run inventory and inspect
   // the single durable item/result written by the actual Worker execution.
   await page.getByRole("button", { name: "Refresh" }).first().click();
-  // The supported journey publishes two real runs: the durable zero-mutation
-  // analysis (its own `discovery` run) and the execution Task it links.
+  // This journey starts from the analysis-only `/files/organize` preparation, so
+  // it publishes its own durable `discovery` run plus the execution Task it
+  // links.  A Files 整理 admission is the one-Task shape (B46.3-01).
   await expectRunTotal(page, SEEDED_RUN_TOTAL + 2);
   const row = page.getByRole("row").filter({ hasText: "One.2001.mkv" });
   await expect(row).toHaveCount(1);
@@ -1118,6 +1119,10 @@ test("new task selection reconciles a lost admission, completes in the Worker, a
   await openInventory(page);
   // The preceding journey's analysis plus its execution Task.
   await expectRunTotal(page, SEEDED_RUN_TOTAL + 2);
+  // This Files 整理 admission publishes exactly one durable organizing Task
+  // before any analysis; the confirmed execution adopts that same Task, so no
+  // second run appears.  The corrected accounting is asserted at the end of the
+  // journey against durable state instead of a guessed pre-count.
   await page.getByLabel("操作类型").fill("manual_organize");
   await expect(page).toHaveURL(/command=manual_organize/);
 
@@ -1542,11 +1547,13 @@ test("a real standalone pipeline run keeps its durable steps through detail and 
   const api = recordApiCalls(page);
   await connect(page);
   await openInventory(page);
-  // The seeded population plus the two real runs (durable analysis + execution
-  // Task) each of the four earlier new-task journeys published: the
+  // The seeded population plus one durable run per earlier journey: the
   // reviewed-plan journey, the lost-admission journey, the sibling-independence
-  // journey and the new-source ambiguity journey.
-  await expectRunTotal(page, SEEDED_RUN_TOTAL + 8);
+  // journey and the new-source ambiguity journey.  A Files admission now
+  // publishes its organizing Task *before* analysis and its confirmed execution
+  // adopts that same Task, so one admission is one run — the accounting
+  // B46.3-01 corrected — instead of the earlier analysis+execution pair.
+  await expectRunTotal(page, SEEDED_RUN_TOTAL + 5);
 
   const executed = await request.post(
     `${BASE}/__harness__/run-standalone-pipeline`,
@@ -1564,7 +1571,7 @@ test("a real standalone pipeline run keeps its durable steps through detail and 
   await page.getByRole("button", { name: "Refresh" }).first().click();
   // This standalone `organize --execute` shape publishes one Task and no
   // separate analysis run, so exactly one more run appears.
-  await expectRunTotal(page, SEEDED_RUN_TOTAL + 9);
+  await expectRunTotal(page, SEEDED_RUN_TOTAL + 6);
 
   // Isolate the exact new run through the existing server-side command
   // filter — the standalone pipeline command is unique in this population.
@@ -1725,20 +1732,26 @@ test("the default unfiltered task-center origin selects its admitted run through
     page.getByRole("heading", { name: "任务中心", exact: true }),
   ).toBeVisible();
   await expect(page).toHaveURL(/\/ui-v2\/operations$/);
-  await expectRunTotal(page, SEEDED_RUN_TOTAL + 9);
+  // The rendered total is the server's own authorized population.  Read the
+  // same durable population through the product API instead of assuming a
+  // sequence-dependent offset: the assertion is then that the page states the
+  // real total, which is what AC-T3 is actually about.
+  const population = (await (
+    await request.get(`${BASE}/api/v1/operations/runs`, {
+      headers: { Authorization: `Bearer ${ADMIN_TOKEN}` },
+    })
+  ).json()) as { readonly total: number };
+  await expectRunTotal(page, population.total);
 
   // Task46.3 RO-2: the Task Center no longer offers a creation CTA, an
-  // independent library picker or a discovery section.  A generic creation URL
-  // guides to Files instead, and exercising that address must not start work.
+  // independent library picker or a discovery section.
   await expect(page.getByRole("link", { name: "新建整理任务" })).toHaveCount(0);
-  await page.goto(`${BASE}/ui-v2/operations/organize/new`);
-  await expect(
-    page.getByRole("heading", { name: "从资源库文件页开始整理" }),
-  ).toBeVisible();
-  await expect(page.getByRole("radio", { name: "source" })).toHaveCount(0);
+  await expect(page.getByRole("region", { name: /整理发现/ })).toHaveCount(0);
   // The Worker heartbeat window is bounded, so the real Worker is registered
   // exactly before the operator continues into the real Files journey.
   await request.post(`${BASE}/__harness__/register-manual-worker`);
+  // The journey continues through the shell, which carries this exact
+  // task-center origin into Files — the RO-2 replacement for the removed CTA.
   await openOrganizingSource(page);
 
   // Select the live file from the actual ResourceLibrary listing.
@@ -1808,6 +1821,29 @@ test("the default unfiltered task-center origin selects its admitted run through
         entry.path.match(/\/operations\/organize\/previews\/[^/]+\/execute$/),
     ),
   ).toHaveLength(1);
+
+  // A generic creation URL is a separate navigation with no journey origin: it
+  // guides to Files, offers no library picker, and starts no work.
+  await page.goto(`${BASE}/ui-v2/operations/organize/new`);
+  await reconnectAtCurrentRoute(page, ADMIN_TOKEN);
+  await expect(
+    page.getByRole("heading", { name: "从资源库文件页开始整理" }),
+  ).toBeVisible();
+  await expect(page.getByRole("radio", { name: "source" })).toHaveCount(0);
+  // Nothing was created by visiting that address (the admitted run itself is
+  // the only population change this journey made, and it predates the visit).
+  expect(
+    (
+      await (
+        await request.get(`${BASE}/api/v1/operations/runs`, {
+          headers: { Authorization: `Bearer ${ADMIN_TOKEN}` },
+        })
+      ).json()
+    ).total,
+  ).toBe(population.total + 1);
+  // Return to the exact admitted run before proving the continuation.
+  await page.goto(`${BASE}/ui-v2/operations?run=${runId}`);
+  await reconnectAtCurrentRoute(page, ADMIN_TOKEN);
 
   // The empty origin survives authentication continuation: a reload plus
   // Connect returns to the same list with the same admitted run selected.
