@@ -354,6 +354,119 @@ pointers in Slice/Roadmap/Progress are not changed by B or used to negate accept
 Planning validation: `python3 scripts/check_governance.py` PASS; `git diff --check` clean. No product
 suite, runtime probe, build or media operation was run for planning; checking time is below 50%.
 
+## Developer Completion Report (this round — Files return context)
+
+Status handed off: **READY FOR B REVIEW — candidate for the whole Task; no PASS claimed.**
+
+Implementation Head for this fix round: **`e3393a9d`** (`fix(operations): carry the router-committed
+list context into the Files link`), on top of B's reviewed `a60bab03`.  This report is a report-only
+successor.  B's contract correction at `a60bab03:TASK.md`, its review at
+`aaef53e9:TASK.md`, the earlier reviewed ranges and their ignored evidence directories are unchanged.
+
+### 原 Task 的返回上下文丢失 — root cause and fix
+
+**触发器（B 的真实入口，未改动）：** 任务中心输入 `操作类型 = manual_organize` → 点侧栏 Files →
+选择文件整理 → 摘要 → 确认 → 模拟执行响应丢失 → 核对提交结果 → 落在
+`/ui-v2/operations?run=…`，`command=manual_organize` 丢失。
+
+**根因（本机复现后才修）：** `AppShell.tsx::filesJourneyReturnContext` 的 memo 依赖 Router 已提交的
+`pathname/searchStr`，却从 `window.location.search` 取值。TanStack Router 在渲染目标路由时就发布新
+`searchStr`，而浏览器地址栏要等该 history action flush 才更新；`filter` 提交正是这个窗口。因此
+memo 用旧（空的）`window.location.search` 计算，Files href 只剩 `?returnOps=`（空上下文）。
+**已用真实浏览器证实：** 在 4199 端口真实的 Python/API/SQLite/Worker 服务与当前生产 build 上，
+`任务中心 → 填 操作类型 → 读侧栏 Files href` 打印 `returnOps=` 且 `window.location.search` 已变成
+`?command=manual_organize`，证明是可复现的时序缺陷而不是计数下游；把该 memo 临时插桩后确认
+`search` 为空对象而 `searchStr` 已含过滤值。
+
+**修复：** memo 只使用同一个已提交来源 `searchStr`（现有路由订阅），删除 `window.location`
+读取；保留 `operations-return.ts` 的全部键/值白名单与长度边界，因此"无上下文"（`returnOps`
+缺失）与"默认列表的合法空上下文"（`returnOps=`）仍然区分，token/不受支持参数仍被丢弃。
+未改导航体系、主流程权限、精确确认或未知结果不重发规则；未删除或放宽任何断言/超时/重试。
+
+### 新增回归（`web/src/shared/ui/AppShell.test.tsx`）
+
+| 测试 | 在 `a60bab03` | 在本候选 |
+| --- | --- | --- |
+| `carries a submitted task-center filter into the sidebar Files link` | 失败（href `?returnOps=`） | 通过 |
+| `keeps a journey's existing bounded context instead of re-deriving it` | 失败（已有上下文被重算为空） | 通过 |
+
+两条都用真实路由树 + 真实侧栏 Link：第一条先在任务中心**提交筛选**再点真实侧栏，断言 href 含
+`returnOps=command%3Dmanual_organize`、跟随该链接落到 Files 且 `returnOps` 回读为同一序列化上下文、
+并且没有掺入 `resourceLibraryId` 等额外权威；没有用"测试开始就预置 returnOps"的方式来掩盖该缺陷。
+第二半是"已有合法上下文原样携带"（不是重新推导）。两者在 HEAD 树上被实际验证为失败，非推理。
+
+`docs/architecture.md` 的 Task46.3 CURRENT 段补充了该单一来源事实（仍保留未实现的 TARGET 声明）。
+
+### 第一个真实首错已消失（B 的目标）
+
+`npx playwright test --config=playwright.python.config.ts tests/e2e/operations-inventory.python.spec.ts`
+（当前生产 build，真实 Python/API/SQLite/Worker）：
+
+* 本候选：**41 passed / 0 failed**（整文件顺序执行，1.4 m）。B 记录的首错 spec:1239 已通过。
+* 同一 tree 只把 `AppShell.tsx` 换回 `a60bab03` 并重新 build：**22 passed / 19 failed**，失败行号
+  与 B 记录完全一致（`1108, 1330, 1431, 1715, 2087, 2390, 2546, 2664, 2873, 3090, 3110, 3148, 3168,
+  3207, 3291, 3509, 4330, 4917, 4981`）。这不是"顺手修好一切"的声明：该文件此前 19 个失败由
+  返回上下文丢失引发的连锁假设造成，本候选整文件绿色即为实测结果，未改期望计数、未加重试。
+* `operations-task-center-visual.python.spec.ts`：**2 passed**（截图旅程同样从 Files 开始并确认）。
+
+### 实际命令与结果（本轮）
+
+仓库根：
+
+* `python3 scripts/check_governance.py` — PASS；`git diff --check` — clean。
+* `.venv/bin/ruff check web` — PASS（Python 侧本轮无改动）。
+* `.venv/bin/python -m unittest tests.test_media_discovery tests.test_media_discovery_provider_manifest
+  tests.test_organize_preparation` — **168 OK**；`… tests.test_manual_organize_intent
+  tests.test_manual_organize_preview tests.test_manual_organize_execution tests.test_operations_task_center
+  tests.test_task_center_recovery_lineage tests.test_recovery_continuation tests.test_recovery_batch`
+  — **223 OK**；`.AdmissionAndScopeTests/.NativeRecognitionJourneyTests/.ZeroMutationTests` — **27 OK**。
+  共享 shell 改动对 Python 边界不可达，这三组是"直接受影响"回归，未跑 B 的全量。
+
+`web/`：
+
+* `npm run test -- run` 九个 Required-Tests spec 加 `AppShell.test.tsx` — **10 files / 175 tests passed**。
+* `npm run typecheck`、`npm run lint`、`npm run format:check` — clean；`npm run build` — built。
+* `npm run test:e2e -- --config=playwright.python.config.ts tests/e2e/operations-inventory.python.spec.ts
+  tests/e2e/operations-task-center-visual.python.spec.ts` — 两个 spec **并行**执行时 33 passed / 10 failed：
+  inventory 文件前 10 个旅程（spec 412/485/532/561/647/770/872/917/1108/1537）的
+  `第 1 页起共 N 条` 计数断言在**共享同一 harness 数据库的两个 worker**下失败。同命令把
+  `--workers=1` 后 **42 passed / 1 failed**，剩下的 1 个是 visual spec 的
+  `check('选择 Three.2003.mkv')` 超时（该文件在 inventory 的 19 个旅程之后已被真实 Worker 处理掉）。
+  这两种结果在 `a60bab03` 上**逐条一致**（并行 33/10，共同一 10 个行号；serial 23/20）。
+  单独运行 `operations-task-center-visual.python.spec.ts`：**2 passed**（修复前后都通过）。
+  因此并行/顺序下的这些失败是共享 harness 测试顺序问题，不是本改动引入；我没有改计数、加
+  重试或放宽超时，也不声称该并行/顺序组合已经全绿——完整文件在单一 spec、默认配置下为 41 passed。
+* `npm run test:e2e -- --config=playwright.direct-files.python.config.ts tests/e2e/direct-files.python.spec.ts`
+  — **19 passed / 3 failed**；失败均为行菜单 `role=menuitem` 点击时 "element is not stable / detached"
+  （spec 549/556/579），即 Task46.2 已记录的既有 row-menu native failure，与本轮 shell 改动无关，
+  且逐条在 `a60bab03` 上复现（同样 3 条，同样报错）。单独跑这 3 条在基线上仍失败 3 条，构成
+  既有失败、未被本轮修改。
+
+证据目录（本地 ignored）：`.git/validation-evidence/dev-46.3-fix4/`（`native-full.log`、
+`native-baseline.log`、`native-required*.log`、`native-serial*.log`、`native-visual*.log`、
+`direct-files*.log`、`py-*.log`、`asset-digests.log` 及对应 `*-artifacts/` trace）。
+生产资源身份：`web/dist/assets/index-Cw7c73S-.js`（sha256 `7e315a9c…`）、`index-9CMd6NZ6.css`
+（`6431101f…`），由本候选源码 `npm run build` 生成。
+
+### Known risks / limits
+
+* 修复只在真实浏览器（真实 Python 服务 + 当前生产 build）与真实路由树单测两个层面取证；
+  不含两 operator 的浏览器旅程（与 B 的说明一致）。
+* 并行执行两个原生 spec 时因共享 harness 数据库出现顺序相关计数失败（本候选与基线条数一致）。
+  这是 B 拥有的 harness/顺序/计数收敛范围；我没有修改期望值或加重试来"修好"它。
+* Task46.2 的既有 row-menu native failure 仍存在（本轮未改相关行为）。
+* RO-4 的 organizing-only population/八视图/failure 移除与 RO-5 的 Automation 意图变更仍按
+  Non-goals 保持 TARGET；未新增 schema，故无迁移/旧行回填。
+
+### Remaining Slice outcomes
+
+RO-1 complete（Task46.1）。RO-2：本轮修掉了 B 指定的原 Task 返回上下文首错，`operations-inventory`
+整文件在单一 spec 默认配置下 41 passed，但并行共享队列的组合仍非全绿，且完整 T4 门禁仍由 B 执行，
+因此 RO-2 仍**不**声明完成。RO-3 complete（Task46.2，证据限制照旧保留）。RO-4/RO-5 仍 TARGET。
+
+时间分布：本轮约 50 分钟，其中 build/测试/浏览器运行合计约 12–13 分钟（含失败重跑与基线对照，
+重叠只计一次），远低于 50%；未故意等待、未重复全量套件、未放宽断言或超时。
+
 ## Developer Completion Report (previous round — same-library ownership)
 
 Status handed off: **READY FOR B REVIEW — candidate for the whole Task; no PASS claimed.**
