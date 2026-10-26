@@ -721,6 +721,14 @@ extension that could not commit is reported as `admission_not_committed` beside 
 request had already resolved itself (for example an explicitly excluded temporary suffix), one truthful
 conclusion per exact `(path, kind)`.
 
+Convergence is **principal-bound**, not library-bound. A source another principal's unfinished work
+holds is never merged into and that holder's Task/discovery identity is never published: the refusing
+operator receives the `source_owned_by_another_operator` reason with its own next action, while the
+still-free siblings of the same selection are admitted into the *submitting* operator's own durable
+work under its own request identity. The first operator's Task, scope and request binding are
+unchanged. Matching principal, library/Storage binding, immutable pin and admission kind is the
+complete convergence identity — sharing a library is not a reason to skip it.
+
 Files owns the normal readback: `GET /api/v1/resource-libraries/{id}/files/organize-work` is
 library-scoped, principal-scoped and cursor-paged over the durable rows, and its `requestId` form is the
 exact lost-admission reconciliation. The Task Center therefore exposes no new-organize CTA, no

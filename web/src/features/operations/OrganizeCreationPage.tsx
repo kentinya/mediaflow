@@ -96,6 +96,11 @@ const REASON_LABELS: Readonly<Record<string, string>> = {
   cursor_invalid: "存储返回了无效游标",
   unreadable: "无法读取",
   eligibility: "不符合整理条件",
+  // The verified-source refusals of a Files admission, so a refused sibling in the
+  // exact plan summary is explained instead of showing an internal token.
+  source_already_organizing: "已属于未结束的整理工作",
+  source_owned_by_another_operator: "已被其他操作员未结束的整理工作占用",
+  admission_not_committed: "范围变化，未加入整理工作",
 };
 
 function label(map: Readonly<Record<string, string>>, value: string): string {

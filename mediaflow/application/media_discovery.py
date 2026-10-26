@@ -163,6 +163,13 @@ _REASON_ALREADY_OWNED = "source_already_organizing"
 #: called a duplicate: no existing work holds it, and the operator's next action
 #: is to resubmit it, not to open something else.
 _REASON_ADMISSION_NOT_COMMITTED = "admission_not_committed"
+#: A source another principal's unfinished organizing work already holds.  The
+#: operator must not be shown that work's identity — a foreign Task/discovery ID
+#: is private context — so the refusal states the fact and the honest next action
+#: without naming it.  It is a *different* reason from ``source_already_organizing``
+#: because the operator cannot open the holder; the only resolution is to pick
+#: other sources or wait for the other operator's work to settle.
+_REASON_OWNED_BY_ANOTHER_PRINCIPAL = "source_owned_by_another_operator"
 
 _TEMPORARY_SUFFIXES = TEMPORARY_SUFFIXES
 
@@ -381,6 +388,7 @@ class MediaDiscoveryService:
         deduplicated, duplicate_refusals = self._refuse_owned_sources(
             deduplicated,
             library,
+            actor=actor,
             storage=storage,
             observed_fingerprints=observed_fingerprints,
         )
@@ -690,7 +698,7 @@ class MediaDiscoveryService:
                 # permanent failure.
                 remaining = (*remaining, entry)
                 continue
-            refusals.append(self._owned_source_refusal(entry, owned))
+            refusals.append(self._owned_source_refusal(entry, owned, actor=actor))
             known.add((entry.path, entry.kind.value))
         # B46.3-04: a *same-library* open work that already holds one of these
         # sources is the owner this request converges on, exactly like the
@@ -820,7 +828,15 @@ class MediaDiscoveryService:
                 if isinstance(entry, DiscoveryScopeEntry)
             )
             if refused_here:
-                raise MediaDiscoveryService._scope_owned_error(refused_here) from conflict
+                owner = self._owned_source_work(library, refused_here[0])
+                raise MediaDiscoveryService._scope_owned_error(
+                    refused_here,
+                    refusal=(
+                        self._owned_source_refusal(refused_here[0], owner, actor=actor)
+                        if owner is not None
+                        else None
+                    ),
+                ) from conflict
             winner = self._reconcile_admission(
                 actor,
                 remaining,
@@ -878,6 +894,15 @@ class MediaDiscoveryService:
             record is None
             or record.terminal
             or record.frozen
+            # B46.3-04: a *foreign principal's* open work is never the work this
+            # request converges on.  Merging the still-free siblings into it would
+            # put this operator's new files inside another operator's Task, and
+            # binding this request identity to that record would then answer the
+            # submitting principal with a bounded absence while the other principal
+            # holds the work.  Matching principal, library/Storage, pin and admission
+            # kind is the complete convergence identity; the same library is not a
+            # reason to skip it.
+            or record.actor != actor
             or record.resource_library_id != resource_library_id
             or record.storage_id != library.storage_id
             or record.snapshot_id != snapshot_id
@@ -925,17 +950,34 @@ class MediaDiscoveryService:
         )
 
     @staticmethod
-    def _scope_owned_error(refused: tuple[DiscoveryScopeEntry, ...]) -> DiscoveryError:
+    def _scope_owned_error(
+        refused: tuple[DiscoveryScopeEntry, ...],
+        *,
+        refusal: DiscoveryRefusedEntry | None = None,
+    ) -> DiscoveryError:
         first = refused[0]
+        # When the owner was already resolved, answer with that exact refusal: a
+        # source another principal holds must not be reported as an openable work
+        # of this operator's own (B46.3-04).
+        resolved = (
+            refusal
+            if refusal is not None
+            else MediaDiscoveryService._owned_source_refusal(first, {})
+        )
         return DiscoveryError(
-            "this source is already owned by an unfinished organizing work",
-            code="source_already_organizing",
+            resolved.message,
+            code=resolved.code,
             status=409,
-            next_action=(
-                "open the reported existing organizing work instead; this request did not start "
-                "a second organizing task for the same source"
-            ),
-            details={"relativePath": first.path, "reason": _REASON_ALREADY_OWNED},
+            next_action=resolved.next_action,
+            details={
+                "relativePath": first.path,
+                "reason": resolved.reason,
+                **(
+                    {"existingWorkId": resolved.existing_work_id}
+                    if resolved.existing_work_id is not None
+                    else {}
+                ),
+            },
         )
 
     def _create_work(
@@ -1116,7 +1158,7 @@ class MediaDiscoveryService:
                         library = None
                 owned = self._owned_source_work(library, entry) if library is not None else None
             if owned is not None:
-                not_admitted.append(self._owned_source_refusal(entry, owned))
+                not_admitted.append(self._owned_source_refusal(entry, owned, actor=discovery.actor))
                 continue
             # Nothing durable holds this entry: the extension never committed, the
             # boundary refused a source that is free again, or another writer
@@ -1218,6 +1260,7 @@ class MediaDiscoveryService:
         scope: tuple[DiscoveryScopeEntry, ...],
         library,
         *,
+        actor: str | None = None,
         storage=None,
         observed_fingerprints: Mapping[str, str | None] | None = None,
     ) -> tuple[tuple[DiscoveryScopeEntry, ...], list[DiscoveryRefusedEntry]]:
@@ -1265,15 +1308,17 @@ class MediaDiscoveryService:
                 kept.append(entry)
                 continue
             same_library = owned.get("resourceLibraryId") == library.library_id
-            if owned.get("kind") == "discovery" and same_library:
-                # An open admission of *this* library that already holds the exact
-                # source is not a conflict: the library-wide reconciliation below
-                # converges this request onto that same durable work and reports
-                # the item as ``existing``.  Only a competed source outside that
-                # convergence path is a real refusal here.
+            same_principal = actor is not None and owned.get("actor") == actor
+            if owned.get("kind") == "discovery" and same_library and same_principal:
+                # An open admission of *this* principal's work in this library that
+                # already holds the exact source is not a conflict: the
+                # library-wide reconciliation below converges this request onto that
+                # same durable work and reports the item as ``existing``.  Another
+                # principal's admission is never merged into (B46.3-04), so it is a
+                # real refusal here and its identity is not published.
                 kept.append(entry)
                 continue
-            refusals.append(self._owned_source_refusal(entry, owned))
+            refusals.append(self._owned_source_refusal(entry, owned, actor=actor))
         return tuple(kept), refusals
 
     def _reserve_sources_callback(self, library, observed: Mapping[str, str | None]):
@@ -1337,10 +1382,38 @@ class MediaDiscoveryService:
 
     @staticmethod
     def _owned_source_refusal(
-        entry: DiscoveryScopeEntry, owned: Mapping[str, object]
+        entry: DiscoveryScopeEntry,
+        owned: Mapping[str, object],
+        *,
+        actor: str | None = None,
     ) -> DiscoveryRefusedEntry:
-        """The bounded refusal of one file an existing organizing work already owns."""
+        """The bounded refusal of one file an existing work already owns.
 
+        ``actor`` is this request's principal.  When the holder is another
+        principal's work the refusal must not publish its identity: a foreign Task
+        or discovery ID is private context, and handing it over would let one
+        operator discover (and later try to drive) another operator's work.  The
+        fact of the conflict and a truthful next action are still published, so the
+        operator knows the source is not available and why.
+        """
+
+        owner_actor = owned.get("actor")
+        foreign = isinstance(owner_actor, str) and actor is not None and owner_actor != actor
+        if foreign:
+            return DiscoveryRefusedEntry(
+                entry.path,
+                entry.kind,
+                "source_owned_by_another_operator",
+                _REASON_OWNED_BY_ANOTHER_PRINCIPAL,
+                (
+                    "this file already belongs to another operator's unfinished organizing "
+                    "work; this request did not start a second organizing task for it"
+                ),
+                (
+                    "select other files, or wait for the other operator's work to finish or "
+                    "be cancelled; this request did not start a second organizing task"
+                ),
+            )
         task_id = owned.get("taskId")
         discovery_id = owned.get("discoveryId")
         if isinstance(task_id, str):
@@ -1377,11 +1450,11 @@ class MediaDiscoveryService:
 
     @staticmethod
     def _refusal_for_owned_source(
-        entry: DiscoveryScopeEntry, owned: Mapping[str, object]
+        entry: DiscoveryScopeEntry, owned: Mapping[str, object], *, actor: str | None = None
     ) -> DiscoveryRefusedEntry:
         """The bounded refusal of one source an unfinished work already owns."""
 
-        return MediaDiscoveryService._owned_source_refusal(entry, owned)
+        return MediaDiscoveryService._owned_source_refusal(entry, owned, actor=actor)
 
     def _reconcile_library_work(
         self,
@@ -3879,7 +3952,7 @@ class MediaDiscoveryService:
             if owned is None:
                 return None
             entry_scope = DiscoveryScopeEntry(relative, DiscoveryEntryKind.FILE)
-            return self._owned_source_refusal(entry_scope, owned)
+            return self._owned_source_refusal(entry_scope, owned, actor=discovery.actor)
 
         def observe(
             relative: str,

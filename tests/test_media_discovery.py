@@ -67,6 +67,12 @@ from tests.storage_fixtures import PagedMemoryStorage
 SNAPSHOT_ID = "active-1"
 SNAPSHOT_DIGEST = "a" * 64
 OPERATOR_TOKEN = "operator-token"
+#: A second published operator sharing the same ResourceLibrary.  The tokens are
+#: environment-owned exactly like production, so a two-principal journey resolves
+#: them through the real configuration loader.
+SECOND_OPERATOR_TOKEN = "second-operator-token"
+SECOND_OPERATOR_FIRST_ENV = "MEDIAFLOW_TEST_FIRST_OPERATOR_TOKEN"
+SECOND_OPERATOR_SECOND_ENV = "MEDIAFLOW_TEST_SECOND_OPERATOR_TOKEN"
 
 
 class _Clock:
@@ -261,8 +267,29 @@ class _DiscoveryFixture(unittest.TestCase):
         exclude_rules: tuple[str, ...] = (),
         second_library: bool = False,
         attachments: bool = False,
+        second_operator: bool = False,
     ) -> dict:
         document = json.loads(Path("config/strategy.example.json").read_text(encoding="utf-8"))
+        if second_operator:
+            # Two enabled operator principals share one published configuration.
+            # Their tokens are environment-owned exactly like production, so the
+            # journey resolves them through the real loader instead of injecting
+            # synthetic permission sets.
+            document["api"]["principals"] = [
+                {
+                    "id": "operator",
+                    "tokenEnv": SECOND_OPERATOR_FIRST_ENV,
+                    "roles": ["operator"],
+                    "enabled": True,
+                },
+                {
+                    "id": "second-operator",
+                    "tokenEnv": SECOND_OPERATOR_SECOND_ENV,
+                    "roles": ["operator"],
+                    "enabled": True,
+                },
+            ]
+            document["api"].pop("tokenEnv", None)
         document["persistence"]["databasePath"] = str(self.database)
         document["historyPath"] = str(self.root / "history.jsonl")
         document["storages"] = [
@@ -374,6 +401,7 @@ class _DiscoveryFixture(unittest.TestCase):
         metadata_query_type: str | None = None,
         source_storage=None,
         provider=None,
+        second_operator: bool = False,
     ):
 
         document = self.document(
@@ -382,6 +410,7 @@ class _DiscoveryFixture(unittest.TestCase):
             extensions=extensions,
             second_library=second_library,
             attachments=attachments,
+            second_operator=second_operator,
         )
         if metadata_query_type is not None:
             for policy in document.get("metadataPolicies", []):
@@ -442,10 +471,17 @@ class _DiscoveryFixture(unittest.TestCase):
                 clock=self.clock,
                 budgets=budgets or DiscoveryBudgets(),
             )
-            api = MediaFlowApi(
-                repository,
-                None,
-                principals=(
+            if second_operator:
+                with mock.patch.dict(
+                    os.environ,
+                    {
+                        SECOND_OPERATOR_FIRST_ENV: OPERATOR_TOKEN,
+                        SECOND_OPERATOR_SECOND_ENV: SECOND_OPERATOR_TOKEN,
+                    },
+                ):
+                    principals = runtime.resolve_api_principals()
+            else:
+                principals = (
                     ResolvedApiPrincipal(
                         "operator",
                         OPERATOR_TOKEN,
@@ -465,6 +501,12 @@ class _DiscoveryFixture(unittest.TestCase):
                             }
                         ),
                     ),
+                )
+            api = MediaFlowApi(
+                repository,
+                None,
+                principals=(
+                    *principals,
                     ResolvedApiPrincipal("viewer", "viewer-token", frozenset({ApiPermission.READ})),
                 ),
                 configuration_service=managed,
@@ -1148,6 +1190,314 @@ class AdmissionAndScopeTests(_DiscoveryFixture):
                     self.assertEqual([], value.source.mutations)
                 self.tearDown()
                 self.setUp()
+
+    def test_another_operator_submission_never_merges_into_the_first_operators_work(
+        self,
+    ) -> None:
+        """B46.3-04: convergence is principal-bound, not library-bound.
+
+        Two enabled `operator` principals share one published ResourceLibrary.
+        Operator A submits `[One]`; A's Task is still queued.  Operator B then
+        submits `[One, Three]` — no concurrency, no fault injection, just two
+        ordinary Files API submissions.  B's response must
+
+        * keep One as another operator's unfinished work, refusing it *without*
+          publishing A's private Task/discovery identity,
+        * admit the genuinely free Three inside B's *own* new organizing work,
+        * leave A's Task, scope and request identity exactly as they were.
+
+        Both request identities read back their own results, before and after the
+        SQLite repository is reopened, and no media effect occurs.
+        """
+
+        self.media("Movies/One.2001.mkv")
+        self.media("Movies/Three.2003.mkv")
+        endpoint = "/api/v1/resource-libraries/library/files/discoveries"
+        first_request = "11111111-1111-4111-8111-111111111111"
+        second_request = "22222222-2222-4222-8222-222222222222"
+        with self.journey(second_operator=True) as value:
+            self.assertEqual(
+                ("operator", "second-operator"),
+                tuple(p.principal_id for p in value.api._principals[:2]),
+            )
+            status, first = self.request(
+                value,
+                endpoint,
+                "POST",
+                {
+                    "paths": ["Movies/One.2001.mkv"],
+                    "autoPrepare": True,
+                    "requestId": first_request,
+                },
+            )
+            self.assertEqual(202, status, first)
+            first_work = value.repository.get_media_discovery(first["discoveryId"])
+            self.assertEqual("operator", first_work.actor)
+
+            status, second = self.request(
+                value,
+                endpoint,
+                "POST",
+                {
+                    "paths": ["Movies/One.2001.mkv", "Movies/Three.2003.mkv"],
+                    "autoPrepare": True,
+                    "requestId": second_request,
+                },
+                token=SECOND_OPERATOR_TOKEN,
+            )
+            self.assertEqual(202, status, second)
+            # B never converges onto A's work: it owns its own durable record.
+            self.assertNotEqual(first["discoveryId"], second["discoveryId"])
+            second_work = value.repository.get_media_discovery(second["discoveryId"])
+            self.assertEqual("second-operator", second_work.actor)
+            # One is refused as another operator's unfinished work, and that
+            # refusal does not publish the first operator's work identity.
+            refused = {item["path"]: item for item in second["selection"]["refused"]}
+            self.assertEqual(["Movies/One.2001.mkv"], sorted(refused))
+            self.assertEqual(
+                "source_owned_by_another_operator", refused["Movies/One.2001.mkv"]["code"]
+            )
+            self.assertNotIn("existingWorkId", refused["Movies/One.2001.mkv"])
+            self.assertNotIn("existingWorkKind", refused["Movies/One.2001.mkv"])
+            # The free sibling is admitted inside B's own work.
+            self.assertEqual(
+                [{"kind": "file", "path": "Movies/Three.2003.mkv"}],
+                second["selection"]["scopes"],
+            )
+            self.assertEqual([], list(second["selection"]["existing"]))
+            self.assertEqual(
+                ["Movies/Three.2003.mkv"],
+                [entry.path for entry in second_work.progress.scope_entries],
+            )
+            # A's work is unchanged: still only One, still owned by A, still its
+            # own request identity.
+            unchanged = value.repository.get_media_discovery(first["discoveryId"])
+            self.assertEqual("operator", unchanged.actor)
+            self.assertEqual(
+                ["Movies/One.2001.mkv"],
+                [entry.path for entry in unchanged.progress.scope_entries],
+            )
+            self.assertEqual(first_work.organize_task_id, unchanged.organize_task_id)
+            self.assertIsNotNone(
+                value.repository.find_media_discovery_by_request_id(
+                    actor="operator", admission_request_id=first_request
+                )
+            )
+            self.assertIsNone(
+                value.repository.find_media_discovery_by_request_id(
+                    actor="operator", admission_request_id=second_request
+                )
+            )
+            self.assertIsNotNone(
+                value.repository.find_media_discovery_by_request_id(
+                    actor="second-operator", admission_request_id=second_request
+                )
+            )
+            # Two distinct durable Tasks, one per operator's own selection.
+            task_ids = {first_work.organize_task_id, second_work.organize_task_id}
+            self.assertEqual(2, len(task_ids))
+            self.assertEqual(len(task_ids), len(value.repository.list_tasks()))
+
+            for principal, request_id, expected in (
+                (OPERATOR_TOKEN, first_request, first["discoveryId"]),
+                (SECOND_OPERATOR_TOKEN, second_request, second["discoveryId"]),
+            ):
+                status, exact = self.request(
+                    value,
+                    f"/api/v1/resource-libraries/library/files/organize-work"
+                    f"?requestId={request_id}",
+                    token=principal,
+                )
+                self.assertEqual(200, status, exact)
+                self.assertEqual([expected], [item["discoveryId"] for item in exact["items"]])
+            with SQLiteTaskRepository(self.database) as reopened:
+                by_request = {
+                    (principal, request_id): reopened.find_media_discovery_by_request_id(
+                        actor=principal, admission_request_id=request_id
+                    )
+                    for principal, request_id in (
+                        ("operator", first_request),
+                        ("second-operator", second_request),
+                    )
+                }
+                self.assertEqual(
+                    first["discoveryId"], by_request[("operator", first_request)].discovery_id
+                )
+                self.assertEqual(
+                    second["discoveryId"],
+                    by_request[("second-operator", second_request)].discovery_id,
+                )
+                self.assertEqual(
+                    "second-operator", by_request[("second-operator", second_request)].actor
+                )
+                self.assertEqual(
+                    ["Movies/Three.2003.mkv"],
+                    [
+                        entry.path
+                        for entry in by_request[
+                            ("second-operator", second_request)
+                        ].progress.scope_entries
+                    ],
+                )
+            self.assertEqual([], value.source.mutations)
+            self.assertEqual([], value.target.mutations)
+
+    def test_each_operator_reads_only_its_own_files_organizing_work(self) -> None:
+        """The Files work read stays principal-scoped after a real admission.
+
+        B rows are already covered structurally elsewhere; this journey proves it
+        on the two-principal configuration that produced the conflict, so a later
+        convergence change cannot quietly widen the readback.
+        """
+
+        self.media("Movies/One.2001.mkv")
+        self.media("Movies/Three.2003.mkv")
+        endpoint = "/api/v1/resource-libraries/library/files/discoveries"
+        with self.journey(second_operator=True) as value:
+            for token, path in (
+                (OPERATOR_TOKEN, "Movies/One.2001.mkv"),
+                (SECOND_OPERATOR_TOKEN, "Movies/Three.2003.mkv"),
+            ):
+                status, admitted = self.request(
+                    value, endpoint, "POST", {"paths": [path], "autoPrepare": True}, token=token
+                )
+                self.assertEqual(202, status, admitted)
+            for token, expected in (
+                (OPERATOR_TOKEN, "Movies/One.2001.mkv"),
+                (SECOND_OPERATOR_TOKEN, "Movies/Three.2003.mkv"),
+            ):
+                status, listed = self.request(
+                    value,
+                    "/api/v1/resource-libraries/library/files/organize-work",
+                    token=token,
+                )
+                self.assertEqual(200, status, listed)
+                self.assertEqual(1, listed["total"], listed)
+                self.assertEqual(
+                    [expected], [scope["path"] for scope in listed["items"][0]["scopes"]]
+                )
+            self.assertEqual([], value.source.mutations)
+
+    def test_concurrent_operator_selections_still_own_each_source_once(self) -> None:
+        """B46.3-04: the principal boundary does not weaken unique ownership.
+
+        Two *different* operators submit the same source over two SQLite
+        connections and the same barrier as the same-principal race.  Exactly one
+        effective organizing work may own that concrete source: one submission
+        succeeds, and the other is answered with a truthful per-source refusal
+        whose identity is not the winner's private work.  Three is admitted on its
+        own by whichever request has not finished, never twice.
+        """
+
+        self.media("Movies/One.2001.mkv")
+        self.media("Movies/Three.2003.mkv")
+        with self.journey(second_operator=True) as value:
+            second_repository = SQLiteTaskRepository(self.database)
+            second_service = MediaDiscoveryService(
+                second_repository,
+                value.intents,
+                configuration=value.configuration,
+                runtime_resolver=value.discovery._runtime_resolver,
+                preview_service=value.previews,
+                storages=value.storages,
+                clock=self.clock,
+            )
+            barrier = threading.Barrier(2)
+            seen: set[int] = set()
+            lock = threading.Lock()
+
+            def synchronize(repository) -> None:
+                original = repository.find_owned_source_work
+
+                def find(**kwargs):
+                    answer = original(**kwargs)
+                    with lock:
+                        first = id(repository) not in seen
+                        seen.add(id(repository))
+                    if first:
+                        barrier.wait(timeout=5)
+                    return answer
+
+                repository.find_owned_source_work = find
+
+            synchronize(value.repository)
+            synchronize(second_repository)
+
+            def admit(args):
+                service, principal, paths, request_id = args
+                try:
+                    return service.admit(
+                        resource_library_id="library",
+                        relative_paths=paths,
+                        actor=principal,
+                        auto_prepare=True,
+                        admission_request_id=request_id,
+                    )
+                except DiscoveryError as error:
+                    return error
+
+            requests = (
+                (
+                    value.discovery,
+                    "operator",
+                    ["Movies/One.2001.mkv"],
+                    "11111111-1111-4111-8111-111111111111",
+                ),
+                (
+                    second_service,
+                    "second-operator",
+                    ["Movies/One.2001.mkv", "Movies/Three.2003.mkv"],
+                    "22222222-2222-4222-8222-222222222222",
+                ),
+            )
+            try:
+                with ThreadPoolExecutor(max_workers=2) as pool:
+                    records = list(pool.map(admit, requests))
+            finally:
+                second_repository.close()
+            accepted = [record for record in records if not isinstance(record, DiscoveryError)]
+            self.assertTrue(accepted, records)
+            works = value.repository.list_media_discoveries(limit=20)
+            # One source, one owner, across both principals: no durable work holds
+            # `One` twice or more than one work does.
+            one_holders = [
+                work
+                for work in works
+                for entry in work.progress.scope_entries
+                if entry.path == "Movies/One.2001.mkv"
+            ]
+            self.assertEqual(1, len(one_holders), works)
+            # Each accepted admission belongs to the principal that submitted it,
+            # and its request identity resolves under that principal only.
+            for record in accepted:
+                self.assertIsNotNone(
+                    value.repository.find_media_discovery_by_request_id(
+                        actor=record.actor,
+                        admission_request_id=record.admission_request_id,
+                    )
+                )
+                self.assertIsNone(
+                    value.repository.find_media_discovery_by_request_id(
+                        actor=("second-operator" if record.actor == "operator" else "operator"),
+                        admission_request_id=record.admission_request_id,
+                    )
+                )
+            # No work is widened with a source its *own* principal did not select,
+            # so one operator's file is never placed inside another's Task.
+            selected_by = {principal: set(paths) for _, principal, paths, _ in requests}
+            for work in works:
+                self.assertTrue(work.progress.scope_entries)
+                self.assertTrue(
+                    {entry.path for entry in work.progress.scope_entries}
+                    <= selected_by[work.actor],
+                    (work.actor, work.progress.scope_entries),
+                )
+            for record in records:
+                if isinstance(record, DiscoveryError):
+                    # A loser refusal never names the winner's private work.
+                    self.assertEqual("source_owned_by_another_operator", record.code)
+                    self.assertNotIn("existingWorkId", record.details or {})
+            self.assertEqual([], value.source.mutations)
 
     def test_a_lost_extension_keeps_this_requests_own_exclusion(self) -> None:
         """B46.3-02: a lost write never erases an already-resolved refusal.

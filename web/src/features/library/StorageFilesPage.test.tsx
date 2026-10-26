@@ -3746,4 +3746,60 @@ describe("Files entry state and ResourceLibrary strip", () => {
     expect(screen.getByRole("status")).not.toHaveTextContent(/临时/);
     expect(discoveryPosts).toHaveLength(1);
   });
+
+  it("explains another operator's unfinished work without exposing its identity", async () => {
+    // B46.3-04: a source another operator's unfinished organizing work already
+    // holds is a real refusal for *this* operator, and the holder's Task or
+    // discovery identity is that operator's private context.  The page must
+    // state the fact and the honest next action, never a generic failure and
+    // never another operator's work reference.
+    const user = userEvent.setup();
+    const discoveryPosts: Record<string, unknown>[] = [];
+    vi.stubGlobal(
+      "fetch",
+      stripFetchMock({
+        status: activeStatus([libraryItem("lib-a", "local-1")]),
+        onFiles: () => jsonResponse(filesPayload("lib-a", "Recover")),
+        onDiscovery: (body) => {
+          discoveryPosts.push(body);
+          return jsonResponse(
+            {
+              error: {
+                code: "source_owned_by_another_operator",
+                message:
+                  "the selected file already belongs the first operator's organizing work",
+                details: {
+                  relativePath: "notes.txt",
+                  reason: "source_owned_by_another_operator",
+                  sideEffects: "none",
+                },
+                nextAction:
+                  "select other files, or wait for the other operator's work",
+              },
+            },
+            409,
+          );
+        },
+      }),
+    );
+    authStore.setToken("test-token");
+    renderWithProviders(<StorageFilesPage />);
+
+    await screen.findAllByText("notes.txt");
+    await user.click(
+      within(screen.getByRole("row", { name: /文件条目 notes.txt/ })).getByRole(
+        "checkbox",
+      ),
+    );
+    await user.click(screen.getByRole("button", { name: "批量整理" }));
+
+    await waitFor(() => expect(discoveryPosts).toHaveLength(1));
+    await waitFor(() =>
+      expect(screen.getByRole("status")).toHaveTextContent(/其他操作员/),
+    );
+    expect(screen.getByRole("status")).toHaveTextContent(/未创建重复任务/);
+    // No work was created and nothing was silently resubmitted or opened.
+    expect(discoveryPosts).toHaveLength(1);
+    expect(screen.queryByRole("heading", { name: "新建整理任务" })).toBeNull();
+  });
 });

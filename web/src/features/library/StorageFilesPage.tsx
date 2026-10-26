@@ -446,6 +446,14 @@ function discoveryAdmissionFailureMessage(
       // One verified concrete source is already held by an unfinished organizing
       // work.  The operator opens that real work; nothing here starts a second one.
       return "所选文件已有未结束的整理工作,未创建重复任务;请打开已有整理继续或取消。";
+    case "source_owned_by_another_operator":
+      // Another operator's unfinished work holds the source.  Its identity is not
+      // published (that is their private context), so the operator can only pick
+      // other files or wait for that work to settle.
+      return (
+        "所选文件已被其他操作员未结束的整理工作占用，本次未创建重复任务；" +
+        "请选择其他文件，或等对方工作完成/取消后再提交。"
+      );
     case "admission_not_committed":
       // The scope changed before this source could be committed.  No durable work
       // holds it, so the truthful next action is to submit it again.

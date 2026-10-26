@@ -13134,6 +13134,12 @@ class SQLiteTaskRepository:
                     "taskStatus": row["task_status"],
                     "itemStatus": row["status"],
                     "itemStage": row["stage"],
+                    # The admitting principal, when this Task is a principal's own
+                    # work.  It lets the caller publish a permission-bounded
+                    # refusal to a *different* operator instead of handing over
+                    # another operator's Task identity.  A scheduled/Run-once Task
+                    # has no admitting operator and honestly reports ``None``.
+                    "actor": self._task_admitting_actor_locked(row["task_id"]),
                 }
             return self._discovery_source_owners_locked(
                 storage_id,
@@ -13144,6 +13150,31 @@ class SQLiteTaskRepository:
                 exclude_discovery_id=exclude_discovery_id,
                 exclude_lineage_task_id=exclude_lineage_task_id,
             )
+
+    def _task_admitting_actor_locked(self, task_id: str) -> str | None:
+        """The principal that admitted one owning Task, when it has one.
+
+        ``tasks`` carries no actor column, so the admitting principal is read from
+        the durable link that created the Task: a Files admission names its
+        organizing Task, and an admitted manual execution names both its Task and
+        its actor.  A scheduled or Run-once Task is not one operator's private
+        work, so the honest answer is ``None`` and its reference stays publishable.
+        """
+
+        row = self._connection.execute(
+            "SELECT actor FROM media_discoveries WHERE organize_task_id=? "
+            "ORDER BY created_at DESC, discovery_id DESC LIMIT 1",
+            (task_id,),
+        ).fetchone()
+        if row is not None and isinstance(row["actor"], str):
+            return row["actor"]
+        row = self._connection.execute(
+            "SELECT actor FROM manual_executions WHERE task_id=? LIMIT 1",
+            (task_id,),
+        ).fetchone()
+        if row is not None and isinstance(row["actor"], str):
+            return row["actor"]
+        return None
 
     def _recovery_lineage_task_ids_locked(self, task_id: str, *, limit: int = 16) -> set[str]:
         """The Tasks whose own work this Task legally continues.
