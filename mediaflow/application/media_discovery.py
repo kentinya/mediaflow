@@ -4667,17 +4667,30 @@ class MediaDiscoveryService:
         knows nothing about ownership.  Pruning here means a refused manifest can
         never be re-offered by any publication of this record.
 
-        Two coordinates meet in this method and are deliberately kept apart:
+        Three coordinates meet in this method and are deliberately kept apart:
 
-        * ``path`` is the operator-facing ResourceLibrary-relative path, which is
-          what a refusal publishes and what the operator recognises.
-        * the manifest is keyed by the exact *Storage*-relative path
-          (``Movies/Sub/One.mkv`` under root ``Movies``).  The repository now
-          reports it, and a record without it falls back to matching the display
-          path — the pre-amendment rows that were stored unprefixed.
+        * ``path`` is the operator-facing ResourceLibrary-relative path.  It is
+          what a refusal publishes, what the operator recognises, and the key
+          this record's findings and stability observations are stored under.
+        * ``storagePath`` is the exact *Storage*-relative key of the same source,
+          which is what the durable ``sources`` manifest is keyed by
+          (``Movies/Movies/Sub/One.mkv`` under root ``Movies``).
 
-        Returns the pruned projection and the exact manifest keys that were
-        removed, so the caller can drop their matching stability observations.
+        The two are *not* interchangeable and must never be tried as alternatives:
+        with a non-empty library root they differ, and a legitimate duplicate
+        directory name can make one source's display path equal a *different*
+        source's Storage key.  Treating both as candidate keys for one refusal
+        therefore deleted an unrelated, genuinely free sibling.  One refusal
+        therefore resolves exactly one manifest row, and only through the internal
+        Storage key the repository proves for that same source.  There is
+        deliberately no display-path fallback: every admitted manifest row is keyed
+        by its Storage path, so a refusal without an internal key prunes nothing
+        rather than inventing a key from a value that may name another real source.
+
+        Returns the pruned projection and the exact ResourceLibrary-relative paths
+        that were removed, so the caller can drop their matching stability
+        observations (which are keyed by the same coordinate as findings, never by
+        the Storage key).
         """
 
         manifest_paths = {
@@ -4687,22 +4700,19 @@ class MediaDiscoveryService:
         }
         refusals = list(updated.progress.refused_entries)
         known = {(item.path, item.kind.value) for item in refusals}
+        # The exact Storage-relative manifest rows this refusal prunes.
         removed: set[str] = set()
-        # The same source has two *different* recorded strings: the manifest stores
-        # its Storage-relative key, while findings are recorded against the
-        # library-relative path the walk observed.  Both have to go.
+        # The ResourceLibrary-relative coordinate of the same sources: findings and
+        # observations are recorded against it, so only it may prune them.
         pruned_relative: set[str] = set()
         for path, storage_path, owned in reserved:
-            candidates = {path}
-            if isinstance(storage_path, str) and storage_path:
-                candidates.add(storage_path)
-            matched = candidates & manifest_paths
-            # Remove what this manifest actually holds under either coordinate.
-            # An empty intersection still records the refusal: the source was
-            # observed and refused even when another attempt had already dropped
-            # the row.
-            removed |= matched
-            pruned_relative.add(path)
+            # One refusal, one manifest identity: only the exact Storage key the
+            # repository reported for *this* source can prune a manifest row.  An
+            # absent or unmatched key prunes nothing, because reinterpreting the
+            # display path as a key may delete a different real source.
+            if isinstance(storage_path, str) and storage_path in manifest_paths:
+                removed.add(storage_path)
+                pruned_relative.add(path)
             entry = DiscoveryScopeEntry(path, DiscoveryEntryKind.FILE)
             if (entry.path, entry.kind.value) in known:
                 continue
@@ -4722,11 +4732,13 @@ class MediaDiscoveryService:
             finding
             for finding in updated.progress.findings
             if not (
-                finding.kind is DiscoveryFindingKind.PRIMARY
-                and (finding.path in removed or finding.path in pruned_relative)
+                finding.kind is DiscoveryFindingKind.PRIMARY and finding.path in pruned_relative
             )
         ]
-        for path in sorted(removed | pruned_relative):
+        # One bounded reason increment per pruned source, keyed by the operator's
+        # own coordinate, so the counts can never double-count two coordinate
+        # strings of the same source.
+        for path in sorted(pruned_relative):
             existing = reasons.get(_REASON_ALREADY_OWNED)
             reasons[_REASON_ALREADY_OWNED] = DiscoveryReasonCount(
                 _REASON_ALREADY_OWNED,
@@ -4758,7 +4770,7 @@ class MediaDiscoveryService:
                     refused_entries=canonical_refusals(tuple(refusals)),
                 ),
             ),
-            frozenset(removed | pruned_relative),
+            frozenset(pruned_relative),
         )
 
     def _begin_preparation_analysis(self, discovery: MediaDiscovery) -> MediaDiscovery:
