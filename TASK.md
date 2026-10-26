@@ -354,6 +354,189 @@ pointers in Slice/Roadmap/Progress are not changed by B or used to negate accept
 Planning validation: `python3 scripts/check_governance.py` PASS; `git diff --check` clean. No product
 suite, runtime probe, build or media operation was run for planning; checking time is below 50%.
 
+## Developer Completion Report (this round — scheduled execution respects admitted Files ownership)
+
+Status handed off: **READY FOR B REVIEW — candidate for the whole Task; no PASS claimed.**
+
+Implementation Head for this fix round: **`6465ad6c`**
+(`fix(organize): keep an admitted Files source owned across scheduled execution`), on top of B's
+reviewed `ce86d8d0` (`docs(task-46.3): require scheduled execution to respect admitted Files
+ownership`). B's contract correction at `ce86d8d0:TASK.md`, its review at
+`9588ef98:TASK.md`, and every earlier reviewed range and its ignored evidence directory are
+unchanged.
+
+### B46.3-05 / P1 — 定时整理必须尊重已经接纳的 Files 来源占用
+
+**B 的真实顺序（原样复现，探测脚本未改一行）：** 一份合法的已发布/已启用自动整理定义（范围
+`Movies`），先做真实 Run once → 完整发现 → Finalize → Worker 分析得到真实零变更计划，再显式
+授予无人值守执行权限；随后用户在 Files 选中实际存在的 `Movies/One.2001.mkv` 提交整理，API 返回
+持久 organizing Task（`pending`）与 `queued` discovery。下一次 `IntervalScheduler.tick()` 发出
+occurrence 后由真实 `AutomationWorker` 消费 `DefinitionScopedExecutionService.run()`。
+
+B 的 `scheduled_ownership_probe.py`（sha256 `2804c9ce…`，本轮拷贝后与本轮 Base 逐字节一致）在
+Base `ce86d8d0` 上（沿用 B 已记录的证据）：
+
+```json
+{"source_owner_before":{"kind":"discovery","status":"queued","path":"Movies/One.2001.mkv"},
+ "scheduled_items":[{"source":"Movies/One.2001.mkv","status":"success","stage":"completed"}],
+ "manual_after":"pending","source_exists_after":false,
+ "mutations":[["delete","Movies/One.2001.mkv"],
+              ["create_directory","Organized/Movies/Movies/Anime/One (2001) [tmdbid-201]"],
+              ["write","Organized/Movies/Movies/Anime/One (2001) [tmdbid-201]/One (2001).mkv"]]}
+```
+
+**同一探测（未改动）在本候选上：**
+
+```json
+{"source_owner_before":{"kind":"discovery","status":"queued","path":"Movies/One.2001.mkv"},
+ "scheduled_items":[{"source":"Movies/One.2001.mkv","status":"failed","stage":"failed"}],
+ "manual_after":"pending","source_exists_after":true,"mutations":[]}
+```
+
+旁证（探测脚本只加了一条读取 `item.error`，判定逻辑未改）给出该 item 的耐久原因：
+`category: source_already_organizing`、`sideEffects: none`、`retrySafe: false`、nextAction 指向
+“打开那份 Files 整理工作继续或取消”。原 Files Task 仍是 `pending`，源文件仍在，`mutations: []`。
+
+**根因：** 未完成来源占用的检查/事务保留只存在于 discovery admission、manifest publication 和
+settlement。既有定时执行直接建 Task，经 `MediaOrganizerService.process_file()` →
+`PersistentTaskCoordinator.begin_item()`；后者只取短期 file lock 再写 TaskItem，从不参加该占用
+检查。queued Files work 还没有执行锁，所以定时入口能越过 owner。这正是原 Scope §3、AC-16 要求的
+跨 manual/scheduled/Run once/continuation 未完成来源占用，不是 RO-5 新功能。
+
+**修复（一个决定，一次事务）：**
+
+* `PersistentTaskCoordinator.begin_item` 新增显式 `enforce_source_ownership`。启用时在**准入
+  本 item 的同一边界**询问耐久占用，而不是在扫描前查一次、也不是等到 Storage 变更前才发现：
+  `claim_task_item_with_ownership` 在同一个 `BEGIN IMMEDIATE` 内做“占用读取 + TaskItem 写入”，
+  两条连接下先提交者拥有来源，另一方**不写 item、不分析、不变更 Storage**。
+* 该事务只做数据库读与写：Storage `stat`/`fingerprint` 全部留在事务外（版本证据在进入
+  coordinator 前已由一次有界 `stat` 得到）。无 schema 改动（沿用 52），无迁移/旧行回填/旧 pin
+  重写。
+* 身份仍是**已验证的 Storage-relative 来源 + 可比较内容版本**：`TaskItem` 现在固定记录
+  `source_storage_path`，因此空/非空 root、重叠库绑定对同一物理文件一致，不同根的相对同名不会
+  碰撞。版本未知的一侧永远回答“未知”而非“不同”，所以不会因不可比较证据丢弃活占用；真正被
+  替换的文件是新来源，可以正常整理（见回归）。
+* 合法 lineage 不自冲突：`exclude_task_id`（本 Task 自己的行）与
+  `exclude_lineage_task_id`（它合法续作的祖先 Task）不参与“竞争 owner”，所以 run-once 重试、
+  recovery continuation、scope continuation 都不会拒绝自己。
+* 拒绝是**逐项**的：`MediaOrganizerService._owned_source_item()` 把拒绝发布为该 attempt 自己的
+  durable failed `TaskItem`/`Result`（`source_already_organizing`，`sideEffects: none`），可用
+  兄弟独立继续；**不**取消、不确认、不改写原 owner，也绝不发布其它主体现有的 Task/discovery
+  身份（`owned_source_refusal` 的既有主体隔离规则保持不变）。
+* 只有**可能真正消费来源**的入口开启该边界：定时定义执行（`enforce_source_ownership=True`）、
+  可执行 `organize` CLI 运行与可执行 scope continuation。纯分析入口（`--execute` 为假的
+  `organize` 分析、recovery/metadata-correction continuation 的 dry-run 重分析）保持关闭，因为它
+  不建整理工作、不获执行权、不变更任何媒体——这类准备必须在其来源被别的流程占用时仍然可读。
+* 新增 `source_already_organizing` 到共享 `failure_explanation` 闭集（message/durable/
+  nextAction/retrySafe），并在 `ProblemFilePanel` 的 `FAILURE_COPY` 增加可读中文原因与下一步，
+  原始 category token 不出现在 DOM。
+
+其余不变：RBAC/显式无人值守授权/执行前权限检查、显式 mutation intent、bounded scope、Storage
+confinement、immutable pins、concurrency fencing、不确定效果不重放、已完成 sibling 不复跑。
+
+### 新增/扩展的永久回归
+
+`tests/test_organize_preparation.py` 新增 `AdmittedSourceOwnershipTests`（6 tests）。全部走真实
+已发布定义、真实 Run once Finalize/分析、真实显式 `UnattendedExecutionGrantService.grant`、
+真实 `IntervalScheduler.tick` + `AutomationWorker` + `DefinitionScopedExecutionService`、真实
+Local Storage/SQLite；只有 Metadata 答案用既有 `SyntheticMetadataProvider` fixture 边界。
+
+| 测试 | 覆盖 | `ce86d8d0`（撤回 flag） |
+| --- | --- | --- |
+| `test_a_scheduled_occurrence_never_consumes_an_admitted_files_source` | B 的顺序原样复现：occupancy 前已由仓储读出、item failed 且原因/无副作用、owner 仍 pending、源文件在、零 mutation | FAILED |
+| `test_a_free_sibling_still_organizes_and_the_owner_survives` | 同批可用兄弟独立成功；被占来源零效果；只移动了自由兄弟 | FAILED |
+| `test_a_paused_files_admission_still_owns_its_source` | 无 TaskItem、无 file_lock、仅 pending pause request 时仍持有来源（短租约不能替代未完成占用） | FAILED |
+| `test_a_replaced_source_is_admitted_as_a_new_version` | Files walk 记录版本后真正替换文件 → 新来源可整理，旧流程不被取消/失败 | 通过（本行为既有，回归锁定） |
+| `test_an_unproven_version_never_releases_a_live_claim` | 无版本证据的 owner 保留占用（“未知”≠“不同”） | FAILED |
+| `test_two_sqlite_connections_admit_one_owner_per_source` | 第二条真实 SQLite 连接经同一原子边界被拒、item 未写入；定时同源仍零效果 | FAILED |
+
+`tests/test_task_persistence.py::SourceOwnershipEvidenceTests` 新增 2 tests：
+`test_the_ownership_decision_and_the_item_admission_are_one_transaction`（原子边界拒写、owner
+保持原状、owner 自己的重试不被自己拒绝）与
+`test_a_legal_continuation_lineage_is_not_its_own_owner`（有/无 lineage 的对照）。
+
+隔离验证（每次只撤掉一处，其余保持候选）：
+
+| 撤掉的实现 | 结果 |
+| --- | --- |
+| `automation_definition_execution` 的 `enforce_source_ownership=True` | `AdmittedSourceOwnershipTests` **4/6 FAILED** |
+| `claim_task_item_with_ownership` 内的占用读取（改为恒 `None`） | `SourceOwnershipEvidenceTests` **2 FAILED** |
+| `begin_item` 使用原子 boundary（`claimant=None` 回退到读边界） | 仍通过（读边界也足够，但原子边界才是 B 要求的“同一事务决策”，见下） |
+
+第三条是刻意记录的事实：这些用例证明的是**行为**（不同源被拒、可用兄弟不被阻断），而不是
+“必须用哪一个函数”。原子边界另有上面两项直接隔离证据；读边界保留为无原子能力的仓储回退，
+且不参与生产路径。
+
+Web：`OperationsInventory.test.tsx` 的既有真实问题文件面板用例新增 `source_already_organizing`
+条目，断言渲染可读中文原因/下一步、且 DOM 不含原始 token。
+
+### 实际命令与结果（本轮）
+
+仓库根目录：
+
+* `python3 scripts/check_governance.py` — PASS；`git diff --check` — clean。
+* `.venv/bin/ruff check mediaflow tests scripts` — clean；
+  `ruff format --check mediaflow tests scripts` — 358 files already formatted；
+  `python -m compileall -q mediaflow tests scripts` — clean；`pip check` — no broken requirements；
+  `config/strategy.example.json` 经生产 loader 校验通过；FFprobe/FFmpeg 源码扫描 — NONE。
+* Required Tests 十套件 — **626 OK**（59.9 s；含本 Task 全部 Required Tests 三个命令组）。
+* 直接受影响 Automation/持久化/续作/CLI 十套件 — **240 OK**（13.7 s）。
+* 直接受影响 Files/普通操作/运行详情八套件 — **252 OK**（68.6 s）。
+* 新增 `AdmittedSourceOwnershipTests` 6 OK；`SourceOwnershipEvidenceTests` 5 → **7 OK**。
+
+`web/`（当前生产 build `index-CmZxy0O8.js`，与 Base 的 `index-Cw7c73S-.js` 不同，因
+`ProblemFilePanel.tsx` 与 `OperationsInventory.test.tsx` 有源码改动；CSS 未变
+`index-9CMd6NZ6.css` sha256 `6431101f…`）：
+
+* `npm run test -- run`（Required Tests 九份 spec）— **9 files / 166 tests passed**。
+* `npm run typecheck`、`npm run lint`、`npm run format:check` — clean。
+* `npm run build` — PASS。
+* `npm run test:e2e -- --config=playwright.python.config.ts
+  tests/e2e/operations-inventory.python.spec.ts` — **41 passed**（1.5 m），真实 Python/API/SQLite/
+  Worker + 当前生产 build。
+* `... operations-task-center-visual.python.spec.ts` — **2 passed**。
+* `npm run test:e2e -- --config=playwright.direct-files.python.config.ts
+  tests/e2e/direct-files.python.spec.ts` — 两次运行 **21 passed / 1 failed** 与
+  **19 passed / 3 failed**。失败全部是 Task46.2 已记录的既有 row-menu/非 localhost 时序问题：
+  `getByRole('menu')` 未出现、`menuitem` 30 s `locator.click` 超时。行号在运行间浮动
+  （`579`；`549/556/579`），类别与 B 及本 Task 上一轮记录一致；未改期望值、未加重试、未放宽超时，
+  也未被本轮“修好”。
+
+证据目录（本地 ignored）：`.git/validation-evidence/dev-46.3-fix9/`（`static.log`、
+`required-tests-a/b/c.log`、`affected-automation.log`、`affected-files-operations.log`、
+`web-unit.log`、`web-static.log`、`native-inventory.log`、`native-visual.log`、
+`direct-files*.log`、`asset-digests.log`、B 的未修改 `b-scheduled_ownership_probe.py` 及
+加读取字段的 `b-scheduled_ownership_probe_with_reason.py`）。
+
+### Known risks / limits
+
+* 端到端竞态仍是“两条真实记录先后进入竞争边界”，不是同一瞬间的双线程 barrier。原子边界本身用
+  两条真实 SQLite 连接 + 同一事务内的读取/write 证明（`test_two_sqlite_connections_...`、
+  `test_the_ownership_decision_and_the_item_admission_are_one_transaction`），但没有做跨进程压测。
+* 定时入口的拒绝是逐项 durable failed，Task 因此可能是 `partial_success` 或（无可用兄弟时）
+  `failed`。这是真实的“本次 occurrence 没做完”，不是把整个 batch 伪造成成功；B 的探测里该项在
+  `completed` Job 下记录 `failed` item，Job 本身仍 `completed`（occurrence 正常结束）。
+* 分析-only 入口刻意不启用该占用边界（见上）。若某个未来分析入口会真的消费来源，它必须显式
+  开启 `enforce_source_ownership`，否则会重开同类缺口。
+* `claim_task_item_with_ownership` 要求 `source_storage_path` 非空；无原子能力的仓储回退到读
+  边界并保留既有语义。生产 SQLite 仓储始终走原子路径。
+* 未新增 schema，故无迁移/旧行回填/reopen 迁移旅程；沿用 schema 52。
+* `direct-files` 的既有失败仍在（两次运行 1/3 条，行号浮动），与本轮改动无关，未删除证据。
+* RO-4 的 organizing-only population/八视图/failure 移除与 RO-5 的 Automation 意图变更仍按
+  Non-goals 保持 TARGET；完整 T4 门禁仍由 B 执行（含打包/安装消费/常驻重启/迁移/RBAC/pins/
+  fences/不确定效果不重放）。
+
+### Remaining Slice outcomes
+
+RO-1 complete（Task46.1）。RO-2：B 指定的 B46.3-05“定时执行必须尊重已接纳的 Files 来源占用”已
+在 B 未改动的真实顺序上修正（零媒体效果、原文件与原 `pending` 工作保留、可用兄弟独立继续），
+并以 6 + 2 个永久回归锁定；但完整 T4 门禁仍由 B 执行，因此 RO-2 仍**不**声明完成。RO-3 complete
+（Task46.2，证据限制与既有 row-menu 失败照旧保留）。RO-4/RO-5 仍 TARGET。
+
+时间分布：本轮约 150 分钟，其中 build/测试/浏览器运行合计约 30 分钟（1 次 Web build、1 次原生
+inventory、1 次 visual、2 次 direct-files、若干聚焦重跑与探测脚本，重叠只计一次），低于 50%；
+未故意等待、未重复全量套件、未放宽断言或超时。
+
 ## Developer Completion Report (this round — one refusal, one manifest identity)
 
 Status handed off: **READY FOR B REVIEW — candidate for the whole Task; no PASS claimed.**
