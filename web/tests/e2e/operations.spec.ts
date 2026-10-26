@@ -27,26 +27,34 @@ async function openOperations(page: Page) {
   await expect(page).toHaveURL(/\/ui-v2\/operations$/);
 }
 
-async function openTaskList(page: Page) {
-  await openOperations(page);
-  await page.getByRole("link", { name: "任务列表", exact: true }).click();
+// Slice46 keeps these administrative deep links, while ordinary work and
+// new manual organizing enter through Files. Reconnect through the real UI.
+async function openTaskList(page: Page, token = VIEWER_TOKEN) {
+  await page.goto("/ui-v2/operations/tasks");
+  await page.getByLabel("API token").fill(token);
+  await page.getByRole("button", { name: "Connect" }).click();
   await expect(page).toHaveURL(/\/ui-v2\/operations\/tasks$/);
   await expect(
     page.getByRole("heading", { name: "Tasks", exact: true }),
   ).toBeVisible();
 }
 
-async function openJobList(page: Page) {
-  await openOperations(page);
-  await page.getByRole("link", { name: "作业列表", exact: true }).click();
+async function openJobList(page: Page, token = VIEWER_TOKEN) {
+  await page.goto("/ui-v2/operations/jobs");
+  await page.getByLabel("API token").fill(token);
+  await page.getByRole("button", { name: "Connect" }).click();
   await expect(page).toHaveURL(/\/ui-v2\/operations\/jobs$/);
   await expect(
     page.getByRole("heading", { name: "Jobs", exact: true }),
   ).toBeVisible();
 }
 
-async function openTaskDetail(page: Page, taskId: string) {
-  await openTaskList(page);
+async function openTaskDetail(
+  page: Page,
+  taskId: string,
+  token = VIEWER_TOKEN,
+) {
+  await openTaskList(page, token);
   await page.getByRole("link", { name: taskId }).click();
   await expect(
     page.getByRole("heading", { name: `Task ${taskId}` }),
@@ -78,22 +86,17 @@ test("任务中心 inventory shows the run list, views and workspace links", asy
     page.getByRole("heading", { name: "Worker 就绪" }),
   ).toBeVisible();
   await expect(page.getByText(/Worker 就绪 — 1 个活跃 Worker/)).toBeVisible();
-  // No retired manual action exists before or after an exact scope is chosen;
-  // the supported entry is the native organize journey.
+  // Slice46: the center offers no independent manual scope or creation entry.
   await expect(page.getByRole("link", { name: "发起受限扫描" })).toHaveCount(0);
   await expect(page.getByRole("link", { name: "运行零变更预览" })).toHaveCount(
     0,
   );
-  await page.getByLabel("ResourceLibrary scope").selectOption("resources");
-  await expect(page.getByRole("link", { name: "发起受限扫描" })).toHaveCount(0);
-  await expect(page.getByRole("link", { name: "运行零变更预览" })).toHaveCount(
-    0,
-  );
-  await expect(page.getByRole("link", { name: "新建整理任务" })).toBeVisible();
-  // Existing workspace navigation stays usable from the landing.
+  await expect(page.getByLabel("ResourceLibrary scope")).toHaveCount(0);
+  await expect(page.getByRole("heading", { name: "手动操作" })).toHaveCount(0);
+  await expect(page.getByRole("link", { name: "新建整理任务" })).toHaveCount(0);
   await expect(
-    page.getByRole("link", { name: "任务列表", exact: true }),
-  ).toBeVisible();
+    page.getByRole("link", { name: "Files", exact: true }),
+  ).toHaveAttribute("href", "/ui-v2/resourcelib/files?returnOps=");
   // Entry has no selection: the detail panel is closed.
   await expect(page.getByRole("region", { name: "运行详情" })).toHaveCount(0);
 });
@@ -336,7 +339,7 @@ test("a read-only principal receives no actionable control", async ({
   page,
 }) => {
   await connect(page, READ_ONLY_TOKEN);
-  await openTaskDetail(page, "task-002");
+  await openTaskDetail(page, "task-002", READ_ONLY_TOKEN);
   await expect(page.getByRole("button", { name: "Cancel Task" })).toHaveCount(
     0,
   );
@@ -435,8 +438,7 @@ test("the 媒体库 entry and Operations workspace cross-link without a retired 
   // The shared shell keeps the Operations workspace reachable from any page.
   await page.getByRole("link", { name: "任务中心", exact: true }).click();
   await expect(page).toHaveURL(/\/ui-v2\/operations$/);
-  await page.getByRole("link", { name: "任务列表", exact: true }).click();
-  await expect(page).toHaveURL(/\/ui-v2\/operations\/tasks$/);
+  await openTaskList(page);
 });
 
 test("task-center views stay keyboard operable and discoverable when narrow", async ({

@@ -76,51 +76,27 @@ async function connect(page: Page, token: string): Promise<void> {
   await page.getByRole("button", { name: "Connect" }).click();
 }
 
-test("Operations landing offers no manual action before a scope is chosen", async ({
+test("Operations directs new manual work to Files without a scope picker or action-matrix read", async ({
   page,
 }) => {
   await page.goto("/ui-v2/operations");
   await connect(page, VIEWER_TOKEN);
-
-  // The unified inventory landing keeps the manual journey discoverable with
-  // its Chinese business presentation.
   await expect(
     page.getByRole("heading", { name: "任务中心", exact: true }),
   ).toBeVisible();
-  await expect(page.getByRole("heading", { name: "手动操作" })).toBeVisible();
+  await expect(page.getByRole("heading", { name: "手动操作" })).toHaveCount(0);
+  await expect(page.getByLabel("ResourceLibrary scope")).toHaveCount(0);
+  await expect(page.getByRole("link", { name: "新建整理任务" })).toHaveCount(0);
   await expect(page.getByRole("link", { name: "发起受限扫描" })).toHaveCount(0);
   await expect(page.getByRole("link", { name: "运行零变更预览" })).toHaveCount(
     0,
   );
-
-  const scope = page.getByLabel("ResourceLibrary scope");
-  await expect(scope).toBeVisible();
-  await expect(scope.locator("option")).toHaveCount(2);
-  await expect(scope.locator('option[value="resources"]')).toHaveCount(1);
-  await scope.selectOption("resources");
-
-  await expect(page.getByRole("link", { name: "发起受限扫描" })).toHaveCount(0);
-  await expect(page.getByRole("link", { name: "运行零变更预览" })).toHaveCount(
-    0,
-  );
-  // The one supported entry starts the native organize journey: the shared
-  // analysis, the fixed plan summary and the explicit confirmation all live in
-  // that journey, so no standalone Scan/Preview submit control exists.
-  await expect(page.getByRole("link", { name: "新建整理任务" })).toBeVisible();
-
-  // The chosen scope is the exact bounded scope sent to the backend.
-  const matrixReads = requestsTo(
-    await manualEvidence(page),
-    "GET",
-    "/api/v1/manual-actions",
-  );
+  await expect(
+    page.getByRole("link", { name: "Files", exact: true }),
+  ).toBeVisible();
   expect(
-    matrixReads.some(
-      (entry) =>
-        entry.body?.scopeKind === "resourceLibrary" &&
-        entry.body?.resourceLibraryId === "resources",
-    ),
-  ).toBe(true);
+    requestsTo(await manualEvidence(page), "GET", "/api/v1/manual-actions"),
+  ).toHaveLength(0);
 });
 
 test("the retired standalone Preview entry is an ordinary not-found route", async ({
@@ -192,23 +168,22 @@ test("removed Scan deep links render the ordinary not-found route", async ({
   ).toBe(0);
 });
 
-test("Read-only principal sees no manual action and the backend reason", async ({
+test("Read-only principal sees the inventory without a center manual-creation entry", async ({
   page,
 }) => {
-  // The Operations workspace owns the manual ResourceLibrary action matrix now
-  // that the retired Library landing no longer exists.
   await page.goto("/ui-v2/operations");
   await connect(page, READ_ONLY_TOKEN);
-  await expect(page.getByRole("heading", { name: "手动操作" })).toBeVisible();
-
-  await page.getByLabel("ResourceLibrary scope").selectOption("resources");
-  // A read-only principal is never offered an actionable control; the backend
-  // reason explains why instead of rendering a dead button.
+  await expect(
+    page.getByRole("heading", { name: "任务中心", exact: true }),
+  ).toBeVisible();
+  await expect(page.getByRole("table")).toBeVisible();
+  await expect(page.getByRole("heading", { name: "手动操作" })).toHaveCount(0);
+  await expect(page.getByLabel("ResourceLibrary scope")).toHaveCount(0);
+  await expect(page.getByRole("link", { name: "新建整理任务" })).toHaveCount(0);
   await expect(page.getByRole("link", { name: "发起受限扫描" })).toHaveCount(0);
   await expect(page.getByRole("link", { name: "运行零变更预览" })).toHaveCount(
     0,
   );
-  await expect(page.getByText(/此范围没有后端公告的手动操作/)).toBeVisible();
 });
 
 test("hostile action-matrix evidence never reaches the built-artifact DOM", async ({
