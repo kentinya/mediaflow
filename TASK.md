@@ -354,6 +354,162 @@ pointers in Slice/Roadmap/Progress are not changed by B or used to negate accept
 Planning validation: `python3 scripts/check_governance.py` PASS; `git diff --check` clean. No product
 suite, runtime probe, build or media operation was run for planning; checking time is below 50%.
 
+## Developer Completion Report (this round — one refusal, one manifest identity)
+
+Status handed off: **READY FOR B REVIEW — candidate for the whole Task; no PASS claimed.**
+
+Implementation Head for this fix round: **`708435fe`** (`fix(organize): resolve one reserved source
+to exactly one manifest row`), on top of B's reviewed `887ee3d9`. B's contract correction at
+`d33cd5ef:TASK.md`, its review at `887ee3d9:TASK.md`, and the earlier reviewed ranges and their
+ignored evidence directories are unchanged.
+
+### B46.3-04 / P1 — 同一拒绝不得用两个坐标同时删清单，误删独立可用兄弟
+
+**B 的真实顺序（原样复现，探测脚本未改一行）：** 库根 `Movies`，通过真实 Files API 提交 `Sub`
+与 `Movies` 两个实际文件夹，实际文件为 `Movies/Sub/One.2001.mkv`（用户看到的 `Sub/One.2001.mkv`）
+与 `Movies/Movies/Sub/One.2001.mkv`（用户看到的 `Movies/Sub/One.2001.mkv`）。让 loser 的真实
+Worker 先观察到两个 primary 后暂缓 publication；另一份普通 Files 请求/Worker 先接纳第二个文件；
+再释放原 publication。B 的 `distinct_sibling_coordinate_probe.py` 在 `887ee3d9` 上：
+
+```json
+{"observed_loser_sources":[["Movies/Sub/One.2001.mkv","Movies/Movies/Sub/One.2001.mkv"]],
+ "loser_durable_sources":[],"loser_refused":["Movies/Sub/One.2001.mkv"],
+ "loser_counters":{"primarySources":0,"excludedEntries":2},"loser_phase":"empty_excluded",
+ "owner_durable_sources":["Movies/Movies/Sub/One.2001.mkv"],
+ "free_sibling_exists":true,"mutations":0}
+```
+
+**同一探测（未改动）在本候选上：**
+
+```json
+{"observed_loser_sources":[["Movies/Sub/One.2001.mkv","Movies/Movies/Sub/One.2001.mkv"]],
+ "loser_durable_sources":["Movies/Sub/One.2001.mkv"],"loser_refused":["Movies/Sub/One.2001.mkv"],
+ "loser_counters":{"primarySources":1,"excludedEntries":1},"loser_phase":"analyzing",
+ "owner_durable_sources":["Movies/Movies/Sub/One.2001.mkv"],
+ "free_sibling_exists":true,"mutations":0}
+```
+
+**根因：** `_without_reserved_sources` 对**一个**拒绝构造
+`candidates = {library_relative_path, storage_path}` 再与 manifest 键求交。manifest 按 Storage
+路径作键，而“库相对路径”是另一套坐标；重复目录名使**第二个**文件的 Storage 键恰好等于**第一个**
+文件的库相对路径，于是交集命中两个不同实际文件，union 一并删除。这正是上一轮“区分坐标”留下的
+后半段：空根相等、普通非空根只命中一项的用例都证明不了这一点。
+
+**修复（一个拒绝只解析一个 manifest 身份）：**
+
+* 只使用仓储为**该来源**明确给出的内部 Storage 键 `storagePath` 去定位 manifest 行；
+  **不做**库相对 `path` 回退、不取并集、不按同名/前缀/重复目录名猜测、不重拼根目录。
+  键缺失或未命中即不删任何行（拒绝仍逐条记录），绝不把可能指向另一实际来源的值当键。
+* findings 与稳定性观察按**同一个来源的库相对坐标**删除；被删键集合返回的也是这个坐标，
+  调用方据此丢弃对应 observation（仓储/取证确认观察是按库相对路径存储的）。
+  `already_owned` 原因计数按实际来源递增，不再按两个坐标字符串重复累计。
+* 计数按真实来源：loser 保留 `primarySources 1` / `excludedEntries 1`，不再被写成
+  `empty_excluded`。
+* 两个调用点（普通 walk publication 与共享的 `_settle_control` →
+  `settle_media_discovery_control` 重试）继续使用这一个决定；事务内 reservation、pause/
+  cancel/reconcile 安全边界、legacy 保守身份与“内部物理键不进 details/操作者投影”全部不变。
+* 无 schema 改动（沿用 52），无迁移/旧行回填/旧 pin 重写。
+
+### 新增永久回归（`tests/test_media_discovery.py`，`AdmissionAndScopeTests`，29 → 31）
+
+两个用例都走真实 Files API、两个真实 `claim_and_run` 入口、两个 SQLite 连接和真实 `reopen`，
+并**显式断言 publication 之前确实观察到两个 primary**：
+
+| 测试 | 覆盖路径 | `887ee3d9` 上 | 本候选（多次重跑） |
+| --- | --- | --- | --- |
+| `test_a_duplicate_directory_name_does_not_prune_a_distinct_free_sibling` | 普通 walk publication | 失败（sources=[]、primary0/excluded2、`empty_excluded`） | 通过 5/5 |
+| `test_the_same_duplicate_name_prune_holds_at_the_pause_settlement` | 共享 settlement 重试 | 失败（同上） | 通过 5/5 |
+
+断言包含：loser 只保留第一个 Storage 键、第二个只有一条准确拒绝（`existingWorkId` 指向真正持有
+它的工作）、primary/excluded 各 1、phase 不是 `empty_excluded`、primary finding 只剩兄弟那条、
+冻结 intent 真的带兄弟来源、真实文件仍存在、零媒体效果、`list_media_discovery_observations`
+reopen 后只剩兄弟的观察、操作者投影不含内部 Storage 键。
+
+隔离验证（每次只撤掉一处，其余保持候选）：
+
+| 撤掉的实现 | 第一个用例 | settlement 用例 |
+| --- | --- | --- |
+| 回到“两个坐标求并集”的键匹配 | **FAILED** | **FAILED** |
+| 观察/被删键集合改回 `removed ∪ relative` | **FAILED** | — |
+
+因此这组回归确实锁住“精确删除一个来源”而不只是某个坐标恰好相等。原三个新回归（非空根剪枝、
+free sibling、暂停结算）与空根/普通非空根对照全部保持通过。
+
+### 实际命令与结果（本轮）
+
+仓库根目录：
+
+* `python3 scripts/check_governance.py` — PASS；`git diff --check` — clean。
+* `.venv/bin/ruff check mediaflow tests scripts` — clean；
+  `ruff format --check mediaflow tests scripts` — 358 files already formatted；
+  `python -m compileall -q mediaflow tests scripts` — clean；`pip check` — no broken requirements。
+* Required Tests 十个套件 — **401 OK**（46.8 s；上一轮同集合 396 + 2 个新回归 + 3 个既有用例）。
+* `.venv/bin/python -m unittest tests.test_media_discovery.AdmissionAndScopeTests` — **30 OK**（连跑
+  5 次一致）。
+* `.venv/bin/python -m unittest tests.test_media_discovery.AdmissionAndScopeTests
+  tests.test_task_persistence.SourceOwnershipEvidenceTests` — **33 OK**。
+* 直接受影响的 Automation/持久化/续作六套件 — **217 OK**（12.7 s）。
+* 直接受影响的 Files/普通操作七套件 — **186 OK**（11.2 s）。
+
+`web/`（本轮**无任何 Web 源码改动**，`git diff --stat -- web/` 为空；生产资源仍为上一轮
+`index-Cw7c73S-.js` sha256 `7e315a9c…`、`index-9CMd6NZ6.css` sha256 `6431101f…`）：
+
+* `npm run test -- run`（Required Tests 九份 spec）— **9 files / 166 tests passed**。
+* `npm run typecheck`、`npm run lint`、`npm run format:check` — clean。
+* `npx playwright test --config=playwright.python.config.ts
+  tests/e2e/operations-inventory.python.spec.ts` — **41 passed**（1.5 m），真实 Python/API/SQLite/
+  Worker + 当前生产 build。
+* `... operations-task-center-visual.python.spec.ts` — **2 passed**。
+* `npm run test:e2e -- --config=playwright.direct-files.python.config.ts
+  tests/e2e/direct-files.python.spec.ts` — **20 passed / 2 failed**（1.3 m）。失败是既有 row-menu/
+  非 localhost 时序问题：`527`（`getByRole('menu')` 未出现）与 `579`（30 s 超时）；同一命令在
+  **本轮 Task Base `83720c76`** 上为 **19 passed / 3 failed**（`549`、`556`、`579`，均为 30 s
+  `locator.click` 超时）。两次运行失败条数与具体行号均浮动，类别相同，未改期望值、未加重试、
+  未放宽超时。
+
+B 的探测脚本未改动重跑（`settlement-path-probe.py` 为本轮新增的同类探测，用来在**共享 settlement
+路径**上取证同一缺陷）：
+
+* `distinct_sibling_coordinate_probe.py` — 见上，loser 保留自由兄弟，`primarySources 1`。
+* `nested_root_folder_probe.py` — 仍只有一份工作持有 `Movies/Sub/Deep/One.2001.mkv`，另一份
+  `empty_excluded` 且带准确拒绝，零媒体效果。
+* `settlement-path-probe.py` — 在 `83720c76` 上 loser 变成 `sources=[]`、`primary0/excluded2`、
+  `empty_excluded`；本候选上 `paused` 且保留兄弟与一条拒绝（`primary1/excluded1`）。
+
+证据目录（本地 ignored）：`.git/validation-evidence/dev-46.3-fix7/`（`static.log`、
+`required-tests*.log`、`focused-and-automation.log`、`files-and-operations.log`、`web-unit.log`、
+`web-static.log`、`native-inventory.log`、`native-visual.log`、`direct-files.log`、
+`direct-files-baseline.log`、`asset-digests.log`、B 的三个未更改探测脚本 + 新增
+`settlement-path-probe.py`、`b-probes*.log`、`settlement-path-probe.log`）。
+
+### Known risks / limits
+
+* 两项修复都在真实 Files API、真实 Worker 入口、两连接 SQLite 与真实 `reopen` 上取证；竞争仍是
+  “两条真实记录先后进入竞争边界 + 有限延迟让两者都读到空闲”，与 B 记录的真实 Worker 轮询形状
+  一致，但不是同一瞬间的双线程 barrier 竞争。
+* settlement 用例把 release 时机交给测试协调（production pause 端点 + 真实 version-CAS 失败），
+  不是自然发生的双 Worker 竞速。
+* “一个拒绝只认内部 Storage 键”意味着：若未来某条 manifest 行真的没有 Storage 键，该来源只会
+  得到拒绝而不会被剪掉。当前所有 admitted manifest 行都以 Storage 路径作键，回归与 reopen 已证明
+  此点；这是刻意选择——宁可留一条不剪的行，也不误删另一实际来源。
+* `direct-files` 的既有失败仍在（本轮 2 条，Base 3 条，行号浮动），与本轮改动无关，未被“修好”，
+  证据保留。
+* 未新增 schema，故无迁移/旧行回填/reopen 迁移旅程；沿用 schema 52。
+* RO-4 的 organizing-only population/八视图/failure 移除与 RO-5 的 Automation 意图变更仍按
+  Non-goals 保持 TARGET；完整 T4 门禁仍由 B 执行。
+
+### Remaining Slice outcomes
+
+RO-1 complete（Task46.1）。RO-2：B 指定的“只删除唯一确定来源键、不误删独立自由兄弟”已交付并在
+普通 publication 与共享 settlement 两条路径上取证；但完整 T4 门禁（含全量 Python/Web/默认 E2E/
+打包/安装消费/常驻重启/迁移/RBAC/pins/fences/不确定效果不重放）仍由 B 执行，因此 RO-2 仍**不**
+声明完成。RO-3 complete（Task46.2，证据限制与既有 row-menu 失败照旧保留）。RO-4/RO-5 仍 TARGET。
+
+时间分布：本轮约 90 分钟，其中 build/测试/浏览器运行合计约 22 分钟（含 1 次原生 inventory、
+1 次 visual、2 次 direct-files（候选 + Base 基线，因基线只在 stash 前后各跑一次，重叠只计一次）、
+若干聚焦重跑与 3 个探测脚本，重叠只计一次），远低于 50%；未故意等待、未重复全量套件、
+未放宽断言或超时。
+
 ## Developer Completion Report (this round — non-empty-root source pruning and guarded settlement)
 
 Status handed off: **READY FOR B REVIEW — candidate for the whole Task; no PASS claimed.**
