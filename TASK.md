@@ -354,7 +354,7 @@ pointers in Slice/Roadmap/Progress are not changed by B or used to negate accept
 Planning validation: `python3 scripts/check_governance.py` PASS; `git diff --check` clean. No product
 suite, runtime probe, build or media operation was run for planning; checking time is below 50%.
 
-## Developer Completion Report
+## Developer Completion Report (previous round — same-library ownership)
 
 Status handed off: **READY FOR B REVIEW — candidate for the whole Task; no PASS claimed.**
 
@@ -508,7 +508,181 @@ RO-1 complete (Task46.1).  RO-2: same-library atomic source ownership and comple
 admission outcomes are now delivered and covered; the real-Python E2E file is still not green, so RO-2
 is **not** claimed complete.  RO-3 complete (Task46.2).  RO-4/RO-5 unchanged and still TARGET.
 
-## Developer Completion Report (previous round)
+## Developer Completion Report
+
+Status handed off: **READY FOR B REVIEW — candidate for the whole Task; no PASS claimed.**
+
+Implementation Head for this fix round: **`36882ccf`** (`fix(organize): bind Files-source
+convergence to the submitting principal`), on top of B's reviewed `c4379196`.  This report is a
+report-only successor.  B's contract correction at `c4379196:TASK.md`, its review at
+`885214c7:TASK.md`, the earlier reviewed ranges and their ignored evidence directories are unchanged.
+
+### B46.3-04 / P1 — 合并是主体（principal）绑定，不是库绑定
+
+B's authoritative proof (`published_principal_convergence_probe.py`, unmodified — two enabled
+`operator` principals actually published and resolved by the production loader) on `0ad89131`:
+
+```json
+{"first_status":202,"second_status":202,"same_discovery":true,
+ "second_selection":{"existing":[{"path":"Movies/One.2001.mkv"}],"refused":[],"scopeCount":2,
+                     "scopes":[{"path":"Movies/Three.2003.mkv"}]},
+ "stored_actor":"operator","stored_scope":["Movies/One.2001.mkv","Movies/Three.2003.mkv"],
+ "second_request_owner_result":{"items":[],"total":0},
+ "request_binding_under_original_actor":true,"request_binding_under_submitting_actor":false,
+ "mutations":0}
+```
+
+The same probe on this candidate:
+
+```json
+{"first_status":202,"second_status":202,"same_discovery":false,
+ "second_selection":{"existing":[],"refused":[{"path":"Movies/One.2001.mkv",
+   "code":"source_owned_by_another_operator","reason":"source_owned_by_another_operator"}],
+   "scopeCount":2,"scopes":[{"path":"Movies/Three.2003.mkv"}]},
+ "stored_actor":"operator","stored_scope":["Movies/One.2001.mkv"],
+ "second_request_owner_result":{"items":[{"discoveryId":"…","scopes":[{"path":"Movies/Three.2003.mkv"}],
+   "admissionRequestId":"22222222-2222-4222-8222-222222222222"}],"total":1},
+ "request_binding_under_original_actor":false,"request_binding_under_submitting_actor":true,
+ "mutations":0}
+```
+
+Root cause and fix:
+
+* `_converge_owned_sources` received the actor but never compared it with `record.actor`, and
+  `_refuse_owned_sources` granted the same-library merge exemption to *any* principal's open
+  discovery.  A second operator's submission therefore extended the first operator's scope and had
+  its own request identity bound under the first operator's record, so its Files readback
+  (`organize-work?requestId=…`) returned `total: 0` for work it had really submitted.
+* Convergence now requires **principal + library/Storage binding + immutable pin + admission kind**.
+  The same-library exemption is narrowed to the *same principal*.
+* A source held by another principal's unfinished work is a new bounded reason,
+  `source_owned_by_another_operator` (`_REASON_OWNED_BY_ANOTHER_PRINCIPAL`), whose refusal publishes
+  the fact and its own next action but **not** the holder's Task/discovery identity — that is the
+  other operator's private context.  `_scope_owned_error` accepts the already-resolved refusal so a
+  boundary conflict answers with the same bounded conclusion instead of a generic duplicate.
+* To make that distinction possible, `find_owned_source_work` now publishes the admitting principal of
+  an owning Task through the durable link that created it (a Files admission's `organize_task_id`, or
+  an admitted manual execution's `actor`); a scheduled/Run-once Task honestly reports `None` and keeps
+  its publishable reference.  No schema column, queue, catalog or idempotency layer was added, and
+  Storage I/O stays outside every transaction.
+* The still-free siblings of the second operator's selection are admitted into **its own** new durable
+  work under its own request identity.  The first operator's Task, scope and request binding are
+  untouched.
+
+New permanent regressions in `tests/test_media_discovery.py`:
+
+| Test | On `0ad89131` | On this candidate |
+| --- | --- | --- |
+| `test_another_operator_submission_never_merges_into_the_first_operators_work` | fails (`first["discoveryId"] == second["discoveryId"]`) | passes |
+| `test_concurrent_operator_selections_still_own_each_source_once` | fails (One lands inside the other operator's work) | passes |
+| `test_each_operator_reads_only_its_own_files_organizing_work` | passes (readback was already principal-scoped) | passes |
+
+The first two were verified failing on the exact prior `HEAD` tree (`git show HEAD:` sources with the
+new tests), not asserted from reasoning.  Both drive the real Files API, the real durable boundary and
+(exact) two SQLite connections; the first also reopens the repository and asserts both request
+identities still read back their own results.
+
+### B's other observations in this round
+
+* The native return-context failure B named first (`operations-inventory.python.spec.ts:1239` /
+  spec line 1108) is unchanged and still not green.  It is a *count* failure in the full sequential
+  file (the `expectRunTotal(SEEDED_RUN_TOTAL + 2)` assertion at spec line 1121 sees 4, not 6, because
+  an earlier journey's analysis run is not published in this sequence); the later
+  `command=manual_organize` URL assertion is downstream of that.  It passes in isolation.  I did not
+  change assertion values or add retries.
+* B46.3-02 (complete per-request refusals) and B46.3-04's same-actor unique ownership are retained:
+  B's unmodified `mixed_scope_race_probe.py` still returns the `.part` temporary-file exclusion beside
+  `admission_not_committed` with the frozen scope at `[One]`; `same_library_concurrent_probe.py` still
+  yields one effective Task with zero mutations; `repeated_root_probe.py` still yields the canonical
+  `Movies/Movies/One.2001.mkv` scope and a 409.
+
+### Actual commands and results (this round)
+
+From the repository root:
+
+* `python3 scripts/check_governance.py` — PASS; `git diff --check` — clean.
+* `.venv/bin/ruff check mediaflow tests scripts` — clean;
+  `ruff format --check mediaflow tests scripts` — 358 files formatted.
+* `.venv/bin/python -m compileall -q mediaflow tests scripts` — clean; `pip check` — no broken
+  requirements.
+* `.venv/bin/python -m unittest tests.test_media_discovery … tests.test_recovery_batch` (the ten
+  suites named in Required Tests) — **391 OK** (45.1 s), i.e. the previously reported 388 plus the
+  three new principal-boundary tests.
+* `.venv/bin/python -m unittest tests.test_media_discovery.AdmissionAndScopeTests` — **20 OK**
+  (was 17).
+* `.venv/bin/python -m unittest tests.test_v2_automation_run_once tests.test_v2_automation_operations
+  tests.test_configuration_snapshot tests.test_automation_run_once
+  tests.test_automation_definition_execution tests.test_automation_admission
+  tests.test_operations_run_inventory tests.test_operations_run_detail tests.test_scope_continuation
+  tests.test_task_persistence` — **356 OK** (27.8 s).
+* `.venv/bin/python -m unittest tests.test_v2_manual_organize tests.test_operations_workspace
+  tests.test_manual_operations tests.test_runtime_files_browser tests.test_direct_file_operations
+  tests.test_media_library_direct_commands tests.test_configuration_organize
+  tests.test_configuration_destination tests.test_configuration_classification
+  tests.test_configuration_destination_activation tests.test_configuration_destination_precheck
+  tests.test_scan_retirement_stability` — **232 OK** (11.6 s).
+
+From `web/` (built production assets):
+
+* `npm run test -- run` on the nine Required-Tests spec files — **9 files / 166 tests passed**
+  (was 165; the new Files copy test is added).
+* `npm run typecheck` — clean; `npm run lint` — clean; `npm run format:check` — clean;
+  `npm run build` — built.
+
+B's probes re-run unmodified against this candidate: `principal_convergence_probe.py`,
+`published_principal_convergence_probe.py` (both now show two distinct works, each request bound under
+its own principal, zero mutations), `same_library_concurrent_probe.py`, `mixed_scope_race_probe.py`,
+`repeated_root_probe.py`.
+
+Durable local ignored evidence for this round: `.git/validation-evidence/dev-46.3-fix3/`
+(`focused-tests.log`, `ruff.log`, `concurrent-two-principal.log`, `full-overlap.log`,
+`published-principal-convergence.log` and the three probe scripts).
+
+### The real-Python E2E file is still not green — unchanged, and not caused here
+
+`npx playwright test --config=playwright.python.config.ts
+tests/e2e/operations-inventory.python.spec.ts` (built production assets): **22 passed / 19 failed**,
+and the failing 19 spec line numbers are **exactly** B's recorded set
+(`1108, 1330, 1431, 1715, 2087, 2390, 2546, 2664, 2873, 3090, 3110, 3148, 3168, 3207, 3291, 3509,
+4330, 4917, 4981`).  `operations-task-center-visual.python.spec.ts` — **2 passed**.
+
+I am not claiming this failure is harmless, base-only, or fixed.  Reproduced first-failure shape on
+this candidate: `expectRunTotal` at spec line 1121 waits for `第 1 页起共 6 条` and the page renders the
+earlier journeys' unfixed count; the trace and `error-context.md` retain the actual route.  The
+subsequent `command=manual_organize` URL assertion follows from that.  It passes standalone.  This
+remains B-owned harness/order/counter reconciliation, and remains the largest open risk for RO-2.
+
+Testing/build/probe wall time this round: ~45 s + 28 s + 12 s focused Python, ~14 s + 3 s web unit,
+~10 s visual E2E, and 2 × ~170 s full native E2E (one run plus one baseline comparison), plus
+~30 s builds and a handful of sub-second probes — roughly 8–9 minutes of subprocess wall time inside a
+round of about 70 minutes (≈13 %, overlapping runs counted once).  No repeated full suite, deliberate
+waiting or relaxed assertion/timeout.
+
+### Known risks / limits
+
+* The real-Python `operations-inventory` E2E file is not green (the same 19 journeys as B's report).
+  RO-2 is therefore still **not** claimed complete.
+* The principal-boundary fix is proven at the real API/application, real durable-boundary and
+  two-connection SQLite levels plus a real repository reopen, and by a Files-page copy test; it is
+  *not* proven through a two-operator browser journey (the browser harness publishes a single admin
+  principal).
+* The native return-context failure B names first is a counting/sequencing effect in that sequential
+  file, not a product return-context defect: the journey passes standalone and the route it lands on
+  carries the selected run.  I did not "fix" it by changing expected counts.
+* `docs/architecture.md`'s Task46.3 CURRENT section now states the delivered principal-bound
+  convergence fact.  No schema change was needed, so no migration or old-row backfill applies.
+* RO-4's organizing-only population/eight-view/failure-removal and RO-5's Automation intent changes
+  remain outside this Task, per B's Non-goals.
+
+### Remaining Slice outcomes
+
+RO-1 complete (Task46.1).  RO-2: early durable admission, per-request results, verified Storage source
+identity, atomic per-source reservation, truthful admission outcomes, same-library unique ownership,
+principal-bound convergence, Files-only entry/readback and truthful Task settlement are implemented
+and proven at their real boundaries — but the real-Python E2E file is not green, so RO-2 is **not**
+claimed complete.  RO-3 complete (Task46.2).  RO-4/RO-5 unchanged and still TARGET.
+
+## Developer Completion Report (earlier round — rule-miss and atomic reservation)
 
 Status handed off: **READY FOR B REVIEW — candidate for the whole Task; no PASS claimed.**
 
