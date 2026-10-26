@@ -731,135 +731,138 @@ still TARGET.
 ## B Review Result
 
 ```text
-Reviewed Task range: 83144be20c6c7bc787a0fafad7fabb3e177bde6a..8b4f8819441622980eb9351b9a0e76d6e0b66fb3
-Executable candidate: ba9d18a3; ba9d18a3..8b4f8819 changes TASK.md only
+Reviewed Task range: 83144be20c6c7bc787a0fafad7fabb3e177bde6a..885214c758f2e11c9b32582f3e20c9e2975a6c03
+Executable candidate: 0ad8913144085c3f0756bbbd103fb653107b224c
+Report-only successor: 0ad89131..885214c7 changes TASK.md only
 Decision: FIX REQUIRED — 2026-10-26
-Open Task blockers: B46.3-02 / B46.3-04 (P1), narrowed below
-B46.3-01: rule-miss and native Recognition API/Worker journey verified; full Web gate pending
+B46.3-02: mixed-request exclusion loss corrected in the verified trigger
+B46.3-04: same-actor overlap corrected; foreign-principal convergence remains a P1 blocker
+Native acceptance: 22 passed / 19 failed; no full T4 PASS
 Slice Required Outcomes / Surfaces all satisfied: NO
 Next: SAME TASK FIX LOOP; no new Task or Slice closure
 ```
 
-B reassessed the complete 44-file Task Base..Head change set against the original Scope and
-acceptance, carrying forward previously verified unchanged facts and inspecting this round's
-recognition/choice, admission/transaction, harness, shell-return and test changes. The immutable
-Task Base, Goal, High/T4 and committed Slice boundaries are unchanged. This is not A Final Review.
-The previous exact review and evidence remain at `2960e620:TASK.md` and its ignored evidence path.
+B reassessed the complete 44-file immutable Task Base..Head range, preserving previously verified
+unchanged facts and independently examining this round's application/repository ownership changes,
+new tests and architecture claims. Base, Goal, Scope, High/T4 and committed Slice boundaries remain
+unchanged. `0ad89131..885214c7` is report-only, as verified by its exact diff. This is not A Final Review.
+The prior review/evidence remains at `4678a2a2:TASK.md` and its ignored evidence path.
 
-### Verified progress
+### Verified fixes
 
-- A genuinely published empty RecognitionRule set now leaves the type/policies undecided, publishes
-  one native Recognition item/count and offers no confirmable plan; zero Storage effects.
-- `NativeRecognitionJourneyTests` independently passes all 4 tests, including miss/ambiguity, a real
-  matching type/policy mapping and saved native Recognition decision → analysis → exact selected
-  confirmation → actual successful cross-Storage move. This verifies the API/Worker journey; it
-  does not claim the required complete browser recovery gate.
-- A Worker winning the scope-extension race no longer makes Three falsely `admitted`: Three is
-  accurately `admission_not_committed`, frozen scope remains One, and only one work exists.
-- Repeated-root alias identity is correct and the second same-source submission returns 409.
-- Concurrent initial admissions through two different library bindings now yield one durable Task
-  and one `source_already_organizing` refusal with the winner's exact work reference.
-- The 15 existing `AdmissionAndScopeTests` pass. These successes do not cover the remaining races
-  below or establish full Task/Slice acceptance.
+- The original same-user, two-connection `[One]` / `[One, Three]` probe now yields **one** effective
+  Task; durable scope really includes both files. The second response does not invent an admission.
+- The original `[One, Three, Excluded.part]` extension race now retains One existing, Three accurately
+  non-admitted, and the `.part` temporary-file exclusion, including exact request readback. Frozen
+  scope remains One; no probe media effects occurred.
+- `AdmissionAndScopeTests`, `NativeRecognitionJourneyTests` and `ZeroMutationTests` independently
+  pass **24 tests**. This includes the two permanent corrections and the actual Recognition
+  decision → analysis → exact selected confirmation → real result journey in temporary roots.
+- The previously corrected rule-miss/default-type and repeated-root identity facts are retained;
+  their code is unchanged in this round. No claim that every source interleaving is now accepted.
 
-### Required corrections — 本轮开发范围
+### Required correction — B46.3-04 / P1: 合并不能跨用户改写任务归属
 
-**1. B46.3-04 / P1：同库并发的不同选择仍重复占用一个来源。**
+**真实使用场景与当前表现：** 同一个合法发布的配置中有两个启用的 operator 账号，共用一个
+资源库。甲从 Files 提交 One；甲的任务还在排队时，乙提交 `[One, Three]`。无需并发、断线、
+故障注入或猜测入口：两次普通 Files API 提交都返回 202，但第二次返回甲的 discovery，并把
+Three 加入甲的 scope。乙的 requestId 被绑定/记录在甲名下；乙用自己的 token 从 Files 的
+`organize-work?requestId=...` 查询，返回 200 / items=[] / total=0。甲原来只提交 One 的工作却
+变成 One+Three。探测零媒体变更；不声称已经发生越权执行、双重变更或数据损失。
 
-真实使用：同一操作者的两个 Files 提交同时选择 `[One]` 与 `[One, Three]`，相同有效资源库、
-Storage 和配置 pin。两个独立 SQLite 连接的请求先各自读到空闲，再正常提交。本轮探测得到
-**两个不同的持久 Task/发现记录**，最终持久 scope 分别是 `[One]`、`[One, Three]`；One 同时归
-两份未完成工作。探测仅延迟首次真实来源检查，没有插入伪造状态、构造不存在入口或执行媒体变更。
+**根因：** 新增 `_converge_owned_sources(actor, ...)` 接收 actor 却不核对 `record.actor`。
+它只检查库/Storage/pin/autoPrepare/open 状态；`_reconcile_library_work` 原先具有的主体边界
+没有被带入这个新回退分支。随后 `_accept_onto_existing` 扩大甲的 scope，而 `_bind_request` /
+`_record_outcome` 又使用 `discovery.actor`，把乙的新请求登记成甲的请求。这不是应该放宽
+Files 读回权限的问题，也不能通过给乙显示甲的全部工作来修复。
 
-根因在现有链路：`_discovery_source_owners_locked` 为同库排队工作过滤掉已有 owner，假定服务层
-随后会合并；但两个请求都能在对方写入前完成 `_reconcile_library_work`。新事务检查复用该查询，
-且 `_reserve_admitted_sources_locked` 还允许跳过同库 discovery。事务中的 admission signature
-只能拦住完全相同选择，挡不住这两个不同范围。因此“跨库别名并发已修”不能证明同库也已修。
+**开发修改范围和步骤：**
 
-开发修改要求：
+1. 在现有 `_converge_owned_sources` / 准入回退中，把“同一操作者的同一合法 Files 工作”与
+   “别人的来源已被占用”分开。只有 principal、库/Storage、不可变 pin、准入种类及合法原始
+   上下文均匹配，才允许合并；沿用现有普通 Files/definition/续作边界，不因同库跳过身份检查。
+2. 对甲的 One 保留其真实占用，向乙返回受权限约束的明确重复结论；不要让 One 再进乙的新任务。
+   对仍空闲的 Three，沿现有边界独立受理到乙自己的工作，或明确报告真实未接纳及下一步。
+   甲的 Task/scope/request 结果保持不变；不得把乙的 requestId 记到甲名下。
+3. 保留已经修好的同主体正常复用、同库并发唯一占用、混合排除结论和冻结范围限制。不要移除
+   合并能力或减弱全局来源查重来回避此问题。Storage I/O 继续留在事务外，不新增队列/目录。
+4. 在 `tests/test_media_discovery.py` 现有 fixture 中合法发布两个有权限的主体，通过真实 API
+   覆盖“甲 One → 乙 One+Three”，以及同选择/并发变体。断言逐项响应、实际持久归属、甲范围
+   不变、乙独立来源/请求正确关联；双方 exact requestId 读回及 SQLite/API 重开后仍各归其主。
+   保留 viewer 拒绝、正常同主体复用、跨库别名、合法续作和成功/未知效果不重放的受影响覆盖。
 
-1. 在现有初始 Task/discovery 提交事务内，让排队的同库工作也参与真实来源所有权判断。
-   同库合并必须在事务边界得到证实，不能仅凭 library 相同就跳过 owner；不要删除同库正常复用能力。
-2. 对事务中发现的竞争，沿现有服务/仓储边界重新读取并有界收敛：One 复用真实已有工作；Three
-   合法加入尚未冻结的同一工作，或独立受理/明确报告未接纳。响应的每项结论必须来自实际持久结果。
-   不得创建两份占有 One 的工作，不得扩大冻结范围，也不得把 Three 无声丢掉。
-3. 同样检查混合剩余来源的 `_admit_remaining_sources` 与文件夹条目准入使用的实际边界，保留
-   已验证 fingerprint、合法续作和逐项结果；Storage I/O 继续留在事务外。只改本 Task 的已有组件。
+验收的用户结果是：**文件只归一份有效整理工作，每人的提交都能在自己的 Files 上找回，
+不能把乙选择的新文件塞进甲的任务。** 这属于原 Scope §3/6、RBAC/主体隔离及 AC-16，未增加
+新账号系统或产品功能。修复继续留在 Task46.3；不修改 Slice/Roadmap 边界，不另开治理 Task。
 
-验收/受影响测试：在 `tests/test_media_discovery.py` 现有真实 fixture 中，加入两个连接同时提交
-`[One]` / `[One, Three]` 的回归（两种先后顺序），断言最终持久 Task/scope、每来源唯一归属、
-Three 的真实结论以及两个 requestId 重读/仓储重开结果。保留完全相同选择、跨库别名、重复根名、
-文件夹条目和已成功/效果未知不重放的直接相关覆盖；不以“两个请求都返回 202”为通过依据。
+### Independent acceptance and evidence
 
-**2. B46.3-02 / P1：加项失去写入时，原有排除结论被覆盖。**
+Durable local ignored evidence: `.git/validation-evidence/885214c7/b46.3-review/`.
 
-沿既有 Files API：先提交 One，再提交 `[One, Three, Excluded.part]`，令真实 Worker 在第二次
-请求检查后、scope 写入前冻结 One。响应仍记 `scopeCount: 3`，却只保留 One 的 existing 和 Three
-的 `admission_not_committed`；`.part` 的 `source_excluded / temporary_file` 消失。同一 requestId
-重读也永久缺这一项。对照组让加项正常提交，则 `.part` 排除结论正确保留，Three 也确实持久加入。
-
-根因是 `_accept_onto_existing` 在有未接纳新项时，把 `outcome.refused` 整体替换成
-`_split_admitted` 对新项算出的 `not_admitted`，没有合并本次请求先前已确定的排除结果。
-
-开发修改要求：按精确 `(path, kind)` 合并原有拒绝与本次加项失败/已有 owner 的事实，再持久保存
-本次完整 outcome；重复键采用明确且事实一致的结论，不拿别次请求/共享进度代替本次结果。
-验收：在既有 race 用例中加入 `.part`，断言三项各自有且只有一个真实结论：One existing、Three
-未接纳、`.part` 保留具体排除原因。正常加项、失去写入、同请求重读及 SQLite 重开均须保持结果；
-先前请求的结果不被改写。不要把技术性未接纳改叫重复文件。
-
-以上两项都属于原有 AC-16 来源占用和原 Scope 逐项提交结果要求，继续同一个 Task46.3。
-不得通过新治理 Task、第二队列/来源目录、放宽合同或修改期望值掩盖问题。对 architecture 中的
-CURRENT 声明，仅同步实际行为事实，不能用文档豁免未交付保证。
-
-### Independent checks and evidence
-
-Durable local ignored evidence: `.git/validation-evidence/8b4f8819/b46.3-review/`.
-
-| Check | B actual result / log |
+| Command / scenario | B actual result |
 | --- | --- |
-| `python3 scripts/check_governance.py`; exact Task Base..8b4f8819 `git diff --check` | PASS / clean |
-| `.venv/bin/python -m unittest tests.test_media_discovery.AdmissionAndScopeTests` | 15 OK, 0.947 s process wall; `admission-tests.log`; ResourceWarning retained |
-| `.venv/bin/python -m unittest tests.test_media_discovery.NativeRecognitionJourneyTests` | 4 OK, 0.351 s process wall; `recognition-journey-tests.log`; real effects confined to temporary roots |
-| Previous `recognition_probe.py` against candidate | blocked plan, type null, Recognition total 1 / TaskItems 1; zero effects; `recognition.log` |
-| Previous `scope_race_probe.py` against candidate | truthful Three non-admission, frozen scope One; zero effects; `scope-race.log` |
-| Previous `repeated_root_probe.py` against candidate | exact canonical path and second submission 409; zero effects; `repeated-root.log` |
-| Developer `concurrent_source_probe.py`, inspected then independently run | cross-library race: one durable Task plus exact existing-work refusal; zero effects; `cross-library.log` |
-| `same_library_concurrent_probe.py` | two durable Tasks/scopes both hold One; zero effects; `same-library.log` |
-| `mixed_scope_race_probe.py` and same-input normal-extension control | race loses `.part` refusal on response/request readback; control retains it; zero effects; `mixed-scope-race.log`, `mixed-scope-control.log` |
+| `python3 scripts/check_governance.py`; exact Base..885214c7 `git diff --check` | PASS / clean |
+| `.venv/bin/python -m unittest tests.test_media_discovery.AdmissionAndScopeTests tests.test_media_discovery.NativeRecognitionJourneyTests tests.test_media_discovery.ZeroMutationTests` | 24 OK, 1.532 s process wall; `affected-tests.log`; ResourceWarning retained |
+| `.venv/bin/ruff check mediaflow/application/media_discovery.py mediaflow/infrastructure/sqlite_runtime.py tests/test_media_discovery.py` | PASS; `ruff.log` |
+| Unmodified prior `same_library_concurrent_probe.py` | one effective Task, actual durable scope One+Three, zero effects; `same-library.log` |
+| Unmodified prior `mixed_scope_race_probe.py` | both refusals retained, exact readback stable, frozen scope One, zero effects; `mixed-scope-race.log` |
+| `principal_convergence_probe.py` | normal two-principal API admission wrongly merges/binds to the first actor; zero effects; `principal-convergence.log` |
+| `published_principal_convergence_probe.py` | same defect with both operator identities actually validated/published and resolved by the production configuration loader; zero effects; `published-principal-convergence.log` |
+| `npm run build` (`web/`) | PASS, 0.343 s process wall; production assets, `native.log` |
+| `npm run test:e2e -- --config=playwright.python.config.ts tests/e2e/operations-inventory.python.spec.ts --output=../.git/validation-evidence/885214c7/b46.3-review/native-artifacts` (`web/`) | **22 passed / 19 failed**, exit 1, 166.420 s process wall; `native.log`, `native-results.json`, traces and error contexts in `native-artifacts/` |
 
-All probes start at existing Files API/application admission and real Worker boundaries, using valid
-published fixture configuration, temporary Local Storage and SQLite. Race delays only schedule actual
-requests/Worker calls; no guessed endpoint, direct DB mutation, fabricated response or DOM evidence.
-Duplicate admission is proven; double media mutation, data loss or exploit is not claimed.
+The two-principal proof uses a valid managed configuration with two enabled `operator` principals,
+production permission/token resolution, ordinary existing Files POST/readback routes, real SQLite
+and confined temporary Local Storage. Synthetic credentials stay in the isolated process and are not
+printed. No foreign ID is guessed by the caller, DB state fabricated, unavailable endpoint invented,
+or response/DOM modified. The second submit itself incorrectly returns the first work's identity.
+The first API-constructor probe is corroborated by the independently published-configuration version;
+the latter is the authoritative acceptance proof, not an assumption about unsupported configuration.
 
-The Developer report's full real-Python E2E failures remain unresolved and visible; B does not accept
-an order/count-only explanation without actual reconciliation of the journey and assertions. B did
-not independently rerun that full file here. The report's immutable-Base 41/41 comparison and candidate
-16–20 failures are Developer evidence, not B acceptance or a waived regression. The reported 73%
-test/build/probe allocation exceeds the user's ceiling and remains a disclosed process deviation.
+### Native failures remain visible; do not turn them into 19 guessed product defects
 
-For the next correction, Developer runs these failing/new tests, directly affected suites and
-changed-file checks. Do not repeat full Python/Web/E2E/release matrices as Developer; workflow §6 owns
-the split even where older broad command blocks above could be read otherwise. Preserve all actual
-failures. After corrected handoff, **B** owns full T4/native/visual/packaging/installed-consumer,
-restart/schema/failure-atomicity/RBAC/pins/non-replay gates. This review uses workflow §6's early
-FIX REQUIRED on proven P1 blockers; those remaining gates are pending, not PASS or waived.
+The first actual failure in B's full sequential run is the lost-execution-response journey at spec
+line 1239: Files submission, analysis and confirmation proceed; after **核对提交结果**, the selected
+Task returns as `/ui-v2/operations?run=...` but loses the original `command=manual_organize` context.
+The assertion at this point is return context, **not a run-count assertion**. Its trace and
+`operations-inventory.pytho-f2b70-d-restores-the-selected-run-chromium/error-context.md` retain the
+actual route and page. The developer's general count/order explanation does not establish this case.
 
-B started at 02:48:35 UTC on 2026-10-26. Product tests/probes took less than 5 seconds subprocess
-wall time inside more than four minutes of code/contract/evidence review, strictly below 50%; no
-build, full suite, deliberate waiting, retry or weakened assertion/timeout was used. Governance and
-final document/whitespace checks do not change that conclusion.
+The next sibling test finds its source still present after a Worker run; later recovery/summary
+fixtures also encounter 409 and timeouts. Since this file deliberately shares one durable queue and
+prior failed tests can leave admitted work behind, B does not label those as nineteen independent
+implementation defects or claim their exact causes without further evidence. The tested native gate
+is nevertheless failed; focused successes and a comparison to a rejected prior Head do not waive it.
+
+B owns acceptance-harness/order/counter reconciliation and the remaining full gates. On the corrected
+candidate, begin with this exact first failing journey/trace and distinguish actual product return-
+context behavior from test sequencing; preserve failed input, assertions and queue evidence. Transfer
+only a proven required implementation correction within the original Task, not a blanket instruction
+for Developer to rerun/fix all full suites or change expected counts. Do not add retries, weaken
+assertions/timeouts or report isolated passes as full-file acceptance.
+
+Developer now fixes the proven principal-boundary blocker and runs its new/failing/directly affected
+tests plus changed-file checks. Full Python/Web/default/native/visual/release/installed-consumer,
+resident-restart/schema/failure-atomicity/RBAC/pins/non-replay gates remain **B-owned and pending**.
+Workflow §6 permits FIX REQUIRED on a proven Task blocker before the rest of expensive T4 acceptance;
+no required gate is waived and no Task PASS/complete native browser recovery is claimed here.
+
+B's review started at 03:58:12 UTC on 2026-10-26. The single production build/full native run plus
+all focused tests/probes occupied less than 175 seconds subprocess wall time (overlap counted once).
+At 04:04:12 UTC, elapsed review time was 360 seconds: even that conservative 175-second upper
+bound is below 48.7%, strictly below 50%. No repeated full suite, deliberate waiting or
+assertion/timeout relaxation was used.
 
 ### All Slice outcomes reevaluated
 
 | Outcome | Assessment at reviewed Head |
 | --- | --- |
-| RO-1 readable shared actions | Task46.1 acceptance retained; no new final visual claim |
-| RO-2 Files-first organizing | Incomplete: Recognition, truthful single lost extension and cross-library ownership improve; same-library atomic ownership and complete mixed-request outcomes still block |
-| RO-3 local ordinary operations | Task46.2 acceptance/evidence limits retained; shared persistence/shell changes await complete acceptance |
-| RO-4 organizing-only center/four-type truth | Incomplete; broader eight-view/population/failure-removal stays outside this Task; new manual work's native integration remains this Task's duty |
-| RO-5 Automation detail/Enabled/Run once | Incomplete; intent semantics remain TARGET; shared source ownership still must preserve every existing entrance |
+| RO-1 readable shared actions | Task46.1 acceptance retained; no new final desktop/narrow visual claim |
+| RO-2 Files-first organizing | Incomplete: both prior triggers improve, but cross-principal merge/request ownership blocks; full native journey gate fails |
+| RO-3 local ordinary operations | Task46.2 acceptance/evidence limits retained; shared persistence/shell still await complete acceptance |
+| RO-4 organizing-only center/four-type truth | Incomplete; wider eight-view/population/failure-removal remains deferred from this Task; native integration for its new manual work is still required |
+| RO-5 Automation detail/Enabled/Run once | Incomplete; changed intent semantics remain TARGET; shared source ownership still preserves principal/pin/origin boundaries |
 
-Slice stays ACTIVE. Only B-owned TASK.md changes in this checkpoint; all pre-existing untracked/private/
-reference files and A-owned boundaries are preserved. No product implementation, next Task, push,
-publication or Slice closure by B.
+Slice remains ACTIVE. This checkpoint changes only B-owned TASK.md. Existing untracked/private and
+reference artifacts, A-owned boundaries and all original work remain preserved. No product
+implementation, next Task, push/publication or Slice closure by B.
