@@ -359,9 +359,9 @@ suite, runtime probe, build or media operation was run for planning; checking ti
 Status handed off: **READY FOR B REVIEW — candidate for the whole Task; no PASS claimed.**
 
 Implementation Head for this fix round: **`eb11c241`** (`test(organize): cover cross-binding and
-folder-walk source ownership`, on top of the fix `b7513ce4`), on top of B's reviewed `6d79858a`.  This report is a report-only successor: B's contract correction and review at
-`6d79858a:TASK.md`, the earlier reviewed ranges and their ignored evidence directories are
-unchanged.
+folder-walk source ownership`, on top of the fix `b7513ce4`), on top of B's reviewed `6d79858a`.
+This report is a report-only successor: B's contract correction and review at `6d79858a:TASK.md`,
+the earlier reviewed ranges and their ignored evidence directories are unchanged.
 
 ### B46.3-04 / P1 (1) — `source_fingerprint` 是库绑定的，不是物理来源
 
