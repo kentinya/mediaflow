@@ -2384,17 +2384,18 @@ class AdmissionAndScopeTests(_DiscoveryFixture):
 
         Root cause 2 of B's non-empty-root trigger.  Once a work has been refused a
         source its refused projection is still carried into
-        ``_merge_attempted_work`` and is republished by the control settlement that
-        acknowledges the operator's pause.  A reservation that only vetoes the
-        *first* attempted write is therefore a bypass: the pause is acknowledged and
-        the same duplicate manifest is written back.
+        ``_merge_attempted_work`` and is republished by the settlement that
+        *acknowledges* the operator's pause.  A reservation that only vetoes the
+        first attempted write is therefore a bypass: the acknowledgement writes the
+        duplicate manifest back.
 
-        The exact sequence is reproduced.  The losing work is admitted first (so the
-        resident Worker really claims it), its walk observes the source and its
-        publication is held; the other work then commits that source; the operator
-        pauses the loser; and only then is the held publication released, so it loses
-        the version CAS and has to settle against the fresh record.  The
-        acknowledgement has to survive *and* keep the source pruned.
+        The order is chosen so the refusal can only happen at the settlement.  The
+        loser is admitted and claimed, its walk observes the source and its
+        publication is held; the operator pauses it *while it is still the only work*
+        (so the accepted pause request itself has nothing to refuse); the other work
+        then commits that source; and only then is the held write released, so it
+        loses the version CAS and has to acknowledge the pause against the fresh
+        record.  That acknowledgement is the publication under test.
         """
 
         self.media("Movies/Sub/Deep/One.2001.mkv")
@@ -2403,7 +2404,6 @@ class AdmissionAndScopeTests(_DiscoveryFixture):
         with self.journey() as value:
             self.publish_policy(value, document=document)
             loser_admission = self._admit_paths(value, ["Sub/Deep"])
-            owner_admission = self._admit_paths(value, ["Sub"])
             second_repository = SQLiteTaskRepository(self.database)
             other = MediaDiscoveryService(
                 second_repository,
@@ -2427,28 +2427,31 @@ class AdmissionAndScopeTests(_DiscoveryFixture):
                 return original_publish(discovery, **kwargs)
 
             second_repository.record_media_discovery_progress = held_publish
+            # Observe the real reservation boundary: which source each in-transaction
+            # ownership decision refused.  This is instrumentation of the existing
+            # entry, never a substitute for it.
+            refused_attempts: list[str] = []
+            original_reserve = second_repository._reserve_discovered_sources_locked
+
+            def observed_reserve(discovery):
+                answer = original_reserve(discovery)
+                refused_attempts.extend(path for path, _storage, _owned in answer)
+                return answer
+
+            second_repository._reserve_discovered_sources_locked = observed_reserve
             worker = threading.Thread(
                 target=lambda: other.claim_and_run(worker_id="loser", claim_token="loser-token")
             )
             worker.start()
             try:
-                # The loser really observed the source before losing the race.
+                # The loser really observed the source, and it is the only work, so
+                # the pause request below has no competing owner to be refused.
                 self.assertTrue(entered.wait(10), "the loser never observed the source")
                 self.assertEqual(loser_admission["discoveryId"], attempted[0].discovery_id)
                 self.assertEqual(
                     ["Movies/Sub/Deep/One.2001.mkv"],
                     [item["path"] for item in attempted[0].sources],
                 )
-                # The other work commits that exact source while the loser waits.
-                self.assertIsNotNone(
-                    value.discovery.claim_and_run(worker_id="owner", claim_token="owner-token")
-                )
-                owner = value.repository.get_media_discovery(owner_admission["discoveryId"])
-                self.assertEqual(
-                    ["Movies/Sub/Deep/One.2001.mkv"], [item["path"] for item in owner.sources]
-                )
-                # The operator pauses the loser before its held write lands, so the
-                # write loses the CAS and the pause must be settled, not lost.
                 status, detail = self.request(
                     value,
                     f"/api/v1/operations/organize/discoveries/{loser_admission['discoveryId']}",
@@ -2463,12 +2466,32 @@ class AdmissionAndScopeTests(_DiscoveryFixture):
                 )
                 self.assertEqual(200, status, paused)
                 self.assertTrue(paused["pauseRequested"])
+                # Nothing has been refused yet: the pause request itself observed no
+                # competing owner.  Everything below therefore exercises the
+                # *acknowledgement* boundary, not the walk's first publication.
+                self.assertEqual([], list(refused_attempts))
+                # Now the other work commits that exact source, and the loser's held
+                # write is released so it must settle against the fresh record.
+                owner_admission = self._admit_paths(value, ["Sub"])
+                claimed = value.discovery.claim_and_run(
+                    worker_id="owner", claim_token="owner-token"
+                )
+                self.assertIsNotNone(claimed)
+                self.assertEqual(owner_admission["discoveryId"], claimed.discovery_id)
+                owner = value.repository.get_media_discovery(owner_admission["discoveryId"])
+                self.assertEqual(
+                    ["Movies/Sub/Deep/One.2001.mkv"], [item["path"] for item in owner.sources]
+                )
             finally:
                 release.set()
                 worker.join(20)
                 self.assertFalse(worker.is_alive())
             settled = value.repository.get_media_discovery(loser_admission["discoveryId"])
-            # The settlement happened (the accepted pause is durable) ...
+            # The durable boundary really refused the acknowledgement's first
+            # attempt at this source: the reconcile -> settle path is exercised, not
+            # merely the walk's first publication and not an exception string.
+            self.assertIn("Sub/Deep/One.2001.mkv", refused_attempts)
+            # The acknowledgement really happened ...
             self.assertEqual("paused", settled.status.value, settled.progress.message)
             self.assertTrue(settled.pause_requested)
             self.assertIsNone(settled.claim_token)
@@ -2487,11 +2510,13 @@ class AdmissionAndScopeTests(_DiscoveryFixture):
                 settled.progress.refused_entries,
             )
             self.assertEqual(0, settled.progress.counters.primary_sources)
+            self.assertEqual(1, settled.progress.counters.excluded_entries)
             self.assertEqual([], value.source.mutations)
             self.assertEqual([], value.target.mutations)
             # The same conclusion survives a real repository reopen.
             with SQLiteTaskRepository(self.database) as reopened:
                 stored = reopened.get_media_discovery(loser_admission["discoveryId"])
+                self.assertEqual("paused", stored.status.value)
                 self.assertEqual([], [item["path"] for item in stored.sources])
                 self.assertEqual(
                     ["Sub/Deep/One.2001.mkv"],

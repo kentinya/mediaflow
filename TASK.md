@@ -354,6 +354,158 @@ pointers in Slice/Roadmap/Progress are not changed by B or used to negate accept
 Planning validation: `python3 scripts/check_governance.py` PASS; `git diff --check` clean. No product
 suite, runtime probe, build or media operation was run for planning; checking time is below 50%.
 
+## Developer Completion Report (this round — non-empty-root source pruning and guarded settlement)
+
+Status handed off: **READY FOR B REVIEW — candidate for the whole Task; no PASS claimed.**
+
+Implementation Head for this fix round: **`58eb734f`**
+(`fix(organize): prune reserved sources by manifest key and keep the decision in settlement`), on top of
+B's reviewed `1ae2f5c1`. B's contract correction at `d33cd5ef:TASK.md`, its review at
+`1ae2f5c1:TASK.md`, the earlier reviewed ranges and their ignored evidence directories are unchanged.
+
+### B46.3-04 / P1 — 非空库根下仍可把被拒绝的来源写回两份工作
+
+**B 的真实顺序（原样复现，未改动任何探测）：** 一个 ResourceLibrary 的 root 为 `Movies`，从它的
+Files 页分别提交文件夹 `Sub` 与 `Sub/Deep`，实际主文件是 `Movies/Sub/Deep/One.2001.mkv`。
+B 的 `nested_root_folder_probe.py` 在 `1ae2f5c1` 上两条记录的 `sources` 都保留该文件、
+一个 `analyzing` 一个 `completed`、零媒体效果。**同一探测（未改一行）在本候选上：**
+
+```json
+{"ownership_reads":[{"path":"Movies/Sub/Deep/One.2001.mkv","free":true},
+                    {"path":"Movies/Sub/Deep/One.2001.mkv","free":true}],
+ "durable_sources":[["Movies/Sub/Deep/One.2001.mkv"],[]],
+ "phases":["analyzing","empty_excluded"],"task_count":2,"mutations":0}
+```
+
+另一次运行里两条记录的先后相反（`durable_sources` 为 `[[], ["Movies/Sub/Deep/One.2001.mkv"]]`，
+`phases` 为 `["empty_excluded","analyzing"]`），这是真实 Worker 领取顺序决定的：**哪一条胜出会变，
+"同一来源最多归一份未完成工作"不变**。两种情况都实测过，零媒体效果。
+
+B 的 `nested_root_folder_diagnostic_probe.py`（同样未改动）在本候选上给出
+`refused: [[], ['Sub/Deep/One.2001.mkv']]`，`existingWorkId` 指向真正持有该来源的那条工作。
+
+**两个独立根因，均已修复并各自有失败即可复现的回归：**
+
+1. **拒绝路径与 manifest 键是两个不同坐标。** manifest 按 walk 记录的 Storage-relative 路径
+   （`Movies/Sub/Deep/One...`）作键，findings 与操作者可见的拒绝用 ResourceLibrary-relative 路径
+   （`Sub/Deep/One...`）。root 非空时两者不同，`_publish_without_reserved_sources` 用
+   `refused_paths` 去过滤 `updated.sources[*].path` 什么都删不掉，于是只有拒绝原因和计数更新、
+   来源仍留在清单里。
+   * 修复：`reserved_refusals()` 现在为每个被拒来源同时携带操作者路径 `path` 与精确 manifest 键
+     `storagePath`，**后者是内部值**，永不进入 `details`、永不进入操作者投影。
+   * 应用层抽出唯一的剪枝决定 `_without_reserved_sources()`：按实际匹配到的坐标删除 manifest 行、
+     对应的 PRIMARY finding、**对应的稳定性观察**（否则下一轮会把它当“已观察”再回放，并重新
+     触发同一保留）、并把 primary/excluded 计数与 reasons 同步；然后为每个精确 `(path, kind)`
+     记一条拒绝。空根与非空根同语义，不做前缀猜测。返回值带被删除的键集合，供调用方丢弃对应
+     observations。
+
+2. **保留只是一个写入否决，不是持续决定。** 被拒的投影仍会被 `_merge_attempted_work` 带进
+   control/reconcile 结算，`settle_media_discovery_control` 更新 `sources_json` 却不做同一来源
+   占用检查，于是前一次原子拒绝被后备写入绕过。
+   * 修复：`settle_media_discovery_control` 在其 `BEGIN IMMEDIATE` 内执行与
+     `record_media_discovery_progress` **完全相同**的 `_reserve_discovered_sources_locked`，
+     命中即整体回滚抛带 `refused_sources` 的 `DiscoveryConflict`，绝不把拒绝过的 manifest 写回。
+   * 应用层 `_settle_control` 捕获该冲突后剪枝并**重试一次**：操作者的 pause/cancel/fail 仍被
+     接受，同时被拒来源及其逐项拒绝成为耐久结论；既不会把合法的控制请求报成失败，也不会因为
+     重试而放宽占用。
+
+其余不变：Storage `stat`/`list` 仍在所有事务外；无 schema 改动（沿用 52），无迁移/旧行回填/
+旧 pin 重写；空根、跨绑定别名、真实文件替换、主体隔离、合法 lineage 的既有行为全部保留。
+
+### 新增/扩展的永久回归（`tests/test_media_discovery.py`，`AdmissionAndScopeTests`）
+
+`AdmissionAndScopeTests` 28 → **31 tests**（新增 3 个）。三个都用现有 Files API、两个真实
+`claim_and_run` 入口、两个 SQLite 连接和真实 `reopen`；根因 2 的用例让 `record_media_discovery_progress`
+在**真实**观察到来源后挂起，由另一条工作先提交该来源，再由操作者通过 production pause 端点暂停，
+最后释放被挂起的写入让版本 CAS 失败，从而真的经过 `_merge_attempted_work` → `_settle_control` 回退。
+
+| 测试 | `1ae2f5c1` 上 | 本候选（多次重跑） |
+| --- | --- | --- |
+| `test_a_nested_library_root_prunes_the_reserved_source_from_the_loser` | 失败（两份工作都持有该来源） | 8/8 通过 |
+| `test_a_nested_library_root_keeps_the_losers_free_sibling` | 失败 | 8/8 通过 |
+| `test_a_paused_loser_settlement_cannot_restore_a_reserved_source` | 失败 | 8/8 通过 |
+
+第三项按**唯一可能失败于一处的顺序**编排，并把断言做得可验证：loser 先被 admit 且先被 claim（避免
+同刻 UUID 排序使用例时过时不过），其 walk 真实观察到来源后挂起；此时它仍是唯一工作，所以随后
+经 production pause 端点发出的暂停请求**不会**被拒——用例显式断言此刻
+`refused_attempts == []`；接着另一条工作才提交该来源；最后释放被挂起的写入让其 CAS 失败，必须对
+新鲜记录**确认暂停**。只有这样，"拒绝 + 剪枝"才必然发生在 `_settle_control` 路径上。
+
+隔离验证（每次只撤掉一处，其余保持候选）：
+
+| 撤掉的实现 | 该用例 |
+| --- | --- |
+| `settle_media_discovery_control` 的事务内保留检查 | **FAILED**（5/5，`[]` vs `['Movies/Sub/Deep/One.2001.mkv']`） |
+| `_settle_control` 中的剪枝重试 | **FAILED**（3/3） |
+| 仅 `record_media_discovery_progress` 的保留检查 | **FAILED**（1/1） |
+
+前两项分别对应 B 指出的"只修首次 reservation 不够"的两个环节，因此该回归确实覆盖 settlement
+绕过而不只是首个写入。空根的原有两条竞争用例保持通过；`refused_attempts` 只是对现有
+`_reserve_discovered_sources_locked` 入口的观测，不替代它，也不改任何生产判断。
+
+### 实际命令与结果（本轮）
+
+仓库根目录：
+
+* `python3 scripts/check_governance.py` — PASS；`git diff --check` — clean。
+* `.venv/bin/ruff check mediaflow tests scripts` — clean；
+  `ruff format --check mediaflow tests scripts` — 358 files already formatted；
+  `python -m compileall -q mediaflow tests scripts` — clean。
+* Required Tests 三个套件 — **176 OK**（连续 3 次，12.6–14.2 s）。
+* Required Tests 七个套件 — **223 OK**（34.3–35.2 s）。
+* `tests.test_media_discovery.AdmissionAndScopeTests` + `SourceOwnershipEvidenceTests` — **31 OK**。
+* 直接受影响的 Automation/持久化/续作/普通整理七套件（`test_scope_continuation`、
+  `test_task_persistence`、`test_automation_run_once`、`test_automation_definition_execution`、
+  `test_automation_task_definition`、`test_processing_recovery_admission`、
+  `test_organize_preparation` 等）— **217 OK**（13.4 s）。
+* B 的两个探测脚本**未修改**重跑（见上）：`.git/validation-evidence/dev-46.3-fix6/` 下的
+  `nested-root-probe.log`、`nested-root-diagnostic.log`。
+
+`web/`（本轮**无任何 Web 源码改动**，`git diff --stat -- web/` 为空）：
+
+* `npm run test -- run`（Required Tests 九份 spec）— **9 files / 166 tests passed**。
+* `npm run typecheck`、`npm run lint` — clean。
+* `npx playwright test --config=playwright.python.config.ts tests/e2e/operations-inventory.python.spec.ts`
+  — **41 passed**（1.5 m），真实 Python/API/SQLite/Worker + 当前生产 build，含 Files 入口、
+  四类原生恢复、未知准入与真实 Worker 结果/重启断言。
+* `... operations-task-center-visual.python.spec.ts` — **2 passed**。
+* `npm run test:e2e -- --config=playwright.direct-files.python.config.ts tests/e2e/direct-files.python.spec.ts`
+  — **19 passed / 3 failed**（15–22 s/test），失败全部是行菜单 `role=menuitem` 的
+  "element is not stable / detached from the DOM"（spec 520/527/549/556/579 的不同组合）。
+  这是 Task46.2 已记录的既有 row-menu native failure：同一命令在**本轮 Task Base `d33cd5ef`** 上
+  同样 **3 failed / 19 passed**，同一报错类别；两次候选运行与一次基线运行的失败条数一致，
+  具体行号在运行间浮动（候选 `520/549/556`、`527/556/579`；基线 `549/556/579`），因此它是
+  既有的顺序/时序敏感失败，不是本轮后端改动引入。未改期望值、未加重试、未放宽超时。
+
+证据目录（本地 ignored）：`.git/validation-evidence/dev-46.3-fix6/`（`required-tests.log`、
+`automation-and-persistence.log`、`static.log`、`nested-root-probe.log`、
+`nested-root-diagnostic.log`、`direct-files*.log`、两个未更改的 B 探测脚本、`repro_nested.py`
+及 `*-artifacts/`）。Web 生产资源本轮未重建（源码未变，沿用 `58eb734f` 同一 Web 输入）。
+
+### Known risks / limits
+
+* 两个根因都在真实 Files API、真实 Worker 入口、两连接 SQLite 与真实 `reopen` 上取证；但
+  **文件夹竞争仍是“两条真实记录先后进入竞争边界 + 有限延迟让两者都读到空闲”**，而非同一瞬间
+  的双线程 barrier 竞争（与 B 记录的真实 Worker 轮询形状一致）。
+* 根因 2 的回归用 production pause 端点制造“被挂起的写入输掉 CAS”，这是真实控制路径而非伪造
+  数据库状态；但它把 release 时机交给测试协调，所以不是一次自然发生的双 Worker 竞速。
+* 该用例的隔离性是用“逐项撤掉实现再重跑”证明的，而不是固定快照；若后续实现把两处保留合并为
+  一处，这组隔离断言需随实现更新，但它仍是 B 要求的“真的经过 reconcile/settle 路径”证据。
+* `direct-files` 的 3 条 row-menu 失败仍在，与本轮改动无关，未被本轮"修好"，未删除证据。
+* 未新增 schema，故无迁移/旧行回填/reopen 迁移旅程；沿用 schema 52。
+* RO-4 的 organizing-only population/八视图/failure 移除与 RO-5 的 Automation 意图变更仍按
+  Non-goals 保持 TARGET；完整 T4 门禁仍由 B 执行。
+
+### Remaining Slice outcomes
+
+RO-1 complete（Task46.1）。RO-2：B 指定的非空库根来源剪枝与 settlement 绕过已交付并在真实
+边界取证，原生 inventory spec 整文件 41 passed；但完整 T4 门禁仍由 B 执行，因此 RO-2 仍**不**
+声明完成。RO-3 complete（Task46.2，证据限制照旧保留，含既有 row-menu 失败）。RO-4/RO-5 仍 TARGET。
+
+时间分布：本轮约 105 分钟，其中 build/测试/浏览器运行合计约 26 分钟（含 2 次 inventory/visual
+原生运行、2 次 direct-files 候选运行与 1 次基线运行、若干聚焦重跑，重叠只计一次），远低于 50%；
+未故意等待、未重复全量套件、未放宽断言或超时。
+
 ## Developer Completion Report (this round — physical source ownership across stages)
 
 Status handed off: **READY FOR B REVIEW — candidate for the whole Task; no PASS claimed.**
