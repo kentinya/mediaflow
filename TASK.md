@@ -476,7 +476,7 @@ B 的 `folder_ownership_sequential_claims_probe.py` 在 `6d79858a` 上：
 连接和一次刻意的 owner-read 延迟，让两次真的都读到空闲，再断言最终持久 `sources`/`TaskItem`
 归属最多一个、失败竞争者的结论真实、独立兄弟保留，并覆盖 `reopen`。
 
-`tests/test_task_persistence.py` 新增 `SourceOwnershipEvidenceTests`（24 → 24 tests，3 个新用例）：
+`tests/test_task_persistence.py` 新增 `SourceOwnershipEvidenceTests`（21 → 24 tests，3 个新用例）：
 两个绑定的摘要确实不同而可比较版本相同、TaskItem 跨绑定仍占用/同绑定替换释放/不可比不释放、
 已结算项不再占用、legacy 无证据行保持占用。该模块在 `6d79858a` 上因缺少新 API 而 error（即
 新 API 确为本次新增）。
