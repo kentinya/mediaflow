@@ -397,8 +397,10 @@ RO-5（Automation detail/Save/Enabled/grant 移除与真实 Run once 执行意�
 
 ### 交付身份
 
-- Fix range: `cb1327a934b7edbcec5b5fb07f26fc7f1a198e74..<fix head>`（30 个既有文件改动 + 新增
-  `web/src/features/operations/LegacyTaskRoutes.tsx`，外加本 `TASK.md` 与 `docs/architecture.md`）。
+- Fix Head: `ea4e5346f6eb8e55b79cff43df398efc377caed8`
+- Fix range: `cb1327a934b7edbcec5b5fb07f26fc7f1a198e74..ea4e5346f6eb8e55b79cff43df398efc377caed8`
+  （30 个既有文件改动 + 新增 `web/src/features/operations/LegacyTaskRoutes.tsx`，外加
+  `docs/architecture.md` 与本 `TASK.md`）。
 - Working tree 无 tracked dirty；既有 untracked 日志/参考图/OS 文件保持未暂存。
 
 ## B Review Result
