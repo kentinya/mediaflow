@@ -354,6 +354,152 @@ pointers in Slice/Roadmap/Progress are not changed by B or used to negate accept
 Planning validation: `python3 scripts/check_governance.py` PASS; `git diff --check` clean. No product
 suite, runtime probe, build or media operation was run for planning; checking time is below 50%.
 
+## Developer Completion Report (this round — the owner is decided before the window)
+
+Status handed off: **READY FOR B REVIEW — candidate for the whole Task; no PASS claimed.**
+
+Implementation Head for this fix round: **WORKTREE CANDIDATE** over B's reviewed
+`5a98bb53` (`docs(task-46.3): require source ownership beyond the recent-record window`).
+B's contract correction at `5a98bb53:TASK.md` and every earlier reviewed range and its
+ignored evidence directory are unchanged.
+
+### B46.3-05 remaining / P1 — 来源占用不能只查最近 50 条记录
+
+**B 的真实顺序（原样复现，B 的探测脚本未改一行）。** `queued_backlog_ownership_probe.py`
+sha256 `c0aed570…`，副本与 B 的原件在本轮 Base 上逐字节一致。本候选上先做 Base 对照
+（同脚本、同参数），再把同一脚本跑在候选上：
+
+| 场景 | Base `5a98bb53` | 本候选 |
+| --- | --- | --- |
+| `probe 50`（51 queued / 52 records） | **P1 复现**：`manual_source_owner_after_backlog: null`，scheduled item `success/completed`，源文件被删，3 条 mutation，原 Task 仍 `pending` | `manual_source_owner_after_backlog` = **同一 discovery**，scheduled item `failed`，`source_exists_after: true`，`mutations: []`，原 Task 仍 `pending` |
+| `probe 48`（49 queued / 50 records） | 通过（既有对照） | 仍通过：owner 保留、scheduled 拒绝、零效果 |
+
+B 上一轮已接受的 `scheduled_ownership_probe.py`（sha256 `2804c9ce…`，与 B 原件同哈希）在本候选上
+仍为 accepted 结果：`source_owner_before` 为那份 queued discovery，`scheduled_items[0]` 为
+`failed/failed`，`manual_after: pending`，`source_exists_after: true`，`mutations: []`。
+
+**根因（与 B 的诊断一致）：** `_discovery_source_owners_locked()` 先按
+`ORDER BY d.created_at DESC, d.discovery_id DESC LIMIT 50` 取最近 50 条 discovery，之后才在 Python
+里判断 `manual_selection`、规范 Storage 源路径、可比较版本。较旧的合法 owner 被无关新记录挤出
+候选集后，"窗口内未找到" 被当成 "来源无人占用"。`6465ad6c` 的 `BEGIN IMMEDIATE` 原子化只能保证
+错误答案被一致使用，无法补回根本没读到的 owner。
+
+**修复（一个问题，一次决定）：** 把"具体来源是否被未完成工作占用"放进**同一个持久谓词的候选
+截断之前**，`LIMIT` 只约束返回的 owner，不再约束允许包含 owner 的总体：
+
+* 每份准入自己记录的精确 Storage-relative scope（`storage_scope_json` 的每个 `[relative, storage]`
+  对的第二个值）——两份同一 Storage 的合法库绑定在此一致；
+* 已完成遍历记录的 `sources_json[*].path`——同一规范 Storage 路径；
+* 只记录了旧身份（pre-change 行，或调用方无法给出规范路径）的准入，用其耐久
+  `progress_json.scopeEntries` 里的文件条目。这条**是读取而非跳过**，所以修正不会因为证据是旧形式
+  就释放一个仍然有效的占用。
+* 已确认执行接管来源的准入（`intent_id` 已有 `manual_executions`）现在也是 SQL 谓词的一部分，而
+  不再是取回后再 Python `continue`：否则它同样会占掉真正 owner 需要的页。
+
+纯 Python 侧的规范路径匹配、可比较内容版本/未知保守规则、lineage `exclude_*`、principal 隔离与
+逐项拒绝全部原样保留：谓词只负责"这个来源值得读"，判定仍由既有代码给出。`claim_task_item_with_ownership`
+调用的就是同一个 `_find_owned_source_work_locked`，因此原子边界自动获得同一修正，没有第二套判定。
+
+**无 schema 变更（仍 52）、无迁移/旧行回填/旧 pin 重写。** 没有新增表、全局来源目录、队列或幂等框架；
+查询仍在既有 `media_discoveries` 行与其已记录的证据上由 SQLite 完成，`LIMIT 50` 仍在。
+
+**性能（新增的不在 Required Tests 里的实测，因为这是有界读约束的一部分）：** 用真实
+`SQLiteTaskRepository` 在临时库里写入 3000 条真实形状的 discovery 行（含完整 `progress_json` 的
+`findings`/`sources_json`/`storage_scope_json`），修正后的 `find_owned_source_work` 命中与未命中
+都约为 **13 ms/次**（miss/hit/most-recent-hit 三者相同）。`EXPLAIN` 级别的取舍：谓词在
+`storage_id`/`status` 已过滤的子集上做 `json_each`，未命中要遍历该子集，因此成本随"本 Storage 的
+未完成 adm 数"线性增长，而不是随全库历史线性增长。这是本修正的**已知边界**（见下方 risks），
+不是被隐藏的取舍。
+
+### 新增/扩展的永久回归
+
+`tests/test_organize_preparation.py::AdmittedSourceOwnershipTests` 6 → **9 tests**（新增 3 个，全部走
+真实已发布定义、真实 Run once → Finalize → 零变更分析、真实显式 grant、真实
+`IntervalScheduler.tick()` + `AutomationWorker` + `DefinitionScopedExecutionService`、真实
+Local Storage/SQLite；只有 Metadata 答案用既有 `SyntheticMetadataProvider` fixture 边界）：
+
+| 测试 | 覆盖 |
+| --- | --- |
+| `test_an_older_admitted_owner_survives_a_queued_backlog` | B 的顺序原样：先读到 owner，再经同一 Files API 接纳 50 个真实文件（51 queued / 52 records），仍读到**同一** owner；scheduled 项 `failed`、原 Task `pending`、原 scope 保留、源文件在、零 mutation |
+| `test_a_queued_backlog_keeps_the_owner_and_a_free_sibling_organizes` | 同批自由兄弟**真正成功**（只 `delete` 了兄弟，目标文件存在），被占来源零效果 |
+| `test_the_backlog_owner_is_read_back_after_a_sqlite_reopen` | 第二条真实 SQLite 连接上重复占用读取，并经该连接的同一原子 admission 边界拒绝竞争 Task（item 未写入） |
+
+受控时钟每请求 +1 s 表示自然提交顺序，不改 DB 时间戳、不等待；每个 `Other/Queued.N.mkv` 都是真实存在
+的文件。
+
+`tests/test_task_persistence.py::SourceOwnershipEvidenceTests` 5 → **6 tests**：新增
+`test_a_pre_change_admission_row_is_still_read_as_an_owner` —— 真实经生产仓储写入的、`storage_scope`
+为空的准入（即 pre-change 行的往返形状）仍被读为 owner，不同来源仍空闲，且用它自己的
+`exclude_discovery_id` 读回时不拒绝自己。
+
+隔离验证（每次只撤掉一处，其余保持候选）：
+
+| 撤掉的实现 | 结果 |
+| --- | --- |
+| 新增的来源谓词（恢复 `LIMIT 50` 后再判定） | `AdmittedSourceOwnershipTests` **3/9 FAILED**，正好是三个新的 backlog 用例；其余 6 个仍通过，B 上一轮接受的 5 个旧场景不受影响 |
+| 谓词里的 pre-change `progress_json` 分支 | `SourceOwnershipEvidenceTests` **1 FAILED**，正好是 legacy 行用例 |
+
+### 实际命令与结果（本轮）
+
+仓库根目录：
+
+* `python3 scripts/check_governance.py` — PASS；`git diff --check` — clean。
+* `.venv/bin/ruff check mediaflow tests scripts` — clean；
+  `ruff format --check mediaflow tests scripts` — 358 files already formatted；
+  `python -m compileall -q mediaflow tests scripts` — clean；`pip check` — no broken requirements。
+* Required Tests 十套件 — **410 OK**（47.2 s）。
+* 直接受影响 Automation/持久化/续作/调度十一套件 — **341 OK**（26.8 s）。
+* 直接受影响 Files/普通操作/运行详情十三套件 — **266 OK**（13.6 s）。
+* 全量 Python `unittest discover` — **2883 OK, skipped 7**（311.8 s）。B 上一轮记录为 2879 OK /
+  skipped 7，差值为本轮 4 个新测试。
+
+`web/`（源码未改，重新构建以确认生产包身份不变）：
+
+* `npm run typecheck`、`npm run lint`、`npx prettier --check src tests` — clean。
+* `npm run build` — PASS；产物仍为 `index-CmZxy0O8.js`（sha256 `54ef346d…`）与
+  `index-9CMd6NZ6.css`（sha256 `6431101f…`），与 B 复核的 Base 候选一致，说明本轮无 Web 源码改动。
+* `npm run test -- run`（Required Tests 九份 spec）— **9 files / 166 tests passed**。
+* `npm run test:e2e -- --config=playwright.python.config.ts
+  tests/e2e/operations-inventory.python.spec.ts` — **41 passed**（1.4 m），真实 Python/API/SQLite/
+  Worker + 当前生产 build，含上一轮顺序相关失败的四个四类恢复/mixed batch/attachment/stability
+  旅程（分文件顺序执行，未改断言或超时）。
+* `... operations-task-center-visual.python.spec.ts` — **2 passed**。
+* `npm run test:e2e -- --config=playwright.direct-files.python.config.ts
+  tests/e2e/direct-files.python.spec.ts` — **19 passed / 3 failed**，失败项仍为 Task46.2 已记录的
+  既有 row-menu/non-localhost 时序问题（spec 行 549 MediaLibrary transfer/Delete、556 MediaLibrary
+  row Rename、579 ResourceLibrary non-localhost Delete），与 B 在上一候选上的行号与类别完全一致；
+  未改期望值、未加重试、未放宽超时，也未声称本轮修好。
+
+证据目录（本地 ignored）：`.git/validation-evidence/dev-46.3-fix10/`（`required-tests.log`、
+`affected-automation.log`、`affected-files-operations.log`、`python-full.log`、`web-typecheck.log`、
+`web-lint.log`、`web-format.log`、`web-unit.log`、`web-build.log`、`native-inventory.log`、
+`native-visual.log`、`direct-files.log`、`asset-digests.log`、B 未经修改的
+`queued_backlog_ownership_probe.py` 与其 `-50-before`/`-50-after`/`-48-after` 输出、B 未经修改的
+`scheduled_ownership_probe.py` 与 `scheduled-ownership.log`）。
+
+### Known risks / limits
+
+* **修正的边界是有界读，不是索引。** 谓词在 `storage_id` + `status` 已过滤的子集上做 JSON 扫描，
+  未命中时成本随"该 Storage 未完成准入数"线性增长（3000 条实测约 13 ms/次）。当某个 Storage
+  长期积累大量未完成准入时，该查询会变慢，但**不会**再返回错误的 "free"。真正需要一个来源索引
+  属于新架构范围（B 的约束明确排除全局来源目录），本轮没有做。
+* 已在候选上实测的是**单进程内**的真实双连接与真实 API 顺序；没有做跨进程/多 JVM 压测，与上一轮
+  披露相同。
+* `Scope` 判定仍以 `manual_selection` 为准（现有 Files 准入标志）。若未来出现一个新的写入
+  `storage_scope`/`sources_json` 却不设置该标志的准入类型，它不会参与 discovery 侧占用，必须在
+  那一处显式处理——这一点与上一轮同源，未被本轮改变。
+* 定时入口的拒绝仍是逐项 durable failed（Task 可能 `partial_success`/`failed`，Job 仍 `completed`），
+  与上一轮一致，是真实的"本次 occurrence 没做完"。
+* direct-files 三个既有失败仍然可见，未修好、未转嫁、未转交 B 之外的人。
+
+### Remaining Slice outcomes
+
+RO-1 complete (Task46.1). RO-2: early durable admission、per-request results、verified Storage source
+identity、atomic per-source reservation、truthful admission outcomes、Files-only entry、Files readback、
+undecided-type native Recognition journey 与 truthful Task settlement 均已实现并在真实边界验证；
+本轮修正了 B 证明的**较旧 owner 被窗口挤掉**缺口（含旧行形状与第二连接）。RO-2 是否 complete 仍由 B
+的 T4 验收决定，本报告不作主张。RO-3 complete (Task46.2). RO-4/RO-5 unchanged and still TARGET.
+
 ## Developer Completion Report (this round — scheduled execution respects admitted Files ownership)
 
 Status handed off: **READY FOR B REVIEW — candidate for the whole Task; no PASS claimed.**
