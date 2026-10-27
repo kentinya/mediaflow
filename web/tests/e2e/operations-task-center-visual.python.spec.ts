@@ -149,6 +149,14 @@ test("capture the nine task-center views and the problem-file states", async ({
     path: `${OUTPUT}/task-center-narrow.png`,
     fullPage: false,
   });
+  // Task46.3 also accepts the exact supported phone dimensions.
+  await page.setViewportSize({ width: 390, height: 844 });
+  await expect(views).toBeVisible();
+  await expect(lastView).toBeFocused();
+  await page.screenshot({
+    path: `${OUTPUT}/task-center-390x844.png`,
+    fullPage: false,
+  });
 
   // Re-entry is explicit because the credential is memory-only. The same
   // source, Task/type and file cursor must restore after the login boundary.
@@ -269,5 +277,12 @@ test("capture the in-context creation summary and confirmation journey", async (
   await page.screenshot({
     path: `${OUTPUT}/organize-creation-summary-narrow.png`,
     fullPage: false,
+  });
+  await page.setViewportSize({ width: 390, height: 844 });
+  await confirmation.scrollIntoViewIfNeeded();
+  await expect(confirmation).toBeInViewport();
+  await page.screenshot({
+    path: `${OUTPUT}/organize-creation-summary-390x844.png`,
+    fullPage: true,
   });
 });
