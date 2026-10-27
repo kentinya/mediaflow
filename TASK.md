@@ -354,6 +354,170 @@ pointers in Slice/Roadmap/Progress are not changed by B or used to negate accept
 Planning validation: `python3 scripts/check_governance.py` PASS; `git diff --check` clean. No product
 suite, runtime probe, build or media operation was run for planning; checking time is below 50%.
 
+## Developer Completion Report (this round — a proven different path is a different source)
+
+Status handed off: **READY FOR B REVIEW — candidate for the whole Task; no PASS claimed.**
+
+Implementation Head for this fix round: **`8280219e`**
+(`fix(organize): decide ownership by proven canonical source, not its relative name`), on top of
+B's reviewed `fd8adc07` (`docs(task-46.3): require distinct canonical sources to stay independent`).
+B's contract correction at `fd8adc07:TASK.md`, its review at `d50a00bf:TASK.md`, and every earlier
+reviewed range and its ignored evidence directory are unchanged.
+
+### B46.3-06 / P1 — 已证明是不同实际路径时不得再退回同名判断
+
+**B 的真实顺序（原样复现，探测脚本未改一行）。** `distinct_roots_probe.py`
+sha256 `b875c87e…`，本轮副本与 B 的原件逐字节一致。同一 Storage `source` 上三个已发布资源库：
+`one`(root `A`)、`two`(root `B`)、`whole`(root 空)；实际文件 `A/One.2001.mkv`、
+`B/One.2001.mkv`、`B/Two.2002.mkv`。全部通过真实 Files API。
+
+| 场景 | Base `fd8adc07`（B 已记录） | 本候选 |
+| --- | --- | --- |
+| `one` 提交 `One.2001.mkv` | 202，`storage_scope` = `[["One.2001.mkv","A/One.2001.mkv"]]` | 同（现代记录，不是旧行形状） |
+| 查 `B/One.2001.mkv` 的 owner | **P1 复现**：错误返回 A 文件的 discovery | `null`（B 文件确实无人占用） |
+| `two` 提交它自己的 `One.2001.mkv` | **409 `source_already_organizing`**，`existingWorkId` 指向 A 的工作 | **202**，得到自己独立的 Task/discovery，`storage_scope` = `[["One.2001.mkv","B/One.2001.mkv"]]` |
+| `whole` 提交 `A/One.2001.mkv`（同一实际文件） | 409，指向 A 的工作 | 仍 **409**，`existingWorkId` 仍是那份原始的 discovery |
+| `two` 提交 `Two.2002.mkv`（对照） | 202 | 仍 202 |
+| 第二 SQLite 连接 reopen 后查 `B/One.2001.mkv` | 仍错，返回 A 的工作 | 返回 **B 自己的** discovery |
+| A 的 work/scope/status、两个真实文件、媒体效果 | 保持不变 / 存在 / 0 | 保持不变（`pending`/`queued`）/ 两个都存在 / `mutations: []` |
+
+**根因（与 B 的诊断一致）：** `_discovery_source_owners_locked()` 在精确规范路径比较失败后
+**无条件**读取 `progress.scope_entries` 的库内相对路径，只要 `source_path` 同名就置 `matched`。
+注释说这是"没有 canonical scope 的旧记录 + 精确库绑定"，但代码既不限制记录缺少规范证据，
+也不比对库绑定。上一轮 `33f5ebb5` 又把同一个不带条件的 `OR EXISTS` 放进候选 SQL 谓词，
+使现代记录也能经这个"旧身份"分支到达错误的最终判定。
+
+**修复（一个决定，两处一致）：** 规范身份与旧身份的分工在**候选谓词**和**逐行判定**里
+同时生效，任一处都不能单独决定：
+
+* 记录已有可信的精确 Storage-relative 身份（`storage_scope_json` / `sources_json`）时以它判断；
+  已证明 A ≠ B，不再因库内相对路径同名回退为同一来源。
+* 只有该条目**自己没记录任何规范路径**时，`progress_json.scopeEntries` 才是它的保守身份：
+  pre-change 行，以及 pre-change 行在本修正之后被合法扩展进来的条目。此时仍要求同一
+  不可变库绑定（`d.resource_library_id=?`），所以旧形式不会跨库替另一个 root 的同名文件作答。
+* 调用方**完全给不出**规范路径时（`storage_path is None`）仍走保守旧身份；未知≠放行，
+  与既有"未知版本保守保留"规则一致。
+* 真正重复的第三组（root 空 `whole` 选中同一物理文件）继续 409 并指向原工作——修复没有把
+  合法重复也放行。
+
+**无 schema 变更（仍 52）、无迁移/旧行回填/旧 pin 重写。** 没有新增表、来源目录、队列或幂等框架；
+判定仍是同一 `_find_owned_source_work_locked`，`claim_task_item_with_ownership` 的
+`BEGIN IMMEDIATE` 原子边界自动获得同一修正，没有第二套判定。Storage I/O 仍在事务外，
+`LIMIT 50` 仍只约束返回的 owner。
+
+### 新增/扩展的永久回归
+
+`tests/test_organize_preparation.py::AdmittedSourceOwnershipTests` 9 → **11 tests**（全部走真实
+Files API / 真实 Local Storage / 真实 SQLite，`journey` 的 Metadata 边界未变）：
+
+| 测试 | 覆盖 |
+| --- | --- |
+| `test_distinct_canonical_sources_under_equal_names_stay_independent` | B 的顺序原样：`one` 的记录确实写入 `A/One.2001.mkv` 规范 scope；`B/One.2001.mkv` 查询为 `null`；`two` 的 **202** 得到自己独立的 Task/discovery 与 `B/...` scope；`one` 的 Task/scope 不变；`Two.2002.mkv` 202；`whole` 选同一物理文件仍 **409** 并指向原工作；第二连接 reopen 后两份 owner 各自正确；两个文件都在、`mutations: []` |
+| `test_an_entry_a_pre_change_record_extended_keeps_its_legacy_binding` | 一条记录同时具备两种形状：原有条目无规范路径、经真实 `extend_media_discovery_scope` 扩展的条目有；无规范路径的条目在同库内仍被读为 owner，扩展条目按自己的规范路径判定，且旧身份不跨到另一个 root 的同名文件 |
+
+另外把 `AdmittedSourceOwnershipTests.document()` 的定义库改为 `libraries[0]["id"]`（原为硬编码
+`"library"`），使既有 9 个用例语义不变而新用例可以发布多个库绑定——这是测试夹具的可参数化，
+不是产品行为改动。
+
+`tests/test_task_persistence.py::SourceOwnershipEvidenceTests` 6 → **7 tests**：新增
+`test_a_recorded_canonical_path_is_never_re_read_as_its_relative_name` —— 经生产仓储写入的两条
+现代准入（`A/...`、`B/...`）各自解析到自己的 owner，第三绑定 `whole` 命中同一物理源，
+"同一绑定下不同规范路径"仍空闲；调用方不给规范路径时得到保守 owner 且不跨库作答。
+
+隔离验证（每次只改一处，其余保持候选）：
+
+| 撤掉的实现 | 结果 |
+| --- | --- |
+| 候选谓词里的"该条目未记录规范路径"条件 | 18 tests **全通过**（谓词只做候选剪枝；逐行判定仍然正确） |
+| 逐行判定的"该条目未记录规范路径"条件 | 18 tests **全通过**（同上，方向相反） |
+| 两处同时撤掉（即恢复 Base 的无条件回退） | **3 FAILED**，正好是三个新用例 |
+| 只撤掉旧身份的同库绑定条件 | `test_an_entry_a_pre_change_record_extended_keeps_its_legacy_binding` **1 FAILED** |
+
+第三条是本轮最需要记录的事实：谓词与逐行判定各自是**冗余但必要**的一层，单撤一层不会改变
+行为（另一层仍给出正确答案），但两层都撤就回到 B 证明的缺陷。因此两条隔离证据必须一起看，
+不能因为单层隔离"全通过"就认为该层可删。
+
+### 实际命令与结果（本轮）
+
+仓库根目录：
+
+* `python3 scripts/check_governance.py` — PASS；`git diff --check` — clean。
+* `ruff check mediaflow tests scripts` — clean；`ruff format --check mediaflow tests scripts` —
+  358 files already formatted；`python -m compileall -q mediaflow tests scripts` — clean。
+* Required Tests 十套件（三组命令）— **189 / 59 / 164 OK**，共 **412 OK**（47.2 s）。
+* 本 Task 焦点套件 `AdmittedSourceOwnershipTests` + `SourceOwnershipEvidenceTests` — **18 OK**（1.3 s）。
+* 直接受影响 Automation/调度/续作八套件 — **135 OK**（6.3 s）。
+* 直接受影响 Files/普通操作/运行详情六套件 — **288 OK**（72.8 s）。
+* 全量 Python `unittest discover` — **2886 OK, skipped 7**（324.6 s）。B 上一轮记录 2879 OK /
+  skipped 7，差值即 Task46.3 各轮累计新增用例。
+
+B 三个探测脚本（本轮实测，均与 B 原件同哈希、未改一行）：
+
+| 探测 | 结果 |
+| --- | --- |
+| `distinct_roots_probe.py`（B46.3-06） | 见上表：P1 顺序全部纠正，同源跨绑定重复仍 409，reopen 后仍正确，`mutations: []` |
+| `scheduled_ownership_probe.py` | 仍为 accepted 结果：`source_owner_before` 是该 queued discovery，`scheduled_items[0]` 为 `failed/failed`，`manual_after: pending`，`source_exists_after: true`，`mutations: []` |
+| `queued_backlog_ownership_probe.py 50` | 仍为 accepted 结果：51 queued / 52 records，owner 不变，scheduled 拒绝，零效果 |
+| `queued_backlog_ownership_probe.py 48` | 仍通过（既有对照） |
+
+`web/`（源码未改，重新构建确认生产包身份不变）：
+
+* `npm run typecheck`、`npm run lint`、`npx prettier --check src tests` — clean。
+* `npm run build` — PASS；产物仍为 `index-CmZxy0O8.js`（sha256 `54ef346d…`）与
+  `index-9CMd6NZ6.css`（sha256 `6431101f…`），与 B 复核的候选一致，说明本轮无 Web 源码改动。
+* `npm run test -- run`（Required Tests 九份 spec）— **9 files / 166 tests passed**。
+* `npm run test:e2e -- --config=playwright.python.config.ts
+  tests/e2e/operations-inventory.python.spec.ts` — **41 passed**（1.5 m；真实 Python/API/SQLite/
+  Worker + 当前生产 build）。
+* `... operations-task-center-visual.python.spec.ts` — **2 passed**。
+* `npm run test:e2e -- --config=playwright.direct-files.python.config.ts
+  tests/e2e/direct-files.python.spec.ts` — **19 passed / 3 failed**，失败项仍为 Task46.2 已记录的
+  既有 row-menu/non-localhost 时序问题（spec 行 549 MediaLibrary transfer/Delete、556 MediaLibrary
+  row Rename、579 ResourceLibrary non-localhost Delete），行号与类别和 B 在上一候选上记录的完全一致；
+  未改期望值、未加重试、未放宽超时，也未声称本轮修好。
+* **额外记录的既有失败（不是本轮引入）：** 把 `operations-inventory` 与
+  `operations-task-center-visual` **两个 spec 放进同一次 `test:e2e` 调用**时，inventory 有 10 条
+  用例失败（`expect(locator).toBeVisible() failed`）。我在 Base `fd8adc07` 的干净 worktree 上
+  用同一命令、同一构建复现了**完全相同的 10 条失败清单**（逐行 id diff 为空），并且两个 spec
+  分开运行时 Base 与候选都是 41 passed / 2 passed。因此这是 harness 跨 spec 顺序问题，
+  与本轮改动无关；证据在 `base-combined-order-failure.log`。Required Tests 的命令里两个 spec
+  是同一次调用，所以我另外补了分开运行的完整证据。
+
+证据目录（本地 ignored）：`.git/validation-evidence/dev-46.3-fix11/`（`required-a/b/c.log`、
+`focused.log`、`ownership.log`、`affected-automation.log`、`affected-files-operations.log`、
+`python-full.log`、`web-typecheck.log`、`web-lint.log`、`web-format.log`、`web-unit.log`、
+`web-build.log`、`asset-digests.log`、`native-inventory.log`、`native-visual.log`、
+`native-combined.log`、`base-combined-order-failure.log`、`direct-files.log`、`isolation.log`、
+三个与 B 原件同哈希的 `b-*.py` 与对应 `.log`、`evidence-manifest.json`）。
+
+### Known risks / limits
+
+* **谓词与逐行判定是两层冗余。** 单撤一层时 18 个用例仍全通过（另一层仍给出正确答案），
+  只有两层都撤才回到缺陷。这是刻意的防御，但意味着"某层未被单独覆盖"——隔离证据见上表。
+* **保守旧身份仍是库绑定内的相对路径。** 一条记录若同时缺规范 scope 又跨了库绑定，其旧身份
+  只在它自己的绑定内成立；这与上一轮规则一致，没有把未知当放行，也没有因修正而释放活占用。
+* **调用方完全不给规范路径时仍返回 owner。** 这是有意的保守答案（未知≠放行），
+  代价是这一路径下无法区分两个 root 的同名文件——但生产入口（Files/定时/Run once/续作）
+  始终提供规范路径，该分支只在旧证据或不完整调用下发生。
+* 已在候选上实测的是**单进程内的真实 API/双连接/reopen 顺序**，没有做跨进程压测；与上一轮
+  披露相同。本轮无 schema 变更，故无迁移/旧行回填旅程可测。
+* **跨 spec 同批运行的 10 条既有失败**已如实记录为 harness 顺序问题（Base 同命令可复现），
+  但它意味着 Required Tests 的合并 E2E 命令目前在此环境不会整体通过；分开运行的证据已补齐，
+  该修复不在本 Task 范围。
+* direct-files 三个既有失败仍然可见，未修好、未转嫁、未转交 B 之外的人。
+
+### Remaining Slice outcomes
+
+RO-1 complete (Task46.1). RO-2：本轮修正了 B 证明的 B46.3-06 缺陷——已证明不同的实际路径不再
+因库内同名被误判为同一来源，同时保留了真实同源跨绑定重复的拒绝、backlog 旧 owner 可见性与
+已接受的定时/续作占用边界；以 11 + 7 个永久回归锁定。RO-2 是否 complete 仍由 B 的 T4 验收决定，
+本报告不作主张。RO-3 complete (Task46.2)。RO-4/RO-5 unchanged and still TARGET。
+
+时间分布：本轮约 95 分钟，其中 build/测试/浏览器运行合计约 42 分钟（1 次 Web build、1 次
+inventory、1 次 visual、1 次合并与 1 次 Base 合并对照、1 次 direct-files、1 次全量 Python、
+若干聚焦重跑与探测脚本，重叠只计一次），低于 50%；未故意等待、未重复全量套件、
+未放宽断言或超时。
+
 ## Developer Completion Report (this round — the owner is decided before the window)
 
 Status handed off: **READY FOR B REVIEW — candidate for the whole Task; no PASS claimed.**
