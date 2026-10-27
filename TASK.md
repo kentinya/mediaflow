@@ -7,7 +7,7 @@ Authority: committed [Slice46](SLICE.md) **RO-4**、AC-5/6/7/8/14/15，以及保
 ```text
 Task ID: 46.4
 Parent Slice: 46
-Status: PLANNED
+Status: FIX REQUIRED
 Task Base: 44cba4f93b94b72d6dee52fcd1199be729ec78c4
 Difficulty: High
 Test Level: T4
@@ -364,10 +364,99 @@ RO-5（Automation detail/Save/Enabled/grant 移除与真实 Run once 执行意�
 ## B Review Result
 
 ```text
-Reviewed: planning baseline 44cba4f93b94b72d6dee52fcd1199be729ec78c4; no implementation reviewed
-Decision: NOT REVIEWED — PLANNED
-Acceptance runs: planning governance/document checks only
-Task blockers: implementation pending
+Reviewed: 44cba4f93b94b72d6dee52fcd1199be729ec78c4..cb1327a934b7edbcec5b5fb07f26fc7f1a198e74
+Implementation candidate: 9241bd5158e5e1576dc4e403520ede1fdc49e0a5
+Decision: FIX REQUIRED — 2026-10-27 / B
+Acceptance runs: critical API/SQLite/Worker/CLI and real-Python browser reproduction; see below
+Task blockers: B46.4-01–05 (P1, required RO-4 outcomes)
 Slice Required Outcomes / Surfaces all satisfied: NO
-Next: DEVELOPER IMPLEMENTS TASK 46.4
+Next: SAME TASK FIX LOOP — preserve Task ID/Base/Goal/Scope
 ```
+
+### Required corrections
+
+1. **B46.4-01 — 四类恢复在必要人工步骤结束前不能消失。**
+   真实 Recognition 决定 → continue → Worker 分析完成后，原任务和分析子任务都发布
+   `attention=false, problem_types=[]`；生成仍需人工确认的摘要后仍如此。Conflict 决定
+   刚保存就消失：`_saved_decision_continuation_sql()` 的 stage 集合遗漏 `conflict_resolved`。
+   在共享当前问题投影中沿精确 item/continuation/preparation 保留原四类责任：保存后待分析、
+   分析完成待生成摘要、摘要待确认都可从对应类型恢复；自动排队/执行无需人工时不虚增待办。
+   新业务阻塞转类型，纯技术失败退出四类，实际完成/合法忽略才结束相应责任。不要只补一个
+   stage 或前端 badge。用当前原生四类链验证各停点、刷新和重开，类型文件列表/计数一致。
+
+2. **B46.4-02 — 全部真实成功后必须有整体恢复完成投影。**
+   单项 Recognition 和 Conflict 经原生决定、分析、精确确认、真实 Worker 移动成功，来源
+   已不存在、执行 completed、旧 Results 未改，但原任务在 SQLite/API 重开后仍为 `failed`。
+   `_run_query_document()` 的 `derived_status` 仅回显旧 attempt 状态，没有所需的整体恢复状态。
+   复用逐项 exact source/pin/lineage/effect 证据，统一列表/状态筛选/统计/详情的整体
+   Completed/recovered 显示；原失败尝试和 Results 保持原样。覆盖全部成功及只恢复部分、
+   忽略/跳过、技术失败、未知效果和不匹配 source/pin 的反例，禁止最新子任务成功替代全覆盖。
+
+3. **B46.4-03 — 技术失败详情仍能启动通用恢复。**
+   从中心“全部任务”搜索真实 technical 失败 → 详情 → 查看证据，仍看到且可用
+   “继续此条目的安全分析”。`RunDetailTabs` 无条件挂载 `TaskItemRecoveryPanel`，其 generic
+   retry、批量失败分析及 checkpoint 下一步指导没有按本 Contract 收缩。将中心的技术失败
+   展示限定为原因/阶段/已完成和不确定效果/结果/日志/导出；关闭通用修复/重试/核查指导及
+   操作旁门，包含旧 Task/Job/detail 深链。四类合法恢复及其必要后续仍可完成，管理 API/CLI
+   和普通文件本地允许的恢复仍保留。修正现有 technical E2E 中“只读”却继续点击分析的断言，
+   不把迁移入口当成移除行为的证明。
+
+4. **B46.4-04 — 旧 V2 Tasks/Jobs 仍绕过中心总体。**
+   用现有 `POST /api/v1/resource-libraries/source/files/commands` 创建目录，再打开已存在的
+   `/ui-v2/operations/tasks`，真实 `files_direct_command` Task 仍在混合列表。旧 Task/Job 页面
+   继续读原管理 collection，不能用 runs exact-ID 返回404代替封闭这些入口。旧 V2 列表接入
+   整理总体或转到中心；整理 detail 到精确上下文，普通操作用持久 origin 回原 kind/library
+   的本地查看；缺失/停用/删除/权限拒绝时有界不可用，不猜库、不执行。保留管理 API/CLI
+   的合法混合查询；覆盖 Tasks、Jobs 和 detail 的实际路由、分页、401/403、重连和返回。
+
+5. **B46.4-05 — 普通独立 organize DryRun 仍被当整理任务。**
+   调用已有 CLI `organize <临时库内文件>`，不带 `--execute`，实际得到 DRY_RUN、零移动和
+   `execute_authorized=false`，但中心 exact-ID 返回200并计为 completed 整理。生产 CLI
+   `final_cli.py` 明确将此形状作为 analysis-only；当前 `_organizing_population_sql()` 只按
+   `organize` family 或任一 continuation link 纳入，未判真实意图及来源。补齐所有现有
+   producers 的执行意图/已受理 Files Task/合法整理 lineage 判定，独立分析及其分析续作
+   排除于所有中心读取/统计/游标；Task/Result 本身仍保留。不可简单全局要求 execute=true：
+   已受理 Files 的分析阶段和合法四类恢复分析仍应纳入。用真实 CLI 分析与对应 execute、
+   Files admission、独立与整理来源的 continuation 证明正反边界。
+
+按以上修复整个既定 RO-4，不新建 Task，不改 RO-5 意图/执行引擎或 A-owned 边界。
+同步受影响的架构/查询/界面实现事实，保留其余 TARGET 和已接受历史。Developer 运行新增失败
+用例与直接受影响测试后提交新的 READY FOR B REVIEW checkpoint；B 在修正候选上完成原 T4
+验收，不能复用本轮 Developer 的全量 PASS 标签代替 B 验收。
+
+### B evidence and test boundary
+
+复核入口为既有 CLI、产品 API、现有 harness/原生页面；仅使用临时 SQLite/媒体根与现有
+synthetic Provider。审查范围覆盖上述完整 Base..Head 的23文件 manifest及其现有调用链。
+本地原始证据：`.git/validation-evidence/cb1327a/b-review-20261027/`（未提交、不可声称远程可达）。
+
+| B 本轮命令 / 证据 | 实际结果 |
+| --- | --- |
+| `python3 scripts/check_governance.py` | PASS（开始及复核文档完成后） |
+| `.venv/bin/python .git/validation-evidence/cb1327a/b-review-20261027/reproduce.py` | exit 1；5项合同断言均失败：识别摘要待确认、Conflict Save待办、两条全成功恢复状态、CLI独立分析总体；`reproduce.json` 保存 API/Worker/重开事实，最后运行约0.5秒 |
+| `web/`: `npm run build` | PASS；`build.log`，`production-assets.json` 保存当前资产SHA256 |
+| `web/`: `npm run test:e2e -- --config=playwright.python.config.ts tests/e2e/b46-4-review.tmp.spec.ts` | **2 failed**：technical history generic continuation、legacy V2 mixed population；浏览器用时分别956ms/422ms，`browser.log`及trace/截图保留 |
+| `git diff --check` | clean |
+
+上述临时 browser spec 仅用于独立复现，已移至证据目录 `browser.spec.ts`，从工作树移除；没有
+改动产品/既有测试、断言、timeout、retry或skip。Python证据脚本用真实 API/Worker 执行，
+不手填成功或伪造 claim；CLI仅将 Provider 工厂替换为同一fixture的 synthetic registry。
+不支持的 remote `execute=false` 已返回400，是拒绝证据，不作为任何缺陷依据。
+
+已确认 P1，按 workflow §6 在昂贵门禁前给出 FIX REQUIRED。本轮未跑完整 Python/Web/default
+E2E、wheel/Docker/发布安全矩阵；Developer报告的全量结果仍属其交付事实，没有转换为B验收。
+测试/构建/探测累计保守上界小于30秒；仅已记录的08:50:05–08:54:50 UTC工作区间即285秒，
+占比小于11%（完整本轮更长），满足本轮严格小于50%，未靠等待扩大分母。
+
+### All Slice outcomes reevaluated after review
+
+| Outcome | 当前结论 |
+| --- | --- |
+| RO-1 | Task46.1既有验收保留；本候选未改样式实现，不宣称重跑全视觉验收 |
+| RO-2 | Task46.3已验收的Files先受理/来源占用/初次确认基础保留；四类恢复呈现受B46.4-01影响，仍由本Task修复 |
+| RO-3 | 原库本地持久查看基础保留；旧中心列表旁门由B46.4-04修复，不重开普通菜单问题 |
+| RO-4 | **未完成**：B46.4-01–05；八标签和移除全局区块不等于完整交付 |
+| RO-5 | **未完成**：Automation detail/Save/Enabled/Run once意图和稳定性结果仍待后续；本Task不提前实现 |
+
+不规划下一Task，不提交Closure Packet，不更改Slice/Roadmap/Progress，不关闭Slice。
+分支仍为`main`；所有启动时untracked日志、参考图、OS文件和私有文件保留且未暂存；不push。
