@@ -127,6 +127,25 @@ export const TASK_ITEM_RECOVERY_KINDS = [
 ] as const;
 export type TaskItemRecoveryKind = (typeof TASK_ITEM_RECOVERY_KINDS)[number];
 
+/** Whether an item currently owes one of the four-type human actions. */
+export function isRecoveryActionKind(
+  kind: TaskItemRecoveryKind | null | undefined,
+): kind is "business_problem" | "recovery_lineage" {
+  return kind === "business_problem" || kind === "recovery_lineage";
+}
+
+/** The conservative browser read of the server's per-item decision. */
+export function normalizeTaskItemRecoveryKind(
+  value: unknown,
+): TaskItemRecoveryKind | null {
+  if (value === null || value === undefined) return null;
+  try {
+    return normalizeEnum(value, "recoveryKind", TASK_ITEM_RECOVERY_KINDS);
+  } catch {
+    return fail();
+  }
+}
+
 export interface TaskItemRecoveryModel {
   readonly taskId: string;
   readonly itemId: string;
@@ -182,6 +201,12 @@ export interface RecoveryBatchChild {
   readonly recoveryContinuationStatus: string | null;
   /** Whether the child is still one exact persisted manual execution item. */
   readonly manualRecoveryAvailable: boolean;
+  /**
+   * The server's current per-item recovery decision.  A saved batch child
+   * that is only technical history stays read-only here even though the
+   * preserved administrative batch API still owns its durable history.
+   */
+  readonly recoveryKind: TaskItemRecoveryKind | null;
 }
 
 export interface RecoveryBatchModel {
@@ -514,11 +539,9 @@ export function normalizeTaskItemRecovery(
     // A missing kind is the conservative read-only default: an older backend
     // that does not publish the field must not turn every terminal failure into
     // a generic repair journey.
-    recoveryKind: normalizeEnum(
-      source["recoveryKind"] ?? "technical_history",
-      "recoveryKind",
-      TASK_ITEM_RECOVERY_KINDS,
-    ),
+    recoveryKind:
+      normalizeTaskItemRecoveryKind(source["recoveryKind"]) ??
+      "technical_history",
     nextAction: text(source, "next_action"),
   };
 }
@@ -592,6 +615,7 @@ export function normalizeRecoveryBatch(payload: unknown): RecoveryBatchModel {
           "recoveryContinuationStatus",
         ),
         manualRecoveryAvailable: item["manualRecoveryAvailable"] === true,
+        recoveryKind: normalizeTaskItemRecoveryKind(item["recoveryKind"]),
       };
     }),
     nextAction: text(source, "next_action"),

@@ -31,6 +31,7 @@ import io
 import json
 import tempfile
 import unittest
+from dataclasses import replace
 from datetime import UTC, datetime
 from pathlib import Path
 
@@ -46,6 +47,7 @@ from mediaflow.domain.classification import (
     ClassificationRule,
     ClassificationStatus,
 )
+from mediaflow.domain.failure import FailureExplanation
 from mediaflow.domain.metadata import (
     CandidateMatchResult,
     CandidateMatchStatus,
@@ -1294,6 +1296,228 @@ class TaskCenterPopulationTests(_TaskCenterTestCase):
         ids = {item["task_id"] for item in self._page()["items"]}
         self.assertEqual({admitted.task_id, admitted_child.task_id}, ids)
 
+    def test_item_page_publishes_the_shared_per_item_recovery_decision(self) -> None:
+        # B46.4-03: the center's batch checkbox must not infer a recovery right
+        # from the run-level union of problems.  Every run item publishes the
+        # same bounded decision the panel and batch document use: a live/saved
+        # four-type problem or an admitted recovery step is actionable;
+        # everything else is technical history, even when its checkpoint still
+        # lists a generic retry/investigate action.
+        task = self._task("organize", scope="Movies/kind")
+        self._recognition_problem(task.task_id, "recognized")
+        self._failure_problem(task.task_id, "technical")
+        technical = self.repository.get_item("technical")
+        self.repository.upsert_item(
+            replace(
+                technical,
+                error=FailureExplanation(
+                    category="storage_permission_denied",
+                    message="the destination Storage rejected the write",
+                    durable_state="no_media_moved",
+                    side_effects="none",
+                    retry_safe=True,
+                    next_action="repair the permission, then re-check this item",
+                ).encode(),
+            )
+        )
+        success = self._processing_item(task.task_id, "success")
+        self.repository.upsert_item(
+            replace(success, status=TaskItemStatus.SUCCESS, stage="completed")
+        )
+        unknown = self._processing_item(task.task_id, "unknown")
+        self.repository.upsert_item(
+            replace(
+                unknown,
+                status=TaskItemStatus.FAILED,
+                stage="execution_outcome_unknown",
+                error=FailureExplanation(
+                    category="execution_outcome_unknown",
+                    message="the effect could not be verified",
+                    durable_state="inspection_required",
+                    side_effects="unknown",
+                    retry_safe=False,
+                    next_action="inspect the effect evidence",
+                ).encode(),
+            )
+        )
+        code, page = request(
+            self.api,
+            "GET",
+            f"/api/v1/operations/runs/{task.task_id}/items",
+            query="limit=100",
+        )
+        self.assertEqual(200, code)
+        by_id = {item["item_id"]: item for item in page["items"]}
+        self.assertEqual("business_problem", by_id["recognized"]["recoveryKind"])
+        self.assertEqual("technical_history", by_id["technical"]["recoveryKind"])
+        self.assertEqual("technical_history", by_id["success"]["recoveryKind"])
+        self.assertEqual("technical_history", by_id["unknown"]["recoveryKind"])
+        # The technical checkpoint can still list a generic checkpoint action;
+        # the center gates its offer on the explicit kind, not that list.
+        self.assertTrue(by_id["technical"]["checkpoint"]["permitted_action_ids"])
+
+    def test_continuation_jobs_require_an_admitted_organizing_source(self) -> None:
+        # B46.4-05: a recovery/metadata/scope continuation Job is center work
+        # only when its own persisted relation names an admitted organizing
+        # source Task.  The administrative analysis-only continuation of a
+        # standalone DryRun writes the same Job command, but must stay out of
+        # every list, count, source option, cursor and exact-ID read.
+        admitted = self._task("organize", scope="Movies/admitted")
+        self._processing_item(admitted.task_id, "admitted-item")
+        analysis = self._task("organize", execute_authorized=False, scope="Movies/analysis")
+        self._processing_item(analysis.task_id, "analysis-item")
+        expected = {admitted.task_id}
+        excluded_jobs: list[str] = []
+        for index, (family, table) in enumerate(
+            (
+                ("recovery-continuation", "recovery_continuations"),
+                ("scope-continuation", "scope_continuations"),
+                ("file-metadata-correction", "metadata_correction_continuations"),
+            )
+        ):
+            admitted_job, admitted_child = self._continuation_job(
+                family,
+                table,
+                source_task_id=admitted.task_id,
+                source_item_id="admitted-item",
+                suffix=f"admitted-{index}",
+            )
+            excluded_job, excluded_child = self._continuation_job(
+                family,
+                table,
+                source_task_id=analysis.task_id,
+                source_item_id="analysis-item",
+                suffix=f"analysis-{index}",
+            )
+            expected.add(admitted_job)
+            excluded_jobs.extend((excluded_job, excluded_child))
+
+        page = self._page("limit=100")
+        ids = {item["run_id"] for item in page["items"]}
+        self.assertEqual(expected, ids)
+        self.assertNotIn(analysis.task_id, ids)
+        for identifier in excluded_jobs:
+            self.assertNotIn(identifier, ids)
+            code, _body = request(self.api, "GET", f"/api/v1/operations/runs/{identifier}")
+            self.assertEqual(404, code, identifier)
+            self.assertIsNone(self.repository.resolve_operations_run_link(identifier))
+        # The same population drives the summary source options and cursor.
+        self.assertTrue(page["summary"]["sources"])
+        first = self._page("limit=1")
+        self.assertIsNotNone(first["next_cursor"])
+        collected = {item["run_id"] for item in first["items"]}
+        cursor = first["next_cursor"]
+        while cursor:
+            next_page = self._page(f"limit=1&cursor={cursor}")
+            collected.update(item["run_id"] for item in next_page["items"])
+            cursor = next_page["next_cursor"]
+        self.assertEqual(expected, collected)
+        self.assertTrue(expected.isdisjoint(excluded_jobs))
+        # Nothing was deleted: the analysis-only source Task/Item and the
+        # administrative continuation rows remain durable history.
+        self.assertIsNotNone(self.repository.get_task(analysis.task_id))
+        self.assertIsNotNone(self.repository.get_item("analysis-item"))
+        for job_id in excluded_jobs[::2]:
+            self.assertIsNotNone(self.repository.get_job(job_id))
+
+    def _continuation_job(
+        self,
+        family: str,
+        table: str,
+        *,
+        source_task_id: str,
+        source_item_id: str,
+        suffix: str,
+    ) -> tuple[str, str]:
+        """Persist one real producer's Job + relation + produced Task shape."""
+
+        job_id = f"job-{suffix}"
+        job = AutomationJob(
+            job_id,
+            AutomationCommand(family),
+            AutomationJobStatus.PENDING,
+            NOW,
+            NOW,
+        )
+        self.repository.create_job(job)
+        child = self.coordinator.create(
+            (
+                "recovery-continuation:child"
+                if family == "recovery-continuation"
+                else "scope-continuation:child"
+                if family == "scope-continuation"
+                else "metadata-correction-continuation:child"
+            )
+            + f"-{suffix}",
+            execute_authorized=False,
+            scope_path=f"Movies/{suffix}",
+        )
+        self.repository.update_job(replace(job, task_id=child.task_id))
+        if table == "recovery_continuations":
+            self._insert_continuation(
+                f"continuation-{suffix}",
+                source_task_id=source_task_id,
+                source_item_id=source_item_id,
+                new_task_id=child.task_id,
+                job_id=job_id,
+            )
+        elif table == "scope_continuations":
+            with self.repository._connection:
+                self.repository._connection.execute(
+                    """INSERT INTO scope_continuations (
+                        continuation_id, source_task_id, command, scope_path,
+                        item_limit, configuration_snapshot_id,
+                        configuration_snapshot_digest, boundary, status,
+                        created_at, updated_at, actor, job_id, new_task_id,
+                        authority_statement
+                    ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)""",
+                    (
+                        f"scope-{suffix}",
+                        source_task_id,
+                        "organize",
+                        "Movies",
+                        10,
+                        "snap-1",
+                        "digest-1",
+                        "remaining_scope",
+                        "queued",
+                        NOW.isoformat(),
+                        NOW.isoformat(),
+                        "operator",
+                        job_id,
+                        child.task_id,
+                        "analysis only",
+                    ),
+                )
+        else:
+            with self.repository._connection:
+                self.repository._connection.execute(
+                    """INSERT INTO metadata_correction_continuations (
+                        continuation_id, file_id, review_id, source_task_id,
+                        source_item_id, configuration_snapshot_id,
+                        configuration_snapshot_digest, correction_version,
+                        status, created_at, updated_at, actor, job_id,
+                        new_task_id
+                    ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)""",
+                    (
+                        f"correction-{suffix}",
+                        f"file-{suffix}",
+                        f"review-{suffix}",
+                        source_task_id,
+                        source_item_id,
+                        "snap-1",
+                        "digest-1",
+                        "a" * 64,
+                        "queued",
+                        NOW.isoformat(),
+                        NOW.isoformat(),
+                        "operator",
+                        job_id,
+                        child.task_id,
+                    ),
+                )
+        return job_id, child.task_id
+
     def _insert_continuation(
         self,
         continuation_id: str,
@@ -1301,6 +1525,7 @@ class TaskCenterPopulationTests(_TaskCenterTestCase):
         source_task_id: str,
         source_item_id: str,
         new_task_id: str,
+        job_id: str | None = None,
     ) -> None:
         """Persist the exact recovery-continuation relation a real Worker writes."""
 
@@ -1325,7 +1550,7 @@ class TaskCenterPopulationTests(_TaskCenterTestCase):
                     NOW.isoformat(),
                     NOW.isoformat(),
                     "operator",
-                    f"job-{continuation_id}",
+                    job_id or f"job-{continuation_id}",
                     new_task_id,
                     "analysis only",
                 ),

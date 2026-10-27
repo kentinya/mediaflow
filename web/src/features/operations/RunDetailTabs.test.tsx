@@ -1277,6 +1277,285 @@ describe("selected-run detail tabs", () => {
     ).toBeVisible();
   });
 
+  it("offers batch recovery only for the mixed run's own four-type items", async () => {
+    const technical = itemRow({
+      item_id: "tech-1",
+      status: "failed",
+      stage: "failed",
+      source_path: "movies/broken.mkv",
+      failure: {
+        category: "storage_permission_denied",
+        message: "the destination Storage rejected the write",
+        durableState: "no_media_moved",
+        sideEffects: "none",
+        retrySafe: true,
+        nextAction:
+          "repair the destination Storage permission, then re-check this item",
+      },
+      checkpoint: {
+        status: "failed",
+        stage: "failed",
+        raw_stage: "failed",
+        blocker_kind: null,
+        blocker_id: null,
+        effect_certainty: "none",
+        retry_safety: "safe",
+        refusal_reason: null,
+        checkpoint_version: "v-tech",
+        permitted_action_ids: ["retry"],
+      },
+      recoveryKind: "technical_history",
+    });
+    const business = itemRow({
+      item_id: "biz-1",
+      status: "failed",
+      stage: "task_retry_requested",
+      source_path: "movies/business.mkv",
+      checkpoint: {
+        status: "pending",
+        stage: "queued",
+        raw_stage: "task_retry_requested",
+        blocker_kind: null,
+        blocker_id: null,
+        effect_certainty: "none",
+        retry_safety: "safe",
+        refusal_reason: null,
+        checkpoint_version: "v-biz",
+        permitted_action_ids: ["retry"],
+      },
+      recoveryKind: "business_problem",
+    });
+    const itemsPage = itemsPageDocument({
+      items: [technical, business],
+      total: 2,
+      matching_total: 2,
+      dispositions: {
+        pending: 0,
+        active: 0,
+        waiting: 0,
+        success: 0,
+        skipped: 0,
+        failed_partial: 2,
+        ignored: 0,
+        cancelled: 0,
+      },
+    });
+    stubFetch(async (input) => {
+      const url = String(input);
+      if (url === "/api/v1/auth/principal") {
+        return jsonResponse({ principal_id: "test-principal" });
+      }
+      if (url.startsWith("/api/v1/operations/runs?")) {
+        return jsonResponse({
+          items: [
+            overviewDocument({
+              attention: true,
+              attention_reason: "task_problem",
+              problem_types: ["recognition"],
+            }),
+          ],
+          limit: 20,
+          status: null,
+          command: null,
+          q: null,
+          from: null,
+          to: null,
+          attention: false,
+          total: 1,
+          truncated: false,
+          status_counts: { running: 1 },
+          attention_count: 1,
+          population: "unified job/task run inventory",
+          sideEffects: "none",
+          previous_cursor: null,
+          next_cursor: null,
+        });
+      }
+      if (url === "/api/v1/operations/runs/task-001") {
+        return jsonResponse(
+          overviewDocument({
+            attention: true,
+            attention_reason: "task_problem",
+            problem_types: ["recognition"],
+          }),
+        );
+      }
+      if (url.startsWith("/api/v1/operations/runs/task-001/items?")) {
+        return jsonResponse(itemsPage);
+      }
+      return jsonResponse({ error: { code: "not_found" } }, 404);
+    });
+    authStore.setToken(TOKEN);
+    renderApp("/ui-v2/operations?run=task-001");
+
+    const detail = await screen.findByRole("region", { name: "运行详情" });
+    const items = await within(detail).findByRole("region", { name: "主条目" });
+    await within(items).findByText(/broken\.mkv/);
+    expect(
+      within(items).queryByLabelText("选择 tech-1 进行单项分析恢复"),
+    ).toBeNull();
+    expect(
+      within(items).getByLabelText("选择 biz-1 进行单项分析恢复"),
+    ).toBeInTheDocument();
+    expect(
+      within(items).getByText(
+        "storage_permission_denied: the destination Storage rejected the write",
+      ),
+    ).toBeVisible();
+    expect(
+      within(items).queryByText(/repair the destination Storage permission/),
+    ).toBeNull();
+    expect(
+      screen.getByRole("region", { name: "批量失败分析恢复" }),
+    ).toBeInTheDocument();
+  });
+
+  it("keeps a saved batch's technical-history child read-only", async () => {
+    const batchId = "22222222-2222-2222-2222-222222222222";
+    const childRow = (itemId: string, recoveryKind: string) =>
+      itemRow({
+        item_id: itemId,
+        status: "failed",
+        stage: "failed",
+        source_path: `movies/${itemId}.mkv`,
+        recoveryKind,
+        checkpoint: {
+          status: "failed",
+          stage: "failed",
+          raw_stage: "failed",
+          blocker_kind: null,
+          blocker_id: null,
+          effect_certainty: "none",
+          retry_safety: "safe",
+          refusal_reason: null,
+          checkpoint_version: "a".repeat(64),
+          permitted_action_ids: ["retry"],
+        },
+      });
+    const itemsPage = itemsPageDocument({
+      items: [childRow("tech-child", "technical_history")],
+      total: 1,
+      matching_total: 1,
+      dispositions: {
+        pending: 0,
+        active: 0,
+        waiting: 0,
+        success: 0,
+        skipped: 0,
+        failed_partial: 1,
+        ignored: 0,
+        cancelled: 0,
+      },
+    });
+    window.sessionStorage.setItem(
+      "mediaflow.operations.recovery-batch:v2:test-principal:task-001",
+      JSON.stringify({
+        batchId,
+        items: [
+          { itemId: "tech-child", expectedCheckpointVersion: "a".repeat(64) },
+        ],
+      }),
+    );
+    stubFetch(async (input) => {
+      const url = String(input);
+      if (url === "/api/v1/auth/principal") {
+        return jsonResponse({ principal_id: "test-principal" });
+      }
+      if (url.startsWith("/api/v1/operations/runs?")) {
+        return jsonResponse({
+          items: [
+            overviewDocument({
+              attention: true,
+              attention_reason: "task_problem",
+              problem_types: ["recognition"],
+            }),
+          ],
+          limit: 20,
+          status: null,
+          command: null,
+          q: null,
+          from: null,
+          to: null,
+          attention: false,
+          total: 1,
+          truncated: false,
+          status_counts: { running: 1 },
+          attention_count: 1,
+          population: "unified job/task run inventory",
+          sideEffects: "none",
+          previous_cursor: null,
+          next_cursor: null,
+        });
+      }
+      if (url === "/api/v1/operations/runs/task-001") {
+        return jsonResponse(
+          overviewDocument({
+            attention: true,
+            attention_reason: "task_problem",
+            problem_types: ["recognition"],
+          }),
+        );
+      }
+      if (url.startsWith("/api/v1/operations/runs/task-001/items?")) {
+        return jsonResponse(itemsPage);
+      }
+      if (url.includes(`/recovery-batches/${batchId}`)) {
+        return jsonResponse({
+          batch_id: batchId,
+          source_task_id: "task-001",
+          actor: "test-principal",
+          status: "completed",
+          next_action: "inspect each item outcome",
+          items: [
+            {
+              batch_item_id: "bi-tech",
+              batch_id: batchId,
+              source_task_id: "task-001",
+              source_item_id: "tech-child",
+              checkpoint_version: "a".repeat(64),
+              status: "completed",
+              continuation_id: "continuation-tech",
+              job_id: "job-tech",
+              new_task_id: "analysis-task-tech",
+              new_result_id: "analysis-result-tech",
+              reason: null,
+              error: null,
+              next_action:
+                "repair the dependency, then continue this item through a fresh pinned DryRun",
+              manualRecoveryPreparation: null,
+              currentCheckpointVersion: "a".repeat(64),
+              recoveryContinuationStatus: "completed",
+              manualRecoveryAvailable: true,
+              recoveryKind: "technical_history",
+            },
+          ],
+        });
+      }
+      return jsonResponse({ error: { code: "not_found" } }, 404);
+    });
+    authStore.setToken(TOKEN);
+    const { queryClient } = renderApp("/ui-v2/operations?run=task-001");
+    await waitFor(() =>
+      expect(
+        queryClient.getQueryData([
+          "authenticated-principal",
+          authStore.getGeneration(),
+        ]),
+      ).toEqual({ principalId: "test-principal" }),
+    );
+
+    const batch = await screen.findByRole("region", {
+      name: "批量失败分析恢复",
+    });
+    expect(await within(batch).findByText(/技术历史，仅只读/)).toBeVisible();
+    expect(within(batch).queryByText(/repair the dependency/)).toBeNull();
+    expect(
+      within(batch).queryByRole("button", {
+        name: "在当前界面生成并确认摘要",
+      }),
+    ).toBeNull();
+  });
+
   it("keeps an unknown batch confirmation locked until its exact durable outcome is read", async () => {
     const user = userEvent.setup();
     const batchId = "11111111-1111-1111-1111-111111111111";
@@ -1368,6 +1647,7 @@ describe("selected-run detail tabs", () => {
           currentCheckpointVersion: checkpointVersion,
           recoveryContinuationStatus: "completed",
           manualRecoveryAvailable: true,
+          recoveryKind: "recovery_lineage",
         },
         {
           batch_item_id: "bi-2",
@@ -1388,6 +1668,7 @@ describe("selected-run detail tabs", () => {
           currentCheckpointVersion: "e".repeat(64),
           recoveryContinuationStatus: "completed",
           manualRecoveryAvailable: true,
+          recoveryKind: "recovery_lineage",
         },
       ],
     });

@@ -63,10 +63,11 @@ import {
   prepareTaskItemRecoverySummary,
   submitTaskRecoveryBatch,
 } from "../../shared/api/api-client";
-import type {
-  ManualRecoveryPreparationModel,
-  RecoveryBatchModel,
-  RecoveryBatchChild,
+import {
+  isRecoveryActionKind,
+  type ManualRecoveryPreparationModel,
+  type RecoveryBatchModel,
+  type RecoveryBatchChild,
 } from "../../entities/operations/task-item-recovery";
 import {
   clearOtherRecoveryBatchSessions,
@@ -944,7 +945,7 @@ function RunItemsSection({
                         <td>{item.destinationPath ?? "—"}</td>
                         <td>
                           {item.failure
-                            ? `${item.failure.category}: ${item.failure.nextAction}`
+                            ? `${item.failure.category}: ${item.failure.message}`
                             : "—"}
                         </td>
                         <td>
@@ -959,6 +960,7 @@ function RunItemsSection({
                         <td>
                           {page.taskId !== null &&
                             item.status === "failed" &&
+                            isRecoveryActionKind(item.recoveryKind) &&
                             item.checkpoint?.retrySafety === "safe" &&
                             item.checkpoint.checkpointVersion !== null &&
                             item.checkpoint.permittedActionIds.includes(
@@ -1434,32 +1436,41 @@ function VerifiedFailedAnalysisBatchControls({
                 {batch.children.length} 项)
               </h6>
               <ul className="mf-dashboard-meta">
-                {batch.children.map((child) => (
-                  <li key={child.itemId}>
-                    {child.itemId} — {labels[child.status] ?? child.status}
-                    {child.error ? `：${child.error}` : ""}；下一步：
-                    {child.nextAction}
-                    {onInspectItem && (
-                      <>
-                        {" "}
-                        ·{" "}
-                        <button
-                          type="button"
-                          className="mf-button mf-button-secondary"
-                          onClick={() => onInspectItem(child.itemId)}
-                        >
-                          {child.status === "queued" ||
-                          child.status === "running"
-                            ? "在此任务内查看分析进度"
-                            : "在当前界面生成并确认摘要"}
-                        </button>
-                      </>
-                    )}
-                    {child.newResultId && ` · Result ${child.newResultId}`}
-                  </li>
-                ))}
+                {batch.children.map((child) => {
+                  const actionable = isRecoveryActionKind(child.recoveryKind);
+                  return (
+                    <li key={child.itemId}>
+                      {child.itemId} — {labels[child.status] ?? child.status}
+                      {child.error ? `：${child.error}` : ""}
+                      {actionable
+                        ? `；下一步：${child.nextAction}`
+                        : "；技术历史，仅只读"}
+                      {onInspectItem && (
+                        <>
+                          {" "}
+                          ·{" "}
+                          <button
+                            type="button"
+                            className="mf-button mf-button-secondary"
+                            onClick={() => onInspectItem(child.itemId)}
+                          >
+                            {child.status === "queued" ||
+                            child.status === "running"
+                              ? "在此任务内查看分析进度"
+                              : actionable
+                                ? "在当前界面生成并确认摘要"
+                                : "查看证据"}
+                          </button>
+                        </>
+                      )}
+                      {child.newResultId && ` · Result ${child.newResultId}`}
+                    </li>
+                  );
+                })}
               </ul>
-              <p className="mf-dashboard-meta">{batch.nextAction}</p>
+              {batch.children.some((child) =>
+                isRecoveryActionKind(child.recoveryKind),
+              ) && <p className="mf-dashboard-meta">{batch.nextAction}</p>}
               <BatchRecoverySummary
                 taskId={taskId}
                 batchId={batch.batchId}
@@ -1649,6 +1660,13 @@ function BatchRecoverySummary({
   const [prepared, setPrepared] = useState<
     Record<string, ManualRecoveryPreparationModel>
   >({});
+  // A saved batch may predate this center contraction or have been admitted
+  // through the preserved administrative API.  Only children whose exact
+  // server decision still owes a four-type step can be prepared/confirmed
+  // here; technical history keeps its factual batch row and inspection only.
+  const actionableChildren = children.filter((child) =>
+    isRecoveryActionKind(child.recoveryKind),
+  );
   useEffect(() => {
     onPendingChange(Object.keys(submissions).length > 0);
   }, [onPendingChange, submissions]);
@@ -1677,20 +1695,20 @@ function BatchRecoverySummary({
     child: RecoveryBatchChild,
   ): ManualRecoveryPreparationModel | null =>
     child.manualRecoveryPreparation ?? prepared[child.itemId] ?? null;
-  const readyChildren = children.filter(
+  const readyChildren = actionableChildren.filter(
     (child) => preparationFor(child)?.status === "prepared",
   );
-  const confirmedChildren = children.filter(
+  const confirmedChildren = actionableChildren.filter(
     (child) => preparationFor(child)?.status === "confirmed",
   );
-  const notReady = children.filter((child) => {
+  const notReady = actionableChildren.filter((child) => {
     const preparation = preparationFor(child);
     return (
       preparation === null ||
       (preparation.status !== "prepared" && preparation.status !== "confirmed")
     );
   });
-  const canPrepare = children.filter(
+  const canPrepare = actionableChildren.filter(
     (child) =>
       preparationFor(child) === null &&
       child.manualRecoveryAvailable &&
@@ -2202,12 +2220,13 @@ function RunEvidenceSection({
                     <dd>{evidence.checkpoint.refusalReason}</dd>
                   </div>
                 )}
-                {evidence.checkpoint.nextAction !== null && (
-                  <div>
-                    <dt>下一步</dt>
-                    <dd>{evidence.checkpoint.nextAction}</dd>
-                  </div>
-                )}
+                {evidence.recoveryKind !== "technical_history" &&
+                  evidence.checkpoint.nextAction !== null && (
+                    <div>
+                      <dt>下一步</dt>
+                      <dd>{evidence.checkpoint.nextAction}</dd>
+                    </div>
+                  )}
                 <div>
                   <dt>计划 ID</dt>
                   <dd>{evidence.checkpoint.planId ?? "不可用"}</dd>

@@ -25,6 +25,10 @@ import {
   normalizeLifecycleProjection,
   type LifecycleProjection,
 } from "./lifecycle";
+import {
+  normalizeTaskItemRecoveryKind,
+  type TaskItemRecoveryKind,
+} from "./task-item-recovery";
 
 export const TASK_STATUSES = [
   "pending",
@@ -134,6 +138,13 @@ export interface TaskItemSummary {
   readonly executionStatus: string | null;
   readonly failure: TaskFailureExplanation | null;
   readonly checkpoint: TaskItemCheckpoint | null;
+  /**
+   * The server's per-item recovery decision, published on Task Center item
+   * reads.  It is optional because the same summary model also serves Task
+   * detail reads that carry no center-specific decision; a missing value is
+   * never treated as an actionable four-type surface.
+   */
+  readonly recoveryKind?: TaskItemRecoveryKind | null;
 }
 
 /**
@@ -432,6 +443,9 @@ export function normalizeTaskItemSummary(
     executionStatus: optionalText(source, "execution_status"),
     failure: normalizeFailure(source["failure"]),
     checkpoint: normalizeTaskItemCheckpoint(source["checkpoint"]),
+    recoveryKind: normalizeTaskItemRecoveryKind(
+      source["recovery_kind"] ?? source["recoveryKind"],
+    ),
   };
 }
 

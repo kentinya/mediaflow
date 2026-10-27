@@ -85,6 +85,7 @@ describe("Task item recovery contract", () => {
           reason: null,
           error: null,
           next_action: "wait for analysis",
+          recoveryKind: "business_problem",
         },
         {
           source_item_id: "item-2",
@@ -97,6 +98,7 @@ describe("Task item recovery contract", () => {
           reason: "stale_checkpoint",
           error: "item changed",
           next_action: "refresh this item",
+          recoveryKind: "technical_history",
         },
       ],
       next_action: "inspect each item outcome",
@@ -107,6 +109,10 @@ describe("Task item recovery contract", () => {
     ]);
     expect(batch.actor).toBe("harness-admin");
     expect(batch.children[1].nextAction).toBe("refresh this item");
+    expect(batch.children.map((item) => item.recoveryKind)).toEqual([
+      "business_problem",
+      "technical_history",
+    ]);
 
     const exactActor = normalizeRecoveryBatch({
       batch_id: "batch-2",

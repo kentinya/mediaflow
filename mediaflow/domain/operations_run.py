@@ -185,11 +185,33 @@ ORGANIZING_TASK_COMMAND_FAMILIES: tuple[str, ...] = (
 #: continuation Job records the shared ``AutomationCommand`` value
 #: ``file-metadata-correction``; the Task it produces records
 #: ``metadata-correction-continuation:<id>``.
+#:
+#: A continuation Job family alone does not prove admission: the producer writes
+#: a durable relation naming the source Task, so the center must verify that the
+#: source is itself admitted organizing work.  Otherwise an administrative
+#: analysis-only continuation of a terminal DryRun would re-enter the center by
+#: command name alone (B46.4-05).
 ORGANIZING_JOB_COMMAND_FAMILIES: tuple[str, ...] = (
     "organize",
     "recovery-continuation",
     "file-metadata-correction",
     "scope-continuation",
+)
+
+#: Job command families whose own admission is the organizing intent (a
+#: scheduled/Run-once occurrence or a legacy pre-Task organize admission).  A
+#: pre-Task queue/failure stays in the center; no relation is needed.
+ORGANIZING_JOB_SEED_COMMAND_FAMILIES: tuple[str, ...] = ("organize",)
+
+#: The durable relation each continuation Job producer writes next to the Job:
+#: ``(Job command family, relation table)``.  The relation's ``source_task_id``
+#: is the persisted parent, so membership is a real identity equality rather
+#: than a command-family guess.  The relation tables all carry a unique
+#: ``job_id`` for their one continuation Job.
+ORGANIZING_JOB_LINEAGE_RELATIONS: tuple[tuple[str, str], ...] = (
+    ("recovery-continuation", "recovery_continuations"),
+    ("file-metadata-correction", "metadata_correction_continuations"),
+    ("scope-continuation", "scope_continuations"),
 )
 
 #: Command families that a Task admission itself proves: a Files admission
@@ -244,7 +266,12 @@ def is_organizing_task_command(command: object) -> bool:
 
 
 def is_organizing_job_command(command: object) -> bool:
-    """Whether a durable Job command belongs to admitted organizing work."""
+    """Whether a durable Job command family can denote organizing work.
+
+    This is only the command-family half.  A concrete continuation Job is
+    organizing work only when its persisted relation names an admitted
+    organizing source Task; see the shared SQL population expression.
+    """
 
     return organizing_task_command_family(command) in ORGANIZING_JOB_COMMAND_FAMILIES
 

@@ -518,11 +518,11 @@ export function TaskItemRecoveryPanel({
         <div>
           <dt>可用操作</dt>
           <dd>
-            {permitted.size === 0
-              ? "无"
-              : owesRecoveryAction
-                ? [...permitted].join("、")
-                : `${[...permitted].join("、")}（技术历史，仅只读）`}
+            {!owesRecoveryAction
+              ? "无（技术历史，仅只读）"
+              : permitted.size === 0
+                ? "无"
+                : [...permitted].join("、")}
           </dd>
         </div>
       </dl>
@@ -530,11 +530,8 @@ export function TaskItemRecoveryPanel({
         checkpoint?.refusalReason !== undefined && (
           <p className="mf-dashboard-meta">{checkpoint.refusalReason}</p>
         )}
-      {checkpoint?.nextAction && (
-        <p className="mf-dashboard-meta">
-          {owesRecoveryAction ? "下一步：" : "当前事实与建议："}
-          {checkpoint.nextAction}
-        </p>
+      {owesRecoveryAction && checkpoint?.nextAction && (
+        <p className="mf-dashboard-meta">下一步：{checkpoint.nextAction}</p>
       )}
       {!owesRecoveryAction && (
         <p className="mf-dashboard-meta">

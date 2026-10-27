@@ -12822,8 +12822,6 @@ class MediaFlowApi:
 
         document = batch.document()
         recovery = getattr(self, "_manual_recovery", None)
-        if recovery is None:
-            return document
         items = document.get("items")
         if not isinstance(items, list):
             return document
@@ -12833,14 +12831,15 @@ class MediaFlowApi:
             source_item_id = child.get("source_item_id")
             if not isinstance(source_item_id, str) or not source_item_id:
                 continue
-            try:
-                preparation = recovery.discovery_for_preparation(
-                    batch.source_task_id, source_item_id
-                )
-            except Exception:
-                preparation = None
-            if preparation is not None:
-                child["manualRecoveryPreparation"] = preparation
+            if recovery is not None:
+                try:
+                    preparation = recovery.discovery_for_preparation(
+                        batch.source_task_id, source_item_id
+                    )
+                except Exception:
+                    preparation = None
+                if preparation is not None:
+                    child["manualRecoveryPreparation"] = preparation
             try:
                 checkpoint = self._checkpoint_service.get(
                     source_item_id, task_id=batch.source_task_id
@@ -12857,11 +12856,24 @@ class MediaFlowApi:
                     if checkpoint.recovery_continuation is not None
                     else None
                 )
-            try:
-                child["manualRecoveryAvailable"] = recovery.supports_source_item(
-                    batch.source_task_id, source_item_id
-                )
-            except Exception:
+            # The same bounded per-item decision the item page and item panel
+            # publish.  A saved batch that contains a technical-history child
+            # (created before the center contraction or through the preserved
+            # administrative API) cannot offer that child a new four-type
+            # summary/confirmation action here.  The management API itself is
+            # unchanged.
+            child["recoveryKind"] = self._task_item_recovery.recovery_kind(
+                source_item_id,
+                has_blocker=(checkpoint is not None and checkpoint.blocker is not None),
+            )
+            if recovery is not None:
+                try:
+                    child["manualRecoveryAvailable"] = recovery.supports_source_item(
+                        batch.source_task_id, source_item_id
+                    )
+                except Exception:
+                    child["manualRecoveryAvailable"] = False
+            else:
                 child["manualRecoveryAvailable"] = False
         return document
 
@@ -14381,14 +14393,22 @@ class MediaFlowApi:
             ),
             disposition=disposition,
         )
-        items = [
-            self._task_item_document(
+        items = []
+        for item in window.page:
+            checkpoint = self._checkpoint_service.get(item.item_id, task_id=task_id)
+            document = self._task_item_document(
                 item,
                 bounded=True,
-                checkpoint=self._checkpoint_service.summary(item.item_id, task_id=task_id),
+                checkpoint=checkpoint.summary(),
             )
-            for item in window.page
-        ]
+            # The same bounded per-item decision the item panel and batch
+            # document publish.  The center's per-item selection uses it, so a
+            # technical failure beside an unrelated business problem never
+            # becomes a batch recovery candidate (B46.4-03).
+            document["recoveryKind"] = self._task_item_recovery.recovery_kind(
+                item.item_id, has_blocker=checkpoint.blocker is not None
+            )
+            items.append(document)
         return self._response(
             start_response,
             200,
@@ -14621,7 +14641,8 @@ class MediaFlowApi:
         item = repository.get_item(item_id) if task_id is not None else None
         if task_id is None or item is None or item.task_id != task_id:
             raise LookupError(f"run item {item_id!r} was not found")
-        checkpoint_document = self._checkpoint_service.get(item.item_id, task_id=task_id).document()
+        checkpoint = self._checkpoint_service.get(item.item_id, task_id=task_id)
+        checkpoint_document = checkpoint.document()
         results = repository.list_results_for_item(item.item_id, limit=32)
         evidence_documents = [
             value.document() for value in repository.list_evidence_for_item(item.item_id, limit=16)
@@ -14677,6 +14698,11 @@ class MediaFlowApi:
         document["run_id"] = overview.run_id
         document["task_id"] = task_id
         document["item_id"] = item.item_id
+        # The evidence panel and the item row must make the same technical-
+        # history/four-type decision from the server, never from a label.
+        document["recoveryKind"] = self._task_item_recovery.recovery_kind(
+            item.item_id, has_blocker=checkpoint.blocker is not None
+        )
         return self._response(start_response, 200, redact_manual_value(document))
 
     def _operations_run_export(

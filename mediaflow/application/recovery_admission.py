@@ -31,6 +31,36 @@ _PRIVATE_ENDPOINT = re.compile(r"(?i)(?:https?|s3|file)://[^\s]+")
 _ABSOLUTE_PATH = re.compile(r"(?<![\w])(?:/[\w.~-]+(?:/[\w. .~+\-]+)*|[A-Za-z]:[\\/][^\s]+)")
 _UNSAFE_SOURCE_PREFIX = re.compile(r"(?i)^(?:[a-z][a-z0-9+.-]*://|[a-z]:/|~(?:/|$))")
 
+#: The raw item stage a saved four-type decision leaves behind before its
+#: required safe continuation.  Recording the decision kind with the admitted
+#: request is what lets the center distinguish a necessary four-type
+#: continuation from the preserved administrative analysis-only continuation of
+#: a purely technical failure.
+_RESOLVED_STAGE_DECISIONS: dict[str, str] = {
+    "recognition_resolved": "recognition",
+    "metadata_correction_resolved": "metadata_correction",
+    "metadata_resolved": "metadata",
+    "classification_resolved": "classification",
+    "conflict_resolved": "conflict",
+}
+
+
+def _decision_identity(checkpoint) -> tuple[str | None, str | None]:
+    """The exact four-type decision behind one admissible continuation."""
+
+    blocker = checkpoint.blocker
+    if blocker is not None:
+        return blocker.kind, blocker.blocker_id
+    kind = _RESOLVED_STAGE_DECISIONS.get(str(checkpoint.raw_stage or ""))
+    if kind is None:
+        return None, None
+    matching = [
+        value
+        for value in checkpoint.blockers
+        if value.kind == kind and value.status in {"resolved", "ignored"}
+    ]
+    return kind, matching[-1].blocker_id if matching else None
+
 
 class RecoveryAdmissionService:
     MAX_IDENTIFIER = 256
@@ -143,7 +173,7 @@ class RecoveryAdmissionService:
 
         snapshot_id = checkpoint.configuration.snapshot_id
         snapshot_digest = checkpoint.configuration.snapshot_digest
-        blocker = checkpoint.blocker
+        decision_kind, decision_id = _decision_identity(checkpoint)
         request = RecoveryRequest(
             request_id=str(uuid4()),
             task_id=task_id,
@@ -158,8 +188,8 @@ class RecoveryAdmissionService:
             requested_at=datetime.now(UTC),
             note=note,
             next_action=self._next_action(action_id),
-            review_kind=blocker.kind if action_id == "ignore" and blocker else None,
-            review_id=blocker.blocker_id if action_id == "ignore" and blocker else None,
+            review_kind=decision_kind,
+            review_id=decision_id,
         )
         admitted = self._repository.admit_recovery_request(
             request,

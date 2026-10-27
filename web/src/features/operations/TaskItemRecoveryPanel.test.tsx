@@ -665,6 +665,45 @@ describe("TaskItemRecoveryPanel", () => {
   });
 });
 
+it("publishes a purely technical failure read-only without generic repair guidance", async () => {
+  authStore.setToken("task-recovery-test-token");
+  const value = recognitionRecovery();
+  const checkpoint = value["checkpoint"] as Record<string, unknown>;
+  value["decision"] = null;
+  checkpoint["status"] = "failed";
+  checkpoint["stage"] = "failed";
+  checkpoint["raw_stage"] = "failed";
+  checkpoint["blocker"] = null;
+  checkpoint["retry_safety"] = "safe";
+  checkpoint["permitted_action_ids"] = ["retry"];
+  checkpoint["next_action"] =
+    "repair the dependency, then continue this item through a fresh pinned DryRun";
+  value["manualRecoveryAvailable"] = false;
+  value["recoveryKind"] = "technical_history";
+  value["next_action"] = checkpoint["next_action"];
+  vi.stubGlobal(
+    "fetch",
+    vi.fn(async () => new Response(JSON.stringify(value), { status: 200 })),
+  );
+  renderWithProviders(
+    <TaskItemRecoveryPanel
+      taskId="task-1"
+      itemId="item-1"
+      runId="task-1"
+      active={false}
+    />,
+  );
+  const panel = await screen.findByRole("region", { name: "条目审核与恢复" });
+  expect(await within(panel).findByText(/技术失败条目/)).toBeVisible();
+  expect(within(panel).getByText("无（技术历史，仅只读）")).toBeVisible();
+  expect(
+    within(panel).queryByText(/repair the dependency/),
+  ).not.toBeInTheDocument();
+  expect(
+    within(panel).queryByRole("button", { name: "继续此条目的安全分析" }),
+  ).not.toBeInTheDocument();
+});
+
 it("handles the exact linked blocker in the original context without navigation", async () => {
   authStore.setToken("task-recovery-test-token");
   const parent = completedRecovery(null);

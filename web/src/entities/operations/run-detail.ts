@@ -35,6 +35,10 @@ import {
   type ManualPreviewPlanModel,
 } from "./preview";
 import { RUN_PROBLEM_TYPES, type RunProblemType } from "./run";
+import {
+  normalizeTaskItemRecoveryKind,
+  type TaskItemRecoveryKind,
+} from "./task-item-recovery";
 
 /** The mutually exclusive primary-item dispositions, in presentation order. */
 export const RUN_DISPOSITIONS = [
@@ -732,6 +736,8 @@ export interface RunItemEvidence {
   readonly itemId: string;
   readonly item: TaskItemSummary;
   readonly checkpoint: RunItemCheckpoint;
+  /** The server's exact per-item technical-history/four-type decision. */
+  readonly recoveryKind: TaskItemRecoveryKind | null;
   readonly results: readonly TaskResultSummary[];
   readonly evidence: readonly RunEvidenceDocument[];
   readonly planEvidence: RunPlanEvidence;
@@ -1005,6 +1011,7 @@ export function normalizeRunItemEvidence(payload: unknown): RunItemEvidence {
     itemId,
     item,
     checkpoint,
+    recoveryKind: normalizeTaskItemRecoveryKind(source["recoveryKind"]),
     results,
     evidence,
     planEvidence: normalizePlanEvidence(source["planEvidence"]),

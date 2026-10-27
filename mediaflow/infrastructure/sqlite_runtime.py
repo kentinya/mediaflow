@@ -148,7 +148,8 @@ from mediaflow.domain.notification import (
 from mediaflow.domain.operations_run import (
     COMMAND_LABELS,
     DISCOVERY_COMMAND_LABEL,
-    ORGANIZING_JOB_COMMAND_FAMILIES,
+    ORGANIZING_JOB_LINEAGE_RELATIONS,
+    ORGANIZING_JOB_SEED_COMMAND_FAMILIES,
     ORGANIZING_RETRY_TASK_FAMILIES,
     ORGANIZING_TASK_LINEAGE_RELATIONS,
     ORGANIZING_TASK_SEED_TASK_FAMILIES,
@@ -5723,7 +5724,7 @@ class SQLiteTaskRepository:
                jobs.schedule_id, jobs.definition_id, jobs.source_scope,
                jobs.resource_library_id, jobs.worker_id, jobs.status AS job_status
         FROM automation_jobs jobs
-        WHERE jobs.command IN ({organizing_job_commands})
+        WHERE {organizing_job_membership}
         UNION ALL
         SELECT 'task' AS run_kind, tasks.task_id AS anchor_id, tasks.created_at AS sort_at,
                NULL AS linked_task_id, NULL AS transfer_task_id,
@@ -5779,11 +5780,13 @@ class SQLiteTaskRepository:
         lineage relations the real producers write — never from a display label,
         a path substring or a timestamp:
 
-        - a Job is organizing work when its own command family is supported
-          organizing work.  Every organizing Job producer (a scheduled or due
-          occurrence, an analysis continuation, a metadata-correction
-          continuation, a remaining-scope continuation) records exactly one of
-          those families, so no extra intent flag is needed;
+        - a Job is organizing work when its own admission proves it (an
+          ``organize`` occurrence, including one that failed before any Task
+          existed) or when the continuation relation it really wrote names an
+          admitted organizing source Task.  A continuation Job family alone is
+          not enough: an administrative analysis-only continuation of a
+          standalone DryRun writes ``recovery-continuation`` too, and must stay
+          out of every center list, count, source option, cursor and deep link;
         - a *standalone* Task is organizing work only when a durable admission or
           a legal lineage relation proves it:
 
@@ -5857,9 +5860,34 @@ class SQLiteTaskRepository:
             "(media_discoveries.definition_origin_json IS NOT NULL"
             " AND media_discoveries.definition_origin_json <> '')"
         )
+        # Every continuation producer writes its Job and its relation row in
+        # the same admission transaction.  Joining the relation to the shared
+        # recursive Task population is therefore a persisted-admission proof:
+        # a recovery/metadata/scope continuation of a non-organizing Task can
+        # never join the center by its command name or by the Job it created.
+        job_seed_placeholders = ", ".join(
+            _sql_string(value) for value in ORGANIZING_JOB_SEED_COMMAND_FAMILIES
+        )
+        job_lineage_branches = "\n              OR ".join(
+            f"""({job_family} = {_sql_string(family)}
+               AND EXISTS (
+                   SELECT 1
+                   FROM organizing_tasks job_lineage_source
+                   JOIN {table} job_lineage_relation
+                     ON job_lineage_relation.source_task_id = job_lineage_source.task_id
+                   WHERE job_lineage_relation.job_id = jobs.job_id
+               ))"""
+            for family, table in ORGANIZING_JOB_LINEAGE_RELATIONS
+        )
+        job_membership = (
+            "(\n              "
+            f"{job_family} IN ({job_seed_placeholders})"
+            "\n              OR "
+            f"{job_lineage_branches}"
+            "\n            )"
+        )
         return {
             "media_library_prefix": media_prefix,
-            "organizing_job_commands": placeholders(ORGANIZING_JOB_COMMAND_FAMILIES),
             # A Files admission or a confirmed execution intent keeps its own
             # persisted authority from the admission transaction, so this flag
             # plus a supported family is the admission proof — never a current
@@ -5870,9 +5898,7 @@ class SQLiteTaskRepository:
             "organizing_task_successor_unions": successor_unions,
             "organizing_retry_union": retry_union,
             "organizing_discovery_membership": discovery_origin,
-            "organizing_job_membership": (
-                f"{job_family} IN ({placeholders(ORGANIZING_JOB_COMMAND_FAMILIES)})"
-            ),
+            "organizing_job_membership": job_membership,
         }
 
     @classmethod
@@ -7520,11 +7546,13 @@ class SQLiteTaskRepository:
             ).fetchone()
             if row is not None:
                 # The persisted Job→Task link only resolves when that exact Job
-                # is Task Center organizing work; an ordinary file work's Task
-                # must reach its own local surface, not the organizing center.
+                # is in the same Task Center population the lists read.  A
+                # command-family match alone would resolve an analysis-only
+                # continuation Job of a non-organizing Task, so the shared
+                # population document is the authority here too.
                 linked = self._connection.execute(
-                    "SELECT 1 FROM automation_jobs WHERE job_id = ? AND "
-                    f"command IN ({self._organizing_population_sql()['organizing_job_commands']})",
+                    "SELECT 1 FROM (" + document + ") WHERE run_kind = 'job' "
+                    "AND anchor_id = ? LIMIT 1",
                     (str(row["job_id"]),),
                 ).fetchone()
                 if linked is None:
@@ -7969,13 +7997,16 @@ class SQLiteTaskRepository:
         return row is not None
 
     def has_persisted_recovery_lineage(self, item_id: str) -> bool:
-        """Whether an exact persisted recovery chain is in flight for this item.
+        """Whether an exact persisted *four-type* recovery chain is in flight.
 
         Task Center RO-4 keeps the four-type recovery journey reachable only
         while a durable fact asks for it: an admitted recovery step (a pending
         request, a queued/running continuation, a prepared summary, an active
-        one-shot authority) or an already verified follow-up.  A purely
-        technical failure has none of those, so its detail stays factual
+        one-shot authority) or an already verified follow-up.  The step must
+        also follow a real four-type decision on this item (or on the exact
+        source item whose continuation produced this item's Task); a purely
+        technical failure -- even one continued through the preserved
+        administrative API -- has no such decision, so its detail stays factual
         read-only history instead of a generic repair/retry invitation.
 
         Every branch reads a persisted identity of this exact item (or the exact
@@ -7984,10 +8015,25 @@ class SQLiteTaskRepository:
 
         if not isinstance(item_id, str) or not item_id.strip():
             return False
+        own_decision = (
+            "EXISTS (SELECT 1 FROM recovery_requests lineage_request "
+            "WHERE lineage_request.item_id = lineage_item.item_id "
+            "AND lineage_request.review_kind IS NOT NULL "
+            "AND lineage_request.review_kind <> '')"
+        )
+        parent_decision = (
+            "EXISTS (SELECT 1 FROM recovery_continuations lineage_parent "
+            "JOIN recovery_requests lineage_parent_request "
+            "ON lineage_parent_request.request_id = lineage_parent.request_id "
+            "WHERE lineage_parent.new_task_id = lineage_item.task_id "
+            "AND lineage_parent_request.review_kind IS NOT NULL "
+            "AND lineage_parent_request.review_kind <> '')"
+        )
         with self._lock:
             row = self._connection.execute(
-                """SELECT 1 FROM task_items lineage_item
+                f"""SELECT 1 FROM task_items lineage_item
                 WHERE lineage_item.item_id = ?
+                  AND ({own_decision} OR {parent_decision})
                   AND (
                     EXISTS (SELECT 1 FROM recovery_requests lineage_request
                             WHERE lineage_request.item_id = lineage_item.item_id

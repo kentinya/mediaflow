@@ -30,6 +30,39 @@ class TaskItemRecoveryError(ValueError):
         self.next_action = next_action
 
 
+#: The bounded recovery surfaces one TaskItem may currently belong to.  The
+#: first two owe a four-type operator action; ``technical_history`` is factual
+#: read-only history (Provider/Storage/permission/uncertain failure) that never
+#: receives a generic retry/repair/investigation invitation in the center.
+TASK_ITEM_RECOVERY_KINDS: tuple[str, ...] = (
+    "business_problem",
+    "recovery_lineage",
+    "technical_history",
+)
+
+
+def item_recovery_kind(repository, item_id: str, *, has_blocker: bool = False) -> str:
+    """The shared per-item recovery decision the center and batch UI consume.
+
+    Membership is read from the same two durable predicates the four-type
+    lists/checkpoint use: an exact current four-type problem (including a live
+    review/conflict blocker or a saved decision still awaiting its required
+    continuation), or an already admitted recovery step of this exact item.
+    Everything else is technical history.  This function is deliberately
+    repository-read-only: it grants no authority and creates no work.
+    """
+
+    if has_blocker:
+        return "business_problem"
+    problem_reader = getattr(repository, "has_current_four_type_problem", None)
+    if callable(problem_reader) and problem_reader(item_id):
+        return "business_problem"
+    lineage_reader = getattr(repository, "has_persisted_recovery_lineage", None)
+    if callable(lineage_reader) and lineage_reader(item_id):
+        return "recovery_lineage"
+    return "technical_history"
+
+
 class TaskItemRecoveryService:
     MAX_QUERY = 500
     MAX_CANDIDATES = 100
@@ -96,7 +129,7 @@ class TaskItemRecoveryService:
             # offered where one of those two durable facts holds; the same
             # fields also keep the native recovery reachable from its own type
             # list and from the administrative API/CLI.
-            "recoveryKind": self._recovery_kind(task_id, item_id, checkpoint, blocker),
+            "recoveryKind": self._recovery_kind(item_id, blocker),
             "sideEffects": "none",
             "next_action": checkpoint.refusal_reason
             or (
@@ -106,11 +139,12 @@ class TaskItemRecoveryService:
             ),
         }
 
-    def _recovery_kind(self, task_id: str, item_id: str, checkpoint, blocker) -> str:
+    def _recovery_kind(self, item_id: str, blocker) -> str:
         """The bounded recovery surface this exact item currently belongs to.
 
         ``business_problem``  — a live review/conflict of one of the four types
-        is blocking this item right now;
+        is blocking this item right now, or a saved decision still awaits its
+        required continuation;
         ``recovery_lineage``  — this item already carries its own persisted
         recovery chain (saved decision → linked analysis → prepared summary), or
         an exact verified follow-up already closed it;
@@ -118,21 +152,16 @@ class TaskItemRecoveryService:
         uncertain failure is read-only All/Ended history in the Task Center, so
         no generic repair/retry/verification invitation is published here.
 
-        The decision reads only durable rows; it grants no authority and never
-        guesses a business meaning from a metric name or a label.
+        The decision reads only durable rows through the one shared helper the
+        run-item and batch projections also use; it grants no authority.
         """
 
-        problem_reader = getattr(self._repository, "has_current_four_type_problem", None)
-        if blocker is not None or (callable(problem_reader) and problem_reader(item_id)):
-            return "business_problem"
-        reader = getattr(self._repository, "has_persisted_recovery_lineage", None)
-        if callable(reader) and reader(item_id):
-            return "recovery_lineage"
-        # Anything else -- a Provider transport error, a Storage/permission
-        # refusal, an uncertain/partial effect, a plain queued item -- has no
-        # four-type blocker and no recovery lineage, so it is factual read-only
-        # history here rather than a generic repair/retry invitation.
-        return "technical_history"
+        return item_recovery_kind(self._repository, item_id, has_blocker=blocker is not None)
+
+    def recovery_kind(self, item_id: str, *, has_blocker: bool = False) -> str:
+        """Public read-only projection of the shared per-item decision."""
+
+        return item_recovery_kind(self._repository, item_id, has_blocker=has_blocker)
 
     def metadata_search(
         self,

@@ -3345,7 +3345,11 @@ test("a technical failure keeps its exact read-only history without a generic co
   // verification step, and no four-type list includes it.
   const seeded = await seedNativeRecovery(request, "technical");
   const { recovery } = await openNativeRecovery(page, seeded);
-  await expect(recovery).toContainText("repair the dependency");
+  // B46.4-03: the factual checkpoint's generic repair suggestion is guidance,
+  // not history.  The center keeps the reason/stage/effects/results/logs/export
+  // but never renders that invitation, not even renamed as "current facts".
+  await expect(recovery).not.toContainText("repair the dependency");
+  await expect(recovery.getByText("无（技术历史，仅只读）")).toBeVisible();
   // The read-only technical surface states why no action is offered, and the
   // mutating controls of the four-type journey are absent.
   await expect(
@@ -3411,6 +3415,85 @@ test("a technical failure keeps its exact read-only history without a generic co
   expect(state.siblingStatuses["TechnicalRecoveryUnknown.2019.mkv"]).toBe(
     "failed",
   );
+});
+
+test("a mixed run never offers its technical or unknown-era siblings for batch recovery", async ({
+  page,
+  request,
+}) => {
+  // B46.4-03: the run-level four-type responsibility must not leak into a
+  // per-item batch selection.  The mixed fixture has real Recognition and
+  // Conflict problems beside a zero-effect Storage permission failure, a
+  // successful sibling and an unknown-effect sibling.  Only the four-type
+  // items may ever owe a center action.
+  const seeded = (await (
+    await request.post(`${BASE}/__harness__/seed-task-center-problems`)
+  ).json()) as {
+    readonly mixedTaskId: string;
+    readonly mixedRecognitionItemIds: readonly string[];
+    readonly mixedFailureItemId: string;
+    readonly mixedSuccessItemId: string;
+    readonly mixedUnknownItemId: string;
+    readonly mixedConflictItemId: string;
+  };
+  await connect(page);
+  await openInventory(page);
+  await page
+    .getByRole("searchbox", { name: "搜索", exact: true })
+    .fill("TaskCenter/Mixed");
+  await page
+    .locator(".mf-run-filter-bar")
+    .getByRole("button", { name: "搜索", exact: true })
+    .click();
+  const runRow = page.getByRole("row").filter({ hasText: "TaskCenter/Mixed" });
+  await expect(runRow).toHaveCount(1);
+  await runRow.getByRole("button").first().click();
+  const detail = page.getByRole("region", { name: "运行详情" });
+  const items = detail.getByRole("region", { name: "主条目" });
+  const technicalRow = items
+    .getByRole("row")
+    .filter({ hasText: "TaskCenter/Mixed/Broken.mkv" });
+  await expect(technicalRow).toHaveCount(1);
+  await expect(
+    technicalRow.getByLabel(
+      `选择 ${seeded.mixedFailureItemId} 进行单项分析恢复`,
+    ),
+  ).toHaveCount(0);
+  await expect(
+    items.getByLabel(`选择 ${seeded.mixedUnknownItemId} 进行单项分析恢复`),
+  ).toHaveCount(0);
+  await expect(
+    items.getByLabel(`选择 ${seeded.mixedSuccessItemId} 进行单项分析恢复`),
+  ).toHaveCount(0);
+  await expect(
+    items.getByText(/repair the destination Storage permission/),
+  ).toHaveCount(0);
+  await expect(page.getByRole("button", { name: /继续所选分析/ })).toHaveCount(
+    0,
+  );
+
+  // The technical item's factual detail stays readable without a generic
+  // repair/retry/verification invitation.
+  await technicalRow.getByRole("button", { name: "查看证据" }).click();
+  const recovery = detail.getByRole("region", { name: "条目审核与恢复" });
+  await expect(recovery.getByText(/技术失败条目/)).toBeVisible();
+  await expect(recovery).not.toContainText(
+    "repair the destination Storage permission",
+  );
+  await expect(
+    recovery.getByRole("button", { name: "继续此条目的安全分析" }),
+  ).toHaveCount(0);
+  await expect(
+    recovery.getByRole("button", { name: "生成计划摘要并在此确认" }),
+  ).toHaveCount(0);
+  // The same mixed run is still a real Recognition/Conflict center entry.
+  const run = await (
+    await request.get(`${BASE}/api/v1/operations/runs/${seeded.mixedTaskId}`, {
+      headers: { Authorization: `Bearer ${ADMIN_TOKEN}` },
+    })
+  ).json();
+  expect(run.attention).toBe(true);
+  expect(run.problem_types.sort()).toEqual(["conflict", "recognition"]);
 });
 
 test("a technical failure batch keeps its administrative API while the center offers no generic recovery", async ({
@@ -3483,6 +3566,95 @@ test("a technical failure batch keeps its administrative API while the center of
   // Reading and refreshing both stay read-only, and the durable facts remain.
   await page.getByRole("button", { name: "Refresh" }).first().click();
   expect(state.sourceExists["Batch/C/BatchEligible.2007.mkv"]).toBe(true);
+});
+
+test("a reopened mixed saved batch keeps its technical-history child read-only", async ({
+  page,
+  request,
+}) => {
+  // B46.4-03: the mixed run owes real four-type work, so its saved batch panel
+  // is present.  A technical-history child admitted through the preserved
+  // administrative API must still reopen read-only: durable row/evidence
+  // visible, no four-type summary/confirmation action and no generic repair
+  // guidance.
+  const seeded = (await (
+    await request.post(`${BASE}/__harness__/seed-task-center-problems`)
+  ).json()) as {
+    readonly mixedTaskId: string;
+    readonly mixedFailureItemId: string;
+  };
+  const itemId = seeded.mixedFailureItemId;
+  const recovery = await (
+    await request.get(
+      `${BASE}/api/v1/tasks/${seeded.mixedTaskId}/items/${itemId}/recovery`,
+      { headers: { Authorization: `Bearer ${ADMIN_TOKEN}` } },
+    )
+  ).json();
+  const submitted = await request.post(
+    `${BASE}/api/v1/tasks/${seeded.mixedTaskId}/recovery/continue-batch`,
+    {
+      headers: { Authorization: `Bearer ${ADMIN_TOKEN}` },
+      data: {
+        items: [
+          {
+            itemId,
+            expectedCheckpointVersion: recovery.checkpoint.checkpoint_version,
+          },
+        ],
+      },
+    },
+  );
+  expect(submitted.status()).toBe(202);
+  const batch = (await submitted.json()) as {
+    readonly batch_id: string;
+    readonly items: readonly { readonly recoveryKind: string }[];
+  };
+  expect(batch.items[0]?.recoveryKind).toBe("technical_history");
+
+  await connect(page, ADMIN_TOKEN);
+  await openInventory(page);
+  await page.evaluate(
+    ({ key, value }) => window.sessionStorage.setItem(key, value),
+    {
+      key: `mediaflow.operations.recovery-batch:v2:harness-admin:${seeded.mixedTaskId}`,
+      value: JSON.stringify({
+        batchId: batch.batch_id,
+        items: [
+          {
+            itemId,
+            expectedCheckpointVersion: recovery.checkpoint.checkpoint_version,
+          },
+        ],
+      }),
+    },
+  );
+  await page
+    .getByRole("searchbox", { name: "搜索", exact: true })
+    .fill("TaskCenter/Mixed");
+  await page
+    .locator(".mf-run-filter-bar")
+    .getByRole("button", { name: "搜索", exact: true })
+    .click();
+  const sourceRun = page
+    .getByRole("row")
+    .filter({ hasText: "TaskCenter/Mixed" });
+  await expect(sourceRun).toHaveCount(1);
+  await sourceRun.getByRole("button").first().click();
+  const detail = page.getByRole("region", { name: "运行详情" });
+  const batchRegion = detail.getByRole("region", { name: "批量失败分析恢复" });
+  await expect(batchRegion).toBeVisible();
+  await expect(batchRegion.getByText(/技术历史，仅只读/)).toBeVisible();
+  await expect(batchRegion.getByText(/repair the dependency/)).toHaveCount(0);
+  await expect(
+    batchRegion.getByRole("button", { name: /生成并确认摘要/ }),
+  ).toHaveCount(0);
+  await expect(
+    batchRegion.getByRole("button", { name: /确认继续整理/ }),
+  ).toHaveCount(0);
+  // The exact item row remains non-selectable as well.
+  await expect(page.getByLabel(`选择 ${itemId} 进行单项分析恢复`)).toHaveCount(
+    0,
+  );
 });
 
 test("the exact undecided batch item is reachable read-only without a generic retry", async ({

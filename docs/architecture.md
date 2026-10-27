@@ -527,10 +527,14 @@ Slice46 narrows this CURRENT population and surface: center membership is proven
 or a durable lineage/retry relation (an admitted Files Task or organize execution intent in its
 discovery/analysis/confirmation stages, a supported organizing Job, and every continuation it really
 owns), so a standalone analysis-only CLI DryRun and its analysis successors are administrative history
-rather than center work. The four types keep a first-attempt responsibility until the exact chain
+rather than center work. A continuation Job joins only through the exact persisted relation whose
+source Task is itself in the admitted organizing population; its command family or produced Task alone
+is never membership proof. The four types keep a first-attempt responsibility until the exact chain
 reaches a confirmed follow-up; a technical failure leaves them and stays a read-only factual entry, and
 the overall recovery-complete projection appears only when every necessary item carries its own
-verified follow-up. The retired mixed Task/Job collections keep their management APIs but no V2 list;
+verified follow-up. Each run item publishes that same four-type/technical-history decision, so batch
+selection and a reopened saved batch never turn a sibling's business problem into a generic technical
+recovery entry. The retired mixed Task/Job collections keep their management APIs but no V2 list;
 their deep links resolve an organizing identity into the exact center run and an ordinary identity into
 its proven library page.
 

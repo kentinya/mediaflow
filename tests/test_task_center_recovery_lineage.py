@@ -136,6 +136,195 @@ class RecoveryLineageTests(unittest.TestCase):
                     original_results, self.state.repository.list_results(seed["taskId"])
                 )
 
+    def test_standalone_analysis_continuation_chain_never_enters_the_center(self):
+        # B46.4-05: the real CLI ``organize <file>`` DryRun plus the preserved
+        # administrative analysis continuation writes the same
+        # ``recovery-continuation`` Job command as a four-type recovery.  The
+        # Job must prove its admitted organizing source through its persisted
+        # relation, not through the command name.  This drives the actual
+        # CLI → API continue → queued Job → Worker → child Task chain and every
+        # center read before/after the claim and across a database reopen.
+        import io
+        from unittest.mock import patch
+
+        from mediaflow.domain.metadata import MetadataError, MetadataErrorCode
+
+        output, errors = io.StringIO(), io.StringIO()
+        source = self.state.managed.root / "source" / h.PIPELINE_SOURCE_FILE
+        source.parent.mkdir(parents=True, exist_ok=True)
+        source.write_bytes(b"synthetic dryrun source")
+        provider = self.state.managed.metadata_registry.resolve("tmdb")
+        with (
+            patch(
+                "mediaflow.final_cli.metadata_provider_registry_from_environment",
+                return_value=self.state.managed.metadata_registry,
+            ),
+            patch.object(
+                provider,
+                "search_movie",
+                side_effect=MetadataError(
+                    MetadataErrorCode.CONNECTION_FAILED, "synthetic provider outage"
+                ),
+            ),
+        ):
+            code = h.final_main(
+                ["organize", str(source)],
+                stdout=output,
+                stderr=errors,
+                _resolved_configuration=self.state.managed.runtime,
+            )
+        self.assertEqual(1, code)
+        task = self.state.repository.list_tasks(limit=10)[0]
+        item = self.state.repository.list_items(task.task_id)[0]
+        self.assertFalse(task.execute_authorized)
+        self.assert_center_excludes(task.task_id, item.item_id)
+
+        continuation = self.continue_item(task.task_id, item.item_id)
+        self.assertEqual("queued", continuation["status"])
+        job_id = continuation["job_id"]
+        self.assert_center_excludes(task.task_id, job_id)
+
+        worker = h.run_task_item_recovery_worker_once(self.state, item_id=item.item_id)
+        self.assertTrue(worker["ran"])
+        child_task_id = worker["newTaskId"]
+        self.assertTrue(child_task_id)
+        self.assert_center_excludes(task.task_id, job_id, child_task_id)
+
+        self.state.restart()
+        self.assert_center_excludes(task.task_id, job_id, child_task_id)
+        # Nothing was deleted: the analysis Task/Result/Job and its
+        # continuation remain reachable through the preserved management
+        # API/CLI history, only outside the center population.
+        self.assertIsNotNone(self.state.repository.get_task(task.task_id))
+        self.assertIsNotNone(self.state.repository.get_job(job_id))
+        self.assertIsNotNone(self.state.repository.get_task(child_task_id))
+
+    def test_admitted_recovery_continuation_job_joins_before_and_after_claim(self):
+        # The positive half of B46.4-05: a recovery continuation of an admitted
+        # organizing Task stays center work while its Job is queued (before a
+        # Task exists) and after the Worker binds the child Task.  The persisted
+        # relation's source Task is the membership proof.
+        seed = h.seed_task_item_recovery_journey(self.state, "recognition")
+        task_id, item_id = seed["taskId"], seed["itemId"]
+        self.call(
+            "POST",
+            f"/api/v1/tasks/{task_id}/items/{item_id}/recovery/decision",
+            {
+                "kind": "recognition",
+                "recognitionTypeId": "C",
+                "expectedCheckpointVersion": self.detail(task_id, item_id)["checkpoint"][
+                    "checkpoint_version"
+                ],
+            },
+        )
+        continuation = self.continue_item(task_id, item_id)
+        job_id = continuation["job_id"]
+
+        page = self.call("GET", "/api/v1/operations/runs", query="limit=100")
+        self.assertEqual(2, page["total"])
+        ids = {row["run_id"] for row in page["items"]}
+        self.assertEqual({task_id, job_id}, ids)
+        job_row = next(row for row in page["items"] if row["run_id"] == job_id)
+        self.assertEqual("recovery-continuation", job_row["command"])
+        self.assertIsNone(job_row["task_id"])
+        self.call("GET", f"/api/v1/operations/runs/{job_id}")
+        self.assertEqual(job_id, self.state.repository.resolve_operations_run_link(job_id))
+
+        first = self.call("GET", "/api/v1/operations/runs", query="limit=1")
+        collected = {row["run_id"] for row in first["items"]}
+        cursor = first["next_cursor"]
+        while cursor:
+            following = self.call(
+                "GET", "/api/v1/operations/runs", query=f"limit=1&cursor={cursor}"
+            )
+            collected.update(row["run_id"] for row in following["items"])
+            cursor = following["next_cursor"]
+        self.assertEqual({task_id, job_id}, collected)
+
+        worker = h.run_task_item_recovery_worker_once(self.state, item_id=item_id)
+        self.assertTrue(worker["ran"])
+        child_task_id = worker["newTaskId"]
+        for reopen in (False, True):
+            with self.subTest(reopen=reopen):
+                if reopen:
+                    self.state.restart()
+                page = self.call("GET", "/api/v1/operations/runs", query="limit=100")
+                self.assertEqual(2, page["total"])
+                job_row = next(row for row in page["items"] if row["run_id"] == job_id)
+                self.assertEqual(child_task_id, job_row["task_id"])
+                self.assertEqual(
+                    job_id,
+                    self.state.repository.resolve_operations_run_link(child_task_id),
+                )
+
+    def assert_center_excludes(self, *identifiers: str) -> None:
+        """Every center read excludes the supplied identities/source chain."""
+
+        page = self.call("GET", "/api/v1/operations/runs", query="limit=100")
+        self.assertEqual(0, page["total"])
+        self.assertEqual([], page["items"])
+        self.assertEqual(0, page["summary"]["total"])
+        self.assertEqual([], page["summary"]["sources"])
+        self.assertIsNone(page["previous_cursor"])
+        self.assertIsNone(page["next_cursor"])
+        for identifier in identifiers:
+            with self.subTest(identifier=identifier):
+                code, body = h.wsgi_request(
+                    self.state.api,
+                    "GET",
+                    f"/api/v1/operations/runs/{identifier}",
+                    token=h.HARNESS_ADMIN_TOKEN,
+                )
+                self.assertEqual(404, code, body)
+                code, _body = h.wsgi_request(
+                    self.state.api,
+                    "GET",
+                    f"/api/v1/operations/runs/{identifier}/export",
+                    token=h.HARNESS_ADMIN_TOKEN,
+                )
+                self.assertEqual(404, code)
+                self.assertIsNone(self.state.repository.resolve_operations_run_link(identifier))
+
+    def test_admin_batch_child_publishes_technical_history_kind(self):
+        # B46.4-03: the preserved administrative batch still accepts an exact
+        # technical item, but its batch document publishes the same
+        # ``technical_history`` decision the center uses.  A reopened batch can
+        # therefore keep the child's durable row and evidence read-only without
+        # re-offering a four-type summary/confirmation action.
+        seed = h.seed_task_item_recovery_journey(self.state, "technical")
+        task_id, item_id = seed["taskId"], seed["itemId"]
+        checkpoint = self.detail(task_id, item_id)["checkpoint"]
+        status, batch = h.wsgi_request(
+            self.state.api,
+            "POST",
+            f"/api/v1/tasks/{task_id}/recovery/continue-batch",
+            body={
+                "items": [
+                    {
+                        "itemId": item_id,
+                        "expectedCheckpointVersion": checkpoint["checkpoint_version"],
+                    }
+                ]
+            },
+            token=h.HARNESS_ADMIN_TOKEN,
+        )
+        self.assertEqual(202, status, batch)
+        self.assertEqual("queued", batch["items"][0]["status"])
+        self.assertEqual("technical_history", batch["items"][0]["recoveryKind"])
+        for reopen in (False, True):
+            with self.subTest(reopen=reopen):
+                if reopen:
+                    self.state.restart()
+                code, stored = request_batch = h.wsgi_request(
+                    self.state.api,
+                    "GET",
+                    f"/api/v1/tasks/{task_id}/recovery-batches/{batch['batch_id']}",
+                    token=h.HARNESS_ADMIN_TOKEN,
+                )
+                self.assertEqual(200, code, request_batch)
+                self.assertEqual("technical_history", stored["items"][0]["recoveryKind"])
+                self.assertEqual("queued", stored["items"][0]["status"])
+
     def test_repeated_failure_is_not_resolution(self):
         seed, child_task, _, summary, preview = self.prepared_chain()
         self.call(
