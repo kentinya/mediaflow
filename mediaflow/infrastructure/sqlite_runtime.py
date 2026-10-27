@@ -13481,7 +13481,41 @@ class SQLiteTaskRepository:
         # history load and no global source catalog is introduced: the predicate is
         # evaluated by SQLite against the same durable discovery rows and their
         # already-recorded identity evidence.
+        #
+        # B46.3-06: a row that *did* record the exact Storage-relative path of its own
+        # scope entry has proven its concrete source, and two different canonical
+        # paths are two different files (``A/One.mkv`` and ``B/One.mkv`` under two
+        # library bindings of one Storage).  The library-relative ``progress``
+        # document is therefore only the identity of an entry that recorded *no*
+        # canonical path at all — a pre-change row, or an entry a pre-change record
+        # extended after the amendment — and then only inside that record's own
+        # immutable library binding.  Reading it unconditionally let a modern record
+        # reach its per-row decision through a "legacy" branch and refuse a genuinely
+        # different file for sharing a library-relative name.
         wanted = storage_path if storage_path is not None else source_path
+        legacy_clauses = [
+            "EXISTS (SELECT 1 FROM json_each(CASE WHEN json_valid(d.progress_json) "
+            "THEN json_extract(d.progress_json, '$.scopeEntries') END) scope "
+            "WHERE json_extract(scope.value, '$.kind')='file' "
+            "AND json_extract(scope.value, '$.path')=?)",
+        ]
+        legacy_parameters: list[object] = [source_path]
+        if storage_path is not None:
+            # A caller that *did* supply the concrete source proves every entry of
+            # this record that recorded its own canonical path; only an entry that
+            # recorded none is still the conservative legacy identity.
+            legacy_clauses.append(
+                "NOT EXISTS (SELECT 1 FROM json_each("
+                "CASE WHEN json_valid(d.storage_scope_json) THEN d.storage_scope_json END"
+                ") recorded WHERE json_extract(recorded.value, '$[0]')=?)"
+            )
+            legacy_parameters.append(source_path)
+        if resource_library_id is not None:
+            # The conservative legacy identity is the library-relative path *plus*
+            # the record's own binding; without a comparable binding the answer
+            # stays "owner" instead of releasing a live claim.
+            legacy_clauses.append("d.resource_library_id=?")
+            legacy_parameters.append(resource_library_id)
         clauses.append(
             "("
             # The exact confined Storage-relative path of every admitted scope entry
@@ -13494,18 +13528,10 @@ class SQLiteTaskRepository:
             " OR EXISTS (SELECT 1 FROM json_each("
             "CASE WHEN json_valid(d.sources_json) THEN d.sources_json END"
             ") entry WHERE json_extract(entry.value, '$.path')=?)"
-            # A record whose only recorded identity is its durable progress document
-            # (a pre-change row, or a caller that could not supply a canonical
-            # Storage path) keeps that conservative legacy identity.  It is read,
-            # never silently skipped, so the correction cannot release a live claim
-            # merely because its evidence is the older form.
-            " OR EXISTS (SELECT 1 FROM json_each(CASE WHEN json_valid(d.progress_json) "
-            "THEN json_extract(d.progress_json, '$.scopeEntries') END) scope "
-            "WHERE json_extract(scope.value, '$.kind')='file' "
-            "AND json_extract(scope.value, '$.path')=?)"
+            " OR (" + " AND ".join(legacy_clauses) + ")"
             ")"
         )
-        parameters.extend((wanted, wanted, source_path))
+        parameters.extend((wanted, wanted, *legacy_parameters))
         rows = self._connection.execute(
             "SELECT d.discovery_id, d.actor, d.status, d.resource_library_id, "
             "d.progress_json, d.sources_json, d.intent_id, d.storage_scope_json "
@@ -13555,10 +13581,15 @@ class SQLiteTaskRepository:
             except Exception:
                 pass
             matched = wanted if wanted in owned_paths else None
-            if matched is None:
-                # A pre-change record carries no canonical scope; its
-                # library-relative file paths plus its exact library binding are
-                # the conservative legacy identity.
+            if matched is None and (storage_path is None or source_path not in canonical):
+                # Only an entry this record never recorded a canonical path for
+                # falls back to the conservative legacy identity — its
+                # library-relative file path.  An entry whose canonical path *is*
+                # recorded has proven its concrete source, so a differing path is a
+                # different file, not the same source under another name.  The
+                # legacy answer never leaves the record's own binding: the predicate
+                # above already required this record's ResourceLibrary when the
+                # caller supplied one.
                 legacy = {
                     entry.path
                     for entry in progress.scope_entries

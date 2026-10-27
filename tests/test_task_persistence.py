@@ -1957,7 +1957,6 @@ class SourceOwnershipEvidenceTests(unittest.TestCase):
 
     def test_a_legacy_task_item_without_evidence_keeps_its_claim(self) -> None:
         """A pre-change row proves no version, so it never reads as replaced."""
-
         with tempfile.TemporaryDirectory() as directory:
             database = Path(directory, "legacy.sqlite3")
             with SQLiteTaskRepository(database) as repository:
@@ -1981,6 +1980,123 @@ class SourceOwnershipEvidenceTests(unittest.TestCase):
                         ),
                     )
                 )
+
+    def test_a_recorded_canonical_path_is_never_re_read_as_its_relative_name(self) -> None:
+        """B46.3-06: a proven different path is a different file, not the same one.
+
+        Two admissions of one Storage under two library roots record their own
+        canonical Storage paths.  A lookup for the second must not reach the first
+        through the library-relative name -- but a record that recorded *no*
+        canonical path for that entry is still the conservative legacy owner inside
+        its own binding.  Both facts are asserted on rows written through the
+        production repository, so the distinction cannot drift back into an
+        unconditional fallback.
+        """
+
+        from mediaflow.domain.media_discovery import (
+            DiscoveryBudgets,
+            DiscoveryCounters,
+            DiscoveryEntryKind,
+            DiscoveryIncompleteReason,
+            DiscoveryProgress,
+            DiscoveryScopeEntry,
+            DiscoveryStatus,
+            MediaDiscovery,
+        )
+
+        now = datetime(2026, 10, 20, 12, 0, tzinfo=UTC)
+
+        def admission(discovery_id: str, library: str, storage_scope) -> MediaDiscovery:
+            return MediaDiscovery(
+                discovery_id,
+                "operator",
+                library,
+                "source",
+                "snap",
+                "d" * 64,
+                DiscoveryStatus.QUEUED,
+                1,
+                DiscoveryBudgets(),
+                DiscoveryProgress(
+                    "queued",
+                    (DiscoveryScopeEntry("One.2001.mkv", DiscoveryEntryKind.FILE),),
+                    DiscoveryCounters(),
+                    DiscoveryIncompleteReason.NONE,
+                    message="queued",
+                    manual_selection=True,
+                ),
+                now,
+                now,
+                storage_scope=storage_scope,
+            )
+
+        with tempfile.TemporaryDirectory() as directory:
+            database = Path(directory, "distinct-sources.sqlite3")
+            with SQLiteTaskRepository(database) as repository:
+                repository.create_media_discovery(
+                    admission("admission-a", "one", (("One.2001.mkv", "A/One.2001.mkv"),))
+                )
+                repository.create_media_discovery(
+                    admission("admission-b", "two", (("One.2001.mkv", "B/One.2001.mkv"),))
+                )
+                # Each canonical path resolves to its own owner, and neither one
+                # answers for the other.
+                first = repository.find_owned_source_work(
+                    storage_id="source",
+                    source_path="One.2001.mkv",
+                    storage_path="A/One.2001.mkv",
+                    resource_library_id="one",
+                )
+                self.assertIsNotNone(first)
+                self.assertEqual("admission-a", first["discoveryId"])
+                second = repository.find_owned_source_work(
+                    storage_id="source",
+                    source_path="One.2001.mkv",
+                    storage_path="B/One.2001.mkv",
+                    resource_library_id="two",
+                )
+                self.assertIsNotNone(second)
+                self.assertEqual("admission-b", second["discoveryId"])
+                # The same physical source through a third binding of the same
+                # Storage is still one owner, not a third admission.
+                alias = repository.find_owned_source_work(
+                    storage_id="source",
+                    source_path="A/One.2001.mkv",
+                    storage_path="A/One.2001.mkv",
+                    resource_library_id="whole",
+                )
+                self.assertIsNotNone(alias)
+                self.assertEqual("admission-a", alias["discoveryId"])
+                # A different canonical path in the *same* binding is free, even
+                # though it carries the identical library-relative name: the
+                # recorded canonical identity decides, not the name.
+                self.assertIsNone(
+                    repository.find_owned_source_work(
+                        storage_id="source",
+                        source_path="One.2001.mkv",
+                        storage_path="C/One.2001.mkv",
+                        resource_library_id="one",
+                    )
+                )
+                # A caller that cannot supply a canonical path at all stays on the
+                # conservative identity instead of being answered "free": the
+                # record's own library-relative path still names unfinished work.
+                conservative = repository.find_owned_source_work(
+                    storage_id="source",
+                    source_path="One.2001.mkv",
+                    resource_library_id="one",
+                )
+                self.assertIsNotNone(conservative)
+                # ...and that conservative answer never leaves the record's own
+                # binding: the same relative name in the other binding names the
+                # other root's own work, never this one's.
+                other = repository.find_owned_source_work(
+                    storage_id="source",
+                    source_path="One.2001.mkv",
+                    resource_library_id="two",
+                )
+                self.assertIsNotNone(other)
+                self.assertEqual("admission-b", other["discoveryId"])
 
 
 def source_version_evidence_from(fingerprint):

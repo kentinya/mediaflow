@@ -1649,11 +1649,14 @@ class AdmittedSourceOwnershipTests(_PreparationFixture):
 
     def document(self, **kwargs) -> dict:
         document = super().document(**kwargs)
+        libraries = document["resourceLibraries"]
         document["automationTaskDefinitions"] = [
             {
                 "id": "shared",
                 "name": "Shared source",
-                "resourceLibraryId": "library",
+                # The definition's scope names one of the published libraries, so
+                # a test may publish several bindings of one Storage.
+                "resourceLibraryId": libraries[0]["id"],
                 "sourceScope": "Movies",
                 "mode": "automatic-organization",
                 "intervalSeconds": 3600,
@@ -2199,6 +2202,182 @@ class AdmittedSourceOwnershipTests(_PreparationFixture):
             self.assertTrue(value.source.exists("Movies/One.2001.mkv"))
             self.assertEqual([], value.source.mutations)
             self.assertEqual([], value.target.mutations)
+
+    def test_distinct_canonical_sources_under_equal_names_stay_independent(self) -> None:
+        """B46.3-06: two proven different paths never collide on their name.
+
+        Two published, enabled ResourceLibrary bindings of one Storage with roots
+        ``A`` and ``B`` each expose a real ``One.2001.mkv``.  Those are two
+        different concrete files, so admitting the first may not refuse the
+        second.  The admission records the canonical path of each, so the legacy
+        library-relative fallback must not reach a row that has already proven its
+        own path.  The controls of B's sequence stay in the same real journey: a
+        differently named file in the second binding is admitted, and a third
+        binding whose root is empty selects the *same* physical file as the first
+        and is correctly refused (that is a real duplicate, not a collision).
+        """
+
+        self.media("A/One.2001.mkv")
+        self.media("B/One.2001.mkv")
+        self.media("B/Two.2002.mkv")
+        libraries = [
+            self.resource_library("one", storagePath="A"),
+            self.resource_library("two", storagePath="B"),
+            self.resource_library("whole", storagePath=""),
+        ]
+        with self.journey(resource_libraries=libraries) as value:
+            first = self.admit(value, ["One.2001.mkv"], library_id="one")
+            # The first admission recorded its own canonical path, so this is a
+            # modern record and never the pre-change legacy shape.
+            self.assertEqual(
+                (("One.2001.mkv", "A/One.2001.mkv"),),
+                value.repository.get_media_discovery(first["discoveryId"]).storage_scope,
+            )
+            self.assertIsNone(
+                value.repository.find_owned_source_work(
+                    storage_id="source",
+                    source_path="One.2001.mkv",
+                    storage_path="B/One.2001.mkv",
+                    resource_library_id="two",
+                ),
+                "a genuinely different canonical source read as the A file",
+            )
+            # The second real file gets its own durable organizing work.
+            status, second = self.request(
+                value,
+                "/api/v1/resource-libraries/two/files/discoveries",
+                "POST",
+                {"paths": ["One.2001.mkv"], "autoPrepare": True},
+            )
+            self.assertEqual(202, status, second)
+            self.assertNotEqual(first["discoveryId"], second["discoveryId"])
+            self.assertNotEqual(first["organizeTaskId"], second["organizeTaskId"])
+            self.assertEqual(
+                (("One.2001.mkv", "B/One.2001.mkv"),),
+                value.repository.get_media_discovery(second["discoveryId"]).storage_scope,
+            )
+            # The first work is untouched: same admitted scope, same queued state.
+            original = value.repository.get_media_discovery(first["discoveryId"])
+            self.assertEqual("queued", original.status.value)
+            self.assertEqual(
+                "pending", value.repository.get_task(first["organizeTaskId"]).status.value
+            )
+            # A genuinely different file in the second binding is admitted too.
+            status, control = self.request(
+                value,
+                "/api/v1/resource-libraries/two/files/discoveries",
+                "POST",
+                {"paths": ["Two.2002.mkv"], "autoPrepare": True},
+            )
+            self.assertEqual(202, status, control)
+            # The empty-root binding exposes the *same* physical file as ``one``,
+            # so this real duplicate is still refused with the original work.
+            status, duplicated = self.request(
+                value,
+                "/api/v1/resource-libraries/whole/files/discoveries",
+                "POST",
+                {"paths": ["A/One.2001.mkv"], "autoPrepare": True},
+            )
+            self.assertEqual(409, status, duplicated)
+            self.assertEqual("source_already_organizing", duplicated["error"]["code"], duplicated)
+            self.assertEqual(first["discoveryId"], duplicated["error"]["details"]["existingWorkId"])
+            # The correction is durable: the second connection over the same
+            # database reads the same two independent owners.
+            with SQLiteTaskRepository(self.database) as reopened:
+                owner = reopened.find_owned_source_work(
+                    storage_id="source",
+                    source_path="One.2001.mkv",
+                    storage_path="B/One.2001.mkv",
+                    resource_library_id="two",
+                )
+                self.assertIsNotNone(owner)
+                self.assertEqual(second["discoveryId"], owner["discoveryId"])
+                original_owner = reopened.find_owned_source_work(
+                    storage_id="source",
+                    source_path="One.2001.mkv",
+                    storage_path="A/One.2001.mkv",
+                    resource_library_id="one",
+                )
+                self.assertIsNotNone(original_owner)
+                self.assertEqual(first["discoveryId"], original_owner["discoveryId"])
+            # Both concrete files still exist and nothing was mutated.
+            self.assertTrue(value.source.exists("A/One.2001.mkv"))
+            self.assertTrue(value.source.exists("B/One.2001.mkv"))
+            self.assertEqual([], value.source.mutations)
+            self.assertEqual([], value.target.mutations)
+
+    def test_an_entry_a_pre_change_record_extended_keeps_its_legacy_binding(self) -> None:
+        """One record can hold both identity shapes, and each is judged by its own.
+
+        A record admitted before the canonical scope existed can still be extended
+        with a still-free sibling after the amendment, so one of its entries has a
+        recorded canonical path and the other has none.  The entry without a
+        canonical path keeps the conservative legacy identity — its
+        library-relative path *inside that record's own binding* — while the
+        extended entry is decided by its recorded canonical path.
+        """
+
+        from mediaflow.domain.media_discovery import (
+            DiscoveryEntryKind,
+            DiscoveryScopeEntry,
+        )
+
+        self.media("A/One.2001.mkv")
+        self.media("A/Two.2002.mkv")
+        libraries = [
+            self.resource_library("one", storagePath="A"),
+            self.resource_library("two", storagePath="B"),
+        ]
+        with self.journey(resource_libraries=libraries) as value:
+            first = self.admit(value, ["One.2001.mkv"], library_id="one")
+            record = value.repository.get_media_discovery(first["discoveryId"])
+            # The pre-change shape: the admitted entry recorded no canonical path
+            # at all, exactly what a row written before the amendment round-trips
+            # as.
+            value.repository.update_media_discovery(
+                _replace(record, storage_scope=()), expected_version=record.version
+            )
+            legacy = value.repository.get_media_discovery(first["discoveryId"])
+            self.assertEqual((), legacy.storage_scope)
+            # A later converging request adds one still-free sibling, so this one
+            # record now carries both shapes at once.
+            extended, refused = value.repository.extend_media_discovery_scope(
+                legacy,
+                (DiscoveryScopeEntry("Two.2002.mkv", DiscoveryEntryKind.FILE),),
+                (("Two.2002.mkv", "A/Two.2002.mkv"),),
+                expected_version=legacy.version,
+            )
+            self.assertEqual((), refused)
+            self.assertEqual((("Two.2002.mkv", "A/Two.2002.mkv"),), extended.storage_scope)
+            # The entry that recorded no canonical path is still owned inside its
+            # own binding.
+            owner = value.repository.find_owned_source_work(
+                storage_id="source",
+                source_path="One.2001.mkv",
+                storage_path="A/One.2001.mkv",
+                resource_library_id="one",
+            )
+            self.assertIsNotNone(owner)
+            self.assertEqual(first["discoveryId"], owner["discoveryId"])
+            # The extended entry is decided by its own canonical path.
+            sibling = value.repository.find_owned_source_work(
+                storage_id="source",
+                source_path="Two.2002.mkv",
+                storage_path="A/Two.2002.mkv",
+                resource_library_id="one",
+            )
+            self.assertIsNotNone(sibling)
+            self.assertEqual(first["discoveryId"], sibling["discoveryId"])
+            # The legacy answer never escapes its own binding: the same relative
+            # name under another library root is a different real file.
+            self.assertIsNone(
+                value.repository.find_owned_source_work(
+                    storage_id="source",
+                    source_path="One.2001.mkv",
+                    storage_path="B/One.2001.mkv",
+                    resource_library_id="two",
+                )
+            )
 
 
 if __name__ == "__main__":
