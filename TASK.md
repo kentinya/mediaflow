@@ -279,129 +279,96 @@ Task46.2 普通文件原生回归的三项既有菜单/non-localhost失败仍保
 合同并执行文档/治理检查，没有产品测试、构建、浏览器探测或媒体操作；检查时间低于本轮50%。
 Task46.3 的完整计划/交付/复核在 Git 保留，其终结 PASS 不被本 Task 的 PLANNED 状态覆盖。
 
-## Developer Completion Report (fix round for B46.4-01–05)
+## Developer Completion Report (fix round for B46.4-03/05)
 
 ```text
 Task: 46.4 / High / T4
 Task Base: 44cba4f93b94b72d6dee52fcd1199be729ec78c4
-Fix base (B review checkpoint): cb1327a934b7edbcec5b5fb07f26fc7f1a198e74
+Fix base (B review checkpoint): e3dec038a76ec391ef302d1da4effcce1e895218
+Implementation Head: 4ea21d2bdec889818cb2255d653b8f16dd17acb4
 Status: READY FOR B REVIEW
 Slice: ACTIVE (this is not A Final Review, PASS or closure)
 Push: none performed
 ```
 
-上一轮（实现 checkpoint `9241bd5158e5e1576dc4e403520ede1fdc49e0a5`、交付报告
-`cb1327a934b7edbcec5b5fb07f26fc7f1a198e74`）的报告与 B 的复核结论保留在 Git 历史中。本轮只修
-B46.4-01–05，不新建 Task、不改 RO-5 意图/执行引擎、不改 RO-1/2/3 已验收入口，也不自行 PASS。
+本轮只修 B46.4-03/05 两个 P1，保留 Task ID/Base/Goal/Scope；不新建 Task、不改 RO-5 意图/
+执行引擎、不改 RO-1/2/3 已验收入口，也不自行 PASS。上一轮报告与 B 的复核结论保留在 Git 历史。
 
-### 按 blocker 的实际变化
+### B46.4-03 — 逐项四类责任约束中心恢复入口
 
-1. **B46.4-01 四类责任在必要人工步骤结束前保持原类型。**
-   `sqlite_runtime.py` 新增链感知谓词（`_recovery_chain_cte`、`_chain_newest_decision_kind_sql`、
-   `_chain_newest_step_settled_sql`、`_summary_step_owed_sql`、
-   `_inherited_recovery_responsibility_sql`），重写 `_saved_decision_continuation_sql` 与
-   `_problem_item_predicate`：保存决定后待分析、分析完成待生成摘要、摘要待显式确认都仍属原四类
-   类型（含此前遗漏的 `conflict_resolved` 停点），只有精确链到达**已确认**的后续或被合法忽略才
-   结束该责任；纯技术 follow-up 失败退出四类但不显示完成。`_recovery_handoff_state_sql` 统一读取
-   `manual_recovery_preparations`（prepared/confirmed）与 `manual_recovery_links`（consumed→
-   confirmed）两种真实持久形状，不用 consumed/analysis 标记猜成功。
-2. **B46.4-02 全部必要项精确成功才有整体恢复完成。**
-   `_RUN_QUERY_SELECT` 新增 `recovered_success` 表达式与 `recovered_completion` 列
-   （`OperationsRunOverview.recovered_completion`、API `recovered_completion`、
-   `web/src/entities/operations/run.ts::recoveredCompletion`）：仅当每个必要 item（排除 .srt/.nfo/
-   .jpg 等附件/扩展）都有自己的已核实 follow-up、且不存在任何待处理四类阻塞时才把派生状态投影为
-   completed，并在界面显示“已完成（恢复成功）”。原 Task/Result 行保持原样，部分恢复、忽略、
-   技术失败、未知效果、来源/pin 不匹配都不会投影为完成。
-3. **B46.4-03 技术失败只保留只读事实。**
-   `TaskItemRecoveryPanel` 增加 `recoveryKind`（`business_problem` / `recovery_lineage` /
-   `technical_history`）：只有仍欠人工动作的条目才显示决定表单、“继续此条目的安全分析”“生成计划
-   摘要并在此确认”、递归关联面板与批量失败分析；纯技术失败显示只读说明。
-   `RunDetailTabs` 按同一门控不挂载批量恢复面板，`service_api`/`task_item_recovery.py` 发布该判定，
-   不再靠前端标签。
-4. **B46.4-04 旧 V2 Tasks/Jobs 入口封闭。**
-   删除 `TaskListPage.tsx`/`TaskDetailPage.tsx`/`JobListPage.tsx`/`JobDetailPage.tsx`，新增
-   `features/operations/LegacyTaskRoutes.tsx`：列表页只给有界关闭提示与中心/文件页链接，不读混合
-   collection；detail 先 `fetchRunOverview`，整理身份跳到 `/operations?run=<anchor>`，普通身份用
-   `fetchLibraryFileOperationOrigin` 回其 kind/library 的本地页并带 `operationTaskId`，无法证明时
-   只读不可用（“没有提交任何命令，也不会猜测来源库”）；401/403 走既有 `AuthorizedReadBoundary`。
-   Dashboard/Automation 的返回链接同步改为“在任务中心查看该运行的详情”。
-5. **B46.4-05 独立分析不再计入中心总体。**
-   `operations_run.py` 新增 `ORGANIZING_TASK_SEED_TASK_FAMILIES=("organize","manual_organize")` 与
-   `ORGANIZING_RETRY_TASK_FAMILIES`，`_RUN_QUERY_SELECT` 的种子只取 `execute_authorized=1` 的这两
-   个家族，并沿 `recovery_continuations`/`scope_continuations`/`metadata_correction_continuations`
-   的 `new_task_id` 与 `retry:<id>`/`retry-failed:<id>` 命令身份递归（depth<16）。CLI 单独
-   `organize` DryRun（`execute_authorized=0`）及其分析续作因此从列表/计数/来源/游标/exact-ID 全部
-   排除，而其 Task/Result 行仍保留；已受理 Files 分析阶段与合法四类恢复分析仍纳入。
+- `task_item_recovery.py` 新增共享 `item_recovery_kind()` / `TASK_ITEM_RECOVERY_KINDS`：只有
+  当前四类问题（含 live blocker、已保存决定待续作）或已受理的四类恢复链才是
+  `business_problem` / `recovery_lineage`；其余全部是 `technical_history`。run-item 页、
+  条目证据页、batch 文档和单条目面板都读这一个后端判定。
+- `recovery_admission.py` 在 admission 时把真实四类决定身份写入既有
+  `recovery_requests.review_kind/review_id`（保存决定后的 `*_resolved`、live blocker），
+  因此管理 API 对纯技术失败发起的分析续作仍保留 `review_kind=NULL` 并保持
+  `technical_history`；既有列无 schema 变化。
+- `service_api.py` 为 run items、item evidence、saved batch child 发布同一 `recoveryKind`；
+  `RunDetailTabs` 只给 `business_problem`/`recovery_lineage` 条目显示批量选择，已保存批次
+  的技术历史 child 只显示持久行/证据和“技术历史，仅只读”，不提供摘要/确认/重试；batch
+  级 nextAction 在没有任何可操作 child 时也不渲染。
+- 技术历史仍保留真实原因/阶段/效果/结果/日志/导出：条目表的失败证据改为
+  `failure.category: failure.message`（不再拼接 `nextAction`），证据页不渲染其
+  `checkpoint.nextAction`，`TaskItemRecoveryPanel` 显示“无（技术历史，仅只读）”并省略
+  generic next action。管理 API/CLI 的单条/批次恢复能力未删除。
 
-Web 同步：`TaskItemRecoveryPanel`/`RunDetailTabs`/`TaskDetailPage` 门控、`OperationsLanding` 的
-恢复成功文案与中心内链接、`LegacyTaskRoutes` 路由、`AutomationOccurrencesPage`/`DashboardView`
-的单一精确链接；测试侧改写 `OperationsRouter.test.tsx`、`OperationsInventory.test.tsx`、
-`TaskItemRecoveryPanel.test.tsx` 及 `operations.spec.ts`、`operations-inventory.python.spec.ts`、
-`medialib-transfers.spec.ts`、`automation.spec.ts`，并把 harness
-（`scripts/operations_inventory_harness.py`）的续作旅程改为真实 definition occurrence Job +
-真实 `UnattendedExecutionGrant`/audit，scheduled tick 只派发自己的定义。架构 CURRENT 事实同步更新
-（八视图总体、四类继承、`recovered_completion`、退役 collection 的深链语义）。
+### B46.4-05 — Job 归属必须证明已受理整理来源
 
-### 受影响命令与结果（本轮实际执行）
+- `operations_run.py` 新增 `ORGANIZING_JOB_SEED_COMMAND_FAMILIES=("organize",)` 与
+  `ORGANIZING_JOB_LINEAGE_RELATIONS`（recovery/scope/metadata-correction 的持久 relation 表）。
+- `sqlite_runtime.py` 的 Job 分支不再只按命令白名单：`organize` admission（含 pre-Task
+  排队/失败）直接纳入；其余 continuation Job 必须通过自身 `job_id` 对应的持久 relation
+  指向 `organizing_tasks` 递归总体中的源 Task。纯分析 continuation 的 Job/子 Task 因此在
+  排队、claim、绑定、完成/失败和重开各阶段都留在管理历史而不进入中心。
+- `resolve_operations_run_link()` 的 Job→Task 回退也改用同一共享总体，而不是只比对命令；
+  普通/分析身份的旧深链仍得到有界 404。
+- 新增真实链路：CLI `organize` DryRun → 管理 API continue（202，Job queued）→ 中心列表/
+  统计/来源/游标/详情/导出全部为空 → 真实 Worker → 子 Task → 重开后仍为空；同一链路在
+  已受理整理 Task 上 continue 时，Job 在 claim 前后和重开后都保留在中心，并正确绑定子 Task。
+  scope/metadata-correction continuation Job 的真实 relation 正反例也覆盖。
+
+### 实际命令与结果
 
 | 命令 | 结果 |
 | --- | --- |
 | `python3 scripts/check_governance.py` | PASS（开始与交付前） |
 | `git diff --check` | clean |
-| `.venv/bin/python .git/validation-evidence/cb1327a/b-review-20261027/reproduce.py` | **exit 0**；`contractChecks` 5/5 true（识别/冲突保存仍待恢复、两条全成功恢复投影、CLI 独立分析排除） |
-| `.venv/bin/python -m unittest tests.test_operations_run_inventory tests.test_operations_task_center tests.test_operations_run_detail tests.test_operations_run_detail_log_isolation tests.test_recovery_continuation` | **182 OK** |
-| `.venv/bin/python -m unittest tests.test_task_center_recovery_lineage tests.test_recovery_batch` | **73 OK** |
-| `.venv/bin/python -m unittest tests.test_library_file_operation_history tests.test_operations_workspace tests.test_operations_run_detail_plan_evidence tests.test_v2_automation_lifecycle tests.test_v2_automation_operations tests.test_automation_workspace_read_model tests.test_automation_api tests.test_automation_admission tests.test_api_security tests.test_direct_file_operations tests.test_direct_file_transfers tests.test_media_library_transfers tests.test_media_library_direct_commands tests.test_manual_operations tests.test_manual_operations_contract` | **412 OK** |
-| `.venv/bin/ruff check mediaflow scripts tests` / `ruff format --check` | PASS / 358 files formatted |
-| `web`: `npm run test -- --run` | **87 files / 1262 tests OK** |
-| `web`: `npm run typecheck` / `npm run lint` / `prettier --check` | PASS / PASS / PASS |
-| `web`: `npm run build` | PASS |
-| `web`: `npm run test:e2e -- --config=playwright.config.ts`（Node fake 全量） | **240 passed** |
-| `web`: 构建后 `npm run test:e2e -- --config=playwright.python.config.ts tests/e2e/operations-inventory.python.spec.ts`（独立干净 harness） | **38 passed**（含新增“退役 Task 集合仍封闭、真实身份各归其位”） |
+| `.venv/bin/python .git/validation-evidence/cb1327a/b-review-20261027/reproduce.py` | **exit 0**，`contractChecks` 5/5 true |
+| `.venv/bin/python .git/validation-evidence/e3dec038/b-review-20261027/cli-continuation.py` | **exit 0**；continue 202，中心 total=0、beforeStatus=404 |
+| `.venv/bin/python -m unittest tests.test_operations_run_inventory tests.test_operations_task_center tests.test_operations_run_detail tests.test_operations_run_detail_plan_evidence tests.test_operations_run_detail_log_isolation tests.test_task_center_recovery_lineage tests.test_recovery_continuation tests.test_recovery_batch tests.test_processing_recovery_admission tests.test_library_file_operation_history tests.test_operations_workspace tests.test_v2_automation_operations tests.test_api_security tests.test_manual_ignore tests.test_manual_ignore_batch tests.test_manual_operations_contract` | **370 OK** |
+| `.venv/bin/ruff check mediaflow tests scripts` / `ruff format --check` | PASS / 358 files formatted |
+| `web`: 13 个受影响 vitest 文件（含 `RunDetailTabs`、`TaskItemRecoveryPanel`、`task-item-recovery`） | **192 tests OK** |
+| `web`: `npm run typecheck` / `npm run lint` / `npm run format:check` | PASS / PASS / PASS |
+| `web`: `npm run build` | PASS（当前生产资产） |
+| `web`: `npm run test:e2e -- --config=playwright.python.config.ts tests/e2e/operations-inventory.python.spec.ts` | **40 passed**（含 mixed 技术项不可批量选择、纯技术无 guidance、saved batch 技术 child 只读） |
 | 同上独立干净 harness：`tests/e2e/operations-task-center-visual.python.spec.ts` | **2 passed** |
 
-所有浏览器/后端探测只用 harness 临时 SQLite/媒体根与合成 Provider，不用用户媒体或私有配置。
-`medialib-transfers.spec.ts` 的暂停旅程按新合同拆成两条真实入口用例：继续在其 MediaLibrary 进度
-对话框完成并恰好提交一次；旧 `/operations/tasks/<id>` 深链只解析到
-`/medialib/files?mediaLibraryId=movies&operationTaskId=…`，其会话内 0 次混合 collection 读取、
-0 次 resume，耐久行仍为 PAUSED。Node fake 同步补齐 `file-operation` 起源读取与
-`/files/operation-origin/` 的路由隔离（此前被 FileIndex 详情匹配器吞掉），使该入口在 fake 中
-也真实可达。
+所有浏览器/后端探测只用 harness 临时 SQLite/媒体根与合成 Provider；故障注入只作用于实际
+Provider/Executor adapter。未用用户配置/数据库/媒体，未伪造成功/claim 或手改 DOM。既有
+产品测试/断言/timeout/retry/skip 未放宽。
 
-`operations-inventory.python.spec.ts` 新增一条 real-Python 用例覆盖 B46.4-04 的原始复现路径：
-用真实支持的 `POST /api/v1/resource-libraries/source/files/commands`（`create_directory`）产出真
-direct-file Task，先证明 `/api/v1/files/operation-origin/<id>` 返回 `matched=true` 的 source/
-resource 来源，再打开旧 `/ui-v2/operations/tasks/<id>` 深链，断言落到
-`/ui-v2/resourcelib/files?resourceLibraryId=source&operationTaskId=<id>`、该库页打开“所选操作”，
-且整段导航没有 `/api/v1/tasks`、`/api/v1/jobs`、`/operations/tasks|jobs` 读取，也没有
-`files/commands` 或 `/resume` 提交；随后旧 Tasks/Jobs 列表地址只显示关闭提示，未知身份保持有界
-只读。
+### 已知风险与剩余工作
 
-### 已知失败与风险
-
-- 未改变 Storage/Worker/Scheduler 执行引擎与 manifest；无 schema 变更，本轮仅新增读模型列与
-  API 字段，`reproduce.py` 已覆盖 SQLite/API 重开。
-- `recovered_completion` 是显示层投影：它不改写原 Task/Result，也不授予任何新的执行权；B 仍需按
-  T4 用真实 Worker 结果复核“部分恢复/忽略/未知效果/来源不匹配”的反例。
-- 附件/扩展（.srt/.nfo/.jpg 等）沿用既有“随主文件成功”语义，不计为独立必要项；若 B 认为某类
-  边车应独立核实，需要在合同层先明确。
-- 既有 Task46.2 三项 direct-files 菜单/非 localhost 失败仍未修、未跳过、未标绿，不在本 Task 范围。
-- fake server 新增的两个读取端点只服务浏览器 fixture，不代表生产契约新增；生产契约由 real-Python
-  spec 证明。
-- 未跑全量 Python `discover`、wheel/Docker/发布安全门禁与 B 的完整 T4 验收（按分工属 B）。
-
-### 剩余 in-Slice 工作
-
-RO-5（Automation detail/Save/Enabled/grant 移除与真实 Run once 执行意图）仍未实现；中心八视图/
-四类恢复的最终 A 关闭与文档对账同样未开始。
+- 管理 API/CLI 仍可按显式请求继续一个纯技术条目（这是保留的管理恢复能力）；中心是否展示
+  动作由服务端 `recoveryKind` 决定，网页不再提供旁门。若未来其他 Web 消费者忽略该字段，
+  仍需在消费端保持同一门控。
+- `has_persisted_recovery_lineage` 新增要求 continuation request 带四类 `review_kind`。
+  升级前已存在的 in-flight 四类 request 若 `review_kind` 为空，在其排队/运行期间会暂时按
+  technical_history 只读展示；完成后由当前四类问题判定恢复原类型与摘要入口。未回填历史行，
+  未改写任何原 Task/Result/claim。
+- 无 schema 变更、无 Worker/Scheduler/OrganizerExecutor 执行语义变更；`recoveryKind` 是只读
+  投影，不授予执行/重放权。
+- 未跑全量 Python `discover`、wheel/Docker/发布安全矩阵与 B 的完整 T4；按分工属 B。
+- RO-5 与 Slice 最终关闭/文档对账仍未开始。
 
 ### 交付身份
 
-- Fix Head: `ea4e5346f6eb8e55b79cff43df398efc377caed8`
-- Fix range: `cb1327a934b7edbcec5b5fb07f26fc7f1a198e74..ea4e5346f6eb8e55b79cff43df398efc377caed8`
-  （30 个既有文件改动 + 新增 `web/src/features/operations/LegacyTaskRoutes.tsx`，外加
-  `docs/architecture.md` 与本 `TASK.md`）。
-- Working tree 无 tracked dirty；既有 untracked 日志/参考图/OS 文件保持未暂存。
+- Implementation Head: `4ea21d2bdec889818cb2255d653b8f16dd17acb4`
+- Fix range: `e3dec038a76ec391ef302d1da4effcce1e895218..4ea21d2bdec889818cb2255d653b8f16dd17acb4`
+  （17 个文件：后端查询/恢复判定、Web entities/中心 UI、affected tests 与 architecture CURRENT）。
+- 本报告在独立 docs checkpoint 提交；Working tree 无 tracked dirty，既有 untracked 日志/
+  参考图/OS 文件保持未暂存。
 
 ## B Review Result
 
