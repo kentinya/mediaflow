@@ -373,103 +373,112 @@ Provider/Executor adapter。未用用户配置/数据库/媒体，未伪造成�
 ## B Review Result
 
 ```text
-Reviewed: 44cba4f93b94b72d6dee52fcd1199be729ec78c4..e3dec038a76ec391ef302d1da4effcce1e895218
-Implementation candidate: ea4e5346f6eb8e55b79cff43df398efc377caed8
-Decision: FIX REQUIRED — 2026-10-27 / B re-review
-Acceptance runs: original reproduction, focused lineage and native browser checks; see below
-Task blockers: B46.4-03 and B46.4-05 remain P1
+Reviewed: 44cba4f93b94b72d6dee52fcd1199be729ec78c4..d63dd7105177f492c287c99412b90e22f19380cf
+Implementation candidate: 4ea21d2bdec889818cb2255d653b8f16dd17acb4
+Decision: FIX REQUIRED — 2026-10-28 / B re-review
+Acceptance runs: original reproduction, mixed-result counterexample, focused lineage and native checks
+Task blocker: B46.4-02 (P1) — ignore plus actual recovery success is falsely projected as all-success
 Slice Required Outcomes / Surfaces all satisfied: NO
 Next: SAME TASK FIX LOOP — preserve Task ID/Base/Goal/Scope
 ```
 
-上次完整判定在 `542be061599c115657c7d5527523bf01b2a5ab11:TASK.md` 保留。本轮审查
-整个 Task Base..候选及修复 diff，不以 Developer 的 PASS 标签代替 B 验收。
+此前完整判定在 `542be061:TASK.md`、`a456b9d0:TASK.md` 保留。本轮核对整个 Task Base..Head
+manifest、当前生产调用链及新增18文件修复，不把 Developer 结果转写为 B 验收。
 
-### Verified fixes and remaining corrections
+### Verified fixes
 
-- **B46.4-01/02 的原始复现通过。** Recognition 保存/分析/待确认、Conflict Save 仍保留四类
-  责任；两条单项真实确认、Worker 整理成功、SQLite/API 重开后的恢复完成显示通过；旧 Results
-  保留。原复现5项 `contractChecks` 全 true；这不代替全部混合结果/反例及最终 T4。
-- **B46.4-04 原生修复验证通过。** 用真实 direct-file create_directory 产出 Task，旧深链回
-  resource/source 文件页的所选操作；旧 Tasks/Jobs 集合关闭、未知身份有界只读、导航零命令/
-  零混合 collection 读取。B 独立执行现有 real-Python 用例通过；权限等其余 T4 仍待完整验收。
+- **B46.4-01 原始恢复停点通过。** 保存决定、完成分析、等待摘要确认仍保留原四类责任；
+  原复现的 Recognition/Conflict 单项真实成功、重开及旧 Results 保留也通过。
+- **B46.4-03 本轮实际验证通过。** real-Python 的 technical-only 无 generic guidance/继续，
+  mixed Task 的技术/unknown/success 项不可批量选择，重开 saved mixed batch 的技术 child
+  只读；三条现有原生用例均通过。未删除管理单项/批次 API 能力。
+- **B46.4-04 原生入口验证通过。** 真实 direct-file Task 的旧深链返回正确原库与所选操作，
+  旧集合关闭、未知身份有界只读、无混合读取/命令；本轮再次执行现有用例通过。
+- **B46.4-05 本轮实际验证通过。** 原 CLI/API continuation 复现中，continue仍202、中心
+  total=0；新增真实 CLI → 管理 continue → queued Job → Worker/子 Task → reopen 的现有
+  regression 通过，合法整理来源的续作正例仍可见。未把纯分析记录删除。
 
-1. **B46.4-03（P1）— 混合任务仍可批量恢复技术失败，且仍有通用修复指导。**
-   在现有 `seed-task-center-problems` 原生旅程进入 `TaskCenter/Mixed` → 详情，选择真实
-   `Broken.mkv`（Storage permission 技术失败，无四类 blocker）→ 点击“继续所选分析(1)”，
-   后端实际返回202、accepted=1、queued=1，创建其分析续作。它因同任务还有 Recognition/
-   Conflict 问题而获得整个 run 的 `owesRecoveryAction=true`；条目勾选只检查 failed/safe/
-   retry，没有按该条目自己的四类责任限制，因此 run 级门控没有封住旁门。
-   纯 technical 详情虽然删掉单项继续按钮，仍显示 `retry（技术历史，仅只读）` 和
-   `repair the dependency, then continue this item through a fresh pinned DryRun`；
-   `TaskItemRecoveryPanel` 只是把“下一步”改叫“当前事实与建议”，仍渲染同一指导；
-   `RunDetailTabs` 的失败证据也仍直接拼接 `failure.nextAction`。
+### B46.4-02 — Remaining P1 and required correction
 
-   **修复步骤：**用同一个后端当前四类/必要人工续作判定限定每个条目的选择、批量入口及
-   已保存批次的可操作范围；同任务其他业务问题不能赋予技术失败项恢复入口。中心保留真实
-   原因/阶段/效果/结果/日志/导出，但不渲染这些项的 generic retry/repair/investigation 指导。
-   不删除历史证据或管理 API/CLI 的恢复能力，不破坏合法四类决定/分析/摘要确认和未知请求
-   的只读核对。扩展当前 mixed-history 和原生浏览器测试：technical-only、四类+safe technical、
-   四类+unknown/success、已有批次重开，分别断言无技术恢复选择/提交/指导，四类仍可完成。
+**实际场景与事实：**复用现有 native `seed_batch_summary_recovery` 的两主文件 Manual
+admission及真实 pre-mutation 失败fixture；用现有 MetadataReviewService（与 native Metadata
+fixture相同）建立合法候选决定。通过已有恢复 API 明确忽略 B，对 A 保存候选 → continue →
+真实 Worker分析 → 精确摘要 → 仅确认 A → 真实 Worker整理。没有手填任何成功状态/Result。
 
-2. **B46.4-05（P1）— 独立分析的 Job 续作仍绕过整理总体。**
-   用已有 CLI `organize <临时库/电影/Two.2002.mkv>` 不带 `--execute`，仅把实际 Provider
-   adapter 注入连接失败：得到 DRY_RUN/failed、Moved=0、Task execute_authorized=false，
-   其中心 exact-ID 正确为404。随后通过已有管理
-   `POST /api/v1/tasks/{task}/items/{item}/recovery/continue` 明确申请纯分析续作，合法202；
-   尚未运行 Worker，中心已出现一条 `recovery-continuation` Job，总数变为1。
-   Task 分支递归校验父工作，Job 分支仍只用
-   `WHERE jobs.command IN ({organizing_job_commands})`，没有核对其真实来源，因而声明的
-   “独立分析及其分析续作全部排除”尚未实现。
+最终 A 已真正整理，B 的 TaskItem 为 `ignored`、文件仍在 source；原 Results 未改。
+但中心在 SQLite/API 重开前后都发布：
 
-   **修复步骤：**按当前实际 Job producers 的持久 admission/continuation 关系验证中心归属，
-   将 parent 是否已受理整理的判定贯穿 Job 排队、绑定 Task、完成/失败和 exact-ID 各读取，
-   不只修改 standalone Task 分支。纯分析 Job/Task/Result 仍在合法管理历史，不能删除；
-   pre-Task 真整理排队/失败及整理来源的四类分析续作仍保留。把现有仅插入 Task/continuation
-   的正反测试补成真实 CLI → API continue → Job → Worker → Task 链，覆盖 claim 前后、刷新/
-   重开、列表/统计/来源/游标/详情/导出，不能靠缺少 Job 的 fixture 得出已封闭结论。
+```text
+status=completed
+recovered_completion=true
+attention=false
+problem_types=[]
+```
 
-以上仍是原 Task 两项未完成结果，不新开 Task、不改合同、不扩展 RO-5。Developer 修复后跑
-新增失败用例与直接受影响测试并提交新 checkpoint；B 再对修正候选完成原定 T4。01/02/04 的
-已验证事实保留，最终仍需与这两项修复一起回归，不能将本次局部通过写成 Task PASS。
+界面据此显示“已完成（恢复成功）”，并声明“每个必要条目都有精确关联的真实成功证据”。
+这没有满足 RO-4 / AC-15、Task Implementation Scope §4 / Acceptance 中“忽略不等于整理成功、
+真实全成功才投影恢复完成”的既定结果。B46.4-02 的原始单项正例虽通过，混合结果仍未交付。
 
-### B evidence and test boundary
+**根因：**`sqlite_runtime.py::_run_query_document()` 的 `recovered_success` 只检查
+`failed/partial/pending/processing/paused` 的未成功项；`ignored` 项直接被排除，随后只要
+有 confirmed preparation，就可由其他项成功把整个 run 判成恢复全成功。原 Task/Result
+未改并不能纠正这一错误的列表/统计/详情投影。
 
-本轮 `main` / `e3dec038`，无 tracked dirty。既有 untracked 日志/参考图/OS/private 文件
-保留且未暂存；仅维护本 `TASK.md`，不改产品/既有测试/A-owned 文件，不 push。
-本地原始证据在 `.git/validation-evidence/e3dec038/b-review-20261027/`；未提交、非远程可达。
+**修复步骤：**
 
-| B 实际命令 / cwd | 结果及证据 |
+1. 对原整理范围的必要主项统一计算实际处置与证据。只有每个必要项的本次真实成功，或其
+   exact source/pin/合法 lineage 的已核实成功 follow-up，才能形成全成功恢复完成投影。
+   忽略/跳过/取消/无成功证据不能通过从检查集合排除而算成成功；未知/部分效果仍保持真实。
+   保留既有主文件成功/附件告警语义，不扩大执行范围或引入附件自动重放。
+2. 同一结果用于列表、状态筛选、统计、详情和 recovered_completion 文案。已结束、已处理
+   问题与整理全成功保持区别；两项中一项忽略、一项成功的实际处置可完整查看，不能宣称
+   “每个必要条目成功”。原失败尝试、忽略决定、Results/audit保持原样，成功或未知项不重跑。
+3. 在当前 lineage/Task Center tests 增加上述真实双项 API/Worker 负例，并覆盖单项/多项全
+   成功正例、只恢复部分、ignored/skip、技术/未知效果、source/pin不匹配。断言最终 API 的
+   status/recovered_completion、列表/统计和页面文案，及忽略文件仍在源处、成功兄弟不重放。
+   初始 review fixture 应与配置实际识别结果匹配，不用“已自动识别却再强行创建识别选择”
+   的不合法 fixture 冒充产品失败。可复用本轮已完成 Metadata 负例；无需新增过程框架。
+
+这仍是原 B46.4-02 和原 Task 的修复，不新建 Task、不扩展合同或 RO-5。Developer跑新增失败
+用例与直接受影响测试后交新 checkpoint；B 在修正候选上完成原定 T4，包含已验证01/03/04/05
+的回归。不能把本轮四个修复点通过写成整个 Task PASS。
+
+### B evidence and testing boundary
+
+启动为 `main` / `d63dd710`，无 tracked dirty；既有 untracked日志、参考图、OS/private文件
+保留且未暂存。证据在 `.git/validation-evidence/d63dd710/b-review-20261028/`，未提交、非远程
+可达；JSON保存实际 API/Worker/逐项源存在性/重开和旧Results事实，脚本副本及资产SHA256保留。
+
+| B 本轮实际命令 / cwd | 结果 / 证据 |
 | --- | --- |
-| `python3 scripts/check_governance.py` | 开始和文档完成后 PASS |
-| `.venv/bin/python .git/validation-evidence/cb1327a/b-review-20261027/reproduce.py` | exit0，原5项断言全true；`original-reproduction.json`及脚本副本，约0.8秒 |
-| `.venv/bin/python .git/validation-evidence/e3dec038/b-review-20261027/cli-continuation.py` | 正常结束；真实 DRY_RUN/失败 → 管理分析续作202 → 中心错误纳入1条 Job；`cli-continuation.json`，约0.3秒 |
-| `.venv/bin/python -m unittest tests.test_task_center_recovery_lineage` | **5 tests OK / 2.137s**，SQLite ResourceWarning 保留在 `lineage-tests.log` |
-| `web/`: `npm run build` | PASS，约1.2秒；`build.log`及`production-assets.json` SHA256 |
-| `web/`: `npm run test:e2e -- --config=playwright.python.config.ts tests/e2e/b46-4-rereview.tmp.spec.ts` | **2 failed**，混合 technical 真正提交202、纯 technical 仍有修复指导；`browser.log`/截图及`browser.spec.ts`副本 |
-| `web/`: `npm run test:e2e -- --config=playwright.python.config.ts tests/e2e/operations-inventory.python.spec.ts --grep 'retired Task collections stay closed'` | **1 passed / 2.0s**，`legacy-native.log` |
+| `python3 scripts/check_governance.py` | 开始与文档完成后 PASS |
+| `.venv/bin/python .git/validation-evidence/cb1327a/b-review-20261027/reproduce.py` | exit0，原5项contractChecks true；`original-reproduction.json`，约0.65秒 |
+| `.venv/bin/python .git/validation-evidence/e3dec038/b-review-20261027/cli-continuation.py` | exit0，纯分析续作202但中心total=0；`cli-continuation.json`，约0.17秒 |
+| `.venv/bin/python .git/validation-evidence/d63dd710/b-review-20261028/mixed-reproduction.py` | **exit1**，A真实成功、B ignored且仍在源处；`mixedIgnoreIsNotAllSuccess=false`；`mixed-reproduction.json`，约0.24秒，旧Results unchanged |
+| `.venv/bin/python -m unittest tests.test_task_center_recovery_lineage` | **8 OK / 2.323s**；SQLite ResourceWarning原样保留在`lineage-tests.log` |
+| `web/`: `npm run build` | PASS，约1.1秒；`build.log` / `production-assets.json` |
+| `web/`: `npm run test:e2e -- --config=playwright.python.config.ts tests/e2e/operations-inventory.python.spec.ts --grep 'a technical failure keeps its exact read-only|a mixed run never offers|a reopened mixed saved batch|retired Task collections stay closed'` | **4 passed / 3.7s**；`native-critical.log`，各原生入口独立验证 |
 | `git diff --check` | clean |
 
-所有 API/CLI/浏览器使用现有支持入口、临时 SQLite/媒体根和 synthetic Provider；故障注入只
-作用实际 Provider adapter。未用用户配置/数据库/媒体，未伪造成功/claim或手改DOM。
-临时 browser spec 已移入证据目录并从工作树移除；既有产品测试/断言/timeout/retry/skip未改。
-首个浏览器取证在成功受理后尝试滚动已移除按钮而超时，原日志`browser-initial.log`保留；
-修正取证顺序后，两项均在合同断言失败，未放宽超时。另一个双项 fixture 探索未到达有效计划，
-保留`mixed-debug.log`且不作为任何缺陷依据，不从中宣称混合成功/忽略用例已通过或失败。
+仅使用既有产品 API/CLI、production review producer、现有临时库/native fixture及真实 Worker；
+无用户配置/数据库/媒体、无伪造成功/claim或DOM修改。诊断中一版 review fixture与实际C目录
+自动识别不匹配，未作为缺陷；最终负例用合法Metadata选择，成功均由Worker实际执行。
+诊断/最终原始证据保留；未修改产品/既有测试、断言、timeout/retry/skip。
 
-按 workflow §6，已有真实 P1 即在昂贵门禁前 FIX REQUIRED；本轮未启动全量 Python/Web/
-默认E2E、wheel、Docker/发布安全矩阵，Developer的全量报告未转换为B验收。
-测试/构建/探测含初次30秒取证超时的累计保守上界小于90秒；已记录13:55:06–14:04:03 UTC
-工作时段下界537秒，占比小于17%，满足本轮严格小于50%，未靠等待制造分母。
+已证明原 Task P1，按workflow §6在昂贵门禁前 FIX REQUIRED。本轮未启动全量 Python/Web/
+默认E2E、wheel/Docker/发布安全矩阵；Developer的结果未冒充B验收，必要T4在修正候选上执行。
+所有测试/构建/探测含诊断尝试累计保守上界小于60秒；已记录23:05:01–23:09:48 UTC工作区间
+下界287秒，占比小于21%，满足本轮严格小于50%，未故意等待扩大分母。
 
 ### All Slice outcomes reevaluated
 
 | Outcome | 当前结论 |
 | --- | --- |
-| RO-1 | Task46.1既有验收保留；本候选未改样式，不宣称重跑完整视觉门禁 |
-| RO-2 | Task46.3早期受理/来源占用/初次确认基础保留；本轮原始四类恢复停点通过，整体仍待修正后的T4 |
-| RO-3 | 原库本地持久查看基础保留；原生旧入口返回正确库通过，既有普通菜单问题不重开 |
-| RO-4 | **未完成**：B46.4-03/05，保留01/02/04已验证修复，不冒充全结果完成 |
+| RO-1 | Task46.1已验收基础保留；本候选未改动作样式，不宣称完整视觉重验 |
+| RO-2 | Task46.3先受理/占用/初次确认基础保留；四类原始恢复停点通过，整体仍待修正后T4 |
+| RO-3 | 原库持久查看基础保留；普通工作旧入口回库原生验证通过，既有菜单限制不重开 |
+| RO-4 | **未完成**：原 B46.4-02 的 mixed ignored/all-success 投影仍为P1；01/03/04/05局部验证通过 |
 | RO-5 | **未完成**：Automation detail/Save/Enabled/Run once/稳定性改造仍属后续，当前Task不提前实现 |
 
-继续同一 Task 修复；不规划下一 Task，不交 Closure Packet，不关闭 Slice，不改 Roadmap/Progress。
+继续同一Task修复；不规划下一Task，不交Closure Packet、不关闭Slice，不改Roadmap/Progress。
+仅checkpoint本TASK复核；不改产品或A-owned文档，不push。
