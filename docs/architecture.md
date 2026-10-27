@@ -729,6 +729,18 @@ eligible siblings remain independently admissible. A legal continuation excludes
 of conflicting with itself, and a manual execution of a linked intent takes ownership over through its
 own TaskItems.
 
+The ownership read itself is **source-scoped before it is bounded**. Asking "does any unfinished work
+own this concrete source?" is decided inside the durable predicate over the rows' own recorded identity
+evidence — each admission's exact Storage-relative scope, each recorded walk source, and, for a
+pre-change row that recorded no canonical identity, its durable progress document — and only the answer
+is truncated. Taking the N most recent admissions and then asking the question per row would let
+unrelated newer admissions push a live owner out of the window, so "not found in the window" would be
+read as "free" and a scheduled, Run-once or continuation entrance could consume a source a queued or
+paused Files admission still owns. The bounded `LIMIT` therefore bounds the returned owners, never the
+population that is allowed to contain them; no global source catalog, no unbounded history load and no
+browser-side merge is involved, and the same correction applies to the atomic per-source admission
+boundary because both ask exactly this one question.
+
 A refused source has **two different recorded strings**, and pruning must respect both. The manifest is
 keyed by the exact Storage-relative path the walk recorded, while findings and the operator-facing
 refusal use the ResourceLibrary-relative path; a non-empty library root (root `Movies`, source

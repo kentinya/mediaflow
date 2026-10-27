@@ -1873,6 +1873,88 @@ class SourceOwnershipEvidenceTests(unittest.TestCase):
                 )
                 self.assertEqual(continuation.task_id, repository.get_item("lineage-item").task_id)
 
+    def test_a_pre_change_admission_row_is_still_read_as_an_owner(self) -> None:
+        """B46.3-05: narrowing the read must never skip a legacy identity.
+
+        A durable Files admission written before the canonical Storage-relative
+        scope existed records its identity only in its progress document.  The
+        corrected ownership read decides the source *inside* the SQL predicate, so
+        that legacy shape is the one place where a too-narrow predicate would
+        silently answer "free".  The row here is a real admitted discovery written
+        through the production repository with an empty recorded scope, exactly
+        what a pre-change row round-trips as, and it must still be found — both as
+        the source owner and through the atomic per-source admission boundary.
+        """
+
+        from mediaflow.domain.media_discovery import (
+            DiscoveryBudgets,
+            DiscoveryCounters,
+            DiscoveryEntryKind,
+            DiscoveryIncompleteReason,
+            DiscoveryProgress,
+            DiscoveryScopeEntry,
+            DiscoveryStatus,
+            MediaDiscovery,
+        )
+
+        now = datetime(2026, 10, 20, 12, 0, tzinfo=UTC)
+        with tempfile.TemporaryDirectory() as directory:
+            database = Path(directory, "legacy-owner.sqlite3")
+            with SQLiteTaskRepository(database) as repository:
+                legacy = MediaDiscovery(
+                    "legacy-admission",
+                    "operator",
+                    "library",
+                    "source",
+                    "snap",
+                    "d" * 64,
+                    DiscoveryStatus.QUEUED,
+                    1,
+                    DiscoveryBudgets(),
+                    DiscoveryProgress(
+                        "queued",
+                        (DiscoveryScopeEntry("Movies/One.2001.mkv", DiscoveryEntryKind.FILE),),
+                        DiscoveryCounters(),
+                        DiscoveryIncompleteReason.NONE,
+                        message="queued",
+                        manual_selection=True,
+                    ),
+                    now,
+                    now,
+                    # Deliberately the pre-change evidence shape: no recorded
+                    # canonical scope at all.
+                    storage_scope=(),
+                )
+                repository.create_media_discovery(legacy)
+                owner = repository.find_owned_source_work(
+                    storage_id="source",
+                    source_path="Movies/One.2001.mkv",
+                    storage_path="Movies/One.2001.mkv",
+                    resource_library_id="library",
+                )
+                self.assertIsNotNone(owner, "the legacy admission lost its source")
+                self.assertEqual("legacy-admission", owner["discoveryId"])
+                self.assertEqual("discovery", owner["kind"])
+                # A genuinely different source is still free.
+                self.assertIsNone(
+                    repository.find_owned_source_work(
+                        storage_id="source",
+                        source_path="Movies/Two.2002.mkv",
+                        storage_path="Movies/Two.2002.mkv",
+                        resource_library_id="library",
+                    )
+                )
+                # Its own re-read never refuses itself.
+                self.assertIsNone(
+                    repository.find_owned_source_work(
+                        storage_id="source",
+                        source_path="Movies/One.2001.mkv",
+                        storage_path="Movies/One.2001.mkv",
+                        resource_library_id="library",
+                        exclude_discovery_id="legacy-admission",
+                    )
+                )
+
     def test_a_legacy_task_item_without_evidence_keeps_its_claim(self) -> None:
         """A pre-change row proves no version, so it never reads as replaced."""
 

@@ -1809,6 +1809,198 @@ class AdmittedSourceOwnershipTests(_PreparationFixture):
             self.assertEqual([], value.source.mutations)
             self.assertEqual([], value.target.mutations)
 
+    def _backlog(self, value, count: int) -> None:
+        """Admit ``count`` further real Files requests through the supported API.
+
+        Each request is an ordinary single-file Files selection of a real file, so
+        every row is a genuine durable admission (its own Task and its own
+        ``queued`` discovery) and never an invented database row.  The controlled
+        clock advances one second per request so the persisted ``created_at`` order
+        is the natural submission order without waiting.
+        """
+
+        for index in range(count):
+            path = f"Other/Queued.{index}.mkv"
+            self.media(path)
+            self.clock_value = self.clock_value + timedelta(seconds=1)
+            self.admit(value, [path])
+
+    def _queued_discovery_count(self, value) -> int:
+        return len(
+            [
+                item
+                for item in value.repository.list_media_discoveries(limit=500)
+                if item.status.value == "queued"
+            ]
+        )
+
+    def test_an_older_admitted_owner_survives_a_queued_backlog(self) -> None:
+        """B46.3-05: a recent-N window must never answer "this source is free".
+
+        B's proven order, unchanged: the Files source is admitted and the
+        repository already reads it as the owner; then the same existing Files API
+        admits 50 further real files in the same Storage/ResourceLibrary, all of
+        them outside the scheduled definition's ``Movies`` scope.  That leaves 51
+        queued admissions and 52 discovery records in total, so the original owner
+        is no longer inside the 50 most recent discovery rows.  The same lookup must
+        still return that very owner, and the scheduled occurrence must therefore
+        refuse the source with zero effects instead of consuming it.
+        """
+
+        self.media("Movies/One.2001.mkv", size=64)
+        with self.journey() as value:
+            worker = self._automatic_long_runs(value)
+            manual = self.admit(value, ["Movies/One.2001.mkv"])
+            before = value.repository.find_owned_source_work(
+                storage_id="source",
+                source_path="Movies/One.2001.mkv",
+                storage_path="Movies/One.2001.mkv",
+                resource_library_id="library",
+            )
+            self.assertIsNotNone(before)
+            self.assertEqual(manual["discoveryId"], before["discoveryId"])
+            self._backlog(value, 50)
+            self.assertEqual(51, self._queued_discovery_count(value))
+            self.assertGreater(len(value.repository.list_media_discoveries(limit=500)), 50)
+            self.assertEqual(
+                "queued",
+                value.repository.get_media_discovery(manual["discoveryId"]).status.value,
+            )
+            # The older owner is still found, and it is the *same* work — not a
+            # newer lookalike and not "free".
+            after = value.repository.find_owned_source_work(
+                storage_id="source",
+                source_path="Movies/One.2001.mkv",
+                storage_path="Movies/One.2001.mkv",
+                resource_library_id="library",
+            )
+            self.assertIsNotNone(after, "the pre-existing owner was pushed out of the read")
+            self.assertEqual(manual["discoveryId"], after["discoveryId"])
+            self.assertEqual("discovery", after["kind"])
+
+            result = worker.run_next()
+            self.assertIsNotNone(result)
+            self.assertEqual("completed", result.status.value, result.error)
+            items = value.repository.list_items(result.task_id)
+            self.assertEqual(["Movies/One.2001.mkv"], [item.source_path for item in items])
+            self.assertEqual("failed", items[0].status.value)
+            self.assertEqual(
+                "source_already_organizing",
+                decode_failure_explanation(items[0].error).category,
+            )
+            # Nothing was taken from the operator: original Task, admitted scope and
+            # source are intact and no media effect happened at all.
+            self.assertEqual(
+                "pending", value.repository.get_task(manual["organizeTaskId"]).status.value
+            )
+            self.assertEqual(
+                ("Movies/One.2001.mkv",),
+                tuple(
+                    storage_path
+                    for _, storage_path in value.repository.get_media_discovery(
+                        manual["discoveryId"]
+                    ).storage_scope
+                ),
+            )
+            self.assertTrue(value.source.exists("Movies/One.2001.mkv"))
+            self.assertEqual([], value.source.mutations)
+            self.assertEqual([], value.target.mutations)
+
+    def test_a_queued_backlog_keeps_the_owner_and_a_free_sibling_organizes(self) -> None:
+        """The backlog correction never blocks the sibling the same run must finish.
+
+        Same 51-queued order as above, but the scheduled scope also contains a
+        genuinely free file.  The owned source keeps its owner and stays untouched
+        while the free sibling really completes, so the correction stays a truthful
+        per-item decision instead of a whole-batch refusal.
+        """
+
+        self.media("Movies/One.2001.mkv", size=64)
+        self.media("Movies/Two.2002.mkv", size=64)
+        with self.journey() as value:
+            worker = self._automatic_long_runs(value)
+            manual = self.admit(value, ["Movies/One.2001.mkv"])
+            self._backlog(value, 50)
+            self.assertEqual(51, self._queued_discovery_count(value))
+            self.assertIsNotNone(
+                value.repository.find_owned_source_work(
+                    storage_id="source",
+                    source_path="Movies/One.2001.mkv",
+                    storage_path="Movies/One.2001.mkv",
+                    resource_library_id="library",
+                )
+            )
+            result = worker.run_next()
+            self.assertIsNotNone(result)
+            self.assertEqual("completed", result.status.value, result.error)
+            items = {item.source_path: item for item in value.repository.list_items(result.task_id)}
+            self.assertEqual("failed", items["Movies/One.2001.mkv"].status.value)
+            self.assertEqual("success", items["Movies/Two.2002.mkv"].status.value)
+            self.assertEqual(
+                "pending", value.repository.get_task(manual["organizeTaskId"]).status.value
+            )
+            self.assertTrue(value.source.exists("Movies/One.2001.mkv"))
+            self.assertFalse(value.source.exists("Movies/Two.2002.mkv"))
+            self.assertEqual(
+                [("delete", "Movies/Two.2002.mkv")],
+                [(operation, path) for operation, path in value.source.mutations],
+            )
+
+    def test_the_backlog_owner_is_read_back_after_a_sqlite_reopen(self) -> None:
+        """The correction is durable, not an in-memory or read-only pre-check.
+
+        The ownership answer is re-read from a *separate* real SQLite connection
+        over the same temporary database after the backlog, and that second
+        connection is the one whose atomic admission boundary refuses a competing
+        Task for the same source.  A process-local cache or a pre-flight check
+        could not pass this.
+        """
+
+        self.media("Movies/One.2001.mkv", size=64)
+        with self.journey() as value:
+            worker = self._automatic_long_runs(value)
+            manual = self.admit(value, ["Movies/One.2001.mkv"])
+            self._backlog(value, 50)
+            with SQLiteTaskRepository(self.database) as second_repository:
+                owner = second_repository.find_owned_source_work(
+                    storage_id="source",
+                    source_path="Movies/One.2001.mkv",
+                    storage_path="Movies/One.2001.mkv",
+                    resource_library_id="library",
+                )
+                self.assertIsNotNone(owner, "the reopened connection lost the older owner")
+                self.assertEqual(manual["discoveryId"], owner["discoveryId"])
+                self.assertEqual("queued", owner["status"])
+                competitor = PersistentTaskCoordinator(second_repository, second_repository).create(
+                    "organize", execute_authorized=True
+                )
+                refused = second_repository.claim_task_item_with_ownership(
+                    PersistentTaskItem(
+                        "backlog-probe-item",
+                        competitor.task_id,
+                        "source",
+                        "library",
+                        "Movies/One.2001.mkv",
+                        "Movies/One.2001.mkv",
+                        TaskItemStatus.PROCESSING,
+                        "pipeline",
+                        1,
+                        datetime(2026, 10, 16, 12, 0, tzinfo=UTC),
+                        datetime(2026, 10, 16, 12, 0, tzinfo=UTC),
+                        source_storage_path="Movies/One.2001.mkv",
+                    )
+                )
+                self.assertIsNotNone(refused, "the second connection admitted the owned source")
+                self.assertEqual(manual["discoveryId"], refused["discoveryId"])
+                self.assertIsNone(second_repository.get_item("backlog-probe-item"))
+            result = worker.run_next()
+            self.assertIsNotNone(result)
+            items = value.repository.list_items(result.task_id)
+            self.assertEqual("failed", items[0].status.value)
+            self.assertTrue(value.source.exists("Movies/One.2001.mkv"))
+            self.assertEqual([], value.source.mutations)
+            self.assertEqual([], value.target.mutations)
+
     def test_a_free_sibling_still_organizes_and_the_owner_survives(self) -> None:
         """One owned source never blocks an independent sibling of the same run.
 

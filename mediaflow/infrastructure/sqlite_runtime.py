@@ -13459,6 +13459,53 @@ class SQLiteTaskRepository:
         if exclude_discovery_id is not None:
             clauses.append("d.discovery_id<>?")
             parameters.append(exclude_discovery_id)
+        # A confirmed execution of this work owns the source through its own
+        # TaskItems, not through the admission any more.  This is decided as part of
+        # the durable predicate rather than per fetched row: B46.3-05 requires the
+        # *concrete source* question to be settled before any candidate truncation, so
+        # a row that can never be an owner must not consume one of the bounded pages
+        # the real owner needs in order to be found at all.
+        clauses.append(
+            "(d.intent_id IS NULL OR NOT EXISTS ("
+            "SELECT 1 FROM manual_executions execution WHERE execution.intent_id=d.intent_id))"
+        )
+        # B46.3-05: the previous read took the 50 most recent discoveries and only
+        # afterwards asked whether any of them held this exact source.  An owner that
+        # older unrelated admissions had pushed out of that window then answered
+        # "free", and a scheduled/Run-once entrance consumed a source a Files
+        # admission still owned.  The concrete source is therefore matched *before*
+        # any window applies: only rows this predicate proves relevant to the
+        # requested source (or that carry no recorded identity at all) reach the
+        # bounded read below, so ``LIMIT`` bounds the answer instead of the population
+        # that contains it.  Nothing here replaces the bounded read with an unbounded
+        # history load and no global source catalog is introduced: the predicate is
+        # evaluated by SQLite against the same durable discovery rows and their
+        # already-recorded identity evidence.
+        wanted = storage_path if storage_path is not None else source_path
+        clauses.append(
+            "("
+            # The exact confined Storage-relative path of every admitted scope entry
+            # is the identity two valid bindings of one Storage agree on.
+            "EXISTS (SELECT 1 FROM json_each("
+            "CASE WHEN json_valid(d.storage_scope_json) THEN d.storage_scope_json END"
+            ") pair WHERE json_extract(pair.value, '$[1]')=?)"
+            # The exact sources a completed walk already recorded carry that same
+            # canonical Storage path.
+            " OR EXISTS (SELECT 1 FROM json_each("
+            "CASE WHEN json_valid(d.sources_json) THEN d.sources_json END"
+            ") entry WHERE json_extract(entry.value, '$.path')=?)"
+            # A record whose only recorded identity is its durable progress document
+            # (a pre-change row, or a caller that could not supply a canonical
+            # Storage path) keeps that conservative legacy identity.  It is read,
+            # never silently skipped, so the correction cannot release a live claim
+            # merely because its evidence is the older form.
+            " OR EXISTS (SELECT 1 FROM json_each(CASE WHEN json_valid(d.progress_json) "
+            "THEN json_extract(d.progress_json, '$.scopeEntries') END) scope "
+            "WHERE json_extract(scope.value, '$.kind')='file' "
+            "AND json_extract(scope.value, '$.path')=?)"
+            ")"
+        )
+        parameters.extend((wanted, wanted, source_path))
         rows = self._connection.execute(
             "SELECT d.discovery_id, d.actor, d.status, d.resource_library_id, "
             "d.progress_json, d.sources_json, d.intent_id, d.storage_scope_json "
@@ -13467,18 +13514,7 @@ class SQLiteTaskRepository:
             "ORDER BY d.created_at DESC, d.discovery_id DESC LIMIT 50",
             parameters,
         ).fetchall()
-        wanted = storage_path if storage_path is not None else source_path
         for row in rows:
-            intent_id = row["intent_id"]
-            if isinstance(intent_id, str) and intent_id:
-                # A confirmed execution of this work owns the source through its
-                # own TaskItems, not through the admission any more.
-                executed = self._connection.execute(
-                    "SELECT 1 FROM manual_executions WHERE intent_id=? LIMIT 1",
-                    (intent_id,),
-                ).fetchone()
-                if executed is not None:
-                    continue
             try:
                 progress = DiscoveryProgress.from_document(json.loads(row["progress_json"]))
             except Exception:
