@@ -406,99 +406,103 @@ RO-5（Automation detail/Save/Enabled/grant 移除与真实 Run once 执行意�
 ## B Review Result
 
 ```text
-Reviewed: 44cba4f93b94b72d6dee52fcd1199be729ec78c4..cb1327a934b7edbcec5b5fb07f26fc7f1a198e74
-Implementation candidate: 9241bd5158e5e1576dc4e403520ede1fdc49e0a5
-Decision: FIX REQUIRED — 2026-10-27 / B
-Acceptance runs: critical API/SQLite/Worker/CLI and real-Python browser reproduction; see below
-Task blockers: B46.4-01–05 (P1, required RO-4 outcomes)
+Reviewed: 44cba4f93b94b72d6dee52fcd1199be729ec78c4..e3dec038a76ec391ef302d1da4effcce1e895218
+Implementation candidate: ea4e5346f6eb8e55b79cff43df398efc377caed8
+Decision: FIX REQUIRED — 2026-10-27 / B re-review
+Acceptance runs: original reproduction, focused lineage and native browser checks; see below
+Task blockers: B46.4-03 and B46.4-05 remain P1
 Slice Required Outcomes / Surfaces all satisfied: NO
 Next: SAME TASK FIX LOOP — preserve Task ID/Base/Goal/Scope
 ```
 
-### Required corrections
+上次完整判定在 `542be061599c115657c7d5527523bf01b2a5ab11:TASK.md` 保留。本轮审查
+整个 Task Base..候选及修复 diff，不以 Developer 的 PASS 标签代替 B 验收。
 
-1. **B46.4-01 — 四类恢复在必要人工步骤结束前不能消失。**
-   真实 Recognition 决定 → continue → Worker 分析完成后，原任务和分析子任务都发布
-   `attention=false, problem_types=[]`；生成仍需人工确认的摘要后仍如此。Conflict 决定
-   刚保存就消失：`_saved_decision_continuation_sql()` 的 stage 集合遗漏 `conflict_resolved`。
-   在共享当前问题投影中沿精确 item/continuation/preparation 保留原四类责任：保存后待分析、
-   分析完成待生成摘要、摘要待确认都可从对应类型恢复；自动排队/执行无需人工时不虚增待办。
-   新业务阻塞转类型，纯技术失败退出四类，实际完成/合法忽略才结束相应责任。不要只补一个
-   stage 或前端 badge。用当前原生四类链验证各停点、刷新和重开，类型文件列表/计数一致。
+### Verified fixes and remaining corrections
 
-2. **B46.4-02 — 全部真实成功后必须有整体恢复完成投影。**
-   单项 Recognition 和 Conflict 经原生决定、分析、精确确认、真实 Worker 移动成功，来源
-   已不存在、执行 completed、旧 Results 未改，但原任务在 SQLite/API 重开后仍为 `failed`。
-   `_run_query_document()` 的 `derived_status` 仅回显旧 attempt 状态，没有所需的整体恢复状态。
-   复用逐项 exact source/pin/lineage/effect 证据，统一列表/状态筛选/统计/详情的整体
-   Completed/recovered 显示；原失败尝试和 Results 保持原样。覆盖全部成功及只恢复部分、
-   忽略/跳过、技术失败、未知效果和不匹配 source/pin 的反例，禁止最新子任务成功替代全覆盖。
+- **B46.4-01/02 的原始复现通过。** Recognition 保存/分析/待确认、Conflict Save 仍保留四类
+  责任；两条单项真实确认、Worker 整理成功、SQLite/API 重开后的恢复完成显示通过；旧 Results
+  保留。原复现5项 `contractChecks` 全 true；这不代替全部混合结果/反例及最终 T4。
+- **B46.4-04 原生修复验证通过。** 用真实 direct-file create_directory 产出 Task，旧深链回
+  resource/source 文件页的所选操作；旧 Tasks/Jobs 集合关闭、未知身份有界只读、导航零命令/
+  零混合 collection 读取。B 独立执行现有 real-Python 用例通过；权限等其余 T4 仍待完整验收。
 
-3. **B46.4-03 — 技术失败详情仍能启动通用恢复。**
-   从中心“全部任务”搜索真实 technical 失败 → 详情 → 查看证据，仍看到且可用
-   “继续此条目的安全分析”。`RunDetailTabs` 无条件挂载 `TaskItemRecoveryPanel`，其 generic
-   retry、批量失败分析及 checkpoint 下一步指导没有按本 Contract 收缩。将中心的技术失败
-   展示限定为原因/阶段/已完成和不确定效果/结果/日志/导出；关闭通用修复/重试/核查指导及
-   操作旁门，包含旧 Task/Job/detail 深链。四类合法恢复及其必要后续仍可完成，管理 API/CLI
-   和普通文件本地允许的恢复仍保留。修正现有 technical E2E 中“只读”却继续点击分析的断言，
-   不把迁移入口当成移除行为的证明。
+1. **B46.4-03（P1）— 混合任务仍可批量恢复技术失败，且仍有通用修复指导。**
+   在现有 `seed-task-center-problems` 原生旅程进入 `TaskCenter/Mixed` → 详情，选择真实
+   `Broken.mkv`（Storage permission 技术失败，无四类 blocker）→ 点击“继续所选分析(1)”，
+   后端实际返回202、accepted=1、queued=1，创建其分析续作。它因同任务还有 Recognition/
+   Conflict 问题而获得整个 run 的 `owesRecoveryAction=true`；条目勾选只检查 failed/safe/
+   retry，没有按该条目自己的四类责任限制，因此 run 级门控没有封住旁门。
+   纯 technical 详情虽然删掉单项继续按钮，仍显示 `retry（技术历史，仅只读）` 和
+   `repair the dependency, then continue this item through a fresh pinned DryRun`；
+   `TaskItemRecoveryPanel` 只是把“下一步”改叫“当前事实与建议”，仍渲染同一指导；
+   `RunDetailTabs` 的失败证据也仍直接拼接 `failure.nextAction`。
 
-4. **B46.4-04 — 旧 V2 Tasks/Jobs 仍绕过中心总体。**
-   用现有 `POST /api/v1/resource-libraries/source/files/commands` 创建目录，再打开已存在的
-   `/ui-v2/operations/tasks`，真实 `files_direct_command` Task 仍在混合列表。旧 Task/Job 页面
-   继续读原管理 collection，不能用 runs exact-ID 返回404代替封闭这些入口。旧 V2 列表接入
-   整理总体或转到中心；整理 detail 到精确上下文，普通操作用持久 origin 回原 kind/library
-   的本地查看；缺失/停用/删除/权限拒绝时有界不可用，不猜库、不执行。保留管理 API/CLI
-   的合法混合查询；覆盖 Tasks、Jobs 和 detail 的实际路由、分页、401/403、重连和返回。
+   **修复步骤：**用同一个后端当前四类/必要人工续作判定限定每个条目的选择、批量入口及
+   已保存批次的可操作范围；同任务其他业务问题不能赋予技术失败项恢复入口。中心保留真实
+   原因/阶段/效果/结果/日志/导出，但不渲染这些项的 generic retry/repair/investigation 指导。
+   不删除历史证据或管理 API/CLI 的恢复能力，不破坏合法四类决定/分析/摘要确认和未知请求
+   的只读核对。扩展当前 mixed-history 和原生浏览器测试：technical-only、四类+safe technical、
+   四类+unknown/success、已有批次重开，分别断言无技术恢复选择/提交/指导，四类仍可完成。
 
-5. **B46.4-05 — 普通独立 organize DryRun 仍被当整理任务。**
-   调用已有 CLI `organize <临时库内文件>`，不带 `--execute`，实际得到 DRY_RUN、零移动和
-   `execute_authorized=false`，但中心 exact-ID 返回200并计为 completed 整理。生产 CLI
-   `final_cli.py` 明确将此形状作为 analysis-only；当前 `_organizing_population_sql()` 只按
-   `organize` family 或任一 continuation link 纳入，未判真实意图及来源。补齐所有现有
-   producers 的执行意图/已受理 Files Task/合法整理 lineage 判定，独立分析及其分析续作
-   排除于所有中心读取/统计/游标；Task/Result 本身仍保留。不可简单全局要求 execute=true：
-   已受理 Files 的分析阶段和合法四类恢复分析仍应纳入。用真实 CLI 分析与对应 execute、
-   Files admission、独立与整理来源的 continuation 证明正反边界。
+2. **B46.4-05（P1）— 独立分析的 Job 续作仍绕过整理总体。**
+   用已有 CLI `organize <临时库/电影/Two.2002.mkv>` 不带 `--execute`，仅把实际 Provider
+   adapter 注入连接失败：得到 DRY_RUN/failed、Moved=0、Task execute_authorized=false，
+   其中心 exact-ID 正确为404。随后通过已有管理
+   `POST /api/v1/tasks/{task}/items/{item}/recovery/continue` 明确申请纯分析续作，合法202；
+   尚未运行 Worker，中心已出现一条 `recovery-continuation` Job，总数变为1。
+   Task 分支递归校验父工作，Job 分支仍只用
+   `WHERE jobs.command IN ({organizing_job_commands})`，没有核对其真实来源，因而声明的
+   “独立分析及其分析续作全部排除”尚未实现。
 
-按以上修复整个既定 RO-4，不新建 Task，不改 RO-5 意图/执行引擎或 A-owned 边界。
-同步受影响的架构/查询/界面实现事实，保留其余 TARGET 和已接受历史。Developer 运行新增失败
-用例与直接受影响测试后提交新的 READY FOR B REVIEW checkpoint；B 在修正候选上完成原 T4
-验收，不能复用本轮 Developer 的全量 PASS 标签代替 B 验收。
+   **修复步骤：**按当前实际 Job producers 的持久 admission/continuation 关系验证中心归属，
+   将 parent 是否已受理整理的判定贯穿 Job 排队、绑定 Task、完成/失败和 exact-ID 各读取，
+   不只修改 standalone Task 分支。纯分析 Job/Task/Result 仍在合法管理历史，不能删除；
+   pre-Task 真整理排队/失败及整理来源的四类分析续作仍保留。把现有仅插入 Task/continuation
+   的正反测试补成真实 CLI → API continue → Job → Worker → Task 链，覆盖 claim 前后、刷新/
+   重开、列表/统计/来源/游标/详情/导出，不能靠缺少 Job 的 fixture 得出已封闭结论。
+
+以上仍是原 Task 两项未完成结果，不新开 Task、不改合同、不扩展 RO-5。Developer 修复后跑
+新增失败用例与直接受影响测试并提交新 checkpoint；B 再对修正候选完成原定 T4。01/02/04 的
+已验证事实保留，最终仍需与这两项修复一起回归，不能将本次局部通过写成 Task PASS。
 
 ### B evidence and test boundary
 
-复核入口为既有 CLI、产品 API、现有 harness/原生页面；仅使用临时 SQLite/媒体根与现有
-synthetic Provider。审查范围覆盖上述完整 Base..Head 的23文件 manifest及其现有调用链。
-本地原始证据：`.git/validation-evidence/cb1327a/b-review-20261027/`（未提交、不可声称远程可达）。
+本轮 `main` / `e3dec038`，无 tracked dirty。既有 untracked 日志/参考图/OS/private 文件
+保留且未暂存；仅维护本 `TASK.md`，不改产品/既有测试/A-owned 文件，不 push。
+本地原始证据在 `.git/validation-evidence/e3dec038/b-review-20261027/`；未提交、非远程可达。
 
-| B 本轮命令 / 证据 | 实际结果 |
+| B 实际命令 / cwd | 结果及证据 |
 | --- | --- |
-| `python3 scripts/check_governance.py` | PASS（开始及复核文档完成后） |
-| `.venv/bin/python .git/validation-evidence/cb1327a/b-review-20261027/reproduce.py` | exit 1；5项合同断言均失败：识别摘要待确认、Conflict Save待办、两条全成功恢复状态、CLI独立分析总体；`reproduce.json` 保存 API/Worker/重开事实，最后运行约0.5秒 |
-| `web/`: `npm run build` | PASS；`build.log`，`production-assets.json` 保存当前资产SHA256 |
-| `web/`: `npm run test:e2e -- --config=playwright.python.config.ts tests/e2e/b46-4-review.tmp.spec.ts` | **2 failed**：technical history generic continuation、legacy V2 mixed population；浏览器用时分别956ms/422ms，`browser.log`及trace/截图保留 |
+| `python3 scripts/check_governance.py` | 开始和文档完成后 PASS |
+| `.venv/bin/python .git/validation-evidence/cb1327a/b-review-20261027/reproduce.py` | exit0，原5项断言全true；`original-reproduction.json`及脚本副本，约0.8秒 |
+| `.venv/bin/python .git/validation-evidence/e3dec038/b-review-20261027/cli-continuation.py` | 正常结束；真实 DRY_RUN/失败 → 管理分析续作202 → 中心错误纳入1条 Job；`cli-continuation.json`，约0.3秒 |
+| `.venv/bin/python -m unittest tests.test_task_center_recovery_lineage` | **5 tests OK / 2.137s**，SQLite ResourceWarning 保留在 `lineage-tests.log` |
+| `web/`: `npm run build` | PASS，约1.2秒；`build.log`及`production-assets.json` SHA256 |
+| `web/`: `npm run test:e2e -- --config=playwright.python.config.ts tests/e2e/b46-4-rereview.tmp.spec.ts` | **2 failed**，混合 technical 真正提交202、纯 technical 仍有修复指导；`browser.log`/截图及`browser.spec.ts`副本 |
+| `web/`: `npm run test:e2e -- --config=playwright.python.config.ts tests/e2e/operations-inventory.python.spec.ts --grep 'retired Task collections stay closed'` | **1 passed / 2.0s**，`legacy-native.log` |
 | `git diff --check` | clean |
 
-上述临时 browser spec 仅用于独立复现，已移至证据目录 `browser.spec.ts`，从工作树移除；没有
-改动产品/既有测试、断言、timeout、retry或skip。Python证据脚本用真实 API/Worker 执行，
-不手填成功或伪造 claim；CLI仅将 Provider 工厂替换为同一fixture的 synthetic registry。
-不支持的 remote `execute=false` 已返回400，是拒绝证据，不作为任何缺陷依据。
+所有 API/CLI/浏览器使用现有支持入口、临时 SQLite/媒体根和 synthetic Provider；故障注入只
+作用实际 Provider adapter。未用用户配置/数据库/媒体，未伪造成功/claim或手改DOM。
+临时 browser spec 已移入证据目录并从工作树移除；既有产品测试/断言/timeout/retry/skip未改。
+首个浏览器取证在成功受理后尝试滚动已移除按钮而超时，原日志`browser-initial.log`保留；
+修正取证顺序后，两项均在合同断言失败，未放宽超时。另一个双项 fixture 探索未到达有效计划，
+保留`mixed-debug.log`且不作为任何缺陷依据，不从中宣称混合成功/忽略用例已通过或失败。
 
-已确认 P1，按 workflow §6 在昂贵门禁前给出 FIX REQUIRED。本轮未跑完整 Python/Web/default
-E2E、wheel/Docker/发布安全矩阵；Developer报告的全量结果仍属其交付事实，没有转换为B验收。
-测试/构建/探测累计保守上界小于30秒；仅已记录的08:50:05–08:54:50 UTC工作区间即285秒，
-占比小于11%（完整本轮更长），满足本轮严格小于50%，未靠等待扩大分母。
+按 workflow §6，已有真实 P1 即在昂贵门禁前 FIX REQUIRED；本轮未启动全量 Python/Web/
+默认E2E、wheel、Docker/发布安全矩阵，Developer的全量报告未转换为B验收。
+测试/构建/探测含初次30秒取证超时的累计保守上界小于90秒；已记录13:55:06–14:04:03 UTC
+工作时段下界537秒，占比小于17%，满足本轮严格小于50%，未靠等待制造分母。
 
-### All Slice outcomes reevaluated after review
+### All Slice outcomes reevaluated
 
 | Outcome | 当前结论 |
 | --- | --- |
-| RO-1 | Task46.1既有验收保留；本候选未改样式实现，不宣称重跑全视觉验收 |
-| RO-2 | Task46.3已验收的Files先受理/来源占用/初次确认基础保留；四类恢复呈现受B46.4-01影响，仍由本Task修复 |
-| RO-3 | 原库本地持久查看基础保留；旧中心列表旁门由B46.4-04修复，不重开普通菜单问题 |
-| RO-4 | **未完成**：B46.4-01–05；八标签和移除全局区块不等于完整交付 |
-| RO-5 | **未完成**：Automation detail/Save/Enabled/Run once意图和稳定性结果仍待后续；本Task不提前实现 |
+| RO-1 | Task46.1既有验收保留；本候选未改样式，不宣称重跑完整视觉门禁 |
+| RO-2 | Task46.3早期受理/来源占用/初次确认基础保留；本轮原始四类恢复停点通过，整体仍待修正后的T4 |
+| RO-3 | 原库本地持久查看基础保留；原生旧入口返回正确库通过，既有普通菜单问题不重开 |
+| RO-4 | **未完成**：B46.4-03/05，保留01/02/04已验证修复，不冒充全结果完成 |
+| RO-5 | **未完成**：Automation detail/Save/Enabled/Run once/稳定性改造仍属后续，当前Task不提前实现 |
 
-不规划下一Task，不提交Closure Packet，不更改Slice/Roadmap/Progress，不关闭Slice。
-分支仍为`main`；所有启动时untracked日志、参考图、OS文件和私有文件保留且未暂存；不push。
+继续同一 Task 修复；不规划下一 Task，不交 Closure Packet，不关闭 Slice，不改 Roadmap/Progress。
