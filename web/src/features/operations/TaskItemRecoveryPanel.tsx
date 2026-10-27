@@ -476,7 +476,18 @@ export function TaskItemRecoveryPanel({
   }
 
   const linked = model?.manualRecoveryLink ?? null;
+  // Task Center RO-4 publishes a purely technical failure read-only.  Every
+  // mutating affordance of this panel (a four-type decision form, the generic
+  // "continue this item's safe analysis" step, the batch/checkpoint next-step
+  // guidance and the follow-up summary) is therefore offered only where a
+  // durable fact asks for it: a live four-type problem, or an already admitted
+  // recovery step of this exact item.  The factual stage, effect certainty,
+  // retry safety, reason, results, logs and export stay readable either way.
+  const owesRecoveryAction =
+    model?.recoveryKind === "business_problem" ||
+    model?.recoveryKind === "recovery_lineage";
   const canPreparePreview =
+    owesRecoveryAction &&
     model?.manualRecoveryAvailable === true &&
     model.manualRecoveryAnalysisReady &&
     confirmedPreparation === null &&
@@ -506,7 +517,13 @@ export function TaskItemRecoveryPanel({
         </div>
         <div>
           <dt>可用操作</dt>
-          <dd>{permitted.size === 0 ? "无" : [...permitted].join("、")}</dd>
+          <dd>
+            {permitted.size === 0
+              ? "无"
+              : owesRecoveryAction
+                ? [...permitted].join("、")
+                : `${[...permitted].join("、")}（技术历史，仅只读）`}
+          </dd>
         </div>
       </dl>
       {checkpoint?.refusalReason !== null &&
@@ -514,7 +531,16 @@ export function TaskItemRecoveryPanel({
           <p className="mf-dashboard-meta">{checkpoint.refusalReason}</p>
         )}
       {checkpoint?.nextAction && (
-        <p className="mf-dashboard-meta">下一步：{checkpoint.nextAction}</p>
+        <p className="mf-dashboard-meta">
+          {owesRecoveryAction ? "下一步：" : "当前事实与建议："}
+          {checkpoint.nextAction}
+        </p>
+      )}
+      {!owesRecoveryAction && (
+        <p className="mf-dashboard-meta">
+          这是一个技术失败条目：任务中心只保留它的真实原因、阶段、已完成与不确定效果、
+          结果、日志和导出，不提供通用修复、重试或核查流程。成功或效果未知的记录不会被重放。
+        </p>
       )}
       {message && (
         <StatusBanner
@@ -524,7 +550,8 @@ export function TaskItemRecoveryPanel({
           <p>{message}</p>
         </StatusBanner>
       )}
-      {activePreparation !== null &&
+      {owesRecoveryAction &&
+        activePreparation !== null &&
         activePreparation.status === "prepared" && (
           <SamePagePlanSummary
             token={token}
@@ -571,7 +598,7 @@ export function TaskItemRecoveryPanel({
           </button>
         </div>
       )}
-      {decision !== null && (
+      {owesRecoveryAction && decision !== null && (
         <DecisionForm
           decision={decision}
           selectedChoice={selectedChoice}
@@ -627,7 +654,7 @@ export function TaskItemRecoveryPanel({
           busy={busy}
         />
       )}
-      {permitted.has("retry") && (
+      {owesRecoveryAction && permitted.has("retry") && (
         <div className="mf-actions">
           <button
             type="button"
@@ -669,7 +696,8 @@ export function TaskItemRecoveryPanel({
             )}
         </StatusBanner>
       )}
-      {checkpoint?.continuationStatus === "failed" &&
+      {owesRecoveryAction &&
+        checkpoint?.continuationStatus === "failed" &&
         checkpoint.continuationTaskId &&
         checkpoint.continuationItemId &&
         !model?.manualRecoveryAnalysisReady &&

@@ -84,6 +84,9 @@ function recognitionRecovery(resolved = false): Record<string, unknown> {
           ],
         },
     manualRecoveryAvailable: false,
+    // Task Center RO-4: a live four-type review is the surface that really owes
+    // the operator an action, so the panel keeps its native decision form.
+    recoveryKind: "business_problem",
     next_action: resolved
       ? "continue safe analysis"
       : "choose a RecognitionType",

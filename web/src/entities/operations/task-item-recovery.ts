@@ -3,6 +3,7 @@ import {
   normalizeBoolean,
   normalizeBoundedCount,
   normalizeBoundedText,
+  normalizeEnum,
   normalizeIdentityText,
   normalizeOptionalText,
   normalizeTextArray,
@@ -108,6 +109,24 @@ export interface ManualRecoveryPreparationModel {
   readonly allowSourceCleanup: boolean | null;
 }
 
+/**
+ * The bounded recovery surface one exact TaskItem currently belongs to.
+ *
+ * Task Center RO-4 publishes a purely technical failure as read-only history:
+ * its detail keeps the factual reason, stage, known/uncertain effects, results,
+ * logs and export, but never a generic repair/retry/verification invitation.
+ * The four-type journey and its required follow-up steps stay reachable for
+ * `business_problem` (a live review/conflict of one of the four types) and for
+ * `recovery_lineage` (an already admitted recovery step or a verified
+ * follow-up), which are the only surfaces that owe the operator an action.
+ */
+export const TASK_ITEM_RECOVERY_KINDS = [
+  "business_problem",
+  "recovery_lineage",
+  "technical_history",
+] as const;
+export type TaskItemRecoveryKind = (typeof TASK_ITEM_RECOVERY_KINDS)[number];
+
 export interface TaskItemRecoveryModel {
   readonly taskId: string;
   readonly itemId: string;
@@ -117,6 +136,7 @@ export interface TaskItemRecoveryModel {
   readonly manualRecoveryPreparation: ManualRecoveryPreparationModel | null;
   readonly manualRecoveryAvailable: boolean;
   readonly manualRecoveryAnalysisReady: boolean;
+  readonly recoveryKind: TaskItemRecoveryKind;
   readonly nextAction: string;
 }
 
@@ -491,6 +511,14 @@ export function normalizeTaskItemRecovery(
       source["manualRecoveryAnalysisReady"] === true ||
       (source["manualRecoveryAnalysisReady"] === undefined &&
         checkpoint.continuationStatus === "completed"),
+    // A missing kind is the conservative read-only default: an older backend
+    // that does not publish the field must not turn every terminal failure into
+    // a generic repair journey.
+    recoveryKind: normalizeEnum(
+      source["recoveryKind"] ?? "technical_history",
+      "recoveryKind",
+      TASK_ITEM_RECOVERY_KINDS,
+    ),
     nextAction: text(source, "next_action"),
   };
 }

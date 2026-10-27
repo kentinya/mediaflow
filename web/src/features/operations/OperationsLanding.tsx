@@ -352,12 +352,13 @@ function commandLabelOf(run: RunSummary): string {
 }
 
 function detailLinkOf(run: RunSummary): string | null {
-  // Deep evidence stays on the existing exact detail routes.
-  if (run.taskId !== null) {
-    return `/operations/tasks/${encodeURIComponent(run.taskId)}`;
-  }
-  if (run.jobId !== null) {
-    return `/operations/jobs/${encodeURIComponent(run.jobId)}`;
+  // Slice46 RO-4 / B46.4-04: the retired `/operations/tasks|jobs` deep links are
+  // closed, so the "more detailed evidence" action points at the same exact run
+  // *inside* the center, where its own detail tabs already live.  An identity
+  // the center did not list never gets a link (the row simply has no native
+  // detail), and no second mixed collection is involved.
+  if (run.taskId !== null || run.jobId !== null) {
+    return `/operations?run=${encodeURIComponent(run.runId)}`;
   }
   return null;
 }
@@ -1206,7 +1207,9 @@ function RunTable({
                     <span
                       className={run.attention ? "mf-run-attention" : undefined}
                     >
-                      {RUN_STATUS_LABELS[run.status]}
+                      {run.recoveredCompletion
+                        ? "已完成（恢复成功）"
+                        : RUN_STATUS_LABELS[run.status]}
                     </span>
                     {run.pauseRequested && "（已请求暂停）"}
                     {run.status === "unknown" && "（证据不足）"}
@@ -1997,6 +2000,7 @@ function RunDetailPanel({
                 state={detailState}
                 onStateChange={onDetailStateChange}
                 active={!TERMINAL_RUN_STATUSES.includes(run.status)}
+                owesRecoveryAction={selectedRunOwesRecovery(run)}
                 onOpenLinkedAnalysis={onOpenLinkedAnalysis}
                 onOpenRecoveryExecution={onOpenRecoveryExecution}
                 facts={<RunDetailFacts run={run} onSelectRun={onSelectRun} />}
@@ -2007,6 +2011,27 @@ function RunDetailPanel({
       </AuthorizedReadBoundary>
     </section>
   );
+}
+
+/**
+ * Whether one selected run currently owes a four-type recovery step.
+ *
+ * Task Center RO-4 publishes a purely technical failure as read-only history,
+ * so the generic four-type recovery entries (the batch re-analysis block and
+ * the per-item follow-up) are offered only when the run's own durable evidence
+ * may still owe one: a current four-type problem, or a run whose reported state
+ * is not decided yet.  A terminal failed/partial run with no four-type problem
+ * and no recovery lineage keeps its factual detail/results/logs/export without a
+ * generic repair invitation; the per-item panel additionally checks its own
+ * exact lineage before exposing any follow-up step.
+ */
+function selectedRunOwesRecovery(
+  run: RunSummary & { readonly problemTypes: readonly RunProblemType[] },
+): boolean {
+  if (run.problemTypes.length > 0) return true;
+  // An unfinished run may still acquire a four-type problem; a terminal run
+  // with none of them never re-enters the four-type journey from the center.
+  return !TERMINAL_RUN_STATUSES.includes(run.status);
 }
 
 /**
@@ -2101,7 +2126,11 @@ function RunDetailFacts({
       <div>
         <dt>状态</dt>
         <dd>
-          {RUN_STATUS_LABELS[run.status]}
+          {run.recoveredCompletion
+            ? "已完成（恢复成功）"
+            : RUN_STATUS_LABELS[run.status]}
+          {run.recoveredCompletion &&
+            "：每个必要条目都有精确关联的真实成功证据；原失败尝试与结果保持原样。"}
           {run.pauseRequested && "（已请求暂停，等待确认）"}
           {run.status === "unknown" && "（证据不足，未知状态）"}
         </dd>
@@ -2205,25 +2234,12 @@ function RunDetailFacts({
           </dd>
         </div>
       )}
-      {detail !== null && run.taskId !== null && (
+      {detail !== null && (
         <div>
           <dt>更详细证据</dt>
           <dd>
-            <Link
-              to="/operations/tasks/$taskId"
-              params={{ taskId: run.taskId }}
-            >
-              打开 Task 详情
-            </Link>
-          </dd>
-        </div>
-      )}
-      {detail !== null && run.taskId === null && run.jobId !== null && (
-        <div>
-          <dt>更详细证据</dt>
-          <dd>
-            <Link to="/operations/jobs/$jobId" params={{ jobId: run.jobId }}>
-              打开 Job 详情
+            <Link to="/operations" search={{ run: run.runId }}>
+              在任务中心查看该运行的详情
             </Link>
           </dd>
         </div>

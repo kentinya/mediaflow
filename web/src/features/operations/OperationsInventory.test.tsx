@@ -476,10 +476,13 @@ describe("Operations run inventory landing", () => {
     // part of the visible overview (absent evidence renders explicitly).
     expect(within(detail).getByText("Movies")).toBeVisible();
     expect(within(detail).getByText("Library/History")).toBeVisible();
-    // A deep evidence link to the exact existing Task detail route.
+    // A deep evidence link that stays inside the center's own run context:
+    // the retired mixed Task collection is closed (B46.4-04).
     expect(
-      within(detail).getByRole("link", { name: "打开 Task 详情" }),
-    ).toHaveAttribute("href", "/ui-v2/operations/tasks/task-001");
+      within(detail).getByRole("link", {
+        name: "在任务中心查看该运行的详情",
+      }),
+    ).toHaveAttribute("href", "/ui-v2/operations?run=task-001");
 
     await user.click(within(detail).getByRole("button", { name: "关闭详情" }));
     await waitFor(() =>

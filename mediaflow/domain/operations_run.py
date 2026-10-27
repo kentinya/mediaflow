@@ -181,13 +181,29 @@ ORGANIZING_TASK_COMMAND_FAMILIES: tuple[str, ...] = (
 
 #: Job command families of admitted organizing work.  A scheduled/Run-once
 #: occurrence, an analysis continuation and a remaining-scope continuation all
-#: remain part of the same admitted organizing journey.
+#: remain part of the same admitted organizing journey.  A metadata-correction
+#: continuation Job records the shared ``AutomationCommand`` value
+#: ``file-metadata-correction``; the Task it produces records
+#: ``metadata-correction-continuation:<id>``.
 ORGANIZING_JOB_COMMAND_FAMILIES: tuple[str, ...] = (
     "organize",
     "recovery-continuation",
-    "metadata-correction-continuation",
+    "file-metadata-correction",
     "scope-continuation",
 )
+
+#: Command families that a Task admission itself proves: a Files admission
+#: (``manual_organize``) and an explicit organize execution intent (``organize``)
+#: both persist ``execute_authorized=True`` inside the admitting transaction.
+ORGANIZING_TASK_SEED_TASK_FAMILIES: tuple[str, ...] = (
+    "organize",
+    "manual_organize",
+)
+
+#: Command families of an explicit retry of one named organizing Task.  The
+#: persisted command identity names the exact predecessor Task, so it proves a
+#: legal continuation of that work instead of guessing from a label.
+ORGANIZING_RETRY_TASK_FAMILIES: tuple[str, ...] = ("retry", "retry-failed")
 
 #: The durable relations that prove a Task continues an admitted organizing
 #: work.  Only persisted identity equality may establish this.
@@ -214,7 +230,15 @@ def organizing_task_command_family(command: object) -> str | None:
 
 
 def is_organizing_task_command(command: object) -> bool:
-    """Whether a durable Task command belongs to admitted organizing work."""
+    """Whether a durable Task *command family* is organizing work.
+
+    This is only the command half of the membership rule.  Whether one concrete
+    Task really is admitted organizing work additionally needs its persisted
+    admission (Files admission, execute-authorized execution intent) or a legal
+    lineage relation; see the SQL population expression, which is the single
+    authority every center read uses.  A standalone ``organize`` DryRun shares
+    this family but is analysis-only work.
+    """
 
     return organizing_task_command_family(command) in ORGANIZING_TASK_COMMAND_FAMILIES
 
@@ -457,6 +481,14 @@ class OperationsRunOverview:
     #: pre-Task failure).  It is the durable admission value, never today's
     #: definition limit, so a historical run keeps the exact bound it ran with.
     admitted_item_bound: int | None = None
+    #: Whether this run is only *Completed* because an exact persisted recovery
+    #: really finished every necessary item.  The original Task/Result rows keep
+    #: their historical failed/partial facts; this facet only lets the operator-
+    #: facing projection say "已完成（恢复成功）" instead of pretending the first
+    #: attempt always succeeded.  It is never true for a run that still carries a
+    #: four-type problem, an unsettled/uncertain effect or a sibling failure
+    #: without its own verified follow-up.
+    recovered_completion: bool = False
 
     @property
     def organized_successfully(self) -> bool:

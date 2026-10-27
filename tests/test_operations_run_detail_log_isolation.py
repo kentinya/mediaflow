@@ -129,7 +129,7 @@ class RealPipelineSharedPlanIsolationTests(unittest.TestCase):
     def _preview_pass(self, *, rank: int, executor_logging: bool) -> dict[str, object]:
         """One independent tracked Preview Task over the same single source."""
 
-        task = self.coordinator.create("organize", execute_authorized=False)
+        task = self.coordinator.create("organize", execute_authorized=True)
         logger = SQLiteOperationalLogger(self.repository, "workflow")
         service = MediaOrganizerService(
             strategy_runner_from_configuration(
@@ -413,7 +413,7 @@ class SeededSharedPlanAttributionTests(unittest.TestCase):
         self.coordinator = PersistentTaskCoordinator(self.repository, self.repository)
 
     def _run_with_item(self, item_id: str) -> str:
-        task = self.coordinator.create("organize", execute_authorized=False)
+        task = self.coordinator.create("organize", execute_authorized=True)
         self.repository.upsert_item(
             _item(task.task_id, item_id, TaskItemStatus.DRY_RUN, plan_id=SHARED_PLAN)
         )

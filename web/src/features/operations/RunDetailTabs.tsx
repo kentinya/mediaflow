@@ -546,6 +546,14 @@ export interface RunDetailTabsProps {
   readonly active: boolean;
   /** Optional run facts rendered inside 任务详情 above the progress card. */
   readonly facts?: ReactNode;
+  /**
+   * Whether this exact run's durable evidence currently owes a four-type
+   * recovery step.  Task Center RO-4 publishes a purely technical failure as
+   * read-only history, so the generic batch re-analysis entry is offered only
+   * when this is true.  The per-item panel makes the same decision from its own
+   * `recoveryKind`, so both surfaces agree.
+   */
+  readonly owesRecoveryAction?: boolean;
   readonly onOpenLinkedAnalysis?: (taskId: string, itemId: string) => void;
   readonly onOpenRecoveryExecution?: (executionId: string) => void;
 }
@@ -557,6 +565,7 @@ export function RunDetailTabs({
   onStateChange,
   active,
   facts,
+  owesRecoveryAction = false,
   onOpenLinkedAnalysis,
   onOpenRecoveryExecution,
 }: RunDetailTabsProps) {
@@ -625,6 +634,7 @@ export function RunDetailTabs({
             onInspectItem={inspectItem}
             onOpenRecoveryExecution={onOpenRecoveryExecution}
             active={active}
+            owesRecoveryAction={owesRecoveryAction}
           />
           {state.evidenceItem !== null && (
             <RunEvidenceSection
@@ -818,6 +828,7 @@ function RunItemsSection({
   onInspectItem,
   onOpenRecoveryExecution,
   active,
+  owesRecoveryAction,
 }: {
   readonly runId: string;
   readonly state: RunDetailState;
@@ -826,6 +837,7 @@ function RunItemsSection({
   readonly onInspectItem: (itemId: string) => void;
   readonly onOpenRecoveryExecution?: (executionId: string) => void;
   readonly active: boolean;
+  readonly owesRecoveryAction: boolean;
 }) {
   const token = useAuthToken();
   const query = useQuery(
@@ -1001,7 +1013,13 @@ function RunItemsSection({
                   ? ` / 运行共 ${page.total} 条(状态分布按整个运行统计)`
                   : ` / 运行共 ${page.total} 条`}
               </p>
-              {page.taskId !== null && (
+              {page.taskId !== null && owesRecoveryAction && (
+                // Task Center RO-4 (B46.4-03): the bounded batch re-analysis is
+                // a four-type recovery entry, not a generic failure repair.  It
+                // is therefore offered only on a run whose own durable evidence
+                // currently owes one of those steps; a purely technical failure
+                // keeps its factual detail/results/logs/export without a batch
+                // retry or verification side door.
                 <FailedAnalysisBatchControls
                   key={page.taskId}
                   taskId={page.taskId}

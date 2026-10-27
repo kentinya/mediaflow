@@ -507,8 +507,8 @@ Slice45 adds the typed cross-Task lists below. These are accepted foundation fac
 Contract own complete page/journey acceptance. Compose existing authorities:
 
 ```text
-nine task/recovery routes → typed query/command boundary
-→ authorized full-population Task/Job/item/problem/checkpoint projection
+eight organizing views → typed query/command boundary
+→ authorized admitted-organizing Task/Job/item/problem/checkpoint projection
 → bounded preparation → exact in-context summary → separate confirmation
 → atomic admission → resident Worker → OrganizerExecutor
 ```
@@ -522,6 +522,17 @@ Material change needs a fresh summary. Unknown submissions reconcile, never auto
 No second queue, lifecycle, configuration or recovery engine. Exact internal organizing analysis/plan
 records remain under their real responsibilities; the standalone Preview product exits under
 V2-OPS-013 below. Organizing DryRun and shared Rules/configuration checks stay supported.
+
+Slice46 narrows this CURRENT population and surface: center membership is proven by persisted admission
+or a durable lineage/retry relation (an admitted Files Task or organize execution intent in its
+discovery/analysis/confirmation stages, a supported organizing Job, and every continuation it really
+owns), so a standalone analysis-only CLI DryRun and its analysis successors are administrative history
+rather than center work. The four types keep a first-attempt responsibility until the exact chain
+reaches a confirmed follow-up; a technical failure leaves them and stays a read-only factual entry, and
+the overall recovery-complete projection appears only when every necessary item carries its own
+verified follow-up. The retired mixed Task/Job collections keep their management APIs but no V2 list;
+their deep links resolve an organizing identity into the exact center run and an ordinary identity into
+its proven library page.
 
 Scan is absent on first deployment, including definition modes and dedicated compatibility guards:
 ordinary route/argument/shared type validation rejects before discovery/admission/authority. Shared
@@ -793,8 +804,9 @@ library-scoped, principal-scoped and cursor-paged over the durable rows, and its
 exact lost-admission reconciliation. The Task Center therefore exposes no new-organize CTA, no
 independent library picker, no manual-action section and no discovery section, and a generic
 `operations/organize/new` address guides to Files without offering another picker or starting work.
-Valid prepared-work deep links keep working. Removed-center population convergence, the complete
-organizing-only eight-view set and Automation's own RO-5 intent changes remain TARGET.
+Valid prepared-work deep links keep working. The organizing-only eight-view set and its
+`recovered_completion` projection are delivered by Slice46 Task46.4; removed-center population
+convergence and Automation's own RO-5 intent changes remain TARGET.
 
 The shell's carry-over of that context has one source of truth: the router's own committed search for
 the current route. Deriving it from the browser's address bar mixed two differently-timed copies of

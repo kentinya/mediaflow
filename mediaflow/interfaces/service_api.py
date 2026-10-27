@@ -14794,6 +14794,7 @@ class MediaFlowApi:
             "pause_requested": overview.pause_requested,
             "attention": overview.attention,
             "problem_types": list(overview.problem_types),
+            "recovered_completion": overview.recovered_completion,
             "problem_file_counts": dict(overview.problem_file_counts),
             "attention_reason": overview.attention_reason,
             "attention_failure_category": overview.attention_failure_category,

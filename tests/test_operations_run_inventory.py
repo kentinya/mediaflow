@@ -109,7 +109,7 @@ def task(
     status: PersistentTaskStatus = PersistentTaskStatus.COMPLETED,
     rank: int = 0,
     scope_path: str | None = None,
-    execute_authorized: bool = False,
+    execute_authorized: bool = True,
     configuration_snapshot_id: str | None = "snap-a",
 ) -> PersistentTask:
     occurred = NOW + timedelta(minutes=rank)
@@ -666,7 +666,9 @@ class RunInventoryTestCase(_InventoryApiTestCase):
             "z-preview-failed": ("preview", PersistentTaskStatus.FAILED, 7),
             "a-completed": ("organize", PersistentTaskStatus.COMPLETED, 0),
             "b-completed": ("organize", PersistentTaskStatus.COMPLETED, 1),
-            "c-failed": ("retry-failed:organize-task", PersistentTaskStatus.FAILED, 2),
+            # A retry names the exact predecessor Task it continues; that
+            # predecessor is a real admitted organizing Task above.
+            "c-failed": ("retry-failed:a-completed", PersistentTaskStatus.FAILED, 2),
             "d-failed": ("organize", PersistentTaskStatus.FAILED, 3),
             "e-running": ("organize", PersistentTaskStatus.RUNNING, 4),
             "f-partial": ("organize", PersistentTaskStatus.PARTIAL_SUCCESS, 5),

@@ -259,6 +259,17 @@ export interface RunSummary {
    * continued its remaining scope. Only the single-run overview read publishes
    * it; inventory rows carry `null`. */
   readonly continuation: RunContinuation | null;
+  /**
+   * Whether this run's *current* overall state is Completed because an exact
+   * persisted recovery really finished every necessary item.
+   *
+   * The original Task/Result rows keep their historical failed/partial facts;
+   * this facet only lets the UI say "已完成（恢复成功）" instead of pretending the
+   * first attempt always succeeded. It can never be true for a run that still
+   * carries a four-type problem, an unsettled effect or a sibling failure
+   * without its own verified follow-up.
+   */
+  readonly recoveredCompletion: boolean;
 }
 
 /**
@@ -642,6 +653,10 @@ export function normalizeRunSummary(payload: unknown): RunSummary {
         : normalizeRunProgress(source["progress"]),
     lifecycle,
     continuation,
+    recoveredCompletion:
+      source["recovered_completion"] === undefined
+        ? false
+        : flag(source, "recovered_completion"),
   };
 }
 

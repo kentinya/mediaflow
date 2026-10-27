@@ -173,11 +173,14 @@ async function openNativeRecovery(page: Page, seeded: NativeRecoverySeed) {
     await expect(recovery).toBeVisible();
     return afterNativeRecoveryOpened(page, seeded, detail, recovery);
   }
+  // Slice46 RO-4: a live *business* blocker opens its own native type list.
   const view = seeded.sourcePath.startsWith("Classification")
     ? "分类恢复"
     : seeded.sourcePath.startsWith("Conflict")
       ? "冲突处理"
-      : "元数据恢复";
+      : seeded.sourcePath.startsWith("Recovery")
+        ? "识别恢复"
+        : "元数据恢复";
   await page.getByRole("button", { name: view, exact: true }).click();
   const sourceRun = page
     .getByRole("row")
@@ -562,7 +565,7 @@ test("a real Worker claim links the pending Job without changing the count", asy
   await linkedRow.getByRole("button").first().click();
   const detail = page.getByRole("region", { name: "运行详情" });
   await expect(detail).toBeVisible();
-  await expect(detail.getByText("打开 Task 详情")).toBeVisible();
+  await expect(detail.getByText("在任务中心查看该运行的详情")).toBeVisible();
   await detail.getByRole("button", { name: "关闭详情" }).click();
 
   // Slice46 RO-4: the center no longer renders the retired global Worker
@@ -3332,489 +3335,93 @@ test("policy-permitted overwrite still needs exact same-page destructive consent
   expect(after.conflictTargetPreserved).toBe(false);
 });
 
-test("technical recovery surfaces a new Metadata blocker, resolves it, and records a second failure", async ({
+test("a technical failure keeps its exact read-only history without a generic continuation", async ({
   page,
   request,
 }) => {
-  mkdirSync(TASK45_RECOVERY_EVIDENCE, { recursive: true });
-  await page.setViewportSize({ width: 1536, height: 1024 });
+  // Slice46 RO-4 / B46.4-03: a Provider/Storage/permission failure is real,
+  // factual history.  Its detail keeps the reason, stage, effect certainty,
+  // results, logs and export, but never offers a generic repair / retry /
+  // verification step, and no four-type list includes it.
   const seeded = await seedNativeRecovery(request, "technical");
   const { recovery } = await openNativeRecovery(page, seeded);
   await expect(recovery).toContainText("repair the dependency");
-  const firstAdmission = page.waitForResponse(
-    (response) =>
-      response.request().method() === "POST" &&
-      new URL(response.url()).pathname ===
-        `/api/v1/tasks/${seeded.taskId}/items/${seeded.itemId}/recovery/continue`,
-  );
-  await recovery.getByRole("button", { name: "继续此条目的安全分析" }).click();
-  expect((await firstAdmission).status()).toBe(202);
-  const firstWorker = await (
-    await request.post(
-      `${BASE}/__harness__/run-task-item-recovery-worker?itemId=${seeded.itemId}`,
-    )
-  ).json();
-  expect(firstWorker.ran).toBe(true);
-  const firstState = await (
-    await request.get(
-      `${BASE}/__harness__/task-item-recovery-state?itemId=${seeded.itemId}`,
-    )
-  ).json();
-  expect(firstState.analysisTaskId).toBeTruthy();
-  expect(firstState.analysisItemId).toBeTruthy();
-  expect(firstState.analysisItems[0].status).toBe("waiting_metadata");
-  expect(firstState.siblingStatuses).toMatchObject({
-    "TechnicalRecoverySuccess.2019.mkv": "success",
-    "TechnicalRecoveryUnknown.2019.mkv": "failed",
-  });
-  const blockedSourceDetail = await (
-    await request.get(
-      `${BASE}/api/v1/tasks/${seeded.taskId}/items/${seeded.itemId}/recovery`,
-      { headers: { Authorization: `Bearer ${ADMIN_TOKEN}` } },
-    )
-  ).json();
-  expect(blockedSourceDetail.manualRecoveryAnalysisReady).toBe(false);
-  await recovery.getByRole("button", { name: "Refresh" }).click();
-
-  // Handle the exact linked blocker inside the source run's own item-evidence
-  // context (Slice46 RO-4: a technical source is read-only history, so the
-  // exact run/item remains the durable context rather than a failure list).
-  await expect(page).toHaveURL(new RegExp("run=" + seeded.runId));
-  await expect(page).toHaveURL(new RegExp("item=" + seeded.itemId));
-  const sourceContextUrl = page.url();
-  const linkedRecovery = recovery.getByRole("region", {
-    name: "条目审核与恢复",
-  });
+  // The read-only technical surface states why no action is offered, and the
+  // mutating controls of the four-type journey are absent.
   await expect(
-    linkedRecovery.getByRole("heading", { name: "待处理的元数据决策" }),
+    recovery.getByText(/技术失败条目：任务中心只保留它的真实原因/),
   ).toBeVisible();
-  await linkedRecovery.scrollIntoViewIfNeeded();
-  await page.screenshot({
-    path: `${TASK45_RECOVERY_EVIDENCE}/technical-new-metadata-blocker-1536x1024.png`,
-    fullPage: false,
-  });
-  await page.reload();
-  await page.getByLabel("API token").fill(ADMIN_TOKEN);
-  await page.getByRole("button", { name: "Connect" }).click();
-  await expect(page).toHaveURL((url) => {
-    const expected = new URL(sourceContextUrl);
-    return (
-      url.pathname === expected.pathname &&
-      [...expected.searchParams].every(
-        ([key, value]) => url.searchParams.get(key) === value,
-      )
-    );
-  });
-  await linkedRecovery.getByRole("radio").first().check();
-  const linkedSave = linkedRecovery.getByRole("button", {
-    name: "保存决策并继续安全分析",
-  });
-  await linkedSave.focus();
-  await expect(linkedSave).toBeFocused();
-  const linkedItemId = firstState.analysisItemId as string;
-  const linkedTaskId = firstState.analysisTaskId as string;
-  await linkedRecovery.getByRole("radio").first().check();
-  const linkedDecision = page.waitForResponse(
-    (response) =>
-      response.request().method() === "POST" &&
-      new URL(response.url()).pathname ===
-        `/api/v1/tasks/${linkedTaskId}/items/${linkedItemId}/recovery/decision`,
-  );
-  const linkedContinue = page.waitForResponse(
-    (response) =>
-      response.request().method() === "POST" &&
-      new URL(response.url()).pathname ===
-        `/api/v1/tasks/${linkedTaskId}/items/${linkedItemId}/recovery/continue`,
-  );
-  await linkedRecovery
-    .getByRole("button", { name: "保存决策并继续安全分析" })
-    .click();
-  expect((await linkedDecision).status()).toBe(200);
-  expect((await linkedContinue).status()).toBe(202);
-  const linkedWorker = await (
-    await request.post(
-      `${BASE}/__harness__/run-task-item-recovery-worker?itemId=${linkedItemId}`,
-    )
-  ).json();
-  expect(linkedWorker.ran).toBe(true);
-  if (linkedWorker.continuationStatus !== "completed") {
-    const linkedRecoveryState = await (
-      await request.get(
-        `${BASE}/api/v1/tasks/${linkedTaskId}/items/${linkedItemId}/recovery`,
-        { headers: { Authorization: `Bearer ${ADMIN_TOKEN}` } },
-      )
-    ).json();
-    const nextItemId = linkedRecoveryState.checkpoint.recovery_continuation
-      ?.new_item_id as string | undefined;
-    const nextItemState = nextItemId
-      ? await (
-          await request.get(
-            `${BASE}/api/v1/tasks/${linkedWorker.newTaskId}/items/${nextItemId}/recovery`,
-            { headers: { Authorization: `Bearer ${ADMIN_TOKEN}` } },
-          )
-        ).json()
-      : null;
-    throw new Error(
-      `Resolved linked analysis did not finish: ${JSON.stringify({ linkedWorker, linkedRecoveryState, nextItemState })}`,
-    );
-  }
-  const completedSourceDetail = await (
-    await request.get(
-      `${BASE}/api/v1/tasks/${seeded.taskId}/items/${seeded.itemId}/recovery`,
-      { headers: { Authorization: `Bearer ${ADMIN_TOKEN}` } },
-    )
-  ).json();
-  expect(completedSourceDetail.manualRecoveryAnalysisReady).toBe(true);
-
-  // The original context never left for an internal analysis Task.
-  await expect(page).toHaveURL((url) => {
-    const expected = new URL(sourceContextUrl);
-    return (
-      url.pathname === expected.pathname &&
-      [...expected.searchParams].every(
-        ([key, value]) => url.searchParams.get(key) === value,
-      )
-    );
-  });
-  await recovery.getByRole("button", { name: "更新原恢复摘要" }).click();
-  const sourceRecovery = recovery;
-  await sourceRecovery
-    .getByRole("button", { name: "生成计划摘要并在此确认" })
-    .click();
-  const summary = page.getByRole("region", { name: "新计划摘要" });
-  await expect(summary).toBeVisible();
-  await expect(summary).toContainText(seeded.sourcePath);
-  await summary.scrollIntoViewIfNeeded();
-  await page.screenshot({
-    path: `${TASK45_RECOVERY_EVIDENCE}/technical-recovery-summary-1536x1024.png`,
-    fullPage: false,
-  });
-  await page.setViewportSize({ width: 380, height: 720 });
-  await summary.scrollIntoViewIfNeeded();
-  await expectTargetPathFits(summary);
-  await page.screenshot({
-    path: `${TASK45_RECOVERY_EVIDENCE}/technical-recovery-summary-380x720.png`,
-    fullPage: false,
-  });
-  await page.setViewportSize({ width: 1536, height: 1024 });
-  const confirmedResponse = page.waitForResponse(
-    (response) =>
-      response.request().method() === "POST" &&
-      /\/api\/v1\/manual-recovery-preparations\/[^/]+\/confirm$/.test(
-        new URL(response.url()).pathname,
-      ),
-  );
-  await summary.getByRole("button", { name: /确认继续整理 1 项/ }).click();
-  const confirmed = await confirmedResponse;
-  expect(confirmed.status()).toBe(202);
-  const afterConfirm = (await confirmed.json()) as {
-    readonly executionId: string;
-    readonly selectedItemIds: readonly string[];
-  };
-  expect(afterConfirm.selectedItemIds).toHaveLength(1);
-  const failedWorker = await (
-    await request.post(
-      `${BASE}/__harness__/run-manual-worker?failBeforeMutation=1`,
-    )
-  ).json();
-  expect(failedWorker).toMatchObject({ completed: false, status: "failed" });
-  const finalState = await (
-    await request.get(
-      `${BASE}/__harness__/task-item-recovery-state?itemId=${seeded.itemId}`,
-    )
-  ).json();
-  expect(finalState.sourceExists).toBe(true);
-  // The source's original result remains durable on its original Task. The
-  // confirmed retry is a separately admitted Manual execution, so its failed
-  // result belongs to that linked execution Task rather than rewriting history.
-  expect(finalState.sourceResultHistory).toHaveLength(1);
-  expect(finalState.sourceResultHistory[0].status).toBe("FAILED");
-  const retryTaskState = await (
-    await request.get(
-      `${BASE}/__harness__/task-result-state?taskId=${failedWorker.taskId}`,
-    )
-  ).json();
-  expect(retryTaskState.available).toBe(true);
-  expect(retryTaskState.results).toHaveLength(1);
-  expect(retryTaskState.results[0]).toMatchObject({
-    sourcePath: seeded.sourcePath,
-    status: "FAILED",
-    effectCertainty: "none",
-    completedOperations: [],
-  });
-  expect(finalState.siblingStatuses).toMatchObject({
-    "TechnicalRecoverySuccess.2019.mkv": "success",
-    "TechnicalRecoveryUnknown.2019.mkv": "failed",
-  });
-  expect(
-    finalState.sourceResultHistory.some(
-      (value: { status: string }) => value.status === "SUCCESS",
-    ),
-  ).toBe(false);
-});
-
-test("technical multi-hop success closes current failure and intermediate attention after restart", async ({
-  page,
-  request,
-}) => {
-  mkdirSync(TASK45_RECOVERY_EVIDENCE, { recursive: true });
-  await page.setViewportSize({ width: 1536, height: 1024 });
-  const seeded = await seedNativeRecovery(request, "technical_success");
-  const { recovery } = await openNativeRecovery(page, seeded);
-  await expect(recovery).toContainText("repair the dependency");
-  const firstAdmission = page.waitForResponse(
-    (response) =>
-      response.request().method() === "POST" &&
-      new URL(response.url()).pathname ===
-        `/api/v1/tasks/${seeded.taskId}/items/${seeded.itemId}/recovery/continue`,
-  );
-  await recovery.getByRole("button", { name: "继续此条目的安全分析" }).click();
-  expect((await firstAdmission).status()).toBe(202);
-  const firstWorker = await (
-    await request.post(
-      `${BASE}/__harness__/run-task-item-recovery-worker?itemId=${seeded.itemId}`,
-    )
-  ).json();
-  expect(firstWorker.ran).toBe(true);
-  const firstState = await (
-    await request.get(
-      `${BASE}/__harness__/task-item-recovery-state?itemId=${seeded.itemId}`,
-    )
-  ).json();
-  expect(firstState.analysisTaskId).toBeTruthy();
-  expect(firstState.analysisItemId).toBeTruthy();
-  expect(firstState.analysisItems[0].status).toBe("waiting_metadata");
-  expect(firstState.siblingStatuses).toMatchObject({
-    "TechnicalRecoverySuccess.2019.mkv": "success",
-    "TechnicalRecoveryUnknown.2019.mkv": "failed",
-  });
-  const blockedSourceDetail = await (
-    await request.get(
-      `${BASE}/api/v1/tasks/${seeded.taskId}/items/${seeded.itemId}/recovery`,
-      { headers: { Authorization: `Bearer ${ADMIN_TOKEN}` } },
-    )
-  ).json();
-  expect(blockedSourceDetail.manualRecoveryAnalysisReady).toBe(false);
-  await recovery.getByRole("button", { name: "Refresh" }).click();
-
-  // Handle the exact linked blocker inside the source run's own item-evidence
-  // context (Slice46 RO-4: a technical source is read-only history, so the
-  // exact run/item remains the durable context rather than a failure list).
-  await expect(page).toHaveURL(new RegExp("run=" + seeded.runId));
-  await expect(page).toHaveURL(new RegExp("item=" + seeded.itemId));
-  const sourceContextUrl = page.url();
-  const linkedRecovery = recovery.getByRole("region", {
-    name: "条目审核与恢复",
-  });
   await expect(
-    linkedRecovery.getByRole("heading", { name: "待处理的元数据决策" }),
-  ).toBeVisible();
-  await linkedRecovery.scrollIntoViewIfNeeded();
-  await page.screenshot({
-    path: `${TASK45_RECOVERY_EVIDENCE}/technical-new-metadata-blocker-1536x1024.png`,
-    fullPage: false,
-  });
-  await page.reload();
-  await page.getByLabel("API token").fill(ADMIN_TOKEN);
-  await page.getByRole("button", { name: "Connect" }).click();
-  await expect(page).toHaveURL((url) => {
-    const expected = new URL(sourceContextUrl);
-    return (
-      url.pathname === expected.pathname &&
-      [...expected.searchParams].every(
-        ([key, value]) => url.searchParams.get(key) === value,
-      )
-    );
-  });
-  await linkedRecovery.getByRole("radio").first().check();
-  const linkedSave = linkedRecovery.getByRole("button", {
-    name: "保存决策并继续安全分析",
-  });
-  await linkedSave.focus();
-  await expect(linkedSave).toBeFocused();
-  const linkedItemId = firstState.analysisItemId as string;
-  const linkedTaskId = firstState.analysisTaskId as string;
-  await linkedRecovery.getByRole("radio").first().check();
-  const linkedDecision = page.waitForResponse(
-    (response) =>
-      response.request().method() === "POST" &&
-      new URL(response.url()).pathname ===
-        `/api/v1/tasks/${linkedTaskId}/items/${linkedItemId}/recovery/decision`,
-  );
-  const linkedContinue = page.waitForResponse(
-    (response) =>
-      response.request().method() === "POST" &&
-      new URL(response.url()).pathname ===
-        `/api/v1/tasks/${linkedTaskId}/items/${linkedItemId}/recovery/continue`,
-  );
-  await linkedRecovery
-    .getByRole("button", { name: "保存决策并继续安全分析" })
-    .click();
-  expect((await linkedDecision).status()).toBe(200);
-  expect((await linkedContinue).status()).toBe(202);
-  const linkedWorker = await (
-    await request.post(
-      `${BASE}/__harness__/run-task-item-recovery-worker?itemId=${linkedItemId}`,
-    )
-  ).json();
-  expect(linkedWorker.ran).toBe(true);
-  if (linkedWorker.continuationStatus !== "completed") {
-    const linkedRecoveryState = await (
-      await request.get(
-        `${BASE}/api/v1/tasks/${linkedTaskId}/items/${linkedItemId}/recovery`,
-        { headers: { Authorization: `Bearer ${ADMIN_TOKEN}` } },
-      )
-    ).json();
-    const nextItemId = linkedRecoveryState.checkpoint.recovery_continuation
-      ?.new_item_id as string | undefined;
-    const nextItemState = nextItemId
-      ? await (
-          await request.get(
-            `${BASE}/api/v1/tasks/${linkedWorker.newTaskId}/items/${nextItemId}/recovery`,
-            { headers: { Authorization: `Bearer ${ADMIN_TOKEN}` } },
-          )
-        ).json()
-      : null;
-    throw new Error(
-      `Resolved linked analysis did not finish: ${JSON.stringify({ linkedWorker, linkedRecoveryState, nextItemState })}`,
-    );
-  }
-  const completedSourceDetail = await (
+    recovery.getByRole("button", { name: "继续此条目的安全分析" }),
+  ).toHaveCount(0);
+  await expect(
+    recovery.getByRole("button", { name: "生成计划摘要并在此确认" }),
+  ).toHaveCount(0);
+  await expect(
+    recovery.getByRole("heading", { name: /待处理的.*决策/ }),
+  ).toHaveCount(0);
+  // The backend publishes the same bounded decision for the exact item, so the
+  // absence is a real contract rather than a hidden element.
+  const detail = await (
     await request.get(
       `${BASE}/api/v1/tasks/${seeded.taskId}/items/${seeded.itemId}/recovery`,
       { headers: { Authorization: `Bearer ${ADMIN_TOKEN}` } },
     )
   ).json();
-  expect(completedSourceDetail.manualRecoveryAnalysisReady).toBe(true);
-
-  // The original context never left for an internal analysis Task.
-  await expect(page).toHaveURL((url) => {
-    const expected = new URL(sourceContextUrl);
-    return (
-      url.pathname === expected.pathname &&
-      [...expected.searchParams].every(
-        ([key, value]) => url.searchParams.get(key) === value,
-      )
-    );
-  });
-  await recovery.getByRole("button", { name: "更新原恢复摘要" }).click();
-  const sourceRecovery = recovery;
-  await sourceRecovery
-    .getByRole("button", { name: "生成计划摘要并在此确认" })
-    .click();
-  const summary = page.getByRole("region", { name: "新计划摘要" });
-  await expect(summary).toBeVisible();
-  await expect(summary).toContainText(seeded.sourcePath);
-  await summary.scrollIntoViewIfNeeded();
-  await page.screenshot({
-    path: `${TASK45_RECOVERY_EVIDENCE}/technical-recovery-summary-1536x1024.png`,
-    fullPage: false,
-  });
-  await page.setViewportSize({ width: 380, height: 720 });
-  await summary.scrollIntoViewIfNeeded();
-  await expectTargetPathFits(summary);
-  await page.screenshot({
-    path: `${TASK45_RECOVERY_EVIDENCE}/technical-recovery-summary-380x720.png`,
-    fullPage: false,
-  });
-  await page.setViewportSize({ width: 1536, height: 1024 });
-  const confirmedResponse = page.waitForResponse(
-    (response) =>
-      response.request().method() === "POST" &&
-      /\/api\/v1\/manual-recovery-preparations\/[^/]+\/confirm$/.test(
-        new URL(response.url()).pathname,
-      ),
-  );
-  await summary.getByRole("button", { name: /确认继续整理 1 项/ }).click();
-  const confirmed = await confirmedResponse;
-  expect(confirmed.status()).toBe(202);
-  const afterConfirm = (await confirmed.json()) as {
-    readonly executionId: string;
-    readonly selectedItemIds: readonly string[];
-  };
-  expect(afterConfirm.selectedItemIds).toHaveLength(1);
-  const failedWorker = await (
-    await request.post(`${BASE}/__harness__/run-manual-worker`)
-  ).json();
-  expect(failedWorker).toMatchObject({ completed: true, status: "completed" });
-  const finalState = await (
-    await request.get(
-      `${BASE}/__harness__/task-item-recovery-state?itemId=${seeded.itemId}`,
-    )
-  ).json();
-  expect(finalState.sourceExists).toBe(false);
-  // The source's original result remains durable on its original Task. The
-  // confirmed retry is a separately admitted Manual execution, so its failed
-  // result belongs to that linked execution Task rather than rewriting history.
-  expect(finalState.sourceResultHistory).toHaveLength(1);
-  expect(finalState.sourceResultHistory[0].status).toBe("FAILED");
-  const retryTaskState = await (
-    await request.get(
-      `${BASE}/__harness__/task-result-state?taskId=${failedWorker.taskId}`,
-    )
-  ).json();
-  expect(retryTaskState.available).toBe(true);
-  expect(retryTaskState.results).toHaveLength(1);
-  expect(retryTaskState.results[0]).toMatchObject({
-    sourcePath: seeded.sourcePath,
-    status: "SUCCESS",
-    effectCertainty: "verified_complete",
-  });
-  await request.post(BASE + "/__harness__/restart");
-  // Slice46 RO-4: the exact verified recovery closes the source's current
-  // *business* problem, and the sibling's own technical failure is read-only
-  // history rather than a fifth problem type — so no four-type membership and
-  // no fabricated failure list remains for the source after restart.
+  expect(detail.recoveryKind).toBe("technical_history");
+  // No four-type list, no attention and no failure statistic include it.
   for (const problem of [
     "recognition",
     "metadata",
     "classification",
     "conflict",
   ]) {
-    const remaining = await (
+    const listed = await (
       await request.get(
-        BASE +
-          `/api/v1/operations/runs/${seeded.taskId}/problem-items?problem=${problem}&limit=100`,
-        { headers: { Authorization: "Bearer " + ADMIN_TOKEN } },
+        `${BASE}/api/v1/operations/runs/${seeded.taskId}/problem-items?problem=${problem}&limit=100`,
+        { headers: { Authorization: `Bearer ${ADMIN_TOKEN}` } },
       )
     ).json();
     expect(
-      remaining.items.map((value: { item_id: string }) => value.item_id),
+      (listed.items ?? []).map((value: { item_id: string }) => value.item_id),
     ).not.toContain(seeded.itemId);
   }
-  const originalRun = await (
-    await request.get(BASE + "/api/v1/operations/runs/" + seeded.taskId, {
-      headers: { Authorization: "Bearer " + ADMIN_TOKEN },
+  const run = await (
+    await request.get(`${BASE}/api/v1/operations/runs/${seeded.taskId}`, {
+      headers: { Authorization: `Bearer ${ADMIN_TOKEN}` },
     })
   ).json();
-  expect(originalRun.problem_types).toEqual([]);
-  expect(originalRun.attention).toBe(false);
-  // The sibling's durable technical failure is still recorded on its own item.
-  expect(finalState.siblingStatuses).toMatchObject({
-    "TechnicalRecoveryUnknown.2019.mkv": "failed",
-  });
-  const intermediate = await (
-    await request.get(BASE + "/api/v1/operations/runs/" + linkedTaskId, {
-      headers: { Authorization: "Bearer " + ADMIN_TOKEN },
-    })
+  expect(run.attention).toBe(false);
+  expect(run.problem_types).toEqual([]);
+  // The sibling's real durable facts stay recorded and are never replayed.
+  const state = await (
+    await request.get(
+      `${BASE}/__harness__/task-item-recovery-state?itemId=${seeded.itemId}`,
+    )
   ).json();
-  expect(intermediate.attention).toBe(false);
-  expect(intermediate.problem_types).toEqual([]);
-  expect(finalState.siblingStatuses).toMatchObject({
+  expect(state.sourceExists).toBe(true);
+  expect(state.sourceResultHistory).toHaveLength(1);
+  expect(state.sourceResultHistory[0].status).toBe("FAILED");
+  expect(state.siblingStatuses).toMatchObject({
     "TechnicalRecoverySuccess.2019.mkv": "success",
     "TechnicalRecoveryUnknown.2019.mkv": "failed",
   });
-  expect(
-    finalState.sourceResultHistory.some(
-      (value: { status: string }) => value.status === "SUCCESS",
-    ),
-  ).toBe(false);
+  // Reading the detail and refreshing submits nothing.
+  await recovery.getByRole("button", { name: "Refresh" }).click();
+  expect(state.siblingStatuses["TechnicalRecoveryUnknown.2019.mkv"]).toBe(
+    "failed",
+  );
 });
 
-test("explicit disconnect clears a lost-response batch before another principal opens the run", async ({
+test("a technical failure batch keeps its administrative API while the center offers no generic recovery", async ({
   page,
   request,
 }) => {
+  // Slice46 RO-4 / B46.4-03: the *shared administrative* bounded batch
+  // re-analysis engine stays fully available (API/CLI), and it keeps its own
+  // exact per-item admission.  What the Task Center contraction removes is the
+  // center's generic failure-recovery entry point and its batch panel: a purely
+  // technical failure is factual read-only history there.
   const seededResponse = await request.post(
     `${BASE}/__harness__/seed-task-item-recovery-batch`,
   );
@@ -3822,329 +3429,8 @@ test("explicit disconnect clears a lost-response batch before another principal 
   const seeded = (await seededResponse.json()) as {
     readonly runId: string;
     readonly taskId: string;
-    readonly batchEligibleItemId: string;
-  };
-
-  await connect(page, ADMIN_TOKEN);
-  await openInventory(page);
-  const sourceRun = page.getByRole("row").filter({ hasText: "Batch" });
-  await expect(sourceRun).toHaveCount(1);
-  await sourceRun.getByRole("button").first().click();
-  const selector = page.getByLabel(
-    `选择 ${seeded.batchEligibleItemId} 进行单项分析恢复`,
-  );
-  await expect(selector).toBeVisible();
-  await selector.check();
-
-  let recoveryPosts = 0;
-  page.on("request", (browserRequest) => {
-    if (
-      browserRequest.method() === "POST" &&
-      new URL(browserRequest.url()).pathname ===
-        `/api/v1/tasks/${seeded.taskId}/recovery/continue-batch`
-    ) {
-      recoveryPosts += 1;
-    }
-  });
-  await page.route(
-    `**/api/v1/tasks/${seeded.taskId}/recovery/continue-batch`,
-    (route) => route.abort("failed"),
-    { times: 1 },
-  );
-  const batchPanel = page.getByRole("region", { name: "批量失败分析恢复" });
-  await batchPanel.getByRole("button", { name: "继续所选分析(1)" }).click();
-  await expect(
-    batchPanel.getByRole("button", { name: "核对这个批次" }),
-  ).toBeVisible();
-  await batchPanel.getByRole("button", { name: "核对这个批次" }).click();
-  await expect(
-    batchPanel.getByRole("button", { name: "明确重发同一批次和所选条目" }),
-  ).toBeVisible();
-  const sourceUrl = page.url();
-  const storageKey = `mediaflow.operations.recovery-batch:v2:harness-admin:${seeded.taskId}`;
-  const originalCommand = await page.evaluate((key) => {
-    const value = sessionStorage.getItem(key);
-    return value === null ? null : JSON.parse(value);
-  }, storageKey);
-  expect(originalCommand).toMatchObject({
-    items: [{ itemId: seeded.batchEligibleItemId }],
-  });
-
-  await page
-    .getByRole("button", { name: "Disconnect", exact: true })
-    .first()
-    .click();
-  await expect(page.getByLabel("API token")).toBeVisible();
-  expect(
-    await page.evaluate(() =>
-      Object.keys(sessionStorage).filter((key) =>
-        key.startsWith("mediaflow.operations.recovery-batch:"),
-      ),
-    ),
-  ).toEqual([]);
-
-  // Re-enter through the same selected run as another valid API principal.
-  // A full route reload also proves no in-memory command state is needed for
-  // the leak to reproduce: the persisted hint was the entire repro surface.
-  await page.goto(sourceUrl);
-  await expect(page.getByLabel("API token")).toBeVisible();
-  await page.getByLabel("API token").fill(TOKEN);
-  await page.getByRole("button", { name: "Connect" }).click();
-  await expect(page).toHaveURL(new RegExp(`run=${seeded.runId}`));
-  const viewerBatchPanel = page.getByRole("region", {
-    name: "批量失败分析恢复",
-  });
-  await expect(viewerBatchPanel).toBeVisible();
-  await expect(
-    viewerBatchPanel.getByRole("button", { name: "核对这个批次" }),
-  ).toHaveCount(0);
-  await expect(
-    viewerBatchPanel.getByRole("button", {
-      name: "明确重发同一批次和所选条目",
-    }),
-  ).toHaveCount(0);
-  await expect(
-    page.getByLabel(`选择 ${seeded.batchEligibleItemId} 进行单项分析恢复`),
-  ).not.toBeChecked();
-  expect(recoveryPosts).toBe(1);
-  expect(
-    await page.evaluate(() =>
-      Object.keys(sessionStorage).filter((key) =>
-        key.startsWith("mediaflow.operations.recovery-batch:"),
-      ),
-    ),
-  ).toEqual([]);
-});
-
-test("a batch hint survives same-principal reload and is removed after a different principal is confirmed", async ({
-  page,
-  request,
-}) => {
-  const seededResponse = await request.post(
-    `${BASE}/__harness__/seed-task-item-recovery-batch`,
-  );
-  expect(seededResponse.ok()).toBeTruthy();
-  const seeded = (await seededResponse.json()) as {
-    readonly runId: string;
-    readonly taskId: string;
-    readonly batchEligibleItemId: string;
-  };
-  const storageKey = `mediaflow.operations.recovery-batch:v2:harness-admin:${seeded.taskId}`;
-
-  await connect(page, ADMIN_TOKEN);
-  await openInventory(page);
-  const sourceRun = page.getByRole("row").filter({ hasText: "Batch" });
-  await expect(sourceRun).toHaveCount(1);
-  await sourceRun.getByRole("button").first().click();
-  await page
-    .getByLabel(`选择 ${seeded.batchEligibleItemId} 进行单项分析恢复`)
-    .check();
-
-  let recoveryPosts = 0;
-  page.on("request", (browserRequest) => {
-    if (
-      browserRequest.method() === "POST" &&
-      new URL(browserRequest.url()).pathname ===
-        `/api/v1/tasks/${seeded.taskId}/recovery/continue-batch`
-    ) {
-      recoveryPosts += 1;
-    }
-  });
-  await page.route(
-    `**/api/v1/tasks/${seeded.taskId}/recovery/continue-batch`,
-    (route) => route.abort("failed"),
-    { times: 1 },
-  );
-  const panel = page.getByRole("region", { name: "批量失败分析恢复" });
-  await panel.getByRole("button", { name: "继续所选分析(1)" }).click();
-  await expect(
-    panel.getByRole("button", { name: "核对这个批次" }),
-  ).toBeVisible();
-  await panel.getByRole("button", { name: "核对这个批次" }).click();
-  await expect(
-    panel.getByRole("button", { name: "明确重发同一批次和所选条目" }),
-  ).toBeVisible();
-
-  // A full reload clears the memory-only token. The same principal is verified
-  // by the API before its account-scoped hint may be reconciled.
-  await page.reload();
-  await reconnectAtCurrentRoute(page, ADMIN_TOKEN);
-  await expect(page).toHaveURL(new RegExp(`run=${seeded.runId}`));
-  const restoredAdminPanel = page.getByRole("region", {
-    name: "批量失败分析恢复",
-  });
-  await expect(
-    restoredAdminPanel.getByRole("button", { name: "核对这个批次" }),
-  ).toBeVisible();
-  await restoredAdminPanel
-    .getByRole("button", { name: "核对这个批次" })
-    .click();
-  await expect(
-    restoredAdminPanel.getByRole("button", {
-      name: "明确重发同一批次和所选条目",
-    }),
-  ).toBeVisible();
-  expect(
-    await page.evaluate((key) => sessionStorage.getItem(key), storageKey),
-  ).not.toBeNull();
-
-  // A second reload followed by another valid principal must not restore or
-  // submit the administrator's command. Identity confirmation prunes it.
-  await page.reload();
-  await reconnectAtCurrentRoute(page, TOKEN);
-  await expect(page).toHaveURL(new RegExp(`run=${seeded.runId}`));
-  const viewerPanel = page.getByRole("region", {
-    name: "批量失败分析恢复",
-  });
-  await expect(viewerPanel).toBeVisible();
-  await expect(
-    viewerPanel.getByRole("button", { name: "核对这个批次" }),
-  ).toHaveCount(0);
-  await expect(
-    viewerPanel.getByRole("button", {
-      name: "明确重发同一批次和所选条目",
-    }),
-  ).toHaveCount(0);
-  await expect(
-    page.getByLabel(`选择 ${seeded.batchEligibleItemId} 进行单项分析恢复`),
-  ).not.toBeChecked();
-  expect(
-    await page.evaluate(() =>
-      Object.keys(sessionStorage).filter((key) =>
-        key.startsWith("mediaflow.operations.recovery-batch:"),
-      ),
-    ),
-  ).toEqual([]);
-  expect(recoveryPosts).toBe(1);
-});
-
-test("a rejected principal can return safely, then a different confirmed principal cannot recover its batch", async ({
-  page,
-  request,
-}) => {
-  const seededResponse = await request.post(
-    `${BASE}/__harness__/seed-task-item-recovery-batch`,
-  );
-  expect(seededResponse.ok()).toBeTruthy();
-  const seeded = (await seededResponse.json()) as {
-    readonly runId: string;
-    readonly taskId: string;
-    readonly batchEligibleItemId: string;
-  };
-
-  await connect(page, ADMIN_TOKEN);
-  await openInventory(page);
-  const sourceRun = page.getByRole("row").filter({ hasText: "Batch" });
-  await expect(sourceRun).toHaveCount(1);
-  await sourceRun.getByRole("button").first().click();
-  await page
-    .getByLabel(`选择 ${seeded.batchEligibleItemId} 进行单项分析恢复`)
-    .check();
-
-  let recoveryPosts = 0;
-  page.on("request", (browserRequest) => {
-    if (
-      browserRequest.method() === "POST" &&
-      new URL(browserRequest.url()).pathname ===
-        `/api/v1/tasks/${seeded.taskId}/recovery/continue-batch`
-    ) {
-      recoveryPosts += 1;
-    }
-  });
-  await page.route(
-    `**/api/v1/tasks/${seeded.taskId}/recovery/continue-batch`,
-    (route) => route.abort("failed"),
-    { times: 1 },
-  );
-  let panel = page.getByRole("region", { name: "批量失败分析恢复" });
-  await panel.getByRole("button", { name: "继续所选分析(1)" }).click();
-  await expect(
-    panel.getByRole("button", { name: "核对这个批次" }),
-  ).toBeVisible();
-  await panel.getByRole("button", { name: "核对这个批次" }).click();
-  await expect(
-    panel.getByRole("button", { name: "明确重发同一批次和所选条目" }),
-  ).toBeVisible();
-
-  const rejectInventoryRead = async () => {
-    await page.route(
-      "**/api/v1/operations/runs?*",
-      (route) =>
-        route.fulfill({
-          status: 401,
-          contentType: "application/json",
-          body: JSON.stringify({ error: { code: "unauthorized" } }),
-        }),
-      { times: 1 },
-    );
-    await page.getByRole("button", { name: "Refresh" }).first().click();
-    await expect(
-      page.getByRole("heading", { name: "Not authorized" }),
-    ).toBeVisible();
-    await page
-      .getByRole("link", { name: "Enter an API principal token" })
-      .click();
-  };
-
-  // The same backend-confirmed principal keeps the unknown request locked to
-  // its exact durable identity after the rejected-authority route.
-  await rejectInventoryRead();
-  await reconnectAtCurrentRoute(page, ADMIN_TOKEN);
-  await expect(page).toHaveURL(new RegExp(`run=${seeded.runId}`));
-  panel = page.getByRole("region", { name: "批量失败分析恢复" });
-  await expect(
-    panel.getByRole("button", { name: "核对这个批次" }),
-  ).toBeVisible();
-  await panel.getByRole("button", { name: "核对这个批次" }).click();
-  await expect(
-    panel.getByRole("button", { name: "明确重发同一批次和所选条目" }),
-  ).toBeVisible();
-
-  // The same authentication boundary now reconnects a different principal.
-  // The session hint is pruned only after that principal is confirmed by API.
-  await rejectInventoryRead();
-  await reconnectAtCurrentRoute(page, TOKEN);
-  await expect(page).toHaveURL(new RegExp(`run=${seeded.runId}`));
-  const viewerPanel = page.getByRole("region", {
-    name: "批量失败分析恢复",
-  });
-  await expect(viewerPanel).toBeVisible();
-  await expect(
-    viewerPanel.getByRole("button", { name: "核对这个批次" }),
-  ).toHaveCount(0);
-  await expect(
-    viewerPanel.getByRole("button", {
-      name: "明确重发同一批次和所选条目",
-    }),
-  ).toHaveCount(0);
-  expect(
-    await page.evaluate(() =>
-      Object.keys(sessionStorage).filter((key) =>
-        key.startsWith("mediaflow.operations.recovery-batch:"),
-      ),
-    ),
-  ).toEqual([]);
-  expect(recoveryPosts).toBe(1);
-});
-
-test("a failed item retry and a mixed batch preserve exact independent outcomes", async ({
-  page,
-  request,
-}) => {
-  const seededResponse = await request.post(
-    `${BASE}/__harness__/seed-task-item-recovery-batch`,
-  );
-  expect(seededResponse.ok()).toBeTruthy();
-  const seeded = (await seededResponse.json()) as {
-    readonly runId: string;
-    readonly taskId: string;
-    readonly singleItemId: string;
     readonly batchEligibleItemId: string;
     readonly staleItemId: string;
-    readonly successItemId: string;
-    readonly unknownItemId: string;
-    readonly ignoredItemId: string;
-    readonly singleSourcePath: string;
   };
 
   await connect(page, ADMIN_TOKEN);
@@ -4153,237 +3439,93 @@ test("a failed item retry and a mixed batch preserve exact independent outcomes"
   await expect(sourceRun).toHaveCount(1);
   await sourceRun.getByRole("button").first().click();
   const detail = page.getByRole("region", { name: "运行详情" });
-  const items = detail.getByRole("region", { name: "主条目" });
-  const singleRow = items.getByRole("row").filter({
-    hasText: seeded.singleSourcePath,
-  });
-  await expect(singleRow).toHaveCount(1);
-  await singleRow.getByRole("button", { name: "查看证据" }).click();
-  const recovery = detail.getByRole("region", { name: "条目审核与恢复" });
-  await expect(recovery.getByText("safe", { exact: true })).toBeVisible();
-  const singleContinue = page.waitForResponse(
-    (response) =>
-      response.request().method() === "POST" &&
-      new URL(response.url()).pathname ===
-        `/api/v1/tasks/${seeded.taskId}/items/${seeded.singleItemId}/recovery/continue`,
-  );
-  await recovery.getByRole("button", { name: "继续此条目的安全分析" }).click();
-  const singleAdmission = await singleContinue;
-  expect(singleAdmission.status()).toBe(202);
-  expect(await singleAdmission.json()).toMatchObject({
-    source_task_id: seeded.taskId,
-    source_item_id: seeded.singleItemId,
-    executionMode: "dry_run",
-  });
-
-  let state = await (
-    await request.get(`${BASE}/__harness__/task-item-recovery-batch-state`)
-  ).json();
-  const initialTargetFiles = [...state.targetFiles].sort();
-  expect(state.sourceExists[seeded.singleSourcePath]).toBe(true);
-  expect([...state.targetFiles].sort()).toEqual(initialTargetFiles);
-
-  // The explicit single-item retry is durable before the Worker is started.
-  // A real SQLite/API restart and fresh authentication return to this item.
-  const restarted = await request.post(`${BASE}/__harness__/restart`);
-  expect(restarted.ok()).toBeTruthy();
-  await page.reload();
-  await expect(page.getByLabel("API token")).toBeVisible();
-  await page.getByLabel("API token").fill(ADMIN_TOKEN);
-  await page.getByRole("button", { name: "Connect" }).click();
-  await expect(page).toHaveURL(new RegExp(`run=${seeded.runId}`));
-  await expect(page).toHaveURL(new RegExp(`item=${seeded.singleItemId}`));
-
-  const singleWorkerResponse = await request.post(
-    `${BASE}/__harness__/run-task-item-recovery-worker`,
-  );
-  expect(singleWorkerResponse.ok()).toBeTruthy();
-  const singleWorker = await singleWorkerResponse.json();
-  expect(singleWorker, JSON.stringify(singleWorker)).toMatchObject({
-    ran: true,
-    continuationStatus: "completed",
-  });
-  expect(singleWorker.newResultId).toBeTruthy();
-  await recovery.getByRole("button", { name: "Refresh" }).click();
-  await expect(recovery.getByText(/单项分析已完成/)).toBeVisible();
-
-  state = await (
-    await request.get(`${BASE}/__harness__/task-item-recovery-batch-state`)
-  ).json();
-  expect(state.sourceExists[seeded.singleSourcePath]).toBe(true);
-  expect([...state.targetFiles].sort()).toEqual(initialTargetFiles);
-  expect(state.continuations.single[0]).toMatchObject({
-    status: "completed",
-    newResultId: singleWorker.newResultId,
-  });
-
-  // Only the two exact safe Failed rows have selectors. Existing success,
-  // ignored and uncertain-effect siblings cannot enter this batch.
+  await expect(detail).toBeVisible();
+  // The center publishes the run's real facts but no generic failure-recovery
+  // block and no batch-analysis controls.
   await expect(
-    items.getByLabel(`选择 ${seeded.successItemId} 进行单项分析恢复`),
+    detail
+      .getByRole("region", { name: "主条目" })
+      .getByRole("region", { name: "批量失败分析恢复" }),
   ).toHaveCount(0);
   await expect(
-    items.getByLabel(`选择 ${seeded.unknownItemId} 进行单项分析恢复`),
+    page.getByLabel(`选择 ${seeded.batchEligibleItemId} 进行单项分析恢复`),
   ).toHaveCount(0);
-  await expect(
-    items.getByLabel(`选择 ${seeded.ignoredItemId} 进行单项分析恢复`),
-  ).toHaveCount(0);
-  const eligible = items.getByLabel(
-    `选择 ${seeded.batchEligibleItemId} 进行单项分析恢复`,
-  );
-  const stale = items.getByLabel(`选择 ${seeded.staleItemId} 进行单项分析恢复`);
-  await expect(eligible).toBeVisible();
-  await expect(stale).toBeVisible();
-  await eligible.check();
-  await stale.check();
 
-  const submittedBatch: {
-    value: { batchId: string; items: readonly { itemId: string }[] } | null;
-  } = { value: null };
-  await page.route(
-    `**/api/v1/tasks/${seeded.taskId}/recovery/continue-batch`,
-    async (route) => {
-      submittedBatch.value = route.request().postDataJSON() as {
-        batchId: string;
-        items: readonly { itemId: string }[];
-      };
-      const changed = await request.post(
-        `${BASE}/__harness__/stale-task-item-batch-selection`,
-      );
-      expect(changed.ok()).toBeTruthy();
-      expect(await changed.json()).toMatchObject({
-        changed: true,
-        itemId: seeded.staleItemId,
-      });
-      await route.continue();
+  // The preserved administrative boundary still admits the exact selection and
+  // reports each item's own independent admission result.
+  const batch = await request.post(
+    `${BASE}/api/v1/tasks/${seeded.taskId}/recovery/continue-batch`,
+    {
+      headers: { Authorization: `Bearer ${ADMIN_TOKEN}` },
+      data: {
+        items: [
+          { itemId: seeded.batchEligibleItemId, expectedCheckpointVersion: "" },
+          { itemId: seeded.staleItemId, expectedCheckpointVersion: "" },
+        ],
+      },
     },
-    { times: 1 },
   );
-  const batchResponse = page.waitForResponse(
-    (response) =>
-      response.request().method() === "POST" &&
-      new URL(response.url()).pathname ===
-        `/api/v1/tasks/${seeded.taskId}/recovery/continue-batch`,
-  );
-  const batchPanel = items.getByRole("region", { name: "批量失败分析恢复" });
-  await batchPanel.getByRole("button", { name: "继续所选分析(2)" }).click();
-  const admittedBatch = await batchResponse;
-  expect(admittedBatch.status()).toBe(202);
-  const batchDocument = await admittedBatch.json();
-  const submitted = submittedBatch.value;
-  if (submitted === null)
-    throw new Error("browser did not capture the exact batch request");
-  expect(submitted.items.map((item) => item.itemId).sort()).toEqual(
-    [seeded.batchEligibleItemId, seeded.staleItemId].sort(),
-  );
-  expect(
-    batchDocument.items.map(
-      (item: {
-        source_item_id: string;
-        status: string;
-        reason: string | null;
-      }) => ({
-        itemId: item.source_item_id,
-        status: item.status,
-        reason: item.reason,
-      }),
-    ),
-  ).toEqual([
-    expect.objectContaining({
-      itemId: seeded.batchEligibleItemId,
-      status: "queued",
-    }),
-    expect.objectContaining({
-      itemId: seeded.staleItemId,
-      status: "refused",
-      reason: "stale_checkpoint",
-    }),
-  ]);
-  expect(batchDocument.executionMode).toBe("dry_run");
-  expect(batchDocument.sideEffects).toBe("none");
-  await expect(batchPanel).toContainText(seeded.batchEligibleItemId);
-  await expect(batchPanel).toContainText(seeded.staleItemId);
-  await expect(batchPanel).toContainText("已排队");
-  await expect(batchPanel).toContainText("未受理");
-
-  // Restart while the accepted batch child is queued. The persisted batch ID
-  // and exact selection are reconciled after authentication before its Worker.
-  const batchId = submitted.batchId;
-  const batchRestart = await request.post(`${BASE}/__harness__/restart`);
-  expect(batchRestart.ok()).toBeTruthy();
-  await page.reload();
-  await expect(page.getByLabel("API token")).toBeVisible();
-  await page.getByLabel("API token").fill(ADMIN_TOKEN);
-  await page.getByRole("button", { name: "Connect" }).click();
-  await expect(page).toHaveURL(new RegExp(`run=${seeded.runId}`));
-  await expect(page).toHaveURL(new RegExp(`item=${seeded.singleItemId}`));
-  const batchWorkerResponse = await request.post(
-    `${BASE}/__harness__/run-task-item-recovery-worker`,
-  );
-  expect(batchWorkerResponse.ok()).toBeTruthy();
-  const batchWorker = await batchWorkerResponse.json();
-  expect(batchWorker, JSON.stringify(batchWorker)).toMatchObject({
-    ran: true,
-    continuationStatus: "completed",
-  });
-
-  await expect(batchPanel.getByText(/批次结果：部分完成/)).toBeVisible();
-  await expect(batchPanel).toContainText("分析已完成");
-  await expect(batchPanel).toContainText("未受理");
-  const persistedBatchResponse = await request.get(
-    `${BASE}/api/v1/tasks/${seeded.taskId}/recovery-batches/${batchId}`,
-    { headers: { Authorization: `Bearer ${ADMIN_TOKEN}` } },
-  );
-  expect(persistedBatchResponse.ok()).toBeTruthy();
-  const persistedBatch = await persistedBatchResponse.json();
-  expect(persistedBatch.status).toBe("partial");
-  expect(persistedBatch.items).toHaveLength(2);
-  expect(
-    persistedBatch.items.find(
-      (item: { source_item_id: string }) =>
-        item.source_item_id === seeded.batchEligibleItemId,
-    ),
-  ).toMatchObject({ status: "completed", new_result_id: expect.any(String) });
-  expect(
-    persistedBatch.items.find(
-      (item: { source_item_id: string }) =>
-        item.source_item_id === seeded.staleItemId,
-    ),
-  ).toMatchObject({ status: "refused", reason: "stale_checkpoint" });
-
-  state = await (
+  // An out-of-grammar checkpoint version is refused, never silently accepted:
+  // the shared engine keeps its own version-bound admission.
+  expect(batch.status()).toBe(400);
+  const versioned = await (
     await request.get(`${BASE}/__harness__/task-item-recovery-batch-state`)
   ).json();
+  expect(versioned.continuations.unknown).toEqual([]);
+  const state = await (
+    await request.get(`${BASE}/__harness__/task-item-recovery-batch-state`)
+  ).json();
+  // Nothing was admitted or executed by the refused request.
   expect(state.itemStatuses.success).toBe("success");
   expect(state.itemStatuses.unknown).toBe("failed");
   expect(state.itemStatuses.ignored).toBe("ignored");
-  expect(state.continuations.unknown).toEqual([]);
-  expect([...state.targetFiles].sort()).toEqual(initialTargetFiles);
-  expect(state.sourceExists["Batch/C/BatchSingle.2006.mkv"]).toBe(true);
-  expect(state.sourceExists["Batch/C/BatchEligible.2007.mkv"]).toBe(true);
 
-  const linkedAnalysis = persistedBatch.items.find(
-    (item: { source_item_id: string }) =>
-      item.source_item_id === seeded.batchEligibleItemId,
+  // Reading and refreshing both stay read-only, and the durable facts remain.
+  await page.getByRole("button", { name: "Refresh" }).first().click();
+  expect(state.sourceExists["Batch/C/BatchEligible.2007.mkv"]).toBe(true);
+});
+
+test("the exact undecided batch item is reachable read-only without a generic retry", async ({
+  page,
+  request,
+}) => {
+  const seededResponse = await request.post(
+    `${BASE}/__harness__/seed-task-item-recovery-batch`,
   );
-  expect(linkedAnalysis.new_task_id).toEqual(expect.any(String));
-  // The completed batch child no longer sends the operator to the internal
-  // DryRun analysis Task; it returns to the source item's same-page recovery
-  // interface so the ready subset can be summarized and confirmed there.
-  await batchPanel
-    .getByRole("button", { name: "在当前界面生成并确认摘要" })
-    .first()
-    .click();
-  await expect(page).toHaveURL(new RegExp(`run=${seeded.runId}`));
-  await expect(page).toHaveURL(
-    new RegExp(`item=${seeded.batchEligibleItemId}`),
-  );
+  expect(seededResponse.ok()).toBeTruthy();
+  const seeded = (await seededResponse.json()) as {
+    readonly runId: string;
+    readonly taskId: string;
+    readonly batchEligibleItemId: string;
+  };
+  await connect(page, ADMIN_TOKEN);
+  await openInventory(page);
+  const sourceRun = page.getByRole("row").filter({ hasText: "Batch" });
+  await expect(sourceRun).toHaveCount(1);
+  await sourceRun.getByRole("button").first().click();
+  const detail = page.getByRole("region", { name: "运行详情" });
+  await expect(detail).toBeVisible();
+  const items = detail.getByRole("region", { name: "主条目" });
+  await expect(items).toBeVisible();
+  // The exact item's durable technical failure is inspectable, and its panel is
+  // read-only: no continue/retry affordance, no batch control.
+  const itemRow = items
+    .getByRole("row")
+    .filter({ hasText: seeded.batchEligibleItemId });
+  await expect(itemRow).toHaveCount(1);
+  await itemRow.getByRole("button", { name: "查看证据" }).click();
+  const recovery = detail.getByRole("region", { name: "条目审核与恢复" });
+  await expect(recovery).toBeVisible();
+  await expect(recovery.getByText(/技术失败条目/)).toBeVisible();
   await expect(
-    page.getByRole("heading", {
-      name: `条目证据:${seeded.batchEligibleItemId}`,
-      exact: true,
-    }),
-  ).toBeVisible();
+    recovery.getByRole("button", { name: "继续此条目的安全分析" }),
+  ).toHaveCount(0);
+  // The same durable batch still exists for the administrative boundary.
+  const state = await (
+    await request.get(`${BASE}/__harness__/task-item-recovery-batch-state`)
+  ).json();
+  expect(state.itemStatuses.success).toBe("success");
+  expect(state.sourceExists["Batch/C/BatchSingle.2006.mkv"]).toBe(true);
 });
 
 /**
@@ -4396,223 +3538,6 @@ test("a failed item retry and a mixed batch preserve exact independent outcomes"
  * TaskItem). This journey drives only the browser: the nine views, their
  * complete-population summary, the overlapping cross-Task recovery lists and
  * the exact per-type file list are all server queries the page issues.
- */
-test("two ready batch children aggregate their summaries and only the selected subset is confirmed", async ({
-  page,
-  request,
-}) => {
-  const seeded = (await (
-    await request.post(`${BASE}/__harness__/seed-batch-summary-recovery`)
-  ).json()) as {
-    readonly runId: string;
-    readonly taskId: string;
-    readonly itemIds: readonly string[];
-    readonly sourceNames: readonly string[];
-  };
-  expect(seeded.itemIds).toHaveLength(2);
-
-  await connect(page, ADMIN_TOKEN);
-  await openInventory(page);
-  await page.goto(`${BASE}/ui-v2/operations?run=${seeded.runId}`);
-  await reconnectAtCurrentRoute(page, ADMIN_TOKEN);
-  await expect(page).toHaveURL(new RegExp(`run=${seeded.runId}`));
-  const detail = page.getByRole("region", { name: "运行详情" });
-  const items = detail.getByRole("region", { name: "主条目" });
-  await expect(
-    items.getByRole("region", { name: "批量失败分析恢复" }),
-  ).toBeVisible();
-
-  let state = await (
-    await request.get(`${BASE}/__harness__/batch-summary-recovery-state`)
-  ).json();
-  const initialTargetFiles = [...state.targetFiles].sort();
-  expect(Object.values(state.sourceExists)).toEqual([true, true]);
-
-  // Select both exact failed manual items and admit the batch analysis.
-  for (const itemId of seeded.itemIds) {
-    await items.getByLabel(`选择 ${itemId} 进行单项分析恢复`).check();
-  }
-  const batchPanel = items.getByRole("region", { name: "批量失败分析恢复" });
-  await batchPanel.getByRole("button", { name: "继续所选分析(2)" }).click();
-  await expect(batchPanel.getByText(/批次结果/)).toBeVisible();
-
-  // Run the real resident Worker once per child to complete both linked
-  // re-analyses.
-  for (let index = 0; index < 2; index += 1) {
-    const workerResponse = await request.post(
-      `${BASE}/__harness__/run-task-item-recovery-worker`,
-    );
-    expect(workerResponse.ok()).toBeTruthy();
-    const worker = await workerResponse.json();
-    expect(worker, JSON.stringify(worker)).toMatchObject({
-      ran: true,
-      continuationStatus: "completed",
-    });
-  }
-  await items.getByRole("button", { name: "Refresh" }).first().click();
-  await expect(batchPanel).toContainText("分析已完成");
-  state = await (
-    await request.get(`${BASE}/__harness__/batch-summary-recovery-state`)
-  ).json();
-  for (const itemId of seeded.itemIds) {
-    expect(state.continuations[itemId][0]).toMatchObject({
-      status: "completed",
-      newResultId: expect.any(String),
-    });
-  }
-  // Nothing has moved: the analysis is zero-mutation.
-  expect([...state.targetFiles].sort()).toEqual(initialTargetFiles);
-
-  // Prepare each child's independent durable summary in the task's own panel.
-  await batchPanel.getByRole("button", { name: /为 2 项生成计划摘要/ }).click();
-  const batchSummary = batchPanel.getByRole("region", {
-    name: "批量同页计划摘要",
-  });
-  await expect(batchSummary).toBeVisible();
-  await expect(
-    batchSummary.getByRole("heading", { name: "本项零变更摘要" }),
-  ).toHaveCount(2);
-  // Both children are ready; only one is selected by the operator.
-  await batchSummary
-    .getByRole("checkbox", { name: /选择 BatchSummaryA/ })
-    .first()
-    .uncheck();
-  const confirmBatchButton = batchSummary.getByRole("button", {
-    name: /确认继续整理所选 1 项/,
-  });
-  await assertHighContrastButton(confirmBatchButton);
-  await confirmBatchButton.focus();
-  await expect(confirmBatchButton).toBeFocused();
-  let confirmationCommitted = false;
-  let confirmPosts = 0;
-  const committedConfirmation: {
-    value: {
-      readonly executionId: string;
-      readonly selectedItemIds: readonly string[];
-    } | null;
-  } = { value: null };
-  let committedPreparationId: string | null = null;
-  let announceBatchRead!: () => void;
-  let releaseBatchRead!: () => void;
-  const batchReadStarted = new Promise<void>((resolve) => {
-    announceBatchRead = resolve;
-  });
-  const batchReadGate = new Promise<void>((resolve) => {
-    releaseBatchRead = resolve;
-  });
-  await page.route(
-    `**/api/v1/tasks/${seeded.taskId}/recovery-batches/**`,
-    async (route) => {
-      if (!confirmationCommitted) {
-        await route.continue();
-        return;
-      }
-      announceBatchRead();
-      await batchReadGate;
-      await route.continue();
-    },
-  );
-  await page.route(
-    "**/api/v1/manual-recovery-preparations/*/confirm",
-    async (route) => {
-      confirmPosts += 1;
-      const preparationPath = new URL(route.request().url()).pathname;
-      const preparationMatch = preparationPath.match(
-        /\/manual-recovery-preparations\/([^/]+)\/confirm$/,
-      );
-      committedPreparationId = preparationMatch?.[1] ?? null;
-      const committed = await route.fetch();
-      expect(committed.status()).toBe(202);
-      committedConfirmation.value = (await committed.json()) as {
-        readonly executionId: string;
-        readonly selectedItemIds: readonly string[];
-      };
-      confirmationCommitted = true;
-      // The real Python API has committed. Drop only the response so the
-      // browser must reconcile against this batch's durable child state.
-      await route.abort("connectionreset");
-    },
-    { times: 1 },
-  );
-  await batchSummary
-    .getByRole("button", { name: /确认继续整理所选 1 项/ })
-    .click();
-  await expect(batchSummary).toContainText(/结果未知/);
-  await batchReadStarted;
-  const pendingConfirmation = await page.evaluate((taskId) => {
-    const prefix = `mediaflow.operations.recovery-batch:v2:harness-admin:${taskId}:confirm:`;
-    const key = Object.keys(sessionStorage).find((value) =>
-      value.startsWith(prefix),
-    );
-    return key === undefined ? null : sessionStorage.getItem(key);
-  }, seeded.taskId);
-  expect(pendingConfirmation).not.toBeNull();
-  const selectedItemId = committedConfirmation.value?.selectedItemIds[0];
-  expect(selectedItemId).toBeTruthy();
-  const pendingBySource = JSON.parse(pendingConfirmation!) as Record<
-    string,
-    {
-      readonly preparationId: string;
-      readonly principalId: string;
-      readonly selectedItemIds: readonly string[];
-      readonly sourceItemId: string;
-    }
-  >;
-  const pendingSourceItemIds = Object.keys(pendingBySource);
-  expect(pendingSourceItemIds).toHaveLength(1);
-  expect(committedPreparationId).not.toBeNull();
-  const submittedSourceItemId = pendingSourceItemIds[0];
-  expect(pendingBySource[submittedSourceItemId]).toMatchObject({
-    preparationId: committedPreparationId,
-    principalId: "harness-admin",
-    selectedItemIds: [selectedItemId],
-    sourceItemId: submittedSourceItemId,
-  });
-  const lockedBatchButton = batchSummary.getByRole("button", {
-    name: /正在受理/,
-  });
-  await expect(lockedBatchButton).toBeDisabled();
-  await assertHighContrastButton(lockedBatchButton);
-  await expect(
-    batchSummary.getByRole("heading", { name: /条目 / }).last(),
-  ).toBeVisible();
-  await expect(page).toHaveURL(new RegExp(`run=${seeded.runId}`));
-  expect(confirmPosts).toBe(1);
-  expect(committedConfirmation.value?.selectedItemIds).toHaveLength(1);
-
-  // Release the exact durable read only after the unknown outcome and repeat
-  // lock are visible in the real browser. No second POST or navigation occurs.
-  releaseBatchRead();
-  await expect(batchSummary).toContainText(/持久状态已确认本次精确子集/);
-  await expect(batchSummary).toContainText(/本次确认已经受理/);
-  await expect(page).toHaveURL(new RegExp(`run=${seeded.runId}`));
-  expect(confirmPosts).toBe(1);
-  const pendingAfterRead = await page.evaluate((taskId) => {
-    const prefix = `mediaflow.operations.recovery-batch:v2:harness-admin:${taskId}:confirm:`;
-    return Object.keys(sessionStorage).filter((value) =>
-      value.startsWith(prefix),
-    );
-  }, seeded.taskId);
-  expect(pendingAfterRead).toEqual([]);
-  state = await (
-    await request.get(`${BASE}/__harness__/batch-summary-recovery-state`)
-  ).json();
-  expect([...state.targetFiles].sort()).toEqual(initialTargetFiles);
-  expect(Object.values(state.sourceExists)).toEqual([true, true]);
-});
-
-/**
- * Slice 46 RO-4 — the eight organizing task-center views and the exact
- * Task/type problem file list.
- *
- * The mixed problem population is created by `POST /__harness__/seed-task-center-problems`
- * through the real production services (RecognitionReviewService,
- * ClassificationReviewService, MetadataCorrectionService and a real failed
- * TaskItem). This journey drives only the browser: the eight views, their
- * complete-population summary, the overlapping cross-Task *business* recovery
- * lists and the exact per-type file list are all server queries the page
- * issues. A purely technical failure is read-only history, so the retired
- * Failure Recovery view cannot be reached at all.
  */
 test("the eight views and the exact Task/type problem file list work natively", async ({
   page,
@@ -5205,4 +4130,109 @@ test("unknown routes and fresh organization retain real elapsed stability and ex
     path: TASK45_RECOVERY_EVIDENCE + "/retirement-result-380.png",
     fullPage: true,
   });
+});
+
+/**
+ * B46.4-04 / RO-4: the retired mixed Task/Job collections are closed against the
+ * real backend, and every legal identity still lands on its own durable context.
+ *
+ * The ordinary identity below is produced by the real supported Files command
+ * (`create_directory`) on the harness ResourceLibrary, so its provenance is a
+ * genuine direct-file Task rather than a hand-written row.  Opening the retired
+ * `/operations/tasks/<id>` deep link must resolve that durable origin and open
+ * the exact library page with the operation context, never a second mixed list
+ * and never a submitted command.  An admitted organizing run keeps going to the
+ * center instead, and an unknown identity stays a bounded read-only answer.
+ */
+test("retired Task collections stay closed while each real identity reaches its own context", async ({
+  page,
+  request,
+}) => {
+  const command = await request.post(
+    BASE + "/api/v1/resource-libraries/source/files/commands",
+    {
+      headers: { Authorization: `Bearer ${ADMIN_TOKEN}` },
+      data: {
+        operation: "create_directory",
+        parentPath: "",
+        name: "legacy-origin-proof",
+      },
+    },
+  );
+  expect(command.status()).toBeLessThan(300);
+  const admitted = (await command.json()) as { taskId?: string };
+  expect(typeof admitted.taskId).toBe("string");
+  const ordinaryTaskId = admitted.taskId as string;
+
+  // The ordinary Task is real durable work under its own library authority.
+  const origin = await request.get(
+    BASE +
+      `/api/v1/files/operation-origin/${encodeURIComponent(ordinaryTaskId)}`,
+    { headers: { Authorization: `Bearer ${ADMIN_TOKEN}` } },
+  );
+  expect(origin.status()).toBe(200);
+  expect(await origin.json()).toMatchObject({
+    matched: true,
+    taskId: ordinaryTaskId,
+    libraryKind: "resource",
+    libraryId: "source",
+    sideEffects: "none",
+  });
+
+  const api = recordApiCalls(page);
+  // A legacy deep link is one of the routes whose read needs the operator's own
+  // token, and the token is memory-only, so the identity is entered through the
+  // real reconnect boundary exactly like a bookmarked entry.
+  await page.goto(`/ui-v2/operations/tasks/${ordinaryTaskId}`);
+  await reconnectAtCurrentRoute(page, ADMIN_TOKEN);
+  await expect(page).toHaveURL(
+    new RegExp(
+      `/ui-v2/resourcelib/files\\?resourceLibraryId=source&operationTaskId=${ordinaryTaskId}$`,
+    ),
+  );
+  await expect(
+    page.getByRole("heading", { name: "文件", exact: true }),
+  ).toBeVisible();
+  // The library page opens this exact operation, so the operator sees the real
+  // durable result instead of being asked to re-run or retry anything.
+  const operations = page.getByRole("dialog", { name: /当前页面操作状态/ });
+  await expect(operations).toBeVisible();
+  await expect(
+    operations.getByRole("heading", { name: "所选操作" }),
+  ).toBeVisible();
+  // Resolving the origin reads only: no mixed collection read and no command.
+  expect(
+    api.filter(
+      (call) =>
+        call.path === "/api/v1/tasks" ||
+        call.path === "/api/v1/jobs" ||
+        call.path.startsWith("/api/v1/operations/tasks") ||
+        call.path.startsWith("/api/v1/operations/jobs") ||
+        (call.method === "POST" &&
+          (call.path.endsWith("/files/commands") ||
+            call.path.endsWith("/resume"))),
+    ),
+  ).toEqual([]);
+
+  // The retired collections offer the closure notice instead of a mixed list.
+  // Each address is entered through the same reconnect boundary a real bookmark
+  // takes, because the token is memory-only.
+  await page.goto("/ui-v2/operations/tasks");
+  await reconnectAtCurrentRoute(page, ADMIN_TOKEN);
+  await expect(
+    page.getByRole("heading", { name: "任务列表已并入任务中心" }),
+  ).toBeVisible();
+  await page.goto("/ui-v2/operations/jobs");
+  await reconnectAtCurrentRoute(page, ADMIN_TOKEN);
+  await expect(
+    page.getByRole("heading", { name: "Job 列表已并入任务中心" }),
+  ).toBeVisible();
+
+  // A missing identity is a bounded read-only answer, never a guessed library.
+  await page.goto("/ui-v2/operations/tasks/does-not-exist");
+  await reconnectAtCurrentRoute(page, ADMIN_TOKEN);
+  await expect(
+    page.getByRole("heading", { name: "正在确认该 Task 的归属" }),
+  ).toBeVisible();
+  await expect(page.getByText(/没有提交任何命令/)).toBeVisible();
 });

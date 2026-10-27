@@ -139,27 +139,20 @@ export function AutomationOccurrencesPage() {
                   <p className="mf-dashboard-meta">{occurrence.nextAction}</p>
                 )}
                 <div className="mf-actions">
-                  {occurrence.actions.job !== null &&
-                    occurrence.actions.job.available && (
-                      <Link
-                        className="mf-button mf-button-secondary"
-                        to="/operations/jobs/$jobId"
-                        params={{ jobId: occurrence.jobId }}
-                      >
-                        Open the Job
-                      </Link>
-                    )}
-                  {occurrence.taskId !== null &&
-                    occurrence.actions.task !== null &&
-                    occurrence.actions.task.available && (
-                      <Link
-                        className="mf-button mf-button-secondary"
-                        to="/operations/tasks/$taskId"
-                        params={{ taskId: occurrence.taskId }}
-                      >
-                        Open the Task
-                      </Link>
-                    )}
+                  {/* Slice46 RO-4 / B46.4-04: the retired `/operations/jobs` and
+                      `/operations/tasks` collections are closed, so the exact
+                      occurrence evidence opens the same run *inside* the center,
+                      never a second mixed list.  Reading it stays GET-only. */}
+                  {(occurrence.actions.job?.available === true ||
+                    occurrence.actions.task?.available === true) && (
+                    <Link
+                      className="mf-button mf-button-secondary"
+                      to="/operations"
+                      search={{ run: occurrence.jobId ?? occurrence.taskId }}
+                    >
+                      Open the exact run in the Task Center
+                    </Link>
+                  )}
                 </div>
               </section>
             ))}

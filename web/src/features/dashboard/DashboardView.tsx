@@ -36,19 +36,23 @@ function FailureTarget({
   readonly failure: DashboardRecentFailure;
 }) {
   if (failure.kind === "task" && safeIdentifier(failure.identifier)) {
+    // Slice46 RO-4 / B46.4-04: the retired Task collection is closed, so a
+    // recorded failure opens the exact Task Center run context instead of a
+    // second mixed list.  The center only shows the run when the durable
+    // population really contains it; the legacy route explains a non-match.
     return (
       <Link
         to="/operations/tasks/$taskId"
         params={{ taskId: failure.identifier }}
       >
-        Open this Task
+        Open this Task in the Task Center
       </Link>
     );
   }
   if (failure.kind === "job" && safeIdentifier(failure.identifier)) {
     return (
       <Link to="/operations/jobs/$jobId" params={{ jobId: failure.identifier }}>
-        Open this Job
+        Open this Job in the Task Center
       </Link>
     );
   }

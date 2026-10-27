@@ -11734,8 +11734,12 @@ const server = createServer(async (req, res) => {
     );
     return;
   }
+  // `operation-origin/<taskId>` is its own bounded read (the proven ordinary
+  // library origin), so it must never be claimed by the FileIndex file-detail
+  // matcher.  An organizing identity and an unknown identity both answer through
+  // the origin contract below, not as a missing FileIndex record.
   const detailMatch = url.pathname.match(
-    /^\/api\/v1\/files\/(?!by-source$)(.+)$/,
+    /^\/api\/v1\/files\/(?!by-source$|operation-origin\/)(.+)$/,
   );
   if (detailMatch !== null) {
     if (req.method !== "GET") {
@@ -12065,6 +12069,10 @@ const server = createServer(async (req, res) => {
       : ATTENTION_RUN_STATUSES.includes(run.status);
     return {
       ...run,
+      // An exact all-success recovery may make the run's current overall state
+      // Completed while its original attempt stays failed history.  The fake
+      // population records no such recovery, so the honest value is false.
+      recovered_completion: run.recovered_completion === true,
       // Bounded destination-scope evidence; the fake population records no
       // run-level target scope, exactly like a legacy admission row.
       target_scope: null,
@@ -12152,6 +12160,38 @@ const server = createServer(async (req, res) => {
         (item) => item.task_id !== null && item.task_id === identifier,
       ) ?? null
     );
+  }
+
+  /**
+   * The proven ordinary library origin of one Task identity, or `null`.
+   *
+   * Only a durable ordinary command resolves: a session transfer records its
+   * own source library and kind, and an ordinary direct-command Task records
+   * the library it was admitted from.  An organizing run and an unknown
+   * identity answer with a bounded non-match instead of a guessed library.
+   */
+  function resolveSessionOrdinaryOrigin(session, identity) {
+    // The durable transfer authority row is the source of the proven origin; the
+    // derived Task record only exists for the administrative list/detail read,
+    // so it must never be asked to guess a library it does not carry.
+    const media = mediaLibraryState(session).mediaTransfers.get(identity);
+    const resource = resourceLibraryState(session).filesTransfers.get(identity);
+    const transfer = media ?? resource;
+    if (transfer !== undefined) {
+      const kind = media !== undefined ? "media" : "resource";
+      const libraryId = transfer.sourceLibraryId;
+      return {
+        matched: true,
+        taskId: identity,
+        libraryKind: kind,
+        libraryId,
+        ...(kind === "media"
+          ? { mediaLibraryId: libraryId }
+          : { resourceLibraryId: libraryId }),
+        path: null,
+      };
+    }
+    return null;
   }
 
   function runDispositionOf(status) {
@@ -14050,6 +14090,46 @@ const server = createServer(async (req, res) => {
         runContinuationDocument(run),
       ),
     );
+    return;
+  }
+
+  // --- Proven ordinary library origin (Slice46 RO-4 / B46.4-04) ---
+  //
+  // The closed legacy Task/Job deep links resolve an identity through this same
+  // bounded read.  A real admitted organizing run answers through the center
+  // instead; an ordinary Files/MediaLibrary Task answers with its durable origin
+  // (kind, library and source path); anything else is a bounded non-match.  No
+  // branch mutates or submits anything.
+  const originMatch = url.pathname.match(
+    /^\/api\/v1\/files\/operation-origin\/([^/]+)$/,
+  );
+  if (originMatch && req.method === "GET") {
+    if (!operationsGuard(res)) {
+      return;
+    }
+    const identity = decodeURIComponent(originMatch[1]);
+    if (resolveRunByIdentifier(identity)) {
+      sendJson(res, 200, {
+        matched: false,
+        taskId: identity,
+        reason: "organizing_work",
+        nextAction: "open the exact run in the Task Center",
+        sideEffects: "none",
+      });
+      return;
+    }
+    const ordinary = resolveSessionOrdinaryOrigin(session, identity);
+    if (ordinary !== null) {
+      sendJson(res, 200, { ...ordinary, sideEffects: "none" });
+      return;
+    }
+    sendJson(res, 200, {
+      matched: false,
+      taskId: identity,
+      reason: "not_ordinary_file_work",
+      nextAction: "open the exact Task detail in Operations",
+      sideEffects: "none",
+    });
     return;
   }
 
@@ -17165,6 +17245,15 @@ const server = createServer(async (req, res) => {
       mutations: state.mutationLog,
       commands: state.commandLog,
       transfers: state.transferLog,
+      // The durable transfer rows themselves, not the submission envelopes, so a
+      // browser test can prove what state the work durably reached (for example
+      // that resolving its origin never resumed it).
+      transferTasks: [...state.mediaTransfers.values()].map((transfer) => ({
+        taskId: transfer.taskId,
+        status: transfer.status,
+        version: transfer.version,
+        sourceLibraryId: transfer.sourceLibraryId,
+      })),
     });
     return;
   }

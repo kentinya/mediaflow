@@ -289,55 +289,118 @@ test("the media transfer journey works at a supported narrow viewport", async ({
   ).toBeVisible();
 });
 
-test("a paused media transfer retains its administrative deep-link continuation once", async ({
+test("a paused media transfer continues once from its own MediaLibrary progress dialog", async ({
   page,
 }) => {
-  // Slice 38 RO-6/RO-7: a paused bounded transfer is a durable Operations
-  // object.  Revisiting it in Operations and using its advertised Resume must
-  // report an *applied* control (never `Control was not applied`) and must
-  // re-queue the transfer exactly once for the resident Worker.
-  await resetMediaTransfers(page, "?transferPause=1");
-  await openMediaLibrary(page);
-  await page.getByRole("checkbox", { name: "选择 Dune (2021)" }).check();
-  await openRowMenu(page, /Dune \(2021\)/);
-  await page.getByRole("menuitem", { name: "复制" }).click();
-  const dialog = page.getByRole("dialog", { name: "复制到…" });
-  await chooseDestination(page, "tv");
-  await dialog.getByRole("button", { name: "复制", exact: true }).click();
-  await expect.poll(async () => (await transferPosts(page)).length).toBe(1);
-  const [post] = await transferPosts(page);
-  const taskId = `task-e2e-media-transfer-1`;
-  expect(post.mediaLibraryId).toBe("movies");
+  // Slice 38 RO-6/RO-7 + Slice46 RO-3: a paused bounded transfer is durable
+  // ordinary work owned by its MediaLibrary.  The continuation is reachable from
+  // that library's own progress dialog, is submitted exactly once, and is
+  // reported as applied rather than as an unapplied control.
+  const taskId = await admitPausedMediaTransfer(page);
+  const dialog = page.getByRole("dialog", { name: "复制进度" });
+  await expect(dialog.getByText(/传输已在安全边界暂停/)).toBeVisible();
 
-  // The Files dialog follows the durable projection into its paused state and
-  // advertises the continuation the backend really supports.
-  await expect(
-    page
-      .getByRole("dialog", { name: "复制进度" })
-      .getByText(/传输已在安全边界暂停/),
-  ).toBeVisible({ timeout: 10_000 });
   const resumeRequests: string[] = [];
   page.on("request", (request) => {
     if (request.method() === "POST" && request.url().includes("/resume")) {
       resumeRequests.push(request.url());
     }
   });
+  await dialog.getByRole("button", { name: "继续传输" }).click();
 
-  // Ordinary transfer readback is Files-owned in Slice46. The existing
-  // administrative Task deep link remains compatible and must retain Resume.
+  // The accepted continuation is reported truthfully: the durable projection is
+  // re-read as queued work, and the control was applied exactly once.
+  await expect(
+    dialog.getByText(/传输已确认并排队等待执行|等待可用 Worker/),
+  ).toBeVisible();
+  await expect(dialog.getByText(/继续传输未被执行/)).toHaveCount(0);
+  expect(resumeRequests).toHaveLength(1);
+  expect(resumeRequests[0]).toContain(`/api/v1/tasks/${taskId}/resume`);
+  const [transfer] = await durableMediaTransfers(page);
+  expect(transfer.status).toBe("QUEUED");
+});
+
+test("a paused transfer's retired administrative deep link reaches its own library without replaying it", async ({
+  page,
+}) => {
+  // Slice46 RO-4 / B46.4-04: the mixed Task collection is closed, so an old
+  // `/operations/tasks/<id>` deep link must resolve the exact ordinary identity
+  // to its proven MediaLibrary origin and land on that library's page carrying
+  // the operation context — never a second mixed list, a guessed library or an
+  // automatic command.
+  const taskId = await admitPausedMediaTransfer(page);
+  const resumeRequests: string[] = [];
+  page.on("request", (request) => {
+    if (request.method() === "POST" && request.url().includes("/resume")) {
+      resumeRequests.push(request.url());
+    }
+  });
+  const mixedReads: string[] = [];
+  page.on("request", (request) => {
+    const url = new URL(request.url());
+    if (
+      url.pathname === "/api/v1/tasks" ||
+      url.pathname === "/api/v1/jobs" ||
+      url.pathname.startsWith("/api/v1/operations/tasks") ||
+      url.pathname.startsWith("/api/v1/operations/jobs")
+    ) {
+      mixedReads.push(url.pathname);
+    }
+  });
   await page.goto(`/ui-v2/operations/tasks/${taskId}`);
   await connectAs(page);
-  await expect(
-    page.getByRole("heading", { name: `Task ${taskId}` }),
-  ).toBeVisible();
-  await page.getByRole("button", { name: "Resume Task" }).click();
 
-  // The accepted continuation is reported truthfully, not as an unapplied
-  // control, and it is submitted exactly once.
+  await expect(page).toHaveURL(
+    new RegExp(
+      `/ui-v2/medialib/files\\?mediaLibraryId=movies&operationTaskId=${taskId}$`,
+    ),
+  );
   await expect(
-    page.getByRole("heading", { name: "Control accepted" }),
+    page.getByRole("heading", { name: "媒体库", exact: true }),
   ).toBeVisible();
-  await expect(page.getByText("Control was not applied")).toHaveCount(0);
-  await expect(page.getByText(/Durable state: pending/)).toBeVisible();
-  expect(resumeRequests).toHaveLength(1);
+  expect(mixedReads).toEqual([]);
+  // Resolving the origin reads; it never resumes the paused transfer.
+  expect(resumeRequests).toEqual([]);
+  const [transfer] = await durableMediaTransfers(page);
+  expect(transfer.status).toBe("PAUSED");
 });
+
+/**
+ * Admit one deterministic media transfer that the fake pauses at its safe
+ * boundary, and return its durable Task identity.
+ */
+async function admitPausedMediaTransfer(page: Page): Promise<string> {
+  await resetMediaTransfers(page, "?transferPause=1");
+  await openMediaLibrary(page);
+  await page.getByRole("checkbox", { name: "选择 Dune (2021)" }).check();
+  await openRowMenu(page, /Dune \(2021\)/);
+  await page.getByRole("menuitem", { name: "复制" }).click();
+  const dialog = page.getByRole("dialog", { name: "复制到…" });
+  await expect(dialog).toBeVisible();
+  await chooseDestination(page, "tv");
+  await dialog.getByRole("button", { name: "复制", exact: true }).click();
+  await expect.poll(async () => (await transferPosts(page)).length).toBe(1);
+  const [post] = await transferPosts(page);
+  expect(post.mediaLibraryId).toBe("movies");
+  // The fake Worker stops the admitted transfer at the durable safe boundary, so
+  // every following step starts from a really paused row rather than a queued one.
+  await expect(
+    page
+      .getByRole("dialog", { name: "复制进度" })
+      .getByText(/传输已在安全边界暂停/),
+  ).toBeVisible({ timeout: 10_000 });
+  return "task-e2e-media-transfer-1";
+}
+
+/** The durable media-transfer rows this session admitted, from the fake. */
+async function durableMediaTransfers(
+  page: Page,
+): Promise<Array<{ taskId: string; status: string }>> {
+  return page.evaluate(async () => {
+    const response = await fetch("/__test__/media-library-mutations");
+    const document = (await response.json()) as {
+      transferTasks?: Array<{ taskId: string; status: string }>;
+    };
+    return document.transferTasks ?? [];
+  });
+}

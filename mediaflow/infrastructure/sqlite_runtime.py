@@ -149,8 +149,9 @@ from mediaflow.domain.operations_run import (
     COMMAND_LABELS,
     DISCOVERY_COMMAND_LABEL,
     ORGANIZING_JOB_COMMAND_FAMILIES,
-    ORGANIZING_TASK_COMMAND_FAMILIES,
+    ORGANIZING_RETRY_TASK_FAMILIES,
     ORGANIZING_TASK_LINEAGE_RELATIONS,
+    ORGANIZING_TASK_SEED_TASK_FAMILIES,
     RECOVERY_PROBLEM_TYPES,
     RUN_RECORD_KINDS,
     OperationsRunItemWindow,
@@ -5701,6 +5702,22 @@ class SQLiteTaskRepository:
     )
 
     _RUN_QUERY_SELECT = """
+        WITH RECURSIVE organizing_tasks(task_id, depth) AS (
+            -- A Task whose own persisted admission proves it is admitted
+            -- organizing work, plus every Task a legal continuation/retry
+            -- relation names as part of the same journey.  Membership is never
+            -- guessed from a label, a path or a timestamp.
+            SELECT tasks.task_id, 0 AS depth
+            FROM tasks tasks
+            WHERE substr(tasks.command, 1, length('media_'))
+                  <> {media_library_prefix}
+              AND (tasks.execute_authorized = 1
+                   AND {organizing_task_seed_families})
+            UNION
+            {organizing_task_successor_unions}
+            UNION
+            {organizing_retry_union}
+        )
         SELECT 'job' AS run_kind, jobs.job_id AS anchor_id, jobs.created_at AS sort_at,
                jobs.task_id AS linked_task_id, NULL AS transfer_task_id,
                jobs.schedule_id, jobs.definition_id, jobs.source_scope,
@@ -5714,11 +5731,11 @@ class SQLiteTaskRepository:
                tasks.scope_path AS source_scope, NULL AS resource_library_id,
                NULL AS worker_id, NULL AS job_status
         FROM tasks tasks
+        JOIN organizing_tasks admitted ON admitted.task_id = tasks.task_id
         WHERE NOT EXISTS (
             SELECT 1 FROM automation_jobs linked_jobs
             WHERE linked_jobs.task_id = tasks.task_id
         )
-        AND ({organizing_task_membership})
         UNION ALL
         SELECT 'discovery' AS run_kind,
                media_discoveries.discovery_id AS anchor_id,
@@ -5758,21 +5775,43 @@ class SQLiteTaskRepository:
 
         Task Center lists, counts, summaries, sources, cursors and exact-ID
         reads must all speak about *admitted organizing work* only.  Membership
-        is derived from supported command semantics and the durable
-        admission/lineage relations the real producers write — never from a
-        display label, a path substring or a timestamp:
+        is derived from supported command semantics and the durable admission /
+        lineage relations the real producers write — never from a display label,
+        a path substring or a timestamp:
 
         - a Job is organizing work when its own command family is supported
-          organizing work (a scheduled/due/Run-once occurrence, an analysis
-          continuation, a remaining-scope continuation);
-        - a standalone Task is organizing work when its own command family is
-          supported organizing work -- a Files admission command already
-          records ``manual_organize`` and keeps ``execute_authorized=True`` from
-          the moment it is admitted, so an explicitly admitted work stays
-          present while it is still discovering/analyzing/waiting for its first
-          confirmation -- or when an exact persisted continuation relation names
-          it as the successor of one organizing work.  A MediaLibrary-owned
-          ``media_`` command is never organizing work;
+          organizing work.  Every organizing Job producer (a scheduled or due
+          occurrence, an analysis continuation, a metadata-correction
+          continuation, a remaining-scope continuation) records exactly one of
+          those families, so no extra intent flag is needed;
+        - a *standalone* Task is organizing work only when a durable admission or
+          a legal lineage relation proves it:
+
+          * a Files admission persists ``manual_organize`` with
+            ``execute_authorized=1`` inside the admission transaction, so an
+            explicitly admitted work stays present while it is still
+            discovering, analyzing or waiting for its first confirmation;
+          * a real organize execution intent persists ``organize`` with
+            ``execute_authorized=1`` (an Automation occurrence, a confirmed
+            manual execution, a retry that keeps the original authority);
+          * a ``recovery-continuation`` / ``metadata-correction-continuation`` /
+            ``scope-continuation`` family is only ever produced *for* one
+            existing admitted Task;
+          * an explicit ``retry`` / ``retry-failed`` names the exact predecessor
+            Task in its own persisted command identity, and every Task that
+            relation produced is part of the same journey;
+          * an exact persisted continuation relation (``new_task_id`` of a
+            recovery / scope / metadata-correction continuation) may also name
+            the Task as the successor of one organizing work.  The relation is
+            followed recursively from the admitted seeds, so a multi-hop recovery
+            keeps every attempt in the center.
+
+          A standalone ``organize`` DryRun — the CLI run without ``--execute`` —
+          records ``execute_authorized=0`` and no admission relation, so it and
+          its analysis-only successors are excluded from every center list,
+          count, source option, cursor and deep link while the Task/Result rows
+          stay intact.  A MediaLibrary-owned ``media_`` command is never
+          organizing work;
         - a ``media_discoveries`` preparation row is organizing work only when
           it carries a durable definition origin (a definition-bound Run once)
           and never admitted its own organizing Task.  A plain analysis/preview
@@ -5782,27 +5821,58 @@ class SQLiteTaskRepository:
         def placeholders(values: tuple[str, ...]) -> str:
             return ", ".join(_sql_string(value) for value in values)
 
-        def membership(command_expression: str, task_identity: str) -> str:
-            family = cls._command_family_sql(command_expression)
-            lineage = " OR ".join(
-                f"EXISTS (SELECT 1 FROM {table} lineage WHERE lineage.{column} = {task_identity})"
-                for table, column in ORGANIZING_TASK_LINEAGE_RELATIONS
-            )
-            return (
-                f"({task_identity} IS NOT NULL AND (("
-                f"{family} IN ({placeholders(ORGANIZING_TASK_COMMAND_FAMILIES)})"
-                f" AND substr({command_expression}, 1, length('media_')) "
-                f"<> {_sql_string(MEDIA_LIBRARY_TASK_COMMAND_PREFIX)}) OR {lineage}))"
-            )
-
+        media_prefix = _sql_string(MEDIA_LIBRARY_TASK_COMMAND_PREFIX)
+        job_family = cls._command_family_sql("jobs.command")
+        task_family = cls._command_family_sql("tasks.command")
+        # Every persisted relation that proves one Task continues another Task
+        # of the same admitted organizing journey.  The recursive seed and the
+        # retry branch share this single list, so a relation can never be honored
+        # in one place only.
+        successor_unions = "\n            UNION\n".join(
+            f"""SELECT link.{column} AS task_id, relation.depth + 1 AS depth
+            FROM organizing_tasks relation
+            JOIN {table} link ON link.source_task_id = relation.task_id
+            JOIN tasks successor ON successor.task_id = link.{column}
+            WHERE relation.depth < 16
+              AND link.{column} IS NOT NULL
+              AND substr(successor.command, 1, length('media_')) <> {media_prefix}"""
+            for table, column in ORGANIZING_TASK_LINEAGE_RELATIONS
+        )
+        # An explicit retry records the exact predecessor Task inside its own
+        # persisted command identity, so the join is a real persisted identity
+        # equality rather than a name or timing guess.
+        retry_prefixes = " UNION ALL ".join(
+            f"SELECT {_sql_string(family + ':')} AS prefix"
+            for family in ORGANIZING_RETRY_TASK_FAMILIES
+        )
+        retry_union = f"""SELECT successor.task_id AS task_id,
+                   relation.depth + 1 AS depth
+            FROM organizing_tasks relation
+            JOIN ({retry_prefixes}) families ON 1 = 1
+            JOIN tasks successor
+              ON successor.command = families.prefix || relation.task_id
+            WHERE relation.depth < 16
+              AND substr(successor.command, 1, length('media_')) <> {media_prefix}"""
         discovery_origin = (
             "(media_discoveries.definition_origin_json IS NOT NULL"
             " AND media_discoveries.definition_origin_json <> '')"
         )
         return {
+            "media_library_prefix": media_prefix,
             "organizing_job_commands": placeholders(ORGANIZING_JOB_COMMAND_FAMILIES),
-            "organizing_task_membership": membership("tasks.command", "tasks.task_id"),
+            # A Files admission or a confirmed execution intent keeps its own
+            # persisted authority from the admission transaction, so this flag
+            # plus a supported family is the admission proof — never a current
+            # Active guess and never a display label.
+            "organizing_task_seed_families": (
+                f"({task_family} IN ({placeholders(ORGANIZING_TASK_SEED_TASK_FAMILIES)}))"
+            ),
+            "organizing_task_successor_unions": successor_unions,
+            "organizing_retry_union": retry_union,
             "organizing_discovery_membership": discovery_origin,
+            "organizing_job_membership": (
+                f"{job_family} IN ({placeholders(ORGANIZING_JOB_COMMAND_FAMILIES)})"
+            ),
         }
 
     @classmethod
@@ -6074,6 +6144,77 @@ class SQLiteTaskRepository:
             for problem in RECOVERY_PROBLEM_TYPES
         }
         problem_file_sql = {problem: task_item_count(problem) for problem in RECOVERY_PROBLEM_TYPES}
+        # -- Aggregate recovered completion (B46.4-02) ------------------------
+        #
+        # A run whose outstanding work was really completed by exact, verified
+        # follow-ups is *completed now*, while its original Task/Result rows and
+        # this Task's own historical outcome stay exactly as they were recorded.
+        # Every necessary item must individually prove its own completed effect:
+        #
+        # - the item is not a success/ignored/skipped/cancelled terminal state
+        #   (those never replay) and not an attachment step of a primary file;
+        # - the exact verified-follow-up evidence (source, pin, lineage and
+        #   completed effect certainty — the same predicate the per-item read
+        #   uses) proves *this* item's original source was really organized;
+        # - a purely technical failure or an unsettled/unknown effect never
+        #   qualifies, so a mixed run cannot be presented as recovered.
+        #
+        # Nothing here is inferred from a sibling's success, a child Task's
+        # totals, a single analysis or a consumed marker: an item either has its
+        # own verified effect or the run keeps its honest failed/partial state.
+        verified_follow_up = self._verified_recovery_follow_up("recovery_items")
+        recovered_success = (
+            "task_status.task_id IS NOT NULL "
+            "AND task_status.status IN ('failed', 'partial_success') "
+            "AND NOT EXISTS (SELECT 1 FROM recognition_reviews recoverable_recognition "
+            "WHERE recoverable_recognition.item_id IN ("
+            "SELECT pending_item.item_id FROM task_items pending_item "
+            f"WHERE pending_item.task_id = {task_identity}) "
+            "AND recoverable_recognition.status = 'pending') "
+            "AND NOT EXISTS (SELECT 1 FROM metadata_reviews recoverable_metadata "
+            "WHERE recoverable_metadata.item_id IN ("
+            "SELECT pending_item.item_id FROM task_items pending_item "
+            f"WHERE pending_item.task_id = {task_identity}) "
+            "AND recoverable_metadata.status = 'pending') "
+            "AND NOT EXISTS (SELECT 1 FROM metadata_corrections recoverable_correction "
+            "WHERE recoverable_correction.item_id IN ("
+            "SELECT pending_item.item_id FROM task_items pending_item "
+            f"WHERE pending_item.task_id = {task_identity}) "
+            "AND recoverable_correction.status = 'pending') "
+            "AND NOT EXISTS (SELECT 1 FROM classification_reviews recoverable_classification "
+            "WHERE recoverable_classification.item_id IN ("
+            "SELECT pending_item.item_id FROM task_items pending_item "
+            f"WHERE pending_item.task_id = {task_identity}) "
+            "AND recoverable_classification.status = 'pending') "
+            "AND NOT EXISTS (SELECT 1 FROM conflict_confirmations recoverable_conflict "
+            "WHERE recoverable_conflict.item_id IN ("
+            "SELECT pending_item.item_id FROM task_items pending_item "
+            f"WHERE pending_item.task_id = {task_identity}) "
+            "AND recoverable_conflict.status = 'pending') "
+            "AND NOT EXISTS (SELECT 1 FROM task_items recovery_items "
+            f"WHERE recovery_items.task_id = {task_identity} "
+            "AND recovery_items.source_path NOT LIKE '%.srt' "
+            "AND recovery_items.source_path NOT LIKE '%.ass' "
+            "AND recovery_items.source_path NOT LIKE '%.ssa' "
+            "AND recovery_items.source_path NOT LIKE '%.vtt' "
+            "AND recovery_items.source_path NOT LIKE '%.sub' "
+            "AND recovery_items.source_path NOT LIKE '%.sup' "
+            "AND recovery_items.source_path NOT LIKE '%.nfo' "
+            "AND recovery_items.source_path NOT LIKE '%.jpg' "
+            "AND recovery_items.source_path NOT LIKE '%.png' "
+            "AND recovery_items.status IN ('failed', 'partial', 'pending', 'processing', 'paused') "
+            f"AND NOT ({verified_follow_up}) "
+            "AND NOT EXISTS (SELECT 1 FROM task_results recovery_result "
+            "WHERE recovery_result.task_id = recovery_items.task_id "
+            "AND recovery_result.item_id = recovery_items.item_id "
+            "AND lower(recovery_result.status) = 'success' "
+            "AND COALESCE(recovery_result.effect_certainty, 'unknown') "
+            "NOT IN ('attempted_unverified', 'unknown') "
+            "AND COALESCE(recovery_result.uncertain_effects, '[]') = '[]')) "
+            "AND EXISTS (SELECT 1 FROM manual_recovery_preparations recovered_summary "
+            "WHERE recovered_summary.status = 'confirmed' "
+            "AND recovered_summary.source_task_id = task_status.task_id)"
+        )
         document = f"""
             SELECT runs.*,
                    task_status.status AS linked_task_status,
@@ -6230,6 +6371,15 @@ class SQLiteTaskRepository:
                     ), 'unknown') IN ('attempted_unverified', 'unknown')
                    ) AS uncertain_success_items,
                    CASE
+                       -- Task Center RO-4 (B46.4-02): once *every* necessary
+                       -- item of this exact run carries its own persisted
+                       -- proof of a completed follow-up, the run's current
+                       -- overall state is Completed.  The original Task/Result
+                       -- rows keep their historical failed/partial facts; this
+                       -- is a read-time projection over proven effects only, and
+                       -- it can never invent a success from a sibling, a child
+                       -- total or a consumed marker.
+                       WHEN {recovered_success} THEN 'completed'
                        WHEN task_status.status = 'paused' THEN 'paused'
                        WHEN task_status.status = 'pending' THEN 'pending'
                        WHEN task_status.status = 'running' THEN 'running'
@@ -6255,6 +6405,12 @@ class SQLiteTaskRepository:
                            runs.job_status
                        ELSE 'unknown'
                    END AS derived_status,
+                   -- Whether the run is only finished because a proven recovery
+                   -- completed its outstanding work.  Published separately so
+                   -- the UI can say "已完成（恢复成功）" instead of pretending
+                   -- the original attempt always succeeded.
+                   CASE WHEN {recovered_success} THEN 1 ELSE 0 END
+                       AS recovered_completion,
                    -- The durable trigger, derived from admission-written
                    -- identity only and with exactly the precedence
                    -- :meth:`_operations_run_overview` applies, so the SQL
@@ -7792,6 +7948,69 @@ class SQLiteTaskRepository:
               AND lower(result.status) = 'success'
         )"""
 
+    def has_current_four_type_problem(self, item_id: str) -> bool:
+        """Whether this exact TaskItem currently carries a four-type problem.
+
+        It reuses the same per-item predicates the Task Center lists, file
+        counts and Attention union use, so a detail panel can never offer a
+        different recovery set than the lists themselves publish.
+        """
+
+        if not isinstance(item_id, str) or not item_id.strip():
+            return False
+        clause = " OR ".join(
+            f"({self._problem_item_predicate(problem)[0]})" for problem in RECOVERY_PROBLEM_TYPES
+        )
+        with self._lock:
+            row = self._connection.execute(
+                f"SELECT 1 FROM task_items i WHERE i.item_id = ? AND ({clause}) LIMIT 1",
+                (item_id,),
+            ).fetchone()
+        return row is not None
+
+    def has_persisted_recovery_lineage(self, item_id: str) -> bool:
+        """Whether an exact persisted recovery chain is in flight for this item.
+
+        Task Center RO-4 keeps the four-type recovery journey reachable only
+        while a durable fact asks for it: an admitted recovery step (a pending
+        request, a queued/running continuation, a prepared summary, an active
+        one-shot authority) or an already verified follow-up.  A purely
+        technical failure has none of those, so its detail stays factual
+        read-only history instead of a generic repair/retry invitation.
+
+        Every branch reads a persisted identity of this exact item (or the exact
+        link that names it), never a label, a metric name or a time proximity.
+        """
+
+        if not isinstance(item_id, str) or not item_id.strip():
+            return False
+        with self._lock:
+            row = self._connection.execute(
+                """SELECT 1 FROM task_items lineage_item
+                WHERE lineage_item.item_id = ?
+                  AND (
+                    EXISTS (SELECT 1 FROM recovery_requests lineage_request
+                            WHERE lineage_request.item_id = lineage_item.item_id
+                              AND lineage_request.status = 'pending')
+                    OR EXISTS (SELECT 1 FROM recovery_continuations lineage_continuation
+                               WHERE lineage_continuation.source_item_id = lineage_item.item_id
+                                 AND lineage_continuation.status IN ('queued', 'running'))
+                    OR EXISTS (SELECT 1 FROM recovery_continuations lineage_parent
+                               WHERE lineage_parent.new_task_id = lineage_item.task_id
+                                 AND lineage_parent.status IN ('queued', 'running'))
+                    OR EXISTS (SELECT 1 FROM manual_recovery_preparations lineage_prep
+                               WHERE lineage_prep.status = 'prepared'
+                                 AND (lineage_prep.source_item_id = lineage_item.item_id
+                                      OR lineage_prep.source_task_id = lineage_item.task_id))
+                    OR EXISTS (SELECT 1 FROM manual_recovery_links lineage_link
+                               WHERE lineage_link.status = 'authorized'
+                                 AND lineage_link.source_item_id = lineage_item.item_id)
+                  )
+                LIMIT 1""",
+                (item_id,),
+            ).fetchone()
+        return row is not None
+
     def has_verified_recovery_follow_up(self, item_id: str) -> bool:
         with self._lock:
             return (
@@ -7804,35 +8023,76 @@ class SQLiteTaskRepository:
             )
 
     @staticmethod
+    def _recovery_handoff_state_sql(item_alias: str) -> str:
+        """The current recovery handoff state of one original source item.
+
+        Both supported same-interface handoffs are bound to the exact source
+        TaskItem, and their own persisted status is the only authority for
+        whether the operator still owes the required step:
+
+        - the current ``manual_recovery_preparations`` summary projects
+          ``prepared`` (nobody confirmed it yet) or ``confirmed`` (the exact
+          ready subset was admitted, so the responsibility moved to that
+          execution's own durable Result);
+        - the older one-shot ``manual_recovery_links`` anchor projects
+          ``authorized`` until its execute consumes it, then ``consumed``.
+
+        A ``superseded``/``stale`` summary or link is history and never keeps a
+        step alive.  A consumed link is reported as ``confirmed`` because the
+        operator already completed that exact handoff.
+        """
+
+        return (
+            "COALESCE("
+            "(SELECT prep.status FROM manual_recovery_preparations prep "
+            f"WHERE prep.source_item_id = {item_alias}.item_id "
+            "ORDER BY prep.created_at DESC, prep.preparation_id DESC LIMIT 1), "
+            "(SELECT CASE link_row.status WHEN 'consumed' THEN 'confirmed' "
+            "ELSE link_row.status END FROM manual_recovery_links link_row "
+            f"WHERE link_row.source_item_id = {item_alias}.item_id "
+            "ORDER BY link_row.created_at DESC, link_row.link_id DESC LIMIT 1), "
+            "'')"
+        )
+
+    @staticmethod
     def _saved_decision_continuation_sql(item_alias: str) -> str:
-        """A saved business decision that still needs its explicit continuation.
+        """A saved business decision that still needs its explicit follow-up.
 
         A recognition/metadata/classification/conflict decision Save moves the
         item to ``pending`` at a ``*_resolved`` stage: the file left its old
         review (so it is no longer a *new* blocker of that type) but the
         required human step is not finished, because the exact safe analysis
-        continuation has not run yet.  That pending step is still four-type
-        recovery work of the *same* type, never a technical failure and never a
-        fifth type.
+        continuation, the summary and the explicit confirmation have not all
+        happened yet.
 
-        Once the operator submits the explicit continuation, the item moves to
-        ``pending`` at ``task_retry_requested``: that follow-up is already queued
-        work, so it belongs in Running and no longer counts here.  A later
-        technical follow-up failure likewise leaves the four types; only a new
-        business blocker creates a new typed problem.
+        The saved decision therefore keeps its own four-type responsibility
+        until the exact persisted chain proves the whole step is done:
+
+        - the linked analysis continuation is still missing, queued, running or
+          failed (nothing after the saved decision yet), or
+        - the analysis completed but no current summary was prepared for the
+          original item (the operator must still review the new plan), or
+        - a summary is ``prepared`` but not confirmed (the operator must still
+          confirm the exact ready subset).
+
+        A ``confirmed`` summary moved the responsibility to the execution's own
+        Result, and an explicit ``ignore``/``skip`` ended it, so neither keeps
+        the old type alive.  A purely technical follow-up failure is *not* a
+        four-type problem: only a genuinely new business blocker of any of the
+        four types keeps a pending human step, which the per-type predicates
+        below decide from their own durable review rows.
         """
 
         return (
             f"{item_alias}.status = 'pending' "
             f"AND {item_alias}.stage IN ("
             "'recognition_resolved', 'metadata_resolved', 'metadata_correction_resolved', "
-            "'classification_resolved')"
-            # A *newer* attempt admitted from the same original item proves the
-            # saved decision was already consumed: the exact older analysis
-            # child that carried it must not keep pretending a human step is
-            # still owed.  The relation read is the persisted recovery lineage
-            # (same source item, strictly newer continuation), never a label or
-            # a timestamp proximity.
+            "'classification_resolved', 'conflict_resolved')"
+            # The exact saved decision itself must still be the last word of
+            # its own item; a newer recovered decision on the same item is read
+            # from that block row instead.
+            # A *newer* attempt admitted from the same original item proves an
+            # earlier saved decision was already consumed.
             " AND NOT EXISTS (SELECT 1 FROM recovery_continuations decision_chain "
             "JOIN recovery_continuations newer_chain "
             "ON newer_chain.source_item_id = decision_chain.source_item_id "
@@ -7840,10 +8100,16 @@ class SQLiteTaskRepository:
             "OR (newer_chain.created_at = decision_chain.created_at "
             "AND newer_chain.continuation_id > decision_chain.continuation_id)) "
             f"WHERE decision_chain.new_task_id = {item_alias}.task_id)"
+            # The saved decision is only *finished* when the exact recovery
+            # chain reached a confirmed follow-up.  Until then the same type's
+            # required human step is still owed.
+            " AND COALESCE(("
+            f"{SQLiteTaskRepository._recovery_handoff_state_sql(item_alias)}"
+            "), '') <> 'confirmed'"
         )
 
-    @staticmethod
-    def _problem_item_predicate(problem_type: str) -> tuple[str, tuple[object, ...]]:
+    @classmethod
+    def _problem_item_predicate(cls, problem_type: str) -> tuple[str, tuple[object, ...]]:
         """The exact durable predicate of one *business* recovery problem type.
 
         Kept next to the run document's own problem probes so the view list,
@@ -7855,19 +8121,29 @@ class SQLiteTaskRepository:
         Conflict are problem types.  A technical failure -- Provider transport,
         Storage, permission/grant, a missing configuration/source, a partial or
         uncertain effect -- is deliberately *not* one: it is read-only history
-        in All/Ended.  Each type predicate therefore covers exactly two real
-        human situations:
+        in All/Ended.  Each per-item predicate therefore covers exactly the real
+        human situations of that type, all of them backed by persisted rows of
+        the same item or its exact persisted recovery chain:
 
-        - a current blocking review of that type (a new business decision), and
+        - a current blocking review of that type (a new business decision);
         - the saved decision that still waits for its explicit safe continuation
           (the same type's required next step, before it really resolved).
 
-        A resolver that already recorded its decision must **not** hide a
-        remaining live blocker on the same item: an open review of the type
-        always wins over the resolved decision that preceded it.
+        The chain-aware probes below keep the type alive across the whole
+        required human journey — saved decision → linked analysis → prepared
+        summary — and drop it only when the exact confirmed follow-up already
+        took over (or a legal ignore/skip ended the item).  A resolver that
+        already recorded its decision must **not** hide a remaining live blocker
+        on the same item: an open review of the type always wins over the
+        resolved decision that preceded it.
         """
 
-        saved = SQLiteTaskRepository._saved_decision_continuation_sql("i")
+        saved = cls._saved_decision_continuation_sql("i")
+        # The item that carries the *continuation* responsibility may be a
+        # linked analysis child.  Its own row is ``pending`` at a new stage, so
+        # the predicates also accept "this item is the newest child of one exact
+        # saved-decision chain whose follow-up is not confirmed yet".
+        inherited = cls._inherited_recovery_responsibility_sql("i", problem_type)
         if problem_type == "recognition":
             return (
                 "("
@@ -7880,6 +8156,7 @@ class SQLiteTaskRepository:
                 " AND NOT EXISTS (SELECT 1 FROM recognition_reviews open_recognition "
                 "WHERE open_recognition.item_id = i.item_id"
                 " AND open_recognition.status = 'pending'))"
+                f" OR ({inherited})"
                 ")",
                 (),
             )
@@ -7902,6 +8179,7 @@ class SQLiteTaskRepository:
                 " AND NOT EXISTS (SELECT 1 FROM metadata_corrections open_correction "
                 "WHERE open_correction.item_id = i.item_id"
                 " AND open_correction.status = 'pending'))"
+                f" OR ({inherited})"
                 ")",
                 (),
             )
@@ -7918,6 +8196,7 @@ class SQLiteTaskRepository:
                 " AND NOT EXISTS (SELECT 1 FROM classification_reviews open_classification "
                 "WHERE open_classification.item_id = i.item_id"
                 " AND open_classification.status = 'pending'))"
+                f" OR ({inherited})"
                 ")",
                 (),
             )
@@ -7933,10 +8212,149 @@ class SQLiteTaskRepository:
                 " AND NOT EXISTS (SELECT 1 FROM conflict_confirmations open_conflict "
                 "WHERE open_conflict.item_id = i.item_id"
                 " AND open_conflict.status = 'pending'))"
+                f" OR ({inherited})"
                 ")",
                 (),
             )
         raise ValueError("run problem item type is invalid")
+
+    @staticmethod
+    def _recovery_chain_cte(item_alias: str) -> str:
+        """The exact persisted recovery chain of one item, root first.
+
+        Every hop is a persisted identity: one ``recovery_continuations`` row
+        whose ``source_item_id`` is a chain item, joined to the child Task it
+        recorded, and to that child's single item.  The hop also preserves the
+        exact source (storage + path) and stays bounded, so no sibling, no
+        same-named file and no renamed source can join the chain.
+        """
+
+        return f"""
+            chain(item_id, depth) AS (
+                SELECT {item_alias}.item_id AS item_id, 0 AS depth
+                UNION
+                SELECT child_item.item_id, child_chain.depth + 1
+                FROM chain child_chain
+                JOIN task_items parent_item ON parent_item.item_id = child_chain.item_id
+                JOIN recovery_continuations link
+                  ON link.source_item_id = parent_item.item_id
+                 AND link.source_task_id = parent_item.task_id
+                 AND link.new_task_id IS NOT NULL
+                JOIN tasks child_task ON child_task.task_id = link.new_task_id
+                JOIN task_items child_item ON child_item.task_id = child_task.task_id
+                WHERE child_chain.depth < 16
+                  AND child_item.storage_id = parent_item.storage_id
+                  AND child_item.source_path = parent_item.source_path
+            )"""
+
+    @classmethod
+    def _chain_newest_decision_kind_sql(cls, item_alias: str) -> str:
+        """The newest saved business decision kind in one exact recovery chain.
+
+        Returns a scalar subquery yielding one of the four type names, or
+        ``NULL`` when the chain carries no saved business decision at all (for
+        example a purely technical retry that never needed a business choice).
+        The comparison is on the decision's own durable timestamp, so the type
+        of the still-owed step is the type the operator last actually decided.
+        """
+
+        chain = cls._recovery_chain_cte(item_alias)
+        return f"""(SELECT newest.kind FROM (
+            WITH RECURSIVE {chain},
+            decisions(kind, occurred_at) AS (
+                SELECT 'recognition', COALESCE(decided_at, updated_at)
+                FROM recognition_reviews
+                WHERE status = 'resolved' AND item_id IN (SELECT item_id FROM chain)
+                UNION ALL
+                SELECT 'metadata', COALESCE(decided_at, updated_at)
+                FROM metadata_reviews
+                WHERE status = 'resolved' AND item_id IN (SELECT item_id FROM chain)
+                UNION ALL
+                SELECT 'metadata', COALESCE(decided_at, updated_at)
+                FROM metadata_corrections
+                WHERE status = 'resolved' AND item_id IN (SELECT item_id FROM chain)
+                UNION ALL
+                SELECT 'classification', COALESCE(decided_at, updated_at)
+                FROM classification_reviews
+                WHERE status = 'resolved' AND item_id IN (SELECT item_id FROM chain)
+                UNION ALL
+                SELECT 'conflict', updated_at
+                FROM conflict_confirmations
+                WHERE status = 'resolved' AND item_id IN (SELECT item_id FROM chain)
+            )
+            SELECT kind FROM decisions
+            ORDER BY occurred_at DESC, kind DESC
+            LIMIT 1
+        ) newest)"""
+
+    @classmethod
+    def _chain_newest_step_settled_sql(cls, item_alias: str) -> str:
+        """Whether the newest analysis step of the chain produced a usable plan.
+
+        The exact chain's newest ``recovery_continuations`` row is the current
+        analysis step.  It has produced one usable linked DryRun only when it
+        completed *and* recorded the exact ``new_result_id``; a queued, running
+        or technically failed step never counts, so nothing here can turn a
+        transport/storage failure into a business problem or an optimistic
+        success.
+        """
+
+        chain = cls._recovery_chain_cte(item_alias)
+        return f"""EXISTS (
+            WITH RECURSIVE {chain}
+            SELECT 1 FROM (
+                SELECT continuation.status AS status, continuation.new_result_id AS new_result_id
+                FROM recovery_continuations continuation
+                WHERE continuation.source_item_id IN (SELECT item_id FROM chain)
+                ORDER BY continuation.created_at DESC, continuation.continuation_id DESC
+                LIMIT 1
+            ) newest_step
+            WHERE newest_step.status = 'completed' AND newest_step.new_result_id IS NOT NULL
+        )"""
+
+    @classmethod
+    def _summary_step_owed_sql(cls, item_alias: str) -> str:
+        """The exact original item still owes its summary/confirmation step.
+
+        Only the original manual execution item can own that step: the recovery
+        summary and its one-shot confirmation are bound to that exact
+        ``manual_executions`` item.  A deeper analysis child owns the *analysis*
+        step, never the summary, so it can never claim this responsibility.
+
+        The step is owed while the linked analysis of the exact chain produced a
+        usable DryRun and no confirmed summary took over yet — that is exactly
+        "分析完成待生成摘要" and "摘要待确认".  Queued/running/technically failed
+        analysis, an ignored item and a confirmed summary all end it.
+        """
+
+        chain_settled = cls._chain_newest_step_settled_sql(item_alias)
+        confirmed = cls._recovery_handoff_state_sql(item_alias)
+        return (
+            f"{item_alias}.status = 'pending' "
+            f"AND {item_alias}.stage = 'task_retry_requested' "
+            "AND EXISTS (SELECT 1 FROM manual_execution_items source_execution_item "
+            f"WHERE source_execution_item.task_id = {item_alias}.task_id "
+            f"AND source_execution_item.task_item_id = {item_alias}.item_id) "
+            f"AND {chain_settled} "
+            f"AND COALESCE({confirmed}, '') <> 'confirmed'"
+        )
+
+    @classmethod
+    def _inherited_recovery_responsibility_sql(cls, item_alias: str, problem_type: str) -> str:
+        """The still-owed summary step of one exact chain, attributed by type.
+
+        The saved business decision belongs to one source item, so the required
+        human step continues at whichever chain member currently owns it — and
+        the *type* of that step is the type the operator last actually decided
+        in that exact chain.  A purely technical chain (no saved business
+        decision) therefore never creates a four-type problem, and a chain whose
+        newest decision was a different type moves the responsibility instead of
+        duplicating it.
+        """
+
+        newest_kind = cls._chain_newest_decision_kind_sql(item_alias)
+        owed = cls._summary_step_owed_sql(item_alias)
+        return f"({owed} AND {newest_kind} = {_sql_string(problem_type)})"
 
     def _typed_problem_exists(self, problem_type: str) -> str:
         """The exact Task-level existence probe of one business problem type.
@@ -8379,6 +8797,7 @@ class SQLiteTaskRepository:
                 if run_kind != "discovery" and row["admitted_item_bound"] is not None
                 else None
             ),
+            recovered_completion=bool(row["recovered_completion"]),
         )
 
     def claim_next_job(

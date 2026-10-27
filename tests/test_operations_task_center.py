@@ -125,10 +125,22 @@ class _TaskCenterTestCase(unittest.TestCase):
         self.repository.close()
         self.directory.cleanup()
 
-    def _task(self, command: str = "organize", *, scope: str | None = None):
+    def _task(
+        self,
+        command: str = "organize",
+        *,
+        scope: str | None = None,
+        execute_authorized: bool = True,
+    ):
+        # An admitted organizing Task always keeps its real execution intent:
+        # a Files admission, a confirmed manual execution, an Automation
+        # occurrence or a retry that keeps the original authority.  The Task
+        # Center membership rule reads exactly that persisted admission, so a
+        # standalone analysis-only DryRun (``execute_authorized=False``) is the
+        # negative case the population tests seed explicitly.
         task = self.coordinator.create(
             command,
-            execute_authorized=False,
+            execute_authorized=execute_authorized,
             scope_path=scope or f"Movies/{command}",
         )
         return task
@@ -1190,3 +1202,131 @@ class TaskCenterPopulationTests(_TaskCenterTestCase):
         # Every collected row is organizing work with the metadata problem.
         for item in (*first["items"], *second["items"]):
             self.assertEqual(["metadata"], list(item["problem_types"]))
+
+    def test_standalone_analysis_only_dryrun_is_not_organizing_work(self) -> None:
+        # B46.4-05: the production CLI ``organize <file>`` without ``--execute``
+        # admits a real durable Task whose shape is DRY_RUN / zero movement /
+        # ``execute_authorized=False``.  That is analysis-only preparation, so it
+        # never enters a center list, count, source option, cursor or exact-ID
+        # deep link -- while the Task/Result rows themselves stay intact.
+        analysed = self.coordinator.create(
+            "organize",
+            execute_authorized=False,
+            scope_path="Movies/analysis-only",
+        )
+        self._processing_item(analysed.task_id, "analysis-item")
+        self.repository._connection.execute(
+            "UPDATE task_items SET status='dry_run', stage='completed' WHERE item_id=?",
+            ("analysis-item",),
+        )
+        self.repository._connection.commit()
+
+        page = self._page()
+        self.assertEqual(0, page["total"], page)
+        self.assertEqual([], [entry["value"] for entry in page["summary"]["sources"]])
+        for view in (
+            "all",
+            "running",
+            "attention",
+            "ended",
+            "recognition",
+            "metadata",
+            "classification",
+            "conflict",
+        ):
+            self.assertEqual(0, self._page(f"view={view}")["total"], view)
+        code, body = request(self.api, "GET", f"/api/v1/operations/runs/{analysed.task_id}")
+        self.assertEqual(404, code)
+        self.assertEqual("not_found", body["error"]["code"])
+        # Nothing was deleted: the durable analysis Task and its item remain.
+        self.assertIsNotNone(self.repository.get_task(analysed.task_id))
+        self.assertIsNotNone(self.repository.get_item("analysis-item"))
+
+        # A confirmed execution intent of the *same* scope is organizing work.
+        executed = self.coordinator.create(
+            "organize",
+            execute_authorized=True,
+            scope_path="Movies/executed",
+        )
+        self.assertEqual(1, self._page()["total"])
+        self.assertEqual(executed.task_id, self._page()["items"][0]["task_id"])
+
+    def test_analysis_only_successors_never_inherit_center_membership(self) -> None:
+        # B46.4-05: an analysis-only Task's own recovery successors are not
+        # organizing work either, and they must not become a back door into the
+        # center.  The same persisted relation from an *admitted* Task is legal
+        # organizing lineage, so the rule is the predecessor's admission — not
+        # the continuation command.
+        analysed = self.coordinator.create(
+            "organize", execute_authorized=False, scope_path="Movies/analysis-only"
+        )
+        self._processing_item(analysed.task_id, "analysis-item")
+        analysis_child = self.coordinator.create(
+            "recovery-continuation:analysis-continuation",
+            execute_authorized=False,
+            scope_path="Movies/analysis-only",
+        )
+        self._processing_item(analysis_child.task_id, "analysis-child-item")
+        self._insert_continuation(
+            "analysis-continuation",
+            source_task_id=analysed.task_id,
+            source_item_id="analysis-item",
+            new_task_id=analysis_child.task_id,
+        )
+        self.assertEqual(0, self._page()["total"])
+
+        admitted = self.coordinator.create(
+            "organize", execute_authorized=True, scope_path="Movies/admitted"
+        )
+        self._processing_item(admitted.task_id, "admitted-item")
+        admitted_child = self.coordinator.create(
+            "recovery-continuation:admitted-continuation",
+            execute_authorized=False,
+            scope_path="Movies/admitted",
+        )
+        self._processing_item(admitted_child.task_id, "admitted-child-item")
+        self._insert_continuation(
+            "admitted-continuation",
+            source_task_id=admitted.task_id,
+            source_item_id="admitted-item",
+            new_task_id=admitted_child.task_id,
+        )
+        ids = {item["task_id"] for item in self._page()["items"]}
+        self.assertEqual({admitted.task_id, admitted_child.task_id}, ids)
+
+    def _insert_continuation(
+        self,
+        continuation_id: str,
+        *,
+        source_task_id: str,
+        source_item_id: str,
+        new_task_id: str,
+    ) -> None:
+        """Persist the exact recovery-continuation relation a real Worker writes."""
+
+        with self.repository._connection:
+            self.repository._connection.execute(
+                """INSERT INTO recovery_continuations (
+                    continuation_id, request_id, source_task_id, source_item_id,
+                    checkpoint_version, configuration_snapshot_id,
+                    configuration_snapshot_digest, boundary, status, created_at,
+                    updated_at, actor, job_id, new_task_id, authority_statement
+                ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)""",
+                (
+                    continuation_id,
+                    f"request-{continuation_id}",
+                    source_task_id,
+                    source_item_id,
+                    "0" * 64,
+                    "snap-1",
+                    "digest-1",
+                    "source_scope_analysis",
+                    "completed",
+                    NOW.isoformat(),
+                    NOW.isoformat(),
+                    "operator",
+                    f"job-{continuation_id}",
+                    new_task_id,
+                    "analysis only",
+                ),
+            )

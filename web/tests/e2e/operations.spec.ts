@@ -11,7 +11,6 @@ import { expect, test, type Page } from "@playwright/test";
  */
 
 const VIEWER_TOKEN = "e2e-viewer-token";
-const READ_ONLY_TOKEN = "e2e-readonly-token";
 
 async function connect(page: Page, token: string = VIEWER_TOKEN) {
   await page.goto("/ui-v2/");
@@ -27,46 +26,57 @@ async function openOperations(page: Page) {
   await expect(page).toHaveURL(/\/ui-v2\/operations$/);
 }
 
-// Slice46 keeps these administrative deep links, while ordinary work and
-// new manual organizing enter through Files. Reconnect through the real UI.
-async function openTaskList(page: Page, token = VIEWER_TOKEN) {
+// Slice46 RO-4 / B46.4-04: the former independent Task/Job collections are
+// closed.  These helpers drive the real closed entries so a visit proves the
+// contraction instead of a second mixed list, and the center itself is opened
+// through its own route.
+async function openClosedTaskCollection(page: Page, token = VIEWER_TOKEN) {
   await page.goto("/ui-v2/operations/tasks");
-  await page.getByLabel("API token").fill(token);
-  await page.getByRole("button", { name: "Connect" }).click();
-  await expect(page).toHaveURL(/\/ui-v2\/operations\/tasks$/);
+  if (await page.getByLabel("API token").isVisible()) {
+    await page.getByLabel("API token").fill(token);
+    await page.getByRole("button", { name: "Connect" }).click();
+  }
   await expect(
-    page.getByRole("heading", { name: "Tasks", exact: true }),
+    page.getByRole("heading", { name: "任务列表已并入任务中心" }),
   ).toBeVisible();
 }
 
-async function openJobList(page: Page, token = VIEWER_TOKEN) {
+async function openClosedJobCollection(page: Page, token = VIEWER_TOKEN) {
   await page.goto("/ui-v2/operations/jobs");
-  await page.getByLabel("API token").fill(token);
-  await page.getByRole("button", { name: "Connect" }).click();
-  await expect(page).toHaveURL(/\/ui-v2\/operations\/jobs$/);
+  if (await page.getByLabel("API token").isVisible()) {
+    await page.getByLabel("API token").fill(token);
+    await page.getByRole("button", { name: "Connect" }).click();
+  }
   await expect(
-    page.getByRole("heading", { name: "Jobs", exact: true }),
+    page.getByRole("heading", { name: "Job 列表已并入任务中心" }),
   ).toBeVisible();
 }
 
-async function openTaskDetail(
+/** Resolve one legacy identity and assert where it really lands. */
+async function openLegacyIdentity(
   page: Page,
-  taskId: string,
+  kind: "tasks" | "jobs",
+  identity: string,
   token = VIEWER_TOKEN,
 ) {
-  await openTaskList(page, token);
-  await page.getByRole("link", { name: taskId }).click();
-  await expect(
-    page.getByRole("heading", { name: `Task ${taskId}` }),
-  ).toBeVisible();
+  await page.goto(`/ui-v2/operations/${kind}/${identity}`);
+  if (await page.getByLabel("API token").isVisible()) {
+    await page.getByLabel("API token").fill(token);
+    await page.getByRole("button", { name: "Connect" }).click();
+  }
 }
 
-async function openJobDetail(page: Page, jobId: string) {
-  await openJobList(page);
-  await page.getByRole("link", { name: jobId }).click();
-  await expect(
-    page.getByRole("heading", { name: `Job ${jobId}` }),
-  ).toBeVisible();
+/** Open one exact run in the Task Center through its own URL state. */
+async function openCenterRun(page: Page, runId: string) {
+  await connect(page);
+  // A direct reload of a selected-run URL drops the memory-only token, so the
+  // exact selection is re-entered through the real reconnect boundary.
+  await page.goto(`/ui-v2/operations?run=${encodeURIComponent(runId)}`);
+  if (await page.getByLabel("API token").isVisible()) {
+    await page.getByLabel("API token").fill(VIEWER_TOKEN);
+    await page.getByRole("button", { name: "Connect" }).click();
+  }
+  await expect(page.getByRole("region", { name: "运行详情" })).toBeVisible();
 }
 
 test("任务中心 inventory shows the run list, views and workspace links", async ({
@@ -106,24 +116,28 @@ test("the submitted Operations filter is reflected in the URL and survives recon
   page,
 }) => {
   await connect(page);
-  await openTaskList(page);
-  await page.getByLabel("Filter by status").selectOption("failed");
-  await expect(page).toHaveURL(/\/ui-v2\/operations\/tasks\?status=failed$/);
-  await expect(page.getByRole("link", { name: "task-004" })).toBeVisible();
+  await openOperations(page);
+  await page.getByLabel("状态", { exact: true }).selectOption("failed");
+  await expect(page).toHaveURL(/\/ui-v2\/operations\?status=failed$/);
+  await expect(
+    page.getByRole("row", { name: /整理.*失败.*2026-08-22 12:22:00/ }),
+  ).toBeVisible();
 
   await page.getByRole("button", { name: "Disconnect" }).click();
   await expect(page.getByLabel("API token")).toBeVisible();
 });
 
-test("an unauthenticated deep entry reconnects to the same filtered collection", async ({
+test("an unauthenticated deep entry reconnects to the same filtered center view", async ({
   page,
 }) => {
-  await page.goto("/ui-v2/operations/tasks?status=failed");
+  await page.goto("/ui-v2/operations?status=failed");
   await expect(page.getByLabel("API token")).toBeVisible();
   await page.getByLabel("API token").fill(VIEWER_TOKEN);
   await page.getByRole("button", { name: "Connect" }).click();
-  await expect(page).toHaveURL(/\/ui-v2\/operations\/tasks\?status=failed$/);
-  await expect(page.getByRole("link", { name: "task-004" })).toBeVisible();
+  await expect(page).toHaveURL(/\/ui-v2\/operations\?status=failed$/);
+  await expect(
+    page.getByRole("row", { name: /整理.*失败.*2026-08-22 12:22:00/ }),
+  ).toBeVisible();
   const html = await page.content();
   expect(html).not.toContain(VIEWER_TOKEN);
 });
@@ -139,76 +153,70 @@ test("a reload drops the memory-only token and returns to the connection boundar
   expect(html).not.toContain(VIEWER_TOKEN);
 });
 
-test("Task list filters through the backend and distinguishes filtered-empty", async ({
+test("the closed Task collection keeps its filter state without a mixed list", async ({
   page,
 }) => {
   await connect(page);
-  await openTaskList(page);
+  const requested: string[] = [];
+  page.on("request", (request) => requested.push(request.url()));
+  await openClosedTaskCollection(page);
 
-  await page.getByLabel("Filter by status").selectOption("failed");
-  await expect(page.getByRole("link", { name: "task-004" })).toBeVisible();
-  await expect(page.getByRole("link", { name: "task-001" })).toHaveCount(0);
-
-  // The failed Task records the organizing command family, so combining it
-  // with the (unused in the filtered population) preview family is a truthful
-  // filtered-empty collection, never a silently widened one.
-  await page.getByLabel("Filter by work kind").selectOption("preview");
+  // The retired entry states the contraction and never reads a second mixed
+  // Task collection or offers a generic failure recovery.
+  expect(
+    requested.filter((url) => url.includes("/api/v1/operations/tasks")),
+  ).toHaveLength(0);
   await expect(
-    page.getByRole("heading", { name: "No matching Tasks" }),
-  ).toBeVisible();
-
-  await page.getByRole("button", { name: "Reset filters" }).first().click();
-  await expect(page.getByRole("link", { name: "task-001" })).toBeVisible();
+    page.getByRole("link", { name: "打开任务中心" }),
+  ).toHaveAttribute("href", "/ui-v2/operations");
+  await expect(
+    page.getByRole("link", { name: "打开资源库文件页" }),
+  ).toHaveAttribute("href", "/ui-v2/resourcelib/files");
 });
 
-test("Task list keeps the submitted filter and reports the real page boundary", async ({
+test("the closed Job collection never reads a second mixed population", async ({
   page,
 }) => {
   await connect(page);
-  await openTaskList(page);
-
-  await page.getByLabel("Filter by status").selectOption("running");
-  await expect(page.getByRole("link", { name: "task-002" })).toBeVisible();
-  await expect(page.getByRole("link", { name: "task-005" })).toBeVisible();
-  await expect(page.getByRole("link", { name: "task-001" })).toHaveCount(0);
-
-  // The filtered collection fits one bounded page, so the list reports no
-  // further page instead of inventing one.
-  await expect(page.getByRole("button", { name: "Next" })).toBeDisabled();
-  await expect(page.getByRole("button", { name: "Previous" })).toBeDisabled();
+  const requested: string[] = [];
+  page.on("request", (request) => requested.push(request.url()));
+  await openClosedJobCollection(page);
+  expect(
+    requested.filter((url) => url.includes("/api/v1/operations/jobs")),
+  ).toHaveLength(0);
+  await expect(
+    page.getByRole("link", { name: "打开任务中心" }),
+  ).toHaveAttribute("href", "/ui-v2/operations");
 });
 
-test("Job list filters by status and work kind", async ({ page }) => {
-  await connect(page);
-  await openJobList(page);
-
-  // Slice46 RO-4: the shared Job collection keeps its own command filter, and
-  // its fixtures record the supported organizing family.
-  await page.getByLabel("Filter by work kind").selectOption("organize");
-  await expect(page.getByRole("link", { name: "job-003" })).toBeVisible();
-  await expect(page.getByRole("link", { name: "job-001" })).toHaveCount(1);
-
-  await page.getByLabel("Filter by status").selectOption("failed");
-  await expect(page.getByRole("link", { name: "job-005" })).toBeVisible();
-  await expect(page.getByRole("link", { name: "job-003" })).toHaveCount(0);
-});
-
-test("Task detail separates the aggregate from items and results", async ({
+test("an organizing legacy deep link resolves to the exact center run", async ({
   page,
 }) => {
   await connect(page);
-  await openTaskDetail(page, "task-001");
+  const requested: string[] = [];
+  page.on("request", (request) => requested.push(request.url()));
+  await openLegacyIdentity(page, "tasks", "task-001");
+  // The supported identity opens the same run the center lists, inside the
+  // center (its anchor is the admitted Job through the persisted Job→Task link,
+  // so the run identity stays stable before and after that linkage), with no
+  // second collection read and no command replay.
+  await expect(page).toHaveURL(/\/ui-v2\/operations\?run=job-001/);
+  await expect(page.getByRole("region", { name: "运行详情" })).toBeVisible();
+  expect(
+    requested.filter(
+      (url) =>
+        url.includes("/api/v1/tasks") && !url.includes("/api/v1/operations/"),
+    ),
+  ).toHaveLength(0);
+});
 
-  await expect(
-    page.getByRole("heading", { name: "Task aggregate" }),
-  ).toBeVisible();
-  await expect(
-    page.getByText("Pinned configuration", { exact: true }),
-  ).toBeVisible();
+test("the center's own run detail separates the aggregate from items and results", async ({
+  page,
+}) => {
+  await openCenterRun(page, "job-001");
 
-  // The item/result evidence journey is the native run detail: the supported
-  // Task identity resolves to its run through the persisted Job→Task link and
-  // opens the 任务详情 / 操作记录 tabs.
+  // The item/result evidence journey is the native run detail: the exact run
+  // identity opens the 任务详情 / 操作记录 tabs.
   await expect(page.getByRole("button", { name: "任务详情" })).toBeVisible();
   await expect(page.getByRole("button", { name: "操作记录" })).toBeVisible();
   const items = page.getByRole("region", { name: "主条目" });
@@ -238,8 +246,7 @@ test("the operations read and the rendered page stay free of a hostile historica
   page.on("console", (message) => consoleMessages.push(message.text()));
   page.on("request", (request) => requested.push(request.url()));
 
-  await connect(page);
-  await openTaskDetail(page, "task-001");
+  await openCenterRun(page, "job-001");
   await page.waitForTimeout(250);
 
   const html = await page.content();
@@ -259,66 +266,42 @@ test("the operations read and the rendered page stay free of a hostile historica
     expect(consoleMessages.join("\n")).not.toContain(hostile);
   }
   expect(html).not.toContain(VIEWER_TOKEN);
-  // The V2 workspace reads the bounded Operations projection, not the legacy
-  // compatibility document, so no fingerprint value is fetched at all.
+  // The V2 workspace reads the bounded center projection, not the retired
+  // compatibility Task/Job document, so no fingerprint value is fetched at all.
   expect(
-    requested.some((url) => url.includes("/api/v1/operations/tasks/task-001")),
+    requested.some((url) => url.includes("/api/v1/operations/runs/job-001")),
   ).toBe(true);
   expect(
     requested.some(
       (url) =>
-        url.includes("/api/v1/tasks/task-001") &&
-        !url.includes("/api/v1/operations/"),
+        (url.includes("/api/v1/tasks/job-001") ||
+          url.includes("/api/v1/operations/tasks/job-001")) &&
+        !url.includes("/api/v1/operations/runs/"),
     ),
   ).toBe(false);
 });
 
-test("Job detail distinguishes admission state, Worker ownership and the linked Task", async ({
+test("a pre-Task Job deep link resolves to the same center run with admission truth", async ({
   page,
 }) => {
   await connect(page);
-  await openJobDetail(page, "job-002");
+  // A pre-Task admission is real center work: the closed legacy link opens the
+  // exact run the center lists, with the same durable admission/Worker facts.
+  await openLegacyIdentity(page, "jobs", "job-005");
+  await expect(page).toHaveURL(/\/ui-v2\/operations\?run=job-005/);
+  const detail = page.getByRole("region", { name: "运行详情" });
+  await expect(detail).toBeVisible();
+  await expect(detail.getByText(/整理/).first()).toBeVisible();
+  // A missing identity is a bounded read-only state, never a guessed context.
+  await openLegacyIdentity(page, "jobs", "does-not-exist");
   await expect(
-    page.getByText("No Worker owns this Job right now."),
+    page.getByRole("heading", { name: "正在确认该 Job 的归属" }),
   ).toBeVisible();
-  await expect(page.getByText(/Condition: no_worker/)).toBeVisible();
-
-  // A second detail is reached through the shell list, keeping the
-  // memory-only connection.
-  await page.getByRole("link", { name: "Back to Jobs" }).click();
-  await expect(page).toHaveURL(/\/ui-v2\/operations\/jobs$/);
-  await page.getByRole("link", { name: "job-004" }).click();
-  await expect(
-    page.getByRole("heading", { name: "Job job-004" }),
-  ).toBeVisible();
-  await expect(page.getByText("worker-e2e-stale")).toBeVisible();
-  await expect(page.getByText(/Owner status/)).toBeVisible();
-  await expect(page.getByText(/Condition: stale_worker/)).toBeVisible();
-  await expect(page.getByRole("link", { name: "task-006" })).toBeVisible();
+  await expect(page.getByText(/没有提交任何命令/)).toBeVisible();
+  await expect(page.getByRole("link", { name: "打开任务中心" })).toBeVisible();
 });
 
-test("a permitted Task control sends exactly one versioned POST and renders the durable result", async ({
-  page,
-}) => {
-  const mutations: string[] = [];
-  page.on("request", (request) => {
-    if (request.method() === "POST" && request.url().includes("/api/v1/")) {
-      mutations.push(request.url());
-    }
-  });
-  await connect(page);
-  await openTaskDetail(page, "task-002");
-  await page.getByRole("button", { name: "Request pause" }).click();
-
-  await expect(
-    page.getByRole("heading", { name: "Control accepted" }),
-  ).toBeVisible();
-  expect(
-    mutations.filter((url) => url.endsWith("/api/v1/tasks/task-002/pause")),
-  ).toHaveLength(1);
-});
-
-test("a terminal Task exposes no control and no request is sent", async ({
+test("a terminal run exposes no control and no request is sent", async ({
   page,
 }) => {
   const posts: string[] = [];
@@ -327,71 +310,28 @@ test("a terminal Task exposes no control and no request is sent", async ({
       posts.push(request.url());
     }
   });
-  await connect(page);
-  await openTaskDetail(page, "task-001");
-  await expect(page.getByRole("button", { name: "Cancel Task" })).toHaveCount(
-    0,
-  );
+  await openCenterRun(page, "job-001");
+  await expect(page.getByRole("button", { name: "取消运行" })).toHaveCount(0);
   await expect(
-    page.getByText(
-      "The backend advertises no lifecycle action for this Task state and principal.",
-    ),
+    page.getByText(/后端没有为该状态与当前主体公告任何可执行的运行控制/),
   ).toBeVisible();
   await page.waitForTimeout(250);
   expect(posts).toHaveLength(0);
-});
-
-test("a read-only principal receives no actionable control", async ({
-  page,
-}) => {
-  await connect(page, READ_ONLY_TOKEN);
-  await openTaskDetail(page, "task-002", READ_ONLY_TOKEN);
-  await expect(page.getByRole("button", { name: "Cancel Task" })).toHaveCount(
-    0,
-  );
-  await expect(page.getByRole("button", { name: "Request pause" })).toHaveCount(
-    0,
-  );
-  await expect(
-    page.getByText(/does not hold the cancel_job permission/).first(),
-  ).toBeVisible();
-});
-
-test("Job cancellation is exact, single and followed by the returned durable state", async ({
-  page,
-}) => {
-  const posts: string[] = [];
-  page.on("request", (request) => {
-    if (request.method() === "POST" && request.url().includes("/api/v1/")) {
-      posts.push(request.url());
-    }
-  });
-  await connect(page);
-  await openJobDetail(page, "job-002");
-  await page.getByRole("button", { name: "Cancel Job" }).click();
-  await expect(
-    page.getByRole("heading", { name: "Cancellation requested" }),
-  ).toBeVisible();
-  await expect(page.getByText(/Durable state: cancelled/)).toBeVisible();
-  await page.waitForTimeout(250);
-  expect(
-    posts.filter((url) => url.endsWith("/api/v1/jobs/job-002/cancel")),
-  ).toHaveLength(1);
 });
 
 test("Operations failures stay inside the shell and offer a valid next action", async ({
   page,
 }) => {
   await connect(page);
-  // An unauthenticated deep entry to a missing Operations object reconnects
-  // and then renders the bounded not-found state inside the shell.
-  await page.goto("/ui-v2/operations/tasks/does-not-exist");
-  await page.getByLabel("API token").fill(VIEWER_TOKEN);
-  await page.getByRole("button", { name: "Connect" }).click();
+  // An unauthenticated deep entry to a missing identity reconnects and then
+  // renders the bounded read-only unavailable state inside the shell instead of
+  // a second mixed list or a generic failure recovery.
+  await openLegacyIdentity(page, "tasks", "does-not-exist");
   await expect(
-    page.getByRole("heading", { name: "Record not found" }),
+    page.getByRole("heading", { name: "正在确认该 Task 的归属" }),
   ).toBeVisible();
-  await expect(page.getByRole("link", { name: "Back to Tasks" })).toBeVisible();
+  await expect(page.getByText(/没有提交任何命令/)).toBeVisible();
+  await expect(page.getByRole("link", { name: "打开任务中心" })).toBeVisible();
 });
 
 test("an unknown Operations route renders the not-found boundary", async ({
@@ -412,19 +352,26 @@ test("Dashboard counts and recent failures link to exact Operations state", asyn
     .getByRole("link", { name: /Failed/ })
     .first()
     .click();
+  // The Task count links into the center's own filtered population.
   await expect(page).toHaveURL(/\/ui-v2\/operations\/tasks\?status=failed$/);
-  await expect(page.getByRole("link", { name: "task-004" })).toBeVisible();
+  await expect(
+    page.getByRole("heading", { name: "任务列表已并入任务中心" }),
+  ).toBeVisible();
+  await page.getByRole("link", { name: "打开任务中心" }).click();
+  await expect(page).toHaveURL(/\/ui-v2\/operations$/);
 
   await page.getByRole("link", { name: "Overview" }).click();
   await expect(page).toHaveURL(/\/ui-v2\/dashboard$/);
+  // A recorded failure resolves to the exact center run through the closed
+  // legacy link; it never becomes a second mixed list.
   await expect(
-    page.getByRole("link", { name: "Open this Task" }),
+    page.getByRole("link", { name: "Open this Task in the Task Center" }),
   ).toBeVisible();
-  await page.getByRole("link", { name: "Open this Job" }).click();
-  await expect(page).toHaveURL(/\/ui-v2\/operations\/jobs\/job-005$/);
-  await expect(
-    page.getByRole("heading", { name: "Job job-005" }),
-  ).toBeVisible();
+  await page
+    .getByRole("link", { name: "Open this Job in the Task Center" })
+    .click();
+  await expect(page).toHaveURL(/\/ui-v2\/operations\?run=job-005$/);
+  await expect(page.getByRole("region", { name: "运行详情" })).toBeVisible();
 });
 
 test("the 媒体库 entry and Operations workspace cross-link without a retired route", async ({
@@ -444,7 +391,9 @@ test("the 媒体库 entry and Operations workspace cross-link without a retired 
   // The shared shell keeps the Operations workspace reachable from any page.
   await page.getByRole("link", { name: "任务中心", exact: true }).click();
   await expect(page).toHaveURL(/\/ui-v2\/operations$/);
-  await openTaskList(page);
+  await expect(
+    page.getByRole("heading", { name: "任务中心", exact: true }),
+  ).toBeVisible();
 });
 
 test("task-center views stay keyboard operable and discoverable when narrow", async ({
@@ -489,13 +438,15 @@ test("dropping credential-like Operations search state on reconnect", async ({
   page.on("console", (message) => consoleMessages.push(message.text()));
   // A deep entry carrying an unknown, credential-like key must be reduced to
   // the allowlisted route before the reconnect continuation replays it.
-  await page.goto("/ui-v2/operations/tasks?status=failed&token=secret");
+  await page.goto("/ui-v2/operations?status=failed&token=secret");
   await expect(page.getByLabel("API token")).toBeVisible();
   expect(page.url()).not.toContain("token=secret");
   await page.getByLabel("API token").fill(VIEWER_TOKEN);
   await page.getByRole("button", { name: "Connect" }).click();
-  await expect(page).toHaveURL(/\/ui-v2\/operations\/tasks\?status=failed$/);
-  await expect(page.getByRole("link", { name: "task-004" })).toBeVisible();
+  await expect(page).toHaveURL(/\/ui-v2\/operations\?status=failed$/);
+  await expect(
+    page.getByRole("row", { name: /整理.*失败.*2026-08-22 12:22:00/ }),
+  ).toBeVisible();
   const html = await page.content();
   expect(html).not.toContain(VIEWER_TOKEN);
   expect(consoleMessages.join("\n")).not.toContain(VIEWER_TOKEN);
@@ -565,8 +516,9 @@ test("inventory count card applies its server filter and the run overview opens 
   await expect(detail).toBeVisible();
   await expect(detail.getByText(/失败/).first()).toBeVisible();
   await expect(detail.getByText("触发方式")).toBeVisible();
-  // Deeper evidence links to the exact existing Task detail route.
-  await expect(detail.getByText("打开 Task 详情")).toBeVisible();
+  // Deeper evidence stays inside the center's own exact run context: the
+  // retired mixed Task collection is closed (B46.4-04).
+  await expect(detail.getByText("在任务中心查看该运行的详情")).toBeVisible();
 
   // Closing the detail returns to the same filtered list context.
   await detail.getByRole("button", { name: "关闭详情" }).click();

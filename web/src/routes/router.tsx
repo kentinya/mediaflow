@@ -17,10 +17,12 @@ import { RulesEditPage } from "../features/rules/RulesEditPage";
 import { MediaLibraryFilesPage } from "../features/library/MediaLibraryFilesPage";
 import { StorageFilesPage } from "../features/library/StorageFilesPage";
 import { OperationsLanding } from "../features/operations/OperationsLanding";
-import { TaskListPage } from "../features/operations/TaskListPage";
-import { TaskDetailPage } from "../features/operations/TaskDetailPage";
-import { JobListPage } from "../features/operations/JobListPage";
-import { JobDetailPage } from "../features/operations/JobDetailPage";
+import {
+  LegacyJobDetailPage,
+  LegacyJobListPage,
+  LegacyTaskDetailPage,
+  LegacyTaskListPage,
+} from "../features/operations/LegacyTaskRoutes";
 import { OrganizeCreationPage } from "../features/operations/OrganizeCreationPage";
 import { OrganizeDiscoveryPage } from "../features/operations/OrganizeDiscoveryPage";
 import { OrganizeIntentPage } from "../features/operations/OrganizeIntentPage";
@@ -134,25 +136,25 @@ const operationsRoute = createRoute({
 const taskListRoute = createRoute({
   getParentRoute: () => rootRoute,
   path: "operations/tasks",
-  component: TaskListPage,
+  component: LegacyTaskListPage,
 });
 
 const taskDetailRoute = createRoute({
   getParentRoute: () => rootRoute,
   path: "operations/tasks/$taskId",
-  component: TaskDetailPage,
+  component: LegacyTaskDetailPage,
 });
 
 const jobListRoute = createRoute({
   getParentRoute: () => rootRoute,
   path: "operations/jobs",
-  component: JobListPage,
+  component: LegacyJobListPage,
 });
 
 const jobDetailRoute = createRoute({
   getParentRoute: () => rootRoute,
   path: "operations/jobs/$jobId",
-  component: JobDetailPage,
+  component: LegacyJobDetailPage,
 });
 
 const organizeNewRoute = createRoute({

@@ -87,6 +87,7 @@ import urllib.parse
 from datetime import UTC, datetime, timedelta
 from pathlib import Path
 from unittest.mock import patch
+from uuid import uuid4
 from wsgiref.simple_server import WSGIRequestHandler, WSGIServer, make_server
 
 REPO_ROOT = Path(__file__).resolve().parents[1]
@@ -182,6 +183,11 @@ from mediaflow.domain.task_persistence import (  # noqa: E402
     PersistentTaskItem,
     PersistentTaskStatus,
     TaskItemStatus,
+)
+from mediaflow.domain.unattended_execution import (  # noqa: E402
+    UnattendedExecutionGrant,
+    UnattendedExecutionGrantAudit,
+    UnattendedExecutionGrantStatus,
 )
 from mediaflow.final_cli import final_main  # noqa: E402
 from mediaflow.infrastructure.configuration_snapshot import (  # noqa: E402
@@ -590,7 +596,21 @@ def build_managed_fixture(
             "mode": "automatic-organization",
             "intervalSeconds": 3600,
             "itemLimit": 5,
-        }
+        },
+        {
+            # The remaining-scope continuation fixture's own reviewed scope.  A
+            # mutation-authorized continuation needs a *live reusable* authority,
+            # and only a definition-bound unattended grant provides one, so the
+            # fixture uses the real production shape instead of a stored flag.
+            "id": CONTINUATION_DEFINITION_ID,
+            "name": "Harness continuation review",
+            "enabled": True,
+            "resourceLibraryId": "source",
+            "sourceScope": CONTINUATION_SCOPE,
+            "mode": "automatic-organization",
+            "intervalSeconds": 3600,
+            "itemLimit": 2,
+        },
     ]
 
     configuration_repository = SQLiteConfigurationRepository(database)
@@ -1028,9 +1048,12 @@ def seed(
 
     # 3. Standalone durable Tasks through the production coordinator.
     coordinator = PersistentTaskCoordinator(repository, repository)
+    # A real admitted organizing Task keeps its execution intent: this stands
+    # for an admitted run (a Files admission / confirmed execution / Automation
+    # occurrence), which is exactly what the Task Center population lists.
     coordinator.create(
         "organize",
-        execute_authorized=False,
+        execute_authorized=True,
         scope_path="Movies/Harness",
     )
     failed_task = coordinator.create(
@@ -1096,6 +1119,16 @@ def run_scheduled_definition_tick(
     if active is None:
         raise RuntimeError("harness: scheduled fixture has no Active configuration")
     runtime = managed.runtime
+    # Only the inventory's own scheduled definition is due here.  The Active may
+    # publish further managed definitions (for example the continuation fixture's
+    # definition-bound occurrence, which the continuation journey admits through
+    # its own real grant), and emitting them here would change the deterministic
+    # four-run population this fixture exists to prove.
+    due_definitions = tuple(
+        value
+        for value in runtime.automation_task_definitions
+        if value.definition_id == SCHEDULED_DEFINITION_ID
+    )
     scheduler = IntervalScheduler(
         repository,
         (),
@@ -1104,7 +1137,7 @@ def run_scheduled_definition_tick(
             active.digest,
             (),
             runtime.automation_maximum_active_jobs,
-            tuple(runtime.automation_task_definitions),
+            due_definitions,
             active.version,
             tuple(item.library_id for item in runtime.resource_libraries),
             tuple(item.library_id for item in runtime.resource_libraries if item.enabled),
@@ -1123,7 +1156,9 @@ def seed_inventory_poll_population(state: AppState) -> dict[str, object]:
         now = datetime.now(UTC)
         running = coordinator.create(
             "organize",
-            execute_authorized=False,
+            # An admitted organizing Task records its real execution intent; the
+            # Task Center population reads exactly that persisted admission.
+            execute_authorized=True,
             scope_path="Movies/Inventory Live Running",
         )
         state.repository.update_task(
@@ -1171,7 +1206,7 @@ def seed_inventory_poll_population(state: AppState) -> dict[str, object]:
         for index in range(1, 4):
             task = coordinator.create(
                 "organize",
-                execute_authorized=False,
+                execute_authorized=True,
                 scope_path=f"Movies/Inventory Poll {index:02}",
             )
             failed_at = now + timedelta(milliseconds=index)
@@ -1224,7 +1259,7 @@ def append_inventory_poll_failure(state: AppState) -> dict[str, object]:
             return dict(existing)
         task = PersistentTaskCoordinator(state.repository, state.repository).create(
             "organize",
-            execute_authorized=False,
+            execute_authorized=True,
             scope_path="Movies/Inventory Poll 04",
         )
         failed_at = datetime.now(UTC)
@@ -1547,7 +1582,9 @@ def run_worker_once(state: AppState) -> dict:
         coordinator = PersistentTaskCoordinator(state.repository, state.repository)
         task = coordinator.create(
             job.command.value,
-            execute_authorized=False,
+            # The Worker's Task for a claimed organizing Job carries the Job's
+            # own durable execution authority, exactly like production.
+            execute_authorized=bool(job.execute_authorized),
             scope_path="Movies/Harness/Linked",
             configuration_snapshot_id=job.configuration_snapshot_id,
             configuration_snapshot_digest=job.configuration_snapshot_digest,
@@ -2807,7 +2844,7 @@ def seed_task_item_recovery_batch(state: AppState) -> dict[str, object]:
     active = state.managed.active
     task = PersistentTaskCoordinator(state.repository, state.repository).create(
         "organize",
-        execute_authorized=False,
+        execute_authorized=True,
         scope_path="Batch",
         configuration_snapshot_id=active.revision_id,
         configuration_snapshot_digest=active.digest,
@@ -3323,6 +3360,13 @@ FULL_BUDGET_LEFT_STEM = "FullBudgetLeft"
 CONTINUATION_RECORDED_FILE = "C/Continuation/Six.2006.mkv"
 CONTINUATION_SOURCE_FILE = "C/Continuation/Five.2005.mkv"
 
+#: The managed definition whose exact reviewed scope holds the continuation
+#: fixture.  A mutation-authorized remaining-scope continuation is admitted only
+#: with a live definition-bound grant, so the fixture publishes the real
+#: definition and persists the real grant instead of relying on a stored flag.
+CONTINUATION_DEFINITION_ID = "harness-continuation"
+CONTINUATION_SCOPE = "C/Continuation"
+
 
 def seed_continuation_journey(state: AppState) -> dict[str, object]:
     """Create one real paused organize Task with one already-recorded source.
@@ -3339,14 +3383,81 @@ def seed_continuation_journey(state: AppState) -> dict[str, object]:
     (source_root / "C" / "Continuation").mkdir(parents=True, exist_ok=True)
     (source_root / CONTINUATION_SOURCE_FILE).write_bytes(b"continuation synthetic media")
     coordinator = PersistentTaskCoordinator(state.repository, state.repository)
+    # The fixture runs as one real occurrence of the managed continuation
+    # definition: its Job carries the definition identity/bounds, the Task keeps
+    # the same admission pin, and the definition-bound grant is persisted through
+    # the production grant service.  A mutation-authorized continuation is
+    # advertised only with that live reusable authority, exactly like production.
+    definition = next(
+        (
+            value
+            for value in state.managed.runtime.automation_task_definitions
+            if value.definition_id == CONTINUATION_DEFINITION_ID
+        ),
+        None,
+    )
+    if definition is None:
+        raise RuntimeError("continuation fixture definition is not in the Active")
+    now = datetime.now(UTC)
+    occurrence_job = AutomationJob(
+        str(uuid4()),
+        AutomationCommand.ORGANIZE,
+        AutomationJobStatus.RUNNING,
+        now,
+        now,
+        limit=definition.item_limit,
+        execute_authorized=True,
+        definition_id=definition.definition_id,
+        definition_fingerprint=definition.definition_fingerprint,
+        run_mode=definition.mode,
+        resource_library_id=definition.resource_library_id,
+        source_scope=definition.source_scope,
+        configuration_snapshot_id=active.revision_id,
+        configuration_snapshot_digest=active.digest,
+        configuration_snapshot_version=active.version,
+    )
+    procedure = getattr(state.repository, "admit_job", None)
+    if callable(procedure):
+        procedure(occurrence_job, 100)
+    else:
+        state.repository.create_job(occurrence_job)
     task = coordinator.create(
         "organize",
-        execute_authorized=False,
-        scope_path=str(source_root / "C" / "Continuation"),
-        item_limit=2,
+        execute_authorized=True,
+        scope_path=definition.source_scope,
+        item_limit=definition.item_limit,
         configuration_snapshot_id=active.revision_id,
         configuration_snapshot_digest=active.digest,
         require_configuration_snapshot=True,
+    )
+    state.repository.update_job(
+        dataclasses.replace(state.repository.get_job(occurrence_job.job_id), task_id=task.task_id)
+    )
+    grant_id = str(uuid4())
+    state.repository.create_unattended_execution_grant(
+        UnattendedExecutionGrant(
+            grant_id,
+            definition.definition_id,
+            definition.resource_library_id,
+            definition.source_scope,
+            definition.mode,
+            definition.item_limit,
+            UnattendedExecutionGrantStatus.ACTIVE,
+            "harness-admin",
+            now,
+            definition.definition_fingerprint,
+            active.revision_id,
+            active.digest,
+            active.version,
+        ),
+        UnattendedExecutionGrantAudit(
+            str(uuid4()),
+            grant_id,
+            "granted",
+            now,
+            "harness-admin",
+            {"definitionId": definition.definition_id},
+        ),
     )
     # One source is already recorded, so the continuation must never repeat it.
     coordinator.record_discovered(
@@ -3425,9 +3536,15 @@ def run_continuation_worker_once(state: AppState) -> dict[str, object]:
         claimed = state.repository.claim_next_job(datetime.now(UTC), worker_id=WORKER_ID)
     if claimed is None:
         return {"ran": False, "reason": "the continuation Job was not claimable"}
-    with patch(
-        "mediaflow.final_cli.metadata_provider_registry_from_environment",
-        lambda _provider_ids: state.managed.metadata_registry,
+    with (
+        patch(
+            "mediaflow.final_cli.metadata_provider_registry_from_environment",
+            lambda _provider_ids: state.managed.metadata_registry,
+        ),
+        # A resident Worker runs with its configuration path in the environment,
+        # so the production grant-permission boundary reads that same Active.
+        # The harness reproduces exactly that composition here.
+        patch.dict(os.environ, {"MEDIAFLOW_CONFIG": str(config_path)}),
     ):
         task_id = _run_queued_workflow(
             claimed,
@@ -3746,7 +3863,7 @@ def seed_full_budget_recovery(state: AppState) -> dict[str, object]:
     # destination file rather than hiding behind a removed source.
     earlier = coordinator.create(
         "organize",
-        execute_authorized=False,
+        execute_authorized=True,
         # A distinct display scope keeps this earlier history its own inventory
         # row; the Result below still names the real source path, which is what
         # the operator's default choice is derived from.
@@ -3910,7 +4027,7 @@ def seed_mixed_scope_recovery(state: AppState) -> dict[str, object]:
         source_item = items_by_path[source_path]
         earlier = coordinator.create(
             "organize",
-            execute_authorized=False,
+            execute_authorized=True,
             scope_path=MIXED_EARLIER_SCOPE,
             item_limit=1,
             configuration_snapshot_id=active.revision_id,
@@ -4840,7 +4957,7 @@ def seed_task_center_problem_journey(state: AppState) -> dict[str, object]:
     # task therefore belongs to both the recognition and failure lists.
     mixed = coordinator.create(
         "organize",
-        execute_authorized=False,
+        execute_authorized=True,
         scope_path="TaskCenter/Mixed",
         configuration_snapshot_id=snapshot.revision_id,
         configuration_snapshot_digest=snapshot.digest,
@@ -5048,7 +5165,7 @@ def seed_task_center_problem_journey(state: AppState) -> dict[str, object]:
     # Task 2: one classification file, proving the classification list.
     classified = coordinator.create(
         "organize",
-        execute_authorized=False,
+        execute_authorized=True,
         scope_path="TaskCenter/Classified",
     )
     classification_policy = ClassificationPolicy(
@@ -5088,7 +5205,7 @@ def seed_task_center_problem_journey(state: AppState) -> dict[str, object]:
     # Task 3: one pending Metadata correction candidate.
     metadata = coordinator.create(
         "organize",
-        execute_authorized=False,
+        execute_authorized=True,
         scope_path="TaskCenter/Metadata",
     )
     from mediaflow.application.metadata_correction import MetadataCorrectionService
@@ -5177,7 +5294,7 @@ def seed_task_center_problem_page(state: AppState) -> dict[str, object]:
     coordinator = PersistentTaskCoordinator(state.repository, state.repository)
     task = coordinator.create(
         "organize",
-        execute_authorized=False,
+        execute_authorized=True,
         scope_path="TaskCenter/PagedMetadata",
         configuration_snapshot_id=snapshot.revision_id,
         configuration_snapshot_digest=snapshot.digest,

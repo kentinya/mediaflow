@@ -180,6 +180,44 @@ class _RunDetailApiTestCase(unittest.TestCase):
         code, body, _ = self.get(f"/api/v1/operations/runs/{run_id}", **kwargs)
         return code, body
 
+    def _insert_continuation(
+        self,
+        continuation_id: str,
+        *,
+        source_task_id: str,
+        source_item_id: str,
+        new_task_id: str,
+    ) -> None:
+        """Persist the exact recovery-continuation relation a real Worker writes."""
+
+        connection = self.raw()
+        with connection:
+            connection.execute(
+                """INSERT INTO recovery_continuations (
+                    continuation_id, request_id, source_task_id, source_item_id,
+                    checkpoint_version, configuration_snapshot_id,
+                    configuration_snapshot_digest, boundary, status, created_at,
+                    updated_at, actor, job_id, new_task_id, authority_statement
+                ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)""",
+                (
+                    continuation_id,
+                    f"request-{continuation_id}",
+                    source_task_id,
+                    source_item_id,
+                    "0" * 64,
+                    "snap-1",
+                    "digest-1",
+                    "source_scope_analysis",
+                    "completed",
+                    NOW.isoformat(),
+                    NOW.isoformat(),
+                    "operator",
+                    f"job-{continuation_id}",
+                    new_task_id,
+                    "analysis only",
+                ),
+            )
+
     def seed_run(
         self,
         *,
@@ -468,7 +506,28 @@ class RunProgressAccountingTests(_RunDetailApiTestCase):
         self.assertEqual(progress["confirmed_success"], 3)
 
     def test_analysis_completion_is_not_organize_success(self) -> None:
-        run_id, task_id = self.seed_run(command="organize", execute_authorized=False, total_items=1)
+        # A center run may still be analysis-only: a recovery/remaining-scope
+        # continuation Task is admitted organizing work whose own execution
+        # authority is deliberately absent (analysis only).  It is center work
+        # only through its real persisted lineage from the admitted Task it
+        # continues, so this fixture writes that exact relation.  Its completed
+        # DryRun item is analysis completion, never organize success.
+        predecessor_id, predecessor_task_id = self.seed_run(
+            command="organize",
+            execute_authorized=True,
+            total_items=1,
+        )
+        run_id, task_id = self.seed_run(
+            command="recovery-continuation:fixture",
+            execute_authorized=False,
+            total_items=1,
+        )
+        self._insert_continuation(
+            "fixture",
+            source_task_id=predecessor_task_id,
+            source_item_id="item-0",
+            new_task_id=task_id,
+        )
         self.repository.upsert_item(_item(task_id, "item-0", TaskItemStatus.DRY_RUN))
         code, overview = self.overview(run_id)
         progress = overview["progress"]
@@ -1038,11 +1097,12 @@ class RunExportTests(unittest.TestCase):
                 task(
                     task_id,
                     # Task46.4 RO-4: the center is admitted organizing work only,
-                    # so the export/record fixtures seed a real organizing Task
-                    # (a standalone analysis-only preview is not center work).
+                    # so the export/record fixtures seed a real admitted
+                    # organizing Task (a standalone analysis-only DryRun is not
+                    # center work).
                     command="organize",
                     status=PersistentTaskStatus.COMPLETED,
-                    execute_authorized=False,
+                    execute_authorized=True,
                 ),
                 total_items=1,
             )

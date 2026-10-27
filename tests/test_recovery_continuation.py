@@ -286,7 +286,12 @@ class RecoveryContinuationTests(unittest.TestCase):
         self,
         environment,
         *,
-        execute_authorized: bool = False,
+        # Task46.4 RO-4: this seed stands for *admitted* organizing work (a
+        # Files admission / confirmed execution / Automation occurrence), which
+        # always persists its real execution intent.  A standalone
+        # ``organize`` run without that intent is analysis-only preparation and
+        # is deliberately not Task Center work.
+        execute_authorized: bool = True,
         sibling: bool = True,
         source_path: str | None = None,
         certainty: str = "none",

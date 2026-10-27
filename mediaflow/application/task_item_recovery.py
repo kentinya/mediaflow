@@ -89,6 +89,14 @@ class TaskItemRecoveryService:
             "item_id": item_id,
             "checkpoint": checkpoint_document,
             "decision": decision,
+            # Whether this exact item is currently one of the four Task Center
+            # business problems, and whether an exact persisted recovery lineage
+            # already owns it.  Task Center RO-4 publishes technical history
+            # read-only, so the generic four-type recovery journey must only be
+            # offered where one of those two durable facts holds; the same
+            # fields also keep the native recovery reachable from its own type
+            # list and from the administrative API/CLI.
+            "recoveryKind": self._recovery_kind(task_id, item_id, checkpoint, blocker),
             "sideEffects": "none",
             "next_action": checkpoint.refusal_reason
             or (
@@ -97,6 +105,34 @@ class TaskItemRecoveryService:
                 else "inspect the saved item evidence"
             ),
         }
+
+    def _recovery_kind(self, task_id: str, item_id: str, checkpoint, blocker) -> str:
+        """The bounded recovery surface this exact item currently belongs to.
+
+        ``business_problem``  — a live review/conflict of one of the four types
+        is blocking this item right now;
+        ``recovery_lineage``  — this item already carries its own persisted
+        recovery chain (saved decision → linked analysis → prepared summary), or
+        an exact verified follow-up already closed it;
+        ``technical_history`` — anything else: a Provider/Storage/permission/
+        uncertain failure is read-only All/Ended history in the Task Center, so
+        no generic repair/retry/verification invitation is published here.
+
+        The decision reads only durable rows; it grants no authority and never
+        guesses a business meaning from a metric name or a label.
+        """
+
+        problem_reader = getattr(self._repository, "has_current_four_type_problem", None)
+        if blocker is not None or (callable(problem_reader) and problem_reader(item_id)):
+            return "business_problem"
+        reader = getattr(self._repository, "has_persisted_recovery_lineage", None)
+        if callable(reader) and reader(item_id):
+            return "recovery_lineage"
+        # Anything else -- a Provider transport error, a Storage/permission
+        # refusal, an uncertain/partial effect, a plain queued item -- has no
+        # four-type blocker and no recovery lineage, so it is factual read-only
+        # history here rather than a generic repair/retry invitation.
+        return "technical_history"
 
     def metadata_search(
         self,

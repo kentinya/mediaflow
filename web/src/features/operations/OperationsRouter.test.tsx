@@ -1,6 +1,5 @@
 import { afterEach, describe, expect, it, vi } from "vitest";
-import { cleanup, screen, waitFor, within } from "@testing-library/react";
-import userEvent from "@testing-library/user-event";
+import { cleanup, screen, waitFor } from "@testing-library/react";
 import { authStore } from "../../shared/api/auth-store";
 import { renderApp } from "../../../tests/utils";
 
@@ -31,636 +30,298 @@ afterEach(() => {
   vi.unstubAllGlobals();
 });
 
-function action(
-  name: string,
-  available: boolean,
-  unavailableReason: string | null,
-) {
-  return {
-    action: name,
-    label: `${name} label`,
-    method: "POST",
-    path: `/api/v1/tasks/{id}/${name}`,
-    available,
-    unavailableReason,
-    confirmationRequired: false,
-    cooperative: true,
-    durableOutcome: "a durable request is stored",
-    sideEffects: "no Storage mutation",
-    retrySafe: false,
-    nextAction: "refresh the Task",
-  };
-}
-
-function taskRecord(overrides: Record<string, unknown> = {}) {
-  return {
-    task_id: "task-run",
-    command: "preview",
-    status: "running",
-    execute_authorized: false,
-    created_at: "2026-08-22T12:00:00+00:00",
-    updated_at: "2026-08-22T12:00:00+00:00",
-    started_at: "2026-08-22T12:00:01+00:00",
-    completed_at: null,
-    total_items: 4,
-    completed_items: 1,
-    failed_items: 1,
-    failure: null,
-    pause_requested: false,
-    configuration_snapshot_id: "snap-1",
-    item_limit: 20,
-    ...overrides,
-  };
-}
-
-function taskLifecycle(overrides: Record<string, unknown> = {}) {
-  return {
-    objectType: "task",
-    objectId: "task-run",
-    state: "running",
-    version: "2026-08-22T12:00:00+00:00",
-    executionPath: "operator_workflow",
-    terminal: false,
-    permitted: true,
-    permission: "cancel_job",
-    knownEffects: "no Storage effect is recorded for this Task",
-    nextAction: "refresh the Task to read the durable state",
-    pauseRequested: false,
-    effectCertainty: "none",
-    resultsObserved: 0,
-    resultsComplete: true,
-    uncertainResults: 0,
-    actions: [
-      action("cancel", true, null),
-      action("pause", true, null),
-      action("resume", false, "no durable queued continuation exists"),
-    ],
-    ...overrides,
-  };
-}
-
-function taskDetailPayload(overrides: Record<string, unknown> = {}) {
-  const record = taskRecord();
-  return {
-    ...record,
-    lifecycle: taskLifecycle(),
-    items: [
-      {
-        item_id: "item-1",
-        task_id: "task-run",
-        storage_id: "source",
-        resource_library_id: "movies",
-        source_path: "movie.mkv",
-        status: "failed",
-        stage: "metadata",
-        attempts: 1,
-        created_at: "2026-08-22T12:00:00+00:00",
-        updated_at: "2026-08-22T12:00:00+00:00",
-        destination_storage_id: null,
-        destination_path: null,
-        execution_status: null,
-        failure: {
-          category: "provider_failure",
-          message: "Provider failure: metadata lookup did not complete",
-          durableState: "TaskItem and Result are durable with a failed outcome",
-          sideEffects: "none",
-          retrySafe: true,
-          nextAction:
-            "inspect Provider availability and explicitly retry metadata analysis",
-        },
-        checkpoint: null,
-      },
-    ],
-    results: [],
-    item_limit: 20,
-    result_limit: 20,
-    items_truncated: false,
-    results_truncated: false,
-    previous_item_cursor: null,
-    previous_result_cursor: null,
-    next_item_cursor: null,
-    next_result_cursor: null,
-    ...overrides,
-  };
-}
-
-function taskListPayload(
-  items: readonly unknown[],
-  overrides: Record<string, unknown> = {},
-) {
-  return {
-    items,
-    limit: 20,
-    status: null,
-    command: null,
-    truncated: false,
-    previous_cursor: null,
-    next_cursor: null,
-    ...overrides,
-  };
-}
-
-/** One run overview without a progress key: the tabs must render the
- * bounded unavailable state instead of inventing progress. */
-function taskRunOverviewPayload(overrides: Record<string, unknown> = {}) {
+/** One bounded run overview document the center really publishes. */
+function runOverviewPayload(overrides: Record<string, unknown> = {}) {
   return {
     run_kind: "task",
     run_id: "task-run",
-    command: "preview",
-    command_label: "预览",
+    command: "organize",
+    command_label: "整理",
     recognized_command: true,
     status: "running",
     trigger: "manual",
     created_at: "2026-08-22T12:00:00+00:00",
-    updated_at: "2026-08-22T12:00:00+00:00",
+    updated_at: "2026-08-22T12:06:00+00:00",
     job_id: null,
     task_id: "task-run",
     schedule_id: null,
     definition_id: null,
-    source_scope: null,
+    source_scope: "Movies",
     target_scope: null,
-    library_kind: null,
-    total_items: 1,
+    library_kind: "resource",
+    total_items: 2,
     completed_items: 0,
-    failed_items: 1,
+    failed_items: 0,
     pause_requested: false,
     attention: false,
-    configuration_snapshot_id: null,
+    problem_types: [],
+    attention_reason: null,
+    configuration_snapshot_id: "snap-1",
     worker_id: null,
     sideEffects: "none",
     ...overrides,
   };
 }
 
-/** A server-paged run-items page whose partition reconciles to its total. */
-function runItemsPayload(
-  items: readonly unknown[],
-  overrides: Record<string, unknown> = {},
-) {
-  const total = items.length;
+/** One bounded inventory page over the same population. */
+function runInventoryPayload(overrides: Record<string, unknown> = {}) {
   return {
-    run_id: "task-run",
-    task_id: "task-run",
-    filter: { status: null },
+    items: [runOverviewPayload()],
     limit: 20,
-    items,
-    total,
-    matching_total: total,
-    dispositions: {
-      pending: 0,
-      active: 0,
-      waiting: 0,
-      success: total,
-      skipped: 0,
-      failed_partial: 0,
-      ignored: 0,
-      cancelled: 0,
+    status: null,
+    command: null,
+    q: null,
+    from: null,
+    to: null,
+    attention: false,
+    view: null,
+    problem: null,
+    source: null,
+    definition: null,
+    trigger: null,
+    total: 1,
+    truncated: false,
+    status_counts: { running: 1 },
+    attention_count: 0,
+    summary: {
+      available: true,
+      scope: "current_filters",
+      source_options_scope: "authorized_population",
+      total: 1,
+      running: 1,
+      attention: 0,
+      ended: 0,
+      problem_tasks: {
+        recognition: 0,
+        metadata: 0,
+        classification: 0,
+        conflict: 0,
+      },
+      problem_files: {
+        recognition: 0,
+        metadata: 0,
+        classification: 0,
+        conflict: 0,
+      },
+      sources: [],
+      sources_truncated: false,
+      sideEffects: "none",
     },
-    uncertain_success: 0,
-    truncated: false,
+    population: "organizing only",
+    sideEffects: "none",
     previous_cursor: null,
     next_cursor: null,
-    sideEffects: "none",
     ...overrides,
   };
 }
 
-/** An empty but truthful operation-records page. */
-function runRecordsPayload(overrides: Record<string, unknown> = {}) {
-  return {
-    run_id: "task-run",
-    task_id: "task-run",
-    job_id: null,
-    filter: { kind: null },
-    limit: 20,
-    records: [],
-    matching_total: 0,
-    kind_counts: { result: 0, evidence: 0, log: 0, audit: 0 },
-    truncated: false,
-    previous_cursor: null,
-    next_cursor: null,
-    sideEffects: "none",
-    ...overrides,
-  };
-}
-
-describe("Operations router journeys", () => {
-  it("filters the Task list through the backend and resets to the unfiltered read", async () => {
-    const user = userEvent.setup();
+describe("Operations legacy route closure (RO-4 / B46.4-04)", () => {
+  it("closes the legacy Task list without reading a second mixed collection", async () => {
     const requested: string[] = [];
     stubFetch(async (input) => {
-      const url = String(input);
-      requested.push(url);
-      if (url.startsWith("/api/v1/operations/tasks?")) {
-        return jsonResponse(taskListPayload([]));
-      }
+      requested.push(String(input));
       return jsonResponse({ error: { code: "not_found" } }, 404);
     });
     authStore.setToken(TOKEN);
     renderApp("/ui-v2/operations/tasks");
 
-    await screen.findByRole("heading", { name: "Tasks" });
-    await waitFor(() => expect(requested.length).toBe(1));
-    expect(requested[0]).toContain("/api/v1/operations/tasks?limit=20");
-
-    await user.selectOptions(
-      screen.getByLabelText("Filter by status"),
-      "failed",
-    );
-    await waitFor(() =>
-      expect(requested.some((url) => url.includes("status=failed"))).toBe(true),
-    );
-    // The filtered-empty state is distinct from the empty state.
+    // No independent, mixed Task collection is read any more: the closed entry
+    // states the contraction and points at the two supported surfaces.
+    await screen.findByRole("heading", { name: "任务列表已并入任务中心" });
     expect(
-      await screen.findByRole("heading", { name: "No matching Tasks" }),
+      requested.filter((url) => url.startsWith("/api/v1/operations/tasks")),
+    ).toHaveLength(0);
+    expect(screen.getByRole("link", { name: "打开任务中心" })).toBeVisible();
+    expect(
+      screen.getByRole("link", { name: "打开资源库文件页" }),
     ).toBeVisible();
-
-    await user.selectOptions(
-      screen.getByLabelText("Filter by work kind"),
-      "organize",
-    );
-    await waitFor(() =>
-      expect(
-        requested.some(
-          (url) =>
-            url.includes("status=failed") && url.includes("command=organize"),
-        ),
-      ).toBe(true),
-    );
-
-    await user.click(
-      screen.getAllByRole("button", { name: "Reset filters" })[0]!,
-    );
-    // Resetting returns to the unfiltered read (served from the existing query
-    // cache) and to the distinct unfiltered empty state.
     expect(
-      await screen.findByRole("heading", { name: "No Tasks yet" }),
+      screen.getByRole("link", { name: "打开媒体库文件页" }),
     ).toBeVisible();
   });
 
-  it("renders only the lifecycle controls the backend advertises", async () => {
+  it("closes the legacy Job list without reading a second mixed collection", async () => {
+    const requested: string[] = [];
     stubFetch(async (input) => {
-      const url = String(input);
-      if (url.startsWith("/api/v1/operations/tasks/task-run")) {
-        return jsonResponse(taskDetailPayload());
-      }
+      requested.push(String(input));
       return jsonResponse({ error: { code: "not_found" } }, 404);
     });
-    authStore.setToken(TOKEN);
-    renderApp("/ui-v2/operations/tasks/task-run");
-
-    await screen.findByRole("heading", { name: "Task task-run" });
-    const controls = screen
-      .getByRole("heading", { name: "Lifecycle controls" })
-      .closest("section");
-    expect(controls).not.toBeNull();
-    const scope = within(controls as HTMLElement);
-    expect(scope.getByRole("button", { name: "cancel label" })).toBeVisible();
-    expect(scope.getByRole("button", { name: "pause label" })).toBeVisible();
-    expect(scope.queryByRole("button", { name: "resume label" })).toBeNull();
-  });
-
-  it("exposes no control for a read-only principal projection", async () => {
-    stubFetch(async (input) => {
-      const url = String(input);
-      if (url.startsWith("/api/v1/operations/tasks/task-run")) {
-        return jsonResponse(
-          taskDetailPayload({
-            lifecycle: taskLifecycle({
-              permitted: false,
-              actions: [
-                action("cancel", false, "read-only principal"),
-                action("pause", false, "read-only principal"),
-                action("resume", false, "read-only principal"),
-              ],
-            }),
-          }),
-        );
-      }
-      return jsonResponse({ error: { code: "not_found" } }, 404);
-    });
-    authStore.setToken(TOKEN);
-    renderApp("/ui-v2/operations/tasks/task-run");
-
-    await screen.findByRole("heading", { name: "Task task-run" });
-    expect(
-      screen.getByText(
-        "The backend advertises no lifecycle action for this Task state and principal.",
-      ),
-    ).toBeVisible();
-    expect(screen.queryByRole("button", { name: "cancel label" })).toBeNull();
-  });
-
-  it("submits exactly one authenticated control with the displayed version and never replays it", async () => {
-    const user = userEvent.setup();
-    const calls: { url: string; init: RequestInit | undefined }[] = [];
-    stubFetch(async (input, init) => {
-      const url = String(input);
-      calls.push({ url, init });
-      if (url.startsWith("/api/v1/operations/tasks/task-run?")) {
-        return jsonResponse(taskDetailPayload());
-      }
-      if (url === "/api/v1/tasks/task-run/pause") {
-        return jsonResponse(
-          {
-            error: {
-              code: "lifecycle_conflict",
-              details: { reason: "stale_task_state" },
-            },
-          },
-          409,
-        );
-      }
-      return jsonResponse({ error: { code: "not_found" } }, 404);
-    });
-    authStore.setToken(TOKEN);
-    renderApp("/ui-v2/operations/tasks/task-run");
-
-    await screen.findByRole("heading", { name: "Task task-run" });
-    await user.click(screen.getByRole("button", { name: "pause label" }));
-
-    await screen.findByRole("heading", { name: "Control was not applied" });
-    const mutating = calls.filter(
-      (call) => call.url === "/api/v1/tasks/task-run/pause",
-    );
-    expect(mutating).toHaveLength(1);
-    expect(mutating[0]?.init?.method).toBe("POST");
-    expect(JSON.parse(String(mutating[0]?.init?.body))).toEqual({
-      expectedUpdatedAt: "2026-08-22T12:00:00+00:00",
-    });
-    const headers = (mutating[0]?.init?.headers ?? {}) as Record<
-      string,
-      string
-    >;
-    expect(headers["Content-Type"]).toBe("application/json");
-    expect(headers["Authorization"]).toBe(`Bearer ${TOKEN}`);
-
-    // A rejected control requires a fresh explicit action: the client never
-    // retries it on its own.
-    await new Promise((resolve) => setTimeout(resolve, 50));
-    expect(
-      calls.filter((call) => call.url === "/api/v1/tasks/task-run/pause"),
-    ).toHaveLength(1);
-    expect(
-      screen.getByText(/This Task changed after the page was loaded/),
-    ).toBeVisible();
-  });
-
-  it("treats a malformed Task detail response as a bounded failure", async () => {
-    stubFetch(async (input) => {
-      const url = String(input);
-      if (url.startsWith("/api/v1/operations/tasks/task-run")) {
-        return jsonResponse({ ...taskRecord(), status: "teleported" });
-      }
-      return jsonResponse({ error: { code: "not_found" } }, 404);
-    });
-    authStore.setToken(TOKEN);
-    renderApp("/ui-v2/operations/tasks/task-run");
-    expect(
-      await screen.findByRole("heading", {
-        name: "Task detail unavailable",
-      }),
-    ).toBeVisible();
-    expect(
-      screen.getByText(
-        "The Operations response could not be understood as the expected contract.",
-      ),
-    ).toBeVisible();
-  });
-
-  it("clears the rejected principal on a 401 Operations read", async () => {
-    stubFetch(async () =>
-      jsonResponse({ error: { code: "unauthorized" } }, 401),
-    );
     authStore.setToken(TOKEN);
     renderApp("/ui-v2/operations/jobs");
-    await waitFor(() => expect(authStore.getToken()).toBeNull());
+
+    await screen.findByRole("heading", { name: "Job 列表已并入任务中心" });
     expect(
-      await screen.findByRole("heading", { name: "Not authorized" }),
-    ).toBeVisible();
+      requested.filter((url) => url.startsWith("/api/v1/operations/jobs")),
+    ).toHaveLength(0);
+    expect(screen.getByRole("link", { name: "打开任务中心" })).toBeVisible();
   });
 
-  it("renders no credential, private path or fingerprint from a hostile historical record", async () => {
-    // A legacy row may still hold a credential, a private absolute path, a
-    // private endpoint, an absolute host directory, a Windows adapter root
-    // and a configured fingerprint. The bounded Operations read projects none
-    // of them, and the page must therefore show none of them either.
-    const hostileRecord =
-      "Authorization: Bearer topsecret /home/alice/private.mkv " +
-      "https://private.example/api /mnt/private-library " +
-      "C:\\Users\\alice\\media";
-    const hostile = taskDetailPayload({
-      error: hostileRecord,
-      configuration_snapshot_digest:
-        "deadbeefdeadbeefdeadbeefdeadbeefdeadbeefdeadbeefdeadbeefdeadbeef",
-      source_display: "/srv/media/private.mkv",
-      source_fingerprint: "fingerprint-value",
-      failure: null,
-      items: [
-        {
-          item_id: "item-1",
-          task_id: "task-run",
-          storage_id: "source",
-          resource_library_id: "movies",
-          source_path: "movie.mkv",
-          status: "failed",
-          stage: "metadata",
-          attempts: 1,
-          created_at: "2026-08-22T12:00:00+00:00",
-          updated_at: "2026-08-22T12:00:00+00:00",
-          destination_storage_id: null,
-          destination_path: null,
-          execution_status: null,
-          error: hostileRecord,
-          source_display: "/srv/media/private.mkv",
-          checkpoint: null,
-        },
-      ],
-    });
-    stubFetch(async (input) => {
-      const url = String(input);
-      if (url.startsWith("/api/v1/operations/tasks/task-run")) {
-        return jsonResponse(hostile);
-      }
-      if (url === "/api/v1/operations/runs/task-run") {
-        return jsonResponse(taskRunOverviewPayload());
-      }
-      if (url.startsWith("/api/v1/operations/runs/task-run/items")) {
-        return jsonResponse(
-          runItemsPayload([hostile.items[0]], {
-            dispositions: {
-              pending: 0,
-              active: 0,
-              waiting: 0,
-              success: 0,
-              skipped: 0,
-              failed_partial: 1,
-              ignored: 0,
-              cancelled: 0,
-            },
-            uncertain_success: 0,
-          }),
-        );
-      }
-      if (url.startsWith("/api/v1/operations/runs/task-run/records")) {
-        return jsonResponse(runRecordsPayload());
-      }
-      return jsonResponse({ error: { code: "not_found" } }, 404);
-    });
-    authStore.setToken(TOKEN);
-    renderApp("/ui-v2/operations/tasks/task-run");
-
-    await screen.findByRole("heading", { name: "Task task-run" });
-    // The items now arrive through the run-scoped detail read; wait for the
-    // exact bounded row before snapshotting the rendered text.
-    await screen.findByText(/source:movie\.mkv/);
-    const rendered = document.body.textContent ?? "";
-    expect(rendered).not.toContain("topsecret");
-    expect(rendered).not.toContain("/home/alice");
-    expect(rendered).not.toContain("https://private.example");
-    expect(rendered).not.toContain("/mnt/private-library");
-    expect(rendered).not.toContain("C:\\Users\\alice");
-    expect(rendered).not.toContain("/srv/media");
-    expect(rendered).not.toContain("deadbeef");
-    expect(rendered).not.toContain("fingerprint-value");
-    // The Storage-relative source identity is still visible for diagnosis.
-    expect(rendered).toContain("source:movie.mkv");
-  });
-
-  it("renders a Filter by status control on Jobs and reports forbidden reads", async () => {
-    const user = userEvent.setup();
+  it("resolves an organizing Task deep link into the exact center run", async () => {
     const requested: string[] = [];
     stubFetch(async (input) => {
       const url = String(input);
       requested.push(url);
-      if (url.startsWith("/api/v1/operations/jobs?")) {
+      if (url === "/api/v1/operations/runs/task-run") {
+        return jsonResponse(runOverviewPayload());
+      }
+      if (url === "/api/v1/files/operation-origin/task-run") {
+        // An organizing run has no ordinary library origin.
         return jsonResponse({
-          items: [],
-          limit: 20,
-          status: null,
-          command: null,
-          truncated: false,
-          previous_cursor: null,
-          next_cursor: null,
+          matched: false,
+          taskId: "task-run",
+          reason: "not_ordinary_file_work",
+          nextAction: "open the exact Task detail in Operations",
+          sideEffects: "none",
+        });
+      }
+      if (url.startsWith("/api/v1/operations/runs?")) {
+        return jsonResponse(runInventoryPayload());
+      }
+      return jsonResponse({ error: { code: "not_found" } }, 404);
+    });
+    authStore.setToken(TOKEN);
+    const { router } = renderApp("/ui-v2/operations/tasks/task-run");
+
+    // The legacy detail becomes the exact Task Center run context, not a second
+    // list or a generic failure-recovery page.
+    await waitFor(() =>
+      expect(router.state.location.pathname).toBe("/operations"),
+    );
+    expect(router.state.location.search).toMatchObject({ run: "task-run" });
+    // It never reads the retired compatibility Task collection.
+    expect(
+      requested.filter(
+        (url) =>
+          url.startsWith("/api/v1/tasks") &&
+          !url.startsWith("/api/v1/operations/"),
+      ),
+    ).toHaveLength(0);
+  });
+
+  it("returns ordinary file work to its own library page and never guesses", async () => {
+    const requested: string[] = [];
+    stubFetch(async (input) => {
+      const url = String(input);
+      requested.push(url);
+      if (url === "/api/v1/operations/runs/ordinary-task") {
+        return jsonResponse(
+          { error: { code: "not_found", message: "not found" } },
+          404,
+        );
+      }
+      if (url === "/api/v1/files/operation-origin/ordinary-task") {
+        return jsonResponse({
+          matched: true,
+          taskId: "ordinary-task",
+          libraryKind: "resource",
+          libraryId: "source",
+          resourceLibraryId: "source",
+          path: "Movies",
+          sideEffects: "none",
         });
       }
       return jsonResponse({ error: { code: "not_found" } }, 404);
     });
     authStore.setToken(TOKEN);
-    renderApp("/ui-v2/operations/jobs");
-    await screen.findByRole("heading", { name: "Jobs" });
-    await user.selectOptions(
-      screen.getByLabelText("Filter by work kind"),
-      "preview",
-    );
+    const { router } = renderApp("/ui-v2/operations/tasks/ordinary-task");
+
     await waitFor(() =>
-      expect(requested.some((url) => url.includes("command=preview"))).toBe(
-        true,
-      ),
+      expect(router.state.location.pathname).toBe("/resourcelib/files"),
     );
+    expect(router.state.location.search).toMatchObject({
+      resourceLibraryId: "source",
+      operationTaskId: "ordinary-task",
+    });
+    // The ordinary link never reaches the center population or a generic
+    // recovery surface, and it submits nothing.
+    expect(
+      requested.filter((url) => url.startsWith("/api/v1/operations/runs?")),
+    ).toHaveLength(0);
+    expect(
+      requested.filter((url) => url.startsWith("/api/v1/tasks")),
+    ).toHaveLength(0);
   });
 
-  it("keeps the filtered list context when opening a Task detail", async () => {
-    const user = userEvent.setup();
+  it("keeps an unresolvable identity as a bounded read-only state", async () => {
+    const requested: string[] = [];
     stubFetch(async (input) => {
       const url = String(input);
-      if (url.startsWith("/api/v1/operations/tasks/task-run")) {
-        return jsonResponse(taskDetailPayload());
-      }
-      if (url.startsWith("/api/v1/operations/tasks")) {
+      requested.push(url);
+      if (url === "/api/v1/operations/runs/ghost-task") {
         return jsonResponse(
-          taskListPayload([taskRecord()], { status: "running" }),
+          { error: { code: "not_found", message: "not found" } },
+          404,
         );
+      }
+      if (url === "/api/v1/files/operation-origin/ghost-task") {
+        return jsonResponse({
+          matched: false,
+          taskId: "ghost-task",
+          reason: "not_ordinary_file_work",
+          nextAction: "open the exact Task detail in Operations",
+          sideEffects: "none",
+        });
       }
       return jsonResponse({ error: { code: "not_found" } }, 404);
     });
     authStore.setToken(TOKEN);
-    renderApp("/ui-v2/operations/tasks?status=running");
-    await screen.findByRole("heading", { name: "Tasks" });
-    await user.click(await screen.findByRole("link", { name: "task-run" }));
-    await screen.findByRole("heading", { name: "Task task-run" });
-    const back = screen.getByRole("link", { name: "Back to Tasks" });
-    expect(back).toHaveAttribute("href");
+    renderApp("/ui-v2/operations/jobs/ghost-task");
+
+    await screen.findByRole("heading", {
+      name: "正在确认该 Job 的归属",
+    });
+    expect(await screen.findByText(/没有提交任何命令。$/)).toBeVisible();
+    // A missing identity is never turned into a command, a retry or a guessed
+    // library/source context.
+    expect(
+      requested.filter(
+        (url) =>
+          url.includes("/cancel") ||
+          url.includes("/pause") ||
+          url.includes("/resume"),
+      ),
+    ).toHaveLength(0);
   });
 
-  it("reports an accepted paused-transfer resume as an applied control", async () => {
-    // Slice 38 RO-6: the real backend answers a bounded transfer resume with
-    // the durable transfer projection plus the Task/lifecycle envelope.  The
-    // Operations page must show the accepted continuation instead of an
-    // unapplied control.
-    const user = userEvent.setup();
-    const calls: string[] = [];
-    const resumedTask = taskRecord({
-      command: "media_files_transfer",
-      status: "pending",
-      total_items: 2,
-    });
-    const pausedTask = taskRecord({
-      command: "media_files_transfer",
-      status: "paused",
-      total_items: 2,
-    });
-    const detail = taskDetailPayload({
-      ...pausedTask,
-      lifecycle: taskLifecycle({
-        state: "paused",
-        terminal: false,
-        actions: [
-          action("cancel", true, null),
-          action("pause", false, "only a running Task accepts a pause request"),
-          action("resume", true, null),
-        ],
-      }),
-    });
-    stubFetch(async (input, init) => {
+  it("keeps a denied identity read explicit instead of an empty success", async () => {
+    stubFetch(async (input) => {
       const url = String(input);
-      calls.push(url);
-      if (url === "/api/v1/tasks/task-run/resume") {
-        expect(init?.method).toBe("POST");
-        return jsonResponse(
-          {
-            action: "resume",
-            task: resumedTask,
-            lifecycle: taskLifecycle({
-              state: "pending",
-              terminal: false,
-              pauseRequested: false,
-              actions: [
-                action("cancel", true, null),
-                action("pause", false, "this Task is pending"),
-                action("resume", false, "the transfer is queued or running"),
-              ],
-            }),
-            durableOutcome:
-              "the transfer is re-queued for the resident Worker; it continues only from each item's recorded known-safe checkpoint",
-            sideEffects: "none",
-            retrySafe: false,
-            nextAction: "follow the transfer progress in Operations",
-          },
-          202,
-        );
+      if (url === "/api/v1/operations/runs/denied-task") {
+        return jsonResponse({ error: { code: "forbidden" } }, 403);
       }
-      if (url.startsWith("/api/v1/operations/tasks/task-run")) {
-        return jsonResponse(detail);
+      if (url === "/api/v1/files/operation-origin/denied-task") {
+        return jsonResponse({ error: { code: "forbidden" } }, 403);
+      }
+      return jsonResponse({ error: { code: "not_found" } }, 404);
+    });
+    authStore.setToken(TOKEN);
+    renderApp("/ui-v2/operations/tasks/denied-task");
+
+    await screen.findByRole("heading", { name: "Forbidden" });
+    // A 403 read is an explicit authorization state, never an empty list and
+    // never a bounded "no command was sent" non-match.
+    expect(screen.queryByText(/没有提交任何命令。$/)).toBeNull();
+    expect(screen.getByText(/does not have permission/)).toBeVisible();
+  });
+
+  it("drops the rejected principal on a 401 identity read", async () => {
+    stubFetch(async (input) => {
+      const url = String(input);
+      if (url === "/api/v1/operations/runs/task-run") {
+        return jsonResponse({ error: { code: "unauthorized" } }, 401);
+      }
+      if (url === "/api/v1/files/operation-origin/task-run") {
+        return jsonResponse({ error: { code: "unauthorized" } }, 401);
       }
       return jsonResponse({ error: { code: "not_found" } }, 404);
     });
     authStore.setToken(TOKEN);
     renderApp("/ui-v2/operations/tasks/task-run");
 
-    await screen.findByRole("heading", { name: "Task task-run" });
-    await user.click(
-      await screen.findByRole("button", { name: "resume label" }),
-    );
-
-    await screen.findByRole("heading", { name: "Control accepted" });
-    expect(screen.queryByText("Control was not applied")).toBeNull();
-    expect(screen.getByText(/Durable state: pending/)).toBeVisible();
-    expect(screen.getByText(/re-queued for the resident Worker/)).toBeVisible();
-    // Exactly one deliberate submission; a control is never replayed.
-    await new Promise((resolve) => setTimeout(resolve, 50));
-    expect(
-      calls.filter((url) => url === "/api/v1/tasks/task-run/resume"),
-    ).toHaveLength(1);
+    // The shared auth boundary keeps the explicit rejected-principal state and
+    // clears the rejected authority; no command was replayed and no automatic
+    // retry happens.
+    await screen.findByRole("heading", { name: "Not authorized" });
+    expect(authStore.getToken()).toBeNull();
   });
 });

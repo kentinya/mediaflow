@@ -458,9 +458,13 @@ test("occurrence history links the exact Job and Task without emitting work", as
     page.getByText(/automation-active-rev-e2e-001/).first(),
   ).toBeVisible();
 
-  await page.getByRole("link", { name: "Open the Job" }).click();
+  // Slice46 RO-4 / B46.4-04: the retired Job collection is closed, so the
+  // occurrence opens the same exact run inside the center.
+  await page
+    .getByRole("link", { name: "Open the exact run in the Task Center" })
+    .click();
   await expect(page).toHaveURL(
-    new RegExp(`/ui-v2/operations/jobs/automation-job-e2e-001$`),
+    new RegExp("/ui-v2/operations\\?run=automation-job-e2e-001$"),
   );
 
   // Reading the history is GET-only: nothing was emitted or submitted.
