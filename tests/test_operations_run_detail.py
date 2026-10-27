@@ -288,10 +288,12 @@ class RunDetailJourneyTests(_RunDetailApiTestCase):
         self.assertEqual(records["records"][0]["record_id"], "log:log-pre-task")
 
     def test_standalone_task_and_both_library_kinds_remain_inspectable(self) -> None:
+        # Task46.4 RO-4: the center's population is admitted organizing work
+        # (a MediaLibrary-owned file command is deliberately *not* organizing
+        # work), so the two inspectable runs are one ResourceLibrary organizing
+        # Task and one task whose recorded items prove a MediaLibrary kind.
         resource_run, resource_task = self.seed_run(command="organize")
-        media_run, media_task = self.seed_run(
-            command="media_organize:collection-1", library="media-collection"
-        )
+        media_run, media_task = self.seed_run(command="manual_organize", library="media-collection")
         self.repository.upsert_item(
             _item(resource_task, "r-item", TaskItemStatus.DRY_RUN, library="movies")
         )
@@ -1035,7 +1037,10 @@ class RunExportTests(unittest.TestCase):
             dataclasses.replace(
                 task(
                     task_id,
-                    command="preview",
+                    # Task46.4 RO-4: the center is admitted organizing work only,
+                    # so the export/record fixtures seed a real organizing Task
+                    # (a standalone analysis-only preview is not center work).
+                    command="organize",
                     status=PersistentTaskStatus.COMPLETED,
                     execute_authorized=False,
                 ),

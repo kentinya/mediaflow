@@ -148,6 +148,9 @@ from mediaflow.domain.notification import (
 from mediaflow.domain.operations_run import (
     COMMAND_LABELS,
     DISCOVERY_COMMAND_LABEL,
+    ORGANIZING_JOB_COMMAND_FAMILIES,
+    ORGANIZING_TASK_COMMAND_FAMILIES,
+    ORGANIZING_TASK_LINEAGE_RELATIONS,
     RECOVERY_PROBLEM_TYPES,
     RUN_RECORD_KINDS,
     OperationsRunItemWindow,
@@ -5703,6 +5706,7 @@ class SQLiteTaskRepository:
                jobs.schedule_id, jobs.definition_id, jobs.source_scope,
                jobs.resource_library_id, jobs.worker_id, jobs.status AS job_status
         FROM automation_jobs jobs
+        WHERE jobs.command IN ({organizing_job_commands})
         UNION ALL
         SELECT 'task' AS run_kind, tasks.task_id AS anchor_id, tasks.created_at AS sort_at,
                NULL AS linked_task_id, NULL AS transfer_task_id,
@@ -5714,6 +5718,7 @@ class SQLiteTaskRepository:
             SELECT 1 FROM automation_jobs linked_jobs
             WHERE linked_jobs.task_id = tasks.task_id
         )
+        AND ({organizing_task_membership})
         UNION ALL
         SELECT 'discovery' AS run_kind,
                media_discoveries.discovery_id AS anchor_id,
@@ -5729,9 +5734,93 @@ class SQLiteTaskRepository:
         -- same operator work twice, so the discovery branch covers only the
         -- admissions that keep their original preparation-only lineage (a
         -- definition Run once, a remaining-scope recovery preparation and any
-        -- pre-change record).
+        -- pre-change record).  RO-4: such a preparation is Task Center work
+        -- only when it carries a durable definition origin (a definition-bound
+        -- Run once); a plain analysis/preview preparation is not organizing
+        -- work and never leaks into a center list or count.
         WHERE media_discoveries.organize_task_id IS NULL
+        AND ({organizing_discovery_membership})
     """
+
+    #: The command-family expression of one SQL row alias: the persisted
+    #: ``<family>[:<identity>]`` head, exactly like ``known_command_label``.
+    @staticmethod
+    def _command_family_sql(command_expression: str) -> str:
+        return (
+            f"CASE WHEN instr({command_expression}, ':') > 0 "
+            f"THEN substr({command_expression}, 1, instr({command_expression}, ':') - 1) "
+            f"ELSE {command_expression} END"
+        )
+
+    @classmethod
+    def _organizing_population_sql(cls) -> dict[str, str]:
+        """The shared Task Center population expressions (Slice46 RO-4).
+
+        Task Center lists, counts, summaries, sources, cursors and exact-ID
+        reads must all speak about *admitted organizing work* only.  Membership
+        is derived from supported command semantics and the durable
+        admission/lineage relations the real producers write — never from a
+        display label, a path substring or a timestamp:
+
+        - a Job is organizing work when its own command family is supported
+          organizing work (a scheduled/due/Run-once occurrence, an analysis
+          continuation, a remaining-scope continuation);
+        - a standalone Task is organizing work when its own command family is
+          supported organizing work -- a Files admission command already
+          records ``manual_organize`` and keeps ``execute_authorized=True`` from
+          the moment it is admitted, so an explicitly admitted work stays
+          present while it is still discovering/analyzing/waiting for its first
+          confirmation -- or when an exact persisted continuation relation names
+          it as the successor of one organizing work.  A MediaLibrary-owned
+          ``media_`` command is never organizing work;
+        - a ``media_discoveries`` preparation row is organizing work only when
+          it carries a durable definition origin (a definition-bound Run once)
+          and never admitted its own organizing Task.  A plain analysis/preview
+          preparation is not organizing work.
+        """
+
+        def placeholders(values: tuple[str, ...]) -> str:
+            return ", ".join(_sql_string(value) for value in values)
+
+        def membership(command_expression: str, task_identity: str) -> str:
+            family = cls._command_family_sql(command_expression)
+            lineage = " OR ".join(
+                f"EXISTS (SELECT 1 FROM {table} lineage WHERE lineage.{column} = {task_identity})"
+                for table, column in ORGANIZING_TASK_LINEAGE_RELATIONS
+            )
+            return (
+                f"({task_identity} IS NOT NULL AND (("
+                f"{family} IN ({placeholders(ORGANIZING_TASK_COMMAND_FAMILIES)})"
+                f" AND substr({command_expression}, 1, length('media_')) "
+                f"<> {_sql_string(MEDIA_LIBRARY_TASK_COMMAND_PREFIX)}) OR {lineage}))"
+            )
+
+        discovery_origin = (
+            "(media_discoveries.definition_origin_json IS NOT NULL"
+            " AND media_discoveries.definition_origin_json <> '')"
+        )
+        return {
+            "organizing_job_commands": placeholders(ORGANIZING_JOB_COMMAND_FAMILIES),
+            "organizing_task_membership": membership("tasks.command", "tasks.task_id"),
+            "organizing_discovery_membership": discovery_origin,
+        }
+
+    @classmethod
+    def _run_query_population_select(cls) -> str:
+        """The organizing-only row population of the Task Center read model.
+
+        One projection over the exact same three durable anchor kinds the
+        vocabulary already shares (admitted Job, standalone Task, definition-
+        bound Run-once preparation), restricted to Task Center membership.  The
+        population is applied *inside* the subquery that page, filtered total,
+        status partitions, attention, summary, source options, cursor windows,
+        exact-ID detail, items, records and export all read, so a record outside
+        the center can never be reached through a legacy list, cursor, count or
+        deep link.  No consumer can widen it after the fact.
+        """
+
+        population = cls._organizing_population_sql()
+        return cls._RUN_QUERY_SELECT.format(**population)
 
     @staticmethod
     def _run_query_clauses(
@@ -5793,13 +5882,7 @@ class SQLiteTaskRepository:
                 )
             elif view == OperationsRunView.ATTENTION.value:
                 clauses.append("derived_attention = 1")
-            elif view in {
-                OperationsRunView.RECOGNITION.value,
-                OperationsRunView.METADATA.value,
-                OperationsRunView.CLASSIFICATION.value,
-                OperationsRunView.CONFLICT.value,
-                OperationsRunView.FAILURE.value,
-            }:
+            elif view in RECOVERY_PROBLEM_TYPES:
                 clauses.append(f"has_{view}_problem = 1")
         if problem_type is not None:
             clauses.append(f"has_{problem_type}_problem = 1")
@@ -5933,13 +6016,6 @@ class SQLiteTaskRepository:
             problem: self._problem_item_predicate(problem)[0] for problem in RECOVERY_PROBLEM_TYPES
         }
 
-        def task_item_exists(problem: str) -> str:
-            predicate = problem_predicates[problem].replace("i.", "problem_items.")
-            return (
-                "EXISTS (SELECT 1 FROM task_items problem_items "
-                f"WHERE problem_items.task_id = {task_identity} AND {predicate})"
-            )
-
         def task_item_count(problem: str) -> str:
             predicate = problem_predicates[problem].replace("i.", "problem_items.")
             return (
@@ -5947,89 +6023,34 @@ class SQLiteTaskRepository:
                 f"WHERE problem_items.task_id = {task_identity} AND {predicate})"
             )
 
-        actionable_failure = task_item_exists("failure")
-        # A confirmed recovery plan summary whose linked execution already
-        # completed with a verified effect is a durable follow-up that no longer
-        # needs operator attention.  This mirrors ``completed_manual_follow_up``
-        # but reads the newer preparation -> execution -> TaskItem/Result chain,
-        # never the legacy link, so a source item resolved through the same-page
-        # journey leaves the current problem list once its real Worker outcome
-        # proves the effect.
-        completed_preparation_follow_up = self._verified_recovery_follow_up("continuation_items")
-        # A resolved review or admitted analysis/retry is no longer a
-        # technical failure. Its pending safe-continuation step remains in
-        # the generic attention view until a later durable outcome replaces
-        # that state. This keeps it discoverable without inventing a failure.
-        completed_manual_follow_up = (
-            "EXISTS (SELECT 1 FROM manual_recovery_links recovery_links "
-            "JOIN recovery_continuations resolved_continuations "
-            "ON resolved_continuations.source_task_id = recovery_links.source_task_id "
-            "AND resolved_continuations.source_item_id = recovery_links.source_item_id "
-            "AND resolved_continuations.new_task_id = continuation_items.task_id "
-            "JOIN recovery_continuations linked_analysis "
-            "ON linked_analysis.continuation_id = recovery_links.analysis_continuation_id "
-            "AND linked_analysis.new_task_id = recovery_links.analysis_task_id "
-            "AND linked_analysis.source_task_id = resolved_continuations.source_task_id "
-            "AND linked_analysis.source_item_id = resolved_continuations.source_item_id "
-            "JOIN task_results analysis_results "
-            "ON analysis_results.result_id = recovery_links.analysis_result_id "
-            "AND analysis_results.task_id = recovery_links.analysis_task_id "
-            "AND analysis_results.result_id = linked_analysis.new_result_id "
-            "JOIN manual_preview_items preview_items "
-            "ON preview_items.preview_id = recovery_links.preview_id "
-            "AND preview_items.source_fingerprint = analysis_results.source_fingerprint "
-            "AND json_extract(preview_items.source_json, '$.occurrenceId') "
-            "= analysis_results.source_occurrence_id "
-            "JOIN manual_execution_items execution_items "
-            "ON execution_items.execution_id = recovery_links.execution_id "
-            "AND execution_items.preview_id = recovery_links.preview_id "
-            "AND execution_items.preview_item_id = preview_items.preview_item_id "
-            "AND execution_items.item_id = preview_items.item_id "
-            "JOIN manual_executions executions "
-            "ON executions.execution_id = recovery_links.execution_id "
-            "AND executions.task_id = execution_items.task_id "
-            "WHERE recovery_links.status = 'consumed' "
-            "AND recovery_links.execution_id IS NOT NULL "
-            "AND executions.status = 'completed' "
-            "AND execution_items.status = 'success' "
-            "AND execution_items.result_id IS NOT NULL "
-            "AND execution_items.effect_certainty = 'verified_complete' "
-            "AND execution_items.uncertain_effects = '[]' "
-            "AND recovery_links.source_task_id = resolved_continuations.source_task_id)"
-        )
-        safe_continuation = (
-            "EXISTS (SELECT 1 FROM task_items continuation_items "
-            f"WHERE continuation_items.task_id = {task_identity} "
-            "AND continuation_items.status = 'pending' "
-            "AND ((continuation_items.stage LIKE '%\\_resolved' ESCAPE '\\' "
-            f"AND NOT {completed_manual_follow_up} "
-            f"AND NOT {completed_preparation_follow_up}) "
-            "OR (continuation_items.stage = 'task_retry_requested' AND NOT EXISTS ("
-            "SELECT 1 FROM manual_recovery_links recovery_links WHERE "
-            "recovery_links.source_item_id = continuation_items.item_id "
-            f"AND recovery_links.status = 'consumed') AND NOT {completed_preparation_follow_up})))"
-        )
-        item_attention = (
-            "EXISTS (SELECT 1 FROM task_items attention_items"
-            f" WHERE attention_items.task_id = {task_identity}"
-            " AND attention_items.status IN ('waiting_recognition', 'waiting_metadata',"
-            " 'waiting_metadata_correction', 'waiting_classification', 'waiting_confirm'))"
-            f" OR {actionable_failure} OR {safe_continuation}"
-        )
-        # A run-level current problem (RO-1): a Job that failed *before* any
-        # Task existed carries structured, durable repair/verification evidence
-        # (a stable failure category plus an explicit next action) and no
-        # linked Task.  It has no TaskItem to appear in the five file lists, but
-        # it is exactly the configuration/authority repair work an operator must
-        # still act on.  A plain queue admission carries none of these fields, a
-        # generic exception failure has no structured category, and a Job that
-        # later created a Task is owned by that Task's item evidence — so none
-        # of them is misclassified as a manual to-do here.  The predicate reads
-        # durable structured columns only; it never matches free-form error text
-        # and never infers a repair from the current Active configuration.
-        # Only a genuine failure is a repair to-do.  A cancelled Job also
-        # records bounded cancellation evidence, but cancellation is the
-        # operator's own completed intent, never an outstanding problem.
+        # -- Task Center current problems (Slice46 RO-4) --------------------
+        #
+        # Attention is the *distinct union of the four business problem types*,
+        # nothing else.  A technical failure (Provider transport, Storage,
+        # permission/grant, missing configuration/source, partial or uncertain
+        # effects), a plain queue admission and an initial manual confirmation
+        # are not a fifth type and never inflate attention, pending counts or
+        # the type statistics: those remain real, read-only history in
+        # All/Ended with their factual reasons, stages, effects, logs and
+        # export.
+        #
+        # A saved business decision that waits for its explicit safe
+        # continuation is still the operator's required next step of the same
+        # four-type recovery, and the *initial* manual ``waiting_confirm``
+        # without such recovery lineage is not a business problem at all.
+        # Both facts are decided inside the shared
+        # :meth:`_problem_item_predicate`, so the Attention union, every type
+        # list and every type file count use one predicate.
+        attention_clauses = [
+            self._typed_problem_exists(problem) for problem in RECOVERY_PROBLEM_TYPES
+        ]
+        attention_sql = "CASE WHEN (" + " OR ".join(attention_clauses) + ") THEN 1 ELSE 0 END"
+        # A Job that failed *before* any Task existed carries durable structured
+        # repair evidence.  Task Center RO-4 does NOT treat it as a fifth
+        # attention type -- it stays read-only All/Ended history -- but the
+        # shared administrative Automation recovery boundary still needs the
+        # exact durable repair facts to publish its own explicit handoff.  The
+        # predicate therefore stays *outside* the Attention union.
         run_level_repair = (
             "runs.run_kind = 'job' "
             "AND runs.linked_task_id IS NULL "
@@ -6039,18 +6060,17 @@ class SQLiteTaskRepository:
             "AND runs.anchor_failure_next_action IS NOT NULL "
             "AND runs.anchor_failure_next_action <> ''"
         )
-        attention_sql = f"CASE WHEN {item_attention} OR {run_level_repair} THEN 1 ELSE 0 END"
-        attention_reason_sql = (
-            f"CASE WHEN {item_attention} THEN 'task_problem' "
-            f"WHEN {run_level_repair} THEN 'run_repair' ELSE NULL END"
-        )
+        # Why a run is in attention, when it is: its current four-type problem
+        # set.  A run with no current business problem publishes no reason, so
+        # no page can render a generic repair/retry invitation.
+        attention_reason_sql = f"CASE WHEN ({attention_sql}) = 1 THEN 'task_problem' ELSE NULL END"
         # The durable "this run is a follow-up" facet, computed once and shared
         # by every consumer that must keep follow-ups out of the *original*
         # Automation population (page, filtered total, status partitions, metric
         # cohorts and per-definition latest outcome all read this same column).
         recovery_follow_up_sql = self._recovery_follow_up_sql(task_identity)
         problem_sql = {
-            problem: f"CASE WHEN {task_item_exists(problem)} THEN 1 ELSE 0 END"
+            problem: f"CASE WHEN {self._typed_problem_exists(problem)} THEN 1 ELSE 0 END"
             for problem in RECOVERY_PROBLEM_TYPES
         }
         problem_file_sql = {problem: task_item_count(problem) for problem in RECOVERY_PROBLEM_TYPES}
@@ -6266,6 +6286,13 @@ class SQLiteTaskRepository:
                        THEN CASE WHEN {recovery_follow_up_sql} THEN 1 ELSE 0 END
                        ELSE 0
                    END AS is_recovery_follow_up,
+                   -- A pre-Task authoritative failure is *not* a fifth
+                   -- attention type (RO-4): it never contributes to Attention,
+                   -- pending counts, type lists or a generic center repair
+                   -- action.  Its factual category/state/next action remain
+                   -- readable as read-only history, and the shared
+                   -- administrative Automation recovery boundary keeps using
+                   -- them for its own explicit handoff.
                    CASE WHEN {run_level_repair}
                         THEN runs.anchor_failure_category ELSE NULL END
                        AS attention_failure_category,
@@ -6275,20 +6302,19 @@ class SQLiteTaskRepository:
                    CASE WHEN {run_level_repair}
                         THEN runs.anchor_failure_next_action ELSE NULL END
                        AS attention_failure_next_action,
-                   -- Per-type problem evidence, each from a durable review,
-                   -- item state or continuation.  A resolved review leaves
-                   -- its item pending at a *_resolved stage, so it stops
-                   -- contributing; a new blocker contributes to its own type.
+                   -- Per-type problem evidence, each from the one shared
+                   -- durable predicate its own file list reads: a current
+                   -- blocking review, or the saved decision that still waits
+                   -- for its explicit safe continuation of that same type.  The
+                   -- task's Attention union is exactly the OR of these four.
                    {problem_sql["recognition"]} AS has_recognition_problem,
                    {problem_sql["metadata"]} AS has_metadata_problem,
                    {problem_sql["classification"]} AS has_classification_problem,
                    {problem_sql["conflict"]} AS has_conflict_problem,
-                   {problem_sql["failure"]} AS has_failure_problem,
                    {problem_file_sql["recognition"]} AS problem_recognition_files,
                    {problem_file_sql["metadata"]} AS problem_metadata_files,
                    {problem_file_sql["classification"]} AS problem_classification_files,
-                   {problem_file_sql["conflict"]} AS problem_conflict_files,
-                   {problem_file_sql["failure"]} AS problem_failure_files
+                   {problem_file_sql["conflict"]} AS problem_conflict_files
             FROM (
                 SELECT job_rows.*,
                        jobs.command AS anchor_command,
@@ -6299,7 +6325,7 @@ class SQLiteTaskRepository:
                        jobs.failure_category AS anchor_failure_category,
                        jobs.failure_durable_state AS anchor_failure_durable_state,
                        jobs.failure_next_action AS anchor_failure_next_action
-                FROM ({self._RUN_QUERY_SELECT}) job_rows
+                FROM ({self._run_query_population_select()}) job_rows
                 LEFT JOIN automation_jobs jobs ON jobs.job_id = job_rows.anchor_id
                        AND job_rows.run_kind = 'job'
             ) runs
@@ -6475,12 +6501,10 @@ class SQLiteTaskRepository:
             SUM(has_metadata_problem) AS metadata_tasks,
             SUM(has_classification_problem) AS classification_tasks,
             SUM(has_conflict_problem) AS conflict_tasks,
-            SUM(has_failure_problem) AS failure_tasks,
             SUM(problem_recognition_files) AS recognition_files,
             SUM(problem_metadata_files) AS metadata_files,
             SUM(problem_classification_files) AS classification_files,
-            SUM(problem_conflict_files) AS conflict_files,
-            SUM(problem_failure_files) AS failure_files
+            SUM(problem_conflict_files) AS conflict_files
             FROM ({document}) {filter_where}"""
         sources_sql = f"""SELECT effective_scope AS value, COUNT(*) AS value_count
             FROM ({document})
@@ -6647,8 +6671,7 @@ class SQLiteTaskRepository:
                         SUM(has_recognition_problem) AS recognition,
                         SUM(has_metadata_problem) AS metadata,
                         SUM(has_classification_problem) AS classification,
-                        SUM(has_conflict_problem) AS conflict,
-                        SUM(has_failure_problem) AS failure
+                        SUM(has_conflict_problem) AS conflict
                     FROM ({document})"""
                 ).fetchone()
                 source_rows = self._connection.execute(
@@ -6679,11 +6702,7 @@ class SQLiteTaskRepository:
             "attention": int(row["attention"] or 0),
             "ended": int(row["ended"] or 0),
             "problem_tasks": {
-                "recognition": int(row["recognition"] or 0),
-                "metadata": int(row["metadata"] or 0),
-                "classification": int(row["classification"] or 0),
-                "conflict": int(row["conflict"] or 0),
-                "failure": int(row["failure"] or 0),
+                problem: int(row[problem] or 0) for problem in RECOVERY_PROBLEM_TYPES
             },
             "problem_files": files,
             "sources": sources,
@@ -7306,8 +7325,7 @@ class SQLiteTaskRepository:
                 SUM(problem_recognition_files) AS recognition,
                 SUM(problem_metadata_files) AS metadata,
                 SUM(problem_classification_files) AS classification,
-                SUM(problem_conflict_files) AS conflict,
-                SUM(problem_failure_files) AS failure
+                SUM(problem_conflict_files) AS conflict
                 FROM ({document})"""
         ).fetchone()
         return {problem: int(row[problem] or 0) for problem in RECOVERY_PROBLEM_TYPES}
@@ -7344,7 +7362,37 @@ class SQLiteTaskRepository:
                 "SELECT job_id FROM automation_jobs WHERE task_id = ? LIMIT 1",
                 (identifier,),
             ).fetchone()
+            if row is not None:
+                # The persisted Job→Task link only resolves when that exact Job
+                # is Task Center organizing work; an ordinary file work's Task
+                # must reach its own local surface, not the organizing center.
+                linked = self._connection.execute(
+                    "SELECT 1 FROM automation_jobs WHERE job_id = ? AND "
+                    f"command IN ({self._organizing_population_sql()['organizing_job_commands']})",
+                    (str(row["job_id"]),),
+                ).fetchone()
+                if linked is None:
+                    return None
         return str(row["job_id"]) if row is not None else None
+
+    def is_task_center_run(self, run_id: object) -> bool:
+        """Whether one durable identifier resolves to Task Center organizing work.
+
+        The check runs against the exact same shared population the Task Center
+        lists, so a center deep link can only ever open a row the center really
+        contains: an ordinary Files/MediaLibrary command, a notification or an
+        unrelated/legacy record is refused here instead of being published
+        through a center detail surface.
+        """
+
+        if not isinstance(run_id, str) or not run_id.strip() or len(run_id) > 128:
+            return False
+        document = self._run_query_document()
+        with self._lock:
+            row = self._connection.execute(
+                f"SELECT 1 FROM ({document}) WHERE anchor_id = ? LIMIT 1", (run_id,)
+            ).fetchone()
+        return row is not None
 
     def operations_run_with_progress(
         self, run_id: object
@@ -7756,110 +7804,157 @@ class SQLiteTaskRepository:
             )
 
     @staticmethod
-    def _problem_item_predicate(problem_type: str) -> tuple[str, tuple[object, ...]]:
-        """The exact durable predicate of one recovery problem type.
+    def _saved_decision_continuation_sql(item_alias: str) -> str:
+        """A saved business decision that still needs its explicit continuation.
 
-        Kept next to the run document's own problem probes so the list view
-        and its file list can never disagree about what counts as an
-        outstanding problem.  ``i`` is the ``task_items`` alias of the caller.
+        A recognition/metadata/classification/conflict decision Save moves the
+        item to ``pending`` at a ``*_resolved`` stage: the file left its old
+        review (so it is no longer a *new* blocker of that type) but the
+        required human step is not finished, because the exact safe analysis
+        continuation has not run yet.  That pending step is still four-type
+        recovery work of the *same* type, never a technical failure and never a
+        fifth type.
+
+        Once the operator submits the explicit continuation, the item moves to
+        ``pending`` at ``task_retry_requested``: that follow-up is already queued
+        work, so it belongs in Running and no longer counts here.  A later
+        technical follow-up failure likewise leaves the four types; only a new
+        business blocker creates a new typed problem.
         """
 
+        return (
+            f"{item_alias}.status = 'pending' "
+            f"AND {item_alias}.stage IN ("
+            "'recognition_resolved', 'metadata_resolved', 'metadata_correction_resolved', "
+            "'classification_resolved')"
+            # A *newer* attempt admitted from the same original item proves the
+            # saved decision was already consumed: the exact older analysis
+            # child that carried it must not keep pretending a human step is
+            # still owed.  The relation read is the persisted recovery lineage
+            # (same source item, strictly newer continuation), never a label or
+            # a timestamp proximity.
+            " AND NOT EXISTS (SELECT 1 FROM recovery_continuations decision_chain "
+            "JOIN recovery_continuations newer_chain "
+            "ON newer_chain.source_item_id = decision_chain.source_item_id "
+            "AND (newer_chain.created_at > decision_chain.created_at "
+            "OR (newer_chain.created_at = decision_chain.created_at "
+            "AND newer_chain.continuation_id > decision_chain.continuation_id)) "
+            f"WHERE decision_chain.new_task_id = {item_alias}.task_id)"
+        )
+
+    @staticmethod
+    def _problem_item_predicate(problem_type: str) -> tuple[str, tuple[object, ...]]:
+        """The exact durable predicate of one *business* recovery problem type.
+
+        Kept next to the run document's own problem probes so the view list,
+        the Attention union and the per-type file list can never disagree about
+        what counts as an outstanding problem.  ``i`` is the ``task_items``
+        alias of the caller.
+
+        Only Recognition, Metadata (candidate/correction), Classification and
+        Conflict are problem types.  A technical failure -- Provider transport,
+        Storage, permission/grant, a missing configuration/source, a partial or
+        uncertain effect -- is deliberately *not* one: it is read-only history
+        in All/Ended.  Each type predicate therefore covers exactly two real
+        human situations:
+
+        - a current blocking review of that type (a new business decision), and
+        - the saved decision that still waits for its explicit safe continuation
+          (the same type's required next step, before it really resolved).
+
+        A resolver that already recorded its decision must **not** hide a
+        remaining live blocker on the same item: an open review of the type
+        always wins over the resolved decision that preceded it.
+        """
+
+        saved = SQLiteTaskRepository._saved_decision_continuation_sql("i")
         if problem_type == "recognition":
             return (
+                "("
+                "("
                 "EXISTS (SELECT 1 FROM recognition_reviews recog "
                 "WHERE recog.item_id = i.item_id AND recog.status = 'pending')"
-                " AND i.status IN ('waiting_recognition', 'pending')",
+                " AND i.status IN ('waiting_recognition', 'pending')"
+                ")"
+                f" OR ({saved} AND i.stage = 'recognition_resolved'"
+                " AND NOT EXISTS (SELECT 1 FROM recognition_reviews open_recognition "
+                "WHERE open_recognition.item_id = i.item_id"
+                " AND open_recognition.status = 'pending'))"
+                ")",
                 (),
             )
         if problem_type == "metadata":
             return (
-                "i.status IN ('waiting_metadata', 'waiting_metadata_correction')",
+                "("
+                "i.status IN ('waiting_metadata', 'waiting_metadata_correction')"
+                " OR (EXISTS (SELECT 1 FROM metadata_reviews meta_reviews "
+                "WHERE meta_reviews.item_id = i.item_id AND meta_reviews.status = 'pending')"
+                " AND i.status IN ('waiting_metadata', 'waiting_metadata_correction',"
+                " 'pending'))"
+                " OR (EXISTS (SELECT 1 FROM metadata_corrections meta_corrections "
+                "WHERE meta_corrections.item_id = i.item_id "
+                "AND meta_corrections.status = 'pending')"
+                " AND i.status IN ('waiting_metadata_correction', 'pending'))"
+                f" OR ({saved} AND i.stage IN ('metadata_resolved',"
+                " 'metadata_correction_resolved')"
+                " AND NOT EXISTS (SELECT 1 FROM metadata_reviews open_metadata "
+                "WHERE open_metadata.item_id = i.item_id AND open_metadata.status = 'pending')"
+                " AND NOT EXISTS (SELECT 1 FROM metadata_corrections open_correction "
+                "WHERE open_correction.item_id = i.item_id"
+                " AND open_correction.status = 'pending'))"
+                ")",
                 (),
             )
         if problem_type == "classification":
-            return ("i.status = 'waiting_classification'", ())
-        if problem_type == "conflict":
             return (
-                "EXISTS (SELECT 1 FROM conflict_confirmations conflict "
-                "WHERE conflict.item_id = i.item_id AND conflict.status = 'pending')"
-                " AND i.status IN ('waiting_confirm', 'pending')",
+                "("
+                "("
+                "EXISTS (SELECT 1 FROM classification_reviews class_reviews "
+                "WHERE class_reviews.item_id = i.item_id "
+                "AND class_reviews.status = 'pending')"
+                " AND i.status IN ('waiting_classification', 'pending')"
+                ")"
+                f" OR ({saved} AND i.stage = 'classification_resolved'"
+                " AND NOT EXISTS (SELECT 1 FROM classification_reviews open_classification "
+                "WHERE open_classification.item_id = i.item_id"
+                " AND open_classification.status = 'pending'))"
+                ")",
                 (),
             )
-        if problem_type == "failure":
-
-            def latest_request(alias: str) -> str:
-                """Keep only the last admission for equal as well as ordered times."""
-
-                return (
-                    "NOT EXISTS (SELECT 1 FROM recovery_requests newer_requests "
-                    f"WHERE newer_requests.item_id = {alias}.item_id AND ("
-                    f"newer_requests.requested_at > {alias}.requested_at OR ("
-                    f"newer_requests.requested_at = {alias}.requested_at AND "
-                    f"newer_requests.request_id > {alias}.request_id)))"
-                )
-
-            # A failed analysis continuation may have moved the actual
-            # operator decision to its linked TaskItem. Keep the source item
-            # out of Failure when that exact child currently carries a real
-            # review, conflict, or technical blocker; the child Task owns the
-            # current problem and its file list. A continuation that failed
-            # before producing a child blocker remains a source failure.
-            # A saved decision leaves the child item ``pending`` with a
-            # ``*_resolved`` stage while it waits for the next admission. That
-            # exact linked child still owns the current problem, so the source
-            # keeps its generic safe-continuation attention instead of being
-            # reclassified as a technical failure. Only a genuinely new
-            # failure/unknown effect (no child blocker and no saved decision)
-            # restores the source failure.
-            child_blocker = (
-                "EXISTS (SELECT 1 FROM task_items child_items "
-                "WHERE child_items.task_id = {continuation}.new_task_id AND ("
-                "child_items.status IN ('waiting_recognition', 'waiting_metadata', "
-                "'waiting_metadata_correction', 'waiting_classification', 'waiting_confirm') "
-                "OR (child_items.status = 'pending' AND child_items.stage IN ("
-                "'conflict_resolved', 'recognition_resolved', 'metadata_resolved', "
-                "'metadata_correction_resolved', 'classification_resolved')) "
-                "OR (child_items.status = 'pending' AND EXISTS ("
-                "SELECT 1 FROM recognition_reviews child_reviews "
-                "WHERE child_reviews.item_id = child_items.item_id "
-                "AND child_reviews.status = 'pending')) "
-                "OR (child_items.status = 'pending' AND EXISTS ("
-                "SELECT 1 FROM conflict_confirmations child_conflicts "
-                "WHERE child_conflicts.item_id = child_items.item_id "
-                "AND child_conflicts.status = 'pending'))))"
-            )
-            failed_request = (
-                "EXISTS (SELECT 1 FROM recovery_requests failed_requests "
-                "WHERE failed_requests.item_id = i.item_id "
-                "AND failed_requests.status = 'failed' "
-                f"AND {latest_request('failed_requests')} "
-                "AND NOT EXISTS (SELECT 1 FROM recovery_continuations linked_continuations "
-                "WHERE linked_continuations.request_id = failed_requests.request_id "
-                "AND linked_continuations.source_item_id = i.item_id "
-                "AND linked_continuations.status = 'failed' "
-                "AND linked_continuations.new_task_id IS NOT NULL AND "
-                f"{child_blocker.format(continuation='linked_continuations')}))"
-            )
-            failed_continuation = (
-                "EXISTS (SELECT 1 FROM recovery_continuations failed_continuations "
-                "JOIN recovery_requests continuation_requests "
-                "ON continuation_requests.request_id = failed_continuations.request_id "
-                "WHERE failed_continuations.source_item_id = i.item_id "
-                "AND failed_continuations.status = 'failed' "
-                f"AND {latest_request('continuation_requests')} AND NOT "
-                f"{child_blocker.format(continuation='failed_continuations')})"
-            )
+        if problem_type == "conflict":
             return (
-                "((i.status IN ('failed', 'partial')"
-                " AND i.stage NOT IN ('conflict_resolved', 'recognition_resolved',"
-                " 'metadata_resolved', 'metadata_correction_resolved',"
-                " 'classification_resolved', 'task_retry_requested'))"
-                " OR (i.status = 'pending' AND i.stage = 'task_retry_requested' AND ("
-                f"{failed_request} OR {failed_continuation})))"
-                f" AND NOT {SQLiteTaskRepository._verified_recovery_follow_up('i')}",
+                "("
+                "("
+                "EXISTS (SELECT 1 FROM conflict_confirmations conflict "
+                "WHERE conflict.item_id = i.item_id AND conflict.status = 'pending')"
+                " AND i.status IN ('waiting_confirm', 'pending')"
+                ")"
+                f" OR ({saved} AND i.stage = 'conflict_resolved'"
+                " AND NOT EXISTS (SELECT 1 FROM conflict_confirmations open_conflict "
+                "WHERE open_conflict.item_id = i.item_id"
+                " AND open_conflict.status = 'pending'))"
+                ")",
                 (),
             )
         raise ValueError("run problem item type is invalid")
+
+    def _typed_problem_exists(self, problem_type: str) -> str:
+        """The exact Task-level existence probe of one business problem type.
+
+        It binds the same per-item predicate the type's file list uses, so the
+        Attention union, the type list total and the type file count are one
+        fact.  ``task_items`` remains the driving identity, so an attachment
+        step is never counted as its own problem file.
+        """
+
+        predicate = self._problem_item_predicate(problem_type)[0]
+        task_identity = "COALESCE(runs.linked_task_id, runs.transfer_task_id, runs.anchor_id)"
+        return (
+            "EXISTS (SELECT 1 FROM task_items problem_items "
+            f"WHERE problem_items.task_id = {task_identity} AND "
+            + predicate.replace("i.", "problem_items.")
+            + ")"
+        )
 
     def operations_run_records_window(
         self,

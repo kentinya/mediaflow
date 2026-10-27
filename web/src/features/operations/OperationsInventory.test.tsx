@@ -37,7 +37,7 @@ afterEach(() => {
 });
 
 function runDocument(overrides: Record<string, unknown> = {}) {
-  return {
+  const document: Record<string, unknown> = {
     run_kind: "task",
     run_id: "task-001",
     command: "preview",
@@ -67,16 +67,25 @@ function runDocument(overrides: Record<string, unknown> = {}) {
       metadata: 0,
       classification: 0,
       conflict: 0,
-      failure: 0,
     },
+    // Attention is exactly the union of the four business problem types, so
+    // an attention row always names its reason; the fixture derives it from the
+    // overrides instead of letting the two fields disagree.
     attention_reason: null,
-    attention_failure_category: null,
-    attention_failure_next_action: null,
     configuration_snapshot_id: "snap-1",
     worker_id: null,
     sideEffects: "none",
     ...overrides,
   };
+  if (
+    document.attention_reason === null &&
+    document.attention === true &&
+    Array.isArray(document.problem_types) &&
+    document.problem_types.length > 0
+  ) {
+    document.attention_reason = "task_problem";
+  }
+  return document;
 }
 
 function summaryDocument(overrides: Record<string, unknown> = {}) {
@@ -85,7 +94,6 @@ function summaryDocument(overrides: Record<string, unknown> = {}) {
     metadata: 0,
     classification: 0,
     conflict: 0,
-    failure: 0,
   };
   return {
     available: true,
@@ -130,64 +138,12 @@ function pageDocument(overrides: Record<string, unknown> = {}) {
   };
 }
 
-function readinessPayload(overrides: Record<string, unknown> = {}) {
-  return {
-    ready: true,
-    condition: "ready",
-    category: null,
-    durableState: "resident processing worker is live and ready",
-    sideEffects: "none",
-    retrySafe: true,
-    nextAction: "none",
-    activeWorkersCount: 1,
-    activeSnapshotId: "snap-1",
-    expectedRuntimeSchemaVersion: 41,
-    ...overrides,
-  };
-}
-
-function managementReadinessPayload() {
-  return {
-    available: true,
-    scope: "current_filters",
-    source_options_scope: "authorized_population",
-    infrastructureReady: true,
-    asOf: "2026-08-22T12:00:00+00:00",
-    sideEffects: "none",
-    infrastructure: { services: {} },
-  };
-}
-
-function manualActionsPayload() {
-  return {
-    scopeKind: null,
-    scopeId: null,
-    fileId: null,
-    resourceLibraryId: null,
-    selectionRequired: true,
-    source: null,
-    resourceLibraries: [
-      {
-        resourceLibraryId: "resources",
-        storageId: "local",
-        scanMode: null,
-        enabled: true,
-        reason: null,
-      },
-    ],
-    runtime: { ready: true, condition: "ready", nextAction: null },
-    actions: {
-      preview: { available: true, reason: null },
-      organize: { available: false, reason: "not advertised" },
-    },
-    limits: { organizeMaxItems: 100 },
-  };
-}
-
 /**
- * A fetch stub serving the full inventory journey: the unified run page, the
- * Worker readiness, the resident-service readiness and the manual action
- * matrix the landing composes.
+ * A fetch stub serving the organizing inventory read.
+ *
+ * Slice46 RO-4 removed the global Worker/resident-status, discovery and
+ * manual-operation blocks, so the landing issues no exclusive readiness,
+ * management-readiness or manual-action read any more.
  */
 function stubInventoryJourney(
   page: Record<string, unknown>,
@@ -201,15 +157,6 @@ function stubInventoryJourney(
       url === "/api/v1/operations/runs"
     ) {
       return jsonResponse(page);
-    }
-    if (url === "/api/v1/workers/readiness") {
-      return jsonResponse(readinessPayload());
-    }
-    if (url === "/api/v1/management/readiness") {
-      return jsonResponse(managementReadinessPayload());
-    }
-    if (url.startsWith("/api/v1/operations/manual-actions")) {
-      return jsonResponse(manualActionsPayload());
     }
     return jsonResponse({ error: { code: "not_found" } }, 404);
   });
@@ -227,11 +174,17 @@ describe("Operations run inventory landing", () => {
             run_kind: "job",
             job_id: "job-002",
             task_id: null,
-            command: "preview",
-            command_label: "预览",
+            command: "organize",
+            command_label: "整理",
             status: "pending",
             attention: true,
-            problem_types: ["failure"],
+            problem_types: ["metadata"],
+            problem_file_counts: {
+              recognition: 0,
+              metadata: 1,
+              classification: 0,
+              conflict: 0,
+            },
             source_scope: null,
             trigger: "scheduled",
             definition_id: "def-1",
@@ -243,7 +196,13 @@ describe("Operations run inventory landing", () => {
             recognized_command: false,
             status: "failed",
             attention: true,
-            problem_types: ["failure"],
+            problem_types: ["metadata"],
+            problem_file_counts: {
+              recognition: 0,
+              metadata: 1,
+              classification: 0,
+              conflict: 0,
+            },
           }),
         ],
         status_counts: { running: 1, pending: 1, failed: 1 },
@@ -256,17 +215,15 @@ describe("Operations run inventory landing", () => {
           ended: 1,
           problem_tasks: {
             recognition: 0,
-            metadata: 0,
+            metadata: 2,
             classification: 0,
             conflict: 0,
-            failure: 2,
           },
           problem_files: {
             recognition: 0,
-            metadata: 0,
+            metadata: 2,
             classification: 0,
             conflict: 0,
-            failure: 2,
           },
         }),
       }),
@@ -277,17 +234,19 @@ describe("Operations run inventory landing", () => {
 
     await screen.findByRole("heading", { name: "任务中心" });
     // Chinese business labels describe operation and state.
-    expect((await screen.findAllByText("预览")).length).toBeGreaterThan(0);
-    expect((await screen.findAllByText("预览")).length).toBeGreaterThan(0);
+    expect((await screen.findAllByText("整理")).length).toBeGreaterThan(0);
     expect(screen.getAllByText("失败").length).toBeGreaterThan(0);
+    expect(screen.getAllByText("元数据问题").length).toBeGreaterThan(0);
     // The unknown legacy command stays honest.
     expect(screen.getByText(/未识别的历史命令/)).toBeVisible();
     // Missing historical scope evidence is explicitly unavailable.
     expect(screen.getByText("不可用")).toBeVisible();
-    // The nine sibling views are present on one navigation row.
+    // The eight organizing views are present on one navigation row; the
+    // retired Failure Recovery view is gone.
     expect(screen.getByRole("button", { name: "全部任务" })).toBeVisible();
     expect(screen.getByRole("button", { name: "需要处理" })).toBeVisible();
-    expect(screen.getByRole("button", { name: "失败恢复" })).toBeVisible();
+    expect(screen.getByRole("button", { name: "冲突处理" })).toBeVisible();
+    expect(screen.queryByRole("button", { name: "失败恢复" })).toBeNull();
     // The summary advertises the whole-population attention count.
     expect(
       screen.getAllByRole("button", { name: /需要处理/ }).length,
@@ -298,11 +257,24 @@ describe("Operations run inventory landing", () => {
       ),
     ).toBeVisible();
     expect(screen.queryByText(/unified job\/task run inventory/)).toBeNull();
-    // Worker readiness and manual entries stay discoverable.
-    expect((await screen.findAllByText(/Worker 就绪/)).length).toBeGreaterThan(
-      0,
-    );
+    // The retired global Worker/resident block, discovery list and manual
+    // operation section are all absent, together with their exclusive reads.
+    expect(screen.queryByText(/Worker 就绪/)).toBeNull();
+    expect(screen.queryByText(/常驻服务状态/)).toBeNull();
     expect(screen.queryByRole("link", { name: "发起受限扫描" })).toBeNull();
+    expect(screen.queryByText(/整理发现/)).toBeNull();
+    expect(screen.queryByText(/手动操作/)).toBeNull();
+    expect(
+      requested.some((url) => url.includes("/api/v1/workers/readiness")),
+    ).toBe(false);
+    expect(
+      requested.some((url) => url.includes("/api/v1/management/readiness")),
+    ).toBe(false);
+    expect(
+      requested.some((url) =>
+        url.includes("/api/v1/operations/manual-actions"),
+      ),
+    ).toBe(false);
     expect(
       requested.some((url) => url.includes("/api/v1/operations/runs")),
     ).toBe(true);
@@ -336,7 +308,6 @@ describe("Operations run inventory landing", () => {
               metadata: 1,
               classification: 0,
               conflict: 0,
-              failure: 0,
             },
             current_stage: null,
             processed_items: null,
@@ -485,15 +456,6 @@ describe("Operations run inventory landing", () => {
         overviewRead = true;
         return jsonResponse(runDocument({ target_scope: "Library/History" }));
       }
-      if (url === "/api/v1/workers/readiness") {
-        return jsonResponse(readinessPayload());
-      }
-      if (url === "/api/v1/management/readiness") {
-        return jsonResponse(managementReadinessPayload());
-      }
-      if (url.startsWith("/api/v1/operations/manual-actions")) {
-        return jsonResponse(manualActionsPayload());
-      }
       return jsonResponse({ error: { code: "not_found" } }, 404);
     });
     authStore.setToken(TOKEN);
@@ -537,15 +499,6 @@ describe("Operations run inventory landing", () => {
       if (url === "/api/v1/operations/runs/task-001") {
         return jsonResponse(runDocument());
       }
-      if (url === "/api/v1/workers/readiness") {
-        return jsonResponse(readinessPayload());
-      }
-      if (url === "/api/v1/management/readiness") {
-        return jsonResponse(managementReadinessPayload());
-      }
-      if (url.startsWith("/api/v1/operations/manual-actions")) {
-        return jsonResponse(manualActionsPayload());
-      }
       return jsonResponse({ error: { code: "not_found" } }, 404);
     });
     authStore.setToken(TOKEN);
@@ -570,15 +523,6 @@ describe("Operations run inventory landing", () => {
       if (url.startsWith("/api/v1/operations/runs")) {
         return jsonResponse({ error: { code: "internal_error" } }, 500);
       }
-      if (url === "/api/v1/workers/readiness") {
-        return jsonResponse(readinessPayload());
-      }
-      if (url === "/api/v1/management/readiness") {
-        return jsonResponse(managementReadinessPayload());
-      }
-      if (url.startsWith("/api/v1/operations/manual-actions")) {
-        return jsonResponse(manualActionsPayload());
-      }
       return jsonResponse({ error: { code: "not_found" } }, 404);
     });
     authStore.setToken(TOKEN);
@@ -596,15 +540,6 @@ describe("Operations run inventory landing", () => {
       const url = String(input);
       if (url.startsWith("/api/v1/operations/runs")) {
         return jsonResponse({ items: "everything", total: -1 });
-      }
-      if (url === "/api/v1/workers/readiness") {
-        return jsonResponse(readinessPayload());
-      }
-      if (url === "/api/v1/management/readiness") {
-        return jsonResponse(managementReadinessPayload());
-      }
-      if (url.startsWith("/api/v1/operations/manual-actions")) {
-        return jsonResponse(manualActionsPayload());
       }
       return jsonResponse({ error: { code: "not_found" } }, 404);
     });
@@ -662,15 +597,6 @@ describe("Operations run inventory landing", () => {
       if (url.startsWith("/api/v1/operations/runs")) {
         return jsonResponse(pageOne);
       }
-      if (url === "/api/v1/workers/readiness") {
-        return jsonResponse(readinessPayload());
-      }
-      if (url === "/api/v1/management/readiness") {
-        return jsonResponse(managementReadinessPayload());
-      }
-      if (url.startsWith("/api/v1/operations/manual-actions")) {
-        return jsonResponse(manualActionsPayload());
-      }
       return jsonResponse({ error: { code: "not_found" } }, 404);
     });
     authStore.setToken(TOKEN);
@@ -703,13 +629,12 @@ describe("Operations run inventory landing", () => {
         runDocument({
           status: "failed",
           attention: true,
-          problem_types: ["failure"],
+          problem_types: ["metadata"],
           problem_file_counts: {
             recognition: 0,
-            metadata: 0,
+            metadata: 1,
             classification: 0,
             conflict: 0,
-            failure: 1,
           },
         }),
       ],
@@ -725,17 +650,15 @@ describe("Operations run inventory landing", () => {
         ended: 1,
         problem_tasks: {
           recognition: 0,
-          metadata: 0,
+          metadata: 1,
           classification: 0,
           conflict: 0,
-          failure: 1,
         },
         problem_files: {
           recognition: 0,
-          metadata: 0,
+          metadata: 1,
           classification: 0,
           conflict: 0,
-          failure: 1,
         },
       }),
     });
@@ -748,7 +671,7 @@ describe("Operations run inventory landing", () => {
           source_scope: "Movies/Needs review",
           status: "failed",
           attention: true,
-          problem_types: ["failure"],
+          problem_types: ["metadata"],
         }),
       ],
       status_counts: { running: 1, failed: 1 },
@@ -761,17 +684,15 @@ describe("Operations run inventory landing", () => {
         ended: 1,
         problem_tasks: {
           recognition: 0,
-          metadata: 0,
+          metadata: 1,
           classification: 0,
           conflict: 0,
-          failure: 1,
         },
         problem_files: {
           recognition: 0,
-          metadata: 0,
+          metadata: 1,
           classification: 0,
           conflict: 0,
-          failure: 1,
         },
       }),
     });
@@ -782,15 +703,6 @@ describe("Operations run inventory landing", () => {
         return jsonResponse(
           url.includes("view=attention") ? attentionPage : fullPage,
         );
-      }
-      if (url === "/api/v1/workers/readiness") {
-        return jsonResponse(readinessPayload());
-      }
-      if (url === "/api/v1/management/readiness") {
-        return jsonResponse(managementReadinessPayload());
-      }
-      if (url.startsWith("/api/v1/operations/manual-actions")) {
-        return jsonResponse(manualActionsPayload());
       }
       return jsonResponse({ error: { code: "not_found" } }, 404);
     });
@@ -835,24 +747,23 @@ describe("Operations run inventory landing", () => {
         runDocument({
           run_id: "task-002",
           task_id: "task-002",
-          source_scope: "Movies/Failure",
+          source_scope: "Movies/Metadata",
           status: "failed",
           attention: true,
-          problem_types: ["failure"],
+          problem_types: ["metadata"],
           problem_file_counts: {
             recognition: 0,
-            metadata: 0,
+            metadata: 1,
             classification: 0,
             conflict: 0,
-            failure: 1,
           },
         }),
       ],
       status_counts: { failed: 1 },
       attention_count: 1,
       total: 1,
-      view: "failure",
-      problem: "failure",
+      view: "metadata",
+      problem: "metadata",
       summary: summaryDocument({
         total: 1,
         running: 0,
@@ -860,24 +771,22 @@ describe("Operations run inventory landing", () => {
         ended: 1,
         problem_tasks: {
           recognition: 0,
-          metadata: 0,
+          metadata: 1,
           classification: 0,
           conflict: 0,
-          failure: 1,
         },
         problem_files: {
           recognition: 0,
-          metadata: 0,
+          metadata: 21,
           classification: 0,
           conflict: 0,
-          failure: 21,
         },
       }),
     });
     const problemItems = {
       run_id: "task-002",
       task_id: "task-002",
-      problem: "failure",
+      problem: "metadata",
       limit: 20,
       items: [
         {
@@ -993,24 +902,15 @@ describe("Operations run inventory landing", () => {
       if (url.startsWith("/api/v1/operations/runs")) {
         return jsonResponse(recoveryPage);
       }
-      if (url === "/api/v1/workers/readiness") {
-        return jsonResponse(readinessPayload());
-      }
-      if (url === "/api/v1/management/readiness") {
-        return jsonResponse(managementReadinessPayload());
-      }
-      if (url.startsWith("/api/v1/operations/manual-actions")) {
-        return jsonResponse(manualActionsPayload());
-      }
       return jsonResponse({ error: { code: "not_found" } }, 404);
     });
     authStore.setToken(TOKEN);
-    const { router } = renderApp("/ui-v2/operations?view=failure");
+    const { router } = renderApp("/ui-v2/operations?view=metadata");
 
     const table = await screen.findByRole("table");
     const recoveryRow = within(table)
       .getAllByRole("row")
-      .find((row) => row.textContent?.includes("Movies/Failure"));
+      .find((row) => row.textContent?.includes("Movies/Metadata"));
     expect(recoveryRow).toBeDefined();
     if (recoveryRow === undefined) {
       throw new Error("recovery row was not rendered");
@@ -1018,16 +918,16 @@ describe("Operations run inventory landing", () => {
     expect(within(recoveryRow).getByText("1 个文件")).toBeVisible();
     expect(within(recoveryRow).queryByText("21 个文件")).toBeNull();
     await user.click(
-      within(recoveryRow).getByRole("button", { name: "查看失败文件" }),
+      within(recoveryRow).getByRole("button", { name: "查看问题文件" }),
     );
     await waitFor(() =>
       expect(router.history.location.search).toContain("problemRun=task-002"),
     );
-    expect(router.history.location.search).toContain("view=failure");
+    expect(router.history.location.search).toContain("view=metadata");
     const panel = await screen.findByRole("region", { name: "问题文件处理" });
-    expect(within(panel).getByText(/失败问题 — 文件清单/)).toBeVisible();
-    // The exact Task/type file list is server-filtered: only the failure file
-    // appears, with its durable reason and next step.
+    expect(within(panel).getByText(/元数据问题 — 文件清单/)).toBeVisible();
+    // The exact Task/type file list is server-filtered: only that type's files
+    // appear, with their durable reason and next step.
     expect(
       (await within(panel).findAllByText(/Movies\/a\.mkv/)).length,
     ).toBeGreaterThan(0);
@@ -1041,7 +941,7 @@ describe("Operations run inventory landing", () => {
     expect(
       requested.some(
         (url) =>
-          url.includes("problem-items") && url.includes("problem=failure"),
+          url.includes("problem-items") && url.includes("problem=metadata"),
       ),
     ).toBe(true);
     await user.click(within(panel).getByRole("button", { name: "下一页" }));
@@ -1095,7 +995,7 @@ describe("Operations run inventory landing", () => {
     expect(
       parseOperationsReturnContext(router.history.location.search),
     ).toMatchObject({
-      view: "failure",
+      view: "metadata",
       problemRun: "task-002",
       problemCursor: "page-two",
       problemDir: "forward",
@@ -1113,22 +1013,27 @@ describe("Operations run inventory landing", () => {
           source_scope: "Movies/Mixed",
           status: "partial_success",
           attention: true,
-          problem_types: ["metadata", "failure"],
+          problem_types: ["metadata", "classification"],
           problem_file_counts: {
             recognition: 0,
             metadata: 1,
-            classification: 0,
+            classification: 1,
             conflict: 0,
-            failure: 1,
           },
         }),
         runDocument({
-          run_id: "task-continue",
-          task_id: "task-continue",
-          source_scope: "Movies/Continue",
+          run_id: "task-single",
+          task_id: "task-single",
+          source_scope: "Movies/Single",
           status: "waiting",
           attention: true,
-          problem_types: [],
+          problem_types: ["classification"],
+          problem_file_counts: {
+            recognition: 0,
+            metadata: 0,
+            classification: 1,
+            conflict: 0,
+          },
         }),
       ],
       status_counts: { partial_success: 1, waiting: 1 },
@@ -1143,16 +1048,14 @@ describe("Operations run inventory landing", () => {
         problem_tasks: {
           recognition: 0,
           metadata: 1,
-          classification: 0,
+          classification: 1,
           conflict: 0,
-          failure: 1,
         },
         problem_files: {
           recognition: 0,
           metadata: 1,
-          classification: 0,
+          classification: 1,
           conflict: 0,
-          failure: 1,
         },
       }),
     });
@@ -1207,15 +1110,6 @@ describe("Operations run inventory landing", () => {
       if (url.startsWith("/api/v1/operations/runs")) {
         return jsonResponse(attentionPage);
       }
-      if (url === "/api/v1/workers/readiness") {
-        return jsonResponse(readinessPayload());
-      }
-      if (url === "/api/v1/management/readiness") {
-        return jsonResponse(managementReadinessPayload());
-      }
-      if (url.startsWith("/api/v1/operations/manual-actions")) {
-        return jsonResponse(manualActionsPayload());
-      }
       return jsonResponse({ error: { code: "not_found" } }, 404);
     });
     authStore.setToken(TOKEN);
@@ -1249,42 +1143,40 @@ describe("Operations run inventory landing", () => {
       ),
     ).toBe(true);
 
-    // A pure safe-continuation row opens its own evidence/next-step surface
-    // instead of a fabricated problem-file list.
+    // A row with exactly one current type opens that one type list directly.
     await user.click(
       within(panel).getByRole("button", { name: "返回任务列表" }),
     );
-    const continueRow = within(await screen.findByRole("table"))
+    const singleRow = within(await screen.findByRole("table"))
       .getAllByRole("row")
-      .find((row) => row.textContent?.includes("Movies/Continue"));
-    expect(continueRow).toBeDefined();
-    if (continueRow === undefined) {
-      throw new Error("continuation row was not rendered");
+      .find((row) => row.textContent?.includes("Movies/Single"));
+    expect(singleRow).toBeDefined();
+    if (singleRow === undefined) {
+      throw new Error("single-type attention row was not rendered");
     }
     await user.click(
-      within(continueRow).getByRole("button", {
-        name: "查看详情与下一步",
-      }),
+      within(singleRow).getByRole("button", { name: "查看问题文件" }),
     );
     await waitFor(() =>
-      expect(router.history.location.search).toContain("run=task-continue"),
+      expect(router.history.location.search).toContain(
+        "problemRun=task-single",
+      ),
     );
     expect(requested.some((url) => url.includes("/problem-items"))).toBe(true);
   });
 
-  it("renders a run-level repair row with a reachable Job detail action", async () => {
-    const user = userEvent.setup();
+  it("keeps a terminal technical failure as read-only history, not attention", async () => {
     const requested: string[] = [];
     stubInventoryJourney(
       pageDocument({
         items: [
           runDocument({
-            run_id: "pre-task-repair",
+            run_id: "pre-task-failure",
             run_kind: "job",
-            job_id: "pre-task-repair",
+            job_id: "pre-task-failure",
             task_id: null,
-            command: "preview",
-            command_label: "预览",
+            command: "organize",
+            command_label: "整理",
             status: "failed",
             source_scope: null,
             total_items: null,
@@ -1292,51 +1184,55 @@ describe("Operations run inventory landing", () => {
             failed_items: null,
             processed_items: null,
             current_stage: null,
-            attention: true,
+            // Task46.4 RO-4: a technical failure is never a fifth type and
+            // never Attention; it stays real failed history in All/Ended.
+            attention: false,
             problem_types: [],
-            attention_reason: "run_repair",
-            attention_failure_category: "snapshot_digest_mismatch",
-            attention_failure_next_action:
-              "restore the exact saved published revision",
+            attention_reason: null,
           }),
         ],
         status_counts: { failed: 1 },
-        attention_count: 1,
+        attention_count: 0,
         total: 1,
-        view: "attention",
         summary: summaryDocument({
           total: 1,
           running: 0,
-          attention: 1,
+          attention: 0,
           ended: 1,
         }),
       }),
       requested,
     );
     authStore.setToken(TOKEN);
-    renderApp("/ui-v2/operations?view=attention");
+    renderApp("/ui-v2/operations");
 
     const table = await screen.findByRole("table");
-    const row = within(table)
-      .getAllByRole("row")
-      .find((candidate) =>
-        candidate.textContent?.includes("snapshot_digest_mismatch"),
-      );
+    // The only row of the page is the technical failure: no attention column,
+    // no runtime-repair guidance and no fabricated problem type.
+    const row = within(table).getAllByRole("row")[1];
     expect(row).toBeDefined();
     if (row === undefined) {
-      throw new Error("run-level repair row was not rendered");
+      throw new Error("technical failure row was not rendered");
     }
-    // The row explains the run-level repair rather than claiming a file list.
-    expect(
-      within(row).getByText(/运行级修复：snapshot_digest_mismatch/),
-    ).toBeVisible();
-    const action = within(row).getByRole("link", {
-      name: "查看原因与修复指引",
-    });
-    expect(action).toBeVisible();
-    await user.click(action);
-    // The action reaches the existing Job detail, which carries the full
-    // structured repair guidance; it never opens a fabricated file list.
+    // The factual failed status stays readable; there is no fabricated repair
+    // guidance, no runtime-repair label and no pending-task claim.
+    expect(within(row).getAllByText("失败").length).toBeGreaterThan(0);
+    expect(within(row).queryByText(/运行级修复/)).toBeNull();
+    expect(screen.queryByText(/运行级修复/)).toBeNull();
+    // The center navigation offers exactly the eight organizing views.
+    for (const label of [
+      "全部任务",
+      "进行中",
+      "需要处理",
+      "已结束",
+      "识别恢复",
+      "元数据恢复",
+      "分类恢复",
+      "冲突处理",
+    ]) {
+      expect(await screen.findByRole("button", { name: label })).toBeVisible();
+    }
+    expect(screen.queryByRole("button", { name: "失败恢复" })).toBeNull();
     expect(
       requested.some((url) => url.includes("/api/v1/operations/runs")),
     ).toBe(true);
@@ -1391,15 +1287,6 @@ describe("Operations run inventory landing", () => {
       if (url === "/api/v1/operations/runs/task-001") {
         return jsonResponse(runDocument());
       }
-      if (url === "/api/v1/workers/readiness") {
-        return jsonResponse(readinessPayload());
-      }
-      if (url === "/api/v1/management/readiness") {
-        return jsonResponse(managementReadinessPayload());
-      }
-      if (url.startsWith("/api/v1/operations/manual-actions")) {
-        return jsonResponse(manualActionsPayload());
-      }
       return jsonResponse({ error: { code: "not_found" } }, 404);
     });
     authStore.setToken(TOKEN);
@@ -1439,15 +1326,6 @@ describe("Operations run inventory landing", () => {
       }
       if (url === "/api/v1/operations/runs/task-001") {
         return jsonResponse(runDocument());
-      }
-      if (url === "/api/v1/workers/readiness") {
-        return jsonResponse(readinessPayload());
-      }
-      if (url === "/api/v1/management/readiness") {
-        return jsonResponse(managementReadinessPayload());
-      }
-      if (url.startsWith("/api/v1/operations/manual-actions")) {
-        return jsonResponse(manualActionsPayload());
       }
       return jsonResponse({ error: { code: "not_found" } }, 404);
     });
@@ -1734,15 +1612,6 @@ function stubLifecycleJourney(options: {
     if (url.startsWith("/api/v1/operations/runs/task-001/")) {
       // The invalidated detail tabs re-read their own bounded pages.
       return jsonResponse({ error: { code: "not_found" } }, 404);
-    }
-    if (url === "/api/v1/workers/readiness") {
-      return jsonResponse(readinessPayload());
-    }
-    if (url === "/api/v1/management/readiness") {
-      return jsonResponse(managementReadinessPayload());
-    }
-    if (url.startsWith("/api/v1/operations/manual-actions")) {
-      return jsonResponse(manualActionsPayload());
     }
     const extra = await options.extraGet?.(url);
     if (extra !== undefined && extra !== null) {

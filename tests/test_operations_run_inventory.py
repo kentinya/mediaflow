@@ -436,6 +436,9 @@ class RunInventoryTestCase(_InventoryApiTestCase):
         self.assertEqual(triggers["manual-task"], "manual")
 
     def test_command_families_and_library_kinds_are_discoverable(self) -> None:
+        # Only admitted organizing work (and its legal continuations) is in the
+        # Task Center population; ordinary Files/MediaLibrary commands stay on
+        # their own library surfaces with their own labels.
         self.repository.create_task(task("organize-task", command="organize", rank=0))
         self.repository.create_task(
             task(
@@ -446,37 +449,91 @@ class RunInventoryTestCase(_InventoryApiTestCase):
             )
         )
         self.repository.create_task(
-            task("transfer-task", command="files_transfer", rank=2, execute_authorized=True)
+            task("manual-task", command="manual_organize", rank=2, execute_authorized=True)
+        )
+        # Ordinary file work: durable and labelled, but not center membership.
+        self.repository.create_task(
+            task("transfer-task", command="files_transfer", rank=3, execute_authorized=True)
         )
         self.repository.create_task(
             task(
                 "media-transfer-task",
                 command="media_files_transfer",
-                rank=3,
+                rank=4,
                 execute_authorized=True,
             )
         )
-        self.repository.create_task(
-            task("media-rename-task", command="media_rename", rank=4, execute_authorized=True)
-        )
         self.repository.create_task(task("files-delete-task", command="files_delete", rank=5))
-        self.repository.create_task(
-            task("legacy-command-task", command="legacy_historic_work", rank=6)
-        )
         _status, page, _ = request(self.api, "GET", "/api/v1/operations/runs")
         by_id = {item["run_id"]: item for item in page["items"]}
+        self.assertEqual({"organize-task", "retry-task", "manual-task"}, set(by_id))
+        self.assertEqual(by_id["organize-task"]["command_label"], "整理")
         self.assertEqual(by_id["retry-task"]["command_label"], "失败项重试")
-        self.assertEqual(by_id["transfer-task"]["command_label"], "文件传输")
-        self.assertEqual(by_id["transfer-task"]["library_kind"], "resource")
-        # An equal library ID never reads as ResourceLibrary work.
-        self.assertEqual(by_id["media-transfer-task"]["library_kind"], "media")
-        self.assertEqual(by_id["media-transfer-task"]["command_label"], "媒体库文件传输")
-        self.assertEqual(by_id["media-rename-task"]["library_kind"], "media")
-        self.assertEqual(by_id["files-delete-task"]["command_label"], "文件删除")
-        # An unknown legacy command stays discoverable with an honest label.
-        self.assertTrue(by_id["legacy-command-task"]["recognized_command"] is False)
-        self.assertEqual(by_id["legacy-command-task"]["command"], "legacy_historic_work")
-        self.assertIsNone(by_id["legacy-command-task"]["command_label"])
+        self.assertEqual(by_id["manual-task"]["command_label"], "手动整理")
+        self.assertEqual(by_id["manual-task"]["library_kind"], "resource")
+        # The bounded label vocabulary still understands ordinary commands: it
+        # is the shared display mapping, not the center's membership rule.
+        from mediaflow.domain.operations_run import known_command_label
+
+        self.assertEqual("文件传输", known_command_label("files_transfer"))
+        self.assertEqual("媒体库文件传输", known_command_label("media_files_transfer"))
+        self.assertEqual("文件删除", known_command_label("files_delete"))
+
+    def test_task_center_population_membership_is_one_shared_testable_rule(self) -> None:
+        """The organizing membership rule is public, shared and honest.
+
+        It names supported organizing command families (with a derived
+        ``<kind>:<identity>`` suffix stripped) and never a MediaLibrary-owned
+        command, an analysis-only preparation or an ordinary file command.
+        """
+
+        from mediaflow.domain.operations_run import (
+            is_organizing_job_command,
+            is_organizing_task_command,
+        )
+
+        for command in (
+            "organize",
+            "organize:task-1",
+            "manual_organize",
+            "retry",
+            "retry-failed:organize-task",
+            "recovery-continuation",
+            "metadata-correction-continuation:task-2",
+            "scope-continuation",
+        ):
+            with self.subTest(command=command):
+                self.assertTrue(is_organizing_task_command(command))
+        for command in (
+            "preview",
+            "scan",
+            "files_direct_command",
+            "files_delete",
+            "files_transfer",
+            "media_files_transfer",
+            "media_organize",
+            "file-metadata-correction",
+            "legacy_historic_work",
+            "",
+            None,
+        ):
+            with self.subTest(command=command):
+                self.assertFalse(is_organizing_task_command(command))
+        # A Job never carries the Files-only admission or the item-level
+        # correction family; only the admission/continuation families do.
+        for command in ("organize", "recovery-continuation", "scope-continuation"):
+            with self.subTest(command=command):
+                self.assertTrue(is_organizing_job_command(command))
+        for command in (
+            "manual_organize",
+            "retry",
+            "preview",
+            "media_organize",
+            "",
+            None,
+        ):
+            with self.subTest(command=command):
+                self.assertFalse(is_organizing_job_command(command))
 
     def test_unknown_command_label_is_honest_at_the_domain_layer(self) -> None:
         self.assertIsNone(known_command_label("totally_unknown_command"))
@@ -601,10 +658,15 @@ class RunInventoryTestCase(_InventoryApiTestCase):
     # -- AC-T2: authoritative query/counts -------------------------------
 
     def test_filters_compose_and_counts_reconcile_beyond_one_page(self) -> None:
+        # Task46.4 RO-4: the population is admitted organizing work only.  Two
+        # ordinary (non-organizing) commands are seeded as the *newest* rows and
+        # must never appear in any page, count, source option or search result.
         fixture = {
-            "a-completed": ("scan", PersistentTaskStatus.COMPLETED, 0),
-            "b-completed": ("scan", PersistentTaskStatus.COMPLETED, 1),
-            "c-failed": ("scan", PersistentTaskStatus.FAILED, 2),
+            "z-scan-completed": ("scan", PersistentTaskStatus.COMPLETED, 6),
+            "z-preview-failed": ("preview", PersistentTaskStatus.FAILED, 7),
+            "a-completed": ("organize", PersistentTaskStatus.COMPLETED, 0),
+            "b-completed": ("organize", PersistentTaskStatus.COMPLETED, 1),
+            "c-failed": ("retry-failed:organize-task", PersistentTaskStatus.FAILED, 2),
             "d-failed": ("organize", PersistentTaskStatus.FAILED, 3),
             "e-running": ("organize", PersistentTaskStatus.RUNNING, 4),
             "f-partial": ("organize", PersistentTaskStatus.PARTIAL_SUCCESS, 5),
@@ -623,10 +685,9 @@ class RunInventoryTestCase(_InventoryApiTestCase):
             ("", 6),
             ("status=completed", 2),
             ("status=failed", 2),
-            ("command=organize", 3),
-            ("command=organize", 3),
+            ("command=organize", 5),
             ("status=failed&command=organize", 1),
-            ("q=scope-1", 1),
+            ("q=scope-2", 1),
             ("q=scope", 6),
         )
         for query, expected_total in cases:
@@ -635,6 +696,16 @@ class RunInventoryTestCase(_InventoryApiTestCase):
                 self.assertEqual(page["total"], expected_total)
                 counts = page["status_counts"]
                 self.assertEqual(sum(counts.values()), page["total"])
+                self.assertNotIn(
+                    "scan",
+                    {item["command"] for item in page["items"]},
+                    "an ordinary command must never leak into a center page",
+                )
+                self.assertNotIn(
+                    "preview",
+                    {item["command"] for item in page["items"]},
+                    "an analysis-only preparation is not organizing work",
+                )
 
     def test_time_filters_compose_with_status(self) -> None:
         self.repository.create_task(task("old", rank=0))
@@ -1418,7 +1489,7 @@ class RunInventoryTestCase(_InventoryApiTestCase):
                     "INSERT INTO tasks VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)",
                     (
                         "legacy-task-1",
-                        "scan",
+                        "organize",
                         "completed",
                         1,
                         NOW.isoformat(),
@@ -1441,7 +1512,7 @@ class RunInventoryTestCase(_InventoryApiTestCase):
                     " updated_at, task_id) VALUES (?, ?, ?, ?, ?, ?)",
                     (
                         "legacy-job-1",
-                        "scan",
+                        "organize",
                         "completed",
                         NOW.isoformat(),
                         NOW.isoformat(),
@@ -1729,11 +1800,11 @@ class ManualOrganizeDisplayEvidenceTests(_JourneyFixtureMixin, unittest.TestCase
 
             status, page = self._request(value, "/api/v1/operations/runs")
             self.assertEqual(200, status)
-            # Durable organize analysis is an explicit discovery run in the
-            # unified inventory.  It is distinct from, and linked to, the
-            # admitted execution Task; both rows are real history and must be
-            # counted without treating the discovery as a duplicate Task.
-            self.assertEqual(2, page["total"])
+            # Task46.4 RO-4: the admitted Files execution Task is the one real
+            # Task Center row.  Its analysis-only preparation is *not* a second
+            # organizing row, so the center never counts the same admitted work
+            # twice and never presents analysis as organizing work.
+            self.assertEqual(1, page["total"])
             run = next(item for item in page["items"] if item["run_id"] == task_id)
             self.assertEqual(task_id, run["run_id"])
             self.assertEqual("手动整理", run["command_label"])

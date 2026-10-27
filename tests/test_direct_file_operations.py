@@ -2559,28 +2559,30 @@ class DirectFileOperationsTests(unittest.TestCase):
             # Display evidence is additive: it admits no extra durable work.
             self.assertEqual(1, len(runtime.list_tasks(limit=100)))
 
-            code, page = request(api, "/api/v1/operations/runs", token="viewer-token")
-            self.assertEqual(200, code)
+            # Slice46 RO-3/RO-4: ordinary file work belongs to its originating
+            # library surface.  The same durable display identity is published
+            # by the library-local history/detail reads, and the organizing
+            # Task Center never lists it.
+            code, page = request(
+                api, "/api/v1/resource-libraries/source/file-operations", token="viewer-token"
+            )
+            self.assertEqual(200, code, page)
             self.assertEqual(1, page["total"], page)
             run = page["items"][0]
-            self.assertEqual(root_task, run["run_id"])
-            self.assertEqual("文件维护", run["command_label"])
-            self.assertEqual("resource", run["library_kind"])
-            self.assertEqual("Unified media source", run["source_scope"])
-            self.assertEqual("Unified media source/collections", run["target_scope"])
-            for needle, total in (
-                ("Unified media source", 1),
-                ("collections", 1),
-                ("文件维护", 1),
-            ):
-                with self.subTest(needle=needle):
-                    code, found = request(
-                        api, f"/api/v1/operations/runs?q={needle}", token="viewer-token"
-                    )
-                    self.assertEqual(200, code)
-                    self.assertEqual(total, found["total"], found)
-                    self.assertEqual(root_task, found["items"][0]["run_id"])
-
+            self.assertEqual(root_task, run["taskId"])
+            self.assertEqual("文件维护", run["commandLabel"])
+            self.assertEqual("resource", page["libraryKind"])
+            self.assertEqual("Unified media source", run["sourceScope"])
+            self.assertEqual("Unified media source/collections", run["targetScope"])
+            code, overview = request(
+                api,
+                f"/api/v1/resource-libraries/source/files/operations/{root_task}",
+                token="viewer-token",
+            )
+            self.assertEqual(200, code, overview)
+            self.assertEqual("Unified media source", overview["sourceScope"])
+            self.assertEqual("Unified media source/collections", overview["targetScope"])
+            self.assertEqual("文件维护", overview["commandLabel"])
             # A non-empty relative directory publishes its exact nested scope.
             service = self._service(api, active)
             nested = service.create_directory(
@@ -2591,30 +2593,23 @@ class DirectFileOperationsTests(unittest.TestCase):
             self.assertEqual(1, len(rows), rows)
             self.assertEqual("Unified media source/collections", rows[0][0])
             self.assertEqual("Unified media source/collections/2024", rows[0][1])
-            code, found = request(api, "/api/v1/operations/runs?q=2024", token="viewer-token")
-            self.assertEqual(200, code)
-            self.assertEqual(1, found["total"], found)
-            self.assertEqual(nested_task, found["items"][0]["run_id"])
-            code, found = request(
-                api, "/api/v1/operations/runs?q=collections", token="viewer-token"
+            code, page = request(
+                api, "/api/v1/resource-libraries/source/file-operations", token="viewer-token"
             )
-            self.assertEqual(200, code)
-            self.assertEqual(2, found["total"], found)
+            self.assertEqual(200, code, page)
+            self.assertEqual(2, page["total"], page)
             self.assertEqual(
                 {root_task, nested_task},
-                {item["run_id"] for item in found["items"]},
+                {item["taskId"] for item in page["items"]},
             )
+            # The organizing Task Center never treats these as its own work.
+            code, inventory = request(api, "/api/v1/operations/runs", token="viewer-token")
+            self.assertEqual(200, code, inventory)
+            self.assertEqual(0, inventory["total"], inventory)
             self.assertEqual(2, len(runtime.list_tasks(limit=100)))
 
             # No host root, credential or adapter evidence in the public
-            # list or overview documents.
-            code, overview = request(
-                api, f"/api/v1/operations/runs/{root_task}", token="viewer-token"
-            )
-            self.assertEqual(200, code)
-            self.assertEqual(run["source_scope"], overview["source_scope"])
-            self.assertEqual(run["target_scope"], overview["target_scope"])
-            self.assertEqual(run["command_label"], overview["command_label"])
+            # library documents either.
             rendered = json.dumps([page, overview])
             for forbidden in (str(root), "password", "token", "secret", "Authorization"):
                 self.assertNotIn(forbidden, rendered)
@@ -2632,16 +2627,16 @@ class DirectFileOperationsTests(unittest.TestCase):
             )
             code, found = request(
                 restarted_api,
-                "/api/v1/operations/runs?q=Unified%20media%20source",
+                "/api/v1/resource-libraries/source/file-operations",
                 token="viewer-token",
             )
             self.assertEqual(200, code)
             self.assertEqual(2, found["total"], found)
-            by_id = {item["run_id"]: item for item in found["items"]}
-            self.assertEqual("Unified media source", by_id[root_task]["source_scope"])
+            by_id = {item["taskId"]: item for item in found["items"]}
+            self.assertEqual("Unified media source", by_id[root_task]["sourceScope"])
             self.assertEqual(
                 "Unified media source/collections/2024",
-                by_id[nested_task]["target_scope"],
+                by_id[nested_task]["targetScope"],
             )
 
             # An Active A→B library rename — a real configuration change
@@ -2662,18 +2657,18 @@ class DirectFileOperationsTests(unittest.TestCase):
             self.assertEqual("Unified media source", rows[0][0])
             code, found = request(
                 api,
-                "/api/v1/operations/runs?q=Unified%20media%20source",
+                "/api/v1/resource-libraries/source/file-operations",
                 token="viewer-token",
             )
             self.assertEqual(200, code)
             self.assertEqual(2, found["total"], found)
-            code, renamed_found = request(
-                api,
-                "/api/v1/operations/runs?q=Renamed%20Unified%20Source",
-                token="viewer-token",
+            # The same durable rows still publish A's historical identity, not
+            # the renamed current Active label.
+            self.assertIn(
+                "Unified media source",
+                {item["sourceScope"] for item in found["items"]},
             )
-            self.assertEqual(200, code)
-            self.assertEqual(0, renamed_found["total"], renamed_found)
+            self.assertNotIn("Renamed Unified Source", json.dumps(found))
 
     def test_media_direct_command_publishes_its_library_identity_and_kind(self) -> None:
         """A MediaLibrary command keeps its own historical identity and kind.
@@ -2705,27 +2700,26 @@ class DirectFileOperationsTests(unittest.TestCase):
             self.assertEqual("Movies/media-folder", target_scope)
             self.assertIn("Movies", search_text)
 
-            for needle, total in (
-                ("Movies", 1),
-                ("media-folder", 1),
-                ("媒体库文件维护", 1),
-            ):
-                with self.subTest(needle=needle):
-                    code, found = request(
-                        api, f"/api/v1/operations/runs?q={needle}", token="viewer-token"
-                    )
-                    self.assertEqual(200, code)
-                    self.assertEqual(total, found["total"], found)
-                    self.assertEqual(task_id, found["items"][0]["run_id"])
-
+            # Slice46 RO-3/RO-4: this MediaLibrary work belongs to the media
+            # library surface and never to the organizing Task Center.
+            code, page = request(
+                api, "/api/v1/media-libraries/movies/file-operations", token="viewer-token"
+            )
+            self.assertEqual(200, code, page)
+            self.assertEqual(1, page["total"], page)
+            self.assertEqual("media", page["libraryKind"])
+            self.assertEqual(task_id, page["items"][0]["taskId"])
             code, overview = request(
-                api, f"/api/v1/operations/runs/{task_id}", token="viewer-token"
+                api,
+                f"/api/v1/media-libraries/movies/files/operations/{task_id}",
+                token="viewer-token",
             )
             self.assertEqual(200, code)
-            self.assertEqual("media", overview["library_kind"])
-            self.assertEqual("媒体库文件维护", overview["command_label"])
-            self.assertEqual("Movies", overview["source_scope"])
-            self.assertEqual("Movies/media-folder", overview["target_scope"])
+            self.assertEqual("文件维护", overview["commandLabel"])
+            self.assertEqual("Movies", overview["sourceScope"])
+            self.assertEqual("Movies/media-folder", overview["targetScope"])
+            code, inventory = request(api, "/api/v1/operations/runs", token="viewer-token")
+            self.assertEqual(0, inventory["total"], inventory)
             self.assertEqual(1, len(runtime.list_tasks(limit=100)))
 
     def test_rename_and_text_save_publish_both_entry_scopes(self) -> None:
@@ -2755,17 +2749,14 @@ class DirectFileOperationsTests(unittest.TestCase):
             self.assertEqual(1, len(rows), rows)
             self.assertEqual("Unified media source/old-name.nfo", rows[0][0])
             self.assertEqual("Unified media source/new-name.nfo", rows[0][1])
-            for needle, total in (
-                ("old-name.nfo", 1),
-                ("new-name.nfo", 1),
-            ):
-                with self.subTest(needle=needle):
-                    code, found = request(
-                        api, f"/api/v1/operations/runs?q={needle}", token="viewer-token"
-                    )
-                    self.assertEqual(200, code)
-                    self.assertEqual(total, found["total"], found)
-                    self.assertEqual(rename_task, found["items"][0]["run_id"])
+            code, found = request(
+                api, "/api/v1/resource-libraries/source/file-operations", token="viewer-token"
+            )
+            self.assertEqual(200, code, found)
+            self.assertEqual(1, found["total"], found)
+            self.assertEqual(rename_task, found["items"][0]["taskId"])
+            self.assertEqual("Unified media source/old-name.nfo", found["items"][0]["sourceScope"])
+            self.assertEqual("Unified media source/new-name.nfo", found["items"][0]["targetScope"])
 
             saved = service.save_text(
                 library_id="source",
@@ -2780,17 +2771,22 @@ class DirectFileOperationsTests(unittest.TestCase):
             self.assertEqual("Unified media source/new-name.nfo", rows[0][0])
             self.assertEqual("Unified media source/new-name.nfo", rows[0][1])
             code, found = request(
-                api, "/api/v1/operations/runs?q=new-name.nfo", token="viewer-token"
+                api, "/api/v1/resource-libraries/source/file-operations", token="viewer-token"
             )
             self.assertEqual(200, code)
             self.assertEqual(2, found["total"], found)
             self.assertEqual(
                 {rename_task, save_task},
-                {item["run_id"] for item in found["items"]},
+                {item["taskId"] for item in found["items"]},
             )
-            overview = self._inventory_overview(api, save_task)
-            self.assertEqual("Unified media source/new-name.nfo", overview["source_scope"])
-            self.assertEqual("Unified media source/new-name.nfo", overview["target_scope"])
+            code, overview = request(
+                api,
+                f"/api/v1/resource-libraries/source/files/operations/{save_task}",
+                token="viewer-token",
+            )
+            self.assertEqual(200, code, overview)
+            self.assertEqual("Unified media source/new-name.nfo", overview["sourceScope"])
+            self.assertEqual("Unified media source/new-name.nfo", overview["targetScope"])
 
     def test_delete_publishes_the_confirmed_scope_without_a_destination(self) -> None:
         """A Delete names the confirmed scope it removed — and invents no target.
@@ -2826,15 +2822,22 @@ class DirectFileOperationsTests(unittest.TestCase):
             self.assertIn("trash", search_text)
             self.assertFalse((root / "source" / "trash").exists())
 
-            code, found = request(api, "/api/v1/operations/runs?q=trash", token="viewer-token")
-            self.assertEqual(200, code)
+            code, found = request(
+                api, "/api/v1/resource-libraries/source/file-operations", token="viewer-token"
+            )
+            self.assertEqual(200, code, found)
             self.assertEqual(1, found["total"], found)
-            self.assertEqual(task_id, found["items"][0]["run_id"])
-            overview = self._inventory_overview(api, task_id)
-            self.assertEqual("文件删除", overview["command_label"])
-            self.assertEqual("resource", overview["library_kind"])
-            self.assertEqual("Unified media source/trash", overview["source_scope"])
-            self.assertIsNone(overview["target_scope"])
+            self.assertEqual(task_id, found["items"][0]["taskId"])
+            self.assertEqual("删除", found["items"][0]["commandLabel"])
+            code, overview = request(
+                api,
+                f"/api/v1/resource-libraries/source/files/operations/{task_id}",
+                token="viewer-token",
+            )
+            self.assertEqual(200, code, overview)
+            self.assertEqual("删除", overview["commandLabel"])
+            self.assertEqual("Unified media source/trash", overview["sourceScope"])
+            self.assertIsNone(overview["targetScope"])
             self.assertEqual(1, len(runtime.list_tasks(limit=100)))
 
     def test_credential_shaped_library_name_is_hidden_from_search_and_overview(
@@ -2874,34 +2877,22 @@ class DirectFileOperationsTests(unittest.TestCase):
             self.assertEqual(f"{sentinel}/collections", rows[0][1])
 
             code, overview = request(
-                api, f"/api/v1/operations/runs/{task_id}", token="viewer-token"
+                api,
+                f"/api/v1/resource-libraries/source/files/operations/{task_id}",
+                token="viewer-token",
             )
+            self.assertEqual(200, code, overview)
+            # The organizing Task Center never lists ordinary file work at all,
+            # so no center list/count/type/search/overview document can leak any
+            # part of this durable identity.
+            code, inventory = request(api, "/api/v1/operations/runs", token="viewer-token")
             self.assertEqual(200, code)
-            self.assertEqual("[redacted-path]", overview["source_scope"])
-            self.assertEqual("[redacted-path]", overview["target_scope"])
-            for needle in (
-                sentinel,
-                "INVENTORYPROBE-SECRET",
-                "INVENTORYPROBE",
-                "api_key=INVENTORYPROBE",
-                "Archive",
-                "collections",
-            ):
-                with self.subTest(needle=needle):
-                    code, found = request(
-                        api, f"/api/v1/operations/runs?q={needle}", token="viewer-token"
-                    )
-                    self.assertEqual(200, code)
-                    self.assertEqual(0, found["total"], found)
-                    self.assertEqual({}, found["status_counts"])
-                    self.assertEqual(0, found["attention_count"])
-                    self.assertNotIn("INVENTORYPROBE", json.dumps(found["items"]))
-            code, found = request(api, "/api/v1/operations/runs?q=文件维护", token="viewer-token")
-            self.assertEqual(200, code)
-            self.assertEqual(1, found["total"], found)
-            self.assertEqual(task_id, found["items"][0]["run_id"])
-            self.assertNotIn("INVENTORYPROBE", json.dumps(overview))
-            self.assertNotIn(str(root), json.dumps([overview, rows]))
+            self.assertEqual(0, inventory["total"], inventory)
+            self.assertEqual({}, inventory["status_counts"])
+            self.assertEqual(0, inventory["attention_count"])
+            code, missing = request(api, f"/api/v1/operations/runs/{task_id}", token="viewer-token")
+            self.assertEqual(404, code, missing)
+            self.assertNotIn("INVENTORYPROBE", json.dumps([inventory, missing]))
 
     # ------------------------------------------------------------------
     # API journeys

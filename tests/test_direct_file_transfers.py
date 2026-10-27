@@ -1303,26 +1303,28 @@ class TransferApiTests(TransferTestCase):
             self.assertIn("Unified media source", search_text)
             self.assertIn("Movies", search_text)
 
-            # The READ principal finds the run by the source library name and
-            # the chosen destination directory, and the overview identifies
-            # the target with the historical source scope intact.
-            for needle in ("Unified media source", "Movies", "a.mkv"):
-                with self.subTest(needle=needle):
-                    code, page = request(
-                        api, f"/api/v1/operations/runs?q={needle}", token="viewer-token"
-                    )
-                    self.assertEqual(200, code)
-                    self.assertEqual(1, page["total"], page)
-                    self.assertEqual(task_id, page["items"][0]["run_id"])
+            # Slice46 RO-3/RO-4: this ordinary transfer belongs to its
+            # originating library page.  The same durable display identity is
+            # published there, and the organizing Task Center never lists it.
+            code, page = request(
+                api, "/api/v1/resource-libraries/source/file-operations", token="viewer-token"
+            )
+            self.assertEqual(200, code, page)
+            self.assertEqual(1, page["total"], page)
+            self.assertEqual(task_id, page["items"][0]["taskId"])
             code, overview = request(
-                api, f"/api/v1/operations/runs/{task_id}", token="viewer-token"
+                api,
+                f"/api/v1/resource-libraries/source/files/operations/{task_id}",
+                token="viewer-token",
             )
             self.assertEqual(200, code)
-            self.assertEqual("文件传输", overview["command_label"])
-            self.assertEqual("Unified media source/a.mkv", overview["source_scope"])
-            self.assertEqual("Unified media source/Movies", overview["target_scope"])
-            # Bounded and secret-free: no host root or adapter evidence in
-            # the public inventory documents.
+            self.assertEqual("复制/移动", overview["commandLabel"])
+            self.assertEqual("Unified media source/a.mkv", overview["sourceScope"])
+            self.assertEqual("Unified media source/Movies", overview["targetScope"])
+            code, inventory = request(api, "/api/v1/operations/runs", token="viewer-token")
+            self.assertEqual(0, inventory["total"], inventory)
+            # Bounded and secret-free: no host root or adapter evidence in the
+            # public library documents.
             rendered = json.dumps([page, overview])
             for forbidden in (str(root), "password", "token", "secret", "Authorization"):
                 self.assertNotIn(forbidden, rendered)
@@ -1340,13 +1342,13 @@ class TransferApiTests(TransferTestCase):
             )
             code, page = request(
                 restarted_api,
-                "/api/v1/operations/runs?q=Unified%20media%20source",
+                "/api/v1/resource-libraries/source/file-operations",
                 token="viewer-token",
             )
             self.assertEqual(200, code)
             self.assertEqual(1, page["total"], page)
-            self.assertEqual("Unified media source/a.mkv", page["items"][0]["source_scope"])
-            self.assertEqual("Unified media source/Movies", page["items"][0]["target_scope"])
+            self.assertEqual("Unified media source/a.mkv", page["items"][0]["sourceScope"])
+            self.assertEqual("Unified media source/Movies", page["items"][0]["targetScope"])
 
     def test_transfer_routes_share_application_behavior_and_rbac(self) -> None:
         with tempfile.TemporaryDirectory() as directory:

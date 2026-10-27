@@ -13579,6 +13579,9 @@ class MediaFlowApi:
         elif raw_view in {item.value for item in OperationsRunView}:
             view = raw_view
         else:
+            # A retired view (the former fifth Failure Recovery page) is a
+            # rejected filter, never a silently different population: the old
+            # deep link cannot resurrect a failure-recovery list.
             raise ValueError("operations run view filter is invalid")
         raw_problem = values.get("problem", [""])[0]
         if raw_problem in {"", "all"}:
@@ -13586,6 +13589,9 @@ class MediaFlowApi:
         elif raw_problem in set(RECOVERY_PROBLEM_TYPES):
             problem_type = raw_problem
         else:
+            # Only the four business problem types are filterable.  A technical
+            # failure is read-only history in All/Ended, never a fifth problem
+            # filter.
             raise ValueError("operations run problem filter is invalid")
         if view in RECOVERY_PROBLEM_TYPES and problem_type is not None and problem_type != view:
             # A recovery view already owns its problem type; a contradicting
@@ -14161,27 +14167,41 @@ class MediaFlowApi:
 
     @staticmethod
     def _operations_run_detail(repository, identifier: str):
-        """Resolve one supported run/Task identity to ``(overview, progress)``.
+        """Resolve one supported *Task Center* identity to ``(overview, progress)``.
 
         The exact run anchor wins; a Job-linked Task ID resolves only through
         the persisted ``automation_jobs.task_id`` link (never a filename,
-        label or time proximity).  When the repository has no combined
+        label or time proximity).  Task Center's population is admitted
+        organizing work only (Slice46 RO-4), so an ordinary file work's Task or
+        an unrelated Job published the same ID resolves to *nothing* here: the
+        ordinary record keeps its own library-local surface and cannot be
+        reached through a center deep link.  When the repository has no combined
         detail read, the plain overview read still answers with
         ``progress=None`` instead of failing a supported deep link.
         """
 
+        membership = getattr(repository, "is_task_center_run", None)
         with_progress = getattr(repository, "operations_run_with_progress", None)
-        detail = None
-        if callable(with_progress):
-            detail = with_progress(identifier)
+
+        def read(identity: str):
+            if callable(membership) and not membership(identity):
+                return None
+            return with_progress(identity) if callable(with_progress) else None
+
+        detail = read(identifier) if isinstance(identifier, str) else None
         if detail is None:
             resolver = getattr(repository, "resolve_operations_run_link", None)
-            if callable(resolver) and callable(with_progress):
+            if callable(resolver) and callable(with_progress) and isinstance(identifier, str):
                 anchor = resolver(identifier)
-                if anchor is not None and anchor != identifier:
-                    detail = with_progress(anchor)
+                if isinstance(anchor, str) and anchor and anchor != identifier:
+                    detail = read(anchor)
+            # A Job-linked Task that is not Task Center work may still resolve
+            # its anchor through the plain read; but the membership check above
+            # already refused it, so nothing is guessed here.
         if detail is not None:
             return detail[0], detail[1]
+        if callable(membership) and isinstance(identifier, str) and not membership(identifier):
+            return None, None
         return repository.operations_run(identifier), None
 
     @classmethod
@@ -15654,7 +15674,15 @@ class MediaFlowApi:
         record says so explicitly instead of silently showing no reason.
         """
 
-        if overview.attention_reason == "run_repair":
+        # A settled pre-start failure keeps its structured durable repair facts
+        # for this explicit administrative handoff, even though Task Center
+        # RO-4 does not treat it as a fifth attention type.
+        if (
+            not overview.task_id
+            and overview.attention_failure_category
+            and overview.attention_failure_next_action
+            and overview.status.value == "failed"
+        ):
             return {
                 "stage": "before_formal_execution",
                 "category": overview.attention_failure_category,
@@ -15812,7 +15840,7 @@ class MediaFlowApi:
             }
         if (
             status == "failed"
-            and overview.attention_reason == "run_repair"
+            and not has_task
             and overview.attention_failure_category
             and overview.attention_failure_next_action
         ):

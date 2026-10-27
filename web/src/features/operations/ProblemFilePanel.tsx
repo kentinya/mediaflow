@@ -37,7 +37,6 @@ const PROBLEM_NEXT_STEP: Readonly<Record<RunProblemType, string>> = {
   metadata: "选择候选或修正标题/年份/类型，再继续分析",
   classification: "选择允许的分类目标，或修复分类规则",
   conflict: "按许可跳过、重命名或明确授权覆盖；保存决定不会直接覆盖",
-  failure: "查看修复指引，修复条件后显式重新检查并生成摘要",
 };
 
 const EFFECT_CERTAINTY_LABELS: Readonly<Record<string, string>> = {

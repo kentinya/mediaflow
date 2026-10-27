@@ -1,20 +1,26 @@
-"""Focused proof for Task 45.1 — nine task-center views and problem recovery.
+"""Focused proof for Task 46.4 — the organizing-only Task Center (RO-4).
 
 These tests exercise the real SQLite repository, the shared read projection and
 the authenticated ``/api/v1/operations/runs`` API against the current legal
 production assemblies:
 
-- AC-1 the nine sibling views are independent, deep-linkable server queries
-  with a complete-population summary, and the recovery views group one Task per
-  current problem type;
+- AC-1 the eight sibling views are independent, deep-linkable server queries
+  with a complete-population summary, and the four recovery views group one
+  Task per current *business* problem type;
 - AC-2 the summary, the view counts and the page rows share one read basis over
-  the whole authorized population, and cursors bind the view/problem/filters;
+  the whole authorized organizing population, and cursors bind the
+  view/problem/filters;
 - AC-3 a plain queue admission is not a manual to-do, a real pending problem is,
   resolving it leaves the list and a genuinely new blocker transfers to its own
   type;
 - AC-4 a recovery row leads to the exact Task/type file list, server-filtered
   and server-paged on the same durable predicate;
 - AC-6 every read is authorized, bounded and side-effect-free.
+
+Task 46.4 removed the former fifth "failure recovery" view: a technical failure
+is read-only history in All/Ended, never a problem type, a pending-task count or
+a recovery entry.  The tests below assert that positively instead of asserting
+the retired five-type shape.
 
 No production media, credentials or external service is used.
 """
@@ -198,6 +204,21 @@ class _TaskCenterTestCase(unittest.TestCase):
         )
         return review.review_id
 
+    def _processing_item_as_waiting_metadata(self, task_id: str, item_id: str) -> None:
+        """One item genuinely blocked on a live metadata decision."""
+
+        from dataclasses import replace
+
+        item = self._processing_item(task_id, item_id)
+        self.repository.upsert_item(
+            replace(
+                item,
+                status=TaskItemStatus.WAITING_METADATA,
+                stage="waiting_metadata",
+                attempts=1,
+            )
+        )
+
     def _classification_problem(self, task_id: str, item_id: str) -> str:
         item = self._processing_item(task_id, item_id)
         policy = ClassificationPolicy(
@@ -258,6 +279,13 @@ class _TaskCenterTestCase(unittest.TestCase):
         return confirmation.confirmation_id
 
     def _failure_problem(self, task_id: str, item_id: str) -> None:
+        """One *technical* (non-business) failed item.
+
+        A technical failure is real durable history, but it is deliberately not
+        one of the four Task Center problem types: it must stay out of Attention
+        and out of every type list while remaining readable in All/Ended.
+        """
+
         from dataclasses import replace
 
         item = self._processing_item(task_id, item_id)
@@ -272,7 +300,7 @@ class _TaskCenterTestCase(unittest.TestCase):
 
 
 class TaskCenterViewTests(_TaskCenterTestCase):
-    def test_nine_views_are_independent_and_deep_linkable(self) -> None:
+    def test_eight_views_are_independent_and_deep_linkable(self) -> None:
         recognition = self._task("organize")
         self._recognition_problem(recognition.task_id, "recog-item")
         metadata = self._task("organize")
@@ -281,8 +309,10 @@ class TaskCenterViewTests(_TaskCenterTestCase):
         self._classification_problem(classification.task_id, "class-item")
         conflict = self._task("organize")
         self._conflict_problem(conflict.task_id, "conflict-item")
+        # A purely technical failure: durable history, never a fifth type.
         failure = self._task("organize")
         self._failure_problem(failure.task_id, "failure-item")
+        # An ordinary (non-organizing) Files command must never enter the center.
         self._task("scan")
         ended = self._task("organize")
         self.repository.update_task(
@@ -295,25 +325,36 @@ class TaskCenterViewTests(_TaskCenterTestCase):
         )
 
         all_page = self._page()
-        self.assertGreaterEqual(all_page["total"], 7)
+        self.assertEqual(6, all_page["total"])
+        self.assertNotIn(
+            "scan",
+            {item["command"] for item in all_page["items"]},
+            "an ordinary command family is not Task Center organizing work",
+        )
         self.assertEqual(all_page["view"], None)
         # Each view is an independent server query with its own population.
+        # The technical failure stays in the running partition (it is unfinished)
+        # but is never an Attention problem and never a type list.
         cases = {
-            "all": all_page["total"],
-            "running": 6,
-            "attention": 5,
+            "all": 6,
+            "running": 5,
+            "attention": 4,
             "ended": 1,
             "recognition": 1,
             "metadata": 1,
             "classification": 1,
             "conflict": 1,
-            "failure": 1,
         }
         for view, expected in cases.items():
             with self.subTest(view=view):
                 page = self._page(f"view={view}")
                 self.assertEqual(view if view != "all" else None, page["view"])
                 self.assertEqual(expected, page["total"])
+        # The retired fifth view is a rejected filter, never a silently
+        # different population and never a resurrected recovery page.
+        code, body = request(self.api, "GET", "/api/v1/operations/runs", query="view=failure")
+        self.assertEqual(400, code)
+        self.assertEqual("invalid_request", body["error"]["code"])
         # The recovery view always applies its own problem predicate even when
         # no explicit problem parameter is submitted.
         recognition_page = self._page("view=recognition")
@@ -322,8 +363,21 @@ class TaskCenterViewTests(_TaskCenterTestCase):
         narrowed = self._page("view=attention&problem=conflict")
         self.assertEqual(1, narrowed["total"])
         self.assertEqual(["conflict"], narrowed["items"][0]["problem_types"])
+        # The technical failure is readable in All/Ended and carries no
+        # Attention/type/problem claim.
+        ended_row = next(item for item in all_page["items"] if item["run_id"] == failure.task_id)
+        self.assertFalse(ended_row["attention"])
+        self.assertEqual([], list(ended_row["problem_types"]))
+        self.assertIsNone(ended_row["attention_reason"])
+        # The durable technical failure itself is preserved untouched.
+        self.assertEqual(
+            TaskItemStatus.FAILED,
+            self.repository.get_item("failure-item").status,
+        )
 
     def test_summary_counts_the_complete_population_and_problem_files(self) -> None:
+        # Three purely technical failures are real history but produce no
+        # Attention and no type/problem count at all.
         for index in range(3):
             task = self._task("organize")
             self._failure_problem(task.task_id, f"failure-{index}")
@@ -337,25 +391,34 @@ class TaskCenterViewTests(_TaskCenterTestCase):
         # The summary is over the whole authorized population, never just the
         # returned page (which here holds one row).
         self.assertEqual(4, summary["total"])
-        self.assertEqual(4, summary["attention"])
+        self.assertEqual(1, summary["attention"])
         self.assertEqual(1, summary["problem_tasks"]["recognition"])
         self.assertEqual(2, summary["problem_files"]["recognition"])
-        self.assertEqual(3, summary["problem_files"]["failure"])
+        # A technical failure is not a fifth problem type and cannot be counted
+        # as a problem or a file.
+        self.assertEqual(
+            sorted(["recognition", "metadata", "classification", "conflict"]),
+            sorted(summary["problem_tasks"]),
+        )
+        self.assertEqual(
+            sorted(["recognition", "metadata", "classification", "conflict"]),
+            sorted(summary["problem_files"]),
+        )
         self.assertEqual(4, page["total"])
-        self.assertEqual(4, page["attention_count"])
+        self.assertEqual(1, page["attention_count"])
 
     def test_source_filter_accepts_historical_paths_and_scopes_summary(self) -> None:
         alpha = self._task("organize", scope="Movies/alpha")
-        self._failure_problem(alpha.task_id, "alpha-file")
+        self._recognition_problem(alpha.task_id, "alpha-file")
         beta = self._task("organize", scope="Movies/beta")
-        self._failure_problem(beta.task_id, "beta-file")
+        self._classification_problem(beta.task_id, "beta-file")
 
-        page = self._page("view=failure&source=Movies%2Falpha")
+        page = self._page("view=recognition&source=Movies%2Falpha")
         self.assertEqual(1, page["total"])
         self.assertEqual([alpha.task_id], [item["task_id"] for item in page["items"]])
         self.assertEqual(1, page["summary"]["total"])
-        self.assertEqual(1, page["summary"]["problem_tasks"]["failure"])
-        self.assertEqual(1, page["summary"]["problem_files"]["failure"])
+        self.assertEqual(1, page["summary"]["problem_tasks"]["recognition"])
+        self.assertEqual(1, page["summary"]["problem_files"]["recognition"])
         self.assertEqual("Movies/alpha", page["source"])
         self.assertEqual(
             {"Movies/alpha", "Movies/beta"},
@@ -382,17 +445,20 @@ class TaskCenterViewTests(_TaskCenterTestCase):
         self.assertTrue(summary["sources_truncated"])
 
     def test_page_row_has_its_own_problem_file_count(self) -> None:
-        two = self._task("organize", scope="Movies/two")
-        self._failure_problem(two.task_id, "two-a")
-        self._failure_problem(two.task_id, "two-b")
+        # One task with three metadata problems, one with a single one: the row
+        # file count is that exact task's population, never another task's.
+        three = self._task("organize", scope="Movies/three")
+        self._metadata_correction_problem(three.task_id, "three-a")
+        self._metadata_review_problem(three.task_id, "three-b")
+        self._processing_item_as_waiting_metadata(three.task_id, "three-c")
         one = self._task("organize", scope="Movies/one")
-        self._failure_problem(one.task_id, "one-a")
+        self._metadata_review_problem(one.task_id, "one-a")
 
-        page = self._page("view=failure")
+        page = self._page("view=metadata")
         by_task = {item["task_id"]: item for item in page["items"]}
-        self.assertEqual(2, by_task[two.task_id]["problem_file_counts"]["failure"])
-        self.assertEqual(1, by_task[one.task_id]["problem_file_counts"]["failure"])
-        self.assertEqual(3, page["summary"]["problem_files"]["failure"])
+        self.assertEqual(3, by_task[three.task_id]["problem_file_counts"]["metadata"])
+        self.assertEqual(1, by_task[one.task_id]["problem_file_counts"]["metadata"])
+        self.assertEqual(4, page["summary"]["problem_files"]["metadata"])
 
     def test_page_and_filter_summary_share_the_window_snapshot(self) -> None:
         original = self.repository.operations_runs_window
@@ -437,8 +503,8 @@ class TaskCenterViewTests(_TaskCenterTestCase):
     def test_cursor_binds_view_and_problem_scope(self) -> None:
         for index in range(3):
             task = self._task("organize")
-            self._failure_problem(task.task_id, f"failure-{index}")
-        first = self._page("view=failure&limit=1")
+            self._metadata_correction_problem(task.task_id, f"meta-{index}")
+        first = self._page("view=metadata&limit=1")
         cursor = first["next_cursor"]
         self.assertIsNotNone(cursor)
         # The minted scope names the view and problem predicate.
@@ -446,15 +512,15 @@ class TaskCenterViewTests(_TaskCenterTestCase):
             cursor,
             "operations_runs",
             expected_scope=(
-                "principal=viewer;status=all;attention=false;view=failure;"
-                "problem=failure;source=all;command=all;q=;from=;to="
+                "principal=viewer;status=all;attention=false;view=metadata;"
+                "problem=metadata;source=all;command=all;q=;from=;to="
             ),
         )
         self.assertIsNotNone(decoded)
         for mismatched in (
             f"view=recognition&limit=1&cursor={cursor}",
             f"view=all&limit=1&cursor={cursor}",
-            f"view=failure&problem=conflict&limit=1&cursor={cursor}",
+            f"view=metadata&problem=conflict&limit=1&cursor={cursor}",
         ):
             with self.subTest(query=mismatched):
                 code, _body = request(self.api, "GET", "/api/v1/operations/runs", query=mismatched)
@@ -465,9 +531,48 @@ class TaskCenterViewTests(_TaskCenterTestCase):
             "GET",
             "/api/v1/operations/runs",
             token="other-token",
-            query=f"view=failure&limit=1&cursor={cursor}",
+            query=f"view=metadata&limit=1&cursor={cursor}",
         )
         self.assertEqual(400, code)
+
+    def test_initial_manual_confirmation_stays_unfinished_without_attention(self) -> None:
+        """An initial manual ``waiting_confirm`` is Running/All, not Attention.
+
+        Task46.4 RO-4: normal manual work that waits for its *initial* execution
+        confirmation has no four-type recovery lineage.  It therefore stays
+        unfinished in Running/All with its exact summary reachable, contributes
+        no pending-task count, no type list and no ended status -- and a plain
+        ``waiting_confirm`` item never becomes a Conflict problem on its own.
+        """
+
+        from dataclasses import replace
+
+        task = self.coordinator.create(
+            "manual_organize", execute_authorized=True, scope_path="Movies/initial"
+        )
+        item = self._processing_item(task.task_id, "initial-confirm")
+        self.repository.upsert_item(
+            replace(
+                item,
+                status=TaskItemStatus.WAITING_CONFIRM,
+                stage="waiting_confirm",
+            )
+        )
+        attention = self._page("view=attention")
+        self.assertEqual(0, attention["total"])
+        self.assertEqual(0, attention["summary"]["attention"])
+        for kind in ("recognition", "metadata", "classification", "conflict"):
+            self.assertEqual(0, self._page(f"view={kind}")["total"], kind)
+        running = self._page("view=running")
+        self.assertEqual(1, running["total"])
+        self.assertEqual(running["items"][0]["task_id"], task.task_id)
+        # The real Task aggregate is an unfinished state (pending/running), so
+        # the initial confirmation is genuine Running work.
+        self.assertIn(running["items"][0]["status"], {"pending", "running"})
+        self.assertFalse(running["items"][0]["attention"])
+        self.assertEqual([], list(running["items"][0]["problem_types"]))
+        # It is unfinished work, never an ended run.
+        self.assertEqual(0, self._page("view=ended")["total"])
 
     def test_invalid_view_and_problem_values_reject_safely(self) -> None:
         for query in ("view=teleported", "problem=unknown", "view=recognition&view=metadata"):
@@ -479,15 +584,18 @@ class TaskCenterViewTests(_TaskCenterTestCase):
     def test_attention_row_exposes_each_current_problem_type_for_location(self) -> None:
         # The overlapping attention view must let the operator open the exact
         # Task/type file list for every current problem, not a dead action.
+        # A purely technical failure on the same Task adds neither a type nor a
+        # file member.
         mixed = self._task("organize")
         self._metadata_correction_problem(mixed.task_id, "meta-item")
+        self._conflict_problem(mixed.task_id, "conflict-item")
         self._failure_problem(mixed.task_id, "failure-item")
         page = self._page("view=attention")
         self.assertEqual(1, page["total"])
         row = page["items"][0]
-        self.assertEqual({"metadata", "failure"}, set(row["problem_types"]))
+        self.assertEqual({"metadata", "conflict"}, set(row["problem_types"]))
         # Each type has its own reachable server-filtered file list.
-        for problem in ("metadata", "failure"):
+        for problem in ("metadata", "conflict"):
             code, files = request(
                 self.api,
                 "GET",
@@ -498,17 +606,25 @@ class TaskCenterViewTests(_TaskCenterTestCase):
             self.assertEqual(problem, files["problem"])
             self.assertEqual(1, files["matching_total"])
 
-    def test_attention_row_with_only_a_safe_continuation_has_no_problem_type(self) -> None:
-        # A saved decision waits for continuation with no technical type; the
-        # row must stay in attention without inventing one of the five types.
+    def test_saved_decision_keeps_its_own_type_until_the_step_completes(self) -> None:
+        # Saving a metadata decision leaves the required safe continuation
+        # pending.  It is still metadata work of the same recovery lineage, so
+        # the row keeps exactly that one type instead of inventing a fifth
+        # "safe continuation only" pseudo-type.
         task = self._task("organize")
         review_id = self._metadata_review_problem(task.task_id, "meta-item")
         MetadataReviewService(self.repository).resolve(review_id, 1, actor="operator")
         page = self._page("view=attention")
         self.assertEqual(1, page["total"])
         row = page["items"][0]
-        self.assertEqual([], list(row["problem_types"]))
+        self.assertEqual(["metadata"], list(row["problem_types"]))
         self.assertTrue(row["attention"])
+        self.assertEqual("task_problem", row["attention_reason"])
+        # The saved decision is reachable in the metadata type list itself, so
+        # the required step is locatable after refresh/restart.
+        metadata_page = self._page("view=metadata")
+        self.assertEqual(1, metadata_page["total"])
+        self.assertEqual(["metadata"], list(metadata_page["items"][0]["problem_types"]))
 
     def test_reads_are_side_effect_free(self) -> None:
         task = self._task("organize")
@@ -524,10 +640,14 @@ class TaskCenterViewTests(_TaskCenterTestCase):
             "metadata",
             "classification",
             "conflict",
-            "failure",
         ):
             self._page(f"view={view}")
         self._page()
+        # The retired failure view and any other out-of-contract view are
+        # rejected reads that still create no work and no media effect.
+        for query in ("view=failure", "view=teleported", "problem=failure"):
+            code, _body = request(self.api, "GET", "/api/v1/operations/runs", query=query)
+            self.assertEqual(400, code)
         self.assertEqual(before_tasks, len(self.repository.list_tasks()))
         self.assertEqual(before_jobs, len(self.repository.list_jobs()))
         # An unauthenticated read is refused, never an empty population.
@@ -537,11 +657,14 @@ class TaskCenterViewTests(_TaskCenterTestCase):
 
 class RecoveryListTests(_TaskCenterTestCase):
     def test_one_task_per_type_with_accurate_file_counts(self) -> None:
-        # One Task carrying two recognition files and one failure file appears
-        # once in each of its type lists, with the file count of its own type.
+        # One Task carrying two recognition files and one classification
+        # problem appears once in each of its own type lists, with the file
+        # count of its own type; a purely technical failure on the same Task
+        # adds no type, no file and no count.
         mixed = self._task("organize")
         self._recognition_problem(mixed.task_id, "recog-a")
         self._recognition_problem(mixed.task_id, "recog-b")
+        self._classification_problem(mixed.task_id, "class-a")
         self._failure_problem(mixed.task_id, "failure-a")
         # A second Task with only a conflict problem.
         conflict = self._task("organize")
@@ -549,41 +672,56 @@ class RecoveryListTests(_TaskCenterTestCase):
 
         recognition = self._page("view=recognition")
         self.assertEqual(1, recognition["total"])
-        self.assertEqual({"recognition", "failure"}, set(recognition["items"][0]["problem_types"]))
+        self.assertEqual(
+            {"recognition", "classification"},
+            set(recognition["items"][0]["problem_types"]),
+        )
         self.assertEqual(2, recognition["summary"]["problem_files"]["recognition"])
         self.assertEqual(1, recognition["summary"]["problem_tasks"]["recognition"])
 
-        failure = self._page("view=failure")
-        self.assertEqual(1, failure["total"])
-        self.assertEqual(1, failure["summary"]["problem_files"]["failure"])
+        classification = self._page("view=classification")
+        self.assertEqual(1, classification["total"])
+        self.assertEqual(1, classification["summary"]["problem_files"]["classification"])
 
         conflict_page = self._page("view=conflict")
         self.assertEqual(1, conflict_page["total"])
         self.assertEqual(conflict.task_id, conflict_page["items"][0]["task_id"])
 
-    def test_resolved_problem_leaves_the_list_and_a_new_blocker_transfers(self) -> None:
+        # The retired failure view is rejected, and no center read derives a
+        # failure statistic from the technical failure.
+        code, _body = request(self.api, "GET", "/api/v1/operations/runs", query="view=failure")
+        self.assertEqual(400, code)
+        summary = self._page()["summary"]
+        self.assertNotIn("failure", summary["problem_tasks"])
+        self.assertNotIn("failure", summary["problem_files"])
+
+    def test_resolved_problem_keeps_its_type_until_the_human_step_completes(self) -> None:
         task = self._task("organize")
         review_id = self._recognition_problem(task.task_id, "recog-item")
         self.assertEqual(1, self._page("view=recognition")["total"])
-        # Resolving the recognition review leaves the item pending at a
-        # *_resolved stage: it is no longer a recognition blocker or a
-        # technical failure. Its safe-analysis continuation remains visible
-        # in the generic attention view until the operator continues it.
+        # Saving the decision leaves the item pending at ``recognition_resolved``
+        # waiting for the required safe analysis continuation.  The problem is
+        # not *resolved* yet: it stays in its own recognition type (and therefore
+        # in Attention) instead of being relabelled as a technical failure.
         RecognitionReviewService(
             self.repository,
             (RecognitionType("A", "Movie"), RecognitionType("B", "TV")),
         ).resolve(review_id, "A", actor="operator")
-        self.assertEqual(0, self._page("view=recognition")["total"])
-        self.assertEqual(0, self._page("view=failure")["total"])
+        saved = self._page("view=recognition")
+        self.assertEqual(1, saved["total"])
+        self.assertIn("recognition", saved["items"][0]["problem_types"])
         self.assertEqual(1, self._page("view=attention")["total"])
-        # A genuinely new classification blocker on the same Task appears in
-        # the classification list alongside the continuation problem.
+        self.assertEqual(0, self._page("view=metadata")["total"])
+        self.assertEqual(0, self._page("view=classification")["total"])
+        # A genuinely new *classification* blocker on the same Task appears in
+        # the classification list, and the task then carries both types once.
         self._classification_problem(task.task_id, "class-item")
-        self.assertEqual(1, self._page("view=classification")["total"])
         classification = self._page("view=classification")
+        self.assertEqual(1, classification["total"])
+        self.assertIn("classification", classification["items"][0]["problem_types"])
+        self.assertEqual(1, self._page("view=attention")["total"])
         self.assertEqual(
-            {"classification"},
-            set(classification["items"][0]["problem_types"]),
+            1, self._page("view=recognition")["summary"]["problem_tasks"]["recognition"]
         )
 
     def test_metadata_two_subtypes_are_both_metadata_problems(self) -> None:
@@ -599,9 +737,9 @@ class RecoveryListTests(_TaskCenterTestCase):
         task = self._task("organize")
         for index in range(3):
             self._recognition_problem(task.task_id, f"recog-{index}")
-        # A failure file on the same Task must not appear in the recognition
+        # A conflict file on the same Task must not appear in the recognition
         # file list.
-        self._failure_problem(task.task_id, "failure-a")
+        self._conflict_problem(task.task_id, "conflict-a")
 
         code, first = request(
             self.api,
@@ -615,7 +753,7 @@ class RecoveryListTests(_TaskCenterTestCase):
         self.assertEqual(2, len(first["items"]))
         self.assertTrue(first["truncated"])
         self.assertIsNotNone(first["next_cursor"])
-        self.assertNotIn("failure-a", [item["item_id"] for item in first["items"]])
+        self.assertNotIn("conflict-a", [item["item_id"] for item in first["items"]])
         code, second = request(
             self.api,
             "GET",
@@ -629,16 +767,24 @@ class RecoveryListTests(_TaskCenterTestCase):
             item["item_id"] for item in second["items"]
         ]
         self.assertEqual(3, len(set(seen)))
-        # The failure file list contains only the failure file.
-        code, failures = request(
+        # The conflict file list contains only the conflict file.
+        code, conflicts = request(
+            self.api,
+            "GET",
+            f"/api/v1/operations/runs/{task.task_id}/problem-items",
+            query="problem=conflict",
+        )
+        self.assertEqual(200, code)
+        self.assertEqual(1, conflicts["matching_total"])
+        self.assertEqual("conflict-a", conflicts["items"][0]["item_id"])
+        # A retired technical-failure problem filter is rejected outright.
+        code, _body = request(
             self.api,
             "GET",
             f"/api/v1/operations/runs/{task.task_id}/problem-items",
             query="problem=failure",
         )
-        self.assertEqual(200, code)
-        self.assertEqual(1, failures["matching_total"])
-        self.assertEqual("failure-a", failures["items"][0]["item_id"])
+        self.assertEqual(400, code)
 
     def test_problem_file_list_binds_problem_and_principal(self) -> None:
         task = self._task("organize")
@@ -656,7 +802,7 @@ class RecoveryListTests(_TaskCenterTestCase):
             self.api,
             "GET",
             f"/api/v1/operations/runs/{task.task_id}/problem-items",
-            query=f"problem=failure&limit=1&cursor={cursor}",
+            query=f"problem=conflict&limit=1&cursor={cursor}",
         )
         self.assertEqual(400, code)
         code, _body = request(
@@ -698,19 +844,20 @@ class RecoveryListTests(_TaskCenterTestCase):
             self.api,
             "GET",
             "/api/v1/operations/runs/pre-task-job/problem-items",
-            query="problem=failure",
+            query="problem=metadata",
         )
         self.assertEqual(200, code)
         self.assertIsNone(body["task_id"])
         self.assertIsNotNone(body["unavailable"])
         self.assertEqual(0, body["matching_total"])
 
-    def test_pre_task_repair_failure_is_attention_without_a_file_list(self) -> None:
+    def test_pre_task_technical_failure_is_read_only_history_not_attention(self) -> None:
         # A Job that failed before any Task existed carries structured, durable
-        # repair evidence (a stable category plus an explicit next action).
-        # It is exactly the configuration/authority work an operator must still
-        # act on, so it belongs in the overlapping attention view even though it
-        # has no TaskItem and therefore no file list.
+        # failure evidence (a stable category plus an explicit next action).
+        # Task46.4 RO-4: that is real read-only history, *not* a fifth problem
+        # type and not required human organizing work -- it never enters
+        # Attention, pending counts or a type list, while All/Ended keep the
+        # real failed status and its factual reason.
         from mediaflow.domain.automation import (
             AutomationCommand,
             AutomationJob,
@@ -745,22 +892,30 @@ class RecoveryListTests(_TaskCenterTestCase):
         self.assertIsNone(finished)
         stored = self.repository.get_job("pre-task-repair")
         self.assertEqual(AutomationJobStatus.FAILED, stored.status)
-        page = self._page("view=attention")
-        self.assertEqual(1, page["total"])
-        row = page["items"][0]
-        self.assertTrue(row["attention"])
+        # No Attention and no fabricated problem membership.
+        self.assertEqual(0, self._page("view=attention")["total"])
+        self.assertEqual(0, self._page()["summary"]["attention"])
+        for problem in ("recognition", "metadata", "classification", "conflict"):
+            self.assertEqual(0, self._page(f"view={problem}")["total"])
+        # The factual failed record is still readable in All/Ended.
+        all_page = self._page()
+        self.assertEqual(1, all_page["total"])
+        row = all_page["items"][0]
+        self.assertFalse(row["attention"])
         self.assertEqual([], list(row["problem_types"]))
-        self.assertEqual("run_repair", row["attention_reason"])
-        self.assertEqual("snapshot_digest_mismatch", row["attention_failure_category"])
+        self.assertIsNone(row["attention_reason"])
+        self.assertEqual("failed", row["status"])
+        self.assertEqual(1, self._page("view=ended")["total"])
+        # Its structured failure evidence stays readable through the Job detail
+        # the center already links to -- not a new center failure surface.
+        code, job_document = request(self.api, "GET", "/api/v1/operations/jobs/pre-task-repair")
+        self.assertEqual(200, code)
+        self.assertEqual("snapshot_digest_mismatch", job_document["failure"]["category"])
         self.assertEqual(
             "restore the exact saved published revision",
-            row["attention_failure_next_action"],
+            job_document["failure"]["nextAction"],
         )
-        # No fabricated file members: it never appears in a five-type list.
-        for problem in ("recognition", "metadata", "classification", "conflict", "failure"):
-            self.assertEqual(0, self._page(f"view={problem}")["total"])
-        # The summary card reflects the same run-level attention fact.
-        self.assertEqual(1, page["summary"]["attention"])
+        self.assertEqual(1, self._page("view=ended")["total"])
 
     def test_plain_queue_and_unstructured_failure_are_not_run_level_repair(self) -> None:
         # A plain queue admission carries no structured repair evidence, and a
@@ -877,3 +1032,161 @@ class RecoveryListTests(_TaskCenterTestCase):
         page = self._page("view=attention")
         self.assertIn("summary", page)
         self.assertTrue(page["summary"]["available"])
+
+
+class TaskCenterPopulationTests(_TaskCenterTestCase):
+    """The center's membership rule, exercised over real durable rows (RO-4).
+
+    Every case here writes the exact durable shape a real producer writes and
+    then asks the center's own reads: the same rule must decide the list, the
+    counts, the source options, the cursor population and the exact-ID detail.
+    """
+
+    def test_ordinary_and_notification_work_never_enters_the_center(self) -> None:
+        # Ordinary Files/MediaLibrary commands, a notification command and an
+        # unknown legacy command are real durable rows, but never organizing
+        # work: no page, count, type list, source option or cursor includes them.
+        for command in (
+            "files_direct_command",
+            "files_delete",
+            "files_transfer",
+            "media_files_transfer",
+            "media_rename",
+            "notify-delivery",
+            "legacy_historic_work",
+        ):
+            self.coordinator.create(command, execute_authorized=True, scope_path=command)
+        organizing = self._task("organize", scope="Movies/organizing")
+        self._recognition_problem(organizing.task_id, "recog-item")
+
+        page = self._page()
+        self.assertEqual([organizing.task_id], [item["task_id"] for item in page["items"]])
+        self.assertEqual(1, page["total"])
+        self.assertEqual({"running": 1}, page["status_counts"])
+        self.assertEqual(1, page["summary"]["total"])
+        self.assertEqual(1, page["summary"]["problem_tasks"]["recognition"])
+        self.assertEqual(
+            ["Movies/organizing"],
+            [entry["value"] for entry in page["summary"]["sources"]],
+        )
+        self.assertIsNone(page["next_cursor"])
+
+        # An exact-ID center read of an ordinary row is a 404, never a
+        # re-labelled organizing run.
+        code, body = request(self.api, "GET", "/api/v1/operations/runs/files_transfer")
+        self.assertEqual(404, code)
+        self.assertEqual("not_found", body["error"]["code"])
+        # A cursor minted over the organizing population cannot be replayed to
+        # reach an ordinary row either: the population is decided server-side.
+        code, filtered = request(
+            self.api, "GET", "/api/v1/operations/runs", query="command=files_transfer"
+        )
+        self.assertEqual(200, code)
+        self.assertEqual(0, filtered["total"])
+
+    def test_analysis_only_preparation_is_not_organizing_work(self) -> None:
+        # A definition Run once that has not admitted its own Task is center
+        # work; a plain analysis/preview preparation (no definition origin and
+        # no admitted Task) is not.
+        snapshot = self.repository.list_tasks(limit=1)
+        del snapshot  # the fixture's own organizer admission defaults are enough
+        self.repository._connection.execute(
+            "INSERT INTO media_discoveries (discovery_id, actor, resource_library_id,"
+            " storage_id, configuration_snapshot_id, configuration_snapshot_digest,"
+            " status, version, budgets_json, progress_json, sources_json,"
+            " attempts, pause_requested, cancel_requested, created_at, updated_at)"
+            " VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)",
+            (
+                "plain-analysis",
+                "operator",
+                "source",
+                "source-storage",
+                "snap-1",
+                "digest-1",
+                "completed",
+                1,
+                "{}",
+                "{}",
+                "[]",
+                0,
+                0,
+                0,
+                NOW.isoformat(),
+                NOW.isoformat(),
+            ),
+        )
+        self.repository._connection.commit()
+        page = self._page()
+        self.assertEqual(0, page["total"], page)
+        code, body = request(self.api, "GET", "/api/v1/operations/runs/plain-analysis")
+        self.assertEqual(404, code)
+
+    def test_job_to_task_linkage_keeps_one_identity_and_one_count(self) -> None:
+        # A Job acquiring its Task is the same admitted organizing run: the
+        # identity, the count and the problem membership never drift, and the
+        # linked Task ID still resolves to the one run.
+        task = self._task("organize", scope="Movies/linked")
+        self._metadata_correction_problem(task.task_id, "meta-a")
+        job = AutomationJob(
+            "job-linked",
+            AutomationCommand.ORGANIZE,
+            AutomationJobStatus.PENDING,
+            NOW,
+            NOW,
+            task_id=task.task_id,
+            source_scope="Movies/linked",
+        )
+        self.repository.create_job(job)
+
+        page = self._page()
+        self.assertEqual(1, page["total"])
+        self.assertEqual("job-linked", page["items"][0]["run_id"])
+        self.assertEqual(task.task_id, page["items"][0]["task_id"])
+        self.assertEqual({"running": 1}, page["status_counts"])
+        # The Job is the admission identity and the pending Task keeps the
+        # aggregate in its own unfinished partition without a second row.
+        self.assertEqual("running", page["items"][0]["status"])
+        self.assertEqual(1, page["summary"]["problem_tasks"]["metadata"])
+        # Both durable identities open the same exact run.
+        for identity in ("job-linked", task.task_id):
+            code, document = request(self.api, "GET", f"/api/v1/operations/runs/{identity}")
+            self.assertEqual(200, code)
+            self.assertEqual("job-linked", document["run_id"])
+            self.assertEqual(task.task_id, document["task_id"])
+            self.assertEqual(["metadata"], document["problem_types"])
+
+    def test_mixed_population_beyond_one_page_counts_and_pages_consistently(self) -> None:
+        # Ordinary work is newer than every organizing row: the backend decides
+        # the population before paging, so the page, the totals and the source
+        # options never change because of it.
+        organizing_ids = []
+        for index in range(3):
+            task = self._task("organize", scope=f"Movies/page-{index}")
+            self._metadata_correction_problem(task.task_id, f"meta-{index}")
+            organizing_ids.append(task.task_id)
+        for index in range(5):
+            self.coordinator.create(
+                "files_direct_command",
+                execute_authorized=True,
+                scope_path=f"Files/ordinary-{index}",
+            )
+
+        first = self._page("view=metadata&limit=2")
+        self.assertEqual(3, first["total"])
+        self.assertEqual(2, len(first["items"]))
+        self.assertEqual(3, first["summary"]["problem_tasks"]["metadata"])
+        self.assertEqual(3, first["summary"]["problem_files"]["metadata"])
+        self.assertEqual(
+            sorted(f"Movies/page-{index}" for index in range(3)),
+            sorted(entry["value"] for entry in first["summary"]["sources"]),
+        )
+        second = self._page(f"view=metadata&limit=2&cursor={first['next_cursor']}")
+        self.assertEqual(3, second["total"])
+        self.assertEqual(1, len(second["items"]))
+        collected = {item["task_id"] for item in first["items"]} | {
+            item["task_id"] for item in second["items"]
+        }
+        self.assertEqual(set(organizing_ids), collected)
+        # Every collected row is organizing work with the metadata problem.
+        for item in (*first["items"], *second["items"]):
+            self.assertEqual(["metadata"], list(item["problem_types"]))

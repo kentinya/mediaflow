@@ -87,7 +87,6 @@ import {
   isUnknownLifecycleOutcome,
 } from "./RunLifecycleControls";
 import type { LifecycleAction } from "../../entities/operations/lifecycle";
-import { ResidentServiceStatus } from "./ResidentServiceStatus";
 import {
   OPERATIONS_RETURN_KEY,
   operationsLandingSearch,
@@ -95,8 +94,6 @@ import {
   operationsReturnSearch,
   readOperationsReturnContext,
 } from "../../shared/navigation/operations-return";
-import { workerReadinessQueryOptions } from "./worker-query";
-import type { WorkerReadinessModel } from "../../entities/operations/worker";
 import { useQueryClient, type UseQueryResult } from "@tanstack/react-query";
 
 /** The bounded page size submitted to the server on every read. */
@@ -134,7 +131,6 @@ const RUN_VIEW_DESCRIPTIONS: Readonly<Record<RunView, string>> = {
   metadata: "媒体身份仍待确认或补正；核对标题、年份和候选后查看文件记录。",
   classification: "目标媒体库或相对路径尚未确定；检查分类策略和来源范围。",
   conflict: "目标位置存在冲突；查看冲突文件和已配置的处理策略。",
-  failure: "处理失败或结果仍需调查；先查看文件证据和明确的安全下一步。",
 };
 
 const RECOVERY_VIEW_EXPLANATIONS: Readonly<Record<RunProblemType, string>> = {
@@ -142,7 +138,6 @@ const RECOVERY_VIEW_EXPLANATIONS: Readonly<Record<RunProblemType, string>> = {
   metadata: "元数据身份仍待确认或补正；打开文件记录核对当前候选。",
   classification: "目标媒体库或路径仍未确定；打开文件记录查看分类状态。",
   conflict: "目标位置有冲突待处理；打开文件记录核对冲突和策略。",
-  failure: "存在失败或不确定结果；打开文件记录查看证据与下一步。",
 };
 
 const STATUS_TOKEN = /^[a-z][a-z0-9_]{0,31}$/;
@@ -604,10 +599,9 @@ export function OperationsLanding() {
   // same `执行记录` tab/filters/page instead of losing the context.
   const automationReturn = readAutomationReturnContext(searchParams);
   const overviewQuery = useQuery(runOverviewQueryOptions(token, selectedId));
-  const readinessQuery = useQuery(workerReadinessQueryOptions(token));
-  // The explicit header refresh re-reads every bounded landing read (the
-  // inventory, the selected run overview, Worker readiness and the manual
-  // action matrix); it never submits or replays any command.
+  // The explicit header refresh re-reads the bounded landing reads (the
+  // inventory and the selected run overview); it never submits or replays any
+  // command and never issues the retired global Worker/resident-status reads.
   const refreshAll = () => {
     void query.refetch();
     if (selectedId !== "") {
@@ -617,10 +611,8 @@ export function OperationsLanding() {
       void queryClient.invalidateQueries({ queryKey: [runItemsQueryKey] });
       void queryClient.invalidateQueries({ queryKey: [runRecordsQueryKey] });
     }
-    void readinessQuery.refetch();
   };
-  const anyFetching =
-    query.isFetching || overviewQuery.isFetching || readinessQuery.isFetching;
+  const anyFetching = query.isFetching || overviewQuery.isFetching;
 
   return (
     <div className="mf-dashboard mf-operations-inventory">
@@ -939,7 +931,6 @@ export function OperationsLanding() {
                   )}
               </div>
             </div>
-            <WorkerReadinessSection query={readinessQuery} />
           </>
         )}
       </AuthorizedReadBoundary>
@@ -1198,13 +1189,9 @@ function RunTable({
                   )}
                   {attention && (
                     <td>
-                      {run.problemTypes.length > 0
-                        ? run.problemTypes
-                            .map((type) => RUN_PROBLEM_LABELS[type])
-                            .join("、")
-                        : run.attentionReason === "run_repair"
-                          ? `运行级修复${run.attentionFailureCategory ? `：${run.attentionFailureCategory}` : ""}`
-                          : "待检查后续步骤"}
+                      {run.problemTypes
+                        .map((type) => RUN_PROBLEM_LABELS[type])
+                        .join("、")}
                     </td>
                   )}
                   {ended && (
@@ -1251,38 +1238,13 @@ function RunTable({
                         className="mf-button mf-button-secondary"
                         onClick={() => onOpenProblem(run.runId, null)}
                       >
-                        {view === "failure" ? "查看失败文件" : "查看问题文件"}
+                        查看问题文件
                       </button>
                     </td>
                   )}
                   {attention && (
                     <td>
-                      {run.problemTypes.length === 0 ? (
-                        // A safe continuation step is not one of the five
-                        // technical types, and a run-level repair has no item
-                        // file list at all. Neither is a dead action: the
-                        // former opens the run's own evidence/next-step
-                        // surface, the latter opens its existing Job detail
-                        // with the structured repair guidance.
-                        run.attentionReason === "run_repair" &&
-                        run.jobId !== null ? (
-                          <Link
-                            className="mf-button mf-button-secondary"
-                            to="/operations/jobs/$jobId"
-                            params={{ jobId: run.jobId }}
-                          >
-                            查看原因与修复指引
-                          </Link>
-                        ) : (
-                          <button
-                            type="button"
-                            className="mf-button mf-button-secondary"
-                            onClick={() => onSelect(run.runId)}
-                          >
-                            查看详情与下一步
-                          </button>
-                        )
-                      ) : run.problemTypes.length === 1 ? (
+                      {run.problemTypes.length === 1 ? (
                         <button
                           type="button"
                           className="mf-button mf-button-secondary"
@@ -2232,25 +2194,14 @@ function RunDetailFacts({
           </dd>
         </div>
       )}
-      {run.attentionReason === "run_repair" && (
+      {run.problemTypes.length > 0 && (
         <div>
-          <dt>运行级修复</dt>
+          <dt>当前业务问题</dt>
           <dd>
-            <p>
-              该运行在任何处理任务创建前失败，保留了可执行的修复/核查证据；
-              它没有逐文件清单，也没有文件计数。
-            </p>
-            {run.attentionFailureCategory !== null && (
-              <p>原因类别：{run.attentionFailureCategory}</p>
-            )}
-            {run.attentionFailureNextAction !== null && (
-              <p>{run.attentionFailureNextAction}</p>
-            )}
-            {run.jobId !== null && (
-              <Link to="/operations/jobs/$jobId" params={{ jobId: run.jobId }}>
-                打开 Job 详情查看完整修复指引
-              </Link>
-            )}
+            {run.problemTypes
+              .map((type) => RUN_PROBLEM_LABELS[type])
+              .join("、")}{" "}
+            ——在对应的识别/元数据/分类/冲突列表里逐项处理，保存决定后仍需显式继续安全分析。
           </dd>
         </div>
       )}
@@ -2278,27 +2229,5 @@ function RunDetailFacts({
         </div>
       )}
     </dl>
-  );
-}
-
-function WorkerReadinessSection({
-  query,
-}: {
-  readonly query: ReturnType<typeof useQuery<WorkerReadinessModel, Error>>;
-}) {
-  return (
-    <section className="mf-count-section">
-      <h3>Worker 就绪</h3>
-      {query.data === undefined ? (
-        <p className="mf-dashboard-meta">正在读取 Worker 就绪状态。</p>
-      ) : (
-        <p className="mf-dashboard-meta">
-          {query.data.ready
-            ? `Worker 就绪 — ${query.data.activeWorkersCount} 个活跃 Worker`
-            : `Worker 未就绪：${query.data.condition}`}
-        </p>
-      )}
-      <ResidentServiceStatus />
-    </section>
   );
 }

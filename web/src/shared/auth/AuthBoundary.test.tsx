@@ -108,9 +108,15 @@ describe("AuthBoundary", () => {
     expect(
       screen.queryByText("Operations is not available in V2 yet"),
     ).toBeNull();
+    // Slice46 RO-4 removed the global Worker/resident block and its exclusive
+    // readiness read, so the landing performs only its own inventory read.
     expect(fetchMock).toHaveBeenCalledWith(
-      "/api/v1/operations/workers/readiness",
+      "/api/v1/operations/runs?limit=20",
       expect.objectContaining({ method: "GET" }),
+    );
+    expect(fetchMock).not.toHaveBeenCalledWith(
+      "/api/v1/operations/workers/readiness",
+      expect.anything(),
     );
   });
 

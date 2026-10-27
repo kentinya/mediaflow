@@ -79,8 +79,10 @@ const ATTENTION_RUN_STATUSES = [
   "failed",
   "waiting",
 ];
-// The nine sibling task-center views and the five recovery problem types the
-// fake mirrors from the authoritative Python contract.
+// The eight organizing task-center views and the four business recovery
+// problem types the fake mirrors from the authoritative Python contract
+// (Slice46 RO-4). A technical failure is not a problem type: it is read-only
+// history in All/Ended.
 const RUN_VIEWS = [
   "all",
   "running",
@@ -90,37 +92,26 @@ const RUN_VIEWS = [
   "metadata",
   "classification",
   "conflict",
-  "failure",
 ];
 const RUN_PROBLEM_TYPES = [
   "recognition",
   "metadata",
   "classification",
   "conflict",
-  "failure",
 ];
 /** The fake's durable current-problem evidence per Task.
  *
  * The fake population has no item-level rows, so it derives the same
  * *semantic* fact the Python repository derives from durable review/item
- * evidence: an unresolved failure or a withheld continuation is a real
- * current problem, while a plain queued/running/completed admission is not.
- * Keeping this next to the view constants lets the list, the summary and the
- * per-type file list agree exactly, as the real backend does.
+ * evidence: a blocked metadata decision is a real current business problem,
+ * while a plain queued/running/completed admission and a technical failure are
+ * not. Keeping this next to the view constants lets the list, the summary and
+ * the per-type file list agree exactly, as the real backend does.
  */
 function taskProblemTypes(task) {
   if (!task) return [];
-  const problems = [];
-  if (task.status === "failed" || task.status === "partial_success") {
-    problems.push("failure");
-  }
-  if (task.status === "paused" && task.command !== "files_transfer") {
-    problems.push("failure");
-  }
-  if (task.status === "running" && task.pause_requested) {
-    problems.push("failure");
-  }
-  return problems;
+  if (task.status === "waiting_metadata") return ["metadata"];
+  return [];
 }
 const SAFE_RUN_TIME_FILTER =
   /^\d{4}-\d{2}-\d{2}(T\d{2}:\d{2}(:\d{2}(\.\d+)?)?(Z|\+00:00)?)?$/;
@@ -524,7 +515,7 @@ const FAKE_TASKS = [
       "deadbeefdeadbeefdeadbeefdeadbeefdeadbeefdeadbeefdeadbeefdeadbeef",
     source_display: "/srv/media/private.mkv",
     source_fingerprint: "fingerprint-value",
-    command: "preview",
+    command: "organize",
     status: "completed",
     execute_authorized: false,
     created_at: "2026-08-22T12:00:00+00:00",
@@ -541,7 +532,7 @@ const FAKE_TASKS = [
   },
   {
     task_id: "task-002",
-    command: "preview",
+    command: "organize",
     status: "running",
     execute_authorized: false,
     created_at: "2026-08-22T12:10:00+00:00",
@@ -558,7 +549,7 @@ const FAKE_TASKS = [
   },
   {
     task_id: "task-003",
-    command: "preview",
+    command: "organize",
     status: "pending",
     execute_authorized: false,
     created_at: "2026-08-22T12:15:00+00:00",
@@ -593,7 +584,7 @@ const FAKE_TASKS = [
   },
   {
     task_id: "task-004",
-    command: "preview",
+    command: "organize",
     status: "failed",
     execute_authorized: false,
     created_at: "2026-08-22T11:50:00+00:00",
@@ -674,7 +665,7 @@ const FAKE_TASKS = [
 const FAKE_JOBS = [
   {
     job_id: "job-001",
-    command: "preview",
+    command: "organize",
     status: "completed",
     created_at: "2026-08-22T12:00:00+00:00",
     updated_at: "2026-08-22T12:06:00+00:00",
@@ -692,7 +683,7 @@ const FAKE_JOBS = [
   },
   {
     job_id: "job-002",
-    command: "preview",
+    command: "organize",
     status: "pending",
     created_at: "2026-08-22T12:15:00+00:00",
     updated_at: "2026-08-22T12:15:00+00:00",
@@ -718,7 +709,7 @@ const FAKE_JOBS = [
   },
   {
     job_id: "job-003",
-    command: "preview",
+    command: "organize",
     status: "running",
     created_at: "2026-08-22T12:16:00+00:00",
     updated_at: "2026-08-22T12:18:00+00:00",
@@ -771,7 +762,7 @@ const FAKE_JOBS = [
   },
   {
     job_id: "job-005",
-    command: "preview",
+    command: "organize",
     status: "failed",
     created_at: "2026-08-22T12:22:00+00:00",
     updated_at: "2026-08-22T12:24:00+00:00",
@@ -11952,6 +11943,25 @@ const server = createServer(async (req, res) => {
       : "resource";
   }
 
+  // Slice46 RO-4: the Task Center population is admitted organizing work only.
+  // Ordinary Files/MediaLibrary commands and analysis-only preparations keep
+  // their own surfaces and never enter a center list, count or deep link.
+  const ORGANIZING_COMMAND_FAMILIES = new Set([
+    "organize",
+    "manual_organize",
+    "retry",
+    "retry-failed",
+    "recovery-continuation",
+    "metadata-correction-continuation",
+    "scope-continuation",
+  ]);
+
+  function isOrganizingCommand(command) {
+    if (typeof command !== "string" || command.length === 0) return false;
+    if (command.startsWith("media_")) return false;
+    return ORGANIZING_COMMAND_FAMILIES.has(command.split(":", 1)[0]);
+  }
+
   /**
    * The deduplicated run population over the same FAKE_TASKS/FAKE_JOBS the
    * Task/Job lists read. A Task with any linked Job appears once through its
@@ -11964,6 +11974,7 @@ const server = createServer(async (req, res) => {
     );
     const runs = [];
     for (const job of FAKE_JOBS) {
+      if (!isOrganizingCommand(job.command)) continue;
       const linked = job.task_id
         ? FAKE_TASKS.find((task) => task.task_id === job.task_id)
         : undefined;
@@ -12011,6 +12022,9 @@ const server = createServer(async (req, res) => {
       if (linkedTaskIds.has(task.task_id)) {
         continue;
       }
+      if (!isOrganizingCommand(task.command)) {
+        continue;
+      }
       runs.push({
         run_kind: "task",
         run_id: task.task_id,
@@ -12056,6 +12070,12 @@ const server = createServer(async (req, res) => {
       target_scope: null,
       attention,
       problem_types: Array.isArray(run.problem_types) ? run.problem_types : [],
+      attention_reason:
+        attention &&
+        Array.isArray(run.problem_types) &&
+        run.problem_types.length > 0
+          ? "task_problem"
+          : null,
       // The selected-run overview carries the durable progress projection;
       // the inventory page leaves it absent, exactly like the Python
       // `_operations_runs_page` / `_operations_run_overview` split.
@@ -12215,20 +12235,8 @@ const server = createServer(async (req, res) => {
     if (problem === "conflict") {
       return item.status === "waiting_confirm" || blockerKind === "conflict";
     }
-    if (problem === "failure") {
-      const resolvedStages = [
-        "conflict_resolved",
-        "recognition_resolved",
-        "metadata_resolved",
-        "metadata_correction_resolved",
-        "classification_resolved",
-        "task_retry_requested",
-      ];
-      if (resolvedStages.includes(rawStage)) {
-        return false;
-      }
-      return item.status === "failed" || item.status === "partial";
-    }
+    // Slice46 RO-4: a technical failure is not a problem type at all, so no
+    // item ever matches a fifth "failure" problem here.
     return false;
   }
 

@@ -332,12 +332,20 @@ class LibraryFileOperationHistoryTests(unittest.TestCase):
             self.assertIsNotNone(organize_job_id)
             code, runs = request(api, "/api/v1/operations/runs?limit=100")
             self.assertEqual(200, code, runs)
-            self.assertGreater(runs["total"], 4, runs)
+            # Task46.4 RO-4: the Task Center population is admitted organizing
+            # work only, so the four ordinary file operations stay on their own
+            # library surface and only the Organize Job is a center row.
+            self.assertEqual(1, runs["total"], runs)
+            self.assertEqual({organize_job_id}, {item["run_id"] for item in runs["items"]})
             ordinary_commands = {
                 "files_direct_command",
                 "files_transfer",
                 "files_delete",
             }
+            self.assertFalse(
+                ordinary_commands & {item["command"] for item in runs["items"]},
+                "ordinary file work must not leak into the organizing center",
+            )
 
             code, page = self._list(api, "resource", "source", query="limit=2")
             self.assertEqual(200, code, page)

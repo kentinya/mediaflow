@@ -144,21 +144,46 @@ async function seedNativeRecovery(
 async function openNativeRecovery(page: Page, seeded: NativeRecoverySeed) {
   await connect(page, ADMIN_TOKEN);
   await openInventory(page);
-  const view = seeded.sourcePath.startsWith("Technical")
-    ? "失败恢复"
-    : seeded.sourcePath.startsWith("Classification")
-      ? "分类恢复"
-      : seeded.sourcePath.startsWith("Conflict")
-        ? "冲突处理"
-        : "元数据恢复";
+  // Slice46 RO-4: a purely technical seed is read-only history, not one of the
+  // four problem types, so its own durable item evidence is reached by
+  // selecting the exact run in 全部任务 and inspecting the item there.  A real
+  // business blocker keeps its native type list.
+  if (seeded.sourcePath.startsWith("Technical")) {
+    await page
+      .getByRole("searchbox", { name: "搜索", exact: true })
+      .fill(seeded.sourcePath);
+    await page
+      .locator(".mf-run-filter-bar")
+      .getByRole("button", { name: "搜索", exact: true })
+      .click();
+    const sourceRun = page
+      .getByRole("row")
+      .filter({ hasText: seeded.sourcePath });
+    await expect(sourceRun).toHaveCount(1);
+    await sourceRun.getByRole("button").first().click();
+    const detail = page.getByRole("region", { name: "运行详情" });
+    await expect(detail).toBeVisible();
+    const items = detail.getByRole("region", { name: "主条目" });
+    const itemRow = items
+      .getByRole("row")
+      .filter({ hasText: seeded.sourcePath });
+    await expect(itemRow).toHaveCount(1);
+    await itemRow.getByRole("button", { name: "查看证据" }).click();
+    const recovery = detail.getByRole("region", { name: "条目审核与恢复" });
+    await expect(recovery).toBeVisible();
+    return afterNativeRecoveryOpened(page, seeded, detail, recovery);
+  }
+  const view = seeded.sourcePath.startsWith("Classification")
+    ? "分类恢复"
+    : seeded.sourcePath.startsWith("Conflict")
+      ? "冲突处理"
+      : "元数据恢复";
   await page.getByRole("button", { name: view, exact: true }).click();
   const sourceRun = page
     .getByRole("row")
     .filter({ hasText: seeded.sourcePath });
   await expect(sourceRun).toHaveCount(1);
-  await sourceRun
-    .getByRole("button", { name: /查看问题文件|查看失败文件/ })
-    .click();
+  await sourceRun.getByRole("button", { name: "查看问题文件" }).click();
   const problemFiles = page.getByRole("region", { name: /问题文件/ });
   const sourceItem = problemFiles
     .getByRole("listitem")
@@ -166,6 +191,17 @@ async function openNativeRecovery(page: Page, seeded: NativeRecoverySeed) {
   await expect(sourceItem).toHaveCount(1);
   await sourceItem.getByRole("button").click();
   const detail = page.getByRole("region", { name: "运行详情" });
+  const recovery = detail.getByRole("region", { name: "条目审核与恢复" });
+  return afterNativeRecoveryOpened(page, seeded, detail, recovery);
+}
+
+/** Capture the opened item evidence the native recovery journeys then drive. */
+async function afterNativeRecoveryOpened(
+  page: Page,
+  seeded: NativeRecoverySeed,
+  detail: Locator,
+  recovery: Locator,
+) {
   mkdirSync(TASK45_RECOVERY_EVIDENCE, { recursive: true });
   await detail.scrollIntoViewIfNeeded();
   await page.screenshot({
@@ -173,7 +209,6 @@ async function openNativeRecovery(page: Page, seeded: NativeRecoverySeed) {
       TASK45_RECOVERY_EVIDENCE + "/" + seeded.sourcePath + "-input-1536.png",
     fullPage: false,
   });
-  const recovery = detail.getByRole("region", { name: "条目审核与恢复" });
   await recovery.screenshot({
     path: `${TASK45_RECOVERY_EVIDENCE}/${seeded.sourcePath}-input-fields-1536.png`,
   });
@@ -432,7 +467,7 @@ test("the inventory renders real producer runs with truthful labels", async ({
   await expect(page.getByText("计划任务").first()).toBeVisible();
   await expect(page.getByText("自动化").first()).toBeVisible();
   await expect(page.getByText("手动").first()).toBeVisible();
-  // The nine sibling views share one horizontal navigation row, and the
+  // The eight organizing views share one horizontal navigation row, and the
   // summary is over the whole authorized population.
   const views = page.getByRole("navigation", { name: "任务中心视图" });
   await expect(
@@ -442,13 +477,18 @@ test("the inventory renders real producer runs with truthful labels", async ({
     views.getByRole("button", { name: "需要处理", exact: true }),
   ).toBeVisible();
   await expect(
-    views.getByRole("button", { name: "失败恢复", exact: true }),
+    views.getByRole("button", { name: "冲突处理", exact: true }),
   ).toBeVisible();
+  await expect(
+    views.getByRole("button", { name: "失败恢复", exact: true }),
+  ).toHaveCount(0);
   await expect(page.getByText("任务总数").first()).toBeVisible();
 
-  // Worker waiting: no Worker is registered yet, and the landing reports the
-  // backend's own condition instead of inventing readiness.
-  await expect(page.getByText(/Worker 未就绪/)).toBeVisible();
+  // Slice46 RO-4: the retired global Worker/resident block and its exclusive
+  // readiness reads are gone; the center still reads its own inventory.
+  await expect(page.getByText(/Worker 就绪/)).toHaveCount(0);
+  await expect(page.getByText(/Worker 未就绪/)).toHaveCount(0);
+  await expect(page.getByText(/常驻服务状态/)).toHaveCount(0);
   // Task46.3 RO-2: the center's new-organize CTA, independent library picker,
   // manual-action and discovery sections are removed.  New file-selection work
   // starts from ResourceLibrary Files, so none of them may render here.
@@ -525,8 +565,10 @@ test("a real Worker claim links the pending Job without changing the count", asy
   await expect(detail.getByText("打开 Task 详情")).toBeVisible();
   await detail.getByRole("button", { name: "关闭详情" }).click();
 
-  // Worker readiness now reports the registered Worker instead of waiting.
-  await expect(page.getByText(/Worker 就绪 — 1 个活跃 Worker/)).toBeVisible();
+  // Slice46 RO-4: the center no longer renders the retired global Worker
+  // block, so no readiness text appears even with a registered Worker.
+  await expect(page.getByText(/Worker 就绪/)).toHaveCount(0);
+  await expect(page.getByText(/常驻服务状态/)).toHaveCount(0);
 });
 
 test("server-side filtered selection and return keep the list context", async ({
@@ -944,10 +986,11 @@ test("a real Manual Organize Worker run keeps its reviewed plan through detail, 
   // Select the exact new Task through the visible run inventory and inspect
   // the single durable item/result written by the actual Worker execution.
   await page.getByRole("button", { name: "Refresh" }).first().click();
-  // This journey starts from the analysis-only `/files/organize` preparation, so
-  // it publishes its own durable `discovery` run plus the execution Task it
-  // links.  A Files 整理 admission is the one-Task shape (B46.3-01).
-  await expectRunTotal(page, SEEDED_RUN_TOTAL + 2);
+  // Slice46 RO-4: this journey starts from the analysis-only
+  // `/files/organize` preparation.  That preparation is *not* organizing work
+  // of its own, so the center shows only the admitted execution Task: exactly
+  // one new organizing row.
+  await expectRunTotal(page, SEEDED_RUN_TOTAL + 1);
   const row = page.getByRole("row").filter({ hasText: "One.2001.mkv" });
   await expect(row).toHaveCount(1);
   await row.getByRole("button").first().click();
@@ -1117,8 +1160,9 @@ test("new task selection reconciles a lost admission, completes in the Worker, a
 
   await connect(page, ADMIN_TOKEN);
   await openInventory(page);
-  // The preceding journey's analysis plus its execution Task.
-  await expectRunTotal(page, SEEDED_RUN_TOTAL + 2);
+  // The preceding journey's one admitted execution Task (its analysis-only
+  // preparation is not a separate organizing row).
+  await expectRunTotal(page, SEEDED_RUN_TOTAL + 1);
   // This Files 整理 admission publishes exactly one durable organizing Task
   // before any analysis; the confirmed execution adopts that same Task, so no
   // second run appears.  The corrected accounting is asserted at the end of the
@@ -1549,11 +1593,11 @@ test("a real standalone pipeline run keeps its durable steps through detail and 
   await openInventory(page);
   // The seeded population plus one durable run per earlier journey: the
   // reviewed-plan journey, the lost-admission journey, the sibling-independence
-  // journey and the new-source ambiguity journey.  A Files admission now
-  // publishes its organizing Task *before* analysis and its confirmed execution
-  // adopts that same Task, so one admission is one run — the accounting
-  // B46.3-01 corrected — instead of the earlier analysis+execution pair.
-  await expectRunTotal(page, SEEDED_RUN_TOTAL + 5);
+  // journey and the new-source ambiguity journey.  A Files admission publishes
+  // its organizing Task before analysis and its confirmed execution adopts that
+  // same Task, so one admission is one organizing row (Slice46 RO-4 also stops
+  // counting the analysis-only preparation as a second center row).
+  await expectRunTotal(page, SEEDED_RUN_TOTAL + 4);
 
   const executed = await request.post(
     `${BASE}/__harness__/run-standalone-pipeline`,
@@ -1571,12 +1615,12 @@ test("a real standalone pipeline run keeps its durable steps through detail and 
   await page.getByRole("button", { name: "Refresh" }).first().click();
   // This standalone `organize --execute` shape publishes one Task and no
   // separate analysis run, so exactly one more run appears.
-  await expectRunTotal(page, SEEDED_RUN_TOTAL + 6);
+  await expectRunTotal(page, SEEDED_RUN_TOTAL + 5);
 
   // Isolate the exact new run through the existing server-side command
   // filter — the standalone pipeline command is unique in this population.
-  await page.getByLabel("操作类型").fill("harness-standalone-organize");
-  await expect(page).toHaveURL(/command=harness-standalone-organize/);
+  await page.getByLabel("操作类型").fill("organize:harness-standalone");
+  await expect(page).toHaveURL(/command=organize%3Aharness-standalone/);
   await expectRunTotal(page, 1);
   const row = page.getByRole("row").filter({ hasText: run.sourcePath });
   await expect(row).toHaveCount(1);
@@ -3332,8 +3376,11 @@ test("technical recovery surfaces a new Metadata blocker, resolves it, and recor
   expect(blockedSourceDetail.manualRecoveryAnalysisReady).toBe(false);
   await recovery.getByRole("button", { name: "Refresh" }).click();
 
-  // Handle the exact linked blocker inside the source Task/type context.
-  await expect(page).toHaveURL(new RegExp("problemRun=" + seeded.runId));
+  // Handle the exact linked blocker inside the source run's own item-evidence
+  // context (Slice46 RO-4: a technical source is read-only history, so the
+  // exact run/item remains the durable context rather than a failure list).
+  await expect(page).toHaveURL(new RegExp("run=" + seeded.runId));
+  await expect(page).toHaveURL(new RegExp("item=" + seeded.itemId));
   const sourceContextUrl = page.url();
   const linkedRecovery = recovery.getByRole("region", {
     name: "条目审核与恢复",
@@ -3550,8 +3597,11 @@ test("technical multi-hop success closes current failure and intermediate attent
   expect(blockedSourceDetail.manualRecoveryAnalysisReady).toBe(false);
   await recovery.getByRole("button", { name: "Refresh" }).click();
 
-  // Handle the exact linked blocker inside the source Task/type context.
-  await expect(page).toHaveURL(new RegExp("problemRun=" + seeded.runId));
+  // Handle the exact linked blocker inside the source run's own item-evidence
+  // context (Slice46 RO-4: a technical source is read-only history, so the
+  // exact run/item remains the durable context rather than a failure list).
+  await expect(page).toHaveURL(new RegExp("run=" + seeded.runId));
+  await expect(page).toHaveURL(new RegExp("item=" + seeded.itemId));
   const sourceContextUrl = page.url();
   const linkedRecovery = recovery.getByRole("region", {
     name: "条目审核与恢复",
@@ -3711,25 +3761,45 @@ test("technical multi-hop success closes current failure and intermediate attent
     effectCertainty: "verified_complete",
   });
   await request.post(BASE + "/__harness__/restart");
-  const original = await (
-    await request.get(
-      BASE +
-        "/api/v1/operations/runs/" +
-        seeded.taskId +
-        "/problem-items?problem=failure&limit=100",
-      { headers: { Authorization: "Bearer " + ADMIN_TOKEN } },
-    )
+  // Slice46 RO-4: the exact verified recovery closes the source's current
+  // *business* problem, and the sibling's own technical failure is read-only
+  // history rather than a fifth problem type — so no four-type membership and
+  // no fabricated failure list remains for the source after restart.
+  for (const problem of [
+    "recognition",
+    "metadata",
+    "classification",
+    "conflict",
+  ]) {
+    const remaining = await (
+      await request.get(
+        BASE +
+          `/api/v1/operations/runs/${seeded.taskId}/problem-items?problem=${problem}&limit=100`,
+        { headers: { Authorization: "Bearer " + ADMIN_TOKEN } },
+      )
+    ).json();
+    expect(
+      remaining.items.map((value: { item_id: string }) => value.item_id),
+    ).not.toContain(seeded.itemId);
+  }
+  const originalRun = await (
+    await request.get(BASE + "/api/v1/operations/runs/" + seeded.taskId, {
+      headers: { Authorization: "Bearer " + ADMIN_TOKEN },
+    })
   ).json();
-  expect(original.matching_total).toBe(1);
-  expect(
-    original.items.map((value: { item_id: string }) => value.item_id),
-  ).not.toContain(seeded.itemId);
+  expect(originalRun.problem_types).toEqual([]);
+  expect(originalRun.attention).toBe(false);
+  // The sibling's durable technical failure is still recorded on its own item.
+  expect(finalState.siblingStatuses).toMatchObject({
+    "TechnicalRecoveryUnknown.2019.mkv": "failed",
+  });
   const intermediate = await (
     await request.get(BASE + "/api/v1/operations/runs/" + linkedTaskId, {
       headers: { Authorization: "Bearer " + ADMIN_TOKEN },
     })
   ).json();
   expect(intermediate.attention).toBe(false);
+  expect(intermediate.problem_types).toEqual([]);
   expect(finalState.siblingStatuses).toMatchObject({
     "TechnicalRecoverySuccess.2019.mkv": "success",
     "TechnicalRecoveryUnknown.2019.mkv": "failed",
@@ -4532,17 +4602,19 @@ test("two ready batch children aggregate their summaries and only the selected s
 });
 
 /**
- * Slice 45 RO-1/RO-3 — the nine sibling task-center views and the exact
+ * Slice 46 RO-4 — the eight organizing task-center views and the exact
  * Task/type problem file list.
  *
  * The mixed problem population is created by `POST /__harness__/seed-task-center-problems`
  * through the real production services (RecognitionReviewService,
  * ClassificationReviewService, MetadataCorrectionService and a real failed
- * TaskItem). This journey drives only the browser: the nine views, their
- * complete-population summary, the overlapping cross-Task recovery lists and
- * the exact per-type file list are all server queries the page issues.
+ * TaskItem). This journey drives only the browser: the eight views, their
+ * complete-population summary, the overlapping cross-Task *business* recovery
+ * lists and the exact per-type file list are all server queries the page
+ * issues. A purely technical failure is read-only history, so the retired
+ * Failure Recovery view cannot be reached at all.
  */
-test("the nine views and the exact Task/type problem file list work natively", async ({
+test("the eight views and the exact Task/type problem file list work natively", async ({
   page,
   request,
 }) => {
@@ -4561,7 +4633,7 @@ test("the nine views and the exact Task/type problem file list work natively", a
   await connect(page);
   await openInventory(page);
 
-  // The nine sibling views share one horizontal navigation row.
+  // The eight organizing views share one horizontal navigation row.
   const views = page.getByRole("navigation", { name: "任务中心视图" });
   for (const label of [
     "全部任务",
@@ -4572,12 +4644,15 @@ test("the nine views and the exact Task/type problem file list work natively", a
     "元数据恢复",
     "分类恢复",
     "冲突处理",
-    "失败恢复",
   ]) {
     await expect(
       views.getByRole("button", { name: label, exact: true }),
     ).toBeVisible();
   }
+  // The retired fifth Failure Recovery view cannot be entered.
+  await expect(
+    views.getByRole("button", { name: "失败恢复", exact: true }),
+  ).toHaveCount(0);
 
   // Source scopes are exact historical filters carried by the URL and
   // consumed by the same real server query; the source options remain drawn
@@ -4647,27 +4722,21 @@ test("the nine views and the exact Task/type problem file list work natively", a
     page.getByRole("row").filter({ hasText: "TaskCenter/Metadata" }),
   ).toHaveCount(1);
 
-  // The failure view includes the mixed Task (its unresolved failure file),
-  // so the same Task appears in more than one recovery list.
-  await views.getByRole("button", { name: "失败恢复", exact: true }).click();
-  await expect(page).toHaveURL(/view=failure/);
-  const mixedFailureRow = page
+  // The mixed Task's technical failures (its failed/uncertain files) are real
+  // read-only history: they are visible in its own selected detail and in
+  // 全部任务, but they never create a fifth recovery view or problem list.
+  await views.getByRole("button", { name: "全部任务", exact: true }).click();
+  const mixedHistoryRow = page
     .getByRole("row")
     .filter({ hasText: "TaskCenter/Mixed" });
-  await expect(mixedFailureRow).toHaveCount(1);
-  await expect(mixedFailureRow).toContainText("2 个文件");
-  await mixedFailureRow.getByRole("button", { name: "查看失败文件" }).click();
-  const failurePanel = page.getByRole("region", { name: "问题文件处理" });
-  await expect(failurePanel.getByText(/匹配 2 个文件/)).toBeVisible();
+  await expect(mixedHistoryRow).toHaveCount(1);
+  await mixedHistoryRow.getByRole("button", { name: /详情/ }).first().click();
+  const mixedDetail = page.getByRole("region", { name: "运行详情" });
+  await expect(mixedDetail).toBeVisible();
   await expect(
-    failurePanel.getByText(/UnknownEffect\.mkv/).first(),
+    mixedDetail.getByText(/UnknownEffect\.mkv/).first(),
   ).toBeVisible();
-  await expect(failurePanel.getByText("未知").first()).toBeVisible();
-  await expect(failurePanel.getByText("核查当前效果")).toBeVisible();
-  await expect(
-    failurePanel.getByText("investigate", { exact: true }),
-  ).toHaveCount(0);
-  await failurePanel.getByRole("button", { name: "返回任务列表" }).click();
+  await mixedDetail.getByRole("button", { name: "关闭详情" }).click();
 
   // The primary file and its subtitle each have a pending durable conflict,
   // but the Task/type list counts the affected primary file once.
@@ -4728,24 +4797,24 @@ test("source filters and 21-file recovery pages preserve exact evidence context"
 
   await connect(page);
   await openInventory(page);
-  await page.getByLabel("来源").selectOption("TaskCenter/PagedFailures");
+  await page.getByLabel("来源").selectOption("TaskCenter/PagedMetadata");
   await expect
     .poll(() => new URL(page.url()).searchParams.get("source"))
-    .toBe("TaskCenter/PagedFailures");
+    .toBe("TaskCenter/PagedMetadata");
   await expectRunTotal(page, 1);
-  await page.getByRole("button", { name: "失败恢复", exact: true }).click();
+  await page.getByRole("button", { name: "元数据恢复", exact: true }).click();
   const row = page
     .getByRole("row")
-    .filter({ hasText: "TaskCenter/PagedFailures" });
+    .filter({ hasText: "TaskCenter/PagedMetadata" });
   await expect(row).toContainText("21 个文件");
-  await row.getByRole("button", { name: "查看失败文件" }).click();
+  await row.getByRole("button", { name: "查看问题文件" }).click();
 
   const panel = page.getByRole("region", { name: "问题文件处理" });
   await expect(panel.getByText(/匹配 21 个文件/)).toBeVisible();
-  await expect(panel.getByText(/Failure19\.mkv/).first()).toBeVisible();
+  await expect(panel.getByText(/Metadata19\.mkv/).first()).toBeVisible();
   await expect(panel.getByRole("button", { name: "下一页" })).toBeEnabled();
   await panel.getByRole("button", { name: "下一页" }).click();
-  await expect(panel.getByText(/Failure20\.mkv/).first()).toBeVisible();
+  await expect(panel.getByText(/Metadata20\.mkv/).first()).toBeVisible();
   await expect(page).toHaveURL(/problemCursor=/);
 
   // A memory-only-token reload must restore the exact source, Task/type,
@@ -4754,11 +4823,13 @@ test("source filters and 21-file recovery pages preserve exact evidence context"
   await expect(page.getByLabel("API token")).toBeVisible();
   await page.getByLabel("API token").fill(TOKEN);
   await page.getByRole("button", { name: "Connect" }).click();
-  await expect(page).toHaveURL(/view=failure/);
+  await expect(page).toHaveURL(/view=metadata/);
   await expect(page).toHaveURL(/source=/);
   await expect(page).toHaveURL(/problemCursor=/);
   const restoredPanel = page.getByRole("region", { name: "问题文件处理" });
-  await expect(restoredPanel.getByText(/Failure20\.mkv/).first()).toBeVisible();
+  await expect(
+    restoredPanel.getByText(/Metadata20\.mkv/).first(),
+  ).toBeVisible();
 
   await restoredPanel
     .getByRole("button", { name: "查看该文件证据与恢复记录" })
@@ -4774,12 +4845,12 @@ test("source filters and 21-file recovery pages preserve exact evidence context"
   await expect(
     page
       .getByRole("region", { name: "问题文件处理" })
-      .getByText(/Failure20\.mkv/)
+      .getByText(/Metadata20\.mkv/)
       .first(),
   ).toBeVisible();
 });
 
-test("the nine views survive authentication continuation and a real restart", async ({
+test("the eight views survive authentication continuation and a real restart", async ({
   page,
   request,
 }) => {
@@ -4790,12 +4861,12 @@ test("the nine views survive authentication continuation and a real restart", as
 
   await connect(page);
   await openInventory(page);
-  await page.getByRole("button", { name: "失败恢复" }).click();
-  await expect(page).toHaveURL(/view=failure/);
+  await page.getByRole("button", { name: "冲突处理", exact: true }).click();
+  await expect(page).toHaveURL(/view=conflict/);
   await page
     .getByRole("row")
     .filter({ hasText: "TaskCenter/Mixed" })
-    .getByRole("button", { name: "查看失败文件" })
+    .getByRole("button", { name: "查看问题文件" })
     .click();
   await expect(page).toHaveURL(/problemRun=/);
 
@@ -4806,14 +4877,16 @@ test("the nine views survive authentication continuation and a real restart", as
   await expect(page.getByLabel("API token")).toBeVisible();
   await page.getByLabel("API token").fill(TOKEN);
   await page.getByRole("button", { name: "Connect" }).click();
-  await expect(page).toHaveURL(/view=failure/);
+  await expect(page).toHaveURL(/view=conflict/);
   await expect(page).toHaveURL(/problemRun=/);
   await expect(
     page.getByRole("region", { name: "问题文件处理" }),
   ).toBeVisible();
 
   // A real runtime restart over the same SQLite file keeps the same durable
-  // problems: both current failure items remain in the exact file list.
+  // problems: the exact current conflict file remains in the type list (the
+  // attached subtitle is grouped under its primary file, never counted as a
+  // second problem file).
   const restart = await request.post(`${BASE}/__harness__/restart`);
   expect(restart.ok()).toBeTruthy();
   await page.reload();
@@ -4823,7 +4896,7 @@ test("the nine views survive authentication continuation and a real restart", as
   await expect(page).toHaveURL(/problemRun=/);
   const panel = page.getByRole("region", { name: "问题文件处理" });
   await expect(panel).toBeVisible();
-  await expect(panel.getByText(/匹配 2 个文件/)).toBeVisible();
+  await expect(panel.getByText(/匹配 1 个文件/)).toBeVisible();
 });
 
 test("a visible terminal inventory discovers new work and shows live progress", async ({

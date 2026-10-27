@@ -1,13 +1,16 @@
 /**
- * Visual acceptance capture for the nine sibling task-center views (Slice 45
- * RO-1/RO-3) against the real-Python harness.
+ * Visual acceptance capture for the eight organizing task-center views
+ * (Slice46 RO-4) against the real-Python harness.
+ *
+ * The former fifth Failure Recovery view is gone: a technical failure is
+ * read-only history in All/Ended.
  *
  * Run under `playwright.python.config.ts` after `npm run build`:
  *
  *   npm run test:e2e -- --config=playwright.python.config.ts \
  *     tests/e2e/operations-task-center-visual.python.spec.ts
  *
- * The script seeds the real mixed problem population, then captures the nine
+ * The script seeds the real mixed problem population, then captures the eight
  * views at the reference 1536x1024 viewport plus the narrow-width and
  * Task/type problem-file states.  Screenshots are written under
  * `web/test-results/task-center-visual/`; the human review of layout,
@@ -32,7 +35,6 @@ const VIEWS: readonly { readonly view: string; readonly label: string }[] = [
   { view: "metadata", label: "元数据恢复" },
   { view: "classification", label: "分类恢复" },
   { view: "conflict", label: "冲突处理" },
-  { view: "failure", label: "失败恢复" },
 ];
 
 async function connect(page: Page): Promise<void> {
@@ -44,7 +46,7 @@ async function connect(page: Page): Promise<void> {
   ).toBeVisible();
 }
 
-test("capture the nine task-center views and the problem-file states", async ({
+test("capture the eight task-center views and the problem-file states", async ({
   page,
   request,
 }) => {
@@ -61,7 +63,7 @@ test("capture the nine task-center views and the problem-file states", async ({
   const views = page.getByRole("navigation", { name: "任务中心视图" });
   await expect(views).toBeVisible();
 
-  // The token is memory-only, so the nine views are reached through in-app
+  // The token is memory-only, so the eight views are reached through in-app
   // navigation (never a full page reload that would clear the session).
   for (const { view, label } of VIEWS) {
     await views.getByRole("button", { name: label, exact: true }).click();
@@ -78,19 +80,20 @@ test("capture the nine task-center views and the problem-file states", async ({
 
   // The exact Task/type problem-file list (one recovery row's own action),
   // including its actual next page rather than a synthetic short fixture.
-  await views.getByRole("button", { name: "失败恢复", exact: true }).click();
+  await views.getByRole("button", { name: "元数据恢复", exact: true }).click();
   const row = page
     .getByRole("row")
-    .filter({ hasText: "TaskCenter/PagedFailures" });
-  await row.getByRole("button", { name: "查看失败文件" }).click();
+    .filter({ hasText: "TaskCenter/PagedMetadata" });
+  await row.getByRole("button", { name: "查看问题文件" }).click();
   const problemPanel = page.getByRole("region", { name: "问题文件处理" });
   await expect(problemPanel).toBeVisible();
   await expect(problemPanel.getByText(/匹配 21 个文件/)).toBeVisible();
   await problemPanel.getByRole("button", { name: "下一页" }).click();
-  await expect(problemPanel.getByText(/Failure20\.mkv/).first()).toBeVisible();
-  await expect(problemPanel.getByText(/安全分析中断/)).toBeVisible();
-  await expect(problemPanel.getByText(/修复分析依赖后/)).toBeVisible();
-  await expect(problemPanel.getByText(/analysis_interrupted/)).toHaveCount(0);
+  await expect(problemPanel.getByText(/Metadata20\.mkv/).first()).toBeVisible();
+  // A pending metadata decision names its own readable next step, never a raw
+  // category token or a generic technical-repair invitation.
+  await expect(problemPanel.getByText(/选择候选或修正标题/)).toBeVisible();
+  await expect(problemPanel.getByText(/waiting_metadata/)).toHaveCount(0);
   await page.waitForTimeout(250);
   await page.screenshot({
     path: `${OUTPUT}/task-center-problem-files.png`,
@@ -123,7 +126,7 @@ test("capture the nine task-center views and the problem-file states", async ({
   });
   await attentionPanel.getByRole("button", { name: "返回任务列表" }).click();
 
-  // The narrow viewport keeps all nine tabs discoverable in a scrollable row.
+  // The narrow viewport keeps all eight tabs discoverable in a scrollable row.
   await page.setViewportSize({ width: 380, height: 720 });
   await views.getByRole("button", { name: "全部任务", exact: true }).click();
   await expect(views).toBeVisible();
@@ -160,11 +163,11 @@ test("capture the nine task-center views and the problem-file states", async ({
 
   // Re-entry is explicit because the credential is memory-only. The same
   // source, Task/type and file cursor must restore after the login boundary.
-  await views.getByRole("button", { name: "失败恢复", exact: true }).click();
+  await views.getByRole("button", { name: "元数据恢复", exact: true }).click();
   await page
     .getByRole("row")
-    .filter({ hasText: "TaskCenter/PagedFailures" })
-    .getByRole("button", { name: "查看失败文件" })
+    .filter({ hasText: "TaskCenter/PagedMetadata" })
+    .getByRole("button", { name: "查看问题文件" })
     .click();
   await page
     .getByRole("region", { name: "问题文件处理" })
@@ -177,7 +180,9 @@ test("capture the nine task-center views and the problem-file states", async ({
   await page.getByRole("button", { name: "Connect" }).click();
   await expect(page).toHaveURL(/problemCursor=/);
   const restoredPanel = page.getByRole("region", { name: "问题文件处理" });
-  await expect(restoredPanel.getByText(/Failure20\.mkv/).first()).toBeVisible();
+  await expect(
+    restoredPanel.getByText(/Metadata20\.mkv/).first(),
+  ).toBeVisible();
   await page.waitForTimeout(250);
   await page.screenshot({
     path: `${OUTPUT}/task-center-reconnected.png`,

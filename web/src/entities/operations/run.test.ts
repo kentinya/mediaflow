@@ -31,11 +31,21 @@ function runDocument(overrides: Record<string, unknown> = {}) {
     pause_requested: false,
     attention: false,
     problem_types: [],
+    attention_reason: null,
     configuration_snapshot_id: "snap-1",
     worker_id: null,
     sideEffects: "none",
     ...overrides,
   };
+}
+
+/** Derive the consistent reason a real attention row always carries. */
+function attentionRun(overrides: Record<string, unknown> = {}) {
+  return runDocument({
+    attention: true,
+    attention_reason: "task_problem",
+    ...overrides,
+  });
 }
 
 function pageDocument(overrides: Record<string, unknown> = {}) {
@@ -65,14 +75,12 @@ function pageDocument(overrides: Record<string, unknown> = {}) {
         metadata: 0,
         classification: 0,
         conflict: 0,
-        failure: 0,
       },
       problem_files: {
         recognition: 0,
         metadata: 0,
         classification: 0,
         conflict: 0,
-        failure: 0,
       },
       sources: [],
       sources_truncated: false,
@@ -269,16 +277,16 @@ describe("run summary normalization", () => {
   });
 
   it("derives the attention facet from the real current-problem list", () => {
-    // A plain failed status without durable problem evidence is not attention.
+    // A plain failed status without durable problem evidence is not attention:
+    // a technical failure is read-only history, never a fifth problem type.
     const plain = normalizeRunSummary(
       runDocument({ status: "failed", attention: false, problem_types: [] }),
     );
     expect(plain.attention).toBe(false);
     expect(plain.problemTypes).toEqual([]);
     const attention = normalizeRunSummary(
-      runDocument({
+      attentionRun({
         status: "failed",
-        attention: true,
         problem_types: ["recognition"],
       }),
     );
@@ -286,21 +294,45 @@ describe("run summary normalization", () => {
     expect(attention.problemTypes).toEqual(["recognition"]);
   });
 
-  it("allows generic continuation attention without inventing a problem type", () => {
+  it("rejects a retired fifth problem type and any attention/type disagreement", () => {
+    // The former technical "failure" type is no longer a problem type at all.
     expect(() =>
       normalizeRunSummary(
         runDocument({
           status: "failed",
-          attention: false,
+          attention: true,
+          attention_reason: "task_problem",
           problem_types: ["failure"],
         }),
       ),
     ).toThrow(RunNormalizationError);
-    const continuation = normalizeRunSummary(
-      runDocument({ status: "pending", attention: true, problem_types: [] }),
-    );
-    expect(continuation.attention).toBe(true);
-    expect(continuation.problemTypes).toEqual([]);
+    // Attention is exactly the union of the four business types: a row cannot
+    // claim attention without naming one, and cannot name one without attention.
+    expect(() =>
+      normalizeRunSummary(
+        runDocument({ status: "pending", attention: true, problem_types: [] }),
+      ),
+    ).toThrow(RunNormalizationError);
+    expect(() =>
+      normalizeRunSummary(
+        runDocument({
+          status: "pending",
+          attention: false,
+          problem_types: ["metadata"],
+        }),
+      ),
+    ).toThrow(RunNormalizationError);
+    // The retired `run_repair` reason is rejected: it is not a current type.
+    expect(() =>
+      normalizeRunSummary(
+        runDocument({
+          status: "failed",
+          attention: true,
+          attention_reason: "run_repair",
+          problem_types: [],
+        }),
+      ),
+    ).toThrow(RunNormalizationError);
   });
 
   it("rejects a duplicated or unknown problem type", () => {
@@ -358,10 +390,9 @@ describe("run inventory page normalization", () => {
     const applied = normalizeRunInventoryPage(
       pageDocument({
         items: [
-          runDocument({
+          attentionRun({
             status: "failed",
-            attention: true,
-            problem_types: ["failure"],
+            problem_types: ["metadata"],
           }),
         ],
         status_counts: { failed: 1 },
@@ -379,14 +410,12 @@ describe("run inventory page normalization", () => {
             metadata: 0,
             classification: 0,
             conflict: 0,
-            failure: 1,
           },
           problem_files: {
             recognition: 0,
-            metadata: 0,
+            metadata: 1,
             classification: 0,
             conflict: 0,
-            failure: 1,
           },
           sources: [],
           sources_truncated: false,
@@ -425,17 +454,15 @@ describe("run inventory page normalization", () => {
             ended: 0,
             problem_tasks: {
               recognition: 0,
-              metadata: 0,
+              metadata: 2,
               classification: 0,
               conflict: 0,
-              failure: 0,
             },
             problem_files: {
               recognition: 0,
               metadata: 0,
               classification: 0,
               conflict: 0,
-              failure: 0,
             },
             sources: [],
             sources_truncated: false,
@@ -448,10 +475,9 @@ describe("run inventory page normalization", () => {
       normalizeRunInventoryPage(
         pageDocument({
           items: [
-            runDocument({
+            attentionRun({
               status: "failed",
-              attention: true,
-              problem_types: ["failure"],
+              problem_types: ["metadata"],
             }),
           ],
           status_counts: { failed: 1 },
@@ -466,17 +492,15 @@ describe("run inventory page normalization", () => {
             ended: 2,
             problem_tasks: {
               recognition: 0,
-              metadata: 0,
+              metadata: 2,
               classification: 0,
               conflict: 0,
-              failure: 2,
             },
             problem_files: {
               recognition: 0,
               metadata: 0,
               classification: 0,
               conflict: 0,
-              failure: 2,
             },
             sources: [],
             sources_truncated: false,

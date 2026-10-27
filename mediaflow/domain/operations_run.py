@@ -64,9 +64,10 @@ class OperationsRunTrigger(StrEnum):
     UNKNOWN = "unknown"
 
 
-#: The bounded attention facet: an overlapping (not mutually exclusive) set of
-#: runs an operator should look at.  A run can be in attention and still be
-#: counted in its own status partition.
+#: The historical status facet an operator used to treat as attention.  Task
+#: Center attention is now the exact union of the four business problem types
+#: (see :data:`RECOVERY_PROBLEM_TYPES`), never a status or a technical failure,
+#: so this set is retained only as documentation of the status vocabulary.
 ATTENTION_RUN_STATUSES = frozenset(
     {
         OperationsRunStatus.PENDING,
@@ -79,13 +80,14 @@ ATTENTION_RUN_STATUSES = frozenset(
 
 
 class OperationsRunView(StrEnum):
-    """The nine sibling task-center views (RO-1).
+    """The eight sibling task-center views (Slice46 RO-4).
 
     The first four are lifecycle partitions of the whole authorized
-    population; the last five are overlapping cross-Task recovery lists that
-    group one Task per current problem type.  They share one horizontal
-    navigation row and one authoritative query, but each is an independent
-    deep-linkable list.
+    organizing population; the last four are overlapping cross-Task recovery
+    lists that group one Task per current *business* problem type.  They share
+    one horizontal navigation row and one authoritative query, but each is an
+    independent deep-linkable list.  A former fifth ``failure`` view is gone:
+    technical failures are read-only history in All/Ended.
     """
 
     ALL = "all"
@@ -96,7 +98,6 @@ class OperationsRunView(StrEnum):
     METADATA = "metadata"
     CLASSIFICATION = "classification"
     CONFLICT = "conflict"
-    FAILURE = "failure"
 
 
 #: The four lifecycle views; the remaining views are recovery types.
@@ -109,13 +110,13 @@ RUN_VIEW_LIFECYCLE = frozenset(
     }
 )
 
-#: The five cross-Task recovery problem types, in display order.
+#: The four cross-Task recovery problem types, in display order.  Exactly the
+#: business problems a human must decide; technical failures are not a type.
 RECOVERY_PROBLEM_TYPES: tuple[str, ...] = (
     "recognition",
     "metadata",
     "classification",
     "conflict",
-    "failure",
 )
 
 #: A view's recovery problem type, or ``None`` for a lifecycle view.
@@ -129,11 +130,10 @@ RUN_VIEW_PROBLEM_TYPE: Mapping[str, str | None] = MappingProxyType(
         OperationsRunView.METADATA.value: "metadata",
         OperationsRunView.CLASSIFICATION.value: "classification",
         OperationsRunView.CONFLICT.value: "conflict",
-        OperationsRunView.FAILURE.value: "failure",
     }
 )
 
-#: Chinese business labels for the nine views.
+#: Chinese business labels for the eight views.
 RUN_VIEW_LABELS: Mapping[str, str] = MappingProxyType(
     {
         "all": "全部任务",
@@ -144,20 +144,85 @@ RUN_VIEW_LABELS: Mapping[str, str] = MappingProxyType(
         "metadata": "元数据恢复",
         "classification": "分类恢复",
         "conflict": "冲突处理",
-        "failure": "失败恢复",
     }
 )
 
-#: Chinese business labels for the five recovery problem types.
+#: Chinese business labels for the four recovery problem types.
 RECOVERY_PROBLEM_LABELS: Mapping[str, str] = MappingProxyType(
     {
         "recognition": "识别问题",
         "metadata": "元数据问题",
         "classification": "分类问题",
         "conflict": "冲突问题",
-        "failure": "失败问题",
     }
 )
+
+# -- Task Center population: admitted organizing work only (RO-4) -----------
+#
+# One shared, testable membership rule decides which durable rows the Task
+# Center may ever list, count, filter or page.  It is deliberately *not* a
+# display-text guess: it names the supported organizing command families plus
+# the persisted admission/lineage relations the real producers write, so an
+# explicitly admitted Files organizing Task stays included while it is still
+# discovering/analyzing/waiting for its first confirmation, and a
+# preparation-only analysis/preview or an ordinary file command is not.
+
+#: Task command families of admitted organizing work and its legal recovery/
+#: continuation successors.  ``manual_organize`` is the Files-first admission.
+ORGANIZING_TASK_COMMAND_FAMILIES: tuple[str, ...] = (
+    "organize",
+    "manual_organize",
+    "retry",
+    "retry-failed",
+    "recovery-continuation",
+    "metadata-correction-continuation",
+    "scope-continuation",
+)
+
+#: Job command families of admitted organizing work.  A scheduled/Run-once
+#: occurrence, an analysis continuation and a remaining-scope continuation all
+#: remain part of the same admitted organizing journey.
+ORGANIZING_JOB_COMMAND_FAMILIES: tuple[str, ...] = (
+    "organize",
+    "recovery-continuation",
+    "metadata-correction-continuation",
+    "scope-continuation",
+)
+
+#: The durable relations that prove a Task continues an admitted organizing
+#: work.  Only persisted identity equality may establish this.
+ORGANIZING_TASK_LINEAGE_RELATIONS: tuple[tuple[str, str], ...] = (
+    ("recovery_continuations", "new_task_id"),
+    ("scope_continuations", "new_task_id"),
+    ("metadata_correction_continuations", "new_task_id"),
+)
+
+
+def organizing_task_command_family(command: object) -> str | None:
+    """The organizing command family of one durable Task/Job command.
+
+    A derived ``<kind>:<identity>`` continuation and the MediaLibrary ``media_``
+    prefix are stripped exactly like :func:`known_command_label`, so a
+    MediaLibrary-owned command is never read as organizing work by accident.
+    """
+
+    if not isinstance(command, str) or not command:
+        return None
+    if command.startswith(MEDIA_LIBRARY_TASK_COMMAND_PREFIX):
+        return None
+    return command.split(":", 1)[0]
+
+
+def is_organizing_task_command(command: object) -> bool:
+    """Whether a durable Task command belongs to admitted organizing work."""
+
+    return organizing_task_command_family(command) in ORGANIZING_TASK_COMMAND_FAMILIES
+
+
+def is_organizing_job_command(command: object) -> bool:
+    """Whether a durable Job command belongs to admitted organizing work."""
+
+    return organizing_task_command_family(command) in ORGANIZING_JOB_COMMAND_FAMILIES
 
 
 def derive_run_status(
@@ -339,32 +404,28 @@ class OperationsRunOverview:
     processed_items: int | None = None
     current_stage: str | None = None
     pause_requested: bool = False
-    #: The current, real operator-attention facet. It is derived from durable
-    #: evidence (an unresolved decision/repair, safe continuation step or
-    #: investigation), never from a plain status name. Some human steps are
-    #: not one of the five technical recovery types, so attention may be true
-    #: with no problem type.
+    #: The current, real operator-attention facet: exactly the union of the
+    #: four business problem types a human must still decide.  A plain status
+    #: name, a technical failure, a plain queue admission and an initial manual
+    #: confirmation are never attention.
     attention: bool = False
-    #: The five recovery problem types this Task currently has outstanding
-    #: (recognition/metadata/classification/conflict/failure).  A Task may
-    #: carry several at once; each is derived from the same durable review /
-    #: checkpoint / continuation evidence the recovery lists read.  Empty
-    #: means the Task currently has no outstanding recovery problem.
+    #: The four recovery problem types this Task currently has outstanding
+    #: (recognition/metadata/classification/conflict).  A Task may carry several
+    #: at once; each is derived from the same durable review / saved-decision /
+    #: continuation evidence its own list and file read use.  Empty means the
+    #: Task currently has no outstanding business problem.
     problem_types: tuple[str, ...] = ()
     #: Distinct affected primary files for each current problem type on this
     #: exact Task. Attachment steps remain grouped under their primary file.
     problem_file_counts: tuple[tuple[str, int], ...] = ()
-    #: Why this run is in attention when the reason is not one of the five
-    #: technical problem types.  ``"run_repair"`` marks a Job that failed
-    #: before any Task existed and still carries a structured repair/next
-    #: action; ``"task_problem"`` marks item/review evidence (including a
-    #: pending safe-continuation step).  ``None`` means the run is not in
-    #: attention at all.
+    #: Why this run is in attention: its current four-type problem evidence.
+    #: ``"task_problem"`` is the only published reason; ``None`` means the run
+    #: is not in attention at all.
     attention_reason: str | None = None
-    #: Bounded, secret-free run-level repair evidence for a pre-Task failure:
-    #: the stable failure category and the explicit operator next action the
-    #: Job recorded at admission.  Both are ``None`` when the current problem
-    #: lives on a linked Task's items (or there is no current problem).
+    #: Bounded, secret-free *factual* failure evidence of a Job that failed
+    #: before any Task existed.  It is read-only history in All/Ended and the
+    #: shared administrative recovery boundary; it is deliberately NOT an
+    #: attention type, a center pending count or a recovery entry.
     attention_failure_category: str | None = None
     attention_failure_next_action: str | None = None
     configuration_snapshot_id: str | None = None

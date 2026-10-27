@@ -1804,8 +1804,17 @@ class RecoveryContinuationTests(unittest.TestCase):
                 failed_overview = repository.operations_run(source_task.task_id)
                 self.assertIsNotNone(failed_overview)
                 assert failed_overview is not None
-                self.assertTrue(failed_overview.attention)
-                self.assertEqual(("failure",), failed_overview.problem_types)
+                # A Provider transport failure during a linked re-analysis is a
+                # technical failure: real, bounded, read-only All/Ended history
+                # (with its own recorded Result) but never a fifth problem type,
+                # never a Metadata decision and never Attention.
+                self.assertFalse(failed_overview.attention)
+                self.assertEqual((), failed_overview.problem_types)
+                # The bounded provider error text stays on the failed
+                # continuation/Result, redacted; the raw marker never surfaces.
+                self.assertNotIn(
+                    "provider exception marker", failed_overview.attention_reason or ""
+                )
             history = Path(environment["root"] / "history.jsonl")
             self.assertNotIn("provider exception marker", history.read_text(encoding="utf-8"))
 
@@ -1828,7 +1837,9 @@ class RecoveryContinuationTests(unittest.TestCase):
                 accepted_overview = repository.operations_run(source_task.task_id)
                 self.assertIsNotNone(accepted_overview)
                 assert accepted_overview is not None
-                self.assertTrue(accepted_overview.attention)
+                # The second admitted retry is queued work (Running), not a
+                # pending business problem.
+                self.assertFalse(accepted_overview.attention)
                 self.assertEqual((), accepted_overview.problem_types)
             self._continue(environment, source_task, source_item)
             self._run_worker(
@@ -1849,7 +1860,9 @@ class RecoveryContinuationTests(unittest.TestCase):
                 completed_overview = repository.operations_run(source_task.task_id)
                 self.assertIsNotNone(completed_overview)
                 assert completed_overview is not None
-                self.assertTrue(completed_overview.attention)
+                # The completed re-analysis produced a zero-mutation result; it
+                # is not organizing success and not a pending business problem.
+                self.assertFalse(completed_overview.attention)
                 self.assertEqual((), completed_overview.problem_types)
 
     def test_zero_mutation_falsified_through_real_seams_and_tree_snapshot(self) -> None:
@@ -2116,13 +2129,27 @@ class RecoveryContinuationTests(unittest.TestCase):
                 source_overview = repository.operations_run(run.task_id)
                 self.assertIsNotNone(source_overview)
                 assert source_overview is not None
-                self.assertTrue(source_overview.attention)
+                # Task46.4 RO-4: the source item is now `pending` at
+                # `task_retry_requested`, i.e. the required human step moved on
+                # to the exact summary/confirmation of queued work.  That is
+                # unfinished work in Running/All, not a pending business problem
+                # and never a technical failure.
+                self.assertFalse(source_overview.attention)
                 self.assertEqual((), source_overview.problem_types)
                 self.assertEqual(
-                    0,
-                    dict(source_overview.problem_file_counts).get("failure"),
-                    "a completed analysis continuation remains a generic safe next step, "
-                    "not a technical failure",
+                    (),
+                    tuple(
+                        problem
+                        for problem in ("recognition", "metadata", "classification", "conflict")
+                        if dict(source_overview.problem_file_counts).get(problem)
+                    ),
+                    "a completed analysis continuation is queued work, not a typed problem",
+                )
+                # It stays truthfully visible in All/Ended with its own
+                # durable status; it simply contributes no pending problem.
+                self.assertIn(
+                    run.task_id,
+                    {row.task_id for row in repository.operations_runs_window(view="all").page},
                 )
 
             # The completed DryRun unlocks one exact continued execution authority.
@@ -2203,8 +2230,12 @@ class RecoveryContinuationTests(unittest.TestCase):
             authorized_overview = continued_services["task_repository"].operations_run(run.task_id)
             self.assertIsNotNone(authorized_overview)
             assert authorized_overview is not None
-            self.assertTrue(authorized_overview.attention)
+            # An authorized-but-unexecuted continuation is queued work with its
+            # own exact execute command, not a pending business problem: it
+            # spends no four-type Attention while remaining reachable in All.
+            self.assertFalse(authorized_overview.attention)
             self.assertEqual((), authorized_overview.problem_types)
+            self.assertIsNotNone(continued_services["task_repository"].operations_run(run.task_id))
 
             self.assertTrue(environment["source_file"].exists())
             status, item_before_execution = api_request(
@@ -2317,10 +2348,16 @@ class RecoveryContinuationTests(unittest.TestCase):
                 review = repository.get_metadata_review_for_item(linked.item_id)
                 assert review is not None
                 self.assertEqual(MetadataReviewStatus.PENDING, review.status)
-                failure_window = repository.operations_runs_window(view="failure")
                 metadata_window = repository.operations_runs_window(view="metadata")
-                self.assertNotIn(run.task_id, {row.task_id for row in failure_window.page})
+                # Task46.4 RO-4: the re-analysis produced a real metadata
+                # decision on the linked child, so the child owns the metadata
+                # problem; the source keeps no obsolete four-type work and no
+                # technical "failure" type exists at all.
                 self.assertIn(analysis.task_id, {row.task_id for row in metadata_window.page})
+                source_overview = repository.operations_run(run.task_id)
+                assert source_overview is not None
+                self.assertFalse(source_overview.attention)
+                self.assertEqual((), source_overview.problem_types)
 
             # Persistence-only decision saved on the linked analysis item.
             with SQLiteTaskRepository(environment["database"]) as repository:
@@ -2329,20 +2366,24 @@ class RecoveryContinuationTests(unittest.TestCase):
                 assert resolved is not None
                 self.assertEqual(MetadataReviewStatus.RESOLVED, resolved.status)
                 self.assertEqual("42", resolved.selected_provider_id)
-                # Immediately after saving the decision the child item waits
-                # for the next admission. No new technical failure happened,
-                # so the original source must NOT reappear under Failure while
-                # its own generic safe-continuation attention stays.
+                # Immediately after saving the decision the child item waits at
+                # ``metadata_resolved`` for its explicit safe analysis
+                # continuation.  That saved step is *still* metadata work of the
+                # same four-type lineage (never a fifth "safe continuation only"
+                # type, never a technical failure), so the child stays in the
+                # metadata list and in Attention until the follow-up completes.
                 resolved_item = repository.get_item(linked.item_id)
                 assert resolved_item is not None
                 self.assertEqual(TaskItemStatus.PENDING, resolved_item.status)
                 self.assertEqual("metadata_resolved", resolved_item.stage)
-                saved_failure = repository.operations_runs_window(view="failure")
                 saved_metadata = repository.operations_runs_window(view="metadata")
-                self.assertNotIn(run.task_id, {row.task_id for row in saved_failure.page})
-                self.assertNotIn(analysis.task_id, {row.task_id for row in saved_metadata.page})
+                self.assertIn(analysis.task_id, {row.task_id for row in saved_metadata.page})
                 saved_attention = repository.operations_runs_window(view="attention")
-                self.assertIn(run.task_id, {row.task_id for row in saved_attention.page})
+                self.assertIn(analysis.task_id, {row.task_id for row in saved_attention.page})
+                saved_source = repository.operations_run(run.task_id)
+                assert saved_source is not None
+                self.assertFalse(saved_source.attention)
+                self.assertEqual((), saved_source.problem_types)
 
             services = self._manual_services(environment, provider)
             with SQLiteTaskRepository(environment["database"]) as repository:
@@ -2377,6 +2418,17 @@ class RecoveryContinuationTests(unittest.TestCase):
             )
             with SQLiteTaskRepository(environment["database"]) as repository:
                 attention_window = repository.operations_runs_window(view="attention")
+                # The exact impacted source and the linked zero-mutation
+                # analysis are both settled: no obsolete four-type problem and
+                # no fabricated type remains.  (The analysis-only preparation
+                # itself is not Task Center organizing work at all.)
+                self.assertNotIn(run.task_id, {row.task_id for row in attention_window.page})
+                for row in attention_window.page:
+                    self.assertNotEqual(
+                        analysis.task_id,
+                        row.task_id,
+                        (row.run_id, row.status, row.problem_types),
+                    )
                 self.assertEqual(0, attention_window.total)
 
     def test_manual_recovery_re_analysis_consumes_recognition_decision_saved_on_linked_item(self):
@@ -2825,7 +2877,10 @@ class RecoveryContinuationTests(unittest.TestCase):
             with SQLiteTaskRepository(environment["database"]) as repository:
                 before = repository.operations_run(run.task_id)
                 assert before is not None
-                self.assertTrue(before.attention)
+                # The prepared-but-unconfirmed summary of an admitted organizing
+                # task is unfinished work in Running/All with its exact
+                # confirmation reachable; it is not a pending business problem.
+                self.assertFalse(before.attention)
             status, admitted = api_request(
                 api,
                 f"/api/v1/manual-recovery-preparations/{preparation['preparation_id']}/confirm",
@@ -2840,7 +2895,13 @@ class RecoveryContinuationTests(unittest.TestCase):
             with SQLiteTaskRepository(environment["database"]) as repository:
                 queued = repository.operations_run(run.task_id)
                 assert queued is not None
-                self.assertTrue(queued.attention)
+                # Admission alone is not success and not a typed problem: the
+                # exact execution is queued work owned by Running.
+                self.assertFalse(queued.attention)
+                self.assertIn(
+                    run.task_id,
+                    {row.task_id for row in repository.operations_runs_window(view="all").page},
+                )
             # The real resident Worker claims and runs the admitted execution.
             services["execution"].run_admitted(
                 admitted["executionId"], worker_id="recovery-e2e-worker"

@@ -73,11 +73,29 @@ class RecoveryLineageTests(unittest.TestCase):
         return seed, child_task, child_item, summary, preview
 
     def problem_items(self, task):
-        return self.call(
-            "GET",
-            f"/api/v1/operations/runs/{task}/problem-items",
-            query="problem=failure&limit=100",
-        )
+        """Every currently typed business problem of this Task, all four types.
+
+        Task46.4 RO-4 removed the fifth technical "failure" problem type, so the
+        current-problem membership is asserted over the four real types and over
+        the Attention union the center publishes.
+        """
+
+        problems = {}
+        for kind in ("recognition", "metadata", "classification", "conflict"):
+            problems[kind] = self.call(
+                "GET",
+                f"/api/v1/operations/runs/{task}/problem-items",
+                query=f"problem={kind}&limit=100",
+            )
+        return problems
+
+    def typed_items(self, task):
+        """The distinct items that currently carry any of the four problems."""
+
+        seen: dict[str, set[str]] = {}
+        for kind, page in self.problem_items(task).items():
+            seen[kind] = {value["item_id"] for value in page["items"]}
+        return seen
 
     def test_verified_multi_hop_success_closes_only_exact_current_problem_after_reopen(self):
         seed, child_task, child_item, summary, preview = self.prepared_chain()
@@ -87,16 +105,30 @@ class RecoveryLineageTests(unittest.TestCase):
             f"/api/v1/manual-recovery-preparations/{summary['preparation_id']}/confirm",
             {"confirmation": True, "itemIds": [preview.items[0].item_id]},
         )
-        self.assertTrue(self.state.repository.operations_run(child_task).attention)
+        # The exact confirmed follow-up is queued work in Running, not a
+        # pending business problem: the child's saved decision already moved on
+        # to its explicit continuation, so the child Task carries no four-type
+        # attention of its own any more.
+        child = self.state.repository.operations_run(child_task)
+        self.assertEqual((), child.problem_types)
+        self.assertFalse(child.attention)
         completed = h.run_manual_worker_once(self.state)
         self.assertTrue(completed["completed"])
         for reopen in (False, True):
             with self.subTest(reopen=reopen):
                 if reopen:
                     self.state.restart()
-                problems = self.problem_items(seed["taskId"])
-                self.assertEqual(1, problems["matching_total"], problems)
-                self.assertNotIn(seed["itemId"], {value["item_id"] for value in problems["items"]})
+                # A completed re-analysis and a consumed same-page follow-up
+                # prove the exact affected item's problem really closed; the
+                # source spends no obsolete four-type attention, while its
+                # original attempt Results stay untouched history.
+                typed = self.typed_items(seed["taskId"])
+                self.assertNotIn(seed["itemId"], typed["metadata"])
+                source = self.state.repository.operations_run(seed["taskId"])
+                self.assertFalse(source.attention)
+                self.assertEqual((), source.problem_types)
+                # The re-analysis child itself is no longer typed work: its
+                # decision completed and no technical failure became a type.
                 self.assertFalse(self.state.repository.operations_run(child_task).attention)
                 checkpoint = self.detail(seed["taskId"], seed["itemId"])["checkpoint"]
                 self.assertNotIn("retry", set(checkpoint["permitted_action_ids"]))
@@ -119,7 +151,14 @@ class RecoveryLineageTests(unittest.TestCase):
         finally:
             execution._executor = actual
         self.assertFalse(completed["completed"])
-        self.assertTrue(self.state.repository.operations_run(child_task).attention)
+        # A purely technical follow-up failure is not a fifth problem type and
+        # does not keep obsolete four-type work alive; it stays true read-only
+        # history on the exact failed execution/Result while the source is
+        # untouched and is never replayed.
+        child = self.state.repository.operations_run(child_task)
+        self.assertFalse(child.attention)
+        self.assertEqual((), child.problem_types)
+        self.assertIn(child.status.value, {"failed", "partial_success"})
         self.assertTrue((self.state.managed.root / "source" / seed["sourcePath"]).exists())
 
     def test_verified_effect_does_not_resolve_different_source_or_pin(self):

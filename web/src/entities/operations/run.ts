@@ -113,9 +113,11 @@ export const RUN_TRIGGERS = [
 export type RunTrigger = (typeof RUN_TRIGGERS)[number];
 
 /**
- * The nine sibling task-center views (RO-1). The first four are lifecycle
- * partitions; the last five are cross-Task recovery lists keyed by current
- * problem type.
+ * The eight sibling task-center views (Slice46 RO-4). The first four are
+ * lifecycle partitions of the organizing population; the last four are
+ * cross-Task recovery lists keyed by a current *business* problem type. The
+ * former fifth Failure Recovery view is retired: a technical failure is
+ * read-only history in All/Ended, never a problem type or a recovery list.
  */
 export const RUN_VIEWS = [
   "all",
@@ -126,21 +128,19 @@ export const RUN_VIEWS = [
   "metadata",
   "classification",
   "conflict",
-  "failure",
 ] as const;
 export type RunView = (typeof RUN_VIEWS)[number];
 
-/** The five cross-Task recovery problem types, in display order. */
+/** The four cross-Task recovery problem types, in display order. */
 export const RUN_PROBLEM_TYPES = [
   "recognition",
   "metadata",
   "classification",
   "conflict",
-  "failure",
 ] as const;
 export type RunProblemType = (typeof RUN_PROBLEM_TYPES)[number];
 
-/** Chinese labels for the nine views, in the reference navigation order. */
+/** Chinese labels for the eight views, in the reference navigation order. */
 export const RUN_VIEW_LABELS: Readonly<Record<RunView, string>> = {
   all: "全部任务",
   running: "进行中",
@@ -150,30 +150,29 @@ export const RUN_VIEW_LABELS: Readonly<Record<RunView, string>> = {
   metadata: "元数据恢复",
   classification: "分类恢复",
   conflict: "冲突处理",
-  failure: "失败恢复",
 };
 
-/** Chinese labels for the five recovery problem types. */
+/** Chinese labels for the four recovery problem types. */
 export const RUN_PROBLEM_LABELS: Readonly<Record<RunProblemType, string>> = {
   recognition: "识别问题",
   metadata: "元数据问题",
   classification: "分类问题",
   conflict: "冲突问题",
-  failure: "失败问题",
 };
 
-/** True for one of the five cross-Task recovery views. */
+/** True for one of the four cross-Task recovery views. */
 export function isRecoveryView(view: RunView): view is RunProblemType {
   return (RUN_PROBLEM_TYPES as readonly string[]).includes(view);
 }
 
 /**
- * Why a run is in attention when it is not one of the five technical problem
- * types. A pre-Task Job failure with durable repair evidence is a run-level
- * problem with no item file list; every other attention run is explained by
- * its item/review/continuation evidence.
+ * Why a run is in attention. Attention is exactly the union of the four current
+ * business problem types, so the only reason a row can publish is its
+ * item/review/continuation evidence. A former `run_repair` reason (a pre-Task
+ * technical failure) is deliberately gone: that failure is read-only history in
+ * All/Ended, never a pending-task count or a recovery entry.
  */
-export const RUN_ATTENTION_REASONS = ["task_problem", "run_repair"] as const;
+export const RUN_ATTENTION_REASONS = ["task_problem"] as const;
 export type RunAttentionReason = (typeof RUN_ATTENTION_REASONS)[number];
 
 /** Which kind of configured library owns the run's recorded scope. */
@@ -243,15 +242,9 @@ export interface RunSummary {
   readonly problemTypes: readonly RunProblemType[];
   /** Per-type distinct affected primary-file counts for this exact Task. */
   readonly problemFileCounts: Readonly<Record<RunProblemType, number>> | null;
-  /** Why this run is in attention when it is not one of the five technical
-   * types. `run_repair` marks a pre-Task Job failure that still carries a
-   * structured repair/next action; `task_problem` marks item/review evidence
-   * (including a pending safe-continuation step); `null` means the run is not
-   * in attention. */
+  /** Why this run is in attention: its current four-type problem evidence.
+   * `null` means the run is not in attention at all. */
   readonly attentionReason: RunAttentionReason | null;
-  /** The run-level repair evidence of a pre-Task failure, or `null`. */
-  readonly attentionFailureCategory: string | null;
-  readonly attentionFailureNextAction: string | null;
   readonly configurationSnapshotId: string | null;
   readonly workerId: string | null;
   /** The selected-run detail progress projection. Present on the overview
@@ -598,41 +591,14 @@ export function normalizeRunSummary(payload: unknown): RunSummary {
     fail();
   }
   const attention = flag(source, "attention");
-  // Every technical recovery problem is actionable, but a safe continuation
-  // step can need attention without belonging to a technical type.
+  // Attention is exactly the union of the four business problem types: a run
+  // in attention must name at least one current type, and a run that names a
+  // type is in attention. A server that disagrees with its own two fields is
+  // malformed, never an approximate pending-task truth.
   const problemTypes = normalizeProblemTypes(source["problem_types"]);
-  if (!attention && problemTypes.length > 0) fail();
-  // The attention reason explains a run in attention that has no technical
-  // problem type. It is optional (older servers omit it) but, when present,
-  // must agree with the facet it describes.
+  if (attention !== problemTypes.length > 0) fail();
   const attentionReason = normalizeAttentionReason(source["attention_reason"]);
-  if (!attention && attentionReason !== null) fail();
-  if (attentionReason === "run_repair" && problemTypes.length > 0) {
-    // A run-level repair has no item file list; it can never claim one.
-    fail();
-  }
-  const attentionFailureCategory = optionalText(
-    source,
-    "attention_failure_category",
-  );
-  const attentionFailureNextAction = optionalText(
-    source,
-    "attention_failure_next_action",
-  );
-  if (attentionReason === "run_repair") {
-    if (
-      attentionFailureCategory === null ||
-      attentionFailureNextAction === null
-    ) {
-      fail();
-    }
-  } else if (
-    attentionFailureCategory !== null ||
-    attentionFailureNextAction !== null
-  ) {
-    // Run-level repair evidence only exists for a run-level repair.
-    fail();
-  }
+  if (attention !== (attentionReason !== null)) fail();
   const problemFileCounts = normalizeOptionalProblemCounts(
     source["problem_file_counts"],
     "run.problem_file_counts",
@@ -668,8 +634,6 @@ export function normalizeRunSummary(payload: unknown): RunSummary {
     problemTypes,
     problemFileCounts,
     attentionReason,
-    attentionFailureCategory,
-    attentionFailureNextAction,
     configurationSnapshotId: optionalText(source, "configuration_snapshot_id"),
     workerId: optionalText(source, "worker_id"),
     progress:
@@ -1097,7 +1061,6 @@ function emptyProblemCounts(): Readonly<Record<RunProblemType, number>> {
     metadata: 0,
     classification: 0,
     conflict: 0,
-    failure: 0,
   };
 }
 

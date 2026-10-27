@@ -281,8 +281,81 @@ Task46.3 的完整计划/交付/复核在 Git 保留，其终结 PASS 不被本 
 
 ## Developer Completion Report
 
-待实施。交付 full SHA 和 READY FOR B REVIEW；简述实际变化、受影响命令/结果、已知失败与风险、
-剩余 in-Slice 工作。不要自批 PASS、关闭 Slice、规划下一 Task 或准备全量验收档案。
+```text
+Task: 46.4 / High / T4
+Task Base: 44cba4f93b94b72d6dee52fcd1199be729ec78c4
+Status: READY FOR B REVIEW
+Slice: ACTIVE (this is not A Final Review, PASS or closure)
+Push: none performed
+```
+
+本轮实现 RO-4 的整理专用总体、八视图、四类真实问题与只读技术历史。RO-1/2/3/5 未改动。
+
+### 实际变化
+
+- `mediaflow/domain/operations_run.py`：`OperationsRunView` 由九视图改为八视图、删除 `failure`
+  视图与问题类型；新增共享、可测试的总体归属规则
+  （`ORGANIZING_TASK_COMMAND_FAMILIES`/`ORGANIZING_JOB_COMMAND_FAMILIES`/
+  `ORGANIZING_TASK_LINEAGE_RELATIONS` 与 `is_organizing_*_command`）。`attention_reason`
+  只剩 `task_problem`。
+- `mediaflow/infrastructure/sqlite_runtime.py`：总体归属下推到 `_RUN_QUERY_SELECT` 的三个
+  分支（Job 命令家族、Task 命令家族 + `media_discoveries.organize_task_id` + 持久续作关系、
+  仅有 definition origin 的 Run once 准备行），因此列表、过滤总数、状态分区、attention、
+  summary、source options、游标窗口、exact-ID detail/items/records/export 全部共用同一总体。
+  删除 `failure` 问题谓词与失败统计列；`_problem_item_predicate` 只保留四类业务问题，并让
+  “已保存决定待显式继续”仍属原类型（不新增第五类、不误判为技术失败）。attention 即四类
+  distinct union；`run_level_repair` 只保留为只读事实字段，不进入 attention/统计。
+- `mediaflow/interfaces/service_api.py`：拒绝退役的 `view=failure`/`problem=failure`；
+  exact-ID 中心读经 `is_task_center_run` 限定；Automation 记录 handoff 继续使用冻结的
+  pre-start 失败事实（不与中心失败统计混淆）。
+- `web/src/entities/operations/run.ts`、`OperationsLanding.tsx`、`ProblemFilePanel.tsx`：
+  八视图、四问题类型；`attention` 与 `problem_types` 双向一致才接受；移除全局 Worker/
+  常驻服务区块及其独占 readiness 读取、失败视图标签、“运行级修复”链接与通用失败文件入口。
+- 既有普通文件工作（复制/移动/删除/维护）现在只在其原库的 file-operations/operations
+  读取上呈现；中心精确 ID 读取对它们是 404（RO-3 已验收的本地入口不变）。
+
+### 受影响命令与结果（本轮实际执行）
+
+| 命令 | 结果 |
+| --- | --- |
+| `python3 scripts/check_governance.py` | PASS |
+| `git diff --check` | clean |
+| `.venv/bin/python -m unittest tests.test_operations_run_inventory tests.test_operations_task_center tests.test_operations_run_detail tests.test_operations_run_detail_plan_evidence tests.test_operations_run_detail_log_isolation tests.test_task_center_recovery_lineage tests.test_recovery_continuation tests.test_recovery_batch tests.test_library_file_operation_history tests.test_operations_workspace tests.test_v2_automation_operations tests.test_api_security tests.test_automation_workspace_read_model tests.test_direct_file_operations tests.test_direct_file_transfers` | **534 OK** |
+| `.venv/bin/python -m unittest discover -s tests` | **2890 OK, 7 skipped** |
+| `.venv/bin/ruff check mediaflow tests scripts` / `ruff format --check` | PASS / 358 files formatted |
+| `.venv/bin/python -m compileall -q mediaflow tests scripts`, `pip check` | PASS / no broken requirements |
+| 两个 example 配置 `config validate`；FFprobe/FFmpeg 依赖扫描 | PASS；无匹配（exit 1） |
+| `web`: `npm run typecheck` / `lint` / `format:check` | PASS / PASS / PASS |
+| `web`: `npm run test -- run` | **87 files / 1265 tests OK** |
+| `web`: `npm run test:e2e -- --config=playwright.config.ts`（Node fake） | **242 passed** |
+| `web`: `npm run build` 后 `npm run test:e2e -- --config=playwright.python.config.ts tests/e2e/operations-task-center-visual.python.spec.ts`（独立干净 harness） | **2 passed**；截图 1536×1024、380×720、390×844 |
+| 同上独立干净 harness：`tests/e2e/operations-inventory.python.spec.ts` | **41 passed**（含八视图/四类原生恢复/技术只读历史/刷新与真实 restart） |
+| `.venv/bin/python -m pip wheel` + `scripts/wheel_smoke_test.py <wheel>` | PASS（安装消费者加载 recovery 模块） |
+
+浏览器探测均使用 harness 临时 SQLite/媒体根与本地合成 Provider，不使用用户媒体或私有配置。
+截图人工检查：桌面 1536×1024 八标签同排、无 Worker/失败恢复、问题文件清单与统计一致；窄屏
+380×720 与 390×844 标签可横向滚动、聚焦可滚动到末项。E2E 与构建/探测占本轮工作墙钟时间
+明显低于 50%。
+
+### 已知失败与风险
+
+- 本 Task 未改变 Storage/Worker/Scheduler 执行引擎；manifest 只读，新增无 schema 变更。
+- `media_discoveries` 中**仅有** `organize_task_id` 的 Files 受理由其 Task 行代表；analysis-only
+  准备（无 definition origin、无组织 Task）不再计入中心——这是 RO-4 的既定收缩，非回归。
+- 原库本地 readback（`/resource-libraries/{id}/file-operations`）保留既有契约，仍回显其原始
+  scope；本轮未改动它，也不在该路径上声称新增 redaction 行为。
+- 一处 E2E 计数从“分析+执行 2 行”改为“1 行”是 RO-4 的直接结果（此前分析准备被计入中心）。
+- 既有 Task46.2 三项 direct-files 菜单/非 localhost 失败不在本 Task 范围，未修、未跳过、未标绿。
+- 未做全量 Docker/发布安全门禁（按分工属 B）。
+
+### 剩余 in-Slice 工作
+
+RO-5（Automation detail/Save/Enabled/grant 移除与真实 Run once 执行意图）仍未实现；中心
+八视图/四类恢复的最终 A 关闭与文档对账同样未开始。
+
+### 交付身份
+
+- Full source identity 由下列 checkpoint commit 决定（提交后写入哈希）；本报告随同一次提交。
 
 ## B Review Result
 

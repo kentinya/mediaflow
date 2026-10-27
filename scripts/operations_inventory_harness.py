@@ -3273,11 +3273,13 @@ def manual_file_state(state: AppState, filename: str = "Three.2003.mkv") -> dict
     }
 
 
-#: The unique Task command of the real standalone processing-chain proof.  It
-#: is neither the Manual command nor a seeded command, so the browser spec can
-#: isolate its run with the existing server-side command filter without
-#: touching the seeded population's counts.
-PIPELINE_TASK_COMMAND = "harness-standalone-organize"
+#: The unique Task command of the real standalone processing-chain proof.  It is
+#: the supported ``organize`` family with its own durable identity suffix (the
+#: exact ``<family>:<identity>`` form the real producers write), so it is real
+#: Task Center organizing work *and* the browser spec can isolate its run with
+#: the existing server-side exact command filter without touching the seeded
+#: population's counts.
+PIPELINE_TASK_COMMAND = "organize:harness-standalone"
 
 #: The managed source file the standalone chain organizes.  Its path contains
 #: the `/电影/` directory the checked Active recognition rules match to
@@ -5158,7 +5160,15 @@ def seed_task_center_problem_journey(state: AppState) -> dict[str, object]:
 
 
 def seed_task_center_problem_page(state: AppState) -> dict[str, object]:
-    """Create 21 real zero-effect failures for the server-paged file journey."""
+    """Create 21 real pending metadata decisions for the paged file journey.
+
+    Slice46 RO-4 removed the fifth technical-failure problem type, so a
+    server-paged *problem* list must be a real business problem.  Each item
+    here is a genuine ``waiting_metadata`` TaskItem (the durable state the
+    pipeline writes when a metadata decision is required) and the Task itself
+    stays unfinished with zero Storage effects, so the paged list, its counts
+    and its per-item next step are the real four-type ones.
+    """
 
     if state.task_center_problem_page is not None:
         return dict(state.task_center_problem_page)
@@ -5168,24 +5178,16 @@ def seed_task_center_problem_page(state: AppState) -> dict[str, object]:
     task = coordinator.create(
         "organize",
         execute_authorized=False,
-        scope_path="TaskCenter/PagedFailures",
+        scope_path="TaskCenter/PagedMetadata",
         configuration_snapshot_id=snapshot.revision_id,
         configuration_snapshot_digest=snapshot.digest,
         require_configuration_snapshot=True,
-        status=PersistentTaskStatus.FAILED,
+        status=PersistentTaskStatus.PARTIAL_SUCCESS,
     )
-    explanation = FailureExplanation(
-        category="analysis_interrupted",
-        message="the analysis worker stopped before a Storage mutation",
-        durable_state="failure is recorded",
-        side_effects="none",
-        retry_safe=True,
-        next_action="repair the analysis dependency, then explicitly re-check this item",
-    ).encode()
     item_ids: list[str] = []
     for index in range(21):
-        item_id = f"{task.task_id}-failure-{index:02d}"
-        source_path = f"TaskCenter/PagedFailures/Failure{index:02d}.mkv"
+        item_id = f"{task.task_id}-metadata-{index:02d}"
+        source_path = f"TaskCenter/PagedMetadata/Metadata{index:02d}.mkv"
         item_ids.append(item_id)
         state.repository.upsert_item(
             PersistentTaskItem(
@@ -5195,21 +5197,18 @@ def seed_task_center_problem_page(state: AppState) -> dict[str, object]:
                 resource_library_id="source",
                 source_path=source_path,
                 source_display=source_path,
-                status=TaskItemStatus.FAILED,
-                stage="failed",
+                status=TaskItemStatus.WAITING_METADATA,
+                stage="waiting_metadata",
                 attempts=1,
                 created_at=now + timedelta(microseconds=index),
                 updated_at=now + timedelta(microseconds=index),
-                error=explanation,
             )
         )
     state.repository.update_task(
         dataclasses.replace(
             task,
             updated_at=now,
-            completed_at=now,
             total_items=len(item_ids),
-            failed_items=len(item_ids),
         )
     )
     state.task_center_problem_page = {
