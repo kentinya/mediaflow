@@ -6172,23 +6172,30 @@ class SQLiteTaskRepository:
         problem_file_sql = {problem: task_item_count(problem) for problem in RECOVERY_PROBLEM_TYPES}
         # -- Aggregate recovered completion (B46.4-02) ------------------------
         #
-        # A run whose outstanding work was really completed by exact, verified
-        # follow-ups is *completed now*, while its original Task/Result rows and
-        # this Task's own historical outcome stay exactly as they were recorded.
-        # Every necessary item must individually prove its own completed effect:
+        # A run whose every necessary item really was organized is *completed
+        # now*, while its original Task/Result rows and this Task's own
+        # historical outcome stay exactly as they were recorded.  The whole
+        # necessary primary population is therefore enumerated and each member
+        # must prove its own organizing effect:
         #
-        # - the item is not a success/ignored/skipped/cancelled terminal state
-        #   (those never replay) and not an attachment step of a primary file;
+        # - the item's own latest Result really organized it (verified effect
+        #   certainty, no uncertain effect), or
         # - the exact verified-follow-up evidence (source, pin, lineage and
         #   completed effect certainty — the same predicate the per-item read
-        #   uses) proves *this* item's original source was really organized;
-        # - a purely technical failure or an unsettled/unknown effect never
-        #   qualifies, so a mixed run cannot be presented as recovered.
+        #   uses) proves *this* item's original source was really organized.
+        #
+        # Every other disposition is an item without success proof, and it
+        # blocks the projection instead of being skipped over: an ignored,
+        # skipped or cancelled item was deliberately *not* organized, a
+        # pending/processing/paused item is still owed, and a failed/partial/
+        # uncertain item keeps its own honest effect.  A purely technical
+        # follow-up failure is likewise no success proof.
         #
         # Nothing here is inferred from a sibling's success, a child Task's
         # totals, a single analysis or a consumed marker: an item either has its
         # own verified effect or the run keeps its honest failed/partial state.
         verified_follow_up = self._verified_recovery_follow_up("recovery_items")
+        verified_own_effect = self._verified_own_effect_sql("recovery_items")
         recovered_success = (
             "task_status.task_id IS NOT NULL "
             "AND task_status.status IN ('failed', 'partial_success') "
@@ -6228,15 +6235,8 @@ class SQLiteTaskRepository:
             "AND recovery_items.source_path NOT LIKE '%.nfo' "
             "AND recovery_items.source_path NOT LIKE '%.jpg' "
             "AND recovery_items.source_path NOT LIKE '%.png' "
-            "AND recovery_items.status IN ('failed', 'partial', 'pending', 'processing', 'paused') "
             f"AND NOT ({verified_follow_up}) "
-            "AND NOT EXISTS (SELECT 1 FROM task_results recovery_result "
-            "WHERE recovery_result.task_id = recovery_items.task_id "
-            "AND recovery_result.item_id = recovery_items.item_id "
-            "AND lower(recovery_result.status) = 'success' "
-            "AND COALESCE(recovery_result.effect_certainty, 'unknown') "
-            "NOT IN ('attempted_unverified', 'unknown') "
-            "AND COALESCE(recovery_result.uncertain_effects, '[]') = '[]')) "
+            f"AND NOT ({verified_own_effect})) "
             "AND EXISTS (SELECT 1 FROM manual_recovery_preparations recovered_summary "
             "WHERE recovered_summary.status = 'confirmed' "
             "AND recovered_summary.source_task_id = task_status.task_id)"
@@ -7907,6 +7907,35 @@ class SQLiteTaskRepository:
             has_next=has_next,
             has_previous=has_previous,
         )
+
+    @staticmethod
+    def _verified_own_effect_sql(item_alias: str) -> str:
+        """Whether this TaskItem's own latest attempt really organized it.
+
+        Used by the aggregate recovered-completion projection (B46.4-02) to
+        enumerate the whole necessary primary population: an item that its own
+        Task attempt already organized keeps that verified success even when a
+        sibling needed an exact follow-up.  The *latest* Result of the item's
+        own Task is the authority, so an earlier success superseded by a later
+        failed/uncertain outcome is never counted as success; a missing Result
+        is never a success either.
+        """
+
+        return f"""EXISTS (
+            SELECT 1 FROM task_results own_effect
+            WHERE own_effect.task_id = {item_alias}.task_id
+              AND own_effect.item_id = {item_alias}.item_id
+              AND lower(own_effect.status) = 'success'
+              AND COALESCE(own_effect.effect_certainty, 'unknown')
+                  NOT IN ('attempted_unverified', 'unknown')
+              AND COALESCE(own_effect.uncertain_effects, '[]') = '[]'
+              AND own_effect.result_id = (
+                  SELECT latest_effect.result_id FROM task_results latest_effect
+                  WHERE latest_effect.task_id = {item_alias}.task_id
+                    AND latest_effect.item_id = {item_alias}.item_id
+                  ORDER BY latest_effect.created_at DESC, latest_effect.result_id DESC
+                  LIMIT 1)
+        )"""
 
     @staticmethod
     def _verified_recovery_follow_up(item_alias: str) -> str:

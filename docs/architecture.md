@@ -812,6 +812,15 @@ Valid prepared-work deep links keep working. The organizing-only eight-view set 
 `recovered_completion` projection are delivered by Slice46 Task46.4; removed-center population
 convergence and Automation's own RO-5 intent changes remain TARGET.
 
+The aggregate outcome enumerates the run's whole necessary primary population and requires an exact
+verified effect per member — the item's own latest Result (success, verified certainty, no uncertain
+effect) or its bounded confirmed follow-up with the same source, pin and lineage. An ignored, skipped
+or cancelled item is a legal disposition that ends that item's problem but is never organizing success,
+and a failed/partial/uncertain item keeps its own effect. The aggregate therefore stays
+`failed`/`partial_success` for any mixed run, and only a run whose every necessary item is proven
+publishes `completed` with `recovered_completion`, from the same read snapshot that supplies the
+status partitions, the file counts and the detail.
+
 The shell's carry-over of that context has one source of truth: the router's own committed search for
 the current route. Deriving it from the browser's address bar mixed two differently-timed copies of
 the same state — the router publishes a new location when it renders the target route, while the URL

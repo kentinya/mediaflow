@@ -1278,6 +1278,101 @@ describe("Operations run inventory landing", () => {
     ).toBe(true);
   });
 
+  it("only claims recovered completion when the whole run really succeeded", async () => {
+    // B46.4-02: the server publishes the per-item truth as ``status`` plus the
+    // ``recovered_completion`` facet.  A run whose sibling was ignored keeps its
+    // real failed state and its "失败" label; only a run whose every necessary
+    // item has exact success proof may say "已完成（恢复成功）".
+    const user = userEvent.setup();
+    const mixed = runDocument({
+      run_id: "mixed-run",
+      task_id: "mixed-run",
+      command_label: "混合结果",
+      status: "failed",
+      recovered_completion: false,
+      total_items: 2,
+      completed_items: 0,
+      failed_items: 2,
+      processed_items: 2,
+      current_stage: null,
+    });
+    const recovered = runDocument({
+      run_id: "recovered-run",
+      task_id: "recovered-run",
+      command_label: "恢复完成",
+      status: "completed",
+      recovered_completion: true,
+      total_items: 2,
+      completed_items: 0,
+      failed_items: 2,
+      processed_items: 2,
+      current_stage: null,
+    });
+    stubFetch(async (input) => {
+      const url = String(input);
+      if (url.startsWith("/api/v1/operations/runs?")) {
+        return jsonResponse(
+          pageDocument({
+            items: [mixed, recovered],
+            status_counts: { failed: 1, completed: 1 },
+            attention_count: 0,
+            total: 2,
+            summary: summaryDocument({
+              total: 2,
+              running: 0,
+              attention: 0,
+              ended: 2,
+            }),
+          }),
+        );
+      }
+      if (url === "/api/v1/operations/runs/mixed-run") {
+        return jsonResponse(mixed);
+      }
+      if (url === "/api/v1/operations/runs/recovered-run") {
+        return jsonResponse(recovered);
+      }
+      return jsonResponse({ error: { code: "not_found" } }, 404);
+    });
+    authStore.setToken(TOKEN);
+    renderApp("/ui-v2/operations?run=mixed-run");
+
+    const table = await screen.findByRole("table");
+    const rows = within(table).getAllByRole("row");
+    const mixedRow = rows.find((row) => row.textContent?.includes("混合结果"));
+    const recoveredRow = rows.find((row) =>
+      row.textContent?.includes("恢复完成"),
+    );
+    if (mixedRow === undefined || recoveredRow === undefined) {
+      throw new Error("the exact run rows were not rendered");
+    }
+    expect(within(mixedRow).getByText("失败")).toBeVisible();
+    expect(within(mixedRow).queryByText(/已完成（恢复成功）/)).toBeNull();
+    expect(within(recoveredRow).getByText("已完成（恢复成功）")).toBeVisible();
+
+    // The selected mixed run never explains itself as an all-item success.
+    const detail = await screen.findByRole("region", { name: "运行详情" });
+    expect(within(detail).getAllByText("失败").length).toBeGreaterThan(0);
+    expect(
+      within(detail).queryByText(/每个必要条目都有精确关联的真实成功证据/),
+    ).toBeNull();
+    // Selecting the really recovered run publishes that exact claim.
+    await user.click(
+      within(recoveredRow).getByRole("button", { name: /恢复完成/ }),
+    );
+    const recoveredDetail = await screen.findByRole("region", {
+      name: "运行详情",
+    });
+    expect(
+      await within(recoveredDetail).findByText(/已完成（恢复成功）/),
+    ).toBeVisible();
+    expect(
+      within(recoveredDetail).getByText(
+        /每个必要条目都有精确关联的真实成功证据/,
+      ),
+    ).toBeVisible();
+  });
+
   it("re-reads the selected overview from the header refresh control", async () => {
     const user = userEvent.setup();
     const requested: string[] = [];

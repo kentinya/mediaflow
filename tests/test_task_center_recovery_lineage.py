@@ -4,6 +4,7 @@ from __future__ import annotations
 
 import tempfile
 import unittest
+from collections import Counter
 from pathlib import Path
 
 from scripts import operations_inventory_harness as h
@@ -39,6 +40,216 @@ class RecoveryLineageTests(unittest.TestCase):
                 ]
             },
         )
+
+    def seed_metadata_choices(self, task, item_ids):
+        """Publish the legal Metadata decisions the batch fixture's items need.
+
+        ``seed_batch_summary_recovery`` really admits two Manual items and fails
+        them before any Storage mutation, so neither item carries business
+        review rows yet.  The product ``MetadataReviewService`` records one
+        NEED_CONFIRM candidate per item for the provider evidence the fixture
+        actually seeded, so the operator's following decision is a legal one
+        rather than a fabricated identification.
+        """
+
+        from dataclasses import replace
+
+        from mediaflow.application.metadata_review import MetadataReviewService
+        from mediaflow.domain.metadata import (
+            CandidateMatchResult,
+            CandidateMatchStatus,
+            CandidateScore,
+            MetadataIdentificationResult,
+            MetadataIdentificationStatus,
+            ScoreComponent,
+        )
+        from mediaflow.domain.recognition import RecognitionType
+        from mediaflow.domain.task_persistence import TaskItemStatus
+
+        service = MetadataReviewService(self.state.repository)
+        for item_id in item_ids:
+            current = self.state.repository.get_item(item_id)
+            processing = replace(current, status=TaskItemStatus.PROCESSING, stage="metadata")
+            self.state.repository.upsert_item(processing)
+            result = next(
+                value
+                for value in self.state.repository.list_results(task)
+                if value.item_id == item_id
+            )
+            title = result.title or Path(processing.source_path).name.split(".")[0]
+            candidate = h.MediaCandidate(
+                "tmdb",
+                result.provider_id,
+                h.MediaType.MOVIE,
+                title,
+                year=2012,
+                genres=("Animation",),
+                countries=("JP",),
+            )
+            service.create(
+                processing,
+                MetadataIdentificationResult(
+                    MetadataIdentificationStatus.NEED_CONFIRM,
+                    RecognitionType("C", "Special"),
+                    match=CandidateMatchResult(
+                        CandidateMatchStatus.NEED_CONFIRM,
+                        candidate,
+                        72,
+                        (CandidateScore(candidate, 72, (ScoreComponent("title", 72, "title"),)),),
+                    ),
+                    query=title,
+                ),
+                "C",
+            )
+
+    def prepared_metadata_summary(self, task, item):
+        """Decide, analyze and prepare one item's exact non-authorizing summary.
+
+        Every step is the product API/Worker: the saved decision, the queued
+        analysis continuation, the real resident handler and the bounded plan
+        summary.  No execution authority is minted here.
+        """
+
+        self.call(
+            "POST",
+            f"/api/v1/tasks/{task}/items/{item}/recovery/decision",
+            {
+                "kind": "metadata",
+                "candidateRank": 1,
+                "expectedCheckpointVersion": self.detail(task, item)["checkpoint"][
+                    "checkpoint_version"
+                ],
+            },
+        )
+        self.continue_item(task, item)
+        self.assertTrue(h.run_task_item_recovery_worker_once(self.state, item_id=item)["ran"])
+        summary = self.call(
+            "POST",
+            f"/api/v1/tasks/{task}/items/{item}/recovery/prepare-summary",
+            {
+                "expectedCheckpointVersion": self.detail(task, item)["checkpoint"][
+                    "checkpoint_version"
+                ]
+            },
+        )
+        return summary, self.state.api._manual_recovery._previews.get(summary["preview_id"])
+
+    def confirm_ready_subset(self, summary, preview):
+        return self.call(
+            "POST",
+            f"/api/v1/manual-recovery-preparations/{summary['preparation_id']}/confirm",
+            {"confirmation": True, "itemIds": [preview.items[0].item_id]},
+        )
+
+    def seed_skipped_conflict(self, task, item, execution_id):
+        """Record the real destination conflict a retry observes for one item.
+
+        The product ``ConfirmationService`` writes the pending conflict; the
+        operator's following ``skip`` decision is then applied by the product
+        recovery API, so both the ``skipped`` disposition and the preserved
+        destination come from the native conflict journey.
+        """
+
+        from dataclasses import replace
+
+        from mediaflow.application.conflict_resolution import ConfirmationService
+        from mediaflow.domain.organizer import (
+            Conflict,
+            ConflictType,
+            OrganizePlan,
+            PlanStatus,
+            StorageLocation,
+        )
+        from mediaflow.domain.task_persistence import TaskItemStatus
+
+        execution = self.state.repository.get_manual_execution(execution_id)
+        manual_item = next(value for value in execution.items if value.task_item_id == item)
+        target_path = str(manual_item.plan["executionPlan"]["targetPath"])
+        destination = self.state.managed.root / "destination" / target_path
+        destination.parent.mkdir(parents=True, exist_ok=True)
+        destination.write_bytes(b"existing destination must be preserved")
+        policy = next(
+            value
+            for value in self.state.managed.runtime.strategy.organize_policies
+            if value.policy_id == "A"
+        )
+        current = self.state.repository.get_item(item)
+        processing = replace(current, status=TaskItemStatus.PROCESSING, stage="metadata")
+        self.state.repository.upsert_item(processing)
+        ConfirmationService(self.state.repository).create(
+            task_id=task,
+            item_id=item,
+            plan=OrganizePlan(
+                source_storage_id="source-storage",
+                target_storage_id="media-target",
+                source=current.source_path,
+                target=target_path,
+                recognition_type_id="C",
+                naming_policy_id="A",
+                classification_policy_id="A",
+                organize_policy_id=policy.policy_id,
+                conflicts=(
+                    Conflict(
+                        ConflictType.DESTINATION_EXISTS,
+                        current.source_path,
+                        target_path,
+                        "destination already exists",
+                    ),
+                ),
+                status=PlanStatus.CONFLICT,
+                plan_id=str(manual_item.plan["planId"]),
+                source_location=StorageLocation("source-storage", current.source_path),
+                destination_location=StorageLocation("media-target", target_path),
+            ),
+            policy=policy,
+            item=replace(
+                processing, status=TaskItemStatus.WAITING_CONFIRM, stage="waiting_confirm"
+            ),
+        )
+        return destination
+
+    def run_row(self, task, query="limit=100"):
+        """One run row exactly as the center list publishes it."""
+
+        page = self.call("GET", "/api/v1/operations/runs", query=query)
+        self.assertEqual(page["total"], len(page["items"]))
+        matches = [value for value in page["items"] if value["run_id"] == task]
+        self.assertEqual(1, len(matches), page["items"])
+        return matches[0], page
+
+    def assert_run_projection(self, task, *, status, recovered_completion):
+        """The exact aggregate status/recovered-completion truth of one run.
+
+        The detail, the unfiltered list, its status partition and the ended
+        view all publish the same facts, so no surface can claim a completion
+        the durable items do not prove.
+        """
+
+        run = self.call("GET", f"/api/v1/operations/runs/{task}")
+        self.assertEqual(status, run["status"])
+        self.assertEqual(recovered_completion, run["recovered_completion"])
+        row, page = self.run_row(task)
+        self.assertEqual(status, row["status"])
+        self.assertEqual(recovered_completion, row["recovered_completion"])
+        # The same read snapshot's page rows, counts and status partition agree
+        # with the row the detail publishes.
+        self.assertEqual(
+            dict(Counter(value["status"] for value in page["items"])),
+            dict(page["status_counts"]),
+        )
+        self.assertIn(status, page["status_counts"])
+        ended, ended_page = self.run_row(task, query="view=ended&limit=100")
+        self.assertEqual(status, ended["status"])
+        self.assertEqual(recovered_completion, ended["recovered_completion"])
+        self.assertGreaterEqual(ended_page["summary"]["ended"], 1)
+        # The status partition never publishes a run the detail denies.
+        for partition in ("completed", "failed", "partial_success"):
+            rows = self.call(
+                "GET", "/api/v1/operations/runs", query=f"status={partition}&limit=100"
+            )
+            present = task in {value["run_id"] for value in rows["items"]}
+            self.assertEqual(partition == status, present, (partition, rows["total"]))
+        return run
 
     def prepared_chain(self):
         seed = h.seed_task_item_recovery_journey(self.state, "technical")
@@ -127,6 +338,15 @@ class RecoveryLineageTests(unittest.TestCase):
                 source = self.state.repository.operations_run(seed["taskId"])
                 self.assertFalse(source.attention)
                 self.assertEqual((), source.problem_types)
+                # The one necessary item really carries its own exact verified
+                # effect, so the aggregate (detail, list and status partitions)
+                # publishes the recovered completion those facts prove.
+                # The same source Task keeps an unknown-effect sibling and a
+                # success item with no Result evidence, so its aggregate stays
+                # honestly partial_success instead of claiming completion.
+                self.assert_run_projection(
+                    seed["taskId"], status="partial_success", recovered_completion=False
+                )
                 # The re-analysis child itself is no longer typed work: its
                 # decision completed and no technical failure became a type.
                 self.assertFalse(self.state.repository.operations_run(child_task).attention)
@@ -134,6 +354,147 @@ class RecoveryLineageTests(unittest.TestCase):
                 self.assertNotIn("retry", set(checkpoint["permitted_action_ids"]))
                 self.assertEqual(
                     original_results, self.state.repository.list_results(seed["taskId"])
+                )
+
+    def test_single_item_recovery_projects_completed_from_its_own_effect(self):
+        # The clean single-item half of the same rule: the run's only necessary
+        # item really is organized by its exact confirmed follow-up, so every
+        # read of the aggregate publishes the completion its own effect proves.
+        seed = h.seed_task_item_recovery_journey(self.state, "metadata")
+        task, item = seed["taskId"], seed["itemId"]
+        original_results = self.state.repository.list_results(task)
+        summary, preview = self.prepared_metadata_summary(task, item)
+        self.confirm_ready_subset(summary, preview)
+        self.assertTrue(h.run_manual_worker_once(self.state)["completed"])
+        for reopen in (False, True):
+            with self.subTest(reopen=reopen):
+                if reopen:
+                    self.state.restart()
+                run = self.assert_run_projection(
+                    task, status="completed", recovered_completion=True
+                )
+                self.assertEqual((), tuple(run["problem_types"]))
+                self.assertFalse(run["attention"])
+                self.assertEqual(original_results, self.state.repository.list_results(task))
+
+    def test_ignored_sibling_never_projects_recovered_completion(self):
+        # B46.4-02: one necessary item is really organized by its exact
+        # confirmed follow-up while its sibling is deliberately ignored.  The
+        # ignore is a legal disposition that ends that sibling's problem, but it
+        # is not organizing success: the run keeps its real failed outcome and
+        # never publishes "已完成（恢复成功）".
+        seed = h.seed_batch_summary_recovery(self.state)
+        task = seed["taskId"]
+        recover, ignored = seed["itemIds"]
+        self.seed_metadata_choices(task, seed["itemIds"])
+        original_results = self.state.repository.list_results(task)
+        self.call(
+            "POST",
+            f"/api/v1/tasks/{task}/items/{ignored}/recovery",
+            {
+                "actionId": "ignore",
+                "expectedCheckpointVersion": self.detail(task, ignored)["checkpoint"][
+                    "checkpoint_version"
+                ],
+            },
+        )
+        summary, preview = self.prepared_metadata_summary(task, recover)
+        self.confirm_ready_subset(summary, preview)
+        self.assertTrue(h.run_manual_worker_once(self.state)["completed"])
+        # Nothing is replayed once the confirmed work settled.
+        self.assertEqual(
+            {"completed": False, "reason": "no admitted manual execution"},
+            h.run_manual_worker_once(self.state),
+        )
+        sources = {
+            value.item_id: value.source_path for value in self.state.repository.list_items(task)
+        }
+        root = self.state.managed.root
+        for reopen in (False, True):
+            with self.subTest(reopen=reopen):
+                if reopen:
+                    self.state.restart()
+                run = self.assert_run_projection(task, status="failed", recovered_completion=False)
+                # The real dispositions stay fully readable instead of being
+                # flattened into a completion claim.
+                self.assertEqual(1, run["progress"]["dispositions"]["ignored"])
+                self.assertEqual(0, run["progress"]["dispositions"]["success"])
+                self.assertFalse(run["attention"])
+                self.assertEqual((), tuple(run["problem_types"]))
+                # The page statistics describe the same population: this run is
+                # ended history, not a pending business problem.
+                _, page = self.run_row(task)
+                self.assertEqual(0, page["attention_count"])
+                self.assertEqual(0, page["summary"]["problem_tasks"]["metadata"])
+                self.assertEqual(0, page["summary"]["problem_files"]["metadata"])
+                # The ignored source is exactly where the operator left it; the
+                # recovered sibling really moved into the destination scope.
+                self.assertTrue((root / "source" / sources[ignored]).is_file())
+                self.assertFalse((root / "source" / sources[recover]).exists())
+                moved = [
+                    value.name for value in (root / "destination").rglob("*") if value.is_file()
+                ]
+                self.assertTrue(any("BatchSummaryA" in name for name in moved), moved)
+                # The original failed attempt stays untouched history.
+                self.assertEqual(original_results, self.state.repository.list_results(task))
+
+    def test_recovered_completion_requires_every_necessary_item(self):
+        # B46.4-02: only the whole necessary primary population with exact,
+        # per-item verified effects may project "已完成（恢复成功）".  One real
+        # recovery leaves the run's honest state, the second real recovery
+        # completes it, and losing one item's exact lineage evidence drops the
+        # projection back instead of keeping a stale completion.
+        seed = h.seed_batch_summary_recovery(self.state)
+        task = seed["taskId"]
+        first, second = seed["itemIds"]
+        self.seed_metadata_choices(task, seed["itemIds"])
+        original_results = self.state.repository.list_results(task)
+        summary, preview = self.prepared_metadata_summary(task, first)
+        self.confirm_ready_subset(summary, preview)
+        self.assertTrue(h.run_manual_worker_once(self.state)["completed"])
+        run = self.assert_run_projection(task, status="failed", recovered_completion=False)
+        # Half of the necessary population is still a real Metadata decision, so
+        # a partial recovery neither completes nor resets the current problem.
+        self.assertEqual(("metadata",), tuple(run["problem_types"]))
+        self.assertTrue(run["attention"])
+        _, page = self.run_row(task)
+        self.assertEqual(1, page["attention_count"])
+        self.assertEqual(1, page["summary"]["problem_tasks"]["metadata"])
+        self.assertEqual(1, page["summary"]["problem_files"]["metadata"])
+        summary, preview = self.prepared_metadata_summary(task, second)
+        self.confirm_ready_subset(summary, preview)
+        self.assertTrue(h.run_manual_worker_once(self.state)["completed"])
+        for reopen in (False, True):
+            with self.subTest(reopen=reopen):
+                if reopen:
+                    self.state.restart()
+                run = self.assert_run_projection(
+                    task, status="completed", recovered_completion=True
+                )
+                self.assertFalse(run["attention"])
+                self.assertEqual((), tuple(run["problem_types"]))
+                self.assertEqual(0, run["progress"]["dispositions"]["ignored"])
+                self.assertEqual(original_results, self.state.repository.list_results(task))
+        # A verified success that no longer matches the exact persisted source
+        # identity is not proof: the aggregate falls back to the run's real
+        # outcome instead of keeping a stale completion.
+        original = self.state.repository.get_item(second)
+        self.assertTrue(self.state.repository.has_verified_recovery_follow_up(second))
+        for detached in (True, False):
+            with self.subTest(detached=detached):
+                with self.state.repository._connection:
+                    self.state.repository._connection.execute(
+                        "UPDATE task_items SET source_path=? WHERE item_id=?",
+                        ("unrelated.mkv" if detached else original.source_path, second),
+                    )
+                self.assertEqual(
+                    not detached,
+                    self.state.repository.has_verified_recovery_follow_up(second),
+                )
+                self.assert_run_projection(
+                    task,
+                    status="failed" if detached else "completed",
+                    recovered_completion=not detached,
                 )
 
     def test_standalone_analysis_continuation_chain_never_enters_the_center(self):
@@ -348,7 +709,64 @@ class RecoveryLineageTests(unittest.TestCase):
         self.assertFalse(child.attention)
         self.assertEqual((), child.problem_types)
         self.assertIn(child.status.value, {"failed", "partial_success"})
+        # A technical follow-up failure is no success proof: the source run keeps
+        # its real aggregate state and never claims a recovered completion.
+        self.assert_run_projection(
+            seed["taskId"], status="partial_success", recovered_completion=False
+        )
         self.assertTrue((self.state.managed.root / "source" / seed["sourcePath"]).exists())
+
+    def test_skipped_item_never_projects_recovered_completion(self):
+        # B46.4-02: ``skip`` is a legal conflict decision that ends that item's
+        # problem without organizing the file.  A sibling recovered by its own
+        # exact effect therefore does not make the run complete: the skipped file
+        # is still at its source, its destination is untouched, and the aggregate
+        # keeps its real failed outcome.
+        seed = h.seed_batch_summary_recovery(self.state)
+        task = seed["taskId"]
+        recover, skipped = seed["itemIds"]
+        self.seed_metadata_choices(task, [recover])
+        destination = self.seed_skipped_conflict(task, skipped, seed["executionId"])
+        self.call(
+            "POST",
+            f"/api/v1/tasks/{task}/items/{skipped}/recovery/decision",
+            {
+                "kind": "conflict",
+                "strategy": "skip",
+                "expectedCheckpointVersion": self.detail(task, skipped)["checkpoint"][
+                    "checkpoint_version"
+                ],
+            },
+        )
+        self.assertEqual("skipped", self.state.repository.get_item(skipped).status.value)
+        summary, preview = self.prepared_metadata_summary(task, recover)
+        self.confirm_ready_subset(summary, preview)
+        self.assertTrue(h.run_manual_worker_once(self.state)["completed"])
+        for reopen in (False, True):
+            with self.subTest(reopen=reopen):
+                if reopen:
+                    self.state.restart()
+                run = self.assert_run_projection(task, status="failed", recovered_completion=False)
+                self.assertFalse(run["attention"])
+                self.assertEqual((), tuple(run["problem_types"]))
+                self.assertEqual(1, run["progress"]["dispositions"]["skipped"])
+                self.assertEqual(0, run["progress"]["dispositions"]["success"])
+                # One necessary item carries exact verified success and the other
+                # only carries a legal skip, so the aggregate has both facts to
+                # weigh instead of silently dropping the unproven item.
+                self.assertTrue(self.state.repository.has_verified_recovery_follow_up(recover))
+                self.assertFalse(self.state.repository.has_verified_recovery_follow_up(skipped))
+                # The skip never mutated either side of the conflict.
+                self.assertEqual(
+                    b"existing destination must be preserved", destination.read_bytes()
+                )
+                self.assertTrue(
+                    (
+                        self.state.managed.root
+                        / "source"
+                        / self.state.repository.get_item(skipped).source_path
+                    ).is_file()
+                )
 
     def test_verified_effect_does_not_resolve_different_source_or_pin(self):
         seed, child_task, child_item, summary, preview = self.prepared_chain()
