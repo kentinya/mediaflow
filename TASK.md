@@ -7,7 +7,7 @@ Authority: committed [Slice46](SLICE.md) **RO-4**、AC-5/6/7/8/14/15，以及保
 ```text
 Task ID: 46.4
 Parent Slice: 46
-Status: FIX REQUIRED
+Status: READY FOR B REVIEW
 Task Base: 44cba4f93b94b72d6dee52fcd1199be729ec78c4
 Difficulty: High
 Test Level: T4
@@ -482,3 +482,98 @@ problem_types=[]
 
 继续同一Task修复；不规划下一Task，不交Closure Packet、不关闭Slice，不改Roadmap/Progress。
 仅checkpoint本TASK复核；不改产品或A-owned文档，不push。
+
+## Developer Completion Report (fix round for B46.4-02)
+
+```text
+Task: 46.4 / High / T4
+Task Base: 44cba4f93b94b72d6dee52fcd1199be729ec78c4
+Fix base (B review checkpoint): d63dd7105177f492c287c99412b90e22f19380cf
+Implementation Head: 76553772
+Status: READY FOR B REVIEW
+Slice: ACTIVE (this is not A Final Review, PASS or closure)
+Push: none performed
+```
+
+本轮只修 B46.4-02 的 P1，保留 Task ID/Base/Goal/Scope；不新建 Task、不改 RO-5 意图/执行
+引擎、不改 RO-1/2/3 已验收入口，也不自行 PASS。此前报告与 B 复核结论保留在 Git 历史。
+
+### 根因与本轮更正
+
+`sqlite_runtime.py::_run_query_document()` 的 `recovered_success` 只在
+`failed/partial/pending/processing/paused` 项上取证，`ignored`（以及 `skipped`、`cancelled`）
+因不在检查集合里被直接跳过；只要存在 confirmed preparation，别的项的真实成功即可把整个 run
+投影成 `completed` + `recovered_completion=true`。原 Task/Result 未被改写，但列表/统计/详情/
+“已完成（恢复成功）”文案因此与逐项事实相反。
+
+- 新增共享 `SQLiteTaskRepository._verified_own_effect_sql(item_alias)`：该项自身 Task 的
+  **最新** Result 必须是 `success`、`effect_certainty` 非 `attempted_unverified/unknown`、
+  `uncertain_effects='[]'`；较早的成功被后来的失败/不确定结果取代即不算成功，无 Result 也不算。
+- `recovered_success` 不再按 status 白名单排除项，而是枚举原整理范围的**全部必要主项**
+  （既有附件扩展名过滤保持不变），要求每一项都有“自身最新真实成功”或“exact source/pin/
+  lineage 的已核实成功 follow-up”。忽略/跳过/取消/待处理/失败/部分/不确定都是“无成功证据”，
+  会阻止整体完成投影；同一结果同时驱动 `derived_status`、状态分区、统计、详情与文案（同一
+  read snapshot）。既有“任务本身 failed/partial_success + 无 pending 四类 review + 存在
+  confirmed preparation”门槛不变。
+- 只读投影；无 schema、Worker、Scheduler、OrganizerExecutor、admission/authority 变更，
+  不授予执行/重放权，不重跑成功或不确定项，不改写原 Task/Result/决定/audit。
+- `docs/architecture.md` CURRENT 事实补充该逐项证据规则（Task46.4 合同内的事实澄清）。
+
+### 新增真实链路回归（`tests/test_task_center_recovery_lineage.py`，12 用例）
+
+- **mixed ignored + 实际恢复成功**（B 原负例同形）：真实双项 Manual admission + 产品
+  `MetadataReviewService` 决定 + ignore admission + 真实 Worker 分析/整理。重开前后 API 都是
+  `status=failed`、`recovered_completion=false`，列表/状态分区/`view=ended` 一致，统计无
+  attention/问题计数，`dispositions.ignored=1` 且 `success=0`，被忽略文件仍在源处、成功兄弟
+  已移动到目标，旧 Results 不变，确认后无第二次执行被受理（不重放）。
+- **skip**：真实 destination 冲突由产品 `ConfirmationService` 写入、`skip` 由产品决定 API 应用；
+  同 run 的另一项真实恢复成功后仍 `failed`/`false`，skip 项与既有目标字节都不变，且逐项证据
+  为“一项有 verified follow-up、skip 项没有”。
+- **只恢复部分 → 全项恢复 → 证据失效**：两项分别真实恢复，之前 `false`、之后 `completed`+
+  `true`（重开后同）；随后把其中一项原 source_path 改成不匹配值，逐项 follow-up 证据与整体
+  投影同时回落到 `failed`/`false`，恢复后再次成立。
+- **单项全成功正例**：干净单项任务（Metadata）恢复后详情/列表/分区为 `completed`+`true`。
+- **技术/未知效果负例**：既有 mixed technical fixture（未知效果 sibling、无 Result 的成功
+  sibling）与 follow-up 预变更失败都保持 `partial_success`+`false`，源文件未被改动。
+- `OperationsInventory.test.tsx` 新增投影契约用例：`recovered_completion=false`+`failed` 的行
+  显示“失败”、无“已完成（恢复成功）”与“每个必要条目…”文案；`true`+`completed` 的行与详情
+  显示该文案与说明。
+
+### 实际命令与结果
+
+| 命令 | 结果 |
+| --- | --- |
+| `python3 scripts/check_governance.py` | PASS（开始与提交前） |
+| `git diff --check` | clean |
+| `.venv/bin/python .git/validation-evidence/d63dd710/b-review-20261028/mixed-reproduction.py` | **exit 0**；B 原三项 contractChecks 全 true（ignored 仍在源处、兄弟真实整理、`mixedIgnoreIsNotAllSuccess=true`），旧 Results unchanged |
+| `.venv/bin/python -m unittest tests.test_operations_run_inventory tests.test_operations_task_center tests.test_operations_run_detail tests.test_operations_run_detail_plan_evidence tests.test_operations_run_detail_log_isolation tests.test_task_center_recovery_lineage tests.test_recovery_continuation tests.test_recovery_batch tests.test_processing_recovery_admission tests.test_library_file_operation_history tests.test_operations_workspace tests.test_v2_automation_operations tests.test_api_security tests.test_manual_ignore tests.test_manual_ignore_batch tests.test_manual_operations_contract` | **374 tests OK / 54.2s** |
+| 同上单跑 `tests.test_task_center_recovery_lineage` | **12 tests OK / 4.1s**（SQLite ResourceWarning 与既有套件一致，属既有噪声） |
+| `.venv/bin/ruff check mediaflow tests scripts` / `ruff format --check` | PASS / 358 files formatted |
+| `web`: `npm run test -- run`（12 个受影响文件，含 `OperationsInventory`、`run`、`RunDetailTabs`、`TaskItemRecoveryPanel`） | **191 tests OK / 10.7s** |
+| `web`: `npm run typecheck` / `npm run lint` / `npm run format:check` | PASS / PASS / PASS |
+| `web`: `npm run build` | PASS（当前生产资产 `index-DwbDDOhM.js`） |
+| `web`: `npm run test:e2e -- --config=playwright.python.config.ts tests/e2e/operations-inventory.python.spec.ts` | **40 passed / 1.3m**（各自干净 harness） |
+| 同上独立干净 harness：`operations-task-center-visual.python.spec.ts` | **2 passed / 9.2s** |
+
+所有浏览器/后端探测只用 harness 临时 SQLite/媒体根与合成 Provider；故障注入只作用于既有
+adapter/fixture seam。未用用户配置/数据库/媒体，未手填成功/伪造 claim/改 DOM；既有产品或测试
+断言、timeout、retry、skip 未放宽。
+
+### 已知风险与剩余工作
+
+- 投影是严格“逐项已验证成功”：仅 status=success 但没有 Result 行（或最新 Result 不是已验证
+  成功）的项不再算成功证据，因此这类旧/异常记录所在 run 不会显示恢复完成。这与产品既有
+  `confirmed_success`（要求 Result 证据）一致，属保守方向；未回填/改写任何历史行。
+- ignored/skipped 项会让该 run 永久停在 `failed`/`partial_success`（忽略/跳过按合同不算整理
+  成功），逐项处置仍完整可读；这是本轮要求的行为而不是缺陷。
+- 无 schema/Worker/执行语义变更；`recovered_completion` 仍是只读投影，不新增执行权。
+- 未跑全量 Python `discover`、默认 E2E、wheel/installed-consumer、Docker/发布安全矩阵与 B 的
+  完整 T4；按分工属 B。RO-5 与 Slice 最终关闭/文档对账仍未开始。
+
+### 交付身份
+
+- Implementation Head: `76553772`（4 files：`sqlite_runtime.py` 查询投影、lineage/Web 回归、
+  architecture CURRENT 事实）
+- Fix range: `d63dd7105177f492c287c99412b90e22f19380cf..76553772`
+- 本报告在独立 docs checkpoint 提交；Working tree 无 tracked dirty，既有 untracked 日志/
+  参考图/OS/private 文件保持未暂存。
