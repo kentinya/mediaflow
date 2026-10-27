@@ -355,7 +355,11 @@ RO-5（Automation detail/Save/Enabled/grant 移除与真实 Run once 执行意�
 
 ### 交付身份
 
-- Full source identity 由下列 checkpoint commit 决定（提交后写入哈希）；本报告随同一次提交。
+- Implementation Head: `9241bd5158e5e1576dc4e403520ede1fdc49e0a5`
+- Range: `44cba4f93b94b72d6dee52fcd1199be729ec78c4..9241bd5158e5e1576dc4e403520ede1fdc49e0a5`
+  （23 files：4 production modules、1 harness、10 Python suites、4 Web modules、4 Web
+  tests，外加本 `TASK.md`）。
+- Working tree 无 tracked dirty；既有 untracked 日志/参考图/OS 文件保持未暂存。
 
 ## B Review Result
 
