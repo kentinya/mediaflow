@@ -549,7 +549,12 @@ class DefinitionScopedExecutionTests(unittest.TestCase):
             )
 
     def test_paused_definition_relative_scope_continues_in_the_real_worker(self) -> None:
-        """Repeated Pause → Continue resolves the original Definition sub-scope."""
+        """Analysis-only continuations retain scope without entering Task Center.
+
+        This fixture deliberately withholds execution authority. The real Worker
+        must still preserve two-hop analysis scope, pins and non-replay, while
+        those analysis children remain available only through admin history.
+        """
 
         from mediaflow.application.scope_continuation import ScopeContinuationService
         from mediaflow.application.task_runtime import PersistentTaskCoordinator
@@ -675,23 +680,14 @@ class DefinitionScopedExecutionTests(unittest.TestCase):
                 self.assertEqual(len(repository.list_items(paused_continuation_task.task_id)), 1)
                 self.assertEqual(paused_continuation_task.scope_path, "Media/C")
                 run_page, run_total, run_counts = repository.operations_runs_page(limit=20)
-                self.assertEqual(run_total, 2)
-                self.assertEqual(sum(run_counts.values()), 2)
-                self.assertEqual(len(run_page), 2)
-                linked_run = repository.operations_run(submission.job.job_id)
-                self.assertEqual(linked_run.task_id, paused_continuation_task.task_id)
-                self.assertEqual(linked_run.status.value, "paused")
-                self.assertEqual(
-                    repository.resolve_operations_run_link(paused_continuation_task.task_id),
-                    submission.job.job_id,
+                self.assertEqual(run_total, 1)
+                self.assertEqual(sum(run_counts.values()), 1)
+                self.assertEqual([run.run_id for run in run_page], [original_job.job_id])
+                self.assertIsNone(repository.operations_run(submission.job.job_id))
+                self.assertIsNone(
+                    repository.resolve_operations_run_link(paused_continuation_task.task_id)
                 )
-                run_detail = repository.operations_run_with_progress(submission.job.job_id)
-                self.assertIsNotNone(run_detail)
-                linked_overview, linked_progress = run_detail
-                self.assertEqual(linked_overview.status.value, "paused")
-                self.assertTrue(linked_progress.available)
-                self.assertEqual(linked_progress.known_total, 1)
-                self.assertEqual(linked_progress.results_total, 1)
+                self.assertIsNone(repository.operations_run_with_progress(submission.job.job_id))
                 self.assertEqual(
                     paused_continuation_task.configuration_snapshot_id,
                     original.configuration_snapshot_id,
@@ -780,13 +776,11 @@ class DefinitionScopedExecutionTests(unittest.TestCase):
                 )
                 self.assertEqual(second.task_id, continued_task.task_id)
                 run_page, run_total, run_counts = repository.operations_runs_page(limit=20)
-                self.assertEqual(run_total, 3)
-                self.assertEqual(sum(run_counts.values()), 3)
-                self.assertEqual(len(run_page), 3)
-                self.assertEqual(
-                    repository.resolve_operations_run_link(continued_task.task_id),
-                    second_submission.job.job_id,
-                )
+                self.assertEqual(run_total, 1)
+                self.assertEqual(sum(run_counts.values()), 1)
+                self.assertEqual([run.run_id for run in run_page], [original_job.job_id])
+                self.assertIsNone(repository.operations_run(second_submission.job.job_id))
+                self.assertIsNone(repository.resolve_operations_run_link(continued_task.task_id))
                 self.assertNotIn(
                     "Media/D/Alpha.Movie.2024.mkv",
                     {item.source_path for item in repository.list_items(continued_task.task_id)},
@@ -810,25 +804,40 @@ class DefinitionScopedExecutionTests(unittest.TestCase):
                 restarted_page, restarted_total, restarted_counts = (
                     restarted_repository.operations_runs_page(limit=20)
                 )
-                self.assertEqual(restarted_total, 3)
-                self.assertEqual(sum(restarted_counts.values()), 3)
-                self.assertEqual(len(restarted_page), 3)
-                self.assertEqual(
+                self.assertEqual(restarted_total, 1)
+                self.assertEqual(sum(restarted_counts.values()), 1)
+                self.assertEqual([run.run_id for run in restarted_page], [original_job.job_id])
+                self.assertIsNone(
                     restarted_repository.resolve_operations_run_link(
                         paused_continuation_task.task_id
-                    ),
-                    submission.job.job_id,
+                    )
+                )
+                self.assertIsNone(
+                    restarted_repository.resolve_operations_run_link(continued_task.task_id)
+                )
+                self.assertIsNone(
+                    restarted_repository.operations_run_with_progress(submission.job.job_id)
                 )
                 self.assertEqual(
-                    restarted_repository.resolve_operations_run_link(continued_task.task_id),
-                    second_submission.job.job_id,
+                    restarted_repository.get_job(submission.job.job_id).task_id,
+                    paused_continuation_task.task_id,
                 )
-                restarted_first = restarted_repository.operations_run_with_progress(
-                    submission.job.job_id
+                self.assertEqual(
+                    restarted_repository.get_job(second_submission.job.job_id).task_id,
+                    continued_task.task_id,
                 )
-                self.assertIsNotNone(restarted_first)
-                self.assertEqual(restarted_first[0].status.value, "paused")
-                self.assertEqual(restarted_first[1].results_total, 1)
+                self.assertEqual(
+                    restarted_repository.get_task(paused_continuation_task.task_id).status,
+                    PersistentTaskStatus.PAUSED,
+                )
+                self.assertEqual(
+                    restarted_repository.get_task(continued_task.task_id).status,
+                    PersistentTaskStatus.COMPLETED,
+                )
+                self.assertEqual(
+                    len(restarted_repository.list_results(paused_continuation_task.task_id)), 1
+                )
+                self.assertEqual(len(restarted_repository.list_results(continued_task.task_id)), 1)
 
     def test_scope_without_subscope_uses_library_root_and_never_parent(self) -> None:
         definition = _definition("root", scope=None, limit=10)

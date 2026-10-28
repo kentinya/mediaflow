@@ -1498,34 +1498,84 @@ class ScopeContinuationTests(unittest.TestCase):
         self.assertIsNone(continuation_obstacle(self.repository, child, lambda *_: None)[0])
 
     def test_projection_advertises_the_linked_continuation_of_a_finished_run(self) -> None:
-        """The selected run publishes its bounded continuation evidence."""
+        """A real admitted organize run exposes its completed Worker continuation."""
 
-        api, _active = self._activate()
-        task = self._api_paused_task(scope_path="Media", item_limit=2)
-        self._item(task.task_id, "item-a", "Media/Five.2005.mkv", TaskItemStatus.SUCCESS)
-        self._result(task.task_id, "item-a")
-        child = self._child_task(task, "task-child", status=PersistentTaskStatus.RUNNING)
-        submission = self._admit(self._service(), task)
-        self.repository.mark_scope_continuation_running(submission.job.job_id)
-        self.repository.bind_scope_continuation_task(submission.job.job_id, child.task_id)
-        self.repository.complete_scope_continuation(
-            submission.job.job_id, new_task_id=child.task_id, success=True
+        from scripts import operations_inventory_harness as h
+
+        database = self.root / "admitted.sqlite3"
+        repository, managed, api = h.build_managed_fixture(database, self.root / "admitted-media")
+        state = h.AppState(database, repository=repository, api=api, managed=managed)
+        self.addCleanup(managed.configuration_repository.close)
+        self.addCleanup(lambda: state.repository.close())
+        seeded = h.seed_continuation_journey(state)
+        source_task_id = seeded["taskId"]
+        original = repository.get_task(source_task_id)
+        self.assertTrue(original.execute_authorized)
+        status, admission = request(
+            state.api,
+            f"/api/v1/tasks/{source_task_id}/resume",
+            method="POST",
+            token=h.HARNESS_TOKEN,
         )
+        self.assertEqual(status, 202, admission)
+        self.assertEqual(admission["sideEffects"], "none")
+        self.assertEqual(admission["continuation"]["status"], "queued")
+        worker = h.run_continuation_worker_once(state)
+        self.assertTrue(worker["ran"], worker)
+        self.assertEqual(worker["jobId"], admission["jobId"])
+        self.assertEqual(worker["continuationStatus"], "completed")
+        child_id = worker["newTaskId"]
+        child = repository.get_task(child_id)
+        self.assertEqual(child.status, PersistentTaskStatus.COMPLETED)
+        self.assertEqual(child.scope_path, original.scope_path)
+        self.assertEqual(child.item_limit, original.item_limit)
+        self.assertEqual(child.configuration_snapshot_id, original.configuration_snapshot_id)
+        self.assertEqual(
+            child.configuration_snapshot_digest, original.configuration_snapshot_digest
+        )
+        self.assertEqual(
+            [item.source_path for item in repository.list_items(child_id)],
+            [seeded["remainingSource"]],
+        )
+        self.assertEqual(
+            [item.source_path for item in repository.list_items(source_task_id)],
+            [seeded["recordedSource"]],
+        )
+        self.assertEqual(repository.get_task(source_task_id), original)
 
-        status, overview = request(api, f"/api/v1/operations/runs/{task.task_id}")
-        self.assertEqual(status, 200, overview)
-        continuation = overview["continuation"]
-        self.assertEqual(continuation["continuationId"], submission.continuation.continuation_id)
-        self.assertEqual(continuation["status"], "completed")
-        self.assertEqual(continuation["newTaskId"], child.task_id)
-        self.assertEqual(continuation["jobId"], submission.job.job_id)
-        self.assertEqual(continuation["attemptCount"], 1)
-        self.assertEqual(continuation["sideEffects"], "none")
-        # The bounded projection never publishes the internal scope or the pin.
-        payload = json.dumps(overview)
-        self.assertNotIn("Media/Five", payload)
-        self.assertNotIn("scope_path", payload)
-        self.assertNotIn(str(self.root), payload)
+        for reopened in (False, True):
+            with self.subTest(reopened=reopened):
+                if reopened:
+                    state.restart()
+                status, overview = request(
+                    state.api,
+                    f"/api/v1/operations/runs/{source_task_id}",
+                    token=h.HARNESS_TOKEN,
+                )
+                self.assertEqual(status, 200, overview)
+                continuation = overview["continuation"]
+                self.assertEqual(
+                    continuation["continuationId"],
+                    admission["continuation"]["continuationId"],
+                )
+                self.assertEqual(continuation["status"], "completed")
+                self.assertEqual(continuation["newTaskId"], child_id)
+                self.assertEqual(continuation["jobId"], admission["jobId"])
+                self.assertEqual(continuation["attemptCount"], 1)
+                self.assertEqual(continuation["sideEffects"], "none")
+                linked_status, linked = request(
+                    state.api,
+                    f"/api/v1/operations/runs/{child_id}",
+                    token=h.HARNESS_TOKEN,
+                )
+                self.assertEqual(linked_status, 200, linked)
+                self.assertEqual(linked["task_id"], child_id)
+                self.assertEqual(linked["status"], "completed")
+                # The bounded projection never publishes the internal scope or pin.
+                payload = json.dumps(overview)
+                self.assertNotIn("Five.2005", payload)
+                self.assertNotIn("scope_path", payload)
+                self.assertNotIn(str(self.root), payload)
 
 
 class ScopeContinuationAuthorityWiringTests(unittest.TestCase):
