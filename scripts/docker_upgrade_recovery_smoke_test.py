@@ -1133,6 +1133,19 @@ def upgrade_recovery_smoke(
         root = Path(directory)
         os.chmod(root, 0o755)
         config_file, environment_file, source_root, target_root = prepare_files(root, token)
+        # The schedule-audit fixture must name a real supported schedule in
+        # the published runtime. Disabled keeps this history proof effect-free.
+        document = json.loads(config_file.read_text(encoding="utf-8"))
+        document.setdefault("automation", {}).setdefault("schedules", []).append(
+            {
+                "id": SCHEDULE_ID,
+                "command": "organize",
+                "intervalSeconds": 3600,
+                "limit": 1,
+                "enabled": False,
+            }
+        )
+        config_file.write_text(json.dumps(document), encoding="utf-8")
         # A real ResourceLibrary-relative source for the post-upgrade discovery
         # persistence check.  The source mount stays read-only in production, so
         # the file is created on the host before the stack starts.
