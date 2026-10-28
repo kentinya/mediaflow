@@ -382,6 +382,36 @@ Web重试；已替换为真实只读/不重放断言，并在现有业务冲突�
 | typecheck、lint、改动spec prettier、Python ruff/format、compileall、governance、diff whitespace | 通过 |
 | forbidden dependency scan（FFmpeg/FFprobe） | 无匹配，预期exit 1 |
 
+```bash
+cd /Users/songzhidong/mediaflow
+.venv/bin/python -m unittest tests.test_automation_definition_publication \
+  tests.test_v2_automation_lifecycle tests.test_automation_task_definition \
+  tests.test_automation_definition_execution tests.test_automation_run_once \
+  tests.test_v2_automation_run_once tests.test_automation_authorized_execution_matrix \
+  tests.test_automation_definition_occurrence tests.test_automation_admission \
+  tests.test_automation_job_fencing tests.test_scope_continuation \
+  tests.test_operations_task_center tests.test_task_center_recovery_lineage \
+  tests.test_automation_execution_intent tests.test_processing_worker_readiness \
+  tests.test_operations_run_inventory tests.test_configuration_snapshot \
+  tests.test_preview_retirement tests.test_manual_operations_contract \
+  tests.test_automation_workspace_read_model tests.test_configuration_successor_draft \
+  tests.test_configuration_classification tests.test_configuration_destination \
+  tests.test_configuration_destination_activation \
+  tests.test_configuration_destination_precheck tests.test_configuration_organize \
+  tests.test_task_persistence
+cd web
+npm run test -- run src/entities/operations/automation.test.ts \
+  src/entities/operations/automation-lifecycle.test.ts \
+  src/entities/operations/run-once.test.ts \
+  src/features/operations/AutomationLifecyclePage.test.tsx \
+  src/features/operations/AutomationRunOncePage.test.tsx \
+  src/features/operations/AutomationWorkspaceReadModel.test.tsx \
+  src/features/operations/AutomationRouter.test.tsx
+npm run test:e2e -- --config=playwright.python.config.ts tests/e2e/automation-lifecycle.python.spec.ts
+npm run test:e2e -- --config=playwright.python.config.ts tests/e2e/automation-run-once.python.spec.ts \
+  --grep 'disabled published definition runs once|successful sibling'
+```
+
 native继续使用上一候选已构建的`web/dist`；本轮未改Web生产源码，只改spec，故未重新build。
 B需按原计划fresh build后重跑完整T4。B日志中`test_manual_operations_contract`全量失败的原因同为
 schema53 Worker被按52判定；schema默认修复后该模块独立通过，不是放宽fixture比较。
