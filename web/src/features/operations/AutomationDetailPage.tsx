@@ -3,15 +3,9 @@
  *
  * Shows the exact immutable Active identity, the distinct open successor Draft
  * with its optimistic version, truthful schedule/occurrence state, the
- * unattended grant state with the backend's admission eligibility, and only
+ * saved execution readiness, and only
  * the cooperative actions the backend advertises for the exact principal.
- * Grant requires an explicit confirmation; revocation is exact-object and
- * never rewrites completed effects. Reading mutates nothing.
- *
- * The durable exact-Preview admission carries a client-generated request
- * identity: a lost or malformed response is an *unknown* durable outcome, so
- * the exact context is retained (principal-scoped) and reconciled by its own
- * request id before any resubmission is offered.
+ * Checked definition editing owns schedule changes. Reading mutates nothing.
  */
 
 import { useState } from "react";
@@ -21,8 +15,6 @@ import { useAuthToken } from "../../shared/api/auth-context";
 import {
   createAutomationSuccessorDraft,
   copyAutomationDefinition,
-  grantAutomationAuthority,
-  revokeAutomationAuthority,
 } from "../../shared/api/api-client";
 import {
   automationDefinitionQueryKey,
@@ -52,7 +44,6 @@ export function AutomationDetailPage() {
   // The exact workspace list state this page was opened from, so the back
   // link restores the same tab/filters/page instead of the workspace default.
   const listReturn = useAutomationListReturn();
-  const [confirmGrant, setConfirmGrant] = useState(false);
   const [error, setError] = useState<string | null>(null);
   const detailQuery = useQuery(
     automationDefinitionQueryOptions(token, definitionId),
@@ -105,40 +96,6 @@ export function AutomationDetailPage() {
     },
   });
 
-  const grantMutation = useMutation({
-    mutationFn: (revisionId: string) =>
-      grantAutomationAuthority(token, { definitionId, revisionId }),
-    retry: false,
-    onMutate: () => {
-      setError(null);
-      setConfirmGrant(false);
-    },
-    onSuccess: (result) => {
-      if (result.ok) {
-        invalidate();
-        return;
-      }
-      setError(
-        `The grant was rejected (${result.code}). Read the current eligibility and try again; nothing is retried automatically.`,
-      );
-    },
-  });
-
-  const revokeMutation = useMutation({
-    mutationFn: () => revokeAutomationAuthority(token, { definitionId }),
-    retry: false,
-    onMutate: () => setError(null),
-    onSuccess: (result) => {
-      if (result.ok) {
-        invalidate();
-        return;
-      }
-      setError(
-        `The revocation was rejected (${result.code}). Reload the durable grant state and try again.`,
-      );
-    },
-  });
-
   return (
     <AuthorizedReadBoundary
       query={detailQuery}
@@ -171,8 +128,7 @@ export function AutomationDetailPage() {
         }
         const definition = data.model;
         const doc = definition.document;
-        const grant = definition.grant;
-        const eligibility = definition.grantEligibility;
+        const readiness = definition.executionReadiness;
         return (
           <div className="mf-dashboard">
             <header className="mf-dashboard-head">
@@ -288,100 +244,23 @@ export function AutomationDetailPage() {
               </div>
             </section>
             <section className="mf-count-section">
-              <h3>Unattended authority</h3>
-              {grant.status === "none" ? (
-                <p className="mf-dashboard-meta">
-                  No unattended execution grant exists for this definition.
-                </p>
-              ) : (
-                <dl>
-                  <dt>Grant state</dt>
-                  <dd>{displayEnum(grant.status)}</dd>
-                  <dt>Granted by</dt>
-                  <dd>{grant.grantingPrincipal ?? "unknown"}</dd>
-                  <dt>Max items per run</dt>
-                  <dd>{grant.maxItemsPerRun ?? "unbounded"}</dd>
-                  <dt>Definition changed since grant</dt>
-                  <dd>{grant.definitionChangedSinceGrant ? "yes" : "no"}</dd>
-                  {grant.currentPermission && (
-                    <>
-                      <dt>Granting principal permission</dt>
-                      <dd>
-                        {displayEnum(grant.currentPermission.status)} ·{" "}
-                        {grant.currentPermission.allowed
-                          ? "allowed"
-                          : "not allowed"}
-                      </dd>
-                    </>
-                  )}
-                </dl>
+              <h3>Execution readiness</h3>
+              {readiness !== null && (
+                <>
+                  <p>{readiness.state}</p>
+                  <p>{readiness.explanation}</p>
+                  <p>{readiness.nextAction}</p>
+                </>
               )}
-              <p className="mf-dashboard-meta">{grant.nextAction}</p>
-              {eligibility !== null && (
-                <p className="mf-dashboard-meta">
-                  {eligibility.eligible
-                    ? "Grant eligibility: this exact published definition, its scope bounds and the current permission satisfy the unattended grant."
-                    : `Grant eligibility: ${eligibility.explanation}`}
-                </p>
+              {definition.definitionState === "active" && (
+                <Link
+                  className="mf-button mf-button-secondary"
+                  to="/operations/automation/lifecycle/$definitionId"
+                  params={{ definitionId }}
+                >
+                  Edit saved definition
+                </Link>
               )}
-              {eligibility !== null &&
-                eligibility.eligible &&
-                definition.actions.grant.available && (
-                  <div className="mf-actions">
-                    <label>
-                      <input
-                        type="checkbox"
-                        checked={confirmGrant}
-                        aria-label="Confirm unattended execution grant"
-                        onChange={(event) =>
-                          setConfirmGrant(event.target.checked)
-                        }
-                      />{" "}
-                      I confirm the exact bounded unattended authority
-                    </label>
-                    <Button
-                      type="button"
-                      disabled={
-                        !confirmGrant ||
-                        grantMutation.isPending ||
-                        definition.activeConfiguration === null
-                      }
-                      onClick={() => {
-                        // The unattended authority is bound to this exact
-                        // published definition revision, its scope bounds and
-                        // the current principal permission. No analysis or
-                        // Preview identity is an execution authority.
-                        const revisionId =
-                          definition.activeConfiguration?.revisionId;
-                        if (revisionId) {
-                          grantMutation.mutate(revisionId);
-                        }
-                      }}
-                    >
-                      {grantMutation.isPending
-                        ? "Granting…"
-                        : "Grant unattended authority"}
-                    </Button>
-                  </div>
-                )}
-              {grant.status === "active" &&
-                definition.actions.revoke.available && (
-                  <div className="mf-actions">
-                    <Button
-                      type="button"
-                      disabled={revokeMutation.isPending}
-                      onClick={() => revokeMutation.mutate()}
-                    >
-                      {revokeMutation.isPending ? "Revoking…" : "Revoke grant"}
-                    </Button>
-                  </div>
-                )}
-              {!definition.actions.grant.available &&
-                definition.actions.grant.reason && (
-                  <p className="mf-dashboard-meta">
-                    {definition.actions.grant.reason}
-                  </p>
-                )}
             </section>
             <section className="mf-count-section">
               <h3>Definition actions</h3>

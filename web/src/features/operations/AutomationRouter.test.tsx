@@ -135,6 +135,12 @@ function definitionDocument(
       validatedAt: null,
       validationErrors: [],
     },
+    executionReadiness: {
+      state: "enabled",
+      explanation:
+        "The saved schedule is enabled; runtime checks remain required.",
+      nextAction: "Review the saved scope and limits.",
+    },
     grantEligibility: {
       eligible: true,
       status: "eligible",
@@ -368,6 +374,11 @@ function draftOnlyDefinitionDocument(
     id: "created-task",
     name: "Created automation",
     definitionState: "draft-only",
+    executionReadiness: {
+      state: "draft-only",
+      explanation: "Not consumed by runtime.",
+      nextAction: "Review the Draft.",
+    },
     enabled: false,
     resourceLibraryId: "source",
     mode: "automatic-organization",
@@ -695,64 +706,36 @@ describe("V2 Automation journey", () => {
     expect(screen.queryByRole("link", { name: "新建自动化任务" })).toBeNull();
   });
 
-  it("grants unattended authority with one explicit confirmed action and no authority material", async () => {
-    const user = userEvent.setup();
+  it("reads execution readiness without exposing independent grant controls", async () => {
     const { calls } = recordingFetch((call) => {
       if (
         call.url === "/api/v1/operations/automation/task-definitions/auto-task"
       ) {
-        return jsonResponse({ definition: definitionDocument() });
-      }
-      if (call.url === "/api/v1/automation/task-definitions/auto-task/grant") {
-        return jsonResponse({ grant: { status: "active", active: true } }, 201);
+        const value = definitionDocument();
+        delete value.unattendedExecutionGrant;
+        delete value.grantEligibility;
+        return jsonResponse({ definition: value });
       }
       return undefined;
     });
     authStore.setToken(TOKEN);
     renderApp("/ui-v2/operations/automation/definition/auto-task");
-
     await screen.findByRole("heading", { name: /Automation definition/ });
-    const confirm = await screen.findByLabelText(
-      "Confirm unattended execution grant",
-    );
-    const grantButton = screen.getByRole("button", {
-      name: "Grant unattended authority",
-    });
-    expect(grantButton).toBeDisabled();
-    await user.click(confirm);
-    await user.click(grantButton);
-
-    await waitFor(() =>
-      expect(
-        calls.some(
-          (item) =>
-            item.url ===
-              "/api/v1/automation/task-definitions/auto-task/grant" &&
-            item.method === "POST",
-        ),
-      ).toBe(true),
-    );
-    const grant = calls.find(
-      (item) =>
-        item.url === "/api/v1/automation/task-definitions/auto-task/grant",
-    );
-    // The unattended authority is bound to the exact published definition
-    // revision and the principal's current permission, not to any analysis or
-    // retired Preview identity.
-    expect(grant?.body).toMatchObject({
-      confirmation: true,
-      revisionId: "revision-active-1",
-    });
-    expect(grant?.body).not.toHaveProperty("previewId");
-    expect(JSON.stringify(grant?.body)).not.toMatch(
-      /digest|fingerprint|token|secret/i,
-    );
     expect(
-      calls.filter(
-        (item) =>
-          item.url === "/api/v1/automation/task-definitions/auto-task/grant",
-      ),
-    ).toHaveLength(1);
+      screen.getByRole("heading", { name: "Execution readiness" }),
+    ).toBeVisible();
+    expect(
+      screen.getByRole("link", { name: "Edit saved definition" }),
+    ).toBeVisible();
+    expect(
+      screen.queryByLabelText("Confirm unattended execution grant"),
+    ).toBeNull();
+    expect(
+      screen.queryByRole("button", { name: "Grant unattended authority" }),
+    ).toBeNull();
+    expect(screen.queryByRole("button", { name: "Revoke grant" })).toBeNull();
+    expect(calls.every((call) => call.method === "GET")).toBe(true);
+    expect(calls.some((call) => call.url.includes("grant"))).toBe(false);
   });
 
   it("saves the bounded Draft form and never submits a digest", async () => {

@@ -858,6 +858,42 @@ describe("normalizeAutomationDefinitionsPage", () => {
       },
       actions,
     };
+    const readiness = {
+      state: "enabled",
+      explanation: "Checks remain required.",
+      nextAction: "Inspect current state.",
+    };
+    const detail = {
+      ...activeDefinition,
+      unattendedExecutionGrant: undefined,
+      executionReadiness: readiness,
+    };
+    expect(
+      normalizeAutomationDefinition(detail, "definition", {
+        withReadiness: true,
+      }).executionReadiness?.state,
+    ).toBe("enabled");
+    for (const malformed of [
+      null,
+      {},
+      { ...readiness, state: "ready" },
+      { ...readiness, explanation: 12 },
+    ]) {
+      expect(() =>
+        normalizeAutomationDefinition(
+          { ...detail, executionReadiness: malformed },
+          "definition",
+          { withReadiness: true },
+        ),
+      ).toThrow();
+    }
+    expect(() =>
+      normalizeAutomationDefinition(
+        { ...detail, itemLimit: "bad" },
+        "definition",
+        { withReadiness: true },
+      ),
+    ).toThrow();
     // A definition whose state marker is missing, hostile or claims Active
     // while it only lives in a Draft is malformed evidence: the UI renders
     // no control instead of guessing.

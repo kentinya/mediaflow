@@ -962,7 +962,13 @@ export interface AutomationDefinitionModel {
   readonly nextAction: string | null;
   readonly lastFailureCategory: string | null;
   readonly outcomeSummary: AutomationOutcomeSummaryModel | null;
-  readonly grant: AutomationGrantStateModel;
+  readonly grant: AutomationGrantStateModel | null;
+  readonly executionReadiness: {
+    readonly state:
+      "enabled" | "disabled" | "unavailable" | "historical" | "draft-only";
+    readonly explanation: string;
+    readonly nextAction: string;
+  } | null;
   readonly draftState: AutomationDraftStateModel;
   readonly activeConfiguration: AutomationActiveConfigurationModel | null;
   readonly grantEligibility: AutomationEligibilityModel | null;
@@ -970,9 +976,9 @@ export interface AutomationDefinitionModel {
     readonly detail: AutomationActionModel;
     readonly occurrences: AutomationActionModel;
     readonly runOnce: AutomationActionModel;
-    readonly grantState: AutomationActionModel;
-    readonly grant: AutomationActionModel;
-    readonly revoke: AutomationActionModel;
+    readonly grantState: AutomationActionModel | null;
+    readonly grant: AutomationActionModel | null;
+    readonly revoke: AutomationActionModel | null;
     readonly copy: AutomationActionModel;
     readonly draftCreate: AutomationActionModel;
   };
@@ -981,7 +987,7 @@ export interface AutomationDefinitionModel {
 export function normalizeAutomationDefinition(
   value: unknown,
   field = "definition",
-  { withEligibility = false }: { withEligibility?: boolean } = {},
+  { withReadiness = false }: { withReadiness?: boolean } = {},
 ): AutomationDefinitionModel {
   const source = readRecord(value, field);
   const document = normalizeAutomationDefinitionDocument(source, field);
@@ -1014,20 +1020,36 @@ export function normalizeAutomationDefinition(
       occurrence["outcomeSummary"],
       `${field}.occurrenceState.outcomeSummary`,
     ),
-    grant: normalizeAutomationGrantState(
-      source["unattendedExecutionGrant"] ?? source["grant"],
-      `${field}.grant`,
-    ),
+    grant: withReadiness
+      ? null
+      : normalizeAutomationGrantState(
+          source["unattendedExecutionGrant"] ?? source["grant"],
+          `${field}.grant`,
+        ),
     draftState,
     activeConfiguration: normalizeAutomationActiveConfiguration(
       source["activeConfiguration"],
       `${field}.activeConfiguration`,
     ),
-    grantEligibility: withEligibility
-      ? normalizeAutomationEligibility(
-          source["grantEligibility"],
-          `${field}.grantEligibility`,
-        )
+    grantEligibility: null,
+    executionReadiness: withReadiness
+      ? (() => {
+          const readiness = readRecord(
+            source["executionReadiness"],
+            `${field}.executionReadiness`,
+          );
+          return {
+            state: enumOrFail(readiness["state"], "executionReadiness.state", [
+              "enabled",
+              "disabled",
+              "unavailable",
+              "historical",
+              "draft-only",
+            ] as const),
+            explanation: text(readiness, "explanation"),
+            nextAction: text(readiness, "nextAction"),
+          };
+        })()
       : null,
     actions: {
       detail: normalizeAutomationAction(
@@ -1048,24 +1070,30 @@ export function normalizeAutomationDefinition(
         "definition-run-once",
         identity,
       ),
-      grantState: normalizeAutomationAction(
-        actions["grantState"],
-        `${field}.actions.grantState`,
-        "definition-grant-state",
-        identity,
-      ),
-      grant: normalizeAutomationAction(
-        actions["grant"],
-        `${field}.actions.grant`,
-        "definition-grant",
-        identity,
-      ),
-      revoke: normalizeAutomationAction(
-        actions["revoke"],
-        `${field}.actions.revoke`,
-        "definition-revoke",
-        identity,
-      ),
+      grantState: withReadiness
+        ? null
+        : normalizeAutomationAction(
+            actions["grantState"],
+            `${field}.actions.grantState`,
+            "definition-grant-state",
+            identity,
+          ),
+      grant: withReadiness
+        ? null
+        : normalizeAutomationAction(
+            actions["grant"],
+            `${field}.actions.grant`,
+            "definition-grant",
+            identity,
+          ),
+      revoke: withReadiness
+        ? null
+        : normalizeAutomationAction(
+            actions["revoke"],
+            `${field}.actions.revoke`,
+            "definition-revoke",
+            identity,
+          ),
       copy: normalizeAutomationAction(
         actions["copy"],
         `${field}.actions.copy`,
@@ -1783,7 +1811,7 @@ export function normalizeAutomationDefinitionsPage(
     ),
     items: rawItems.map((item) =>
       normalizeAutomationDefinition(item, "items[]", {
-        withEligibility: false,
+        withReadiness: false,
       }),
     ),
     total: count(source, "total"),

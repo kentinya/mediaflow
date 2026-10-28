@@ -382,6 +382,34 @@ class AutomationOperatorJourneyTests(unittest.TestCase):
             "expectedVersion": draft["revisionVersion"],
         }
 
+    def test_detail_does_not_read_retired_grant_dependencies(self) -> None:
+        from unittest.mock import patch
+
+        with self._journey() as value:
+            with (
+                patch.object(
+                    value.api._unattended_grants, "project", side_effect=RuntimeError("unavailable")
+                ),
+                patch.object(
+                    value.api._unattended_grants,
+                    "get_for_definition",
+                    side_effect=RuntimeError("unavailable"),
+                ),
+                patch.object(
+                    value.api,
+                    "_automation_grant_eligibility",
+                    side_effect=AssertionError("retired dependency"),
+                ),
+            ):
+                status, detail = _request(value.api, f"{OPERATIONS_ROUTE}/{_DEFINITION['id']}")
+                self.assertEqual(status, 200)
+                self.assertEqual(detail["definition"]["executionReadiness"]["state"], "enabled")
+                self.assertNotIn("grantEligibility", detail["definition"])
+                self.assertEqual((), value.runtime.list_tasks())
+                self.assertEqual((), value.runtime.list_jobs())
+                self.assertEqual([], value.source.mutations)
+                self.assertEqual([], value.target.mutations)
+
     def test_operator_list_and_detail_are_bounded_and_permission_aware(self) -> None:
         with self._journey() as value:
             status, page = _request(value.api, OPERATIONS_ROUTE)
@@ -447,14 +475,11 @@ class AutomationOperatorJourneyTests(unittest.TestCase):
                 operator["activeConfiguration"]["revisionId"], value.active.revision_id
             )
             self.assertIn("occurrenceState", operator)
-            self.assertIn("unattendedExecutionGrant", operator)
-            eligibility = operator["grantEligibility"]
-            # With a fresh shared analysis the exact definition bounds and current
-            # permission satisfy the persisted grant bounds; the retired
-            # independent Preview product is not a prerequisite.
-            self.assertEqual(eligibility["eligible"], True)
-            self.assertEqual(eligibility["status"], "eligible")
-            self.assertNotIn("previewId", eligibility)
+            self.assertNotIn("unattendedExecutionGrant", operator)
+            self.assertNotIn("grantEligibility", operator)
+            self.assertEqual(operator["executionReadiness"]["state"], "enabled")
+            for key in ("grant", "grantState", "revoke"):
+                self.assertNotIn(key, operator["actions"])
 
     def test_draft_journey_composes_existing_routes_atomically(self) -> None:
         with self._journey() as value:
@@ -1384,8 +1409,7 @@ class AutomationOperatorJourneyTests(unittest.TestCase):
             run_once_action = self._action(operator, "runOnce")
             self.assertFalse(run_once_action["available"])
             self.assertIn("Draft", run_once_action["reason"])
-            grant_action = self._action(operator, "grant")
-            self.assertFalse(grant_action["available"])
+            self.assertNotIn("grant", operator["actions"])
             self.assertNotIn("grantEligibility", operator)
 
             # The bounded occurrence history stays readable and empty.

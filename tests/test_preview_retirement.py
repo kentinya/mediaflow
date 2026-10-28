@@ -317,7 +317,6 @@ class RetainedAuthorizationPrecedentTests(unittest.TestCase):
     def test_grant_requires_the_shared_analysis_then_admits_it(self):
         from tests.test_v2_automation_operations import (
             _DEFINITION,
-            OPERATIONS_ROUTE,
             AutomationOperatorJourneyTests,
             _request,
         )
@@ -339,19 +338,24 @@ class RetainedAuthorizationPrecedentTests(unittest.TestCase):
             self.assertEqual(value.source.mutations, [])
             self.assertEqual(value.target.mutations, [])
 
-            # The eligibility projection agrees with the durable admission.
-            status, detail = _request(api, f"{OPERATIONS_ROUTE}/{_DEFINITION['id']}")
+            # The retained legacy grant-state route agrees with its legacy admission;
+            # ordinary V2 detail no longer consumes that eligibility.
+            status, detail = _request(
+                api, f"/api/v1/automation/task-definitions/{_DEFINITION['id']}/grant-state"
+            )
             self.assertEqual(200, status)
-            eligibility = detail["definition"]["grantEligibility"]
+            eligibility = detail["grantEligibility"]
             self.assertFalse(eligibility["eligible"])
             self.assertNotIn("previewId", eligibility)
 
             # A real definition-bound Run once produces the shared analysis.
             preview_id = journey._run_shared_analysis(value)
             self.assertTrue(preview_id)
-            status, detail = _request(api, f"{OPERATIONS_ROUTE}/{_DEFINITION['id']}")
+            status, detail = _request(
+                api, f"/api/v1/automation/task-definitions/{_DEFINITION['id']}/grant-state"
+            )
             self.assertEqual(200, status)
-            self.assertTrue(detail["definition"]["grantEligibility"]["eligible"])
+            self.assertTrue(detail["grantEligibility"]["eligible"])
 
             # The same confirmed grant now succeeds, still with zero mutation.
             status, granted = _request(

@@ -124,6 +124,28 @@ test("one checked Save publishes the definition and a reload confirms durable tr
   expect(state.definitions[0]?.enabled).toBe(false);
   expect(state.definitions[0]?.resourceLibraryId).toBe("source");
 
+  // The ordinary detail route consumes the real Python contract while disabled.
+  // Reading does not depend on an independent grant or start work.
+  await connectOn(
+    page,
+    `/ui-v2/operations/automation/definition/${DEFINITION_ID}`,
+  );
+  await expect(
+    page.getByRole("heading", { name: /Automation definition Harness/ }),
+  ).toBeVisible();
+  await expect(
+    page.getByRole("heading", { name: "Execution readiness" }),
+  ).toBeVisible();
+  await expect(
+    page.getByText(
+      "The saved schedule is disabled; it emits no new scheduled work.",
+    ),
+  ).toBeVisible();
+  await expect(
+    page.getByRole("button", { name: "Grant unattended authority" }),
+  ).toHaveCount(0);
+  expect((await harnessState(page)).occurrenceTotal).toBe(0);
+
   // The published definition is durable across a real runtime restart, and the
   // create was one POST against the focused publication route.
   await page.request.post("/__harness__/restart");

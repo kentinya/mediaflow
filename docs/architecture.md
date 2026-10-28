@@ -846,6 +846,17 @@ authority, scope, capabilities, conflicts and current snapshot at each mutation 
 blocks future mutation without rewriting completed effects. Uncertain mutation is not automatically
 replayed.
 
+### CURRENT implementation amendment — Automation definition detail (Task46.5 in progress)
+
+The ordinary V2 definition detail read no longer queries grant eligibility or the grant projection.
+It reads the saved definition, occurrence history and publication/Draft identity, and publishes a
+bounded `executionReadiness` state (enabled, disabled, unavailable, historical or draft-only).
+Enabled describes the saved schedule; it does not certify an executable plan or bypass runtime
+permission/source/effect checks. The detail page exposes checked definition editing and no grant/
+revoke controls. Removed definitions remain read-only history; reads create no work or media effects.
+Other Automation intent/admission changes in the Slice46 TARGET above remain in progress; this
+amendment does not claim their delivery or replace the historical Slice43 acceptance below.
+
 ### CURRENT — V2 Automation workspace and consumed engine settings (Slice43 PASS / CLOSED)
 
 Slice43 is PASS / CLOSED at implementation `97316131946bdecc483b684f6e6f6ecb98c5594d` after

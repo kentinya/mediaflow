@@ -5717,7 +5717,7 @@ export async function fetchAutomationDefinition(
     return {
       ok: true,
       model: normalizeAutomationDefinition(source?.definition, "definition", {
-        withEligibility: true,
+        withReadiness: true,
       }),
     };
   } catch {

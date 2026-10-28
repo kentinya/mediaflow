@@ -17576,26 +17576,50 @@ class MediaFlowApi:
         projected = self._automation_occurrences.project_definition(
             raw,
             configuration=active.summary(),
+            _grant=None,
         )
-        eligibility = None
-        if in_active and definition is not None:
-            persisted = self._unattended_grants.get_for_definition(definition.definition_id)
-            eligibility = self._automation_grant_eligibility(
-                active, definition, principal, persisted=persisted
-            )
+        operator = self._automation_definition_operator_document(
+            projected,
+            principal=principal,
+            active=active,
+            draft=draft,
+            in_active=in_active,
+            historical=historical,
+        )
+        for key in ("unattendedExecutionGrant", "grant", "grantEligibility"):
+            operator.pop(key, None)
+        for key in ("grantState", "grant", "revoke"):
+            operator["actions"].pop(key, None)
+        state = "enabled" if raw.get("enabled", True) else "disabled"
+        if historical:
+            state = "historical"
+        elif not in_active:
+            state = "draft-only"
+        elif definition is None:
+            state = "unavailable"
+        operator["executionReadiness"] = {
+            "state": state,
+            "explanation": {
+                "enabled": "The saved schedule is enabled. Each run still checks current "
+                "execution permission, source availability and its actual plans before effects.",
+                "disabled": "The saved schedule is disabled; it emits no new scheduled work.",
+                "historical": "This definition was removed; retained history is read-only.",
+                "draft-only": (
+                    "This definition is saved only in a Draft and is not consumed by runtime."
+                ),
+                "unavailable": "The saved definition cannot currently be consumed safely.",
+            }[state],
+            "nextAction": (
+                "inspect retained results; removed work is never restarted by reading history"
+                if historical
+                else "review the saved scope and limits in the checked definition editor"
+            ),
+        }
         return self._response(
             start_response,
             200,
             {
-                "definition": self._automation_definition_operator_document(
-                    projected,
-                    principal=principal,
-                    active=active,
-                    draft=draft,
-                    eligibility=eligibility,
-                    in_active=in_active,
-                    historical=historical,
-                ),
+                "definition": operator,
                 "activeConfiguration": self._automation_active_configuration(active),
             },
         )
