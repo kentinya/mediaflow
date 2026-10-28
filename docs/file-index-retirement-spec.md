@@ -3,7 +3,8 @@
 本文件保留 Slice45 已验收的 CURRENT 退役合同；稳定要求为
 [V2-FILES-005/006](v2-requirements.md)。完整 Contract 与验收证据见
 `13ecfc0e75fc34ff0ae489e655124a178943cba4:SLICE.md`，当前状态见 [Progress](progress.md)。
-后续 TARGET 修订以当前 [SLICE.md](../SLICE.md) 为准，不撤销 FileIndex 退役及其安全边界。
+后续整理受理和页面归属按已验收的 [V2 Requirements](v2-requirements.md) 与现行旅程，
+不撤销 FileIndex 退役及其安全边界。
 
 ## 1. 用户旅程与范围
 

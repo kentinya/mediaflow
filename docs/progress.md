@@ -16,26 +16,18 @@ AC-1–18, independent final review and evidence limits. B's complete Closure Pa
 [TASK.md](../TASK.md) has no active implementation Task. Next: **A SELECTS THE NEXT LARGE SLICE**.
 No next Slice is selected by this closure.
 
-Historical Slice43 resumption and Slice44 audit/review packets remain in Git at
-`22a23cc61686eb2c72ce56ea0b6cc3dea4380bf4:docs/reviews/`; closed-stage packets are not current work.
+The ledger below retains each closure's original Base/accepted Head, delivered scope and deferrals.
+Current amendments may replace behavior without rewriting an older acceptance. Detailed43
+resumption/hold/integration and44 review records are reachable at
+`22a23cc61686eb2c72ce56ea0b6cc3dea4380bf4:docs/reviews/`; complete accepted43 Contract/A review
+at `e9f1a8dc607cfc6d5ea02141b058da8ce849cd70:SLICE.md`, refreshed B packet at
+`0822e58fd687e402551e3224073cc8e8522192a0:TASK.md`; accepted45 Contract/Task at
+`13ecfc0e75fc34ff0ae489e655124a178943cba4:SLICE.md` / `TASK.md`.
 
-Slice43 remains **PASS / CLOSED** by A on 2026-10-24, reviewed from original Base
-`853973dbbf8289fa2ad40657033e94e870a690e4` through implementation
-`97316131946bdecc483b684f6e6f6ecb98c5594d`. A43-01 is resolved. The complete Contract and final
-review remain at `e9f1a8dc607cfc6d5ea02141b058da8ce849cd70:SLICE.md`; the refreshed B packet
-remains at `0822e58fd687e402551e3224073cc8e8522192a0:TASK.md`.
-
-The original Slice/Task Bases, prior rejected review, frozen hold and integration refs remain
-unchanged in local backups. Current-lineage equivalents after the user-authorized attribution
-update remain in that prior43 Contract; the ledger below keeps
-the original accepted review IDs. Full outcomes/T4, read-only records/Task Center recovery and
-accepted45 amendments are preserved. External-service/endurance profiles remain unavailable; test-time allocation deviations
-and the latest unmeasured denominator remain disclosed in the packets, not waived or transferred.
-
-Slice45 stays **PASS / CLOSED** at implementation `4fcb0028f987f8746f0a8aa7b309e360b07c598e`.
-Its full Contract/A review/evidence limits and last Task closure are retained at
-`13ecfc0e75fc34ff0ae489e655124a178943cba4:SLICE.md` / `TASK.md`. The ledger below records the exact
-accepted facts and deferrals at each closure; later43 resumption does not rewrite those entries.
+Original identities, `frozen/slice-43-2026-10-15` and integration-preservation refs remain unchanged
+in owner-local backups; attribution-update equivalents and exact refs remain in the prior43 Contract.
+External-service/endurance skips, original role/test-allocation exceptions and evidence limitations
+remain disclosed in those packets; they are not erased, waived or recast as a new acceptance.
 
 Testing ownership now follows [Development Workflow](development-workflow.md): Developer runs
 new/changed/affected tests; B owns full acceptance. This process change does not rewrite prior

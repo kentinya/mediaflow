@@ -1,6 +1,6 @@
 # Files Page Visual Specification
 
-Status: CURRENT visual baseline — accepted Slice37 with delivered38 route/card editing updates.
+Status: CURRENT visual baseline — accepted37/38 with accepted46 readable actions/local-status updates.
 Canonical immutable image: [`文件页.png`](pics/文件页.png), `1536 x 1024`.
 Current route: `/ui-v2/resourcelib/files`; MediaLibrary has its
 [separate specification](media-library-page-visual-spec.md). Old library URLs provide route recovery.
@@ -21,7 +21,8 @@ sibling stays not-found, without alternate-path guesses.
 
 Refresh reconciles directory-tree memory/selection against live Storage so externally removed/moved
 directories disappear. Keep the selected library/path when valid, or the bounded read-failure and
-recovery state when absent. Source organization remains behind exact analysis/separate confirmation.
+recovery state when absent. Explicit Files organizing admits its durable task before business
+readiness; exact analysis/summary and selected confirmation still precede media mutation.
 
 ## Shared Library Selector Presentation — 2026-09-24 A Revision
 
@@ -80,7 +81,7 @@ do not impose pixel-identical CSS geometry:
 | Top bar | Begins after the left rail, approximately `58 px` high |
 | Main page content | Starts inside the top bar and uses a wide constrained content area |
 | Page title block | Upper-left of the main content: `文件` followed by the subtitle |
-| Primary action | Upper-right of the title block: `+ 添加资源库` |
+| Header actions | Upper-right: `当前页面操作状态` immediately left of `+ 添加资源库`, with the same style |
 | Information banner | Full content-width light-blue band directly below the title block |
 | Library selector/context | Shared card strip showing `source` by name; selected context below shows `已启用` and `路径: /media/incoming` |
 | Directory pane | Left pane below the summary card, headed `目录` |
@@ -102,7 +103,7 @@ The Files screenshot must show the replacement shared V2 shell in the following 
 
 1. MediaFlow brand block at the top of the left rail.
 2. Navigation items, in order:
-   `首页`, `文件`, `媒体库`, `存储管理`, `整理规则`, `自动化`, `操作与任务`, `通知`, `系统设置`.
+   `首页`, `文件`, `媒体库`, `存储管理`, `整理规则`, `自动化`, `任务中心`, `通知`, `系统设置`.
 3. `文件` is the only active navigation item.
 4. No fabricated system-capacity or usage block is rendered at the bottom of the left rail.
 5. The top bar contains the search field, notification icon and `admin` account control.
@@ -273,7 +274,7 @@ configuration; the page must not present the ResourceLibrary as saved when activ
 
 ## Journey Contract
 
-The page must be documented and later implemented as one vertical journey:
+The current page completes one vertical journey:
 
 | Stage | Files page contract |
 |---|---|
@@ -287,7 +288,10 @@ The page must be documented and later implemented as one vertical journey:
 
 Viewing, refreshing, browsing and selecting are read-only. Common mutation commands are
 explicit and do not start merely by viewing or selecting. Any organize action continues
-through same-page analysis/plan summary, explicit intent and backend authority boundaries. The Files page must
+through its admitted task's analysis/plan summary, explicit selected execution and backend authority
+boundaries. Ordinary operation history/results/controls reopen in the centered `当前页面操作状态`
+modal after close/reload/reconnect/service restart, scoped to the originating library and kind;
+closing neither cancels nor replays work. The Files page must
 never use FileIndex to enumerate physical entries, resolve a selected path, construct source
 authority, expose credentials or grant execution authority, and it does not present
 recognition/business-status feedback. After a terminal Organize or direct file-operation result,
@@ -296,8 +300,8 @@ There is no FileIndex sync/reconciliation consumer; result/display failure never
 
 ## Acceptance
 
-Slice 37 was accepted only when all of the following were true. Item 6's historical index-sync
-obligation is superseded for CURRENT V2 by Slice45; the original acceptance remains historical:
+The following current obligations consolidate accepted37/38/45/46. Historical index-sync and
+Upload/Download delivery facts remain in the original Git closures; neither is a current feature:
 
 1. A deterministic screenshot at exactly `1536 x 1024` is captured and compared with
    `docs/pics/文件页.png` in the controlled browser/font environment. The report records observed
@@ -314,14 +318,13 @@ obligation is superseded for CURRENT V2 by Slice45; the original acceptance rema
       states with action-oriented recovery; error states do not rewrite the reference success state.
 5. `+ 添加资源库` creates a ResourceLibrary, and final `保存` invokes backend validation and
       activation as one user action; any error rejects the save and preserves the previous Active.
-6. FileIndex supplies no Files-page recognition/business-status feedback, and every
-      terminal Organize item attempts an automatic FileIndex synchronization without replaying media
-      mutation when synchronization fails.
+6. Live Storage supplies the file list; FileIndex/automatic index sync are absent. Explicit Files
+   organizing creates a task before business resolution, with exact summary/selected confirmation
+   before mutation. Ordinary operation status/results reopen locally without a center handoff or replay.
 7. Create Folder/Text File, Rename, Copy, Move, Delete and bounded text Edit
    complete through direct, low-friction backend-authoritative commands with explicit destructive/
    overwrite intent, bounded selection/recursion, partial-outcome recovery and
-   `OrganizerExecutor`-only mutation. Direct browser Upload and Download were delivered by the
-   original closure and later removed from the current product surface.
+   `OrganizerExecutor`-only mutation. No browser Upload/Download is offered.
 8. Non-Files V2 business journeys and route behavior remain functional inside the intentionally
       replaced shared shell, and V1 `/ui` remains unchanged.
 9. The implementation contains no unrelated provider, Storage-adapter or identity-system change;

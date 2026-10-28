@@ -56,27 +56,19 @@ production deployment remain explicit maintainer actions.
 
 ## Quality gate
 
-Run from a clean checkout with a supported Python version (3.11, 3.12, or 3.13):
+Use a clean checkout with a supported Python version (3.11, 3.12, or 3.13) and install the declared
+runtime/development dependencies. [Development Workflow §6](development-workflow.md#6-test-levels)
+owns the shared regression commands, applicable Web/native/package/safety gates, execution ownership
+and evidence-reuse rules. A release requires the gates appropriate to its exact target source and
+artifacts; older Slice acceptance is not a new release run.
 
-```bash
-python -m pip install -e ".[dev]"
-ruff format --check .
-ruff check .
-python -m unittest discover -s tests
-python -m compileall -q mediaflow tests scripts
-python -m pip check
-mediaflow --config config/strategy.example.json config validate
-mediaflow --config config/mediaflow.phase13.2.example.json config validate
-test -z "$(rg -n -i 'ffprobe|ffmpeg' mediaflow pyproject.toml || true)"
-git diff --check
-```
-
-Compatibility markers must be tied to the release line rather than presented as one ambiguous
-current value. The released V1 `v1.0.0` / `release/v1` line retains runtime SQLite schema `33`. The
-unreleased `main` / V2 development line currently uses runtime SQLite schema `34`,
-configuration-management schema `10`, and managed configuration document schema `1`. A release
-claim must be tied to the actual migration and upgrade evidence for the target revision, not to an
-old migration number.
+Compatibility markers belong to the target artifact and release line. Released V1 `v1.0.0` /
+`release/v1` retains runtime schema `33`. For unreleased `main`, the source authorities are
+[`SCHEMA_VERSION`](../mediaflow/infrastructure/sqlite_runtime.py),
+[`CONFIGURATION_SCHEMA_VERSION`](../mediaflow/infrastructure/sqlite_configuration_management.py)
+and the [managed document validator](../mediaflow/application/configuration_snapshot.py).
+Use the installed target's read-only `upgrade check` and actual migration/upgrade evidence rather
+than copying a mutable development schema number into a release claim.
 
 Build and validate the exact installable artifact in a new isolated environment:
 

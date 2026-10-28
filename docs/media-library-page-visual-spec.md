@@ -16,7 +16,7 @@ path only. Reuse the shared shell; this visual specification adds no unrelated F
 | Region | Required content and behavior |
 |---|---|
 | Shared shell | Existing left rail/top bar; `媒体库` active; `文件` selects ResourceLibrary Files; shared navigation/authentication. |
-| Header | `媒体库`; subtitle `选择媒体库，浏览其中的文件。媒体库用于存放已整理的媒体文件，支持文件的常规操作。`; `+ 添加媒体库`. |
+| Header | `媒体库`; subtitle `选择媒体库，浏览其中的文件。媒体库用于存放已整理的媒体文件，支持文件的常规操作。`; `当前页面操作状态` immediately left of `+ 添加媒体库`, with the same button style. |
 | Card strip | Enabled libraries with name only; blue selected state and independent action menu; accessible responsive overflow shared with ResourceLibrary Files. |
 | Selected-library context | Immediately below the cards, show only `已启用` and exact configured `路径: /...`; do not repeat the name or show Storage. |
 | Directory pane | `目录`, selected library root and lazy directories; exact relative identity and selected directory. |
@@ -96,7 +96,10 @@ it never fabricates removed entries to retain the tree.
 Common commands follow existing short dialogs and backend capabilities. Text is allowlisted/bounded;
 Delete is explicit; conflicts default to no overwrite. Copy/Move selects a MediaLibrary and confined
 directory. Durable progress, independent partial/uncertain outcomes and supported continuation remain
-available through Task/Operations after navigation/reconnection.
+available through this library page's centered `当前页面操作状态` modal after close/reload/reconnect/
+service restart. Its durable history, independent item evidence and existing permitted controls stay
+MediaLibrary-scoped; it never hands normal progress to Task Center or mixes ResourceLibrary work.
+Empty/loading/read-error and keyboard dismissal remain usable; closing neither cancels nor replays work.
 
 ## Visual Acceptance
 

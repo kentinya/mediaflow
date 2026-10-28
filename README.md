@@ -36,7 +36,8 @@ AWS/R2, other OpenList drivers, remote atomic publication, power loss or multi-h
 ## V2 development status
 
 `main` is the unreleased `2.0.0.dev0` Operator Web development trunk. Python `/api/v1/*` remains the
-business authority and V1 `/ui` remains available. [Roadmap](docs/roadmap.md) records priority/status,
+business authority and V1 `/ui` remains available. [Documentation](docs/README.md) maps document
+responsibilities. [Roadmap](docs/roadmap.md) records priority/status,
 [Progress](docs/progress.md) accepted closures, and [SLICE.md](SLICE.md)/[TASK.md](TASK.md) current work.
 Slice43 is PASS / CLOSED: native Automation lifecycle, bounded Run once, read-only records/statistics
 and engine settings with actual resident adoption are accepted. Slice45's Task Center and retired

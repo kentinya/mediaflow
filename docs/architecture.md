@@ -486,7 +486,7 @@ remaining scope, budget and immutable pin to one continuation Job and its eventu
 resident Worker reuses existing source revalidation, locks/leases/fences and checkpoint accounting;
 HTTP does not run the long work or shell out to CLI. Continue excludes successful/ignored/uncertain
 effects and rechecks applicable current authority. Persisted `execute_authorized` cannot reissue
-consumed one-shot authority or bypass unattended-grant revocation. A changed plan or insufficient
+consumed one-shot authority or bypass withdrawn scheduled intent/current permission checks. A changed plan or insufficient
 authority returns to native exact Preview and explicit execution intent. Schema44's nullable manual
 Preview origin-Task link preserves that continuation history without granting execution authority.
 
@@ -599,7 +599,7 @@ cannot create a new confirmable plan.
 No old Preview migration/takeover/history/cancel/export/V1-parity framework; no runtime/media clear or
 automatic rebuild. Fresh deployments contain no independent Preview schema, while supported organizing
 work reopens and recovers safely. These Slice45 contracts passed final review; necessary merged43
-coupling cleanup does not accept or resume its broader redesign.
+coupling cleanup did not itself accept the broader43 workspace; that was accepted separately.
 
 ## Manual organize
 
@@ -631,7 +631,7 @@ remain in force, and only `OrganizerExecutor` mutates Storage.
 
 ## CURRENT — Bounded folder discovery and safe restart
 
-ResourceLibrary Files list/grid and Operations admit folder or mixed selections to
+ResourceLibrary Files list/grid admits folder or mixed selections to
 `MediaDiscoveryService`, the resident discovery Worker and additive SQLite discovery/observation
 records. Admission pins actor, library kind/ID, Storage/root and immutable configuration; it
 reconciles equivalent open scopes independently of recent-list windows. Native status/progress,
@@ -686,152 +686,63 @@ combinations remains deferred. Frozen pins and completed/uncertain media effects
 or automatically replayed. Actual schema-38→45 and old schema-45 migration/reopen evidence retains
 frozen/file-only/discovery history; unsupported unfinished work has the safe-stop/new-discovery path.
 
-### CURRENT — Files-admitted organizing Task and verified source ownership (Task46.3)
+### CURRENT — Files-admitted organizing Task and verified source ownership (Slice46)
 
-A Files 整理 command now commits one **durable organizing Task before business readiness**. The
-admission transaction writes the Task (command `manual_organize`, queued status, execute authority,
-the pinned configuration snapshot and the admitted primary bound) together with the discovery record
-that owns the bounded walk, so the Task and its linked work are one durable outcome: a failure leaves
-neither, and the record can never name a Task that was not committed with it. Folder materialization,
-Provider lookups, target calculation and plan readiness all happen afterwards inside the resident
-Worker, exactly as before; the Task is the durable subject the operator's progress, four-type
-recovery and exact confirmation belong to. No execution authority is created at admission: only the
-existing exact plan summary and an explicitly confirmed OrganizerExecutor call may mutate media.
+Explicit Files 整理 commits the pinned queued `manual_organize` Task and its discovery record in one
+transaction before traversal, Provider/business decisions or plan readiness. The Task's organizing
+admission marker proves center membership; it is not permission to mutate. Manual execution still
+requires the exact reviewed summary and selected confirmation. Discovery owns bounded read-only
+work, TaskItems own their real findings/decisions, and only OrganizerExecutor mutates after all checks.
 
-The Task's aggregate state follows the real discovery stage. A completed or partial *walk* keeps the
-Task running, because its decisions or its confirmation are outstanding; a failed or cancelled
-admission settles it with the recorded explanation; a settled execution keeps its own outcome. A
-later discovery publication never reopens a Task that already reached a terminal execution outcome.
+Task state follows discovery/stability/analysis and controls. A completed/partial walk stays unfinished
+while decisions or initial confirmation remain; failed/cancelled work retains its cause. Later
+progress never reopens a terminal execution. One accepted manual work is counted once across its
+linked discovery/analysis/execution records. Exact verified per-item recovery may project Completed
+without rewriting original failed attempts; ignored/skipped/cancelled/technical/uncertain siblings
+never prove all-success.
 
-Admission is also a **per-request** outcome, not only a shared one. Several caller requests may
-legitimately converge on one open organizing work (a resubmission, a wider selection that contains an
-already admitted file, a different library-scoped folder). Each request therefore keeps its own durable
-row in the additive `media_discovery_admission_outcomes` table: its complete submitted selection, the
-items this request newly admitted, the items the same work already held, and its own refused items with
-their bounded reasons. The shared `media_discoveries` row still carries the one admitted scope, so a
-Worker progress publication or an operator control can never erase another request's answer, and a
-lost-response readback of request B never returns request A's evidence. The projection's
-`admissionRequestId` names the request whose result is being published, and the detail read accepts
-one optional `requestId` for the same purpose.
+Each caller request has its own durable `media_discovery_admission_outcomes` row: submitted scope,
+newly admitted/existing/refused items and reasons. Shared progress cannot overwrite another
+request's outcome. Convergence requires the same principal, library/Storage binding, immutable pin
+and admission kind. Only an open unfrozen manifest can widen within bounds; a failed extension
+reports every uncommitted/refused item, never silently drops a sibling. Another principal's owned
+source yields a bounded refusal without disclosing that principal's work ID or merging into it.
 
-**Verified source ownership** is separate from the short-lived execution lease. A concrete source is
-identified by its Storage plus its exact Storage-relative path and its *comparable content version* —
-never by a filename, a UI label or today's Active configuration. A TaskItem owns its source from
-admission until it reaches a settled state (`dry_run`, `success`, `skipped`, `cancelled`, `failed`,
-`ignored`), so queued, running, paused, waiting-for-decision and saved-decision work all keep their
-claim; a finished history row is therefore never a perpetual lock.
+Source ownership is independent of short-lived execution leases:
 
-The two questions "is this still the occurrence I reviewed?" and "is this still the same physical
-source, or a genuinely replaced file?" are deliberately answered by different evidence. The reviewed
-occurrence keeps the ResourceLibrary-scoped fingerprint digest, which covers the library identity and is
-therefore incomparable across two valid bindings of one Storage. Ownership needs a weaker, comparable
-fact: the observed size, modification instant and the set of provider validators that were present —
-no library, principal, pin or plan context. Equal comparable versions are one source even when the two
-digests differ; a differing comparable version is real proof of a replacement (`source_evidence`'s
-`source_version_evidence` / `stored_source_version_evidence`); an unknown side is never "different", so
-an incomparable observation can never release a live claim. Inside one binding the stored digest is
-itself comparable and still proves a replacement, so a record whose comparable evidence is incomplete
-is not locked forever. A replaced file at the same path is a different concrete source and may be
-organized again; equal relative names under genuinely distinct roots still never collide.
+- Identity is Storage plus exact canonical Storage-relative path and comparable content version,
+  never filename, library-relative text alone, label, principal or today's Active. Distinct canonical
+  paths remain independent, including equal names under different roots.
+- Reviewed fingerprints remain library-bound. Cross-binding comparisons use observed size,
+  modification instant and provider-validator names; same-binding fingerprints can prove replacement.
+  A proven replacement is new content. Missing/incomparable evidence is unknown and cannot release
+  a live claim. Pre-change rows use only their own persisted pin/binding/progress fallback; a proven
+  different canonical path never matches by a coincidental relative name.
+- Queued/running/paused/four-type decision and saved-decision work keeps ownership. Settled
+  `dry_run/success/skipped/cancelled/failed/ignored` items do not create perpetual history locks;
+  partial/uncertain effects retain their non-replay protections. Legal continuations exclude their
+  own persisted lineage, without exempting other work of the same library.
+- Direct-file ownership is re-proved in the same `BEGIN IMMEDIATE` transaction as admission.
+  Folder tasks precede traversal; each discovered concrete source is atomically reserved with its
+  manifest/item publication. Manual, scheduled, Run once and continuation entrances share the
+  ownership boundary. Storage `stat/list` I/O stays outside transactions.
+- Queries restrict to the exact source before bounding owner results; recent-history windows never
+  decide that a source is free. No global source catalog or unbounded history load is introduced.
+- A refused source is removed by its exact Storage-relative manifest key, while the operator sees
+  its library-relative path. Prune the source/observation/finding/counters together, preserving distinct
+  free siblings. Control/reconcile settlement repeats that same reservation/prune decision so pause,
+  cancellation or lease loss cannot restore the rejected source through a fallback publication.
 
-A directly selected file is checked at request admission, and the same decision is re-proved inside the
-admission's own `BEGIN IMMEDIATE` transaction so two concurrent submissions can never both commit one
-concrete source. A folder is admitted as outer work *before* traversal, and each source its walk
-discovers is reserved inside the same transaction that writes the manifest: the publication rolls back
-if another unfinished work really owns it, and the caller republishes its manifest without exactly that
-source plus one truthful per-item refusal naming the existing work. Storage ``stat``/``list`` calls all
-stay outside every transaction, so a slow provider never holds the write lock; two Workers on two
-connections are serialized by the reserved lock, so the second one observes the first one's durable
-manifest instead of the free state it read before either committed. A refused source reports the exact
-existing work reference (or, for another principal's work, only the bounded fact and next action), and
-eligible siblings remain independently admissible. A legal continuation excludes its own lineage instead
-of conflicting with itself, and a manual execution of a linked intent takes ownership over through its
-own TaskItems.
+`GET /api/v1/resource-libraries/{id}/files/organize-work` provides principal/library-scoped paged
+history and exact `requestId` reconciliation. Prepared-work links retain their own pin/context;
+generic new-organize routes guide to Files without another picker or work. Ordinary initial summary
+confirmation stays in Running/All outside Attention. The center uses only the admitted organizing
+population and four-type lineage described above.
 
-The ownership read itself is **source-scoped before it is bounded**. Asking "does any unfinished work
-own this concrete source?" is decided inside the durable predicate over the rows' own recorded identity
-evidence — each admission's exact Storage-relative scope, each recorded walk source, and, for an entry
-that recorded no canonical identity, its durable progress document — and only the answer is truncated.
-Taking the N most recent admissions and then asking the question per row would let unrelated newer
-admissions push a live owner out of the window, so "not found in the window" would be read as "free" and
-a scheduled, Run-once or continuation entrance could consume a source a queued or paused Files admission
-still owns. The bounded `LIMIT` therefore bounds the returned owners, never the population that is
-allowed to contain them; no global source catalog, no unbounded history load and no browser-side merge
-is involved, and the same correction applies to the atomic per-source admission boundary because both
-ask exactly this one question.
-
-Two proven different canonical paths are **two different files**, so the progress document is only the
-identity of an entry this record never recorded a canonical path for. Reading it unconditionally made a
-modern admission answer for a genuinely different file that merely shared its library-relative name
-(`A/One.mkv` and `B/One.mkv` behind two published roots of one Storage), and the conditional applies to
-both the durable predicate and the per-row decision so neither can decide differently. An entry without
-its own canonical path — a pre-change row, or an entry such a row extended after the amendment — keeps
-the conservative legacy identity: its library-relative path *inside that record's own immutable library
-binding*. A lookup that supplies no binding, or one whose record recorded no path at all, therefore
-still answers "owner" rather than releasing a live claim on incomparable evidence.»
-
-A refused source has **two different recorded strings**, and pruning must respect both. The manifest is
-keyed by the exact Storage-relative path the walk recorded, while findings and the operator-facing
-refusal use the ResourceLibrary-relative path; a non-empty library root (root `Movies`, source
-`Movies/Sub/One.mkv` shown as `Sub/One.mkv`) makes them differ, so pruning by the display path alone
-removes nothing and leaves the duplicate. The refusal therefore carries the operator-facing path plus
-the exact manifest key as an internal value — never inside the public `details` projection — and pruning
-removes the manifest row, the matching stability observation, the primary finding and the counters by
-whichever coordinate actually matches, while recording one refusal per exact `(path, kind)`.
-
-The reservation and its prune are **one decision, not a veto on one write**. A control or reconcile
-settlement republishes the very projection a refused walk attempted (``_merge_attempted_work``), so a
-settlement's `BEGIN IMMEDIATE` repeats the same per-source ownership check: an in-transaction refusal
-is never silently written back by the fallback that acknowledges a pause, a cancel or a lapsed lease.
-The settled record keeps its accepted control *and* the pruned manifest with its per-item refusals, so
-neither an operator control nor a Worker lease change can restore a source another unfinished work owns.
-
-A **same-library** admission owns its sources by the same concrete-source evidence as any other
-ResourceLibrary binding. There is no library-identity exemption: two concurrent submissions of one
-effective library/pin selection each re-check every already-observed direct source inside their own
-`BEGIN IMMEDIATE` transaction, so at most one durable Task is committed for one verified source. The
-loser converges on the winning open work before it reaches that boundary — the still-free siblings of
-its own selection join that same work's committed scope, and the items it already held are reported as
-existing — instead of being answered with a second overlapping Task. A request whose whole selection is
-already held converges the same way while publishing its own per-item evidence; a frozen or settled
-manifest is never widened, so a competing source keeps its truthful refusal. Nothing is dropped: an
-extension that could not commit is reported as `admission_not_committed` beside the refusals the same
-request had already resolved itself (for example an explicitly excluded temporary suffix), one truthful
-conclusion per exact `(path, kind)`.
-
-Convergence is **principal-bound**, not library-bound. A source another principal's unfinished work
-holds is never merged into and that holder's Task/discovery identity is never published: the refusing
-operator receives the `source_owned_by_another_operator` reason with its own next action, while the
-still-free siblings of the same selection are admitted into the *submitting* operator's own durable
-work under its own request identity. The first operator's Task, scope and request binding are
-unchanged. Matching principal, library/Storage binding, immutable pin and admission kind is the
-complete convergence identity — sharing a library is not a reason to skip it.
-
-Files owns the normal readback: `GET /api/v1/resource-libraries/{id}/files/organize-work` is
-library-scoped, principal-scoped and cursor-paged over the durable rows, and its `requestId` form is the
-exact lost-admission reconciliation. The Task Center therefore exposes no new-organize CTA, no
-independent library picker, no manual-action section and no discovery section, and a generic
-`operations/organize/new` address guides to Files without offering another picker or starting work.
-Valid prepared-work deep links keep working. The organizing-only eight-view set, full-population
-queries and `recovered_completion` projection are accepted in Slice46, together with Automation
-intent and real Run once below.
-
-The aggregate outcome enumerates the run's whole necessary primary population and requires an exact
-verified effect per member — the item's own latest Result (success, verified certainty, no uncertain
-effect) or its bounded confirmed follow-up with the same source, pin and lineage. An ignored, skipped
-or cancelled item is a legal disposition that ends that item's problem but is never organizing success,
-and a failed/partial/uncertain item keeps its own effect. The aggregate therefore stays
-`failed`/`partial_success` for any mixed run, and only a run whose every necessary item is proven
-publishes `completed` with `recovered_completion`, from the same read snapshot that supplies the
-status partitions, the file counts and the detail.
-
-The shell's carry-over of that context has one source of truth: the router's own committed search for
-the current route. Deriving it from the browser's address bar mixed two differently-timed copies of
-the same state — the router publishes a new location when it renders the target route, while the URL
-is only rewritten when that history action flushes — so the sidebar Files link could lose a filter the
-operator had just submitted. The single routed value is also the only one a route's own search
-validation has already admitted, so no unvalidated key can travel; an existing bounded context is
-preserved verbatim and a credential-shaped or oversized one is still dropped by the existing grammar.
+Shell return context comes from the router's committed validated search, preserving bounded
+filters/selection through Files and recovery without a second address-bar-derived state or allowing
+credential-shaped/oversized keys. Detailed Task46.3 repair history remains at
+`29a6d6d0064a5de766086446b345ae5ec2fe790f:docs/architecture.md`; it is not a second current contract.
 
 ## Automation and unattended execution
 
@@ -1238,8 +1149,8 @@ Long and batch Delete persists the exact flattened confirmed scope, one TaskItem
 effect certainty in the existing `files_transfers` claim/lease/mutation-fence table. The resident
 Files Worker reconstructs the pinned kind and immutable revision, removes children before
 directories, and invokes mutation only through `OrganizerExecutor`. The existing Task pause,
-cancel, Operations readback and safe-continuation surfaces control this work; an uncertain delete
-is read back and recorded for investigation, never replayed. Existing transfer rows without a
+cancel and safe-continuation controls are available through the originating library's local status
+readback; an uncertain delete is read back and recorded for investigation, never replayed. Existing transfer rows without a
 `direct_delete` authority discriminator remain Copy/Move work and keep their historical format.
 
 The native Delete pages create a request ID before submitting and retain only that ID, the exact

@@ -43,24 +43,10 @@ AC-1–18, independent final review and evidence limits. B's complete Closure Pa
 [TASK.md](../TASK.md) has no active implementation Task. Next: **A SELECTS THE NEXT LARGE SLICE**.
 No next Slice is selected by this closure.
 
-Slice43 remains **PASS / CLOSED** after A's 2026-10-24 review of original Base
-`853973dbbf8289fa2ad40657033e94e870a690e4` through implementation
-`97316131946bdecc483b684f6e6f6ecb98c5594d`. A43-01 is resolved; the refreshed B packet is at
-`0822e58fd687e402551e3224073cc8e8522192a0:TASK.md`. Its complete Contract, A review and evidence
-limits remain at `e9f1a8dc607cfc6d5ea02141b058da8ce849cd70:SLICE.md`.
-
-Original Bases, `frozen/slice-43-2026-10-15` and both integration-preservation refs remain unchanged.
-Their original review identities remain in local backups; current-lineage equivalents after the
-user-authorized attribution update remain in the prior43 Contract at the checkpoint above.
-Automation records are read-only with prerequisite-repair guidance; formal organizing-task recovery
-belongs to Task Center. External-service/endurance skips and test-time evidence limits remain disclosed.
-
-Slice45 remains **PASS / CLOSED**, with Base `a72252091d5d46edf3e2114b994036ae21b08e2e`, reviewed
-Implementation Head `4fcb0028f987f8746f0a8aa7b309e360b07c598e` and closure
-`13ecfc0e75fc34ff0ae489e655124a178943cba4:SLICE.md`. Its Task Center, recovery, live lists and
-Scan/Preview/FileIndex retirement are protected. Selecting46 does not reopen43/45 or restore retired
-products/compatibility. All accepted closures, original exceptions and preserved refs retain their
-historical facts in Git/[Progress](progress.md).
+Accepted43/45 foundations and retirement boundaries remain protected by the current requirements.
+Original Bases, historical holds/integration refs, accepted Heads, prior exceptions and validation
+limits remain in Git and [Progress](progress.md); current46 closure does not rewrite those facts or
+restore retired products/compatibility.
 
 [Release](release.md) owns release-line facts, [Progress](progress.md) the closure ledger,
 [Architecture](architecture.md)/[Product Experience](product-experience.md) CURRENT behavior,
