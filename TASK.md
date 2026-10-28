@@ -7,7 +7,7 @@ RO-2/RO-4 所需的 AC-5/8/14/15/16。[Development Workflow](docs/development-wo
 ```text
 Task ID: 46.5
 Parent Slice: 46
-Status: IN PROGRESS
+Status: READY FOR B REVIEW
 Task Base: 63c5c92e771054e30281617e2c652b7d5b486eb4
 Difficulty: High
 Test Level: T4
@@ -265,72 +265,91 @@ A-owned旧“首个Task”指针不代表当前交付状态；保留待A最终�
 
 ## Developer Completion Report
 
-续开发 checkpoint：`dd128aa8b3cdc84a6d341b3511b648464b277b8a`（父节点报告
-`2fb79066f8135cb0383dbf3d5f80fea84c203f5d`）。Task 仍 **IN PROGRESS**，不是完整
-READY FOR B REVIEW；以下结果可交 B 审查已实现的详情链路。
+**READY FOR B REVIEW — 实施完成，未自行声明 Task PASS / Slice CLOSED。**
 
-- V2普通详情跳过旧grant投影/eligibility读取，返回有界executionReadiness，删除详情授权/
-  撤销按钮并提供已有checked编辑入口。enabled仅描述保存状态，不承诺计划可执行。
-  disabled、Draft-only与removed history保留各自身份，读取不产生工作或媒体效果。
-  typed detail严格校验新状态/说明/下一步与其他相关字段，旧grant字段不再是详情依赖。
-- 修改真实Python native场景：disabled保存后直接打开普通详情，渲染范围/状态且无grant
-  控件，确认未产生occurrence；原同页连续Save/启停与copy/remove证明保留。
-  Architecture添加当前详情事实，明确整个执行意图TARGET仍未完成。旧专用grant接口和
-  历史未删除；旧授权回归改从其实际保留的grant-state接口核对，仍验证零变更和授权边界。
-- 实际验证：`python -m unittest tests.test_v2_automation_operations tests.test_v2_automation_lifecycle`
-  48/48；新增零Task/Job/Storage效果断言后，详情无grant依赖用例与
-  `tests.test_preview_retirement.RetainedAuthorizationPrecedentTests` 共2/2。
-  Web affected：automation.test.ts、AutomationRouter.test.tsx、AutomationWorkspaceReadModel.test.tsx
-  最终34/34。typecheck、lint、build、改动文件prettier/ruff及governance/diff检查通过。
-  真实Python Playwright lifecycle `--grep "one checked Save|edit, enable"` 2/2。
-- 本轮首次Web 33通过/1失败（Draft-only夹具缺新readiness字段），补齐后34/34；首次ruff
-  发现一个新增说明字符串超长，拆行后通过。没有隐藏失败、增加retry或放宽timeout。
-- 日志、完整命令/cwd/exit/墙钟、输入patch及产物摘要：本地
-  `.git/validation-evidence/task46.5-detail/`。浏览器输入为dd128aa源码加原有四个后端dirty
-  文件，patch sha256仍是`58f5b45610d22db23cdb9a06357fbfbb5747d1da1a126782f6c04de227560ce7`。
-  JS sha256 `d9f94e813a650fc3c797bbadb814c14826ddb912f88404209defba4098baa014`。
-  原四文件与全部原有untracked保持未提交；未读取用户runtime数据、未push。
-- 计时器从本轮初始读取后启动，checkpoint时保守总耗时294.914秒；全部计时测试/检查/
-  构建累计70.217秒，另有格式化和治理检查不足4秒，占保守分母小于26%，符合本轮<30%。
-- 剩余范围：所有publication入口的权限/意图审计、可信主体来源、scheduled逐效果live
-  边界、Run once真实准入/Worker执行/任务关联、完整恢复/稳定性/统计整合与受影响验证。
-  当前列表和旧Run once流程仍有旧grant/分析语义，不能宣称RO-5或整个Task交付完成。
-  未执行B全量/发布矩阵，desktop/narrow视觉与完整权限/竞争验收仍待完成。
+- Task Base：`63c5c92e771054e30281617e2c652b7d5b486eb4`。
+- 本轮启动：`main / 90193491e2d006a1bb9f76d4201d0a769e44a561`。
+- 产品/受影响测试 checkpoint：`8968a06c0765e57e48f00f99561fe3a7fbb13470`。
+- 最终验证 checkpoint：`f18ca67617c70b2f48291b476fb799108232eef4`；相对产品 checkpoint
+  只改真实浏览器 spec：键盘 Enter 启动、截图前复位滚动。Python/Web生产源码、单元测试、
+  harness、依赖与资产未变；该 spec 的最终5项已重新运行。后续交接提交只改本报告。
+- 启动已有四个 tracked 后端改动（definition execution、unattended execution、domain automation、
+  sqlite runtime）已在同一 Task 内完成并验证后纳入产品 checkpoint；没有丢弃或静默重置。
+  原始 patch 保留在 `.git/validation-evidence/task46.5-detail/preexisting-backend.patch`，sha256
+  `58f5b45610d22db23cdb9a06357fbfbb5747d1da1a126782f6c04de227560ce7`。
+  OS/private/log、`15`、两张中文参考图和 imagegen zip 均保留且未暂存；未动用户配置/DB/媒体、
+  SLICE/Roadmap/Progress，未 push/发布。用户最新“忽略时间限制”替代此前30%测试时间约束。
 
-此前实施报告（其验证身份及限制仍有效）：
+### 已实施的最终行为
 
-本轮部分实施 checkpoint：`0768000e232b57ef7f69e2913cd58475f1fb33d2`。
-Status: **IN PROGRESS — 尚不能提交整个 Task 的 READY FOR B REVIEW**。请 B 仅审查本轮
-同页编辑修复；本记录不构成 Task 完成或验收声明。
+1. 普通列表/详情不依赖独立 grant；保存状态、执行就绪、Draft/removed/unavailable保留真实
+   身份。confirmed Save/toggle推进同页发布身份并保留后续输入；peer冲突不重新授权旧候选。
+   unknown Save/toggle持久保留主体/候选/action/base，按精确命令和实际激活审计只读核对。
+2. focused/object/generic/CLI activation共用 Enabled execution intent 检查；激活审计与Active
+   同事务记录实际主体、有效上下文摘要和本地信任来源。远程检查真实当前权限，不能由候选
+   自授或任意 actor 冒充。无关管理发布沿用合法意图；已启用旧记录使用真实旧审计主体，
+   不补造管理员。旧grant/revocation仅留历史，不再是执行门控。
+3. Scheduler正常due前检查；启用本身零Job/Task。Worker固定pin并逐效果检查当前权限、
+   Enabled/removed与激活继承链，覆盖附件/cleanup的既有Executor边界；经历停用的旧工作
+   不因重启用复活。已完成兄弟/正在进行的Storage调用不回滚，合法enabled successor不repin。
+4. Run once按保存定义、真实主体和exact request原子创建Pending整理Task+Job+origin，
+   先受理再发现/规划/真实执行；禁用也可运行，不改due，不要求picker或第二次初始确认。
+   并发请求、队列满、写失败、重开、Pending取消和已进入Task的claim恢复均保留安全边界。
+   后者拒绝重新扫描/重放已完成或不确定效果。
+5. Run once完整枚举先于任何效果：min(limit,100)，沿用条目/目录/分页/深度/时间/路径预算，
+   失败、overflow、unsafe/duplicate entry、invalid/repeated cursor不得first-N或伪装empty。
+   保留真实age/size观测及一次<=60秒等待/复扫；ready避免等待，超时不等，余下不稳定项
+   真实Failed/PartialSuccess且不进入四类Attention。
+6. 四类业务阻塞沿用Task Center；定义Task接通原有单项分析、精确源证据、摘要和显式续作。
+   修正真实恢复plan身份与Storage相对根的一致性；保留成功兄弟Result。记录页按原始项及
+   持久恢复关联计数，分析/准备不算成功，一个真实run不重复计数，技术兄弟仍失败时不全成功。
+   历史analysis不自动升级执行；Files初始确认不变。CURRENT架构/旅程说明已同步。
 
-- 启动：main / `5efdd2ec331f91555cbce71bc5aabbf9c1780602`，governance通过。
-  启动已有四个 tracked 后端文件改动（automation_definition_execution、unattended_execution、
-  domain/automation、sqlite_runtime）原样保留且未纳入本轮提交；原有untracked日志、OS文件、
-  参考图和zip均未暂存。没有修改SLICE/Roadmap/Progress或用户runtime数据。
-- 本轮修复：成功Save/toggle使用该命令确认的definition和Active身份更新同页候选。
-  逐字段保留请求期间后续输入，toggle不覆盖其他未保存字段；普通refresh不重新授权旧候选。
-  既有peer-change拒绝和Copy unknown核对覆盖保留。
-- 实际验证（cwd web）：`npm run test -- run src/features/operations/AutomationLifecyclePage.test.tsx`
-  最终19/19；`npm run typecheck`通过；`npm run lint`通过；上述三个改动文件prettier检查通过；
-  `npm run build`通过。真实Python浏览器命令：
-  `npm run test:e2e -- --config=playwright.python.config.ts tests/e2e/automation-lifecycle.python.spec.ts --grep "one checked Save|edit, enable" --output ../.git/validation-evidence/task46.5-developer/playwright`
-  2/2通过；从渲染控件完成同页Save→Enable→Disable→Save→Enable并读临时SQLite持久状态，
-  未重开页面绕过冲突。governance与git diff whitespace检查通过。
-- 原始日志、逐命令计时、产物sha256及四文件完整patch位于本地
-  `.git/validation-evidence/task46.5-developer/`。浏览器实际源码身份是上述checkpoint加保留的
-  backend patch（sha256 `58f5b45610d22db23cdb9a06357fbfbb5747d1da1a126782f6c04de227560ce7`），
-  不能声称纯checkpoint已经通过Python浏览器验证。生产JS sha256：
-  `ab300b10ab5a94cb8b9edde3a341caad2a2445584b6f21e20fcc0f2ac345f655`。
-- 计时：测试/类型检查/lint/build/format命令累计34.364秒；包含格式写入、governance和diff
-  的额外工具墙钟不足3秒。全轮开始时未启动总计时器；仅从首次测试日志03:32:27 UTC到
-  交接前已知活动窗口就超过130秒，此前阅读/实施未计入该保守分母，故占比小于29%，
-  满足用户本轮严格小于30%的要求；没有等待填充分母。
-- 已知工具输出：jsdom Window.scrollTo未实现提示、Vite大chunk提示；命令exit均为0。
-  未执行全量回归/发布矩阵，未声称desktop/narrow视觉验收或整个Task安全矩阵通过。
-- 剩余同Task实施：详情去grant依赖、全部publication执行权限/审计、可信主体解析、真实
-  Run once准入/任务/Worker、scheduled逐效果live检查及恢复/稳定性/统计的整合和受影响验证。
-  已有后端工作区改动仍需完成并验证；不能据本轮Web成功推断这些目标已经达成。
-  Architecture的整个Automation CURRENT尚未改写为交付，不自批PASS，不关闭Slice。
+### 实际验证与证据
+
+本地稳定证据目录：`.git/validation-evidence/task46.5-completion/`；完整命令/cwd/输入与结果索引
+见 `README.md`，源码/lockfile/资产sha256见 `candidate-identity.json`。这些是本机证据，未上传。
+
+| 验证 | 实际最终结果 | 原始日志 |
+| --- | --- | --- |
+| Required Tests 中20个受影响Python模块，含新增intent、恢复/checkpoint、cron及升级迁移 | 501 / OK，无skip | `candidate-python.log` |
+| 8个受影响Web实体/页面/恢复组件模块 | 93 / 93 | `web-final.log` |
+| real-Python Run once：禁用直接执行、重启读回、冲突恢复、独立技术兄弟、实际范围上限 | 5 / 5；最终含键盘Enter | `keyboard-native.log` |
+| real-Python workspace：技术失败只读/独立事实、真实历史排序 | 3 / 3 | `candidate-workspace.log` |
+| real-Python lifecycle：同页Save/启停/再Save及copy/remove | 2 / 2 | `candidate-lifecycle.log` |
+| typecheck、lint、build、改动文件prettier、Python ruff/format、compileall、governance、diff whitespace | 通过 | 对应 `*-final.log` 与交接检查 |
+| forbidden dependency scan | 无FFmpeg/FFprobe匹配，预期exit 1 | `forbidden-dependencies.log` |
+
+生产JS：`web/dist/assets/index-CUseHErF.js`，sha256
+`f0e1ab4b2485077f019125ae7f4edd82760ce288e6b3c45f5f1874b54d5ba039`。
+实际查看1536px桌面和380px窄屏四张截图：`keyboard-native/.../definition-{desktop,narrow}.png`、
+`run-once-{desktop,narrow}.png`；动作可读、窄屏无横向溢出，真实键盘Enter仅产生一次受理。
+busy/disabled、unknown核对与保留后续输入由受影响组件测试覆盖；不是全站视觉验收。
+
+上述native从实际UI checked Save/Run once入口发命令，通过真实API/SQLite/Worker/Executor
+操作临时Local Storage。四类阻塞的实际Task/中心归属有Python覆盖；本轮native完整恢复聚焦
+冲突及其混合技术兄弟，不将它冒称四类完整native矩阵。Metadata使用合成Provider；技术失败
+使用既有Executor的已知零效果测试接缝，其他兄弟真实执行，不构造产品不存在的通用重试入口。
+
+开发中的失败日志全部保留：修复SQLite字段绑定、恢复上下文/plan身份、业务阻塞历史计数及
+旧grant/初始确认夹具等问题后重跑。旧workspace用例还要求Task46.4已移除的技术失败通用
+Web重试；已替换为真实只读/不重放断言，并在现有业务冲突入口补回分析不算成功、精确续作、
+受影响项独立恢复和历史不重复计数证明。没有增加retry或放宽timeout掩盖失败。
+
+### 剩余风险与 B 交接
+
+- 当前受影响验证没有未修复失败。日志中有SQLite ResourceWarning、jsdom scrollTo未实现提示、
+  Vite chunk大小及NO_COLOR提示；未隐藏或称其已消除，B全量时需关注连接生命周期警告。
+- 本地CLI意图绑定真实发布UID；跨UID Worker或旧审计actor无法对应当前有效主体时安全拒绝，
+  不推断管理员权限。需要通过受信身份/现有checked发布建立可验证来源。
+- 激活继承链live检查成本随历史深度增长；分页/时间预算不能中断已经进入的Storage调用，
+  仍依赖现有Provider超时。长期/远程Storage与多进程部署性能不在本轮实测范围。
+- B按原Required Tests执行完整T4、四类完整native与workspace/settings/中心组合、wheel/安装/
+  Docker/发布安全矩阵；本报告未声称这些门禁通过。B审查完整Task Base..最终验证checkpoint，
+  决定Task PASS/FIX REQUIRED并重新评估Slice全部outcomes。Developer不规划下一Task、不关闭Slice。
+- 下方B Review Result是原规划占位，保留B所有权；请B基于本次候选更新，不能将其旧
+  “implementation not started”文字当成本轮实现结论。
+
 
 ## B Review Result
 
