@@ -279,217 +279,13 @@ Task46.2 普通文件原生回归的三项既有菜单/non-localhost失败仍保
 合同并执行文档/治理检查，没有产品测试、构建、浏览器探测或媒体操作；检查时间低于本轮50%。
 Task46.3 的完整计划/交付/复核在 Git 保留，其终结 PASS 不被本 Task 的 PLANNED 状态覆盖。
 
-## Developer Completion Report (fix round for B46.4-03/05)
-
-```text
-Task: 46.4 / High / T4
-Task Base: 44cba4f93b94b72d6dee52fcd1199be729ec78c4
-Fix base (B review checkpoint): e3dec038a76ec391ef302d1da4effcce1e895218
-Implementation Head: 4ea21d2bdec889818cb2255d653b8f16dd17acb4
-Status: READY FOR B REVIEW
-Slice: ACTIVE (this is not A Final Review, PASS or closure)
-Push: none performed
-```
-
-本轮只修 B46.4-03/05 两个 P1，保留 Task ID/Base/Goal/Scope；不新建 Task、不改 RO-5 意图/
-执行引擎、不改 RO-1/2/3 已验收入口，也不自行 PASS。上一轮报告与 B 的复核结论保留在 Git 历史。
-
-### B46.4-03 — 逐项四类责任约束中心恢复入口
-
-- `task_item_recovery.py` 新增共享 `item_recovery_kind()` / `TASK_ITEM_RECOVERY_KINDS`：只有
-  当前四类问题（含 live blocker、已保存决定待续作）或已受理的四类恢复链才是
-  `business_problem` / `recovery_lineage`；其余全部是 `technical_history`。run-item 页、
-  条目证据页、batch 文档和单条目面板都读这一个后端判定。
-- `recovery_admission.py` 在 admission 时把真实四类决定身份写入既有
-  `recovery_requests.review_kind/review_id`（保存决定后的 `*_resolved`、live blocker），
-  因此管理 API 对纯技术失败发起的分析续作仍保留 `review_kind=NULL` 并保持
-  `technical_history`；既有列无 schema 变化。
-- `service_api.py` 为 run items、item evidence、saved batch child 发布同一 `recoveryKind`；
-  `RunDetailTabs` 只给 `business_problem`/`recovery_lineage` 条目显示批量选择，已保存批次
-  的技术历史 child 只显示持久行/证据和“技术历史，仅只读”，不提供摘要/确认/重试；batch
-  级 nextAction 在没有任何可操作 child 时也不渲染。
-- 技术历史仍保留真实原因/阶段/效果/结果/日志/导出：条目表的失败证据改为
-  `failure.category: failure.message`（不再拼接 `nextAction`），证据页不渲染其
-  `checkpoint.nextAction`，`TaskItemRecoveryPanel` 显示“无（技术历史，仅只读）”并省略
-  generic next action。管理 API/CLI 的单条/批次恢复能力未删除。
-
-### B46.4-05 — Job 归属必须证明已受理整理来源
-
-- `operations_run.py` 新增 `ORGANIZING_JOB_SEED_COMMAND_FAMILIES=("organize",)` 与
-  `ORGANIZING_JOB_LINEAGE_RELATIONS`（recovery/scope/metadata-correction 的持久 relation 表）。
-- `sqlite_runtime.py` 的 Job 分支不再只按命令白名单：`organize` admission（含 pre-Task
-  排队/失败）直接纳入；其余 continuation Job 必须通过自身 `job_id` 对应的持久 relation
-  指向 `organizing_tasks` 递归总体中的源 Task。纯分析 continuation 的 Job/子 Task 因此在
-  排队、claim、绑定、完成/失败和重开各阶段都留在管理历史而不进入中心。
-- `resolve_operations_run_link()` 的 Job→Task 回退也改用同一共享总体，而不是只比对命令；
-  普通/分析身份的旧深链仍得到有界 404。
-- 新增真实链路：CLI `organize` DryRun → 管理 API continue（202，Job queued）→ 中心列表/
-  统计/来源/游标/详情/导出全部为空 → 真实 Worker → 子 Task → 重开后仍为空；同一链路在
-  已受理整理 Task 上 continue 时，Job 在 claim 前后和重开后都保留在中心，并正确绑定子 Task。
-  scope/metadata-correction continuation Job 的真实 relation 正反例也覆盖。
-
-### 实际命令与结果
-
-| 命令 | 结果 |
-| --- | --- |
-| `python3 scripts/check_governance.py` | PASS（开始与交付前） |
-| `git diff --check` | clean |
-| `.venv/bin/python .git/validation-evidence/cb1327a/b-review-20261027/reproduce.py` | **exit 0**，`contractChecks` 5/5 true |
-| `.venv/bin/python .git/validation-evidence/e3dec038/b-review-20261027/cli-continuation.py` | **exit 0**；continue 202，中心 total=0、beforeStatus=404 |
-| `.venv/bin/python -m unittest tests.test_operations_run_inventory tests.test_operations_task_center tests.test_operations_run_detail tests.test_operations_run_detail_plan_evidence tests.test_operations_run_detail_log_isolation tests.test_task_center_recovery_lineage tests.test_recovery_continuation tests.test_recovery_batch tests.test_processing_recovery_admission tests.test_library_file_operation_history tests.test_operations_workspace tests.test_v2_automation_operations tests.test_api_security tests.test_manual_ignore tests.test_manual_ignore_batch tests.test_manual_operations_contract` | **370 OK** |
-| `.venv/bin/ruff check mediaflow tests scripts` / `ruff format --check` | PASS / 358 files formatted |
-| `web`: 13 个受影响 vitest 文件（含 `RunDetailTabs`、`TaskItemRecoveryPanel`、`task-item-recovery`） | **192 tests OK** |
-| `web`: `npm run typecheck` / `npm run lint` / `npm run format:check` | PASS / PASS / PASS |
-| `web`: `npm run build` | PASS（当前生产资产） |
-| `web`: `npm run test:e2e -- --config=playwright.python.config.ts tests/e2e/operations-inventory.python.spec.ts` | **40 passed**（含 mixed 技术项不可批量选择、纯技术无 guidance、saved batch 技术 child 只读） |
-| 同上独立干净 harness：`tests/e2e/operations-task-center-visual.python.spec.ts` | **2 passed** |
-
-所有浏览器/后端探测只用 harness 临时 SQLite/媒体根与合成 Provider；故障注入只作用于实际
-Provider/Executor adapter。未用用户配置/数据库/媒体，未伪造成功/claim 或手改 DOM。既有
-产品测试/断言/timeout/retry/skip 未放宽。
-
-### 已知风险与剩余工作
-
-- 管理 API/CLI 仍可按显式请求继续一个纯技术条目（这是保留的管理恢复能力）；中心是否展示
-  动作由服务端 `recoveryKind` 决定，网页不再提供旁门。若未来其他 Web 消费者忽略该字段，
-  仍需在消费端保持同一门控。
-- `has_persisted_recovery_lineage` 新增要求 continuation request 带四类 `review_kind`。
-  升级前已存在的 in-flight 四类 request 若 `review_kind` 为空，在其排队/运行期间会暂时按
-  technical_history 只读展示；完成后由当前四类问题判定恢复原类型与摘要入口。未回填历史行，
-  未改写任何原 Task/Result/claim。
-- 无 schema 变更、无 Worker/Scheduler/OrganizerExecutor 执行语义变更；`recoveryKind` 是只读
-  投影，不授予执行/重放权。
-- 未跑全量 Python `discover`、wheel/Docker/发布安全矩阵与 B 的完整 T4；按分工属 B。
-- RO-5 与 Slice 最终关闭/文档对账仍未开始。
-
-### 交付身份
-
-- Implementation Head: `4ea21d2bdec889818cb2255d653b8f16dd17acb4`
-- Fix range: `e3dec038a76ec391ef302d1da4effcce1e895218..4ea21d2bdec889818cb2255d653b8f16dd17acb4`
-  （17 个文件：后端查询/恢复判定、Web entities/中心 UI、affected tests 与 architecture CURRENT）。
-- 本报告在独立 docs checkpoint 提交；Working tree 无 tracked dirty，既有 untracked 日志/
-  参考图/OS 文件保持未暂存。
-
-## B Review Result
-
-```text
-Reviewed: 44cba4f93b94b72d6dee52fcd1199be729ec78c4..d63dd7105177f492c287c99412b90e22f19380cf
-Implementation candidate: 4ea21d2bdec889818cb2255d653b8f16dd17acb4
-Decision: FIX REQUIRED — 2026-10-28 / B re-review
-Acceptance runs: original reproduction, mixed-result counterexample, focused lineage and native checks
-Task blocker: B46.4-02 (P1) — ignore plus actual recovery success is falsely projected as all-success
-Slice Required Outcomes / Surfaces all satisfied: NO
-Next: SAME TASK FIX LOOP — preserve Task ID/Base/Goal/Scope
-```
-
-此前完整判定在 `542be061:TASK.md`、`a456b9d0:TASK.md` 保留。本轮核对整个 Task Base..Head
-manifest、当前生产调用链及新增18文件修复，不把 Developer 结果转写为 B 验收。
-
-### Verified fixes
-
-- **B46.4-01 原始恢复停点通过。** 保存决定、完成分析、等待摘要确认仍保留原四类责任；
-  原复现的 Recognition/Conflict 单项真实成功、重开及旧 Results 保留也通过。
-- **B46.4-03 本轮实际验证通过。** real-Python 的 technical-only 无 generic guidance/继续，
-  mixed Task 的技术/unknown/success 项不可批量选择，重开 saved mixed batch 的技术 child
-  只读；三条现有原生用例均通过。未删除管理单项/批次 API 能力。
-- **B46.4-04 原生入口验证通过。** 真实 direct-file Task 的旧深链返回正确原库与所选操作，
-  旧集合关闭、未知身份有界只读、无混合读取/命令；本轮再次执行现有用例通过。
-- **B46.4-05 本轮实际验证通过。** 原 CLI/API continuation 复现中，continue仍202、中心
-  total=0；新增真实 CLI → 管理 continue → queued Job → Worker/子 Task → reopen 的现有
-  regression 通过，合法整理来源的续作正例仍可见。未把纯分析记录删除。
-
-### B46.4-02 — Remaining P1 and required correction
-
-**实际场景与事实：**复用现有 native `seed_batch_summary_recovery` 的两主文件 Manual
-admission及真实 pre-mutation 失败fixture；用现有 MetadataReviewService（与 native Metadata
-fixture相同）建立合法候选决定。通过已有恢复 API 明确忽略 B，对 A 保存候选 → continue →
-真实 Worker分析 → 精确摘要 → 仅确认 A → 真实 Worker整理。没有手填任何成功状态/Result。
-
-最终 A 已真正整理，B 的 TaskItem 为 `ignored`、文件仍在 source；原 Results 未改。
-但中心在 SQLite/API 重开前后都发布：
-
-```text
-status=completed
-recovered_completion=true
-attention=false
-problem_types=[]
-```
-
-界面据此显示“已完成（恢复成功）”，并声明“每个必要条目都有精确关联的真实成功证据”。
-这没有满足 RO-4 / AC-15、Task Implementation Scope §4 / Acceptance 中“忽略不等于整理成功、
-真实全成功才投影恢复完成”的既定结果。B46.4-02 的原始单项正例虽通过，混合结果仍未交付。
-
-**根因：**`sqlite_runtime.py::_run_query_document()` 的 `recovered_success` 只检查
-`failed/partial/pending/processing/paused` 的未成功项；`ignored` 项直接被排除，随后只要
-有 confirmed preparation，就可由其他项成功把整个 run 判成恢复全成功。原 Task/Result
-未改并不能纠正这一错误的列表/统计/详情投影。
-
-**修复步骤：**
-
-1. 对原整理范围的必要主项统一计算实际处置与证据。只有每个必要项的本次真实成功，或其
-   exact source/pin/合法 lineage 的已核实成功 follow-up，才能形成全成功恢复完成投影。
-   忽略/跳过/取消/无成功证据不能通过从检查集合排除而算成成功；未知/部分效果仍保持真实。
-   保留既有主文件成功/附件告警语义，不扩大执行范围或引入附件自动重放。
-2. 同一结果用于列表、状态筛选、统计、详情和 recovered_completion 文案。已结束、已处理
-   问题与整理全成功保持区别；两项中一项忽略、一项成功的实际处置可完整查看，不能宣称
-   “每个必要条目成功”。原失败尝试、忽略决定、Results/audit保持原样，成功或未知项不重跑。
-3. 在当前 lineage/Task Center tests 增加上述真实双项 API/Worker 负例，并覆盖单项/多项全
-   成功正例、只恢复部分、ignored/skip、技术/未知效果、source/pin不匹配。断言最终 API 的
-   status/recovered_completion、列表/统计和页面文案，及忽略文件仍在源处、成功兄弟不重放。
-   初始 review fixture 应与配置实际识别结果匹配，不用“已自动识别却再强行创建识别选择”
-   的不合法 fixture 冒充产品失败。可复用本轮已完成 Metadata 负例；无需新增过程框架。
-
-这仍是原 B46.4-02 和原 Task 的修复，不新建 Task、不扩展合同或 RO-5。Developer跑新增失败
-用例与直接受影响测试后交新 checkpoint；B 在修正候选上完成原定 T4，包含已验证01/03/04/05
-的回归。不能把本轮四个修复点通过写成整个 Task PASS。
-
-### B evidence and testing boundary
-
-启动为 `main` / `d63dd710`，无 tracked dirty；既有 untracked日志、参考图、OS/private文件
-保留且未暂存。证据在 `.git/validation-evidence/d63dd710/b-review-20261028/`，未提交、非远程
-可达；JSON保存实际 API/Worker/逐项源存在性/重开和旧Results事实，脚本副本及资产SHA256保留。
-
-| B 本轮实际命令 / cwd | 结果 / 证据 |
-| --- | --- |
-| `python3 scripts/check_governance.py` | 开始与文档完成后 PASS |
-| `.venv/bin/python .git/validation-evidence/cb1327a/b-review-20261027/reproduce.py` | exit0，原5项contractChecks true；`original-reproduction.json`，约0.65秒 |
-| `.venv/bin/python .git/validation-evidence/e3dec038/b-review-20261027/cli-continuation.py` | exit0，纯分析续作202但中心total=0；`cli-continuation.json`，约0.17秒 |
-| `.venv/bin/python .git/validation-evidence/d63dd710/b-review-20261028/mixed-reproduction.py` | **exit1**，A真实成功、B ignored且仍在源处；`mixedIgnoreIsNotAllSuccess=false`；`mixed-reproduction.json`，约0.24秒，旧Results unchanged |
-| `.venv/bin/python -m unittest tests.test_task_center_recovery_lineage` | **8 OK / 2.323s**；SQLite ResourceWarning原样保留在`lineage-tests.log` |
-| `web/`: `npm run build` | PASS，约1.1秒；`build.log` / `production-assets.json` |
-| `web/`: `npm run test:e2e -- --config=playwright.python.config.ts tests/e2e/operations-inventory.python.spec.ts --grep 'a technical failure keeps its exact read-only|a mixed run never offers|a reopened mixed saved batch|retired Task collections stay closed'` | **4 passed / 3.7s**；`native-critical.log`，各原生入口独立验证 |
-| `git diff --check` | clean |
-
-仅使用既有产品 API/CLI、production review producer、现有临时库/native fixture及真实 Worker；
-无用户配置/数据库/媒体、无伪造成功/claim或DOM修改。诊断中一版 review fixture与实际C目录
-自动识别不匹配，未作为缺陷；最终负例用合法Metadata选择，成功均由Worker实际执行。
-诊断/最终原始证据保留；未修改产品/既有测试、断言、timeout/retry/skip。
-
-已证明原 Task P1，按workflow §6在昂贵门禁前 FIX REQUIRED。本轮未启动全量 Python/Web/
-默认E2E、wheel/Docker/发布安全矩阵；Developer的结果未冒充B验收，必要T4在修正候选上执行。
-所有测试/构建/探测含诊断尝试累计保守上界小于60秒；已记录23:05:01–23:09:48 UTC工作区间
-下界287秒，占比小于21%，满足本轮严格小于50%，未故意等待扩大分母。
-
-### All Slice outcomes reevaluated
-
-| Outcome | 当前结论 |
-| --- | --- |
-| RO-1 | Task46.1已验收基础保留；本候选未改动作样式，不宣称完整视觉重验 |
-| RO-2 | Task46.3先受理/占用/初次确认基础保留；四类原始恢复停点通过，整体仍待修正后T4 |
-| RO-3 | 原库持久查看基础保留；普通工作旧入口回库原生验证通过，既有菜单限制不重开 |
-| RO-4 | **未完成**：原 B46.4-02 的 mixed ignored/all-success 投影仍为P1；01/03/04/05局部验证通过 |
-| RO-5 | **未完成**：Automation detail/Save/Enabled/Run once/稳定性改造仍属后续，当前Task不提前实现 |
-
-继续同一Task修复；不规划下一Task，不交Closure Packet、不关闭Slice，不改Roadmap/Progress。
-仅checkpoint本TASK复核；不改产品或A-owned文档，不push。
-
 ## Developer Completion Report (fix round for B46.4-02)
 
 ```text
 Task: 46.4 / High / T4
 Task Base: 44cba4f93b94b72d6dee52fcd1199be729ec78c4
 Fix base (B review checkpoint): d63dd7105177f492c287c99412b90e22f19380cf
-Implementation Head: 76553772
+Implementation Head: 7655377204772aaba6fbec1ad4040005bbe28140
 Status: READY FOR B REVIEW
 Slice: ACTIVE (this is not A Final Review, PASS or closure)
 Push: none performed
@@ -577,3 +373,129 @@ adapter/fixture seam。未用用户配置/数据库/媒体，未手填成功/伪
 - Fix range: `d63dd7105177f492c287c99412b90e22f19380cf..76553772`
 - 本报告在独立 docs checkpoint 提交；Working tree 无 tracked dirty，既有 untracked 日志/
   参考图/OS/private 文件保持未暂存。
+
+
+## B Review Result
+
+```text
+Reviewed: 44cba4f93b94b72d6dee52fcd1199be729ec78c4..c6d568a27ae0a79ae35d81835cae08a1e8dfd129
+Implementation candidate: 7655377204772aaba6fbec1ad4040005bbe28140
+Decision: FIX REQUIRED — 2026-10-28 / B
+Product findings B46.4-01–05: critical reproductions and native checks now pass
+Remaining acceptance blocker: 2 required Python regressions still use the old center/analysis fixture contract
+Slice Required Outcomes / Surfaces all satisfied: NO
+Next: SAME TASK — reconcile the two affected regressions; B retains full acceptance ownership
+```
+
+上次判定与诊断在 `e66f0f8d:TASK.md` 及此前 Git 保留。当前报告只记录本轮候选结果，未把
+Developer 的 PASS 标签当成 B 验收，也没有把过时夹具错误描述为已复现的用户功能回归。
+
+### Product review and verified behavior
+
+完整 Task Base..Head manifest为46文件；生产变更集中于整理总体/四类责任/逐项结果的SQLite
+读模型、恢复请求的decision evidence、typed API/Web呈现与旧V2入口归属，没有schema、Storage/
+OrganizerExecutor/Worker/Scheduler执行引擎或新命令/Provider变更。
+
+- 原始5项复现通过：Recognition/Conflict保存与必要人工确认的责任保留，真实单项全成功
+  才投影恢复完成，SQLite/API重开一致，原Results保持；独立CLI DryRun不混入中心。
+- B46.4-02原mixed负例通过：B ignored且仍在source，A由实际Worker整理，原Results unchanged；
+  run仍failed、recovered_completion=false。新增partial→all-success、skip、technical/unknown、
+  source/pin失配及最新Result证据规则由本轮完整Python执行覆盖；不是手填成功证明。
+- 整理总体在page/count/source options/cursor/exact-ID之前统一，Job→Task显式去重；四类
+  Attention为distinct union；普通初次WaitingConfirm不计第五类；技术故障无generic恢复入口。
+- real Python/API/SQLite/Worker原生40场景通过，含四类决定/分析/精确确认/真实结果、成功及
+  uncertain非重放、unknown请求、重启、技术只读和saved batch、旧普通Task返回准确原库。
+- 构建资产的八视图visual原生2场景通过。人工查看1536×1024的All/Attention/问题文件页面及
+  390×844窄屏：八标签同排、滚动/焦点可达，移除的区块不出现，窄屏表格在自身范围内滚动。
+  截图保留在证据目录；未以脚本退出码代替人工查看。
+- 新wheel在源目录之外安装并通过现有smoke（CLI、fresh DB、backup/restore/lease及消费者
+  import）；独立installed-query进一步证明安装包实际SQLite整理总体取1个admitted、排除
+  同库standalone analysis。未调用媒体Storage/Provider。
+
+### Required test reconciliation — no new product expansion
+
+完整Python实际结果为 **2903 tests / 2 failures / 7 skips**。两项在Task Base `44cba4f` 的独立
+归档中均通过，在本候选单跑仍均失败；未猜测“基线失败”，未归因于测试顺序或环境。
+
+1. `tests/test_automation_definition_execution.py::DefinitionScopedExecutionTests.`
+   `test_paused_definition_relative_scope_continues_in_the_real_worker`，line678：期望中心
+   run_total=2，实际1。fixture手工给definition occurrence的来源Task设置
+   `execute_authorized=False`（line581），实际生产
+   `DefinitionScopedExecutionService.run` 创建的是True。测试使用非执行的范围分析续作来
+   验证管理Worker，但仍断言该分析续作必须进入整理中心；4ea21d2引入Job真实父级归属后，
+   该旧前提不再成立。
+2. `tests/test_scope_continuation.py::ScopeContinuationTests.`
+   `test_projection_advertises_the_linked_continuation_of_a_finished_run`，line1516：
+   `_api_paused_task`默认创建standalone `organize`/execute_authorized=False，仍断言中心
+   exact-ID应200；实际404，符合本Task对独立分析的排除。该旧前提从ea4e534的Task admission
+   判定改变起就需同步，但此文件未随Task更新。
+
+**同一Task修正这两处直接受影响的测试：**先按真实producer明确每份fixture究竟是已受理
+整理，还是管理用analysis-only。若验证纯分析范围续作，断言其管理记录/Worker行为仍保留而
+中心排除；若验证整理中心合法续作的正向projection，使用真实整理admission/pin及所需live
+scoped authority建立父工作，再保留其Job/Task/续作可见、范围/预算/重启/不重放断言。
+不能只改2→1或200→404来掩盖合法整理续作遗漏，也不能删除范围/权限/媒体零变更证明。
+复用当前合法definition/continuation fixtures，无需新过程框架或更改产品范围。
+
+Developer只跑这两处新增/修改用例、各自suite及直接受影响检查后交checkpoint；不将全量
+Python/Web/E2E/发布矩阵转交Developer。B将独立审查测试适配与实现语义一致，再按workflow
+核对相同执行输入的既有结果/必要fresh runs；当前完整门禁未通过，不提前PASS。
+目前未从这两个失败推导新的P0/P1用户功能问题，也不为其新建Task或重开旧Slice。
+
+### B actual acceptance evidence
+
+当前分支`main`，启动HEAD=`c6d568a2`，无tracked dirty；原有untracked日志、参考图、OS文件/
+private文件完整保留、未暂存。证据在
+`.git/validation-evidence/c6d568a2/b-review-20261028/`（本地未提交、非远程可达）。
+
+| B本轮命令 / cwd | 实际结果 / raw evidence |
+| --- | --- |
+| `python3 scripts/check_governance.py`；`git diff --check` | PASS / clean，开始及文档完成后 |
+| `.venv/bin/python .git/validation-evidence/d63dd710/b-review-20261028/mixed-reproduction.py` | exit0；三项contractChecks true，ignored源仍在、兄弟真实整理、mixed非全成功；`mixed-reproduction.json` |
+| `.venv/bin/python .git/validation-evidence/cb1327a/b-review-20261027/reproduce.py` | exit0，原5项true；`original-reproduction.json` |
+| `.venv/bin/ruff check .` / `ruff format --check .` | PASS / 386 files formatted |
+| `.venv/bin/python -m compileall -q mediaflow tests scripts` / `pip check` | PASS / no broken requirements |
+| 两个example的`config validate`；`rg -n -i 'ffprobe|ffmpeg' mediaflow pyproject.toml` | 两配置PASS；无禁用依赖匹配（exit1） |
+| `.venv/bin/python -m unittest discover -s tests` | **2903 / 2 failures / 7 skipped / 339.591s**；`python-full.log` |
+| 本候选单跑上列两个完整test ID | **2 failed / 0.132s**；`candidate-two.log` |
+| Task Base归档中用同一venv单跑上列两个test ID | **2 OK / 0.146s**；`task-base-two.log`，已验证module实际来自归档路径 |
+| `web/`: `npm run typecheck` / `lint` / `format:check` | PASS，`web-format.log`及工具输出 |
+| `web/`: `npm run test -- run` | **87 files / 1266 passed / 102.57s**；`web-unit.log`，jsdom scrollTo提示未隐藏 |
+| `web/`: `npm run build` | PASS，`web-build.log`；资产SHA256=`production-assets.json` |
+| `web/`: `npm run test:e2e -- --config=playwright.python.config.ts tests/e2e/operations-inventory.python.spec.ts` | **40 passed / 1.4m**；`native-inventory.log` |
+| 独立干净Python harness，`operations-task-center-visual.python.spec.ts` | **2 passed / 9.0s**；`native-visual.log`及`native-visual/`截图 |
+| `web/`: `npm run test:e2e -- --config=playwright.config.ts --output=../.git/validation-evidence/c6d568a2/b-review-20261028/node-e2e-results` | **240 passed / 1.9m**；`node-e2e.log` |
+| `.venv/bin/python -m pip wheel . --no-deps -w .git/validation-evidence/c6d568a2/b-review-20261028/wheels` | PASS，`wheel-build.log`；wheel SHA256 `a1d5304edf227a7ca2db862e229fcf1e80d0a048262decb4a034951eed8fe553` |
+| `.venv/bin/python scripts/wheel_smoke_test.py <该精确wheel>` | PASS / 6.53s；`wheel-smoke.log` |
+| `.venv/bin/python .git/validation-evidence/c6d568a2/b-review-20261028/installed-query.py` | PASS / 1.09s；真正installed module+fresh DB整理总体，`installed-query.log` |
+
+所有产品测试只用已有入口、临时DB/媒体根及fake/local Provider；未使用用户配置、运行DB或
+用户媒体。全量7个skip来自未提供的既有真实SMB/S3/OpenList及endurance环境；没有新增skip/
+retry或放宽超时。SQLite ResourceWarning和jsdom提示保留。Docker镜像发布安全矩阵本Task
+未重跑：当前diff未改变schema/运行命令/Worker执行与消费/镜像、部署或发布边界；已执行
+wheel/installed消费者、全量本地安全测试及原生Worker重启路径，不声称未执行的发布证明。
+
+B取证的两次自身问题均已纠正且保留日志：并行Playwright共用默认产物目录，首次默认E2E
+239 passed/1 trace ENOENT（`node-e2e-initial.log`）；使用独立输出目录后全240通过。installed
+query首次因macOS `/var`与`/private/var`实路径比较未归一化失败（`installed-query-initial.log`）；
+比较resolve后的同一安装目标后通过。没有修改产品、测试断言或框架超时使其变绿。
+
+测试/构建/探测的重叠墙钟区间已计入`timing.json`（包括首次失败/重跑、基线对照）；有计时
+命令合并约387.94秒，未计时critical/doc检查保守补足后总上界400秒。本轮从00:25:44 UTC开始，
+至00:40:10 UTC已工作866.24秒，保守上界400秒占比小于46.2%，严格小于50%；未故意等待
+扩大分母。B只维护本TASK，未改产品/既有
+测试或A-owned文档；基线归档与证据均在.git内，未切换工作分支、未reset/stash/清理用户文件。
+
+### All Slice outcomes reevaluated
+
+| Outcome | 当前结论 |
+| --- | --- |
+| RO-1 | Task46.1已验收动作样式保留，本Task未改palette/Entry认证；默认Web回归无新增失败 |
+| RO-2 | Task46.3早期受理/占用/初次确认基础保留；原生40场景含Files→Task→确认/Worker/重启通过 |
+| RO-3 | 原库持久查看基础保留；普通Task旧链接回准确原库通过，既有Task46.2菜单限制未宣称修复 |
+| RO-4 | 五个已知功能问题验证通过；**Task T4仍因上述两处旧测试契约未同步而未通过** |
+| RO-5 | **未完成**：实际Automation仍有grant eligibility/独立grant门控、旧Save authority与Run once分析后确认流程；76553772未改这些生产路径 |
+
+继续同一Task完成两处测试适配并交B；不规划下一Task、不提交Closure Packet、不关闭Slice，
+不改Slice/Roadmap/Progress、不push。A的旧“首个Task”指针仍仅作历史事实，不能当作本轮交付
+或关闭证据，留A-owned当前指针/最终文档对账。
