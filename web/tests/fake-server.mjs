@@ -4716,7 +4716,7 @@ function automationState(session) {
       workerPollSeconds: 2,
       granted: false,
       activated: false,
-      hostileGrant: false,
+      hostileReadiness: false,
       createdDefinition: null,
       copiedDefinition: null,
     };
@@ -4885,6 +4885,7 @@ function automationPermissions(token) {
     activate: operator,
     grant: operator,
     dryRun: operator,
+    execute: operator,
   };
 }
 
@@ -5397,8 +5398,42 @@ function notificationDeliveryDetailDocument(state, token, deliveryId) {
   };
 }
 
+// Match the current Python operator projection. Historical grant fixtures remain
+// available to their administrative routes, but normal definitions use Enabled
+// execution readiness and never advertise an independent grant workflow.
+function automationExecutionDefinition(document) {
+  delete document.unattendedExecutionGrant;
+  delete document.grantEligibility;
+  for (const key of ["grantState", "grant", "revoke"]) {
+    delete document.actions[key];
+  }
+  const state =
+    document.definitionState === "draft-only"
+      ? "draft-only"
+      : document.definitionState === "historical"
+        ? "historical"
+        : document.enabled
+          ? "enabled"
+          : "disabled";
+  document.executionReadiness = {
+    state,
+    explanation: {
+      enabled:
+        "The saved schedule is enabled. Each run still checks current execution permission, source availability and its actual plans before effects.",
+      disabled:
+        "The saved schedule is disabled; it emits no new scheduled work.",
+      "draft-only":
+        "This definition is saved only in a Draft and is not consumed by runtime.",
+      historical: "This definition was removed; retained history is read-only.",
+    }[state],
+    nextAction:
+      "review the saved scope and limits in the checked definition editor",
+  };
+  return document;
+}
+
 function automationDefinitionActions(state, token) {
-  const { manage, grant, dryRun } = automationPermissions(token);
+  const { manage, grant, execute } = automationPermissions(token);
   return {
     detail: automationAction({
       available: true,
@@ -5419,15 +5454,15 @@ function automationDefinitionActions(state, token) {
       // The current published definition advertises its own definition-bound
       // Run once; the retired standalone Preview action is gone.  A Draft-only
       // definition advertises it as withheld with the activation reason.
-      available: dryRun,
-      reason: dryRun
+      available: execute,
+      reason: execute
         ? null
-        : "the connected API principal cannot start a zero-mutation Run once",
+        : "the connected API principal cannot execute an organizing Run once",
       path: `/api/v1/operations/automation/task-definitions/${AUTOMATION_DEFINITION_ID}/run-once`,
       durableOutcome:
-        "a durable bounded discovery of the definition scope is admitted; it freezes a complete manifest and stores an exact zero-mutation Preview",
+        "a durable organizing task for the saved scope is admitted and executed through the existing Worker after complete scope and plan checks",
       nextAction:
-        "start Run once, review the exact Preview of the frozen manifest, then separately confirm execution",
+        "start Run once and inspect progress, independent results and recovery in its linked task",
     }),
     grantState: automationAction({
       available: true,
@@ -5542,7 +5577,7 @@ function automationDefinitionDocument(state, token) {
         nextAction:
           "review the exact definition bounds and explicitly grant unattended execution",
       };
-  return {
+  return automationExecutionDefinition({
     id: AUTOMATION_DEFINITION_ID,
     name: "Nightly automation",
     definitionState: "active",
@@ -5621,7 +5656,7 @@ function automationDefinitionDocument(state, token) {
           },
     },
     actions: automationDefinitionActions(state, token),
-  };
+  });
 }
 
 /**
@@ -5634,7 +5669,7 @@ function automationDraftOnlyDefinitionDocument(state, token, definition) {
   const notActiveReason =
     "this definition exists only inside an open successor Draft; " +
     "activate the Draft to make it the Active definition";
-  return {
+  return automationExecutionDefinition({
     id: definition.id,
     name: definition.name,
     definitionState: "draft-only",
@@ -5709,7 +5744,7 @@ function automationDraftOnlyDefinitionDocument(state, token, definition) {
         reason: notActiveReason,
         path: `/api/v1/operations/automation/task-definitions/${definition.id}/run-once`,
         durableOutcome:
-          "a durable bounded discovery of the definition scope is admitted; it freezes a complete manifest and stores an exact zero-mutation Preview",
+          "a durable organizing task for the saved scope is admitted and executed through the existing Worker after complete scope and plan checks",
         nextAction: "activate the Draft before starting Run once",
       }),
       grantState: automationAction({
@@ -5761,7 +5796,7 @@ function automationDraftOnlyDefinitionDocument(state, token, definition) {
           "create or open the successor Draft, then edit this definition inside it",
       }),
     },
-  };
+  });
 }
 
 /**
@@ -15524,16 +15559,12 @@ const server = createServer(async (req, res) => {
       body: null,
     });
     const document = automationDefinitionDocument(state, token);
-    if (state.hostileGrant === true) {
-      // A contract-shaped document whose grant evidence is malformed: the
-      // built artifact must refuse the whole read, render no grant control and
-      // submit nothing.
-      document["unattendedExecutionGrant"] = {
-        status: "active",
-        active: "yes",
-        grantId: "grant-hostile",
-        definitionChangedSinceGrant: "no",
-        previewId: { nested: "hidden-token" },
+    if (state.hostileReadiness === true) {
+      // Malformed current operator evidence must fail closed, without exposing
+      // arbitrary nested values or offering any mutation control.
+      document.executionReadiness = {
+        state: "not-a-valid-state",
+        explanation: { nested: "hidden-token" },
         nextAction: "/private/media/Bearer hidden-token",
       };
     }
@@ -17090,16 +17121,15 @@ const server = createServer(async (req, res) => {
     return;
   }
 
-  // The supported Automation boundary owns the unattended grant: a test can
-  // request malformed grant evidence for its own session and then drive the
-  // real definition page.
+  // A test requests malformed current readiness for its own session, then
+  // drives the real definition page and its typed fail-closed boundary.
   if (
-    url.pathname === "/__test__/automation-grant-variant" &&
+    url.pathname === "/__test__/automation-readiness-variant" &&
     req.method === "POST"
   ) {
     const state = automationState(session);
-    state.hostileGrant = url.searchParams.get("variant") === "hostile";
-    sendJson(res, 200, { ok: true, hostileGrant: state.hostileGrant });
+    state.hostileReadiness = url.searchParams.get("variant") === "hostile";
+    sendJson(res, 200, { ok: true, hostileReadiness: state.hostileReadiness });
     return;
   }
 

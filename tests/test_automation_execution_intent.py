@@ -154,7 +154,7 @@ class ExecutionIntentTests(unittest.TestCase):
         )
         status, other = f.request(
             "POST",
-            lifecycle.BASE + "/fresh-create/publication-intent",
+            lifecycle.BASE + "/nightly/publication-intent",
             body,
             token=lifecycle.VIEWER_TOKEN,
         )
@@ -162,7 +162,7 @@ class ExecutionIntentTests(unittest.TestCase):
         self.assertEqual("unknown", other["state"])
         status, changed = f.request(
             "POST",
-            lifecycle.BASE + "/fresh-create/publication-intent",
+            lifecycle.BASE + "/nightly/publication-intent",
             {**body, "object": {**candidate, "name": "Other"}},
         )
         self.assertEqual("unknown", changed["state"])

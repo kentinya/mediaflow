@@ -11,7 +11,7 @@ import { expect, test, type Page } from "@playwright/test";
  * `任务列表` table with its full-population cards, query echo and page cursors,
  * Draft/Active distinction, explicit validation and checked activation, the
  * definition-bound Run once entry (the retired standalone Preview product is
- * gone), confirmed unattended grant, pinned occurrences with linked work, the
+ * gone), Enabled execution readiness, pinned occurrences with linked work, the
  * read-only `执行记录` tab and fail-closed malformed documents. Captured evidence
  * excludes Bearer values, grant secrets, digests, fingerprints and raw plans.
  */
@@ -266,10 +266,14 @@ test("the definition detail offers the backend-advertised actions only", async (
   await expect(
     page.getByRole("heading", { name: /Automation definition/ }),
   ).toBeVisible();
-  // No grant exists yet, so the grant section reports the backend state.
+  // The saved Enabled state is readable without an independent grant.
   await expect(
-    page.getByText(/No unattended execution grant exists/),
+    page.getByRole("heading", { name: "Execution readiness" }),
   ).toBeVisible();
+  await expect(page.getByText(/The saved schedule is enabled/)).toBeVisible();
+  await expect(
+    page.getByRole("button", { name: /Grant unattended authority|Revoke grant/ }),
+  ).toHaveCount(0);
   // The independent Preview product is retired: no such control exists.
   await expect(
     page.getByRole("button", { name: "Create exact Preview" }),
@@ -495,14 +499,13 @@ test("a read-only principal is offered no executable Automation control", async 
   ).toBeDisabled();
 });
 
-test("malformed grant evidence renders the bounded malformed state and submits nothing", async ({
+test("malformed execution readiness renders the bounded malformed state and submits nothing", async ({
   page,
 }) => {
-  // The unattended grant is bound to this exact published definition, its
-  // scope bounds and the current permission. Malformed persisted grant evidence
-  // must fail the whole read closed: no grant control, no POST.
+  // Malformed current readiness must fail the whole read closed, rather than
+  // accepting old grant evidence or exposing arbitrary payload text/controls.
   const variant = await page.request.post(
-    "/__test__/automation-grant-variant?variant=hostile",
+    "/__test__/automation-readiness-variant?variant=hostile",
   );
   expect(variant.status()).toBe(200);
   await connectOn(
@@ -514,6 +517,10 @@ test("malformed grant evidence renders the bounded malformed state and submits n
   ).toBeVisible();
   await expect(
     page.getByRole("button", { name: "Grant unattended authority" }),
+  ).toHaveCount(0);
+  await expect(page.getByText(/hidden-token|private\/media/)).toHaveCount(0);
+  await expect(
+    page.getByRole("button", { name: "Start successor Draft" }),
   ).toHaveCount(0);
   const evidence = await automationEvidence(page);
   expect(evidence.items.filter((item) => item.method !== "GET")).toHaveLength(

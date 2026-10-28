@@ -7,7 +7,7 @@ RO-2/RO-4 所需的 AC-5/8/14/15/16。[Development Workflow](docs/development-wo
 ```text
 Task ID: 46.5
 Parent Slice: 46
-Status: FIX REQUIRED
+Status: IN PROGRESS
 Task Base: 63c5c92e771054e30281617e2c652b7d5b486eb4
 Difficulty: High
 Test Level: T4
@@ -421,6 +421,23 @@ SQLite ResourceWarning、jsdom scrollTo及前端构建提示仍保留未隐藏�
 Slice关闭。轮次起点2026-10-28T07:28:50Z、本报告09:56Z；实际执行测试/构建并集约300s，
 未用等待填充，未重复无关矩阵。
 
+
+### User-authorized B test-only correction — 2026-10-28
+
+用户在本轮明确要求“你自己处理一下吧”，授权B亲自完成B46.5-03测试契约适配；这是披露的
+角色例外。没有另一位Developer/独立Reviewer的虚称，不改变产品实现或Slice边界。
+
+- 启动main/`bd6b421c73f13ce34e850db2a8e690110da22f62`，无tracked dirty；原有untracked/
+  private/OS/log/参考图/zip均保留且不纳入checkpoint。未读用户runtime配置/DB/媒体。
+- fake正常定义投影对齐真实Python的Enabled/readiness并移除普通grant依赖，保留legacy管理
+  历史fixture；Run once描述对齐保存范围的一次真实整理。没有增加执行引擎或改生产normalizer。
+- 原13项Automation浏览器场景全部保留，malformed校验改查当前readiness并保留零POST、
+  无变更控制及敏感哨兵不展示证明。edit发布核对负例恢复真实nightly路由。
+- 首轮affected：Automation E2E 13/13（real6.63s）、intent Python 15/OK（real1.83s）；
+  随后补正向Enabled/无grant控件断言，最终候选仍须重新执行受影响及B验收。
+- 证据目录`.git/validation-evidence/b-task46.5-self-fix/`；源代码/依赖/产品资产不变，
+  B自己的匹配生产native/Web/static证据按workflow核对输入后复用；改变的测试/fake重新跑。
+  本轮UTC13:18:07起计，保留实际测试并集与总墙钟，严格低于50%，不等待填充分母。
 
 ## B Review Result
 
