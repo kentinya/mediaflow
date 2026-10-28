@@ -362,6 +362,37 @@ Slice Required Outcomes / Surfaces all satisfied: NO — RO-5 recovery and Worke
 Next: SAME TASK FIX LOOP; preserve Task ID/Base/Goal; no next Task or Slice closure
 ```
 
+### 本轮修复执行指导（Developer）
+
+继续 Task46.5，保留原 Task Base/目标/范围，不另开 Task。按以下顺序修复；下面英文条目保留
+精确复现、代码位置和命令。不要把所有测试失败都当作产品缺陷，也不要仅修改断言来掩盖缺陷。
+
+1. **先修复“保存成功但收不到响应后卡住”。** 在
+   `automation_workspace_commands.py::_definition_command_evidence` 中区分新建与其他命令：
+   新建本来没有来源ID，应按候选定义ID识别该条审计；编辑/启停/复制仍核对各自真实来源。
+   后续主体、操作、原配置版本、完整候选及实际发布证据检查全部保留。不能仅因为当前存在
+   同名定义就认定本次保存成功，也不能靠清空未决状态或自动重发保存“解锁”。
+   **验收：** 从真实新建表单保存，后端实际提交后丢失响应；刷新/重连后点击“核对本次发布”
+   能找回这一次成功结果，再编辑、保存、启用均可完成。全程只有一次新建，核对不创建任务
+   或产生媒体变更。错误账号/候选/原版本及未发布记录不能误报成功。
+2. **再修复“正常Worker被误报版本不匹配”。** 将
+   `automation.py::ProcessingWorkerService` 的当前schema默认值与本Task的53保持一致，
+   核对真实API/CLI组合是否仍传入旧值；保持应用层与基础设施层的依赖方向，不做版本管理重构。
+   **验收：** 当前53版本Worker、有效心跳、支持命令和匹配快照时真实就绪；旧版本Worker仍
+   被拒绝，快照不匹配仍准确报快照问题。不能强制返回ready或把期望值改回52。
+3. **按真实失败逐组适配测试。** 当前版本断言更新到53，但历史升级输入版本及数据保留检查
+   不变；测试建数据走合法主体/关闭后创建再明确启用的流程；旧分析记录继续验证历史读回，
+   新Run once使用精确请求身份并真实执行。核对API契约差异后才更新fixture。浏览器删除用例
+   改查Enabled/当前意图，继续完成实际删除、后续定时停止及历史保留证明。不要恢复独立grant
+   按钮、额外授权或Run once第二次初始确认来迎合旧测试。
+4. **交付同一Task的修复检查点。** Developer执行下列已知失败及直接受影响测试、必要静态检查，
+   记录实际结果/遗留风险后交READY FOR B REVIEW；不自行PASS、不承担全量发布矩阵。
+   B随后审查完整原Base..修复Head并补齐T4；全部Slice结果满足前不交A收尾。
+
+本轮开发/复核继续遵守用户最新约束：从轮次开始记录总墙钟时间，测试/构建/探测并集严格
+小于该轮总用时50%；不靠等待填充分母。仅用已有真实入口和临时fixture，不读取用户媒体、
+运行数据库或私密配置。时间预算不足的B验收保持pending，不省略失败或虚报通过。
+
 ### B46.5-01 — P1: committed Create cannot reconcile its unknown response
 
 Existing entry: Automation new-definition checked Save, followed by the existing exact
