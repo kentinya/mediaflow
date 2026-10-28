@@ -1519,10 +1519,14 @@ def upgrade_recovery_smoke(
                 if marker not in app_js:
                     raise RuntimeError(f"Operator Web lacks durable view marker {marker!r}")
 
+            # The explicit discovery command above legitimately created work.
+            # Compare reads against its settled state, not the pre-command lists.
             before_reads = {
-                "jobs": len(final_jobs),
-                "tasks": len(final_tasks),
-                "notifications": len(final_notifications),
+                "jobs": len(collection_items(base, token, "/api/v1/jobs?limit=100")),
+                "tasks": len(collection_items(base, token, "/api/v1/tasks?limit=100")),
+                "notifications": len(
+                    collection_items(base, token, "/api/v1/notifications?limit=100")
+                ),
             }
             for _ in range(2):
                 collection_items(base, token, "/api/v1/jobs?limit=100")
