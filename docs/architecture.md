@@ -4,14 +4,15 @@ This document owns component/dependency boundaries and distinguishes accepted CU
 from TARGET design. [Progress](progress.md) owns closure facts; committed [SLICE.md](../SLICE.md)
 owns scope. Slice45 is PASS / CLOSED: Task Center/typed recovery, shared live listing and
 Scan/Preview/FileIndex retirement below are CURRENT. Slice43 is also PASS / CLOSED; its Automation
-workspace/settings contract below is CURRENT within the accepted outcomes and deferrals.
+workspace/settings foundation remains accepted. Slice46 is PASS / CLOSED; its current amendments
+below replace selected entry/query/intent behavior without changing prior acceptance or deferrals.
 Detailed former delivery notes remain at `865ebdce47b0b323064fd8e05fbfaa54546e6269:docs/architecture.md`.
 
-## TARGET — Slice46 presentation and work-query ownership
+## CURRENT — Slice46 presentation and work-query ownership
 
 [Slice46](../SLICE.md) owns outcomes/acceptance; `V2-UX-004`, `V2-OPS-014–017`, `V2-FILES-007`
-and `V2-AUTO-010/011` identify the authorized amendments. The CURRENT contracts below remain
-accepted implementation facts until delivery. This section owns only the affected layer boundaries.
+and `V2-AUTO-010/011` identify the accepted amendments after A final review on 2026-10-29.
+Unchanged foundation contracts below remain current; this section owns the affected layer boundaries.
 
 - **Presentation:** shared action components supply readable states. Files owns ordinary-command
   results and durable local reopening; Task Center owns organizing progress and four-type recovery.
@@ -128,12 +129,15 @@ mechanism may continue to support API automation, local administration, debuggin
 and emergency/support workflows.
 
 **CURRENT V2:** the routine operator-facing Web journey does not require CLI issuance or raw-token
-transfer. After the operator reviews an exact durable organizing plan and confirms the selected items and
-any permitted destructive effects, the backend creates server-held, short-lived, single-use
+transfer. Files manual execution and four-type recovery require an exact durable organizing plan
+and confirmation of the selected items and any permitted destructive effects. The backend creates
+server-held, short-lived, single-use
 authority bound to the authenticated principal, plan/configuration/item set and effect scope.
 Admission and authority consumption are atomic; the resident Worker later claims the durable
 execution under a fence before OrganizerExecutor may perform Storage mutation. The browser neither
-receives nor submits the raw authority or its digest.
+receives nor submits the raw authority or its digest. Automation instead obtains scoped scheduled
+intent from checked Enabled publication, or one-run intent from the explicit Run once command,
+under V2-AUTO-010/011 below. These entry points still require exact backend plans/checks before effects.
 
 Both V1 and V2 preserve backend RBAC and permission enforcement, bounded execution
 authority, limits, audit, immutable configuration binding, stale/concurrent fencing, explicit
@@ -808,9 +812,9 @@ library-scoped, principal-scoped and cursor-paged over the durable rows, and its
 exact lost-admission reconciliation. The Task Center therefore exposes no new-organize CTA, no
 independent library picker, no manual-action section and no discovery section, and a generic
 `operations/organize/new` address guides to Files without offering another picker or starting work.
-Valid prepared-work deep links keep working. The organizing-only eight-view set and its
-`recovered_completion` projection are delivered by Slice46 Task46.4; removed-center population
-convergence and Automation's own RO-5 intent changes remain TARGET.
+Valid prepared-work deep links keep working. The organizing-only eight-view set, full-population
+queries and `recovered_completion` projection are accepted in Slice46, together with Automation
+intent and real Run once below.
 
 The aggregate outcome enumerates the run's whole necessary primary population and requires an exact
 verified effect per member — the item's own latest Result (success, verified certainty, no uncertain
@@ -840,13 +844,12 @@ The current implementation accepts automatic-organization only; removed Scan mod
 compatible executor or dedicated history layer. The complete native Automation workspace below is
 separately accepted by Slice43; Slice45's closure and retirement boundaries remain unchanged.
 
-Unattended authority is persistent, scoped, revocable and separate from schedule enablement. Exact
-shared analysis eligibility and authority are required before a due run may reach mutation. The Worker rechecks live
-authority, scope, capabilities, conflicts and current snapshot at each mutation boundary. Revocation
-blocks future mutation without rewriting completed effects. Uncertain mutation is not automatically
-replayed.
+Scheduled intent is persistent and scoped to checked Enabled publication; disable/removal withdraws
+it without an independent grant. The Worker rechecks live permission/definition continuity, the
+admitted immutable pin, scope, capabilities and conflicts at each unperformed mutation boundary.
+Completed/in-flight effects are not rolled back; uncertain mutation is never automatically replayed.
 
-### CURRENT implementation amendment — Automation intent and real Run once (Task46.5; B review pending)
+### CURRENT — Automation intent and real Run once (Slice46 PASS / CLOSED)
 
 The ordinary V2 inventory/detail reads saved definitions and bounded `executionReadiness`, without
 querying historical grant eligibility. Enabled is a published schedule state, not proof of a valid
@@ -896,9 +899,9 @@ results. Job/Task linkage and explicit manual origin deduplicate runs; original 
 progress remain distinct. Historical analysis records retain their old read/explicit-confirm semantics
 and receive no automatic execute authority. Only OrganizerExecutor mutates media via Storage.
 
-This amendment records implementation, not independent acceptance or Slice closure. The Slice43
-accepted baseline below remains historical where V2-AUTO-010/011 now replace its normal grant and
-initial analysis/confirmation sequence. Files initial confirmation is unchanged.
+This amendment passed independent A final review with Slice46. The Slice43 accepted foundation
+below remains historical where V2-AUTO-010/011 replace its normal grant and initial analysis/
+confirmation sequence. Files initial confirmation is unchanged.
 
 ### CURRENT — V2 Automation workspace and consumed engine settings (Slice43 PASS / CLOSED)
 
@@ -910,10 +913,10 @@ is an integration invariant; no exclusive retired models/repos/routes or second 
 
 [V2-AUTO-001–009](v2-requirements.md#automation-workspace-requirements--current-slice-43-pass--closed) describe
 the accepted contract: reuse managed definitions/occurrences/grants, Scheduler/Worker/Operations and exact focused
-publication, not another queue/config store. Manual Run once uses complete bounded live discovery
-and shared exact analysis/plan-summary evidence plus separate one-shot intent under V2-OPS-013;
-min(definition ceiling,100) bounds primaries, incomplete/
-overflow refuses a first-N prefix, schedule due state/grants do not become manual authority.
+publication, not another queue/config store. V2-AUTO-010/011 above replace independent grants
+and initial manual Run once confirmation. Run once uses the same bounded pipeline and explicit
+one-run command intent; min(definition ceiling,100) bounds primaries, incomplete/overflow refuses
+a first-N prefix, and schedule due state/history grants do not become manual authority.
 Durable origin/request/principal/pin links preserve deduplication and truthful historical metrics.
 
 Automation execution records are a read-only projection of existing results, stages/reasons, known

@@ -8,10 +8,13 @@ workflow authority. Closure rules live only in
 
 ## Current development pointer
 
-Slice46 — **V2 Organizing Task Center and Readable Actions** — is **ACTIVE** at immutable Base
-`e9f1a8dc607cfc6d5ea02141b058da8ce849cd70`. [SLICE.md](../SLICE.md) owns its five outcomes,
-18 acceptance criteria and T4 validation; [TASK.md](../TASK.md) has no active implementation Task.
-Implementation Head: **NOT SET**. Next: **B PLANS THE FIRST TASK**. This is TARGET, not delivery.
+Slice46 — **V2 Organizing Task Center and Readable Actions** — is **PASS / CLOSED** by A on
+2026-10-29. Immutable Base: `e9f1a8dc607cfc6d5ea02141b058da8ce849cd70`; reviewed Implementation Head:
+`6469f45811ee59c875cfd10107d3aed129e9d489`. [SLICE.md](../SLICE.md) records all five outcomes,
+AC-1–18, independent final review and evidence limits. B's complete Closure Packet remains at
+`85696ab160e8ec1d1e29dcdfc046d426e2cc214c:TASK.md`.
+[TASK.md](../TASK.md) has no active implementation Task. Next: **A SELECTS THE NEXT LARGE SLICE**.
+No next Slice is selected by this closure.
 
 Historical Slice43 resumption and Slice44 audit/review packets remain in Git at
 `22a23cc61686eb2c72ce56ea0b6cc3dea4380bf4:docs/reviews/`; closed-stage packets are not current work.
@@ -46,6 +49,7 @@ backfilled or guessed; consult Git and the legacy archive for their detailed lin
 
 | Slice | Status | Base | Implementation Head | Final Audit | Delivered | Deferred |
 |---|---|---|---|---|---|---|
+| 46 — V2 Organizing Task Center and Readable Actions | PASS / CLOSED | `e9f1a8dc607cfc6d5ea02141b058da8ce849cd70` | `6469f45811ee59c875cfd10107d3aed129e9d489` | A Final Review PASS / CLOSED — 2026-10-29 | Readable V2 actions/Entry; Files-first durable organizing before business readiness with folder filtering and atomic source ownership; both library kinds’ durable local ordinary-operation status; organizing-only eight-view center and four-type recovery with truthful completion; usable Automation detail/continued Save, checked Enabled scheduled intent and real bounded Run once | New providers/commands, MediaLibrary organizing, global ordinary-operation center, cross-Task bulk recovery, arbitrary historical Reprocess, automatic uncertain replay/rollback, queue/supervision redesign, V1 cutover and unchanged Contract deferrals; 7 existing external-service/endurance skips remain disclosed |
 | 43 — V2 Automation Workspace and Engine Settings | PASS / CLOSED | `853973dbbf8289fa2ad40657033e94e870a690e4` | `97316131946bdecc483b684f6e6f6ecb98c5594d` | A Final Review PASS / CLOSED — 2026-10-24 | Native automatic-organization definition lifecycle and focused checked publication; shared exact analysis/scoped grant; bounded automatic-discovery Run once with separate intent and unchanged schedule; authoritative inventory/calendar metrics; read-only records with exact Task Center recovery links; four-field settings Save and real resident adoption including restart/history/override | New pipeline modes/providers/Storage operations; queue/overlap/backfill redesign; unbounded work; cross-Task bulk and arbitrary historical Reprocess; deployment/identity editing; automatic uncertain replay/universal rollback; V1 cutover and other Contract deferrals |
 | 45 — V2 Task Center, Recovery and Scan/Preview/FileIndex Retirement | PASS / CLOSED | `a72252091d5d46edf3e2114b994036ae21b08e2e` | `4fcb0028f987f8746f0a8aa7b309e360b07c598e` | A Final Review PASS / CLOSED — 2026-10-23 | Nine authoritative task/recovery lists; same-page exact organizing summary/selected confirmation; typed independent recovery, results/controls and attachment guidance; first-deployment Scan/Preview removal; complete FileIndex exit and shared CLI/Files/MediaLibrary live listing | Frozen43 Automation workspace/Run once/metrics/settings redesign; cross-Task bulk mutation; attachment-only automatic recovery; arbitrary historical Reprocess; universal rollback/uncertain replay; old retired-product production migration/compatibility; other Contract deferrals unchanged |
 | 44 — Existing V2 Pages Functional Improvements | PASS / CLOSED | `853973dbbf8289fa2ad40657033e94e870a690e4` | `8be263ea778df08aa374e9433f138a218c1d4af9` | A Final Review PASS / CLOSED — 2026-10-12 | Shared ordinary maintenance with optional fingerprints and durable Delete on both library kinds; reference-aligned Rules forms and object-local tests/separate complete flow; MediaLibrary-plus-path classification with explicit legacy conversion; long-name list/grid navigation/toolbars; bounded ResourceLibrary folder/mixed discovery through frozen primary/attachment Preview and confirmed execution | Seamless exceptional discovery crash/control/activation/legacy continuity, frozen Slice 43, unselected pages/providers, Upload/Download, MediaLibrary Organize, larger/split manifests, implicit destructive authority and automatic uncertain replay; other Contract deferrals unchanged |

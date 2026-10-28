@@ -13,14 +13,17 @@ product and authority boundaries.
 [Release](release.md) owns release lines; [Roadmap](roadmap.md) priorities/status; [Progress](progress.md)
 accepted closures and deferrals. [SLICE.md](../SLICE.md) and [TASK.md](../TASK.md) own current work.
 CURRENT journeys/contracts live in Product Experience/Architecture; reference images are never
-runtime authority. Accepted43–45 behavior remains CURRENT until an authorized TARGET is delivered.
+runtime authority. Accepted43–45 foundations remain; the accepted Slice46 amendments below define
+changed CURRENT behavior.
 
-## Slice46 authorized TARGET — not yet delivered
+## Slice46 authorized amendments — CURRENT
 
 The following stable amendments select readable actions, organizing-only Task Center, earlier Files
 manual admission, local ordinary-work feedback and enable-to-execute/real Run once. [Slice46](../SLICE.md)
 owns full scope/acceptance and retained stability behavior; Product Experience owns complete journeys.
-Prior independent-grant, all-folder-suffix and no-wait planning variants are superseded, not delivery.
+A reviewed the full immutable Base..Implementation Head and closed Slice46 on 2026-10-29. Prior
+independent-grant, all-folder-suffix and no-wait planning variants remain superseded; they are not
+current behavior.
 
 | ID | Requirement | Acceptance meaning |
 |---|---|---|
@@ -121,7 +124,8 @@ These requirements extend the existing Operations foundation and are delivered w
 accepted boundary. CURRENT behavior and explicit deferrals are documented in Architecture and
 Product Experience. Task-linked recovery is delivered; cross-Task recovery lists were deferred by
 that baseline and are delivered by the accepted Slice45 amendment below.
-This factual status update does not change the stable requirement IDs or acceptance meaning below.
+The stable IDs remain. V2-OPS-014–017 now supersede the affected all-command population, entry,
+admission ordering and general-failure recovery wording below; unchanged safety remains current.
 
 | ID | Requirement | Acceptance meaning |
 |---|---|---|
@@ -137,7 +141,9 @@ This factual status update does not change the stable requirement IDs or accepta
 ## Operations and Tasks redesign — CURRENT (Slice 45 PASS / CLOSED)
 
 The user-approved 2026-10-15 amendment extends the accepted baseline and passed Slice45 final review.
-The final journey and nine reference images are in [task-center-page-spec.md](task-center-page-spec.md).
+The current eight-view/four-type journey and historical reference images are in
+[task-center-page-spec.md](task-center-page-spec.md). V2-OPS-014–017 supersede the affected
+nine-view/general-failure/creation/admission wording of this accepted foundation.
 It supersedes the mandatory separate Preview-page realization of `V2-OPS-006/008` and the former
 standalone Scan-entry obligation; exact zero-mutation plans, explicit execution authority and all
 `V2-AUTH-*` / `V2-SAFE-*` requirements remain unchanged. The user-approved 2026-10-18 first-deployment
@@ -158,7 +164,8 @@ diagnostic/scheduled Preview products and retired command-family discoverability
 | V2-OPS-012 | Recovery lists lead to native task/type-scoped file processing with integrated analysis, plan summary and explicit continuation. | Recognition, Metadata candidate/correction, Classification, conflict and failure use current legal backend choices/checkpoints and appropriate correctable forms. Save/analysis does not mutate media or confer execution authority; fresh mutation is confirmed against the in-context exact summary without a separate Preview route or operator-managed DryRun task. Pending lists/counts follow durable per-item resolution while retaining history, return context and successful siblings. Uncertain effects stay investigation-only; existing bounded within-Task analysis recovery preserves independent outcomes, with no new cross-Task bulk mutation. |
 | V2-OPS-013 | The standalone Preview product is absent on first deployment; organizing owns shared zero-mutation analysis and exact plans. | Remove standalone Web/V1/API/CLI/alias/help, Job/Task/command/scheduled/definition-bound dispatch/retry/continuation, exclusive models/repositories/schema/composition and dead code. Old inputs use ordinary authenticated not-found/argument/shared unsupported-type validation before discovery/Provider/admission/authority; no retirement page/410/guidance/special guard, hidden executor, automatic conversion to Organize, old-work settlement/takeover/migration/history/cancel/export or V1-parity layer. Organize without --execute, same-page creation/recovery summaries, Rules/configuration checks and Automation authorization preflight reuse existing analysis/plan/Task/Worker capabilities with exact source/configuration/plan/version evidence. Analysis records findings/unready items without formal execution backlog or single/unattended authority; execution still requires exact authorized plans, pins/fences, revalidation and completed/uncertain non-replay. Preserve supported-work data/reopen/results/audit; do not clear media/runtime databases; this45 amendment alone does not authorize unrelated Automation redesign, which requires its separate43 Contract. |
 
-For V2-OPS-012, the failure journey must expose the failed stage, source/target, completed steps,
+For V2-OPS-012 as narrowed by V2-OPS-016, the four-type recovery journey must expose the failed
+stage, source/target, completed steps,
 effect certainty and permitted action per file/attachment. Repair dependencies or save a legal
 decision, explicitly re-analyze the allowed scope, handle any new blocker, then review the in-context
 summary and confirm the eligible selected subset. Admission/running is not resolution; membership
@@ -188,7 +195,10 @@ Slice43 is PASS / CLOSED after A's review of original Base
 `97316131946bdecc483b684f6e6f6ecb98c5594d`; see the [Contract and review](../SLICE.md).
 The hold Contract `ed974e0df8b263f631bfe48b524da461013d8780:SLICE.md` and branch
 `frozen/slice-43-2026-10-15` remain historical, unchanged. This factual delivery update preserves
-the stable requirements and the Contract's explicit deferrals and evidence limits.
+the stable IDs and the Contract's explicit deferrals and evidence limits. Accepted V2-AUTO-010/011
+now replace the independent grant and initial analysis/confirmation ordering of V2-AUTO-002–004;
+V2-OPS-016 limits Task Center recovery to four business types. Earlier43 wording is its accepted
+foundation, not an additional gate on current Enabled/Run once behavior.
 
 Scan/Preview/FileIndex removal is already accepted under45. Historical old-mode parity/inventory/
 migration clauses are superseded by `V2-OPS-011` first-deployment absence. `V2-OPS-013` replaces the

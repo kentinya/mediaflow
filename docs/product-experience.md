@@ -5,15 +5,16 @@ This document owns operator journeys and completion semantics. Stable scope/IDs 
 [Architecture](architecture.md). [Progress](progress.md) records accepted baselines and deferrals.
 The committed [Slice](../SLICE.md) owns scope. Slice45 is PASS / CLOSED; its accepted Task Center,
 live-list and retirement journeys below are CURRENT. Slice43 is also PASS / CLOSED; its complete
-Automation workspace/settings journey below is CURRENT within its accepted boundary.
+Automation workspace/settings foundation remains accepted. Slice46 is PASS / CLOSED; the
+readability, Files, Task Center and Automation amendments below define changed CURRENT behavior.
 Detailed superseded delivery notes are retained at
 `865ebdce47b0b323064fd8e05fbfaa54546e6269:docs/product-experience.md`.
 
-## TARGET — Slice46 readable actions and organizing-only Task Center
+## CURRENT — Slice46 readable actions and organizing-only Task Center
 
 [Slice46](../SLICE.md) owns scope and acceptance; [V2 Requirements](v2-requirements.md) owns the
-stable amendment IDs. These journeys are TARGET, not delivered changes. The later CURRENT sections
-remain the accepted baseline except where this section explicitly selects a replacement.
+stable amendment IDs. These journeys passed A final review on 2026-10-29. The later foundation
+sections retain unchanged behavior; the selected replacements below take precedence.
 
 **Readable actions:** open Entry or a V2 page/dialog → distinguish text, availability and focus →
 submit the permitted action → read the result or bounded failure. Preserve keyboard/busy/disabled
@@ -67,7 +68,7 @@ wait/re-scan under RO-5/AC-18. Proven-stable files proceed; remaining unstable f
 and stay outside four-type Attention. Later ordinary runs use their normal scope/checks, without a
 failed-item selection/retry flow or cross-run observation sharing. Files manual handling stays.
 
-## CURRENT implementation amendment — Automation (Task46.5; B review pending)
+## CURRENT — Automation execution intent and real Run once (Slice46 PASS / CLOSED)
 
 Open a saved definition from its name/打开/direct link to read scope, limits, schedule, strategy
 effects and bounded readiness. Checked Save keeps the same editor usable for further edits and
@@ -90,7 +91,8 @@ instructions. No successful sibling is replayed, and one real run counts once. O
 records remain historical; they are not automatically executed. Files manual confirmation stays.
 
 The earlier Slice43 journey below describes its accepted baseline; V2-AUTO-010/011 replace its
-normal independent-grant and initial analysis/confirmation steps. B owns final T4 acceptance.
+normal independent-grant and initial analysis/confirmation steps. B final T4 acceptance and
+independent A review passed; actual evidence and limits remain in the accepted Contract and preserved Closure Packet.
 
 ## Product Experience Priority
 
@@ -238,7 +240,8 @@ keeps prior Active and correctable input.
   entries/list/grid, paging, selection and meaningful capability/error state. No FileIndex membership,
   FileID/occurrence/fingerprint authority, recognition-result or organize-status feedback.
 - **Action:** navigate/refresh/select a bounded file/folder scope, use ordinary maintenance or explicitly
-  prepare organization. Viewing is a bounded read, never recursive discovery, Provider lookup or work.
+  submit organization into its durable task. Viewing is a bounded read, never recursive discovery,
+  Provider lookup or work.
 - **Success:** exact names/paths survive normalization, hover/focus, breadcrumbs and long-name toolbar
   reflow. Boundary whitespace is visibly/assistively distinguished; shortening never changes identity.
   Refresh reconciles directory-tree memory/selection and removes vanished entries without losing a
@@ -324,7 +327,8 @@ results and audit; no existing runtime data or media is cleared.
 ## Manual organize
 
 - **Goal/entry:** explicitly organize selected live ResourceLibrary files or bounded folders from
-  Files/Task Center. MediaLibrary is not a source, and indexed paths provide no admission.
+  Files only. Task Center continues existing admitted work. MediaLibrary is not a source, and
+  indexed paths provide no admission.
 - **State/action:** exact source identities, durable intent, allowed recognition/metadata/classification
   choices, zero-mutation plan/attachments/conflicts/capabilities/effects and selected items. Review
   the plan and separately confirm exact execution plus any permitted overwrite/source cleanup.
@@ -343,8 +347,8 @@ the CURRENT Task Center journey below; no independent Preview product remains.
 
 ### CURRENT — Bounded folder organization with safe discovery restart
 
-Explicit Files/Operations discovery shows pinned scope, progress/exclusions, real stability waiting
-and read errors before freezing sources for exact planning/confirmation. At most 100 selected scopes
+Explicit Files-originated discovery inside the admitted task shows pinned scope, progress/exclusions,
+real stability waiting and read errors before freezing sources for exact planning/confirmation. At most 100 selected scopes
 and 100 primaries; pinned filtering/depth and true elapsed stability apply to direct and walked files.
 Matching enabled trailers attach to the retained main even in explicit mixed selection. Exact legal
 long names survive handoff; first stat/old mtime/lost observation is not a stable-size interval.
@@ -370,7 +374,8 @@ Discovery controls/progress/readiness and return-to-Files remain visible in Oper
   Task and file counts differ; attention overlaps and ordinary queued state is not a human blocker.
 - **Action:** inspect detail, source/target/policies, completed primary/attachment steps, relevant
   audit/logs and bounded secret-free JSON; use backend-advertised pause/cancel/continue or enter the
-  current task/type's recognition, Metadata, classification, conflict or failure handling.
+  current task/type's recognition, Metadata, classification or conflict handling. Other technical/
+  uncertain failures remain factual read-only All/Ended history, with no generic center recovery.
 - **Success:** durable per-file Results and linked recovery attempts survive reload/reconnect/restart.
   Queue completion cannot overwrite Task failure/partial/unknown state. Current Active cannot rename
   historical work or substitute its legitimate pinned context; unavailable totals never become zero.
@@ -378,8 +383,8 @@ Discovery controls/progress/readiness and return-to-Files remain visible in Oper
   known partial or uncertain effects with legal next action. Retain input/successful siblings. Controls
   distinguish request from acknowledged effect; they do not interrupt an in-flight call or roll back.
 
-Continue rechecks exact remaining safe scope, current authority and fences; consumed/revoked grants
-are not reissued. Recognition selection/ignore, persisted Metadata candidate/correction/ignore,
+Continue rechecks exact remaining safe scope, current authority and fences; consumed one-shot
+permission is not reissued and withdrawn scheduled intent is not bypassed. Recognition selection/ignore, persisted Metadata candidate/correction/ignore,
 classification and conflict use backend-offered legal inputs. Saving is non-executing. Bounded single/
 batch failed-analysis recovery keeps independent admitted/refused items and linked original history.
 Repair dependencies or save a legal decision, explicitly re-analyze, handle any new blocker, inspect
@@ -396,39 +401,39 @@ preparation and do not fabricate execution recovery work.
 
 ## Scheduled unattended organization
 
-- **Goal/entry:** configure reusable bounded ResourceLibrary/schedule intent in Automation and inspect
-  due occurrences, granted authority and linked results.
-- **State/action:** enabled/published/readiness/grant/revocation are distinct; inspect interval/Cron/
-  timezone/next due, run exact shared zero-mutation analysis and separately grant scoped revocable unattended
-  authority. Valid due runs need no repeated per-run click. Enable alone is not authority.
-- **Success:** Scheduler emits idempotent snapshot-pinned Jobs; existing Worker/Task/Result pipeline
-  checks current authority/scope/capability/conflicts before each unperformed mutation.
-- **Failure/recovery:** invalid pin/reference/secret/provider, instability, conflict or revoked grant
-  stops affected work with next action. Correct/publish/re-analyze and regrant when scope changed;
-  inspect independent checkpoints without replaying known/uncertain effects.
+- **Goal/entry:** save bounded ResourceLibrary/scope/schedule intent in Automation, review its source,
+  limits and policy effects, then explicitly enable or save an enabled successor.
+- **State/action:** disabled-first create/copy; checked publication validates current execution and
+  configuration permissions. Enabled supplies scheduled intent without an independent grant or
+  mandatory pre-analysis. Enablement creates no immediate work; due occurrences need no per-run click.
+- **Success:** Scheduler emits one immutable pinned Job; Worker/Task/Result and OrganizerExecutor
+  perform full planning/source/capability/conflict/authority checks and preserve independent results.
+- **Failure/recovery:** disable/removal/current permission loss stops future admission and remaining
+  scheduled effects at safe boundaries, with no rollback or historical replay. Four business problems
+  use Task Center decision→analysis→summary→explicit continuation; other failures retain truthful history.
+  Healthy empty is no-work; unstable/unreadable/incomplete is never fabricated empty success.
 
-Automatic organization is the only supported definition mode in current code; removed Scan intents
-cannot be reinterpreted as execution permission. Independent diagnostic/scheduled Preview is absent;
-necessary analysis/authorization checks use shared organizing behavior.
-Slice43's complete native Automation workspace, Run once, metrics and engine-settings journey is
-PASS / CLOSED. [V2-AUTO requirements](v2-requirements.md#automation-workspace-requirements--current-slice-43-pass--closed)
-and the accepted [Contract](../SLICE.md) preserve complete bounded discovery, separate manual/scheduled
-authority, truthful historical metrics and actual resident settings consumption. Historical hold and
-prior review facts remain in Git; retired45 products stay absent.
+Run once is a separate explicit execution of the saved scope, even while disabled, without changing
+its schedule or requiring another initial confirmation. Full bounded traversal and real stability
+precede effects. Old grants/revocations and analysis records remain history; they cannot override
+Enabled or execute an old preparation. Only automatic organization remains; Scan/Preview/FileIndex
+products remain absent. The complete intent/Run once journey is defined above under Slice46.
 
-### CURRENT — Complete native Automation workspace (Slice43 PASS / CLOSED)
+### CURRENT — Complete native Automation workspace (accepted43, amended46)
 
 - **Entry/state:** shared-shell `自动化` opens the real definition inventory, with `任务列表 / 执行记录 /
   全局设置`, population metrics, source/scope/schedule/timezone/limit, next/latest outcome and distinct
-  published/enabled/authorized/readiness states. No editor opens automatically or sample data appears.
+  published/enabled/execution-readiness states. No editor opens automatically or sample data appears.
 - **Configure/authorize:** New/copy starts disabled without authority. One focused checked Save
-  publishes only the intended definition; shared zero-mutation analysis shows the exact same-page
-  plan/scope/effects before explicit revocable unattended permission. Enabling alone grants nothing.
+  publishes only the intended definition. Checked enable/enabled-successor Save supplies scoped
+  scheduled intent with current execution permission and audit; there is no independent grant or
+  mandatory grant analysis. Failed/peer/unknown publication preserves Active/input and reconciles first.
 - **Scheduled success:** each valid due occurrence creates one linked pinned run and executes through
   the existing Worker/OrganizerExecutor without another per-run click, with independent item results.
 - **Run once:** use the published definition's saved scope to discover/freeze a complete bounded
-  manifest without asking the user to pick files again; review the same-page exact summary and
-  separately confirm one-shot execution. No schedule advancement or reuse of unattended permission.
+  manifest without asking the user to pick files again. One explicit command admits the organizing
+  Task before readiness and executes ready items without a second initial confirmation. Four-type
+  recovery still needs explicit continuation; no schedule advancement or old grant consumption.
   Overflow/incomplete scope refuses execution and explains narrowing/re-analysis, not first-N success.
 - **Execution records:** keep the Automation records page read-only, showing status/results, failure
   stage/reason, known effects and repair/Task Center links; no local file decisions, re-analysis or
@@ -495,16 +500,17 @@ Show loading/empty/success/transport/malformed/unauthorized/forbidden/unavailabl
 Dashboard/refresh/list/navigation are read-only, with no Provider/work/mutation. No independent Node
 production service, replacement identity model or implicit V1 cutover is introduced.
 
-### CURRENT — 任务中心与分类恢复（Slice45 PASS / CLOSED）
+### CURRENT — 任务中心与分类恢复（Slice46 PASS / CLOSED）
 
 The complete selected journey is [Task Center page specification](task-center-page-spec.md),
-`V2-OPS-009–012` and the committed Slice: nine sibling task/recovery lists; bounded live selection;
+`V2-OPS-009–017` and the committed Slice: eight organizing-only task/recovery lists; Files-only
+bounded live selection admitted before business readiness;
 zero-mutation preparation; same-interface exact plan summary followed by explicit ready-subset
 confirmation; task/type-scoped native decision/re-analysis/recovery with independent results.
 No ordinary separate Preview page/CLI/internal authorization-material burden. Global type lists
 use current durable problems over the complete authorized population, not page-only filtering.
 
-The specification defines all five recovery inputs, summary/attachment/effect warnings, new-blocker
+The specification defines the four business recovery inputs, summary/attachment/effect warnings, new-blocker
 transitions, precise confirmation and refresh/restart/unknown-response behavior. Scan products,
 definition modes and dedicated retirement/compatibility layers are absent on first deployment;
 old routes/commands/types ordinarily reject before discovery/admission/authority. Shared internal
@@ -530,10 +536,11 @@ Scan 相同的首次部署标准移除：独立 V1/V2 页面、CLI/API、Job/Tas
 
 操作者在整理创建/Files 或原任务恢复界面显式分析，直接检查当前计划摘要和逐项原因，选择
 合法就绪子集后明确确认。CLI organize 不带 --execute 继续显示完整零媒体变更分析。
-未就绪或发现冲突留在准备界面，不制造正式执行待办或单次/无人值守权限；需要修正时在原
-界面补充决定并重新分析。来源/计划变化需更新摘要和意图，成功/未知效果不得重放。
+独立分析的未就绪或冲突留在准备上下文，不产生正式执行待办或权限；明确 Files 整理或
+Automation Run once 已受理的任务则在四类原生恢复中补充决定、重新分析并明确继续。
+来源/计划变化需更新摘要和意图，成功/未知效果不得重放。
 
-Rules、配置检查和 Automation 授权前校验复用共享分析/精确计划，并保持原候选配置/定义/
+Rules、配置检查和整理执行前的内部校验复用共享分析/精确计划，并保持原候选配置/定义/
 权限边界；无需用户管理独立 Preview Task。支持工作的计划/pin/结果/审计和正常重启恢复
 保留，不清空媒体/运行库；只清理必要 Automation 耦合，不恢复冻结工作区重设计。
 这是整 Slice 验收后的 CURRENT；没有把 Task45.4 Scan PASS 代替 Preview 退役验收。

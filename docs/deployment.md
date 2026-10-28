@@ -209,9 +209,12 @@ heartbeats and wait without Active/media mounts. Empty Active is healthy infrast
 unconfigured work. Eligible publication is adopted without restart; recoverable DB/config faults
 retain the process/work and bounded waiting reason. Configuration publication creates no work.
 
-Scheduler emits only from one current valid snapshot with existing idempotency/grant/capacity gates,
-never stale cache or advancing an unissued occurrence. Notification Worker waits without claiming/
-burning targetless attempts, preserves recipient/signing identity and reports changed/unpublished
+Scheduler emits only from one current valid snapshot with idempotency/capacity and checked Enabled
+execution intent/current-permission gates; an independent grant is not required. It never uses stale
+cache or advances an unissued occurrence. Disable/removal stops future admission and remaining
+scheduled effects at safe boundaries, while admitted pins and completed effects remain durable.
+Notification Worker waits without claiming/burning targetless attempts, preserves recipient/signing
+identity and reports changed/unpublished
 target as configuration failure, never retargeting. Retry/dead-letter/lease/at-least-once rules remain.
 New admission uses Active; intact older admitted pins stay valid, broken pins block before mutation.
 

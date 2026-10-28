@@ -4,21 +4,21 @@
 Slice ID: 46
 Name: V2 Organizing Task Center and Readable Actions
 Owner: A — Slice Owner / Architect / Final Reviewer
-Status: ACTIVE
+Status: PASS / CLOSED
 Base SHA: e9f1a8dc607cfc6d5ea02141b058da8ce849cd70
-Implementation Head: NOT SET
+Implementation Head: 6469f45811ee59c875cfd10107d3aed129e9d489
 Working Branch: main
 Development Authorization: USER-REQUESTED NEXT SLICE — 2026-10-24
 Risk: High
 Final Test Level: T4
-Next Action: B PLANS THE FIRST TASK
+Next Action: A SELECTS THE NEXT LARGE SLICE
 ```
 
 ## Authority and accepted baseline
 
 [AGENTS.md](AGENTS.md) and [Development Workflow](docs/development-workflow.md) govern roles,
-safety, tests and closure. This ACTIVE Contract selects TARGET changes; it delivers no product
-implementation and does not reopen Slices43–45. Accepted Base/Head/deferrals remain in
+safety, tests and closure. This Contract records Slice46 delivery after independent A Final Review on 2026-10-29.
+It does not reopen Slices43–45; their historical facts and deferrals remain intact. Accepted Base/Head/deferrals remain in
 [Progress](docs/progress.md). The prior43 Contract is retained at
 `e9f1a8dc607cfc6d5ea02141b058da8ce849cd70:SLICE.md`; accepted45 at
 `13ecfc0e75fc34ff0ae489e655124a178943cba4:SLICE.md`. Detailed planning revisions remain in Git.
@@ -42,14 +42,14 @@ implementation and does not reopen Slices43–45. Accepted Base/Head/deferrals r
   `V2-FILES-002/003/007`, `V2-AUTO-001–006/010/011`, applicable amended `V2-OPS-001–017`:
   [V2 Requirements](docs/v2-requirements.md).
 - [Product Experience](docs/product-experience.md) owns complete entry → state → action → result →
-  failure/recovery journeys; its Slice46 TARGET identifies changes to the accepted CURRENT behavior.
+  failure/recovery journeys; its accepted Slice46 amendment records the current changed behavior.
 - [Task Center specification](docs/task-center-page-spec.md) owns page/view interactions;
   [Architecture](docs/architecture.md) owns query, admission, authority and execution boundaries.
 
 ## Base audit and reuse
 
-These source/isolated-runtime findings identify gaps, not delivered fixes; B verifies actual code
-when planning. Detailed diagnosis is retained at `22a23cc61686eb2c72ce56ea0b6cc3dea4380bf4:SLICE.md`.
+These retained Base findings identify the original gaps. The final review below records the
+delivered outcomes; they are not current unresolved defects. Detailed diagnosis is retained at `22a23cc61686eb2c72ce56ea0b6cc3dea4380bf4:SLICE.md`.
 
 - Shared button/field colors and local overrides explain unreadable Entry/actions; verify in-browser.
 - Files discovery/preparation currently gates business readiness before task creation. Reuse the
@@ -446,12 +446,72 @@ B's final evidence includes:
   computed contrast and keyboard evidence for shared variants/overrides. Record candidate/artifact
   identity, actual commands/results, failures and skips; do not test only CSS implementation literals.
 
-Planning validation is governance/document consistency and `git diff --check` only. No product test
-or visual pass is claimed. Closure Packet and A Final Review: **NOT STARTED**. Implementation Head:
-**NOT SET** until a reviewed implementation exists.
+Planning originally ran governance/document checks only. Final implementation, acceptance and
+independent A evidence are recorded below; the immutable Base was not moved to a planning/report commit.
 
 ## Workspace record
 
 Planning uses `main` with the immutable Base above. Pre-existing reference-image deletion, untracked
 references/logs/OS files and test artifacts remain unrelated and unstaged. Private runtime config,
 databases and user media are not validation fixtures. No push is authorized or performed.
+
+## Closure Packet and A Final Review — 2026-10-29
+
+**Decision: PASS / CLOSED.** No in-Slice P0/P1 or unmet required outcome remains.
+Reviewed range: `e9f1a8dc607cfc6d5ea02141b058da8ce849cd70..6469f45811ee59c875cfd10107d3aed129e9d489`
+(164 files). `85696ab160e8ec1d1e29dcdfc046d426e2cc214c` is B's report-only successor;
+this closure changes documentation only. The real implementation Base is unchanged.
+
+A independently reviewed the complete range's scope/manifest and integration across shared actions,
+both Files kinds, Task/Job/SQLite projections, manual discovery/planning/confirmation/recovery,
+Automation publication/Scheduler/Worker/Executor and release validation. The earlier accepted
+retirement boundaries remain intact. Checks followed existing Files/Task Center/Automation entries
+with isolated synthetic media; no invented endpoint, user runtime DB/config/media or production
+Provider was used. No product implementation or B Task self-approval was performed by A.
+
+| Outcome / acceptance | A conclusion |
+|---|---|
+| RO-1 / AC-1 | Shared normal/focus/busy/disabled action and Entry contrast/readability pass rendered checks; desktop/narrow visual evidence preserves keyboard/auth behavior. |
+| RO-2 / AC-2/3/7/16 | Files admits the pinned durable task before business decisions; direct-file and folder semantics remain distinct. Atomic Storage/path ownership spans manual/Automation/continuations. Exact request readback, native decisions, real stability and selected summary confirmation precede effects. |
+| RO-3 / AC-4/8 | Both kinds reopen multiple durable ordinary operations locally; kind/library/source scoping, item paging, partial/unknown effects and permitted controls survive refresh/restart. Live panels converge without replay. |
+| RO-4 / AC-5/6/14/15 | Backend scopes the whole organizing population before paging/counts/detail. Eight views use four-type union/lineage; technical history stays factual and read-only. Linked recovery needs verified effects for every necessary item; mixed failures never become all-success. Removed blocks and independent creation/legacy-list entries stay absent. |
+| RO-5 / AC-9/11/12/13/17/18 | Saved detail/continued Save and exact unknown reconciliation work. Checked publication supplies bounded scheduled intent with current permissions; disable/removal fences old work. Disabled Run once uses saved scope, complete bounded traversal, real stability and one-run intent; native recovery preserves independent siblings. |
+| Required surfaces / AC-10 | API/Web/SQLite/Worker/Scheduler, installation and production/restart/upgrade evidence cover the selected boundaries; CURRENT documents and closure pointers are reconciled here. |
+
+B's complete acceptance/Closure Packet is preserved at `85696ab1:TASK.md`, with local raw evidence
+in `.git/validation-evidence/b-task46.5-self-fix/` and matching reused
+`.git/validation-evidence/b-task46.5-c7a25b41/`. A verified all 34 recorded final log hashes and
+inspected the test-only corrections and unchanged production/harness inputs supporting reuse.
+B's user-authorized test-only role exception is retained explicitly; A's review is independent.
+Actual B results: Python 2921/OK with 7 existing skips; Web 1270 passed; default browser 240/240;
+real-Python lifecycle/Run once 12+5 (matching reuse), plus 62 fresh workspace/settings/inventory/visual
+checks; static/examples/dependency checks, wheel/source-external consumers and Docker security,
+restart and schema52→53 upgrade acceptance pass. Matching local-image source/asset verification
+replaced only upgrade rebuilding after registry timeout; complete actual upgrade checks still ran.
+
+A's independent checks on unchanged candidate inputs:
+
+- `.venv/bin/python -m unittest tests.test_automation_execution_intent tests.test_task_center_recovery_lineage tests.test_library_file_operation_history`: **48 / OK**, 9.524s.
+- Three existing source-ownership cases covering concurrent same-library selections, overlapping
+  bindings and competing folder walks: **3 / OK**, 0.271s.
+- `npm run build` in `web/`: **PASS**; production artifact used for the following checks.
+- Real-Python Playwright, existing action/Run once entries: **6/6**; Entry/variant contrast/focus,
+  disabled state, disabled Run once and success/conflict/technical-sibling recovery.
+- Real-Python organizing journeys: **5/5**; fresh ambiguity, read-only technical history,
+  eight views/type files, real stability→summary→selected execution, and legacy identity resolution.
+- Real-Python direct Files journeys: **6/6**; ResourceLibrary/MediaLibrary local reopen, mixed item
+  evidence and live queued→Worker completion. Exact commands and logs are retained in
+  `.git/validation-evidence/a-slice46-final/README.md` (local only).
+- Visual inspection: rendered Entry desktop, ResourceLibrary narrow status modal, MediaLibrary
+  desktop mixed-result modal, B's All/390px center and 390px exact summary/confirmation. Readable actions, independent
+  results and reachable confirmation; bounded scrolling remains the accepted narrow-page behavior.
+- Closure governance, changed-document links and `git diff --check`: **PASS**.
+
+Limits remain explicit: 7 existing SMB/S3/OpenList/endurance skips, no remote production/endurance
+claim, schema52→53 only for the latest container-upgrade run, known ResourceWarning/jsdom/Vite
+warnings and earlier menu/non-localhost evidence limits. They are not converted to new passes.
+All Contract deferrals remain unchanged; no optional/P2 correction Task or next Slice is created.
+Final-review workspace: `main` at `85696ab160e8ec1d1e29dcdfc046d426e2cc214c`, no pre-existing
+tracked changes; workspace/Git writes were available. A/B/Developer role experiences were reviewed;
+existing reusable lessons already cover this work,
+so no duplicate lesson is added. Pre-existing untracked/private files remain unstaged; no push.

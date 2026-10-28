@@ -41,7 +41,9 @@ business authority and V1 `/ui` remains available. [Roadmap](docs/roadmap.md) re
 Slice43 is PASS / CLOSED: native Automation lifecycle, bounded Run once, read-only records/statistics
 and engine settings with actual resident adoption are accepted. Slice45's Task Center and retired
 Scan/Preview/FileIndex boundaries remain intact; V2 is still unreleased and V1 cutover is not selected.
-The active Slice46 changes are TARGET under the current Contract, with no implementation Task yet.
+Slice46 is PASS / CLOSED: readable V2 actions, Files-first admitted organizing, library-local ordinary
+operation status, organizing-only eight-view/four-type Task Center and checked Enabled/real Run once
+are accepted. No active implementation Task remains; A selects the next large Slice separately.
 
 ## V2 frontend (web/)
 
@@ -87,12 +89,16 @@ stability observations and zero-mutation planning remain. Independent Preview is
 absence standard as Scan: independent Preview pages/API/CLI/Jobs/schedules/dispatch/continuation,
 exclusive persistence/composition and compatibility layers are removed. Old inputs use ordinary not-found or
 unsupported-argument/type errors; no retirement page/410, automatic conversion or old production
-migration/history/takeover framework. Task Center creation and recovery passed Slice45 final review.
+migration/history/takeover framework. New manual organizing starts from ResourceLibrary Files;
+Task Center owns its progress and four-type recovery under accepted Slice46.
 
-Organizing keeps same-page analysis, exact plan summary and separate explicit confirmation.
-`mediaflow organize` without `--execute`, Rules/configuration checks and Automation authorization
-preflight retain shared zero-media-mutation analysis. Analysis grants no execution permission or
-formal execution backlog. Exact plans/pins/results/audit stay durable; no existing data/media is cleared.
+Explicit Files organizing admits a durable task before business readiness, then keeps exact same-page
+analysis/summary and separate selected execution confirmation. Automation checked Enabled supplies
+future scheduled intent; Run once directly executes its saved bounded scope with current permission,
+without an independent grant/pre-analysis or second initial confirmation. Four-type recovery still
+requires explicit safe continuation. `mediaflow organize` without `--execute` and Rules/configuration
+checks retain shared zero-media-mutation analysis. Separate analysis creates no organizing authority
+or backlog; exact plans/pins/results/audit stay durable and no existing data/media is cleared.
 
 ### Baseline command reference
 
