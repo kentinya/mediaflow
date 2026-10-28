@@ -272,7 +272,9 @@ test("the definition detail offers the backend-advertised actions only", async (
   ).toBeVisible();
   await expect(page.getByText(/The saved schedule is enabled/)).toBeVisible();
   await expect(
-    page.getByRole("button", { name: /Grant unattended authority|Revoke grant/ }),
+    page.getByRole("button", {
+      name: /Grant unattended authority|Revoke grant/,
+    }),
   ).toHaveCount(0);
   // The independent Preview product is retired: no such control exists.
   await expect(
