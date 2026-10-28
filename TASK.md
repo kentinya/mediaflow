@@ -7,7 +7,7 @@ RO-2/RO-4 所需的 AC-5/8/14/15/16。[Development Workflow](docs/development-wo
 ```text
 Task ID: 46.5
 Parent Slice: 46
-Status: PLANNED
+Status: IN PROGRESS
 Task Base: 63c5c92e771054e30281617e2c652b7d5b486eb4
 Difficulty: High
 Test Level: T4
@@ -265,8 +265,38 @@ A-owned旧“首个Task”指针不代表当前交付状态；保留待A最终�
 
 ## Developer Completion Report
 
-NOT STARTED。交接填写精确checkpoint、Status READY FOR B REVIEW、实际改动和受影响测试
-命令/结果、风险及剩余in-Slice工作；不自批PASS、不规划下一Task或修改Slice边界。
+本轮部分实施 checkpoint：`0768000e232b57ef7f69e2913cd58475f1fb33d2`。
+Status: **IN PROGRESS — 尚不能提交整个 Task 的 READY FOR B REVIEW**。请 B 仅审查本轮
+同页编辑修复；本记录不构成 Task 完成或验收声明。
+
+- 启动：main / `5efdd2ec331f91555cbce71bc5aabbf9c1780602`，governance通过。
+  启动已有四个 tracked 后端文件改动（automation_definition_execution、unattended_execution、
+  domain/automation、sqlite_runtime）原样保留且未纳入本轮提交；原有untracked日志、OS文件、
+  参考图和zip均未暂存。没有修改SLICE/Roadmap/Progress或用户runtime数据。
+- 本轮修复：成功Save/toggle使用该命令确认的definition和Active身份更新同页候选。
+  逐字段保留请求期间后续输入，toggle不覆盖其他未保存字段；普通refresh不重新授权旧候选。
+  既有peer-change拒绝和Copy unknown核对覆盖保留。
+- 实际验证（cwd web）：`npm run test -- run src/features/operations/AutomationLifecyclePage.test.tsx`
+  最终19/19；`npm run typecheck`通过；`npm run lint`通过；上述三个改动文件prettier检查通过；
+  `npm run build`通过。真实Python浏览器命令：
+  `npm run test:e2e -- --config=playwright.python.config.ts tests/e2e/automation-lifecycle.python.spec.ts --grep "one checked Save|edit, enable" --output ../.git/validation-evidence/task46.5-developer/playwright`
+  2/2通过；从渲染控件完成同页Save→Enable→Disable→Save→Enable并读临时SQLite持久状态，
+  未重开页面绕过冲突。governance与git diff whitespace检查通过。
+- 原始日志、逐命令计时、产物sha256及四文件完整patch位于本地
+  `.git/validation-evidence/task46.5-developer/`。浏览器实际源码身份是上述checkpoint加保留的
+  backend patch（sha256 `58f5b45610d22db23cdb9a06357fbfbb5747d1da1a126782f6c04de227560ce7`），
+  不能声称纯checkpoint已经通过Python浏览器验证。生产JS sha256：
+  `ab300b10ab5a94cb8b9edde3a341caad2a2445584b6f21e20fcc0f2ac345f655`。
+- 计时：测试/类型检查/lint/build/format命令累计34.364秒；包含格式写入、governance和diff
+  的额外工具墙钟不足3秒。全轮开始时未启动总计时器；仅从首次测试日志03:32:27 UTC到
+  交接前已知活动窗口就超过130秒，此前阅读/实施未计入该保守分母，故占比小于29%，
+  满足用户本轮严格小于30%的要求；没有等待填充分母。
+- 已知工具输出：jsdom Window.scrollTo未实现提示、Vite大chunk提示；命令exit均为0。
+  未执行全量回归/发布矩阵，未声称desktop/narrow视觉验收或整个Task安全矩阵通过。
+- 剩余同Task实施：详情去grant依赖、全部publication执行权限/审计、可信主体解析、真实
+  Run once准入/任务/Worker、scheduled逐效果live检查及恢复/稳定性/统计的整合和受影响验证。
+  已有后端工作区改动仍需完成并验证；不能据本轮Web成功推断这些目标已经达成。
+  Architecture的整个Automation CURRENT尚未改写为交付，不自批PASS，不关闭Slice。
 
 ## B Review Result
 
