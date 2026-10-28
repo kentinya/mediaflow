@@ -186,10 +186,24 @@ test("edit, enable, copy and removal are separate durable commands", async ({
   expect(state.definitions[0]?.enabled).toBe(false);
 
   // Enabling starts no work: it only makes the definition eligible.
-  await openLifecycle(page, DEFINITION_ID);
   await page.getByRole("button", { name: "Enable schedule" }).click();
   await expect(page.getByText(/eligible for future Scheduler/)).toBeVisible();
   state = await harnessState(page);
+  expect(state.definitions[0]?.enabled).toBe(true);
+  expect(state.occurrenceTotal).toBe(0);
+
+  // Continue on the same form through another Save and repeated toggles.
+  await page.getByRole("button", { name: "Disable schedule" }).click();
+  await expect(page.getByText(/definition is disabled;/)).toBeVisible();
+  await page.getByLabel("Name").fill("Harness automation saved again");
+  await page.getByRole("button", { name: "保存" }).click();
+  await expect(
+    page.getByText(/published definition is the Active/),
+  ).toBeVisible();
+  await page.getByRole("button", { name: "Enable schedule" }).click();
+  await expect(page.getByText(/eligible for future Scheduler/)).toBeVisible();
+  state = await harnessState(page);
+  expect(state.definitions[0]?.name).toBe("Harness automation saved again");
   expect(state.definitions[0]?.enabled).toBe(true);
   expect(state.occurrenceTotal).toBe(0);
 

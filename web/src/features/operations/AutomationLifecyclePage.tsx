@@ -48,7 +48,10 @@ import {
   AUTOMATION_AUTOMATIC_ORGANIZATION_MODE,
   type AutomationDocumentRunMode,
 } from "../../entities/operations/automation";
-import type { AutomationEditProjectionModel } from "../../entities/operations/automation-lifecycle";
+import type {
+  AutomationPublicationModel,
+  AutomationEditProjectionModel,
+} from "../../entities/operations/automation-lifecycle";
 import { AuthorizedReadBoundary } from "../../shared/auth/AuthorizedReadBoundary";
 import { RefreshControl } from "../../shared/ui/RefreshControl";
 import { StatusBanner } from "../../shared/ui/StatusBanner";
@@ -524,6 +527,65 @@ export function AutomationLifecyclePage() {
     });
   };
 
+  // Only a confirmed command may advance retained input's publication fence.
+  // Merge against what was submitted so typing during the request survives.
+  const acceptPublication = (
+    model: AutomationPublicationModel,
+    submitted: FormState,
+    submittedAuthority: CandidateAuthority,
+    key: FormContextKey,
+    toggleOnly = false,
+  ) => {
+    const saved = model.definition;
+    if (saved === null) return;
+    const nextAuthority = {
+      revisionId: model.active.revisionId,
+      version: model.active.revisionSequence,
+      digest: model.active.digest,
+    };
+    const published: FormState = {
+      id: saved.id,
+      name: saved.name,
+      enabled: saved.enabled,
+      resourceLibraryId: saved.resourceLibraryId,
+      mode: saved.mode,
+      sourceScope: saved.sourceScope ?? "",
+      itemLimit: String(saved.itemLimit),
+      scheduleType: saved.scheduleType,
+      intervalSeconds:
+        saved.intervalSeconds === null ? "" : String(saved.intervalSeconds),
+      cron: saved.cron ?? "",
+      timezone: saved.timezone ?? "UTC",
+    };
+    setFormEntry((entry) => {
+      if (
+        entry !== null &&
+        (entry.key !== key ||
+          entry.authority.revisionId !== submittedAuthority.revisionId ||
+          entry.authority.digest !== submittedAuthority.digest)
+      )
+        return entry;
+      const retained = entry?.form ?? submitted;
+      const merged = { ...retained };
+      for (const field of Object.keys(published) as (keyof FormState)[]) {
+        if (
+          (!toggleOnly || field === "enabled") &&
+          retained[field] === submitted[field]
+        ) {
+          Object.assign(merged, { [field]: published[field] });
+        }
+      }
+      return { key, form: merged, authority: nextAuthority };
+    });
+    queryClient.setQueryData(
+      ["operations.automation-lifecycle-authority"],
+      (previous: typeof authority) =>
+        previous?.ok
+          ? { ...previous, model: { ...previous.model, active: model.active } }
+          : previous,
+    );
+  };
+
   const saveMutation = useMutation({
     mutationFn: (input: {
       readonly form: FormState;
@@ -556,8 +618,14 @@ export function AutomationLifecyclePage() {
       setError(null);
       setNotice(null);
     },
-    onSuccess: (result) => {
+    onSuccess: (result, input) => {
       if (result.ok) {
+        acceptPublication(
+          result.model,
+          input.form,
+          input.authority,
+          input.targetId || "__new__",
+        );
         setNotice(
           result.model.action === "remove"
             ? "The definition was removed and its future unattended authority was revoked."
@@ -583,6 +651,7 @@ export function AutomationLifecyclePage() {
   const toggleMutation = useMutation({
     mutationFn: (input: {
       readonly id: string;
+      readonly form: FormState;
       readonly enabled: boolean;
       readonly authority: CandidateAuthority;
     }) =>
@@ -600,8 +669,15 @@ export function AutomationLifecyclePage() {
       setError(null);
       setNotice(null);
     },
-    onSuccess: (result) => {
+    onSuccess: (result, input) => {
       if (result.ok) {
+        acceptPublication(
+          result.model,
+          input.form,
+          input.authority,
+          input.id,
+          true,
+        );
         setNotice(
           result.model.definition?.enabled
             ? "The definition is enabled and eligible for future Scheduler evaluation; no work was started."
@@ -1439,6 +1515,7 @@ export function AutomationLifecyclePage() {
                       candidateAuthority !== null &&
                       toggleMutation.mutate({
                         id: routeTargetId,
+                        form: currentForm,
                         enabled: !currentForm.enabled,
                         authority: candidateAuthority,
                       })

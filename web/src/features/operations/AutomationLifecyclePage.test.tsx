@@ -247,6 +247,125 @@ describe("AutomationLifecyclePage", () => {
     });
   });
 
+  it("uses each confirmed publication for subsequent same-page Save and toggles", async () => {
+    let active = ACTIVE;
+    let saved = definition();
+    const commands: Call[] = [];
+    const calls = recordingFetch((call) => {
+      if (call.url === "/api/v1/auth/principal") return principalResponse();
+      if (
+        call.url.endsWith("/automation/definitions") &&
+        call.method === "GET"
+      ) {
+        return jsonResponse({ ...formAuthority(), active });
+      }
+      if (call.url.endsWith("/nightly/removal-impact"))
+        return jsonResponse(removalImpact());
+      if (
+        call.url.endsWith("/automation/definitions/nightly") &&
+        call.method === "GET"
+      ) {
+        return jsonResponse({ ...editProjection(), definition: saved, active });
+      }
+      if (
+        call.method === "PUT" ||
+        call.url.endsWith("/nightly/enable") ||
+        call.url.endsWith("/nightly/disable")
+      ) {
+        commands.push(call);
+        if (call.body?.expectedRevisionId !== active.revisionId) {
+          return jsonResponse({ error: { code: "active_changed" } }, 409);
+        }
+        saved =
+          call.method === "PUT"
+            ? definition(call.body?.object as Record<string, unknown>)
+            : { ...saved, enabled: call.url.endsWith("/nightly/enable") };
+        active = {
+          ...active,
+          revisionId: `own-${commands.length}`,
+          revisionSequence: active.revisionSequence + 1,
+        };
+        return jsonResponse({ ...publication("save", saved), active });
+      }
+      return undefined;
+    });
+    await connect();
+    renderApp("/operations/automation/lifecycle/nightly");
+    const name = await screen.findByLabelText("Name");
+    await userEvent.clear(name);
+    await userEvent.type(name, "Updated");
+    await userEvent.click(screen.getByRole("button", { name: "保存" }));
+    await waitFor(() => expect(saved.name).toBe("Updated"));
+    await userEvent.click(
+      screen.getByRole("button", { name: "Enable schedule" }),
+    );
+    await waitFor(() => expect(saved.enabled).toBe(true));
+    await userEvent.click(
+      screen.getByRole("button", { name: "Disable schedule" }),
+    );
+    await waitFor(() => expect(saved.enabled).toBe(false));
+    await userEvent.clear(name);
+    await userEvent.type(name, "Updated again");
+    await userEvent.click(screen.getByRole("button", { name: "保存" }));
+    await waitFor(() => expect(saved.name).toBe("Updated again"));
+    expect(commands.map((call) => call.body?.expectedRevisionId)).toEqual([
+      ACTIVE_REVISION,
+      "own-1",
+      "own-2",
+      "own-3",
+    ]);
+    expect(calls.filter((call) => call.method !== "GET")).toHaveLength(4);
+  });
+
+  it("retains typing made while Save is pending and advances only its confirmed fence", async () => {
+    let active = ACTIVE;
+    let saved = definition();
+    let completeSave: ((response: Response) => void) | undefined;
+    recordingFetch((call) => {
+      if (call.url === "/api/v1/auth/principal") return principalResponse();
+      if (call.url.endsWith("/automation/definitions") && call.method === "GET")
+        return jsonResponse({ ...formAuthority(), active });
+      if (call.url.endsWith("/nightly/removal-impact"))
+        return jsonResponse(removalImpact());
+      if (
+        call.url.endsWith("/automation/definitions/nightly") &&
+        call.method === "GET"
+      )
+        return jsonResponse({ ...editProjection(), definition: saved, active });
+      return undefined;
+    });
+    const readFetch = globalThis.fetch;
+    vi.stubGlobal(
+      "fetch",
+      vi.fn((input: RequestInfo | URL, init?: RequestInit) => {
+        if (init?.method === "PUT")
+          return new Promise<Response>((resolve) => {
+            completeSave = resolve;
+          });
+        return readFetch(input, init);
+      }),
+    );
+    await connect();
+    renderApp("/operations/automation/lifecycle/nightly");
+    const name = await screen.findByLabelText("Name");
+    await userEvent.clear(name);
+    await userEvent.type(name, "Submitted");
+    await userEvent.click(screen.getByRole("button", { name: "保存" }));
+    await waitFor(() => expect(completeSave).toBeDefined());
+    await userEvent.clear(name);
+    await userEvent.type(name, "Later typing");
+    saved = definition({ name: "Submitted" });
+    const confirmed = publication("save", saved);
+    active = confirmed.active;
+    completeSave?.(jsonResponse(confirmed));
+    await screen.findByText(/published definition is the Active/);
+    expect(name).toHaveValue("Later typing");
+    expect(screen.getByRole("button", { name: "保存" })).toBeEnabled();
+    expect(
+      screen.queryByText(/unsaved edits are based on an older configuration/i),
+    ).toBeNull();
+  });
+
   it("offers enable and a disabled copy for a published definition", async () => {
     const calls = recordingFetch((call) => {
       if (call.url === "/api/v1/auth/principal") {
