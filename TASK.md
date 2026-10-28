@@ -347,8 +347,49 @@ Web重试；已替换为真实只读/不重放断言，并在现有业务冲突�
 - B按原Required Tests执行完整T4、四类完整native与workspace/settings/中心组合、wheel/安装/
   Docker/发布安全矩阵；本报告未声称这些门禁通过。B审查完整Task Base..最终验证checkpoint，
   决定Task PASS/FIX REQUIRED并重新评估Slice全部outcomes。Developer不规划下一Task、不关闭Slice。
-- 下方B Review Result是原规划占位，保留B所有权；请B基于本次候选更新，不能将其旧
-  “implementation not started”文字当成本轮实现结论。
+- 下方B Review Result保留B所有权；本轮修复回应其B46.5-01/02及失败验收，不把旧结论当成本轮
+  实现结果。
+
+### 修复轮次 — B46.5-01 / B46.5-02（READY FOR B REVIEW）
+
+- 轮次起点：`main / d1ce622f`；源码修复checkpoint：`c98b8767`。Task Base仍为
+  `63c5c92e771054e30281617e2c652b7d5b486eb4`，未改Task目标/范围，未push/关闭Slice。
+- **B46.5-01 已修复，真实入口可复现：** `automation_workspace_commands.py` 的
+  `_definition_command_evidence` 现在对无来源ID的create仅按候选定义ID识别该条审计；
+  edit/toggle/copy仍核对各自真实source。actor、action、原revision、完整候选指纹及实际
+  发布证据检查全部保留；未发布/错主体/错候选/错base仍返回unknown，不自动重发、不建Task。
+  新增API用例从真实checked create后核对，并覆盖错主体/候选/base/未发布证据；新增原生
+  Web旅程：真实create后端已提交但响应丢失→刷新/重连→核对一次成功→同页edit+enable，
+  全程只有一个定义、无第二次create或媒体工作。
+- **B46.5-02 已修复：** `ProcessingWorkerService` 当前schema默认值与runtime的53一致，
+  真实API组合显式传入`SCHEMA_VERSION`，保持application不导入infrastructure；旧版本
+  Worker仍以真实schema mismatch拒绝，快照不匹配仍单独报告。
+- 按B失败逐组适配：7个当前schema标记更新为53（旧source-schema fixture与数据/失败原子性
+  保留）；read-model与successor setup改为disabled-first/真实admin checked publication；
+  snapshot用例改为真实remote principal发布，证明工作前和真实效果之间检查当前权限；
+  preview-retirement改为新Run once精确request身份+历史analysis旧记录读回；生命周期
+  native删除场景改为Enabled/current-intent并验证删除后真实tick不再产生occurrence。
+  未恢复独立grant控件、额外授权或Run once第二次初始确认。
+
+实际验证（本机，全部为真实现有入口/临时fixture，未读用户媒体/DB/配置）：
+
+| 验证 | 实际结果 |
+| --- | --- |
+| Task Required Tests #1–#3及B失败相关共27个模块，包含新增intent/readback用例 | 648 / OK，无skip，85s |
+| `web/` 7个受影响实体/页面/路由模块 | 7 files / 86 passed |
+| real-Python `automation-lifecycle.python.spec.ts` 完整12项（含新create lost-response与Enabled删除） | 12 / 12 |
+| real-Python Run once既有 `disabled...runs once` 与成功兄弟场景 | 3 / 3 |
+| typecheck、lint、改动spec prettier、Python ruff/format、compileall、governance、diff whitespace | 通过 |
+| forbidden dependency scan（FFmpeg/FFprobe） | 无匹配，预期exit 1 |
+
+native继续使用上一候选已构建的`web/dist`；本轮未改Web生产源码，只改spec，故未重新build。
+B需按原计划fresh build后重跑完整T4。B日志中`test_manual_operations_contract`全量失败的原因同为
+schema53 Worker被按52判定；schema默认修复后该模块独立通过，不是放宽fixture比较。
+
+剩余风险：Developer未跑全量Python/Web/E2E、wheel/安装/Docker/发布安全矩阵，均由B负责；日志中
+SQLite ResourceWarning、jsdom scrollTo及前端构建提示仍保留未隐藏。本报告未声称T4 PASS或
+Slice关闭。轮次起点2026-10-28T07:28:50Z、本报告09:56Z；实际执行测试/构建并集约300s，
+未用等待填充，未重复无关矩阵。
 
 
 ## B Review Result
