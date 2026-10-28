@@ -518,31 +518,38 @@ class ManualRecoveryContinuationService:
                 ),
             )
 
-        executions = self._repository.list_manual_executions_for_task_item(
-            source_task_id, source_item_id
-        )
-        if len(executions) != 1:
-            raise ManualRecoveryContinuationError(
-                "the original TaskItem is not one exact manual Organize item",
-                code="manual_item_not_found",
-                status=404,
+        definition_source = self._definition_source_job(source_task_id, source_item_id) is not None
+        if definition_source:
+            intent = self._definition_recovery_intent(
+                checkpoint, analysis_item, analysis_result, actor
             )
-        execution = executions[0]
-        manual_item = next(
-            (
-                value
-                for value in execution.items
-                if value.task_item_id == source_item_id and value.task_id == source_task_id
-            ),
-            None,
-        )
-        if manual_item is None:
-            raise ManualRecoveryContinuationError(
-                "the original manual execution item is unavailable",
-                code="manual_item_not_found",
-                status=404,
+            manual_item = intent.items[0]
+        else:
+            executions = self._repository.list_manual_executions_for_task_item(
+                source_task_id, source_item_id
             )
-        intent = self._intents.get(execution.intent_id)
+            if len(executions) != 1:
+                raise ManualRecoveryContinuationError(
+                    "the original TaskItem is not one exact manual Organize item",
+                    code="manual_item_not_found",
+                    status=404,
+                )
+            execution = executions[0]
+            manual_item = next(
+                (
+                    value
+                    for value in execution.items
+                    if value.task_item_id == source_item_id and value.task_id == source_task_id
+                ),
+                None,
+            )
+            if manual_item is None:
+                raise ManualRecoveryContinuationError(
+                    "the original manual execution item is unavailable",
+                    code="manual_item_not_found",
+                    status=404,
+                )
+            intent = self._intents.get(execution.intent_id)
         if (
             intent.status is not ManualIntentStatus.OPEN
             or intent.snapshot_id != checkpoint.configuration.snapshot_id
@@ -611,6 +618,7 @@ class ManualRecoveryContinuationService:
             review_decisions=decisions,
             reuse_analysis_identity=reuse_analysis_identity,
             require_durable_identity=True,
+            skip_current_snapshot_check=definition_source,
         )
         preview_item = next(
             (value for value in preview.items if value.item_id == manual_item.item_id), None
@@ -895,9 +903,93 @@ class ManualRecoveryContinuationService:
         value["hasExecutionAuthority"] = False
         return value
 
+    def _definition_source_job(self, task_id, item_id):
+        reader = getattr(self._repository, "get_job_for_task", None)
+        job = reader(task_id) if callable(reader) else None
+        task = self._repository.get_task(task_id)
+        item = self._repository.get_item(item_id)
+        if (
+            job is None
+            or not job.definition_id
+            or task is None
+            or item is None
+            or item.task_id != task_id
+            or not task.execute_authorized
+            or job.configuration_snapshot_id != task.configuration_snapshot_id
+            or job.configuration_snapshot_digest != task.configuration_snapshot_digest
+        ):
+            return None
+        return job
+
+    def _definition_recovery_intent(self, checkpoint, analysis_item, analysis_result, actor):
+        """Reuse existing one-item intent/summary authority for a definition Task.
+
+        The completed linked analysis and live exact source are required first;
+        no prior successful/uncertain sibling enters this explicit continuation.
+        """
+        from mediaflow.application.manual_source_validation import PersistedSourceEvidence
+        from mediaflow.domain.manual_organize import ManualSourceIdentity
+
+        previous = self._repository.get_current_manual_recovery_preparation(
+            checkpoint.task_id, checkpoint.item_id
+        )
+        if previous is not None:
+            return self._intents.get(previous.intent_id)
+        validated = self._intents._source_validator.validate_persisted_source(
+            PersistedSourceEvidence(
+                analysis_item.storage_id,
+                analysis_item.resource_library_id,
+                analysis_item.source_path,
+                analysis_item.source_occurrence_id,
+                analysis_item.source_fingerprint,
+                analysis_item.source_fingerprint_state,
+            ),
+            snapshot_id=checkpoint.configuration.snapshot_id,
+            snapshot_digest=checkpoint.configuration.snapshot_digest,
+        )
+        entry = validated.entry
+        source = ManualSourceIdentity(
+            validated.occurrence_id,
+            analysis_item.storage_id,
+            analysis_item.resource_library_id,
+            analysis_item.source_path,
+            entry.name,
+            entry.name.rsplit(".", 1)[-1].lower(),
+            entry.size,
+            entry.modified_at,
+            self._clock(),
+            analysis_item.source_observed_at,
+            occurrence_id=validated.occurrence_id,
+            fingerprint=validated.fingerprint,
+            occurrence_state="verified",
+        )
+        intent = self._intents.create_from_sources(
+            (source,),
+            actor=actor,
+            snapshot_id=checkpoint.configuration.snapshot_id,
+            snapshot_digest=checkpoint.configuration.snapshot_digest,
+            pinned_snapshot=True,
+        )
+        if not analysis_result.recognition_type:
+            raise ManualRecoveryContinuationError(
+                "linked analysis has no resolved RecognitionType", code="analysis_result_invalid"
+            )
+        return self._intents.update_choice(
+            intent.intent_id,
+            intent.items[0].item_id,
+            {"recognitionTypeId": analysis_result.recognition_type},
+            expected_version=intent.version,
+            expected_item_version=intent.items[0].version,
+            actor=actor,
+            snapshot_id=intent.snapshot_id,
+            snapshot_digest=intent.snapshot_digest,
+        )
+
     def supports_source_item(self, source_task_id: str, source_item_id: str) -> bool:
         """Whether this exact item belongs to one persisted manual execution."""
 
+        if self._definition_source_job(source_task_id, source_item_id) is not None:
+            return True
         executions = self._repository.list_manual_executions_for_task_item(
             source_task_id, source_item_id
         )

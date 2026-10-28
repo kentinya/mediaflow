@@ -8282,6 +8282,39 @@ export async function fetchAutomationCopyIntent(
   );
 }
 
+export async function reconcileAutomationPublicationFocused(
+  token: string | null,
+  definitionId: string,
+  command: Record<string, unknown>,
+  fetchImpl: FetchLike = fetch,
+): Promise<
+  AutomationMutationResult<{
+    state: "published" | "unknown";
+    publication: AutomationPublicationModel | null;
+  }>
+> {
+  if (!isSafeIdentifier(definitionId))
+    return { ok: false, status: 400, code: "invalid_request" };
+  return submitAutomationDefinitionCommand(
+    token,
+    "POST",
+    `${AUTOMATION_DEFINITIONS_BASE}/${encodeURIComponent(definitionId)}/publication-intent`,
+    command,
+    (payload) => {
+      const value = readRecord(payload, "publicationIntent");
+      if (value["state"] === "published")
+        return {
+          state: "published" as const,
+          publication: normalizeAutomationPublication(value["publication"]),
+        };
+      if (value["state"] !== "unknown" || value["publication"] !== null)
+        throw new Error("malformed publication reconciliation");
+      return { state: "unknown" as const, publication: null };
+    },
+    fetchImpl,
+  );
+}
+
 export async function fetchAutomationRemovalImpact(
   token: string | null,
   definitionId: string,

@@ -65,6 +65,9 @@ def _document(root: Path) -> dict:
     value["persistence"]["databasePath"] = str(root / "runtime.sqlite3")
     value["storages"][0]["rootPath"] = str(root / "source")
     value["storages"][1]["rootPath"] = str(root / "target")
+    value["api"]["principals"] = [
+        {"id": "admin", "tokenEnv": "MEDIAFLOW_API_TOKEN", "roles": ["admin"], "enabled": True}
+    ]
     return value
 
 

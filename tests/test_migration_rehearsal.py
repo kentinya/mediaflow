@@ -236,8 +236,16 @@ class MigrationRehearsalTests(unittest.TestCase):
                 # readable; the retired Preview product is not part of the
                 # authority tuple, so authorization binds the definition and
                 # configuration revision the grant recorded.
-                authority = service.authorize(job, definition)
-                self.assertEqual(authority.grant.grant_id, "legacy-grant")
+                from mediaflow.application.unattended_execution import UnattendedExecutionGrantError
+
+                with self.assertRaises(UnattendedExecutionGrantError) as refused:
+                    service.authorize(job, definition)
+                # A migrated historical grant cannot override the saved disabled state.
+                self.assertEqual("definition_disabled", refused.exception.code)
+                self.assertEqual(
+                    "legacy-grant",
+                    repository.get_unattended_execution_grant("legacy-grant").grant_id,
+                )
 
     def test_migration_failure_keeps_schema30_source_atomic(self) -> None:
         with tempfile.TemporaryDirectory() as directory:

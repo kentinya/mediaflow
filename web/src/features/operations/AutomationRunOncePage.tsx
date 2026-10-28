@@ -202,9 +202,9 @@ export function AutomationRunOncePage() {
         <div>
           <h2>运行一次</h2>
           <p className="mf-dashboard-meta">
-            定义已保存的来源范围会自动发现并冻结为完整清单，无需重新选择文件。
-            这里只读取存储元数据，不会移动、复制或删除任何文件；
-            冻结后会在本页显示零变更计划摘要，仍需单独确认才会执行整理。
+            {query.data?.ok && query.data.model?.executionKind === "analysis"
+              ? "这是保留的历史分析记录。读取不会启动整理；已冻结的摘要及显式续作按原有安全规则处理。"
+              : "已按保存范围受理一次真实整理，无需重新选择文件或再次确认初始执行。后台完成发现、稳定性检查和规划，逐项结果及四类问题恢复在关联任务中查看。"}
           </p>
         </div>
         <RefreshControl onRefresh={refresh} refreshing={query.isFetching} />
@@ -226,6 +226,47 @@ export function AutomationRunOncePage() {
             );
           }
           const model: AutomationRunOnceModel = view.data.model;
+          if (model.executionKind === "organizing" && model.taskId !== null) {
+            return (
+              <div className="mf-dashboard-body">
+                <StatusBanner
+                  variant={model.status === "failed" ? "error" : "info"}
+                  title="运行一次整理任务"
+                >
+                  <p>
+                    {model.definitionName} ·{" "}
+                    {label(
+                      {
+                        queued: "排队中",
+                        running: "整理中",
+                        completed: "已完成",
+                        partial_success: "部分完成",
+                        failed: "失败",
+                        cancelled: "已取消",
+                        paused: "已暂停",
+                      },
+                      model.status,
+                    )}
+                  </p>
+                  <p>
+                    已受理保存范围的一次真实整理，上限{" "}
+                    {model.effectivePrimaryLimit}
+                    。进度、逐项结果和问题恢复在关联任务中查看。
+                  </p>
+                  <p>{model.nextAction}</p>
+                  {model.error && <p>{model.error}</p>}
+                </StatusBanner>
+                <Link
+                  className="mf-button mf-button-primary"
+                  to="/operations/tasks/$taskId"
+                  params={{ taskId: model.taskId }}
+                >
+                  查看整理任务
+                </Link>
+              </div>
+            );
+          }
+
           // The plan this Run once produced is restored from the durable
           // backend association after a reload, reconnect or restart: the
           // local identity is only the faster path to the same fixed plan, and
@@ -440,14 +481,16 @@ export function AutomationRunOncePage() {
           );
         }}
       </AuthorizedReadBoundary>
-      <nav aria-label="运行一次返回">
+      <nav className="mf-actions" aria-label="运行一次返回">
         <Link
+          className="mf-button mf-button-secondary"
           to="/operations/automation"
           search={operationsLandingSearch(operationsReturn, null)}
         >
           返回自动化列表
         </Link>
         <Link
+          className="mf-button mf-button-secondary"
           to="/operations"
           search={operationsLandingSearch(operationsReturn, null)}
         >

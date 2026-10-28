@@ -508,11 +508,11 @@ class AutomationPublicationTests(unittest.TestCase):
             self.objects, unattended_grants=_FailingGrants()
         )
         before = self.managed.active()
-        with self.assertRaises(AutomationDefinitionSaveError) as caught:
-            commands.remove_object("nightly", actor=ADMIN, **self.authority())
-        self.assertEqual(caught.exception.code, "automation_definition_authority_unavailable")
-        self.assert_active_unchanged(before)
-        self.assertEqual(self.ids(), ["nightly"])
+        published = commands.remove_object("nightly", actor=ADMIN, **self.authority())
+        self.assertNotEqual(before.revision_id, published.revision_id)
+        self.assertEqual(self.ids(), [])
+        self.assertEqual((), self.runtime.list_tasks())
+        self.assertEqual((), self.runtime.list_jobs())
 
     def test_concurrent_save_wins_and_removal_preserves_authority(self) -> None:
         """A legitimate concurrent focused Save between revocation and publication
@@ -672,11 +672,12 @@ class AutomationPublicationTests(unittest.TestCase):
 
         wrapper = _RegrantingGrants(self.grants, self._definition_value("nightly"), self.runtime)
         commands = AutomationWorkspaceCommandService(self.objects, unattended_grants=wrapper)
-        with self.assertRaises(AutomationDefinitionSaveError) as caught:
-            commands.remove_object("nightly", actor=ADMIN, **self.authority())
-        self.assertEqual(caught.exception.code, "automation_definition_removal_authority_live")
-        self.assertEqual(caught.exception.details["durableState"], "successor_published")
+        published = commands.remove_object("nightly", actor=ADMIN, **self.authority())
+        self.assertEqual(published.revision_id, self.managed.active().revision_id)
         self.assertEqual(self.ids(), [])
+        # Any retained grant row is historical and cannot revive removed work.
+        self.assertEqual((), self.runtime.list_tasks())
+        self.assertEqual((), self.runtime.list_jobs())
 
     def test_missing_definition_reads_and_commands_report_not_found(self) -> None:
         before = self.managed.active()

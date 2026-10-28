@@ -128,6 +128,7 @@ class _DefinitionCommandAudit:
     action: str
     occurred_at: str
     context: dict[str, object]
+    actor: str
 
 
 @dataclass(frozen=True)
@@ -300,6 +301,22 @@ class AutomationWorkspaceCommandService:
             "fields": sorted(AUTOMATION_DEFINITION_FORM_FIELDS),
             "defaults": copy.deepcopy(AUTOMATION_DEFINITION_FORM_DEFAULTS),
             "resourceLibraries": resource_libraries,
+            "executionEffects": {
+                "operations": sorted(
+                    {
+                        str(value.get("operation", ""))
+                        for value in active.document.get("organizePolicies", [])
+                    }
+                ),
+                "overwrite": any(
+                    value.get("overwrite") is True
+                    for value in active.document.get("organizePolicies", [])
+                ),
+                "sourceCleanup": any(
+                    value.get("sourceDirectoryCleanup", {}).get("mode", "none") != "none"
+                    for value in active.document.get("organizePolicies", [])
+                ),
+            },
             "enums": {
                 # The single retained mode.  A removed mode or alias is not
                 # advertised, so a form can never offer one as a legal choice.
@@ -408,6 +425,72 @@ class AutomationWorkspaceCommandService:
                 "mutation authority while retaining grants, audits and run history"
             ),
         }
+
+    def publication_intent(
+        self,
+        definition_id,
+        *,
+        actor,
+        action,
+        candidate,
+        expected_revision_id,
+        expected_version,
+        expected_digest,
+    ):
+        """Prove an unknown own publication from exact durable command evidence.
+
+        Absence is unknown: an HTTP request may still be in flight. This read
+        never invents a rejection or authorizes automatic resubmission.
+        """
+        self._identifier(definition_id, "publication reconciliation")
+        if action not in {"create", "edit", "enable", "disable"}:
+            raise ValueError("unsupported publication reconciliation action")
+        observed = self._managed.require(expected_revision_id)
+        self._managed.verify_integrity(observed)
+        if (
+            observed.digest != expected_digest
+            or (observed.revision_sequence or observed.version) != expected_version
+        ):
+            raise ValueError("submitted publication identity is invalid")
+        if action in {"enable", "disable"}:
+            raw = self._active_definition(observed, definition_id, action)
+            submitted = AutomationTaskDefinition.from_document(
+                {**raw, "enabled": action == "enable"}
+            )
+        else:
+            submitted = AutomationTaskDefinition.from_document(
+                self._normalize_or_reject({**dict(candidate), "id": definition_id}, definition_id)
+            )
+        trail = self._definition_command_evidence(definition_id)
+        for command in trail.commands:
+            if (
+                command.actor != actor
+                or command.action != action
+                or command.context.get("publishedFromRevisionId") != expected_revision_id
+            ):
+                continue
+            raw = command.context.get("after") or command.context.get("candidate")
+            if not isinstance(raw, dict):
+                continue
+            if (
+                AutomationTaskDefinition.from_document(raw).definition_fingerprint
+                != submitted.definition_fingerprint
+            ):
+                continue
+            proof = self._candidate_publication(command.revision_id, definition_id)
+            if proof.available and proof.revision_id is not None:
+                revision = self._managed.require(proof.revision_id)
+                return {
+                    "state": "published",
+                    "publication": {
+                        "action": action,
+                        "definition": submitted.document(),
+                        "removed": None,
+                        "active": self._safe_active(revision),
+                        "sideEffects": "configuration_only",
+                    },
+                }
+        return {"state": "unknown", "publication": None, "sideEffects": "none"}
 
     def copy_intent(
         self,
@@ -607,7 +690,7 @@ class AutomationWorkspaceCommandService:
             # (``draft_edit``); the command identity lives in the
             # objectChange context.
             command_action = str(change.get("action"))
-            if command_action not in {"copy", "create"}:
+            if command_action not in {"copy", "create", "edit", "enable", "disable"}:
                 return
             # Copy commands carry their source explicitly; create commands
             # have no source identity at all, so they only reconcile for a
@@ -621,7 +704,7 @@ class AutomationWorkspaceCommandService:
                     return
             elif source_id is None:
                 return
-            if str(source_id) != definition_id and command_action == "copy":
+            if str(source_id) != definition_id:
                 return
             commands.append(
                 _DefinitionCommandAudit(
@@ -630,6 +713,7 @@ class AutomationWorkspaceCommandService:
                     action=command_action,
                     occurred_at=audit.occurred_at.isoformat(),
                     context=change,
+                    actor=audit.actor,
                 )
             )
 
@@ -1366,13 +1450,6 @@ class AutomationWorkspaceCommandService:
         validated = self._validate(edited, definition_id)
         self._assert_focused_change(active.document, validated.document, definition_id)
 
-        # Fail-closed authority preflight: the removal must never publish when
-        # the definition's live unattended authority cannot be read, because
-        # publication is followed by the durable revocation and an unreadable
-        # grant state can never be treated as no authority. This is a read
-        # only; the revocation itself happens after the publication is proven.
-        self._assert_authority_readable(definition_id)
-
         try:
             published = self._managed.activate(
                 validated.revision_id,
@@ -1405,7 +1482,7 @@ class AutomationWorkspaceCommandService:
                 next_action=(
                     "refresh the current Active configuration; the definition is still "
                     f"published and its future unattended authority is {live_authority}. "
-                    "Re-grant deliberately if it must remain live"
+                    "Review current Enabled and permission state before another command"
                 ),
             ) from error
         except Exception as error:
@@ -1449,57 +1526,23 @@ class AutomationWorkspaceCommandService:
                     )
                     if unconflicted
                     else (
-                        "read the Active Automation inventory and the definition's grant "
+                        "read the Active Automation inventory and current Enabled "
                         "state; reconcile the uncertain publication deliberately before any "
                         "further removal command"
                     )
                 ),
             ) from error
 
-        # The removal successor is durably published.  Only now — after the
-        # publication is proven — is the definition's future unattended
-        # authority durably revoked, so a known failed removal can never leave
-        # the definition Active while its authority was already revoked (the
-        # exact production failure the same-file configuration/runtime
-        # assembly exposed).  A residual applicable grant that a concurrent
-        # operator legitimately re-granted in the serialized window between
-        # publication and this revocation is revoked here; a revocation that
-        # cannot prove the revoked state is re-read live and reported
-        # truthfully on the already-published removal instead of being hidden.
-        residual = self._revoke_future_authority(
+        # Removal is the durable live stop. Best-effort revocation only updates
+        # retained legacy evidence; it cannot gate the published outcome.
+        self._revoke_future_authority(
             definition_id,
             actor=actor,
             reason=reason or "the Automation Task Definition was removed",
             allow_unavailable=True,
         )
-        if str(residual.get("state")) not in {"revoked", "already_revoked", "none"}:
-            live = self._live_authority_status(definition_id)
-            raise AutomationDefinitionSaveError(
-                "automation_definition_removal_authority_live",
-                (
-                    "the removal successor was published but live future unattended authority "
-                    "could not be revoked; verify and revoke it deliberately"
-                    if live == "active"
-                    else (
-                        "the removal successor was published and no live unattended authority "
-                        "is currently readable; the revocation could not be proven, so "
-                        "verify the grant state and revoke it deliberately"
-                    )
-                ),
-                status=200,
-                definition_id=definition_id,
-                stage="authority",
-                revision_id=published.revision_id,
-                durable_state="successor_published",
-                side_effects="configuration_only",
-                retry_safe=False,
-                authority_state=live,
-                next_action=(
-                    "inspect the definition's unattended grant state and revoke it "
-                    "deliberately; scheduled emission already stopped because the "
-                    "definition is no longer published"
-                ),
-            )
+        # Old grants are historical only. Removal itself is the live stop;
+        # an unavailable historical revocation cannot gate or undo publication.
         return published
 
     def _safe_active_summary(self) -> dict[str, object] | None:
@@ -1569,6 +1612,7 @@ class AutomationWorkspaceCommandService:
                 expected_version=validated.version,
                 actor=actor,
                 before_publish=before_publish,
+                automation_intent_ids=(definition_id,) if normalized.get("enabled") is True else (),
             )
         except (ConfigurationVersionConflict, ConfigurationActivationConflict):
             raise
@@ -1861,48 +1905,23 @@ class AutomationWorkspaceCommandService:
         }
 
     def _live_authority_status(self, definition_id: str) -> str:
-        """The definition's live unattended-authority status right now.
-
-        ``get_for_definition`` falls back to the newest grant row of any
-        status, so a previously revoked grant reads ``revoked`` even when no
-        authority is live.  Removal reconciliation must report the *live*
-        state: a revoked/absent grant means no live authority; only an ACTIVE
-        grant is live future mutation authority.
-        """
-
-        projection = self._authority_projection(definition_id)
-        if projection.get("active") is True:
-            return "active"
-        return "none"
-
-    def _assert_authority_readable(self, definition_id: str) -> None:
-        """Fail closed when the definition's unattended authority cannot be read.
-
-        The removal publishes first and revokes afterwards, so an unreadable
-        grant state can never be silently treated as "no authority": the
-        pre-publication preflight refuses to publish until the grant boundary
-        can answer. It is a read only and changes nothing.
-        """
-
-        if self._unattended_grants is None:
-            return
+        """Current published schedule state; historical grants cannot override it."""
         try:
-            self._unattended_grants.get_for_definition(definition_id)
-        except Exception as error:
-            raise AutomationDefinitionSaveError(
-                "automation_definition_authority_unavailable",
-                "the definition's unattended authority state could not be read, so the removal "
-                "was not attempted; the Active definition remains in use",
-                status=503,
-                definition_id=definition_id,
-                stage="authority",
-                durable_state="active_preserved",
-                side_effects="none",
-                authority_state="unavailable",
-                next_action=(
-                    "restore unattended grant state availability, then confirm the removal again"
+            active = self._managed.active()
+            if active is None:
+                return "unavailable"
+            self._managed.verify_integrity(active)
+            definition = next(
+                (
+                    v
+                    for v in active.document.get("automationTaskDefinitions", [])
+                    if v.get("id") == definition_id
                 ),
-            ) from error
+                None,
+            )
+            return "active" if definition and definition.get("enabled") is True else "none"
+        except Exception:
+            return "unavailable"
 
     def _revoke_future_authority(
         self,

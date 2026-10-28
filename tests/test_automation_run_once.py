@@ -217,6 +217,14 @@ class _RunOnceFixture(unittest.TestCase):
         document = json.loads(Path("config/strategy.example.json").read_text(encoding="utf-8"))
         document["persistence"]["databasePath"] = str(self.database)
         document["historyPath"] = str(self.root / "history.jsonl")
+        document["api"]["principals"] = [
+            {
+                "id": "operator",
+                "tokenEnv": "MEDIAFLOW_API_TOKEN",
+                "roles": ["operator"],
+                "enabled": True,
+            }
+        ]
         document["storages"] = [
             {
                 "id": "source",
@@ -1308,18 +1316,23 @@ class RunOnceJourneyTests(_RunOnceFixture):
                 value,
                 "/api/v1/operations/automation/task-definitions/nightly/run-once",
                 "POST",
-                {},
+                {"admissionRequestId": "99999999-9999-4999-8999-999999999999"},
             )
             self.assertEqual(202, status)
             self.assertEqual("discovering", document["phase"])
             self.assertEqual("nightly", document["definitionId"])
             discovery_id = document["discoveryId"]
-            self.drive(value)
+            self.assertEqual("organizing", document["executionKind"])
+            self.assertIsNotNone(document["taskId"])
+            self.assertEqual("pending", value.repository.get_task(document["taskId"]).status.value)
             status, detail = self.request(
                 value, f"/api/v1/operations/automation/run-once/{discovery_id}"
             )
             self.assertEqual(200, status)
-            self.assertEqual("ready", detail["phase"])
+            self.assertEqual("discovering", detail["phase"])
+            self.assertEqual(document["taskId"], detail["taskId"])
+            self.assertEqual([], value.source.mutations)
+            self.assertEqual([], value.target.mutations)
 
     def test_duplicate_admission_reconciles_to_one_durable_run(self) -> None:
         self.media("Movies/One.2001.mkv")
@@ -1703,11 +1716,11 @@ class RunOnceApiTests(_RunOnceFixture):
                 "/api/v1/operations/automation/task-definitions/nightly/occurrences",
             )
             self.assertEqual(200, status)
-            manual = [item for item in document["items"] if item.get("trigger") == "manual"]
+            manual = document["manualRuns"]
             self.assertEqual(1, len(manual))
-            self.assertEqual("nightly", manual[0]["definitionId"])
-            self.assertIsNone(manual[0]["occurrenceId"])
-            self.assertIsNone(manual[0]["jobId"])
+            self.assertEqual("analysis", manual[0]["kind"])
+            self.assertIsNone(manual[0]["taskId"])
+            self.assertEqual([], document["items"])
 
     def test_run_once_list_is_principal_scoped(self) -> None:
         self.media("Movies/One.2001.mkv")

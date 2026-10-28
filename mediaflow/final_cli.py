@@ -2694,6 +2694,15 @@ def _run_definition_scoped_workflow(
                 permission_authority=_ConfiguredPermissionAuthority(
                     lambda: _configuration(configured_path)
                 ),
+                publication_principal_resolver=lambda job, definition: (
+                    _definition_publication_principal(configuration.database_path, job, definition)
+                ),
+                live_intent_checker=lambda job, definition: _schedule_intent_continuity(
+                    configuration.database_path, job, definition
+                ),
+                live_definition_resolver=lambda definition_id: _live_automation_definition(
+                    configuration.database_path, definition_id
+                ),
             ),
             logger=operational_logger,
         )
@@ -3483,12 +3492,57 @@ def _bounded_scope_continuation_failure(error: BaseException) -> tuple[str, str]
     )
 
 
+def _definition_publication_principal(database_path, job, definition):
+    from mediaflow.application.automation_execution_intent import resolve_principal
+
+    with SQLiteConfigurationRepository(database_path) as repository:
+        return resolve_principal(ManagedConfigurationService(repository), job, definition)
+
+
+def _live_automation_definition(database_path, definition_id):
+    from mediaflow.application.automation_execution_intent import live_definition
+
+    with SQLiteConfigurationRepository(database_path) as repository:
+        return live_definition(ManagedConfigurationService(repository), definition_id)
+
+
+def _schedule_intent_continuity(database_path, job, definition):
+    from mediaflow.application.automation_execution_intent import assert_schedule_continuity
+
+    with SQLiteConfigurationRepository(database_path) as repository:
+        assert_schedule_continuity(ManagedConfigurationService(repository), job, definition)
+
+
+def _current_automation_configuration(database_path):
+    """Read current permissions from the same managed authority as the Job queue."""
+    with SQLiteConfigurationRepository(database_path) as repository:
+        managed = ManagedConfigurationService(repository)
+        active = managed.active()
+        if active is None:
+            raise RuntimeError("current Active is unavailable")
+        managed.verify_integrity(active)
+        return load_managed_runtime_configuration(
+            active.document, bootstrap_database_path=str(database_path)
+        )
+
+
 def _scope_continuation_grants(configuration, repository):
     """The production unattended-grant service over the Worker's own repository."""
 
     return UnattendedExecutionGrantService(
         repository,
-        permission_authority=_ConfiguredPermissionAuthority(lambda: _configuration(None)),
+        permission_authority=_ConfiguredPermissionAuthority(
+            lambda: _current_automation_configuration(configuration.database_path)
+        ),
+        publication_principal_resolver=lambda job, definition: _definition_publication_principal(
+            configuration.database_path, job, definition
+        ),
+        live_intent_checker=lambda job, definition: _schedule_intent_continuity(
+            configuration.database_path, job, definition
+        ),
+        live_definition_resolver=lambda definition_id: _live_automation_definition(
+            configuration.database_path, definition_id
+        ),
     )
 
 
@@ -3496,8 +3550,9 @@ def _scope_continuation_authority(configuration, repository):
     """The shared live-authority checker for one continuation.
 
     It resolves the occurrence's own Job and the definition from the exact saved
-    revision the continuation is pinned to, then re-reads the definition-bound
-    unattended grant through the production grant service.  This is the same
+    revision the continuation is pinned to, then re-reads the publication intent,
+    current permissions and Enabled continuity
+    through the shared production authority.  This is the same
     decision the API admission and the Web projection make, so a continuation
     can never be admitted under authority that the Worker would refuse.
     """
@@ -3516,7 +3571,7 @@ def _scope_continuation_mutation_authority(configuration, repository, original):
     each boundary, exactly as the definition-scoped execution path does.  The
     hook is returned **only** together with the exact ``(job, definition)`` pair
     the continuation will re-verify, and it re-checks that same pair on every
-    call, so a grant revoked while the continuation is running stops the next
+    call, so a disabled/removed definition or permission loss stops the next
     mutation with zero new effect.
 
     A mutation-authorized Task whose authority cannot be resolved returns
@@ -4270,6 +4325,9 @@ def _run_scheduler(
                 # occurrence.
                 NotificationPublisher(
                     repository, getattr(resolved, "webhooks", ()) if resolved else ()
+                ),
+                execution_authority=_scope_continuation_grants(
+                    resolved or configuration, repository
                 ),
                 maximum_active_jobs=(
                     getattr(resolved, "automation_maximum_active_jobs", maximum_active_jobs)

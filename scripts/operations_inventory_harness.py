@@ -2788,6 +2788,12 @@ def run_task_item_recovery_worker_once(
         "taskId": completed_job.task_id,
         "continuationStatus": continuation.status.value if continuation else None,
         "continuationError": continuation.error if continuation else None,
+        "newItems": [
+            {"status": v.status.value, "error": v.error, "path": v.source_path}
+            for v in state.repository.list_items(continuation.new_task_id)
+        ]
+        if continuation and continuation.new_task_id
+        else [],
         "continuationRecovery": continuation.recovery if continuation else None,
         "newTaskId": continuation.new_task_id if continuation else None,
         "newResultId": continuation.new_result_id if continuation else None,
@@ -4092,13 +4098,64 @@ def seed_mixed_scope_recovery(state: AppState) -> dict[str, object]:
     }
 
 
-def run_automation_run_once_worker(state: AppState, *, discovery_id: str) -> dict[str, object]:
-    """Advance the admitted definition-bound Run once with the real Worker.
+def run_automation_run_once_worker(
+    state: AppState, *, discovery_id: str, failure_fixture: str = ""
+) -> dict[str, object]:
+    """Drive the real Job/Worker/Executor, or retained legacy discovery Worker.
 
-    The API only *admits* the discovery; this route is the resident
-    Processing-Worker boundary that turns it into bounded, metadata-only
-    Storage observations and freezes the manifest.  It never mutates Storage.
+    Named failure fixtures inject a bounded pre-effect failure at the existing
+    Executor seam; other siblings execute normally against temporary roots.
     """
+
+    job = state.repository.get_job(discovery_id)
+    if job is not None and job.run_once:
+        from mediaflow.final_cli import _run_queued_workflow
+
+        active = state.managed.configuration_service.active()
+        worker = AutomationWorker(
+            state.repository,
+            lambda value, cancelled: _run_queued_workflow(
+                value, str(state.managed.config_path), cancelled, repository=state.repository
+            ),
+            worker_id="harness-run-once-execution-worker",
+            supported_commands=("organize",),
+            configuration_snapshot_id=active.revision_id,
+            configuration_snapshot_digest=active.digest,
+            runtime_schema_version=SCHEMA_VERSION,
+        )
+        with patch(
+            "mediaflow.final_cli.metadata_provider_registry_from_environment",
+            lambda _ids: state.managed.metadata_registry,
+        ):
+            failed_sources = {
+                "one": ("Two.2002.mkv",),
+                "two": ("Two.2002.mkv", "Three.2003.mkv"),
+                "third": ("Three.2003.mkv",),
+            }.get(failure_fixture)
+            if failed_sources:
+                executor = _failure_for_named_execution_items(failed_sources)
+                with patch(
+                    "mediaflow.application.automation_definition_execution.OrganizerExecutor",
+                    lambda *_args: executor,
+                ):
+                    completed = worker.run_next()
+            else:
+                completed = worker.run_next()
+        items = (
+            state.repository.list_items(completed.task_id)
+            if completed and completed.task_id
+            else ()
+        )
+        return {
+            "failedItemIds": [v.item_id for v in items if v.status.value in {"failed", "partial"}],
+            "successItemIds": [v.item_id for v in items if v.status.value == "success"],
+            "advanced": completed is not None,
+            "discoveryId": discovery_id,
+            "status": completed.status.value if completed else None,
+            "taskId": completed.task_id if completed else None,
+            "failureCategory": completed.failure_category if completed else None,
+            "error": completed.error if completed else None,
+        }
 
     from mediaflow.application.media_discovery_worker import MediaDiscoveryWorker
 
@@ -4154,6 +4211,24 @@ def automation_run_once_state(state: AppState, *, discovery_id: str) -> dict[str
     Bounded reads only: the exact frozen source paths and the durable origin.
     No Storage, Provider or work is touched.
     """
+
+    job = state.repository.get_job(discovery_id)
+    if job is not None and job.run_once:
+        document = state.api._automation_run_once.document(job)
+        task = state.repository.get_task(job.task_id)
+        items = state.repository.list_items(job.task_id)
+        return {
+            "found": True,
+            **document,
+            "sources": [v.source_path for v in items],
+            "taskStatus": task.status.value,
+            "completedItems": task.completed_items,
+            "failedItems": task.failed_items,
+            "items": [
+                {"itemId": v.item_id, "status": v.status.value, "path": v.source_path}
+                for v in items
+            ],
+        }
 
     service = getattr(state.api, "_media_discovery", None)
     if service is None or not discovery_id:
@@ -4352,6 +4427,7 @@ def restore_source_media(state: AppState) -> dict[str, object]:
     """
 
     source_root = state.managed.root / "source"
+    (source_root / "电影/Three.2003.mkv").unlink(missing_ok=True)
     # The scoped definition fixtures. They are restored below rather than only
     # deleted: a narrowed success scope must still hold its two primaries after
     # a previous test moved one of them, otherwise the next journey would find
@@ -4428,7 +4504,7 @@ def seed_scheduled_worker_scope(state: AppState) -> dict[str, object]:
     }
 
 
-def seed_run_once_mixed_scope(state: AppState) -> dict[str, object]:
+def seed_run_once_mixed_scope(state: AppState, *, conflict=True) -> dict[str, object]:
     """Create and index two recognized sources for the native mixed-recovery run."""
 
     files = {
@@ -4439,6 +4515,35 @@ def seed_run_once_mixed_scope(state: AppState) -> dict[str, object]:
         target = state.managed.root / "source" / relative_path
         target.parent.mkdir(parents=True, exist_ok=True)
         target.write_bytes(content)
+    if conflict:
+        # Create a real destination collision from the existing zero-mutation planner.
+        runtime = state.managed.runtime
+        storages = runtime.create_storages()
+        strategy = strategy_runner_from_configuration(
+            runtime.strategy, state.managed.metadata_registry, storages=storages
+        )
+        service = MediaOrganizerService(
+            strategy,
+            StorageScanner(storages),
+            storages,
+            {v.library_id: v for v in runtime.media_libraries},
+            runtime.strategy.recognition_type_policies,
+            JsonLinesOperationHistoryRepository(
+                state.managed.root / "run-once-fixture-analysis.jsonl"
+            ),
+            source_display_roots=dict(runtime.resource_display_roots),
+        )
+        result = service.process_file(
+            "电影/Two.2002.mkv",
+            resource_library=runtime.resource_libraries[0],
+            storage_path="电影/Two.2002.mkv",
+            execute=False,
+        )
+        if result.plan is None:
+            raise RuntimeError("Run once conflict fixture has no actual plan")
+        collision = state.managed.root / "destination" / result.plan.destination_location.path
+        collision.parent.mkdir(parents=True, exist_ok=True)
+        collision.write_bytes(b"preserve existing destination")
     scan = StorageScanner(
         state.managed.runtime.create_storages(),
         clock=lambda: datetime.now(UTC) + timedelta(hours=2),
@@ -4744,6 +4849,7 @@ def run_automation_scheduler_tick(state: AppState) -> dict[str, object]:
     scheduler = IntervalScheduler(
         state.repository,
         (),
+        execution_authority=state.api._unattended_grants,
         configuration_snapshot_resolver=lambda: SchedulerConfigurationSnapshot(
             active.revision_id,
             active.digest,
@@ -5789,7 +5895,11 @@ def application(environ, start_response):
         elif path == "/__harness__/run-automation-run-once-worker" and method == "POST":
             query = urllib.parse.parse_qs(str(environ.get("QUERY_STRING", "")))
             discovery_id = (query.get("discoveryId") or [""])[0]
-            document = run_automation_run_once_worker(STATE, discovery_id=discovery_id)
+            document = run_automation_run_once_worker(
+                STATE,
+                discovery_id=discovery_id,
+                failure_fixture=(query.get("failureFixture") or [""])[0],
+            )
         elif path == "/__harness__/automation-run-once-state" and method == "GET":
             query = urllib.parse.parse_qs(str(environ.get("QUERY_STRING", "")))
             discovery_id = (query.get("discoveryId") or [""])[0]
@@ -5813,7 +5923,10 @@ def application(environ, start_response):
                 STATE, execution_id=(query.get("executionId") or [""])[0]
             )
         elif path == "/__harness__/seed-run-once-mixed-scope" and method == "POST":
-            document = seed_run_once_mixed_scope(STATE)
+            query = urllib.parse.parse_qs(str(environ.get("QUERY_STRING", "")))
+            document = seed_run_once_mixed_scope(
+                STATE, conflict=(query.get("conflict") or ["1"])[0] != "0"
+            )
         elif path == "/__harness__/seed-run-once-two-failure-scope" and method == "POST":
             document = seed_run_once_two_failure_scope(STATE)
         elif path == "/__harness__/open-automation-definition-draft" and method == "POST":

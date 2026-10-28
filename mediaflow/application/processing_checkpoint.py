@@ -374,8 +374,15 @@ class ProcessingCheckpointService:
             _bounded(item.stage).endswith("_resolved")
             or (
                 item_status is TaskItemStatus.PENDING
-                and _bounded(item.stage) == "task_retry_requested"
-                and active_request is not None
+                and _bounded(item.stage) in {"task_retry_requested", "queued"}
+                and (
+                    active_request is not None
+                    or (
+                        current_continuation is not None
+                        and _enum_value(current_continuation.status) == "completed"
+                        and current_continuation.new_result_id is not None
+                    )
+                )
                 and any(value.status == "resolved" for value in blockers)
             )
         ):

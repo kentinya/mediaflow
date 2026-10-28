@@ -1,13 +1,5 @@
-/**
- * Frontend-owned bounded model for a definition-bound Automation Run once.
- *
- * A published `automatic-organization` definition already identifies its
- * ResourceLibrary and safe source sub-scope, so Run once needs no file picker:
- * the backend derives the whole scope, freezes a complete bounded manifest and
- * stores an exact zero-mutation Preview.  This model carries only the durable
- * facts the backend publishes: the immutable definition origin, the effective
- * manifest bound, durable progress and the actions the current principal may
- * take.  It grants no execution authority by itself.
+/** Typed organizing admission and retained historical analysis readback.
+ * The backend owns execution authority, exact pins and independent results.
  */
 
 import {
@@ -18,6 +10,8 @@ import {
 
 export const RUN_ONCE_PHASES = [
   "discovering",
+  "executing",
+  "completed",
   "analyzing",
   // A durable pause was requested (``pausing``) and then acknowledged by the
   // resident Worker at its safe boundary (``paused``); both stop advertising a
@@ -56,6 +50,9 @@ export interface AutomationRunOnceAction {
 }
 
 export interface AutomationRunOnceModel {
+  readonly executionKind: "organizing" | "analysis";
+  readonly taskId: string | null;
+  readonly jobId: string | null;
   readonly discoveryId: string;
   readonly definitionId: string;
   readonly definitionName: string;
@@ -132,9 +129,20 @@ export function normalizeAutomationRunOnce(
   const status = boundedText(record, "status");
   if (!STATUSES.has(status)) fail("status");
   const progress = readRecord(record["progress"], "progress");
-  const counters = readRecord(progress["counters"], "progress.counters");
+  const organizing = record["executionKind"] === "organizing";
+  const counters = organizing
+    ? {
+        visitedEntries: 0,
+        excludedEntries: 0,
+        unstableEntries: 0,
+        errorEntries: 0,
+      }
+    : readRecord(progress["counters"], "progress.counters");
   const actions = readRecord(record["actions"], "actions");
   return {
+    executionKind: organizing ? "organizing" : "analysis",
+    taskId: organizing ? boundedText(record, "taskId") : null,
+    jobId: organizing ? boundedText(record, "jobId") : null,
     discoveryId: boundedText(record, "discoveryId"),
     definitionId: boundedText(record, "definitionId"),
     definitionName: boundedText(record, "definitionName"),

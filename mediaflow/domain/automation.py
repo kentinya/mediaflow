@@ -363,6 +363,37 @@ class AutomationJobStatus(StrEnum):
     CANCELLED = "cancelled"
 
 
+class AutomationJobOrigin(StrEnum):
+    """The exact intent that admitted one definition-pinned Job.
+
+    ``SCHEDULED`` is a normal due occurrence of an Enabled definition and
+    keeps the reusable scheduled authority.  ``RUN_ONCE`` is one explicit
+    operator command for the saved scope; it is admitted directly and never
+    enables the schedule, advances due state or needs a second confirmation.
+    """
+
+    SCHEDULED = "scheduled"
+    RUN_ONCE = "run-once"
+
+    @classmethod
+    def parse(cls, value: object) -> AutomationJobOrigin:
+        if value is None:
+            return cls.SCHEDULED
+        if isinstance(value, cls):
+            return value
+        if not isinstance(value, str) or not value.strip():
+            raise ValueError("automation job execution origin is invalid")
+        aliases = {
+            "scheduled": cls.SCHEDULED,
+            "run-once": cls.RUN_ONCE,
+            "run_once": cls.RUN_ONCE,
+        }
+        try:
+            return aliases[value.strip().lower()]
+        except KeyError as error:
+            raise ValueError("automation job execution origin is invalid") from error
+
+
 class AutomationQueueFull(RuntimeError):
     pass
 
@@ -762,6 +793,40 @@ class AutomationJob:
     resource_library_id: str | None = None
     source_scope: str | None = None
     configuration_snapshot_version: int | None = None
+    # Additive intent evidence for the two definition-pinned execution
+    # entrances.  A normal due occurrence keeps the default scheduled origin;
+    # an explicit Run once records its own exact command identity, the current
+    # principal and (when supplied) the client request id used for lost-response
+    # reconciliation.  None of these values grants anything by itself.
+    execution_origin: AutomationJobOrigin = AutomationJobOrigin.SCHEDULED
+    execution_principal: str | None = None
+    admission_request_id: str | None = None
+
+    def __post_init__(self) -> None:
+        if not isinstance(self.execution_origin, AutomationJobOrigin):
+            object.__setattr__(
+                self, "execution_origin", AutomationJobOrigin.parse(self.execution_origin)
+            )
+        for label, value, maximum in (
+            ("execution principal", self.execution_principal, 200),
+            ("admission request id", self.admission_request_id, 200),
+        ):
+            if value is not None and (
+                not isinstance(value, str)
+                or not value.strip()
+                or len(value) > maximum
+                or "\x00" in value
+            ):
+                raise ValueError(f"automation job {label} is invalid")
+        if self.execution_origin is AutomationJobOrigin.RUN_ONCE:
+            if not self.definition_id or not self.execution_principal:
+                raise ValueError(
+                    "a Run once automation job requires its definition and explicit principal"
+                )
+
+    @property
+    def run_once(self) -> bool:
+        return self.execution_origin is AutomationJobOrigin.RUN_ONCE
 
     @property
     def automation_definition_id(self) -> str | None:

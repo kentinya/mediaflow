@@ -846,16 +846,59 @@ authority, scope, capabilities, conflicts and current snapshot at each mutation 
 blocks future mutation without rewriting completed effects. Uncertain mutation is not automatically
 replayed.
 
-### CURRENT implementation amendment — Automation definition detail (Task46.5 in progress)
+### CURRENT implementation amendment — Automation intent and real Run once (Task46.5; B review pending)
 
-The ordinary V2 definition detail read no longer queries grant eligibility or the grant projection.
-It reads the saved definition, occurrence history and publication/Draft identity, and publishes a
-bounded `executionReadiness` state (enabled, disabled, unavailable, historical or draft-only).
-Enabled describes the saved schedule; it does not certify an executable plan or bypass runtime
-permission/source/effect checks. The detail page exposes checked definition editing and no grant/
-revoke controls. Removed definitions remain read-only history; reads create no work or media effects.
-Other Automation intent/admission changes in the Slice46 TARGET above remain in progress; this
-amendment does not claim their delivery or replace the historical Slice43 acceptance below.
+The ordinary V2 inventory/detail reads saved definitions and bounded `executionReadiness`, without
+querying historical grant eligibility. Enabled is a published schedule state, not proof of a valid
+future plan. Removed/Draft-only/unavailable states retain their actual identities; reads create no
+work. Confirmed focused Save/toggle advances the same form's publication identity while preserving
+later input. Peer changes retain the old candidate. Unknown responses retain principal-scoped
+candidate/action/base identity and reconcile only the matching durable command and activation audit;
+absence is unknown, never permission to replay. Reconnect does not resubmit commands.
+
+All activation paths share publication intent checks. An enabled definition or deliberately saved
+enabled successor requires the publisher's current `GRANT_UNATTENDED_EXECUTION` capability plus the
+entry's existing configuration permissions. Activation audit stores principal, trusted-local flag and
+an effective-scope digest atomically with Active. Unrelated administration changes retain the prior
+intent; unreferenced Storage changes do not expand it. Effective context includes the definition,
+source ResourceLibrary, strategy graph, destination libraries and referenced Storage configurations.
+Legacy activation audit supplies its actual actor, never a fabricated administrator. Local CLI
+publication records the invoking OS uid; `--actor` cannot impersonate remote authority. Workers
+require that same trusted uid or the real configured principal's current capability.
+
+The existing Scheduler checks current authority before normal due admission; enable itself admits
+nothing. Jobs keep immutable revision/definition/scope pins. Worker/Executor checks current permission
+and Enabled/presence before each remaining effect, including attachments/cleanup. Activation ancestry
+also proves no intervening disable/removal: re-enabling cannot resurrect an old queued occurrence.
+An enabled successor may preserve legitimately admitted work without repinning. Completed effects
+and ongoing Storage calls are not rolled back. Legacy grants/revocations remain history, not gates.
+
+Run once requires `EXECUTE_MANUAL_ORGANIZE` and an exact principal/request/observed-publication fence.
+One SQLite transaction inserts its Pending organizing Task, explicit-origin Job and display context;
+request uniqueness and capacity checks leave neither duplicate work nor orphan Tasks. Disabled
+schedules remain runnable without changing due state. Worker consumes the pinned snapshot through
+the same organizing pipeline, without an initial picker/Preview/confirmation. A previously started
+Task is never rescanned after claim recovery; uncertain/completed effects require investigation.
+Pending Job cancellation settles its precreated Task in the same transaction.
+
+Before any Run once effect, configured-scope enumeration must be readable and complete within
+`min(itemLimit,100)`, 10,000 visited entries, 1,000 directory reads, 2,000 pages (100 entries/page), depth 32 and 600 aggregate list-read seconds.
+Unsafe/duplicate entries, invalid/repeated cursors, read failure or overflow refuse the whole prefix. These are cooperative
+budgets around Storage calls, not an interrupt of an in-flight provider call. Existing real age/size
+observation and one conditional wait/re-scan in `(0,60]` seconds remain; waiting consumes no read
+budget. Ready siblings proceed without waiting; remaining unstable items are factual technical
+failures outside four-type Attention. Healthy empty alone is no-work.
+
+Recognition/metadata/classification/conflict blockers retain independent native Task Center recovery.
+Completed linked analysis is not resolution: definition Tasks reuse the existing exact one-item
+intent, source validation, summary and explicit continuation, preserving original pin and sibling
+results. Job/Task linkage and explicit manual origin deduplicate runs; original attempts and recovery
+progress remain distinct. Historical analysis records retain their old read/explicit-confirm semantics
+and receive no automatic execute authority. Only OrganizerExecutor mutates media via Storage.
+
+This amendment records implementation, not independent acceptance or Slice closure. The Slice43
+accepted baseline below remains historical where V2-AUTO-010/011 now replace its normal grant and
+initial analysis/confirmation sequence. Files initial confirmation is unchanged.
 
 ### CURRENT — V2 Automation workspace and consumed engine settings (Slice43 PASS / CLOSED)
 

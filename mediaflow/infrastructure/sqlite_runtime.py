@@ -18,6 +18,7 @@ from mediaflow.domain.automation import (
     AutomationDefinitionOccurrence,
     AutomationJob,
     AutomationJobControlConflict,
+    AutomationJobOrigin,
     AutomationJobStatus,
     AutomationQueueFull,
     AutomationTaskRunMode,
@@ -328,7 +329,7 @@ from mediaflow.infrastructure.task_source_schema import ensure_task_occurrence_c
 # TaskItem's own stored fingerprint inside its binding.  A record without that
 # evidence answers "unknown" instead of "replaced", so no migration, backfill or
 # re-binding of any historical plan/authorization/Result pin is involved.
-SCHEMA_VERSION = 52
+SCHEMA_VERSION = 53
 
 #: The conservative owner generation written to ``file_locks`` rows that predate
 #: schema 38.  It is a fixed, non-guessable-looking sentinel rather than NULL so
@@ -5642,6 +5643,106 @@ class SQLiteTaskRepository:
             ).fetchone()
         return self._job(row) if row else None
 
+    def find_automation_run_once_job(
+        self, *, principal_id: str, admission_request_id: str
+    ) -> AutomationJob | None:
+        """One exact explicit Run once command by its principal-scoped request id."""
+
+        with self._lock:
+            row = self._connection.execute(
+                "SELECT * FROM automation_jobs WHERE execution_origin=? "
+                "AND execution_principal=? AND admission_request_id=? LIMIT 1",
+                (
+                    AutomationJobOrigin.RUN_ONCE.value,
+                    principal_id,
+                    admission_request_id,
+                ),
+            ).fetchone()
+        return self._job(row) if row else None
+
+    def admit_automation_run_once_job(
+        self,
+        job: AutomationJob,
+        maximum_active_jobs: int,
+        *,
+        task: PersistentTask | None = None,
+        definition_name: str | None = None,
+    ) -> AutomationJob | None:
+        """Atomically admit one Run once job or return its existing request twin.
+
+        The unique principal/request identity is the lost-response fence: a
+        concurrent or repeated command for the same exact request converges on
+        the already durable Job instead of admitting a second execution.  The
+        active capacity is checked in the same transaction as insertion.
+        """
+
+        if job.execution_origin is not AutomationJobOrigin.RUN_ONCE:
+            raise ValueError("only a Run once job can be admitted through this boundary")
+        with self._lock:
+            self._connection.execute("BEGIN IMMEDIATE")
+            try:
+                if job.admission_request_id:
+                    row = self._connection.execute(
+                        "SELECT * FROM automation_jobs WHERE execution_origin=? "
+                        "AND execution_principal=? AND admission_request_id=? LIMIT 1",
+                        (
+                            AutomationJobOrigin.RUN_ONCE.value,
+                            job.execution_principal,
+                            job.admission_request_id,
+                        ),
+                    ).fetchone()
+                    if row is not None:
+                        self._connection.commit()
+                        return self._job(row)
+                if not self._has_job_capacity(maximum_active_jobs):
+                    self._connection.rollback()
+                    return None
+                if task is not None:
+                    if task.task_id != job.task_id:
+                        raise ValueError("Run once Task identity does not match Job")
+                    self._connection.execute(
+                        "INSERT INTO tasks VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, "
+                        "?, ?, ?, ?)",
+                        self._task_values(task),
+                    )
+                    self._insert_run_display_locked(
+                        task.task_id,
+                        RunDisplayContext(
+                            source_scope=job.source_scope,
+                            origin_definition_id=job.definition_id,
+                            origin_definition_name=definition_name,
+                            origin_kind="definition-run-once",
+                        ),
+                        task.created_at,
+                    )
+                self._insert_job(job)
+                self._connection.commit()
+                return job
+            except Exception:
+                self._connection.rollback()
+                raise
+
+    def list_automation_run_once_jobs(
+        self, *, principal_id: str | None = None, definition_id: str | None = None, limit: int = 50
+    ) -> tuple[AutomationJob, ...]:
+        if isinstance(limit, bool) or not isinstance(limit, int) or not 1 <= limit <= 100:
+            raise ValueError("Run once list limit must be between 1 and 100")
+        query = (
+            "SELECT * FROM automation_jobs WHERE execution_origin=? "
+            + ("AND execution_principal=? " if principal_id is not None else "")
+            + ("AND definition_id=? " if definition_id is not None else "")
+            + "ORDER BY created_at DESC, job_id DESC LIMIT ?"
+        )
+        parameters = (
+            (AutomationJobOrigin.RUN_ONCE.value,)
+            + ((principal_id,) if principal_id is not None else ())
+            + ((definition_id,) if definition_id is not None else ())
+            + (limit,)
+        )
+        with self._lock:
+            rows = self._connection.execute(query, parameters).fetchall()
+        return tuple(self._job(row) for row in rows)
+
     def list_jobs(
         self,
         *,
@@ -6443,6 +6544,11 @@ class SQLiteTaskRepository:
                    -- trigger selector and the published row value can never
                    -- disagree about what admitted a run.
                    CASE
+                       WHEN runs.run_kind = 'job' AND EXISTS (
+                           SELECT 1 FROM automation_jobs origin_job
+                           WHERE origin_job.job_id = runs.anchor_id
+                           AND origin_job.execution_origin = 'run-once'
+                       ) THEN 'manual'
                        WHEN runs.schedule_id IS NOT NULL
                             OR runs.definition_id IS NOT NULL THEN 'scheduled'
                        WHEN display.origin_definition_id IS NOT NULL THEN 'manual'
@@ -7244,8 +7350,9 @@ class SQLiteTaskRepository:
         """Per-original-item resolution coverage for one page of origin runs.
 
         One original run's *affected* population is its own durable failed/
-        partial item evidence (the same Result-first population the failure
-        stage publishes), and each affected item is *resolved* only when the
+        partial or four-type blocking item evidence, including its durable
+        continuation/preparation lineage after a decision changes the current stage.
+        Each affected item is *resolved* only when the
         exact same source identity carries a confirmed preparation whose linked
         execution terminally completed with a per-item verified effect.  The
         proof is per item, so recovering one failure out of two can never
@@ -7265,7 +7372,18 @@ class SQLiteTaskRepository:
             FROM task_items source_items
             WHERE source_items.task_id IN ({placeholders})
             AND (
-                source_items.status IN ('failed', 'partial')
+                source_items.status IN ('failed', 'partial', 'waiting_confirm',
+                    'waiting_recognition', 'waiting_metadata', 'waiting_classification')
+                OR EXISTS (
+                    SELECT 1 FROM recovery_continuations original_recovery
+                    WHERE original_recovery.source_task_id = source_items.task_id
+                    AND original_recovery.source_item_id = source_items.item_id
+                )
+                OR EXISTS (
+                    SELECT 1 FROM manual_recovery_preparations original_preparation
+                    WHERE original_preparation.source_task_id = source_items.task_id
+                    AND original_preparation.source_item_id = source_items.item_id
+                )
                 OR EXISTS (
                     SELECT 1 FROM task_results failed_results
                     WHERE failed_results.task_id = source_items.task_id
@@ -8073,6 +8191,7 @@ class SQLiteTaskRepository:
                     OR EXISTS (SELECT 1 FROM recovery_continuations lineage_parent
                                WHERE lineage_parent.new_task_id = lineage_item.task_id
                                  AND lineage_parent.status IN ('queued', 'running'))
+                    OR ({self._summary_step_owed_sql("lineage_item")})
                     OR EXISTS (SELECT 1 FROM manual_recovery_preparations lineage_prep
                                WHERE lineage_prep.status = 'prepared'
                                  AND (lineage_prep.source_item_id = lineage_item.item_id
@@ -8407,9 +8526,12 @@ class SQLiteTaskRepository:
         return (
             f"{item_alias}.status = 'pending' "
             f"AND {item_alias}.stage = 'task_retry_requested' "
-            "AND EXISTS (SELECT 1 FROM manual_execution_items source_execution_item "
+            "AND (EXISTS (SELECT 1 FROM manual_execution_items source_execution_item "
             f"WHERE source_execution_item.task_id = {item_alias}.task_id "
             f"AND source_execution_item.task_item_id = {item_alias}.item_id) "
+            "OR EXISTS (SELECT 1 FROM automation_jobs source_definition_job "
+            f"WHERE source_definition_job.task_id = {item_alias}.task_id "
+            "AND source_definition_job.definition_id IS NOT NULL)) "
             f"AND {chain_settled} "
             f"AND COALESCE({confirmed}, '') <> 'confirmed'"
         )
@@ -8754,7 +8876,9 @@ class SQLiteTaskRepository:
         origin_definition_id = (
             str(row["origin_definition_id"]) if row["origin_definition_id"] else None
         )
-        if definition_id or schedule_id:
+        if row["derived_trigger"] == "manual":
+            trigger = OperationsRunTrigger.MANUAL
+        elif definition_id or schedule_id:
             trigger = OperationsRunTrigger.SCHEDULED
         elif origin_definition_id:
             # A definition-bound Run once is a *manual* deliberate run: its
@@ -8995,7 +9119,8 @@ class SQLiteTaskRepository:
                 "failure_category=?, failure_durable_state=?, failure_side_effects=?, "
                 "failure_retry_safe=?, failure_next_action=?, definition_id=?, "
                 "definition_fingerprint=?, definition_version=?, occurrence_at=?, run_mode=?, "
-                "resource_library_id=?, source_scope=?, configuration_snapshot_version=? "
+                "resource_library_id=?, source_scope=?, configuration_snapshot_version=?, "
+                "execution_origin=?, execution_principal=?, admission_request_id=? "
                 "WHERE job_id=?",
                 (*self._job_values(job)[1:], job.job_id),
             )
@@ -9097,11 +9222,19 @@ class SQLiteTaskRepository:
                     (
                         "workflow cancelled",
                         "workflow_cancelled",
-                        "no Task was created and no media effect occurred",
+                        (
+                            "the admitted Task was cancelled before work; no media effect occurred"
+                            if cancelled.run_once
+                            else "no Task was created and no media effect occurred"
+                        ),
                         "none",
                         1,
-                        "inspect the Automation definition and leave it enabled for the next "
-                        "scheduled occurrence",
+                        (
+                            "inspect the cancelled Task; explicitly start a new Run once if wanted"
+                            if cancelled.run_once
+                            else "inspect the Automation definition and leave it enabled "
+                            "for the next scheduled occurrence"
+                        ),
                         job_id,
                     ),
                 )
@@ -9109,6 +9242,18 @@ class SQLiteTaskRepository:
                     "SELECT * FROM automation_jobs WHERE job_id=?", (job_id,)
                 ).fetchone()
                 cancelled = self._job(row)
+                if cancelled.run_once and cancelled.task_id:
+                    self._connection.execute(
+                        "UPDATE tasks SET status=?, updated_at=?, completed_at=? "
+                        "WHERE task_id=? AND status=?",
+                        (
+                            PersistentTaskStatus.CANCELLED.value,
+                            now.isoformat(),
+                            now.isoformat(),
+                            cancelled.task_id,
+                            PersistentTaskStatus.PENDING.value,
+                        ),
+                    )
                 self._finalize_automation_definition_occurrence_locked(cancelled)
         return cancelled
 
@@ -9222,7 +9367,8 @@ class SQLiteTaskRepository:
                 "failure_category=?, failure_durable_state=?, failure_side_effects=?, "
                 "failure_retry_safe=?, failure_next_action=?, definition_id=?, "
                 "definition_fingerprint=?, definition_version=?, occurrence_at=?, run_mode=?, "
-                "resource_library_id=?, source_scope=?, configuration_snapshot_version=? "
+                "resource_library_id=?, source_scope=?, configuration_snapshot_version=?, "
+                "execution_origin=?, execution_principal=?, admission_request_id=? "
                 "WHERE job_id=? AND status=? AND claim_token=? AND worker_id IS ?",
                 (
                     self._job_values(job)[1],
@@ -9316,6 +9462,13 @@ class SQLiteTaskRepository:
                 # failure, and no Task or Storage effect ever existed.
                 "unsupported_definition_mode",
                 "unattended_execution_authority_missing",
+                "automation_execution_authority_unavailable",
+                "automation_execution_principal_missing",
+                "automation_execution_principal_unavailable",
+                "automation_execution_state_unavailable",
+                "scheduled_intent_stopped",
+                "definition_disabled",
+                "definition_removed",
                 "unattended_execution_grant_revoked",
                 "unattended_execution_grant_definition_mismatch",
                 "unattended_execution_grant_resource_mismatch",
@@ -18223,7 +18376,9 @@ class SQLiteTaskRepository:
                     definition_id TEXT, definition_fingerprint TEXT,
                     definition_version INTEGER, occurrence_at TEXT,
                     run_mode TEXT, resource_library_id TEXT, source_scope TEXT,
-                    configuration_snapshot_version INTEGER
+                    configuration_snapshot_version INTEGER,
+                    execution_origin TEXT NOT NULL DEFAULT 'scheduled',
+                    execution_principal TEXT, admission_request_id TEXT
                 );
                 CREATE INDEX IF NOT EXISTS automation_jobs_status_created
                     ON automation_jobs(status, created_at, job_id);
@@ -18828,6 +18983,9 @@ class SQLiteTaskRepository:
                 ("resource_library_id", "TEXT"),
                 ("source_scope", "TEXT"),
                 ("configuration_snapshot_version", "INTEGER"),
+                ("execution_origin", "TEXT NOT NULL DEFAULT 'scheduled'"),
+                ("execution_principal", "TEXT"),
+                ("admission_request_id", "TEXT"),
             ):
                 if column not in job_columns:
                     self._connection.execute(
@@ -18836,6 +18994,16 @@ class SQLiteTaskRepository:
             self._connection.execute(
                 "CREATE INDEX IF NOT EXISTS automation_jobs_definition_occurrence "
                 "ON automation_jobs(definition_id, occurrence_at, job_id)"
+            )
+            self._connection.execute(
+                "CREATE UNIQUE INDEX IF NOT EXISTS automation_jobs_run_once_request "
+                "ON automation_jobs(execution_principal, admission_request_id) "
+                "WHERE execution_origin='run-once' AND admission_request_id IS NOT NULL"
+            )
+            self._connection.execute(
+                "CREATE INDEX IF NOT EXISTS automation_jobs_run_once_principal "
+                "ON automation_jobs(execution_principal, created_at, job_id) "
+                "WHERE execution_origin='run-once'"
             )
             review_columns = {
                 row["name"]
@@ -20054,6 +20222,9 @@ class SQLiteTaskRepository:
             job.resource_library_id,
             job.source_scope,
             job.configuration_snapshot_version,
+            job.execution_origin.value,
+            job.execution_principal,
+            job.admission_request_id,
         )
 
     def _insert_job(self, job: AutomationJob) -> None:
@@ -20073,10 +20244,11 @@ class SQLiteTaskRepository:
             "failure_durable_state, failure_side_effects, failure_retry_safe, "
             "failure_next_action, definition_id, definition_fingerprint, definition_version, "
             "occurrence_at, run_mode, resource_library_id, source_scope, "
-            "configuration_snapshot_version) "
+            "configuration_snapshot_version, execution_origin, execution_principal, "
+            "admission_request_id) "
             "VALUES ("
             "?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, "
-            "?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?"
+            "?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?"
             ")",
             self._job_values(job),
         )
@@ -20114,6 +20286,11 @@ class SQLiteTaskRepository:
             row["resource_library_id"],
             row["source_scope"],
             row["configuration_snapshot_version"],
+            AutomationJobOrigin.parse(
+                row["execution_origin"] if "execution_origin" in row.keys() else None
+            ),
+            (row["execution_principal"] if "execution_principal" in row.keys() else None),
+            (row["admission_request_id"] if "admission_request_id" in row.keys() else None),
         )
 
     @staticmethod

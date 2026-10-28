@@ -188,6 +188,10 @@ class ManagedConfigurationService:
             )
         )
 
+    def bind_automation_publication_authority(self, authority) -> None:
+        """Bind the authenticated API's current configured permission reader."""
+        self._automation_publication_authority = authority
+
     @property
     def repository(self) -> ManagedConfigurationRepository:
         """Expose the existing persistence boundary to focused app adapters."""
@@ -828,6 +832,7 @@ class ManagedConfigurationService:
         expected_version: int,
         actor: str,
         before_publish: Callable[[ManagedConfigurationRevision], object] | None = None,
+        automation_intent_ids: tuple[str, ...] = (),
     ) -> ManagedConfigurationRevision:
         revision = self.require(revision_id)
         if revision.status is not ManagedConfigurationStatus.VALIDATED:
@@ -864,6 +869,17 @@ class ManagedConfigurationService:
                 f"configuration revision is no longer valid: {_bounded_error(error)}",
                 revision_id=revision_id,
             ) from error
+        from mediaflow.application.automation_execution_intent import publication_intents
+
+        previous = self._repository.get_active_revision()
+        intents = publication_intents(
+            self._repository,
+            previous,
+            revision,
+            actor,
+            getattr(self, "_automation_publication_authority", None),
+            explicit_ids=automation_intent_ids,
+        )
         if before_publish is not None:
             # Runtime consumers are constructed while the old Active pointer is
             # still authoritative.  A failed preparation therefore cannot leave
@@ -874,6 +890,7 @@ class ManagedConfigurationService:
         except Exception:
             active = None
         activation_after = {
+            "automationExecutionIntents": intents,
             **_document_evidence(revision, status=ManagedConfigurationStatus.ACTIVE),
             "automationTaskDefinitions": _automation_definition_evidence(revision.document),
         }

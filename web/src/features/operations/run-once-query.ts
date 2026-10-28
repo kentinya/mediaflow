@@ -32,7 +32,8 @@ export function automationRunOnceQueryOptions(
         return false;
       }
       // Durable work is polled only while it is genuinely still progressing.
-      return data.model.phase === "discovering" ||
+      return data.model.phase === "executing" ||
+        data.model.phase === "discovering" ||
         data.model.phase === "analyzing"
         ? 2_000
         : false;

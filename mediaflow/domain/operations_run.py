@@ -355,7 +355,8 @@ _JOB_RUN_STATUS = {
 def derive_run_trigger(job: AutomationJob | None) -> OperationsRunTrigger:
     """The admission trigger from the durable Job record alone.
 
-    A managed definition occurrence is scheduled work; a legacy schedule
+    An explicit definition Run once is manual; a normal managed occurrence
+    is scheduled work; a legacy schedule
     reference is scheduled as well; any other Job came from the Automation
     submission surface; a run with no Job at all was admitted manually (a
     standalone Task producer such as an exact manual organize
@@ -363,7 +364,7 @@ def derive_run_trigger(job: AutomationJob | None) -> OperationsRunTrigger:
     persisted record.
     """
 
-    if job is None:
+    if job is None or job.run_once:
         return OperationsRunTrigger.MANUAL
     if job.definition_id:
         return OperationsRunTrigger.SCHEDULED

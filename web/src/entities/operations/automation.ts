@@ -990,6 +990,7 @@ export function normalizeAutomationDefinition(
   { withReadiness = false }: { withReadiness?: boolean } = {},
 ): AutomationDefinitionModel {
   const source = readRecord(value, field);
+  withReadiness = withReadiness || source["executionReadiness"] !== undefined;
   const document = normalizeAutomationDefinitionDocument(source, field);
   const occurrence = readRecord(
     source["occurrenceState"] ?? source["occurrence"],
@@ -1873,6 +1874,12 @@ function normalizeLatestRuns(
 }
 
 export interface AutomationOccurrencesPage {
+  readonly manualRuns: readonly {
+    readonly runId: string;
+    readonly status: string;
+    readonly taskId: string | null;
+    readonly kind: "organizing" | "analysis";
+  }[];
   readonly definitionId: string;
   readonly activeConfiguration: AutomationActiveConfigurationModel | null;
   readonly items: readonly AutomationOccurrenceModel[];
@@ -1890,7 +1897,21 @@ export function normalizeAutomationOccurrencesPage(
   if (!Array.isArray(rawItems) || rawItems.length > 100) {
     return fail("items");
   }
+  const manual = source["manualRuns"] ?? [];
+  if (!Array.isArray(manual) || manual.length > 50) return fail("manualRuns");
   return {
+    manualRuns: manual.map((value) => {
+      const item = readRecord(value, "manualRuns[]");
+      return {
+        runId: text(item, "runId"),
+        status: text(item, "status"),
+        taskId: optionalText(item, "taskId"),
+        kind: enumOrFail(item["kind"], "manualRuns.kind", [
+          "organizing",
+          "analysis",
+        ] as const),
+      };
+    }),
     definitionId: text(source, "definitionId"),
     activeConfiguration: normalizeAutomationActiveConfiguration(
       source["activeConfiguration"],

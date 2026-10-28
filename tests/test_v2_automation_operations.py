@@ -436,13 +436,9 @@ class AutomationOperatorJourneyTests(unittest.TestCase):
                 run_once_action["path"],
                 f"{OPERATIONS_ROUTE}/{_DEFINITION['id']}/run-once",
             )
-            grant_action = self._action(definition, "grant")
-            self.assertTrue(grant_action["available"])
-            self.assertTrue(grant_action["requiresConfirmation"])
-            self.assertEqual(
-                grant_action["path"],
-                f"/api/v1/automation/task-definitions/{_DEFINITION['id']}/grant",
-            )
+            for retired in ("grant", "grantState", "revoke"):
+                self.assertNotIn(retired, definition["actions"])
+            self.assertEqual("enabled", definition["executionReadiness"]["state"])
             copy_action = self._action(definition, "copy")
             self.assertFalse(copy_action["available"])
             self.assertIn("successor Draft", copy_action["reason"])

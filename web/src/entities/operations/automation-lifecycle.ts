@@ -139,6 +139,11 @@ function normalizeResourceLibrary(
 }
 
 export interface AutomationDefinitionFormAuthorityModel {
+  readonly executionEffects: {
+    readonly operations: readonly string[];
+    readonly overwrite: boolean;
+    readonly sourceCleanup: boolean;
+  } | null;
   readonly active: AutomationActiveIdentityModel;
   readonly fields: readonly string[];
   readonly defaults: Record<string, unknown>;
@@ -230,7 +235,37 @@ export function normalizeAutomationFormAuthority(
   ) {
     return fail("defaults");
   }
+  const effects =
+    source["executionEffects"] === undefined
+      ? null
+      : readRecord(source["executionEffects"], "executionEffects");
+  const operations = effects === null ? [] : effects["operations"];
+  if (
+    !Array.isArray(operations) ||
+    operations.length > 4 ||
+    operations.some(
+      (value) =>
+        typeof value !== "string" ||
+        ![
+          "MOVE",
+          "COPY",
+          "HARDLINK",
+          "SOFTLINK",
+          "HARD_LINK",
+          "SOFT_LINK",
+        ].includes(value),
+    )
+  )
+    return fail("executionEffects.operations");
   return {
+    executionEffects:
+      effects === null
+        ? null
+        : {
+            operations: operations as string[],
+            overwrite: flag(effects, "overwrite"),
+            sourceCleanup: flag(effects, "sourceCleanup"),
+          },
     active: normalizeAutomationActiveIdentity(source["active"]),
     fields: rawFields.filter(
       (item): item is string => typeof item === "string",

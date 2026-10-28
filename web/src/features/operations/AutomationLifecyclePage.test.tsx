@@ -366,6 +366,59 @@ describe("AutomationLifecyclePage", () => {
     ).toBeNull();
   });
 
+  it("reconciles an unknown Save without replay and preserves later input", async () => {
+    let active = ACTIVE;
+    let saved = definition();
+    let writes = 0;
+    const calls = recordingFetch((call) => {
+      if (call.url === "/api/v1/auth/principal") return principalResponse();
+      if (call.url.endsWith("/automation/definitions") && call.method === "GET")
+        return jsonResponse({ ...formAuthority(), active });
+      if (call.url.endsWith("/nightly/removal-impact"))
+        return jsonResponse(removalImpact());
+      if (
+        call.url.endsWith("/automation/definitions/nightly") &&
+        call.method === "GET"
+      )
+        return jsonResponse({ ...editProjection(), definition: saved, active });
+      if (call.method === "PUT") {
+        writes += 1;
+        saved = definition(call.body?.object as Record<string, unknown>);
+        active = publication("save", saved).active;
+        // Publication committed; its successful response was lost in transport.
+        return jsonResponse({ error: { code: "response_lost" } }, 503);
+      }
+      if (call.url.endsWith("/nightly/publication-intent"))
+        return jsonResponse({
+          state: "published",
+          publication: { ...publication("save", saved), active },
+        });
+      return undefined;
+    });
+    await connect();
+    renderApp("/operations/automation/lifecycle/nightly");
+    const name = await screen.findByLabelText("Name");
+    await userEvent.clear(name);
+    await userEvent.type(name, "Submitted once");
+    await userEvent.click(screen.getByRole("button", { name: "保存" }));
+    await screen.findByText("发布结果待核对");
+    expect(screen.getByRole("button", { name: "保存" })).toBeDisabled();
+    await userEvent.clear(name);
+    await userEvent.type(name, "Later input");
+    await userEvent.click(screen.getByRole("button", { name: "核对本次发布" }));
+    await screen.findByText(/已从持久审计核对本次发布/);
+    expect(name).toHaveValue("Later input");
+    expect(screen.getByRole("button", { name: "保存" })).toBeEnabled();
+    expect(writes).toBe(1);
+    const read = calls.find((call) =>
+      call.url.endsWith("/nightly/publication-intent"),
+    );
+    expect(read?.body?.expectedRevisionId).toBe(ACTIVE_REVISION);
+    expect((read?.body?.object as Record<string, unknown>).name).toBe(
+      "Submitted once",
+    );
+  });
+
   it("offers enable and a disabled copy for a published definition", async () => {
     const calls = recordingFetch((call) => {
       if (call.url === "/api/v1/auth/principal") {

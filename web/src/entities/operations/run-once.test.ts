@@ -60,6 +60,35 @@ describe("normalizeAutomationRunOnce", () => {
     expect(model.actions.finalize.available).toBe(false);
   });
 
+  it("reads organizing admission without inventing discovery counters or a second confirmation", () => {
+    const model = normalizeAutomationRunOnce(
+      payload({
+        executionKind: "organizing",
+        taskId: "task-1",
+        jobId: "job-1",
+        phase: "executing",
+        status: "running",
+        progress: { message: "processing" },
+        actions: {},
+        zeroMutation: false,
+      }),
+    );
+    expect(model.executionKind).toBe("organizing");
+    expect(model.taskId).toBe("task-1");
+    expect(model.actions.finalize.available).toBe(false);
+    expect(model.actions.preview.available).toBe(false);
+    expect(() =>
+      normalizeAutomationRunOnce(
+        payload({
+          executionKind: "organizing",
+          jobId: "job-1",
+          progress: {},
+          taskId: null,
+        }),
+      ),
+    ).toThrow();
+  });
+
   it("exposes the refused phase with its material reason", () => {
     const model = normalizeAutomationRunOnce(
       payload({

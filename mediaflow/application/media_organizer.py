@@ -100,6 +100,18 @@ ANALYSIS_CLASSIFICATION_NEXT_ACTION = (
 )
 
 
+class IncompleteOrganizingScope(RuntimeError):
+    """The complete automatic scope was not proved before any effects."""
+
+    def __init__(self, reason: str):
+        self.reason = reason
+        super().__init__(
+            "the complete saved scope is unreadable"
+            if reason == "scope_unreadable"
+            else "the complete saved scope exceeds its primary limit"
+        )
+
+
 @dataclass(frozen=True)
 class MediaOrganizerItemResult:
     source: str
@@ -1089,6 +1101,7 @@ class MediaOrganizerService:
         cancellation_check: CancellationCheck | None = None,
         skip_sources: set[tuple[str, str]] | None = None,
         source_display_root: str | None = None,
+        require_complete_scope: bool = False,
     ) -> MediaOrganizerBatchResult:
         items: list[MediaOrganizerItemResult] = []
         selected_count = 0
@@ -1108,6 +1121,14 @@ class MediaOrganizerService:
             cancellation=cancellation,
             cancellation_check=cancellation_check,
         )
+        if require_complete_scope and scan_errors:
+            raise IncompleteOrganizingScope("scope_unreadable")
+        if (
+            require_complete_scope
+            and limit is not None
+            and len(ready_files) + len(waiting_files) > limit
+        ):
+            raise IncompleteOrganizingScope("scope_overflow")
         if waiting_files and not ready_files:
             # Record this pass's real observation time *before* waiting, so the
             # later re-observation measures a genuine elapsed interval instead of
@@ -1132,6 +1153,14 @@ class MediaOrganizerService:
                     cancellation=cancellation,
                     cancellation_check=cancellation_check,
                 )
+        if require_complete_scope and scan_errors:
+            raise IncompleteOrganizingScope("scope_unreadable")
+        if (
+            require_complete_scope
+            and limit is not None
+            and len(ready_files) + len(waiting_files) > limit
+        ):
+            raise IncompleteOrganizingScope("scope_overflow")
         # Keep this pass's live observations for the work's own continuation and
         # for any still-waiting candidate the caller re-runs later.
         self._previous_observations = {
@@ -1171,7 +1200,7 @@ class MediaOrganizerService:
             if progress:
                 progress(len(items), limit, source)
             if limit is not None and selected_count >= limit:
-                bound_reached = True
+                bound_reached = not require_complete_scope
                 cancellation.cancel()
 
         scan_errors: tuple[ScanError, ...] = scan_errors

@@ -80,6 +80,24 @@ export function AutomationOccurrencesPage() {
               </div>
               <RefreshControl onRefresh={refresh} refreshing={isFetching} />
             </header>
+            {page.manualRuns.length > 0 && (
+              <section className="mf-count-section">
+                <h3>Run once history</h3>
+                {page.manualRuns.map((run) => (
+                  <p key={run.runId}>
+                    <Link
+                      to="/operations/automation/run-once/$discoveryId"
+                      params={{ discoveryId: run.runId }}
+                    >
+                      {run.kind === "organizing"
+                        ? "Organizing Run once"
+                        : "Historical analysis"}
+                    </Link>{" "}
+                    · {run.status}
+                  </p>
+                ))}
+              </section>
+            )}
             {page.items.length === 0 && (
               <StatusBanner variant="info" title="No occurrences yet">
                 <p>

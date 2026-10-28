@@ -32,7 +32,7 @@ from mediaflow.application.configuration_snapshot import ManagedConfigurationSer
 from mediaflow.application.manual_organize import ManualOrganizeIntentService
 from mediaflow.application.manual_organize_preview import ManualOrganizePreviewService
 from mediaflow.application.media_discovery import MediaDiscoveryService
-from mediaflow.domain.media_discovery import DiscoveryBudgets, DiscoveryStatus
+from mediaflow.domain.media_discovery import DiscoveryBudgets
 from mediaflow.domain.security import ApiPermission, ResolvedApiPrincipal
 from mediaflow.domain.storage import StorageError, StorageErrorCode
 from mediaflow.infrastructure.local_storage import LocalStorage
@@ -85,6 +85,10 @@ class _RecordingStorage:
 
     def list(self, path: str):
         self.reads.append(("list", path))
+        if any(path == prefix or path.startswith(prefix + "/") for prefix in self._unreadable):
+            raise StorageError(
+                StorageErrorCode.PERMISSION_DENIED, "list", path, "unreadable fixture subtree"
+            )
         return self._storage.list(path)
 
     def list_page(self, path: str, *, limit: int, cursor: str | None = None):
@@ -108,29 +112,35 @@ class _RecordingStorage:
         return self._storage.exists(path)
 
     def read(self, path: str):
-        self.mutations.append(("read", path))
         return self._storage.read(path)
 
     def write(self, path: str, data, *, overwrite: bool = False) -> None:
         self.mutations.append(("write", path))
+        return self._storage.write(path, data, overwrite=overwrite)
 
     def create_directory(self, path: str) -> None:
         self.mutations.append(("create_directory", path))
+        return self._storage.create_directory(path)
 
     def move(self, source: str, target: str, *, overwrite: bool = False) -> None:
         self.mutations.append(("move", source))
+        return self._storage.move(source, target, overwrite=overwrite)
 
     def copy(self, source: str, target: str, *, overwrite: bool = False) -> None:
         self.mutations.append(("copy", source))
+        return self._storage.copy(source, target, overwrite=overwrite)
 
     def delete(self, path: str) -> None:
         self.mutations.append(("delete", path))
+        return self._storage.delete(path)
 
     def hard_link(self, source: str, target: str) -> None:
         self.mutations.append(("hard_link", source))
+        return self._storage.hard_link(source, target)
 
     def soft_link(self, source: str, target: str) -> None:
         self.mutations.append(("soft_link", source))
+        return self._storage.soft_link(source, target)
 
 
 class RunOnceApiTests(unittest.TestCase):
@@ -218,7 +228,25 @@ class RunOnceApiTests(unittest.TestCase):
             if source_scope is not None:
                 definition["sourceScope"] = source_scope
             definitions = [definition]
+        value["api"]["principals"] = [
+            {"id": "admin", "tokenEnv": "MEDIAFLOW_API_TOKEN", "roles": ["admin"], "enabled": True}
+        ]
+        value["recognitionRules"] = [
+            {
+                "id": "movies",
+                "name": "Movies",
+                "priority": 100,
+                "score": 100,
+                "stopOnMatch": True,
+                "condition": {"field": "extension", "operator": "in", "value": ["mkv", "mp4"]},
+                "outputRecognitionType": "A",
+            }
+        ]
         value["automationTaskDefinitions"] = definitions
+        if hasattr(self, "stability"):
+            value["resourceLibraries"][0]["stability"] = self.stability
+        if hasattr(self, "change_document"):
+            self.change_document(value)
         return value
 
     @contextmanager
@@ -339,800 +367,487 @@ class RunOnceApiTests(unittest.TestCase):
             raise AssertionError("Run-once discovery did not settle")
         return result
 
-    # -- the promised journey --------------------------------------------
+    def admit(self, value, request_id="request-1", **overrides):
+        active = value.managed.active()
+        from mediaflow.domain.automation import AutomationTaskDefinition
 
-    def test_published_disabled_definition_runs_once_without_file_selection(self) -> None:
+        definition = AutomationTaskDefinition.from_document(
+            active.document["automationTaskDefinitions"][0]
+        )
+        body = {
+            "admissionRequestId": request_id,
+            "expectedRevisionId": active.revision_id,
+            "expectedRevisionVersion": active.revision_sequence or active.version,
+            "expectedRevisionDigest": active.digest,
+            "expectedDefinitionFingerprint": definition.definition_fingerprint,
+            **overrides,
+        }
+        return self.request(
+            value, "POST", "/api/v1/operations/automation/task-definitions/nightly/run-once", body
+        )
+
+    def execute(self, value):
+        from mediaflow.application.automation import AutomationWorker
+        from mediaflow.application.automation_definition_execution import (
+            DefinitionScopedExecutionService,
+        )
+        from mediaflow.application.metadata import MetadataProviderRegistry
+        from mediaflow.application.strategy_test import (
+            SyntheticMetadataProvider,
+            strategy_runner_from_configuration,
+        )
+        from mediaflow.domain.metadata import MediaCandidate, MediaType
+        from mediaflow.infrastructure.json_history import JsonLinesOperationHistoryRepository
+
+        provider = SyntheticMetadataProvider(
+            (
+                MediaCandidate("tmdb", "1", MediaType.MOVIE, "One", year=2001),
+                MediaCandidate("tmdb", "2", MediaType.MOVIE, "Two", year=2002),
+            )
+        )
+        service = DefinitionScopedExecutionService(
+            value.repository,
+            value.runtime,
+            storage_factory=lambda **kwargs: {"source": value.source, "target": value.target},
+            provider_factory=lambda ids: MetadataProviderRegistry((provider,)),
+            strategy_factory=strategy_runner_from_configuration,
+            history_factory=JsonLinesOperationHistoryRepository,
+            unattended_grant_service=value.api._unattended_grants,
+        )
+        return AutomationWorker(value.repository, service.run).run_next()
+
+    def test_disabled_definition_admits_task_before_worker_and_executes_without_confirmation(self):
+        self.media("Movies/One.2001.mkv")
+        with self.journey(source_scope="Movies") as value:
+            before = value.managed.active()
+            status, run = self.admit(value)
+            self.assertEqual(202, status, run)
+            self.assertEqual("organizing", run["executionKind"])
+            self.assertEqual("pending", value.repository.get_task(run["taskId"]).status.value)
+            self.assertEqual([], value.source.mutations)
+            finished = self.execute(value)
+            self.assertEqual("completed", finished.status.value)
+            task = value.repository.get_task(run["taskId"])
+            self.assertEqual("completed", task.status.value)
+            self.assertEqual(1, task.completed_items)
+            self.assertFalse((self.source_root / "Movies/One.2001.mkv").exists())
+            self.assertEqual(before.revision_id, value.managed.active().revision_id)
+            self.assertIsNone(value.repository.get_automation_definition_due_state("nightly"))
+            self.assertEqual((), value.repository.list_unattended_execution_grants())
+            self.assertEqual((), value.discovery.list())
+            self.assertEqual(1, len(value.repository.list_tasks()))
+            self.assertEqual(1, len(value.repository.list_jobs()))
+            status, runs = self.request(
+                value, "GET", "/api/v1/operations/runs?view=all&trigger=manual"
+            )
+            self.assertEqual(200, status, runs)
+            linked = [v for v in runs["items"] if v["task_id"] == task.task_id]
+            self.assertEqual(1, len(linked))
+            self.assertEqual("manual", linked[0]["trigger"])
+            self.assertEqual("nightly", linked[0]["definition_id"])
+
+    def test_duplicate_and_exact_lost_response_reconcile_without_replay(self):
+        self.media("One.2001.mkv")
+        with self.journey() as value:
+            status, first = self.admit(value)
+            self.assertEqual(202, status, first)
+            status, second = self.admit(value)
+            self.assertEqual(first["jobId"], second["jobId"])
+            self.execute(value)
+            status, read = self.request(
+                value,
+                "GET",
+                "/api/v1/operations/automation/task-definitions/nightly/run-once?admissionRequestId=request-1",
+            )
+            self.assertEqual(200, status, read)
+            self.assertEqual(first["taskId"], read["taskId"])
+            self.assertEqual("completed", read["status"])
+            self.assertIsNone(self.execute(value))
+            self.assertEqual(1, len(value.repository.list_tasks()))
+
+    def test_empty_is_no_work_but_unreadable_and_overflow_never_execute_prefix(self):
+        with self.journey() as value:
+            status, run = self.admit(value)
+            self.assertEqual(202, status, run)
+            self.execute(value)
+            self.assertEqual(
+                "no_work", value.run_once.document(value.run_once.get(run["jobId"]))["phase"]
+            )
         self.media("Movies/One.2001.mkv")
         self.media("Movies/Two.2002.mkv")
-        with self.journey(source_scope="Movies") as value:
-            active_before = value.managed.active()
-            due_before = value.repository.get_automation_definition_due_state("nightly")
-            status, body = self.request(
+        with self.journey(item_limit=1) as value:
+            self.admit(value, "overflow")
+            result = self.execute(value)
+            self.assertEqual("failed", result.status.value)
+            self.assertEqual([], value.source.mutations)
+            self.assertEqual([], value.target.mutations)
+        with self.journey() as value:
+            value.source.fail_listing("Movies")
+            self.admit(value, "unreadable")
+            result = self.execute(value)
+            self.assertEqual("failed", result.status.value)
+            self.assertEqual([], value.source.mutations)
+            self.assertEqual([], value.target.mutations)
+
+    def test_effective_ceiling_is_one_hundred_and_small_scope_completes(self):
+        self.media("One.2001.mkv")
+        with self.journey(item_limit=150) as value:
+            status, run = self.admit(value)
+            self.assertEqual(202, status, run)
+            self.assertEqual(100, run["effectivePrimaryLimit"])
+            result = self.execute(value)
+            self.assertEqual("completed", result.status.value)
+            self.assertEqual(1, value.repository.get_task(run["taskId"]).completed_items)
+
+    def test_stale_malformed_missing_and_read_only_commands_create_nothing(self):
+        with self.journey() as value:
+            for body, token in [
+                ({"admissionRequestId": "bad", "paths": ["One.mkv"]}, ADMIN_TOKEN),
+                ({"admissionRequestId": "denied"}, VIEWER_TOKEN),
+            ]:
+                status, _ = self.request(
+                    value,
+                    "POST",
+                    "/api/v1/operations/automation/task-definitions/nightly/run-once",
+                    body,
+                    token=token,
+                )
+                self.assertIn(status, (400, 403))
+            status, _ = self.admit(value, expectedRevisionId="stale")
+            self.assertEqual(409, status)
+            status, _ = self.request(
                 value,
                 "POST",
-                "/api/v1/operations/automation/task-definitions/nightly/run-once",
-                {},
+                "/api/v1/operations/automation/task-definitions/missing/run-once",
+                {"admissionRequestId": "missing"},
             )
-            self.assertEqual(202, status)
-            self.assertEqual("discovering", body["phase"])
-            self.assertEqual("nightly", body["definitionId"])
-            self.assertEqual("Movies", body["sourceScope"])
-            self.assertEqual(10, body["definitionItemLimit"])
-            self.assertEqual(10, body["effectivePrimaryLimit"])
-            self.assertEqual("none", body["sideEffects"])
-            discovery_id = body["discoveryId"]
+            self.assertEqual(404, status)
+            self.assertEqual((), value.repository.list_tasks())
+            self.assertEqual((), value.repository.list_jobs())
+            self.assertEqual([], value.source.mutations)
 
-            settled = self.drive(value)
-            self.assertEqual(DiscoveryStatus.COMPLETED, settled.status)
-            self.assertEqual(2, len(settled.sources))
-            # The scope came from the definition, never from a submitted path.
-            self.assertEqual(
-                ("Movies",),
-                tuple(entry.path for entry in settled.progress.scope_entries),
-            )
-            # No schedule or authority state changed.
-            self.assertEqual(active_before.revision_id, value.managed.active().revision_id)
-            self.assertEqual(
-                due_before, value.repository.get_automation_definition_due_state("nightly")
-            )
-            self.assertIsNone(value.repository.get_active_unattended_execution_grant("nightly"))
+    def test_automatic_folder_filtering_keeps_images_and_sidecars_out_of_primaries(self):
+        self.media("One.2001.mkv")
+        self.media("advert.jpg")
+        self.media("One.2001.en.srt")
+        with self.journey() as value:
+            self.admit(value)
+            result = self.execute(value)
+            self.assertEqual("completed", result.status.value)
+            self.assertEqual(1, len(value.repository.list_items(result.task_id)))
+            self.assertTrue((self.source_root / "advert.jpg").exists())
+            self.assertTrue((self.source_root / "One.2001.en.srt").exists())
 
-            status, detail = self.request(
-                value,
-                "GET",
-                f"/api/v1/operations/automation/run-once/{discovery_id}",
+    def test_business_readiness_is_inside_the_admitted_task(self):
+        self.media("Unknown.2024.mkv")
+        with self.journey() as value:
+            self.admit(value)
+            result = self.execute(value)
+            self.assertEqual("completed", result.status.value)
+            items = value.repository.list_items(result.task_id)
+            self.assertEqual(1, len(items))
+            self.assertIn(
+                items[0].status.value, ("waiting_metadata", "waiting_metadata_correction")
+            )
+            self.assertEqual([], value.source.mutations)
+
+    def test_old_analysis_records_remain_analysis_only_on_plain_read(self):
+        self.media("One.2001.mkv")
+        with self.journey() as value:
+            legacy = value.run_once.admit(
+                "nightly",
+                actor="admin",
+                admission_request_id="00000000-0000-4000-8000-000000000001",
+            )
+            status, read = self.request(
+                value, "GET", f"/api/v1/operations/automation/run-once/{legacy.discovery_id}"
             )
             self.assertEqual(200, status)
-            self.assertEqual("ready", detail["phase"])
-            self.assertTrue(detail["actions"]["finalize"]["available"])
-            self.assertEqual([], value.source.mutations)
-            self.assertEqual([], value.target.mutations)
-
-    def test_finalize_freezes_manifest_and_defers_the_plan_to_the_worker(self) -> None:
-        self.media("Movies/One.2001.mkv")
-        with self.journey(source_scope="Movies") as value:
-            _status, body = self.request(
-                value,
-                "POST",
-                "/api/v1/operations/automation/task-definitions/nightly/run-once",
-                {},
-            )
-            self.drive(value)
-            current = value.run_once.get(body["discoveryId"])
-            status, frozen = self.request(
-                value,
-                "POST",
-                f"/api/v1/operations/automation/run-once/{body['discoveryId']}/finalize",
-                {"expectedVersion": current.version},
-            )
-            self.assertEqual(201, status)
-            # The exact plan is durable work of this same run: the response
-            # names the analyzing stage and the resident Worker links the plan
-            # here; no plan or execution authority is created inline.
-            self.assertEqual("analyzing", frozen["phase"])
-            self.assertTrue(frozen["frozen"])
-            self.assertIsNotNone(frozen["intentId"])
-            self.assertIsNone(frozen["previewId"])
-            self.assertIsNone(frozen["previewPath"])
-            self.assertIsNone(frozen["analysisId"])
-            self.assertIsNone(frozen["analysisPath"])
-            # The analyzing run stays pausable and cancellable.
-            self.assertTrue(frozen["actions"]["pause"]["available"])
-            self.assertTrue(frozen["actions"]["cancel"]["available"])
-            # The plain run read honestly advertises the pending plan route.
-            status, reading = self.request(
-                value,
-                "GET",
-                f"/api/v1/operations/automation/run-once/{body['discoveryId']}",
-            )
-            self.assertEqual("analyzing", reading["phase"])
-            self.assertIsNone(reading["previewId"])
-            self.assertTrue(reading["actions"]["preview"]["available"])
-            self.assertIsNone(reading["actions"]["preview"]["path"])
-            # The resident Worker completes the same analysis on this run.
-            analyzed = value.discovery.claim_and_run(
-                worker_id="analysis-worker", claim_token="analysis-token"
-            )
-            self.assertIsNotNone(analyzed)
-            self.assertIsNotNone(analyzed.preview_id)
-            # Freezing and the durable analysis are zero mutation.
-            self.assertEqual([], value.source.mutations)
-            self.assertEqual([], value.target.mutations)
-
-    def test_definition_run_once_keeps_the_unchanged_automatic_folder_filtering(self) -> None:
-        """B46.3-03: the deliberate Files rule never weakens the automatic one.
-
-        A definition-bound Run once walks a scope the operator did not select by
-        hand, so the published exclude/include/match rules keep exactly their
-        previous meaning.  The same policy under which a deliberate Files folder
-        selection is now admitted still prunes this automatic walk.
-        """
-
-        self.media("Movies/One.2001.mkv")
-        self.media("Movies/Kept.2002.mkv")
-        with self.journey(source_scope="Movies") as value:
-            library = value.runtime.resource_libraries[0]
-            from dataclasses import replace as _replace
-
-            from mediaflow.domain.library import ScanRule, ScanRuleKind
-
-            excluded = _replace(
-                library,
-                exclude_rules=(
-                    *library.exclude_rules,
-                    ScanRule(ScanRuleKind.GLOB, "**/Kept*"),
-                ),
-            )
-            runtime = _replace(value.runtime, resource_libraries=(excluded,))
-            value.discovery._runtime_resolver = lambda sid, digest: runtime
-            _status, body = self.request(
-                value,
-                "POST",
-                "/api/v1/operations/automation/task-definitions/nightly/run-once",
-                {},
-            )
-            settled = self.drive(value)
-            self.assertEqual(
-                ["Movies/One.2001.mkv"],
-                [item["path"] for item in settled.sources],
-                settled,
-            )
-            self.assertIn(
-                "configured_exclude",
-                {item.reason for item in settled.progress.reasons},
-            )
-            self.assertIsNotNone(body["discoveryId"])
-            self.assertEqual([], value.source.mutations)
-
-    def test_pause_request_during_analysis_is_a_continuable_stop_without_a_plan(
-        self,
-    ) -> None:
-        """B's pause race over the real V2 API, without a blocking Provider.
-
-        A pause that arrives while the frozen manifest's analysis is still
-        queued is a real operator state: the run reports the pause request, no
-        plan identity or plan route is published, and the same run continues
-        through the existing Worker after the acknowledgement.
-        """
-
-        self.media("Movies/One.2001.mkv")
-        with self.journey(source_scope="Movies") as value:
-            frozen, discovery_id = self._frozen_analysis(value)
-            status, paused = self.request(
-                value,
-                "POST",
-                f"/api/v1/operations/automation/run-once/{discovery_id}/pause",
-                {"expectedVersion": frozen["version"]},
-            )
-            self.assertEqual(200, status, paused)
-            self.assertEqual("pausing", paused["phase"])
-            self.assertIsNone(paused["previewId"])
-            self.assertFalse(paused["actions"]["preview"]["available"])
-            self.assertFalse(paused["actions"]["resume"]["available"])
-            self.assertFalse(paused["actions"]["pause"]["available"])
-            # The Worker acknowledges the pause at its safe boundary and the
-            # same run becomes continuable with no plan published.
-            acknowledged_run = value.discovery.claim_and_run(
-                worker_id="pause-worker", claim_token="pause-token"
-            )
-            self.assertIsNotNone(acknowledged_run)
-            self.assertEqual(DiscoveryStatus.PAUSED, acknowledged_run.status)
-            self.assertIsNone(acknowledged_run.preview_id)
-            status, acknowledged = self.request(
-                value,
-                "GET",
-                f"/api/v1/operations/automation/run-once/{discovery_id}",
-            )
-            self.assertEqual(200, status, acknowledged)
-            self.assertEqual("paused", acknowledged["phase"])
-            self.assertEqual("paused", acknowledged["status"])
-            self.assertIsNone(acknowledged["previewId"])
-            self.assertFalse(acknowledged["actions"]["preview"]["available"])
-            self.assertTrue(acknowledged["actions"]["resume"]["available"])
-            self.assertEqual([], value.source.mutations)
-            self.assertEqual([], value.target.mutations)
-            self.assertEqual((), value.repository.list_manual_previews(frozen["intentId"]))
-            # Continue resumes the same frozen analysis; the exact plan appears.
-            status, resumed = self.request(
-                value,
-                "POST",
-                f"/api/v1/operations/automation/run-once/{discovery_id}/resume",
-                {"expectedVersion": acknowledged["version"]},
-            )
-            self.assertEqual(200, status, resumed)
-            self.assertEqual("analyzing", resumed["phase"])
-            analyzed = value.discovery.claim_and_run(
-                worker_id="resume-worker", claim_token="resume-token"
-            )
-            self.assertIsNotNone(analyzed)
-            self.assertIsNotNone(analyzed.preview_id)
-            status, linked = self.request(
-                value,
-                "GET",
-                f"/api/v1/operations/automation/run-once/{discovery_id}",
-            )
-            self.assertEqual(200, status, linked)
-            self.assertEqual("frozen", linked["phase"])
-            self.assertEqual(analyzed.preview_id, linked["previewId"])
-            self.assertEqual([], value.source.mutations)
-            self.assertEqual([], value.target.mutations)
-
-    def test_cancel_during_analysis_is_terminal_and_never_exposes_the_plan(self) -> None:
-        """B's cancel race over the real V2 API: no plan, no recovery entry."""
-
-        self.media("Movies/One.2001.mkv")
-        with self.journey(source_scope="Movies") as value:
-            frozen, discovery_id = self._frozen_analysis(value)
-            status, cancelled = self.request(
-                value,
-                "POST",
-                f"/api/v1/operations/automation/run-once/{discovery_id}/cancel",
-                {"expectedVersion": frozen["version"]},
-            )
-            self.assertEqual(200, status, cancelled)
-            self.assertEqual("cancelled", cancelled["status"])
-            self.assertEqual("cancelled", cancelled["phase"])
-            self.assertIsNone(cancelled["previewId"])
-            self.assertFalse(cancelled["actions"]["preview"]["available"])
-            # A late Worker pass cannot publish or link a plan for a cancelled
-            # run, and the terminal state is final.
-            late = value.discovery.claim_and_run(worker_id="late-worker", claim_token="late-token")
-            self.assertIsNone(late)
-            status, readback = self.request(
-                value,
-                "GET",
-                f"/api/v1/operations/automation/run-once/{discovery_id}",
-            )
-            self.assertEqual(200, status, readback)
-            self.assertEqual("cancelled", readback["phase"])
-            self.assertIsNone(readback["previewId"])
-            self.assertFalse(readback["actions"]["preview"]["available"])
-            self.assertFalse(readback["actions"]["resume"]["available"])
-            self.assertFalse(readback["actions"]["pause"]["available"])
-            self.assertEqual((), value.repository.list_manual_previews(frozen["intentId"]))
-            self.assertEqual([], value.source.mutations)
-            self.assertEqual([], value.target.mutations)
+            self.assertTrue(read["zeroMutation"])
+            self.assertNotIn("executionKind", read)
+            self.assertEqual((), value.repository.list_jobs())
             self.assertEqual((), value.repository.list_tasks())
 
-    def test_paused_and_cancelled_runs_stay_terminal_after_a_reopen(self) -> None:
-        """The control outcome, not the intent's latest plan, survives a reopen."""
+    def test_real_positive_size_interval_waits_once_and_reobserves(self):
+        import time
 
-        self.media("Movies/One.2001.mkv")
-        with self.journey(source_scope="Movies") as value:
-            frozen, discovery_id = self._frozen_analysis(value)
-            status, cancelled = self.request(
-                value,
-                "POST",
-                f"/api/v1/operations/automation/run-once/{discovery_id}/cancel",
-                {"expectedVersion": frozen["version"]},
-            )
-            self.assertEqual(200, status, cancelled)
-            intent_id = frozen["intentId"]
-        with SQLiteTaskRepository(str(self.root / "runtime.sqlite3")) as reopened:
-            durable = reopened.get_media_discovery(discovery_id)
-            self.assertEqual(DiscoveryStatus.CANCELLED, durable.status)
-            self.assertIsNone(durable.preview_id)
-            self.assertEqual((), reopened.list_manual_previews(intent_id))
+        self.stability = {
+            "minimumAgeSeconds": 0,
+            "modifiedThresholdSeconds": 0,
+            "stableSizeDurationSeconds": 1,
+        }
+        self.media("One.2001.mkv")
+        with self.journey() as value:
+            self.admit(value)
+            start = time.monotonic()
+            result = self.execute(value)
+            self.assertGreaterEqual(time.monotonic() - start, 1)
+            self.assertEqual("completed", value.repository.get_task(result.task_id).status.value)
+            self.assertEqual(1, value.repository.get_task(result.task_id).completed_items)
 
-    def _frozen_analysis(self, value):
-        """Admit, discover and freeze one Run once; the Worker has not analyzed."""
+    def test_ready_sibling_avoids_wait_and_unstable_sibling_is_failure_not_attention(self):
+        import time
 
-        status, body = self.request(
-            value,
-            "POST",
-            "/api/v1/operations/automation/task-definitions/nightly/run-once",
-            {},
-        )
-        self.assertEqual(202, status, body)
-        self.drive(value)
-        current = value.run_once.get(body["discoveryId"])
-        status, frozen = self.request(
-            value,
-            "POST",
-            f"/api/v1/operations/automation/run-once/{body['discoveryId']}/finalize",
-            {"expectedVersion": current.version},
-        )
-        self.assertEqual(201, status, frozen)
-        self.assertEqual("analyzing", frozen["phase"])
-        self.assertIsNotNone(frozen["intentId"])
-        return frozen, body["discoveryId"]
+        self.stability = {
+            "minimumAgeSeconds": 10,
+            "modifiedThresholdSeconds": 20,
+            "stableSizeDurationSeconds": 0,
+        }
+        self.media("One.2001.mkv")
+        fresh = self.media("Two.2002.mkv")
+        os.utime(fresh, (time.time(), time.time()))
+        with self.journey() as value:
+            self.admit(value)
+            with patch(
+                "mediaflow.application.media_organizer.time.sleep",
+                side_effect=AssertionError("ready sources must avoid wait"),
+            ):
+                result = self.execute(value)
+            task = value.repository.get_task(result.task_id)
+            self.assertEqual("partial_success", task.status.value)
+            self.assertEqual((1, 1), (task.completed_items, task.failed_items))
+            self.assertTrue(fresh.exists())
+            status, page = self.request(value, "GET", "/api/v1/operations/runs?view=attention")
+            self.assertEqual(200, status, page)
+            self.assertEqual(0, page["total"])
 
-    def test_frozen_run_once_plan_survives_a_plain_read_and_a_reopen(self) -> None:
-        """The exact plan is re-read from the durable intent association.
+    def test_over_sixty_interval_has_no_wait_and_only_instability_is_failed(self):
+        import time
 
-        The durable Worker analysis writes the plan against the frozen intent,
-        so the plan is addressed by that intent rather than guessed.  An
-        ordinary GET — a reload, a reconnect or a restart — must return the
-        exact plan identity the run produced, and the same must hold after the
-        runtime database is closed and reopened.  The read performs no second
-        freeze, no second analysis and no mutation.
-        """
-
-        self.media("Movies/One.2001.mkv")
-        with self.journey(source_scope="Movies") as value:
-            _status, body = self.request(
-                value,
-                "POST",
-                "/api/v1/operations/automation/task-definitions/nightly/run-once",
-                {},
-            )
-            self.drive(value)
-            current = value.run_once.get(body["discoveryId"])
-            status, frozen = self.request(
-                value,
-                "POST",
-                f"/api/v1/operations/automation/run-once/{body['discoveryId']}/finalize",
-                {"expectedVersion": current.version},
-            )
-            self.assertEqual(201, status)
-            # Finalize defers the plan to the durable analysis stage.
-            self.assertIsNone(frozen["previewId"])
-            # The resident Worker links the exact plan on this same run.
-            analyzed = value.discovery.claim_and_run(
-                worker_id="analysis-worker", claim_token="analysis-token"
-            )
-            self.assertIsNotNone(analyzed)
-            preview_id = analyzed.preview_id
-            self.assertIsNotNone(preview_id)
-            # A plain read of the same durable run resolves the same plan.
-            status, reread = self.request(
-                value,
-                "GET",
-                f"/api/v1/operations/automation/run-once/{body['discoveryId']}",
-            )
-            self.assertEqual(200, status)
-            self.assertEqual("frozen", reread["phase"])
-            self.assertEqual(preview_id, reread["previewId"])
-            self.assertEqual(frozen["intentId"], reread["intentId"])
-            # The advertised plan route names that exact plan, so the page never
-            # shows an available action with no address.
-            self.assertTrue(reread["actions"]["preview"]["available"])
-            self.assertEqual(
-                f"/api/v1/operations/organize/previews/{preview_id}",
-                reread["actions"]["preview"]["path"],
-            )
-            # The already-frozen manifest offers no second freeze action.
-            self.assertFalse(reread["actions"]["finalize"]["available"])
-            # Re-reading is inert: no plan is created or re-analyzed, and no
-            # mutation happens.
-            self.assertEqual([], value.source.mutations)
-            self.assertEqual([], value.target.mutations)
-            previews = value.repository.list_manual_previews(frozen["intentId"])
-            self.assertEqual(1, len(previews))
-            self.assertEqual(preview_id, previews[0].preview_id)
-
-        # The same association is durable across a reopen of the runtime store:
-        # a fresh read of the same discovery resolves the same exact plan.
-        with SQLiteTaskRepository(str(self.root / "runtime.sqlite3")) as reopened:
-            latest = reopened.get_latest_manual_preview(frozen["intentId"])
-            self.assertEqual(preview_id, latest.preview_id)
-            self.assertEqual(frozen["intentId"], latest.intent_id)
-            self.assertTrue(latest.zero_mutation)
-
-    def test_unfrozen_run_once_publishes_no_plan_identity(self) -> None:
-        """Before the manifest is frozen there is no plan to re-read."""
-
-        self.media("Movies/One.2001.mkv")
-        with self.journey(source_scope="Movies") as value:
-            _status, body = self.request(
-                value,
-                "POST",
-                "/api/v1/operations/automation/task-definitions/nightly/run-once",
-                {},
-            )
-            self.drive(value)
-            status, document = self.request(
-                value,
-                "GET",
-                f"/api/v1/operations/automation/run-once/{body['discoveryId']}",
-            )
-            self.assertEqual(200, status)
-            self.assertEqual("ready", document["phase"])
-            self.assertIsNone(document["previewId"])
-            self.assertIsNone(document["intentId"])
-            self.assertFalse(document["actions"]["preview"]["available"])
-            self.assertTrue(document["actions"]["finalize"]["available"])
-
-    def test_repeated_finalize_converges_on_one_durable_analysis(self) -> None:
-        """A repeated or lost-response finalize never duplicates work."""
-
-        self.media("Movies/One.2001.mkv")
-        with self.journey(source_scope="Movies") as value:
-            _status, body = self.request(
-                value,
-                "POST",
-                "/api/v1/operations/automation/task-definitions/nightly/run-once",
-                {},
-            )
-            self.drive(value)
-            current = value.run_once.get(body["discoveryId"])
-            status, frozen = self.request(
-                value,
-                "POST",
-                f"/api/v1/operations/automation/run-once/{body['discoveryId']}/finalize",
-                {"expectedVersion": current.version},
-            )
-            self.assertEqual(201, status)
-            self.assertEqual("analyzing", frozen["phase"])
-            # A repeated request converges on the already-queued analysis.
-            status, repeated = self.request(
-                value,
-                "POST",
-                f"/api/v1/operations/automation/run-once/{body['discoveryId']}/finalize",
-                {"expectedVersion": frozen["version"]},
-            )
-            self.assertEqual(201, status)
-            self.assertEqual("analyzing", repeated["phase"])
-            self.assertEqual(frozen["intentId"], repeated["intentId"])
-            # One frozen manifest, one linked intent, one analysis stage.
-            analyzed = value.discovery.claim_and_run(
-                worker_id="analysis-worker", claim_token="analysis-token"
-            )
-            self.assertIsNotNone(analyzed)
-            self.assertIsNotNone(analyzed.preview_id)
-            previews = value.repository.list_manual_previews(frozen["intentId"])
-            self.assertEqual(1, len(previews))
+        self.stability = {
+            "minimumAgeSeconds": 0,
+            "modifiedThresholdSeconds": 70,
+            "stableSizeDurationSeconds": 0,
+        }
+        fresh = self.media("One.2001.mkv")
+        os.utime(fresh, (time.time(), time.time()))
+        with self.journey() as value:
+            self.admit(value)
+            with patch(
+                "mediaflow.application.media_organizer.time.sleep",
+                side_effect=AssertionError("over 60 seconds must not wait"),
+            ):
+                result = self.execute(value)
+            self.assertEqual("failed", value.repository.get_task(result.task_id).status.value)
             self.assertEqual([], value.source.mutations)
             self.assertEqual([], value.target.mutations)
 
-    def test_over_bound_ceiling_with_a_small_scope_runs_once(self) -> None:
-        """Ceiling 250 with one eligible file is a legal, complete Run once.
+    def test_source_change_during_single_short_wait_does_not_fake_stability(self):
+        import time
 
-        The effective bound is min(250, 100) = 100 and the actual manifest holds
-        one source, so no overflow exists: the definition is admitted, Storage
-        is read and the complete manifest can be frozen.
-        """
+        actual_sleep = time.sleep
+        self.stability = {
+            "minimumAgeSeconds": 0,
+            "modifiedThresholdSeconds": 0,
+            "stableSizeDurationSeconds": 1,
+        }
+        source = self.media("One.2001.mkv")
+        calls = []
 
-        self.media("Movies/One.2001.mkv")
-        with self.journey(item_limit=250, source_scope="Movies") as value:
-            status, body = self.request(
-                value,
-                "POST",
-                "/api/v1/operations/automation/task-definitions/nightly/run-once",
-                {},
+        def change_during_wait(seconds):
+            calls.append(seconds)
+            source.write_bytes(b"changed while being observed")
+            actual_sleep(seconds)
+
+        with self.journey() as value:
+            self.admit(value)
+            with patch(
+                "mediaflow.application.media_organizer.time.sleep", side_effect=change_during_wait
+            ):
+                result = self.execute(value)
+            self.assertEqual(1, len(calls))
+            self.assertEqual("failed", value.repository.get_task(result.task_id).status.value)
+            self.assertEqual([], value.source.mutations)
+            self.assertEqual([], value.target.mutations)
+
+    def test_concurrent_exact_request_has_one_job_and_one_task(self):
+        from concurrent.futures import ThreadPoolExecutor
+
+        with self.journey() as value:
+            with ThreadPoolExecutor(max_workers=2) as pool:
+                responses = list(pool.map(lambda _: self.admit(value), range(2)))
+            self.assertTrue(all(status == 202 for status, body in responses), responses)
+            self.assertEqual(responses[0][1]["jobId"], responses[1][1]["jobId"])
+            self.assertEqual(1, len(value.repository.list_tasks()))
+            self.assertEqual(1, len(value.repository.list_jobs()))
+            status, listing = self.request(
+                value, "GET", "/api/v1/operations/automation/run-once", token=VIEWER_TOKEN
             )
-            self.assertEqual(202, status)
-            self.assertEqual(250, body["definitionItemLimit"])
-            self.assertEqual(100, body["effectivePrimaryLimit"])
-            settled = self.drive(value)
-            document = value.run_once.document(settled)
-            self.assertEqual("ready", document["phase"])
-            self.assertEqual(1, document["primarySourceCount"])
-            self.assertTrue(document["actions"]["finalize"]["available"])
+            self.assertEqual(200, status, listing)
+            self.assertEqual([], listing["items"])
 
-    def test_actual_overflow_refuses_with_narrowing_guidance(self) -> None:
-        """An actual manifest above the effective bound refuses, never truncates."""
-
-        for index in range(101):
-            self.media(f"Movies/Movie{index:03d}.2001.mkv")
-        with self.journey(item_limit=250, source_scope="Movies") as value:
-            status, body = self.request(
-                value,
-                "POST",
-                "/api/v1/operations/automation/task-definitions/nightly/run-once",
-                {},
-            )
-            self.assertEqual(202, status)
-            settled = self.drive(value)
-            self.assertEqual(100, len(settled.sources))
-            current = value.run_once.get(body["discoveryId"])
-            status, refused = self.request(
-                value,
-                "POST",
-                f"/api/v1/operations/automation/run-once/{body['discoveryId']}/finalize",
-                {"expectedVersion": current.version},
-            )
+    def test_queue_capacity_and_failed_insert_do_not_leave_orphan_tasks(self):
+        self.change_document = lambda document: document["automation"].update(
+            {"maximumActiveJobs": 1}
+        )
+        with self.journey() as value:
+            with patch.object(
+                value.repository, "_insert_job", side_effect=RuntimeError("write failed")
+            ):
+                status, _ = self.admit(value)
+                self.assertEqual(500, status)
+            self.assertEqual((), value.repository.list_tasks())
+            self.assertEqual((), value.repository.list_jobs())
+            status, run = self.admit(value)
+            self.assertEqual(202, status, run)
+            status, _ = self.admit(value, "second")
             self.assertEqual(409, status)
-            self.assertEqual("discovery_overflow", refused["error"]["code"])
-            self.assertIn("narrow", refused["error"]["details"]["nextAction"])
+            self.assertEqual(1, len(value.repository.list_tasks()))
+            self.assertEqual(1, len(value.repository.list_jobs()))
 
-    def test_empty_scope_reports_no_work(self) -> None:
-        (self.source_root / "Movies").mkdir()
-        with self.journey(source_scope="Movies") as value:
-            status, body = self.request(
-                value,
-                "POST",
-                "/api/v1/operations/automation/task-definitions/nightly/run-once",
-                {},
-            )
-            self.assertEqual(202, status)
-            settled = self.drive(value)
-            document = value.run_once.document(settled)
-            self.assertEqual("no_work", document["phase"])
-            self.assertFalse(document["actions"]["finalize"]["available"])
-
-    def test_duplicate_admission_reconciles_to_one_durable_run(self) -> None:
-        self.media("Movies/One.2001.mkv")
-        with self.journey(source_scope="Movies") as value:
-            request_id = "11111111-1111-4111-8111-111111111111"
-            first_status, first = self.request(
-                value,
-                "POST",
-                "/api/v1/operations/automation/task-definitions/nightly/run-once",
-                {"admissionRequestId": request_id},
-            )
-            second_status, second = self.request(
-                value,
-                "POST",
-                "/api/v1/operations/automation/task-definitions/nightly/run-once",
-                {"admissionRequestId": request_id},
-            )
-            self.assertEqual(202, first_status)
-            self.assertEqual(202, second_status)
-            self.assertEqual(first["discoveryId"], second["discoveryId"])
-
-    def test_run_once_list_is_principal_scoped(self) -> None:
-        self.media("Movies/One.2001.mkv")
-        with self.journey(source_scope="Movies") as value:
-            self.request(
-                value,
-                "POST",
-                "/api/v1/operations/automation/task-definitions/nightly/run-once",
-                {},
-            )
-            status, body = self.request(value, "GET", "/api/v1/operations/automation/run-once")
-            self.assertEqual(200, status)
-            self.assertEqual(1, body["total"])
-            self.assertEqual("nightly", body["items"][0]["definitionId"])
-
-    def test_definition_history_lists_the_manual_run_once(self) -> None:
-        self.media("Movies/One.2001.mkv")
-        with self.journey(source_scope="Movies") as value:
-            self.request(
-                value,
-                "POST",
-                "/api/v1/operations/automation/task-definitions/nightly/run-once",
-                {},
-            )
-            self.drive(value)
-            status, body = self.request(
-                value,
-                "GET",
-                "/api/v1/operations/automation/task-definitions/nightly/occurrences",
-            )
-            self.assertEqual(200, status)
-            manual = [item for item in body["items"] if item.get("trigger") == "manual"]
-            self.assertEqual(1, len(manual))
-            self.assertEqual("nightly", manual[0]["definitionId"])
-            self.assertIsNone(manual[0]["occurrenceId"])
-            self.assertIsNone(manual[0]["jobId"])
-
-    # -- refusals and principal isolation --------------------------------
-
-    def test_lost_response_reconciles_by_the_client_request_identity(self) -> None:
-        """A lost admission response reads back its own proved original.
-
-        The request identity is generated before the POST, so it proves the
-        *actual* admission even after the Active pin changed; a proved absence is
-        a bounded 404, never a guessed latest run.
-        """
-
-        self.media("Movies/One.2001.mkv")
-        with self.journey(source_scope="Movies") as value:
-            request_id = "33333333-3333-4333-8333-333333333333"
-            # No admission exists for this identity yet: an honest absence.
-            status, absent = self.request(
-                value,
-                "GET",
-                "/api/v1/operations/automation/task-definitions/nightly/run-once"
-                f"?admissionRequestId={request_id}",
-            )
-            self.assertEqual(404, status)
-            self.assertEqual("run_once_request_not_found", absent["error"]["code"])
-            self.assertEqual("unknown", absent["error"]["details"]["durableState"])
-            # Admit, then reconcile the same identity to the same durable run.
-            status, admitted = self.request(
-                value,
-                "POST",
-                "/api/v1/operations/automation/task-definitions/nightly/run-once",
-                {"admissionRequestId": request_id},
-            )
+    def test_recognition_and_classification_block_inside_real_task_and_center(self):
+        # Each case uses a fresh fixture database, not a manually invented Task.
+        self.media("One.2001.mkv")
+        self.change_document = lambda document: document.update({"recognitionRules": []})
+        with self.journey() as value:
+            status, admitted = self.admit(value)
             self.assertEqual(202, status, admitted)
-            status, reconciled = self.request(
-                value,
-                "GET",
-                "/api/v1/operations/automation/task-definitions/nightly/run-once"
-                f"?admissionRequestId={request_id}",
-            )
-            self.assertEqual(200, status, reconciled)
-            self.assertEqual(admitted["discoveryId"], reconciled["discoveryId"])
-            # The reconciliation never created a second run.
-            status, listing = self.request(value, "GET", "/api/v1/operations/automation/run-once")
-            self.assertEqual(200, status)
-            self.assertEqual(1, listing["total"])
+            result = self.execute(value)
+            (item,) = value.repository.list_items(result.task_id)
+            self.assertEqual("waiting_recognition", item.status.value)
+            status, page = self.request(value, "GET", "/api/v1/operations/runs?view=recognition")
+            self.assertEqual(200, status, page)
+            self.assertEqual(1, page["total"])
             self.assertEqual([], value.source.mutations)
 
-    def test_observed_definition_fence_refuses_a_stale_request(self) -> None:
-        """A stale observed definition/configuration refuses the new admission.
+    def test_classification_block_inside_real_task(self):
+        self.media("One.2001.mkv")
 
-        The same stale action must never silently admit today's published
-        definition: the operator reviewed a specific binding, so a changed
-        fingerprint or a repinned Active is a 409, not a repin.
-        """
-
-        self.media("Movies/One.2001.mkv")
-        with self.journey(source_scope="Movies") as value:
-            definition = next(
-                item
-                for item in value.runtime.automation_task_definitions
-                if item.definition_id == "nightly"
-            )
-            status, body = self.request(
-                value,
-                "POST",
-                "/api/v1/operations/automation/task-definitions/nightly/run-once",
+        def no_matching_destination(document):
+            document["classificationPolicies"][0]["rules"] = [
                 {
-                    "admissionRequestId": "11111111-1111-4111-8111-111111111111",
-                    "expectedDefinitionFingerprint": definition.definition_fingerprint,
-                    "expectedRevisionId": value.revision.revision_id,
-                    "expectedRevisionVersion": value.revision.version,
-                    "expectedRevisionDigest": value.revision.digest,
-                },
-            )
+                    "id": "tv-only",
+                    "priority": 1,
+                    "conditions": {"mediaType": ["tv"]},
+                    "result": {"mediaLibraryId": "movies", "path": ["TV"]},
+                }
+            ]
+
+        self.change_document = no_matching_destination
+        with self.journey() as value:
+            self.admit(value)
+            result = self.execute(value)
+            (item,) = value.repository.list_items(result.task_id)
+            self.assertEqual("waiting_classification", item.status.value)
+            status, page = self.request(value, "GET", "/api/v1/operations/runs?view=classification")
+            self.assertEqual(200, status, page)
+            self.assertEqual(1, page["total"])
+            self.assertEqual([], value.source.mutations)
+
+    def test_cancel_pending_job_also_settles_its_precreated_task(self):
+        with self.journey() as value:
+            status, body = self.admit(value)
             self.assertEqual(202, status, body)
-            self.assertEqual("nightly", body["definitionId"])
-            # A changed observed definition fingerprint is refused.
-            status, stale = self.request(
-                value,
-                "POST",
-                "/api/v1/operations/automation/task-definitions/nightly/run-once",
-                {"expectedDefinitionFingerprint": "0" * 64},
-            )
-            self.assertEqual(409, status)
-            self.assertEqual("definition_stale", stale["error"]["code"])
-            # A repinned Active is refused.
-            status, repinned = self.request(
-                value,
-                "POST",
-                "/api/v1/operations/automation/task-definitions/nightly/run-once",
-                {
-                    "expectedRevisionId": "other-revision",
-                    "expectedRevisionVersion": 1,
-                    "expectedRevisionDigest": "other-digest",
-                },
-            )
-            self.assertEqual(409, status)
-            self.assertEqual("configuration_stale", repinned["error"]["code"])
-            # A partial fence is malformed rather than silently weakened.
-            status, _partial = self.request(
-                value,
-                "POST",
-                "/api/v1/operations/automation/task-definitions/nightly/run-once",
-                {"expectedRevisionId": "other-revision"},
-            )
-            self.assertEqual(400, status)
-            # The refused admissions created no additional work.
-            status, listing = self.request(value, "GET", "/api/v1/operations/automation/run-once")
-            self.assertEqual(200, status)
-            self.assertEqual(1, listing["total"])
+            (job,) = value.repository.list_jobs()
+            cancelled = value.repository.request_job_cancellation(job.job_id, datetime.now(UTC))
+            self.assertEqual("cancelled", cancelled.status.value)
+            task = value.repository.get_task(job.task_id)
+            self.assertEqual("cancelled", task.status.value)
+            self.assertIsNotNone(task.completed_at)
+            self.assertIn("admitted Task", cancelled.failure_durable_state)
             self.assertEqual([], value.source.mutations)
 
-    def test_unreadable_subtree_refuses_the_definition_manifest(self) -> None:
-        """An incomplete definition-derived walk cannot finalize over the API."""
+    def test_complete_walk_budget_and_unsafe_entries_fail_before_effects(self):
+        from dataclasses import replace
 
-        self.media("Movies/One.2001.mkv")
-        self.media("Locked/Two.2002.mkv")
-        with self.journey(source_scope=None) as value:
-            status, body = self.request(
-                value,
-                "POST",
-                "/api/v1/operations/automation/task-definitions/nightly/run-once",
-                {},
-            )
-            self.assertEqual(202, status)
-            value.source.fail_listing("Locked")
-            settled = self.drive(value)
-            status, refused = self.request(
-                value,
-                "POST",
-                f"/api/v1/operations/automation/run-once/{body['discoveryId']}/finalize",
-                {"expectedVersion": settled.version},
-            )
-            self.assertEqual(409, status)
-            self.assertEqual("discovery_incomplete_manifest", refused["error"]["code"])
-            self.assertEqual("read_failure", refused["error"]["details"]["incompleteReason"])
+        from mediaflow.application.automation_execution_intent import BoundedScopeReader
+
+        self.media("One.2001.mkv")
+        self.media("Two.2002.mkv")
+        with self.journey() as value:
+            self.admit(value)
+            with patch(
+                "mediaflow.application.automation_execution_intent.BoundedScopeReader",
+                side_effect=lambda storage, **kwargs: BoundedScopeReader(
+                    storage, maximum_entries=1, **kwargs
+                ),
+            ):
+                result = self.execute(value)
+            self.assertEqual("scope_unreadable", result.failure_category)
+            self.assertEqual([], value.source.mutations)
+            self.assertEqual([], value.target.mutations)
+        with self.journey() as value:
+            self.admit(value, request_id="unsafe-2")
+            original = value.source.list_page
+
+            def unsafe(path, **kwargs):
+                page = original(path, **kwargs)
+                return replace(page, entries=[replace(page.entries[0], path="../outside.mkv")])
+
+            with patch.object(value.source, "list_page", side_effect=unsafe):
+                result = self.execute(value)
+            self.assertEqual("scope_unreadable", result.failure_category)
             self.assertEqual([], value.source.mutations)
             self.assertEqual([], value.target.mutations)
 
-    def test_viewer_cannot_start_run_once_and_creates_nothing(self) -> None:
-        self.media("Movies/One.2001.mkv")
-        with self.journey(source_scope="Movies") as value:
-            status, _body = self.request(
-                value,
-                "POST",
-                "/api/v1/operations/automation/task-definitions/nightly/run-once",
-                {},
-                token=VIEWER_TOKEN,
+    def test_current_permission_loss_after_admission_settles_task_without_effects(self):
+        import copy
+
+        self.media("One.2001.mkv")
+        with self.journey() as value:
+            self.admit(value)
+            document = copy.deepcopy(value.managed.active().document)
+            document["api"]["principals"][0]["roles"] = ["viewer"]
+            draft = value.managed.import_draft(document, actor="admin")
+            validated = value.managed.validate(draft.revision_id, actor="admin")
+            value.managed.activate(
+                validated.revision_id, expected_version=validated.version, actor="admin"
             )
-            self.assertEqual(403, status)
-            self.assertEqual((), value.discovery.list(actor="admin"))
+            result = self.execute(value)
+            self.assertEqual("failed", result.status.value)
+            self.assertEqual("failed", value.repository.get_task(result.task_id).status.value)
             self.assertEqual([], value.source.mutations)
+            self.assertEqual([], value.target.mutations)
 
-    def test_draft_only_definition_cannot_run_once(self) -> None:
-        # A definition that exists only in an unpublished Draft is not a
-        # published definition, so Run once refuses instead of running a Draft.
-        with self.journey(definitions=[]) as value:
-            active = value.managed.active()
-            assert active is not None
-            draft = value.managed.create_successor_draft(
-                actor="tester", expected_active_revision_id=active.revision_id
-            )
-            from mediaflow.application.configuration_objects import (
-                ConfigurationObjectService,
-            )
-            from mediaflow.domain.configuration_management import (
-                ConfigurationObjectKind,
-            )
+    def test_previously_started_run_once_is_not_scanned_or_replayed(self):
+        from mediaflow.application.task_runtime import PersistentTaskCoordinator
 
-            ConfigurationObjectService(value.managed).mutate(
-                draft.revision_id,
-                ConfigurationObjectKind.SCHEDULE,
-                object_id=None,
-                value={
-                    "id": "draft-only",
-                    "name": "Draft only",
-                    "resourceLibraryId": "library",
-                    "mode": "automatic-organization",
-                    "intervalSeconds": 3600,
-                    "itemLimit": 10,
-                    "enabled": True,
-                },
-                expected_version=draft.version,
-                actor="tester",
-            )
-            status, body = self.request(
-                value,
-                "POST",
-                "/api/v1/operations/automation/task-definitions/draft-only/run-once",
-                {},
-            )
-            self.assertEqual(404, status)
-            self.assertEqual("definition_not_found", body["error"]["code"])
-            self.assertEqual((), value.discovery.list(actor="admin"))
+        self.media("One.2001.mkv")
+        with self.journey() as value:
+            self.admit(value)
+            (job,) = value.repository.list_jobs()
+            PersistentTaskCoordinator(value.repository, value.repository).begin_queued(job.task_id)
+            result = self.execute(value)
+            self.assertEqual("run_once_already_started", result.failure_category)
+            self.assertFalse(result.failure_retry_safe)
+            self.assertEqual("unknown", result.failure_side_effects)
+            self.assertEqual((), value.repository.list_items(job.task_id))
+            self.assertEqual([], value.source.mutations)
+            self.assertEqual([], value.target.mutations)
 
-    def test_malformed_run_once_body_is_rejected(self) -> None:
-        with self.journey(source_scope="Movies") as value:
-            status, _body = self.request(
-                value,
-                "POST",
-                "/api/v1/operations/automation/task-definitions/nightly/run-once",
-                {"paths": ["Movies"]},
-            )
-            self.assertEqual(400, status)
+    def test_repeated_storage_cursor_cannot_be_reported_as_empty_scope(self):
+        from mediaflow.domain.storage import StoragePage
 
-    def test_removed_mode_definition_cannot_be_published_or_run(self) -> None:
-        with self.journey(definitions=[]) as value:
-            active = value.managed.active()
-            assert active is not None
-            status, _body = self.request(
-                value,
-                "POST",
-                "/api/v1/operations/automation/definitions",
-                {
-                    "expectedRevisionId": active.revision_id,
-                    "expectedVersion": active.version,
-                    "expectedDigest": active.digest,
-                    "object": {
-                        "id": "legacy",
-                        "name": "Legacy",
-                        "resourceLibraryId": "library",
-                        "mode": "scan-and-plan",
-                        "intervalSeconds": 3600,
-                        "itemLimit": 10,
-                    },
-                },
-            )
-            self.assertGreaterEqual(status, 400)
-            self.assertNotEqual(200, status)
-            status, body = self.request(
-                value,
-                "POST",
-                "/api/v1/operations/automation/task-definitions/legacy/run-once",
-                {},
-            )
-            self.assertEqual(404, status)
-            self.assertEqual("definition_not_found", body["error"]["code"])
+        with self.journey() as value:
+            self.admit(value)
+            with patch.object(value.source, "list_page", return_value=StoragePage((), "repeat")):
+                result = self.execute(value)
+            self.assertEqual("scope_unreadable", result.failure_category)
+            self.assertEqual("failed", value.repository.get_task(result.task_id).status.value)
+            self.assertEqual([], value.source.mutations)
+            self.assertEqual([], value.target.mutations)
 
+    def test_scope_beyond_existing_depth_budget_never_executes_a_prefix(self):
+        self.media("One.2001.mkv")
+        self.media("/".join(["nested"] * 33 + ["Two.2002.mkv"]))
+        with self.journey() as value:
+            self.admit(value)
+            result = self.execute(value)
+            self.assertEqual("scope_unreadable", result.failure_category)
+            self.assertEqual([], value.source.mutations)
+            self.assertEqual([], value.target.mutations)
 
-if __name__ == "__main__":
-    unittest.main()
+    def test_pending_task_cancellation_is_honored_when_job_is_claimed(self):
+        self.media("One.2001.mkv")
+        with self.journey() as value:
+            self.admit(value)
+            (job,) = value.repository.list_jobs()
+            cancelled = value.repository.cancel_task_if_current(
+                job.task_id, updated_at=datetime.now(UTC)
+            )
+            self.assertEqual("cancelled", cancelled.status.value)
+            result = self.execute(value)
+            self.assertEqual("cancelled", result.status.value)
+            self.assertEqual("cancelled", value.repository.get_task(job.task_id).status.value)
+            self.assertEqual([], value.source.mutations)
+            self.assertEqual([], value.target.mutations)

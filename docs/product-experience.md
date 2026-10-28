@@ -67,6 +67,31 @@ wait/re-scan under RO-5/AC-18. Proven-stable files proceed; remaining unstable f
 and stay outside four-type Attention. Later ordinary runs use their normal scope/checks, without a
 failed-item selection/retry flow or cross-run observation sharing. Files manual handling stays.
 
+## CURRENT implementation amendment — Automation (Task46.5; B review pending)
+
+Open a saved definition from its name/打开/direct link to read scope, limits, schedule, strategy
+effects and bounded readiness. Checked Save keeps the same editor usable for further edits and
+Enabled changes. Later typing survives a confirmed response. A genuine peer conflict retains input;
+an unknown Save/toggle first offers “核对本次发布”, which reads the exact durable audit without
+reposting. Unknown Run once similarly reconciles only its principal/request identity.
+
+Review scope/effects → checked enable or deliberate enabled Save → normal due execution. Enable
+creates no immediate work and needs no separate grant/analysis. Disable/remove stops remaining
+scheduled effects at safe boundaries; re-enable uses future normal runs, never an old stopped run.
+Current permission loss also stops future effects; completed siblings remain visible.
+
+“运行一次” on the saved enabled or disabled definition immediately creates a durable organizing
+Task before business readiness. The page links to its actual progress/results; refresh/reopen does
+not submit again. Background complete bounded discovery, real stability checks and plans precede
+effects. Empty scope shows no-work; incomplete/unreadable/over-limit scope fails without executing
+a prefix. Four business blockers enter Task Center decisions → analysis → exact summary → explicit
+safe continuation. Instability/technical/uncertain failures keep factual history and explicit repair
+instructions. No successful sibling is replayed, and one real run counts once. Old analysis-only
+records remain historical; they are not automatically executed. Files manual confirmation stays.
+
+The earlier Slice43 journey below describes its accepted baseline; V2-AUTO-010/011 replace its
+normal independent-grant and initial analysis/confirmation steps. B owns final T4 acceptance.
+
 ## Product Experience Priority
 
 Choose the most direct complete Web journey that preserves correctness, security and data integrity.

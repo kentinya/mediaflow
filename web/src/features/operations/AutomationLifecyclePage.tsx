@@ -31,6 +31,7 @@ import { usePrincipalIdentity } from "./principal-identity-query";
 import {
   admitAutomationRunOnce,
   reconcileAutomationRunOnce,
+  reconcileAutomationPublicationFocused,
   copyAutomationDefinitionFocused,
   createAutomationDefinitionFocused,
   fetchAutomationCopyCandidate,
@@ -350,12 +351,66 @@ function writePendingRunOnce(
   }
 }
 
+interface PendingPublication {
+  readonly definitionId: string;
+  readonly action: "create" | "edit" | "enable" | "disable";
+  readonly form: FormState;
+  readonly authority: CandidateAuthority;
+}
+const PUBLICATION_SESSION_PREFIX =
+  "mediaflow.operations.automation-publication:";
+function publicationSessionKey(principalId: string) {
+  return PUBLICATION_SESSION_PREFIX + principalIdStorageSegment(principalId);
+}
+function readPendingPublication(
+  principalId: string | null,
+): PendingPublication | null {
+  if (principalId === null) return null;
+  try {
+    const raw = sessionStorage.getItem(publicationSessionKey(principalId));
+    if (!raw || raw.length > 16384) return null;
+    const value = JSON.parse(raw) as PendingPublication;
+    if (
+      !value ||
+      !["create", "edit", "enable", "disable"].includes(value.action) ||
+      typeof value.definitionId !== "string" ||
+      !value.authority ||
+      typeof value.authority.revisionId !== "string" ||
+      typeof value.authority.digest !== "string" ||
+      typeof value.authority.version !== "number" ||
+      !value.form ||
+      typeof value.form.enabled !== "boolean" ||
+      [
+        "id",
+        "name",
+        "resourceLibraryId",
+        "mode",
+        "sourceScope",
+        "itemLimit",
+        "scheduleType",
+        "intervalSeconds",
+        "cron",
+        "timezone",
+      ].some(
+        (key) =>
+          typeof (value.form as unknown as Record<string, unknown>)[key] !==
+          "string",
+      )
+    )
+      return null;
+    return value;
+  } catch {
+    return null;
+  }
+}
+
 registerPrincipalSessionDataCleaner(() => {
   if (typeof window === "undefined") return;
   const storage = window.sessionStorage;
   const keys: string[] = [];
   for (let index = 0; index < storage.length; index += 1) {
     const key = storage.key(index);
+    if (key?.startsWith(PUBLICATION_SESSION_PREFIX)) keys.push(key);
     if (key?.startsWith(COPY_INTENT_SESSION_PREFIX)) keys.push(key);
     if (key?.startsWith(RUN_ONCE_INTENT_SESSION_PREFIX)) keys.push(key);
   }
@@ -377,6 +432,30 @@ export function AutomationLifecyclePage() {
   const principalId = principalIdentity.resolved
     ? principalIdentity.principalId
     : null;
+  const [publicationOverride, setPublicationOverride] = useState<{
+    owner: string | null;
+    value: PendingPublication | null;
+  } | null>(null);
+  const pendingPublication =
+    publicationOverride?.owner === principalId
+      ? publicationOverride.value
+      : readPendingPublication(principalId);
+  const setPendingPublication = (value: PendingPublication | null) => {
+    setPublicationOverride({ owner: principalId, value });
+    if (principalId !== null) {
+      try {
+        if (value === null)
+          sessionStorage.removeItem(publicationSessionKey(principalId));
+        else
+          sessionStorage.setItem(
+            publicationSessionKey(principalId),
+            JSON.stringify(value),
+          );
+      } catch {
+        /* The live pending command remains blocked even without storage. */
+      }
+    }
+  };
   const navigate = useNavigate();
   const queryClient = useQueryClient();
   const params = useParams({ strict: false }) as { definitionId?: string };
@@ -580,7 +659,8 @@ export function AutomationLifecyclePage() {
     queryClient.setQueryData(
       ["operations.automation-lifecycle-authority"],
       (previous: typeof authority) =>
-        previous?.ok
+        previous?.ok &&
+        previous.model.active.revisionSequence <= model.active.revisionSequence
           ? { ...previous, model: { ...previous.model, active: model.active } }
           : previous,
     );
@@ -614,12 +694,19 @@ export function AutomationLifecyclePage() {
             },
           }),
     retry: false,
-    onMutate: () => {
+    onMutate: (input) => {
+      setPendingPublication({
+        definitionId: input.targetId || input.form.id.trim(),
+        action: editing ? "edit" : "create",
+        form: input.form,
+        authority: input.authority,
+      });
       setError(null);
       setNotice(null);
     },
     onSuccess: (result, input) => {
       if (result.ok) {
+        setPendingPublication(null);
         acceptPublication(
           result.model,
           input.form,
@@ -640,6 +727,15 @@ export function AutomationLifecyclePage() {
         }
         return;
       }
+      if (
+        result.status === 0 ||
+        result.status >= 500 ||
+        result.code === "malformed_response"
+      ) {
+        setError("保存结果尚未确认。先核对本次发布；不会自动重发命令。");
+        return;
+      }
+      setPendingPublication(null);
       setError(
         result.status === 409
           ? "The command was rejected because the Active configuration changed. Refresh and review durable state before submitting again; nothing is retried automatically."
@@ -665,12 +761,19 @@ export function AutomationLifecyclePage() {
         },
       }),
     retry: false,
-    onMutate: () => {
+    onMutate: (input) => {
+      setPendingPublication({
+        definitionId: input.id,
+        action: input.enabled ? "enable" : "disable",
+        form: input.form,
+        authority: input.authority,
+      });
       setError(null);
       setNotice(null);
     },
     onSuccess: (result, input) => {
       if (result.ok) {
+        setPendingPublication(null);
         acceptPublication(
           result.model,
           input.form,
@@ -686,9 +789,61 @@ export function AutomationLifecyclePage() {
         invalidate();
         return;
       }
+      if (
+        result.status === 0 ||
+        result.status >= 500 ||
+        result.code === "malformed_response"
+      ) {
+        setError("启停结果尚未确认。先核对本次发布；不会自动重发命令。");
+        return;
+      }
+      setPendingPublication(null);
       setError(
         `The state change was rejected (${result.code}). Refresh and review state.`,
       );
+    },
+  });
+
+  const reconcilePublication = useMutation({
+    mutationFn: (pending: PendingPublication) =>
+      reconcileAutomationPublicationFocused(token, pending.definitionId, {
+        action: pending.action,
+        object: buildCandidate(pending.form),
+        expectedRevisionId: pending.authority.revisionId,
+        expectedVersion: pending.authority.version,
+        expectedDigest: pending.authority.digest,
+      }),
+    retry: false,
+    onSuccess: (result, pending) => {
+      if (
+        result.ok &&
+        result.model.state === "published" &&
+        result.model.publication !== null
+      ) {
+        acceptPublication(
+          result.model.publication,
+          pending.form,
+          pending.authority,
+          pending.action === "create" && !editing
+            ? "__new__"
+            : pending.definitionId,
+          pending.action === "enable" || pending.action === "disable",
+        );
+        setPendingPublication(null);
+        setError(null);
+        setNotice("已从持久审计核对本次发布；没有重发保存或启停命令。");
+        if (pending.action === "create" && !editing) {
+          void navigate({
+            to: "/operations/automation/lifecycle/$definitionId",
+            params: { definitionId: pending.definitionId },
+            search: listReturn,
+          });
+        }
+        invalidate();
+      } else
+        setError(
+          "本次发布仍未证实。保留输入和未决身份，稍后继续核对；不会自动重发。",
+        );
     },
   });
 
@@ -791,7 +946,7 @@ export function AutomationLifecyclePage() {
     onSuccess: (result) => {
       if (result.ok) {
         setNotice(
-          "The definition was removed; grants, audits and run history were retained and future unattended authority was revoked.",
+          "The definition was removed; future scheduled effects stop at safe boundaries and run history is retained.",
         );
         invalidate();
         void navigate({ to: "/operations/automation" });
@@ -973,6 +1128,8 @@ export function AutomationLifecyclePage() {
   });
 
   const canManage =
+    pendingPublication === null &&
+    principalId !== null &&
     authorityModel !== null &&
     activeIdentity !== null &&
     activeIdentity.digest.length > 0;
@@ -1151,6 +1308,43 @@ export function AutomationLifecyclePage() {
             : null;
         return (
           <div className="mf-dashboard">
+            <p className="mf-dashboard-meta">
+              启用后按保存的来源范围与上限定时整理；启用本身不启动任务。“运行一次”立即受理该保存范围的一次真实整理，禁用时也可使用。
+            </p>
+            {authorityModel?.executionEffects && (
+              <p className="mf-dashboard-meta">
+                已保存策略的可用效果：
+                {authorityModel.executionEffects.operations.join("、")}。
+                {authorityModel.executionEffects.overwrite
+                  ? "策略允许的覆盖仍需已有明确许可。"
+                  : "不允许覆盖现有目标。"}
+                {authorityModel.executionEffects.sourceCleanup
+                  ? "包含策略明确允许的源目录清理。"
+                  : "不清理源目录。"}
+              </p>
+            )}
+
+            {pendingPublication !== null && (
+              <StatusBanner variant="warning" title="发布结果待核对">
+                <p>
+                  保留了 {pendingPublication.definitionId}{" "}
+                  的本次命令身份。核对只读取审计，不会重新发布。
+                </p>
+                <Button
+                  type="button"
+                  disabled={
+                    reconcilePublication.isPending ||
+                    saveMutation.isPending ||
+                    toggleMutation.isPending
+                  }
+                  onClick={() =>
+                    reconcilePublication.mutate(pendingPublication)
+                  }
+                >
+                  核对本次发布
+                </Button>
+              </StatusBanner>
+            )}
             <header className="mf-dashboard-head">
               <div>
                 <h2>
@@ -1651,8 +1845,7 @@ export function AutomationLifecyclePage() {
                 ) : (
                   <>
                     <p className="mf-dashboard-meta">
-                      {removal.referenceTotal} configuration reference(s) ·
-                      unattended authority {removal.authorityStatus}
+                      {removal.referenceTotal} configuration reference(s)
                     </p>
                     <p className="mf-label">
                       <label htmlFor="lifecycle-confirm-removal">
@@ -1669,8 +1862,8 @@ export function AutomationLifecyclePage() {
                         }
                       />{" "}
                       I confirm removing this definition; future scheduling and
-                      unattended mutation stop while grants, audits and history
-                      are retained
+                      remaining scheduled effects stop at safe boundaries;
+                      audits and history are retained
                     </label>
                     <div className="mf-actions">
                       <Button

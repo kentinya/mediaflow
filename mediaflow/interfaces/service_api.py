@@ -472,7 +472,17 @@ class MediaFlowApi:
             self._automation_run_once = AutomationRunOnceService(
                 self._media_discovery,
                 self._manual_previews,
+                repository=repository,
+                configuration_service=configuration_service,
             )
+        if self._automation_run_once is not None:
+            binder = getattr(self._automation_run_once, "bind_execution_authority", None)
+            if callable(binder):
+                binder(
+                    repository,
+                    configuration_service,
+                    _CurrentConfiguredPermissionAuthority(self._principals, configuration_service),
+                )
         self._configuration_objects = (
             ConfigurationObjectService(
                 configuration_service,
@@ -610,6 +620,16 @@ class MediaFlowApi:
                 execution_service=self._manual_execution,
                 checkpoint_service=self._checkpoint_service,
             )
+        from mediaflow.application.automation_execution_intent import (
+            assert_schedule_continuity,
+            live_definition,
+            resolve_principal,
+        )
+
+        if configuration_service is not None:
+            configuration_service.bind_automation_publication_authority(
+                _CurrentConfiguredPermissionAuthority(self._principals, configuration_service)
+            )
         self._unattended_grants = UnattendedExecutionGrantService(
             repository,
             discovery_service=self._media_discovery,
@@ -617,6 +637,23 @@ class MediaFlowApi:
             permission_authority=_CurrentConfiguredPermissionAuthority(
                 self._principals, configuration_service
             ),
+            publication_principal_resolver=(
+                lambda job, definition: resolve_principal(configuration_service, job, definition)
+            )
+            if configuration_service is not None
+            else None,
+            live_intent_checker=(
+                lambda job, definition: assert_schedule_continuity(
+                    configuration_service, job, definition
+                )
+            )
+            if configuration_service is not None
+            else None,
+            live_definition_resolver=(
+                lambda definition_id: live_definition(configuration_service, definition_id)
+            )
+            if configuration_service is not None
+            else None,
         )
         self._automation_occurrences = AutomationDefinitionOccurrenceService(repository)
         self._automation_occurrences.attach_unattended_grant_service(self._unattended_grants)
@@ -2547,7 +2584,9 @@ class MediaFlowApi:
             values = service.list(actor=principal.principal_id, limit=50)
             items = []
             for value in values:
-                if value.definition_origin is None:
+                if getattr(value, "definition_origin", None) is None and not getattr(
+                    value, "run_once", False
+                ):
                     continue
                 items.append(service.document(value))
             return self._response(
@@ -13223,7 +13262,7 @@ class MediaFlowApi:
         permissions = principal.permissions
         manage = ApiPermission.MANAGE_CONFIGURATION in permissions
         grant_permitted = ApiPermission.GRANT_UNATTENDED_EXECUTION in permissions
-        dry_run = ApiPermission.SUBMIT_DRY_RUN in permissions
+        dry_run = ApiPermission.EXECUTE_MANUAL_ORGANIZE in permissions
         active_revision_id = active.revision_id if active is not None else None
         not_active_reason = (
             "this definition exists only inside an open successor Draft; "
@@ -13313,20 +13352,20 @@ class MediaFlowApi:
                     if not in_active
                     else self._organize_unavailable_reason(
                         dry_run,
-                        ApiPermission.SUBMIT_DRY_RUN,
-                        "the connected API principal cannot start a zero-mutation Run once",
+                        ApiPermission.EXECUTE_MANUAL_ORGANIZE,
+                        "the connected API principal cannot execute an organizing Run once",
                     )
                 ),
                 "method": "POST",
                 "path": f"/api/v1/operations/automation/task-definitions/{definition_id}/run-once",
                 "sideEffects": "none",
                 "durableOutcome": (
-                    "a durable bounded discovery of the definition scope is admitted; it "
-                    "freezes a complete manifest and stores an exact zero-mutation Preview"
+                    "a durable organizing task for the saved scope is admitted and executed "
+                    "through the existing Worker after complete scope and plan checks"
                 ),
                 "nextAction": (
-                    "start Run once, review the exact Preview of the frozen manifest, then "
-                    "separately confirm execution"
+                    "start Run once and inspect progress, independent results and "
+                    "recovery in its linked task"
                 ),
             },
             "copy": {
@@ -13385,6 +13424,37 @@ class MediaFlowApi:
             },
         }
 
+    @staticmethod
+    def _automation_operator_execution_state(operator, *, in_active, historical):
+        for key in ("unattendedExecutionGrant", "grant", "grantEligibility"):
+            operator.pop(key, None)
+        for key in ("grantState", "grant", "revoke"):
+            operator["actions"].pop(key, None)
+        state = "enabled" if operator.get("enabled") is True else "disabled"
+        if historical:
+            state = "historical"
+        elif not in_active:
+            state = "draft-only"
+        operator["executionReadiness"] = {
+            "state": state,
+            "explanation": {
+                "enabled": "The saved schedule is enabled. Each run still checks current "
+                "execution permission, source availability and its actual plans before effects.",
+                "disabled": "The saved schedule is disabled; it emits no new scheduled work.",
+                "historical": "This definition was removed; retained history is read-only.",
+                "draft-only": (
+                    "This definition is saved only in a Draft and is not consumed by runtime."
+                ),
+                "unavailable": "The saved definition cannot currently be consumed safely.",
+            }[state],
+            "nextAction": (
+                "inspect retained results; removed work is never restarted by reading history"
+                if historical
+                else "review the saved scope and limits in the checked definition editor"
+            ),
+        }
+        return operator
+
     def _automation_definition_operator_document(
         self,
         document: dict,
@@ -13420,7 +13490,9 @@ class MediaFlowApi:
                 draft_present=False,
                 in_active=False,
             )
-            return operator
+            return self._automation_operator_execution_state(
+                operator, in_active=False, historical=True
+            )
         operator["definitionState"] = "active" if in_active else "draft-only"
         operator["activeConfiguration"] = self._automation_active_configuration(active)
         draft_state = self._automation_draft_state(
@@ -13439,7 +13511,9 @@ class MediaFlowApi:
         )
         if eligibility is not None:
             operator["grantEligibility"] = self._strip_automation_operator_evidence(eligibility)
-        return operator
+        return self._automation_operator_execution_state(
+            operator, in_active=in_active, historical=False
+        )
 
     def _automation_occurrence_operator_document(self, document: dict) -> dict:
         """Bounded occurrence projection with exact linked-work transports."""
@@ -15971,6 +16045,16 @@ class MediaFlowApi:
                     "automation Run once reconciliation requires one admissionRequestId"
                 )
             request_id = query["admissionRequestId"][0]
+            execution = service.find_execution(principal.principal_id, request_id)
+            if execution is not None:
+                if execution.definition_id != definition_id:
+                    return self._error(
+                        start_response,
+                        404,
+                        "run_once_request_not_found",
+                        "request not found for this definition",
+                    )
+                return self._response(start_response, 200, service.document(execution))
             discovery_service = getattr(self, "_media_discovery", None)
             finder = (
                 getattr(discovery_service, "find_by_request_id", None)
@@ -16007,7 +16091,7 @@ class MediaFlowApi:
                 )
             return self._response(start_response, 200, service.document(discovery))
         if method == "POST":
-            self._require(principal, ApiPermission.SUBMIT_DRY_RUN)
+            self._require(principal, ApiPermission.EXECUTE_MANUAL_ORGANIZE)
             self._require_empty_query(environ, "automation definition Run once")
             document = self._document(environ)
             allowed = {
@@ -16060,7 +16144,7 @@ class MediaFlowApi:
                     "automation definition Run once expectedRevisionDigest must be text or null"
                 )
             try:
-                discovery = service.admit(
+                discovery = service.admit_execution(
                     definition_id,
                     actor=principal.principal_id,
                     admission_request_id=request_id,
@@ -16578,6 +16662,39 @@ class MediaFlowApi:
                 start_response, 405, "method_not_allowed", "GET, PUT or DELETE required"
             )
 
+        if len(parts) == 7 and parts[6] == "publication-intent":
+            self._require(principal, ApiPermission.READ)
+            if method != "POST":
+                return self._error(
+                    start_response,
+                    405,
+                    "method_not_allowed",
+                    "POST required for exact reconciliation",
+                )
+            self._require_empty_query(environ, "publication reconciliation")
+            document = self._document(environ)
+            if set(document) != {
+                "action",
+                "object",
+                "expectedRevisionId",
+                "expectedVersion",
+                "expectedDigest",
+            }:
+                raise ValueError(
+                    "publication reconciliation requires the exact command and observed identity"
+                )
+            return self._automation_definition_document(
+                start_response,
+                lambda: self._automation_workspace.publication_intent(
+                    definition_id,
+                    actor=principal.principal_id,
+                    action=document["action"],
+                    candidate=document["object"],
+                    expected_revision_id=document["expectedRevisionId"],
+                    expected_version=document["expectedVersion"],
+                    expected_digest=document["expectedDigest"],
+                ),
+            )
         if len(parts) == 7 and parts[6] == "copy-candidate":
             if method != "GET":
                 return self._error(
@@ -17255,6 +17372,7 @@ class MediaFlowApi:
         projected = self._automation_occurrences.project_definitions(
             active_page,
             configuration=active.summary(),
+            include_grants=False,
         )
         items = [
             self._automation_definition_operator_document(
@@ -17586,35 +17704,6 @@ class MediaFlowApi:
             in_active=in_active,
             historical=historical,
         )
-        for key in ("unattendedExecutionGrant", "grant", "grantEligibility"):
-            operator.pop(key, None)
-        for key in ("grantState", "grant", "revoke"):
-            operator["actions"].pop(key, None)
-        state = "enabled" if raw.get("enabled", True) else "disabled"
-        if historical:
-            state = "historical"
-        elif not in_active:
-            state = "draft-only"
-        elif definition is None:
-            state = "unavailable"
-        operator["executionReadiness"] = {
-            "state": state,
-            "explanation": {
-                "enabled": "The saved schedule is enabled. Each run still checks current "
-                "execution permission, source availability and its actual plans before effects.",
-                "disabled": "The saved schedule is disabled; it emits no new scheduled work.",
-                "historical": "This definition was removed; retained history is read-only.",
-                "draft-only": (
-                    "This definition is saved only in a Draft and is not consumed by runtime."
-                ),
-                "unavailable": "The saved definition cannot currently be consumed safely.",
-            }[state],
-            "nextAction": (
-                "inspect retained results; removed work is never restarted by reading history"
-                if historical
-                else "review the saved scope and limits in the checked definition editor"
-            ),
-        }
         return self._response(
             start_response,
             200,
@@ -17827,7 +17916,7 @@ class MediaFlowApi:
         # same definition.  They are published in the same history next to the
         # scheduled occurrences, distinguished by their explicit trigger, and
         # they are never counted as scheduled occurrences.
-        items.extend(self._automation_run_once_history(definition_id))
+        manual_runs = self._automation_run_once_history(definition_id)
         return self._response(
             start_response,
             200,
@@ -17836,6 +17925,7 @@ class MediaFlowApi:
                 "historicalState": "removed" if historical else None,
                 "activeConfiguration": self._automation_active_configuration(active),
                 "items": items,
+                "manualRuns": manual_runs,
                 "limit": limit,
                 "truncated": has_next,
                 "previous_cursor": self._page_cursor(
@@ -17872,17 +17962,21 @@ class MediaFlowApi:
             values = reader(definition_id, limit=50)
         except Exception:
             return []
-        items: list[dict[str, object]] = []
+        jobs_reader = getattr(self._repository, "list_automation_run_once_jobs", None)
+        if callable(jobs_reader):
+            values = (*jobs_reader(definition_id=definition_id, limit=50), *values)
+        items = []
         for value in values:
-            try:
-                document = service.document(value)
-            except Exception:
-                continue
-            document["trigger"] = "manual"
-            document["occurrenceId"] = None
-            document["jobId"] = None
-            items.append(document)
-        return items
+            document = service.document(value)
+            items.append(
+                {
+                    "runId": document["discoveryId"],
+                    "status": document["status"],
+                    "taskId": document.get("taskId"),
+                    "kind": document.get("executionKind", "analysis"),
+                }
+            )
+        return items[:50]
 
     # ------------------------------------------------------------------
     # V2 Rules workspace read projection (bounded, secret-free)

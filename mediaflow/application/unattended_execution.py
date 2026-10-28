@@ -1,4 +1,11 @@
-"""Application authority for persistent scheduled organization grants."""
+"""Live execution intent for definition-pinned scheduled and Run once work.
+
+The persisted grant rows are retained as historical evidence only.  Current
+authority is the published Enabled definition (scheduled) or one explicit
+Run once command (single run), checked against the *actual current* configured
+principal permission at admission and again at every unperformed effect
+boundary.  An old grant can neither override Enabled nor be required for it.
+"""
 
 from __future__ import annotations
 
@@ -7,7 +14,12 @@ from dataclasses import dataclass, replace
 from datetime import UTC, datetime
 from uuid import uuid4
 
-from mediaflow.domain.automation import AutomationTaskDefinition, AutomationTaskRunMode
+from mediaflow.application.automation_execution_intent import ExecutionPrincipal
+from mediaflow.domain.automation import (
+    AutomationJobOrigin,
+    AutomationTaskDefinition,
+    AutomationTaskRunMode,
+)
 from mediaflow.domain.manual_organize_preview import (
     ManualOrganizePreview,
     ManualPreviewItemStatus,
@@ -77,10 +89,16 @@ class UnattendedExecutionBoundaryError(RuntimeError):
 
 @dataclass(frozen=True)
 class UnattendedExecutionAuthority:
-    """The exact grant admitted for one claimed occurrence."""
+    """The exact live intent admitted for one claimed occurrence.
 
-    grant: UnattendedExecutionGrant
+    ``grant`` is the retained historical grant row when one happens to exist;
+    it is evidence, never the current execution gate.
+    """
+
+    grant: UnattendedExecutionGrant | None
     definition_changed_since_grant: bool = False
+    principal_id: str | None = None
+    run_once: bool = False
 
 
 class UnattendedExecutionGrantService:
@@ -97,6 +115,10 @@ class UnattendedExecutionGrantService:
         discovery_service=None,
         preview_service=None,
         permission_authority: CurrentPermissionAuthority | None = None,
+        publication_principal_resolver: Callable[[object, AutomationTaskDefinition], str | None]
+        | None = None,
+        live_definition_resolver: Callable[[str], object | None] | None = None,
+        live_intent_checker: Callable[[object, AutomationTaskDefinition], None] | None = None,
     ) -> None:
         self._repository = repository
         self._clock = clock
@@ -104,6 +126,14 @@ class UnattendedExecutionGrantService:
         self._discovery_service = discovery_service
         self._preview_service = preview_service
         self._permission_authority = permission_authority
+        # The principal that published the current Enabled definition is real
+        # configuration evidence.  It is supplied by the production consumer
+        # (the current Active activation), never by a browser or ``--actor``.
+        self._publication_principal_resolver = publication_principal_resolver
+        # The Worker's current-Active definition read.  A disabled or removed
+        # definition stops future scheduled effects at the next safe boundary.
+        self._live_definition_resolver = live_definition_resolver
+        self._live_intent_checker = live_intent_checker
 
     @property
     def repository(self):
@@ -346,51 +376,72 @@ class UnattendedExecutionGrantService:
         return getter(_bounded(grant_id, 128, "grant ID"), limit=limit)
 
     def authorize(self, job, definition) -> UnattendedExecutionAuthority:
+        """Admit the current intent before any Task or adapter exists.
+
+        A scheduled occurrence must still be an Enabled published definition
+        at this boundary and its publishing principal must currently hold the
+        scheduled execution capability.  A Run once Job carries its own
+        explicit principal and only needs the current manual-execution
+        permission; a disabled schedule is deliberately runnable once.
+        """
+
         definition = _definition(definition)
-        grant = self._get_active(definition.definition_id)
-        if grant is None:
-            latest = self._latest_for_definition(definition.definition_id)
-            if latest is not None and latest.status is UnattendedExecutionGrantStatus.REVOKED:
-                raise UnattendedExecutionGrantError(
-                    "unattended execution grant is revoked",
-                    code="unattended_execution_grant_revoked",
-                    next_action=(
-                        "review completed history and explicitly grant the exact bounds again"
-                    ),
-                )
+        run_once = _is_run_once(job)
+        if not run_once and not definition.enabled:
             raise UnattendedExecutionGrantError(
-                "automatic organization has no active unattended execution grant; "
-                "no Task was created",
-                code="unattended_execution_authority_missing",
+                "the pinned Automation Task Definition is disabled; no scheduled work was started",
+                code="definition_disabled",
                 durable_state="no Task, adapter, Provider request, or media effect was created",
                 next_action=(
-                    "review the exact definition bounds and explicitly grant unattended execution"
+                    "enable the definition in a checked published successor, or use Run once "
+                    "for one deliberate execution"
                 ),
                 details={"definitionId": definition.definition_id},
             )
-        self._assert_match(grant, job, definition)
-        self._assert_current_permission(grant.granting_principal, boundary=False)
+        principal = self._intent_principal(job, definition)
+        permission = (
+            ApiPermission.EXECUTE_MANUAL_ORGANIZE
+            if run_once
+            else ApiPermission.GRANT_UNATTENDED_EXECUTION
+        )
+        self._assert_current_permission(principal, permission=permission, boundary=False)
+        if not run_once:
+            self._assert_live_definition(definition, boundary=False)
+            self._assert_intent_continuity(job, definition)
+        grant = self._current_grant_evidence(definition.definition_id)
         return UnattendedExecutionAuthority(
             grant,
-            _definition_changed_since_grant(grant, definition),
+            _definition_changed_since_grant(grant, definition) if grant is not None else False,
+            principal_id=principal.principal_id
+            if isinstance(principal, ExecutionPrincipal)
+            else principal,
+            run_once=run_once,
         )
 
-    def assert_live(self, job, definition) -> UnattendedExecutionGrant:
-        """Re-read and validate the grant at one mutation boundary."""
+    def assert_live(self, job, definition) -> UnattendedExecutionGrant | None:
+        """Re-read current permission and schedule state at one effect boundary."""
 
         definition = _definition(definition)
-        grant = self._get_active(definition.definition_id)
+        run_once = _is_run_once(job)
         try:
-            if grant is None:
+            if not run_once and not definition.enabled:
                 raise UnattendedExecutionGrantError(
-                    "unattended execution grant is no longer active",
-                    code="unattended_execution_grant_revoked",
-                    next_action=(
-                        "inspect the completed siblings and explicitly grant the exact bounds again"
-                    ),
+                    "the scheduled definition was disabled; remaining effects were stopped",
+                    code="definition_disabled",
+                    durable_state="completed sibling effects are preserved",
+                    next_action="inspect the completed items and use a new Enabled revision if "
+                    "wanted",
                 )
-            self._assert_match(grant, job, definition)
-            self._assert_current_permission(grant.granting_principal, boundary=True)
+            principal = self._intent_principal(job, definition)
+            permission = (
+                ApiPermission.EXECUTE_MANUAL_ORGANIZE
+                if run_once
+                else ApiPermission.GRANT_UNATTENDED_EXECUTION
+            )
+            self._assert_current_permission(principal, permission=permission, boundary=True)
+            if not run_once:
+                self._assert_live_definition(definition, boundary=True)
+                self._assert_intent_continuity(job, definition)
         except UnattendedExecutionGrantError as error:
             raise UnattendedExecutionBoundaryError(
                 category=error.code,
@@ -398,18 +449,150 @@ class UnattendedExecutionGrantService:
                 next_action=error.next_action,
                 retry_safe=error.retry_safe,
             ) from error
-        return grant
+        return self._current_grant_evidence(definition.definition_id)
 
-    def _assert_current_permission(self, principal_id: str, *, boundary: bool) -> None:
+    def _intent_principal(
+        self, job, definition: AutomationTaskDefinition
+    ) -> str | ExecutionPrincipal:
+        principal = getattr(job, "execution_principal", None)
+        if _is_run_once(job) and isinstance(principal, str) and principal.strip():
+            return principal.strip()
+        if _is_run_once(job):
+            raise UnattendedExecutionGrantError(
+                "the Run once Job has no explicit principal; no work was started",
+                code="run_once_principal_missing",
+                durable_state="no Task, adapter, Provider request, or media effect was created",
+                next_action="start Run once again from an authenticated session",
+                details={"definitionId": definition.definition_id},
+            )
+        resolver = self._publication_principal_resolver
+        if resolver is not None:
+            try:
+                value = resolver(job, definition)
+            except Exception as error:
+                raise UnattendedExecutionGrantError(
+                    "the Enabled definition's publication principal could not be read",
+                    code="automation_execution_principal_unavailable",
+                    status=503,
+                    durable_state=(
+                        "no Task, adapter, Provider request, Storage probe, or media effect "
+                        "was created"
+                    ),
+                    next_action=(
+                        "restore the managed configuration authority, then let the next due "
+                        "occurrence execute; no retry is needed"
+                    ),
+                ) from error
+            if isinstance(value, ExecutionPrincipal):
+                return value
+            if isinstance(value, str) and value.strip():
+                return value.strip()
+        # Direct legacy adapters without a publication reader retain their real
+        # existing principal; production always binds the publication reader.
+        if resolver is None:
+            grant = self._current_grant_evidence(definition.definition_id)
+            if grant is not None:
+                return grant.granting_principal
+        raise UnattendedExecutionGrantError(
+            "the Enabled definition has no verifiable publication principal; no scheduled "
+            "work was started",
+            code="automation_execution_principal_missing",
+            durable_state="no Task, adapter, Provider request, or media effect was created",
+            next_action=(
+                "publish the Enabled definition again through a checked configuration Save so "
+                "its real publication authority is recorded"
+            ),
+            details={"definitionId": definition.definition_id},
+        )
+
+    def _assert_intent_continuity(self, job, definition):
+        if self._live_intent_checker is None:
+            return
+        try:
+            self._live_intent_checker(job, definition)
+        except Exception as error:
+            raise UnattendedExecutionGrantError(
+                "the admitted schedule was stopped or its publication continuity is unavailable",
+                code="scheduled_intent_stopped",
+                durable_state="completed effects are retained; no further effect was started",
+                next_action=(
+                    "inspect existing results; use the next normal due run, "
+                    "never replay the stopped occurrence"
+                ),
+            ) from error
+
+    def _assert_live_definition(
+        self, definition: AutomationTaskDefinition, *, boundary: bool
+    ) -> None:
+        if self._live_definition_resolver is None:
+            return
+        try:
+            current = self._live_definition_resolver(definition.definition_id)
+        except Exception as error:
+            raise UnattendedExecutionGrantError(
+                "the current published definition state could not be read",
+                code="automation_execution_state_unavailable",
+                status=503,
+                durable_state="no further media effect was started",
+                next_action=(
+                    "restore the managed configuration authority; completed effects are "
+                    "preserved and no retry is automatic"
+                ),
+            ) from error
+        if current is None:
+            raise UnattendedExecutionGrantError(
+                "the scheduled definition was removed; remaining effects were stopped",
+                code="definition_removed",
+                durable_state="completed sibling effects are preserved",
+                next_action="inspect the completed items; a removed definition cannot be replayed",
+            )
+        enabled = (
+            current.get("enabled")
+            if isinstance(current, Mapping)
+            else getattr(current, "enabled", None)
+        )
+        if enabled is not True:
+            raise UnattendedExecutionGrantError(
+                "the scheduled definition was disabled; remaining effects were stopped",
+                code="definition_disabled",
+                durable_state="completed sibling effects are preserved",
+                next_action="inspect the completed items and enable a reviewed successor if wanted",
+            )
+
+    def _current_grant_evidence(self, definition_id: str) -> UnattendedExecutionGrant | None:
+        try:
+            return self._get_active(definition_id)
+        except Exception:
+            return None
+
+    def _assert_current_permission(
+        self,
+        principal_id: str,
+        *,
+        boundary: bool,
+        permission: ApiPermission = ApiPermission.GRANT_UNATTENDED_EXECUTION,
+    ) -> None:
+        if isinstance(principal_id, ExecutionPrincipal):
+            if principal_id.trusted_local:
+                import os
+
+                if principal_id.principal_id != f"local:{os.getuid()}":
+                    raise UnattendedExecutionGrantError(
+                        "the trusted local publisher identity is no longer available",
+                        code="automation_execution_principal_unavailable",
+                        next_action=(
+                            "publish a reviewed successor from the current trusted local boundary"
+                        ),
+                    )
+                return
+            principal_id = principal_id.principal_id
         if self._permission_authority is None:
             # Lightweight direct callers from the pre-managed runtime do not
             # have a configured authority to consult. Production API/Worker
             # composition always injects one and therefore fails closed.
             return
         try:
-            allowed = self._permission_authority.has_permission(
-                principal_id, ApiPermission.GRANT_UNATTENDED_EXECUTION
-            )
+            allowed = self._permission_authority.has_permission(principal_id, permission)
         except Exception:
             error = UnattendedExecutionGrantError(
                 "current configured principal permission authority could not be read",
@@ -434,20 +617,26 @@ class UnattendedExecutionGrantService:
                 ),
             ) from error
         if allowed is not True:
+            label = permission.value
             error = UnattendedExecutionGrantError(
-                "the granting principal no longer has grant_unattended_execution permission",
+                f"the publishing principal no longer has {label} permission",
                 code="unattended_permission_invalid",
                 durable_state=(
                     "no Task, adapter, Provider request, Storage probe, or media effect was created"
                 ),
-                next_action="restore that principal permission or explicitly create a new grant",
+                next_action=(
+                    "restore that principal's current permission, or publish a reviewed Enabled "
+                    "successor from a principal that has it"
+                ),
             )
             if not boundary:
                 raise error
             raise UnattendedExecutionBoundaryError(
                 category="unattended_permission_invalid",
-                reason="the granting principal no longer has grant_unattended_execution permission",
-                next_action="restore that principal permission or explicitly create a new grant",
+                reason=f"the publishing principal no longer has {label} permission",
+                next_action=(
+                    "restore that principal's current permission; completed effects are preserved"
+                ),
             ) from error
 
     def project_eligibility(
@@ -1110,6 +1299,13 @@ def _prefer_grant(
         current.granted_at,
         current.grant_id,
     )
+
+
+def _is_run_once(job) -> bool:
+    origin = getattr(job, "execution_origin", None)
+    if isinstance(origin, AutomationJobOrigin):
+        return origin is AutomationJobOrigin.RUN_ONCE
+    return origin in {"run-once", "run_once"}
 
 
 def _definition_changed_since_grant(

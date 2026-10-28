@@ -837,6 +837,21 @@ class AutomationWorker:
                 failure_retry_safe=None,
                 failure_next_action=None,
             )
+        if job.run_once and job.task_id:
+            if finished.task_id is None:
+                finished = replace(finished, task_id=job.task_id)
+            pending_task = self._repository.get_task(job.task_id)
+            if (
+                pending_task is not None
+                and pending_task.status.value == "pending"
+                and finished.status in {AutomationJobStatus.FAILED, AutomationJobStatus.CANCELLED}
+            ):
+                finished = replace(
+                    finished,
+                    failure_durable_state=(
+                        "the admitted Task and exact pin are retained; no media effect was started"
+                    ),
+                )
         if finished.task_id is None and job.command is AutomationCommand.SCOPE_CONTINUATION:
             # A scope continuation can durably create and bind its processing
             # Task, then exit non-successfully when that Task pauses again or
@@ -865,6 +880,28 @@ class AutomationWorker:
         if persisted is None:
             raise AutomationClaimLost("automation Job disappeared after terminal commit")
         finished = persisted
+        if (
+            finished.run_once
+            and finished.task_id
+            and finished.status in {AutomationJobStatus.FAILED, AutomationJobStatus.CANCELLED}
+        ):
+            task = self._repository.get_task(finished.task_id)
+            if task is not None and task.status.value == "pending":
+                from mediaflow.domain.task_persistence import PersistentTaskStatus
+
+                self._repository.update_task(
+                    replace(
+                        task,
+                        status=(
+                            PersistentTaskStatus.CANCELLED
+                            if finished.status is AutomationJobStatus.CANCELLED
+                            else PersistentTaskStatus.FAILED
+                        ),
+                        updated_at=finished.updated_at,
+                        completed_at=finished.completed_at,
+                        error=finished.failure_durable_state or finished.error,
+                    )
+                )
         if self._notifications:
             event_type = {
                 AutomationJobStatus.COMPLETED: NotificationEventType.JOB_COMPLETED,
@@ -1007,6 +1044,7 @@ class IntervalScheduler:
         ) = None,
         automation_task_definitions: tuple[AutomationTaskDefinition, ...] = (),
         configuration_snapshot_version: int | None = None,
+        execution_authority=None,
     ) -> None:
         if (configuration_snapshot_id is None) != (configuration_snapshot_digest is None):
             raise ValueError("Job configuration snapshot ID and digest must be provided together")
@@ -1017,6 +1055,7 @@ class IntervalScheduler:
             or maximum_active_jobs > 10_000
         ):
             raise ValueError("maximum active Jobs must be between 1 and 10000")
+        self._execution_authority = execution_authority
         self._repository = repository
         self._schedules = schedules
         self._notifications = notifications
@@ -1304,6 +1343,8 @@ class IntervalScheduler:
                     configuration_snapshot_digest=snapshot[1],
                     configuration_snapshot_version=snapshot_version,
                 )
+                if self._execution_authority is not None:
+                    self._execution_authority.authorize(job, definition)
                 occurrence = AutomationDefinitionOccurrence(
                     str(uuid4()),
                     definition_id,

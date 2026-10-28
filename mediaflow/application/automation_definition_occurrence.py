@@ -66,6 +66,7 @@ class AutomationDefinitionOccurrenceService:
         definitions,
         *,
         configuration: Mapping[str, object] | None = None,
+        include_grants: bool = True,
     ) -> list[dict[str, object]]:
         """Project a bounded definition page with bulk state lookups.
 
@@ -104,7 +105,7 @@ class AutomationDefinitionOccurrenceService:
             except TypeError:
                 latest_values = {}
         grants = {}
-        if self._unattended_grants is not None:
+        if include_grants and self._unattended_grants is not None:
             grants = self._unattended_grants.project_many(
                 values,
                 configuration=configuration,

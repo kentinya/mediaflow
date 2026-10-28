@@ -1159,7 +1159,7 @@ class DefinitionScopedExecutionTests(unittest.TestCase):
                 self.assertEqual(finished.status, AutomationJobStatus.FAILED)
                 self.assertEqual(
                     finished.failure_category,
-                    "unattended_execution_authority_missing",
+                    "automation_execution_authority_unavailable",
                 )
                 self.assertEqual(finished.failure_side_effects, "none")
                 self.assertFalse(finished.failure_retry_safe)
@@ -1172,7 +1172,7 @@ class DefinitionScopedExecutionTests(unittest.TestCase):
                 self.assertEqual(occurrence.outcome, "blocked")
                 self.assertEqual(
                     occurrence.failure_category,
-                    "unattended_execution_authority_missing",
+                    "automation_execution_authority_unavailable",
                 )
 
     def test_authorized_automatic_mode_executes_normal_chain_and_c_stays_c(self) -> None:
@@ -1990,7 +1990,7 @@ class DefinitionScopedExecutionTests(unittest.TestCase):
             self.assertFalse(alpha_source.exists())
             self.assertTrue(beta_source.exists())
 
-    def test_revoked_automatic_mode_fails_before_task_and_mutation(self) -> None:
+    def test_unverifiable_publication_principal_fails_before_task_and_mutation(self) -> None:
         definition = _definition(
             "revoked",
             mode=AutomationTaskRunMode.AUTOMATIC_ORGANIZATION,
@@ -2027,7 +2027,9 @@ class DefinitionScopedExecutionTests(unittest.TestCase):
                     unattended_grant_service=grant_service,
                 )
                 finished = self._run(repository, service)
-                self.assertEqual(finished.failure_category, "unattended_execution_grant_revoked")
+                self.assertEqual(
+                    finished.failure_category, "automation_execution_principal_missing"
+                )
                 self.assertEqual(finished.failure_side_effects, "none")
                 self.assertTrue(finished.failure_retry_safe)
                 self.assertTrue(finished.failure_next_action)
@@ -2035,7 +2037,7 @@ class DefinitionScopedExecutionTests(unittest.TestCase):
                 self.assertEqual(source_guard.mutation_calls["Move"], 0)
             self.assertEqual(_tree(root / "source"), before)
 
-    def test_revocation_is_reread_between_items_and_preserves_first_result(self) -> None:
+    def test_disable_is_reread_between_items_and_preserves_first_result(self) -> None:
         definition = _definition(
             "boundary",
             mode=AutomationTaskRunMode.AUTOMATIC_ORGANIZATION,
@@ -2090,7 +2092,7 @@ class DefinitionScopedExecutionTests(unittest.TestCase):
             ):
                 job = self._emit(repository, definition)
                 grant_service = _grant_service(repository, definition)
-                grant = grant_service.grant(
+                grant_service.grant(
                     definition,
                     configuration_snapshot_id=job.configuration_snapshot_id,
                     configuration_snapshot_digest=job.configuration_snapshot_digest,
@@ -2099,7 +2101,9 @@ class DefinitionScopedExecutionTests(unittest.TestCase):
                     confirmation=True,
                 )
 
-                class RevokingGrantService(UnattendedExecutionGrantService):
+                live = {"enabled": True}
+
+                class DisablingIntentService(UnattendedExecutionGrantService):
                     def __init__(self, *args, **kwargs):
                         super().__init__(*args, **kwargs)
                         self.boundary_calls = 0
@@ -2107,14 +2111,18 @@ class DefinitionScopedExecutionTests(unittest.TestCase):
                     def assert_live(self, claimed_job, claimed_definition):
                         self.boundary_calls += 1
                         # The first item performs three cross-storage boundaries
-                        # (directory, target write, source delete).  Revoke before the
+                        # (directory, target write, source delete). Disable before the
                         # second item's first boundary so the first sibling completes
                         # and the second fails before any mutation.
                         if self.boundary_calls == 4:
-                            self.revoke(grant.grant_id, actor="admin", reason="boundary")
+                            live["enabled"] = False
                         return super().assert_live(claimed_job, claimed_definition)
 
-                revoking = RevokingGrantService(repository)
+                revoking = DisablingIntentService(
+                    repository,
+                    publication_principal_resolver=lambda job, definition: "admin",
+                    live_definition_resolver=lambda definition_id: live,
+                )
                 service = self._service(
                     repository,
                     configuration,
@@ -2489,6 +2497,14 @@ class DefinitionScopedExecutionTests(unittest.TestCase):
 
                 with (
                     patch("mediaflow.final_cli._configuration", side_effect=resolve),
+                    patch(
+                        "mediaflow.final_cli._definition_publication_principal",
+                        return_value="admin",
+                    ),
+                    patch(
+                        "mediaflow.final_cli._live_automation_definition", return_value=definition
+                    ),
+                    patch("mediaflow.final_cli._schedule_intent_continuity"),
                     patch(
                         "mediaflow.final_cli.metadata_provider_registry_from_environment",
                         return_value=MetadataProviderRegistry((SyntheticMetadataProvider(()),)),

@@ -1,25 +1,10 @@
-"""Definition-bound Run once: automatic discovery, freeze and exact Preview.
+"""Explicit saved-definition organizing and retained historical analysis.
 
-A published ``automatic-organization`` definition already identifies its
-ResourceLibrary and safe source sub-scope.  Run once therefore needs no file
-picker and no hand-selected subset: this service derives the complete admitted
-scope from the saved definition, admits the existing durable bounded discovery,
-and — once the resident Worker has frozen a *complete* manifest — creates the
-existing manual intent and exact zero-mutation Preview that the ordinary
-separate one-shot execution intent then consumes.
-
-Safety invariants preserved here:
-
-* the whole stage is metadata-only and creates **no** mutation authority; only
-  the existing exact Preview plus an explicit separate execution confirmation
-  can ever reach ``OrganizerExecutor``;
-* the effective manifest bound is the smaller of the definition ceiling and the
-  existing manual/discovery primary bound, and an over-bound or incomplete walk
-  refuses execution instead of freezing a first-N prefix;
-* Run once never enables a schedule, never creates/revives/consumes an
-  unattended grant, and never advances or resets definition due state;
-* a disabled published schedule is runnable once; a Draft-only or removed
-  definition is not.
+Normal admission atomically creates a pinned Job and organizing Task before
+business readiness. The existing Worker proves the complete bounded scope and
+executes through the shared pipeline. Disabled schedules are eligible without
+changing due state. Legacy discovery/freeze/Preview methods remain solely for
+already supported analysis records and never automatically acquire execution.
 """
 
 from __future__ import annotations
@@ -40,6 +25,8 @@ from mediaflow.domain.media_discovery import (
 #: Bounded operator-facing phases of one definition-bound Run once.
 RUN_ONCE_PHASES = (
     "discovering",
+    "executing",
+    "completed",
     "analyzing",
     "pausing",
     "paused",
@@ -81,10 +68,238 @@ class AutomationRunOnceService:
         preview_service,
         *,
         clock: Callable[[], datetime] = lambda: datetime.now(UTC),
+        repository=None,
+        configuration_service=None,
     ) -> None:
         self._discovery = discovery_service
         self._previews = preview_service
         self._clock = clock
+        self._repository = repository
+        self._managed = configuration_service
+
+    def bind_execution_authority(
+        self, repository, configuration_service, permission_authority=None
+    ):
+        self._repository = repository
+        self._managed = configuration_service
+        self._permission_authority = permission_authority
+
+    def admit_execution(
+        self,
+        definition_id,
+        *,
+        actor,
+        admission_request_id=None,
+        expected_definition_fingerprint=None,
+        expected_revision_id=None,
+        expected_revision_version=None,
+        expected_revision_digest=None,
+    ):
+        """One explicit command atomically admits a pinned Job and queued Task."""
+        import posixpath
+        from uuid import uuid4
+
+        from mediaflow.domain.automation import (
+            AutomationCommand,
+            AutomationJob,
+            AutomationJobOrigin,
+            AutomationJobStatus,
+        )
+        from mediaflow.domain.task_persistence import PersistentTask, PersistentTaskStatus
+
+        if self._repository is None or self._managed is None:
+            raise AutomationRunOnceError("Run once admission is unavailable", status=503)
+        if (
+            not isinstance(admission_request_id, str)
+            or not admission_request_id.strip()
+            or len(admission_request_id) > 200
+        ):
+            raise AutomationRunOnceError("one bounded request identity is required", status=400)
+        authority = getattr(self, "_permission_authority", None)
+        if authority is None:
+            raise AutomationRunOnceError(
+                "current execution permission authority is unavailable", status=503
+            )
+        from mediaflow.domain.security import ApiPermission
+
+        try:
+            allowed = authority.has_permission(actor, ApiPermission.EXECUTE_MANUAL_ORGANIZE)
+        except Exception as error:
+            raise AutomationRunOnceError(
+                "current execution permission could not be read", status=503
+            ) from error
+        if allowed is not True:
+            raise AutomationRunOnceError(
+                "current principal cannot execute organizing work", status=403
+            )
+        previous = self.find_execution(actor, admission_request_id)
+        if previous is not None:
+            if previous.definition_id != definition_id:
+                raise AutomationRunOnceError(
+                    "the request identity belongs to another definition", status=409
+                )
+            return previous
+        active = self._managed.active()
+        if active is None:
+            raise AutomationRunOnceError("published configuration is unavailable", status=503)
+        self._managed.verify_integrity(active)
+        raw = next(
+            (
+                v
+                for v in active.document.get("automationTaskDefinitions", [])
+                if v.get("id") == definition_id
+            ),
+            None,
+        )
+        if raw is None:
+            raise AutomationRunOnceError("published definition was not found", status=404)
+        definition = AutomationTaskDefinition.from_document(raw)
+        if (
+            (expected_revision_id is not None and active.revision_id != expected_revision_id)
+            or (
+                expected_revision_version is not None
+                and (active.revision_sequence or active.version) != expected_revision_version
+            )
+            or (expected_revision_digest is not None and active.digest != expected_revision_digest)
+            or (
+                expected_definition_fingerprint is not None
+                and definition.definition_fingerprint != expected_definition_fingerprint
+            )
+        ):
+            raise AutomationRunOnceError(
+                "the saved definition changed; review it before a new command",
+                code="definition_changed",
+                status=409,
+            )
+        resource = next(
+            (
+                v
+                for v in active.document.get("resourceLibraries", [])
+                if v.get("id") == definition.resource_library_id
+            ),
+            None,
+        )
+        if resource is None or resource.get("enabled", True) is not True:
+            raise AutomationRunOnceError("the saved source library is unavailable", status=409)
+        now = self._clock()
+        limit = min(definition.item_limit, 100)
+        task = PersistentTask(
+            str(uuid4()),
+            "organize",
+            PersistentTaskStatus.PENDING,
+            True,
+            now,
+            now,
+            scope_path=posixpath.join(
+                resource.get("storagePath", resource.get("rootPath", "")),
+                definition.source_scope or "",
+            ),
+            item_limit=limit,
+            configuration_snapshot_id=active.revision_id,
+            configuration_snapshot_digest=active.digest,
+        )
+        job = AutomationJob(
+            str(uuid4()),
+            AutomationCommand.ORGANIZE,
+            AutomationJobStatus.PENDING,
+            now,
+            now,
+            limit=limit,
+            task_id=task.task_id,
+            execute_authorized=True,
+            configuration_snapshot_id=active.revision_id,
+            configuration_snapshot_digest=active.digest,
+            configuration_snapshot_version=active.version,
+            definition_id=definition.definition_id,
+            definition_fingerprint=definition.definition_fingerprint,
+            definition_version=active.version,
+            run_mode=definition.mode,
+            resource_library_id=definition.resource_library_id,
+            source_scope=definition.source_scope,
+            execution_origin=AutomationJobOrigin.RUN_ONCE,
+            execution_principal=actor,
+            admission_request_id=admission_request_id,
+        )
+        capacity = active.document.get("automation", {}).get("maximumActiveJobs", 100)
+        admitted = self._repository.admit_automation_run_once_job(
+            job, capacity, task=task, definition_name=definition.name
+        )
+        if admitted is None:
+            raise AutomationRunOnceError(
+                "the processing queue is full; no work was admitted", code="queue_full", status=409
+            )
+        return admitted
+
+    def find_execution(self, actor, request_id):
+        if self._repository is None:
+            return None
+        return self._repository.find_automation_run_once_job(
+            principal_id=actor, admission_request_id=request_id
+        )
+
+    def execution_document(self, job):
+        revision = self._managed.require(job.configuration_snapshot_id)
+        definition = next(
+            v
+            for v in revision.document["automationTaskDefinitions"]
+            if v["id"] == job.definition_id
+        )
+        task = self._repository.get_task(job.task_id) if job.task_id else None
+        status = task.status.value if task else job.status.value
+        status = "queued" if status == "pending" else status
+        phase = (
+            "executing"
+            if status == "running"
+            else "discovering"
+            if status == "queued"
+            else "paused"
+            if status == "paused"
+            else "cancelled"
+            if status == "cancelled"
+            else "failed"
+            if status == "failed"
+            else "completed"
+        )
+        if status == "completed" and task and task.total_items == 0:
+            phase = "no_work"
+        return {
+            "journey": "automation-run-once",
+            "executionKind": "organizing",
+            "discoveryId": job.job_id,
+            "jobId": job.job_id,
+            "taskId": job.task_id,
+            "definitionId": job.definition_id,
+            "definitionName": definition.get("name") or job.definition_id,
+            "resourceLibraryId": job.resource_library_id,
+            "sourceScope": job.source_scope,
+            "runMode": job.run_mode.value,
+            "definitionItemLimit": definition.get("itemLimit", 100),
+            "effectivePrimaryLimit": job.limit,
+            "phase": phase,
+            "status": status,
+            "version": 1,
+            "primarySourceCount": task.total_items if task else 0,
+            "progress": {
+                "message": "The linked organizing task owns progress, results and recovery."
+            },
+            "taskCounts": {
+                "total": task.total_items,
+                "completed": task.completed_items,
+                "failed": task.failed_items,
+            }
+            if task
+            else None,
+            "frozen": False,
+            "zeroMutation": False,
+            "sideEffects": "none" if status == "queued" else "see_linked_task_results",
+            "admissionRequestId": job.admission_request_id,
+            "intentId": None,
+            "previewId": None,
+            "nextAction": "open the linked task for live progress, independent results and "
+            "permitted recovery",
+            "error": job.error or (task.error if task else None),
+            "actions": {},
+        }
 
     @property
     def discovery(self):
@@ -137,14 +352,28 @@ class AutomationRunOnceService:
     # ------------------------------------------------------------------
 
     def get(self, discovery_id: str) -> MediaDiscovery:
+        if self._repository is not None:
+            job = self._repository.get_job(discovery_id)
+            if job is not None and job.run_once:
+                return job
         return self._discovery.get(discovery_id)
 
     def list(self, *, actor: str | None = None, limit: int = 100) -> tuple[MediaDiscovery, ...]:
-        return self._discovery.list(actor=actor, limit=limit)
+        legacy = self._discovery.list(actor=actor, limit=limit)
+        jobs = (
+            self._repository.list_automation_run_once_jobs(principal_id=actor, limit=limit)
+            if self._repository
+            else ()
+        )
+        return (*jobs, *legacy)[:limit]
 
     def document(self, discovery: MediaDiscovery) -> dict[str, object]:
         """The bounded Run-once projection of one definition-bound discovery."""
 
+        from mediaflow.domain.automation import AutomationJob
+
+        if isinstance(discovery, AutomationJob):
+            return self.execution_document(discovery)
         origin = discovery.definition_origin
         if origin is None:
             raise AutomationRunOnceError(
