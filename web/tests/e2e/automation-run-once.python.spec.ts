@@ -129,6 +129,7 @@ test("a disabled published definition runs once without a file picker", async ({
   await publishRunOnceDefinition(page, { sourceScope: "电影" });
   const before = await lifecycleState(page);
   await page.setViewportSize({ width: 1536, height: 1024 });
+  await page.evaluate(() => window.scrollTo(0, 0));
   await page.screenshot({
     path: testInfo.outputPath("definition-desktop.png"),
     fullPage: true,
@@ -137,6 +138,7 @@ test("a disabled published definition runs once without a file picker", async ({
   await runButton.focus();
   await expect(runButton).toBeFocused();
   await page.setViewportSize({ width: 380, height: 844 });
+  await page.evaluate(() => window.scrollTo(0, 0));
   await page.screenshot({
     path: testInfo.outputPath("definition-narrow.png"),
     fullPage: true,
@@ -147,7 +149,9 @@ test("a disabled published definition runs once without a file picker", async ({
     ),
   ).toBe(true);
   await page.setViewportSize({ width: 1536, height: 1024 });
-  await page.getByRole("button", { name: "运行一次" }).click();
+  await runButton.focus();
+  await expect(runButton).toBeFocused();
+  await page.keyboard.press("Enter");
   await expect(page).toHaveURL(
     /\/operations\/automation\/run-once\/[0-9a-f-]{36}$/,
   );
