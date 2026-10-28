@@ -28,7 +28,6 @@ import urllib.parse
 import urllib.request
 from datetime import UTC, datetime, timedelta
 from pathlib import Path
-from uuid import uuid4
 
 from docker_health_smoke_test import (
     activate_runtime,
@@ -87,7 +86,7 @@ def wait_services_healthy(
 
 
 def add_fault_schedule(config_file: Path, source_root: Path) -> None:
-    """Add one enabled definition and one stable media file."""
+    """Add a disabled-first definition and one stable media file."""
 
     media_dir = source_root / "电影"
     media_dir.mkdir(parents=True, exist_ok=True)
@@ -116,7 +115,7 @@ def add_fault_schedule(config_file: Path, source_root: Path) -> None:
             "name": "Fault restart automatic organization",
             "resourceLibraryId": "source",
             "mode": "automatic-organization",
-            "enabled": True,
+            "enabled": False,
             "intervalSeconds": 3600,
             "itemLimit": 10,
         }
@@ -214,7 +213,7 @@ def active_identity(base: str, token: str) -> dict[str, object]:
     active = management.get("active") or {}
     revision_id = active.get("revisionId")
     digest = active.get("digest")
-    version = active.get("version") or active.get("revisionSequence")
+    version = active.get("revisionSequence") or active.get("version")
     if not revision_id or not digest or not isinstance(version, int):
         raise RuntimeError(f"management readiness lacks an exact Active identity: {management}")
     return {"revisionId": revision_id, "digest": digest, "version": version}
@@ -233,108 +232,25 @@ def definition_projection(base: str, token: str) -> dict:
     return definition
 
 
-def prepare_definition_grant(base: str, token: str, identity: dict[str, object]) -> dict:
-    """Create the exact analysis evidence and explicit grant used by scheduling."""
-
-    definition = definition_projection(base, token)
-    request_id = str(uuid4())
-    status, admitted = json_request(
+def prepare_definition_intent(base: str, token: str, identity: dict[str, object]) -> dict:
+    """Checked Enabled publication supplies intent without analysis or a grant."""
+    status, published = json_request(
         base,
-        f"/api/v1/operations/automation/definitions/{urllib.parse.quote(DEFINITION_ID)}/run-once",
+        f"/api/v1/operations/automation/definitions/{urllib.parse.quote(DEFINITION_ID)}/enable",
         token,
         method="POST",
         body={
-            "admissionRequestId": request_id,
-            "expectedDefinitionFingerprint": definition["definitionFingerprint"],
             "expectedRevisionId": identity["revisionId"],
-            "expectedRevisionVersion": identity["version"],
-            "expectedRevisionDigest": identity["digest"],
-        },
-    )
-    if status != 202:
-        raise RuntimeError(f"definition Run once admission returned HTTP {status}: {admitted}")
-    discovery_id = admitted.get("discoveryId")
-    if not discovery_id:
-        raise RuntimeError(f"definition Run once admission lacks discovery identity: {admitted}")
-
-    def discovery_complete() -> dict | None:
-        current_status, current = json_request(
-            base,
-            f"/api/v1/operations/automation/run-once/{urllib.parse.quote(discovery_id)}",
-            token,
-        )
-        if current_status != 200:
-            return None
-        if current.get("status") in {"completed", "partial_success"}:
-            return current
-        return None
-
-    completed = wait_until(
-        discovery_complete,
-        timeout=180.0,
-        description="definition Run once discovery completion",
-    )
-    status, finalized = json_request(
-        base,
-        f"/api/v1/operations/automation/run-once/{urllib.parse.quote(discovery_id)}/finalize",
-        token,
-        method="POST",
-        body={"expectedVersion": completed["version"]},
-    )
-    if status != 201:
-        raise RuntimeError(f"definition Run once finalize returned HTTP {status}: {finalized}")
-
-    def analysis_complete() -> dict | None:
-        current_status, current = json_request(
-            base,
-            f"/api/v1/operations/automation/run-once/{urllib.parse.quote(discovery_id)}",
-            token,
-        )
-        if current_status != 200:
-            return None
-        if current.get("previewId"):
-            return current
-        return None
-
-    analyzed = wait_until(
-        analysis_complete,
-        timeout=180.0,
-        description="definition Run once analysis completion",
-    )
-    status, grant = json_request(
-        base,
-        f"/api/v1/automation/task-definitions/{urllib.parse.quote(DEFINITION_ID)}/grant",
-        token,
-        method="POST",
-        body={
-            "revisionId": identity["revisionId"],
             "expectedVersion": identity["version"],
-            "confirmation": True,
-            "maxItemsPerRun": definition["itemLimit"],
-            "reason": "isolated restart/fault acceptance",
-            "previewId": analyzed["previewId"],
+            "expectedDigest": identity["digest"],
         },
     )
-    if status != 201 or (grant.get("grant") or {}).get("status") != "active":
-        _, preview = json_request(
-            base,
-            f"/api/v1/operations/organize/previews/{urllib.parse.quote(analyzed['previewId'])}",
-            token,
-        )
-        _, eligibility = json_request(
-            base,
-            f"/api/v1/automation/task-definitions/{urllib.parse.quote(DEFINITION_ID)}/grant-state",
-            token,
-        )
-        raise RuntimeError(
-            "definition unattended grant returned "
-            f"HTTP {status}: grant={grant}; preview={preview}; eligibility={eligibility}"
-        )
-    return {
-        "discoveryId": discovery_id,
-        "previewId": analyzed["previewId"],
-        "grantId": (grant.get("grant") or {}).get("grantId"),
-    }
+    if status != 200 or (published.get("definition") or {}).get("enabled") is not True:
+        raise RuntimeError(f"checked enable failed: {published}")
+    definition = definition_projection(base, token)
+    if (definition.get("grant") or {}).get("active") is True:
+        raise RuntimeError("fresh checked enable unexpectedly required a historical grant")
+    return {"definitionId": DEFINITION_ID, "active": active_identity(base, token)}
 
 
 def scheduled_jobs(base: str, token: str) -> list[dict]:
@@ -829,9 +745,10 @@ def restart_fault_smoke(project: str, image: str, keep: bool) -> None:
             wait_worker_ready(base, token)
             source_file = source_root / "电影" / "One.2001.mkv"
             source_bytes = source_file.read_bytes()
-            grant_evidence = prepare_definition_grant(base, token, identity)
+            intent_evidence = prepare_definition_intent(base, token, identity)
+            identity = active_identity(base, token)
             if source_file.read_bytes() != source_bytes or any(target_root.rglob("*")):
-                raise RuntimeError("definition analysis or grant mutated source/destination media")
+                raise RuntimeError("checked enable mutated source/destination media")
             run([*command, "stop", "worker"], environment=environment)
 
             print("Starting the Scheduler and waiting for one definition-bound Job...")
@@ -946,7 +863,7 @@ def restart_fault_smoke(project: str, image: str, keep: bool) -> None:
                 "scheduledJobs": second_occurrence,
                 "scheduledTaskId": scheduled_task_id,
                 "occurrence": occurrence,
-                "grantEvidence": grant_evidence,
+                "intentEvidence": intent_evidence,
                 "notifications": collection_ids(base, token, "/api/v1/notifications?limit=100"),
                 "logs": collection_ids(base, token, "/api/v1/logs?limit=100"),
                 "audits": collection_ids(base, token, "/api/v1/security-audit?limit=100"),
@@ -1001,8 +918,10 @@ def restart_fault_smoke(project: str, image: str, keep: bool) -> None:
             final_definition = definition_projection(base, token)
             if final_definition.get("lastOccurrence") != baseline["occurrence"]:
                 raise RuntimeError("service restarts changed the durable occurrence evidence")
-            if (final_definition.get("grant") or {}).get("grantId") != grant_evidence["grantId"]:
-                raise RuntimeError("service restarts changed the explicit unattended grant")
+            if final_definition.get("enabled") is not True:
+                raise RuntimeError("service restarts lost the checked Enabled intent")
+            if (final_definition.get("grant") or {}).get("active") is True:
+                raise RuntimeError("scheduled execution unexpectedly created a historical grant")
             if list(target_root.rglob("*.mkv")) != outputs or (
                 outputs[0].read_bytes() != source_bytes or source_file.read_bytes() != source_bytes
             ):

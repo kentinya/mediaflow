@@ -426,7 +426,7 @@ with SQLiteTaskRepository(DATABASE) as repository:
         repository.create_job(
             AutomationJob(
                 "upgrade-completed-job",
-                AutomationCommand.PREVIEW,
+                AutomationCommand.ORGANIZE,
                 AutomationJobStatus.COMPLETED,
                 NOW,
                 NOW,
@@ -440,7 +440,7 @@ with SQLiteTaskRepository(DATABASE) as repository:
     if repository.get_schedule_state("hourly-scan") is None:
         scheduled = AutomationJob(
             "upgrade-scheduled-job",
-            AutomationCommand.PREVIEW,
+            AutomationCommand.ORGANIZE,
             AutomationJobStatus.COMPLETED,
             NOW,
             NOW,
