@@ -265,6 +265,40 @@ A-owned旧“首个Task”指针不代表当前交付状态；保留待A最终�
 
 ## Developer Completion Report
 
+续开发 checkpoint：`dd128aa8b3cdc84a6d341b3511b648464b277b8a`（父节点报告
+`2fb79066f8135cb0383dbf3d5f80fea84c203f5d`）。Task 仍 **IN PROGRESS**，不是完整
+READY FOR B REVIEW；以下结果可交 B 审查已实现的详情链路。
+
+- V2普通详情跳过旧grant投影/eligibility读取，返回有界executionReadiness，删除详情授权/
+  撤销按钮并提供已有checked编辑入口。enabled仅描述保存状态，不承诺计划可执行。
+  disabled、Draft-only与removed history保留各自身份，读取不产生工作或媒体效果。
+  typed detail严格校验新状态/说明/下一步与其他相关字段，旧grant字段不再是详情依赖。
+- 修改真实Python native场景：disabled保存后直接打开普通详情，渲染范围/状态且无grant
+  控件，确认未产生occurrence；原同页连续Save/启停与copy/remove证明保留。
+  Architecture添加当前详情事实，明确整个执行意图TARGET仍未完成。旧专用grant接口和
+  历史未删除；旧授权回归改从其实际保留的grant-state接口核对，仍验证零变更和授权边界。
+- 实际验证：`python -m unittest tests.test_v2_automation_operations tests.test_v2_automation_lifecycle`
+  48/48；新增零Task/Job/Storage效果断言后，详情无grant依赖用例与
+  `tests.test_preview_retirement.RetainedAuthorizationPrecedentTests` 共2/2。
+  Web affected：automation.test.ts、AutomationRouter.test.tsx、AutomationWorkspaceReadModel.test.tsx
+  最终34/34。typecheck、lint、build、改动文件prettier/ruff及governance/diff检查通过。
+  真实Python Playwright lifecycle `--grep "one checked Save|edit, enable"` 2/2。
+- 本轮首次Web 33通过/1失败（Draft-only夹具缺新readiness字段），补齐后34/34；首次ruff
+  发现一个新增说明字符串超长，拆行后通过。没有隐藏失败、增加retry或放宽timeout。
+- 日志、完整命令/cwd/exit/墙钟、输入patch及产物摘要：本地
+  `.git/validation-evidence/task46.5-detail/`。浏览器输入为dd128aa源码加原有四个后端dirty
+  文件，patch sha256仍是`58f5b45610d22db23cdb9a06357fbfbb5747d1da1a126782f6c04de227560ce7`。
+  JS sha256 `d9f94e813a650fc3c797bbadb814c14826ddb912f88404209defba4098baa014`。
+  原四文件与全部原有untracked保持未提交；未读取用户runtime数据、未push。
+- 计时器从本轮初始读取后启动，checkpoint时保守总耗时294.914秒；全部计时测试/检查/
+  构建累计70.217秒，另有格式化和治理检查不足4秒，占保守分母小于26%，符合本轮<30%。
+- 剩余范围：所有publication入口的权限/意图审计、可信主体来源、scheduled逐效果live
+  边界、Run once真实准入/Worker执行/任务关联、完整恢复/稳定性/统计整合与受影响验证。
+  当前列表和旧Run once流程仍有旧grant/分析语义，不能宣称RO-5或整个Task交付完成。
+  未执行B全量/发布矩阵，desktop/narrow视觉与完整权限/竞争验收仍待完成。
+
+此前实施报告（其验证身份及限制仍有效）：
+
 本轮部分实施 checkpoint：`0768000e232b57ef7f69e2913cd58475f1fb33d2`。
 Status: **IN PROGRESS — 尚不能提交整个 Task 的 READY FOR B REVIEW**。请 B 仅审查本轮
 同页编辑修复；本记录不构成 Task 完成或验收声明。
