@@ -563,23 +563,31 @@ with SQLiteTaskRepository(DATABASE) as repository:
         return hashlib.sha256(canonical(value).encode("utf-8")).hexdigest()
 
     def legacy_source(path, name):
-        return ManualSourceIdentity(
-            f"legacy-file-{name}",
-            "source-storage",
-            "source",
-            path,
-            name,
-            "mkv",
-            512,
-            NOW - timedelta(hours=2),
-            NOW,
-            NOW,
-            f"legacy-occ-{name}",
-            "a" * 64,
-            "storage-entry-sha256",
-            {"source": "storage_entry"},
-            "verified",
+        # Each immutable Base constructs its own supported source DTO. Retain
+        # the old profile without restoring a catalog in the candidate product.
+        values = dict(
+            storage_id="source-storage",
+            resource_library_id="source",
+            path=path,
+            filename=name,
+            extension="mkv",
+            size=512,
+            modified_at=NOW - timedelta(hours=2),
+            stable_since=NOW,
+            occurrence_id=f"legacy-occ-{name}",
+            fingerprint="a" * 64,
+            fingerprint_algorithm="storage-entry-sha256",
+            fingerprint_evidence={"source": "storage_entry"},
+            occurrence_state="verified",
         )
+        if "source_id" in ManualSourceIdentity.__dataclass_fields__:
+            values.update(source_id=f"legacy-file-{name}", observed_at=NOW)
+        else:
+            values.update(
+                file_id=f"legacy-file-{name}", last_seen_at=NOW, updated_at=NOW,
+                scan_status="ready", last_scan_id=None,
+            )
+        return ManualSourceIdentity(**values)
 
     def legacy_snapshot():
         # The pinned option projection must be the real projection of the exact
