@@ -425,164 +425,103 @@ Slice关闭。轮次起点2026-10-28T07:28:50Z、本报告09:56Z；实际执行�
 ## B Review Result
 
 ```text
-Reviewed: 63c5c92e771054e30281617e2c652b7d5b486eb4..75fbaa9aca3e8d862757fb40ebc72daf9c369f44
+Reviewed: 63c5c92e771054e30281617e2c652b7d5b486eb4..c7a25b4121fe88d35c93fff42e1b3575134ddcd3
+Correction implementation: c98b8767
 Decision: FIX REQUIRED — 2026-10-28 / B
-Acceptance runs: independent results below; final T4 remains pending
-Task blockers: B46.5-01 / B46.5-02 and failed acceptance cases below
-Slice Required Outcomes / Surfaces all satisfied: NO — RO-5 recovery and Worker readiness regression
-Next: SAME TASK FIX LOOP; preserve Task ID/Base/Goal; no next Task or Slice closure
+Resolved: B46.5-01 / B46.5-02 (independent critical and real-Python native proof)
+Remaining: B46.5-03 — default E2E Automation fixtures/assertions still use the old contract
+Slice Required Outcomes / Surfaces all satisfied: NOT YET ACCEPTED — final T4 incomplete
+Next: SAME TASK FIX LOOP for test-consumer adaptation; then B completes remaining gates
 ```
 
-### 本轮修复执行指导（Developer）
+本次覆盖完整原Task Base..修复Head（54文件），结合前轮完整审查，并独立检查本次16文件差异。
+代码修复仅涉及application默认schema、create审计匹配及API组合显式schema；其余为测试适配、
+注释和交接文档。未改Task Base/目标/范围。启动为main/c7a25b41，无tracked dirty；原有
+OS/private/log/参考图/zip全部保留未暂存。B只改TASK及ignored验收证据，不改产品或测试、
+不接触用户runtime配置/DB/媒体、不push。
 
-继续 Task46.5，保留原 Task Base/目标/范围，不另开 Task。按以下顺序修复；下面英文条目保留
-精确复现、代码位置和命令。不要把所有测试失败都当作产品缺陷，也不要仅修改断言来掩盖缺陷。
+### 原两个产品阻塞已解决
 
-1. **先修复“保存成功但收不到响应后卡住”。** 在
-   `automation_workspace_commands.py::_definition_command_evidence` 中区分新建与其他命令：
-   新建本来没有来源ID，应按候选定义ID识别该条审计；编辑/启停/复制仍核对各自真实来源。
-   后续主体、操作、原配置版本、完整候选及实际发布证据检查全部保留。不能仅因为当前存在
-   同名定义就认定本次保存成功，也不能靠清空未决状态或自动重发保存“解锁”。
-   **验收：** 从真实新建表单保存，后端实际提交后丢失响应；刷新/重连后点击“核对本次发布”
-   能找回这一次成功结果，再编辑、保存、启用均可完成。全程只有一次新建，核对不创建任务
-   或产生媒体变更。错误账号/候选/原版本及未发布记录不能误报成功。
-2. **再修复“正常Worker被误报版本不匹配”。** 将
-   `automation.py::ProcessingWorkerService` 的当前schema默认值与本Task的53保持一致，
-   核对真实API/CLI组合是否仍传入旧值；保持应用层与基础设施层的依赖方向，不做版本管理重构。
-   **验收：** 当前53版本Worker、有效心跳、支持命令和匹配快照时真实就绪；旧版本Worker仍
-   被拒绝，快照不匹配仍准确报快照问题。不能强制返回ready或把期望值改回52。
-3. **按真实失败逐组适配测试。** 当前版本断言更新到53，但历史升级输入版本及数据保留检查
-   不变；测试建数据走合法主体/关闭后创建再明确启用的流程；旧分析记录继续验证历史读回，
-   新Run once使用精确请求身份并真实执行。核对API契约差异后才更新fixture。浏览器删除用例
-   改查Enabled/当前意图，继续完成实际删除、后续定时停止及历史保留证明。不要恢复独立grant
-   按钮、额外授权或Run once第二次初始确认来迎合旧测试。
-4. **交付同一Task的修复检查点。** Developer执行下列已知失败及直接受影响测试、必要静态检查，
-   记录实际结果/遗留风险后交READY FOR B REVIEW；不自行PASS、不承担全量发布矩阵。
-   B随后审查完整原Base..修复Head并补齐T4；全部Slice结果满足前不交A收尾。
+- **B46.5-01：已解决。** 无source的create按精确candidate ID匹配，edit/toggle/copy仍核对
+  route/source；actor/action/原revision/候选指纹/实际activation检查保留。独立真实API覆盖
+  成功核对及错主体/候选/base/无发布证据；真实浏览器完成后端已提交但响应丢失→刷新重连→
+  精确核对→同页edit+enable，没有第二次create或自动媒体工作。
+- **B46.5-02：已解决。** application默认与实际runtime均为53，API显式传SCHEMA_VERSION；
+  当前Worker真实就绪、旧schema拒绝、快照不匹配区分均有独立回归。没有强制ready或把期望
+  降回52。改动保持依赖方向。
 
-本轮开发/复核继续遵守用户最新约束：从轮次开始记录总墙钟时间，测试/构建/探测并集严格
-小于该轮总用时50%；不靠等待填充分母。仅用已有真实入口和临时fixture，不读取用户媒体、
-运行数据库或私密配置。时间预算不足的B验收保持pending，不省略失败或虚报通过。
+### B46.5-03 — 必须适配仍使用旧契约的默认E2E消费者
 
-### B46.5-01 — P1: committed Create cannot reconcile its unknown response
+这是本Task遗漏的**测试契约适配**，本轮未据此新增真实用户功能缺陷。现有默认入口
+`web/ npm run test:e2e`从Automation列表/详情/编辑运行，已经出现5项失败。真实Python
+同类生命周期12项通过，不能把Node fake的失败称为生产API又坏了。
 
-Existing entry: Automation new-definition checked Save, followed by the existing exact
-`POST /api/v1/operations/automation/definitions/{id}/publication-intent` reconciliation.
-B used the existing lifecycle API fixture with temporary databases, original candidate/action/
-observed revision and the same authenticated actor. Create returns 200 and Active contains the
-definition; two exact reconciliation reads both return 200 / `state=unknown` / `publication=null`.
-No Job/Task or media effect was created. Raw result: `create-reconciliation.log` below.
+已定位：`web/tests/fake-server.mjs` 的Automation definition投影仍返回
+`unattendedExecutionGrant/grantEligibility`及旧grant动作，没有当前detail必需的
+`executionReadiness`。实际页面因此进入“Automation definition unavailable / expected
+contract”状态。`web/tests/e2e/automation.spec.ts:259`还等待已移除的“No unattended
+execution grant exists”；列表→详情、Draft编辑/create/copy也在同一旧响应上失败。
 
-`automation_workspace_commands.py::_definition_command_evidence.accept` recognizes a create
-candidate without a source ID, then unconditionally rejects it because `str(source_id)` is not
-the definition ID. New creates legitimately have null route/source IDs. The browser retains that
-unknown command and `pendingPublication` blocks Save/enable/disable. AC-12 and the Task's explicit
-unknown-command recovery are therefore incomplete.
+Developer在**同一Task**内按以下步骤修正：
 
-1. Match source-less create evidence by its exact candidate ID; retain route/source identity
-   checks for edit/toggle/copy. Keep actor/action/observed revision/candidate fingerprint and actual
-   activation proof checks; absence must still remain unknown, never authorize a blind replay.
-2. Add real API success-after-committed-create reconciliation coverage using existing entries.
-   Cover wrong actor/candidate/base and unpublished evidence. Add the actual new-form lost-response
-   browser journey: one committed create, reload/reconnect/reconcile, then same-page permitted
-   edit/enable; no second create, sibling publication or media work from reconciliation.
-3. Run `.venv/bin/python -m unittest tests.test_automation_execution_intent tests.test_v2_automation_lifecycle`
-   and the changed Web component/native cases. Do not fix this solely by mocking a successful
-   reconciliation response. Keep this correction in Task46.5.
+1. 按当前真实Python操作接口对齐fake的active/disabled/draft-only/historical definition
+   payload与动作、Enabled/current execution-readiness及Run once真实整理意图；旧分析记录
+   保持历史身份。复用已有类型和真实契约证据，不建立第二套业务规则，也不把生产normalizer
+   改宽以接受已经退役的普通grant流程。
+2. 更新上述spec的旧授权文案/动作断言，保留列表→详情→编辑/create/copy的实际导航、
+   optimistic version、checked activation、只读权限、malformed/denied/not-found和零变更
+   证明。旧“malformed grant”正常详情场景改为当前相关字段的malformed/readiness证明；
+   不删除场景、放宽timeout、增加retry/skip或恢复独立grant按钮来通过。检查其他直接引用
+   同一fake Automation契约的spec，仅适配确实受影响者。
+3. 先运行直接受影响的完整spec：
+   `cd web && npm run test:e2e -- tests/e2e/automation.spec.ts`；再跑实际修改/直接受影响
+   的其他spec、`npm run typecheck`、`npm run lint`及改动文件prettier。保留当前真实Python
+   lifecycle/Run once成功证据；如改变其执行输入，则重跑对应受影响native。
+4. 同时保留本次新建核对测试的正确负例：测试edit的错主体/候选时应使用同一个真实已保存
+   definition路由，不能改指不存在对象而以unknown冒充actor/candidate隔离证明。
+   仅修正已改动测试的输入，不新增产品范围。
+5. 提交修复checkpoint及实际affected结果到READY FOR B REVIEW。Developer无需重跑完整
+   Python/Web/default E2E或wheel/Docker矩阵；B随后在精确候选完成这些门禁。不得自行PASS。
 
-### B46.5-02 — P1: schema53 Worker is evaluated against schema52
+### 本轮独立证据及剩余B责任
 
-The Task bumps SQLite runtime `SCHEMA_VERSION` to53, but
-`automation.py::ProcessingWorkerService.__init__` still defaults to52. The existing
-`GET /api/v1/workers/readiness` test observes `expectedRuntimeSchemaVersion=52` on the schema53
-candidate. The inventory test registers a real current-schema Worker with matching snapshot,
-then readiness incorrectly returns false. This is production contract drift, not permission to
-rewrite those assertions to expect52 or skip readiness.
+稳定本机证据：`.git/validation-evidence/b-task46.5-c7a25b41/`；未上传。全部使用现有入口、
+临时DB/Local Storage及fake/synthetic Provider。原始失败/中断日志保留，无测试修改。
 
-1. Keep the application default and production composition consistent with schema53, preserving
-   application/infrastructure dependency direction and actual old-worker schema-mismatch refusal.
-2. Run `.venv/bin/python -m unittest tests.test_processing_worker_readiness tests.test_operations_run_inventory`.
-   Retain real API/current-Active/Worker registration coverage, correct expected version and
-   true-ready vs snapshot/schema-mismatch distinctions. Do not force readiness true.
-
-### Remaining failed acceptance — adapt fixtures/contracts without losing their proofs
-
-Full Python run: **2919 tests / 13 failures / 16 errors / 7 skips**, real324.34s. Every traceback
-is retained in `python-full.log`; no claim that any failure also occurs at Task Base (not run).
-Besides B46.5-02, the observed failures group as follows:
-
-- Seven hardcoded `SCHEMA_VERSION == 52` failures in classification/destination/destination-activation/
-  destination-precheck/organize configuration and the two persistence upgrade cases. Update current
-  marker expectations to53 while retaining the old source-schema fixtures and data/failure-atomicity
-  checks. Do not mechanically turn genuine upgrade/source-version checks into current-version checks.
-- Three `test_automation_workspace_read_model` errors publish enabled definitions as unconfigured
-  `tester`; thirteen `test_configuration_successor_draft` setup errors activate enabled definitions
-  as `setup` through an API-bound authority before any Active exists. Use legitimate disabled-first
-  setup/current authorized checked publication for the unchanged sorting/successor behaviors;
-  preserve unauthorized/first-activation refusal. Do not weaken production permission checks or
-  let a candidate authorize itself. Any actual first-publication defect found must be corrected.
-- `test_configuration_snapshot...test_worker_rechecks_current_principal_between_real_effect_boundaries`
-  no longer gets its expected pre-Task authority refusal. Reconcile its publisher/authority fixture
-  with current intent semantics and prove the real remote principal is checked before work and
-  between real effects; retain completed siblings and zero later effects. A trusted local publication
-  must not be mislabeled a remote-principal permission proof.
-- `test_preview_retirement...test_frozen_run_once_plan_is_reread_from_the_durable_intent` POSTs the
-  new Run once entry without request identity and gets400. Test retained historical analysis through
-  its supported old record, and the new normal entry with exact identity; do not restore new analysis
-  admission/second initial confirmation or drop durable old-plan readback proof.
-- `test_manual_operations_contract...test_real_api_documents_match_the_frontend_fixture` fails its
-  exact payload comparison. Review the actual diff against the typed contract, correct production or
-  update the fixture only for intended changes; retain malformed/authority/source assertions.
-
-Developer runs these failed cases, directly affected module suites and changed-file checks. B runs
-fresh full acceptance after the correction checkpoint. Full suites remain B-owned.
-
-### Failed native acceptance — update obsolete grant-dependent assertion
-
-Full existing `automation-lifecycle.python.spec.ts`: 10 passed / 1 failed. Line285 waits for
-`unattended authority active`, a normal-flow label this Task intentionally removed. That prevents
-the remaining explicit Remove, durable removed-definition and retained-history assertions from
-executing. Update this scenario to the Enabled/current-intent contract and retain its actual
-deletion/stop/history proof. Historical grants may be retained evidence; do not restore their UI
-or execution gate, delete the scenario, add retries or weaken its timeout. Developer runs this
-complete directly affected spec after fixing; B still owns the remaining T4 gates.
-
-### B evidence and all-outcome reevaluation
-
-Candidate: `75fbaa9a`; complete Task Base..Head manifest contains 45 files, including production,
-tests/harness and documentation. B inspected the cross-layer publication, authority, execution,
-scope/stability, recovery/query and typed UI changes and the handoff evidence; Developer labels
-are not acceptance. Branch `main`; no pre-existing tracked changes. All pre-existing untracked
-OS/private/log/reference-image/zip files remain untouched and unstaged. No user runtime data,
-configuration or media accessed; only TASK is changed by B. No push or implementation by B.
-
-Stable local-only evidence: `.git/validation-evidence/b-task46.5-review/`.
-
-- Governance preflight and `git diff --check`: PASS.
-- Independent Web full `npm run test -- run` (cwd `web`): **87 files / 1270 passed**, real99.80s;
-  `web-full.log`. Existing jsdom scrollTo warnings retained.
-- Independent native lifecycle command (cwd `web`):
-  `npm run test:e2e -- --config=playwright.python.config.ts tests/e2e/automation-lifecycle.python.spec.ts`:
-  **10 passed / 1 failed**, real24.61s; `native-lifecycle.log`. Used existing Developer-built assets;
-  diagnostic failure evidence, not a fresh-build final acceptance claim.
-- Independent Python full regression (root `.venv/bin/python -m unittest discover -s tests`):
-  **2919 / 13 failures / 16 errors / 7 skips**, real324.34s; `python-full.log`.
-  ResourceWarning/temporary-directory warnings remain visible; no new skip/retry/timeout changes.
-- Fresh-build remaining native four-type/settings/center matrix, static/package/installed consumer/
-  Docker/release gates are **pending**. A proven P1 permits early FIX REQUIRED under workflow §6;
-  these gates stay B-owned and are not transferred to Developer. No full T4 PASS claim.
-- Timing: Web/native overlapped the Python run; actual test window is about325s, not the sum
-  of three durations. Turn-start UTC was not captured, so the precise total-review denominator/
-  percentage cannot be independently audited; no fabricated <50% certification or waiting padding.
-  No further product gates were started after the proven blockers.
-
-| Slice outcome | B reevaluation |
+| 命令/入口 | 实际结果 |
 | --- | --- |
-| RO-1 | Accepted46.1 shared action implementation retained; no new palette/Entry redesign |
-| RO-2 | Accepted46.3 Files admission/initial confirmation retained; current-schema Worker readiness regresses; shared execution/recovery changes still need final T4 |
-| RO-3 | Accepted46.2 local ordinary-work behavior retained; its disclosed native menu/non-localhost limits remain |
-| RO-4 | Accepted46.4 organizing-only/four-type semantics retained in intent; shared query/recovery changes still need final T4 |
-| RO-5 | Incomplete: B46.5-01/02 and failed acceptance; no PASS or readiness packet |
+| root `.venv/bin/python -m unittest tests.test_automation_execution_intent tests.test_processing_worker_readiness tests.test_operations_run_inventory` | 77 / OK，9.573s（real9.99s）；critical.log |
+| web `npm run build` | PASS，real1.35s；build.log；后续native使用本轮新构建资产 |
+| web `npm run test:e2e -- --config=playwright.python.config.ts tests/e2e/automation-lifecycle.python.spec.ts --output ../.git/validation-evidence/b-task46.5-c7a25b41/native-lifecycle` | 完整12 / 12，real15.06s；native-lifecycle.log |
+| web同上配置 `tests/e2e/automation-run-once.python.spec.ts --output ../.git/validation-evidence/b-task46.5-c7a25b41/native-run-once` | 完整5 / 5，real6.07s；native-run-once.log；含重开/精确请求/成功兄弟/冲突恢复/独立技术兄弟/有效100上限 |
+| web `npm run test -- run` | 87 files / 1270 passed，real104.92s；web-full.log |
+| web `npm run test:e2e -- --output ../.git/validation-evidence/b-task46.5-c7a25b41/default-e2e` | **5 failed / 5 passed / 1 interrupted / 229 did not run**，real106.60s；发现上述确定失败后主动停止；trace及error-context均在指定output |
+| root `.venv/bin/python -m unittest discover -s tests` | 主动中断，real106.62s，exit130；python-full.log；**没有本候选全量通过或完整计数声明** |
+| root `.venv/bin/ruff check .`、`.venv/bin/ruff format --check .`、compileall、pip check、两份既有example config validate；web typecheck/lint/format:check | PASS；各原始log；forbidden dependency scan无匹配，预期exit1 |
+| root `.venv/bin/python -m pip wheel . --no-deps -w .git/validation-evidence/b-task46.5-c7a25b41/wheel` | 构建成功，real1.87s；sha256 `437fe8d22415c793242d74e0861256645d07dc99719f7e4388c63bb41eda5064`；**wheel smoke/installed消费者尚未执行** |
+| root `.venv/bin/python scripts/docker_release_security_smoke_test.py --image mediaflow:task46.5` | exit1，daemon无法看到本机临时bind source目录；docker-security.log。是环境限制，非产品/安全门禁PASS，不交Developer修产品来绕过 |
 
-No additional Task is planned. A-owned old first-Task pointers remain for final reconciliation;
-they neither override the real Task46.5 checkpoint nor authorize closure.
+已证实的验收失败允许workflow §6提前FIX REQUIRED；本轮停止昂贵的剩余矩阵，保留所有
+pending而非虚报通过。B后续负责fresh完整Python/default E2E、剩余workspace/settings/
+inventory/visual与四类完整native、wheel smoke/源码外安装消费者及Docker发布/重开/升级证明。
+Docker需B使用daemon可见的隔离测试根修正环境后重跑；不能将既有宿主临时路径不可见当成
+产品缺陷，也不能据此豁免。原7项外部Storage/endurance skip、SQLite ResourceWarning和
+jsdom/Vite提示仍保留。未机械重复上轮Python失败后声称其全已解决。
+
+### 全Slice结果重评与停止规则
+
+| Outcome | 当前结论 |
+| --- | --- |
+| RO-1 | 已验收共享动作/Entry实现保留；本轮未改其生产样式 |
+| RO-2 | 已验收Files受理/精确初始确认保留，Worker版本误报修复；最终共享安全回归待B |
+| RO-3 | 原库普通操作实现保留；既有菜单/non-localhost原生限制不冒称已修复 |
+| RO-4 | organizing-only/四类型/独立结果语义保留；Run once冲突及技术兄弟真实native通过，最终组合仍待B |
+| RO-5 | 原两个产品P1已解决；默认E2E契约仍需适配，完整T4未完成，因此本Task不PASS |
+
+只继续当前Task；不创建下一Task、不提交Slice Closure Packet、不更新A-owned Slice/Roadmap/
+Progress或宣称Slice关闭。此前复现与29项Python失败明细保留于`2b27219:TASK.md`；本轮修复
+指导前版保留于`d1ce622f:TASK.md`。当前结论不抹去历史失败或扩大已提交合同。
+
+本轮从UTC13:08:38计时；UTC13:16:54已有496s，测试/构建/探测并集保守计205s，比例<41.4%。
+原始日志birth/last-write与实际time结果保存在candidate-identity.json；并行命令不相加，
+后续仅证据/文档核对与本地checkpoint，无等待填充分母。满足本轮严格低于50%的约束。
