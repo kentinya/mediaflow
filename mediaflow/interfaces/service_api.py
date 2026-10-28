@@ -704,6 +704,10 @@ class MediaFlowApi:
                     repository,
                     active_configuration_snapshot_id=configuration_snapshot_id,
                     active_configuration_snapshot_digest=configuration_snapshot_digest,
+                    # The API composition root passes the real runtime schema
+                    # explicitly so readiness here can never drift from the
+                    # database this process actually opened.
+                    runtime_schema_version=SCHEMA_VERSION,
                 )
         self._runtime_binding_lock = threading.RLock()
         self._runtime_binding = self._build_runtime_binding(
@@ -16010,12 +16014,12 @@ class MediaFlowApi:
     ):
         """Definition-bound Run once: prompt durable admission and readback.
 
-        The published definition itself supplies the ResourceLibrary and source
-        sub-scope, so the operator never re-selects files.  The POST returns the
-        durable discovery identity promptly; the actual bounded walk happens in
-        the resident Processing Worker.  No execution authority is created here:
-        the frozen manifest still needs its exact Preview and a separate explicit
-        confirmation.
+        The published definition itself supplies the ResourceLibrary, source
+        sub-scope and effective bound, so the operator never re-selects files.
+        One explicit POST atomically admits the pinned organizing Task/Job and
+        returns its durable identity promptly; the resident Processing Worker
+        performs discovery, stability, planning and execution.  No separate
+        execution authority or second initial confirmation is required.
         """
 
         service = getattr(self, "_automation_run_once", None)
@@ -16748,10 +16752,10 @@ class MediaFlowApi:
             )
         if len(parts) == 7 and parts[6] == "run-once":
             # Definition-bound Run once on the focused lifecycle base.  The
-            # published definition itself supplies the ResourceLibrary and
-            # source sub-scope, so no file selection is sent and no execution
-            # authority is created: the frozen manifest still needs its exact
-            # Preview and a separate explicit confirmation.
+            # published definition itself supplies the ResourceLibrary, source
+            # sub-scope and effective bound, so no file selection is sent.  One
+            # explicit command admits a real organizing Task; the resident
+            # Worker performs discovery, planning and execution.
             if method not in {"GET", "POST"}:
                 return self._error(
                     start_response, 405, "method_not_allowed", "GET or POST required"

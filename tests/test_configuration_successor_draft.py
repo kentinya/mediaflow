@@ -32,6 +32,10 @@ class SuccessorDraftLifecycleTests(unittest.TestCase):
         self.document["storages"][1]["rootPath"] = str(self.root / "target")
         self.document["resourceLibraries"][0]["storagePath"] = "incoming"
         self.document["mediaLibraries"][0]["rootPath"] = "Movies"
+        # First setup cannot prove an enabled publication's execution
+        # permission before any Active principal authority exists, so the
+        # bootstrap definition is published disabled.  These successor-draft
+        # journeys exercise Draft/Active semantics, not scheduled execution.
         self.document["automationTaskDefinitions"] = [
             {
                 "id": "scan-task",
@@ -39,7 +43,7 @@ class SuccessorDraftLifecycleTests(unittest.TestCase):
                 "resourceLibraryId": "source",
                 "mode": "automatic-organization",
                 "intervalSeconds": 3600,
-                "enabled": True,
+                "enabled": False,
             }
         ]
         self.api = MediaFlowApi(

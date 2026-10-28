@@ -208,18 +208,15 @@ class RetiredPreviewApiTests(unittest.TestCase):
 
 
 class RetainedRunOncePlanTests(unittest.TestCase):
-    """The Run once page keeps its exact plan across a reload and a reopen.
+    """New Run once admits one real Task; retired analysis plans stay readable.
 
-    The retired independent Preview was where an operator reviewed a plan.  The
-    retained shared journey is the definition-bound Run once: it freezes the
-    complete bounded manifest and the resident Worker runs the shared
-    zero-mutation analysis over its linked intent on this same durable run.
-    The plan identity must be re-readable from an ordinary Run once GET and
-    from a reopened runtime store, so a reload, reconnect or restart restores
-    the same plan instead of losing it or re-running the analysis.
+    A repeated or response-lost Run once command is restored by its exact
+    principal-scoped request identity, never by a second admission.  Historical
+    zero-mutation Preview records remain readable through their own supported
+    durable evidence and are never promoted into execution.
     """
 
-    def test_frozen_run_once_plan_is_reread_from_the_durable_intent(self):
+    def test_new_run_once_admits_real_work_with_one_exact_identity(self):
         from tests.test_v2_automation_operations import (
             _DEFINITION,
             AutomationOperatorJourneyTests,
@@ -229,77 +226,83 @@ class RetainedRunOncePlanTests(unittest.TestCase):
         journey = AutomationOperatorJourneyTests()
         with journey._journey() as value:
             api = value.api
+            path = f"/api/v1/operations/automation/task-definitions/{_DEFINITION['id']}/run-once"
+            request_id = "preview-retirement-request-1"
             status, admitted = _request(
                 api,
-                f"/api/v1/operations/automation/task-definitions/{_DEFINITION['id']}/run-once",
+                path,
                 method="POST",
-                body={},
+                body={"admissionRequestId": request_id},
             )
             self.assertEqual(202, status, admitted)
-            discovery_id = admitted["discoveryId"]
-            path = f"/api/v1/operations/automation/run-once/{discovery_id}"
-            for index in range(16):
-                worked = api._media_discovery.claim_and_run(
-                    worker_id=f"plan-worker-{index}",
-                    claim_token=f"plan-token-{index}",
-                )
-                self.assertIsNotNone(worked)
-                if worked.terminal:
-                    break
-            else:
-                self.fail("the Run once did not settle in the step budget")
-            status, ready = _request(api, path)
-            self.assertEqual(200, status)
-            self.assertTrue(ready["actions"]["finalize"]["available"])
-            # Before the freeze there is no plan identity and no linked intent.
-            self.assertIsNone(ready["previewId"])
-            self.assertIsNone(ready["intentId"])
+            # One command admits the real organizing Task; there is no frozen
+            # analysis phase and no second initial confirmation.
+            self.assertEqual("organizing", admitted["executionKind"])
+            task = value.repository.get_task(admitted["taskId"])
+            self.assertEqual("pending", task.status.value)
+            self.assertEqual(value.active.revision_id, task.configuration_snapshot_id)
 
-            status, frozen = _request(
+            # The exact request identity reads back the same durable admission.
+            status, reread = _request(api, path, query=f"admissionRequestId={request_id}")
+            self.assertEqual(200, status, reread)
+            self.assertEqual(admitted["jobId"], reread["jobId"])
+            self.assertEqual(admitted["taskId"], reread["taskId"])
+
+            # A repeated command with the same identity replays no admission
+            # and creates no second Job/Task or media effect.
+            status, duplicate = _request(
                 api,
-                f"{path}/finalize",
+                path,
                 method="POST",
-                body={"expectedVersion": ready["version"]},
+                body={"admissionRequestId": request_id},
             )
-            self.assertEqual(201, status, frozen)
-            # Finalize defers the plan to the durable analysis stage on this
-            # same run; no plan or analysis identity is produced inline.
-            self.assertEqual("analyzing", frozen["phase"])
-            self.assertIsNone(frozen["previewId"])
-            self.assertNotIn("preview", frozen)
-            self.assertIsNone(frozen["analysisId"])
-            # The resident Worker links the exact plan on the same run.
-            analyzed = api._media_discovery.claim_and_run(
-                worker_id="plan-analysis-worker", claim_token="plan-analysis-token"
-            )
-            self.assertIsNotNone(analyzed)
-            preview_id = analyzed.preview_id
-            self.assertIsNotNone(preview_id)
-
-            # An ordinary read of the same durable run resolves the exact plan.
-            status, reread = _request(api, path)
-            self.assertEqual(200, status)
-            self.assertEqual("frozen", reread["phase"])
-            self.assertEqual(preview_id, reread["previewId"])
-            self.assertEqual(frozen["intentId"], reread["intentId"])
-            self.assertTrue(reread["actions"]["preview"]["available"])
-            self.assertEqual(
-                f"/api/v1/operations/organize/previews/{preview_id}",
-                reread["actions"]["preview"]["path"],
-            )
-            # The frozen manifest offers no second freeze, and the whole read
-            # stayed zero-mutation.
-            self.assertFalse(reread["actions"]["finalize"]["available"])
+            self.assertEqual(202, status, duplicate)
+            self.assertEqual(admitted["jobId"], duplicate["jobId"])
+            self.assertEqual(1, len(value.repository.list_jobs()))
+            self.assertEqual(1, len(value.repository.list_tasks()))
             self.assertEqual([], value.source.mutations)
             self.assertEqual([], value.target.mutations)
 
-            # The same association survives a reopen of the runtime store.
-            intent_id = frozen["intentId"]
+            # The same admission survives a reopen of the runtime store.
             database = Path(value.root, "runtime.sqlite3")
             with SQLiteTaskRepository(database) as reopened:
-                latest = reopened.get_latest_manual_preview(intent_id)
+                persisted = reopened.get_task(admitted["taskId"])
+                self.assertEqual("pending", persisted.status.value)
+                persisted_job = reopened.find_automation_run_once_job(
+                    principal_id="admin", admission_request_id=request_id
+                )
+                self.assertIsNotNone(persisted_job)
+                self.assertEqual(admitted["jobId"], persisted_job.job_id)
+                self.assertEqual(admitted["taskId"], persisted_job.task_id)
+
+    def test_retained_old_analysis_plan_stays_readable_from_its_own_record(self):
+        from tests.test_v2_automation_operations import AutomationOperatorJourneyTests
+
+        journey = AutomationOperatorJourneyTests()
+        with journey._journey() as value:
+            # The historical analysis record remains readable through its own
+            # supported durable evidence; it is never promoted into execution
+            # or re-admitted through the new normal Run once entry.
+            preview_id = journey._run_shared_analysis(value)
+            preview = value.repository.get_manual_preview(preview_id)
+            self.assertIsNotNone(preview)
+            self.assertTrue(preview.zero_mutation)
+            self.assertEqual(
+                preview_id, value.repository.get_latest_manual_preview(preview.intent_id).preview_id
+            )
+            self.assertEqual((), value.repository.list_jobs())
+            self.assertEqual((), value.repository.list_tasks())
+            self.assertEqual([], value.source.mutations)
+            self.assertEqual([], value.target.mutations)
+
+            # The same plan association survives a reopen of the runtime store.
+            database = Path(value.root, "runtime.sqlite3")
+            with SQLiteTaskRepository(database) as reopened:
+                reintent = reopened.get_manual_preview(preview_id)
+                self.assertEqual(preview.intent_id, reintent.intent_id)
+                self.assertTrue(reintent.zero_mutation)
+                latest = reopened.get_latest_manual_preview(reintent.intent_id)
                 self.assertEqual(preview_id, latest.preview_id)
-                self.assertEqual(intent_id, latest.intent_id)
                 self.assertTrue(latest.zero_mutation)
 
 

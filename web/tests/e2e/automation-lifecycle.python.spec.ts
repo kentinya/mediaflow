@@ -256,11 +256,12 @@ test("edit, enable, copy and removal are separate durable commands", async ({
   expect(state.definitions.map((item) => item.id)).toEqual([DEFINITION_ID]);
 });
 
-test("removal revokes live unattended authority and retains its audit", async ({
+test("removal stops the enabled definition, revokes historical authority and retains its audit", async ({
   page,
 }) => {
   await openLifecycleNew(page);
   await fillCreateForm(page);
+  const occurrencesBefore = (await harnessState(page)).occurrenceTotal;
   // Automatic organization is the only mode unattended authority may bind, and
   // the form renders it as fixed intent with no selector at all.
   await expect(page.getByLabel("Run mode")).toHaveCount(0);
@@ -269,6 +270,17 @@ test("removal revokes live unattended authority and retains its audit", async ({
     page.getByText(/published definition is the Active/),
   ).toBeVisible();
 
+  // The current scheduling intent is the checked Enabled definition itself: it
+  // has no separate grant/authorization step in the normal flow.
+  await openLifecycle(page, DEFINITION_ID);
+  await page.getByRole("button", { name: "Enable schedule" }).click();
+  await expect(page.getByText(/eligible for future Scheduler/)).toBeVisible();
+  await expect(
+    page.getByRole("button", { name: "Grant unattended authority" }),
+  ).toHaveCount(0);
+
+  // A retained historical grant remains durable history; removal still revokes
+  // it while the Enabled definition is the actual execution intent.
   const seeded = await page.request.post(
     "/__harness__/seed-automation-definition-grant",
   );
@@ -279,10 +291,13 @@ test("removal revokes live unattended authority and retains its audit", async ({
   expect(seededBody.status).toBe("active");
 
   let state = await harnessState(page);
+  expect(state.definitions[0]?.enabled).toBe(true);
   expect(state.grant?.status).toBe("active");
 
   await openLifecycle(page, DEFINITION_ID);
-  await expect(page.getByText(/unattended authority active/)).toBeVisible();
+  await expect(
+    page.getByRole("button", { name: "Disable schedule" }),
+  ).toBeVisible();
   await page.getByLabel(/I confirm removing this definition/).check();
   await page.getByRole("button", { name: "Remove definition" }).click();
   await expect(page).toHaveURL(/\/ui-v2\/operations\/automation$/);
@@ -290,6 +305,16 @@ test("removal revokes live unattended authority and retains its audit", async ({
   state = await harnessState(page);
   expect(state.definitions).toEqual([]);
   expect(state.grant?.status).toBe("revoked");
+  // A real subsequent Scheduler tick emits nothing for the removed definition.
+  const tick = await page.request.post(
+    "/__harness__/run-automation-scheduler-tick",
+  );
+  const tickBody = (await tick.json()) as {
+    emitted?: string[];
+    occurrenceTotal?: number;
+  };
+  expect(tickBody.emitted).toEqual([]);
+  expect(tickBody.occurrenceTotal).toBe(occurrencesBefore);
 });
 
 test("retained history stays readable after removal through the detail route", async ({
@@ -483,6 +508,73 @@ test("a retained candidate survives refresh without being silently repinned", as
   expect(state.definitions[0]?.name).toBe("Harness automation");
   expect(state.definitions[0]?.itemLimit).toBe(9);
   await first.close();
+});
+
+test("a committed create with a lost response reconciles after reload without a second create", async ({
+  page,
+}) => {
+  // P1 regression: the checked create commits durably but only its response is
+  // lost. The browser retains the exact submitted command; after a real reload
+  // the operator reconciles that command from durable evidence and continues
+  // editing/enabling the one published definition. Reconciliation must not
+  // create a second definition, a sibling publication or any organizing work.
+  await openLifecycleNew(page);
+  await fillCreateForm(page);
+  // Other journeys share this isolated harness; the create itself must not add
+  // any scheduled occurrence.
+  const occurrencesBefore = (await harnessState(page)).occurrenceTotal;
+  await page.route("**/api/v1/operations/automation/definitions", (route) => {
+    if (route.request().method() !== "POST") {
+      void route.continue();
+      return;
+    }
+    // Drop only the create response: the backend still commits the definition.
+    void route.fetch().then(() => route.abort());
+  });
+  await page.getByRole("button", { name: "保存" }).click();
+  await expect(page.getByText(/保存结果尚未确认/)).toBeVisible();
+  await expect(page.getByText("发布结果待核对")).toBeVisible();
+  let state = await harnessState(page);
+  expect(state.definitions.map((item) => item.id)).toEqual([DEFINITION_ID]);
+  expect(state.occurrenceTotal).toBe(occurrencesBefore);
+
+  // A real reload loses the in-memory token but keeps the principal-scoped
+  // command identity. Reconcile the exact committed create; no duplicate POST
+  // is sent for it.
+  const api = recordApiCalls(page);
+  await openLifecycleNew(page);
+  await expect(page.getByText("发布结果待核对")).toBeVisible();
+  await expect(page.getByRole("button", { name: "保存" })).toBeDisabled();
+  await page.getByRole("button", { name: "核对本次发布" }).click();
+  await expect(page.getByText(/已从持久审计核对本次发布/)).toBeVisible();
+  await expect(
+    page.getByRole("heading", { name: "Edit Automation definition" }),
+  ).toBeVisible();
+  expect(
+    api.filter(
+      (call) =>
+        call.method === "POST" &&
+        call.path === "/api/v1/operations/automation/definitions",
+    ),
+  ).toHaveLength(0);
+  state = await harnessState(page);
+  expect(state.definitions.map((item) => item.id)).toEqual([DEFINITION_ID]);
+
+  // The same page continues with a permitted edit and enable, each publishing
+  // a real successor rather than replaying the reconciled create.
+  await page.getByLabel("Name").fill("Harness automation reconciled");
+  await page.getByRole("button", { name: "保存" }).click();
+  await expect(
+    page.getByText(/published definition is the Active/),
+  ).toBeVisible();
+  await page.getByRole("button", { name: "Enable schedule" }).click();
+  await expect(page.getByText(/eligible for future Scheduler/)).toBeVisible();
+  state = await harnessState(page);
+  expect(state.definitions.map((item) => item.id)).toEqual([DEFINITION_ID]);
+  expect(state.definitions[0]?.name).toBe("Harness automation reconciled");
+  expect(state.definitions[0]?.enabled).toBe(true);
+  // Neither reconciliation nor the later edit/enable emitted scheduled work.
+  expect(state.occurrenceTotal).toBe(occurrencesBefore);
 });
 
 test("a lost Copy response stays unknown across reload until reconciled", async ({

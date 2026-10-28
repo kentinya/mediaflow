@@ -694,17 +694,19 @@ class AutomationWorkspaceCommandService:
                 return
             # Copy commands carry their source explicitly; create commands
             # have no source identity at all, so they only reconcile for a
-            # read naming the candidate itself.
+            # read naming the candidate itself.  A source-less create is
+            # matched by its own published candidate identity, not by
+            # comparing an absent source against the definition ID.
             source_id = change.get("sourceObjectId") or change.get("routeObjectId")
             candidate = change.get("after") or change.get("candidate")
-            if source_id is None and command_action == "create":
+            if source_id is None:
+                if command_action != "create":
+                    return
                 if not (
                     isinstance(candidate, dict) and str(candidate.get("id") or "") == definition_id
                 ):
                     return
-            elif source_id is None:
-                return
-            if str(source_id) != definition_id:
+            elif str(source_id) != definition_id:
                 return
             commands.append(
                 _DefinitionCommandAudit(

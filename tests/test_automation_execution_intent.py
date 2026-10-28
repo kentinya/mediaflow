@@ -154,7 +154,7 @@ class ExecutionIntentTests(unittest.TestCase):
         )
         status, other = f.request(
             "POST",
-            lifecycle.BASE + "/nightly/publication-intent",
+            lifecycle.BASE + "/fresh-create/publication-intent",
             body,
             token=lifecycle.VIEWER_TOKEN,
         )
@@ -162,11 +162,81 @@ class ExecutionIntentTests(unittest.TestCase):
         self.assertEqual("unknown", other["state"])
         status, changed = f.request(
             "POST",
-            lifecycle.BASE + "/nightly/publication-intent",
+            lifecycle.BASE + "/fresh-create/publication-intent",
             {**body, "object": {**candidate, "name": "Other"}},
         )
         self.assertEqual("unknown", changed["state"])
         self.assertEqual((), f.runtime.list_jobs())
+
+    def test_committed_create_reconciles_from_its_candidate_identity(self):
+        f = self.fixture
+        observed = f.managed.active()
+        candidate = lifecycle._definition("fresh-create")
+        status, saved = f.request("POST", lifecycle.BASE, {**f.authority(), "object": candidate})
+        self.assertEqual(200, status, saved)
+        body = {
+            "action": "create",
+            "object": candidate,
+            "expectedRevisionId": observed.revision_id,
+            "expectedVersion": observed.revision_sequence or observed.version,
+            "expectedDigest": observed.digest,
+        }
+        # A create has no route/source identity; its exact published candidate
+        # identity is the evidence that resolves the retained command.
+        status, result = f.request(
+            "POST", lifecycle.BASE + "/fresh-create/publication-intent", body
+        )
+        self.assertEqual(200, status, result)
+        self.assertEqual("published", result["state"])
+        self.assertEqual(
+            saved["active"]["revisionId"], result["publication"]["active"]["revisionId"]
+        )
+        self.assertEqual(candidate["name"], result["publication"]["definition"]["name"])
+        self.assertEqual("configuration_only", result["publication"]["sideEffects"])
+        self.assertEqual((), f.runtime.list_jobs())
+        self.assertEqual((), f.runtime.list_tasks())
+
+        # Every proof is retained: another principal, a different candidate and
+        # the newly published revision as the command base all stay unknown.
+        status, other = f.request(
+            "POST",
+            lifecycle.BASE + "/fresh-create/publication-intent",
+            body,
+            token=lifecycle.VIEWER_TOKEN,
+        )
+        self.assertEqual(200, status, other)
+        self.assertEqual("unknown", other["state"])
+        status, changed = f.request(
+            "POST",
+            lifecycle.BASE + "/fresh-create/publication-intent",
+            {**body, "object": {**candidate, "name": "Other"}},
+        )
+        self.assertEqual(200, status, changed)
+        self.assertEqual("unknown", changed["state"])
+        status, wrong_base = f.request(
+            "POST",
+            lifecycle.BASE + "/fresh-create/publication-intent",
+            {
+                **body,
+                "expectedRevisionId": result["publication"]["active"]["revisionId"],
+                "expectedVersion": result["publication"]["active"]["revisionSequence"],
+                "expectedDigest": result["publication"]["active"]["digest"],
+            },
+        )
+        self.assertEqual(200, status, wrong_base)
+        self.assertEqual("unknown", wrong_base["state"])
+        # No command was ever published for this candidate, so absence stays an
+        # unknown outcome rather than a fabricated success or rejection.
+        absent = lifecycle._definition("never-published")
+        status, unpublished = f.request(
+            "POST",
+            lifecycle.BASE + "/never-published/publication-intent",
+            {**body, "object": absent},
+        )
+        self.assertEqual(200, status, unpublished)
+        self.assertEqual("unknown", unpublished["state"])
+        self.assertEqual((), f.runtime.list_jobs())
+        self.assertEqual((), f.runtime.list_tasks())
 
     def test_local_publication_uses_local_identity_instead_of_actor_text(self):
         import os

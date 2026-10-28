@@ -2137,7 +2137,13 @@ class ManagedConfigurationSnapshotTests(unittest.TestCase):
                 managed = ManagedConfigurationService(
                     configuration_repository, bootstrap_database_path=str(runtime)
                 )
-                active = activate_document(managed, document)
+                # Publish as the real configured remote principal so the
+                # Worker proves the publisher's current permission instead of
+                # mistaking a trusted local publication for that proof.
+                managed.bind_automation_publication_authority(
+                    _ConfiguredPermissionAuthority(lambda: _configuration(str(config)))
+                )
+                active = activate_document(managed, document, actor="local-admin")
             pinned = _configuration(
                 str(config),
                 snapshot_id=active.revision_id,

@@ -1116,7 +1116,13 @@ class AutomationWorkspaceReadModelTests(unittest.TestCase):
             self.assertEqual(latest["admittedAt"], _NOW.isoformat())
 
     def _publish_definitions(self, value, identities: tuple[str, ...]) -> None:
-        """Publish further enabled definitions through the real managed authority."""
+        """Publish further enabled definitions through the real managed authority.
+
+        First-time enabled publication requires the publishing principal's real
+        execution permission, so the definitions are created disabled in one
+        checked successor and then enabled through the same focused API command
+        operators use.  The setup never lets the candidate authorize itself.
+        """
 
         active = value.managed.active()
         draft = value.managed.create_successor_draft(actor="tester")
@@ -1134,18 +1140,25 @@ class AutomationWorkspaceReadModelTests(unittest.TestCase):
                 expected_version=draft.version,
                 actor="tester",
             )
-            draft = value.objects.enable_automation_task_definition(
-                draft.revision_id,
-                identity,
-                expected_version=draft.version,
-                actor="tester",
-            )
         validated = value.managed.validate(draft.revision_id, actor="tester")
         value.managed.activate(
             validated.revision_id,
             expected_version=validated.version,
             actor="tester",
         )
+        for identity in identities:
+            current = value.managed.active()
+            status, response = _request(
+                value.api,
+                f"/api/v1/operations/automation/definitions/{identity}/enable",
+                method="POST",
+                body={
+                    "expectedRevisionId": current.revision_id,
+                    "expectedVersion": current.revision_sequence or current.version,
+                    "expectedDigest": current.digest,
+                },
+            )
+            self.assertEqual(200, status, response)
         self.assertIsNotNone(active)
 
     def test_inventory_latest_sort_uses_the_latest_admitted_run(self) -> None:
