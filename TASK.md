@@ -7,7 +7,7 @@ RO-2/RO-4 所需的 AC-5/8/14/15/16。[Development Workflow](docs/development-wo
 ```text
 Task ID: 46.5
 Parent Slice: 46
-Status: READY FOR B REVIEW
+Status: FIX REQUIRED
 Task Base: 63c5c92e771054e30281617e2c652b7d5b486eb4
 Difficulty: High
 Test Level: T4
@@ -354,10 +354,133 @@ Web重试；已替换为真实只读/不重放断言，并在现有业务冲突�
 ## B Review Result
 
 ```text
-Reviewed: NOT STARTED
-Decision: PENDING — implementation not started
-Acceptance runs: planning checks only; no product acceptance claimed
-Task blockers: awaiting implementation of this Task
-Slice Required Outcomes / Surfaces all satisfied: NO — RO-5 pending
-Next: IMPLEMENT THIS TASK; after PASS reevaluate all outcomes, then prepare A handoff if complete
+Reviewed: 63c5c92e771054e30281617e2c652b7d5b486eb4..75fbaa9aca3e8d862757fb40ebc72daf9c369f44
+Decision: FIX REQUIRED — 2026-10-28 / B
+Acceptance runs: independent results below; final T4 remains pending
+Task blockers: B46.5-01 / B46.5-02 and failed acceptance cases below
+Slice Required Outcomes / Surfaces all satisfied: NO — RO-5 recovery and Worker readiness regression
+Next: SAME TASK FIX LOOP; preserve Task ID/Base/Goal; no next Task or Slice closure
 ```
+
+### B46.5-01 — P1: committed Create cannot reconcile its unknown response
+
+Existing entry: Automation new-definition checked Save, followed by the existing exact
+`POST /api/v1/operations/automation/definitions/{id}/publication-intent` reconciliation.
+B used the existing lifecycle API fixture with temporary databases, original candidate/action/
+observed revision and the same authenticated actor. Create returns 200 and Active contains the
+definition; two exact reconciliation reads both return 200 / `state=unknown` / `publication=null`.
+No Job/Task or media effect was created. Raw result: `create-reconciliation.log` below.
+
+`automation_workspace_commands.py::_definition_command_evidence.accept` recognizes a create
+candidate without a source ID, then unconditionally rejects it because `str(source_id)` is not
+the definition ID. New creates legitimately have null route/source IDs. The browser retains that
+unknown command and `pendingPublication` blocks Save/enable/disable. AC-12 and the Task's explicit
+unknown-command recovery are therefore incomplete.
+
+1. Match source-less create evidence by its exact candidate ID; retain route/source identity
+   checks for edit/toggle/copy. Keep actor/action/observed revision/candidate fingerprint and actual
+   activation proof checks; absence must still remain unknown, never authorize a blind replay.
+2. Add real API success-after-committed-create reconciliation coverage using existing entries.
+   Cover wrong actor/candidate/base and unpublished evidence. Add the actual new-form lost-response
+   browser journey: one committed create, reload/reconnect/reconcile, then same-page permitted
+   edit/enable; no second create, sibling publication or media work from reconciliation.
+3. Run `.venv/bin/python -m unittest tests.test_automation_execution_intent tests.test_v2_automation_lifecycle`
+   and the changed Web component/native cases. Do not fix this solely by mocking a successful
+   reconciliation response. Keep this correction in Task46.5.
+
+### B46.5-02 — P1: schema53 Worker is evaluated against schema52
+
+The Task bumps SQLite runtime `SCHEMA_VERSION` to53, but
+`automation.py::ProcessingWorkerService.__init__` still defaults to52. The existing
+`GET /api/v1/workers/readiness` test observes `expectedRuntimeSchemaVersion=52` on the schema53
+candidate. The inventory test registers a real current-schema Worker with matching snapshot,
+then readiness incorrectly returns false. This is production contract drift, not permission to
+rewrite those assertions to expect52 or skip readiness.
+
+1. Keep the application default and production composition consistent with schema53, preserving
+   application/infrastructure dependency direction and actual old-worker schema-mismatch refusal.
+2. Run `.venv/bin/python -m unittest tests.test_processing_worker_readiness tests.test_operations_run_inventory`.
+   Retain real API/current-Active/Worker registration coverage, correct expected version and
+   true-ready vs snapshot/schema-mismatch distinctions. Do not force readiness true.
+
+### Remaining failed acceptance — adapt fixtures/contracts without losing their proofs
+
+Full Python run: **2919 tests / 13 failures / 16 errors / 7 skips**, real324.34s. Every traceback
+is retained in `python-full.log`; no claim that any failure also occurs at Task Base (not run).
+Besides B46.5-02, the observed failures group as follows:
+
+- Seven hardcoded `SCHEMA_VERSION == 52` failures in classification/destination/destination-activation/
+  destination-precheck/organize configuration and the two persistence upgrade cases. Update current
+  marker expectations to53 while retaining the old source-schema fixtures and data/failure-atomicity
+  checks. Do not mechanically turn genuine upgrade/source-version checks into current-version checks.
+- Three `test_automation_workspace_read_model` errors publish enabled definitions as unconfigured
+  `tester`; thirteen `test_configuration_successor_draft` setup errors activate enabled definitions
+  as `setup` through an API-bound authority before any Active exists. Use legitimate disabled-first
+  setup/current authorized checked publication for the unchanged sorting/successor behaviors;
+  preserve unauthorized/first-activation refusal. Do not weaken production permission checks or
+  let a candidate authorize itself. Any actual first-publication defect found must be corrected.
+- `test_configuration_snapshot...test_worker_rechecks_current_principal_between_real_effect_boundaries`
+  no longer gets its expected pre-Task authority refusal. Reconcile its publisher/authority fixture
+  with current intent semantics and prove the real remote principal is checked before work and
+  between real effects; retain completed siblings and zero later effects. A trusted local publication
+  must not be mislabeled a remote-principal permission proof.
+- `test_preview_retirement...test_frozen_run_once_plan_is_reread_from_the_durable_intent` POSTs the
+  new Run once entry without request identity and gets400. Test retained historical analysis through
+  its supported old record, and the new normal entry with exact identity; do not restore new analysis
+  admission/second initial confirmation or drop durable old-plan readback proof.
+- `test_manual_operations_contract...test_real_api_documents_match_the_frontend_fixture` fails its
+  exact payload comparison. Review the actual diff against the typed contract, correct production or
+  update the fixture only for intended changes; retain malformed/authority/source assertions.
+
+Developer runs these failed cases, directly affected module suites and changed-file checks. B runs
+fresh full acceptance after the correction checkpoint. Full suites remain B-owned.
+
+### Failed native acceptance — update obsolete grant-dependent assertion
+
+Full existing `automation-lifecycle.python.spec.ts`: 10 passed / 1 failed. Line285 waits for
+`unattended authority active`, a normal-flow label this Task intentionally removed. That prevents
+the remaining explicit Remove, durable removed-definition and retained-history assertions from
+executing. Update this scenario to the Enabled/current-intent contract and retain its actual
+deletion/stop/history proof. Historical grants may be retained evidence; do not restore their UI
+or execution gate, delete the scenario, add retries or weaken its timeout. Developer runs this
+complete directly affected spec after fixing; B still owns the remaining T4 gates.
+
+### B evidence and all-outcome reevaluation
+
+Candidate: `75fbaa9a`; complete Task Base..Head manifest contains 45 files, including production,
+tests/harness and documentation. B inspected the cross-layer publication, authority, execution,
+scope/stability, recovery/query and typed UI changes and the handoff evidence; Developer labels
+are not acceptance. Branch `main`; no pre-existing tracked changes. All pre-existing untracked
+OS/private/log/reference-image/zip files remain untouched and unstaged. No user runtime data,
+configuration or media accessed; only TASK is changed by B. No push or implementation by B.
+
+Stable local-only evidence: `.git/validation-evidence/b-task46.5-review/`.
+
+- Governance preflight and `git diff --check`: PASS.
+- Independent Web full `npm run test -- run` (cwd `web`): **87 files / 1270 passed**, real99.80s;
+  `web-full.log`. Existing jsdom scrollTo warnings retained.
+- Independent native lifecycle command (cwd `web`):
+  `npm run test:e2e -- --config=playwright.python.config.ts tests/e2e/automation-lifecycle.python.spec.ts`:
+  **10 passed / 1 failed**, real24.61s; `native-lifecycle.log`. Used existing Developer-built assets;
+  diagnostic failure evidence, not a fresh-build final acceptance claim.
+- Independent Python full regression (root `.venv/bin/python -m unittest discover -s tests`):
+  **2919 / 13 failures / 16 errors / 7 skips**, real324.34s; `python-full.log`.
+  ResourceWarning/temporary-directory warnings remain visible; no new skip/retry/timeout changes.
+- Fresh-build remaining native four-type/settings/center matrix, static/package/installed consumer/
+  Docker/release gates are **pending**. A proven P1 permits early FIX REQUIRED under workflow §6;
+  these gates stay B-owned and are not transferred to Developer. No full T4 PASS claim.
+- Timing: Web/native overlapped the Python run; actual test window is about325s, not the sum
+  of three durations. Turn-start UTC was not captured, so the precise total-review denominator/
+  percentage cannot be independently audited; no fabricated <50% certification or waiting padding.
+  No further product gates were started after the proven blockers.
+
+| Slice outcome | B reevaluation |
+| --- | --- |
+| RO-1 | Accepted46.1 shared action implementation retained; no new palette/Entry redesign |
+| RO-2 | Accepted46.3 Files admission/initial confirmation retained; current-schema Worker readiness regresses; shared execution/recovery changes still need final T4 |
+| RO-3 | Accepted46.2 local ordinary-work behavior retained; its disclosed native menu/non-localhost limits remain |
+| RO-4 | Accepted46.4 organizing-only/four-type semantics retained in intent; shared query/recovery changes still need final T4 |
+| RO-5 | Incomplete: B46.5-01/02 and failed acceptance; no PASS or readiness packet |
+
+No additional Task is planned. A-owned old first-Task pointers remain for final reconciliation;
+they neither override the real Task46.5 checkpoint nor authorize closure.
