@@ -342,7 +342,9 @@ center recovery guidance/actions. Administrative API/CLI recovery remains outsid
 
 - **Goal/entry:** find one admitted run from Task Center, Files, Dashboard, Automation or a Task/Job
   deep link, then understand and safely resolve its actual files. Default list has no open detail.
-- **State:** server-authorized search/filter/time/paging/counts and historical name/scope/trigger;
+- **State:** All exposes only creation-date range selection and clear; the other seven views retain
+  their existing search/filters. Time, paging and counts use the complete server-authorized
+  population, alongside historical name/scope/trigger;
   queue/Task stage/item outcome/problem/effect certainty are distinct. Only durable Job→Task links
   deduplicate runs; pre-Task failures and independent occurrences/continuations remain visible.
   Task and file counts differ; attention overlaps and ordinary queued state is not a human blocker.
@@ -506,7 +508,7 @@ The center has one page title, with content boundaries and spacing coordinated w
 The shared shell keyword input is not shown there. 全部任务 keeps only the local-timezone
 creation-day range, applies either or both sides without a search submission, and clears back
 to the complete authorized population; the other seven views retain their existing search and
-filters.  Management-API consumers outside that control keep their existing filter semantics.
+filters. Management-API consumers outside that control keep their existing filter semantics.
 Long names/scopes retain readable status/progress columns and complete mouse/keyboard-accessible
 identity. Using the shared Files sidebar entry opens ordinary ResourceLibrary browsing without a
 task-center return button, including when leaving a Files visit that already carried one. Explicit

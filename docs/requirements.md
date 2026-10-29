@@ -53,6 +53,11 @@ Product Experience。Slice46 已由 A 终审 PASS / CLOSED，稳定定义与覆�
 AC-1–18 见 [SLICE.md](../SLICE.md)。本文件保留上表修订索引、稳定需求 ID 和完整 V1 定义；
 目标收缩不删除耐久证据、权限/范围/执行安全，也不改写历史验收。
 
+后续已接受的现行界面修正归入 `V2-OPS-001/003`：任务中心顶部不显示通用搜索；“全部任务”
+仅提供创建日期范围选择和清除，未选/清除时读取完整获准总体，选定后只显示范围内任务。
+其他七视图和管理 API 保留各自既有筛选；完整现行交互见
+[Task Center specification](task-center-page-spec.md)。这不改写下方原 Slice 的接受事实或冻结 V1 定义。
+
 ## Traceability and derivation rules
 
 - `Canonical Source` 使用下方完整产品定义的章节标题；章节正文仍是最终解释来源。
@@ -649,8 +654,9 @@ Review/Recovery 改造、Rules 页面媒体执行、批量导入/diff/rollback �
 
 #### **V2 操作与任务工作区（CURRENT；Slice 42 PASS / CLOSED）**
 
-本节保留 A 于 2026-10-06 验收的基础事实；任务中心入口、独立 Preview 和 FileIndex 的
-现行义务由下方 Slice45 CURRENT 修订替换，不改变冻结 V1 或此前 Slice 的验收事实。
+本节保留 A 于 2026-10-06 验收的基础事实；任务中心入口、筛选、独立 Preview 和 FileIndex 的
+现行义务遵循后续修订及 `V2-OPS-001/003/014–017`、现行任务中心页面约定，
+不改变冻结 V1 或此前 Slice 的验收事实。
 该闭合 Slice 的原始参考图保留在其 Git 检查点；参考中的名称、数量、日期、路径、
 海报、进度与剩余时间均不是实际数据或固定验收样本。稳定 V2 要求见 `V2-OPS-001` 至
 `V2-OPS-008`；当前范围与验收以 `SLICE.md` 为准。
