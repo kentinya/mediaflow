@@ -7,8 +7,9 @@ that assigned full regression to Developer; coverage and accepted historical dec
 
 ## 1. Formal management objects
 
-- **Slice:** one complete business capability, owned by A in root `SLICE.md`.
-- **Task:** one coherent implementation unit inside that Slice, planned/reviewed by B in `TASK.md`.
+- **Slice:** one complete large-version business capability, owned by A in root `SLICE.md`.
+- **Task:** one coherent implementation unit planned/reviewed by B in `TASK.md`, either inside a
+  committed Slice or an independent minor bug under the explicit scope in §3.1.
 
 Fix rounds, old phase/letter names and rejected checkpoints are history, not additional objects.
 Do not create fix ladders or archive directories of completed Task documents.
@@ -17,13 +18,17 @@ Do not create fix ladders or archive directories of completed Task documents.
 
 | Role | Owns |
 |---|---|
-| A — Slice Owner / Architect / Final Reviewer | User outcomes, surfaces, scope/deferrals/invariants, immutable Slice Base, Contract/Roadmap boundaries, final Base..Head review and closure |
-| B — Task Planner / Task Reviewer | Actual-code gap analysis, coherent Task plan, Difficulty/Test Level, acceptance, full regression, critical reproduction, Task PASS/FIX REQUIRED and Closure Packet |
+| A — Slice Owner / Architect / Final Reviewer | Large-version Slice outcomes, surfaces, scope/deferrals/invariants, immutable Base, Contract/Roadmap boundaries, final Base..Head review and closure; no required involvement in independent minor bugs |
+| B — Task Planner / Task Reviewer | Actual-code gap analysis, coherent Task plan, Difficulty/Test Level, acceptance, full regression, critical reproduction, Task PASS/FIX REQUIRED; Slice Closure Packet or independent minor-bug completion |
 | Developer — Implementation Role | Active Task implementation, new/changed/directly affected tests, coherent checkpoint and concise handoff |
 
 Developer cannot approve its own Task; B cannot conduct A Final Review of the same Slice. Explicit
 user-authorized role exceptions must be disclosed. A scope/document action does not constitute
 final review or acceptance. Read the corresponding [role experience](../AGENTS.md#testing-and-roles).
+
+Roles assign responsibilities; they do not authorize spawning sub-agents or automatically starting
+another role's work. Follow the user's explicit delegation and current work boundary. A request to
+plan ends with the plan; implementation, push and deployment require their respective authorization.
 
 ## 3. State machines
 
@@ -34,13 +39,16 @@ Slice: PLANNED → ACTIVE → READY FOR A REVIEW → PASS / CLOSED
 Fix:   READY FOR A REVIEW → FIX REQUIRED → B correction Task → READY FOR A REVIEW
 ```
 
-After Task PASS choose NEXT TASK or SLICE READY FOR A REVIEW. Task has no CLOSED state; only A
-closes a Slice. `READY FOR B READINESS CHECK` is legacy-only and resolves on its first assessment
+After a Slice Task PASS choose NEXT TASK or SLICE READY FOR A REVIEW. Task has no CLOSED state;
+only A closes a Slice. Independent minor bugs finish through B under §3.1.
+`READY FOR B READINESS CHECK` is legacy-only and resolves on its first assessment
 to ACTIVE with a real blocker/Task, or READY FOR A REVIEW with a Closure Packet.
 
-For a new P0/P1 regression in a closed Slice, A first checkpoints reactivation of that same Slice
-as ACTIVE with matching Roadmap. Preserve original Base, prior accepted Head/review/closure and
-add the correction through B; review original Base..corrected Head. P2 does not reopen a Slice.
+A regression in already accepted behavior may use the independent minor-bug path, including a
+P0/P1 correction; severity controls urgency and test risk, not automatic reopening of an old Slice.
+Corrections required to accept an unclosed Slice stay in that Slice's current Task/fix loop.
+New capabilities or changes to accepted outcome/architecture/safety boundaries require A's Slice
+scope decision; never label them minor bugs to bypass that decision or reduce required testing.
 
 Only explicit user instruction permits suspending an unclosed Slice for another priority. A must:
 
@@ -49,9 +57,44 @@ Only explicit user instruction permits suspending an unclosed Slice for another 
 2. Set the suspended Slice/Roadmap to PLANNED with `Development Hold: FROZEN BY USER`; root Task
    becomes `NO ACTIVE IMPLEMENTATION TASK`. A reserved but unspecified Slice also stays PLANNED.
 3. Start intervening work on an isolated accepted baseline unless the user explicitly authorizes
-   integration. Complete and checkpoint an ACTIVE Contract before B plans.
+   integration. Large-version work needs a checkpointed ACTIVE Contract before B plans;
+   independent minor bugs use §3.1 instead.
 4. On resumption explicitly reactivate, recover the same Task ID/Base/Goal/Scope and reassess
    intervening changes. No silent repinning, blocker reset or conversion of rejected work to PASS.
+
+### 3.1 Independent minor bugs
+
+For a bounded correction to existing behavior, B directly plans one Task, Developer implements it,
+and B independently reviews the entire Task Base..candidate, runs the assigned acceptance and
+returns PASS or FIX REQUIRED. A does not create/reactivate/close a Slice for this path. The same
+Task state machine, immutable Base, failure loop, safety and test ownership apply; small scope does
+not imply a lower Test Level when permissions, mutations, schema or concurrency are affected.
+
+Use these explicit fields in the root `TASK.md`:
+
+```text
+Task Type: STANDALONE MINOR BUG
+Parent Slice: NONE
+Status: PLANNED
+Task Base: <full existing ancestor commit SHA>
+```
+
+The Task records the user-authorized bug scope, observed existing entry, actual behavior/root cause,
+fix boundaries, acceptance, Difficulty/Test Level and Developer/B test plans. Related accepted
+Slices are references, not parents; preserve their Base/accepted Head/review/closure and keep
+SLICE/Roadmap/Progress unchanged. No synthetic Slice, temporary governance exception or ignored
+guard failure is needed.
+
+An independent Task may coexist with a retained PASS / CLOSED or PLANNED Slice and its matching
+Roadmap. It cannot silently replace ACTIVE, FIX REQUIRED or READY FOR A REVIEW work: keep an
+in-Slice correction in its Task, or follow the explicit user-priority suspension procedure above.
+
+After PASS, B records the exact reviewed Base..Head, actual results and remaining limitations,
+then restores `# NO ACTIVE IMPLEMENTATION TASK` with a compact decision/checkpoint pointer.
+Do not declare Slice CLOSED or add a minor-bug closure to the large-Slice ledger. Do not plan
+additional work beyond the authorized correction. A planning-only draft may remain below the
+no-active-implementation notice, clearly marked as a draft that does not authorize implementation;
+replace that notice with the real Task metadata only when implementation work is authorized.
 
 ## 4. Slice Contract
 
@@ -72,8 +115,11 @@ and retain the partial record. Never declare partial delivery PASS.
 
 Before planning or implementation run `python3 scripts/check_governance.py`. It reads committed
 `HEAD:SLICE.md` and Roadmap, rejects an uncheckpointed working Contract, mismatched parent/status or
-invalid/non-ancestor Bases, and never changes files. Active Tasks require ACTIVE/FIX REQUIRED Slice
-and ACTIVE Roadmap. PLANNED Slice cannot authorize implementation.
+invalid/non-ancestor Bases, and never changes files. Slice Tasks require an ACTIVE/FIX REQUIRED
+Slice, matching numeric Parent Slice and ACTIVE Roadmap. A PLANNED Slice cannot authorize a Slice
+Task. Explicit `STANDALONE MINOR BUG` Tasks require `Parent Slice: NONE`, a valid Task status and
+full existing ancestor Base; they retain the no-active-Slice/Roadmap checks described in §3.1.
+Omitting Task Type keeps the existing SLICE behavior; NONE alone never selects standalone scope.
 
 Record repository/branch/HEAD, status and workspace/Git writability. Preserve every pre-existing
 change, including A-owned files, B Task state, reference-image deletions and private files. Do not
@@ -81,8 +127,9 @@ reset, restore, checkout over, clean, stash/drop or silently commit unrelated ch
 
 ## 5. Task planning and sizing
 
-B starts from the committed Contract and actual code/tests. Choose the largest reasonable coherent
-user behavior or architectural unit, across necessary layers. Reuse existing capabilities; do not
+B starts from the committed Contract or the user-authorized independent bug scope and actual
+code/tests. Choose the largest reasonable coherent user behavior or architectural unit, across
+necessary layers. Reuse existing capabilities; do not
 split by field, assertion, internal module, UI label or optional proof.
 
 A normal Slice usually needs roughly 3–7 Tasks, not a quota. More than 8 requires reassessing
@@ -165,13 +212,14 @@ Do not accept PASS labels without actual results or invent Base failures without
 
 ## 7. Task execution and review
 
-1. B checks governance and plans one Task in committed scope.
+1. B checks governance and plans one Task in committed Slice scope or the independent minor-bug scope.
 2. Developer implements, runs affected tests, checks scope/private files and hands off an immutable
    checkpoint with a compact report: changes, behavior, commands/results, remaining work and risks.
 3. B reviews explicit SHA/Base..Head, verifies actual behavior and performs its acceptance plan.
 4. FIX REQUIRED lists only Task blockers with simple fix steps; correction remains in that Task.
-5. PASS reevaluates **all** Slice outcomes/surfaces. If incomplete, next coherent Task; if complete,
-   stop planning, finish Slice-final validation and submit SLICE READY FOR A REVIEW.
+5. For a Slice Task, PASS reevaluates **all** Slice outcomes/surfaces. If incomplete, next coherent
+   Task; if complete, stop planning, finish Slice-final validation and submit SLICE READY FOR A REVIEW.
+   For an independent minor bug, PASS completes the authorized correction and B finishes under §3.1.
 
 Task PASS does not close a Slice or update Roadmap/Progress. B results may be in review output;
 there is no mandatory standalone `docs(review)` commit. When no next Task is requested, root Task
@@ -188,13 +236,14 @@ accepted/rejected history. Preserve reachability branches required by a Contract
 
 ## 9. B stop rule and Closure Packet
 
-Stop creating Tasks once Required Outcomes/Surfaces are satisfied. Optional tests, labels, P2
-cleanup and out-of-scope ideas cannot block completion or create another Task. P0 means credible
+Stop creating Tasks once Slice Required Outcomes/Surfaces or the independent bug's acceptance
+are satisfied. Optional tests, labels, P2 cleanup and out-of-scope ideas cannot block completion
+or create another Task. P0 means credible
 data loss/destruction/security/secret/authority or whole-journey outage; P1 means an unmet required
 outcome/surface/recovery or architecture/safety invariant; P2 means non-blocking quality/improvement.
 Do not downgrade safety or required outcomes.
 
-Submit one compact packet:
+For a Slice, submit one compact packet (independent minor bugs use §3.1's B completion instead):
 
 ```text
 Slice / Base SHA / Implementation Head:

@@ -1,5 +1,5 @@
 #!/usr/bin/env python3
-"""Validate the committed Slice/Task/Roadmap governance state.
+"""Validate Slice Tasks and independent minor-bug Tasks against repository state.
 
 This check is intentionally read-only. It never stages, edits, resets, restores,
 cleans, checks out, or stashes repository content.
@@ -18,6 +18,8 @@ COMMIT_RE = re.compile(r"^[0-9a-f]{40}$")
 NO_ACTIVE_TASK = "NO ACTIVE IMPLEMENTATION TASK"
 ACTIVE_TASK_STATUSES = {"PLANNED", "IN PROGRESS", "FIX REQUIRED", "READY FOR B REVIEW"}
 SLICE_STATUSES = {"PLANNED", "ACTIVE", "FIX REQUIRED", "READY FOR A REVIEW", "PASS / CLOSED"}
+SLICE_TASK_TYPE = "SLICE"
+STANDALONE_TASK_TYPE = "STANDALONE MINOR BUG"
 
 
 @dataclass(frozen=True)
@@ -34,6 +36,7 @@ class TaskState:
     status: str | None
     parent_slice: int | None
     task_base: str | None
+    task_type: str | None = None
 
 
 @dataclass(frozen=True)
@@ -65,15 +68,25 @@ def parse_task(text: str) -> TaskState:
     if text.lstrip().startswith("# NO ACTIVE IMPLEMENTATION TASK"):
         return TaskState(False, None, None, None)
     status = _first_match(r"^Status:\s*([^\n]+)$", text, "Task status")
-    parent_match = re.search(r"^Parent Slice:\s*(\d+)\s*$", text, flags=re.MULTILINE)
-    base_match = re.search(r"^Task Base:\s*([^\n]+)$", text, flags=re.MULTILINE)
-    if parent_match is None:
-        raise ValueError("Task Parent Slice is missing")
-    if base_match is None:
-        raise ValueError("Task Base SHA is missing")
     if status not in ACTIVE_TASK_STATUSES:
         raise ValueError(f"unsupported active Task status: {status}")
-    return TaskState(True, status, int(parent_match.group(1)), base_match.group(1).strip())
+    type_match = re.search(r"^Task Type:[ \t]*([^\n]*)$", text, flags=re.MULTILINE)
+    # Existing Slice Tasks predate the explicit discriminator. NONE alone must
+    # never turn one of those Tasks into an independent authority boundary.
+    task_type = type_match.group(1).strip() if type_match else SLICE_TASK_TYPE
+    if task_type not in {SLICE_TASK_TYPE, STANDALONE_TASK_TYPE}:
+        raise ValueError(f"unsupported Task Type: {task_type}")
+    parent = _first_match(r"^Parent Slice:[ \t]*([^\n]+)$", text, "Task Parent Slice")
+    if task_type == STANDALONE_TASK_TYPE:
+        if parent != "NONE":
+            raise ValueError("Task Parent Slice must be NONE for a standalone minor bug")
+        parent_slice = None
+    else:
+        if not re.fullmatch(r"[0-9]+", parent):
+            raise ValueError("Task Parent Slice must be a numeric Slice ID for a Slice Task")
+        parent_slice = int(parent)
+    task_base = _first_match(r"^Task Base:[ \t]*([^\n]+)$", text, "Task Base SHA")
+    return TaskState(True, status, parent_slice, task_base, task_type)
 
 
 def parse_roadmap(text: str) -> dict[int, RoadmapRow]:
@@ -209,6 +222,21 @@ def check_repository(repo: Path) -> None:
         _check_no_active_task(repo, slice_state, roadmap)
         return
 
+    assert task_state.task_base is not None
+    _require_commit(repo, task_state.task_base, "Task Base SHA")
+    _require_ancestor(repo, task_state.task_base, head_sha, "Task Base SHA")
+
+    if task_state.task_type == STANDALONE_TASK_TYPE:
+        if slice_state.status not in {"PASS / CLOSED", "PLANNED"}:
+            raise ValueError(
+                "standalone minor bug cannot replace an unclosed Slice; "
+                "keep corrections in its Task or explicitly suspend that Slice first"
+            )
+        # Preserve the retained Slice's contract/lineage and Roadmap rules. An
+        # independent Task needs no parent, but cannot hide active Slice work.
+        _check_no_active_task(repo, slice_state, roadmap)
+        return
+
     if slice_state.status not in {"ACTIVE", "FIX REQUIRED"}:
         raise ValueError(
             f"active Task requires committed HEAD Slice {slice_state.slice_id} to be "
@@ -222,9 +250,6 @@ def check_repository(repo: Path) -> None:
     row = _require_current_row(roadmap, slice_state)
     if row.status != "ACTIVE":
         raise ValueError(f"Roadmap Slice {slice_state.slice_id} must be ACTIVE")
-    assert task_state.task_base is not None
-    _require_commit(repo, task_state.task_base, "Task Base SHA")
-    _require_ancestor(repo, task_state.task_base, head_sha, "Task Base SHA")
 
 
 def main(argv: list[str] | None = None) -> int:

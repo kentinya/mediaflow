@@ -1,7 +1,8 @@
 # AGENTS.md
 
-MediaFlow is an automated media library organizer. Implement only the current Task inside the
-committed Slice; do not implement the whole project or make unrelated refactors.
+MediaFlow is an automated media library organizer. Implement only the current authorized Task,
+inside a committed Slice or the workflow's independent minor-bug scope; do not implement the
+whole project or make unrelated refactors.
 
 ## Read before work
 
@@ -24,10 +25,12 @@ understand the work; unrelated historical sections need not be reread on every t
 5. V2 Requirements and Architecture: V2 extensions and CURRENT/TARGET design.
 6. Roadmap: large-Slice priority/status; Progress: accepted closure ledger.
 7. `SLICE.md`: A-owned user outcome, surfaces, boundaries, invariants, deferrals and acceptance.
-8. `TASK.md`: B-owned coherent implementation unit within that Slice, or no-active-Task notice.
+8. `TASK.md`: B-owned coherent implementation unit within a Slice or an independent minor bug,
+   or a no-active-implementation notice.
 
 Lower documents may narrow work but cannot weaken higher safety or user outcomes. Broad product
-scope does not authorize work outside the Slice; a Task cannot expand or close its parent Slice.
+scope does not authorize work outside the Task's Slice or independent bug boundary; a Task cannot
+expand or close a parent or previously accepted Slice.
 Current documents retain current rules and decisions; detailed development history belongs in Git.
 
 ## Product and experience invariants
@@ -133,12 +136,14 @@ than production SMB/OpenList/S3/TMDB or user media. Test ownership and levels li
 [workflow](docs/development-workflow.md#6-test-levels): Developer runs new/changed and directly
 affected tests; B owns full regression and acceptance gates.
 
-- **A — Slice Owner / Architect / Final Reviewer:** owns Slice outcomes/boundaries, Roadmap
-  boundaries and final Base..Head acceptance; only A declares `PASS / CLOSED`.
+- **A — Slice Owner / Architect / Final Reviewer:** owns large-version Slice outcomes/boundaries,
+  Roadmap boundaries and final Base..Head acceptance; only A declares a Slice `PASS / CLOSED`.
+  Independent minor bugs do not require A involvement.
   Read [A experience](docs/agent-experience/slice-owner-architect-final-reviewer.md).
 - **B — Task Planner / Task Reviewer:** plans coherent Tasks, Difficulty/Test Level and detailed
   actionable steps; reviews actual checkpoints; keeps fixes in the same Task. After PASS, reevaluate
-  all Slice outcomes and stop planning when they are satisfied.
+  all Slice outcomes and stop planning when they are satisfied. For an independent minor bug,
+  B directly plans, independently reviews and finishes the authorized Task under the workflow.
   Read [B experience](docs/agent-experience/task-planner-reviewer.md).
 - **Developer — Implementation Role:** implements only the active Task, preserves safety, runs its
   affected-test plan and hands off a coherent checkpoint with actual results/risks. Does not plan
@@ -147,11 +152,13 @@ affected tests; B owns full regression and acceptance gates.
 
 ## Scope and workspace control
 
-Before Task planning or implementation run `python3 scripts/check_governance.py`. Committed
-`HEAD:SLICE.md` is the scope authority; an uncheckpointed Contract is a draft. Record branch/HEAD and
-pre-existing dirty files, and preserve them. Never reset/restore/checkout/clean/stash-drop unrelated
+Before Task planning or implementation run `python3 scripts/check_governance.py`. For Slice Tasks,
+committed `HEAD:SLICE.md` is the scope authority; an uncheckpointed Contract is a draft. Independent
+minor bugs use the user-authorized scope and explicit standalone Task defined in the workflow.
+Record branch/HEAD and pre-existing dirty files, and preserve them. Never
+reset/restore/checkout/clean/stash-drop unrelated
 work or silently include it in a checkpoint. Keep private configuration ignored/untracked/unstaged.
 
-No work outside the active Slice/Task, no large unrelated refactors, no history rewriting or
+No work outside the authorized Task boundary, no large unrelated refactors, no history rewriting or
 unauthorized push. Necessary architecture changes preserve compatibility where practical and
 explain/update the architecture contract. Lifecycle and checkpoint details belong to the workflow.

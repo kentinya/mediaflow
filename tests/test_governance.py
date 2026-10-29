@@ -62,6 +62,19 @@ Task Base: {task_base}
 """
 
 
+def standalone_task_document(status: str, task_base: str) -> str:
+    return f"""# Task PATCH-1 — Standalone bug
+
+```text
+Task ID: PATCH-1
+Task Type: STANDALONE MINOR BUG
+Parent Slice: NONE
+Status: {status}
+Task Base: {task_base}
+```
+"""
+
+
 def init_repo(slice_id: int = 27, slice_status: str = "ACTIVE") -> tuple[Path, str]:
     repo = Path(tempfile.mkdtemp(prefix="mediaflow-governance-"))
     git(repo, "init", "-q")
@@ -168,6 +181,142 @@ class GovernanceCheckTests(unittest.TestCase):
 
         self.assertNotEqual(result.returncode, 0)
         self.assertIn("FIX REQUIRED cannot have NO ACTIVE IMPLEMENTATION TASK", result.stderr)
+
+    def test_standalone_bug_lifecycle_preserves_closed_or_planned_slice(self) -> None:
+        for slice_status in ("PASS / CLOSED", "PLANNED"):
+            repo, base_sha = init_repo(slice_status=slice_status)
+            before_slice = (repo / "SLICE.md").read_bytes()
+            before_roadmap = (repo / "docs/roadmap.md").read_bytes()
+            for status in ("PLANNED", "IN PROGRESS", "FIX REQUIRED", "READY FOR B REVIEW"):
+                with self.subTest(slice_status=slice_status, task_status=status):
+                    write(repo, "TASK.md", standalone_task_document(status, base_sha))
+                    before_status = git(repo, "status", "--porcelain")
+                    result = run_check(repo)
+                    self.assertEqual(result.returncode, 0, result.stderr)
+                    self.assertEqual((repo / "SLICE.md").read_bytes(), before_slice)
+                    self.assertEqual((repo / "docs/roadmap.md").read_bytes(), before_roadmap)
+                    self.assertEqual(git(repo, "status", "--porcelain"), before_status)
+
+    def test_standalone_bug_pass_returns_to_no_active_task(self) -> None:
+        repo, base_sha = init_repo(slice_status="PASS / CLOSED")
+        write(repo, "TASK.md", standalone_task_document("READY FOR B REVIEW", base_sha))
+        self.assertEqual(run_check(repo).returncode, 0)
+        write(repo, "TASK.md", "# NO ACTIVE IMPLEMENTATION TASK\n\nB reviewed PATCH-1: PASS.\n")
+        result = run_check(repo)
+        self.assertEqual(result.returncode, 0, result.stderr)
+
+    def test_standalone_bug_requires_explicit_type_and_no_parent(self) -> None:
+        repo, base_sha = init_repo(slice_status="PASS / CLOSED")
+        document = standalone_task_document("PLANNED", base_sha)
+        for invalid in (
+            document.replace("Task Type: STANDALONE MINOR BUG\n", ""),
+            document.replace("Parent Slice: NONE", "Parent Slice: 27"),
+            document.replace("Parent Slice: NONE\n", ""),
+            document.replace("Task Type: STANDALONE MINOR BUG", "Task Type: UNKNOWN"),
+        ):
+            with self.subTest(document=invalid):
+                write(repo, "TASK.md", invalid)
+                result = run_check(repo)
+                self.assertNotEqual(result.returncode, 0)
+                self.assertRegex(result.stderr, "Task (Type|Parent Slice)")
+
+    def test_standalone_bug_cannot_silently_displace_unclosed_slice(self) -> None:
+        for status in ("ACTIVE", "FIX REQUIRED", "READY FOR A REVIEW"):
+            with self.subTest(slice_status=status):
+                repo, base_sha = init_repo(slice_status=status)
+                write(repo, "TASK.md", standalone_task_document("PLANNED", base_sha))
+                result = run_check(repo)
+                self.assertNotEqual(result.returncode, 0)
+                self.assertIn(
+                    "standalone minor bug cannot replace an unclosed Slice", result.stderr
+                )
+
+    def test_standalone_bug_does_not_bypass_contract_checkpoint(self) -> None:
+        repo, base_sha = init_repo(slice_status="PASS / CLOSED")
+        write(repo, "TASK.md", standalone_task_document("PLANNED", base_sha))
+        write(repo, "SLICE.md", slice_document(27, "ACTIVE", base_sha))
+        result = run_check(repo)
+        self.assertNotEqual(result.returncode, 0)
+        self.assertIn("SLICE.md differs from HEAD", result.stderr)
+
+    def test_standalone_bug_still_requires_consistent_roadmap(self) -> None:
+        for status in ("PASS / CLOSED", "PLANNED"):
+            with self.subTest(slice_status=status):
+                repo, base_sha = init_repo(slice_status=status)
+                write(repo, "TASK.md", standalone_task_document("PLANNED", base_sha))
+                write(repo, "docs/roadmap.md", roadmap_document(27, "ACTIVE"))
+                git(repo, "add", "docs/roadmap.md")
+                git(repo, "commit", "-qm", "mismatched retained roadmap")
+                result = run_check(repo)
+                self.assertNotEqual(result.returncode, 0)
+                self.assertIn(f"Roadmap Slice 27 must be {status}", result.stderr)
+
+    def test_standalone_bug_does_not_hide_a_later_active_slice(self) -> None:
+        repo, base_sha = init_repo(slice_status="PASS / CLOSED")
+        write(repo, "TASK.md", standalone_task_document("PLANNED", base_sha))
+        write(repo, "docs/roadmap.md", roadmap_document(27, "PASS / CLOSED", next_status="ACTIVE"))
+        git(repo, "add", "docs/roadmap.md")
+        git(repo, "commit", "-qm", "another active slice")
+        result = run_check(repo)
+        self.assertNotEqual(result.returncode, 0)
+        self.assertIn("next open Slice 28 must be PLANNED", result.stderr)
+
+    def test_task_bases_must_be_full_existing_ancestor_commits_for_both_types(self) -> None:
+        for standalone in (False, True):
+            repo, base_sha = init_repo(slice_status="PASS / CLOSED" if standalone else "ACTIVE")
+            unrelated = git(
+                repo, "commit-tree", git(repo, "rev-parse", "HEAD^{tree}"), "-m", "root"
+            )
+            for invalid in (base_sha[:8], "0" * 40, unrelated):
+                with self.subTest(standalone=standalone, task_base=invalid):
+                    document = (
+                        standalone_task_document("PLANNED", invalid)
+                        if standalone
+                        else task_document(27, "PLANNED", invalid)
+                    )
+                    write(repo, "TASK.md", document)
+                    result = run_check(repo)
+                    self.assertNotEqual(result.returncode, 0)
+                    self.assertRegex(result.stderr, "Task Base SHA|cat-file")
+
+    def test_standalone_bug_rejects_unknown_status_and_missing_base(self) -> None:
+        repo, base_sha = init_repo(slice_status="PASS / CLOSED")
+        for invalid in (
+            standalone_task_document("UNKNOWN", base_sha),
+            standalone_task_document("PLANNED", base_sha).replace(f"Task Base: {base_sha}\n", ""),
+        ):
+            with self.subTest(document=invalid):
+                write(repo, "TASK.md", invalid)
+                result = run_check(repo)
+                self.assertNotEqual(result.returncode, 0)
+                self.assertRegex(result.stderr, "Task status|Task Base SHA")
+
+    def test_explicit_slice_type_keeps_the_existing_parent_contract(self) -> None:
+        repo, base_sha = init_repo()
+        document = task_document(27, "PLANNED", base_sha).replace(
+            "Task ID: 27.1", "Task ID: 27.1\nTask Type: SLICE"
+        )
+        write(repo, "TASK.md", document)
+        result = run_check(repo)
+        self.assertEqual(result.returncode, 0, result.stderr)
+        write(repo, "TASK.md", document.replace("Parent Slice: 27", "Parent Slice: NONE"))
+        result = run_check(repo)
+        self.assertNotEqual(result.returncode, 0)
+        self.assertIn("Task Parent Slice", result.stderr)
+
+    def test_closed_slice_still_cannot_authorize_a_slice_task(self) -> None:
+        repo, base_sha = init_repo(slice_status="PASS / CLOSED")
+        document = task_document(27, "PLANNED", base_sha)
+        for declaration in ("", "Task Type: SLICE\n"):
+            with self.subTest(declaration=declaration):
+                write(
+                    repo,
+                    "TASK.md",
+                    document.replace("Status: PLANNED", declaration + "Status: PLANNED"),
+                )
+                result = run_check(repo)
+                self.assertNotEqual(result.returncode, 0)
+                self.assertIn("ACTIVE or FIX REQUIRED", result.stderr)
 
 
 if __name__ == "__main__":

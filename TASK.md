@@ -26,8 +26,7 @@ Implementation: NOT STARTED / NOT AUTHORIZED BY THIS PLAN
 ```
 
 Task Base 保留已确认缺陷的真实源码基线；Base 到 Planning HEAD 只有先前的 TASK.md
-规划提交，没有产品或测试代码变更。原提交的子 agent 启动、实施授权及治理例外表述
-不代表用户授权，由本次规划更正；保留 Git 历史，不重写原提交。
+规划提交，没有产品或测试代码变更。规划历史保留在 Git，本草案不授权启动其他角色或实施。
 
 ### 用户结果与真实入口
 
@@ -102,11 +101,11 @@ B 对精确候选独立检查关键复现、完整差异和证据，运行：
 本 Task 只规划本地修复。资源库编辑的部署身份问题、远端操作、部署、推送、历史清理、
 数据库迁移、执行授权/调度行为修改及无关重构均不在范围内。
 
-此次规划前治理检查实际失败：原计划将活动 Task 关联到已关闭的 Slice46。
-现已纠正为“无活动实施 Task + 规划草案”的真实阶段；校验器通过只证明当前无活动实施的
-仓库状态一致，不能用来宣称独立小版本的正式实施流程已受校验器支持。正式实施前须明确
-独立小版本 Task 的治理表示，不得挂靠已关闭 Slice、臆造用户豁免或忽略失败开工。
-本轮不修改校验器、SLICE、Roadmap、Progress，也不自行进入实施或验收。
+现行流程和校验器已支持 `Task Type: STANDALONE MINOR BUG`、`Parent Slice: NONE`，
+并继续检查合法状态、完整且存在的祖先 Base，以及保留 Slice/Roadmap 的一致性。
+本草案仍保留“无活动实施 Task”状态；只有用户授权实施后，才改为正式 Task 头部及
+`Status: PLANNED` 并重新运行治理检查。不挂靠已关闭 Slice，不使用治理豁免，
+也不因流程同步而自动实施本 bug、启动其他 agent 或改变 SLICE/Roadmap/Progress。
 
 后续交接必须包含 Task Base、候选完整 SHA、实际测试结果/限制和剩余风险；B 给出
 PASS 或 FIX REQUIRED。当前尚无 Developer 完成报告或 B 验收结果。
