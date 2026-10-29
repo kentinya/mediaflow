@@ -96,9 +96,11 @@ Real Storage Files 和 V2 Operator Web 章节，以及
 
 1. 先固定回归场景：默认/筛选/选中任务 → 侧栏 Files、带合法来源的 Files → 侧栏 Files，
    以及显式来源深链 → 整理流程 → 原任务。把普通切页和显式流程的预期分开断言。
-2. 对任务中心采用单一标题层级与页面边距，参考当前媒体库标题尺度和内容起点；消除双重
-   外层留白与列表重复缩进。保留四张统计卡、八个标签、筛选、列表和现有详情布局。
-   说明文字可收紧间距、压缩表达或放入可访问的说明位置，保留必要的计数含义与错误解释。
+2. 对任务中心采用单一标题层级，参考当前媒体库的标题尺度、内容起点与空间分配，减少
+   多层留白造成的无意义缩进。具体内边距、最大宽度和详情比例由实现按实际效果调整，
+   不要求删除某条 CSS 或逐像素复制媒体库。保留四张统计卡、八个标签、筛选、列表和
+   详情查看/关闭/返回能力；说明文字可收紧间距、压缩表达或放入可访问的说明位置，
+   保留必要的计数含义与错误解释。
 3. 约束业务名称/范围的列宽与长文本展示，给阶段、进度、状态和时间稳定的阅读空间。
    允许省略展示、受控换行或详情揭示，但鼠标和键盘均能取得完整原文；任务选择仍使用
    原 run ID，不能裁改真实路径、名称或后端投影来迁就布局。窄屏只在表格/标签内部滚动。
@@ -111,13 +113,18 @@ Real Storage Files 和 V2 Operator Web 章节，以及
 
 ### Acceptance Criteria
 
-- [ ] 主内容区仅显示一个可见“任务中心”页面标题；侧栏入口与浏览器页签仍正常。
-      八个视图以及加载、空列表、读取失败状态都没有重复标题或多余标题空档。
-- [ ] 在 `1536×1024`、100% 缩放、scale 1 下，任务中心标题的字体尺度、顶部起点、
-      内容左右边界与当前媒体库页一致；移除页面宽度限制和多层留白造成的无意义缩进。
-      使用至少 5 条代表性短/长路径 fixture，默认无详情时首屏至少显示 3 条完整任务行。
-- [ ] 桌面默认列表中长路径不会把阶段、进度、状态和时间挤出可视列表宽度；业务名称与
-      范围两列仍可辨认，完整原文可通过 hover/focus 或现有详情读取，选中的仍是原任务。
+- [ ] 主内容区的页面标题与位置提示合计只有一处可见的“任务中心”标题文字，且保留语义标题；
+      侧栏入口与浏览器页签仍正常。八个视图以及加载、空列表、读取失败状态没有重复
+      位置提示或其空档。断言必须能检出当前 Base 中额外的 `<p>` 小字，不能只数 heading；
+      允许隐藏该提示，不要求从 DOM 删除，也不把侧栏的同名入口计入重复。
+- [ ] 在 `1536×1024`、100% 缩放、scale 1 下，与同环境的媒体库截图对照，标题层级、
+      内容边界和留白尺度协调，允许合理差异。相同代表性数据下，与 Base 对比可见列表
+      起始位置上移、首屏内容利用改善；默认无详情时首屏能读到完整任务行及其状态、进度，
+      不靠缩小到难读的字体或隐藏必要信息满足。样本覆盖短范围、较长的连续无空格路径、
+      同前缀不同结尾的路径，数量足以检查列表与滚动，不规定固定样本数或首屏行数。
+- [ ] 在上述参考桌面视口、默认无详情的列表中，长路径不会把阶段、进度、状态和时间
+      挤出可视列表宽度；业务名称与范围两列仍可辨认，完整原文可通过 hover/focus 或
+      现有详情读取，选中的仍是原任务。
 - [ ] `1280×800` 及 `390×844` 下可用；八标签、筛选、分页、详情关闭/返回和问题处理
       入口均可通过键盘操作，焦点可见且不遮挡。允许表格/标签区域内部有界横向滚动，
       页面本身不因长路径或筛选控件横向溢出；不要求窄屏满足桌面首屏行数。
@@ -128,8 +135,10 @@ Real Storage Files 和 V2 Operator Web 章节，以及
       任务和合法列表上下文。刷新后重新连接不丢失此类显式状态；无效/超长/越界来源继续
       按既有规则降级，不能据此跳到其他页面或获得权限。
 - [ ] 浏览、切页、刷新只进行必要读取；不提交业务命令，不启动发现/元数据查询或 Storage 变更。
-      计数、八视图成员关系、四类恢复、已有持久结果和权限不变。Files/媒体库及其他共享
-      Shell 页面不因新增样式出现标题、边距、控件可读性回退。
+      计数和八视图成员关系的语义、四类恢复、已有持久结果和权限保持原有契约。
+      固定对照资源库 Files 与媒体库的标题、内容边界和控件可读性；若修改通用主容器或
+      全局标题规则，再对 Rules 与 Automation 做同类布局冒烟检查。记录实际受影响选择器
+      与检查页面，不把“所有 Shell 页面不回退”扩成全站业务验收。
 
 ### Required Tests
 
@@ -159,11 +168,13 @@ CSS 在 jsdom 不生效，不能把组件断言当作布局证明；使用构建
 ```sh
 npm run build
 npm run test:e2e -- tests/e2e/task-center-layout.spec.ts
+npm run test:e2e -- tests/e2e/operations.spec.ts --grep 'inventory shows the run list'
 ```
 
 `task-center-layout.spec.ts` 为本 Task 新增的聚焦浏览器用例，使用既有 fake server 与
-必要的只读响应 fixture，验证标题/边距/首屏行、长路径列宽、桌面/窄屏和普通/显式来源导航。
-不新增与实现镜像的 CSS 字符串测试。若改动共享路径组件，额外运行其现有直接受影响测试。
+必要的只读响应 fixture，验证可见重复提示消失、布局改善、长路径列宽、桌面/窄屏和普通/
+显式来源导航。布局以实际几何、溢出、可见性及截图为依据，不锁死像素、样本/行数或
+CSS 实现；标题检查不能只统计 heading。若改动共享路径组件，额外运行其直接受影响测试。
 
 **B — acceptance and regression**
 
@@ -175,15 +186,23 @@ npm run typecheck
 npm run lint
 npm run format:check
 npm run build
-npm run test:e2e -- tests/e2e/task-center-layout.spec.ts tests/e2e/operations.spec.ts tests/e2e/manual-organize.spec.ts tests/e2e/deep-link.spec.ts
-npm run test:e2e -- --config=playwright.python.config.ts tests/e2e/operations-task-center-visual.python.spec.ts
+npm run test:e2e -- tests/e2e/task-center-layout.spec.ts
+npm run test:e2e -- tests/e2e/operations.spec.ts --grep 'inventory shows the run list|task-center views stay keyboard operable|the selected run detail is|Operations failures stay inside'
+npm run test:e2e -- tests/e2e/manual-organize.spec.ts --grep 'reconciles a lost admitted response and selects its durable Operations run'
+npm run test:e2e -- tests/e2e/deep-link.spec.ts --grep 'refresh keeps memory-only semantics and reconnects to the same supported path'
 ```
 
-最后一项使用既有临时 SQLite/本地媒体/Python API harness，核对八视图、问题文件、显式
-整理摘要、重新连接与读取失败的真实集成；不是生产环境验证。B 打开并审阅实际截图：
-桌面任务中心与媒体库并排比较、长路径列表、选中详情、空/读取失败和窄屏/键盘状态。
-现有视觉脚本还需补上本轮媒体库对照及长路径证据；可复用聚焦用例的相同候选截图。
-保留截图/原始日志于 workflow 规定的稳定忽略位置，不能仅凭脚本退出码宣布视觉通过。
+以上使用构建产物和既有本地 fake API，分别覆盖本轮布局/导航、列表与详情的可达性、
+显式来源链路的准确任务回读，以及重新连接。相关旧测试若锁定了本轮明确允许调整的
+详情比例等实现细节，应改为检查查看/关闭/返回、可读性与焦点可达，不保留过时的几何断言。
+不要求完整运行 manual-organize/deep-link 文件或 Python 视觉脚本中的问题分页、Worker
+分析/执行全链。需要新增实际影响范围之外的回归时，B 先说明候选引入的具体风险。
+
+B 打开并审阅实际截图：相同数据/视口下 Base 与候选的任务中心布局、当前媒体库对照、
+长路径列表、选中详情、空/读取失败和窄屏/键盘状态；八个标签的可达性及共享标题层级
+仍需覆盖，不扩成四类业务恢复全链。按上述受影响规则安排 Files/Rules/Automation 对照，
+不重新验证其文件操作或配置发布。可复用聚焦用例的相同候选截图；保留截图/原始日志于
+workflow 规定的稳定忽略位置。脚本退出码或孤立的行数指标不能代替视觉验收。
 
 本 Task 不触及 Python 业务、Storage、配置激活、schema、权限或并发执行；不要求全量
 Python/Web 单元/E2E、Docker 或 wheel 发布矩阵。发现实际跨边界风险时由 B 重评，不能
