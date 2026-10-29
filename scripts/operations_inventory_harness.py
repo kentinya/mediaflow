@@ -46,6 +46,10 @@ infrastructure, not product endpoints, and never touch product documents):
 - ``POST /__harness__/seed-inventory-poll-population`` creates one active
   mixed-progress Task and three terminal failures through real Task
   coordinator/repository paths;
+- ``POST /__harness__/seed-time-filter-population`` creates three adjacent
+  local-day Task groups (23 same-day rows plus one previous-day and one
+  next-day row) through the real coordinator so the browser proves the
+  time-range boundaries and server paging;
 - ``POST /__harness__/append-inventory-poll-failure`` appends a terminal Task
   so the browser can prove that a visible terminal-only inventory refreshes;
 - ``POST /__harness__/restart`` closes and reopens the runtime database and
@@ -85,6 +89,7 @@ import threading
 import time
 import urllib.parse
 from datetime import UTC, datetime, timedelta
+from datetime import time as datetime_time
 from pathlib import Path
 from unittest.mock import patch
 from uuid import uuid4
@@ -915,6 +920,7 @@ class AppState:
         self.task_center_problems: dict[str, object] | None = None
         self.task_center_problem_page: dict[str, object] | None = None
         self.inventory_poll_population: dict[str, object] | None = None
+        self.time_filter_population: dict[str, object] | None = None
         #: The real resident cadence consumers the settings proof starts.
         self.resident_consumers: tuple[_HarnessResidentConsumer, ...] | None = None
 
@@ -1144,6 +1150,85 @@ def run_scheduled_definition_tick(
         ),
     )
     return tuple(job.definition_id or "" for job in scheduler.tick())
+
+
+def seed_time_filter_population(state: AppState) -> dict[str, object]:
+    """Create a deterministic local-day population for the time-filter journey.
+
+    Every row is a real organizing Task admitted by the production coordinator
+    and then re-timed through the repository's own Task update path (the same
+    durable ``created_at`` the read model compares). The three groups sit on
+    three adjacent local calendar days so the browser can prove a full-day
+    range, both single-sided ranges, cross-day ordering and a page boundary
+    without inventing a product entry or filtering client-side.
+    """
+
+    with state._lock:
+        if state.time_filter_population is not None:
+            return dict(state.time_filter_population)
+        # Resolve the local calendar through the system rules for that date,
+        # so a DST change between now and the fixture day cannot shift the
+        # browser's selected local day.
+        local_today = datetime.now().astimezone().date()
+        target_day = local_today - timedelta(days=7)
+        previous_day = target_day - timedelta(days=1)
+        next_day = target_day + timedelta(days=1)
+        day_start = datetime.combine(target_day, datetime_time.min).astimezone()
+        day_end = datetime.combine(target_day, datetime_time.max).astimezone()
+        coordinator = PersistentTaskCoordinator(state.repository, state.repository)
+        task_ids: list[str] = []
+        for index in range(23):
+            if index == 0:
+                created_at = day_start
+            elif index == 22:
+                created_at = day_end
+            else:
+                created_at = day_start + timedelta(hours=index)
+            created = created_at.astimezone(UTC)
+            task = coordinator.create(
+                "organize",
+                execute_authorized=True,
+                scope_path=f"TaskCenter/TimeFilter/{index:02d}",
+            )
+            state.repository.update_task(
+                dataclasses.replace(
+                    task,
+                    created_at=created,
+                    updated_at=created,
+                )
+            )
+            task_ids.append(task.task_id)
+        for label, day in (
+            ("Previous", previous_day),
+            ("Next", next_day),
+        ):
+            created = datetime.combine(day, datetime_time(12, 0)).astimezone().astimezone(UTC)
+            task = coordinator.create(
+                "organize",
+                execute_authorized=True,
+                scope_path=f"TaskCenter/TimeFilter{label}/Only",
+            )
+            state.repository.update_task(
+                dataclasses.replace(
+                    task,
+                    created_at=created,
+                    updated_at=created,
+                )
+            )
+            task_ids.append(task.task_id)
+        state.time_filter_population = {
+            "targetDate": target_day.isoformat(),
+            "previousDate": previous_day.isoformat(),
+            "nextDate": next_day.isoformat(),
+            "targetTotal": 23,
+            "singleDayTotal": 1,
+            "taskIds": task_ids,
+            "firstSource": "TaskCenter/TimeFilter/00",
+            "lastSource": "TaskCenter/TimeFilter/22",
+            "previousSource": "TaskCenter/TimeFilterPrevious/Only",
+            "nextSource": "TaskCenter/TimeFilterNext/Only",
+        }
+        return dict(state.time_filter_population)
 
 
 def seed_inventory_poll_population(state: AppState) -> dict[str, object]:
@@ -5868,6 +5953,8 @@ def application(environ, start_response):
             document = manual_file_state(STATE, filename=requested_file)
         elif path == "/__harness__/run-standalone-pipeline" and method == "POST":
             document = run_standalone_pipeline_once(STATE)
+        elif path == "/__harness__/seed-time-filter-population" and method == "POST":
+            document = seed_time_filter_population(STATE)
         elif path == "/__harness__/seed-inventory-poll-population" and method == "POST":
             document = seed_inventory_poll_population(STATE)
         elif path == "/__harness__/append-inventory-poll-failure" and method == "POST":

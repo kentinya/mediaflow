@@ -522,6 +522,12 @@ eight organizing views → typed query/command boundary
 → atomic admission → resident Worker → OrganizerExecutor
 ```
 
+The All view submits only the local-calendar creation-day range converted to UTC `from`/`to`
+(the `to` boundary covers the final microsecond of the day); it does not carry the removed
+keyword/source/status/command/attention filters. Other views and management-API consumers keep
+their existing filters, and the time condition, rows, total, statistics and cursor stay bound to
+one read snapshot.
+
 Query before grouping/paging; bind cursors/counts to the authorized consistent population. Group each
 problem by durable Task/run links; current problems, effects and lifecycle remain distinct. Never
 infer links from labels/times, count pending automatically as human attention, or hide pre-Task failures.

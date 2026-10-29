@@ -12,6 +12,42 @@ import { expect, test, type Page } from "@playwright/test";
 
 const VIEWER_TOKEN = "e2e-viewer-token";
 
+function pad(value: number): string {
+  return String(value).padStart(2, "0");
+}
+
+/** The product's explicit local display format for one durable UTC instant. */
+function localRunTime(iso: string): string {
+  const parsed = new Date(iso);
+  const offsetMinutes = -parsed.getTimezoneOffset();
+  const sign = offsetMinutes >= 0 ? "+" : "-";
+  const absolute = Math.abs(offsetMinutes);
+  return (
+    `${parsed.getFullYear()}-${pad(parsed.getMonth() + 1)}-${pad(parsed.getDate())}` +
+    ` ${pad(parsed.getHours())}:${pad(parsed.getMinutes())}:${pad(parsed.getSeconds())}` +
+    ` ${sign}${pad(Math.floor(absolute / 60))}:${pad(absolute % 60)}`
+  );
+}
+
+function escapeRegExp(value: string): string {
+  return value.replace(/[.*+?^${}()|[\]\\]/g, "\\$&");
+}
+
+// The ended view shows the durable update time; the other lifecycle views show
+// the creation time. Keep one exact row matcher per observed display.
+const FAILED_ROW = new RegExp(
+  `整理.*失败.*${escapeRegExp(localRunTime("2026-08-22T12:24:00+00:00"))}`,
+);
+const COMPLETED_ROW = new RegExp(
+  `整理.*已完成.*${escapeRegExp(localRunTime("2026-08-22T12:00:00+00:00"))}`,
+);
+const COMPLETED_ENDED_ROW = new RegExp(
+  `整理.*已完成.*${escapeRegExp(localRunTime("2026-08-22T12:06:00+00:00"))}`,
+);
+const AUTOMATED_ROW = new RegExp(
+  `整理.*自动化.*${escapeRegExp(localRunTime("2026-08-22T12:15:00+00:00"))}`,
+);
+
 async function connect(page: Page, token: string = VIEWER_TOKEN) {
   await page.goto("/ui-v2/");
   await page.getByLabel("API token").fill(token);
@@ -119,11 +155,14 @@ test("the submitted Operations filter is reflected in the URL and survives recon
 }) => {
   await connect(page);
   await openOperations(page);
+  await page
+    .getByRole("navigation", { name: "任务中心视图" })
+    .getByRole("button", { name: "已结束", exact: true })
+    .click();
   await page.getByLabel("状态", { exact: true }).selectOption("failed");
-  await expect(page).toHaveURL(/\/ui-v2\/operations\?status=failed$/);
-  await expect(
-    page.getByRole("row", { name: /整理.*失败.*2026-08-22 12:22:00/ }),
-  ).toBeVisible();
+  await expect(page).toHaveURL(/view=ended/);
+  await expect(page).toHaveURL(/status=failed/);
+  await expect(page.getByRole("row", { name: FAILED_ROW })).toBeVisible();
 
   await page.getByRole("button", { name: "Disconnect" }).click();
   await expect(page.getByLabel("API token")).toBeVisible();
@@ -132,14 +171,14 @@ test("the submitted Operations filter is reflected in the URL and survives recon
 test("an unauthenticated deep entry reconnects to the same filtered center view", async ({
   page,
 }) => {
-  await page.goto("/ui-v2/operations?status=failed");
+  await page.goto("/ui-v2/operations?view=ended&status=failed");
   await expect(page.getByLabel("API token")).toBeVisible();
   await page.getByLabel("API token").fill(VIEWER_TOKEN);
   await page.getByRole("button", { name: "Connect" }).click();
-  await expect(page).toHaveURL(/\/ui-v2\/operations\?status=failed$/);
-  await expect(
-    page.getByRole("row", { name: /整理.*失败.*2026-08-22 12:22:00/ }),
-  ).toBeVisible();
+  await expect(page).toHaveURL(/\/ui-v2\/operations\?/);
+  await expect(page).toHaveURL(/view=ended/);
+  await expect(page).toHaveURL(/status=failed/);
+  await expect(page.getByRole("row", { name: FAILED_ROW })).toBeVisible();
   const html = await page.content();
   expect(html).not.toContain(VIEWER_TOKEN);
 });
@@ -440,15 +479,15 @@ test("dropping credential-like Operations search state on reconnect", async ({
   page.on("console", (message) => consoleMessages.push(message.text()));
   // A deep entry carrying an unknown, credential-like key must be reduced to
   // the allowlisted route before the reconnect continuation replays it.
-  await page.goto("/ui-v2/operations?status=failed&token=secret");
+  await page.goto("/ui-v2/operations?view=ended&status=failed&token=secret");
   await expect(page.getByLabel("API token")).toBeVisible();
   expect(page.url()).not.toContain("token=secret");
   await page.getByLabel("API token").fill(VIEWER_TOKEN);
   await page.getByRole("button", { name: "Connect" }).click();
-  await expect(page).toHaveURL(/\/ui-v2\/operations\?status=failed$/);
-  await expect(
-    page.getByRole("row", { name: /整理.*失败.*2026-08-22 12:22:00/ }),
-  ).toBeVisible();
+  await expect(page).toHaveURL(/\/ui-v2\/operations\?/);
+  await expect(page).toHaveURL(/view=ended/);
+  await expect(page).toHaveURL(/status=failed/);
+  await expect(page.getByRole("row", { name: FAILED_ROW })).toBeVisible();
   const html = await page.content();
   expect(html).not.toContain(VIEWER_TOKEN);
   expect(consoleMessages.join("\n")).not.toContain(VIEWER_TOKEN);
@@ -487,30 +526,27 @@ test("inventory count card applies its server filter and the run overview opens 
     exact: true,
   });
   await expect(pressed).toHaveAttribute("aria-current", "page");
-  await expect(
-    page.getByRole("row", { name: /整理.*已完成.*2026-08-22 12:00:00/ }),
-  ).toHaveCount(0);
+  await expect(page.getByRole("row", { name: COMPLETED_ROW })).toHaveCount(0);
 
   // Switching back to 全部任务 restores the full population.
   await views.getByRole("button", { name: "全部任务", exact: true }).click();
   await expect(page).not.toHaveURL(/view=/);
-  await expect(
-    page.getByRole("row", { name: /整理.*已完成.*2026-08-22 12:00:00/ }),
-  ).toBeVisible();
+  await expect(page.getByRole("row", { name: COMPLETED_ROW })).toBeVisible();
 
-  // The status filter applies to the same server-side population.
+  // The status filter stays available in the lifecycle views; the All view
+  // itself only owns the creation-time range.
+  await views.getByRole("button", { name: "已结束", exact: true }).click();
   await page.getByLabel("状态", { exact: true }).selectOption("failed");
-  await expect(page).toHaveURL(/\/ui-v2\/operations\?status=failed$/);
+  await expect(page).toHaveURL(/view=ended/);
+  await expect(page).toHaveURL(/status=failed/);
+  await expect(page.getByRole("row", { name: FAILED_ROW })).toBeVisible();
   await expect(
-    page.getByRole("row", { name: /整理.*失败.*2026-08-22 12:22:00/ }),
-  ).toBeVisible();
-  await expect(
-    page.getByRole("row", { name: /整理.*已完成.*2026-08-22 12:00:00/ }),
+    page.getByRole("row", { name: COMPLETED_ENDED_ROW }),
   ).toHaveCount(0);
 
   // Selecting a run opens the bounded overview with durable facts only.
   await page
-    .getByRole("row", { name: /整理.*失败.*2026-08-22 12:22:00/ })
+    .getByRole("row", { name: FAILED_ROW })
     .getByRole("button")
     .first()
     .click();
@@ -526,14 +562,12 @@ test("inventory count card applies its server filter and the run overview opens 
   await detail.getByRole("button", { name: "关闭详情" }).click();
   await expect(page.getByRole("region", { name: "运行详情" })).toHaveCount(0);
   await expect(page).toHaveURL(/status=failed/);
-  await expect(
-    page.getByRole("row", { name: /整理.*失败.*2026-08-22 12:22:00/ }),
-  ).toBeVisible();
+  await expect(page.getByRole("row", { name: FAILED_ROW })).toBeVisible();
 
   // Selecting pushes a history entry: browser Back returns to the list
   // entry with its filter intact instead of leaving the route.
   await page
-    .getByRole("row", { name: /整理.*失败.*2026-08-22 12:22:00/ })
+    .getByRole("row", { name: FAILED_ROW })
     .getByRole("button")
     .first()
     .click();
@@ -543,9 +577,7 @@ test("inventory count card applies its server filter and the run overview opens 
   await expect(page).toHaveURL(/status=failed/);
   await expect(page).not.toHaveURL(/run=/);
   await expect(page.getByRole("region", { name: "运行详情" })).toHaveCount(0);
-  await expect(
-    page.getByRole("row", { name: /整理.*失败.*2026-08-22 12:22:00/ }),
-  ).toBeVisible();
+  await expect(page.getByRole("row", { name: FAILED_ROW })).toBeVisible();
 });
 
 test("the selected run detail is a right column on desktop and a full overlay when narrow", async ({
@@ -599,7 +631,7 @@ test("the selected run detail is a right column on desktop and a full overlay wh
 test("an unauthenticated deep entry reconnects to the selected run overview", async ({
   page,
 }) => {
-  await page.goto("/ui-v2/operations?status=failed&run=job-005");
+  await page.goto("/ui-v2/operations?view=ended&status=failed&run=job-005");
   await expect(page.getByLabel("API token")).toBeVisible();
   await page.getByLabel("API token").fill(VIEWER_TOKEN);
   await page.getByRole("button", { name: "Connect" }).click();
@@ -611,9 +643,7 @@ test("an unauthenticated deep entry reconnects to the selected run overview", as
   await expect(detail).toBeVisible();
   await expect(detail.getByText(/失败/).first()).toBeVisible();
   // A failed read never means zero runs: the filtered table still shows data.
-  await expect(
-    page.getByRole("row", { name: /整理.*失败.*2026-08-22 12:22:00/ }),
-  ).toBeVisible();
+  await expect(page.getByRole("row", { name: FAILED_ROW })).toBeVisible();
   const html = await page.content();
   expect(html).not.toContain(VIEWER_TOKEN);
 });
@@ -625,7 +655,7 @@ test("the selected run detail shows truthful progress and its accounting basis",
   await openOperations(page);
   const inventoryTable = page.getByRole("table", { name: "运行清单" });
   await inventoryTable
-    .getByRole("row", { name: /整理.*已完成.*2026-08-22 12:00:00/ })
+    .getByRole("row", { name: COMPLETED_ROW })
     .getByRole("button")
     .first()
     .click();
@@ -662,7 +692,7 @@ test("item and record filters page on the server and survive a reload", async ({
   await openOperations(page);
   const inventoryTable = page.getByRole("table", { name: "运行清单" });
   await inventoryTable
-    .getByRole("row", { name: /整理.*已完成.*2026-08-22 12:00:00/ })
+    .getByRole("row", { name: COMPLETED_ROW })
     .getByRole("button")
     .first()
     .click();
@@ -725,7 +755,7 @@ test("one item's evidence opens through exact links and closes again", async ({
   await openOperations(page);
   const inventoryTable = page.getByRole("table", { name: "运行清单" });
   await inventoryTable
-    .getByRole("row", { name: /整理.*已完成.*2026-08-22 12:00:00/ })
+    .getByRole("row", { name: COMPLETED_ROW })
     .getByRole("button")
     .first()
     .click();
@@ -766,7 +796,7 @@ test("the native action downloads the eligible linked Task's result package", as
   await openOperations(page);
   const inventoryTable = page.getByRole("table", { name: "运行清单" });
   await inventoryTable
-    .getByRole("row", { name: /整理.*已完成.*2026-08-22 12:00:00/ })
+    .getByRole("row", { name: COMPLETED_ROW })
     .getByRole("button")
     .first()
     .click();
@@ -801,7 +831,7 @@ test("a pre-Task admission states queue truth and refuses an empty download", as
   await openOperations(page);
   const inventoryTable = page.getByRole("table", { name: "运行清单" });
   await inventoryTable
-    .getByRole("row", { name: /整理.*自动化.*2026-08-22 12:15:00/ })
+    .getByRole("row", { name: AUTOMATED_ROW })
     .getByRole("button")
     .first()
     .click();

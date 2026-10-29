@@ -113,6 +113,8 @@ test("task center has one title, the Files content boundary and an earlier list"
   await openOperations(page);
 
   const main = page.getByRole("main");
+  // The task center's shared shell no longer renders a generic keyword box.
+  await expect(page.getByRole("searchbox")).toHaveCount(0);
   // The Base rendered the shell's large muted location hint plus the page h2.
   // Count every exact title occurrence in main content, not only headings.
   await expect(main.getByText("任务中心", { exact: true })).toHaveCount(1);
@@ -278,8 +280,8 @@ test("shared sidebar Files stays ordinary from default, filtered and selected ce
 
   await page.getByRole("link", { name: "任务中心", exact: true }).click();
   await expect(page.getByRole("table", { name: "运行清单" })).toBeVisible();
-  await page.getByLabel("状态", { exact: true }).selectOption("failed");
-  await expect(page).toHaveURL(/status=failed/);
+  await page.getByLabel("创建时间从（本地）").fill("2026-08-01");
+  await expect(page).toHaveURL(/from=2026-08-01/);
   await expect(filesLink).toHaveAttribute("href", "/ui-v2/resourcelib/files");
   await filesLink.click();
   await expect(page).toHaveURL(/\/ui-v2\/resourcelib\/files$/);
@@ -302,7 +304,7 @@ test("an explicit Files return context still works and same-route sidebar Files 
   await installRepresentativeScopes(page);
   await page.setViewportSize({ width: 1536, height: 1024 });
   await page.goto(
-    "/ui-v2/resourcelib/files?returnOps=status%3Dpaused%26run%3Dtask-source",
+    "/ui-v2/resourcelib/files?returnOps=view%3Dended%26status%3Dfailed%26run%3Dtask-source",
   );
   if (await page.getByLabel("API token").isVisible()) {
     await page.getByLabel("API token").fill(VIEWER_TOKEN);
@@ -311,10 +313,13 @@ test("an explicit Files return context still works and same-route sidebar Files 
 
   const returnLink = page.getByRole("link", { name: "返回任务中心" });
   await expect(returnLink).toBeVisible();
-  await expect(returnLink).toHaveAttribute(
-    "href",
-    "/ui-v2/operations?status=paused&run=task-source",
+  const returnParams = new URLSearchParams(
+    new URL((await returnLink.getAttribute("href")) ?? "", "http://localhost")
+      .search,
   );
+  expect(returnParams.get("view")).toBe("ended");
+  expect(returnParams.get("status")).toBe("failed");
+  expect(returnParams.get("run")).toBe("task-source");
 
   // The sidebar's active Files destination is ordinary navigation: it clears
   // the same-route source instead of leaving a mount-time return surface.
@@ -349,10 +354,20 @@ test("task center stays usable and keyboard reachable at 1280 and 390", async ({
     fullPage: false,
   });
   const search = page.locator("#run-search");
-  await search.focus();
-  await expect(search).toBeFocused();
-  await page.getByLabel("状态", { exact: true }).focus();
-  await expect(page.getByLabel("状态", { exact: true })).toBeFocused();
+  await expect(search).toHaveCount(0);
+  await expect(page.getByLabel("状态", { exact: true })).toHaveCount(0);
+  const fromFilter = page.getByLabel("创建时间从（本地）");
+  await fromFilter.focus();
+  await expect(fromFilter).toBeFocused();
+  const toFilter = page.getByLabel("至（本地）");
+  await toFilter.focus();
+  await expect(toFilter).toBeFocused();
+  await fromFilter.fill("2026-08-01");
+  const clearTime = page.getByRole("button", { name: "清除时间" }).first();
+  await clearTime.focus();
+  await expect(clearTime).toBeFocused();
+  await clearTime.click();
+  await expect(page).not.toHaveURL(/from=/);
 
   for (const viewName of [
     "全部任务",

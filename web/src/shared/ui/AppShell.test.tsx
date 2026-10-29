@@ -1,5 +1,11 @@
 import { afterEach, describe, expect, it, vi } from "vitest";
-import { cleanup, screen, waitFor, within } from "@testing-library/react";
+import {
+  cleanup,
+  fireEvent,
+  screen,
+  waitFor,
+  within,
+} from "@testing-library/react";
 import userEvent from "@testing-library/user-event";
 import { authStore } from "../api/auth-store";
 import { renderApp } from "../../../tests/utils";
@@ -168,6 +174,10 @@ describe("AppShell", () => {
       1,
     );
     expect(main.querySelector(".mf-page-context")).toBeNull();
+    // The task center's shared shell no longer offers a generic keyword
+    // input; the All view owns only its creation-time range.
+    expect(screen.queryByRole("searchbox")).toBeNull();
+    expect(screen.getByRole("button", { name: "通知" })).toBeVisible();
     // The sidebar entry and browser title remain.
     expect(screen.getByRole("link", { name: "任务中心" })).toBeVisible();
     expect(document.title).toBe("任务中心 | MediaFlow");
@@ -201,9 +211,11 @@ describe("AppShell", () => {
       "/ui-v2/resourcelib/files",
     );
 
-    await user.type(screen.getByLabelText("操作类型"), "manual_organize");
+    fireEvent.change(screen.getByLabelText("创建时间从（本地）"), {
+      target: { value: "2026-08-01" },
+    });
     await waitFor(() =>
-      expect(router.history.location.search).toBe("?command=manual_organize"),
+      expect(router.history.location.search).toBe("?from=2026-08-01"),
     );
     expect(screen.getByRole("link", { name: "Files" })).toHaveAttribute(
       "href",
@@ -263,10 +275,7 @@ describe("AppShell", () => {
     // the exact task-center return; the shared sidebar Files link stays plain.
     expect(
       await screen.findByRole("link", { name: "返回任务中心" }),
-    ).toHaveAttribute(
-      "href",
-      "/ui-v2/operations?status=paused&run=task-source",
-    );
+    ).toHaveAttribute("href", "/ui-v2/operations?run=task-source");
     expect(screen.getByRole("link", { name: "Files" })).toHaveAttribute(
       "href",
       "/ui-v2/resourcelib/files",

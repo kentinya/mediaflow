@@ -1,5 +1,11 @@
 import { afterEach, describe, expect, it, vi } from "vitest";
-import { cleanup, screen, waitFor, within } from "@testing-library/react";
+import {
+  cleanup,
+  fireEvent,
+  screen,
+  waitFor,
+  within,
+} from "@testing-library/react";
 import userEvent from "@testing-library/user-event";
 import { authStore } from "../../shared/api/auth-store";
 import {
@@ -7,6 +13,7 @@ import {
   parseOperationsReturnContext,
 } from "../../shared/navigation/operations-return";
 import { renderApp } from "../../../tests/utils";
+import { localDayEndIso, localDayStartIso } from "./run-time";
 import manualOperationsFixture from "../../entities/operations/__fixtures__/manual-operations.json";
 
 const TOKEN = "operations-inventory-token";
@@ -374,7 +381,93 @@ describe("Operations run inventory landing", () => {
     ).toBeVisible();
   });
 
-  it("submits server filters, applies card filters and resets to the same population", async () => {
+  it("offers only a local creation-time range on All and clears back to the whole population", async () => {
+    const user = userEvent.setup();
+    const requested: string[] = [];
+    stubInventoryJourney(
+      pageDocument({
+        items: [],
+        total: 0,
+        summary: summaryDocument({ total: 2, running: 1 }),
+      }),
+      requested,
+    );
+    authStore.setToken(TOKEN);
+    const { router } = renderApp("/ui-v2/operations");
+
+    await screen.findByRole("heading", { name: "任务中心" });
+    await waitFor(() =>
+      expect(
+        requested.some((url) => url.includes("/api/v1/operations/runs")),
+      ).toBe(true),
+    );
+    expect(
+      await screen.findByRole("heading", { name: "还没有运行记录" }),
+    ).toBeVisible();
+
+    // The All view has no keyword search, source/status/command controls or
+    // search submit action; only the creation-day range remains.
+    expect(screen.queryByRole("searchbox")).toBeNull();
+    expect(screen.queryByRole("button", { name: "搜索" })).toBeNull();
+    expect(screen.queryByLabelText("来源")).toBeNull();
+    expect(screen.queryByLabelText("状态")).toBeNull();
+    expect(screen.queryByLabelText("操作类型")).toBeNull();
+    const from = screen.getByLabelText("创建时间从（本地）");
+    const to = screen.getByLabelText("至（本地）");
+    expect(from).not.toHaveAttribute("max");
+    expect(to).not.toHaveAttribute("min");
+
+    // Each date control applies independently; no search submit is needed.
+    fireEvent.change(from, { target: { value: "2026-08-01" } });
+    await waitFor(() =>
+      expect(router.history.location.search).toBe("?from=2026-08-01"),
+    );
+    await waitFor(() =>
+      expect(
+        requested.some((url) => {
+          const params = new URL(url, "http://mediaflow.test").searchParams;
+          return params.get("from") === localDayStartIso("2026-08-01");
+        }),
+      ).toBe(true),
+    );
+
+    fireEvent.change(to, { target: { value: "2026-08-02" } });
+    await waitFor(() =>
+      expect(router.history.location.search).toBe(
+        "?from=2026-08-01&to=2026-08-02",
+      ),
+    );
+    await waitFor(() =>
+      expect(
+        requested.some((url) => {
+          const params = new URL(url, "http://mediaflow.test").searchParams;
+          return (
+            params.get("from") === localDayStartIso("2026-08-01") &&
+            params.get("to") === localDayEndIso("2026-08-02")
+          );
+        }),
+      ).toBe(true),
+    );
+    // The end boundary covers the entire final second of the local day,
+    // including the durable microsecond part.
+    expect(localDayEndIso("2026-08-02")).toMatch(/\.999999Z$/);
+    expect(from).toHaveAttribute("max", "2026-08-02");
+    expect(to).toHaveAttribute("min", "2026-08-01");
+
+    await user.click(screen.getAllByRole("button", { name: "清除时间" })[0]!);
+    await waitFor(() => expect(router.history.location.search).toBe(""));
+    await waitFor(() =>
+      expect(
+        requested.some((url) => {
+          const params = new URL(url, "http://mediaflow.test").searchParams;
+          return params.get("from") === null && params.get("to") === null;
+        }),
+      ).toBe(true),
+    );
+    expect(screen.queryByRole("button", { name: "清除时间" })).toBeNull();
+  });
+
+  it("keeps the existing search and filters in the other seven views", async () => {
     const user = userEvent.setup();
     const requested: string[] = [];
     stubInventoryJourney(
@@ -393,50 +486,142 @@ describe("Operations run inventory landing", () => {
       requested,
     );
     authStore.setToken(TOKEN);
-    renderApp("/ui-v2/operations");
+    const { router } = renderApp("/ui-v2/operations?view=ended");
 
     await screen.findByRole("heading", { name: "任务中心" });
-    await waitFor(() =>
-      expect(
-        requested.some((url) => url.includes("/api/v1/operations/runs")),
-      ).toBe(true),
-    );
-    expect(
-      await screen.findByRole("heading", { name: "还没有运行记录" }),
-    ).toBeVisible();
+    await screen.findByRole("heading", { name: "还没有运行记录" });
+    expect(screen.getByLabelText("搜索")).toBeVisible();
+    expect(screen.getByLabelText("来源")).toBeVisible();
+    expect(screen.getByLabelText("状态")).toBeVisible();
+    expect(screen.getByLabelText("操作类型")).toBeVisible();
 
     await user.type(screen.getByLabelText("搜索"), "电影");
     await user.click(screen.getByRole("button", { name: "搜索" }));
     await waitFor(() =>
-      expect(
-        requested.some((url) => url.includes("q=%E7%94%B5%E5%BD%B1")),
-      ).toBe(true),
+      expect(router.history.location.search).toContain("q=%E7%94%B5%E5%BD%B1"),
     );
-
     await user.selectOptions(screen.getByLabelText("状态"), "failed");
     await waitFor(() =>
-      expect(requested.some((url) => url.includes("status=failed"))).toBe(true),
+      expect(router.history.location.search).toContain("status=failed"),
     );
-
     await user.selectOptions(screen.getByLabelText("来源"), "Movies/beta");
     await waitFor(() =>
+      expect(router.history.location.search).toContain("source=Movies%2Fbeta"),
+    );
+    await waitFor(() =>
       expect(
-        requested.some((url) => url.includes("source=Movies%2Fbeta")),
+        requested.some((url) => {
+          const params = new URL(url, "http://mediaflow.test").searchParams;
+          return (
+            params.get("view") === "ended" &&
+            params.get("q") === "电影" &&
+            params.get("status") === "failed" &&
+            params.get("source") === "Movies/beta"
+          );
+        }),
       ).toBe(true),
     );
 
     await user.click(screen.getAllByRole("button", { name: "重置筛选" })[0]!);
     await waitFor(() =>
-      expect(
-        requested.some(
-          (url) =>
-            url.includes("/api/v1/operations/runs") &&
-            !url.includes("status=failed") &&
-            !url.includes("q=") &&
-            !url.includes("source="),
-        ),
-      ).toBe(true),
+      expect(router.history.location.search).toBe("?view=ended"),
     );
+  });
+
+  it("drops removed All-view filters from an old link without losing its run", async () => {
+    const requested: string[] = [];
+    stubFetch(async (input) => {
+      const url = String(input);
+      requested.push(url);
+      if (url.startsWith("/api/v1/operations/runs?")) {
+        return jsonResponse(pageDocument());
+      }
+      if (url === "/api/v1/operations/runs/task-001") {
+        return jsonResponse(runDocument());
+      }
+      return jsonResponse({ error: { code: "not_found" } }, 404);
+    });
+    authStore.setToken(TOKEN);
+    const { router } = renderApp(
+      "/ui-v2/operations?q=secret&status=failed&source=Movies%2Fbeta" +
+        "&command=manual&attention=true&cursor=old-scope&run=task-001",
+    );
+
+    await screen.findByRole("region", { name: "运行详情" });
+    await waitFor(() => {
+      const search = router.history.location.search;
+      expect(search).not.toContain("q=");
+      expect(search).not.toContain("status=");
+      expect(search).not.toContain("source=");
+      expect(search).not.toContain("command=");
+      expect(search).not.toContain("attention=");
+      expect(search).toContain("run=task-001");
+    });
+    const listReads = requested.filter((url) =>
+      url.startsWith("/api/v1/operations/runs?"),
+    );
+    expect(listReads.length).toBeGreaterThan(0);
+    for (const read of listReads) {
+      const params = new URL(read, "http://mediaflow.test").searchParams;
+      expect(params.get("q")).toBeNull();
+      expect(params.get("status")).toBeNull();
+      expect(params.get("source")).toBeNull();
+      expect(params.get("command")).toBeNull();
+      expect(params.get("attention")).toBeNull();
+      expect(params.get("cursor")).toBeNull();
+    }
+  });
+
+  it("never lets an older time-range response overwrite the newest result", async () => {
+    const pending = new Map<string, (response: Response) => void>();
+    stubFetch(async (input) => {
+      const url = String(input);
+      if (!url.startsWith("/api/v1/operations/runs?")) {
+        return jsonResponse({ error: { code: "not_found" } }, 404);
+      }
+      const from =
+        new URL(url, "http://mediaflow.test").searchParams.get("from") ?? "all";
+      return new Promise<Response>((resolve) => pending.set(from, resolve));
+    });
+    authStore.setToken(TOKEN);
+    renderApp("/ui-v2/operations");
+
+    await screen.findByRole("heading", { name: "任务中心" });
+    await waitFor(() => expect(pending.has("all")).toBe(true));
+    pending.get("all")!(jsonResponse(pageDocument()));
+    await screen.findByRole("table");
+
+    const from = screen.getByLabelText("创建时间从（本地）");
+    const first = localDayStartIso("2026-08-01");
+    const second = localDayStartIso("2026-08-02");
+    expect(first).not.toBeNull();
+    expect(second).not.toBeNull();
+
+    fireEvent.change(from, { target: { value: "2026-08-01" } });
+    await waitFor(() => expect(pending.has(first as string)).toBe(true));
+    fireEvent.change(from, { target: { value: "2026-08-02" } });
+    await waitFor(() => expect(pending.has(second as string)).toBe(true));
+
+    pending.get(second as string)!(
+      jsonResponse(
+        pageDocument({
+          items: [runDocument({ source_scope: "NEWEST" })],
+          summary: summaryDocument({ total: 1 }),
+        }),
+      ),
+    );
+    expect((await screen.findAllByText("NEWEST")).length).toBeGreaterThan(0);
+
+    pending.get(first as string)!(
+      jsonResponse(
+        pageDocument({
+          items: [runDocument({ source_scope: "OLDER" })],
+          summary: summaryDocument({ total: 1 }),
+        }),
+      ),
+    );
+    await waitFor(() => expect(screen.queryAllByText("OLDER")).toHaveLength(0));
+    expect(screen.getAllByText("NEWEST").length).toBeGreaterThan(0);
   });
 
   it("selects a run into the overview panel and closes back to the list", async () => {
@@ -505,7 +690,7 @@ describe("Operations run inventory landing", () => {
       return jsonResponse({ error: { code: "not_found" } }, 404);
     });
     authStore.setToken(TOKEN);
-    renderApp("/ui-v2/operations?run=task-001&status=running");
+    renderApp("/ui-v2/operations?run=task-001&view=running");
 
     const detail = await screen.findByRole("region", { name: "运行详情" });
     expect(
@@ -515,7 +700,7 @@ describe("Operations run inventory landing", () => {
     expect(await screen.findByRole("table")).toBeVisible();
     expect(
       requested.some(
-        (url) => url.includes("status=running") && url.includes("limit=20"),
+        (url) => url.includes("view=running") && url.includes("limit=20"),
       ),
     ).toBe(true);
   });
@@ -568,6 +753,36 @@ describe("Operations run inventory landing", () => {
       await screen.findByRole("heading", { name: "Operations unavailable" }),
     ).toBeVisible();
     expect(screen.queryByText("还没有运行记录")).toBeNull();
+  });
+
+  it("retains the chosen time after a network failure and rereads that exact scope", async () => {
+    const user = userEvent.setup();
+    const requested: string[] = [];
+    let unavailable = true;
+    stubFetch(async (input) => {
+      const url = String(input);
+      requested.push(url);
+      const params = new URL(url, "http://mediaflow.test").searchParams;
+      if (params.has("from") && unavailable)
+        throw new TypeError("network down");
+      return jsonResponse(pageDocument());
+    });
+    authStore.setToken(TOKEN);
+    const { router } = renderApp("/ui-v2/operations");
+    await screen.findByRole("table");
+    fireEvent.change(screen.getByLabelText("创建时间从（本地）"), {
+      target: { value: "2026-08-01" },
+    });
+    await screen.findByRole("heading", { name: "Operations unavailable" });
+    expect(router.history.location.search).toBe("?from=2026-08-01");
+    const failedRead = requested.at(-1);
+    unavailable = false;
+    await user.click(screen.getAllByRole("button", { name: "Refresh" })[0]!);
+    await screen.findByRole("table");
+    expect(requested.at(-1)).toBe(failedRead);
+    expect(screen.getByLabelText("创建时间从（本地）")).toHaveValue(
+      "2026-08-01",
+    );
   });
 
   it("pages forward only through server cursors without merging pages", async () => {

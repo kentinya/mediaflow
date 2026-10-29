@@ -103,28 +103,54 @@ describe("operations return context", () => {
     const context =
       "status=failed&run=older-selected&cursor=abc&tab=items&item=old-item";
     // A plain back/cancel return restores the exact previous selection and
-    // its detail view unchanged.
+    // its detail view. The All view no longer owns the removed status/cursor
+    // filter state, so only the visible time range (none here) survives.
     expect(operationsLandingSearch(context, null)).toEqual({
-      status: "failed",
       run: "older-selected",
-      cursor: "abc",
       tab: "items",
       item: "old-item",
     });
     // Returning with the admitted run replaces the stale selection and drops
     // the detail keys that addressed the *other* run's evidence.
     expect(operationsLandingSearch(context, "admitted-task-1")).toEqual({
+      run: "admitted-task-1",
+    });
+    // A non-All view keeps its existing search/status/page context.
+    const ended =
+      "view=ended&status=failed&cursor=abc&dir=forward&run=older-selected";
+    expect(operationsLandingSearch(ended, null)).toEqual({
+      view: "ended",
       status: "failed",
       cursor: "abc",
+      dir: "forward",
+      run: "older-selected",
+    });
+    expect(operationsLandingSearch(ended, "admitted-task-1")).toEqual({
+      view: "ended",
+      status: "failed",
+      cursor: "abc",
+      dir: "forward",
       run: "admitted-task-1",
+    });
+    // The All view keeps its own visible time range and page cursor.
+    expect(
+      operationsLandingSearch(
+        "from=2026-08-01&to=2026-08-02&cursor=abc&dir=backward",
+        null,
+      ),
+    ).toEqual({
+      from: "2026-08-01",
+      to: "2026-08-02",
+      cursor: "abc",
+      dir: "backward",
     });
     // Without any context the landing keeps the default view plus the run.
     expect(operationsLandingSearch(null, "run-2")).toEqual({ run: "run-2" });
     expect(operationsLandingSearch("", null)).toEqual({});
     // An out-of-grammar run identity never addresses other work.
-    expect(operationsLandingSearch("status=failed", "../tasks/other")).toEqual({
-      status: "failed",
-    });
+    expect(operationsLandingSearch("status=failed", "../tasks/other")).toEqual(
+      {},
+    );
   });
 
   it("serializes the submitted list state without nesting the context key", () => {

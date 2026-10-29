@@ -19,6 +19,7 @@
 
 import { useEffect, useState, type ReactNode } from "react";
 import { AttachmentResults } from "./AttachmentResults";
+import { formatRunDateTime } from "./run-time";
 import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
 import { useAuthGeneration, useAuthToken } from "../../shared/api/auth-context";
 import {
@@ -435,7 +436,7 @@ function PlanEvidenceBlock({
 }
 
 function formatDateTime(value: string): string {
-  return value.replace("T", " ").replace(/\+00:00|Z$/, " UTC");
+  return formatRunDateTime(value);
 }
 
 /**

@@ -503,6 +503,10 @@ exact organizing context or the proven ordinary-operation library page; missing/
 identity stays a bounded read-only explanation, with no generic failure recovery or guessed work.
 
 The center has one page title, with content boundaries and spacing coordinated with MediaLibrary.
+The shared shell keyword input is not shown there. 全部任务 keeps only the local-timezone
+creation-day range, applies either or both sides without a search submission, and clears back
+to the complete authorized population; the other seven views retain their existing search and
+filters.  Management-API consumers outside that control keep their existing filter semantics.
 Long names/scopes retain readable status/progress columns and complete mouse/keyboard-accessible
 identity. Using the shared Files sidebar entry opens ordinary ResourceLibrary browsing without a
 task-center return button, including when leaving a Files visit that already carried one. Explicit

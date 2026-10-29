@@ -149,6 +149,12 @@ async function openNativeRecovery(page: Page, seeded: NativeRecoverySeed) {
   // selecting the exact run in 全部任务 and inspecting the item there.  A real
   // business blocker keeps its native type list.
   if (seeded.sourcePath.startsWith("Technical")) {
+    // A technical failure is read-only history in the ended view; the All
+    // view itself owns only the creation-time range.
+    await page
+      .getByRole("navigation", { name: "任务中心视图" })
+      .getByRole("button", { name: "已结束", exact: true })
+      .click();
     await page
       .getByRole("searchbox", { name: "搜索", exact: true })
       .fill(seeded.sourcePath);
@@ -435,7 +441,13 @@ async function expectRunTotal(page: Page, expected: number): Promise<void> {
  * evidence row) the Task 42.2 journey reads, then wait for its overview panel.
  */
 async function selectRichRun(page: Page): Promise<void> {
-  await page.getByLabel("操作类型").fill(RICH_RUN_COMMAND);
+  // The rich manual run is terminal, so its existing command filter lives in
+  // the ended view; the All view no longer exposes that control.
+  await page
+    .getByRole("navigation", { name: "任务中心视图" })
+    .getByRole("button", { name: "已结束", exact: true })
+    .click();
+  await page.getByLabel("操作类型", { exact: true }).fill(RICH_RUN_COMMAND);
   await expect(page).toHaveURL(/command=manual_organize/);
   // The server applies the command filter: exactly this one run matches, so
   // the row selection below can never address a different run.
@@ -580,7 +592,12 @@ test("server-side filtered selection and return keep the list context", async ({
   await connect(page);
   await openInventory(page);
 
+  // The lifecycle views keep the existing status filter; All owns only the
+  // creation-time range.
+  const views = page.getByRole("navigation", { name: "任务中心视图" });
+  await views.getByRole("button", { name: "已结束", exact: true }).click();
   await page.getByLabel("状态", { exact: true }).selectOption("failed");
+  await expect(page).toHaveURL(/view=ended/);
   await expect(page).toHaveURL(/status=failed/);
   const failedRow = page.getByRole("row").filter({ hasText: "失败" });
   await expect(failedRow).toHaveCount(1);
@@ -594,12 +611,14 @@ test("server-side filtered selection and return keep the list context", async ({
   await expect(detail.getByText(/失败/).first()).toBeVisible();
   await expect(detail.getByText("触发方式")).toBeVisible();
 
-  // Closing returns to the same filtered list; the reset reopens the full
-  // population — every step was a bounded server-side read.
+  // Closing returns to the same filtered list; the reset clears the filters,
+  // and the full All view still reopens the complete population — every step
+  // was a bounded server-side read.
   await detail.getByRole("button", { name: "关闭详情" }).click();
   await expect(page.getByRole("region", { name: "运行详情" })).toHaveCount(0);
   await expect(page).toHaveURL(/status=failed/);
   await page.getByRole("button", { name: "重置筛选" }).first().click();
+  await views.getByRole("button", { name: "全部任务", exact: true }).click();
   await expectRunTotal(page, SEEDED_RUN_TOTAL);
 });
 
@@ -891,6 +910,10 @@ test("an indeterminate run states an unknown total instead of inventing one", as
   // Both non-terminal standalone runs have not admitted any durable item
   // yet, so the backend publishes an honest indeterminate progress — never a
   // fabricated denominator or success percentage.
+  await page
+    .getByRole("navigation", { name: "任务中心视图" })
+    .getByRole("button", { name: "进行中", exact: true })
+    .click();
   await page.getByLabel("状态", { exact: true }).selectOption("running");
   await expect(page).toHaveURL(/status=running/);
   const runningRow = page
@@ -1166,13 +1189,8 @@ test("new task selection reconciles a lost admission, completes in the Worker, a
   // The preceding journey's one admitted execution Task (its analysis-only
   // preparation is not a separate organizing row).
   await expectRunTotal(page, SEEDED_RUN_TOTAL + 1);
-  // This Files 整理 admission publishes exactly one durable organizing Task
-  // before any analysis; the confirmed execution adopts that same Task, so no
-  // second run appears.  The corrected accounting is asserted at the end of the
-  // journey against durable state instead of a guessed pre-count.
-  await page.getByLabel("操作类型").fill("manual_organize");
-  await expect(page).toHaveURL(/command=manual_organize/);
-
+  // Ordinary sidebar Files navigation has no implicit Task Center return.
+  // The admitted execution offers its own exact linked-task entry below.
   // Task46.3 RO-2: the organizing journey starts from ResourceLibrary Files,
   // not from a task-center creation CTA.
   await openOrganizingSource(page);
@@ -1281,9 +1299,12 @@ test("new task selection reconciles a lost admission, completes in the Worker, a
 
   await page.getByRole("button", { name: "核对提交结果" }).click();
   await expect(
+    page.getByRole("heading", { name: "整理执行情况" }),
+  ).toBeVisible();
+  await page.getByRole("link", { name: "查看关联任务" }).click();
+  await expect(
     page.getByRole("heading", { name: "任务中心", exact: true }),
   ).toBeVisible();
-  await expect(page).toHaveURL(/command=manual_organize/);
   await expect(page).toHaveURL(/run=/);
   const runId = new URL(page.url()).searchParams.get("run");
   expect(runId).toBeTruthy();
@@ -1303,7 +1324,6 @@ test("new task selection reconciles a lost admission, completes in the Worker, a
   await expect(page.getByLabel("API token")).toBeVisible();
   await page.getByLabel("API token").fill(ADMIN_TOKEN);
   await page.getByRole("button", { name: "Connect" }).click();
-  await expect(page).toHaveURL(/command=manual_organize/);
   await expect(page).toHaveURL(new RegExp(`run=${runId}`));
   await expect(page.getByRole("region", { name: "运行详情" })).toBeVisible();
 
@@ -1416,6 +1436,10 @@ test("a selected execution never blocks the unselected sibling's correction and 
   // Confirm exactly the Ninth item.
   await page.getByRole("checkbox", { name: "选择 Tenth.2010.mkv" }).uncheck();
   await page.getByRole("button", { name: "确认整理 1 项" }).click();
+  await expect(
+    page.getByRole("heading", { name: "整理执行情况" }),
+  ).toBeVisible();
+  await page.getByRole("link", { name: "查看关联任务" }).click();
   await expect(page).toHaveURL(/run=/);
   const worker = await request.post(`${BASE}/__harness__/run-manual-worker`);
   expect(worker.ok()).toBeTruthy();
@@ -1555,6 +1579,10 @@ test("a brand-new ambiguous source can be corrected and executed on the same pag
   ).toEqual({ sourceExists: true, destinationTargets: [] });
 
   await page.getByRole("button", { name: "确认整理 1 项" }).click();
+  await expect(
+    page.getByRole("heading", { name: "整理执行情况" }),
+  ).toBeVisible();
+  await page.getByRole("link", { name: "查看关联任务" }).click();
   await expect(page).toHaveURL(/run=/);
   const worker = await request.post(`${BASE}/__harness__/run-manual-worker`);
   expect(worker.ok()).toBeTruthy();
@@ -1622,7 +1650,13 @@ test("a real standalone pipeline run keeps its durable steps through detail and 
 
   // Isolate the exact new run through the existing server-side command
   // filter — the standalone pipeline command is unique in this population.
-  await page.getByLabel("操作类型").fill("organize:harness-standalone");
+  await page
+    .getByRole("navigation", { name: "任务中心视图" })
+    .getByRole("button", { name: "已结束", exact: true })
+    .click();
+  await page
+    .getByLabel("操作类型", { exact: true })
+    .fill("organize:harness-standalone");
   await expect(page).toHaveURL(/command=organize%3Aharness-standalone/);
   await expectRunTotal(page, 1);
   const row = page.getByRole("row").filter({ hasText: run.sourcePath });
@@ -1759,16 +1793,12 @@ test("a real standalone pipeline run keeps its durable steps through detail and 
   expect(api.filter((entry) => entry.method !== "GET")).toEqual([]);
 });
 
-test("the default unfiltered task-center origin selects its admitted run through auth and restart", async ({
+test("ordinary Files navigation opens the exact linked run through auth and restart", async ({
   page,
   request,
 }) => {
-  // Task 42.3 correction (P1): the supported default entry — the task center
-  // list with no filters, no selected run and therefore a valid *empty*
-  // `returnOps=` origin — must behave exactly like a filtered origin: the
-  // journey starts, the admitted run is selected on return, and the empty
-  // origin survives authentication continuation instead of degrading to
-  // "not Operations-originated".
+  // Sidebar Files is an ordinary entry. After admission, the execution page's
+  // real linked-task action opens its exact run; no return origin is invented.
   const api = recordApiCalls(page);
   await request.post(`${BASE}/__harness__/register-manual-worker`);
   await connect(page, ADMIN_TOKEN);
@@ -1797,22 +1827,20 @@ test("the default unfiltered task-center origin selects its admitted run through
   // The Worker heartbeat window is bounded, so the real Worker is registered
   // exactly before the operator continues into the real Files journey.
   await request.post(`${BASE}/__harness__/register-manual-worker`);
-  // The journey continues through the shell, which carries this exact
-  // task-center origin into Files — the RO-2 replacement for the removed CTA.
+  // The ordinary sidebar journey clears any Task Center origin.
   await openOrganizingSource(page);
 
   // Select the live file from the actual ResourceLibrary listing.
   await page.getByRole("checkbox", { name: "选择 Four.2004.mkv" }).check();
   await page.getByRole("button", { name: "批量整理" }).click();
-  // The same-page preparation workspace keeps the preserved return context in
-  // the journey it opened, so the operator can return to the same task-center
-  // list (an empty `returnOps=` origin does not degrade to "no origin").
+  // Ordinary Files preparation has no task-center return context.
   await expect(
     page.getByRole("heading", { name: "新建整理任务", exact: true }),
   ).toBeVisible({ timeout: 30_000 });
   await expect(
     page.getByRole("link", { name: "返回任务中心" }).first(),
-  ).toBeVisible();
+  ).toHaveAttribute("href", "/ui-v2/operations");
+  await expect(page).not.toHaveURL(/returnOps=/);
   await expect(page).toHaveURL(/discoveryId=/);
   for (let step = 0; step < 20; step += 1) {
     const advanced = await request.post(
@@ -1851,9 +1879,12 @@ test("the default unfiltered task-center origin selects its admitted run through
     timeout: 30_000,
   });
 
-  // The explicit admission from the empty-origin journey also returns to the
-  // default list view with the admitted run selected (AC-T3).
+  // Follow the execution page's existing exact task link into the center.
   await page.getByRole("button", { name: "确认整理 1 项" }).click();
+  await expect(
+    page.getByRole("heading", { name: "整理执行情况" }),
+  ).toBeVisible();
+  await page.getByRole("link", { name: "查看关联任务" }).click();
   await expect(
     page.getByRole("heading", { name: "任务中心", exact: true }),
   ).toBeVisible();
@@ -1892,8 +1923,7 @@ test("the default unfiltered task-center origin selects its admitted run through
   await page.goto(`${BASE}/ui-v2/operations?run=${runId}`);
   await reconnectAtCurrentRoute(page, ADMIN_TOKEN);
 
-  // The empty origin survives authentication continuation: a reload plus
-  // Connect returns to the same list with the same admitted run selected.
+  // Reconnect preserves the explicitly selected run without replay.
   await page.reload();
   await expect(page.getByLabel("API token")).toBeVisible();
   await page.getByLabel("API token").fill(ADMIN_TOKEN);
@@ -3438,6 +3468,12 @@ test("a mixed run never offers its technical or unknown-era siblings for batch r
   };
   await connect(page);
   await openInventory(page);
+  // The mixed run has current business problems, so it remains searchable in
+  // the attention view after the All view's search was removed.
+  await page
+    .getByRole("navigation", { name: "任务中心视图" })
+    .getByRole("button", { name: "需要处理", exact: true })
+    .click();
   await page
     .getByRole("searchbox", { name: "搜索", exact: true })
     .fill("TaskCenter/Mixed");
@@ -3629,6 +3665,10 @@ test("a reopened mixed saved batch keeps its technical-history child read-only",
     },
   );
   await page
+    .getByRole("navigation", { name: "任务中心视图" })
+    .getByRole("button", { name: "需要处理", exact: true })
+    .click();
+  await page
     .getByRole("searchbox", { name: "搜索", exact: true })
     .fill("TaskCenter/Mixed");
   await page
@@ -3754,7 +3794,9 @@ test("the eight views and the exact Task/type problem file list work natively", 
   // Source scopes are exact historical filters carried by the URL and
   // consumed by the same real server query; the source options remain drawn
   // from the authorized population while summary counts follow this filter.
-  const sourceFilter = page.getByLabel("来源");
+  // They stay available in the recovery views, not the simplified All view.
+  await views.getByRole("button", { name: "识别恢复", exact: true }).click();
+  const sourceFilter = page.getByLabel("来源", { exact: true });
   await sourceFilter.selectOption("TaskCenter/Mixed");
   await expect
     .poll(() => new URL(page.url()).searchParams.get("source"))
@@ -3894,12 +3936,17 @@ test("source filters and 21-file recovery pages preserve exact evidence context"
 
   await connect(page);
   await openInventory(page);
-  await page.getByLabel("来源").selectOption("TaskCenter/PagedMetadata");
+  await page
+    .getByRole("navigation", { name: "任务中心视图" })
+    .getByRole("button", { name: "元数据恢复", exact: true })
+    .click();
+  await page
+    .getByLabel("来源", { exact: true })
+    .selectOption("TaskCenter/PagedMetadata");
   await expect
     .poll(() => new URL(page.url()).searchParams.get("source"))
     .toBe("TaskCenter/PagedMetadata");
   await expectRunTotal(page, 1);
-  await page.getByRole("button", { name: "元数据恢复", exact: true }).click();
   const row = page
     .getByRole("row")
     .filter({ hasText: "TaskCenter/PagedMetadata" });
@@ -4034,8 +4081,12 @@ test("a visible terminal inventory discovers new work and shows live progress", 
   await expect(runningRow.getByRole("cell").nth(4)).toHaveText("1 / 2 项");
 
   // Keep the watched population narrow and terminal: exactly the three
-  // completed-failure rows seeded through the production coordinator.
-  await page.getByRole("button", { name: "全部任务", exact: true }).click();
+  // completed-failure rows seeded through the production coordinator. The
+  // ended view keeps the existing search/status filters.
+  await page
+    .getByRole("navigation", { name: "任务中心视图" })
+    .getByRole("button", { name: "已结束", exact: true })
+    .click();
   await page
     .getByRole("searchbox", { name: "搜索", exact: true })
     .fill("Movies/Inventory Poll");
@@ -4407,4 +4458,196 @@ test("retired Task collections stay closed while each real identity reaches its 
     page.getByRole("heading", { name: "正在确认该 Task 的归属" }),
   ).toBeVisible();
   await expect(page.getByText(/没有提交任何命令/)).toBeVisible();
+});
+
+// -- PATCH-20261029-3: All-view creation-time range only --------------------
+
+type TimeFilterSeed = {
+  readonly targetDate: string;
+  readonly previousDate: string;
+  readonly nextDate: string;
+  readonly targetTotal: number;
+  readonly singleDayTotal: number;
+  readonly taskIds: readonly string[];
+  readonly firstSource: string;
+  readonly lastSource: string;
+  readonly previousSource: string;
+  readonly nextSource: string;
+};
+
+async function seedTimeFilterPopulation(
+  request: APIRequestContext,
+): Promise<TimeFilterSeed> {
+  const response = await request.post(
+    `${BASE}/__harness__/seed-time-filter-population`,
+  );
+  expect(response.ok()).toBeTruthy();
+  return (await response.json()) as TimeFilterSeed;
+}
+
+async function allViewPopulationTotal(
+  request: APIRequestContext,
+): Promise<number> {
+  const response = await request.get(`${BASE}/api/v1/operations/runs`, {
+    headers: { Authorization: `Bearer ${TOKEN}` },
+  });
+  expect(response.ok()).toBeTruthy();
+  return ((await response.json()) as { readonly total: number }).total;
+}
+
+test("time filter: a local day includes both boundaries and clears to all", async ({
+  page,
+  request,
+}) => {
+  const seeded = await seedTimeFilterPopulation(request);
+  const defaultTotal = await allViewPopulationTotal(request);
+  await connect(page);
+  await openInventory(page);
+
+  // The All view has no shell keyword box, search submit, source, status or
+  // command control; only the local creation-day range remains.
+  await expect(page.getByRole("searchbox")).toHaveCount(0);
+  await expect(page.getByLabel("来源", { exact: true })).toHaveCount(0);
+  await expect(page.getByLabel("状态", { exact: true })).toHaveCount(0);
+  await expect(page.getByLabel("操作类型", { exact: true })).toHaveCount(0);
+  await expectRunTotal(page, defaultTotal);
+
+  await page.getByLabel("创建时间从（本地）").fill(seeded.targetDate);
+  await page.getByLabel("至（本地）").fill(seeded.targetDate);
+  await expect(page).toHaveURL(new RegExp(`from=${seeded.targetDate}`));
+  await expect(page).toHaveURL(new RegExp(`to=${seeded.targetDate}`));
+  await expectRunTotal(page, seeded.targetTotal);
+
+  // The newest fixture row is the final microsecond of the selected local day;
+  // the oldest is exactly local midnight and sits on the second server page.
+  await expect(
+    page.getByRole("row").filter({ hasText: seeded.lastSource }),
+  ).toHaveCount(1);
+  await page.getByRole("button", { name: "下一页" }).click();
+  await expect(page).toHaveURL(/cursor=/);
+  await expect(
+    page.getByRole("row").filter({ hasText: seeded.firstSource }),
+  ).toHaveCount(1);
+
+  // Each side of the range remains independently usable. A to-only past day
+  // and a from-only future day each select exactly their own real row.
+  await page.getByLabel("创建时间从（本地）").fill("");
+  await expect(page).not.toHaveURL(/from=/);
+  await page.getByLabel("至（本地）").fill(seeded.previousDate);
+  await expectRunTotal(page, seeded.singleDayTotal);
+  await expect(
+    page.getByRole("row").filter({ hasText: seeded.previousSource }),
+  ).toHaveCount(1);
+
+  await page.getByLabel("至（本地）").fill("");
+  await page.getByLabel("创建时间从（本地）").fill("2999-01-01");
+  await expect(
+    page.getByRole("heading", { name: "没有匹配的运行" }),
+  ).toBeVisible();
+  await expect(
+    page.getByRole("row").filter({ hasText: seeded.previousSource }),
+  ).toHaveCount(0);
+
+  // Clearing the time returns to the complete authorized population and
+  // drops the cursor from the previous range.
+  await page.getByRole("button", { name: "清除时间" }).first().click();
+  await expect(page).not.toHaveURL(/from=|to=|cursor=/);
+  await expectRunTotal(page, defaultTotal);
+});
+
+test("time filter: pages, returns from detail, and survives reconnect", async ({
+  page,
+  request,
+}) => {
+  const seeded = await seedTimeFilterPopulation(request);
+  await connect(page);
+  await openInventory(page);
+
+  await page.getByLabel("创建时间从（本地）").fill(seeded.targetDate);
+  await page.getByLabel("至（本地）").fill(seeded.targetDate);
+  await expectRunTotal(page, seeded.targetTotal);
+  await page.getByRole("button", { name: "下一页" }).click();
+  await expect(page).toHaveURL(/cursor=/);
+  const firstRow = page
+    .getByRole("row")
+    .filter({ hasText: seeded.firstSource });
+  await expect(firstRow).toHaveCount(1);
+
+  // Selecting the exact run opens its durable overview; closing it returns to
+  // the same time range and server page, not page one or another range.
+  await firstRow.getByRole("button").first().click();
+  await expect(page.getByRole("region", { name: "运行详情" })).toBeVisible();
+  await expect(page).toHaveURL(/run=/);
+  await page
+    .getByRole("region", { name: "运行详情" })
+    .getByRole("button", { name: "关闭详情" })
+    .click();
+  await expect(page).toHaveURL(/cursor=/);
+  await expect(
+    page.getByRole("row").filter({ hasText: seeded.firstSource }),
+  ).toHaveCount(1);
+
+  // The memory-only token and URL state are restored through the real
+  // reconnect boundary with the same local dates and page.
+  await page.reload();
+  await reconnectAtCurrentRoute(page, TOKEN);
+  await expect(page).toHaveURL(new RegExp(`from=${seeded.targetDate}`));
+  await expect(page).toHaveURL(new RegExp(`to=${seeded.targetDate}`));
+  await expect(page).toHaveURL(/cursor=/);
+  await expect(page.getByLabel("创建时间从（本地）")).toHaveValue(
+    seeded.targetDate,
+  );
+  await expect(
+    page.getByRole("row").filter({ hasText: seeded.firstSource }),
+  ).toHaveCount(1);
+
+  // A changed range starts from its own first page; the old cursor is never
+  // replayed against the new population.
+  await page.getByLabel("至（本地）").fill("");
+  await page.getByLabel("创建时间从（本地）").fill(seeded.nextDate);
+  await page.getByLabel("至（本地）").fill(seeded.nextDate);
+  await expect(page).not.toHaveURL(/cursor=/);
+  await expectRunTotal(page, seeded.singleDayTotal);
+  await expect(
+    page.getByRole("row").filter({ hasText: seeded.nextSource }),
+  ).toHaveCount(1);
+});
+
+test("time filter: an old All link never keeps its removed hidden filters", async ({
+  page,
+  request,
+}) => {
+  const seeded = await seedTimeFilterPopulation(request);
+  const defaultTotal = await allViewPopulationTotal(request);
+  await connect(page);
+
+  // An old bookmark carries the removed keyword/source/status/command/
+  // attention conditions and one exact run identity. Reconnecting preserves
+  // the run but reads the complete time-only population.
+  await page.goto(
+    "/ui-v2/operations?q=NoSuchRun&status=failed" +
+      "&source=TaskCenter%2FTimeFilter&command=manual_organize" +
+      `&attention=true&run=${seeded.taskIds[0]}`,
+  );
+  await reconnectAtCurrentRoute(page, TOKEN);
+  await expect(page.getByRole("region", { name: "运行详情" })).toBeVisible();
+  await expect(page).toHaveURL(new RegExp(`run=${seeded.taskIds[0]}`));
+  await expect(page).not.toHaveURL(/q=|status=|source=|command=|attention=/);
+  await expectRunTotal(page, defaultTotal);
+  await expect(page.getByLabel("来源", { exact: true })).toHaveCount(0);
+  await expect(page.getByLabel("状态", { exact: true })).toHaveCount(0);
+  await expect(page.getByLabel("操作类型", { exact: true })).toHaveCount(0);
+
+  // The other seven views keep their existing search and filters.
+  const views = page.getByRole("navigation", { name: "任务中心视图" });
+  await views.getByRole("button", { name: "已结束", exact: true }).click();
+  await expect(
+    page.getByRole("searchbox", { name: "搜索", exact: true }),
+  ).toBeVisible();
+  await expect(page.getByLabel("来源", { exact: true })).toBeVisible();
+  await expect(page.getByLabel("状态", { exact: true })).toBeVisible();
+  await expect(page.getByLabel("操作类型", { exact: true })).toBeVisible();
+  await page.getByLabel("状态", { exact: true }).selectOption("failed");
+  await expect(page).toHaveURL(/view=ended/);
+  await expect(page).toHaveURL(/status=failed/);
 });

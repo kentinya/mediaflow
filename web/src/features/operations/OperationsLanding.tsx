@@ -95,6 +95,12 @@ import {
   readOperationsReturnContext,
 } from "../../shared/navigation/operations-return";
 import { useQueryClient, type UseQueryResult } from "@tanstack/react-query";
+import {
+  formatRunDateTime,
+  localDateInputValue,
+  localDayEndIso,
+  localDayStartIso,
+} from "./run-time";
 
 /** The bounded page size submitted to the server on every read. */
 const RUN_PAGE_LIMIT = 20;
@@ -170,13 +176,39 @@ function readAttentionFacet(search: Record<string, unknown>): boolean {
  * Read the submitted filters from the URL: every key falls back to its safe
  * default when absent, oversized or not matching the backend grammar.
  */
-function readFilters(search: Record<string, unknown>): RunListFilters {
+function readFilters(
+  search: Record<string, unknown>,
+  view: RunView,
+): RunListFilters {
   const status = readSafeSearchValue(search, "status");
   const command = readSafeSearchValue(search, "command");
   const source = readSafeSearchValue(search, "source");
   const q = readSafeSearchValue(search, "q");
-  const from = readSafeSearchValue(search, "from");
-  const to = readSafeSearchValue(search, "to");
+  const rawFrom = readSafeSearchValue(search, "from");
+  const rawTo = readSafeSearchValue(search, "to");
+  // The date controls are calendar days in the browser's local timezone. An
+  // older full-instant boundary keeps the day the previous UI displayed, so a
+  // reload does not silently reinterpret the operator's selected day.
+  const fromDate =
+    rawFrom && DATE_TOKEN.test(rawFrom) ? localDateInputValue(rawFrom) : "";
+  const toDate =
+    rawTo && DATE_TOKEN.test(rawTo) ? localDateInputValue(rawTo) : "";
+  const from = localDayStartIso(fromDate) === null ? "" : fromDate;
+  const to = localDayEndIso(toDate) === null ? "" : toDate;
+  // 全部任务 only offers the creation-time range. Removed search, source,
+  // status, command and attention facets stay accepted by the management API
+  // for other views/consumers, but they never restrict this view invisibly.
+  if (view === "all") {
+    return {
+      status: "all",
+      command: "all",
+      source: "all",
+      q: "",
+      from,
+      to,
+      attention: false,
+    };
+  }
   return {
     status:
       status && (status === "all" || STATUS_TOKEN.test(status))
@@ -191,8 +223,8 @@ function readFilters(search: Record<string, unknown>): RunListFilters {
         ? source || "all"
         : "all",
     q: q.length <= 128 ? q : "",
-    from: from && DATE_TOKEN.test(from) ? from : "",
-    to: to && DATE_TOKEN.test(to) ? to : "",
+    from,
+    to,
     attention: readAttentionFacet(search),
   };
 }
@@ -290,14 +322,19 @@ function readProblemType(
 
 function filtersToSearch(
   filters: RunListFilters,
+  view: RunView,
 ): Record<string, RunSearchValue> {
   const search: Record<string, RunSearchValue> = {};
+  if (filters.from) search["from"] = filters.from;
+  if (filters.to) search["to"] = filters.to;
+  // Only the visible controls of the submitted view enter the URL. The All
+  // view keeps its removed filters out entirely; the other seven views keep
+  // their existing search/source/status/command/attention interactions.
+  if (view === "all") return search;
   if (filters.status !== "all") search["status"] = filters.status;
   if (filters.command !== "all") search["command"] = filters.command;
   if (filters.source !== "all") search["source"] = filters.source;
   if (filters.q) search["q"] = filters.q;
-  if (filters.from) search["from"] = filters.from;
-  if (filters.to) search["to"] = filters.to;
   // The facet is written as the boolean `true` so the router serializes it
   // as the literal `attention=true`: a *string* `"true"` would round-trip as
   // `attention=%22true%22`, which the reconnect allowlist and an operator
@@ -316,7 +353,7 @@ function listStateSearch(
   view: RunView,
   problem: RunProblemType | null,
 ): Record<string, RunSearchValue> {
-  const search = filtersToSearch(filters);
+  const search = filtersToSearch(filters, view);
   if (view !== "all") search["view"] = view;
   if (problem !== null && !isRecoveryView(view)) {
     search["problem"] = problem;
@@ -339,6 +376,31 @@ function isFiltered(filters: RunListFilters): boolean {
     filters.from !== "" ||
     filters.to !== ""
   );
+}
+
+/** The conditions the All view removed from its visible controls. */
+const REMOVED_ALL_VIEW_FILTER_KEYS = [
+  "q",
+  "status",
+  "command",
+  "source",
+  "attention",
+  "problem",
+] as const;
+
+/** Whether an old All-view URL still carries a hidden removed condition. */
+function hasRemovedAllViewFilter(search: Record<string, unknown>): boolean {
+  return REMOVED_ALL_VIEW_FILTER_KEYS.some((key) => {
+    const value = search[key];
+    return !(
+      value === undefined ||
+      value === "" ||
+      value === "all" ||
+      value === false ||
+      value === "false" ||
+      value === "no"
+    );
+  });
 }
 
 /** Chinese business label of one run's operation kind. */
@@ -364,7 +426,47 @@ function detailLinkOf(run: RunSummary): string | null {
 }
 
 function formatDate(value: string): string {
-  return value.replace("T", " ").replace("+00:00", " UTC");
+  return formatRunDateTime(value);
+}
+
+/**
+ * The creation-day range shared by every view. Both controls apply their
+ * value independently (no submit button), and each constrains the other's
+ * selectable calendar so the start can never be chosen after the end.
+ */
+function RunTimeRangeFields({
+  filters,
+  onApply,
+}: {
+  readonly filters: RunListFilters;
+  readonly onApply: (next: Partial<RunListFilters>) => void;
+}) {
+  return (
+    <>
+      <span className="mf-run-filter-field">
+        <label htmlFor="run-from-filter">创建时间从（本地）</label>
+        <input
+          id="run-from-filter"
+          type="date"
+          value={filters.from}
+          max={filters.to || undefined}
+          aria-describedby="run-time-filter-note"
+          onChange={(event) => onApply({ from: event.target.value })}
+        />
+      </span>
+      <span className="mf-run-filter-field">
+        <label htmlFor="run-to-filter">至（本地）</label>
+        <input
+          id="run-to-filter"
+          type="date"
+          value={filters.to}
+          min={filters.from || undefined}
+          aria-describedby="run-time-filter-note"
+          onChange={(event) => onApply({ to: event.target.value })}
+        />
+      </span>
+    </>
+  );
 }
 
 export function OperationsLanding() {
@@ -372,8 +474,8 @@ export function OperationsLanding() {
   const queryClient = useQueryClient();
   const searchParams = useSearch({ strict: false }) as Record<string, unknown>;
   const navigate = useNavigate();
-  const filters = readFilters(searchParams);
   const view = readView(searchParams);
+  const filters = readFilters(searchParams, view);
   const problem = readProblem(searchParams);
   const selectedId = readSafeSearchValue(searchParams, "run");
   const problemRunId = readSafeSearchValue(searchParams, "problemRun");
@@ -392,7 +494,11 @@ export function OperationsLanding() {
   // Paging context lives in the URL (cursor + direction), never in component
   // state, so a refresh, a Back/Forward step and a reconnect all restore the
   // same server page instead of silently restarting at the first one.
-  const { cursor, direction } = readPageState(searchParams);
+  const needsAllViewNormalization =
+    view === "all" && hasRemovedAllViewFilter(searchParams);
+  const { cursor, direction } = readPageState(
+    needsAllViewNormalization ? {} : searchParams,
+  );
   // A completed or interrupted journey returns with its preserved context:
   // the landing restores that bounded list state (filters, page, selection
   // and detail view) exactly once and drops the marker, so the URL stays the
@@ -422,6 +528,10 @@ export function OperationsLanding() {
 
   const effectiveStatus = filters.status === "all" ? null : filters.status;
   const effectiveCommand = filters.command === "all" ? null : filters.command;
+  // The visible controls are local calendar days; the API receives the
+  // unambiguous UTC instants for those days, including the final microsecond.
+  const fromBoundary = localDayStartIso(filters.from);
+  const toBoundary = localDayEndIso(filters.to);
 
   const query = useQuery(
     runInventoryQueryOptions(token, {
@@ -429,8 +539,8 @@ export function OperationsLanding() {
       command: effectiveCommand,
       source: filters.source === "all" ? null : filters.source,
       q: filters.q || null,
-      from: filters.from || null,
-      to: filters.to || null,
+      from: fromBoundary,
+      to: toBoundary,
       attention: filters.attention ? true : null,
       view: view === "all" ? null : view,
       problem: view !== "all" && !isRecoveryView(view) ? problem : null,
@@ -462,7 +572,24 @@ export function OperationsLanding() {
     });
   };
 
-  /** Switch to one of the nine sibling views, always from the first page. */
+  // An old All-view link may still carry the removed search/source/status/
+  // command/attention conditions. They never narrow the population, and a
+  // cursor minted for that hidden scope must not be replayed against the
+  // visible time-only population, so the URL is reduced once to the visible
+  // filters while preserving the exact selected run.
+  useEffect(() => {
+    if (!needsAllViewNormalization) return;
+    const search = listStateSearch(filters, view, null);
+    if (selectedId !== "") {
+      search["run"] = selectedId;
+      Object.assign(search, runDetailStateSearch(detailState));
+    }
+    void navigate({ to: "/operations", search, replace: true });
+    // Normalize only on the transition into a hidden All-view condition.
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [needsAllViewNormalization]);
+
+  /** Switch to one of the eight sibling views, always from the first page. */
   const selectView = (next: RunView) => {
     void navigate({
       to: "/operations",
@@ -665,147 +792,140 @@ export function OperationsLanding() {
                     className="mf-count-section mf-run-filters"
                     aria-label="运行筛选"
                   >
-                    <form
-                      className="mf-run-filter-bar"
-                      onSubmit={(event) => {
-                        event.preventDefault();
-                        applyFilters({ q: searchDraft.trim() });
-                      }}
-                    >
-                      <div className="mf-run-search-field">
-                        <label
-                          htmlFor="run-search"
-                          className="mf-visually-hidden"
+                    {view === "all" ? (
+                      <div className="mf-run-filter-bar">
+                        <RunTimeRangeFields
+                          filters={filters}
+                          onApply={applyFilters}
+                        />
+                        {filtered && (
+                          <button
+                            type="button"
+                            className="mf-button mf-button-secondary"
+                            onClick={resetFilters}
+                          >
+                            清除时间
+                          </button>
+                        )}
+                      </div>
+                    ) : (
+                      <form
+                        className="mf-run-filter-bar"
+                        onSubmit={(event) => {
+                          event.preventDefault();
+                          applyFilters({ q: searchDraft.trim() });
+                        }}
+                      >
+                        <div className="mf-run-search-field">
+                          <label
+                            htmlFor="run-search"
+                            className="mf-visually-hidden"
+                          >
+                            搜索
+                          </label>
+                          <input
+                            id="run-search"
+                            type="search"
+                            value={searchDraft}
+                            maxLength={128}
+                            placeholder="搜索任务名称、文件或路径"
+                            onChange={(event) =>
+                              setSearchDraft(event.target.value)
+                            }
+                          />
+                        </div>
+                        <span className="mf-run-filter-field">
+                          <label htmlFor="run-source-filter">来源</label>
+                          <select
+                            id="run-source-filter"
+                            value={filters.source}
+                            onChange={(event) =>
+                              applyFilters({
+                                source: event.target.value || "all",
+                              })
+                            }
+                          >
+                            <option value="all">全部来源</option>
+                            {page?.summary.sources.map((sourceOption) => (
+                              <option
+                                key={sourceOption.value}
+                                value={sourceOption.value}
+                              >
+                                {sourceOption.label}
+                              </option>
+                            ))}
+                            {filters.source !== "all" &&
+                              page?.summary.sources.every(
+                                (sourceOption) =>
+                                  sourceOption.value !== filters.source,
+                              ) && (
+                                <option value={filters.source}>
+                                  {filters.source}
+                                </option>
+                              )}
+                          </select>
+                        </span>
+                        <span className="mf-run-filter-field">
+                          <label htmlFor="run-status-filter">状态</label>
+                          <select
+                            id="run-status-filter"
+                            value={filters.status}
+                            onChange={(event) =>
+                              applyFilters({ status: event.target.value })
+                            }
+                          >
+                            <option value="all">全部状态</option>
+                            {RUN_STATUSES.map((status) => (
+                              <option key={status} value={status}>
+                                {RUN_STATUS_LABELS[status]}
+                              </option>
+                            ))}
+                          </select>
+                        </span>
+                        <span className="mf-run-filter-field">
+                          <label htmlFor="run-command-filter">操作类型</label>
+                          <input
+                            id="run-command-filter"
+                            type="text"
+                            value={
+                              filters.command === "all" ? "" : filters.command
+                            }
+                            maxLength={64}
+                            placeholder="如 preview、organize"
+                            onChange={(event) =>
+                              applyFilters({
+                                command:
+                                  event.target.value === ""
+                                    ? "all"
+                                    : event.target.value,
+                              })
+                            }
+                          />
+                        </span>
+                        <RunTimeRangeFields
+                          filters={filters}
+                          onApply={applyFilters}
+                        />
+                        <button
+                          type="submit"
+                          className="mf-button mf-button-secondary"
                         >
                           搜索
-                        </label>
-                        <input
-                          id="run-search"
-                          type="search"
-                          value={searchDraft}
-                          maxLength={128}
-                          placeholder="搜索任务名称、文件或路径"
-                          onChange={(event) =>
-                            setSearchDraft(event.target.value)
-                          }
-                        />
-                      </div>
-                      <span className="mf-run-filter-field">
-                        <label htmlFor="run-source-filter">来源</label>
-                        <select
-                          id="run-source-filter"
-                          value={filters.source}
-                          onChange={(event) =>
-                            applyFilters({
-                              source: event.target.value || "all",
-                            })
-                          }
-                        >
-                          <option value="all">全部来源</option>
-                          {page?.summary.sources.map((sourceOption) => (
-                            <option
-                              key={sourceOption.value}
-                              value={sourceOption.value}
-                            >
-                              {sourceOption.label}
-                            </option>
-                          ))}
-                          {filters.source !== "all" &&
-                            page?.summary.sources.every(
-                              (sourceOption) =>
-                                sourceOption.value !== filters.source,
-                            ) && (
-                              <option value={filters.source}>
-                                {filters.source}
-                              </option>
-                            )}
-                        </select>
-                      </span>
-                      <span className="mf-run-filter-field">
-                        <label htmlFor="run-status-filter">状态</label>
-                        <select
-                          id="run-status-filter"
-                          value={filters.status}
-                          onChange={(event) =>
-                            applyFilters({ status: event.target.value })
-                          }
-                        >
-                          <option value="all">全部状态</option>
-                          {RUN_STATUSES.map((status) => (
-                            <option key={status} value={status}>
-                              {RUN_STATUS_LABELS[status]}
-                            </option>
-                          ))}
-                        </select>
-                      </span>
-                      <span className="mf-run-filter-field">
-                        <label htmlFor="run-command-filter">操作类型</label>
-                        <input
-                          id="run-command-filter"
-                          type="text"
-                          value={
-                            filters.command === "all" ? "" : filters.command
-                          }
-                          maxLength={64}
-                          placeholder="如 preview、organize"
-                          onChange={(event) =>
-                            applyFilters({
-                              command:
-                                event.target.value === ""
-                                  ? "all"
-                                  : event.target.value,
-                            })
-                          }
-                        />
-                      </span>
-                      <span className="mf-run-filter-field">
-                        <label htmlFor="run-from-filter">创建时间从</label>
-                        <input
-                          id="run-from-filter"
-                          type="date"
-                          value={filters.from.slice(0, 10)}
-                          onChange={(event) =>
-                            applyFilters({
-                              from:
-                                event.target.value === ""
-                                  ? ""
-                                  : `${event.target.value}T00:00:00Z`,
-                            })
-                          }
-                        />
-                      </span>
-                      <span className="mf-run-filter-field">
-                        <label htmlFor="run-to-filter">至</label>
-                        <input
-                          id="run-to-filter"
-                          type="date"
-                          value={filters.to.slice(0, 10)}
-                          onChange={(event) =>
-                            applyFilters({
-                              to:
-                                event.target.value === ""
-                                  ? ""
-                                  : `${event.target.value}T23:59:59Z`,
-                            })
-                          }
-                        />
-                      </span>
-                      <button
-                        type="submit"
-                        className="mf-button mf-button-secondary"
-                      >
-                        搜索
-                      </button>
-                      {filtered && (
-                        <button
-                          type="button"
-                          className="mf-button mf-button-secondary"
-                          onClick={resetFilters}
-                        >
-                          重置筛选
                         </button>
-                      )}
-                    </form>
+                        {filtered && (
+                          <button
+                            type="button"
+                            className="mf-button mf-button-secondary"
+                            onClick={resetFilters}
+                          >
+                            重置筛选
+                          </button>
+                        )}
+                      </form>
+                    )}
+                    <p className="mf-dashboard-meta" id="run-time-filter-note">
+                      创建时间按本机时区选择；列表时间显示同一时区及明确偏移。
+                    </p>
                   </section>
                   {query.data === undefined ? (
                     <StatusBanner variant="info" title="正在加载运行清单">
@@ -828,7 +948,7 @@ export function OperationsLanding() {
                             className="mf-button mf-button-secondary"
                             onClick={resetFilters}
                           >
-                            重置筛选
+                            {view === "all" ? "清除时间" : "重置筛选"}
                           </button>
                         )}
                       </div>
@@ -840,8 +960,10 @@ export function OperationsLanding() {
                     >
                       <p>
                         {filtered
-                          ? "没有运行匹配已提交的筛选条件。重置筛选可以查看此主体可读的全部运行。"
-                          : "当前没有已受理或历史运行记录。从下方入口开始一次扫描、预览或整理。"}
+                          ? view === "all"
+                            ? "没有运行匹配已选择的创建时间范围。清除时间可以查看全部任务。"
+                            : "没有运行匹配已提交的筛选条件。重置筛选可以查看此主体可读的全部运行。"
+                          : "当前没有已受理或历史整理任务。可从资源库文件页选择文件开始整理。"}
                       </p>
                       {filtered && (
                         <div className="mf-actions">
@@ -850,7 +972,7 @@ export function OperationsLanding() {
                             className="mf-button mf-button-secondary"
                             onClick={resetFilters}
                           >
-                            重置筛选
+                            {view === "all" ? "清除时间" : "重置筛选"}
                           </button>
                         </div>
                       )}
@@ -1044,7 +1166,7 @@ function ViewSummary({
         </p>
       )}
       <p className="mf-dashboard-meta">
-        统计按当前筛选后的完整总体计算，翻页不改变数字。来源选项来自完整授权总体。
+        统计按当前筛选后的完整总体计算，翻页不改变数字。
         任务列表合并授权范围内的 Job 与 Task，并按明确关联去重。
       </p>
     </section>

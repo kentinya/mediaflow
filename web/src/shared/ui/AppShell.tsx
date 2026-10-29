@@ -114,6 +114,10 @@ export function AppShell({ children }: AppShellProps) {
   const searchIsFiles =
     pathname === "/resourcelib/files" || pathname === "/medialib/files";
   const searchIsStorage = pathname === "/storage";
+  // The task center's eight views have no shared keyword search: its All view
+  // owns only the creation-time range, and the other views own their own
+  // explicit filters. Account/notification controls stay in the top bar.
+  const searchIsOperations = pathname === "/operations";
   // Only the Rules workspace route gets the Rules header. The dedicated Edit
   // route is a distinct full-page state with its own subject heading, so the
   // shared shell must not add a second Rules title above it.
@@ -282,7 +286,7 @@ export function AppShell({ children }: AppShellProps) {
             </div>
           ) : (
             <>
-              {searchField}
+              {!searchIsOperations && searchField}
               {shellActions}
             </>
           )}
