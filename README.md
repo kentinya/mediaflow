@@ -44,7 +44,8 @@ and engine settings with actual resident adoption are accepted. Slice45's Task C
 Scan/Preview/FileIndex boundaries remain intact; V2 is still unreleased and V1 cutover is not selected.
 Slice46 is PASS / CLOSED: readable V2 actions, Files-first admitted organizing, library-local ordinary
 operation status, organizing-only eight-view/four-type Task Center and checked Enabled/real Run once
-are accepted. No active implementation Task remains; A selects the next large Slice separately.
+are accepted. No active implementation Task remains; [TASK.md](TASK.md) records the latest
+standalone correction and B review. A selects the next large Slice separately.
 
 ## V2 frontend (web/)
 

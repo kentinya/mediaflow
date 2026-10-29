@@ -8,7 +8,7 @@
 | 项目与本地使用 | [根 README](../README.md) |
 | 永久安全、角色和范围 | [AGENTS.md](../AGENTS.md) |
 | 生命周期、测试分工、Git、审查与关闭 | [Development Workflow](development-workflow.md)，唯一流程权威 |
-| 当前 Slice / Task | [SLICE.md](../SLICE.md) / [TASK.md](../TASK.md)；大版本依据已提交 Contract，独立小版本 bug 依据用户授权范围及 B 的 Task；规划草案不授权实施 |
+| 当前 Slice / Task 与独立修复 | [SLICE.md](../SLICE.md) 保留大版本合同；[TASK.md](../TASK.md) 记录当前实施状态或最近 B 审查指针。大版本依据已提交 Contract，独立小版本 bug 依据用户授权范围及 B 的 Task；规划草案不授权实施 |
 | 大版本优先级 / 关闭事实 | [Roadmap](roadmap.md) / [Progress](progress.md) |
 | 完整产品定义与稳定需求 ID | [Requirements](requirements.md) 的 V1 基线与明确修订；[V2 Requirements](v2-requirements.md) 的现行 V2 定义 |
 | 完整用户旅程 | [Product Experience](product-experience.md) |

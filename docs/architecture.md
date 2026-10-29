@@ -817,8 +817,9 @@ confirmation sequence. Files initial confirmation is unchanged.
 ### CURRENT — V2 Automation workspace and consumed engine settings (Slice43 PASS / CLOSED)
 
 Slice43 is PASS / CLOSED at implementation `97316131946bdecc483b684f6e6f6ecb98c5594d` after
-whole-Slice A review from the original Base; the accepted [Contract](../SLICE.md) records evidence
-and deferrals. The hold Contract `ed974e0df8b263f631bfe48b524da461013d8780:SLICE.md` and preservation
+whole-Slice A review from the original Base; its accepted Contract is retained at
+[`e9f1a8dc:SLICE.md`](https://github.com/kentinya/mediaflow/blob/e9f1a8dc607cfc6d5ea02141b058da8ce849cd70/SLICE.md),
+not the root Contract for a later Slice. The hold Contract `ed974e0df8b263f631bfe48b524da461013d8780:SLICE.md` and preservation
 branch `frozen/slice-43-2026-10-15` remain unchanged. Accepted45 Scan/Preview/FileIndex removal
 is an integration invariant; no exclusive retired models/repos/routes or second engine are restored.
 
@@ -838,6 +839,15 @@ Task/execution origin links/checkpoints, not first media mutation; all later con
 recovery stay in Task Center, including pre-mutation scanning/metadata failure. A missing link alone
 does not prove non-execution; unknown admission/handoff/effects require reconciliation/investigation,
 not replay or synthetic Tasks. Historical results and recovery-attempt links remain distinct.
+
+The records API publishes one complete `failureStage` envelope across proven pre-start and formal
+Task failures. A settled pre-start failure retains its durable stage/category/nextAction/statement,
+with `items=[]`, all four `effects` counts zero, `itemsTruncated=false` and `unavailable=false`:
+there is no formal Task or per-item effect evidence, not an unreadable history. Existing historical
+rows receive this projection without migration or execution. The complete pre-start envelope no
+longer causes the unchanged strict Web decoder to reject a readable mixed page. Unavailable formal
+Task item evidence still reports `unavailable=true`, and actual denied/malformed/read failures remain
+distinct. Records refresh uses the same bounded GET and grants no work, retry or execution authority.
 
 Capacity bounds pending+running Jobs; stale age observes updates. Polling adoption must be proved by
 fresh actual consumer values/version at safe resident-loop boundaries, independently of each Job's

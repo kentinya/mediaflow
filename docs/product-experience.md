@@ -429,7 +429,10 @@ normal runs use normal scope/checks; no failed-item selection or cross-run obser
   stage/reason, known effects and repair/Task Center links; no local file decisions, re-analysis or
   execution controls. Bounded authoritative queries reach every authorized row; actual admitted runs
   count once, unavailable/unknown data are not zero/success, and bound reached is not scope exhaustion.
-- **Before organizing starts:** explain the failed prerequisite and link its correction. After repair,
+- **Before organizing starts:** explain the failed prerequisite and link its correction. Proven
+  pre-start failure rows remain visible alongside normal/no-work records, including existing history;
+  absent per-item results/media effects do not mean the history is unreadable. Refresh is the same
+  read-only query, not another attempt. After repair,
   explicitly retry through existing supported commands only if durable evidence proves no formal
   execution/media effects and the old attempt is settled/fenced, with current permissions/context/
   authority rechecked. Do not duplicate queued work or silently repin a changed definition; unsupported
