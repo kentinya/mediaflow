@@ -8,13 +8,13 @@ Authority: 用户授权的三项既有界面修正；生命周期、测试与独
 Task ID: PATCH-20261029-2
 Task Type: STANDALONE MINOR BUG
 Parent Slice: NONE
-Status: PLANNED
+Status: READY FOR B REVIEW
 Task Base: 8ea5cbbd4914316deadda8297e1bdf38dd9d8eeb
 Difficulty: Medium
 Test Level: T3
 Planner / Reviewer: B
 Development Authorization: USER-ACTIVATED TASK — 2026-10-29
-Next Action: DEVELOPER IMPLEMENTS THIS TASK
+Next Action: B REVIEWS THIS TASK AND DECIDES PASS / FIX REQUIRED
 ```
 
 ## Activation
@@ -204,8 +204,74 @@ Python/Web 单元/E2E、Docker 或 wheel 发布矩阵。发现实际跨边界风
 
 ## Developer Completion Report
 
-未开始；Developer 接手后填写实现 checkpoint 与受影响测试结果。
+**READY FOR B REVIEW — 实施完成，未自行声明 Task PASS 或 Slice CLOSED。**
+
+- Task Base：`8ea5cbbd4914316deadda8297e1bdf38dd9d8eeb`。
+- 产品/测试 checkpoint：`19ef96e7e2c77ec7e5507ad41a5b9bb7db75a90b`（7 文件）。
+- 本报告提交为 report-only successor；B 审查完整 Base..本报告 Head，产品/测试源码身份以上一
+  checkpoint 为准。
+- 未 push、未部署；未修改 SLICE/Roadmap/Progress 或既有验收事实。既存 untracked
+  OS/log/参考图/测试产物保持原状且未纳入 checkpoint。
+- 未改 Python 业务、Storage、配置激活、schema、权限或并发执行。
+
+### 已实施修复
+
+1. `AppShell.tsx`：`/operations` 不再渲染共享 shell 的 `.mf-page-context` 位置提示，页面保留
+   唯一语义 `<h2>任务中心</h2>`；浏览器页签与侧栏入口不变。共享侧栏 Files 一律使用普通页面
+   导航（`search={{}}`），删除由任务中心列表状态生成/转带 `returnOps` 的 Shell 逻辑。
+   任务/准备/整理深链自身携带的合法来源上下文、返回按钮与 URL 验证均保留。
+2. `StorageFilesPage.tsx`：来源上下文改为读取 router 已提交 search（`useSearch`）并继续经
+   `readOperationsReturnContext` 校验，不再用挂载时 `window.location` 快照；同一 Files 路由
+   再点侧栏 Files 会同步清除来源与可见返回入口。显式合法深链仍显示准确的任务中心返回。
+   为通过 React Compiler lint，补充既有 setState 的稳定依赖，不改变清理语义。
+3. `OperationsLanding.tsx` + `styles.css`：任务中心使用与媒体库 Files 一致的内容边界（无外层
+   二次 inset）、30/36 标题、紧凑统计/视图说明/筛选；表格改为固定列布局，业务名称/范围可省略
+   但仍保留完整 `title`、可访问名称与现有详情全文，阶段/进度/状态/时间有独立稳定空间。
+   选中详情时列表列允许换行，不把列表/详情挤出既有布局。删除/调整了重复的九视图过期注释，
+   视图说明仅收紧表达，保留原计数和失败解释。
+4. 测试：更新 `AppShell.test.tsx` 与 `operations.spec.ts` 的旧普通导航预期；新增
+   `task-center-layout.spec.ts`，用既有 Node fake API 的只读 `/operations/runs` 响应补充代表性
+   short/long/same-prefix scope，覆盖 1536/390 布局、长路径、八视图键盘、详情关闭/返回、
+   普通/筛选/选中导航及显式来源清除。未新增产品入口或后端接口。
+
+### 实际验证
+
+| 命令（cwd） | 实际结果 |
+| --- | --- |
+| `python3 scripts/check_governance.py`（repo root） | PASS |
+| `git diff --check`（repo root） | PASS |
+| `npm run typecheck`（web/） | PASS |
+| `npm run test -- run src/shared/ui/AppShell.test.tsx src/shared/navigation/operations-return.test.ts src/shared/navigation/destination-model.test.ts src/routes/router.test.tsx src/features/operations/OperationsInventory.test.tsx src/features/library/StorageFilesPage.test.tsx src/features/operations/OrganizeRouter.test.tsx` | 7 files / 154 tests passed |
+| `npx eslint` 上述源码/测试及 `tests/e2e/task-center-layout.spec.ts`、`tests/e2e/operations.spec.ts` | PASS |
+| `npx prettier --check` 上述源码/CSS/测试 | All matched files use Prettier code style |
+| `npm run build`（web/） | PASS；仅既有 Vite chunk-size warning |
+| `npm run test:e2e -- tests/e2e/task-center-layout.spec.ts` | 5/5 passed |
+| `npm run test:e2e -- tests/e2e/operations.spec.ts` | 25/25 passed |
+| `npm run test:e2e -- tests/e2e/manual-organize.spec.ts --grep 'reconciles a lost admitted response and selects its durable Operations run'` | 1/1 passed |
+| `npm run test:e2e -- tests/e2e/deep-link.spec.ts --grep 'refresh keeps memory-only semantics and reconnects to the same supported path'` | 1/1 passed |
+
+候选截图和原始日志保存在本地稳定忽略位置
+`.git/validation-evidence/19ef96e7e2c77ec7e5507ad41a5b9bb7db75a90b/developer-patch-20261029-2/`
+（1536 任务中心、390 列表/详情、长路径详情）。实际截图使用构建产物与本地 fake API。
+
+### 剩余风险与 B 交接
+
+- Developer 只执行 Task 指定的受影响验证；完整 Web/Python/E2E、真实视觉矩阵、Docker/wheel
+  发布验收仍由 B 在精确候选上执行。未把全量门禁交回 Developer。
+- jsdom 仍输出既有 `window.scrollTo not implemented` 提示；Vite 仍有既有 chunk-size warning；
+  未删除、隐藏失败或放宽断言。
+- 新聚焦用例只改写既有 operations/runs 响应中的 `source_scope` 与合法阶段/进度字段，不构造
+  产品不存在的入口；解析器仍按真实严格契约校验。
+- B 应重新评估独立 minor bug 的完整范围，决定 PASS / FIX REQUIRED；Developer 不规划下一
+  Task、不关闭 Slice、不自动 push/发布。
 
 ## B Review Result
 
-未提交实现候选；尚未开展 B Review，不作 PASS/FIX REQUIRED 决定。
+```text
+Reviewed: PENDING
+Decision: PENDING
+Candidate: 19ef96e7e2c77ec7e5507ad41a5b9bb7db75a90b
+Acceptance runs: not yet run by B
+Task blockers: none recorded by Developer
+Next: B reviews Task Base..candidate plus this report-only successor and runs assigned acceptance
+```
