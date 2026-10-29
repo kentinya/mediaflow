@@ -11,6 +11,7 @@ The authorized three-part correction is complete; no Task blocker or additional 
   remains at `74d67e5fd37fa123b3a98591fb2534127d99f765:TASK.md`.
 - Local independent B evidence, exact commands/timing, asset/screenshot hashes and complete patch:
   `.git/validation-evidence/74d67e5fd37fa123b3a98591fb2534127d99f765/b-patch-20261029-2/README.md`.
+  These ignored local artifacts are not included in GitHub; the reviewed source and decision remain in Git.
 
 ## Accepted result and B validation
 
@@ -30,6 +31,7 @@ The authorized three-part correction is complete; no Task blocker or additional 
 
 Slice46 remains **PASS / CLOSED** with its original Base, accepted Implementation Head and outcomes.
 [SLICE.md](SLICE.md), [Roadmap](docs/roadmap.md) and [Progress](docs/progress.md) are unchanged.
-No push/deployment occurred; pre-existing untracked files were preserved.
+B completion did not push or deploy; later repository synchronization is separate from application
+deployment. Pre-existing untracked files were preserved.
 
 Next: **NO ACTIVE IMPLEMENTATION TASK**. No next bug/Task/Slice is selected by this completion.

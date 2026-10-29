@@ -17,6 +17,11 @@ Unchanged foundation contracts below remain current; this section owns the affec
 - **Presentation:** shared action components supply readable states. Files owns ordinary-command
   results and durable local reopening; Task Center owns organizing progress and four-type recovery.
   Exact preparation/unknown-request readback remains accessible without the global discovery block.
+- **Navigation context:** shared sidebar destinations are ordinary page navigation. Files does not
+  derive or carry `returnOps` from a task-center list or an earlier Files visit. Explicit task,
+  preparation and organizing links retain their own bounded return state. Files consumes that state
+  from the router's committed search through the existing bounded parser, so same-route navigation
+  clears the visible return action without a stale mount-time copy. This state conveys no authority.
 - **Admission:** reuse Task/Worker/pipeline. Explicit Files organizing admits before business
   readiness. Direct sources use verified duplicate/excluded-extension checks; folder tasks precede
   bounded traversal, with configured primary-type filtering and atomic per-source item admission.

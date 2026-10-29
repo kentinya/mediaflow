@@ -502,6 +502,13 @@ summary/confirmation and native four-type forms. Supported legacy Task/Job links
 exact organizing context or the proven ordinary-operation library page; missing/denied/unavailable
 identity stays a bounded read-only explanation, with no generic failure recovery or guessed work.
 
+The center has one page title, with content boundaries and spacing coordinated with MediaLibrary.
+Long names/scopes retain readable status/progress columns and complete mouse/keyboard-accessible
+identity. Using the shared Files sidebar entry opens ordinary ResourceLibrary browsing without a
+task-center return button, including when leaving a Files visit that already carried one. Explicit
+task/preparation/organizing links retain their own exact return context through reconnect; ordinary
+page navigation does not start a new organizing journey or discard durable work.
+
 ### CURRENT — FileIndex 退出与 CLI/两种库页实时列表（Slice45）
 
 [FileIndex retirement design](file-index-retirement-spec.md) and `V2-FILES-005/006` define the complete
