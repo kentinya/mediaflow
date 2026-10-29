@@ -654,7 +654,7 @@ describe("Rules complete-flow check", () => {
     );
     inventoryVersion = 2;
     inventorySequence = 2;
-    await user.click(screen.getByRole("button", { name: "刷新 Active" }));
+    await user.click(screen.getByRole("button", { name: "刷新" }));
     expect(
       await screen.findByText(/Overview 已观察到更新的 Active/),
     ).toBeVisible();

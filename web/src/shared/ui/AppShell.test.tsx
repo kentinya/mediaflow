@@ -8,6 +8,7 @@ import {
 } from "@testing-library/react";
 import userEvent from "@testing-library/user-event";
 import { authStore } from "../api/auth-store";
+import { rulesPayload } from "../../entities/rules/rules-workspace.test";
 import { renderApp } from "../../../tests/utils";
 
 afterEach(() => {
@@ -76,78 +77,53 @@ describe("AppShell", () => {
     expect(screen.queryByText("62%")).toBeNull();
   });
 
-  it("composes the Rules title, description and keyword search in the shared header", async () => {
+  it("keeps Rules title and local search in the content workspace", async () => {
     authStore.setToken("shell-test-token");
     vi.stubGlobal(
       "fetch",
       vi.fn(
         async () =>
-          new Response(
-            JSON.stringify({
-              available: true,
-              reason: null,
-              canManage: false,
-              active: { status: "ACTIVE", version: 1, sequence: 1 },
-              actions: {},
-              readiness: { state: "READY", gaps: [] },
-              overview: {
-                relationship: [],
-                counts: {},
-                enabledCounts: {},
-              },
-              sections: {},
-            }),
-            { status: 200, headers: { "Content-Type": "application/json" } },
-          ),
+          new Response(JSON.stringify(rulesPayload), {
+            status: 200,
+            headers: { "Content-Type": "application/json" },
+          }),
       ),
     );
     renderApp("/ui-v2/rules?section=recognitionTypes");
 
-    // One shared shell, one Rules title/description row and the functional
-    // keyword search plus the existing account/notification controls.
+    // Content owns the Rules title and local search; account controls remain
+    // in the one shared topbar.
     expect(
       await screen.findByRole("heading", { name: "整理规则" }),
     ).toBeVisible();
-    expect(screen.getByText(/管理从识别到整理的完整规则体系/)).toBeVisible();
-    const search = screen.getByRole("searchbox", {
-      name: "搜索规则名称、描述",
-    });
-    expect(search).toHaveAttribute("placeholder", "搜索规则名称、描述...");
-    expect(search).toBeEnabled();
+    expect(screen.getByText(/管理识别类型、规则和整理策略/)).toBeVisible();
+    await screen.findByRole("heading", { name: "识别类型" });
+    expect(screen.getAllByRole("searchbox")).toHaveLength(1);
+    expect(
+      screen.getByRole("searchbox", { name: "搜索类型名称或描述" }),
+    ).toBeEnabled();
     expect(screen.getByRole("button", { name: "通知" })).toBeVisible();
     // Exactly one shell header: no duplicate top bar above the workspace.
     expect(document.querySelectorAll(".mf-shell-topbar")).toHaveLength(1);
-    expect(document.querySelectorAll(".mf-shell-topbar h1")).toHaveLength(1);
+    expect(document.querySelectorAll(".mf-shell-topbar h1")).toHaveLength(0);
   });
 
-  it("marks the Rules Overview header search as inapplicable instead of fabricating a global search", async () => {
+  it("renders Overview without a keyword search", async () => {
     authStore.setToken("shell-test-token");
     vi.stubGlobal(
       "fetch",
       vi.fn(
         async () =>
-          new Response(
-            JSON.stringify({
-              available: true,
-              reason: null,
-              canManage: false,
-              active: { status: "ACTIVE", version: 1, sequence: 1 },
-              actions: {},
-              readiness: { state: "READY", gaps: [] },
-              overview: { relationship: [], counts: {}, enabledCounts: {} },
-              sections: {},
-            }),
-            { status: 200, headers: { "Content-Type": "application/json" } },
-          ),
+          new Response(JSON.stringify(rulesPayload), {
+            status: 200,
+            headers: { "Content-Type": "application/json" },
+          }),
       ),
     );
     renderApp("/ui-v2/rules");
 
-    const search = await screen.findByRole("searchbox", {
-      name: "搜索规则名称、描述",
-    });
-    expect(search).toBeDisabled();
-    expect(search).toHaveAttribute("placeholder", "概览不支持关键字搜索");
+    await screen.findByRole("heading", { name: "规则关系概览" });
+    expect(screen.queryByRole("searchbox")).toBeNull();
   });
 
   it("renders only the task center's own semantic title, without the shell location hint", async () => {

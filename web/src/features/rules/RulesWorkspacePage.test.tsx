@@ -73,6 +73,84 @@ function stubRules(
 const inventoryPath = "/api/v1/operations/rules/inventory";
 
 describe("RulesWorkspacePage", () => {
+  it.each([401, 403, 500])(
+    "uses the shared read boundary for HTTP %s without exposing the inventory",
+    async (status) => {
+      const { calls } = stubRules({
+        inventoryStatus: status,
+        inventory: {
+          error: {
+            code:
+              status === 401
+                ? "unauthorized"
+                : status === 403
+                  ? "forbidden"
+                  : "unavailable",
+            message: "read failed",
+          },
+        },
+      });
+      authStore.setToken("rules-token");
+      renderApp("/ui-v2/rules?section=recognitionTypes");
+      await screen.findByRole("heading", {
+        name:
+          status === 401
+            ? "Not authorized"
+            : status === 403
+              ? "Forbidden"
+              : "整理规则暂不可用",
+      });
+      expect(screen.queryByRole("table")).toBeNull();
+      expect(screen.queryByRole("button", { name: "添加识别类型" })).toBeNull();
+      expect(calls.every((call) => call.method === "GET")).toBe(true);
+    },
+  );
+
+  it("keeps the content header during loading and guards a delayed refresh without losing filters", async () => {
+    const { mock, calls } = stubRules();
+    let release: ((response: Response) => void) | undefined;
+    mock.mockImplementationOnce(
+      () =>
+        new Promise<Response>((resolve) => {
+          release = resolve;
+        }),
+    );
+    authStore.setToken("rules-token");
+    renderApp("/ui-v2/rules?section=recognitionTypes");
+    await screen.findByText("正在读取 Active 规则...");
+    expect(screen.getAllByRole("heading", { name: "整理规则" })).toHaveLength(
+      1,
+    );
+    expect(screen.getByRole("button", { name: "刷新中…" })).toBeDisabled();
+    release?.(new Response(JSON.stringify(rulesPayload)));
+    await screen.findByRole("heading", { name: "识别类型" });
+    const user = userEvent.setup();
+    await user.type(screen.getByRole("searchbox"), "Special");
+    await user.selectOptions(
+      screen.getByRole("combobox", { name: "状态" }),
+      "enabled",
+    );
+    mock.mockImplementationOnce(
+      () =>
+        new Promise<Response>((resolve) => {
+          release = resolve;
+        }),
+    );
+    await user.click(screen.getByRole("button", { name: "刷新" }));
+    const busy = screen.getByRole("button", { name: "刷新中…" });
+    expect(busy).toBeDisabled();
+    const count = mock.mock.calls.length;
+    await user.click(busy);
+    expect(mock).toHaveBeenCalledTimes(count);
+    release?.(new Response(JSON.stringify(rulesPayload)));
+    await screen.findByRole("button", { name: "刷新" });
+    expect(screen.getByRole("searchbox")).toHaveValue("Special");
+    expect(screen.getByRole("combobox", { name: "状态" })).toHaveValue(
+      "enabled",
+    );
+    expect(calls.every((call) => call.method === "GET")).toBe(true);
+  });
+
   it("deep-links to a full-width inventory with no drawer or editor open", async () => {
     const { mock } = stubRules();
     authStore.setToken("rules-token");
@@ -80,7 +158,7 @@ describe("RulesWorkspacePage", () => {
     expect(
       await screen.findByRole("navigation", { name: "规则分类" }),
     ).toBeVisible();
-    // The shared shell header carries the Rules title; the navigation appears
+    // The content header carries the Rules title; the navigation appears
     // once the Active inventory has actually resolved.
     expect(screen.getByRole("heading", { name: "整理规则" })).toBeVisible();
     expect(
@@ -123,7 +201,7 @@ describe("RulesWorkspacePage", () => {
       screen.getByRole("combobox", { name: "状态" }),
       "all",
     );
-    await user.click(screen.getByRole("button", { name: "刷新 Active" }));
+    await user.click(screen.getByRole("button", { name: "刷新" }));
     await waitFor(() => expect(mock).toHaveBeenCalledTimes(2));
     // Nothing but GET reads happened through the whole read journey.
     expect(calls.every((call) => call.method === "GET")).toBe(true);
@@ -748,8 +826,8 @@ describe("RulesWorkspacePage", () => {
   });
 
   it("keeps the originating family in the no-Active handoff and its return", async () => {
-    // The no-Active recovery branch uses the same allowlisted return contract
-    // as the normal header link: a family deep link that reaches Settings
+    // The no-Active recovery branch uses the allowlisted return contract:
+    // a family deep link that reaches Settings
     // during first setup must survive the handoff, and the Settings return —
     // after a first activation or as an explicit action — lands back on that
     // exact family instead of dropping to the Overview.
@@ -804,8 +882,8 @@ describe("RulesWorkspacePage", () => {
   });
 
   it("keeps the originating family in the no-Active handoff and its return", async () => {
-    // The no-Active recovery branch uses the same allowlisted return contract
-    // as the normal header link: a family deep link that reaches Settings
+    // The no-Active recovery branch uses the allowlisted return contract:
+    // a family deep link that reaches Settings
     // during first setup must survive the handoff, and the Settings return —
     // after a first activation or as an explicit action — lands back on that
     // exact family instead of dropping to the Overview.
@@ -1094,23 +1172,17 @@ describe("RulesWorkspacePage section state", () => {
     expect(calls.every((call) => call.method === "GET")).toBe(true);
   });
 
-  it("carries the originating family into Settings and back", async () => {
+  it("keeps normal Settings in the sidebar without a permanent workspace handoff", async () => {
     stubRules();
     authStore.setToken("rules-token");
     renderApp("/ui-v2/rules?section=classificationPolicies");
     await screen.findByRole("heading", { name: "分类规则" });
-    expect(screen.getByRole("link", { name: "前往系统设置" })).toHaveAttribute(
+    expect(screen.queryByRole("link", { name: "前往系统设置" })).toBeNull();
+    expect(screen.getByRole("link", { name: "Configuration" })).toHaveAttribute(
       "href",
-      "/ui-v2/configuration?returnTo=rules&returnSection=classificationPolicies",
+      "/ui-v2/configuration",
     );
-    // From the Overview the handoff carries the target only.
-    cleanup();
-    renderApp("/ui-v2/rules");
-    await screen.findByRole("heading", { name: "规则关系概览" });
-    expect(screen.getByRole("link", { name: "前往系统设置" })).toHaveAttribute(
-      "href",
-      "/ui-v2/configuration?returnTo=rules",
-    );
+    expect(screen.queryByText(/Active · 序号/)).toBeNull();
   });
 
   it("keeps correctable input when a tab would leave the editing context", async () => {
@@ -1166,32 +1238,30 @@ describe("RulesWorkspacePage reference-aligned workspace", () => {
     ).not.toHaveAttribute("aria-current");
   });
 
-  it("shares the keyword scope between the header and the inventory input", async () => {
+  it("uses one local keyword input and clears it without changing the inventory scope", async () => {
     stubRules();
     authStore.setToken("rules-token");
     renderApp("/ui-v2/rules?section=recognitionTypes");
     await screen.findByRole("heading", { name: "识别类型" });
 
-    const header = screen.getByRole("searchbox", {
-      name: "搜索规则名称、描述",
-    });
+    expect(screen.getAllByRole("searchbox")).toHaveLength(1);
     const local = screen.getByRole("searchbox", {
       name: "搜索类型名称或描述",
     });
     const user = userEvent.setup();
-    // Typing in either input keeps both truthful and filters the one inventory.
-    await user.type(header, "Special");
+    // The local input filters only the current inventory.
+    await user.type(local, "Special");
     expect(local).toHaveValue("Special");
     expect(screen.getByRole("row", { name: /Special/ })).toBeVisible();
     // A non-matching keyword is a truthful filtered-empty state, not a
     // fabricated global result set.
     await user.clear(local);
     await user.type(local, "no-such-family-object");
-    expect(header).toHaveValue("no-such-family-object");
+    expect(local).toHaveValue("no-such-family-object");
     expect(screen.getByRole("heading", { name: "没有匹配结果" })).toBeVisible();
-    await user.clear(header);
+    await user.clear(local);
     expect(local).toHaveValue("");
-    // Clearing either input restores the complete Active inventory.
+    // Clearing the input restores the complete Active inventory.
     expect(screen.getByRole("row", { name: /Special/ })).toBeVisible();
   });
 

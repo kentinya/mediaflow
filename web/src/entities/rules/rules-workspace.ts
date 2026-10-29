@@ -110,17 +110,27 @@ export const RULE_FAMILY_SEARCH: Readonly<
   },
 };
 
-/** Shared Rules workspace title, description and header search contract. */
+/** Shared Rules workspace title and description. */
 export const RULES_WORKSPACE_TITLE = "整理规则";
-export const RULES_WORKSPACE_DESCRIPTION =
-  "管理从识别到整理的完整规则体系。系统根据识别结果，按照类型策略绑定的各项策略完成最终的文件整理。";
+export const RULES_WORKSPACE_DESCRIPTION = "管理识别类型、规则和整理策略。";
 export const RULES_OVERVIEW_LABEL = "概览";
 export const RULES_OVERVIEW_CARD_DESCRIPTION = "规则总体情况";
-export const RULES_HEADER_SEARCH_LABEL = "搜索规则名称、描述";
-export const RULES_HEADER_SEARCH_PLACEHOLDER = "搜索规则名称、描述...";
-export const RULES_OVERVIEW_SEARCH_PLACEHOLDER = "概览不支持关键字搜索";
-export const RULES_OVERVIEW_SEARCH_HINT =
-  "概览不提供关键字搜索；请先进入一个规则分类，再按该分类的关键字范围搜索。";
+
+const RELATIONSHIP_LABELS: Readonly<Record<string, string>> = {
+  RecognitionRule: "识别规则",
+  RecognitionType: "识别类型",
+  RecognitionTypePolicy: "类型策略",
+  MetadataPolicy: "元数据策略",
+  NamingPolicy: "命名规则",
+  ClassificationPolicy: "分类规则",
+  OrganizePolicy: "整理策略",
+};
+
+export function ruleRelationshipLabel(node: string): string {
+  return Object.hasOwn(RELATIONSHIP_LABELS, node)
+    ? RELATIONSHIP_LABELS[node]!
+    : node;
+}
 
 /**
  * The legal dependency order for incrementally authoring an empty Active.

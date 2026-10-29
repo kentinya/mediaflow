@@ -29,7 +29,9 @@ import {
   RULE_FAMILY_SEARCH,
   RULES_OVERVIEW_CARD_DESCRIPTION,
   RULES_OVERVIEW_LABEL,
-  RULES_OVERVIEW_SEARCH_HINT,
+  RULES_WORKSPACE_TITLE,
+  RULES_WORKSPACE_DESCRIPTION,
+  ruleRelationshipLabel,
   type RuleFamily,
   type RuleInventoryItem,
   type RulesWorkspaceModel,
@@ -48,7 +50,7 @@ import {
 import { settingsReturnSearch } from "../../shared/navigation/settings-return";
 import { readRuleDraft } from "./rules-workspace-labels";
 import { Icon } from "../../shared/ui/Icons";
-import { useRulesSearch } from "../../shared/ui/AppShell";
+import { Button } from "../../shared/ui/Button";
 
 type Section = "overview" | RuleFamily;
 
@@ -256,11 +258,9 @@ function OnboardingPath({ model }: { readonly model: RulesWorkspaceModel }) {
 function Overview({
   model,
   token,
-  searchInapplicable,
 }: {
   readonly model: RulesWorkspaceModel;
   readonly token: string;
-  readonly searchInapplicable: boolean;
 }) {
   return (
     <section
@@ -270,42 +270,34 @@ function Overview({
       <div>
         <h2 id="rules-overview-title">规则关系概览</h2>
         <p>
-          运行时从同一个不可变 Active
-          快照读取以下关系;下游策略复用不会改变识别类型。
+          识别规则确定媒体类型，类型策略关联后续策略；复用策略不改变识别类型。
         </p>
-        {/* The header keyword input has no family scope on the Overview, so the
-            page states that plainly instead of advertising a global search. */}
-        {searchInapplicable ? (
-          <p
-            className="mf-rules-search-note"
-            data-testid="overview-search-note"
-          >
-            {RULES_OVERVIEW_SEARCH_HINT}
-          </p>
-        ) : null}
       </div>
       <ol className="mf-rules-flow" aria-label="规则处理关系">
         {model.overview.relationship.map((item) => (
-          <li key={item}>{item}</li>
+          <li key={item}>{ruleRelationshipLabel(item)}</li>
         ))}
       </ol>
-      <div className="mf-rules-summary-grid">
-        {RULE_FAMILIES.map((family) => (
-          <article key={family}>
-            <h3>
-              <Link
-                to="/rules"
-                search={rulesSectionSearch(family)}
-                aria-label={`查看${LABELS[family]}清单`}
-              >
-                {LABELS[family]}
-              </Link>
-            </h3>
-            <strong>{model.overview.counts[family]}</strong>
-            <span>{model.overview.enabledCounts[family]} 已启用</span>
-          </article>
-        ))}
-      </div>
+      <section aria-labelledby="rules-counts-title">
+        <h3 id="rules-counts-title">数量概况</h3>
+        <div className="mf-rules-summary-grid">
+          {RULE_FAMILIES.map((family) => (
+            <article key={family}>
+              <h3>
+                <Link
+                  to="/rules"
+                  search={rulesSectionSearch(family)}
+                  aria-label={`查看${LABELS[family]}清单`}
+                >
+                  {LABELS[family]}
+                </Link>
+              </h3>
+              <strong>{model.overview.counts[family]}</strong>
+              <span>{model.overview.enabledCounts[family]} 已启用</span>
+            </article>
+          ))}
+        </div>
+      </section>
       <ReadinessGaps model={model} />
       <OnboardingPath model={model} />
       <RulesCompleteFlowCheck token={token} observedActive={model.active} />
@@ -697,10 +689,7 @@ export function RulesWorkspacePage() {
   // authentication continuation can never disagree about which inventory is
   // shown. Malformed input resolves to the read-only Overview.
   const section = readRulesSection(searchParams);
-  // The keyword scope is shared with the shell header so typing or clearing
-  // either input keeps both truthful. Overview has no family scope, so its
-  // header input is disabled and this page explains why.
-  const { query: search, setQuery: setSearch } = useRulesSearch();
+  const [search, setSearch] = useState("");
   const [enabled, setEnabled] = useState<"all" | "enabled" | "disabled">("all");
   const [drawer, setDrawer] = useState<RulesDrawerSession | null>(null);
   const [pending, setPending] = useState<PendingListCommand | null>(null);
@@ -746,18 +735,33 @@ export function RulesWorkspacePage() {
   return (
     <AuthorizedReadBoundary query={query} unavailableTitle="整理规则暂不可用">
       {({ data, isPending, isFetching, refresh }) => {
+        const header = (
+          <header className="mf-rules-header">
+            <div>
+              <h1>{RULES_WORKSPACE_TITLE}</h1>
+              <p>{RULES_WORKSPACE_DESCRIPTION}</p>
+            </div>
+            <Button variant="secondary" onClick={refresh} disabled={isFetching}>
+              {isFetching ? "刷新中…" : "刷新"}
+            </Button>
+          </header>
+        );
         if (isPending || data === undefined)
           return (
-            <div className="mf-rules-state" role="status">
-              正在读取 Active 规则...
-            </div>
+            <section className="mf-rules-page">
+              {header}
+              <div className="mf-rules-state" role="status">
+                正在读取 Active 规则...
+              </div>
+            </section>
           );
         if (!data.available)
           return (
-            <>
+            <section className="mf-rules-page">
+              {header}
               <FamilyNavigation section={section} onSelect={goToSection} />
               <Availability model={data} section={section} />
-            </>
+            </section>
           );
         const family = section === "overview" ? null : section;
         const items =
@@ -799,10 +803,7 @@ export function RulesWorkspacePage() {
         };
         return (
           <section className="mf-rules-page">
-            {/* The reference order is header hierarchy, then family navigation,
-                then the inventory. The shared header already carries the Rules
-                title and business description, so family navigation follows it
-                directly. */}
+            {header}
             <FamilyNavigation section={section} onSelect={goToSection} />
             {notice !== null && (
               <p className="mf-rules-verified" role="status">
@@ -816,35 +817,8 @@ export function RulesWorkspacePage() {
                 。再次打开对应的添加或编辑表单即可继续修正。
               </p>
             )}
-            {/* Identity diagnostics, the Settings handoff and the explicit
-                Active refresh stay reachable as one compact utility line below
-                the family navigation, instead of a dominant row between the
-                header and the family cards. */}
-            <div className="mf-rules-diagnostics">
-              <p className="mf-eyebrow">
-                Active · 序号 {data.active?.sequence}
-              </p>
-              <div className="mf-actions">
-                <Link
-                  to="/configuration"
-                  search={settingsReturnSearch({
-                    target: "rules",
-                    ...(section === "overview" ? {} : { section }),
-                  })}
-                >
-                  前往系统设置
-                </Link>
-                <button type="button" onClick={refresh} disabled={isFetching}>
-                  {isFetching ? "刷新中..." : "刷新 Active"}
-                </button>
-              </div>
-            </div>
             {section === "overview" ? (
-              <Overview
-                model={data}
-                token={token ?? ""}
-                searchInapplicable={true}
-              />
+              <Overview model={data} token={token ?? ""} />
             ) : (
               <section
                 className="mf-rules-family"

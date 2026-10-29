@@ -236,25 +236,24 @@ test.describe("Rules readiness and Settings handoff", () => {
     ).toBeVisible();
   });
 
-  test("Settings returns to the originating family only on explicit intent", async ({
+  test("normal sidebar Settings keeps explicit rule-family navigation available", async ({
     page,
   }) => {
     await resetRules(page);
     await openRules(page, "?section=classificationPolicies");
-    await page.getByRole("link", { name: "前往系统设置" }).click();
+    await page.getByRole("link", { name: "Configuration" }).click();
 
-    // Settings stays on Settings: the return is offered, never automatic.
+    // Sidebar Settings opens without manufacturing a Rules return context.
     await expect(
       page.getByRole("heading", { name: "配置生命周期" }),
     ).toBeVisible();
-    expect(page.url()).toContain("returnTo=rules");
-    expect(page.url()).toContain("returnSection=classificationPolicies");
+    expect(page.url()).not.toContain("returnTo=rules");
     // No raw revision, digest or token travels in the navigation state.
     expect(page.url()).not.toContain("bearer");
     expect(page.url()).not.toContain("digest");
 
-    // The explicit return lands on the exact originating family inventory.
-    await page.getByRole("link", { name: "返回整理规则 · 分类规则" }).click();
+    // Settings still provides an explicit link to each rule family.
+    await page.getByRole("link", { name: "查看分类规则" }).click();
     await expect(
       page.getByRole("heading", { name: "分类规则", exact: true }),
     ).toBeVisible();
@@ -369,7 +368,7 @@ test.describe("Rules readiness and Settings handoff", () => {
     await expect(
       page.getByRole("heading", { name: "类型策略", exact: true }),
     ).toBeVisible();
-    await page.getByRole("button", { name: "刷新 Active" }).click();
+    await page.getByRole("button", { name: "刷新", exact: true }).click();
     await openSettings(page);
     await page.getByRole("link", { name: "查看识别类型" }).click();
     await expect(
@@ -401,63 +400,34 @@ test.describe("Rules readiness and Settings handoff", () => {
 });
 
 test.describe("Rules reference-aligned workspace presentation", () => {
-  test("the shared header carries the Rules title, keyword search and the eight navigation cards", async ({
+  test("the content header owns refresh while local search and eight cards retain their behavior", async ({
     page,
   }) => {
     await resetRules(page);
     const traffic = recordApiTraffic(page);
     await openRules(page, "?section=recognitionTypes");
 
-    // One shell header composes the Rules title/description with the keyword
-    // search and the existing account/notification controls on the same row.
     await expect(
       page.getByRole("heading", { name: "整理规则", exact: true }),
     ).toBeVisible();
     await expect(
-      page.getByText(/管理从识别到整理的完整规则体系/),
-    ).toBeVisible();
-    const headerSearch = page.getByRole("searchbox", {
-      name: "搜索规则名称、描述",
-    });
-    await expect(headerSearch).toBeEnabled();
-    await expect(headerSearch).toHaveAttribute(
-      "placeholder",
-      "搜索规则名称、描述...",
-    );
+      page.locator(".mf-shell-topbar h1, .mf-shell-topbar input"),
+    ).toHaveCount(0);
     await expect(page.getByRole("button", { name: "通知" })).toBeVisible();
-
-    // The reference row hierarchy: title/search/account share one row, and the
-    // business description is its own full-width line below that row.
-    const titleBox = (await page
-      .getByRole("heading", { name: "整理规则", exact: true })
-      .boundingBox())!;
-    const searchBox = (await headerSearch.boundingBox())!;
-    const descriptionBox = (await page
-      .getByText(/管理从识别到整理的完整规则体系/)
-      .boundingBox())!;
-    const headerBox = (await page
-      .locator(".mf-shell-topbar-rules")
-      .boundingBox())!;
-    expect(
-      Math.abs(
-        titleBox.y + titleBox.height / 2 - (searchBox.y + searchBox.height / 2),
-      ),
-    ).toBeLessThan(30);
-    expect(descriptionBox.y).toBeGreaterThanOrEqual(
-      Math.max(titleBox.y + titleBox.height, searchBox.y + searchBox.height) -
-        2,
-    );
-    expect(descriptionBox.width).toBeGreaterThan(headerBox.width * 0.9);
-    expect(descriptionBox.height).toBeLessThanOrEqual(24);
-    // Family navigation follows the header directly; the diagnostics/refresh
-    // utility line never interrupts that hierarchy.
-    const navBox = (await page
-      .getByRole("navigation", { name: "规则分类" })
-      .boundingBox())!;
-    const diagnosticsBox = (await page
-      .locator(".mf-rules-diagnostics")
-      .boundingBox())!;
-    expect(diagnosticsBox.y).toBeGreaterThanOrEqual(navBox.y + navBox.height);
+    await expect(
+      page.getByText("管理识别类型、规则和整理策略。"),
+    ).toBeVisible();
+    await expect(
+      page.getByRole("button", { name: "刷新", exact: true }),
+    ).toBeVisible();
+    await expect(page.locator(".mf-rules-diagnostics")).toHaveCount(0);
+    await expect(
+      page.getByRole("link", { name: "前往系统设置", exact: true }),
+    ).toHaveCount(0);
+    const localSearch = page.getByRole("searchbox", {
+      name: "搜索类型名称或描述",
+    });
+    await expect(page.getByRole("searchbox")).toHaveCount(1);
 
     // The eight reference cards keep their order, business names and descriptions.
     const nav = page.getByRole("navigation", { name: "规则分类" });
@@ -486,24 +456,20 @@ test.describe("Rules reference-aligned workspace presentation", () => {
     // A full-width table follows with the real columns.
     await expect(page.getByRole("table")).toBeVisible();
 
-    // Header and local keyword inputs share the family's one keyword scope.
-    await headerSearch.fill("Normal");
+    // The local keyword input filters only the current family.
+    await localSearch.fill("Normal");
     await expect(
       page.getByRole("searchbox", { name: "搜索类型名称或描述" }),
     ).toHaveValue("Normal");
     await expect(page.getByRole("row", { name: /Normal Movie/ })).toBeVisible();
-    await headerSearch.fill("");
+    await localSearch.fill("");
     await expect(page.getByRole("row", { name: /TV/ })).toBeVisible();
 
-    // The Overview states that its header search is inapplicable rather than
-    // advertising a fabricated global search.
     await nav.getByRole("button", { name: "概览" }).click();
     await expect(
       page.getByRole("heading", { name: "规则关系概览" }),
     ).toBeVisible();
-    await expect(
-      page.getByRole("searchbox", { name: "搜索规则名称、描述" }),
-    ).toBeDisabled();
+    await expect(page.getByRole("searchbox")).toHaveCount(0);
 
     // The whole presentation journey issued reads only.
     expect(traffic.filter((entry) => !entry.startsWith("GET "))).toEqual([]);

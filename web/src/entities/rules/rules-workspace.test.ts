@@ -1,5 +1,8 @@
 import { describe, expect, it } from "vitest";
-import { normalizeRulesWorkspace } from "./rules-workspace";
+import {
+  ruleRelationshipLabel,
+  normalizeRulesWorkspace,
+} from "./rules-workspace";
 
 const ACTION = {
   create: true,
@@ -210,5 +213,33 @@ describe("normalizeRulesWorkspace", () => {
         readiness: { state: "PARTIAL", gaps: Array(8).fill(gap) },
       }),
     ).toThrow();
+  });
+});
+
+describe("relationship presentation", () => {
+  it("translates known nodes without reordering or interpreting unknown server nodes", () => {
+    expect(
+      [
+        "RecognitionRule",
+        "RecognitionType",
+        "RecognitionTypePolicy",
+        "MetadataPolicy",
+        "NamingPolicy",
+        "ClassificationPolicy",
+        "OrganizePolicy",
+        "FutureNode",
+        "constructor",
+      ].map(ruleRelationshipLabel),
+    ).toEqual([
+      "识别规则",
+      "识别类型",
+      "类型策略",
+      "元数据策略",
+      "命名规则",
+      "分类规则",
+      "整理策略",
+      "FutureNode",
+      "constructor",
+    ]);
   });
 });

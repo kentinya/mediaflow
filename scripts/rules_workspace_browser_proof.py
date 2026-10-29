@@ -1,19 +1,18 @@
-"""Real-Python acceptance: reference-aligned Rules workspace and forms (Task 44.4).
+"""Real-Python acceptance: reference-aligned Rules workspace and forms (Task PATCH-20261029-4).
 
 This harness starts the production-shaped Python API (``mediaflow api serve``)
 against a temporary throwaway configuration — temporary SQLite repositories,
 temporary Local Storage roots, a throwaway API token and the current built V2
 artifact served by the real ``mediaflow.interfaces.v2_ui`` boundary — and drives
-a real Chromium browser through Slice 44 RO-2:
+a real Chromium browser through the existing Rules journey:
 
-* the shared shell composes one Rules title/description row with the functional
-  keyword search and the existing account/notification controls;
+* the content header composes the Rules title/description and refresh; the
+  shared topbar retains account/notification controls;
 * the eight reference navigation cards keep their order, business names and
   descriptions, and only the current family is marked current;
 * the inventory keeps a separate title/description row, a left blue Add and a
   right icon-bearing keyword/state filter, then a full-width real table;
-* header and local keyword inputs share one family keyword scope, while the
-  Overview states its own search is inapplicable;
+* each inventory retains one local keyword input; Overview has no search;
 * every one of the seven families opens its purpose-built Add drawer with real
   domain sections, the backend-derived required marker and an accessible enable
   switch only where the family actually supports enable state;
@@ -55,7 +54,7 @@ PORT = int(os.environ.get("MF_WORKSPACE_PROOF_PORT", "4899"))
 BASE = f"http://127.0.0.1:{PORT}"
 TOKEN = "workspace-proof-throwaway-token"
 ARTIFACT_ROOT = Path(
-    os.environ.get("MF_PROOF_ARTIFACTS", "/tmp/mediaflow-task44-4-rules-workspace-proof")
+    os.environ.get("MF_PROOF_ARTIFACTS", "/tmp/mediaflow-patch-20261029-4-rules-workspace-proof")
 )
 
 # The seven reference originals plus the annotated header region, with the
@@ -158,59 +157,17 @@ try {
   await open(page, '/ui-v2/rules?section=recognitionTypes', 1536, 1024);
   const title = page.getByRole('heading', { name: '整理规则', exact: true });
   await expect(title).toBeVisible();
-  await expect(page.getByText(/管理从识别到整理的完整规则体系/)).toBeVisible();
-  const headerSearch = page.getByRole('searchbox', { name: '搜索规则名称、描述' });
-  await expect(headerSearch).toBeEnabled();
+  await expect(page.getByText('管理识别类型、规则和整理策略。')).toBeVisible();
+  await expect(page.locator('.mf-shell-topbar h1, .mf-shell-topbar input')).toHaveCount(0);
   await expect(page.getByRole('button', { name: '通知' })).toBeVisible();
-
-  // Exactly one shell header and one Rules title: no duplicate composition.
-  if ((await page.locator('.mf-shell-topbar').count()) !== 1) {
-    throw new Error('expected exactly one shared shell header');
-  }
-  if ((await page.locator('.mf-shell-topbar h1').count()) !== 1) {
-    throw new Error('expected exactly one Rules title in the shared header');
-  }
-
-  // Title and search sit on the same desktop row.
+  await expect(page.getByRole('heading', { name: '整理规则', exact: true })).toHaveCount(1);
+  await expect(page.getByRole('link', { name: '前往系统设置', exact: true })).toHaveCount(0);
   const titleBox = await bounds(title);
-  const searchBox = await bounds(headerSearch);
-  if (Math.abs(titleBox.y + titleBox.height / 2 - (searchBox.y + searchBox.height / 2)) > 30) {
-    throw new Error('Rules title and keyword search are not on the same desktop row');
-  }
-  if (searchBox.x <= titleBox.x) {
-    throw new Error('the Rules keyword search is not to the right of the title');
-  }
-
-  // The reference hierarchy: title/search/account on one row, then the
-  // business description as a separate full-width line, then navigation.
-  const notificationBox = await bounds(page.getByRole('button', { name: '通知' }));
-  const description = page.getByText(/管理从识别到整理的完整规则体系/);
-  const descriptionBox = await bounds(description);
-  const headerBox = await bounds(page.locator('.mf-shell-topbar-rules'));
-  const titleRowBottom = Math.max(
-    titleBox.y + titleBox.height,
-    searchBox.y + searchBox.height,
-    notificationBox.y + notificationBox.height,
-  );
-  // The description is its own line below the whole title row, not a paragraph
-  // sharing the title column beside the search.
-  if (descriptionBox.y < titleRowBottom - 2) {
-    throw new Error(
-      'the Rules description overlaps the title/search row ('
-        + descriptionBox.y + ' < ' + titleRowBottom + ')',
-    );
-  }
-  if (descriptionBox.width < headerBox.width * 0.9) {
-    throw new Error(
-      'the Rules description is confined to ' + descriptionBox.width
-        + 'px of the ' + headerBox.width + 'px header',
-    );
-  }
-  if (descriptionBox.height > 24) {
-    throw new Error(
-      'the Rules description wraps to ' + descriptionBox.height
-        + 'px at the required viewport',
-    );
+  const refreshBox = await bounds(page.getByRole('button', { name: '刷新', exact: true }));
+  const descriptionBox = await bounds(page.getByText('管理识别类型、规则和整理策略。'));
+  const headerBox = await bounds(page.locator('.mf-rules-header'));
+  if (Math.abs(titleBox.y - refreshBox.y) > 2 || refreshBox.x <= titleBox.x) {
+    throw new Error('content title/refresh alignment drifted');
   }
 
   const nav = page.getByRole('navigation', { name: '规则分类' });
@@ -239,26 +196,8 @@ try {
   }
   await expect(cards.nth(2)).toHaveAttribute('aria-current', 'page');
   const navBox = await bounds(nav);
-  // Family navigation follows the header directly. The only space between them
-  // may be the page's own layout gap; the identity/refresh utility line must
-  // not sit in between.
-  const diagnostics = page.locator('.mf-rules-diagnostics');
-  const diagnosticsBox = (await diagnostics.count())
-    ? await bounds(diagnostics)
-    : null;
-  if (diagnosticsBox !== null && diagnosticsBox.y < navBox.y + navBox.height) {
-    throw new Error(
-      'the diagnostics/action row sits between the Rules header and family '
-        + 'navigation (diagnostics y=' + diagnosticsBox.y
-        + ', navigation ends at ' + (navBox.y + navBox.height) + ')',
-    );
-  }
-  if (navBox.y - (headerBox.y + headerBox.height) > 24) {
-    throw new Error(
-      'a dominant row sits between the Rules header and family navigation ('
-        + (navBox.y - (headerBox.y + headerBox.height)) + 'px gap)',
-    );
-  }
+  await expect(page.locator('.mf-rules-diagnostics')).toHaveCount(0);
+  if (navBox.y < headerBox.y + headerBox.height) throw new Error('navigation overlaps header');
 
   const inventoryTitle = page.getByRole('heading', { name: '识别类型', exact: true });
   await expect(inventoryTitle).toBeVisible();
@@ -302,20 +241,21 @@ try {
   }
 
   // Header and local keyword input share the one family scope.
-  await headerSearch.fill('Normal');
+  await localSearch.fill('Normal');
+  await expect(localSearch).toHaveValue('Normal');
+  await page.getByRole('button', { name: '刷新', exact: true }).click();
+  await expect(page.getByRole('button', { name: '刷新', exact: true })).toBeEnabled();
   await expect(localSearch).toHaveValue('Normal');
   await expect(page.getByRole('row', { name: /Normal Movie/ })).toBeVisible();
-  await headerSearch.fill('');
+  await localSearch.fill('');
   await expect(page.getByRole('row', { name: /TV/ })).toBeVisible();
 
   evidence.viewports.desktop = {
     header: {
       header: headerBox,
       title: titleBox,
-      search: searchBox,
-      notification: notificationBox,
+      refresh: refreshBox,
       description: descriptionBox,
-      titleRowBottom,
     },
     navigation: navBox,
     inventory: { title: await bounds(inventoryTitle), add: addBox },
@@ -323,10 +263,10 @@ try {
   };
   evidence.screenshots.push(await shoot(page, 'desktop-1536x1024-recognition-types'));
 
-  // -- Overview search is inapplicable, not a fabricated global search -----
+  // -- Overview has no inventory search ----------------------------------
   await cards.nth(0).click();
   await expect(page.getByRole('heading', { name: '规则关系概览' })).toBeVisible();
-  await expect(headerSearch).toBeDisabled();
+  await expect(page.getByRole('searchbox')).toHaveCount(0);
   evidence.screenshots.push(await shoot(page, 'desktop-1536x1024-overview'));
   await cards.nth(2).click();
   await expect(inventoryTitle).toBeVisible();
@@ -384,6 +324,7 @@ try {
     await expect(
       page.getByRole('heading', { name: family.label, exact: true }),
     ).toBeVisible();
+    evidence.screenshots.push(await shoot(page, `desktop-inventory-${family.label}`));
     await page
       .getByRole('button', { name: `添加${family.label}` })
       .first()
@@ -394,6 +335,9 @@ try {
     if (await drawer.evaluate((node) => node.classList.contains('mf-files-drawer'))) {
       throw new Error(`${family.label} drawer still carries Files drawer classes`);
     }
+    // Opening a drawer precedes its async authority/form read. Wait for the
+    // existing form entry before inspecting its sections.
+    await expect(drawer.getByLabel('ID', { exact: true })).toBeVisible();
     const legends = (await drawer.locator('legend').allTextContents()).map((item) => item.trim());
     for (const section of family.sections) {
       if (!legends.includes(section)) {
@@ -631,6 +575,44 @@ try {
     evidence.screenshots.push(await shoot(page, `${viewport.name}-recognition-types`));
   }
 
+  // Read-only page controls and comparison with the real task-center entry.
+  for (const viewport of VIEWPORTS) {
+    await open(page, '/ui-v2/rules', viewport.width, viewport.height);
+    const heading = page.getByRole('heading', { name: '整理规则', exact: true });
+    await expect(page.getByRole('searchbox')).toHaveCount(0);
+    const rulesTitle = await bounds(heading);
+    const refresh = page.getByRole('button', { name: '刷新', exact: true });
+    await refresh.focus();
+    await expect(refresh).toBeFocused();
+    await page.keyboard.press('Enter');
+    await expect(refresh).toBeEnabled();
+    const overflow = await page.evaluate(() => document.documentElement.scrollWidth > innerWidth);
+    if (overflow) throw new Error(viewport.name + ': Rules page overflows viewport');
+    evidence.screenshots.push(await shoot(page, viewport.name + '-overview-header'));
+    await page.goto(BASE + '/ui-v2/operations');
+    if (await page.getByLabel('API token').count()) await connect(page);
+    const center = page.getByRole('heading', { name: '任务中心', exact: true });
+    await expect(center).toBeVisible();
+    const centerTitle = await bounds(center);
+    const typography = async (locator) => locator.evaluate(el => {
+      const style = getComputedStyle(el);
+      return { fontSize: style.fontSize, lineHeight: style.lineHeight };
+    });
+    const centerType = await typography(center);
+    evidence.screenshots.push(await shoot(page, viewport.name + '-task-center-header'));
+    await open(page, '/ui-v2/rules', viewport.width, viewport.height);
+    const rulesType = await typography(heading);
+    const desktopMisaligned = viewport.width > 760
+      && (rulesTitle.x !== centerTitle.x || rulesTitle.y !== centerTitle.y);
+    if (JSON.stringify(centerType) !== JSON.stringify(rulesType) || desktopMisaligned) {
+      throw new Error(viewport.name + ': Rules header boundary/typography differs');
+    }
+    evidence.viewports[viewport.name] ??= {};
+    evidence.viewports[viewport.name].headerComparison = {
+      rulesTitle, centerTitle, rulesType, centerType,
+    };
+  }
+
   if (mutations.length > 0) {
     throw new Error('the presentation journey issued mutations: ' + mutations.join(', '));
   }
@@ -776,7 +758,16 @@ def main() -> int:
         print("UNAVAILABLE: node is required for the browser proof")
         return 1
     references = _check_references()
-    changed = [item for item in references if item["state"] != "PRESERVED"]
+    # PATCH-20261029-4 supersedes only the historical header geometry with
+    # Task Base's task-center header. Preserve/report the missing old annotation;
+    # it is no longer an executable layout input. All retained form originals
+    # remain required, and changed assets still fail rather than being replaced.
+    changed = [
+        item
+        for item in references
+        if item["state"] != "PRESERVED"
+        and not (item["reference"] == "整理规则需修复.png" and item["state"] == "MISSING")
+    ]
     if changed:
         print(
             "UNAVAILABLE: user reference assets are missing or changed: "
@@ -881,9 +872,9 @@ def main() -> int:
 
         evidence = json.loads((ARTIFACT_ROOT / "evidence.json").read_text(encoding="utf-8"))
         matrix = {
-            "task": "44.4",
-            "slice": "44",
-            "requiredOutcome": "RO-2",
+            "task": "PATCH-20261029-4",
+            "slice": None,
+            "requiredOutcome": "PATCH-20261029-4 AC-1–8",
             "viewportReference": "1536x1024",
             "referenceHashes": references,
             "measured": evidence,
@@ -899,18 +890,16 @@ def main() -> int:
             "comparison": [
                 {
                     "reference": "整理规则需修复.png",
-                    "region": "shared header/navigation repair region",
+                    "region": "superseded historical header; current task-center comparison",
                     "assertion": (
-                        "one shell header carries the Rules title at left and the "
-                        "functional keyword search plus account/notification controls "
-                        "at right on the same desktop row, with the business "
-                        "description as a separate full-width line below that row and "
-                        "family navigation following the header without an intervening "
-                        "dominant row; the annotated black rectangle is annotation "
-                        "only, not product chrome"
+                        "PATCH-20261029-4 content title/description and right refresh "
+                        "follow the Task Base task-center header; category cards and "
+                        "seven inventories retain their accepted design. Historical "
+                        "reference images remain unchanged; former topbar geometry "
+                        "is superseded by this Task."
                     ),
                     "measured": evidence["viewports"]["desktop"]["header"],
-                    "state": "STRUCTURALLY_ALIGNED",
+                    "state": "TASK_HEADER_ALIGNED_LEGACY_REFERENCE_REPORTED_SEPARATELY",
                 },
                 {
                     "reference": "识别类型.png",

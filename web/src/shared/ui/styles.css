@@ -162,7 +162,6 @@ body {
 .mf-rules-toolbar h2 {
   margin: 0.15rem 0;
 }
-.mf-rules-header button,
 .mf-rules-tabs button {
   border: 1px solid #d8dee8;
   background: #fff;
@@ -4738,116 +4737,69 @@ tr[aria-selected="true"] {
 /* ---------------------------------------------------------------------------
    Slice 44 RO-2: reference-aligned Rules workspace and purpose-built forms.
 
-   Everything below is scoped to `.mf-rules-*` and the Rules top-bar modifier,
+   Everything below is scoped to `.mf-rules-*` and its content container,
    so Files/MediaLibrary/Storage drawers and the shared shell keep their own
    geometry. Nothing here changes another page's composition.
    --------------------------------------------------------------------------- */
 
-/* The Rules header is composed inside the one shared shell. Its hierarchy is
-   the reference's: title, functional keyword search and the existing
-   account/notification controls on one row, then the business description as a
-   separate full-width line, so the search/account controls align against the
-   title row instead of against title plus paragraph. */
-.mf-shell-topbar-rules {
-  display: block;
-  height: auto;
-  min-height: 96px;
-  padding: 14px 18px;
-}
-
-.mf-rules-topbar {
-  display: grid;
-  gap: 6px;
-}
-
-.mf-rules-topbar-row {
-  display: flex;
-  align-items: center;
-  gap: 27px;
-}
-
-/* The header already carries the Rules title and description, so the generic
-   destination context line would be a duplicate heading. */
-.mf-shell-main:has(.mf-rules-page) .mf-page-context {
-  display: none;
-}
-
+/* PATCH-20261029-4: content header follows the accepted task-center geometry. */
 .mf-shell-main:has(.mf-rules-page) {
+  max-width: none;
   padding: 0 0 40px;
 }
 
-.mf-rules-topbar-row h1 {
-  flex: 1 1 auto;
-  min-width: 0;
-  margin: 0;
-  color: #0e1728;
-  font-size: 26px;
-  font-weight: 700;
-  line-height: 32px;
-}
-
-/* The description is a full-width line below the title row, not a paragraph
-   confined to the title column. */
-.mf-rules-topbar-description {
-  margin: 0;
-  color: #53698e;
-  font-size: 14px;
-  line-height: 20px;
-}
-
-.mf-shell-topbar-rules .mf-shell-search {
-  flex: 0 1 420px;
-  min-width: 180px;
-}
-
-.mf-shell-topbar-rules .mf-shell-actions {
-  flex: 0 0 auto;
-}
-
-.mf-shell-topbar-rules .mf-shell-search input:disabled {
-  cursor: not-allowed;
-  color: #7183a2;
-}
-
-/* The workspace sits directly under the shell header with the reference's
-   aligned left edge and no redundant page heading. */
 .mf-rules-page {
   display: grid;
   gap: 14px;
-  padding: 18px 18px 40px;
+  padding: 20px 18px 28px 23px;
   background: #fafbfc;
 }
 
-/* The identity/refresh utility line sits below the family navigation so the
-   reference hierarchy (header → navigation → inventory) is never interrupted. */
-.mf-rules-diagnostics {
-  display: flex;
-  align-items: center;
-  justify-content: space-between;
-  gap: 16px;
+.mf-rules-page > .mf-rules-header {
   flex-wrap: wrap;
-  min-height: 30px;
+  gap: 16px;
+  margin: 0 0 4px;
 }
 
-.mf-rules-diagnostics .mf-eyebrow {
+.mf-rules-header h1 {
   margin: 0;
-  font-size: 12px;
+  color: #0e1728;
+  font-size: 30px;
+  font-weight: 700;
+  line-height: 36px;
 }
 
-.mf-rules-diagnostics .mf-actions {
-  margin-top: 0;
+.mf-rules-header p {
+  margin: 4px 0 0;
+  color: #53698e;
+  font-size: 15px;
+  line-height: 22px;
 }
 
-.mf-rules-diagnostics button {
-  min-height: 30px;
-  padding: 0 12px;
-  border: 1px solid #d8e2ef;
-  border-radius: 6px;
-  background: #fff;
-  color: #14223c;
-  font: inherit;
-  font-size: 13px;
-  cursor: pointer;
+.mf-rules-overview {
+  display: grid;
+  gap: 24px;
+}
+
+.mf-rules-overview h2,
+.mf-rules-overview h3,
+.mf-rules-overview p,
+.mf-rules-overview .mf-rules-flow {
+  margin: 0;
+}
+
+.mf-rules-overview p {
+  margin-top: 8px;
+  color: #53698e;
+}
+
+.mf-rules-overview .mf-rules-summary-grid {
+  margin-top: 12px;
+}
+
+.mf-rules-overview > .mf-rules-complete-flow {
+  border-top: 1px solid #e2e7ef;
+  padding-top: 24px;
 }
 
 /* --- the eight reference navigation cards -------------------------------- */
@@ -5608,14 +5560,6 @@ tr[aria-selected="true"] {
 }
 
 @media (max-width: 900px) {
-  .mf-rules-topbar-row {
-    flex-wrap: wrap;
-    gap: 12px;
-  }
-  .mf-shell-topbar-rules .mf-shell-search {
-    order: 3;
-    flex: 1 1 100%;
-  }
   .mf-rules-drawer,
   .mf-rules-drawer[data-complex="true"] {
     top: 12px;

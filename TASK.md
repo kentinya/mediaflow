@@ -1,7 +1,7 @@
 # Task PATCH-20261029-4 — 整理规则页头与概览展示修正
 
 用户于 2026-10-29 明确要求激活本 Task；已从规划草案提升为正式独立 Task，范围可交 Developer 实施。
-当前状态为 PLANNED，尚未开始代码实现。本轮完成 B 的 Task 激活，不自动启动其他角色或 agent，
+当前状态为 IN PROGRESS，Developer 已开始本 Task 实施，不自动启动其他角色或 agent，
 不授权推送或部署。生命周期遵循 [Development Workflow §3.1](docs/development-workflow.md#31-independent-minor-bugs)。
 
 Authority：用户要求修正现有整理规则页，并明确以现行任务中心为标题/刷新排版基准。
@@ -16,7 +16,7 @@ Authority：用户要求修正现有整理规则页，并明确以现行任务�
 Task ID: PATCH-20261029-4
 Task Type: STANDALONE MINOR BUG
 Parent Slice: NONE
-Status: PLANNED
+Status: IN PROGRESS
 Authorization: USER-ACTIVATED TASK — 2026-10-29
 Task Base: 739a9c49a39187f1cf48aa3a62c241aaea22d9a9
 Difficulty: Medium

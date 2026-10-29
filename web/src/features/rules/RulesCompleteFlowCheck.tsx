@@ -349,9 +349,7 @@ export function RulesCompleteFlowCheck({ token, observedActive }: Props) {
     >
       <h3 id="rules-complete-flow-title">完整流程检查</h3>
       <p>
-        这是独立的完整流程检查:它按当前 Active
-        真实运行识别竞争、策略解析、元数据、命名、分类与整理计划,并如实报告缺失阶段。
-        它与单个对象的本地测试分开,且不发布、不激活、不产生可执行工作。
+        检查当前配置下的识别、元数据、命名、分类和整理计划，不执行文件整理。
       </p>
       {authority === null ? (
         <div className="mf-actions">
