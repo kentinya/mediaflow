@@ -9,7 +9,7 @@ import {
   type ReactNode,
 } from "react";
 import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
-import { Link, useNavigate } from "@tanstack/react-router";
+import { Link, useNavigate, useSearch } from "@tanstack/react-router";
 import { useAuthToken } from "../../shared/api/auth-context";
 import { AuthorizedReadBoundary } from "../../shared/auth/AuthorizedReadBoundary";
 import { settingsReturnSearch } from "../../shared/navigation/settings-return";
@@ -348,19 +348,6 @@ function readInitialBrowseState(): InitialBrowseState {
       search.get("operationTaskId"),
     ),
   };
-}
-
-/**
- * The task center's bounded return context when this Files session started
- * from `新建整理任务` (re-read per browse entry, never component-cached
- * across a reconnect of a different origin). A tampered or absent value means
- * the ordinary Files journey and no Operations return surface.
- */
-function readOperationsReturnFromLocation(): string | null {
-  if (typeof window === "undefined") return null;
-  return readOperationsReturnContext(
-    Object.fromEntries(new URLSearchParams(window.location.search)),
-  );
 }
 
 /**
@@ -2170,15 +2157,15 @@ export function StorageFilesPage() {
   const token = useAuthToken();
   const navigate = useNavigate();
   const queryClient = useQueryClient();
+  const searchParams = useSearch({ strict: false }) as Record<string, unknown>;
   const { query, setQuery, subscribeToQueryChange } = useFilesSearch();
   const initialBrowse = useMemo(() => readInitialBrowseState(), []);
-  // The organize journey started from the task center keeps one bounded
-  // return context; it is read at entry and rides into every page of the
-  // journey this page starts, never re-read after a principal change.
-  const operationsReturn = useMemo(
-    () => readOperationsReturnFromLocation(),
-    [],
-  );
+  // The task-center-originated organizing journey keeps one bounded return
+  // context.  Read it from the router's committed search, not a one-time
+  // `window.location` snapshot: an ordinary sidebar Files click must clear
+  // the visible return surface in the same route instead of leaving a stale
+  // mount-time copy behind.  The helper re-validates every inner key.
+  const operationsReturn = readOperationsReturnContext(searchParams);
   const [selectedLibraryId, setSelectedLibraryId] = useState(
     initialBrowse.requestedLibraryId,
   );
@@ -2700,7 +2687,7 @@ export function StorageFilesPage() {
         return next.length === current.length ? current : next;
       });
     },
-    [],
+    [setSelectedFiles],
   );
 
   const commandMutation = useMutation({

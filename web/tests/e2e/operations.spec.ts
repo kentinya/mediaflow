@@ -105,9 +105,11 @@ test("任务中心 inventory shows the run list, views and workspace links", asy
   await expect(page.getByLabel("ResourceLibrary scope")).toHaveCount(0);
   await expect(page.getByRole("heading", { name: "手动操作" })).toHaveCount(0);
   await expect(page.getByRole("link", { name: "新建整理任务" })).toHaveCount(0);
+  // PATCH-20261029-2: the shared sidebar Files link is ordinary page
+  // navigation from the task center; it neither invents nor carries returnOps.
   await expect(
     page.getByRole("link", { name: "Files", exact: true }),
-  ).toHaveAttribute("href", "/ui-v2/resourcelib/files?returnOps=");
+  ).toHaveAttribute("href", "/ui-v2/resourcelib/files");
   // Entry has no selection: the detail panel is closed.
   await expect(page.getByRole("region", { name: "运行详情" })).toHaveCount(0);
 });

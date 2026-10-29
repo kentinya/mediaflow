@@ -1,5 +1,5 @@
 import { afterEach, describe, expect, it, vi } from "vitest";
-import { cleanup, screen, waitFor } from "@testing-library/react";
+import { cleanup, screen, waitFor, within } from "@testing-library/react";
 import userEvent from "@testing-library/user-event";
 import { authStore } from "../api/auth-store";
 import { renderApp } from "../../../tests/utils";
@@ -144,17 +144,43 @@ describe("AppShell", () => {
     expect(search).toHaveAttribute("placeholder", "概览不支持关键字搜索");
   });
 
+  it("renders only the task center's own semantic title, without the shell location hint", async () => {
+    vi.stubGlobal(
+      "fetch",
+      vi.fn(
+        async () =>
+          new Response(JSON.stringify({ error: { code: "unexpected" } }), {
+            status: 500,
+            headers: { "Content-Type": "application/json" },
+          }),
+      ),
+    );
+    authStore.setToken("shell-test-token");
+    renderApp("/ui-v2/operations");
+
+    await screen.findByRole("heading", { name: "任务中心" });
+    const main = screen.getByRole("main");
+    // The shell's large muted `<p>` location hint used to duplicate the page
+    // title.  A heading-only assertion would miss it, so count every exact
+    // visible title occurrence inside the main content and require the hint's
+    // element to be absent.
+    expect(within(main).getAllByText("任务中心", { exact: true })).toHaveLength(
+      1,
+    );
+    expect(main.querySelector(".mf-page-context")).toBeNull();
+    // The sidebar entry and browser title remain.
+    expect(screen.getByRole("link", { name: "任务中心" })).toBeVisible();
+    expect(document.title).toBe("任务中心 | MediaFlow");
+  });
+
   /**
-   * Task46.3 RO-2: the task center is no longer a creation entry, so an
-   * operator who filtered the list and then continued through the shared
-   * sidebar Files link must carry that exact submitted list state.  The shell
-   * reads the router-owned, already-committed search — never a second, stale
-   * copy of `window.location` — because a filter submission renders the route
-   * before the browser URL is updated.  Asserting a preset `returnOps` at test
-   * start cannot cover this: the defect only appears when the context is
-   * derived from a filter the operator just submitted.
+   * PATCH-20261029-2: the shared sidebar Files destination is ordinary page
+   * navigation.  It must not manufacture a task-center return context from a
+   * filtered list, because the task center no longer starts a Files-originated
+   * organize journey.  An explicit task/preparation deep link still owns its
+   * bounded return context on its own links.
    */
-  it("carries a submitted task-center filter into the sidebar Files link", async () => {
+  it("uses plain Files navigation from the task center and clears a same-route context", async () => {
     const user = userEvent.setup();
     vi.stubGlobal(
       "fetch",
@@ -170,12 +196,9 @@ describe("AppShell", () => {
     const { router } = renderApp("/ui-v2/operations");
 
     await screen.findByRole("heading", { name: "任务中心" });
-    // Before any filter the journey still carries the legitimate empty
-    // context: it marks the Files visit as task-center-originated without
-    // inventing a filter.
     expect(screen.getByRole("link", { name: "Files" })).toHaveAttribute(
       "href",
-      "/ui-v2/resourcelib/files?returnOps=",
+      "/ui-v2/resourcelib/files",
     );
 
     await user.type(screen.getByLabelText("操作类型"), "manual_organize");
@@ -184,27 +207,43 @@ describe("AppShell", () => {
     );
     expect(screen.getByRole("link", { name: "Files" })).toHaveAttribute(
       "href",
-      "/ui-v2/resourcelib/files?returnOps=command%3Dmanual_organize",
+      "/ui-v2/resourcelib/files",
     );
 
-    // Following that real link lands on Files with the same submitted filter.
     await user.click(screen.getByRole("link", { name: "Files" }));
     await waitFor(() =>
       expect(router.history.location.pathname).toBe("/ui-v2/resourcelib/files"),
     );
+    expect(router.history.location.search).toBe("");
+    expect(screen.queryByRole("link", { name: "返回任务中心" })).toBeNull();
+
+    // Re-entering the sidebar's own active Files destination with an already
+    // visible explicit context clears the same-route return surface instead of
+    // leaving a mount-time copy behind.
+    cleanup();
+    const second = renderApp(
+      "/ui-v2/resourcelib/files?returnOps=status%3Dpaused%26run%3Dtask-source",
+    );
     expect(
-      new URLSearchParams(router.history.location.search).get("returnOps"),
-    ).toBe("command=manual_organize");
-    // The Files destination itself stays the ordinary Files page: the carried
-    // context is the return marker only, never a second filter or authority.
-    expect(
-      new URLSearchParams(router.history.location.search).has(
-        "resourceLibraryId",
+      await screen.findByRole("link", { name: "返回任务中心" }),
+    ).toBeVisible();
+    expect(screen.getByRole("link", { name: "Files" })).toHaveAttribute(
+      "href",
+      "/ui-v2/resourcelib/files",
+    );
+    await user.click(screen.getByRole("link", { name: "Files" }));
+    await waitFor(() =>
+      expect(second.router.history.location.pathname).toBe(
+        "/ui-v2/resourcelib/files",
       ),
-    ).toBe(false);
+    );
+    expect(second.router.history.location.search).toBe("");
+    await waitFor(() =>
+      expect(screen.queryByRole("link", { name: "返回任务中心" })).toBeNull(),
+    );
   });
 
-  it("keeps a journey's existing bounded context instead of re-deriving it", async () => {
+  it("keeps an explicit Files-originated return link on its own journey link", async () => {
     vi.stubGlobal(
       "fetch",
       vi.fn(
@@ -216,25 +255,22 @@ describe("AppShell", () => {
       ),
     );
     authStore.setToken("shell-test-token");
-    // A journey that already carries a legitimate context keeps it verbatim
-    // while the operator moves between pages of the same journey, and the link
-    // only ever addresses Files plus that marker — no second destination,
-    // library or population is invented.
     renderApp(
       "/ui-v2/resourcelib/files?returnOps=status%3Dpaused%26run%3Dtask-source",
     );
-    const carried = await screen.findByRole("link", { name: "Files" });
-    expect(carried).toHaveAttribute(
-      "href",
-      "/ui-v2/resourcelib/files?returnOps=status%3Dpaused%26run%3Dtask-source",
-    );
-    // The preserved context is a return marker only: the Files landing still
-    // re-validates its inner keys, so nothing here becomes a Files filter.
+
+    // The explicit deep link still re-validates its bounded context and offers
+    // the exact task-center return; the shared sidebar Files link stays plain.
     expect(
-      new URLSearchParams(carried.getAttribute("href")?.split("?")[1] ?? "")
-        .get("returnOps")
-        ?.includes("status=paused"),
-    ).toBe(true);
+      await screen.findByRole("link", { name: "返回任务中心" }),
+    ).toHaveAttribute(
+      "href",
+      "/ui-v2/operations?status=paused&run=task-source",
+    );
+    expect(screen.getByRole("link", { name: "Files" })).toHaveAttribute(
+      "href",
+      "/ui-v2/resourcelib/files",
+    );
   });
 
   it("does not put a second Rules header on the dedicated Edit route", async () => {

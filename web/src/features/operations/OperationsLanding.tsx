@@ -123,14 +123,14 @@ interface ProblemPageState {
 }
 
 const RUN_VIEW_DESCRIPTIONS: Readonly<Record<RunView, string>> = {
-  all: "查看授权范围内的任务与 Job、实际阶段和已处理进度；业务名称和范围来自受理时保存的记录。",
-  running: "查看当前阶段和已处理进度；未知阶段或计数会明确显示不可用。",
-  attention: "查看仍待跟进的决定、修复或后续步骤，并进入对应文件证据。",
-  ended: "核对每项运行的结果摘要、失败数量和结束状态。",
-  recognition: "识别尚未确定时，核对候选或识别规则，再打开对应文件记录。",
-  metadata: "媒体身份仍待确认或补正；核对标题、年份和候选后查看文件记录。",
-  classification: "目标媒体库或相对路径尚未确定；检查分类策略和来源范围。",
-  conflict: "目标位置存在冲突；查看冲突文件和已配置的处理策略。",
+  all: "任务与 Job 的实际阶段、进度和范围来自受理时记录。",
+  running: "当前阶段与已处理进度；未知值会明确显示不可用。",
+  attention: "仍待跟进的决定、修复或后续步骤，可进入文件证据。",
+  ended: "每项运行的结果摘要、失败数量和结束状态。",
+  recognition: "核对未确定的识别候选或规则，再查看文件记录。",
+  metadata: "核对待确认或补正的媒体身份标题、年份与候选。",
+  classification: "目标媒体库或相对路径尚未确定，检查分类依据。",
+  conflict: "目标位置存在冲突，核对冲突文件和处理策略。",
 };
 
 const RECOVERY_VIEW_EXPLANATIONS: Readonly<Record<RunProblemType, string>> = {
@@ -251,7 +251,7 @@ function defaultFilters(): RunListFilters {
 
 /**
  * The submitted view. The router's default search parser may deliver the
- * literal as a string; anything outside the nine modelled views falls back to
+ * literal as a string; anything outside the eight modelled views falls back to
  * the unfiltered `全部任务` view instead of being replayed against the server.
  */
 function readView(search: Record<string, unknown>): RunView {
@@ -1052,7 +1052,7 @@ function ViewSummary({
 }
 
 /**
- * The nine sibling task-center views on one horizontal navigation row.
+ * The eight sibling task-center views on one horizontal navigation row.
  *
  * Each tab is an independent deep-linkable server query; narrow screens
  * scroll the row horizontally instead of hiding a recovery view.
@@ -1119,22 +1119,28 @@ function RunTable({
   return (
     <>
       <div className="mf-run-table-wrap" style={{ overflowX: "auto" }}>
-        <table>
+        <table className={`mf-run-table mf-run-table-${view}`}>
           <caption className="mf-visually-hidden">运行清单</caption>
           <thead>
             <tr>
-              <th>业务名称</th>
-              <th>操作类型</th>
-              <th>范围</th>
-              {showProgress && <th>当前阶段</th>}
-              {showProgress && <th>处理进度</th>}
-              {attention && <th>当前问题</th>}
-              {ended && <th>结果摘要</th>}
-              {recovery && <th>问题说明</th>}
-              <th>状态</th>
-              <th>{ended || recovery ? "更新时间" : "触发方式 / 创建时间"}</th>
-              {recovery && <th>涉及文件</th>}
-              {(recovery || attention) && <th>定位</th>}
+              <th className="mf-run-col-name">业务名称</th>
+              <th className="mf-run-col-command">操作类型</th>
+              <th className="mf-run-col-scope">范围</th>
+              {showProgress && <th className="mf-run-col-stage">当前阶段</th>}
+              {showProgress && (
+                <th className="mf-run-col-progress">处理进度</th>
+              )}
+              {attention && <th className="mf-run-col-problem">当前问题</th>}
+              {ended && <th className="mf-run-col-result">结果摘要</th>}
+              {recovery && <th className="mf-run-col-description">问题说明</th>}
+              <th className="mf-run-col-status">状态</th>
+              <th className="mf-run-col-time">
+                {ended || recovery ? "更新时间" : "触发方式 / 创建时间"}
+              </th>
+              {recovery && <th className="mf-run-col-files">涉及文件</th>}
+              {(recovery || attention) && (
+                <th className="mf-run-col-actions">定位</th>
+              )}
             </tr>
           </thead>
           <tbody>
@@ -1147,10 +1153,11 @@ function RunTable({
                   className={selected ? "mf-run-selected" : undefined}
                   aria-selected={selected}
                 >
-                  <td>
+                  <td className="mf-run-name-cell">
                     <button
                       type="button"
                       className="mf-run-select"
+                      title={run.sourceScope ?? commandLabelOf(run)}
                       aria-label={`${run.sourceScope ?? commandLabelOf(run)}，${commandLabelOf(run)}详情`}
                       onClick={() => onSelect(run.runId)}
                     >
@@ -1161,7 +1168,7 @@ function RunTable({
                       <span className="mf-run-kind">（无原生详情）</span>
                     )}
                   </td>
-                  <td>
+                  <td className="mf-run-command-cell">
                     {commandLabelOf(run)}
                     {run.libraryKind !== null && (
                       <span className="mf-run-kind">
@@ -1173,16 +1180,21 @@ function RunTable({
                       <span className="mf-run-kind">（未识别的历史命令）</span>
                     )}
                   </td>
-                  <td>{run.sourceScope ?? "不可用"}</td>
+                  <td
+                    className="mf-run-scope-cell"
+                    title={run.sourceScope ?? undefined}
+                  >
+                    {run.sourceScope ?? "不可用"}
+                  </td>
                   {showProgress && (
-                    <td>
+                    <td className="mf-run-stage-cell">
                       {run.currentStage === null
                         ? "不可用"
                         : RUN_CURRENT_STAGE_LABELS[run.currentStage]}
                     </td>
                   )}
                   {showProgress && (
-                    <td>
+                    <td className="mf-run-progress-cell">
                       {run.processedItems === null || run.totalItems === null
                         ? "不可用"
                         : `${run.processedItems} / ${run.totalItems} 项`}

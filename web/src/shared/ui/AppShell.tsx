@@ -23,12 +23,6 @@ import {
   RULES_WORKSPACE_DESCRIPTION,
   RULES_WORKSPACE_TITLE,
 } from "../../entities/rules/rules-workspace";
-import {
-  operationsReturnContextFromSearch,
-  operationsReturnSearch,
-  parseOperationsReturnContext,
-  readOperationsReturnContext,
-} from "../navigation/operations-return";
 import { Icon } from "./Icons";
 
 export interface AppShellProps {
@@ -114,30 +108,6 @@ export function AppShell({ children }: AppShellProps) {
     filesSearchListeners.current.add(listener);
     return () => filesSearchListeners.current.delete(listener);
   }, []);
-  // RO-2: ResourceLibrary Files is the only normal entry for a new
-  // file-selection-based organizing request.  A journey that began in the task
-  // center must therefore keep that exact bounded return context when the
-  // operator continues through the shell instead of the removed creation CTA:
-  // on the task-center route the current, already-validated list filters become
-  // the context, and everywhere else the context this journey already carries is
-  // preserved.  Only grammar-validated keys travel, so a tampered value degrades
-  // to the default list view rather than another page or population.
-  const filesJourneyReturnContext = useMemo(() => {
-    // One consistent source of truth: the router's own committed search.  The
-    // router publishes the new location state as soon as it renders the target
-    // route, while the browser's address bar is only updated when that history
-    // action flushes; reading ``window.location`` here therefore raced the very
-    // filter submission this link must carry and produced an empty context.
-    // The router search is also the only value a route's own validation has
-    // already admitted, so this memo cannot pick up an unvalidated key.
-    const search = Object.fromEntries(new URLSearchParams(searchStr));
-    const existing = readOperationsReturnContext(search);
-    if (pathname !== "/operations") return existing;
-    return operationsReturnContextFromSearch({
-      ...parseOperationsReturnContext(existing),
-      ...search,
-    });
-  }, [pathname, searchStr]);
   const pageTitle =
     destination?.title ??
     (pathname === "/" ? "Connect | MediaFlow" : "MediaFlow");
@@ -269,22 +239,17 @@ export function AppShell({ children }: AppShellProps) {
         >
           {shellDestinations.map((item) => {
             const active = item.isActive(pathname);
-            // RO-2: ResourceLibrary Files is the only normal entry for a new
-            // file-selection-based organizing request, so a journey that began in
-            // the task center must keep that exact bounded return context when the
-            // operator continues through the shell instead of a removed creation
-            // CTA.  Only the already-parsed, grammar-validated context is carried;
-            // every other destination keeps its plain link, and a tampered context
-            // degrades to no context (never to another page or population).
-            const carried =
-              item.id === "files"
-                ? operationsReturnSearch(filesJourneyReturnContext)
-                : {};
+            // Shared sidebar destinations are ordinary page navigation.  The
+            // task center no longer creates an organizing journey from a
+            // filtered list, so its Files link must not manufacture or carry a
+            // `returnOps` marker (including when Files already has one).  An
+            // explicit task/preparation/organize journey keeps its own bounded
+            // return context on its own links; only those links read it.
             return (
               <Link
                 key={item.id}
                 to={item.path as string}
-                search={carried}
+                search={{}}
                 aria-label={item.ariaLabel}
                 aria-current={active ? "page" : undefined}
                 className={`mf-nav-link${active ? " is-active" : ""}`}
@@ -323,7 +288,7 @@ export function AppShell({ children }: AppShellProps) {
           )}
         </header>
         <main id="main-content" className="mf-shell-main" tabIndex={-1}>
-          {destination ? (
+          {destination !== undefined && destination.id !== "operations" ? (
             <p className="mf-page-context">{destination.label}</p>
           ) : null}
           <FilesSearchContext.Provider value={filesSearchContext}>
