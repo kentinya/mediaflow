@@ -1,33 +1,4 @@
-# NO ACTIVE IMPLEMENTATION TASK
-
-B independently reviewed standalone `PATCH-20261029-1` on 2026-10-29: **PASS**.
-Authorized bug acceptance is complete; no Task blocker or additional Task remains.
-
-- Task Type / Parent: `STANDALONE MINOR BUG` / `NONE`.
-- Reviewed Base: `a9d5c5f1914f5590f0ebe1f60e58d7f91ca56381`.
-- Reviewed Head: `608aeea61fc00b5dcf1dacc07e37b6bb4c39b644` (complete 14-file range).
-- Product/test checkpoint: `36e4634ea3a6b6ccb339aaa62f265f464e5f70b3`; the reviewed
-  successor changes only the Developer report. Task/Developer handoff remains at
-  `608aeea61fc00b5dcf1dacc07e37b6bb4c39b644:TASK.md`.
-- B completion checkpoint: `f1463e1d9e16355a6f44fa6fba9c3bbda9efb193`; its `TASK.md`
-  retains the review summary, actual validation results and limitations. Detailed history stays in Git.
-- Local raw logs, exact commands/timing, artifact hashes and acceptance mapping (local only):
-  `.git/validation-evidence/608aeea61fc00b5dcf1dacc07e37b6bb4c39b644/b-patch-20261029-1/README.md`.
-
-Slice46 remains **PASS / CLOSED** with its original Base, accepted Implementation Head,
-five outcomes and AC-1–18 unchanged. [SLICE.md](SLICE.md), [Roadmap](docs/roadmap.md) and
-[Progress](docs/progress.md) are not modified by this independent bug completion.
-
-Next: **NO ACTIVE IMPLEMENTATION TASK**. The user requested the planning-only draft below;
-implementation is not authorized. Any future large Slice still requires A's separate scope selection.
-
-## Planning-only draft — PATCH-20261029-2
-
-本轮授权：用户在只读调查后选择一个独立小修 Task，并要求“规划 Task”。本草案只规划，
-不启动实现、不启动其他角色或代理。得到实现授权后，再用本计划替换顶部无活动实现通知并
-复核 Base 与工作区；如已有其他产品变更，先评估影响，不静默改写本草案的 Base。
-
-### Task — 任务中心布局与普通文件导航修正
+# Task PATCH-20261029-2 — 任务中心布局与普通文件导航修正
 
 Authority: 用户授权的三项既有界面修正；生命周期、测试与独立审查按
 [Development Workflow](docs/development-workflow.md)。相关已验收 Slice38/42/45/46 仅为基础引用，
@@ -42,10 +13,25 @@ Task Base: 8ea5cbbd4914316deadda8297e1bdf38dd9d8eeb
 Difficulty: Medium
 Test Level: T3
 Planner / Reviewer: B
-Development Authorization: PLANNING ONLY
+Development Authorization: USER-ACTIVATED TASK — 2026-10-29
+Next Action: DEVELOPER IMPLEMENTS THIS TASK
 ```
 
-### Goal
+## Activation
+
+用户于 2026-10-29 明确要求“激活 Task”，本计划成为当前正式独立 Task，状态为 PLANNED，
+可由 Developer 按既定边界接手。本次只完成激活，尚未启动产品实现、B Review 或其他代理。
+
+激活前工作区：`main`，HEAD `66fcafba5916c2123cd903ff6ced76f9dd84ae63`；已跟踪文件干净。
+已核对原 Task Base 至该 HEAD 仅有两次 `TASK.md` 规划提交，没有产品或测试变更；保留原
+Task Base、三项目标、范围、验收及 Medium/T3，不重新定 Base。既存未跟踪文件继续保留。
+激活前治理预检：`python3 scripts/check_governance.py` — PASS。
+
+此前独立 `PATCH-20261029-1` 的 PASS 与精确审查记录保留在
+`f1463e1d9e16355a6f44fa6fba9c3bbda9efb193:TASK.md`。Slice46 继续 PASS / CLOSED；
+本次不修改 SLICE/Roadmap/Progress 或此前验收事实。
+
+## Goal
 
 用户打开任务中心时，主内容区只有一个清晰的页面标题；标题、边距和列表的空间分配与
 当前媒体库页协调。用户从任务中心点击共享侧栏“文件”时，进入普通资源库文件页，不出现
@@ -66,7 +52,7 @@ Real Storage Files 和 V2 Operator Web 章节，以及
 - 失败与恢复：保留加载、空列表、读取失败、401/403、失效任务/上下文的既有解释与合法
   恢复动作。刷新/重新连接恢复合法 URL 状态，不自动创建、取消、重提或执行工作。
 
-### Observed gap and root cause
+## Observed gap and root cause
 
 已在当前运行页面复现，并与本 Base 源码交叉确认：
 
@@ -88,7 +74,7 @@ Real Storage Files 和 V2 Operator Web 章节，以及
 `.DS_Store`、`15`、自动化参考图与 imagegen 压缩包均保留，不纳入 Task checkpoint。
 治理预检已运行 `python3 scripts/check_governance.py`：PASS。
 
-### Implementation Scope
+## Implementation Scope
 
 主要修改面：`web/src/shared/ui/AppShell.tsx`、`styles.css`、
 `web/src/features/operations/OperationsLanding.tsx`，以及必要的 Files 路由上下文消费和相关测试。
@@ -111,7 +97,7 @@ Real Storage Files 和 V2 Operator Web 章节，以及
 5. 更新受到本次普通导航预期影响的测试，补足真实布局、长路径与同路由重新进入用例。
    采用现有本地 fake/临时 Python harness；样本来自隔离 fixture，不使用用户媒体或运行库。
 
-### Acceptance Criteria
+## Acceptance Criteria
 
 - [ ] 主内容区的页面标题与位置提示合计只有一处可见的“任务中心”标题文字，且保留语义标题；
       侧栏入口与浏览器页签仍正常。八个视图以及加载、空列表、读取失败状态没有重复
@@ -140,7 +126,7 @@ Real Storage Files 和 V2 Operator Web 章节，以及
       全局标题规则，再对 Rules 与 Automation 做同类布局冒烟检查。记录实际受影响选择器
       与检查页面，不把“所有 Shell 页面不回退”扩成全站业务验收。
 
-### Required Tests
+## Required Tests
 
 按 [workflow §6](docs/development-workflow.md#6-test-levels) 分工。以下为实现后的计划，
 不是本次规划已运行的结果。Developer 完成受影响验证后交候选，B 独立审查完整 Base..Head。
@@ -208,18 +194,18 @@ workflow 规定的稳定忽略位置。脚本退出码或孤立的行数指标�
 Python/Web 单元/E2E、Docker 或 wheel 发布矩阵。发现实际跨边界风险时由 B 重评，不能
 扩张实现范围或把全量验收交给 Developer。
 
-### Non-goals
+## Non-goals
 
 - 不新增/重开 Slice，不改 SLICE/Roadmap/Progress、既有验收事实或全站视觉系统。
 - 不改业务接口、投影语义、任务计数/状态、执行/恢复/授权、库配置、媒体或数据库。
 - 不删除显式整理流程的上下文/返回功能，不恢复任务中心新建入口或全局普通操作中心。
 - 不改媒体库业务功能；媒体库只作为当前标题、边距和共享 Shell 的对照。
-- 不在本轮规划中实现产品、运行实现验收、自动调用其他角色、推送或部署。
+- 激活不自动启动其他角色或代理；推送、部署和范围外工作不在本 Task 授权内。
 
-### Developer Completion Report
+## Developer Completion Report
 
-未开始；实现授权与 Developer 受影响测试结果待后续填写。
+未开始；Developer 接手后填写实现 checkpoint 与受影响测试结果。
 
-### B Review Result
+## B Review Result
 
 未提交实现候选；尚未开展 B Review，不作 PASS/FIX REQUIRED 决定。
