@@ -2,7 +2,7 @@
 
 Authority: the user-authorized standalone correction and
 [Development Workflow](docs/development-workflow.md). 用户于 2026-10-29 明确要求激活本 Task；
-本文件为正式 **PLANNED** Task。本轮完成激活，不启动实现或审查实现结果。
+本文件为正式独立 Task；Developer 已提交候选，等待 B 独立审查。
 Slice46 继续 PASS / CLOSED，原 Base、已审 Head 及 Roadmap/Progress 保持不变。
 前一独立 Task PATCH-20261029-2 的 PASS 记录保留在 `542496a8:TASK.md` 及 Git 历史中。
 
@@ -11,7 +11,7 @@ Task ID: PATCH-20261029-3
 Name: Task Center time-range-only filtering and search removal
 Task Type: STANDALONE MINOR BUG
 Parent Slice: NONE
-Status: PLANNED
+Status: READY FOR B REVIEW
 Task Base: 542496a8cb9b69e5146fe8c702cd6f695752accd
 Difficulty: Low
 Test Level: T3
@@ -154,9 +154,48 @@ checkpoint；不修改产品实现、其他文档或预先 untracked 文件，�
 
 ### Developer completion report
 
-Implementation not started. Developer will implement only this Task, run its affected checks and
-submit an exact checkpoint with actual results as READY FOR B REVIEW under
-[Task/TEMPLATE.md](Task/TEMPLATE.md) and [Development Workflow](docs/development-workflow.md).
+- **Status: READY FOR B REVIEW**；源码候选 `40cdcf6cc26b7b4f244094d86e87dc1872e3c908`。
+  B 审查范围：`542496a8cb9b69e5146fe8c702cd6f695752accd..40cdcf6cc26b7b4f244094d86e87dc1872e3c908`。
+  后继报告提交只修改 TASK.md，不改变已验证的源码/测试/harness/构建输入。
+- 实现：任务中心 Shell 隐去搜索；All 只保留本地创建日期的单侧/双侧范围与清除，
+  列表/详情显示同一时区偏移，结束日覆盖最后一微秒；沿用后端完整总体、统计和分页。
+  All 旧隐藏条件及其游标在首次查询前清除，保留精确任务；其他视图/API 保留既有筛选。
+  修正空列表残留的 Scan/Preview 入口文案，同步三个直接相关说明文档。
+- 入口真实性：时间用例实际操作现有日期控件/清除/分页/详情/重连；临时数据库仅注入合成
+  时间分布，不新增产品入口。旧 Files 浏览器断言按真实的普通侧栏 → 整理执行页 →
+  “查看关联任务”修正，不拼造 `returnOps`，保留实际执行、身份、C→A 和不重放断言。
+- 工作区：开始为 `main` / `aa77d5c38b29132511f313893b11444a76eccf7a`。
+  已有 14 个 tracked 文件修改及未跟踪 `run-time.ts` 均为本 Task 内容，先保存差异再继续
+  核对/修复并显式纳入源码 checkpoint；原始清单与补丁在下述证据目录。所有无关未跟踪
+  日志/图片/OS 文件保留且未 stage；SLICE/Roadmap/Progress 未修改，未读私有运行库/媒体。
+
+实际验证（2026-10-29，命令 cwd 按 Required tests）：
+
+| 检查 | 实际结果 |
+|---|---|
+| Required tests 的五个 Web 文件：`npm run test -- run ...` | 5 文件 / 64 passed |
+| Required tests 的两个 `tests.test_operations_run_inventory.RunInventoryTestCase` 用例 | 2 / OK |
+| `npm run typecheck`、`npm run lint`、`npm run build` | 均通过 |
+| 全部修改的 TS/TSX 文件 Prettier；harness Ruff check / format --check | 均通过 |
+| `npm run test:e2e -- --config=playwright.python.config.ts tests/e2e/operations-inventory.python.spec.ts --output=../.git/validation-evidence/dev-patch-20261029-3/python-browser-delivery` | 43/43（含全部 3 个 `time filter:` 用例），1.4m |
+| `npm run test:e2e -- tests/e2e/task-center-layout.spec.ts tests/e2e/operations.spec.ts --output=../.git/validation-evidence/dev-patch-20261029-3/browser-delivery` | 30/30，12.5s |
+| `python3 scripts/check_governance.py`、`git diff --check` | 通过 |
+
+真实 Python spec 扩展运行覆盖此次修改影响的既有共享入口/详情 helper；没有执行全仓矩阵。
+桌面/390px 截图已实际检查，顶部搜索消失、日期控件/统计/列表可达；窄屏保留表格内部滚动。
+日期选择及八个标签、精确详情的焦点/Enter/Escape 路径通过实际 Chromium 检查。
+
+证据：本地 `.git/validation-evidence/dev-patch-20261029-3/README.md`，`*-delivery.log`、
+`input-sha256.json`（源码/测试/harness/生产资产 SHA256）及浏览器截图/trace。
+首轮浏览器并行运行因默认输出目录共享导致 trace ENOENT，随后使用独立输出目录。
+扩展真实后端首轮 17 failed / 26 passed：四个旧入口断言阻断执行后造成后续共享 Worker/fixture
+连锁失败；中间修正轮在发现准备页仍有默认中心链接后主动中断，日志未删除。
+修正为实际页面链接并完成既有执行后，最终新 harness 上 43/43 通过；未放宽断言/加重试或超时。
+
+剩余风险/限制：无已知本 Task 实现阻塞；B 独立 T3 验收仍待执行，验收勾选由 B 决定。
+本次为本机时区/Chromium/临时 SQLite/合成媒体验证，不声称跨时区矩阵、远程 Storage 或全量
+回归通过。保留 jsdom scrollTo、Vite 大 chunk 和 NO_COLOR 等工具警告。
+无新角色经验；未自签 PASS，未推送或发布。
 
 ### B review result
 
