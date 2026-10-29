@@ -385,9 +385,16 @@ atomic activation. Local evidence grants neither publication nor execution. Hist
 API behavior/evidence, immutable snapshots and admitted Task/Job/Automation pins retain their
 original scope. No alternate domain evaluator, runtime authority or Storage mutator is introduced.
 
-The eight-section Rules presentation has a family-scoped header search, complete inventories,
-explicit Add/copy drawers and full-page Edit with purpose-built forms. Styles are scoped to Rules;
-shared shell navigation/authentication and other business routes retain their behavior.
+The Rules workspace owns its content title/description and read-only refresh; its shared topbar
+contains account/notification controls. Overview has no inventory search; each of the seven
+inventories keeps one local search and its existing state filter. Normal refresh retains the
+current section, filters and unsaved form input. The shared authorized-read boundary still owns
+authentication and read failures; it does not present cached data as a successful refresh.
+Normal workspace chrome omits the Active sequence and Settings handoff; exact Active publication
+checks remain authoritative, diagnostics stay in Settings, and unavailable configuration retains
+its allowlisted Settings return context. Category cards, inventory layouts, explicit Add/copy
+drawers and full-page Edit retain their existing behavior. Styles are scoped to Rules; shared
+shell navigation/authentication and other business routes retain their behavior.
 
 ## Persistence
 

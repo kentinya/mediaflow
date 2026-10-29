@@ -113,9 +113,17 @@ never automatically Add again, reset the database or move media. Existing saved 
 - **State:** actual Active, object identity/enabled state/references/readiness and separate unsaved
   candidate. Overview, bindings, types, rules and Metadata/Naming/Classification/Organize inventories
   open full-width without a selected editor. Add/Copy opens a drawer; Edit is a full-page route.
+- **Presentation:** the workspace content header contains one `整理规则` title, a short description
+  and `刷新`, following the Task Center header hierarchy. The shared topbar keeps account/notification
+  controls. The eight category cards and seven inventory layouts retain their design. Overview
+  shows Chinese relationship labels, real total/enabled counts, conditional gaps/dependency guidance
+  and the separate complete-flow check at the bottom; it has no inventory search. Each family keeps
+  one local search and its existing state filter.
 - **Action:** typed lifecycle/reference impact, exact object test or policy preview and one `保存`.
-  Search/filter/navigation are read-only and create no Draft, Provider call or work. Forms retain
-  correctable tab-scoped input, not credentials or publication authority.
+  Search/filter/navigation/refresh are read-only and create no Draft, Provider call or work. A
+  successful refresh retains the current family, keyword, state filter and unsaved input; changing
+  family clears the keyword. Busy refresh is visibly unavailable. Forms retain correctable
+  tab-scoped input, not credentials or publication authority.
 - **Success:** focused whole-graph checked publication becomes Active for every consumer. Real rule
   priority/score/ambiguity/stop-on-match remains authoritative; one enabled binding per type. C keeps
   C under A Naming/Classification/Organize reuse. Save starts no work or execution authority.
@@ -123,6 +131,10 @@ never automatically Add again, reset the database or move media. Existing saved 
   binding, missing/disabled reference, denied/stale/invalid response or Provider/test failure on the
   affected object. Preserve input/Active; refresh stale authority, inspect/repoint references and
   rerun necessary evidence. An unknown Save needs state verification before another submission.
+  Authentication/read failures use the shared boundary without presenting stale data as refreshed
+  or resubmitting commands. No Active remains distinct from an empty Active graph and offers Settings
+  recovery with the originating family preserved. The normal workspace omits the sequence/Settings
+  utility row; Settings retains version/digest diagnostics and ordinary sidebar access.
 
 Reference images define hierarchy/style, not real names, counts, conditions or backend algorithms.
 TMDB remains the configured Provider abstraction; no implicit fallback or V1 Provider switching.

@@ -58,6 +58,12 @@ AC-1–18 见 [SLICE.md](../SLICE.md)。本文件保留上表修订索引、稳�
 其他七视图和管理 API 保留各自既有筛选；完整现行交互见
 [Task Center specification](task-center-page-spec.md)。这不改写下方原 Slice 的接受事实或冻结 V1 定义。
 
+整理规则的已接受展示修正归入 `V2-RULES-001`：内容区页头负责标题、说明和刷新，概览无清单
+搜索，七类清单各保留一个本地搜索及状态筛选；八分类卡片和清单内部设计保留。正常态不常驻
+配置序号/设置工具行；Settings 诊断、异常恢复及精确 Active/权限/发布语义保持。
+现行验收定义见 [V2 Requirements](v2-requirements.md)，完整旅程见
+[Recognition and rules](product-experience.md#recognition-and-rules)。
+
 ## Traceability and derivation rules
 
 - `Canonical Source` 使用下方完整产品定义的章节标题；章节正文仍是最终解释来源。

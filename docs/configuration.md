@@ -135,6 +135,14 @@ restart-only values; another snapshot's values cannot be labelled consumed.
 ## Native V2 organizing-rules management
 
 `/ui-v2/rules` reads Overview and seven family inventories from exact Active without creating Drafts.
+Use the content header's `刷新` to read current configuration; a successful refresh keeps the family,
+keyword, state filter and unsaved input. Overview has no inventory search; each family has one local
+search and its existing state filter. Changing family clears the keyword. Overview keeps real counts,
+Chinese relationship labels, conditional dependency guidance and the separate complete-flow check.
+Version/digest diagnostics remain in Settings. When the inventory reports no Active or unavailable
+configuration, its contextual Settings link preserves the originating family; normal sidebar
+Settings remains available. Authentication/read errors retain the shared read-only recovery boundary.
+
 Add/Copy explicitly opens a candidate; Edit is a full-page route with immutable ID. One checked Save
 publishes the focused successor, preserving unrelated Drafts/hidden configuration, prior Active on
 known failure and correctable input. Unknown publication is read back before another submission.
