@@ -1,4 +1,4 @@
-# Task PATCH-20261030-1 — 任务中心八标签统一时间筛选
+# Task PATCH-20261030-1 — 任务中心统一时间筛选与刷新反馈
 
 Authority：用户在发现仅“全部任务”完成简化后，明确要求“其他标签页也改”。本 Task 将同一
 创建时间范围交互补齐到其余七页，明确替换上一修正中“其他七视图保留原筛选”的限制；
@@ -6,6 +6,8 @@ Authority：用户在发现仅“全部任务”完成简化后，明确要求�
 [AGENTS.md](AGENTS.md)、[Development Workflow §3.1](docs/development-workflow.md#31-independent-minor-bugs)
 及 [B 角色指南](docs/agent-experience/task-planner-reviewer.md)。
 本轮由 B 完成规划并建立 PLANNED checkpoint，交 Developer 实施；不自动启动其他角色/agent。
+用户随后要求修复任务中心刷新闪烁和英文文案、参考整理规则页，补入同一只读查询体验修正；
+Task ID、Base、Medium/T3 和此前八标签结果不变，状态仍为 PLANNED。
 
 ```text
 Task ID: PATCH-20261030-1
@@ -30,6 +32,8 @@ Roadmap、Progress 和延期边界不变。本次不是重新评审或关闭原 
 默认或清除后读取**当前标签完整获准总体**，选定日期后读取其中创建时间在范围内的任务，
 仍采用有界服务端分页。切换标签保留合法时间范围并从新标签第一页读取；清除日期不切回 All，
 也不把“需要处理／识别恢复”等标签变成全状态任务列表。
+任务中心刷新使用“刷新／刷新中…”等中文文案；手动刷新有明确反馈且防重复点击，后台轮询
+安静更新真实状态，不周期性切换页头按钮或挤动布局。正常刷新保留现有列表/详情和当前上下文。
 
 - Entry/state：八标签及统计卡片沿用现有入口和布局，默认不打开详情；时间、数量、任务行及
   当前标签一致，区分加载、空总体、范围内无匹配和读取失败。
@@ -61,6 +65,15 @@ V2-AUTH-001–003、V2-SAFE-001；完整旅程见
 - `OperationsInventory.test.tsx`、`operations-return.test.ts` 及现有 real-Python
   `time filter:` 用例明确断言其他页保留旧控件；这些断言需要替换，保留原权限、范围、
   结果和返回安全检查。不是新建筛选系统或退役管理 API。
+- 页头 `RefreshControl` 默认显示 `Refresh/Refreshing…`；`anyFetching` 直接取清单/选中详情的
+  `isFetching`，而清单每 5 秒后台读取一次，导致未点刷新也周期性改文字和 disabled 样式。
+  B 经现有侧栏→任务中心和页头刷新入口、隔离 fake API 的受控读取延迟复现：按钮宽度约
+  76.7→107.8px，右对齐时左边缘跳约 31.1px；同条件刷新期间表格节点保持连接，未观察到
+  整张表卸载。因此修复已证明的按钮跳变，并验证正常刷新不清空列表，不能先假定整页重建。
+  本地诊断在 `.git/validation-evidence/patch-20261030-1/planning-refresh/`，首次短采样未捕获
+  轮询状态，后续完整窗口记录自动及手动切换；这不是候选验收或产品通过记录。
+- 整理规则页已有中文 secondary 按钮、忙碌反馈和防重复；它没有同样的列表周期轮询。
+  复用其可见交互/样式，不把任务中心后台轮询直接当作用户手动刷新，也不全站改默认文案。
 
 ## Implementation Scope and ordered steps
 
@@ -91,14 +104,30 @@ V2-AUTH-001–003、V2-SAFE-001；完整旅程见
    快速改日期/标签时旧响应不覆盖当前状态；失败/401/403 不显示旧总体为新条件成功。
    本轮不改后端业务、任务状态、存储、schema、执行、恢复决定或权限。
 
-5. **同步直接相关 CURRENT 文档与测试。** 在同一实现 checkpoint 更新 README、
+5. **修复刷新反馈与跳动。** 页头参照整理规则页使用中文“刷新／刷新中…”，保持 secondary
+   样式、键盘名称/焦点和忙碌防重复。任务中心本页现有列表、详情、问题文件里的只读刷新
+   入口同样采用中文，保持各自原有读取范围；不是全站翻译或翻译后台数据。
+   正常静默轮询继续及时发现新任务/进度，不反复改页头按钮的文字/宽度/disabled 外观；
+   手动刷新单独呈现必要反馈，同一手动刷新未完成时重复点击不触发重复刷新组。
+   与已在途的同条件后台读取安全合并/协调，不以关闭轮询、延长轮询周期或人为延时止闪。
+   手动刷新继续覆盖清单、已选 overview 及既有活动详情读回；局部 busy 的完成/失败应与
+   这组实际读取相符，不能刚发请求就显示完成。按钮在中文正常/忙碌间不造成页头换行或
+   周边内容跳动；正常同条件刷新保留列表/统计/当前详情、滚动及可用焦点，不退回整页加载。
+   日期/标签真正改变时沿用真实加载状态，不将别的查询或身份缓存当作当前结果。
+   请求失败明确展示现有读失败边界，401/403 保留权限/缓存清理规则；不得为“不闪”继续展示
+   受限/失效内容。只调整任务中心消费方或必要可选展示参数，不全局修改 RefreshControl、
+   AuthorizedReadBoundary 的权限/重读行为和其他页面默认语言。
+
+6. **同步直接相关 CURRENT 文档与测试。** 在同一实现 checkpoint 更新 README、
    Requirements 的修订说明、V2-OPS-001/003、Product Experience、Architecture 和
    task-center-page-spec，统一改为八标签时间范围；说明清除后仍为当前标签总体，
    管理 API 能力保留。历史参考图不改，原 Slice/旧 Task 的验收事实不重写。
+   页面约定及旅程同步中文手动刷新、静默轮询和正常刷新保留内容的语义。
    测试替换“其他七页保留原筛选”断言，保留既有 All、安全/身份/回程检查。
 
 优先文件：`web/src/features/operations/OperationsLanding.tsx`、
-`web/src/shared/navigation/operations-return.ts` 及直接测试；允许必要的查询/导航 helper、
+`web/src/shared/navigation/operations-return.ts`、本页消费的 `RunDetailTabs.tsx`/
+`ProblemFilePanel.tsx` 及直接测试；允许必要的查询/导航/刷新展示 helper、
 现有隔离 harness/fixture 和局部样式调整。生产修改限 Web 查询呈现，不改 Python 业务/API。
 
 ## Acceptance Criteria
@@ -124,10 +153,16 @@ V2-AUTH-001–003、V2-SAFE-001；完整旅程见
   键盘可达，焦点可见，无本次引入的整页横向溢出/控件遮挡；既有标签/表格容器滚动允许。
 - [ ] AC-8：CURRENT 文档不再把其他七页写成保留旧筛选；原 Slice 和已接受 Task 的历史结论
   不变。实际结果/失败/限制、精确 checkpoint 和测试用时清楚记录，交 READY FOR B REVIEW。
+- [ ] AC-9：任务中心页头及本页现有只读刷新按钮使用中文，正常/手动忙碌状态清楚，重复点击
+  不重复触发刷新组。桌面/390px 正常与忙碌文案切换不挤动页头；现有键盘焦点、各刷新入口
+  的读取范围保持，正常手动刷新不清空/卸载现有清单和详情、不重置时间/标签/游标/滚动。
+- [ ] AC-10：观察至少一个真实轮询周期及新工作/进度读回，页头不周期性切换手动 busy 文案
+  或闪变外观，列表仍实时更新。覆盖手动刷新与在途轮询交叠、失败及401/403；不关闭/放慢
+  轮询止闪、不伪装成功、不展示受限旧数据、不重发命令。其余页面的刷新显示/行为不被连带修改。
 
 ## Required Tests
 
-T3：跨 Web 列表/URL/回程与既有 API 时间/分页边界的只读集成修正。无新领域状态、权限或
+T3：跨 Web 列表/URL/回程、手动/后台刷新反馈与既有 API 时间/分页边界的只读集成修正。无新领域状态、权限或
 执行协议。按 [workflow §6](docs/development-workflow.md#6-test-levels) 分工；不要求全仓
 Python/Web/E2E、wheel/Docker/外部服务矩阵。若确需改 schema、权限、执行或后端业务，先交 B
 重评边界/等级。测试用时须小于本轮工作用时 50%；优先已知问题/直接影响，不以扩跑无关测试
@@ -139,12 +174,12 @@ Python/Web/E2E、wheel/Docker/外部服务矩阵。若确需改 schema、权限�
 `web/`：
 
 ```sh
-npm run test -- run src/shared/ui/AppShell.test.tsx src/features/operations/OperationsInventory.test.tsx src/features/operations/OperationsRouter.test.tsx src/features/operations/run-query.test.ts src/shared/navigation/operations-return.test.ts
+npm run test -- run src/shared/ui/AppShell.test.tsx src/features/operations/OperationsInventory.test.tsx src/features/operations/OperationsRouter.test.tsx src/features/operations/RunDetailTabs.test.tsx src/features/operations/run-query.test.ts src/shared/navigation/operations-return.test.ts
 npm run typecheck
 npm run lint
 npm run build
 npm run test:e2e -- tests/e2e/task-center-layout.spec.ts
-npm run test:e2e -- --config=playwright.python.config.ts tests/e2e/operations-inventory.python.spec.ts --grep "time filter:"
+npm run test:e2e -- --config=playwright.python.config.ts tests/e2e/operations-inventory.python.spec.ts --grep "time filter:|refresh feedback:|a visible terminal inventory discovers new work and shows live progress"
 ```
 
 对实际改动的 TS/TSX/CSS/测试文件运行 `npx prettier --check <实际文件清单>`；新增 helper/test
@@ -157,10 +192,16 @@ npm run test:e2e -- --config=playwright.python.config.ts tests/e2e/operations-in
 
 - 单元用例按八 view 参数化覆盖控件、无日期/选日期/清除、请求参数及旧条件移除；覆盖
   快速切换、读取失败与必要回程分支。独立问题文件/详情筛选不是本次删除对象。
+- 用延迟读取/现有轮询计时能力覆盖中文、手动 busy/防重、静默轮询、交叠读取、失败与
+  正常同条件内容保留。更新任务中心页头对应的英文定位断言，按实际容器定位；不把其他
+  页面/恢复命令的同名按钮全局替换。必要共享展示参数须有现有默认行为不变的覆盖。
 - 扩展现有 `time filter:` real-Python 旅程，使用 `operations_inventory_harness.py` 现有时间、
   轮询/恢复隔离 fixture，必要时有限扩展已有 seed。覆盖 Running/Ended 时间总体与至少一个
   有实际四类问题的 Attention/恢复视图，断言范围内/外记录、计数/分页、旧非 All 链接及精确
   问题文件/详情回程。仅打开已有处理/证据，不把恢复执行全链路加入本布局/查询修正门禁。
+  在同一 spec 中以 `refresh feedback:` 命名聚焦真实手动刷新/轮询旅程；复用既有 live
+  inventory 用例证明新工作/进度仍会出现，同步移除其已废弃列表筛选动作，保留实时性断言。
+  从现有任务中心刷新入口验证延迟读取期间内容/上下文和中文反馈，不新建探测入口。
 - 默认浏览器用例从现有标签入口逐一验证八页一致，桌面/390px 实看并保存截图；复杂回程
   选代表案例，不要求八页 × 所有错误 × 全部视口的笛卡尔积。
 - 临时 SQLite/Local 和一次性身份；不访问用户配置、运行库、媒体或外部 Provider。
@@ -181,7 +222,8 @@ git diff --check e40093aa2400794f4423987658fba3095c7adda5..HEAD
 
 B 独立实看八标签筛选，桌面/390px 截图与一个真实四类问题文件→证据→返回路径，保留
 实际命令、精确候选、计数/失败/skips 与用时；证据保存在 CI 或 ignored 稳定本地目录。
-只复用输入/产物完全一致的 B 自有证据；本轮规划只做治理及代码/文档核对，未跑产品验收。
+独立核对 AC-9/10 的手动与静默轮询反馈及实际数据更新，并保留前后帧/布局/请求证据；
+只复用输入/产物完全一致的 B 自有证据。规划只做治理、代码/文档核对及上述有界诊断，未跑候选验收。
 
 ## Non-goals and workspace
 
