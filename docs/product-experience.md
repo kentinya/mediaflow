@@ -354,8 +354,8 @@ center recovery guidance/actions. Administrative API/CLI recovery remains outsid
 
 - **Goal/entry:** find one admitted run from Task Center, Files, Dashboard, Automation or a Task/Job
   deep link, then understand and safely resolve its actual files. Default list has no open detail.
-- **State:** All exposes only creation-date range selection and clear; the other seven views retain
-  their existing search/filters. Time, paging and counts use the complete server-authorized
+- **State:** All eight views expose only creation-date range selection and clear; clearing restores
+  the current view’s complete authorized population. Time, paging and counts use the complete server-authorized
   population, alongside historical name/scope/trigger;
   queue/Task stage/item outcome/problem/effect certainty are distinct. Only durable Job→Task links
   deduplicate runs; pre-Task failures and independent occurrences/continuations remain visible.
@@ -517,10 +517,11 @@ exact organizing context or the proven ordinary-operation library page; missing/
 identity stays a bounded read-only explanation, with no generic failure recovery or guessed work.
 
 The center has one page title, with content boundaries and spacing coordinated with MediaLibrary.
-The shared shell keyword input is not shown there. 全部任务 keeps only the local-timezone
-creation-day range, applies either or both sides without a search submission, and clears back
-to the complete authorized population; the other seven views retain their existing search and
-filters. Management-API consumers outside that control keep their existing filter semantics.
+The shared shell keyword input is not shown there. All eight views keep only the local-timezone
+creation-day range, apply either or both sides without a search submission, and clear back
+to the current view’s complete authorized population. Manual refresh shows 刷新 / 刷新中…
+without layout jumps; background polling updates quietly. Normal same-query refresh preserves
+visible lists/details and context; real changes and read/permission failures remain visible. Management-API consumers outside that control keep their existing filter semantics.
 Long names/scopes retain readable status/progress columns and complete mouse/keyboard-accessible
 identity. Using the shared Files sidebar entry opens ordinary ResourceLibrary browsing without a
 task-center return button, including when leaving a Files visit that already carried one. Explicit

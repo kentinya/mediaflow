@@ -47,9 +47,10 @@ operation status, organizing-only eight-view/four-type Task Center and checked E
 are accepted. No active implementation Task remains; [TASK.md](TASK.md) records the latest
 standalone correction and B review. A selects the next large Slice separately.
 
-The current [Task Center](docs/task-center-page-spec.md) has no shared top search. Its All tasks
-view offers only the local creation-date range and clear; the other seven views keep their existing
-filters. Clearing the range restores the complete authorized population with normal paging.
+The current [Task Center](docs/task-center-page-spec.md) has no shared top search. All eight views
+offer only the local creation-date range and clear. Clearing restores the current view’s complete
+authorized population with normal paging. Manual refresh uses Chinese busy feedback; background
+polling updates quietly and normal same-query refresh preserves visible content and context.
 
 The [Rules workspace](docs/configuration.md#native-v2-organizing-rules-management) keeps its title,
 description and refresh in the content header. Overview has no inventory search; each of the seven

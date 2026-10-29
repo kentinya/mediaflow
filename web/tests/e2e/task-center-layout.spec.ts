@@ -89,6 +89,8 @@ async function connect(page: Page): Promise<void> {
 }
 
 async function openOperations(page: Page): Promise<void> {
+  const menu = page.getByRole("button", { name: "Open menu", exact: true });
+  if (await menu.isVisible()) await menu.click();
   await page.getByRole("link", { name: "任务中心", exact: true }).click();
   await expect(page).toHaveURL(/\/ui-v2\/operations$/);
   await expect(
@@ -318,7 +320,7 @@ test("an explicit Files return context still works and same-route sidebar Files 
       .search,
   );
   expect(returnParams.get("view")).toBe("ended");
-  expect(returnParams.get("status")).toBe("failed");
+  expect(returnParams.get("status")).toBeNull();
   expect(returnParams.get("run")).toBe("task-source");
 
   // The sidebar's active Files destination is ordinary navigation: it clears
@@ -413,3 +415,68 @@ test("task center stays usable and keyboard reachable at 1280 and 390", async ({
   await expect(detail).toHaveCount(0);
   await expect(firstRun).toBeFocused();
 });
+
+for (const viewport of [
+  { width: 1536, height: 1024 },
+  { width: 390, height: 844 },
+]) {
+  test(`eight date-only views and stable manual refresh at ${viewport.width}px`, async ({
+    page,
+  }, testInfo) => {
+    await page.setViewportSize(viewport);
+    await connect(page);
+    await openOperations(page);
+    const views = page.getByRole("navigation", { name: "任务中心视图" });
+    for (const name of [
+      "全部任务",
+      "进行中",
+      "需要处理",
+      "已结束",
+      "识别恢复",
+      "元数据恢复",
+      "分类恢复",
+      "冲突处理",
+    ]) {
+      await views.getByRole("button", { name, exact: true }).click();
+      const filters = page.getByRole("region", { name: "运行筛选" });
+      await expect(filters.getByRole("searchbox")).toHaveCount(0);
+      await expect(filters.getByLabel("创建时间从（本地）")).toBeVisible();
+      await filters.getByLabel("创建时间从（本地）").fill("2026-01-01");
+      await expect(page).toHaveURL(/from=2026-01-01/);
+      await filters.getByRole("button", { name: "清除时间" }).click();
+      await expect(page).not.toHaveURL(/from=/);
+      expect(await pageHorizontalOverflow(page)).toBe(0);
+    }
+    await views.getByRole("button", { name: "全部任务", exact: true }).click();
+    await expect(page.getByRole("table", { name: "运行清单" })).toBeVisible();
+    let release!: () => void;
+    const gate = new Promise<void>((resolve) => {
+      release = resolve;
+    });
+    await page.route(/\/api\/v1\/operations\/runs\?/, async (route) => {
+      await gate;
+      await route.continue();
+    });
+    const refresh = page
+      .locator(".mf-operations-inventory > header")
+      .getByRole("button", { name: "刷新", exact: true });
+    await refresh.focus();
+    await expect(refresh).toBeFocused();
+    const before = await refresh.boundingBox();
+    await refresh.click();
+    const busy = page
+      .locator(".mf-operations-inventory > header")
+      .getByRole("button", { name: "刷新中…", exact: true });
+    await expect(busy).toBeDisabled();
+    await expect(page.getByRole("table", { name: "运行清单" })).toBeVisible();
+    const during = await busy.boundingBox();
+    expect(during?.width).toBe(before?.width);
+    expect(during?.x).toBe(before?.x);
+    await page.screenshot({
+      path: testInfo.outputPath(`manual-refresh-${viewport.width}.png`),
+    });
+    release();
+    await expect(refresh).toBeEnabled();
+    expect(await pageHorizontalOverflow(page)).toBe(0);
+  });
+}

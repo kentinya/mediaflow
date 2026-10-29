@@ -28,7 +28,7 @@ import {
   type RunExportRead,
 } from "../../shared/api/api-client";
 import { AuthorizedReadBoundary } from "../../shared/auth/AuthorizedReadBoundary";
-import { RefreshControl } from "../../shared/ui/RefreshControl";
+import { TaskRefreshControl as RefreshControl } from "./TaskRefreshControl";
 import { StatusBanner } from "../../shared/ui/StatusBanner";
 import {
   RUN_DISPOSITION_LABELS,
@@ -874,12 +874,11 @@ function RunItemsSection({
           ))}
         </select>
         <RefreshControl
-          onRefresh={() => void query.refetch()}
-          refreshing={query.isFetching}
+          onRefresh={() => query.refetch({ cancelRefetch: false })}
         />
       </div>
       <AuthorizedReadBoundary query={query} unavailableTitle="条目列表暂不可用">
-        {({ data, isFetching, refresh }) => {
+        {({ data }) => {
           if (data === undefined) {
             return (
               <StatusBanner variant="info" title="正在加载条目">
@@ -892,7 +891,9 @@ function RunItemsSection({
               <StatusBanner variant="error" title={data.failure.title}>
                 <p>{data.failure.nextAction}</p>
                 <div className="mf-actions">
-                  <RefreshControl onRefresh={refresh} refreshing={isFetching} />
+                  <RefreshControl
+                    onRefresh={() => query.refetch({ cancelRefetch: false })}
+                  />
                 </div>
               </StatusBanner>
             );
@@ -2156,8 +2157,7 @@ function RunEvidenceSection({
           关闭证据
         </button>
         <RefreshControl
-          onRefresh={() => void query.refetch()}
-          refreshing={query.isFetching}
+          onRefresh={() => query.refetch({ cancelRefetch: false })}
         />
       </div>
       <AuthorizedReadBoundary query={query} unavailableTitle="条目证据暂不可用">
@@ -2455,8 +2455,7 @@ function RunRecordsSection({
           ))}
         </select>
         <RefreshControl
-          onRefresh={() => void query.refetch()}
-          refreshing={query.isFetching}
+          onRefresh={() => query.refetch({ cancelRefetch: false })}
         />
       </div>
       <AuthorizedReadBoundary query={query} unavailableTitle="操作记录暂不可用">

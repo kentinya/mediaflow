@@ -529,11 +529,14 @@ eight organizing views → typed query/command boundary
 → atomic admission → resident Worker → OrganizerExecutor
 ```
 
-The All view submits only the local-calendar creation-day range converted to UTC `from`/`to`
+All eight views submit only the local-calendar creation-day range converted to UTC `from`/`to`
 (the `to` boundary covers the final microsecond of the day); it does not carry the removed
-keyword/source/status/command/attention filters. Other views and management-API consumers keep
-their existing filters, and the time condition, rows, total, statistics and cursor stay bound to
-one read snapshot.
+keyword/source/status/command/attention filters or an extra problem predicate; each view retains its backend population predicate.
+Management-API consumers keep their existing filters, and the time condition, rows, total, statistics and cursor stay bound to
+one read snapshot. Manual refresh owns a local busy lifetime over its bounded reads, including
+active detail reads; in-flight same-query polling can be joined. Background polling never drives
+the manual busy indicator. Normal refresh preserves content/context; read/auth failures retain
+the shared authoritative boundary.
 
 Query before grouping/paging; bind cursors/counts to the authorized consistent population. Group each
 problem by durable Task/run links; current problems, effects and lifecycle remain distinct. Never

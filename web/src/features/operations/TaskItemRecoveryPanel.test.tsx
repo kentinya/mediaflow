@@ -652,7 +652,7 @@ describe("TaskItemRecoveryPanel", () => {
       next_action: "inspect the linked execution",
     });
     await user.click(
-      within(panel).getAllByRole("button", { name: "Refresh" })[0]!,
+      within(panel).getAllByRole("button", { name: "刷新" })[0]!,
     );
     expect(
       await within(panel).findByRole("heading", { name: "本次确认已经受理" }),

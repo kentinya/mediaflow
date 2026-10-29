@@ -230,17 +230,8 @@ export function operationsLandingSearch(
   runId: string | null,
 ): Record<string, string | boolean> {
   const record = parseOperationsReturnContext(context);
-  // The All view exposes only its creation-time range. An older preserved
-  // context may still contain the removed keyword/source/status/command/
-  // attention conditions; they must not reappear as an invisible limit (or
-  // replay a cursor minted for that hidden scope). Other views keep their
-  // existing filter context unchanged.
-  const restoredView = record["view"];
-  const allView =
-    restoredView === undefined ||
-    restoredView === "all" ||
-    restoredView === "failure";
-  if (allView) {
+  // Every view exposes only its creation-time range; discard legacy list limits.
+  {
     let removedHiddenFilter = false;
     for (const key of [
       "status",

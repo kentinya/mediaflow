@@ -16,7 +16,7 @@ import { useEffect, useMemo } from "react";
 import { useQuery } from "@tanstack/react-query";
 import { organizePreviewQueryOptions } from "./organize-query";
 import { ItemFindings, displayEnum } from "./organize-summary";
-import { RefreshControl } from "../../shared/ui/RefreshControl";
+import { TaskRefreshControl as RefreshControl } from "./TaskRefreshControl";
 import { StatusBanner } from "../../shared/ui/StatusBanner";
 
 export interface SamePagePlanSummaryProps {
@@ -87,8 +87,7 @@ export function SamePagePlanSummary(props: SamePagePlanSummaryProps) {
       <div className="mf-run-items-head">
         <h6>{props.heading}</h6>
         <RefreshControl
-          onRefresh={() => void previewQuery.refetch()}
-          refreshing={previewQuery.isFetching}
+          onRefresh={() => previewQuery.refetch({ cancelRefetch: false })}
         />
       </div>
       {previewQuery.data === undefined ? (

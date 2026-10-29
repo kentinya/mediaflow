@@ -8,14 +8,8 @@
  * filters, paging and selection admit no work, perform no mutation and replay
  * no command.
  *
- * Count cards are filters over the same server-side population the table
- * reads: clicking one applies that status filter, and the attention card
- * applies the overlapping attention facet it advertises (composing with the
- * other filters rather than replacing them, and never disabled). The
- * attention card is an explicitly overlapping facet, not a separate terminal
- * state, and is labelled as such. Worker readiness and the manual Scan/
- * Preview entries stay discoverable below the inventory; existing Task/Job/
- * Automation/Notification detail routes remain the deeper evidence journeys.
+ * Summary cards switch the server-defined view while retaining visible dates.
+ * Attention is the overlapping union of the four business problem types.
  *
  * Filters, the server cursor page and the selection all live in the URL, so
  * a refresh, a browser Back/Forward and a 401 reconnect restore the exact
@@ -46,14 +40,12 @@ import {
   useAuthorizedReadAuthorityRecovery,
 } from "../../shared/auth/AuthorizedReadBoundary";
 import { AuthStateBanner } from "../../shared/auth/AuthStateBanner";
-import { isSafeOperationsSourceScope } from "../../shared/navigation/operations-return";
 import { readAutomationReturnContext } from "../../shared/navigation/automation-return";
-import { RefreshControl } from "../../shared/ui/RefreshControl";
+import { TaskRefreshControl as RefreshControl } from "./TaskRefreshControl";
 import { StatusBanner } from "../../shared/ui/StatusBanner";
 import {
   RUN_PROBLEM_LABELS,
   RUN_PROBLEM_TYPES,
-  RUN_STATUSES,
   RUN_CURRENT_STAGE_LABELS,
   RUN_STATUS_LABELS,
   RUN_TRIGGER_LABELS,
@@ -63,7 +55,6 @@ import {
   isRecoveryView,
   type RunInventoryPage,
   type RunProblemType,
-  type RunStatus,
   type RunSummary,
   type RunView,
 } from "../../entities/operations/run";
@@ -107,14 +98,8 @@ const RUN_PAGE_LIMIT = 20;
 
 /** The submitted collection filters, reflected in the URL for reconnect. */
 interface RunListFilters {
-  readonly status: string;
-  readonly command: string;
-  readonly source: string;
-  readonly q: string;
   readonly from: string;
   readonly to: string;
-  /** The overlapping attention facet the count card advertises. */
-  readonly attention: boolean;
 }
 
 /** The server cursor page, reflected in the URL so paging survives reload. */
@@ -146,8 +131,6 @@ const RECOVERY_VIEW_EXPLANATIONS: Readonly<Record<RunProblemType, string>> = {
   conflict: "目标位置有冲突待处理；打开文件记录核对冲突和策略。",
 };
 
-const STATUS_TOKEN = /^[a-z][a-z0-9_]{0,31}$/;
-const COMMAND_TOKEN = /^[A-Za-z0-9][A-Za-z0-9_.:-]{0,63}$/;
 const DATE_TOKEN = /^\d{4}-\d{2}-\d{2}(T[\d:.]+(Z|\+00:00)?)?$/;
 /** The bounded cursor grammar a run-inventory URL may carry. */
 const CURSOR_TOKEN = /^[A-Za-z0-9._=-]{1,512}$/;
@@ -161,29 +144,10 @@ function readSafeSearchValue(
 }
 
 /**
- * The submitted attention facet. The router's default search parser
- * JSON-parses the literal `attention=true` into the boolean `true`, while a
- * quoted `attention="true"` stays the string `"true"`; only those two exact
- * spellings mean the facet is submitted — anything else (including `yes`,
- * `1` or a stray object) reads as no facet.
- */
-function readAttentionFacet(search: Record<string, unknown>): boolean {
-  const value = search["attention"];
-  return value === true || value === "true";
-}
-
-/**
  * Read the submitted filters from the URL: every key falls back to its safe
  * default when absent, oversized or not matching the backend grammar.
  */
-function readFilters(
-  search: Record<string, unknown>,
-  view: RunView,
-): RunListFilters {
-  const status = readSafeSearchValue(search, "status");
-  const command = readSafeSearchValue(search, "command");
-  const source = readSafeSearchValue(search, "source");
-  const q = readSafeSearchValue(search, "q");
+function readFilters(search: Record<string, unknown>): RunListFilters {
   const rawFrom = readSafeSearchValue(search, "from");
   const rawTo = readSafeSearchValue(search, "to");
   // The date controls are calendar days in the browser's local timezone. An
@@ -195,38 +159,7 @@ function readFilters(
     rawTo && DATE_TOKEN.test(rawTo) ? localDateInputValue(rawTo) : "";
   const from = localDayStartIso(fromDate) === null ? "" : fromDate;
   const to = localDayEndIso(toDate) === null ? "" : toDate;
-  // 全部任务 only offers the creation-time range. Removed search, source,
-  // status, command and attention facets stay accepted by the management API
-  // for other views/consumers, but they never restrict this view invisibly.
-  if (view === "all") {
-    return {
-      status: "all",
-      command: "all",
-      source: "all",
-      q: "",
-      from,
-      to,
-      attention: false,
-    };
-  }
-  return {
-    status:
-      status && (status === "all" || STATUS_TOKEN.test(status))
-        ? status
-        : "all",
-    command:
-      command && (command === "all" || COMMAND_TOKEN.test(command))
-        ? command
-        : "all",
-    source:
-      source === "" || isSafeOperationsSourceScope(source)
-        ? source || "all"
-        : "all",
-    q: q.length <= 128 ? q : "",
-    from,
-    to,
-    attention: readAttentionFacet(search),
-  };
+  return { from, to };
 }
 
 /**
@@ -270,15 +203,7 @@ type RunSearchValue = string | boolean;
 
 /** A safe default filter state (no narrowing). */
 function defaultFilters(): RunListFilters {
-  return {
-    status: "all",
-    command: "all",
-    source: "all",
-    q: "",
-    from: "",
-    to: "",
-    attention: false,
-  };
+  return { from: "", to: "" };
 }
 
 /**
@@ -298,19 +223,6 @@ function readView(search: Record<string, unknown>): RunView {
  * predicate; this explicit value only narrows a lifecycle view. An
  * out-of-contract value reads as no problem filter.
  */
-function readProblem(search: Record<string, unknown>): RunProblemType | null {
-  const value = readSafeSearchValue(search, "problem");
-  return (RUN_PROBLEM_TYPES as readonly string[]).includes(value)
-    ? (value as RunProblemType)
-    : null;
-}
-
-/**
- * The chosen problem-file type of an explicit problem location. A recovery
- * view owns its own problem type; a lifecycle view (notably the overlapping
- * attention view) needs the operator's explicit type because one Task may
- * carry several at once. An out-of-contract value reads as no choice.
- */
 function readProblemType(
   search: Record<string, unknown>,
 ): RunProblemType | null {
@@ -322,64 +234,37 @@ function readProblemType(
 
 function filtersToSearch(
   filters: RunListFilters,
-  view: RunView,
 ): Record<string, RunSearchValue> {
   const search: Record<string, RunSearchValue> = {};
   if (filters.from) search["from"] = filters.from;
   if (filters.to) search["to"] = filters.to;
-  // Only the visible controls of the submitted view enter the URL. The All
-  // view keeps its removed filters out entirely; the other seven views keep
-  // their existing search/source/status/command/attention interactions.
-  if (view === "all") return search;
-  if (filters.status !== "all") search["status"] = filters.status;
-  if (filters.command !== "all") search["command"] = filters.command;
-  if (filters.source !== "all") search["source"] = filters.source;
-  if (filters.q) search["q"] = filters.q;
-  // The facet is written as the boolean `true` so the router serializes it
-  // as the literal `attention=true`: a *string* `"true"` would round-trip as
-  // `attention=%22true%22`, which the reconnect allowlist and an operator
-  // reading the address bar would not recognise as the facet.
-  if (filters.attention) search["attention"] = true;
   return search;
 }
 
 /**
  * The complete URL search of one list state: the submitted filters, the
- * selected view and the explicit problem narrowing (only meaningful outside a
- * recovery view, which already owns its own problem predicate).
+ * selected view. Recovery views own their backend problem predicate.
  */
 function listStateSearch(
   filters: RunListFilters,
   view: RunView,
-  problem: RunProblemType | null,
 ): Record<string, RunSearchValue> {
-  const search = filtersToSearch(filters, view);
+  const search = filtersToSearch(filters);
   if (view !== "all") search["view"] = view;
-  if (problem !== null && !isRecoveryView(view)) {
-    search["problem"] = problem;
-  }
   return search;
 }
 
 /**
- * True when any submitted filter (including the attention facet) narrows the
+ * True when the visible date range narrows the
  * population: it gates the reset affordance and the filtered-empty copy, so
  * both always describe exactly what the URL submitted.
  */
 function isFiltered(filters: RunListFilters): boolean {
-  return (
-    filters.attention ||
-    filters.status !== "all" ||
-    filters.command !== "all" ||
-    filters.source !== "all" ||
-    filters.q !== "" ||
-    filters.from !== "" ||
-    filters.to !== ""
-  );
+  return filters.from !== "" || filters.to !== "";
 }
 
-/** The conditions the All view removed from its visible controls. */
-const REMOVED_ALL_VIEW_FILTER_KEYS = [
+/** The conditions all views removed from their visible controls. */
+const REMOVED_LIST_FILTER_KEYS = [
   "q",
   "status",
   "command",
@@ -388,9 +273,9 @@ const REMOVED_ALL_VIEW_FILTER_KEYS = [
   "problem",
 ] as const;
 
-/** Whether an old All-view URL still carries a hidden removed condition. */
-function hasRemovedAllViewFilter(search: Record<string, unknown>): boolean {
-  return REMOVED_ALL_VIEW_FILTER_KEYS.some((key) => {
+/** Whether an old task-center URL still carries a hidden removed condition. */
+function hasRemovedListFilter(search: Record<string, unknown>): boolean {
+  return REMOVED_LIST_FILTER_KEYS.some((key) => {
     const value = search[key];
     return !(
       value === undefined ||
@@ -475,8 +360,7 @@ export function OperationsLanding() {
   const searchParams = useSearch({ strict: false }) as Record<string, unknown>;
   const navigate = useNavigate();
   const view = readView(searchParams);
-  const filters = readFilters(searchParams, view);
-  const problem = readProblem(searchParams);
+  const filters = readFilters(searchParams);
   const selectedId = readSafeSearchValue(searchParams, "run");
   const problemRunId = readSafeSearchValue(searchParams, "problemRun");
   const chosenProblemType = readProblemType(searchParams);
@@ -494,10 +378,9 @@ export function OperationsLanding() {
   // Paging context lives in the URL (cursor + direction), never in component
   // state, so a refresh, a Back/Forward step and a reconnect all restore the
   // same server page instead of silently restarting at the first one.
-  const needsAllViewNormalization =
-    view === "all" && hasRemovedAllViewFilter(searchParams);
+  const needsListNormalization = hasRemovedListFilter(searchParams);
   const { cursor, direction } = readPageState(
-    needsAllViewNormalization ? {} : searchParams,
+    needsListNormalization ? {} : searchParams,
   );
   // A completed or interrupted journey returns with its preserved context:
   // the landing restores that bounded list state (filters, page, selection
@@ -516,18 +399,6 @@ export function OperationsLanding() {
     // on every search change would fight the restored state itself.
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [searchParams[OPERATIONS_RETURN_KEY]]);
-  // The search draft resets exactly when the submitted URL query changes
-  // (deep entry, reset, reconnect): adjusting state during render instead of
-  // an effect keeps one source of truth without a second render pass.
-  const [searchDraft, setSearchDraft] = useState(filters.q);
-  const [lastSubmittedQuery, setLastSubmittedQuery] = useState(filters.q);
-  if (lastSubmittedQuery !== filters.q) {
-    setLastSubmittedQuery(filters.q);
-    setSearchDraft(filters.q);
-  }
-
-  const effectiveStatus = filters.status === "all" ? null : filters.status;
-  const effectiveCommand = filters.command === "all" ? null : filters.command;
   // The visible controls are local calendar days; the API receives the
   // unambiguous UTC instants for those days, including the final microsecond.
   const fromBoundary = localDayStartIso(filters.from);
@@ -535,15 +406,9 @@ export function OperationsLanding() {
 
   const query = useQuery(
     runInventoryQueryOptions(token, {
-      status: effectiveStatus as RunStatus | null,
-      command: effectiveCommand,
-      source: filters.source === "all" ? null : filters.source,
-      q: filters.q || null,
       from: fromBoundary,
       to: toBoundary,
-      attention: filters.attention ? true : null,
       view: view === "all" ? null : view,
-      problem: view !== "all" && !isRecoveryView(view) ? problem : null,
       limit: RUN_PAGE_LIMIT,
       cursor,
     }),
@@ -551,7 +416,7 @@ export function OperationsLanding() {
 
   /** The full current list state (filters, page and selection) as URL search. */
   const listSearch = (runId?: string): Record<string, RunSearchValue> => {
-    const search = listStateSearch(filters, view, problem);
+    const search = listStateSearch(filters, view);
     if (cursor !== null) {
       search["cursor"] = cursor;
       search["dir"] = direction;
@@ -567,33 +432,38 @@ export function OperationsLanding() {
     // for the previous population is never carried into a new one.
     void navigate({
       to: "/operations",
-      search: listStateSearch({ ...filters, ...next }, view, problem),
+      search: listStateSearch({ ...filters, ...next }, view),
       replace: true,
     });
   };
 
-  // An old All-view link may still carry the removed search/source/status/
-  // command/attention conditions. They never narrow the population, and a
-  // cursor minted for that hidden scope must not be replayed against the
-  // visible time-only population, so the URL is reduced once to the visible
-  // filters while preserving the exact selected run.
+  // Legacy list conditions never constrain the visible date-only population.
   useEffect(() => {
-    if (!needsAllViewNormalization) return;
-    const search = listStateSearch(filters, view, null);
+    if (!needsListNormalization) return;
+    const search = listStateSearch(filters, view);
     if (selectedId !== "") {
       search["run"] = selectedId;
       Object.assign(search, runDetailStateSearch(detailState));
     }
+    for (const key of [
+      "problemRun",
+      "problemType",
+      "problemCursor",
+      "problemDir",
+    ]) {
+      if (searchParams[key] !== undefined)
+        search[key] = searchParams[key] as RunSearchValue;
+    }
     void navigate({ to: "/operations", search, replace: true });
-    // Normalize only on the transition into a hidden All-view condition.
+    // Normalize only on the transition into a hidden list condition.
     // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [needsAllViewNormalization]);
+  }, [needsListNormalization]);
 
   /** Switch to one of the eight sibling views, always from the first page. */
   const selectView = (next: RunView) => {
     void navigate({
       to: "/operations",
-      search: listStateSearch(filters, next, null),
+      search: listStateSearch(filters, next),
       replace: true,
     });
   };
@@ -601,7 +471,7 @@ export function OperationsLanding() {
   const resetFilters = () => {
     void navigate({
       to: "/operations",
-      search: listStateSearch(defaultFilters(), view, null),
+      search: listStateSearch(defaultFilters(), view),
       replace: true,
     });
   };
@@ -691,7 +561,7 @@ export function OperationsLanding() {
     nextCursor: string,
     nextDirection: "forward" | "backward",
   ) => {
-    const search = listStateSearch(filters, view, problem);
+    const search = listStateSearch(filters, view);
     search["cursor"] = nextCursor;
     search["dir"] = nextDirection;
     if (selectedId !== "") {
@@ -707,7 +577,7 @@ export function OperationsLanding() {
     if (selectedId === "") {
       return;
     }
-    const search = listStateSearch(filters, view, problem);
+    const search = listStateSearch(filters, view);
     if (cursor !== null) {
       search["cursor"] = cursor;
       search["dir"] = direction;
@@ -730,17 +600,24 @@ export function OperationsLanding() {
   // The explicit header refresh re-reads the bounded landing reads (the
   // inventory and the selected run overview); it never submits or replays any
   // command and never issues the retired global Worker/resident-status reads.
-  const refreshAll = () => {
-    void query.refetch();
-    if (selectedId !== "") {
-      void overviewQuery.refetch();
-      // The header refresh reaches the open detail tabs' bounded reads too;
-      // it repeats the same side-effect-free GETs, never a command.
-      void queryClient.invalidateQueries({ queryKey: [runItemsQueryKey] });
-      void queryClient.invalidateQueries({ queryKey: [runRecordsQueryKey] });
-    }
+  const refreshAll = async () => {
+    await Promise.all([
+      query.refetch({ cancelRefetch: false }),
+      ...(selectedId === ""
+        ? []
+        : [
+            overviewQuery.refetch({ cancelRefetch: false }),
+            queryClient.invalidateQueries(
+              { queryKey: [runItemsQueryKey], refetchType: "active" },
+              { cancelRefetch: false },
+            ),
+            queryClient.invalidateQueries(
+              { queryKey: [runRecordsQueryKey], refetchType: "active" },
+              { cancelRefetch: false },
+            ),
+          ]),
+    ]);
   };
-  const anyFetching = query.isFetching || overviewQuery.isFetching;
 
   return (
     <div className="mf-dashboard mf-operations-inventory">
@@ -751,7 +628,7 @@ export function OperationsLanding() {
             跟踪整理进度，集中处理问题，查看每个文件的结果。
           </p>
         </div>
-        <RefreshControl onRefresh={refreshAll} refreshing={anyFetching} />
+        <RefreshControl onRefresh={refreshAll} />
       </header>
       {automationReturn !== null && (
         <div className="mf-dashboard-meta" role="note">
@@ -773,7 +650,7 @@ export function OperationsLanding() {
         </div>
       )}
       <AuthorizedReadBoundary query={query} unavailableTitle="任务中心暂不可用">
-        {({ isFetching, refresh }) => (
+        {() => (
           <>
             {page !== null && (
               <ViewSummary page={page} view={view} onSelectView={selectView} />
@@ -792,137 +669,21 @@ export function OperationsLanding() {
                     className="mf-count-section mf-run-filters"
                     aria-label="运行筛选"
                   >
-                    {view === "all" ? (
-                      <div className="mf-run-filter-bar">
-                        <RunTimeRangeFields
-                          filters={filters}
-                          onApply={applyFilters}
-                        />
-                        {filtered && (
-                          <button
-                            type="button"
-                            className="mf-button mf-button-secondary"
-                            onClick={resetFilters}
-                          >
-                            清除时间
-                          </button>
-                        )}
-                      </div>
-                    ) : (
-                      <form
-                        className="mf-run-filter-bar"
-                        onSubmit={(event) => {
-                          event.preventDefault();
-                          applyFilters({ q: searchDraft.trim() });
-                        }}
-                      >
-                        <div className="mf-run-search-field">
-                          <label
-                            htmlFor="run-search"
-                            className="mf-visually-hidden"
-                          >
-                            搜索
-                          </label>
-                          <input
-                            id="run-search"
-                            type="search"
-                            value={searchDraft}
-                            maxLength={128}
-                            placeholder="搜索任务名称、文件或路径"
-                            onChange={(event) =>
-                              setSearchDraft(event.target.value)
-                            }
-                          />
-                        </div>
-                        <span className="mf-run-filter-field">
-                          <label htmlFor="run-source-filter">来源</label>
-                          <select
-                            id="run-source-filter"
-                            value={filters.source}
-                            onChange={(event) =>
-                              applyFilters({
-                                source: event.target.value || "all",
-                              })
-                            }
-                          >
-                            <option value="all">全部来源</option>
-                            {page?.summary.sources.map((sourceOption) => (
-                              <option
-                                key={sourceOption.value}
-                                value={sourceOption.value}
-                              >
-                                {sourceOption.label}
-                              </option>
-                            ))}
-                            {filters.source !== "all" &&
-                              page?.summary.sources.every(
-                                (sourceOption) =>
-                                  sourceOption.value !== filters.source,
-                              ) && (
-                                <option value={filters.source}>
-                                  {filters.source}
-                                </option>
-                              )}
-                          </select>
-                        </span>
-                        <span className="mf-run-filter-field">
-                          <label htmlFor="run-status-filter">状态</label>
-                          <select
-                            id="run-status-filter"
-                            value={filters.status}
-                            onChange={(event) =>
-                              applyFilters({ status: event.target.value })
-                            }
-                          >
-                            <option value="all">全部状态</option>
-                            {RUN_STATUSES.map((status) => (
-                              <option key={status} value={status}>
-                                {RUN_STATUS_LABELS[status]}
-                              </option>
-                            ))}
-                          </select>
-                        </span>
-                        <span className="mf-run-filter-field">
-                          <label htmlFor="run-command-filter">操作类型</label>
-                          <input
-                            id="run-command-filter"
-                            type="text"
-                            value={
-                              filters.command === "all" ? "" : filters.command
-                            }
-                            maxLength={64}
-                            placeholder="如 preview、organize"
-                            onChange={(event) =>
-                              applyFilters({
-                                command:
-                                  event.target.value === ""
-                                    ? "all"
-                                    : event.target.value,
-                              })
-                            }
-                          />
-                        </span>
-                        <RunTimeRangeFields
-                          filters={filters}
-                          onApply={applyFilters}
-                        />
+                    <div className="mf-run-filter-bar">
+                      <RunTimeRangeFields
+                        filters={filters}
+                        onApply={applyFilters}
+                      />
+                      {filtered && (
                         <button
-                          type="submit"
+                          type="button"
                           className="mf-button mf-button-secondary"
+                          onClick={resetFilters}
                         >
-                          搜索
+                          清除时间
                         </button>
-                        {filtered && (
-                          <button
-                            type="button"
-                            className="mf-button mf-button-secondary"
-                            onClick={resetFilters}
-                          >
-                            重置筛选
-                          </button>
-                        )}
-                      </form>
-                    )}
+                      )}
+                    </div>
                     <p className="mf-dashboard-meta" id="run-time-filter-note">
                       创建时间按本机时区选择；列表时间显示同一时区及明确偏移。
                     </p>
@@ -939,8 +700,9 @@ export function OperationsLanding() {
                       <p>{query.data.failure.nextAction}</p>
                       <div className="mf-actions">
                         <RefreshControl
-                          onRefresh={refresh}
-                          refreshing={isFetching}
+                          onRefresh={() =>
+                            query.refetch({ cancelRefetch: false })
+                          }
                         />
                         {filtered && (
                           <button
@@ -948,7 +710,7 @@ export function OperationsLanding() {
                             className="mf-button mf-button-secondary"
                             onClick={resetFilters}
                           >
-                            {view === "all" ? "清除时间" : "重置筛选"}
+                            清除时间
                           </button>
                         )}
                       </div>
@@ -960,9 +722,7 @@ export function OperationsLanding() {
                     >
                       <p>
                         {filtered
-                          ? view === "all"
-                            ? "没有运行匹配已选择的创建时间范围。清除时间可以查看全部任务。"
-                            : "没有运行匹配已提交的筛选条件。重置筛选可以查看此主体可读的全部运行。"
+                          ? "没有运行匹配已选择的创建时间范围。清除时间可以查看当前标签的全部获准任务。"
                           : "当前没有已受理或历史整理任务。可从资源库文件页选择文件开始整理。"}
                       </p>
                       {filtered && (
@@ -972,7 +732,7 @@ export function OperationsLanding() {
                             className="mf-button mf-button-secondary"
                             onClick={resetFilters}
                           >
-                            {view === "all" ? "清除时间" : "重置筛选"}
+                            清除时间
                           </button>
                         </div>
                       )}
@@ -1941,8 +1701,7 @@ function RunDetailPanel({
                 <p>{data.failure.nextAction}</p>
                 <div className="mf-actions">
                   <RefreshControl
-                    onRefresh={() => void query.refetch()}
-                    refreshing={query.isFetching}
+                    onRefresh={() => query.refetch({ cancelRefetch: false })}
                   />
                 </div>
               </StatusBanner>

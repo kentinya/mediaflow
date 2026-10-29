@@ -17,7 +17,7 @@ import { useEffect, useRef } from "react";
 import { useQuery } from "@tanstack/react-query";
 import { useAuthToken } from "../../shared/api/auth-context";
 import { AuthorizedReadBoundary } from "../../shared/auth/AuthorizedReadBoundary";
-import { RefreshControl } from "../../shared/ui/RefreshControl";
+import { TaskRefreshControl as RefreshControl } from "./TaskRefreshControl";
 import { StatusBanner } from "../../shared/ui/StatusBanner";
 import { runProblemItemsQueryOptions } from "./run-detail-query";
 import {
@@ -360,7 +360,7 @@ export function ProblemFilePanel({
         调用 Provider 或修改存储。
       </p>
       <AuthorizedReadBoundary query={query} unavailableTitle="问题文件暂不可用">
-        {({ data, isFetching, refresh }) => {
+        {({ data }) => {
           if (data === undefined) {
             return (
               <StatusBanner variant="info" title="正在加载问题文件">
@@ -373,7 +373,9 @@ export function ProblemFilePanel({
               <StatusBanner variant="error" title={data.failure.title}>
                 <p>{data.failure.nextAction}</p>
                 <div className="mf-actions">
-                  <RefreshControl onRefresh={refresh} refreshing={isFetching} />
+                  <RefreshControl
+                    onRefresh={() => query.refetch({ cancelRefetch: false })}
+                  />
                 </div>
               </StatusBanner>
             );
@@ -393,7 +395,9 @@ export function ProblemFilePanel({
                   该任务在此问题类型下当前没有待处理文件；它可能已在其他视图或已解除。
                 </p>
                 <div className="mf-actions">
-                  <RefreshControl onRefresh={refresh} refreshing={isFetching} />
+                  <RefreshControl
+                    onRefresh={() => query.refetch({ cancelRefetch: false })}
+                  />
                 </div>
               </StatusBanner>
             );

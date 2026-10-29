@@ -23,7 +23,7 @@ import {
 } from "./run-detail-query";
 import { SamePagePlanSummary } from "./SamePagePlanSummary";
 import { StatusBanner } from "../../shared/ui/StatusBanner";
-import { RefreshControl } from "../../shared/ui/RefreshControl";
+import { TaskRefreshControl as RefreshControl } from "./TaskRefreshControl";
 
 const DECISION_LABELS: Readonly<Record<TaskItemDecisionKind, string>> = {
   recognition: "识别",
@@ -467,8 +467,7 @@ export function TaskItemRecoveryPanel({
         <StatusBanner variant="warning" title={query.data.failure.title}>
           <p>{query.data.failure.nextAction}</p>
           <RefreshControl
-            onRefresh={() => void query.refetch()}
-            refreshing={query.isFetching}
+            onRefresh={() => query.refetch({ cancelRefetch: false })}
           />
         </StatusBanner>
       </section>
@@ -498,8 +497,7 @@ export function TaskItemRecoveryPanel({
       <div className="mf-run-items-head">
         <h5>审核与恢复</h5>
         <RefreshControl
-          onRefresh={() => void query.refetch()}
-          refreshing={query.isFetching}
+          onRefresh={() => query.refetch({ cancelRefetch: false })}
         />
       </div>
       <dl className="mf-dashboard-facts">

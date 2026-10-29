@@ -115,21 +115,15 @@ describe("operations return context", () => {
     expect(operationsLandingSearch(context, "admitted-task-1")).toEqual({
       run: "admitted-task-1",
     });
-    // A non-All view keeps its existing search/status/page context.
+    // Every view discards removed conditions and their cursor.
     const ended =
       "view=ended&status=failed&cursor=abc&dir=forward&run=older-selected";
     expect(operationsLandingSearch(ended, null)).toEqual({
       view: "ended",
-      status: "failed",
-      cursor: "abc",
-      dir: "forward",
       run: "older-selected",
     });
     expect(operationsLandingSearch(ended, "admitted-task-1")).toEqual({
       view: "ended",
-      status: "failed",
-      cursor: "abc",
-      dir: "forward",
       run: "admitted-task-1",
     });
     // The All view keeps its own visible time range and page cursor.

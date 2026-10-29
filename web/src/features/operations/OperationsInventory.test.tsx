@@ -467,65 +467,62 @@ describe("Operations run inventory landing", () => {
     expect(screen.queryByRole("button", { name: "清除时间" })).toBeNull();
   });
 
-  it("keeps the existing search and filters in the other seven views", async () => {
+  it.each([
+    "all",
+    "running",
+    "attention",
+    "ended",
+    "recognition",
+    "metadata",
+    "classification",
+    "conflict",
+  ])("uses only visible dates in %s, including legacy links", async (view) => {
     const user = userEvent.setup();
     const requested: string[] = [];
-    stubInventoryJourney(
-      pageDocument({
-        items: [],
-        total: 0,
-        summary: summaryDocument({
-          total: 2,
-          running: 1,
-          sources: [
-            { value: "Movies/alpha", label: "Movies/alpha" },
-            { value: "Movies/beta", label: "Movies/beta" },
-          ],
-        }),
-      }),
-      requested,
-    );
+    stubInventoryJourney(pageDocument({ items: [], total: 0 }), requested);
     authStore.setToken(TOKEN);
-    const { router } = renderApp("/ui-v2/operations?view=ended");
-
-    await screen.findByRole("heading", { name: "任务中心" });
+    const { router } = renderApp(
+      `/ui-v2/operations?view=${view}&q=old&status=failed&source=Movies&command=organize&attention=true&problem=metadata&cursor=old`,
+    );
     await screen.findByRole("heading", { name: "还没有运行记录" });
-    expect(screen.getByLabelText("搜索")).toBeVisible();
-    expect(screen.getByLabelText("来源")).toBeVisible();
-    expect(screen.getByLabelText("状态")).toBeVisible();
-    expect(screen.getByLabelText("操作类型")).toBeVisible();
-
-    await user.type(screen.getByLabelText("搜索"), "电影");
-    await user.click(screen.getByRole("button", { name: "搜索" }));
+    const filters = screen.getByRole("region", { name: "运行筛选" });
+    expect(within(filters).queryByRole("searchbox")).toBeNull();
+    for (const label of ["来源", "状态", "操作类型"])
+      expect(within(filters).queryByLabelText(label)).toBeNull();
     await waitFor(() =>
-      expect(router.history.location.search).toContain("q=%E7%94%B5%E5%BD%B1"),
+      expect(router.history.location.search).not.toMatch(
+        /q=|status=|source=|command=|attention=|problem=|cursor=/,
+      ),
     );
-    await user.selectOptions(screen.getByLabelText("状态"), "failed");
+    fireEvent.change(screen.getByLabelText("创建时间从（本地）"), {
+      target: { value: "2026-08-01" },
+    });
     await waitFor(() =>
-      expect(router.history.location.search).toContain("status=failed"),
+      expect(router.history.location.search).toContain("from=2026-08-01"),
     );
-    await user.selectOptions(screen.getByLabelText("来源"), "Movies/beta");
+    await user.click(screen.getAllByRole("button", { name: "清除时间" })[0]!);
     await waitFor(() =>
-      expect(router.history.location.search).toContain("source=Movies%2Fbeta"),
+      expect(router.history.location.search).not.toContain("from="),
     );
-    await waitFor(() =>
-      expect(
-        requested.some((url) => {
+    expect(
+      requested
+        .filter((url) => url.startsWith("/api/v1/operations/runs?"))
+        .every((url) => {
           const params = new URL(url, "http://mediaflow.test").searchParams;
           return (
-            params.get("view") === "ended" &&
-            params.get("q") === "电影" &&
-            params.get("status") === "failed" &&
-            params.get("source") === "Movies/beta"
+            [
+              "q",
+              "status",
+              "source",
+              "command",
+              "attention",
+              "problem",
+              "cursor",
+            ].every((key) => !params.has(key)) &&
+            params.get("view") === (view === "all" ? null : view)
           );
         }),
-      ).toBe(true),
-    );
-
-    await user.click(screen.getAllByRole("button", { name: "重置筛选" })[0]!);
-    await waitFor(() =>
-      expect(router.history.location.search).toBe("?view=ended"),
-    );
+    ).toBe(true);
   });
 
   it("drops removed All-view filters from an old link without losing its run", async () => {
@@ -777,7 +774,7 @@ describe("Operations run inventory landing", () => {
     expect(router.history.location.search).toBe("?from=2026-08-01");
     const failedRead = requested.at(-1);
     unavailable = false;
-    await user.click(screen.getAllByRole("button", { name: "Refresh" })[0]!);
+    await user.click(screen.getAllByRole("button", { name: "刷新" })[0]!);
     await screen.findByRole("table");
     expect(requested.at(-1)).toBe(failedRead);
     expect(screen.getByLabelText("创建时间从（本地）")).toHaveValue(
@@ -1624,7 +1621,7 @@ describe("Operations run inventory landing", () => {
     // the selected overview (the Resident-service control stays untouched).
     const headerRefresh = await within(header as HTMLElement).findByRole(
       "button",
-      { name: "Refresh" },
+      { name: "刷新" },
     );
     await user.click(headerRefresh);
     await waitFor(() => expect(overviewReads()).toBeGreaterThan(before));
