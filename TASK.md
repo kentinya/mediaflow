@@ -13,7 +13,7 @@ Task ID、Base、Medium/T3 和此前八标签结果不变，状态仍为 PLANNED
 Task ID: PATCH-20261030-1
 Task Type: STANDALONE MINOR BUG
 Parent Slice: NONE
-Status: PLANNED
+Status: READY FOR B REVIEW
 Authorization: USER-REQUESTED CORRECTION — 2026-10-30
 Task Base: e40093aa2400794f4423987658fba3095c7adda5
 Difficulty: Medium
@@ -257,7 +257,56 @@ B 独立实看八标签筛选，桌面/390px 截图与一个真实四类问题�
 
 ## Developer Completion Report
 
-尚未实施。Next：Developer 按本 Task 实施、完成受影响检查后交 READY FOR B REVIEW。
+Decision：READY FOR B REVIEW（Developer 交接，不是独立 Task PASS）。
+
+- 实施起点：`main / f30f521529ab6c68209b961c34bdc2b4dc90cdb2`；Task Base 保持
+  `e40093aa2400794f4423987658fba3095c7adda5`。
+- 实现 checkpoint：`87630b5898bcfa6ec3c341f7b11d73f9f5e1f06a`；源码树
+  `04de4690855a10c3762690965b06d49f642f368b`。本报告为随后仅修改 TASK.md 的管理提交；
+  B 审查完整 Task Base..候选 HEAD，产品/测试/构建输入与实现 checkpoint 相同。
+- 八页共用日期控件与有界 view+时间查询；旧列表条件及关联游标不再生效，精确任务、
+  详情和问题类型/文件分页保留。中文局部刷新控件以实际手动读取 Promise 控制 busy、防重，
+  预留忙碌文字宽度；轮询维持 5 秒，同条件在途读取可合并，页头等待清单/overview/活动详情读取。
+  恢复面板和计划摘要也使用相同局部反馈，共享 RefreshControl/权限边界默认行为未改。
+- 已同步六处 CURRENT 文档；无 Python 业务/API、schema、权限、命令或媒体操作修改，
+  SLICE/Roadmap/Progress 未改。初始未跟踪文件全部保留且未暂存，未读取私有运行库/配置或用户媒体。
+
+验证均在本地隔离 fixture 上实际执行；浏览器从现有侧栏/窄屏菜单、八标签、日期、刷新、
+查看问题文件及证据/关闭详情入口进入。旧书签使用旧页面可产生的字段，延迟/503/401/403
+拦截现有 GET，不新增产品路由/探测入口，不通过禁用按钮合成不可发生的重复动作。
+双击防重由真实 userEvent 双击验证；不是固定全页 GET 次数门禁。
+
+| cwd / 命令 | 实际结果 | 本地原始日志（下述 evidence/logs/ 内） |
+|---|---|---|
+| 根：`python3 scripts/check_governance.py`、`git diff --check` | 通过 | `governance-handoff.log` / `diff-check-handoff.log` |
+| web：Required Tests 六文件命令，附加 `TaskRefreshControl.test.tsx`、`TaskItemRecoveryPanel.test.tsx` | 8 文件、99 测试通过；无 skips；10.15s | `task-units-complete.log` |
+| web：`npm run typecheck`、`npm run lint`、`npm run build` | 均 exit 0 | `task-typecheck-reviewed.log`、`task-lint-handoff.log`、`task-build-complete.log` |
+| web：实际变更 TS/TSX/E2E 文件 `npx prettier --check` | 全部通过 | `task-format-reviewed.log` |
+| web：`npm run test:e2e -- tests/e2e/task-center-layout.spec.ts` | 7 通过；无 skips；5.1s | `task-layout-complete.log` |
+| web：Required real-Python grep，附加 `server-side filtered selection\|a mixed run never\|a reopened mixed saved batch\|the eight views and the exact\|dated views and 21-file` | 14 通过；无 skips；20.5s | `task-python-complete.log` |
+
+最后一组包含 Required 的全部 time filter / refresh feedback / live inventory 用例；增加的五项是
+本次删除旧控件后直接受影响的列表、混合类型、保存批次只读和 21 文件证据回程。最终三组测试
+共 35.75s；包含先前失败和静态检查的验证累计约 3–4 分钟，本轮读码实施/交接超过 12 分钟，
+验证占比低于 50%。没有运行全仓 Python/Web/E2E、发布矩阵或恢复执行全链路。
+
+证据目录：`.git/validation-evidence/patch-20261030-1/`（本机 ignored，不声称远端可访问）。
+`layout-final/` 留存桌面/390px 列表、详情及手动 busy 截图，已实看；`python-final/` 为最终
+隔离 Python 运行产物，`logs/` 保留最终和前轮原始结果；`identity.json` 记录身份。
+构建 JS `web/dist/assets/index-BLEu7AnR.js` SHA256：
+`b59d7e5149bf1f78a956a6db10c92066318658a66479e073d32bdfeda8d10864`；
+lockfile SHA256：`76349eb03577cf68e9aa9715f1eda5ec066f4e09eb92eb3bb471fc71d77ec58f`。
+
+前轮实际失败保留：新增测试用了 Testing Library 不支持的 exact 参数；旧 Files 回程断言还期待
+status、窄屏用例漏走菜单、空列表误期待不存在的分页文字、503 误期待共享异常标题而非现有
+Operations unavailable。均按实际界面/类型修正后执行相关检查；没有删除权限/副作用断言或加重试。
+曾并行运行两个 Playwright 命令导致共用 test-results 的 ENOENT 证据冲突，之后全部串行运行；
+该冲突轮不作为通过依据。
+
+剩余限制：B 尚未独立复核 AC/执行其额外后端时间游标及 format:check 门禁；无全站/外部服务、
+长时耐久或发布验证。构建仍报告大于 500kB chunk 提示，单元环境有 scrollTo 未实现诊断；
+对应命令均正常完成。本轮没有证明其为父版本问题，也未扩范围处理。Task 不自签 PASS，
+不推送、不发布，不启动其他角色/agent。
 
 ## B Review Result
 
