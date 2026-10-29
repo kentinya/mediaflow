@@ -703,6 +703,24 @@ class AutomationWorkspaceReadModelTests(unittest.TestCase):
             self.assertEqual(prestart["handoff"]["supportedCommand"], "scheduled-evaluation")
             self.assertFalse(prestart["handoff"]["startAgainAllowed"])
             self.assertIsNone(prestart["handoff"]["taskCenter"])
+            # The persisted pre-Task failure publishes the same complete shape
+            # a formal failure does, so the strict Web decoder never rejects an
+            # otherwise readable historical record.  This old
+            # ``unattended_execution_authority_missing`` row is only queried,
+            # never re-executed.
+            self.assertEqual(
+                {
+                    "stage": "before_formal_execution",
+                    "category": "unattended_execution_authority_missing",
+                    "nextAction": "review the exact bounds and explicitly grant",
+                    "statement": "整理开始前失败：没有创建正式整理任务，也没有产生媒体效果",
+                    "items": [],
+                    "effects": {"none": 0, "known": 0, "uncertain": 0, "partial": 0},
+                    "itemsTruncated": False,
+                    "unavailable": False,
+                },
+                prestart["failureStage"],
+            )
 
     def test_records_keep_a_formal_task_failure_before_mutation_in_task_center(self) -> None:
         with self._runtime() as value:

@@ -1,0 +1,227 @@
+{
+  "definition": null,
+  "from": null,
+  "historyBasis": "definition/name/scope/version from the durable admission, never backfilled from the current Active configuration",
+  "items": [
+    {
+      "attention": false,
+      "attention_failure_category": null,
+      "attention_failure_next_action": null,
+      "attention_reason": null,
+      "command": "organize",
+      "command_label": "整理",
+      "completed_items": 0,
+      "configuration_snapshot_id": "revision-active",
+      "created_at": "2026-01-01T12:00:00+00:00",
+      "current_stage": null,
+      "definition_id": "healthy",
+      "executionFinishedAt": "2026-01-01T12:00:00+00:00",
+      "executionStartedAt": "2026-01-01T12:00:00+00:00",
+      "failed_items": 0,
+      "failureStage": null,
+      "handling": {
+        "affectedItems": 0,
+        "attempts": 0,
+        "latestKind": null,
+        "latestStatus": null,
+        "nextAction": "open the exact Task Center run to review and handle it",
+        "resolvedItems": 0,
+        "state": "unhandled",
+        "unresolvedItems": 0
+      },
+      "handoff": {
+        "definitionSettings": "/ui-v2/operations/automation/definition/healthy",
+        "durableState": "formal_execution_exists",
+        "explanation": "a durable organizing Task exists for this run; its plan, per-item results and every recovery command belong to that exact Task Center run",
+        "formalExecution": true,
+        "job": {
+          "jobId": "record-healthy",
+          "path": "/api/v1/operations/jobs/record-healthy"
+        },
+        "ownership": "task_center",
+        "retryExplanation": "Task Center owns recovery for this run; successful or uncertain effects are never replayed from Automation",
+        "startAgainAllowed": false,
+        "supportedCommand": null,
+        "supportedCommandPath": null,
+        "taskCenter": {
+          "path": "/api/v1/operations/runs/task-healthy",
+          "runId": "task-healthy"
+        }
+      },
+      "historyContext": {
+        "definitionId": "healthy",
+        "definitionName": null,
+        "recoveredFrom": null,
+        "scheduleId": null,
+        "sourceScope": "Movies",
+        "trigger": "scheduled"
+      },
+      "job_id": "record-healthy",
+      "library_kind": "resource",
+      "manualDefinitionOrigin": null,
+      "nextAction": {
+        "kind": "task-center-run",
+        "runId": "task-healthy",
+        "statement": "在一次正式整理任务中选择安全动作，例如重新分析、继续或恢复条目"
+      },
+      "origin": null,
+      "pause_requested": false,
+      "problem_file_counts": {
+        "classification": 0,
+        "conflict": 0,
+        "metadata": 0,
+        "recognition": 0
+      },
+      "problem_types": [],
+      "processed_items": 0,
+      "recognized_command": true,
+      "recordId": "record-healthy",
+      "recovered_completion": false,
+      "result": {
+        "admittedItemBound": 10,
+        "noWork": true,
+        "organized": false,
+        "reachedItemBound": false,
+        "statement": "本次执行已完成，但没有产生已整理的条目（无工作完成）",
+        "status": "completed",
+        "successItems": 0,
+        "uncertainSuccessItems": 0
+      },
+      "run_id": "record-healthy",
+      "run_kind": "job",
+      "schedule_id": null,
+      "sideEffects": "none",
+      "source_scope": "Movies",
+      "status": "completed",
+      "target_scope": null,
+      "task_id": "task-healthy",
+      "total_items": 0,
+      "trigger": "scheduled",
+      "updated_at": "2026-01-01T12:00:00+00:00",
+      "worker_id": null
+    },
+    {
+      "attention": false,
+      "attention_failure_category": "scope_root_missing",
+      "attention_failure_next_action": "restore the configured source directory and explicitly retry the occurrence",
+      "attention_reason": null,
+      "command": "organize",
+      "command_label": "整理",
+      "completed_items": null,
+      "configuration_snapshot_id": null,
+      "created_at": "2026-01-01T12:00:00+00:00",
+      "current_stage": null,
+      "definition_id": "missing",
+      "executionFinishedAt": "2026-01-01T12:00:00+00:00",
+      "executionStartedAt": "2026-01-01T12:00:00+00:00",
+      "failed_items": null,
+      "failureStage": {
+        "category": "scope_root_missing",
+        "effects": {
+          "known": 0,
+          "none": 0,
+          "partial": 0,
+          "uncertain": 0
+        },
+        "items": [],
+        "itemsTruncated": false,
+        "nextAction": "restore the configured source directory and explicitly retry the occurrence",
+        "stage": "before_formal_execution",
+        "statement": "整理开始前失败：没有创建正式整理任务，也没有产生媒体效果",
+        "unavailable": false
+      },
+      "handling": {
+        "affectedItems": 0,
+        "attempts": 0,
+        "latestKind": null,
+        "latestStatus": null,
+        "nextAction": "open the exact Task Center run once this admission acquires its Task",
+        "resolvedItems": 0,
+        "state": "unhandled",
+        "unresolvedItems": 0
+      },
+      "handoff": {
+        "definitionSettings": "/ui-v2/operations/automation/definition/missing",
+        "durableState": "settled_before_formal_execution",
+        "explanation": "this admission failed before any formal organizing execution or media effect; repair the stated prerequisite, then deliberately start a new run from the definition",
+        "formalExecution": false,
+        "job": {
+          "jobId": "record-missing",
+          "path": "/api/v1/operations/jobs/record-missing"
+        },
+        "ownership": "prestart_repair",
+        "retryExplanation": "the existing supported definition command may be used again after the prerequisite is repaired and the current scope, pins and authority are revalidated; this record stays as the historical fact",
+        "startAgainAllowed": false,
+        "supportedCommand": "scheduled-evaluation",
+        "supportedCommandPath": "/ui-v2/operations/automation/definition/missing",
+        "taskCenter": null
+      },
+      "historyContext": {
+        "definitionId": "missing",
+        "definitionName": null,
+        "recoveredFrom": null,
+        "scheduleId": null,
+        "sourceScope": "DoesNotExist",
+        "trigger": "scheduled"
+      },
+      "job_id": "record-missing",
+      "library_kind": "resource",
+      "manualDefinitionOrigin": null,
+      "nextAction": {
+        "category": "scope_root_missing",
+        "definitionId": "missing",
+        "kind": "repair-prerequisite",
+        "statement": "restore the configured source directory and explicitly retry the occurrence"
+      },
+      "origin": null,
+      "pause_requested": false,
+      "problem_file_counts": {
+        "classification": 0,
+        "conflict": 0,
+        "metadata": 0,
+        "recognition": 0
+      },
+      "problem_types": [],
+      "processed_items": null,
+      "recognized_command": true,
+      "recordId": "record-missing",
+      "recovered_completion": false,
+      "result": {
+        "admittedItemBound": 10,
+        "noWork": false,
+        "organized": false,
+        "reachedItemBound": false,
+        "statement": "本次执行失败；已受理的运行和逐项结果仍然保留，请在任务中心查看原因",
+        "status": "failed",
+        "successItems": 0,
+        "uncertainSuccessItems": 0
+      },
+      "run_id": "record-missing",
+      "run_kind": "job",
+      "schedule_id": null,
+      "sideEffects": "none",
+      "source_scope": "DoesNotExist",
+      "status": "failed",
+      "target_scope": null,
+      "task_id": null,
+      "total_items": null,
+      "trigger": "scheduled",
+      "updated_at": "2026-01-01T12:00:00+00:00",
+      "worker_id": null
+    }
+  ],
+  "limit": 20,
+  "next_cursor": null,
+  "population": "admitted Automation runs deduplicated by explicit task linkage",
+  "previous_cursor": null,
+  "sideEffects": "none",
+  "status": null,
+  "statusCounts": {
+    "completed": 1,
+    "failed": 1
+  },
+  "to": null,
+  "total": 2,
+  "trigger": null,
+  "truncated": false
+}

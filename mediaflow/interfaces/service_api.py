@@ -15793,6 +15793,14 @@ class MediaFlowApi:
                 "category": overview.attention_failure_category,
                 "nextAction": overview.attention_failure_next_action,
                 "statement": ("整理开始前失败：没有创建正式整理任务，也没有产生媒体效果"),
+                # Publish the same closed shape as every other failure stage:
+                # there are no items or effects, and the read is available.  A
+                # strict Web consumer can therefore render this durable
+                # pre-start fact instead of rejecting the whole records page.
+                "items": [],
+                "effects": {"none": 0, "known": 0, "uncertain": 0, "partial": 0},
+                "itemsTruncated": False,
+                "unavailable": False,
             }
         if overview.status.value not in {"failed", "partial_success"}:
             return None

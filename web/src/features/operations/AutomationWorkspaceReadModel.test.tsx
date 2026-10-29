@@ -19,6 +19,7 @@
 import { afterEach, describe, expect, it, vi } from "vitest";
 import { cleanup, screen, waitFor, within } from "@testing-library/react";
 import userEvent from "@testing-library/user-event";
+import prestartRecords from "../../../tests/fixtures/automation-records-prestart.json";
 import { authStore } from "../../shared/api/auth-store";
 import { renderApp } from "../../../tests/utils";
 
@@ -639,6 +640,91 @@ describe("V2 Automation workspace read model", () => {
     expect(
       within(region).getByRole("button", { name: "打开任务中心运行" }),
     ).toBeVisible();
+  });
+
+  it("renders a captured real pre-start failure beside a no-work completion", async () => {
+    // The fixture is captured from the real records API by
+    // tests/test_v2_automation_run_once.py: one Scheduler/Worker pre-start
+    // source-scope failure and one completed no-work run.  Only generated
+    // identities/timestamps are stabilized; the failure-stage shape is the
+    // backend's own response, so the strict decoder is exercised end to end.
+    const user = userEvent.setup();
+    const { calls } = recordingFetch((call) => {
+      if (call.url === LIST_URL) {
+        return jsonResponse(listDocument());
+      }
+      if (call.url.startsWith("/api/v1/operations/automation/records")) {
+        return jsonResponse(prestartRecords);
+      }
+      return undefined;
+    });
+    authStore.setToken(TOKEN);
+    renderApp("/ui-v2/operations/automation?tab=records");
+
+    const region = await screen.findByRole("region", {
+      name: "自动化执行记录",
+    });
+    expect(await within(region).findByText(/共 2 条执行记录/)).toBeVisible();
+
+    const failedRow = within(region)
+      .getAllByRole("row")
+      .filter((row) => row.textContent?.includes("missing"));
+    expect(failedRow).toHaveLength(1);
+    expect(within(failedRow[0]).getByText("失败")).toBeVisible();
+    expect(
+      within(failedRow[0]).getByText(/整理开始前失败：没有创建正式整理任务/),
+    ).toBeVisible();
+    expect(
+      within(failedRow[0]).getByText(/阶段：before_formal_execution/),
+    ).toBeVisible();
+    expect(
+      within(failedRow[0]).getByText(/原因：scope_root_missing/),
+    ).toBeVisible();
+    expect(
+      within(failedRow[0]).getByText(
+        /没有创建正式整理任务，也没有产生媒体效果/,
+      ),
+    ).toBeVisible();
+    // The empty item/effect partition is not fabricated into a per-item
+    // section, and the record does not claim its evidence is unreadable.
+    expect(
+      within(failedRow[0]).queryByText(/逐项失败原因与已知效果/),
+    ).toBeNull();
+    expect(
+      within(failedRow[0]).queryByText(/持久化的逐项失败原因当前不可读/),
+    ).toBeNull();
+
+    // A real completed no-work run is rendered beside the failure instead of
+    // being hidden by the strict-read failure.
+    const healthyRow = within(region)
+      .getAllByRole("row")
+      .filter((row) => row.textContent?.includes("healthy"));
+    expect(healthyRow).toHaveLength(1);
+    expect(within(healthyRow[0]).getByText("成功")).toBeVisible();
+    expect(within(healthyRow[0]).getByText(/无工作完成/)).toBeVisible();
+
+    // Records stay read-only: refresh repeats the same GET reads and never
+    // creates an execution/mutation request.
+    const recordsCalls = (): number =>
+      calls.filter((call) =>
+        call.url.startsWith("/api/v1/operations/automation/records"),
+      ).length;
+    const beforeRefresh = recordsCalls();
+    await user.click(screen.getByRole("button", { name: "Refresh" }));
+    await waitFor(() => expect(recordsCalls()).toBeGreaterThan(beforeRefresh));
+    await waitFor(() =>
+      expect(within(region).getByText(/共 2 条执行记录/)).toBeVisible(),
+    );
+    for (const call of calls.filter((call) =>
+      call.url.startsWith("/api/v1/operations/automation/records"),
+    )) {
+      expect(call.method).toBe("GET");
+    }
+    expect(
+      within(region).queryByRole("button", {
+        name: /运行一次|重新分析|暂停|继续|取消|重试/,
+      }),
+    ).toBeNull();
   });
 
   it("pages backwards with the cursor's own direction", async () => {

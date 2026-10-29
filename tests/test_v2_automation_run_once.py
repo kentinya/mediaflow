@@ -16,9 +16,11 @@ operator-facing journey the Contract promises:
 
 from __future__ import annotations
 
+import copy
 import io
 import json
 import os
+import re
 import tempfile
 import unittest
 from contextlib import contextmanager
@@ -265,12 +267,16 @@ class RunOnceApiTests(unittest.TestCase):
                 configuration,
                 bootstrap_database_path=str(self.root / "runtime.sqlite3"),
             )
-            draft = managed.import_draft(document, actor="tester")
-            validated = managed.validate(draft.revision_id, actor="tester")
+            # The production Scheduler reads the publication principal of an
+            # Enabled definition and re-checks its current permission.  Bind
+            # the fixture's publication to the configured admin principal so a
+            # scheduled occurrence can reach its real preflight/execution path.
+            draft = managed.import_draft(document, actor="admin")
+            validated = managed.validate(draft.revision_id, actor="admin")
             if validated.status.value != "validated":
                 raise AssertionError(validated.validation_errors)
             revision = managed.activate(
-                validated.revision_id, expected_version=validated.version, actor="tester"
+                validated.revision_id, expected_version=validated.version, actor="admin"
             )
             from mediaflow.infrastructure.runtime_configuration import (
                 load_managed_runtime_configuration,
@@ -386,6 +392,77 @@ class RunOnceApiTests(unittest.TestCase):
             value, "POST", "/api/v1/operations/automation/task-definitions/nightly/run-once", body
         )
 
+    @staticmethod
+    def scheduled(value):
+        """Build the production Scheduler over the fixture's Active snapshot."""
+
+        from mediaflow.application.automation import IntervalScheduler
+        from mediaflow.domain.automation import (
+            AutomationTaskDefinition,
+            SchedulerConfigurationSnapshot,
+        )
+
+        active = value.managed.active()
+        definitions = tuple(
+            AutomationTaskDefinition.from_document(item)
+            for item in active.document["automationTaskDefinitions"]
+        )
+        resources = tuple(
+            item["id"]
+            for item in active.document["resourceLibraries"]
+            if isinstance(item, dict) and item.get("id")
+        )
+        snapshot = SchedulerConfigurationSnapshot(
+            active.revision_id,
+            active.digest,
+            (),
+            100,
+            definitions,
+            active.version,
+            resources,
+            resources,
+        )
+        return IntervalScheduler(
+            value.repository,
+            (),
+            configuration_snapshot_resolver=lambda: snapshot,
+        )
+
+    @staticmethod
+    def stable_records_document(page: dict, *, revision_id: str) -> dict:
+        """Replace only volatile identities/times in a real records response.
+
+        The shared browser fixture is captured from this exact API document;
+        the substitution lets the test prove the real response shape without
+        pinning generated UUIDs or wall-clock completion times.
+        """
+
+        document = copy.deepcopy(page)
+        identities: dict[str, str] = {revision_id: "revision-active"}
+        for record in document["items"]:
+            definition_id = record["historyContext"]["definitionId"]
+            for field in ("recordId", "run_id", "job_id"):
+                value = record.get(field)
+                if isinstance(value, str) and value:
+                    identities[value] = f"record-{definition_id}"
+            task_id = record.get("task_id")
+            if isinstance(task_id, str) and task_id:
+                identities[task_id] = f"task-{definition_id}"
+            worker_id = record.get("worker_id")
+            if isinstance(worker_id, str) and worker_id:
+                identities[worker_id] = "worker-harness"
+        text = json.dumps(document, sort_keys=True)
+        for identity, stable in sorted(identities.items(), key=lambda item: -len(item[0])):
+            text = text.replace(identity, stable)
+        text = re.sub(
+            r"\d{4}-\d{2}-\d{2}T\d{2}:\d{2}:\d{2}(?:\.\d+)?(?:Z|[+-]\d{2}:\d{2})",
+            "2026-01-01T12:00:00+00:00",
+            text,
+        )
+        document = json.loads(text)
+        document["items"].sort(key=lambda item: item["historyContext"]["definitionId"])
+        return document
+
     def execute(self, value):
         from mediaflow.application.automation import AutomationWorker
         from mediaflow.application.automation_definition_execution import (
@@ -415,6 +492,124 @@ class RunOnceApiTests(unittest.TestCase):
             unattended_grant_service=value.api._unattended_grants,
         )
         return AutomationWorker(value.repository, service.run).run_next()
+
+    def test_scheduled_prestart_failure_is_a_complete_read_only_record(self):
+        # A healthy empty scope completes as real no-work, while a missing
+        # source scope fails the Worker preflight before any formal Task is
+        # created.  Both are produced by the production Scheduler and Worker.
+        (self.source_root / "Movies").mkdir()
+        definitions = [
+            {
+                "id": "healthy",
+                "name": "Healthy automation",
+                "resourceLibraryId": "library",
+                "mode": "automatic-organization",
+                "intervalSeconds": 3600,
+                "itemLimit": 10,
+                "enabled": True,
+                "sourceScope": "Movies",
+            },
+            {
+                "id": "missing",
+                "name": "Missing automation",
+                "resourceLibraryId": "library",
+                "mode": "automatic-organization",
+                "intervalSeconds": 3600,
+                "itemLimit": 10,
+                "enabled": True,
+                "sourceScope": "DoesNotExist",
+            },
+        ]
+        with self.journey(definitions=definitions) as value:
+            revision = value.managed.active()
+            emitted = self.scheduled(value).tick(self.clock.now)
+            self.assertEqual({job.definition_id for job in emitted}, {"healthy", "missing"})
+            for _ in emitted:
+                self.assertIsNotNone(self.execute(value))
+
+            jobs = {job.definition_id: job for job in value.repository.list_jobs()}
+            missing_job = jobs["missing"]
+            healthy_job = jobs["healthy"]
+            self.assertEqual("failed", missing_job.status.value)
+            self.assertIsNone(missing_job.task_id)
+            self.assertEqual("scope_root_missing", missing_job.failure_category)
+            self.assertIsNotNone(missing_job.failure_next_action)
+            self.assertEqual("completed", healthy_job.status.value)
+            self.assertIsNotNone(healthy_job.task_id)
+
+            def counts():
+                return (
+                    len(value.repository.list_tasks()),
+                    len(value.repository.list_jobs()),
+                    len(value.repository.list_unattended_execution_grants()),
+                    len(value.discovery.list()),
+                    value.managed.active().revision_id,
+                )
+
+            before_refresh = counts()
+            status, page = self.request(
+                value, "GET", "/api/v1/operations/automation/records?limit=20"
+            )
+            self.assertEqual(200, status, page)
+            self.assertEqual(2, page["total"])
+            records = {record["historyContext"]["definitionId"]: record for record in page["items"]}
+            failure = records["missing"]
+            self.assertEqual("failed", failure["status"])
+            self.assertIsNone(failure["task_id"])
+            self.assertFalse(failure["result"]["organized"])
+            self.assertFalse(failure["result"]["noWork"])
+            self.assertEqual("prestart_repair", failure["handoff"]["ownership"])
+            stage = failure["failureStage"]
+            self.assertEqual(
+                {
+                    "stage": "before_formal_execution",
+                    "category": "scope_root_missing",
+                    "nextAction": missing_job.failure_next_action,
+                    "statement": "整理开始前失败：没有创建正式整理任务，也没有产生媒体效果",
+                    "items": [],
+                    "effects": {"none": 0, "known": 0, "uncertain": 0, "partial": 0},
+                    "itemsTruncated": False,
+                    "unavailable": False,
+                },
+                stage,
+            )
+
+            healthy = records["healthy"]
+            self.assertEqual("completed", healthy["status"])
+            self.assertTrue(healthy["result"]["noWork"])
+            self.assertIsNotNone(healthy["task_id"])
+            self.assertIsNone(healthy["failureStage"])
+            self.assertEqual("task_center", healthy["handoff"]["ownership"])
+
+            # A refresh is the same bounded read: it creates no Task/Job/grant/
+            # discovery and never re-executes the settled failure.
+            status, refreshed = self.request(
+                value, "GET", "/api/v1/operations/automation/records?limit=20"
+            )
+            self.assertEqual(200, status, refreshed)
+            self.assertEqual(page["total"], refreshed["total"])
+            self.assertEqual(before_refresh, counts())
+            self.assertEqual("failed", value.repository.get_job(missing_job.job_id).status.value)
+            self.assertIsNone(value.repository.get_job(missing_job.job_id).task_id)
+            self.assertEqual([], value.source.mutations)
+            self.assertEqual([], value.target.mutations)
+            self.assertEqual(
+                self.stable_records_document(page, revision_id=revision.revision_id),
+                self.stable_records_document(refreshed, revision_id=revision.revision_id),
+            )
+
+            fixture_path = (
+                Path(__file__).resolve().parents[1]
+                / "web"
+                / "tests"
+                / "fixtures"
+                / "automation-records-prestart.json"
+            )
+            fixture = json.loads(fixture_path.read_text(encoding="utf-8"))
+            self.assertEqual(
+                self.stable_records_document(page, revision_id=revision.revision_id),
+                fixture,
+            )
 
     def test_disabled_definition_admits_task_before_worker_and_executes_without_confirmation(self):
         self.media("Movies/One.2001.mkv")
