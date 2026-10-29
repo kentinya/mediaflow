@@ -1,7 +1,7 @@
 # Task PATCH-20261029-4 — 整理规则页头与概览展示修正
 
 用户于 2026-10-29 明确要求激活本 Task；已从规划草案提升为正式独立 Task，范围可交 Developer 实施。
-当前状态为 IN PROGRESS，Developer 已开始本 Task 实施，不自动启动其他角色或 agent，
+当前状态为 READY FOR B REVIEW，Developer 已完成实施与受影响验证，不自动启动其他角色或 agent，
 不授权推送或部署。生命周期遵循 [Development Workflow §3.1](docs/development-workflow.md#31-independent-minor-bugs)。
 
 Authority：用户要求修正现有整理规则页，并明确以现行任务中心为标题/刷新排版基准。
@@ -16,7 +16,7 @@ Authority：用户要求修正现有整理规则页，并明确以现行任务�
 Task ID: PATCH-20261029-4
 Task Type: STANDALONE MINOR BUG
 Parent Slice: NONE
-Status: IN PROGRESS
+Status: READY FOR B REVIEW
 Authorization: USER-ACTIVATED TASK — 2026-10-29
 Task Base: 739a9c49a39187f1cf48aa3a62c241aaea22d9a9
 Difficulty: Medium
@@ -272,10 +272,79 @@ Settings 产品、自动化页或其他页面设计；
 
 ## Developer Completion Report
 
-尚未开始实施。Developer 按本 Task 实施后记录完整 checkpoint SHA、实际改动、受影响测试与剩余风险；
-交 READY FOR B REVIEW，由 B 独立验收。
+Decision: **READY FOR B REVIEW** — 2026-10-30。未自签 PASS，未推送或发布。
+
+### Source / workspace
+
+- 分支 `main`；进入实施时 HEAD `b34b374f796c5fded1fa4dce292456554754cbef`。
+- Task Base `739a9c49a39187f1cf48aa3a62c241aaea22d9a9`；实现 checkpoint
+  `c39e81fa1bf465a45cd16ba82e87aabfd191d60e`。后续提交仅更新本报告/状态；
+  B 审查完整 Task Base..candidate，包括前置 Task 激活文档。
+- 初始无 tracked 改动；已有 `.DS_Store`、`.mgmt.log`、`.t.log`、`.t_test_*.log`、`15`、
+  两张自动化参考图、`output/imagegen/slice45-task-center-v1.zip` 均保留且未暂存。
+  SLICE/Roadmap/Progress、Python 业务、API/schema 与私有配置未修改。
+
+### Implemented
+
+- Rules 工作区使用内容区唯一标题/说明及右侧刷新；加载、空配置、无 Active 与只读状态共用页头。
+  公共顶栏保留账户/通知；移除规则搜索、专属加高顶栏和正常态序号/设置工具行。
+- 清单保留一个原位搜索与原状态筛选；成功刷新保留分类、关键字、状态，忙碌时禁用刷新。
+  移除仅服务顶栏的 Rules context，不改变 Files/MediaLibrary/Storage 搜索。
+- 概览按关系、真实数量、条件式缺口/补齐及完整流程检查分区；已知关系节点中文映射，
+  服务端顺序及未知节点文本保留。不新增统计、自动测试或运行时推导。
+- 八分类卡片及七类清单内部 markup/CSS/操作保留。设置恢复仍保留 allowlisted 原分类回程；
+  正常态测试改走实际侧栏设置及 Settings 的分类链接，不构造已删除的入口。
+- 验收脚本标识改为当前 Task，增加三视口实际任务中心页头比较、只读刷新和清单截图；
+  表单检查等待真实异步权限/表单读回后再测量，保留原表单、安全及拒绝保存检查。
+
+### Actual validation
+
+命令按本 Task Required Tests 的文件清单执行，额外把已修改的
+`RulesCompleteFlowCheck.tsx` 加入 ESLint/Prettier 检查。
+
+| cwd / command | 实际结果 |
+|---|---|
+| 根目录 `python3 scripts/check_governance.py` | 实施前及交接前通过 |
+| `web/` 指定五个文件的 `npm run test -- run ...` | **5 files / 103 tests passed**，无 skip |
+| `web/` `npm run typecheck` | 通过 |
+| `web/` 指定受影响文件 `npx eslint ...`、`npx prettier --check ...` | 通过 |
+| `web/` `npm run build` | 通过；实现 checkpoint 再构建，产物供真实 Python proof 使用 |
+| `web/` `npm run test:e2e -- tests/e2e/rules-readiness.spec.ts` | **13 passed**，无 skip |
+| 根目录 `.venv/bin/ruff check scripts/rules_workspace_browser_proof.py` 及 `ruff format --check` | 通过 |
+| 根目录 `MF_PROOF_ARTIFACTS=…/developer-rules .venv/bin/python scripts/rules_workspace_browser_proof.py` | 通过，26 张截图；临时 SQLite/Local、一次性身份、真实 Python API + built V2 |
+| 根目录 `git diff --check` | 通过 |
+
+覆盖延迟加载/刷新防重、搜索与状态保留、无 Active、非法 section、坏响应、401/403/500、
+只读用户、发布后读回、拒绝/未知保存、草稿恢复、对象/完整流程测试及共享 Shell。
+真实浏览器入口为侧栏/分类/添加/取消/编辑/设置等现有产品入口；没有新增产品入口供测试使用。
+
+实看 1536×1024 概览/清单、760×1024 概览/清单、390×844 页头/清单截图：
+页头清晰、焦点可见，无本次引入的整页横向溢出/遮挡；手机表格在既有容器内滚动，
+分类卡片继续沿用原响应式布局。桌面实测标题边界/字号/行高对齐任务中心；
+窄屏只检查可用性和文字层级，按 Task 不强制桌面同一行几何。
+初始化之后的只读旅程 Active revision/digest 不变、激活次数 0→0、Tasks/items 0→0，
+mutating HTTP requests 为 []；原 C 复用 A 策略的身份检查保留。
+
+### Evidence / limitations for B
+
+本地持久证据：`.git/validation-evidence/patch-20261029-4/`。
+`source-identity.json` 记录源码 checkpoint/文件与依赖哈希；`developer-logs/` 保存单元、E2E、
+真实 Python 日志；`developer-rules/` 保存 26 张截图、`evidence.json`、
+`comparison-matrix.json` 和 `reference-hashes.json`。它们为 owner-local ignored 证据，不宣称远程可访问。
+
+- 历史旧页头注释图 `整理规则需修复.png` 缺失，未生成或替换。当前 Task 明确替换旧页头标准，
+  脚本将该缺失记录为 MISSING，使用实际任务中心作当前页头比较；其余六张保留区参考图
+  哈希仍严格检查。请 B 核查这一证据限制及 Task Base 同可用宽度的保留区比较。
+- 早期运行发现旧的无效 Shell 夹具、旧按钮/边界文案断言及 proof 的异步表单等待、
+  整页导航后的内存身份重连、证据字段初始化问题；已修正并重跑。
+  窄屏曾误套用桌面坐标一致性，已按 Task 改为桌面坐标/三视口层级与可用性检查。
+  保留的失败/最终日志可在 `developer-logs/` 对照，不将早期失败标作产品通过。
+- 当前构建有 Vite 单 chunk 大于 500 kB 提示；Vitest 有 jsdom `scrollTo` 未实现提示，
+  未因此跳过用例或更改超时/重试。未进行性能拆包或无关改造。
+- Developer 未执行全仓回归或 B 的独立验收，按 T2 分工交 B。
+  不把单元夹具结果等同真实后端验收；无外部 Provider、生产媒体或用户运行库访问。
 
 ## B Review Result
 
-尚未开始实施验收。激活及治理检查不构成产品 PASS。
-Next: **DEVELOPER IMPLEMENTS PATCH-20261029-4**；开始实现时转 IN PROGRESS。
+尚未开始独立验收；Developer 报告及自动检查不构成 Task PASS。
+Next: **B REVIEWS PATCH-20261029-4**，审查精确候选与 Task Base..candidate 并执行 B acceptance。
