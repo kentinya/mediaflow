@@ -1,10 +1,4 @@
-# NO ACTIVE IMPLEMENTATION TASK
-
-Task47.1 已 PASS，完整计划/审查保留在 `c942c4b4b9d3abf105341e8163c1be2d95d9a671:TASK.md`。
-下列 Task47.2 是用户本轮要求的**规划草案**；尚未启动实施，不授权其他代理或本轮产品改动。
-Slice47 保持 ACTIVE；实施时沿用此 Task ID/Base/范围，按流程进入 IN PROGRESS。
-
-## Task 47.2 — Files 手动整理完整接入 Task 引擎
+# Task 47.2 — Files 手动整理完整接入 Task 引擎
 
 Authority: committed [SLICE.md](SLICE.md)（读取于本 Task Base）；
 [Development Workflow](docs/development-workflow.md) 管理生命周期与测试分工；
@@ -15,12 +9,12 @@ Authority: committed [SLICE.md](SLICE.md)（读取于本 Task Base）；
 Task ID: 47.2
 Task Type: SLICE
 Parent Slice: 47
-Status: PLANNED
+Status: READY FOR B REVIEW
 Task Base: c942c4b4b9d3abf105341e8163c1be2d95d9a671
 Difficulty: High
 Test Level: T4
 Planner / Reviewer: B
-Authorization: PLAN ONLY — 2026-10-31
+Authorization: PLAN ONLY — 2026-10-31; USER-AUTHORIZED IMPLEMENTATION — 2026-10-31
 ```
 
 ## Goal
@@ -239,8 +233,47 @@ RO-5 原界面兼容已验而 Task 化全表面未交付。因此继续规划本
 
 ## Developer Completion Report
 
-尚未实施。交接须含实际 checkpoint、变更/关键决策、精确受影响测试结果、已知失败/限制及
-同一 Task 剩余工作；不自审 PASS、不关闭 Slice、不规划下一 Task。
+- Checkpoint: `HEAD` of the handoff commit on `main`; Task Base
+  `c942c4b4b9d3abf105341e8163c1be2d95d9a671`; Status READY FOR B REVIEW.
+- Changed behavior: newly admitted Files manual work (direct/folder/mixed) now creates its
+  organizing Task *with* its kernel `task_scheduling` row atomically, and the resident Worker
+  advances that same Task through bounded discovery → zero-mutation analysis → human waiting,
+  and — after the operator's exact confirmation — through the confirmed execution. The
+  confirmation re-registers the same Task's machine work inside the admission transaction
+  after re-checking shared capacity; the legacy discovery/manual-execution claim queries
+  explicitly exclude kernel-managed rows so one work is never double-claimed. A saved four-type
+  decision re-enters analysis on the same Task via one atomic `requeue_scheduled_analysis`.
+- Key files: `application/manual_task_engine.py` (new resident engine), `application/media_discovery.py`
+  (kernel admission + atomic analysis re-entry), `infrastructure/sqlite_runtime.py`
+  (`create_files_organize_work` scheduling, `claim_media_discovery`, `claim_manual_execution`,
+  `requeue_scheduled_analysis`, `yield_scheduled_claim`, kernel-fenced
+  `complete_manual_execution_item`), `application/manual_organize_execution.py` (Task-fenced
+  execution via `begin_existing_item`/`begin_mutation`/claim-fenced completion),
+  `domain`/`application` `task_scheduling` (yield/begin-existing seam), `application/automation.py`
+  + `final_cli.py` (resident wiring).
+- Affected tests (actual): `.venv/bin/python -m unittest discover -s tests` → 3004 tests,
+  7 skipped, OK. New `tests/test_manual_task_engine.py` covers admission/dedup, discovery→
+  analysis→human-waiting, and four-type decision→reanalysis→confirmed execution→`completed` on
+  one Task with zero Storage mutation until the confirmed execution. Focused sets
+  (`test_task_scheduling*`, `test_media_discovery`, `test_manual_organize_*`,
+  `test_scope_continuation`, `test_recovery_continuation`, `test_processing_checkpoint`,
+  `test_automation_*`, `test_direct_file_transfers`, `test_media_library_transfers`) pass.
+  `ruff format --check .`, `ruff check .`, `compileall mediaflow tests scripts`,
+  `scripts/check_governance.py`, `git diff --check` pass.
+- Delivered this round: M1, M2 and the M3/M4 core (exact summary/selected confirmation, Save has
+  no effect, four-type decision continues the same Task, capacity re-checked atomically on
+  re-entry/confirmation). `tests/test_task_scheduling.TransitionBoundaryTests` now asserts exactly
+  the named production consumers wire the kernel instead of "no consumer".
+- Remaining Task work / not claimed: M5 full Task-level cooperative pause/cancel/acknowledge on the
+  new path; M6 unified cross-entrance capacity (new Task slots and legacy Job slots are still
+  counted separately, so simultaneous last-slot competition is not yet bounded); M7 explicit
+  restart/claim-loss continuation boundaries; M8 Task Center/Web/API result-loop re-wiring; and M9
+  wheel/Docker/upgrade proofs are NOT delivered. No Web/API projection or UI file changed. Only
+  additive schema 54 is used; no migration/schema change. No self-PASS, no Slice closure, no next
+  Task planned.
+- Known risks: the kernel Worker registration pin comes from a pending legacy Job when one exists,
+  so a manual Task pinned to a different snapshot can be temporarily unclaimable until that Job
+  clears; this is the same coexistence gap as M6 and is disclosed, not hidden.
 
 ## B Review Result
 

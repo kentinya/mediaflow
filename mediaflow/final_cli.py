@@ -4121,11 +4121,44 @@ def _run_worker(
                         media_discovery_worker=media_discovery_worker,
                         files_transfer_worker=files_transfer_worker,
                     )
+                    from mediaflow.application.manual_task_engine import (
+                        ManualTaskEngineWorker,
+                    )
+                    from mediaflow.application.task_scheduling import TaskSchedulingService
+
+                    manual_task_worker = ManualTaskEngineWorker(
+                        repository,
+                        TaskSchedulingService(
+                            repository,
+                            capacity=getattr(configuration, "automation_maximum_active_jobs", 100),
+                            locks=repository,
+                        ),
+                        media_discovery_worker.service,
+                        manual_organize_worker.service,
+                        worker_id=worker_service.worker_id,
+                    )
+                    worker_service.set_manual_task_worker(manual_task_worker)
                     if arguments.worker_command == "run-next":
                         job = worker_service.run_next()
                         if job is not None:
                             stdout.write(render_job(job))
                             return 0 if job.status.value in {"completed", "cancelled"} else 1
+                        manual_task = manual_task_worker.run_next()
+                        if manual_task is not None:
+                            stdout.write(
+                                f"Task ID: {manual_task.task_id}\n"
+                                f"Status: {manual_task.status.value}\n"
+                            )
+                            return (
+                                0
+                                if manual_task.status.value
+                                in {
+                                    "completed",
+                                    "partial_success",
+                                    "cancelled",
+                                }
+                                else 1
+                            )
                         discovered = media_discovery_worker.run_next()
                         if discovered is not None:
                             stdout.write(
@@ -4185,6 +4218,7 @@ def _run_worker(
                     # claim, exactly like the Files transfer consumer.
                     media_discovery_worker.set_worker_heartbeat(heartbeat)
                     manual_organize_worker.set_worker_heartbeat(heartbeat)
+                    manual_task_worker.set_worker_heartbeat(heartbeat)
 
                     def step(loop: ResidentLoop) -> int:
                         if worker_service._registered and not worker_service.heartbeat():
@@ -4192,7 +4226,8 @@ def _run_worker(
                         worked = worker_service.run_next() is not None
                         if not worked:
                             worked = (
-                                worker_service._run_media_discovery_work()
+                                worker_service._run_manual_task_work()
+                                or worker_service._run_media_discovery_work()
                                 or worker_service._run_manual_organize_work()
                                 or worker_service._run_files_transfer_work()
                             )
@@ -4786,6 +4821,7 @@ def _media_discovery_worker_context(configuration, configured_path: str | None, 
             intents,
             configuration_service=configuration_service,
             preview_service=previews,
+            task_scheduling_enabled=True,
         )
         yield MediaDiscoveryWorker(discovery)
 

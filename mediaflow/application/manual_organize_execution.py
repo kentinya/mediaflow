@@ -68,6 +68,7 @@ from mediaflow.domain.task_persistence import (
     RunDisplayContext,
     TaskItemStatus,
 )
+from mediaflow.domain.task_scheduling import TaskQueueFull
 
 _MAX_TEXT = 512
 _MAX_TTL_SECONDS = 900
@@ -845,6 +846,7 @@ class ManualOrganizeExecutionService:
         confirmation: bool,
         admit_only: bool = False,
         preparation_id: str | None = None,
+        scheduling_capacity: int | None = None,
     ) -> ManualExecution:
         if not isinstance(admit_only, bool):
             raise ManualExecutionError(
@@ -1013,17 +1015,33 @@ class ManualOrganizeExecutionService:
         )
         # Preserve the exact Run once definition origin alongside Slice45 admission links.
         display = self._with_definition_origin(display, intent=intent)
-        admitted = admit(
-            authority,
-            execution,
-            execution_items,
-            locks,
-            now,
-            display=display,
-            preparation_id=preparation_id,
-            checkpoint_projector=self._checkpoint_service._project,
-            adopt_task_id=adopted_task_id,
-        )
+        try:
+            admitted = admit(
+                authority,
+                execution,
+                execution_items,
+                locks,
+                now,
+                display=display,
+                preparation_id=preparation_id,
+                checkpoint_projector=self._checkpoint_service._project,
+                adopt_task_id=adopted_task_id,
+                scheduling_capacity=(
+                    scheduling_capacity
+                    if scheduling_capacity is not None
+                    else getattr(runtime, "automation_maximum_active_jobs", 100)
+                ),
+            )
+        except TaskQueueFull as full:
+            raise ManualExecutionError(
+                str(full),
+                code="capacity_full",
+                status=409,
+                next_action=(
+                    "wait for another organizing Task to finish or wait for a human decision, "
+                    "then explicitly confirm this same summary again"
+                ),
+            ) from full
         if admit_only:
             # The durable execution is committed and waiting for the resident
             # Processing Worker; this boundary never calls OrganizerExecutor.
@@ -1197,6 +1215,7 @@ class ManualOrganizeExecutionService:
         claim_token: str | None = None,
         heartbeat: Callable[[], bool] | None = None,
         lease_seconds: float = _CLAIM_LEASE_SECONDS,
+        task_context=None,
     ) -> ManualExecution:
         """Run one already admitted exact execution as its Processing Worker.
 
@@ -1255,7 +1274,7 @@ class ManualOrganizeExecutionService:
         try:
             selected, storages, runtime = self._reconstruct_reviewed_scope(authority)
         except ManualExecutionError as error:
-            return self._fail_pending_before_mutation(execution, error)
+            return self._fail_pending_before_mutation(execution, error, task_context=task_context)
         return self._run_worker_items(
             execution,
             selected,
@@ -1263,6 +1282,7 @@ class ManualOrganizeExecutionService:
             runtime=runtime,
             authority=authority,
             heartbeat=heartbeat,
+            task_context=task_context,
         )
 
     run_claimed_execution = run_admitted
@@ -1577,7 +1597,11 @@ class ManualOrganizeExecutionService:
         return selected, storages, runtime
 
     def _fail_pending_before_mutation(
-        self, execution: ManualExecution, error: ManualExecutionError
+        self,
+        execution: ManualExecution,
+        error: ManualExecutionError,
+        *,
+        task_context=None,
     ) -> ManualExecution:
         """Publish one truthful pre-mutation failure for every unfinished item.
 
@@ -1587,6 +1611,35 @@ class ManualOrganizeExecutionService:
         silently claiming success or leaving the execution running forever.
         """
 
+        if task_context is not None:
+            # The Task kernel owns the Task/item/Result publication.  Publishing
+            # each pre-mutation failure through the ordinary fenced item path
+            # keeps a kernel-managed Task from being rewritten by the legacy
+            # recovery writer; nothing here invokes Storage.
+            for item in execution.items:
+                if item.status in _TERMINAL_ITEM_STATUSES:
+                    continue
+                plan = self._recovery_plan(item)
+                result = ExecutionResult(
+                    ExecutionStatus.FAILED,
+                    plan.operation,
+                    plan.source,
+                    plan.target,
+                    plan_id=plan.plan_id,
+                    resolved_destination=plan.target,
+                    errors=(_safe_error(error),),
+                    effect_certainty=ExecutionEffectCertainty.NONE,
+                )
+                execution = self._publish_item_outcome(
+                    execution,
+                    item,
+                    plan,
+                    result,
+                    self._plan_locks(plan),
+                    stage="revalidation_failed",
+                    task_context=task_context,
+                )
+            return self.get(execution.execution_id)
         plans = {item.item_id: self._recovery_plan(item) for item in execution.items}
         return self._reconcile_unfinished(
             execution,
@@ -1635,6 +1688,7 @@ class ManualOrganizeExecutionService:
         runtime,
         authority: ManualExecutionAuthorization,
         heartbeat: Callable[[], bool] | None,
+        task_context=None,
     ) -> ManualExecution:
         # The chain-level staleness was already refused before reconstruction.  A
         # mixed scope, however, stays eligible while one sibling is undecided, so
@@ -1682,6 +1736,7 @@ class ManualOrganizeExecutionService:
                         },
                     ),
                     storages,
+                    task_context=task_context,
                 )
                 continue
             try:
@@ -1692,7 +1747,9 @@ class ManualOrganizeExecutionService:
                 self._validate_runtime_policy(plan, preview_item, runtime)
                 self._validate_current_storage(plan, preview_item, authority, storages)
             except ManualExecutionError as error:
-                execution = self._publish_pre_mutation_failure(execution, item, error, storages)
+                execution = self._publish_pre_mutation_failure(
+                    execution, item, error, storages, task_context=task_context
+                )
                 continue
             locks = self._plan_locks(plan)
             if not self._locks_owned(execution.task_id, locks):
@@ -1705,9 +1762,12 @@ class ManualOrganizeExecutionService:
                         next_action="inspect the durable Task and request a fresh Preview",
                     ),
                     storages,
+                    task_context=task_context,
                 )
                 continue
-            execution = self._mutate_worker_item(execution, item, plan, locks, storages)
+            execution = self._mutate_worker_item(
+                execution, item, plan, locks, storages, task_context=task_context
+            )
         return self.get(execution.execution_id)
 
     def _publish_pre_mutation_failure(
@@ -1716,6 +1776,8 @@ class ManualOrganizeExecutionService:
         item: ManualExecutionItem,
         error: ManualExecutionError,
         storages,
+        *,
+        task_context=None,
     ) -> ManualExecution:
         """Close one item that was rechecked and refused before any mutation."""
 
@@ -1738,6 +1800,7 @@ class ManualOrganizeExecutionService:
             self._plan_locks(plan),
             stage="revalidation_failed",
             storages=storages,
+            task_context=task_context,
         )
 
     def _mutate_worker_item(
@@ -1747,6 +1810,8 @@ class ManualOrganizeExecutionService:
         plan: OrganizePlan,
         locks: Sequence[tuple[str, str]],
         storages,
+        *,
+        task_context=None,
     ) -> ManualExecution:
         """Publish the running boundary, run OrganizerExecutor once, then record it."""
 
@@ -1764,24 +1829,39 @@ class ManualOrganizeExecutionService:
             stage="organizing",
             updated_at=now,
         )
-        running_task_item = replace(
-            task_item,
-            status=TaskItemStatus.PROCESSING,
-            stage="organizing",
-            attempts=task_item.attempts + 1,
-            updated_at=now,
-        )
         try:
-            self._repository.upsert_item(running_task_item)
+            if task_context is not None:
+                task_service, task_claim = task_context
+                running_task_item = task_service.begin_existing_item(
+                    task_claim, task_item, stage="organizing", now=now
+                )
+            else:
+                running_task_item = replace(
+                    task_item,
+                    status=TaskItemStatus.PROCESSING,
+                    stage="organizing",
+                    attempts=task_item.attempts + 1,
+                    updated_at=now,
+                )
+                self._repository.upsert_item(running_task_item)
             self._repository.update_manual_execution_item(running_item)
         except Exception:
-            self._reconcile_unfinished(
-                execution,
-                {item.item_id: plan},
-                audit_action="execution_start_interrupted",
-                audit_details={"boundary": "before_organizer_executor"},
-            )
+            if task_context is None:
+                self._reconcile_unfinished(
+                    execution,
+                    {item.item_id: plan},
+                    audit_action="execution_start_interrupted",
+                    audit_details={"boundary": "before_organizer_executor"},
+                )
             raise
+        if task_context is not None:
+            task_service, task_claim = task_context
+            task_service.begin_mutation(
+                task_claim,
+                running_task_item,
+                plan.operation.value if hasattr(plan.operation, "value") else str(plan.operation),
+                now=now,
+            )
         result = (
             self._execute_plan(plan, storages)
             if self._locks_owned(execution.task_id, locks)
@@ -1804,6 +1884,7 @@ class ManualOrganizeExecutionService:
             locks,
             task_item=running_task_item,
             storages=storages,
+            task_context=task_context,
         )
 
     def _publish_item_outcome(
@@ -1817,6 +1898,7 @@ class ManualOrganizeExecutionService:
         stage: str | None = None,
         task_item: PersistentTaskItem | None = None,
         storages=None,
+        task_context=None,
     ) -> ManualExecution:
         """Persist exactly one independent item outcome with its Result and effects."""
 
@@ -1843,6 +1925,14 @@ class ManualOrganizeExecutionService:
                 code="execution_unavailable",
                 status=503,
             )
+        if task_context is not None and current_task_item.status is not TaskItemStatus.PROCESSING:
+            task_service, task_claim = task_context
+            current_task_item = task_service.begin_existing_item(
+                task_claim,
+                current_task_item,
+                stage=stage or "organizing",
+                now=terminal_item.updated_at,
+            )
         terminal_task_item = replace(
             current_task_item,
             status=self._task_item_status(terminal_item.status),
@@ -1865,6 +1955,10 @@ class ManualOrganizeExecutionService:
             updated_at=terminal_item.updated_at,
         )
         task = self._task_after_item(task, terminal_task_item, current_items, execution)
+        task_fence = None
+        if task_context is not None:
+            task_service, task_claim = task_context
+            task_fence = task_claim.fence(self._clock())
         try:
             self._repository.complete_manual_execution_item(
                 execution,
@@ -1874,8 +1968,15 @@ class ManualOrganizeExecutionService:
                 result_record,
                 effects,
                 tuple(locks),
+                task_fence=task_fence,
             )
         except Exception:
+            if task_context is not None:
+                # A kernel-managed Task keeps its in-flight mutation boundary
+                # unchanged on a failed publication.  The legacy reconciliation
+                # writer must not rewrite that Task or its items; the engine
+                # leaves the uncertain effect for the documented inspection path.
+                raise
             recovery_execution = replace(
                 execution,
                 items=tuple(

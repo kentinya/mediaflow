@@ -84,6 +84,12 @@ class ManualOrganizeExecutionWorker:
         self._parent_heartbeat = heartbeat
 
     @property
+    def service(self):
+        """The application service this runner advances (read-only seam)."""
+
+        return self._service
+
+    @property
     def worker_id(self) -> str:
         return self._worker_id
 

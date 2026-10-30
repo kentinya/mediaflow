@@ -124,6 +124,14 @@ from mediaflow.domain.task_persistence import (
     PersistentTaskStatus,
     RunDisplayContext,
 )
+from mediaflow.domain.task_scheduling import (
+    TaskControlRejected,
+    TaskMachineStage,
+    TaskQueueFull,
+    TaskQueueState,
+    TaskSchedulingState,
+    TaskTrigger,
+)
 
 DEFAULT_DISCOVERY_LEASE_SECONDS = 300.0
 
@@ -250,6 +258,7 @@ class MediaDiscoveryService:
         monotonic: Callable[[], float] = time.monotonic,
         lease_seconds: float = DEFAULT_DISCOVERY_LEASE_SECONDS,
         budgets: DiscoveryBudgets | None = None,
+        task_scheduling_enabled: bool = False,
     ) -> None:
         if (
             isinstance(lease_seconds, bool)
@@ -271,6 +280,7 @@ class MediaDiscoveryService:
         self._monotonic = monotonic
         self._lease_seconds = float(lease_seconds)
         self._budgets = budgets or DiscoveryBudgets()
+        self._task_scheduling_enabled = bool(task_scheduling_enabled)
 
     @property
     def repository(self):
@@ -594,6 +604,17 @@ class MediaDiscoveryService:
             creator = getattr(self._repository, "create_media_discovery", None)
         if not callable(creator):
             raise DiscoveryUnavailable("durable media discovery storage is unavailable")
+        scheduling = (
+            self._task_admission_state(
+                organize_task,
+                actor=actor,
+                admission_request_id=admission_request_id,
+                now=now,
+            )
+            if self._task_scheduling_enabled
+            and callable(getattr(self._repository, "create_files_organize_work", None))
+            else None
+        )
         try:
             created = self._create_work(
                 creator,
@@ -602,7 +623,19 @@ class MediaDiscoveryService:
                 library=library,
                 scope=deduplicated,
                 reserve_sources=reserve_sources,
+                scheduling=scheduling,
+                capacity=self._shared_capacity(runtime),
             )
+        except TaskQueueFull as full:
+            raise DiscoveryError(
+                str(full),
+                code="capacity_full",
+                status=409,
+                next_action=(
+                    "wait for another organizing Task to finish or wait for a human decision, "
+                    "then explicitly submit this selection again"
+                ),
+            ) from full
         except DiscoveryConflict as conflict:
             # A concurrent admission won the durable identity race.  The two
             # shapes of that race are answered differently, because they mean
@@ -851,10 +884,37 @@ class MediaDiscoveryService:
             admitted=canonical_scope(remaining),
             refused=canonical_refusals(tuple(refusals)),
         )
+        scheduling = (
+            self._task_admission_state(
+                organize_task,
+                actor=actor,
+                admission_request_id=admission_request_id,
+                now=now,
+            )
+            if self._task_scheduling_enabled
+            and callable(getattr(self._repository, "create_files_organize_work", None))
+            else None
+        )
         try:
             created = self._create_work(
-                boundary, discovery, organize_task, library=library, scope=remaining
+                boundary,
+                discovery,
+                organize_task,
+                library=library,
+                scope=remaining,
+                scheduling=scheduling,
+                capacity=self._shared_capacity(self._active_runtime()),
             )
+        except TaskQueueFull as full:
+            raise DiscoveryError(
+                str(full),
+                code="capacity_full",
+                status=409,
+                next_action=(
+                    "wait for another organizing Task to finish or wait for a human decision, "
+                    "then explicitly submit this selection again"
+                ),
+            ) from full
         except DiscoveryConflict as conflict:
             # A second concurrent claim on this remaining set: converge on the
             # durable record the boundary names, or report the bounded refusal.
@@ -1025,6 +1085,8 @@ class MediaDiscoveryService:
         library,
         scope: tuple[DiscoveryScopeEntry, ...],
         reserve_sources=None,
+        scheduling: TaskSchedulingState | None = None,
+        capacity: int | None = None,
     ) -> MediaDiscovery:
         """Commit the admitted organizing work through the available boundary.
 
@@ -1039,10 +1101,16 @@ class MediaDiscoveryService:
             options = {"display": self._organize_display(library, scope)}
             if reserve_sources is not None:
                 options["reserve_sources"] = reserve_sources
+            if scheduling is not None:
+                options["scheduling"] = scheduling
+                options["capacity"] = capacity
             try:
                 return accepts_task(discovery, organize_task, **options)
             except TypeError:
-                if reserve_sources is None:
+                if reserve_sources is None or scheduling is not None:
+                    # A kernel-managed admission must never silently degrade to
+                    # an unscheduled Task: that would leave production work on a
+                    # second, competing queue authority.
                     raise
                 # A boundary that cannot re-check the concrete source is never
                 # silently treated as if it had: the admission then keeps only the
@@ -1074,6 +1142,45 @@ class MediaDiscoveryService:
         return tuple(
             (entry.path, canonical_source_path(library.root_path, entry.path)) for entry in scope
         )
+
+    def _task_admission_state(
+        self,
+        organize_task: PersistentTask,
+        *,
+        actor: str,
+        admission_request_id: str | None,
+        now: datetime,
+    ) -> TaskSchedulingState:
+        """The Task-owned admission facts committed with one Files discovery.
+
+        Manual Files work is admitted before business readiness.  The exact
+        principal/request identity is the kernel's dedupe key, the immutable pin
+        is the Task's own pin, and the machine stage starts at discovery.
+        Nothing here grants a new execution authority: the Task keeps the same
+        explicit ``execute_authorized`` fact the discovery admission already
+        recorded.
+        """
+
+        return TaskSchedulingState(
+            task_id=organize_task.task_id,
+            queue_state=TaskQueueState.QUEUED,
+            admission_trigger=TaskTrigger.MANUAL,
+            admission_principal=actor,
+            admission_request_id=admission_request_id,
+            created_at=now,
+            updated_at=now,
+            machine_stage=TaskMachineStage.DISCOVERY,
+        )
+
+    def _shared_capacity(self, runtime) -> int:
+        value = getattr(runtime, "automation_maximum_active_jobs", 100)
+        if isinstance(value, bool) or not isinstance(value, int) or value < 1:
+            return 100
+        return value
+
+    def _active_runtime(self):
+        snapshot_id, snapshot_digest = self._active_pin()
+        return self._load_runtime(snapshot_id, snapshot_digest)
 
     def _organize_display(
         self, library, scope: tuple[DiscoveryScopeEntry, ...]
@@ -3115,7 +3222,63 @@ class MediaDiscoveryService:
                 message=message,
             ),
         )
+        if self._kernel_task_id(discovery) is not None:
+            return self._requeue_kernel_analysis(discovery, updated)
         return self._persist(updated, expected_version=discovery.version)
+
+    def _kernel_task_id(self, discovery: MediaDiscovery) -> str | None:
+        """The Task engine identity of this discovery, when it has one."""
+
+        if not self._task_scheduling_enabled or discovery.organize_task_id is None:
+            return None
+        reader = getattr(self._repository, "get_task_scheduling", None)
+        if not callable(reader):
+            return None
+        return (
+            discovery.organize_task_id if reader(discovery.organize_task_id) is not None else None
+        )
+
+    def _requeue_kernel_analysis(
+        self, discovery: MediaDiscovery, updated: MediaDiscovery
+    ) -> MediaDiscovery:
+        """Atomically re-register the same Task's analysis and its discovery.
+
+        A full queue leaves the waiting/paused state, saved choices, summary and
+        consumed authority intact and publishes a bounded queue-full answer; no
+        authority is consumed and no automatic continuation is registered.
+        """
+
+        requeue = getattr(self._repository, "requeue_scheduled_analysis", None)
+        if not callable(requeue):
+            raise DiscoveryUnavailable(
+                "the Task scheduling kernel cannot re-register this analysis"
+            )
+        runtime = self._load_runtime(discovery.snapshot_id, discovery.snapshot_digest)
+        try:
+            return requeue(
+                discovery.organize_task_id,
+                updated,
+                expected_version=discovery.version,
+                capacity=self._shared_capacity(runtime),
+                now=self._clock(),
+            )
+        except TaskQueueFull as full:
+            raise DiscoveryError(
+                str(full),
+                code="capacity_full",
+                status=409,
+                next_action=(
+                    "wait for another organizing Task to finish or wait for a human decision, "
+                    "then explicitly request this analysis again"
+                ),
+            ) from full
+        except TaskControlRejected as rejected:
+            raise DiscoveryError(
+                str(rejected),
+                code="analysis_rejected",
+                status=409,
+                next_action="reload the organizing work and inspect its current state",
+            ) from rejected
 
     def analysis_availability(
         self, discovery: MediaDiscovery
@@ -3227,6 +3390,8 @@ class MediaDiscoveryService:
                     ),
                 ),
             )
+            if self._kernel_task_id(discovery) is not None:
+                return self._requeue_kernel_analysis(discovery, resumed)
             return self._persist(resumed, expected_version=expected_version)
         updated = replace(
             discovery,

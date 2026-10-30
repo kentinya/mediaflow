@@ -536,6 +536,11 @@ _KERNEL_RESUMABLE_ITEM_STATUSES = frozenset(
         TaskItemStatus.PENDING,
         TaskItemStatus.PAUSED,
         TaskItemStatus.FAILED,
+        # An analyzed item that produced no four-type problem is waiting for the
+        # operator's own initial exact confirmation.  The confirmed execution
+        # continues that same item; it has no recorded effect or outcome, so
+        # resuming it is safe.
+        TaskItemStatus.WAITING_CONFIRM,
     }
 )
 
@@ -4779,7 +4784,12 @@ class SQLiteTaskRepository:
                 stage="analysis",
                 updated_at=datetime.now(UTC),
             )
-            self.upsert_item(item)
+            # This is the analysis projection that the native review service
+            # immediately advances to its waiting state.  It belongs to the
+            # re-admitted Task and must not be routed through the legacy
+            # unfenced writer, which now refuses a kernel-managed Task.
+            with self._lock, self._connection:
+                self._connection.execute(_TASK_ITEM_UPSERT, self._item_values(item))
         if problem == "recognition":
             from mediaflow.application.recognition_review import RecognitionReviewService
 
@@ -12669,6 +12679,7 @@ class SQLiteTaskRepository:
         preparation_id: str | None = None,
         checkpoint_projector=None,
         adopt_task_id: str | None = None,
+        scheduling_capacity: int | None = None,
     ) -> ManualExecution:
         """Atomically consume exact authority, create Task scope, and fence paths.
 
@@ -12924,19 +12935,86 @@ class SQLiteTaskRepository:
                                 "reopen the Files organizing work and request a fresh summary"
                             ),
                         )
+                    scheduling = self._scheduled_state_locked(adopt_task_id)
+                    # A kernel-managed Task is published RUNNING by its Worker's
+                    # own `begin_work` boundary under the claim; the admission
+                    # only re-registers the queued machine work.  A legacy Task
+                    # keeps entering RUNNING here because its synchronous path
+                    # has no separate Worker boundary.
+                    adopted_status = (
+                        PersistentTaskStatus.PENDING
+                        if scheduling is not None
+                        else PersistentTaskStatus.RUNNING
+                    )
                     self._connection.execute(
                         "UPDATE tasks SET status=?, execute_authorized=1, updated_at=?, "
                         "started_at=COALESCE(started_at, ?), total_items=?, "
                         "completed_items=0, failed_items=0, error=NULL "
                         "WHERE task_id=?",
                         (
-                            PersistentTaskStatus.RUNNING.value,
+                            adopted_status.value,
                             now.isoformat(),
                             now.isoformat(),
                             len(items),
                             adopt_task_id,
                         ),
                     )
+                    if scheduling is not None:
+                        # A kernel-admitted Task holds zero slots while it waits
+                        # for a human.  The explicit confirmation consumes its
+                        # exact authority and re-registers the machine work in
+                        # this same transaction, after an atomic capacity check.
+                        # A full queue rolls the whole admission back, so the
+                        # one-shot authorization and the saved selection remain.
+                        if scheduling.control_request is TaskControl.CANCEL:
+                            raise ManualExecutionError(
+                                "the organizing Task already accepted cancellation",
+                                code="task_cancelled",
+                                next_action="start a fresh organizing request; this Task is final",
+                            )
+                        if scheduling.queue_state is TaskQueueState.PAUSED:
+                            raise ManualExecutionError(
+                                "the organizing Task is paused; resume it explicitly "
+                                "before confirming",
+                                code="task_paused",
+                                next_action="resume the paused Task, then confirm the same summary",
+                            )
+                        if scheduling.queue_state is not TaskQueueState.WAITING_HUMAN:
+                            raise ManualExecutionError(
+                                "the organizing Task is not waiting for this confirmation",
+                                code="task_not_waiting",
+                                next_action="reload the Task and inspect its current stage",
+                            )
+                        if scheduling_capacity is None:
+                            raise ManualExecutionError(
+                                "the shared Task scheduling capacity is unavailable",
+                                code="execution_unavailable",
+                                status=503,
+                                next_action="restore the configured Worker capacity and retry",
+                            )
+                        require_capacity(scheduling_capacity)
+                        if self._scheduled_capacity_use_locked() >= scheduling_capacity:
+                            raise TaskQueueFull(
+                                "the shared Task scheduling capacity is in use by other "
+                                "admitted work"
+                            )
+                        self._connection.execute(
+                            """UPDATE task_scheduling
+                            SET queue_state=?, machine_stage=?, queue_eligible_at=?,
+                                claim_generation=claim_generation+1, claim_token=NULL,
+                                claim_worker_id=NULL, claimed_at=NULL, claim_expires_at=NULL,
+                                heartbeat_at=NULL, control_request=NULL,
+                                control_requested_at=NULL, control_acknowledged_at=NULL,
+                                updated_at=?
+                            WHERE task_id=?""",
+                            (
+                                TaskQueueState.QUEUED.value,
+                                TaskMachineStage.EXECUTION.value,
+                                None,
+                                now.isoformat(),
+                                adopt_task_id,
+                            ),
+                        )
                     if display is not None:
                         self._insert_run_display_locked(
                             adopt_task_id, display, execution.created_at
@@ -13316,7 +13394,7 @@ class SQLiteTaskRepository:
                     self._discovery_values(discovery),
                 )
                 self._connection.commit()
-            except DiscoveryConflict:
+            except (DiscoveryConflict, TaskQueueFull):
                 self._connection.rollback()
                 raise
             except sqlite3.IntegrityError as error:
@@ -13601,6 +13679,19 @@ class SQLiteTaskRepository:
         with self._lock:
             return self._load_media_discovery_locked(discovery_id)
 
+    def get_media_discovery_for_task(self, task_id: str) -> MediaDiscovery | None:
+        """The latest discovery admitted for one organizing Task, read-only."""
+
+        if not isinstance(task_id, str) or not task_id.strip():
+            raise ValueError("media discovery Task identity is required")
+        with self._lock:
+            row = self._connection.execute(
+                "SELECT discovery_id FROM media_discoveries WHERE organize_task_id=? "
+                "ORDER BY created_at DESC, discovery_id DESC LIMIT 1",
+                (task_id,),
+            ).fetchone()
+            return self._load_media_discovery_locked(row["discovery_id"]) if row else None
+
     def list_media_discoveries(
         self, *, actor: str | None = None, limit: int = 100
     ) -> tuple[MediaDiscovery, ...]:
@@ -13819,6 +13910,8 @@ class SQLiteTaskRepository:
         *,
         display: RunDisplayContext | None = None,
         reserve_sources=None,
+        scheduling: TaskSchedulingState | None = None,
+        capacity: int | None = None,
     ) -> MediaDiscovery:
         """Commit one Files 整理 Task and its discovery admission atomically.
 
@@ -13848,9 +13941,36 @@ class SQLiteTaskRepository:
             raise ValueError("PersistentTask projection is required")
         if discovery.organize_task_id != task.task_id:
             raise ValueError("discovery organizing Task identity does not match")
+        if scheduling is not None:
+            if not isinstance(scheduling, TaskSchedulingState):
+                raise ValueError("discovery Task scheduling facts are invalid")
+            if scheduling.task_id != task.task_id:
+                raise ValueError("discovery Task scheduling identity does not match")
+            if capacity is None:
+                raise ValueError("a scheduled discovery admission requires shared capacity")
+            require_capacity(capacity)
+        elif capacity is not None:
+            raise ValueError("discovery shared capacity requires Task scheduling facts")
         with self._lock:
             self._connection.execute("BEGIN IMMEDIATE")
             try:
+                if scheduling is not None:
+                    if scheduling.admission_request_id is not None:
+                        existing = self._scheduled_admission_locked(
+                            scheduling.admission_principal, scheduling.admission_request_id
+                        )
+                        if existing is not None:
+                            # An exactly repeated principal/request identity must
+                            # converge on the work it already admitted, never mint
+                            # a second Task or a second discovery.
+                            raise DiscoveryConflict(
+                                "this discovery admission identity already exists",
+                                details={"taskId": existing[0].task_id},
+                            )
+                    if self._scheduled_capacity_use_locked() >= capacity:
+                        raise TaskQueueFull(
+                            "the shared Task scheduling capacity is in use by other admitted work"
+                        )
                 refused_sources = self._reserve_admitted_sources_locked(
                     discovery, reserve_sources=reserve_sources
                 )
@@ -13867,6 +13987,10 @@ class SQLiteTaskRepository:
                     "INSERT INTO tasks VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)",
                     self._task_values(task),
                 )
+                if scheduling is not None:
+                    self._connection.execute(
+                        _TASK_SCHEDULING_INSERT, self._scheduling_values(scheduling)
+                    )
                 if display is not None:
                     self._insert_run_display_locked(task.task_id, display, task.created_at)
                 admission_signature = self._admission_signature(discovery)
@@ -13895,7 +14019,7 @@ class SQLiteTaskRepository:
                     self._discovery_values(discovery),
                 )
                 self._connection.commit()
-            except DiscoveryConflict:
+            except (DiscoveryConflict, TaskQueueFull):
                 self._connection.rollback()
                 raise
             except sqlite3.IntegrityError as error:
@@ -14961,6 +15085,9 @@ class SQLiteTaskRepository:
             row = self._connection.execute(
                 "SELECT discovery_id FROM media_discoveries WHERE status IN (?, ?, ?, ?) "
                 "AND (claim_expires_at IS NULL OR claim_expires_at <= ?) "
+                "AND (organize_task_id IS NULL OR NOT EXISTS ("
+                "SELECT 1 FROM task_scheduling WHERE task_scheduling.task_id="
+                "media_discoveries.organize_task_id)) "
                 # A waiting discovery is claimable only once a later observation
                 # could actually change its stability verdict.  Reclaiming it
                 # immediately would spin, burn the durable traversal budget
@@ -15003,6 +15130,52 @@ class SQLiteTaskRepository:
             if cursor.rowcount != 1:
                 return None
         return self.get_media_discovery(row["discovery_id"])
+
+    def claim_media_discovery(
+        self,
+        discovery_id: str,
+        now: datetime,
+        *,
+        worker_id: str,
+        claim_token: str,
+        lease_seconds: float,
+    ) -> MediaDiscovery | None:
+        """Lease one exact queued/expired discovery under the Task owner.
+
+        The Task engine names the linked discovery it already owns.  This
+        method therefore never selects another record: it renews only the exact
+        bounded walk that belongs to the claimed Task, and leaves every
+        non-kernel legacy discovery on the original claim query.
+        """
+
+        self._require_claim_values(worker_id, claim_token, lease_seconds)
+        if now.tzinfo is None:
+            raise ValueError("media discovery claim timestamp needs timezone")
+        expires_at = now + timedelta(seconds=float(lease_seconds))
+        with self._lock, self._connection:
+            cursor = self._connection.execute(
+                "UPDATE media_discoveries SET claim_worker_id=?, claim_token=?, "
+                "claim_expires_at=?, attempts=attempts+1, updated_at=? "
+                "WHERE discovery_id=? AND status IN (?, ?, ?, ?) "
+                "AND (claim_expires_at IS NULL OR claim_expires_at <= ?) "
+                "AND (next_observation_at IS NULL OR next_observation_at <= ?)",
+                (
+                    worker_id,
+                    claim_token,
+                    expires_at.isoformat(),
+                    now.isoformat(),
+                    discovery_id,
+                    DiscoveryStatus.QUEUED.value,
+                    DiscoveryStatus.RUNNING.value,
+                    DiscoveryStatus.WAITING_STABILITY.value,
+                    DiscoveryStatus.ANALYZING.value,
+                    now.isoformat(),
+                    now.isoformat(),
+                ),
+            )
+            if cursor.rowcount != 1:
+                return None
+        return self.get_media_discovery(discovery_id)
 
     def media_discovery_claim(self, discovery_id: str) -> dict[str, object] | None:
         """Read one durable discovery claim without reinterpreting its values."""
@@ -15807,6 +15980,8 @@ class SQLiteTaskRepository:
             row = self._connection.execute(
                 "SELECT execution_id FROM manual_executions WHERE status=? "
                 "AND (claim_expires_at IS NULL OR claim_expires_at <= ?) "
+                "AND NOT EXISTS (SELECT 1 FROM task_scheduling "
+                "WHERE task_scheduling.task_id=manual_executions.task_id) "
                 "ORDER BY created_at, execution_id LIMIT 1",
                 (ManualExecutionStatus.ADMITTED.value, now.isoformat()),
             ).fetchone()
@@ -15831,6 +16006,42 @@ class SQLiteTaskRepository:
             if cursor.rowcount != 1:
                 return None
         return self.get_manual_execution(row["execution_id"])
+
+    def claim_manual_execution(
+        self,
+        execution_id: str,
+        now: datetime,
+        *,
+        worker_id: str,
+        claim_token: str,
+        lease_seconds: float,
+    ) -> ManualExecution | None:
+        """Lease one exact admitted execution under the Task engine owner."""
+
+        self._require_claim_values(worker_id, claim_token, lease_seconds)
+        if now.tzinfo is None:
+            raise ValueError("manual execution claim timestamp needs timezone")
+        expires_at = now + timedelta(seconds=float(lease_seconds))
+        with self._lock, self._connection:
+            cursor = self._connection.execute(
+                "UPDATE manual_executions SET worker_id=?, claim_token=?, claimed_at=?, "
+                "claim_expires_at=?, attempts=attempts+1, updated_at=? "
+                "WHERE execution_id=? AND status=? "
+                "AND (claim_expires_at IS NULL OR claim_expires_at <= ?)",
+                (
+                    worker_id,
+                    claim_token,
+                    now.isoformat(),
+                    expires_at.isoformat(),
+                    now.isoformat(),
+                    execution_id,
+                    ManualExecutionStatus.ADMITTED.value,
+                    now.isoformat(),
+                ),
+            )
+            if cursor.rowcount != 1:
+                return None
+        return self.get_manual_execution(execution_id)
 
     def manual_execution_claim(self, execution_id: str) -> dict[str, object] | None:
         """Read one durable Worker claim without reinterpreting its values."""
@@ -17173,15 +17384,47 @@ class SQLiteTaskRepository:
         result: PersistentResultRecord,
         effects: tuple[ManualExecutionEffect, ...],
         locks: tuple[tuple[str, str], ...],
+        *,
+        task_fence: TaskClaimFence | None = None,
     ) -> None:
-        """Publish TaskItem, Result, effect evidence and release its fence together."""
+        """Publish TaskItem, Result, effect evidence and release its fence together.
+
+        A Task admitted by the scheduling kernel has exactly one legitimate
+        publication owner.  Its completion therefore requires the live claim
+        fence in this same transaction and never rewrites the admitted command,
+        authority, scope, limit or pin.  A legacy Task keeps its original path.
+        """
 
         if len(effects) > 256:
             raise ValueError("manual execution effect count exceeds its bound")
         with self._lock:
             self._connection.execute("BEGIN IMMEDIATE")
             try:
-                self._insert_result_locked(result)
+                kernel_managed = (
+                    self._connection.execute(
+                        "SELECT 1 FROM task_scheduling WHERE task_id=?",
+                        (task.task_id,),
+                    ).fetchone()
+                    is not None
+                )
+                if kernel_managed:
+                    if not isinstance(task_fence, TaskClaimFence):
+                        raise TaskSchedulingBypass(
+                            "a kernel-managed Task completion requires its live claim fence"
+                        )
+                    if task_fence.task_id != task.task_id:
+                        raise TaskSchedulingError(
+                            "the Task completion does not match its claim fence"
+                        )
+                    if not self._scheduled_claim_locked(task_fence):
+                        raise TaskClaimFenceLost(
+                            f"task {task.task_id!r} is no longer owned by this Worker"
+                        )
+                    self._require_scheduled_item_locked(
+                        task.task_id, task_item, stage=TaskItemPublication.OUTCOME
+                    )
+                    self._require_scheduled_authority_locked(task)
+                self._insert_result_locked(result, allow_replace=not kernel_managed)
                 if result.attachment_results:
                     for index, outcome in enumerate(result.attachment_results):
                         # Keep each existing 8-KiB audit envelope bounded without truncating paths.
@@ -17265,15 +17508,46 @@ class SQLiteTaskRepository:
                         execution.execution_id,
                     ),
                 )
-                cursor = self._connection.execute(
-                    "UPDATE tasks SET command=?, status=?, execute_authorized=?, created_at=?, "
-                    "updated_at=?, started_at=?, completed_at=?, total_items=?, completed_items=?, "
-                    "failed_items=?, error=?, pause_requested=?, scope_path=?, item_limit=?, "
-                    "configuration_snapshot_id=?, configuration_snapshot_digest=? WHERE task_id=?",
-                    (*self._task_values(task)[1:], task.task_id),
-                )
+                if kernel_managed:
+                    cursor = self._connection.execute(
+                        _TASK_SCHEDULED_PUBLICATION_UPDATE,
+                        self._scheduled_publication_values(task),
+                    )
+                else:
+                    cursor = self._connection.execute(
+                        "UPDATE tasks SET command=?, status=?, execute_authorized=?, created_at=?, "
+                        "updated_at=?, started_at=?, completed_at=?, total_items=?, "
+                        "completed_items=?, failed_items=?, error=?, pause_requested=?, "
+                        "scope_path=?, item_limit=?, configuration_snapshot_id=?, "
+                        "configuration_snapshot_digest=? WHERE task_id=?",
+                        (*self._task_values(task)[1:], task.task_id),
+                    )
                 if cursor.rowcount != 1:
                     raise LookupError(f"task {task.task_id!r} was not found")
+                if kernel_managed:
+                    state = self._scheduled_state_locked(task.task_id)
+                    clears = (
+                        state is not None
+                        and state.mutation_item_id == task_item.item_id
+                        and result.effect_certainty in _KERNEL_BOUNDARY_CLEARING_CERTAINTIES
+                        and not self._result_uncertain_effects_present(result.uncertain_effects)
+                        and (
+                            result.effect_certainty == "verified_complete"
+                            or not result.completed_operations
+                        )
+                    )
+                    if clears:
+                        self._connection.execute(
+                            """UPDATE task_scheduling
+                            SET mutation_state=NULL, mutation_item_id=NULL, mutation_action=NULL,
+                                updated_at=?
+                            WHERE task_id=? AND mutation_item_id=?""",
+                            (
+                                task_fence.now.isoformat(),
+                                task.task_id,
+                                task_item.item_id,
+                            ),
+                        )
                 for storage_id, path in tuple(
                     sorted({(storage_id, self._lock_path(path)) for storage_id, path in locks})
                 ):
@@ -18495,6 +18769,84 @@ class SQLiteTaskRepository:
             self._connection.commit()
         return state
 
+    def yield_scheduled_claim(
+        self,
+        fence: TaskClaimFence,
+        *,
+        task: PersistentTask,
+        items: tuple[PersistentTaskItem, ...],
+        stage: TaskMachineStage,
+        queue_eligible_at: datetime | None,
+    ) -> TaskSchedulingState | None:
+        """Return this pass's claim while the same Task keeps its queued slot.
+
+        Only the current owner may yield.  The Task aggregate is published under
+        the same fence, every supplied item must belong to it, and the shared
+        slot is deliberately *not* released: this is bounded machine work that
+        needs another pass, not a human wait, a pause or a terminal outcome.
+        A pending control request is settled by its acknowledgement path instead
+        of being silently ignored here.
+        """
+
+        if not isinstance(fence, TaskClaimFence):
+            raise ValueError("Task claim fence is required")
+        if not isinstance(task, PersistentTask):
+            raise ValueError("the yielded Task projection is required")
+        if task.task_id != fence.task_id:
+            raise TaskSchedulingError("the yielded Task does not match the claim fence")
+        stage = TaskMachineStage(stage)
+        if queue_eligible_at is not None and queue_eligible_at.tzinfo is None:
+            raise ValueError("Task queue eligibility instant needs timezone")
+        for item in items:
+            if item.task_id != task.task_id:
+                raise TaskSchedulingError("a yielded TaskItem must belong to the yielded Task")
+        with self._lock, self._connection:
+            self._connection.execute("BEGIN IMMEDIATE")
+            try:
+                if not self._scheduled_claim_locked(fence):
+                    self._connection.rollback()
+                    return None
+                state = self._scheduled_state_locked(fence.task_id)
+                if state is None:
+                    raise TaskControlRejected(
+                        f"task {fence.task_id!r} was not admitted by the Task scheduling kernel"
+                    )
+                if state.mutation_in_flight:
+                    raise TaskControlRejected(
+                        "this Task still has an unverified in-flight mutation; it cannot be yielded"
+                    )
+                if state.control_request is not None:
+                    raise TaskControlRejected(
+                        "a control request is pending; acknowledge it at the safe boundary"
+                    )
+                self._require_scheduled_authority_locked(task)
+                self._connection.execute(
+                    _TASK_SCHEDULED_PUBLICATION_UPDATE,
+                    self._scheduled_publication_values(task),
+                )
+                self._connection.execute(
+                    """UPDATE task_scheduling
+                    SET queue_state=?, machine_stage=?, queue_eligible_at=?,
+                        claimed_at=NULL, claim_expires_at=NULL, heartbeat_at=NULL,
+                        updated_at=?
+                    WHERE task_id=? AND claim_token=? AND claim_generation=?""",
+                    (
+                        TaskQueueState.QUEUED.value,
+                        stage.value,
+                        queue_eligible_at.isoformat() if queue_eligible_at else None,
+                        fence.now.isoformat(),
+                        fence.task_id,
+                        fence.claim_token,
+                        fence.generation,
+                    ),
+                )
+                state = self._scheduled_state_locked(fence.task_id)
+            except BaseException:
+                self._connection.rollback()
+                raise
+            self._connection.commit()
+        return state
+
     def requeue_scheduled_task(
         self,
         *,
@@ -18615,6 +18967,121 @@ class SQLiteTaskRepository:
             self._connection.commit()
         assert state is not None
         return state
+
+    def requeue_scheduled_analysis(
+        self,
+        task_id: str,
+        discovery: MediaDiscovery,
+        *,
+        expected_version: int,
+        capacity: int,
+        now: datetime,
+        stage: TaskMachineStage = TaskMachineStage.ANALYSIS,
+    ) -> MediaDiscovery:
+        """Re-register one human-waiting Task's analysis and its discovery atomically.
+
+        An operator-triggered re-analysis (a saved four-type decision, an
+        explicit re-analysis or a resume) must move the *same* Task back to
+        queued machine work and publish the discovery's ``analyzing`` stage in
+        one transaction.  The shared capacity is re-checked here, so a full queue
+        leaves the waiting state, saved choices, summary and consumed authority
+        exactly as they were and raises :class:`TaskQueueFull`.
+        """
+
+        require_capacity(capacity)
+        if now.tzinfo is None:
+            raise ValueError("analysis requeue timestamp needs timezone")
+        if discovery.organize_task_id != task_id:
+            raise ValueError("analysis requeue discovery does not belong to its Task")
+        with self._lock, self._connection:
+            self._connection.execute("BEGIN IMMEDIATE")
+            try:
+                state = self._scheduled_state_locked(task_id)
+                if state is None:
+                    raise TaskControlRejected(
+                        f"task {task_id!r} was not admitted by the Task scheduling kernel"
+                    )
+                if state.queue_state not in {
+                    TaskQueueState.WAITING_HUMAN,
+                    TaskQueueState.PAUSED,
+                }:
+                    raise TaskControlRejected(
+                        "only human-waiting or acknowledged-paused work can re-enter analysis"
+                    )
+                if state.mutation_in_flight:
+                    raise TaskControlRejected(
+                        "this Task has an unverified in-flight mutation; it is never re-analyzed"
+                    )
+                if state.control_request is TaskControl.CANCEL:
+                    raise TaskControlRejected(
+                        "a cancel was already accepted for this Task; it is not re-analyzed"
+                    )
+                task_row = self._connection.execute(
+                    "SELECT * FROM tasks WHERE task_id=?", (task_id,)
+                ).fetchone()
+                if task_row is None:
+                    raise LookupError(f"task {task_id!r} was not found")
+                task = self._task(task_row)
+                if task.status is PersistentTaskStatus.CANCELLED:
+                    raise TaskControlRejected(
+                        "a cancelled Task is not re-analyzed; that is a new organizing request"
+                    )
+                if self._scheduled_capacity_use_locked() >= capacity:
+                    self._connection.rollback()
+                    raise TaskQueueFull(
+                        "the shared Task scheduling capacity is in use by other admitted work"
+                    )
+                cursor = self._connection.execute(
+                    "UPDATE media_discoveries SET status=?, version=?, progress_json=?, "
+                    "preview_id=?, error=?, updated_at=? "
+                    "WHERE discovery_id=? AND version=?",
+                    (
+                        discovery.status.value,
+                        discovery.version,
+                        json.dumps(
+                            discovery.progress.document(), ensure_ascii=False, sort_keys=True
+                        ),
+                        discovery.preview_id,
+                        discovery.error,
+                        discovery.updated_at.isoformat(),
+                        discovery.discovery_id,
+                        expected_version,
+                    ),
+                )
+                if cursor.rowcount != 1:
+                    current = self._load_media_discovery_locked(discovery.discovery_id)
+                    raise DiscoveryConflict(
+                        "the discovery changed before this analysis was published",
+                        details={
+                            "discoveryId": discovery.discovery_id,
+                            "currentVersion": current.version if current is not None else None,
+                        },
+                    )
+                self._connection.execute(
+                    "UPDATE tasks SET status=?, updated_at=?, completed_at=NULL, error=NULL, "
+                    "pause_requested=0 WHERE task_id=?",
+                    (PersistentTaskStatus.PENDING.value, now.isoformat(), task_id),
+                )
+                self._connection.execute(
+                    """UPDATE task_scheduling
+                    SET queue_state=?, machine_stage=?, queue_eligible_at=NULL,
+                        claim_generation=claim_generation+1, claim_token=NULL,
+                        claim_worker_id=NULL, claimed_at=NULL, claim_expires_at=NULL,
+                        heartbeat_at=NULL, control_request=NULL, control_requested_at=NULL,
+                        control_acknowledged_at=NULL, updated_at=?
+                    WHERE task_id=?""",
+                    (
+                        TaskQueueState.QUEUED.value,
+                        TaskMachineStage(stage).value,
+                        now.isoformat(),
+                        task_id,
+                    ),
+                )
+            except BaseException:
+                self._connection.rollback()
+                raise
+            self._connection.commit()
+        return self.get_media_discovery(discovery.discovery_id)
 
     def upsert_scheduled_item(
         self,

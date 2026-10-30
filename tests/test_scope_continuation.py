@@ -5112,6 +5112,12 @@ class ScopeContinuationWorkerJourneyTests(unittest.TestCase):
                 break
             if last.terminal or last.preview_id is not None:
                 break
+        if last is None:
+            # A newly admitted ordinary Files preparation is advanced by the
+            # Task engine, not the legacy discovery claim.  Drive that same
+            # durable work through the production engine so this lineage test
+            # still observes the real preparation.
+            last = _drive_kernel_task(api, discovery_id)
         assert last is not None, "remaining-scope preparation was never claimable"
         status, document = request(
             api,
@@ -5256,3 +5262,54 @@ class ScopeContinuationWorkerJourneyTests(unittest.TestCase):
 
 if __name__ == "__main__":
     unittest.main()
+
+
+def _drive_kernel_task(api, discovery_id: str):
+    """Advance one kernel-admitted Files preparation through the Task engine."""
+
+    from mediaflow.application.manual_task_engine import ManualTaskEngineWorker
+    from mediaflow.application.task_scheduling import TaskSchedulingService
+    from mediaflow.infrastructure.sqlite_runtime import SCHEMA_VERSION
+
+    repository = api._repository
+    service = api._media_discovery
+    discovery = repository.get_media_discovery(discovery_id)
+    if discovery is None or discovery.organize_task_id is None:
+        return None
+    task_id = discovery.organize_task_id
+    if repository.get_task_scheduling(task_id) is None:
+        return None
+    if repository.get_worker("scope-kernel-worker") is None:
+        repository.register_worker(
+            "scope-kernel-worker",
+            "scope kernel",
+            5.0,
+            ("manual_organize",),
+            None,
+            None,
+            SCHEMA_VERSION,
+            datetime.now(UTC),
+        )
+    engine = ManualTaskEngineWorker(
+        repository,
+        TaskSchedulingService(repository, capacity=100, locks=repository),
+        service,
+        api._manual_execution,
+        worker_id="scope-kernel-worker",
+        notice=lambda line: None,
+    )
+    from mediaflow.domain.task_scheduling import TaskQueueState
+
+    for _ in range(12):
+        engine.run_next()
+        state = repository.get_task_scheduling(task_id)
+        current = repository.get_media_discovery(discovery_id)
+        if current is None or state is None:
+            break
+        if state.queue_state in {
+            TaskQueueState.WAITING_HUMAN,
+            TaskQueueState.PAUSED,
+            TaskQueueState.SETTLED,
+        }:
+            break
+    return repository.get_media_discovery(discovery_id)

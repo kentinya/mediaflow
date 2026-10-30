@@ -459,6 +459,7 @@ class MediaFlowApi:
                 storage_factory=lambda runtime, ids: runtime.create_storages(
                     external=self._storage_adapters, storage_ids=ids
                 ),
+                task_scheduling_enabled=True,
             )
         # Definition-bound Run once composes the existing bounded discovery, the
         # existing manual intent admission and the existing exact Preview.  It

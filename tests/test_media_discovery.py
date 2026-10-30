@@ -402,6 +402,7 @@ class _DiscoveryFixture(unittest.TestCase):
         source_storage=None,
         provider=None,
         second_operator: bool = False,
+        task_scheduling: bool = False,
     ):
 
         document = self.document(
@@ -457,6 +458,7 @@ class _DiscoveryFixture(unittest.TestCase):
                 intents,
                 checkpoint_service=ProcessingCheckpointService(repository),
                 storages=dict(storages),
+                clock=self.clock,
             )
             execution_worker = ManualOrganizeExecutionWorker(
                 executions, worker_id="execution-worker", notice=lambda line: None
@@ -470,7 +472,37 @@ class _DiscoveryFixture(unittest.TestCase):
                 storages=dict(storages),
                 clock=self.clock,
                 budgets=budgets or DiscoveryBudgets(),
+                task_scheduling_enabled=task_scheduling,
             )
+            task_engine = None
+            if task_scheduling:
+                from mediaflow.application.manual_task_engine import ManualTaskEngineWorker
+                from mediaflow.application.task_scheduling import TaskSchedulingService
+                from mediaflow.infrastructure.sqlite_runtime import SCHEMA_VERSION
+
+                repository.register_worker(
+                    "task-engine-worker",
+                    "task engine",
+                    5.0,
+                    ("manual_organize",),
+                    None,
+                    None,
+                    SCHEMA_VERSION,
+                    self.clock(),
+                )
+                task_engine = ManualTaskEngineWorker(
+                    repository,
+                    TaskSchedulingService(
+                        repository,
+                        capacity=getattr(runtime, "automation_maximum_active_jobs", 100),
+                        locks=repository,
+                    ),
+                    discovery,
+                    executions,
+                    clock=self.clock,
+                    worker_id="task-engine-worker",
+                    notice=lambda line: None,
+                )
             if second_operator:
                 with mock.patch.dict(
                     os.environ,
@@ -526,6 +558,7 @@ class _DiscoveryFixture(unittest.TestCase):
                     executions=executions,
                     execution_worker=execution_worker,
                     discovery=discovery,
+                    task_engine=task_engine,
                     configuration=runtime,
                     clock=self.clock,
                     source=source,

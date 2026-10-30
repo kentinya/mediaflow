@@ -1451,38 +1451,38 @@ class PortConformanceTests(unittest.TestCase):
 
 
 class TransitionBoundaryTests(unittest.TestCase):
-    def test_no_production_entrance_consumes_the_kernel_yet(self) -> None:
-        """T9: this round adds the engine, not a second live queue.
+    def test_only_the_named_production_files_wire_the_kernel(self) -> None:
+        """Task47.2: the kernel is now consumed by the Files production path.
 
-        The resident Worker, the Scheduler, Files, Run once, the API/CLI and the
-        Web assets keep their current paths.  Only the kernel modules themselves
-        (and the repository that implements its port) may name it, so no
-        production dispatch can be running two engines or adopting legacy work.
+        Newly admitted Files manual work runs on one Task engine.  Exactly the
+        named production modules may name the kernel, so no accidental second
+        dispatch or a legacy runner silently claiming the same work appears.
+        The legacy discovery/manual-execution claim queries explicitly exclude
+        kernel-managed rows, which keeps the two ownership boundaries apart.
         """
 
         package = Path(mediaflow_package_path()).parent
-        allowed = {
-            package / "domain" / "task_scheduling.py",
-            package / "application" / "task_scheduling.py",
-            package / "infrastructure" / "sqlite_runtime.py",
+        expected = {
+            "application/manual_organize_execution.py",
+            "application/manual_task_engine.py",
+            "application/media_discovery.py",
+            "final_cli.py",
+            "interfaces/service_api.py",
+            "domain/task_scheduling.py",
+            "application/task_scheduling.py",
+            "infrastructure/sqlite_runtime.py",
         }
         markers = ("task_scheduling", "TaskSchedulingService", "claim_next_scheduled_task")
-        consumers = sorted(
+        consumers = {
             str(path.relative_to(package))
             for path in package.rglob("*.py")
-            if path not in allowed
-            and any(marker in path.read_text(encoding="utf-8") for marker in markers)
-        )
-        self.assertEqual(consumers, [])
-        web = Path(package).parent / "web" / "src"
-        web_references = sorted(
-            str(path.relative_to(web))
-            for path in web.rglob("*")
-            if path.is_file()
-            and path.suffix in {".ts", ".tsx"}
-            and any(marker in path.read_text(encoding="utf-8") for marker in markers)
-        )
-        self.assertEqual(web_references, [])
+            if any(marker in path.read_text(encoding="utf-8") for marker in markers)
+        }
+        self.assertEqual(consumers, expected)
+        # The legacy runners exclude kernel-managed rows, so a second Worker
+        # can never claim the same new work through the old queue.
+        runtime = (package / "infrastructure" / "sqlite_runtime.py").read_text(encoding="utf-8")
+        self.assertIn("NOT EXISTS (SELECT 1 FROM task_scheduling", runtime)
 
 
 if __name__ == "__main__":

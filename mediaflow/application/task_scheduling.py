@@ -401,6 +401,50 @@ class TaskSchedulingService:
             raise TaskClaimFenceLost(f"task {claim.task_id!r} is no longer owned by this Worker")
         return released
 
+    def yield_claim(
+        self,
+        claim: ScheduledTaskClaim,
+        *,
+        task: PersistentTask,
+        items: tuple[PersistentTaskItem, ...] = (),
+        stage: TaskMachineStage = TaskMachineStage.ANALYSIS,
+        eligible_at: datetime | None = None,
+        now: datetime | None = None,
+    ) -> TaskSchedulingState:
+        """Give the claim back without releasing this Task's shared slot.
+
+        This is the bounded-pass boundary: a discovery step that has more
+        metadata-only work, or a stability wait whose next observation is due
+        later, remains queued machine work.  The Task keeps its slot and source
+        ownership; only the Worker ownership is returned for the next pass.
+        A pending pause/cancel is not acknowledged here; the caller settles it
+        at its safe boundary instead of silently continuing.
+        """
+
+        current = self._now(now)
+        if eligible_at is not None and eligible_at.tzinfo is None:
+            raise ValueError("Task queue eligibility instant needs timezone")
+        self._require_task_matches_claim(claim, task)
+        state = self._require_state(claim.task_id)
+        if state.control_request is not None:
+            raise TaskControlRejected(
+                f"task {claim.task_id!r} has an accepted control request; acknowledge it"
+            )
+        if state.mutation_in_flight:
+            raise TaskControlRejected(
+                "this Task still has an unverified in-flight mutation; it cannot be yielded"
+            )
+        yielded = self._repository.yield_scheduled_claim(
+            claim.fence(current),
+            task=replace(task, status=PersistentTaskStatus.PENDING, updated_at=current),
+            items=tuple(replace(item, updated_at=current) for item in items),
+            stage=TaskMachineStage(stage),
+            queue_eligible_at=eligible_at,
+        )
+        if yielded is None:
+            raise TaskClaimFenceLost(f"task {claim.task_id!r} is no longer owned by this Worker")
+        return yielded
+
     # -- Safe re-entry -------------------------------------------------------
 
     def requeue(
@@ -505,6 +549,44 @@ class TaskSchedulingService:
         ):
             raise TaskClaimFenceLost(f"task {claim.task_id!r} is no longer owned by this Worker")
         return self._repository.get_item(item_id) or started
+
+    def begin_existing_item(
+        self,
+        claim: ScheduledTaskClaim,
+        item: PersistentTaskItem,
+        *,
+        stage: str = "pipeline",
+        now: datetime | None = None,
+    ) -> PersistentTaskItem:
+        """Start one already-admitted TaskItem under this exact claim.
+
+        The execution pipeline creates its TaskItem rows at confirmation time
+        (so the reviewed scope has a stable identity before any effect), while
+        the Task kernel owns the attempt boundary.  This method advances that
+        same row exactly one attempt instead of minting a second row for the
+        same source.
+        """
+
+        current = self._now(now)
+        task = self._require_task(claim.task_id)
+        if task.status is not PersistentTaskStatus.RUNNING:
+            raise TaskControlRejected(
+                "the Task's running boundary must be published before its items start"
+            )
+        self._require_no_pending_control(claim.task_id)
+        started = replace(
+            item,
+            task_id=claim.task_id,
+            status=TaskItemStatus.PROCESSING,
+            stage=stage,
+            attempts=item.attempts + 1,
+            updated_at=current,
+        )
+        if not self._repository.upsert_scheduled_item(
+            claim.fence(current), started, stage=TaskItemPublication.START
+        ):
+            raise TaskClaimFenceLost(f"task {claim.task_id!r} is no longer owned by this Worker")
+        return self._repository.get_item(item.item_id) or started
 
     def record_item(
         self,

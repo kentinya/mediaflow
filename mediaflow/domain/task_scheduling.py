@@ -684,6 +684,25 @@ class TaskSchedulingRepository(Protocol):
         """
         ...
 
+    def yield_scheduled_claim(
+        self,
+        fence: TaskClaimFence,
+        *,
+        task: PersistentTask,
+        items: tuple[PersistentTaskItem, ...],
+        stage: TaskMachineStage,
+        queue_eligible_at: datetime | None,
+    ) -> TaskSchedulingState | None:
+        """Give the claim back while the same Task keeps its machine-work slot.
+
+        A bounded discovery pass may need another turn after a truthful
+        stability wait or a later machine stage.  Yielding is not a release to
+        a human or a pause: the Task stays queued (and therefore keeps its one
+        shared slot), the claim generation is retained so the old frame cannot
+        publish, and the next owner is selected by the ordinary claim query.
+        """
+        ...
+
     def requeue_scheduled_task(
         self,
         *,

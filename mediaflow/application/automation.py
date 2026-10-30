@@ -589,6 +589,7 @@ class AutomationWorker:
         manual_organize_worker=None,
         media_discovery_worker=None,
         files_transfer_worker=None,
+        manual_task_worker=None,
         configuration_snapshot_resolver: Callable[[], tuple[str | None, str | None]] | None = None,
     ) -> None:
         self._repository = repository
@@ -627,6 +628,11 @@ class AutomationWorker:
         # and only executes transfers the API durably admitted; a missing
         # value means no Worker serves queued transfers.
         self._files_transfer_worker = files_transfer_worker
+        # Optional Task-kernel engine for newly admitted Files manual work.  It
+        # claims the same registered Worker identity and never competes with the
+        # legacy discovery/manual-execution runners, which explicitly exclude
+        # kernel-managed rows.
+        self._manual_task_worker = manual_task_worker
         # Every runner sharing this resident loop keeps the *containing*
         # processing-Worker registration live while its own long claim runs:
         # a blocked discovery walk must never make a working Worker report
@@ -640,6 +646,7 @@ class AutomationWorker:
         for other_runner in (
             self._media_discovery_worker,
             self._manual_organize_worker,
+            self._manual_task_worker,
         ):
             binder = getattr(other_runner, "set_worker_heartbeat", None)
             if callable(binder):
@@ -653,6 +660,7 @@ class AutomationWorker:
             or manual_organize_worker is not None
             or media_discovery_worker is not None
             or files_transfer_worker is not None
+            or manual_task_worker is not None
         )
         self._registered = False
 
@@ -946,7 +954,8 @@ class AutomationWorker:
                     )
                 if self.run_next() is None:
                     if (
-                        self._run_media_discovery_work()
+                        self._run_manual_task_work()
+                        or self._run_media_discovery_work()
                         or self._run_manual_organize_work()
                         or self._run_files_transfer_work()
                     ):
@@ -961,6 +970,27 @@ class AutomationWorker:
             except Exception:
                 pass
         return processed
+
+    def set_manual_task_worker(self, worker) -> None:
+        """Attach the Task-kernel runner after this Worker's identity exists."""
+
+        if worker is None:
+            raise ValueError("manual Task worker is required")
+        self._manual_task_worker = worker
+        binder = getattr(worker, "set_worker_heartbeat", None)
+        if callable(binder):
+            binder(self.heartbeat)
+
+    def _run_manual_task_work(self) -> bool:
+        """Advance one kernel-admitted Files manual Task without a Job."""
+
+        runner = self._manual_task_worker
+        if runner is None:
+            return False
+        try:
+            return runner.run_next() is not None
+        except Exception:
+            return False
 
     def _run_media_discovery_work(self) -> bool:
         """Serve one admitted bounded discovery without holding a Job.
