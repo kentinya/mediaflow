@@ -855,7 +855,9 @@ a first-N prefix, and schedule due state/history grants do not become manual aut
 Durable origin/request/principal/pin links preserve deduplication and truthful historical metrics.
 
 Automation execution records are a read-only projection of existing results, stages/reasons, known
-effects and repair/Task Center links, not another recovery surface/store/queue. Proven pre-start
+effects and bounded ownership/next-action statements, not another recovery surface/store/queue.
+The records UI exposes only its detail toggle, with no Task Center/definition navigation controls;
+the API's durable handoff links remain unchanged for other consumers. Proven pre-start
 failure may guide explicit supported retry only after the prior attempt is settled/fenced and its
 permissions, context and authority are revalidated. Formal organizing handoff uses existing durable
 Task/execution origin links/checkpoints, not first media mutation; all later controls and per-item

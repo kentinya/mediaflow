@@ -346,18 +346,12 @@ const RECORD_RESULT_LABELS: Readonly<Record<string, string>> = {
  */
 export function AutomationRecordRow({
   record,
-  onOpenTaskCenter,
-  onOpenDefinition,
 }: {
   readonly record: AutomationRecordModel;
-  readonly onOpenTaskCenter: (runId: string) => void;
-  readonly onOpenDefinition: (definitionId: string) => void;
 }) {
   const [expanded, setExpanded] = useState(false);
   const detailId = useId();
   const { handoff, result, handling, failureStage, nextAction } = record;
-  const definitionIdentity =
-    handoff.definitionSettings?.split("/").filter(Boolean).pop() ?? null;
   return (
     <>
       <tr>
@@ -401,26 +395,6 @@ export function AutomationRecordRow({
             >
               {expanded ? "收起详情" : "查看详情"}
             </button>
-            {handoff.taskCenterRunId !== null && (
-              <button
-                type="button"
-                className="mf-button mf-button-secondary"
-                onClick={() =>
-                  onOpenTaskCenter(handoff.taskCenterRunId as string)
-                }
-              >
-                打开任务中心运行
-              </button>
-            )}
-            {definitionIdentity !== null && (
-              <button
-                type="button"
-                className="mf-button mf-button-secondary"
-                onClick={() => onOpenDefinition(definitionIdentity)}
-              >
-                打开定义设置
-              </button>
-            )}
           </div>
         </td>
       </tr>

@@ -604,6 +604,15 @@ describe("V2 Automation workspace read model", () => {
       name: "自动化执行记录",
     });
     const detail = within(region).getByRole("button", { name: "查看详情" });
+    const summaryRow = detail.closest("tr")!;
+    expect(within(summaryRow).getAllByRole("button")).toHaveLength(1);
+    expect(
+      within(region).queryByRole("button", {
+        name: /打开任务中心运行|打开定义设置/,
+        hidden: true,
+      }),
+    ).toBeNull();
+    expect(within(region).queryByRole("link", { hidden: true })).toBeNull();
     expect(detail).toHaveAttribute("aria-expanded", "false");
     expect(
       within(region).getByText(/阶段：organizing_stage/),
@@ -643,10 +652,16 @@ describe("V2 Automation workspace read model", () => {
         name: /重新分析|暂停|继续|取消|运行一次|重试/,
       }),
     ).toBeNull();
-    // The exact Task Center link is a navigation, not a command.
+    // Even with both backend handoff links populated, records expose only
+    // their detail toggle, including after expansion.
     expect(
-      within(region).getByRole("button", { name: "打开任务中心运行" }),
-    ).toBeVisible();
+      within(region).queryByRole("button", {
+        name: /打开任务中心运行|打开定义设置/,
+        hidden: true,
+      }),
+    ).toBeNull();
+    expect(within(region).queryByRole("link", { hidden: true })).toBeNull();
+    expect(within(summaryRow).getAllByRole("button")).toHaveLength(1);
   });
 
   it("renders a captured real pre-start failure beside a no-work completion", async () => {

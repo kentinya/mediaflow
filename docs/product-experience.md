@@ -443,13 +443,14 @@ normal runs use normal scope/checks; no failed-item selection or cross-run obser
   Task before readiness and executes ready items without a second initial confirmation. Four-type
   recovery still needs explicit continuation; no schedule advancement or old grant consumption.
   Overflow/incomplete scope refuses execution and explains narrowing/re-analysis, not first-N success.
-- **Execution records:** compact rows show status, local start/end times, item counts and viewing
-  links. 查看详情 exposes exact timestamps, original results, failure stage/reason, known per-item
-  effects and next actions. Task Center/definition links keep the submitted list context for return;
-  expanding or collapsing details is read-only. No local file decisions, re-analysis or execution
+- **Execution records:** compact rows show status, local start/end times, item counts and only
+  查看详情 / 收起详情 in the action column. Details expose exact timestamps, original results,
+  failure stage/reason, known per-item effects and next actions. Neither the list nor expanded details
+  provides Task Center/definition navigation buttons or links; use those workspaces' own entries.
+  Expanding or collapsing details is read-only. No local file decisions, re-analysis or execution
   controls. Bounded authoritative queries reach every authorized row; actual admitted runs
   count once, unavailable/unknown data are not zero/success, and bound reached is not scope exhaustion.
-- **Before organizing starts:** explain the failed prerequisite and link its correction. Proven
+- **Before organizing starts:** explain the failed prerequisite and identify its correction. Proven
   pre-start failure rows remain visible alongside normal/no-work records, including existing history;
   absent per-item results/media effects do not mean the history is unreadable. Refresh is the same
   read-only query, not another attempt. After repair,
@@ -459,9 +460,9 @@ normal runs use normal scope/checks; no failed-item selection or cross-run obser
   old-context retry instead explains an explicit new Run once or next scheduled evaluation. Unknown
   submission/handoff reconciles first, never blindly retries.
 - **After organizing starts:** durable formal organizing-task handoff, not the first media mutation,
-  routes organizing history/controls to the exact Task Center run. Four business problems retain
-  native recovery; technical/uncertain outcomes stay factual read-only history, including failures
-  before moving any file. A missing link does not prove pre-start;
+  assigns organizing history/controls to the exact run accessed through Task Center's own entry.
+  Four business problems retain native recovery; technical/uncertain outcomes stay factual read-only
+  history, including failures before moving any file. A missing link does not prove pre-start;
   uncertain effects permit investigation only. Preserve return context, successful siblings and
   independently linked recovery attempts; recovery never rewrites the original run result.
 - **Read/save safety:** stale/failed Save retains Active/input; reads/refresh/paging create no work or

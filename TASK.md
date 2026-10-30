@@ -8,7 +8,7 @@ Authority: 用户明确要求删除自动化执行记录的“打开任务中心
 Task ID: PATCH-20261030-5
 Task Type: STANDALONE MINOR BUG
 Parent Slice: NONE
-Status: PLANNED
+Status: IN PROGRESS
 Task Base: a7bcd92fb5b40dbf636e5aeab99aafc5db701e39
 Difficulty: Low
 Test Level: T2

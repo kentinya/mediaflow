@@ -294,18 +294,6 @@ export function AutomationListPage() {
     });
   }
 
-  function openTaskCenter(runId: string) {
-    void navigate({
-      to: "/operations",
-      search: {
-        run: runId,
-        returnAutomation: new URLSearchParams(
-          recordState({ cursor: cursor ?? "", dir: direction }),
-        ).toString(),
-      },
-    });
-  }
-
   const definitionsPage =
     listQuery.data?.ok === true ? listQuery.data.model : null;
   // Creation is offered only when this exact principal's backend projection
@@ -540,10 +528,6 @@ export function AutomationListPage() {
                 onFrom={(value) => submitSearch(recordState({ rfrom: value }))}
                 onTo={(value) => submitSearch(recordState({ rto: value }))}
                 onReset={() => submitSearch({ tab: "records" })}
-                onOpenTaskCenter={openTaskCenter}
-                onOpenDefinition={(definitionId) =>
-                  openDefinition(definitionId)
-                }
                 onNext={(next) =>
                   submitSearch(
                     recordState({ cursor: next, dir: "next" }),
@@ -815,8 +799,6 @@ function RecordsTab({
   onFrom,
   onTo,
   onReset,
-  onOpenTaskCenter,
-  onOpenDefinition,
   onNext,
   onPrevious,
 }: {
@@ -841,8 +823,6 @@ function RecordsTab({
   readonly onFrom: (value: string) => void;
   readonly onTo: (value: string) => void;
   readonly onReset: () => void;
-  readonly onOpenTaskCenter: (runId: string) => void;
-  readonly onOpenDefinition: (definitionId: string) => void;
   readonly onNext: (cursor: string) => void;
   readonly onPrevious: (cursor: string) => void;
 }) {
@@ -951,12 +931,7 @@ function RecordsTab({
               </thead>
               <tbody>
                 {page.items.map((record) => (
-                  <AutomationRecordRow
-                    key={record.recordId}
-                    record={record}
-                    onOpenTaskCenter={onOpenTaskCenter}
-                    onOpenDefinition={onOpenDefinition}
-                  />
+                  <AutomationRecordRow key={record.recordId} record={record} />
                 ))}
               </tbody>
             </table>

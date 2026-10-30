@@ -81,6 +81,19 @@ for (const width of [1536, 390]) {
     const failed = records.getByRole("row").filter({ hasText: "missing" });
     const details = failed.getByRole("button", { name: "查看详情" });
     await expect(details).toHaveAttribute("aria-expanded", "false");
+    await expect(failed.getByRole("button")).toHaveCount(1);
+    await expect(records.getByRole("button", { name: "查看详情" })).toHaveCount(
+      2,
+    );
+    await expect(
+      records.getByRole("button", {
+        name: /打开任务中心运行|打开定义设置/,
+        includeHidden: true,
+      }),
+    ).toHaveCount(0);
+    await expect(
+      records.getByRole("link", { includeHidden: true }),
+    ).toHaveCount(0);
     expect((await failed.boundingBox())!.height).toBeLessThan(110);
     await assertNoOverflow();
     await page.screenshot({
@@ -102,6 +115,16 @@ for (const width of [1536, 390]) {
     await expect(evidence.getByText("2026-01-01T12:00:00+00:00")).toHaveCount(
       2,
     );
+    await expect(failed.getByRole("button")).toHaveCount(1);
+    await expect(
+      records.getByRole("button", {
+        name: /打开任务中心运行|打开定义设置/,
+        includeHidden: true,
+      }),
+    ).toHaveCount(0);
+    await expect(
+      records.getByRole("link", { includeHidden: true }),
+    ).toHaveCount(0);
     await page.getByRole("button", { name: "收起详情" }).click();
     await expect(evidence).toBeHidden();
     expect(writes).toEqual([]);
