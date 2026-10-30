@@ -263,7 +263,7 @@ test.describe("manual organize journey", () => {
     await expect(
       page.getByRole("heading", { name: "任务中心", exact: true }),
     ).toBeVisible();
-    await expect(page).toHaveURL(/command=manual_organize/);
+    await expect(page).not.toHaveURL(/[?&](command|status)=/);
     await expect(page).toHaveURL(/run=organize-task-e2e-001/);
     await expect(page.getByRole("region", { name: "运行详情" })).toBeVisible();
 

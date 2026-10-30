@@ -33,6 +33,11 @@ function escapeRegExp(value: string): string {
   return value.replace(/[.*+?^${}()|[\]\\]/g, "\\$&");
 }
 
+const FAILED_CREATED_DAY = localRunTime("2026-08-22T12:22:00+00:00").slice(
+  0,
+  10,
+);
+
 // The ended view shows the durable update time; the other lifecycle views show
 // the creation time. Keep one exact row matcher per observed display.
 const FAILED_ROW = new RegExp(
@@ -150,7 +155,7 @@ test("任务中心 inventory shows the run list, views and workspace links", asy
   await expect(page.getByRole("region", { name: "运行详情" })).toHaveCount(0);
 });
 
-test("the submitted Operations filter is reflected in the URL and survives reconnect", async ({
+test("the submitted creation-date range survives reconnect", async ({
   page,
 }) => {
   await connect(page);
@@ -159,13 +164,22 @@ test("the submitted Operations filter is reflected in the URL and survives recon
     .getByRole("navigation", { name: "任务中心视图" })
     .getByRole("button", { name: "已结束", exact: true })
     .click();
-  await page.getByLabel("状态", { exact: true }).selectOption("failed");
+  await page.getByLabel("开始日期").fill(FAILED_CREATED_DAY);
+  await page.getByLabel("结束日期").fill(FAILED_CREATED_DAY);
   await expect(page).toHaveURL(/view=ended/);
-  await expect(page).toHaveURL(/status=failed/);
+  await expect(page).toHaveURL(new RegExp(`from=${FAILED_CREATED_DAY}`));
+  await expect(page).toHaveURL(new RegExp(`to=${FAILED_CREATED_DAY}`));
+  await expect(page.getByLabel("状态", { exact: true })).toHaveCount(0);
+  await expect(page).not.toHaveURL(/status=/);
   await expect(page.getByRole("row", { name: FAILED_ROW })).toBeVisible();
 
   await page.getByRole("button", { name: "Disconnect" }).click();
   await expect(page.getByLabel("API token")).toBeVisible();
+  await page.getByLabel("API token").fill(VIEWER_TOKEN);
+  await page.getByRole("button", { name: "Connect" }).click();
+  await expect(page).toHaveURL(new RegExp(`from=${FAILED_CREATED_DAY}`));
+  await expect(page).toHaveURL(new RegExp(`to=${FAILED_CREATED_DAY}`));
+  await expect(page.getByRole("row", { name: FAILED_ROW })).toBeVisible();
 });
 
 test("an unauthenticated deep entry reconnects to the same filtered center view", async ({
@@ -177,7 +191,7 @@ test("an unauthenticated deep entry reconnects to the same filtered center view"
   await page.getByRole("button", { name: "Connect" }).click();
   await expect(page).toHaveURL(/\/ui-v2\/operations\?/);
   await expect(page).toHaveURL(/view=ended/);
-  await expect(page).toHaveURL(/status=failed/);
+  await expect(page).not.toHaveURL(/status=/);
   await expect(page.getByRole("row", { name: FAILED_ROW })).toBeVisible();
   const html = await page.content();
   expect(html).not.toContain(VIEWER_TOKEN);
@@ -486,7 +500,7 @@ test("dropping credential-like Operations search state on reconnect", async ({
   await page.getByRole("button", { name: "Connect" }).click();
   await expect(page).toHaveURL(/\/ui-v2\/operations\?/);
   await expect(page).toHaveURL(/view=ended/);
-  await expect(page).toHaveURL(/status=failed/);
+  await expect(page).not.toHaveURL(/status=/);
   await expect(page.getByRole("row", { name: FAILED_ROW })).toBeVisible();
   const html = await page.content();
   expect(html).not.toContain(VIEWER_TOKEN);
@@ -533,16 +547,20 @@ test("inventory count card applies its server filter and the run overview opens 
   await expect(page).not.toHaveURL(/view=/);
   await expect(page.getByRole("row", { name: COMPLETED_ROW })).toBeVisible();
 
-  // The status filter stays available in the lifecycle views; the All view
-  // itself only owns the creation-time range.
+  // Every lifecycle view uses the visible creation-date range. The ended
+  // population truthfully includes both failed and completed work that day.
   await views.getByRole("button", { name: "已结束", exact: true }).click();
-  await page.getByLabel("状态", { exact: true }).selectOption("failed");
+  await page.getByLabel("开始日期").fill(FAILED_CREATED_DAY);
+  await page.getByLabel("结束日期").fill(FAILED_CREATED_DAY);
+  await expect(page.getByLabel("状态", { exact: true })).toHaveCount(0);
   await expect(page).toHaveURL(/view=ended/);
-  await expect(page).toHaveURL(/status=failed/);
+  await expect(page).toHaveURL(new RegExp(`from=${FAILED_CREATED_DAY}`));
+  await expect(page).toHaveURL(new RegExp(`to=${FAILED_CREATED_DAY}`));
+  await expect(page).not.toHaveURL(/status=/);
   await expect(page.getByRole("row", { name: FAILED_ROW })).toBeVisible();
   await expect(
     page.getByRole("row", { name: COMPLETED_ENDED_ROW }),
-  ).toHaveCount(0);
+  ).toBeVisible();
 
   // Selecting a run opens the bounded overview with durable facts only.
   await page
@@ -561,7 +579,9 @@ test("inventory count card applies its server filter and the run overview opens 
   // Closing the detail returns to the same filtered list context.
   await detail.getByRole("button", { name: "关闭详情" }).click();
   await expect(page.getByRole("region", { name: "运行详情" })).toHaveCount(0);
-  await expect(page).toHaveURL(/status=failed/);
+  await expect(page).not.toHaveURL(/status=/);
+  await expect(page).toHaveURL(new RegExp(`from=${FAILED_CREATED_DAY}`));
+  await expect(page).toHaveURL(new RegExp(`to=${FAILED_CREATED_DAY}`));
   await expect(page.getByRole("row", { name: FAILED_ROW })).toBeVisible();
 
   // Selecting pushes a history entry: browser Back returns to the list
@@ -574,7 +594,9 @@ test("inventory count card applies its server filter and the run overview opens 
   await expect(page).toHaveURL(/run=job-005/);
   await expect(page.getByRole("region", { name: "运行详情" })).toBeVisible();
   await page.goBack();
-  await expect(page).toHaveURL(/status=failed/);
+  await expect(page).not.toHaveURL(/status=/);
+  await expect(page).toHaveURL(new RegExp(`from=${FAILED_CREATED_DAY}`));
+  await expect(page).toHaveURL(new RegExp(`to=${FAILED_CREATED_DAY}`));
   await expect(page).not.toHaveURL(/run=/);
   await expect(page.getByRole("region", { name: "运行详情" })).toHaveCount(0);
   await expect(page.getByRole("row", { name: FAILED_ROW })).toBeVisible();
@@ -635,9 +657,9 @@ test("an unauthenticated deep entry reconnects to the selected run overview", as
   await expect(page.getByLabel("API token")).toBeVisible();
   await page.getByLabel("API token").fill(VIEWER_TOKEN);
   await page.getByRole("button", { name: "Connect" }).click();
-  // The bounded filter and the selection both survive the continuation.
+  // The view and exact selection survive; the removed hidden filter does not.
   await expect(page).toHaveURL(/\/ui-v2\/operations\?/);
-  await expect(page).toHaveURL(/status=failed/);
+  await expect(page).not.toHaveURL(/status=/);
   await expect(page).toHaveURL(/run=job-005/);
   const detail = page.getByRole("region", { name: "运行详情" });
   await expect(detail).toBeVisible();

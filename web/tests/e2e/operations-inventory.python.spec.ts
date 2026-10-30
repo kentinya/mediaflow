@@ -45,8 +45,8 @@ const TASK45_RECOVERY_EVIDENCE = "test-results/task45.3-recovery-evidence";
 /** The four runs seeded by real producers: two Jobs and two Tasks. */
 const SEEDED_RUN_TOTAL = 4;
 
-/** The unique server-side command filter that isolates the rich detail run. */
-const RICH_RUN_COMMAND = "manual_organize";
+/** The exact persisted scope of the rich detail run created by the harness. */
+const RICH_RUN_SCOPE = "Movies/Harness/Failed";
 
 async function assertHighContrastButton(button: Locator): Promise<void> {
   const ratio = await button.evaluate((element) => {
@@ -440,18 +440,15 @@ async function expectRunTotal(page: Page, expected: number): Promise<void> {
  * evidence row) the Task 42.2 journey reads, then wait for its overview panel.
  */
 async function selectRichRun(page: Page): Promise<void> {
-  // The rich manual run is terminal, so its existing command filter lives in
-  // the ended view; the All view no longer exposes that control.
+  // The rich run is terminal. Select its exact persisted scope from the ended
+  // population; no lifecycle view retains the removed command filter.
   await page
     .getByRole("navigation", { name: "任务中心视图" })
     .getByRole("button", { name: "已结束", exact: true })
     .click();
-  await page.getByLabel("操作类型", { exact: true }).fill(RICH_RUN_COMMAND);
-  await expect(page).toHaveURL(/command=manual_organize/);
-  // The server applies the command filter: exactly this one run matches, so
-  // the row selection below can never address a different run.
-  await expectRunTotal(page, 1);
-  const richRow = page.getByRole("row").filter({ hasText: "手动整理" });
+  await expect(page.getByLabel("操作类型", { exact: true })).toHaveCount(0);
+  await expect(page).not.toHaveURL(/command=/);
+  const richRow = page.getByRole("row").filter({ hasText: RICH_RUN_SCOPE });
   await expect(richRow).toHaveCount(1);
   await richRow.getByRole("button").first().click();
   await expect(page.getByRole("region", { name: "运行详情" })).toBeVisible();
@@ -907,8 +904,8 @@ test("an indeterminate run states an unknown total instead of inventing one", as
     .getByRole("navigation", { name: "任务中心视图" })
     .getByRole("button", { name: "进行中", exact: true })
     .click();
-  await page.getByLabel("状态", { exact: true }).selectOption("running");
-  await expect(page).toHaveURL(/status=running/);
+  await expect(page.getByLabel("状态", { exact: true })).toHaveCount(0);
+  await expect(page).not.toHaveURL(/status=/);
   const runningRow = page
     .getByRole("row")
     .filter({ hasText: "进行中" })
@@ -957,7 +954,8 @@ test("the detail tab and filter context survives a reload through auth continuat
   await page.getByRole("button", { name: "Connect" }).click();
 
   await expect(page).toHaveURL(/\/ui-v2\/operations/);
-  await expect(page).toHaveURL(/command=manual_organize/);
+  await expect(page).toHaveURL(/view=ended/);
+  await expect(page).not.toHaveURL(/command=/);
   await expect(page).toHaveURL(/run=/);
   await expect(page).toHaveURL(/tab=records/);
   await expect(page).toHaveURL(/rkind=log/);
@@ -1641,20 +1639,20 @@ test("a real standalone pipeline run keeps its durable steps through detail and 
   // separate analysis run, so exactly one more run appears.
   await expectRunTotal(page, SEEDED_RUN_TOTAL + 5);
 
-  // Isolate the exact new run through the existing server-side command
-  // filter — the standalone pipeline command is unique in this population.
+  // Select the exact new source from the ended population. Command filtering
+  // has left the page; the returned Task identity still has to match exactly.
   await page
     .getByRole("navigation", { name: "任务中心视图" })
     .getByRole("button", { name: "已结束", exact: true })
     .click();
-  await page
-    .getByLabel("操作类型", { exact: true })
-    .fill("organize:harness-standalone");
-  await expect(page).toHaveURL(/command=organize%3Aharness-standalone/);
-  await expectRunTotal(page, 1);
+  await expect(page.getByLabel("操作类型", { exact: true })).toHaveCount(0);
+  await expect(page).not.toHaveURL(/command=/);
   const row = page.getByRole("row").filter({ hasText: run.sourcePath });
   await expect(row).toHaveCount(1);
   await row.getByRole("button").first().click();
+  await expect
+    .poll(() => new URL(page.url()).searchParams.get("run"))
+    .toBe(run.runId);
   const detail = page.getByRole("region", { name: "运行详情" });
   await expect(detail).toBeVisible();
 
