@@ -93,9 +93,29 @@ its own competing lifecycle. Internal per-attempt/decision/plan evidence may rem
 it is not another operator work or scheduler. Existing safe evidence/authority records are not
 redundant merely because Job is removed.
 
-Unperformed executable work consumes the shared bounded Task scheduling capacity once. Human-waiting
-or paused work retains its Task/source ownership without being repeatedly claimed; it is not a
-second active queue entry. Capacity remains admission control, not new worker/thread parallelism.
+The shared scheduling capacity counts distinct organizing Tasks with admitted pending machine work
+or a running Worker stage, including discovery, analysis and execution. Each Task uses at most one
+slot across manual/due/Run once and permitted continuation, regardless of its item/attempt count.
+Machine-timed stability waiting remains queued work. The counting boundary is:
+
+| Situation | Capacity use |
+|---|---|
+| Pending machine work or an active Worker stage, including a Task with other human-blocked items | One slot for the Task |
+| Entire Task waiting for a human decision/initial confirmation, or safely acknowledged as paused, with no remaining queued/claimed machine work | Zero slots; retain Task/source ownership and all evidence |
+| Pause/cancel requested while work or an in-flight call is still active | Keep its slot until the safe boundary is acknowledged and no admitted machine work remains |
+| Terminal work with no active/queued machine work | Zero slots; retain results and any uncertainty/non-replay protection |
+
+New admission and every transition from non-queued waiting/paused work back to machine work check
+capacity atomically with queue eligibility and applicable authority consumption. Full capacity refuses
+new manual/Run once work without an orphan Task or consumed authority; a due occurrence remains due,
+without occurrence creation/due advance, for a normal later Scheduler tick. A refused confirmation,
+analysis continuation or resume of an existing Task preserves its waiting/paused state, saved choices,
+summary and results, publishes a bounded queue-full answer and consumes no execution authority.
+The operator can explicitly retry that command when capacity is available, with normal freshness/
+authority checks; refusal does not register an automatic continuation. Decision Save alone needs no
+queue slot and grants no effects. An exact duplicate of already admitted work reconciles to it even
+when full, without another slot. Slot release never releases durable source ownership or makes
+uncertain effects replayable. Capacity remains admission control, not new worker/thread parallelism.
 Move current capacity/staleness settings and actual resident adoption to the Task meaning, preserving
 supported configurations, explicit overrides and immutable historical pins. Staleness is evidence,
 never automatic permission to replay an effect. Ordinary operations retain their existing scope,
@@ -133,9 +153,23 @@ mutations never replay, consumed authority never refreshes itself, and legitimat
 
 Preserve attempt/result history when a Task continues or its current aggregate changes. Original
 execution outcomes/times/effects stay distinguishable from later handling; a successful follow-up
-cannot rewrite the original Automation record. New work uses the same Task/TaskItem identity;
-pre-upgrade child Task identities remain traceable historical evidence rather than being destroyed
-or silently merged. No fifth business recovery type, generic technical-failure Web recovery,
+cannot rewrite the original Automation record. The Task identity stays fixed. Each file's decisions,
+checkpoints, attempts and Results remain durably traceable to that Task and the exact source/version
+and pin. Internal TaskItem IDs may be reused or versioned; unchanged IDs are not an acceptance
+requirement. If an implementation creates a successor item ID, it must preserve the prior ID/history
+and an explicit durable relation, keep affected-file counts and supported links truthful, and prevent
+duplicate source ownership/effects. An ID change cannot widen scope, substitute source content or
+grant authority. No new mapping/recovery subsystem is required. Pre-upgrade child Task identities
+remain traceable historical evidence rather than being destroyed or silently merged.
+
+Continuation after pause/restart/claim loss is conditional on the existing supported control/recovery
+boundary and durable proof that the remaining stage/step is safe to run, plus the normal pin/source/
+authority/fence rechecks. If a Storage mutation was dispatched but its outcome was not durably proved,
+retain the affected step as uncertain, prevent replay and preserve factual inspection evidence.
+Timeout, lease expiry, process restart or a missing Result alone is not proof that nothing happened.
+Safe unaffected siblings retain only their existing permitted actions. No seamless automatic
+continuation at every possible crash point is promised; this Slice adds no new technical recovery
+or attachment-only replay path. No fifth business recovery type, generic technical-failure Web recovery,
 cross-Task bulk mutation, arbitrary historical Reprocess or universal rollback is introduced.
 
 ### RO-4 — preserve data and safely remove the Job schema
@@ -216,13 +250,13 @@ RecognitionType C remains C with NamingPolicy A and ClassificationPolicy A. No F
 | ID | Required proof |
 |---|---|
 | AC-1 | Manual file/folder/mixed submission, due occurrence and Run once each admit exactly one stable organizing Task before business readiness and preserve source scope/limits/pins and exact request readback. |
-| AC-2 | Concurrent Task admissions respect the shared bound; simultaneous Scheduler ticks emit one Task per occurrence with atomic due advance. Full admission neither consumes one-shot intent nor leaves orphan work. |
-| AC-3 | Concurrent Workers claim at most one effective owner; stale-owner heartbeats/item/result/aggregate writes and controls cannot defeat current ownership. Human wait/pause is not busy-loop claimed; readiness is Task-based and read-only. |
+| AC-2 | Manual/due/Run once and permitted continuation share one distinct-Task bound under concurrency; simultaneous Scheduler ticks admit one Task per occurrence with atomic due advance. Prove one slot across multiple items/attempts, zero for wholly human-waiting/acknowledged-paused work, one while other machine work or an unacknowledged active call remains, and atomic re-entry. Full capacity preserves existing waiting/paused work and saved choices/results without authority consumption or automatic continuation; new admission has no orphan, an existing duplicate still reconciles, and a refused due tick leaves its occurrence/due state unchanged. |
+| AC-3 | Concurrent Workers claim at most one effective owner; stale-owner heartbeats/item/result/aggregate writes and controls cannot defeat current ownership. Capacity release follows the documented safe boundary; human wait/pause is not busy-loop claimed or used to release source ownership. Readiness is Task-based and read-only. |
 | AC-4 | All organizing entrances use the shared application engine and production pipeline/Executor; no Job queue, CLI-output Task extraction or second engine remains. |
 | AC-5 | Files manual exact summary/selected confirmation, scheduled enable intent and disabled Run once follow existing distinct authority semantics; denied/stale/unknown requests, disable/remove/permission-loss races fail safely. |
 | AC-6 | Filtering, primary/attachment identity, configured limits, complete bounds and real stability are preserved; ready/unstable/empty/unreadable/overflow outcomes remain distinct, with no first-N execution or fabricated success. |
-| AC-7 | Four business decision → analysis → exact summary → selected continuation journeys finish inside the same newly admitted Task/TaskItems after refresh/restart; mixed batches keep independent accepted/refused results and no fifth recovery type. |
-| AC-8 | Pause/resume/cancel/lost claim/crash preserve remaining safe scope, pins and effects; completed/ignored/uncertain siblings never replay, consumed authorization is not reissued and technical history remains read-only in V2. |
+| AC-7 | Four business decision → analysis → exact summary → selected continuation journeys finish inside the same newly admitted Task after refresh/restart. Assert exact per-file source/version/pin and durable item/attempt/result lineage, accurate counts and supported links, rather than mandatory equality of internal TaskItem IDs. Mixed batches keep independent accepted/refused results and no fifth recovery type. |
+| AC-8 | At supported pause/resume/cancel/restart/claim-loss boundaries, prove safe remaining stages can continue only with durable safety evidence and normal authority/fence checks. Inject interruption before mutation dispatch and after dispatch before durable outcome proof: the latter remains uncertain and cannot replay, even after timeout/lease expiry/restart. Preserve completed/ignored siblings, pins and consumed authority; technical history stays read-only in V2. Do not require seamless automatic continuation at every crash point or add a new recovery path. |
 | AC-9 | Genuine Base schema53 fixtures migrate/reopen with linked/unlinked Jobs, every supported status, pre-start failures, old continuation chains, request/due uniqueness, consumed/revoked authority and exact audit/log/attachment/result identity intact. Residual unknown/retired Job rows survive as non-executable history with their original meaning. |
 | AC-10 | Failure injection proves migration rollback, unchanged prior authority/schema marker and safe repeat/reopen; quiescence/schema/fence checks reject incompatible writers and never restart entered uncertain work automatically. |
 | AC-11 | Fresh and upgraded databases have no live Job table/index/FK/queue; source/wheel/container expose no redundant Job domain/repository/dispatch/API/CLI/Web path. Provenance/parser exceptions are bounded/read-only, not a compatibility executor. |
@@ -243,6 +277,10 @@ coverage includes its shared Python/Web/static/examples/package/security gates p
 migration/concurrency/authority/restart/native proofs. Reuse existing test infrastructure and temporary
 roots/fakes/local servers; meaningful migration/reopen/effect assertions cannot be replaced by string
 searches or mock-only UI tests. Do not weaken tests to permit Job removal.
+
+Use the explicit capacity-state/queue-full cases and supported interruption boundaries above as
+acceptance scenarios. File lineage/history/counts and non-replay are the result obligations; keeping
+all internal item IDs equal or enumerating every theoretical crash point is not a separate gate.
 
 The preceding investigation ran 138 core Task/Automation/authority/recovery tests and 45
 original-record/log-isolation tests on the Base: 183 passed, with database ResourceWarnings in the

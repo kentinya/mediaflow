@@ -33,13 +33,25 @@ confirmation, execution and safe continuation. TaskItems keep source identity an
 checkpoint/plan/effect/outcome evidence. Internal attempts may append durable evidence, but have
 no independent queue or top-level work identity. Current Task lifecycle/stage and original attempt
 outcome are different facts; a later aggregate transition cannot erase original Results/failure.
-Pre-upgrade child Task identities/relations remain traceable historical evidence.
+The Task identity is fixed; the physical TaskItem ID is not prescribed. Reused or versioned item IDs
+must preserve prior IDs/history and explicit durable same-Task/source-version/pin lineage, accurate
+file counts and supported links, without duplicate source ownership or widened content/authority.
+Reuse existing evidence/relations; no new mapping or recovery subsystem is required. Pre-upgrade
+child Task identities/relations remain traceable historical evidence.
 
 Task owns atomic bounded admission, ready/queued eligibility, current Worker claim generation,
 heartbeat/staleness and cooperative controls. Every item/result/aggregate publication observes the
 same effective fence. Source ownership spans human waiting/paused work; an execution lease is not
 its substitute. Waiting or paused work does not busy-loop in claim selection. Shared capacity counts
-pending/claimed executable organizing work once; it is not process/thread parallelism. Discovery,
+distinct Tasks with pending machine work or a running Worker stage once, including discovery,
+analysis, execution and machine-timed stability waiting. Wholly human-waiting/acknowledged-paused
+Tasks with no queued/claimed machine work use zero slots. Pause/cancel requests keep the slot until
+active work/calls reach the acknowledged safe boundary. Re-entry and authority consumption share
+the capacity transaction: full capacity preserves the existing waiting/paused Task and choices/
+summary/results without consuming authority or registering automatic continuation. A full due tick
+keeps occurrence/due state unchanged; an exact admitted duplicate reconciles without another slot.
+Decision Save is non-queued and needs no slot. Slot release changes neither source ownership nor
+effect certainty; capacity is not process/thread parallelism. Discovery,
 manual intent/summary/authorization and execution-step records keep their real evidence and authority
 roles without acting as alternate organizing queues or competing scheduling owners.
 
@@ -59,6 +71,13 @@ checkpoints, decisions, exact-source analysis, summary/selected confirmation and
 remaining-scope checks. Migrate their dispatch/relations to Task/TaskItem; do not rebuild recovery or
 admit a second top-level organizing Task for newly started work's continuation. Do not repin,
 refresh consumed authority, reprocess successful siblings or replay uncertain effects.
+
+Restart/claim-loss continuation uses only supported existing control/recovery boundaries, durable
+proof that remaining work is safe, and normal pin/source/authority/fence rechecks. A mutation
+dispatched before interruption without durable outcome proof remains uncertain and cannot replay;
+lease expiry, timeout, restart or an absent Result does not establish absence of effects. Preserve
+the affected step and unaffected siblings' existing permitted actions without promising seamless
+automatic continuation at every crash point or adding technical/attachment-only recovery paths.
 
 Queries use Task identity across authoritative organizing lists/counts/cursors, local Files readback,
 Automation inventory/records/metrics, Dashboard, bounded scoped logs/audit and JSON exports.

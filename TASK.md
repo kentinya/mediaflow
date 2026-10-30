@@ -4,6 +4,8 @@
 ACTIVE，Base：`5144ab1fc2344b06194969cc2c496835729664c0`；Implementation Head：NOT SET。
 [SLICE.md](SLICE.md) 是范围权威；下一步 **B PLANS THE FIRST COHERENT TASK**。
 本次仅完成 A 范围/架构契约检查点，未制定活动实施 Task、实施代码或作出最终验收。
+用户要求的 A 契约修订已明确逐文件追踪而非固定内部 TaskItem ID、等待/暂停/队列满时的
+容量规则，以及仅在现有支持边界和安全证据下续作；B 须以修订后的已提交 Contract 规划。
 
 最近独立修正：**PATCH-20261030-6 — 自动化执行记录只展示本次结果，B PASS（2026-10-30）**。
 六项验收全部满足，无待实施/返工项，不规划额外工作。

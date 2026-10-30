@@ -43,14 +43,26 @@ replacing Job/Task handoffs with one Task identity.
   policy skip, unstable/unreadable/incomplete scope and real success remain distinct.
 - **Failure and recovery:** Recognition, Metadata, Classification and Conflict keep their native
   decision → analysis → exact summary → explicit continuation. Recovery stays in the same newly
-  admitted Task and affected TaskItems, preserving other siblings and original attempt evidence.
+  admitted Task, with each file's source/version, decisions, attempts and results traceable through
+  durable relations. Internal item IDs may change without losing history/links or duplicating files.
+  Other siblings and original attempt evidence remain preserved.
   Save/analysis never executes media. Technical failures remain factual All/Ended history under
   the existing V2 restriction; uncertain effects remain inspection-only. No fifth flow, generic
   retry promise, successful-sibling replay or implicit authority refresh is introduced.
 - **Controls:** permitted pause/cancel/continue remain cooperative and backend-authoritative.
   A request is distinct from its acknowledgement and cannot interrupt an in-flight call or undo
-  completed effects. Waiting/paused work retains identity/source ownership without being repeatedly
-  claimed. Worker unavailability has truthful task-local readiness; no global monitoring block returns.
+  completed effects. A Task wholly waiting for a human or safely paused uses no queue slot when no
+  machine work remains; it keeps identity/source ownership without being repeatedly claimed. A pause
+  request still in progress keeps its slot until the active call/work reaches a safe boundary. When
+  continuation/confirmation is refused because the queue is full, the Task stays waiting/paused with
+  choices/summary/results retained and no authority consumed. It explains the refusal; the operator
+  can explicitly retry later with normal checks. Saving a decision needs no queue slot. Worker
+  unavailability has truthful task-local readiness; no global monitoring block returns.
+- **Interrupted work:** after restart, continue only the remaining work that existing supported
+  rules and durable evidence prove safe. If a copy/move or other mutation was sent but its outcome
+  was not recorded reliably, preserve that step as uncertain for factual inspection and prevent
+  replay. A timeout, expired claim or missing result does not mean the operation never happened.
+  No promise of seamless automatic continuation at every interruption or new recovery flow is added.
 - **History and upgrade:** original Automation records keep this execution's actual outcome/time,
   concise failure/next step and server outcome filtering. Later recovery does not rewrite a failed
   original record or count as another original run. Existing Task/Result/attempt/decision/audit/log
