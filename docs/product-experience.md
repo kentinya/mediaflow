@@ -423,9 +423,12 @@ normal runs use normal scope/checks; no failed-item selection or cross-run obser
 - **Entry/state:** shared-shell `自动化` opens the real definition inventory; name/打开/direct links
   read saved definitions before/after enablement, including truthful disabled/unavailable states.
   Malformed/denied/not-found/read errors remain bounded; no grant-eligibility dependency returns.
-  Inventory provides `任务列表 / 执行记录 /
-  全局设置`, population metrics, source/scope/schedule/timezone/limit, next/latest outcome and distinct
+  Inventory provides `任务列表 / 执行记录 / 全局设置`, population metrics,
+  source/scope/schedule/timezone/limit, next/latest outcome and distinct
   published/enabled/execution-readiness states. No editor opens automatically or sample data appears.
+  One Chinese content title, flat tabs and readable controls align with Task Center/Files on desktop
+  and narrow screens. Routine statistics/tutorial paragraphs are omitted; unavailable metrics retain
+  their correction guidance, and wide tables scroll inside the workspace rather than the page.
 - **Configure/authorize:** New/copy starts disabled without authority. One focused checked Save
   publishes only the intended definition. Checked enable/enabled-successor Save supplies scoped
   scheduled intent with current execution permission and audit; there is no independent grant or
@@ -440,9 +443,11 @@ normal runs use normal scope/checks; no failed-item selection or cross-run obser
   Task before readiness and executes ready items without a second initial confirmation. Four-type
   recovery still needs explicit continuation; no schedule advancement or old grant consumption.
   Overflow/incomplete scope refuses execution and explains narrowing/re-analysis, not first-N success.
-- **Execution records:** keep the Automation records page read-only, showing status/results, failure
-  stage/reason, known effects and repair/Task Center links; no local file decisions, re-analysis or
-  execution controls. Bounded authoritative queries reach every authorized row; actual admitted runs
+- **Execution records:** compact rows show status, local start/end times, item counts and viewing
+  links. 查看详情 exposes exact timestamps, original results, failure stage/reason, known per-item
+  effects and next actions. Task Center/definition links keep the submitted list context for return;
+  expanding or collapsing details is read-only. No local file decisions, re-analysis or execution
+  controls. Bounded authoritative queries reach every authorized row; actual admitted runs
   count once, unavailable/unknown data are not zero/success, and bound reached is not scope exhaustion.
 - **Before organizing starts:** explain the failed prerequisite and link its correction. Proven
   pre-start failure rows remain visible alongside normal/no-work records, including existing history;
@@ -461,7 +466,10 @@ normal runs use normal scope/checks; no failed-item selection or cross-run obser
   independently linked recovery attempts; recovery never rewrites the original run result.
 - **Read/save safety:** stale/failed Save retains Active/input; reads/refresh/paging create no work or
   Provider/media effects. Preparation-only findings remain distinct from execution failures.
-- **Settings:** one four-field Save preserves unrelated Draft/configuration. Capacity is pending+
+- **Settings:** a compact four-field form keeps concise meanings and backend constraints; engine
+  tutorials, schedule/timezone lessons and JSON examples are omitted. Healthy instance details and
+  diagnostic identities start folded; pending/unavailable/overridden states and concrete next actions
+  remain visible. One Save preserves unrelated Draft/configuration. Capacity is pending+
   running Job count, stale age is no-update observation, and Worker/Scheduler polling must be
   adopted by actual resident loops without routine restart. Published/adopted/pending/override/
   stale or unavailable consumers have truthful readback and concrete repair guidance.

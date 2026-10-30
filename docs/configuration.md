@@ -168,6 +168,11 @@ render the *same* four-field form and readback (`AutomationSettingsPanel`); no s
 editor exists. `GET/PUT /api/v1/operations/automation/settings` serves the projection and the
 checked Save with READ / MANAGE_CONFIGURATION enforcement.
 
+The compact form keeps each field's meaning and backend constraints beside its input. Published
+and adopted states stay separate; healthy instance details and diagnostic identities start folded,
+while adoption problems and their next actions remain visible. General engine/schedule tutorials
+and JSON examples are omitted from this focused settings surface.
+
 One Save publishes only `automation.{maximumActiveJobs,staleJobAgeSeconds,workerPollSeconds,
 schedulerPollSeconds}` from the observed immutable Active. Other settings, definitions and open
 Drafts are preserved byte-identically, the whole candidate is validated, and the runtime binding is
