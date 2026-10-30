@@ -9,7 +9,7 @@ Authority: committed [SLICE.md](SLICE.md)（读取于本 Task Base）；
 Task ID: 47.2
 Task Type: SLICE
 Parent Slice: 47
-Status: READY FOR B REVIEW
+Status: FIX REQUIRED
 Task Base: c942c4b4b9d3abf105341e8163c1be2d95d9a671
 Difficulty: High
 Test Level: T4
@@ -277,4 +277,101 @@ RO-5 原界面兼容已验而 Task 化全表面未交付。因此继续规划本
 
 ## B Review Result
 
-尚未有实施候选。此草案不是审查 PASS；实施交接后按完整 Base..Head 独立审查并完成 T4 验收。
+```text
+Reviewed Base: c942c4b4b9d3abf105341e8163c1be2d95d9a671
+Reviewed Head: b5a21ea39315e4e742e8ff2079216c31b8043fc6
+Decision: FIX REQUIRED — 2 independently reproduced P1 blockers; Task incomplete
+Slice Required Outcomes / Surfaces all satisfied: NO
+Next: SAME TASK FIX LOOP — preserve Task47.2 ID/Base/Goal/Scope
+Evidence: .git/validation-evidence/b-task47.2-b5a21ea3/
+```
+
+B 已检查完整 Base..Head 的16文件（含两次规划文档、全部应用/领域/SQLite/驻留接线/API与测试），
+未只检查新增 engine 或照抄 Developer 的完成结论。已交付的是手动准入/发现/分析/确认执行的
+初步生产链；不等于 M1–M9 完成交付。尤其新增3个测试中的端到端用例只覆盖识别决定后分析再
+确认，不证明四种问题、已执行后恢复、协作控制、跨入口容量和完整 Web 旅程均已通过。
+本轮未改产品或测试代码，无角色例外；main 开始于 Reviewed Head，无 tracked edits，既有
+untracked OS/log/参考图/压缩包保留不暂存。治理 preflight 与完整范围空白检查通过。
+
+### P1-1 — 暂停只停了发现记录，Task 仍排队占容量（M5，关联 M6/M8）
+
+**现有入口复现：** 通过真实 Files discoveries API 提交 `Movies`，随后调用已存在的
+`POST /api/v1/operations/organize/discoveries/{id}/pause`，带当前 expectedVersion。
+返回200、pauseRequested=true。实际 Task engine 再运行3轮后：discovery=paused，Task=pending，
+Task queue=queued，control_request=null，仍占1个容量。无媒体变更，暂停已经到安全边界；
+仍在可领取队列不符合本 Task 的暂停/容量合同。
+
+**根因与修复指导：** 新入口已改为 Task 领取，但 `MediaDiscoveryService._request_control()`
+仍只写旧 discovery 的控制事实；`ManualTaskEngineWorker` 只读取 Task 控制请求，无法正确汇合。
+Task Center 的 `TaskLifecycleService.pause/cancel` 也仍走拒绝 kernel-managed Task 的旧 writer。
+
+1. 对 kernel-managed 新手动工作，将现有 Files 与 Task Center 控制命令路由到同一 Task 控制
+   应用边界，保留 RBAC/版本/原 pin；旧工作继续原保护路径。不能解除旧 writer guard 代替接入。
+2. 请求先耐久保存；owner 在现有安全边界确认，再将 Task/item/discovery 显示与调度资格协调
+   提交。无剩余机器工作时暂停为0个名额且不可反复领取；in-flight 调用尚未结束仍保留名额。
+   不通过把所有暂停项标 Failed 或清空源锁/已知效果实现释放。
+3. 合法显式继续重查安全证据/容量/原 pin，回原 Task；满时保留暂停与选择，不登记自动续作。
+   已接受 CANCEL 不能被确认/分析/继续清除；cancel 仍需同样的请求/安全确认与效果保护。
+4. 回归从上述现有 API 和 Task Center 控制入口出发，分别覆盖 queued、人工等待、分析/执行
+   安全边界与 in-flight 请求；验证暂停不忙轮询、容量/源占用、刷新重开及旧 owner 晚到写入。
+
+### P1-2 — 新 Task 与旧 Job 分开计数，满容量仍可接新整理（M6）
+
+**现有入口复现：** 使用现有 `AutomationJobService.submit('organize')` 按配置100的上限填满
+旧队列（与现有 Job admission 相同真实服务/SQLite边界），再通过同一 Files API 提交新手动整理。
+实际返回202，旧 active Jobs=100，新 Task slots=1，总计101；顺序调用已经超额，无需构造竞态。
+
+**根因与修复指导：** `_has_job_capacity()` 只数旧 automation_jobs，新的 Files 准入、分析重入队
+和确认只比较 `_scheduled_capacity_use_locked()`，因此两边各自看到自己的剩余名额。
+
+1. 在现有 repository admission 事务中采用同一分期共存容量判定，覆盖仍受旧队列约束的工作和
+   新 Task 的机器工作；按明确的耐久关系去重，不新建队列、双写或把普通 transfer 算进整理。
+2. 同步新准入/扩展中需要重入队的部分、确认/分析/继续及旧 Job/due/Run once 的相关边界。
+   检查与 Task/资格、授权消费、occurrence/due advance 必须原子，不可先查数量再另事务插入。
+3. 满时新请求无孤儿；原工作保留等待/暂停、选择/摘要/结果，不消费授权、不自动继续；due
+   保持原 due/occurrence 状态。精确已准入重复在满时仍返回原请求，不能因本次计数误拒。
+4. 先补“旧满→新拒绝”“新满→旧拒绝”，再用两个真实连接竞争最后名额并检查去重、机器等待、
+   混合项和安全释放。现有 `test_duplicate_admission_converges_even_at_capacity` 未设1容量或填满
+   默认100容量，只证明重复收敛；补真正满队列对照，不用修改断言允许101。
+
+### 同一 Task 内其余未完成结果与验证分工
+
+- 保留本 Task 的完整交付：M4 四类各自的原 Task 续作（包括适用的执行后问题与混合 sibling）、
+  M7 现有可安全继续边界及 uncertain 不重放、M8 真实 Web/API/Task Center 结果闭环仍需完成并
+  交接受影响测试。不能把“初始识别补正后确认”的一个正向例子等同全部恢复，也不为这些原定
+  结果另拆 Task。内部 item ID 无须相等；历史工作不强制同 Task 化。
+- 新旧 pin 的 resident 选择风险已由 Developer 披露；修复共存接线时验证已准入A、Active B及
+  旧队列pin并存的真实领取与 readiness，不能要求重新提交/换 pin 或全局关闭旧工作来运行新 Task。
+- 本轮未独立复现其他具体缺陷，不把未验证猜想追加为 P1。上述待交付项不因此获得 PASS。
+  Developer 完成原 Scope、运行新增/变更/直接受影响测试后，提交同一 Task 新候选再复核。
+- 完整 Python/Web/E2E、截图、wheel/Docker/升级门禁属于 B；本轮已确认产品阻塞，按 workflow §6
+  提前停止昂贵门禁。M9 对应 B 验收待修正候选完成；不把未运行门禁转交 Developer 或当作
+  Developer 漏跑全量的缺陷。Developer 报告的3004项全量不是本轮 B 独立全量验收结果。
+
+### B 实际证据与限制
+
+| 检查 | 实际结果 |
+|---|---|
+| `tests.test_manual_task_engine` | 3 tests，OK，runner0.237s；真实 API/服务/临时 SQLite/Local Storage |
+| 调度/栅栏/迁移三个模块 | 65 tests，OK，runner3.854s；ResourceWarnings 保留 |
+| 两条独立现有入口复现 | 暂停仍 queued/占1容量；旧100满后新整理202/增加1容量，均确认阻塞；探针0.140s |
+| 完整 Base..Head diff/manifest、治理、空白 | 通过；只做审查，未改 A-owned 文档或业务/测试实现 |
+| 完整 T4/原生浏览器/截图/安装包/容器 | 未运行，产品阻塞后提前 FIX；无豁免，不记 PASS |
+
+原始脚本/输出为 `repro.py/log`、`focused.json/log`、`kernel.json/log`；全部合成临时数据，不读
+用户运行库、媒体或私有配置。新状态/API正常返回与最终持久状态分别读取；未猜造路由，未为
+测试加 retry/skip/timeout。测试耗时含探测/检查的保守上界15秒，低于本轮总用时50%；确切
+复核起点与计时说明见证据目录 `review.json`。
+
+### Slice 全结果重评
+
+| Required Outcome | 结论 |
+|---|---|
+| RO-1 Task 调度/执行 | 内核已验，手动生产链部分接入；协作控制/共存容量阻塞，未完成 |
+| RO-2 三触发共用引擎 | 本轮只接手动部分；due/Run once/独立 API-CLI 引擎切换仍后续，未完成 |
+| RO-3 同工作四类恢复 | 仅识别补正后确认的实际正向证据；完整四类/历史/效果边界未验收，未完成 |
+| RO-4 数据保留与 Job 退出 | 保留 schema54/Job，未做历史转换删除；未完成，非本 Task 新增要求 |
+| RO-5 操作与管理旅程 | 原手动接口已启用新内核，但控制和完整结果旅程尚未完成；其余表面仍待后续 |
+
+Slice47 仍 ACTIVE，不关闭、不改 Roadmap/Progress，不规划下一 Task。修复仍属于 Task47.2；
+范围只覆盖本轮新手动工作及必要共存，不扩张为自动入口切换/历史合并/任意崩溃无缝恢复。
