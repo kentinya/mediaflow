@@ -48,6 +48,9 @@ Implementation Authorization: USER-REQUESTED DIRECT EDIT — 2026-10-30
 
 状态 READY FOR B REVIEW；独立 B 验收待执行，不自签 PASS。
 
+Implementation checkpoint：`219fe066f87c1ae48877dcd8490b9ee4782dee84`。
+本指针为仅文档的交接后继，不改变已验证产品/测试输入；B 审查完整 Task Base..交接 Head。
+
 - 产品仅删除所指统计说明、时区标签/说明控件及无消费者的局部样式/状态/引用。
   时间转换、查询/轮询、统计计算/去重、权限和执行逻辑未改。
 - Developer 实际检查：OperationsInventory **44 passed**；局部 Chromium 布局/交互
