@@ -9,7 +9,7 @@ Authority: committed [SLICE.md](SLICE.md) at `45d2e951eb00ffdd4cecbaafed50039668
 Task ID: 47.1
 Task Type: SLICE
 Parent Slice: 47
-Status: FIX REQUIRED
+Status: READY FOR B REVIEW
 Task Base: 45d2e951eb00ffdd4cecbaafed50039668e445f0
 Difficulty: High
 Test Level: T4
@@ -238,82 +238,65 @@ Slice47 已 ACTIVE，无需重复激活/改写 A-owned SLICE/Roadmap/Progress。
 ## Developer Completion Report
 
 ```text
-Checkpoint: f8a7c0e6bd37dca36c5810f083d8506f164cd490 (implementation; this Task record is the
+Checkpoint: 9b77a632eb87ff7038d53f9069558db42fc88e13 (implementation; this Task record is the
 following docs checkpoint on the same branch — B reviews Task Base..HEAD)
 Task Base: 45d2e951eb00ffdd4cecbaafed50039668e445f0 (unchanged, per plan)
-Fix start HEAD: 792040a150c1021610ea199a055db95542380c46 (B's five-P1 guidance checkpoint)
+Fix start HEAD: 894eaa1d920dcfbdf3e5c96ffdba0ff26ec69f52 (B's remaining-P1 checkpoint)
 Status: READY FOR B REVIEW — full T4/acceptance and the Closure Packet are B's, not claimed here
 ```
 
-上一轮实现 `e53e3899` 与本报告之前的历史仍在 Git；本轮按 B 的五项 P1 在同一 Task 内修正，
-未改 Goal/Base/Difficulty/Test Level、schema 版本、生产入口或 Slice 全结果。
+本轮按 B 的 1 项 P1（T5 源版本/证据 pin 完整性）在同一 Task 内修正；未改 Goal、Base、
+Difficulty、Test Level、schema 版本、生产入口、SLICE/Roadmap/Progress 或既有授权语义。
 
-### 本轮修复（B 的五项 P1）
+### 本轮修复
 
-1. **成功/不确定项不可重做（T5/T6）。** `_require_scheduled_item_locked()` 在同一写入事务内
-   重查耐久 TaskItem、该 item 的全部 Result certainty/uncertain-effects/completed-operations，
-   以及 Task 的 in-flight mutation target。只有 `pending`/`paused`/`failed` 且全部历史证明
-   `none` 的 item 可开新 attempt；`success`/`ignored`/`dry_run`/`skipped`/`processing` 及任何
-   `unknown`/`attempted_unverified`/非空 uncertain-effect 历史一律拒绝。`begin_scheduled_mutation()`
-   只接受当前 `processing` 且历史无效果的 item；`record_item()` 不能把已记录 outcome 的 item
-   改回机器状态。`publish_scheduled_item_outcome()` 只在 mutation target 匹配且 Result 为
-   `none`（无 completed operations）或 `verified_complete` 且无 uncertain effects 时清除
-   in-flight 标记；uncertain Result 仍原样落库并保留不可重放事实。Result/evidence 还必须指向
-   该 TaskItem 的精确源。
-2. **取消不可被恢复（T4）。** 无 owner、无 in-flight 的 `queued`/`waiting_human`/`paused`
-   Task 在 `request_control()` 内原子保存请求并立即确认：Task、适用的未完成 item、queue 与
-   cancel 确认一起提交；重复 cancel 幂等。`requeue_scheduled_task()` 在事务内显式拒绝任何
-   已接受的 CANCEL，即使调用方带最新 revision；正常 PAUSE → 显式恢复保留。已成功 sibling
-   与历史 Result 不被取消改写。
-3. **混合项不得提前释放名额（T2/T4）。** `release_scheduled_claim()` 在同一释放事务内读取该
-   Task 的全部 durable item，叠加本次传入更新后判断；只要仍有 `pending`/`processing` sibling，
-   对 human-wait/暂停/终结释放一律零写入拒绝。`defer_to_human()` 不再能只凭传入子集释放整批；
-   全人工等待仍只释放一次，重开后保持 waiting_human、源占用和 attempt 历史。
-4. **跨 Task 领取凭据不可发布（T4/T5）。** 服务层 `defer_to_human()`/`settle()` 与仓储
-   `release_scheduled_claim()` 都在任何写前要求 `task.task_id == fence.task_id`，且传入 item
-   必须属于该 Task；错误配对以有界领域错误拒绝，不通过改写 task_id 纠正。`fence=None` 仍只
-   用于无 owner 的安全结算，不能释放已领取 Task。
-5. **暂停后快速恢复的旧锁清理（T4）。** 内核不再在 claim 释放提交后调用
-   `reclaim_task_locks(task_id)`；该 Task 的短期执行锁改在仍验证当前 claim/control 的
-   `release_scheduled_claim()` 同一事务内删除。恢复只能在该事务提交后取得新一轮锁，旧
-   owner 的迟到/重复清理没有无归属回退。带 token、既有 task-level 兼容锁、其他 Task 的锁、
-   重复 cleanup 及新 owner 自身条件释放均有真实 SQLite 双连接/同步屏障覆盖。
+1. **恢复同项不得替换已知源版本（T5/T3）。** 新增 `resume_item_source_binding()`：
+   `begin_item()` 恢复既有 TaskItem 时保留已知 occurrence/fingerprint/状态、
+   ResourceLibrary/Storage 路径及首次 `source_observed_at`；调用方给出不同的已知 occurrence、
+   fingerprint、verified 状态降级、库/Storage 路径时以有界 `TaskSourceIdentityConflict`
+   拒绝，不递增 attempt、不写半套 item。省略可选身份参数仍保留原证据；此前缺失的旧证据保持
+   unverified，只有真实提供的证据才可补充。
+2. **持久化事务内独立重查耐久绑定（T5 绕过防护）。** `_require_scheduled_item_locked()` 对
+   START/PROGRESS/OUTCOME 都先与耐久 `task_items` 行比较，而不是只比较调用方传入的 item：
+   `record_item()`、直接 `upsert_scheduled_item()` 或同时替换 item/Result 都不能绕过。
+   拒绝发生在任何 Result/evidence/item/attempt 写入之前。
+3. **Result 必须描述耐久 item 的精确源（T5）。** `publish_scheduled_item_outcome()` 同事务
+   读取耐久 item，`require_result_matches_item_source()` 校验 storage/path、
+   occurrence/fingerprint/verified 状态及首次观察时间；省略可选值仍由既有
+   `_bind_result_to_occurrence()` 从 item 补齐，冲突值不自动修正。
+4. **Evidence 的配置 pin 必须属于 Task 原 pin（T5）。** 提供的 evidence
+   `configuration_snapshot_id/digest` 与 `tasks` 中准入 pin 不一致时拒绝；不读取当前 Active，
+   不 fallback 换 pin。合法的无 evidence 或未提供 pin 的既有兼容场景保持原语义。
+5. **失败零改写。** 错版本/错 pin 拒绝后 item、attempt、Result、evidence、claim、容量与
+   源占用均不变，mutation marker 不被清除；关闭重开后仍保持。合法同版本续作、原 pin 证据与
+   原成功 sibling 不受影响。
 
 ### 实际验证（Developer 范围，均已实际执行）
 
 | 命令（cwd 仓库根） | 实际结果 |
 |---|---|
-| `.venv/bin/python -m unittest tests.test_task_scheduling tests.test_task_scheduling_fencing tests.test_task_scheduling_migration` | 58 tests, OK（新增/变更 27 调度 + 25 栅栏/并发 + 6 迁移） |
-| 计划指定 7 模块（上述 3 个 + `test_task_persistence`、`test_task_pause_resume`、`test_automation_admission`、`test_automation_job_fencing`） | 115 tests, OK |
+| `.venv/bin/python -m unittest tests.test_task_scheduling tests.test_task_scheduling_fencing tests.test_task_scheduling_migration` | 65 tests, OK（新增 7 个源版本/证据 pin 回归；其余为原 58） |
+| 计划指定 7 模块（上述 3 个 + `test_task_persistence`、`test_task_pause_resume`、`test_automation_admission`、`test_automation_job_fencing`） | 122 tests, OK |
 | 计划指定代表性 6 用例（C→A 精确移动与 uncertain 不重放、Files 准入、两种库 transfer、Run once） | 29 tests, OK |
-| `tests.test_direct_file_operations test_confirmation_api test_task_retry test_task_scope test_manual_operations_contract test_file_index_retirement` | 110 tests, OK |
-| `tests.test_operations_run_detail test_operations_task_center test_dashboard test_task_center_recovery_lineage test_processing_worker_readiness test_api_security` | 115 tests, OK |
-| `tests.test_automation_settings_resident test_release_security test_container_probe` | 45 tests, OK |
-| `tests.test_direct_file_transfers test_media_library_transfers test_media_discovery test_manual_organize_execution test_task_center_recovery_lineage` | 333 tests, OK |
-| `scripts/schema_upgrade_rehearsal.py --base-sha 45d2e951… --expect-schema 53 --expect-candidate-schema 54` | `ok: true`，165 preserved-row assertions，0 failed；本轮未改 schema/迁移 |
-| `ruff format --check` / `ruff check` / `compileall` 于 14 个 Base..HEAD 改动 Python 文件；`scripts/check_governance.py`；`git diff --check` | 全部通过 |
+| `tests.test_manual_organize_execution test_direct_file_transfers test_media_library_transfers test_media_discovery test_task_center_recovery_lineage test_recovery_continuation test_processing_checkpoint test_attachments test_automation_authorized_execution_matrix test_operations_workspace` | 451 tests, OK |
+| 旧实现对照：`git archive f8a7c0e6` + 本轮新测试文件 | 7 tests，5 failures（恢复换源版本、Result 换版本、Evidence 换 pin、progress/仓储绕过、首次观察被覆盖）；两个兼容正向（省略身份保留、缺失旧证据不捏造）通过；最终候选同组 OK |
+| 静态检查：Base..HEAD 的 14 个改动 Python 文件 `ruff format --check` / `ruff check` / `compileall`；`scripts/check_governance.py`；`git diff --check` | 全部通过 |
 
-**旧实现对照证据。** 将本轮测试文件放入 `792040a1` 的 `git archive` 树并以同一 venv 运行，
-`tests.test_task_scheduling tests.test_task_scheduling_fencing` 为 **52 tests / 10 failures**；
-失败覆盖成功项重做、不确定 Result 重放、waiting/paused 取消被恢复、混合批提前释放、跨 Task
-发布、旧锁清理删除新锁及跨源 Result。最终候选的同组测试为 52 tests, OK。
-
-测试使用真实临时 SQLite、独立连接、真实子进程和 `threading.Event`/`Barrier` 交错；未使用
-用户运行库、媒体、私有配置或外部服务。新增/变更测试未删除既有安全断言；迁移 fixture 仅把
-非标准的 `complete` 改为既有枚举 `verified_complete`。
+测试均使用真实临时 SQLite、真实服务/仓储端口、独立连接、关闭重开及真实事务回滚；未使用
+用户运行库、媒体、私有配置或外部服务。schema 本轮未改，B 的 53→54 升级/演练、容器、wheel、
+全量 Python/Web/E2E 与截图门禁仍按其 T4 计划执行。ResourceWarning 为既有数据库告警，保留。
 
 ### 已知限制与剩余风险（交 B 判定）
 
 1. **仍无生产入口**：Scheduler/Files/Run once/API/CLI/驻留 Worker 继续走原 Job/Task 路径；
-   本 Task 未切换、未双写、未接管现存 Task/Job，不宣称 RO-2/3/5 或 Job 退休完成。
-2. **无通用过期抢占**：已发布 RUNNING 或带 uncertain mutation 的 Task 在 owner 消失后仍保留
-   名额与不可重放事实；本轮只提供内核安全边界，不新增恢复入口。
-3. **schema 未变**：仍是上一轮完成的 additive schema54；本轮只改 Task 调度行为与测试，未改
-   `_initialize()`/迁移标记，B 的 53→54 升级、容器与 wheel 门禁仍按原计划执行。
-4. **边界语义**：`release_scheduled_claim()` 现在拒绝任何仍有 `pending`/`processing` sibling
-   的释放（包括 terminal settle）；未来 Executor 必须先逐项发布最终 item 状态或传入完整
-   更新。`clear_mutation` 仅是仓储入参兼容提示，持久清除完全由 mutation target + Result
-   证据决定。
+   未切换、未双写、未接管现存 Task/Job，不宣称 RO-2/3/5 或 Job 退休完成。
+2. **无通用过期抢占**：owner 消失后的 RUNNING/uncertain Task 仍保留名额与不可重放事实；本轮只
+   提供内核安全边界，不新增恢复入口。
+3. **schema 仍为 54**：本轮只改调度行为与测试，未改 `_initialize()`/迁移标记；迁移与升级
+   门禁仍由 B 在最终候选执行。
+4. **兼容语义**：Result 省略 occurrence/fingerprint 时仍从耐久 item 补齐；Evidence 未提供
+   pin 时不强制新增 pin，但提供时必须是 Task 原 pin。首次 `source_observed_at` 一旦耐久即为
+   权威，后续普通发布不能替换。
 5. **未执行的共享门禁**：完整 Python/Web/E2E、wheel、容器 fresh/restart/53→54 与 security
    smoke、desktop/narrow 截图仍由 B 按 T4 执行；本报告不宣称这些结果。
 
