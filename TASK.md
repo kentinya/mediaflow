@@ -65,7 +65,8 @@ B 独立验收候选 Base..Head：上述功能/布局与相关 Settings 恢复�
 
 ## Developer Completion Report
 
-Status: READY FOR B REVIEW。实现 checkpoint 见本 Task 后续提交的精确 SHA。
+Status: READY FOR B REVIEW。Implementation checkpoint:
+`1e5be3b91cdb128a044ad8eb585ab2c9c6dae727`；独立 B 待审 Task Base..checkpoint。
 
 - 已删除长说明/教程/JSON 示例和重复英文主标题；共享任务中心标题边界/标签页样式。
   控件使用现有浅色主题，桌面五列、窄屏两列筛选；记录时间本地化且精确值保留。
