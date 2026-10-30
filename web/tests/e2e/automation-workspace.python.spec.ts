@@ -210,8 +210,9 @@ test("the records tab reports read-only admitted runs with their recovery owner"
   await expect(
     page.getByRole("region", { name: "自动化执行记录" }),
   ).toBeVisible();
-  // The records surface states its own read-only boundary.
-  await expect(page.getByText(/执行记录只读/)).toBeVisible();
+  // The compact records surface omits the explanatory paragraph; its real
+  // read-only boundary is checked through the absence of execution controls.
+  await expect(page.getByText(/执行记录只读/)).toHaveCount(0);
 
   // The recorded run keeps its admission-written definition identity.
   await expect(
@@ -247,8 +248,16 @@ test("the records tab reports read-only admitted runs with their recovery owner"
   // start-again retry or any execution control, and it must not invent a Task
   // Center link for work that has no Task. The exact Task Center link (with a
   // real formal Task) is proven by the Run once journey below.
+  const ownRow = ownRegion
+    .getByRole("row")
+    .filter({ hasText: "Records workspace" });
+  const detailToggle = ownRow.getByRole("button", { name: "查看详情" });
+  await expect(detailToggle).toHaveAttribute("aria-expanded", "false");
+  const detailId = await detailToggle.getAttribute("aria-controls");
+  await detailToggle.click();
+  const ownDetails = page.locator(`[id="${detailId}"]`);
   await expect(
-    ownRegion.getByText(/移交状态不确定|先核对再操作/).first(),
+    ownDetails.getByText(/移交状态不确定|先核对再操作/).first(),
   ).toBeVisible();
   await expect(
     ownRegion.getByRole("button", { name: "打开任务中心运行" }),
