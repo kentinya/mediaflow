@@ -1,38 +1,14 @@
-# NO ACTIVE IMPLEMENTATION TASK
-
-最近独立修正：**PATCH-20261030-1 — 任务中心统一时间筛选与刷新反馈，B PASS（2026-10-30）**。
-AC-1–10 已满足，该修正没有待实施或返工项。下方新增规划草案仅供后续实施使用，
-本轮只授权规划，不启动实施。
-
-- Task Type：STANDALONE MINOR BUG；Parent Slice：NONE；Difficulty：Medium；Test Level：T3。
-- Reviewed Base：`e40093aa2400794f4423987658fba3095c7adda5`。
-- Reviewed Head：`0cfbb3b785a101e4625c0c1bdd9e2a11e25e8c51`；Implementation checkpoint：
-  `87630b5898bcfa6ec3c341f7b11d73f9f5e1f06a`。
-- 完整授权/AC/Developer 交接：`0cfbb3b7:TASK.md`；B 完整范围审查、实际结果及证据限制：
-  `7d9699863b98116d636b41f08b7d1e2707b4409a:TASK.md`。
-
-现行八标签时间筛选、中文手动刷新、静默轮询与读取恢复以
-[V2 Requirements](docs/v2-requirements.md)、
-[Task Center specification](docs/task-center-page-spec.md)、
-[Product Experience](docs/product-experience.md#tasks-results-and-per-item-recovery) 和
-[Architecture](docs/architecture.md#current--task-center-query-summary-confirmation-and-typed-recovery-slice45)
-为准。完整测试流水保留在 Git 与本地 ignored evidence，本通知仅保留验收结论/checkpoint 指针。
-
-Slice46 维持 A 已接受的 **PASS / CLOSED**；原 Base、Implementation Head、SLICE、Roadmap、
-Progress 和延期边界不变。下一大 Slice 由 A 单独选择，其他实施须有相应授权。
-生命周期遵循 [Development Workflow](docs/development-workflow.md#31-independent-minor-bugs)。
-
----
-
-## 规划草案：PATCH-20261030-2 — 任务中心紧凑日期筛选栏
-
-**仅规划，未授权实施。** 保留本文件顶部 `NO ACTIVE IMPLEMENTATION TASK`；下面的
-`PLANNED` 是草案元数据。用户明确授权实施后，才将本草案提升为正式 Task；复核期间的
-源代码变化，保留真实实现起点，不把规划提交冒充实现或验收。
+# Task PATCH-20261030-2 — 任务中心紧凑日期筛选栏
 
 Authority：用户于 2026-10-30 提供任务中心筛选区截图，接受“去掉重复视图标题、共用创建日期
-标签、合并时区提示、对齐并紧凑排版”的调查建议，并要求规划一版 Task。
-本轮仅修改本 `TASK.md`；产品代码、其他文档、SLICE/Roadmap/Progress 和历史验收保持原样。
+标签、合并时区提示、对齐并紧凑排版”的调查建议，要求规划并收敛验收断言，随后明确要求
+“激活Task”。现将已修订草案提升为正式 `PLANNED` Task，供 Developer 按下述范围实施。
+此次激活仅更新本 `TASK.md`，不开始产品实现或自动启动其他角色。
+
+生命周期遵循 [Development Workflow](docs/development-workflow.md#31-independent-minor-bugs)。
+Slice46 维持 A 已接受的 **PASS / CLOSED**；SLICE/Roadmap/Progress、原 Base、已接受 Head
+及延期边界不变。前一独立修正 PATCH-20261030-1 的 B PASS 和证据保留在
+`7d9699863b98116d636b41f08b7d1e2707b4409a:TASK.md`，不是本 Task 的待办。
 
 ```text
 Task ID: PATCH-20261030-2
@@ -43,10 +19,10 @@ Task Base: b50e4834b48a1f1fd3347a36ce5cdbb16aad51ce
 Difficulty: Low
 Test Level: T2
 Planner / Reviewer: B
-Implementation Authorization: NOT GRANTED — PLANNING ONLY
+Implementation Authorization: USER-ACTIVATED — 2026-10-30
 ```
 
-### Goal
+## Goal
 
 修正现有 `/ui-v2/operations` 八个视图共用筛选区的重复说明、层级和缩进问题，让用户在选中
 标签下直接使用紧凑的创建日期范围，减少筛选区对列表首屏的占用。
@@ -73,7 +49,7 @@ Implementation Authorization: NOT GRANTED — PLANNING ONLY
 或两端日期即时筛选，必要时展开时区说明 → 查看真实范围内结果并进入详情 → 无匹配时可
 清除条件，读取失败时保留日期并沿用原读取恢复。说明展开/收起仅影响本地展示。
 
-### Implementation Scope
+## Implementation Scope
 
 预期呈现（示意文字不要求替换原生日期框的浏览器占位）：
 
@@ -109,7 +85,7 @@ Implementation Authorization: NOT GRANTED — PLANNING ONLY
 `tests/e2e/operations-inventory.python.spec.ts`；可复用现有
 `operations-task-center-visual.python.spec.ts` 作视觉验证。新增局部组件仅在确有必要时使用。
 
-### Acceptance Criteria
+## Acceptance Criteria
 
 - [ ] AC-1：八个视图保留原选中标签和单个页面标题；标签与筛选栏之间没有重复的当前视图
   标题/通用说明，四类问题处理、阶段/失败证据和必要下一步说明仍可见。
@@ -134,13 +110,13 @@ Implementation Authorization: NOT GRANTED — PLANNING ONLY
   入口保持可用。审查实际选择器影响范围；如改动涉及共享选择器或控件，针对实际受影响的
   相邻入口做检查，不要求全站逐页视觉回归。
 
-### Required Tests
+## Required Tests
 
 测试分工遵循 [workflow §6](docs/development-workflow.md#6-test-levels)。T2：本轮仅局部
 Web 呈现和说明开关，不修改后端查询、时间转换、持久化、权限或执行契约；若实际需要
 跨越该边界，先由 B 重新评估范围与 Test Level。
 
-#### Developer — affected tests
+### Developer — affected tests
 
 根目录：`python3 scripts/check_governance.py`、`git diff --check`。
 
@@ -163,7 +139,7 @@ npm run test:e2e -- tests/e2e/task-center-layout.spec.ts
 检查桌面、窄屏、详情打开和说明展开的实际截图；不以 DOM 形状或 CSS 字面量替代视觉验收。
 交接实际结果与剩余风险即可，不要求 Developer 跑整个 Python/Web/E2E 套件。
 
-#### B — acceptance and regression
+### B — acceptance and regression
 
 审查完整 `Task Base..candidate`，确认产品改动和测试同步均在授权范围。B 独立验收新增/
 修改的布局、信息层级、说明开关、可访问性及实际选择器影响范围（AC-1–4、AC-8）。
@@ -189,26 +165,28 @@ Provider。真实 API 日期用例作为控件名称变更直接影响的回归�
 日期文字、焦点、触摸可达性和说明裁切，保留候选身份/结果/截图到 ignored evidence。
 这是 T2 局部修正，不要求全仓 Python/Web/E2E、容器/打包或执行安全矩阵。
 
-### Non-goals
+## Non-goals
 
 - 不增加快捷日期、搜索、来源/状态等筛选，不引入新日期库或重写日历弹层。
 - 不承诺原生日期占位、日期格式和图标跨浏览器逐像素一致。
 - 不修改 API、URL 结构、`run-time.ts`、查询/刷新算法或整理/恢复/执行权限。
 - 不重设计任务详情、统计卡、其他页面/共享组件；不清理整份历史 CSS。
 - 不修改 SLICE/Roadmap/Progress、需求/架构/页面规范或参考图片；不选择下一 Slice。
-- 本轮不实施、不启动其他角色或子代理、不 push、不部署。
+- 不自动启动其他角色或子代理、不 push、不部署。
 
-### Developer Completion Report
+## Developer Completion Report
 
-未开始；后续仅在用户明确授权实施后填写 checkpoint、实际变更、受影响测试结果和风险，
-状态交至 `READY FOR B REVIEW`。验收仍由 B 独立完成。
+未开始。Developer 实施后填写 checkpoint、实际变更、受影响测试结果和风险，
+状态交至 `READY FOR B REVIEW`。验收由 B 独立完成。
 
-### B Review Result
+## B Review Result
 
-待实施候选。本草案不构成实施或 PASS；后续记录精确 `Task Base..Head`、实际验收结果及
+待实施候选。激活不构成实施或 PASS；后续记录精确 `Task Base..Head`、实际验收结果及
 `PASS / FIX REQUIRED`。独立修正 PASS 后回到无活跃实施 Task，不声明 Slice 关闭。
 
-### Workspace record — planning
+## Workspace record
+
+### Planning
 
 - Repository：`/Users/songzhidong/mediaflow`；branch：`main`；规划 HEAD/Task Base：
   `b50e4834b48a1f1fd3347a36ce5cdbb16aad51ce`；工作区和 Git index 可写。
@@ -218,3 +196,11 @@ Provider。真实 API 日期用例作为控件名称变更直接影响的回归�
   `output/imagegen/slice45-task-center-v1.zip`。均不加入本次规划 checkpoint。
 - 规划前 `python3 scripts/check_governance.py`：PASS。本轮只做规划文档/治理检查，
   未运行产品测试，不声称实现或验收完成。
+
+### Activation — 2026-10-30
+
+- Branch：`main`；激活前 HEAD：`da53640f093c2d4809ecf360b1c9d4a9b01c5153`。
+  工作区和 Git index 可写，无 tracked 或 staged 改动；上列原有 untracked 文件保持原样。
+- `Task Base..HEAD` 仅含本 `TASK.md` 的规划/断言修订，产品实现输入未变；保留原
+  Task Base `b50e4834b48a1f1fd3347a36ce5cdbb16aad51ce`、Goal、范围、AC 和 Low/T2 分级。
+- 激活前治理检查 PASS；本次只提升 Task 状态及授权说明，尚未实施或运行产品测试。
