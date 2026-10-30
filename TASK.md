@@ -1,4 +1,11 @@
-# Task 47.1 — Task 调度与持久化内核
+# NO ACTIVE IMPLEMENTATION TASK
+
+Task47.1 **PASS**；Slice47 保持 **ACTIVE**，下一 Task 尚未规划，无活动实施 Task。
+审查范围 `45d2e951eb00ffdd4cecbaafed50039668e445f0..3ca65507836f00be88457f17e65ddce7b7b9c276`。
+下一步：B 按已提交 Slice47 规划生产集成 Task；本轮不启动下一项实施。以下保留本次完成记录和
+验收证据，完成的 Task 不作为活动实施任务。
+
+## Task 47.1 — Task 调度与持久化内核（已通过）
 
 Authority: committed [SLICE.md](SLICE.md) at `45d2e951eb00ffdd4cecbaafed50039668e445f0`；
 [Development Workflow](docs/development-workflow.md) 管理生命周期、检查点和测试分工。
@@ -9,12 +16,13 @@ Authority: committed [SLICE.md](SLICE.md) at `45d2e951eb00ffdd4cecbaafed50039668
 Task ID: 47.1
 Task Type: SLICE
 Parent Slice: 47
-Status: READY FOR B REVIEW
+Status: PASS
 Task Base: 45d2e951eb00ffdd4cecbaafed50039668e445f0
 Difficulty: High
 Test Level: T4
 Planner / Reviewer: B
 Authorization: PLAN ONLY — 2026-10-30; USER-AUTHORIZED IMPLEMENTATION — 2026-10-30
+B Validation Maintenance: USER-AUTHORIZED — 2026-10-31
 ```
 
 ## Goal
@@ -111,35 +119,35 @@ Authorization: PLAN ONLY — 2026-10-30; USER-AUTHORIZED IMPLEMENTATION — 2026
 
 ## Acceptance Criteria
 
-- [ ] **T1 — Task 内部链完整。** 显式准入得到一个持久 Task；不建立 Job；入队、领取、心跳、
+- [x] **T1 — Task 内部链完整。** 显式准入得到一个持久 Task；不建立 Job；入队、领取、心跳、
   逐项发布、人工等待/安全暂停和原 Task 重入队可经应用服务 + 真实 SQLite 完成并重开读回。
   非调度旧行/未知 command/不完整 pin/非法上下文不能自动变成新内核工作。
-- [ ] **T2 — 容量原子且符合 Contract。** 多个来源标签和多个真实连接竞争最后一个名额不会超额；
+- [x] **T2 — 容量原子且符合 Contract。** 多个来源标签和多个真实连接竞争最后一个名额不会超额；
   多 item/attempt 只计一项，机器定时等待仍计一项。全人工等待/已确认暂停为零，混合任务仍有
   机器工作或暂停/取消尚未确认时为一。释放/重入队竞争按真实事务结果确定，无隐含自动续作。
-- [ ] **T3 — 幂等/拒绝不留副作用。** 同 principal/request 精确重复收敛同 Task，满队列也能查询
+- [x] **T3 — 幂等/拒绝不留副作用。** 同 principal/request 精确重复收敛同 Task，满队列也能查询
   原请求；相同 ID 不同上下文/不同 principal 不混淆。满队列/陈旧版本/非法输入保留既有 Task、
   choices/summary/Results/授权状态，无孤儿 Task 或新 Job；入队/恢复/Worker 发布不能擅改 pin/
   准入上下文或把 analysis-only 升为 execute-authorized；源占用不因容量变零而释放。
-- [ ] **T4 — 领取与控制安全。** 正确 Worker/schema/命令/pin 才可领取，同一 Task 只有一个有效
+- [x] **T4 — 领取与控制安全。** 正确 Worker/schema/命令/pin 才可领取，同一 Task 只有一个有效
   owner。旧 owner/错误代次/错误 Worker 的心跳、item/result/证据/聚合发布和锁释放全部无效。
   心跳不误伤合法控制；暂停/取消有请求与确认区别，不提前释放 in-flight 名额，不丢已接受取消。
-- [ ] **T5 — 发布原子且不串项。** 当前 claim 的逐项结果/证据/状态能共同提交；故障全部回滚。
+- [x] **T5 — 发布原子且不串项。** 当前 claim 的逐项结果/证据/状态能共同提交；故障全部回滚。
   错 Task/item/pin/源版本不能写入，旧无栅栏接口不能绕过新内核。此前成功/历史结果、独立 sibling
   及现有锁保护不被覆盖；验收不要求底层 TaskItem ID 恒等。
-- [ ] **T6 — 重启不重放。** 排队未开始工作可重开按原 pin 领取；领取失效后只按既有可证明安全
+- [x] **T6 — 重启不重放。** 排队未开始工作可重开按原 pin 领取；领取失效后只按既有可证明安全
   边界处理。模拟变更派发前及派发后未证实结果的中断，后者保留 uncertain/不可重放事实，重启/
   到期/无 Result 不清除；不承诺任意崩溃点自动无缝续作。
-- [ ] **T7 — 真正增量升级。** Task Base 原代码建立的 schema53 与新建库都能到54并重开；旧 Task/
+- [x] **T7 — 真正增量升级。** Task Base 原代码建立的 schema53 与新建库都能到54并重开；旧 Task/
   item/result/plan/checkpoint/Job/continuation/授权/日志等原值与关系保持，无授权提升和自动入队。
   覆盖 Unicode/合法长路径/nullable旧证据/活动及终结工作，完整性/FK检查通过。更高版本拒绝。
-- [ ] **T8 — 升级失败原子。** 在新增 schema/索引及版本推进的代表性边界注入失败，原 schema53
+- [x] **T8 — 升级失败原子。** 在新增 schema/索引及版本推进的代表性边界注入失败，原 schema53
   数据/版本/旧代码可读性保持，去掉故障后可安全重开到54；不把只读副本演练成功当作直接升级
   失败原子的唯一证据。新 schema 下各真实 Task 创建/写入入口仍工作，不受列顺序影响。
-- [ ] **T9 — 过渡边界清晰。** 新内核没有生产外部入口/驻留消费者，不接管、复制或双写 Job，
+- [x] **T9 — 过渡边界清晰。** 新内核没有生产外部入口/驻留消费者，不接管、复制或双写 Job，
   也不对现存 Task 额外领取。原 API/CLI/Web、Worker、手动整理/发现、Run once、普通文件两库
   操作、记录与恢复保持原行为；保留 Job 仅为尚未切换的现行路径，不宣称最终退休完成。
-- [ ] **T10 — 可安装/可运行。** 源码外安装实际 wheel 后能导入/使用同一调度服务与 SQLite 升级；
+- [x] **T10 — 可安装/可运行。** 源码外安装实际 wheel 后能导入/使用同一调度服务与 SQLite 升级；
   B 的适用 T4 全回归和当前原生/容器兼容验收通过，或实际不可用门禁明确待完成，不能记为 PASS。
 
 ## Required Tests
@@ -194,11 +202,15 @@ Authorization: PLAN ONLY — 2026-10-30; USER-AUTHORIZED IMPLEMENTATION — 2026
 - 在 `web/` build 后，真实 Python/API/SQLite/Worker 兼容旅程：
 
   ```sh
-  npm run test:e2e -- --config=playwright.python.config.ts tests/e2e/operations-inventory.python.spec.ts tests/e2e/operations-task-center-visual.python.spec.ts tests/e2e/direct-files.python.spec.ts
+  npm run test:e2e -- --config=playwright.python.config.ts --workers=1 tests/e2e/operations-inventory.python.spec.ts
+  npm run test:e2e -- --config=playwright.python.config.ts --workers=1 tests/e2e/operations-task-center-visual.python.spec.ts
+  npm run test:e2e -- --config=playwright.direct-files.python.config.ts --workers=1 tests/e2e/direct-files.python.spec.ts
   ```
 
   核对现有列表/普通工作/手动摘要和结果可读、重启后不丢、desktop/narrow 截图无退化。
   这是 schema54 的原流程兼容证据，不作为三入口已切换新 Task 引擎的证明。
+  三个 spec 分别使用全新的现有 harness；inventory 会真正移动 fixture 文件，不能把其已消费
+  的源当作 visual 的初始文件。双库普通文件使用仓库已有的 dedicated config，不混用入口。
 - 安装本候选实际 wheel，运行共享 wheel smoke 及源码外的 Task 调度服务/SQLite小链路，确认
   导入来自 site-packages、不是源码；记录确切 artifact 路径/哈希，防止旧构建目录漏包。
 - 共享 schema/Worker 兼容性需要容器 fresh/restart/真实53→54升级和安全证明：
@@ -304,136 +316,106 @@ Difficulty、Test Level、schema 版本、生产入口、SLICE/Roadmap/Progress 
 
 ```text
 Reviewed Base: 45d2e951eb00ffdd4cecbaafed50039668e445f0
-Reviewed Head: 894eaa1d920dcfbdf3e5c96ffdba0ff26ec69f52
-Implementation: e53e38999459f81da65f625ee3b73d39e9ff793e + f8a7c0e6bd37dca36c5810f083d8506f164cd490
-Decision: FIX REQUIRED — 1 remaining P1: T5 source-version / evidence-pin integrity
-Previous five blockers: reproduced correction paths PASS; not a Task/T4 PASS
+Reviewed Head: 3ca65507836f00be88457f17e65ddce7b7b9c276
+Developer implementation: e53e38999459f81da65f625ee3b73d39e9ff793e
+  + f8a7c0e6bd37dca36c5810f083d8506f164cd490
+  + 9b77a632eb87ff7038d53f9069558db42fc88e13
+Developer handoff: 2efca4c6f8ec1c9b0502d489e3cb1839e1293b24
+Decision: PASS — Task47.1 T1–T10 satisfied; no remaining Task blocker
 Slice Required Outcomes / Surfaces all satisfied: NO
-Next: SAME TASK FIX LOOP; preserve Task ID/Base/Goal/Scope
+Next: NEXT TASK — not yet planned; Slice47 remains ACTIVE
+Evidence: .git/validation-evidence/b-task47.1-2efca4c6/
 ```
 
-B 独立审查完整 Task Base..Reviewed Head 的15个文件，逐项核对实现、测试、schema/版本消费者、
-升级演练脚本与交接记录；本轮仅更新本 Task 的审查/指导，没有修改产品或测试实现，无角色例外。
-原五项审查及详细指导保留在 `a13c4a71` / `792040a1`，原 Base 不变，不以新问题重开/扩张 Slice。
+B 审查完整 Base..Reviewed Head 的20个文件，核对调度应用/领域端口、SQLite事务与旧 writer、
+所有 schema 版本消费者、真实升级及测试改动。未仅审最后一次修复或根据 Developer 的 PASS
+标签放行。原审查/指导保留在 Git：`a13c4a71`、`792040a1`、`a73e7aae`，Base/Goal/Scope 未变。
+本提交仅更新 Task 计划中的真实测试入口和审查记录，执行输入与 Reviewed Head 相同。
 
-### 原五项修复复核
+**角色例外与独立性：** 用户先以“改”、再以“授权”明确授权 B 同步旧 Web 验收断言与既有测试
+配置。本轮 B 修改5个 Web 测试文件；没有修改产品 Python、前端运行代码、harness、超时或重试。
+这些测试维护由 B 自己负责，不冒充 Developer 交付或第三方独立审查。产品实现仍由 B 独立审查。
+A-owned SLICE/Roadmap/Progress、需求与架构合同未改，既有 untracked 文件未修改或暂存，未 push。
+Developer 报告的 Fix start SHA 是引用的旧审查点；实际 `9b77a632^` 为 `a73e7aae`，本次完整范围
+包含该中间文档，不据错误标签缩小审查。
 
-| 原阻塞 | 实际结论 |
+### 阻塞修复与验收结论
+
+| 验收 | 实际核对结果 |
 |---|---|
-| 成功/不确定项再次变更 | 原重放链已拒绝，uncertain Result 保留 marker，合法无效果失败可继续；通过 |
-| waiting/paused 取消被恢复清除 | 无 owner 的取消能结算，最新 revision 也不能恢复已接受 CANCEL，成功 sibling 不变；通过 |
-| 混合项提前释放容量 | 事务读取全部 durable siblings，混合项释放拒绝，全人工等待可释放，最后名额竞争未超额；通过 |
-| 乙的 claim 释放甲 Task | 服务及仓储均拒绝交叉身份，合法自身释放仍可完成；通过 |
-| 旧清理删除恢复后的新锁 | 执行锁在验证 claim 的释放事务内删除，不再有提交后的无归属清理；双连接交错下新锁保留；通过 |
+| T1/T3 — 同一个 Task、准入/幂等/原权限 | SQLite 准入→领取→逐项发布→等待/暂停→原 Task 重入队→重开成立；精确重复满队列仍收敛；错上下文/满队列拒绝不产生孤儿或提升 execute 权限；旧行无准入资格 |
+| T2 — 容量 | 独立连接最后名额竞争不超额；多 item/attempt 只计一项；混合机器工作、未确认控制及机器等待仍计一项；全人工等待/安全暂停释放，拒绝重入队保留既有状态 |
+| T4 — owner/控制/锁 | 原“乙 claim 释放甲 Task”“接受取消后重入队清除”“旧 finally 删除新锁”均已拒绝；合法自己释放仍成立；旧 owner/代次/Worker 的心跳、发布和控制不能越过新 owner |
+| T5 — item/Result/evidence | 原源版本替换、Result 错版本、evidence 错 pin 及 progress/仓储绕过全部拒绝且回滚；原首次观察时间与已知版本保持。省略可选值通过既有 SQL COALESCE/Result 绑定保留耐久证据；合法同版本续作成立 |
+| T6 — 效果非重放 | 成功项不能再进入变更；uncertain marker、Result 和源占用在拒绝/重开后保留；派发后无已证实结果不因到期/重启/缺 Result 重放；有证据的无效果剩余阶段可显式续作 |
+| T7/T8 — 增量迁移 | 真实 Base schema53→54、新建/重开、更高版本拒绝及代表性故障回滚通过；165项旧行保留断言通过；未知/退役 Job 仍是原始证据，不自动入队 |
+| T9 — 过渡兼容 | 新内核无生产入口/驻留消费者，未双写、接管或删除 Job；现有手动/Run once/四类恢复、普通文件两库操作、记录/导出/重启的实际旅程通过 |
+| T10 — 安装运行 | 源码外实际 wheel 的 site-packages 调度链、真实53→54升级、容器 fresh/restart/升级失败/恢复及安全检查通过 |
 
-以上由本轮实际运行的58项内核/迁移测试及对测试链的独立读码核对支持，不将“测试数增加”当作
-全部 T1–T10 已通过。取消请求先由 `request_scheduled_control()` 持久化，安全确认在另一事务完成；
-确认内 Task/item/queue/执行锁一起提交，重入队事务拒绝已接受 CANCEL。Developer 报告的“请求与
-确认一起原子提交”不符合实际代码，不作为本轮证据；这不否定已接受取消不会被恢复清除的修复。
+原五项 P1 和随后源版本/pin P1 均已消除。以上断言限于本 Task 的内部能力与既有流程兼容；
+不把 fake 标记、字段相等、DOM 数量或测试总数当作生产三入口已接入的证明。
 
-### 仍需修正的 P1 — 同一 Task 的源版本与结果/配置证据可以被替换（T5；关联 T3/T6）
+### B 实际验证
 
-**要保护什么。** 整理 A.mkv 后暂停，期间同名文件被另一份内容替换，恢复不能把原任务悄悄
-改为处理新文件；任务原本绑定配置 A，成功记录也不能混入配置 B 的处理证据。这里复现的是
-新内核现有服务接口的身份/证据保护失败，尚无生产消费者，不声称当前页面已移动错文件。
-这属于原 T5“错 Task/item/pin/源版本不能写入”的未完成验收，不新增恢复或生产入口要求。
+原始命令、耗时、退出码、失败 traces 与截图保存在上述稳定 ignored 目录，索引为 `README.md`；
+证据仅在本地，不宣称 CI/远端可访问。除 Web 命令 cwd=`web/`，其余为仓库根或日志记录的干净
+Git archive/源码外安装环境。所有媒体、数据库和容器均为合成的隔离临时数据。
 
-**已独立复现的三条链（均为真实临时 SQLite、现有服务/读取端口）：**
-
-1. `admit → claim/begin_work → begin_item` 保存 verified 的 occurrence-v1 / fingerprint-A /
-   首次观察时间 → `request_control(PAUSE) → acknowledge_control → requeue → worker-2 正常领取`
-   → 对同一 storage/path `begin_item` 传 occurrence-v2 / fingerprint-B / 新观察时间。
-   同 Task、同 item 被写成版本2，原首次观察时间被覆盖，随后 `begin_mutation(move)` 被接受。
-2. Item 仍是版本1，已进入 mutation 边界，`complete_item()` 的 Result 填版本2、其余保持同
-   Task/item/storage/path；成功 Result 被保存，item 与 Result 指向不同版本，mutation 标记清除。
-3. Item 与 Result 都保持版本1，仅把 PipelineEvidence 的 snapshot/digest 改为另一对值；
-   Task 仍 pinned snapshot-1，evidence 保存为 snapshot-other，成功发布同样清除 mutation 标记。
-   第2/3条分别验证，不能仅用一次“版本和 pin 都错”的组合拒绝掩盖另一条未校验。
-
-**代码位置与原因。** [begin_item](mediaflow/application/task_scheduling.py) 重建现有 item 时
-直接采用传入身份/首次观察字段；[SQLite 持久化](mediaflow/infrastructure/sqlite_runtime.py) 的
-`_require_scheduled_item_locked()` 只比 storage_id/source_path 与 attempts，没有保护已知源版本。
-`publish_scheduled_item_outcome()` 新增了 storage/path 比较，但仍没比 Result 的源版本及
-PipelineEvidence 的 configuration_snapshot_id/digest，随后可将这些记录当成已证实结果清除边界。
-最初缺口来自 `e53e3899`（2026-10-30 19:27:53 +08:00），本次 `f8a7c0e6` 未补完整。
-
-**Developer 在本 Task 内按以下步骤修正：**
-
-1. 明确现有 TaskItem 已绑定的源身份和版本，复用已有 source-occurrence/fingerprint、库/Storage
-   路径及 checkpoint 语义；可参照 `manual_organize_execution.py` 的现有精确来源比较，不增加
-   全局索引、版本登记库或第二套恢复规则。只读内核不自行访问 Storage/Provider 验证文件。
-2. `begin_item()` 恢复同项时保留已有身份及首次 source_observed_at。省略可选入参不能把已知
-   证据清空/降级；已知版本冲突须有界拒绝，不因同名路径或 attempt +1 就替换内容/库绑定。
-   首次新项仍能开始；真正缺失的旧证据保持未验证，合法补充依现有语义处理，不能捏造已验证。
-3. 在实际持久化事务内对 start/progress/outcome 重查原 item 的已知绑定，防止通过
-   `record_item()` 或既有 repository 端口绕过服务层检查。以耐久原值为准，不只比较调用方传入
-   的 item 与 result（两者可能一起被换掉）。拒绝时不递增 attempt、不写半套状态/证据。
-4. `publish_scheduled_item_outcome()` 同事务验证 Result 与耐久 item 的精确源版本、提供的
-   PipelineEvidence pin 与 Task 原 pin。不要从当前 Active 换 pin，也不要把冲突字段自动修正后
-   当成成功证据。合法缺省/无 evidence 的既有场景按原兼容语义保留，不强制新增证据产品。
-   错版本或错 pin 拒绝后，原 Result/item/evidence/claim/容量/授权/源占用保持，mutation 保护不清除。
-5. 保持原五项修复和合法原 Task 续作；来源发生变化时保留事实并按现有安全边界拒绝继续，
-   不增加“技术失败恢复”、自动重新整理、任意历史 Reprocess 或新的用户确认流程。
-
-**必须补的回归验收：**
-
-- 在现有 `tests/test_task_scheduling.py` / `test_task_scheduling_fencing.py` 中先落下上述三条
-  失败回归，经现有服务和真实 SQLite 验证；每条独立断言拒绝且 durable state 零改写。
-- 补正向对照：同版本/原 pin 的新项与合法暂停续作仍成功，省略可选身份参数仍保留原证据与
-  首次观察时间；未验证旧证据不能凭缺失变成已验证。同一项历史 attempt/Result 不丢。
-- 覆盖现有 progress/仓储写入的同类绕过、错证据拒绝后的关闭重开、结果/item/evidence
-  故障回滚；确认 mutation marker 未因错版本/错 pin 消失，原成功/不确定 siblings 不受影响。
-- Developer 运行新增失败回归、新增/变更与直接受影响测试及静态检查，沿用本 Task 已列的
-  affected 命令；共享源比较有改动时补其直接受影响回归。B 在新 checkpoint 再审完整 Base..Head。
-  不能只改测试预期允许身份替换，也不把 B 的全量 Python/Web/E2E/容器门禁转交 Developer。
-
-### 本轮实际验证与未完成门禁
-
-本轮起点：`main` / `894eaa1d920dcfbdf3e5c96ffdba0ff26ec69f52`；开始无 tracked edits，既有
-untracked OS/log/图片/压缩包保留且不暂存。治理 preflight PASS。未读用户运行库、媒体或私有配置。
-
-| 命令 / 范围 | B 实际结果 |
+| 验证 | 实际结果 / 原始证据 |
 |---|---|
-| 三个 Task scheduling / fencing / migration 模块 | 58 tests / OK；runner 3.745s，完整进程3.972s |
-| `.venv/bin/python -m unittest discover -s tests` | 2994 tests / OK，skipped=7；runner 342.326s，完整进程342.759s |
-| 全仓 ruff format/check、compileall、pip check、两份示例 config validate | 全部通过；禁止依赖 rg 无匹配（预期 exit1） |
-| Web typecheck / lint / format:check / build | 通过；保留 bundle-size warning |
-| `npm run test -- run` | 1319 passed / 1 failed（1320），88文件中87通过；完整进程101.595s |
-| 真正 Task Base 的 Web 单用例对照，同一 node_modules/未改 lockfile | 同一 status 断言失败；1 failed / 25因筛选未运行，不是重跑全套 |
-| 现有服务的三条源版本/pin 链 | 全部错误接受，已确认 T5 阻塞；无 Storage mutation 调用 |
-| governance / Base..Head diff whitespace | 通过 |
+| 三个调度/栅栏/迁移模块独立运行 | 65 tests，OK；`focused.json/log`。其后全量已覆盖，不再重复 |
+| `.venv/bin/python -m unittest discover -s tests` | 3001 tests，OK（7 skipped）；`python-full.json/log` |
+| 全仓 ruff format/check、compileall、pip check、两个示例校验、禁止依赖扫描 | 全部符合预期；扫描无匹配 exit1；`quality.json`、`quality-0..6.log` |
+| 真正 Task Base53→54 upgrade rehearsal | PASS，165 preserved-row assertions、0 failed/seed failures；`quality-7.log` |
+| Web typecheck/lint/format、完整 Vitest、build | PASS，88 files / 1320 tests；`web.json`、`web-0..4.log`；测试维护后的三项静态门禁另有 `web-final-quality.json/log` |
+| 默认 built-artifact/fake-API 浏览器全量 | 253 passed，0 retry/skip；`e2e-fake-check.json/log` |
+| 原生 Python/API/SQLite/Worker inventory | 48 passed；`inventory-isolated.json/log`；手动确认、Run once 相关现行记录、四类恢复、权限、混合批次、non-replay 与重启均经既有入口 |
+| 原生桌面/窄屏视觉旅程 | 2 passed；`visual-isolated.json/log`；另实际查看截图：任务列表/问题文件、整理摘要、元数据输入、附件告警、两库逐项结果/暂停已知效果，未见本次退化 |
+| 双库普通文件原生旅程 | 22 passed；`e2e-direct-check.json/log`；独立 dedicated config，逐项效果、进度、丢响应回读、重启、暂停续作均保留 |
+| 干净归档源码构建 wheel + 标准 smoke + 源码外内核链 | PASS；`wheel-build`、`wheel-smoke`、`installed-kernel` JSON/log；导入来自 site-packages，旧 Task/pin/新结果重开可读 |
+| 容器安全/fresh/restart 与真实 Base53→54失败/恢复 | PASS；`docker-security-shared`、`docker-upgrade-shared` JSON/log；非 root、挂载、RBAC、零效果拒绝、日志脱敏及 API/Web 持久化通过 |
+| 治理、完整 diff/manifest、空白与文档链接 | PASS；仅 Task 文档作为本轮收尾，不夹带用户 untracked 文件 |
 
-Web 失败位于 `web/src/features/operations/OrganizeRouter.test.tsx:985`，要求返回任务中心时保留
-`status=paused`，实际为 null。普通临时目录中的真实 Base 对照执行到同一断言并失败；本 Task
-未改 Web 源码/测试/依赖。现行 Task Center 规格与 `operationsLandingSearch()` 已去掉隐藏状态
-筛选，邻近导航单测也验证丢弃它。这是既存测试预期与当前契约不一致，不能冒充本次内核回归；
-不在此 Task 扩改 Web，也不删断言/加重试把红门禁说成绿。Web 全量结果仍为失败、未获豁免，
-其证据处理留在 B，不把它添加为本 Task 的产品修复项。
+Wheel：`dist/mediaflow-2.0.0.dev0-py3-none-any.whl`（相对本地证据目录）；SHA-256：
+`6a1ba7780c34fce0f41d3d1abbc9158b0cbb446446575c969f27baac9059665d`。
+Security image：`mediaflow-task47-1-cf4a5c81-shared-review`，ID：
+`sha256:849bc4ebae8946224f9457622d29b19838a7a3bbe48c65bfda6c6ee9249465a2`。
+构建资产、解释器及配置/依赖摘要见 `artifact-manifest.json`。
 
-原始日志/脚本仅本机 ignored evidence 可达：`.git/validation-evidence/b-task47.1-894eaa1d/`。
-`focused`、`python-full`、`quality`、`web` 的日志/JSON 保留完整命令/结果/时长；
-`web-base-failure` 为实际 Base 断言对照，`source-context-repro` 为三条独立内核复现。
-首次 Base 放在隐藏目录时夹具加载失败、首次探针的证据读取方法名错误均已纠正，原日志保留，
-不计为产品失败或正确 Base 断言复现。数据库 ResourceWarnings 保留，未改成静默通过。
+**匹配复用：** `2efca4c6..Reviewed Head` 仅变5个 Web 测试；Python/迁移/安装包/部署输入未变。
+完整 Web unit/build 从 `cf4a5c81` 执行，其后仅变 E2E（Vitest 明确排除）；默认253项和普通Files22项
+从 `bf35522f` 执行，其后只变默认 config 排除的原生 inventory spec。最终原生48+视觉2项在
+Reviewed Head 分别新开 harness 通过。精确文件差异与允许排除记录在 `reuse-proof.json`。
+文档收尾不改变执行输入；没有以旧失败运行或 Developer 受影响测试替代 B 全量。
 
-本轮从 2026-10-30 14:18:13 UTC 开始；截至14:35:28，实际复核1035秒。各测试/检查进程的
-墙钟保守累计不足480秒（并行命令也逐项累加），低于47%，符合用户要求的小于50%。已通过的
-同候选全量结果不机械重跑；没有通过等待凑时长，剩余产品门禁按阻塞规则停止。
+**实际失败与处理：** 旧 Web 测试仍要求已移除的 status/command 筛选；按已接受的时间筛选合同
+同步，保留精确 Task/文件、返回、计数、权限及无重复 POST 断言。Disconnect 会清空导航意图，
+回连改走实际 reload→认证续接；附件页沿用现有 `Refresh`；键盘菜单先把目标滚入视口再 focus。
+日期测试曾复用前面已恢复完成的 metadata seed，改用现有仍待处理的分页 fixture，保留全部
+书签→证据→关闭返回→零变更断言。旧计划混用了 direct-files harness，已更正为现有 dedicated
+config；inventory 真正移走 `Three.2003.mkv` 后会影响同进程 visual，因此三个 spec 分别用全新
+现有 harness，全部重跑通过。没有加 retry、force click、skip、调大 timeout 或改产品来迎合测试。
 
-发现实际 T5 阻塞后按 workflow §6 提前 FIX REQUIRED，未继续运行 native浏览器/E2E/截图、
-源码外 wheel、新候选容器 fresh/restart/53→54 升级/security 及更广升级演练。本轮6个迁移测试
-覆盖真实53→54/重开/故障边界，但不替代上述门禁。Docker daemon 实际可用，未把未运行写成
-环境不可用；这些门禁仍由 B 在修正候选完成，未豁免、不标 PASS。
+Docker 初次默认 `/var/folders` 临时目录不能被 Colima 挂载，在启动产品前失败；仅将 `TMPDIR`
+设为共享 workspace 中的本次隔离目录后，原脚本全部通过。首次安装链误用系统 Python3.14 被包
+正确拒绝，改用项目 Python3.13 后通过。上述全部失败及 B 中间测试错误均保留，没有包装成产品
+缺陷或删掉失败记录。既有 SQLite ResourceWarning、JSDOM scrollTo 提示及 bundle-size 警告保留；
+7项跳过如实记录，未新增豁免。
+
+本轮从 `2026-10-30 15:22:51 UTC` 开始。计入全部失败/重跑，已计时命令约25分钟；另将零散
+静态检查/探测和未单独计时的初始尝试按5分钟保守余量计入，合计不足30分钟。本轮已超过65分钟，
+测试时间低于50%；具体记录见 `timing.json`，没有通过空等增加分母。
 
 ### Slice 全结果重评与交接
 
-| Slice outcome | 本次结论 |
+| Slice outcome / surfaces | 本次结论 |
 |---|---|
-| RO-1 Task 统一调度/执行 | 内核原五项已修，T5 源版本/证据 pin 仍阻塞；未完成 |
-| RO-2 三入口共用引擎 | 本 Task 明确未接生产入口；未交付 |
-| RO-3 同工作四类恢复 | 仍是内核基础；生产四类改接未交付，本 Task 的身份/证据保护须先完成 |
-| RO-4 数据保留并删除 Job | additive54/代表性迁移回归通过；Job 转换/删除及完整升级证明未完成 |
-| RO-5 操作与管理旅程完整 | 原入口兼容待剩余门禁；Task 化生产集成和最终验收未完成 |
+| RO-1 — Task 统一调度/执行 | 本 Task 内核基础已通过；生产执行接管、配置消费与剩余集成未完成 |
+| RO-2 — 三触发共用引擎 | Files、due、Run once、API/CLI/驻留 Worker 尚未接入新内核；未完成 |
+| RO-3 — 同一工作四类恢复 | 内核身份/源版本/历史/非重放保护通过；生产四类恢复改接同一 Task 未完成 |
+| RO-4 — 保留数据并删除 Job | 本轮 additive54 的真实升级/失败原子/包与容器兼容通过；历史 Job 转换与表/代码/接口删除未完成 |
+| RO-5 — 完整操作与管理旅程 | 原流程兼容已验证；Task 化后的 Files/Automation/Task Center/Dashboard/日志/导出/健康/API/CLI 最终验收未完成 |
 
-Developer 保留同一 Task ID/Base/Goal/Scope 修正上述1项 P1、提交新 checkpoint 后再
-READY FOR B REVIEW。Slice47 保持 ACTIVE，不改 A 的 Contract/Roadmap/Progress，不规划下一 Task。
+Task47.1 **PASS**，Slice47 继续 **ACTIVE**。当前仅交付内部调度与持久化内核，用户尚不会从现有
+入口使用新引擎；Job 仍服务尚未切换的现行路径。下一步应规划生产集成的下一项完整 Task；本轮
+未被要求规划下一 Task，不擅自启动实施，不关闭 Slice、不更新 Roadmap/Progress。
