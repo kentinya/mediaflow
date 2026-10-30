@@ -339,54 +339,173 @@ B 独立审查完整 Base..Head 的15个文件（含实现、测试、脚本、�
 产品实现或测试，没有自审/角色例外。范围先按本 Task 的内部内核交付评估：生产三入口未切换、
 旧 Job 未转换/退休是既定边界，不作为缺陷，也不误记为 Slice 完成。
 
-### 必须在本 Task 修正的阻塞
+### 五项阻塞的开发指导
 
-1. **P1 — 已完成/不确定项仍能再次进入变更边界（T5/T6）。**
-   `begin_item()` 对已有项直接递增 attempt；持久层只核对 attempt 数，没有验证原项/历史结果/
-   checkpoint 是否允许继续。`complete_item()` 又仅凭 item ID 匹配清除 mutation 标记，即便
-   Result 明确是 partial + unknown。实际公共服务调用已复现两条链：成功 → 再 begin_item →
-   第二次 begin_mutation；partial/unknown Result → 标记清除 → 同项第二次 begin_mutation。
-   修正：在同一受 claim 保护的持久化边界检查当前项、现有结果/effect/checkpoint 的可续作事实；
-   成功、ignored 和不确定效果不可重新开始或进入新变更。保存 uncertain Result 应保留不可重放
-   事实，不能当成已证实边界；只按已有安全语义接受真正可继续的剩余阶段，不建立新恢复系统。
-   补足上述两条链及成功 sibling 的拒绝用例；调整
-   `test_a_later_attempt_cannot_replace_a_recorded_outcome` 中把成功项再次开始当合法行为的部分，
-   同时保留其历史 Result 不可替换断言，可使用既有允许且证实无效果的失败分析尝试验证追加历史。
+以下指导细化同一 Task 的修正，不改变 Goal/Base/Difficulty/Test Level 或 T1–T10。
+修正范围限于现有调度内核及直接受影响测试，不接生产入口，不增加恢复类型、队列、后台补偿器或
+对外接口。下面的生活化例子解释接入后的保护目标；实际缺陷均从已有内部服务/锁端口复现，
+不是当前 Web 故障证据。尤其第4项没有已证实的正常用户操作触发链，按内部归属契约修复。
 
-2. **P1 — 人工等待/已暂停状态的取消可被恢复清除（T4）。**
-   `request_control()` 仅立即结算未领取的 QUEUED，等待/已暂停时虽持久接受 CANCEL，却没有
-   owner 可以确认；`requeue_scheduled_task()` 只查 Task.status == CANCELLED，随后把尚未
-   确认的 CANCEL 清空。已复现 waiting_human → CANCEL → 按最新 control_revision requeue
-   得到 pending/queued 且 control_request=None。
-   修正：对无活动 machine owner、无 in-flight 的支持状态，原子完成适用控制；任何重入队均
-   不得抹去已接受取消。保留控制请求/确认和旧结果，继续拒绝取消后恢复；覆盖 waiting_human/
-   paused 的取消、取消与恢复并发，以及重复控制，不靠新的自动续作入口解决。
+主要修改位置：[应用服务](mediaflow/application/task_scheduling.py)、
+[调度端口](mediaflow/domain/task_scheduling.py)、[SQLite 持久化](mediaflow/infrastructure/sqlite_runtime.py)；
+回归放在既有[调度测试](tests/test_task_scheduling.py)与[栅栏/并发测试](tests/test_task_scheduling_fencing.py)，
+不另建过程工具。
 
-3. **P1 — 混合任务未全等待也会释放容量及 owner（T2/T4）。**
-   `defer_to_human()` / `release_scheduled_claim()` 不核对整项的剩余机器工作。已有两个文件，
-   只把 A 提交为 WAITING_CONFIRM，而 B 仍 PROCESSING，就能把 Task 改为 waiting_human、
-   容量从1降为0并接受第二项工作，原 B 还失去了合法发布 owner。
-   修正：按现有耐久 item/阶段事实和本次拟发布状态，在释放事务中判断是否确实全人工等待；
-   混合任务仍有机器工作时不能释放名额/claim。保持真正全等待、明确安全暂停及终结的既定语义；
-   补充混合/全等待对照和释放与新准入竞争，不能只相信传入聚合计数或仅检查 mutation 标记。
+建议先修第4项的共用身份检查，再修第1项的执行资格、第2/3项的状态转换，最后完成第5项的
+锁清理交错验证；可以合并共享事务逻辑，不拆新 Task。先把已复现链写进现有测试并确认失败，
+再改实现；只做解决下述结果所必需的调整。
 
-4. **P1 — B 的有效 claim 可释放 A 的 Task（T4/T5）。**
-   `release_scheduled_claim()` 用 task.task_id 读取/更新目标，却独立验证 fence 指向的另一个
-   Task，缺少两者相等检查。通过 `defer_to_human(claim_B, task=A, items=A的项)` 已复现
-   A 的 owner 被清除，而 B 仍 claimed；没有伪造 token 或修改数据库。
-   修正：在任何写入前验证目标 Task 与 fence 完全一致，并保证 claim、item、聚合和 queue
-   transition 比较同一持久身份/代次；跨 Task 输入须零写入拒绝。补两项不同 Worker 正常
-   claim 的交叉释放用例和正确自身释放对照，不新增 Web/API 入口。
+#### 1. P1 — 继续剩余文件时，不能重做成功项或结果不明的操作（T5/T6）
 
-5. **P1 — 暂停后的迟到清理能删掉替代 owner 的锁（T4）。**
-   `_settle_control()` 先提交暂停/释放名额，再调用无 owner_token 的
-   `reclaim_task_locks(task_id)`。已在这两个现有调用之间暂停线程：另一连接完成原 Task
-   requeue、worker-2 领取及既有 `adopt_or_acquire` 的锁代次交接；旧清理随后删除了新代次的锁。
-   修正：把必要锁释放纳入与确认一致的安全事务，或按本代次实际拥有的精确锁代次条件删除；
-   禁止在释放 claim 后按 Task ID 全量删锁。复用现有锁端口/代次，不建立新锁系统。补确定性的
-   双连接/线程交错回归：新 owner 的锁必须保留，旧 owner 清理不得影响它，原正确暂停清理仍有效。
+**保护目标与复现。** 同批 A 已成功、B 还需处理，继续时只能处理 B；A 的移动结果不明时，
+也不能因为再试一次就重新移动 A。现有入口是 `TaskSchedulingService.begin_item()`、
+`begin_mutation()`、`complete_item()`。已复现成功 A → 再 begin_item(A) → 再 begin_mutation(A)，
+以及 begin_mutation(A) → 发布 partial/unknown Result → mutation 标记清除 → A 再次开始变更。
+
+**开发步骤：**
+
+1. 在 `mediaflow/application/task_scheduling.py` 明确开始/继续的资格；在
+   `sqlite_runtime.py` 的 `_require_scheduled_item_locked()` / `upsert_scheduled_item()`
+   等实际写入事务中重查耐久 item、Result、已有 checkpoint/effect 事实和当前 claim。
+   不能只在服务层读一次状态，也不能仅凭 attempt +1 许可重做。
+2. 已成功、已忽略的项不能重新开始；已派发但未证实的效果不能再次执行。首次未派发的新项
+   仍可正常开始；证实无效果且已有规则允许的剩余分析/续作保留。复用
+   `mediaflow/domain/processing_checkpoint.py`、`mediaflow/application/processing_checkpoint.py` 的安全语义，
+   不把所有失败都当可重试，也不把所有历史项一律封死；本轮不接四类恢复的生产 dispatch。
+3. `publish_scheduled_item_outcome()` 应在结果/item/evidence 同一事务中，按该次操作的证据
+   决定能否清除 mutation 边界。`clear_mutation=True` 或 item ID 相同均不是安全证明。
+   unknown、attempted_unverified 或非空 uncertain_effects 必须保留不重放保护；记录事实仍可
+   落库，不能丢弃 uncertain Result 来过测试。成功证明和证实无效果按既有语义处理。
+4. 核对现有 `record_item()` / `begin_mutation()` 不能绕过同一保护，拒绝将成功/不确定项改回
+   可执行状态后重放。拒绝须保留原 item/attempt/Result/evidence、pin、授权和源占用。
+
+**回归验收：**
+
+- 在 `tests/test_task_scheduling.py` / `test_task_scheduling_fencing.py` 增加上述两条失败链；
+  成功项再次开始或直接再次申请变更均拒绝，成功 sibling 的历史保持原值。
+- uncertain Result 保存后，从另一真实 SQLite 连接及关闭重开后仍不能重放；超时/租约到期
+  不会将其变成“未发生”。合法首次开始、证实结果清除边界和允许的无效果分析续作仍通过。
+- 调整 `test_a_later_attempt_cannot_replace_a_recorded_outcome`：不再用重做成功项制造 attempt2，
+  改用既有允许、明确无效果的分析尝试；保留旧 Result 不可覆盖和新历史可追加两类断言。
+  证据 fixture 使用既有枚举含义（如 `verified_complete` / `none`），不能把非标准 `complete`
+  当作已证实效果。沿用结果/item/evidence 的故障回滚测试。
+
+#### 2. P1 — 等待或暂停时取消，之后不能又恢复执行（T4）
+
+**保护目标与复现。** 用户在等待确认时取消本次整理，这个 Task 后续不能又排队执行；取消不
+撤销已完成文件的效果。现有 `request_control()` 仅立即结算未领取的 QUEUED；已复现
+waiting_human → request_control(CANCEL) → 带最新 control_revision 的 requeue → pending/queued，
+已接受的 CANCEL 被清空。paused 的相同入口也须覆盖。
+
+**开发步骤：**
+
+1. 修改 `request_control()` 及其仓储边界：对已支持、无活动 owner 且无 in-flight 的等待/暂停
+   状态，确认安全后完成取消；Task、适用未完成项、queue 和取消确认事实保持原子一致。
+   所有安全条件和 control_revision 均在事务内重查，不能拿服务层旧快照释放后来取得的 claim。
+2. 在 `requeue_scheduled_task()` 的事务内，除 Task.status 外还必须检查已接受的 CANCEL；
+   即使调用方携带最新 revision，也不能把 CANCEL 清掉再入队。拒绝时不改 generation、pin、
+   choices/summary/Results 或容量，不消耗/刷新授权。
+3. 仍有 owner 或 in-flight 时只保存取消意图，由当前 owner 按原安全边界确认；不强制解锁、
+   不打断 Storage 调用。保留取消请求/确认和历史，重复请求幂等，不允许 CANCEL 降级成 PAUSE。
+   正常 PAUSE → 显式恢复仍保留，不能用“所有控制都禁止恢复”堵住问题。
+
+**回归验收：**
+
+- waiting_human、paused 各做“取消 → 恢复”和重复取消：最终取消事实保留，恢复零写入拒绝；
+  已成功项和历史 Result 不改写。保留排队取消及 owner 安全确认的现有正向测试。
+- 两个真实连接竞争取消/恢复，按事务先后验收：取消先提交，恢复不能抹掉它；恢复先提交，
+  后续取消仍按恢复后的真实状态生效。不要求取消回溯撤销已经完成的效果。
+- pending-control/in-flight 的名额不提前释放，正常暂停恢复、pin/revision 拒绝及满容量保留
+  原状态的既有测试继续通过。
+
+#### 3. P1 — 一部等待确认，另一部仍处理时，整批不能提前释放名额（T2/T4）
+
+**保护目标与复现。** A 等用户选影片、B 仍处理中时，B 继续受当前 Worker 管理，这一批仍占
+一个名额。现有 `defer_to_human()` 只提交 A 为 WAITING_CONFIRM、遗漏仍 PROCESSING 的 B，
+`release_scheduled_claim()` 就接受整批 waiting_human、清除 owner，容量1→0并允许另一 Task 入队。
+
+**开发步骤：**
+
+1. 在 `release_scheduled_claim()` 的同一释放事务内，读取该 Task 已有 item/机器阶段事实，
+   合并本次拟更新后判断是否真的全人工等待；遗漏在调用参数外的 sibling 也要参加判断。
+   不能只相信 task.total_items/completed_items、传入 items 子集，或“没有 mutation 标记”。
+2. 对仍有 PROCESSING/PENDING 机器工作的混合项，`defer_to_human()` 零写入拒绝释放。
+   单个 A 的等待状态可经现有 `record_item()` 保存，B 继续用原 claim 发布；不新增调度入口，
+   不把 B 改成等待来满足计数。只有真正全等待，才原子提交聚合、items 和名额释放。
+3. 保持其他合法边界：全等待/安全确认暂停/终结依原语义释放，in-flight 继续拒绝；释放容量
+   不释放耐久源占用、不删除已保存选择或成功/不确定效果。复用第4项的同 Task 身份检查。
+
+**回归验收：**
+
+- 创建同一 Task 的 A/B 两项，仅 A 等待、B PROCESSING（并覆盖仍排队的机器项）时释放被拒，
+  owner/generation/容量保持，B 仍能合法发布。拒绝不会留下半个聚合更新。
+- 对照：A/B 均进入合法人工等待后，名额只释放一次；重开仍为 waiting_human，源占用、选择、
+  Results 保持。混合项变全等待的正常链仍可完成。
+- capacity=1，用两个真实连接验证混合项期间新准入仍 QueueFull；全等待释放与新准入竞争
+  不超额、不留孤儿 Task。不要只断言返回值，读回 claim、容量和 sibling 结果。
+
+#### 4. P1 — 甲任务的数据不能用乙任务的领取凭据发布（T4/T5）
+
+**证据边界与复现。** 这是已有内部接口的归属校验缺口；没有证实普通用户同时操作两个任务
+就会触发。两个 Task 分别正常领取后，`defer_to_human(claim_B, task=A, items=A的项)` 会释放 A，
+B 仍 claimed。没有伪造 token；原因是 `release_scheduled_claim()` 按 task.task_id 读目标，
+却独立验证 fence 指向的 Task。
+
+**开发步骤：**
+
+1. 在任何写入前，验证 `task.task_id == fence.task_id`，并确保随后的 claim 检查、Task/item
+   更新、控制版本、queue transition 均针对同一持久身份和领取代次。
+2. 服务层可给出明确拒绝，仓储边界必须同样校验，不能让现有 repository 调用绕过。错误输入
+   按既有有界领域错误拒绝，不得通过改写参数中的 task_id“纠正”后继续发布。
+3. 保留 `fence=None` 仅适用于既有无 owner 安全控制结算的边界；不能借此释放已领取 Task。
+   不新增前端参数、路由、权限弹窗或第二套身份映射。
+
+**回归验收：**
+
+- 用两个 Task、两个不同 Worker 的正常 claim，经上述已有服务复现交叉输入，修后拒绝；
+  两个 Task 的聚合、items、queue/claim/generation、control、Result/evidence、锁均保持原值。
+- 在实际仓储入口补绕过服务的同类拒绝，正确 claim_A + task_A 的释放仍成功；旧 owner/
+  错代次/过期 claim 及无 fence 不能释放有 owner Task 的既有测试继续通过。
+- 不为制造用户链路增加 Web/API 消费者；测试结论只写内部契约，不声称已复现当前页面串任务。
+
+#### 5. P1 — 暂停后马上恢复，旧一轮收尾不能删掉新一轮的文件保护（T4）
+
+**保护目标与复现。** 文件有“正在处理，其他执行者别碰”的保护。暂停后马上恢复，新 Worker
+取得了新一轮保护，旧一轮迟到的收尾只能清理自己的保护。当前 `_settle_control()` 先提交暂停/
+释放 claim，再调用不带 owner_token 的 `reclaim_task_locks(task_id)`，会删掉同 Task 的全部锁。
+已用现有锁端口、两个连接和同步屏障复现“新锁存在 → 旧清理到达 → 新锁消失”。已证明的是
+执行锁被误删，未证明当前页面已发生重复移动；耐久源占用也不能代替修复执行锁的归属错误。
+
+**开发步骤：**
+
+1. 核对 `_settle_control()`、`release_scheduled_claim()` 及既有
+   `FileOperationLockRepository` 的 acquire/adopt/release 语义，明确本次实际拥有的锁代次。
+   `owner_token` 是锁的实际代次，不能未经关联就假定它等于 Task 的 claim_token。
+2. 选择一个最小、可证明的修法：在现有同库、仍验证当前 claim 的释放事务中清理该轮执行锁，
+   与暂停确认一起提交；或在交出 claim 前绑定本轮实际锁代次，之后只对这些代次条件删除。
+   跨两个独立仓储调用不能只靠调用顺序宣称原子。不引入新锁系统、额外清理 Worker 或等待时间。
+3. 旧 owner 迟到/重复 cleanup 必须对新代次无效，不能在未匹配时回退到按 Task ID 全删。
+   对既有 owner_token=None 锁走受 claim 保护的安全兼容处理，不能用 None 删除未来新锁；
+   也不能简单移除全部清理造成旧执行锁永久残留。保留耐久源占用与短期执行锁的区别。
+4. 暂停/取消仍只在原支持的安全边界确认；in-flight/uncertain 时不强行解锁。不改普通 transfer/
+   manual 等尚未接入内核的锁语义，除非共享改动确实直接影响且附相应回归。
+
+**回归验收：**
+
+- 在 `tests/test_task_scheduling_fencing.py` 使用真实临时 SQLite 两连接、线程 Event/Barrier
+  控制既有暂停结算与 cleanup 的交错，不用 sleep 碰运气，不直接改数据库伪造 claim/锁。
+- 对暂停提交后的延迟清理方案：原 Task requeue → worker-2 正常领取 → 现有 adopt_or_acquire
+  取得新 owner_token → 允许旧 cleanup 继续；新锁归属必须仍在，旧 claim 不能发布/删除它。
+  若选择同事务清理，应证明恢复只能在该事务完成后取得新锁，旧确认返回后不会再做无归属清理。
+- 正常暂停/取消仍清掉该轮应释放的旧执行锁，其他 Task 的锁不受影响；覆盖带 token 和既有
+  None 锁、重复 cleanup、新 owner 自身合法释放，并保留源占用。沿用/扩展
+  `test_acknowledging_a_pause_retires_only_this_tasks_execution_locks`，不能仅令清理完全不发生。
 
 ### 实际验证、范围及限制
+
+以下产品验证对应上方 Reviewed Head，未因补充指导而重新运行。本次指导补充起点为 `main` /
+`a13c4a7162f3f153743bac0f45482d308dcfe9d4`，只修改 TASK.md，保留既有无关 untracked 文件；
+未改产品/测试实现，未新增产品测试结果。治理及差异检查通过，Task 仍为 FIX REQUIRED。
 
 - 新增3模块：`.venv/bin/python -m unittest tests.test_task_scheduling tests.test_task_scheduling_fencing tests.test_task_scheduling_migration`
   **46 / OK**，runner 3.163s、完整子进程墙钟3.345s；存在未关闭 SQLite 连接 ResourceWarning。
