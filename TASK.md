@@ -1,86 +1,58 @@
-# Task PATCH-20261030-4 — 自动化工作区视觉与信息层级修正
+# NO ACTIVE IMPLEMENTATION TASK
 
-Authority: 用户 2026-10-30 在只读调查后明确授权删除说明、统一控件及跨页风格、
-精简执行记录/全局设置，并按任务中心和文件页统一左上角标题。
+最近独立修正：**PATCH-20261030-4 — 自动化工作区视觉与信息层级修正，B PASS（2026-10-30）**。
+授权范围已完成，无待实施/返工项，不规划额外 Task。
+
+- Task Type：STANDALONE MINOR BUG；Parent Slice：NONE；Difficulty：Medium；Test Level：T2。
+- Reviewed Base：`62beb31fdefe738c4fc90d2229bf3051fe3ec931`。
+- Reviewed Head：`2e3011e6e87f152dd145aba9ac2f2ab7394faec9`；完整 Base..Head 已独立审查。
+- Developer 产品实现：`1e5be3b91cdb128a044ad8eb585ab2c9c6dae727`；完整授权、范围、
+  五项验收和 Developer 交接：`cc5193c174d61f6a2dfbfafffd7a7584d36608a4:TASK.md`。
+- B 仅维护既有原生验收断言（`37389a19`、`2e3011e6`），未修改产品实现；无角色例外。
+
+## B 验收结果
+
+五项验收全部满足：三个分区精简长说明并保留唯一主标题；桌面/窄屏控件与相邻页面
+协调、焦点可见且无页面横向溢出；记录摘要紧凑，详情保留精确时间、失败阶段、逐项
+效果及下一步，任务/定义入口与列表返回上下文保留；四字段编辑、只读、并发冲突、
+未知提交核对和真实消费状态可用。完整差异未改变 API、权限、统计口径、调度/执行、
+数据模型或 Slice/Roadmap/Progress。共享刷新控件只增加可选文案，原默认行为保留；
+Shell 对 Files/任务中心的标题行为保持，通过既有回归核对。
+
+实际命令 cwd 为 `web/`（另注除外）：
+
+- 组件 **63/63**：`npm run test -- run src/features/operations/AutomationRouter.test.tsx src/features/operations/AutomationWorkspaceReadModel.test.tsx src/features/operations/AutomationSettingsPage.test.tsx src/shared/ui/AppShell.test.tsx src/features/operations/TaskRefreshControl.test.tsx`。
+- Node 浏览器 **15/15**：`npm run test:e2e -- tests/e2e/automation.spec.ts tests/e2e/automation-presentation.spec.ts`。
+- 真实 Python 工作区 **8/8**、设置/恢复 **12/12**：分别运行
+  `npm run test:e2e -- --config=playwright.python.automation.config.ts tests/e2e/automation-workspace.python.spec.ts`
+  和 `npm run test:e2e -- --config=playwright.python.automation.config.ts tests/e2e/automation-settings.python.spec.ts`，
+  每次启动全新隔离 Python/SQLite 服务；无重试或跳过。
+- `npm run typecheck`、`npm run lint`、所有改动 Web 文件的 Prettier、`npm run build`
+  通过；B 最后两份原生脚本调整后重新运行原生验收、typecheck 和改动文件 ESLint/Prettier。
+  根目录 `python3 scripts/check_governance.py`、完整范围 `git diff --check` 通过。
+- 已查看三个分区的 1536/390px 截图，以及真实 Python 的 1440/375px 工作区截图。
+  窄屏宽表使用内部横向滚动，未出现页面横向溢出。
+
+首次定向原生验收因旧“执行记录只读”文案断言失败。随后合并运行的 20 项中有 6 项
+失败：健康实例已折叠而旧断言要求直接可见；B 新增行定位只匹配名称，遗漏既有的
+定义 ID 回退；设置用例留下低队列上限，令后续分页造数/Run once 的 4 项遇到容量限制。
+B 修正断言以从真实“查看详情/实例详情”入口读取证据，并将两份原生脚本分开启动，
+最终 8+12 项通过。保留全部失败日志，不删除安全断言、不调整超时或重试、不改产品。
+
+组件/Node/构建在 `37389a19` 验证；至最终 Head 仅两份原生脚本有变化，产品源、
+对应组件/Node 测试、依赖、构建配置、Python harness 均未变，因此复用 B 自己的匹配结果。
+最后 typecheck、两份原生脚本及改动文件检查覆盖最终 Head。
+
+本机 ignored 证据：`.git/validation-evidence/PATCH-20261030-4/b-review-cc5193c/`。
+`results.json`、`final-results.json`、`final-checks.json` 保留精确命令/候选/耗时；
+原始日志、失败 trace、最终截图和 `input-and-artifact-sha256.json` 同目录保留。
+截至记录时本轮约 8 分 11 秒，含失败运行、静态检查及构建的测试时间约 180 秒（37%），
+符合用户测试时间小于本轮 50% 的约束；`timing.json` 保留计算。
+
+证据限 Chromium/模拟视口与隔离 Node/Python/SQLite/本地夹具；未宣称全仓、容器、
+外部服务或长稳通过。构建仍有 bundle 大小提示，无构建错误。预存未跟踪文件原样保留，
+未部署或推送。无产品阻塞项；不为可选清理继续创建工作。
+
+Slice46 保持 A 已接受的 **PASS / CLOSED**；原 Base、已接受 Head、Roadmap/Progress 和延期
+边界不变。本次独立修正由 B 收尾，不重开/关闭 Slice；下一大版本仍由 A 选择。
 生命周期遵循 [Development Workflow](docs/development-workflow.md#31-independent-minor-bugs)。
-
-```text
-Task ID: PATCH-20261030-4
-Task Type: STANDALONE MINOR BUG
-Parent Slice: NONE
-Status: READY FOR B REVIEW
-Task Base: 62beb31fdefe738c4fc90d2229bf3051fe3ec931
-Difficulty: Medium
-Test Level: T2
-Planner / Reviewer: B
-```
-
-## Goal
-
-修正现有自动化页首屏被说明占据、控件样式脱节、重复中英文标题、执行记录行过长和
-四字段设置冗长的问题。沿用任务列表/执行记录/全局设置入口、真实数据、查询、保存与
-失败恢复行为，仅调整展示；不重开 Slice46。
-
-## Implementation Scope
-
-1. 删除统计说明、使用说明、引擎介绍、调度/时区教程与 JSON 示例。统计保持服务端
-   口径及缺失状态；状态、失败原因、效果与明确下一步不能随说明删除而丢失。
-2. 自动化主工作区仅一个中文标题，内容边界、标题、卡片、标签页、表单与按钮协调
-   任务中心/文件页。样式限定自动化，共享 Shell 仅改重复标题条件。
-3. 记录列表显示简短时间、状态、条目与主要查看入口；完整时间/失败阶段/逐项效果/
-   后续处理放入可展开详情；保持只读、精确路由及原列表返回上下文。
-4. 设置四字段紧凑排列，保留字段含义/后端约束、已发布与已采用区别；实例诊断折叠，
-   异常状态保持可见。保存/并发/未知结果核对机制原样保留。
-
-## Acceptance Criteria
-
-- [x] 三个分区无长篇统计/教程说明，仅一个主内容标题，首屏可达主要内容。
-- [x] 桌面与窄屏控件、标签页、标题协调其他页，无页面横向溢出；焦点可见。
-- [x] 记录紧凑，可展开完整证据，正确进入对应任务/定义；无新执行或恢复命令。
-- [x] 设置字段、保存/只读/冲突/失败/未知提交与真实消费状态保持可用。
-- [x] 无 API、权限、统计口径、调度/执行、数据模型、Slice/Roadmap/Progress 修改。
-
-## Required Tests
-
-Developer（受影响范围；cwd `web/`）：
-- `npm run test -- run src/features/operations/AutomationRouter.test.tsx src/features/operations/AutomationWorkspaceReadModel.test.tsx src/features/operations/AutomationSettingsPage.test.tsx src/shared/ui/AppShell.test.tsx`。
-- `npm run typecheck`、`npm run lint`、修改文件 Prettier、`npm run build`。
-- Node 隔离 API 的 `automation.spec.ts` 和本 Task 桌面/窄屏布局用例；实际查看截图。
-- `python3 scripts/check_governance.py`、`git diff --check`。
-
-B 独立验收候选 Base..Head：上述功能/布局与相关 Settings 恢复测试，真实 Python
-`automation-workspace.python.spec.ts` / `automation-settings.python.spec.ts` 相关旅程；
-核对 Shell 标题不影响 Files/任务中心、记录展开证据与安全入口。无全仓回归要求。
-
-## Non-goals
-
-不改后端文案/历史授权语义，不新增自动化能力、不改变业务流程；不改其他页设计，
-不部署、不推送、不自审 PASS。
-
-## Workspace
-
-`main`，初始 HEAD 为 Task Base；无已跟踪文件修改。预存未跟踪日志、DS_Store、`15`、
-参考图与 imagegen zip 原样保留；初始清单在本机
-`.git/validation-evidence/PATCH-20261030-4/baseline.txt`。
-
-## Developer Completion Report
-
-Status: READY FOR B REVIEW。Implementation checkpoint:
-`1e5be3b91cdb128a044ad8eb585ab2c9c6dae727`；独立 B 待审 Task Base..checkpoint。
-
-- 已删除长说明/教程/JSON 示例和重复英文主标题；共享任务中心标题边界/标签页样式。
-  控件使用现有浅色主题，桌面五列、窄屏两列筛选；记录时间本地化且精确值保留。
-- 记录默认仅显示摘要，独立展开完整结果/时间/失败/效果/后续处理；路由入口不变且无
-  新执行命令。四字段设置双列展示，保留后端范围、发布/采用区分及全部保存核对机制。
-- 组件/路由/Shell/Settings 受影响回归 **62/62**；Node 假 API 浏览器功能与布局
-  **15/15**，最后 CSS/截图调整后的桌面/390px 布局复查 **2/2**。新用例检查只读展开、
-  收起、焦点、无页面横向溢出、记录行高度及完整失败证据，已人工查看六张最终截图。
-- `npm run typecheck`、`npm run lint`、修改文件 Prettier、`npm run build`、governance、
-  `git diff --check` 通过；构建仍报告 bundle 大小提示，无构建错误。
-- 首轮组件 5 项失败：旧入口/旧展开状态断言不符，另有指标不可用下一步遗漏及采用
-  状态重复；已恢复动态失败提示、去重并按真实展开入口验证完整证据。首轮浏览器另有
-  JSON ESM 导入及展开后 locator 名称变化；均已修正，不添加重试/放宽超时。
-- 本机原始日志：`.git/validation-evidence/PATCH-20261030-4/` 的 `components.log`、
-  `browser.log`、`layout-final.log`、`lint.log`、`build.log`；最终六张截图在其 `screenshots/`。
-- 证据限 Chromium、1536/390px 与隔离 Node API；真实 Python 验收按计划交 B，未宣称
-  全仓/容器/外部服务通过。无部署/推送；预存未跟踪文件未包含在提交中。独立 B 审查待办。
