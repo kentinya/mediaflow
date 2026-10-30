@@ -1,11 +1,3 @@
-# NO ACTIVE IMPLEMENTATION TASK
-
-Slice47 已在提交 `45d2e951eb00ffdd4cecbaafed50039668e445f0` 保持 **ACTIVE**；原 Slice Base
-`5144ab1fc2344b06194969cc2c496835729664c0` 不变，Implementation Head 为 NOT SET。
-用户本轮要求激活 Slice 并规划首个 Task；依据 [Task 模板](Task/TEMPLATE.md)，下述为
-**仅规划的 Task47.1 草案**，不自行启动实施、其他角色或子代理。实施时沿用同一 Task ID/
-Base/Goal/Scope，并将本通知替换为正式 Task 入口；不得重新选择 Base 或省略本计划的验收。
-
 # Task 47.1 — Task 调度与持久化内核
 
 Authority: committed [SLICE.md](SLICE.md) at `45d2e951eb00ffdd4cecbaafed50039668e445f0`；
@@ -17,12 +9,12 @@ Authority: committed [SLICE.md](SLICE.md) at `45d2e951eb00ffdd4cecbaafed50039668
 Task ID: 47.1
 Task Type: SLICE
 Parent Slice: 47
-Status: PLANNED
+Status: READY FOR B REVIEW
 Task Base: 45d2e951eb00ffdd4cecbaafed50039668e445f0
 Difficulty: High
 Test Level: T4
 Planner / Reviewer: B
-Authorization: PLAN ONLY — 2026-10-30
+Authorization: PLAN ONLY — 2026-10-30; USER-AUTHORIZED IMPLEMENTATION — 2026-10-30
 ```
 
 ## Goal
@@ -237,14 +229,102 @@ Repository `/Users/songzhidong/mediaflow`；branch `main`；planning HEAD / Task
 压缩包均为无关文件，保留且不暂存。只读代码调查未访问用户运行库、私有配置、媒体或生产服务。
 
 Slice47 已 ACTIVE，无需重复激活/改写 A-owned SLICE/Roadmap/Progress。B 接受 A 的最新已提交
-契约修订，按其逐文件关联、明确容量及有条件恢复边界规划。当前仅提交计划及相关文档检查，
-未修改产品代码/测试、未实施/自审，也未运行或宣称本 Task 的 T4 产品门禁。过往183项基线只是
-Slice Base 的已记录观察。此前独立修正及验收记录保留于 `45d2e951eb00ffdd4cecbaafed50039668e445f0:TASK.md`。
+契约修订，按其逐文件关联、明确容量及有条件恢复边界规划。规划检查点（`cb0e2885`）只提交了计划
+及相关文档检查，未修改产品代码/测试、未实施/自审，也未运行或宣称本 Task 的 T4 产品门禁；实施
+从该规划 HEAD 开始，记录见下方 Developer Completion Report。过往183项基线只是 Slice Base 的
+已记录观察。此前独立修正及验收记录保留于
+`45d2e951eb00ffdd4cecbaafed50039668e445f0:TASK.md`。
 
 ## Developer Completion Report
 
-尚未实施。实施后按模板填写确切 checkpoint、实际受影响测试/失败/风险和 READY FOR B REVIEW。
+```text
+Checkpoint: e53e38999459f81da65f625ee3b73d39e9ff793e (implementation; this Task record is the
+following docs checkpoint on the same branch — B reviews Task Base..HEAD)
+Task Base: 45d2e951eb00ffdd4cecbaafed50039668e445f0 (unchanged, per plan)
+Implementation start HEAD: cb0e288598cdffa399256b5ae694522f92ce6ce9 (planning checkpoint)
+Status: READY FOR B REVIEW — full T4/acceptance and the Closure Packet are B's, not claimed here
+```
+
+### 变更内容与关键决定
+
+- **调度事实只属于 Task（schema 53 → 54）。** 新增 1:1 `task_scheduling` 表（`task_id` 主键、
+  外键 Task），承载队列资格/机器阶段/可领取时刻、领取代次与 Worker/租约/心跳、控制请求与
+  `control_revision`、以及 in-flight 变更标记。选择独立 1:1 表而非给 `tasks` 追加列：现存 5 个
+  位置 `INSERT INTO tasks VALUES (...)` 与多处以列数写死的写入点全部保持原样，fresh 与就地升级
+  得到完全相同的物理布局（T8 的“不受列顺序影响”由此成立），旧 Task 行原值、关系、pin、
+  Results、Job 行、授权与日志零改动。
+- **marker 最后推进。** 原先位于后续增量操作之前的 `schema_version` 写入移到
+  `_initialize()` 真正末尾（`_advance_runtime_schema_marker()`），新布局先可验证存在再声明版本；
+  失败保留 53 且旧代码可读，重开可补完（T8 两个注入点实测）。
+- **准入 = 一个事务。** `admit_scheduled_task()` 在 `BEGIN IMMEDIATE` 内完成 principal/request
+  去重（唯一索引）、容量计数、Task/显示证据/调度行插入。满容量零写入、零授权消耗、无孤儿
+  Task；精确重复即使满队列也返回原 Task；同 ID 不同上下文拒绝（`TaskAdmissionConflict`）。
+  `execute_authorized` 只作为显式入参存一次，trigger 只是标签，任何发布都不能改写 command/
+  authority/created_at/scope/item_limit/pin（`_require_scheduled_authority_locked` + 只更新发布列）。
+- **容量语义。** 只有 `queued`/`claimed` 计一个名额（一 Task 一名额，多 item/多 attempt 不重复；
+  机器定时等待仍是 queued）。全人工等待（`defer_to_human` → `waiting_human`）、已确认暂停
+  （`paused`）和终态（`settled`）为零；请求暂停/取消但尚未到安全边界时保持 `claimed` 名额。
+- **领取与控制。** 领取在 `BEGIN IMMEDIATE` 内选择并 CAS 代次，复用既有 Worker 注册/停止/schema/
+  心跳失效判定，并额外要求 Task command ∈ Worker 支持命令、Worker pin（若声明）与 Task pin
+  完全一致；返回的 claim 携带 Task 自身 pin。只领取 `pending` 且未进入机器阶段的 Task：已发布
+  RUNNING 的 Task 即使租约过期也不被普通领取接管（超时/重启本身不是“未发生”的证明）。
+  控制请求先持久化（同一请求幂等、pause→cancel 升级、cancel 不可降级），心跳只延长租约、
+  不触碰 `control_revision`，因此不会令合法控制显得陈旧。
+- **发布栅栏。** item 开始/进度/结果/证据/Task 聚合全部经 `TaskClaimFence`
+  （task+worker+token+generation+now）比较；`release_scheduled_claim()` 把聚合、受影响 item 与
+  名额释放一次提交。item 发布区分 start/progress/outcome 三种 attempt 规则，结果行改为
+  不可 replace 的 INSERT，因此历史 attempt 的成功记录不会被新尝试覆盖。未接入的旧 Task 与
+  普通传输行为不变；对内核管理的 Task，通用无栅栏写入（`update_task`/`upsert_item`/
+  `append_result`/`append_evidence`/`complete_item_with_evidence`、transfer-fence 写入、
+  旧 pause/cancel）一律 `TaskSchedulingBypass` 拒绝。
+- **不确定效果边界。** `begin_scheduled_mutation()` 写入持久标记后，该 Task 不能被领取、
+  不能重入队、不能因超时/租约到期/重启/控制请求释放名额；只有当前 owner 在同一事务内发布
+  受影响 item 的已证实结果才清除标记。服务本身不调用 Storage/Provider/Executor。
+- **安全重入队。** 仅 `waiting_human`/`paused` 可重入队；校验调用方观察到的
+  `control_revision` 与原 pin，同事务重查容量；满队列抛 `TaskQueueFull` 且不改状态/已存
+  选择/摘要/结果、不登记自动续作；成功后同一 Task、代次 +1、pin 与 authority 不变。
+- **本轮无生产入口（T9）。** 新增测试断言除内核三文件外，`mediaflow/` 与 `web/src` 均不引用
+  内核符号；Scheduler/Files/Run once/Worker/API/CLI/Web 未切换、未双写、未接管现存 Task/Job。
+
+### 实际受影响测试（Developer 范围，均已实际执行）
+
+| 命令（cwd 仓库根） | 实际结果 |
+|---|---|
+| `.venv/bin/python -m unittest` 计划指定 7 模块（新增 3 模块 + `test_task_persistence`、`test_task_pause_resume`、`test_automation_admission`、`test_automation_job_fencing`） | 103 tests, OK（含新增 46：调度 23 / 栅栏与并发 17 / 迁移 6） |
+| 计划指定代表性写入/执行链 6 用例（C→A 精确移动与 uncertain 不重放、Files 准入、两种库 transfer、Run once） | 29 tests, OK |
+| `tests.test_direct_file_operations test_confirmation_api test_task_retry test_task_scope test_manual_operations_contract test_file_index_retirement` | 110 tests, OK |
+| `tests.test_operations_run_detail test_operations_task_center test_dashboard test_task_center_recovery_lineage test_processing_worker_readiness test_api_security` | 115 tests, OK |
+| `tests.test_automation_settings_resident test_release_security test_container_probe` + 5 个 `test_configuration_*` 版本断言模块 | 101 tests, OK |
+| `tests.test_automation_definition_occurrence tests.test_automation_run_once tests.test_cron_scheduler tests.test_workflow_retry tests.test_resident_correction tests.test_runtime_lease` | 87 tests, OK |
+| `tests.test_direct_file_transfers test_media_library_transfers test_media_discovery test_manual_organize_execution test_task_center_recovery_lineage` | 333 tests, OK |
+| `.venv/bin/python scripts/schema_upgrade_rehearsal.py --base-sha 45d2e951… --expect-schema 53 --expect-candidate-schema 54` | `ok: true`，165 条断言通过（含新增 `task_scheduling.absent_for_legacy_task` / `no_capacity_use` / `pin_unchanged`） |
+| `ruff format --check` / `ruff check` / `compileall` 于 14 个改动 Python 文件；`scripts/check_governance.py`；`git diff --check` | 全部通过 |
+
+新增测试使用真实临时 SQLite、独立连接、真实子进程（3 进程抢 1 个名额）与真实 Task Base 代码
+（`git archive` 后子进程建库），不以内存储模拟原子性；未使用任何用户运行库/媒体/私有配置。
+
+### 已知限制、范围说明与剩余风险（交 B 判定）
+
+1. **未接入生产入口**：手工整理、Scheduler due、Run once、Files、API/CLI、驻留 Worker 仍走原
+   Job/Task 路径；本 Task 未迁移 Job 数据、未退役 Job 接口/表、未实现共用整理引擎与四类恢复
+   的生产改接。RO-2/3/5 与 Job 退休未交付，Slice 未完成。
+2. **无通用过期抢占**：已发布 RUNNING 的 Task 在 owner 消失后保留名额与 uncertain 事实，本轮
+   不提供“接管并分析边界”的入口（该路径属于后续 Task 与既有四类恢复边界）。
+3. **`scripts/schema_upgrade_rehearsal.py` 的既有缺陷**：base 阶段因 `ManualSourceIdentity` 多传一个
+   位置参数（`occurrence_state` 收到 datetime）而整体不可运行，与本 Task 实现无关但会阻断 B 的
+   升级演练；我按其构造签名做了最小修正（改为关键字传 `occurrence_id`/`occurrence_state`/
+   fingerprint），并新增旧行不入队断言。请在审查时确认该修正范围可接受。
+4. **版本常量同步**：`SCHEMA_VERSION` 53→54，并同步 `ProcessingWorkerService` 默认值（该处注释
+   明确要求随 schema bump 更新）与 7 处现行版本断言。`AutomationWorker` 的陈旧默认
+   `runtime_schema_version=34` 未改（生产调用点均显式传 `SCHEMA_VERSION`），未扩大范围。
+5. **文档未改**：`docs/architecture.md` 的 CURRENT/TARGET 契约、Task Center 规格与 Progress/Roadmap
+   由 A/B 在 Slice 层维护；本 Task 只按增量 schema 事实交付代码与测试。
+6. **性能/规模**：容量计数依赖 `task_scheduling(queue_state, …)` 索引；未做超大批量基准（容量
+   上限 1024、租约上限 1 天为硬界）。真机多进程仅 3 进程规模验证，未做长时间压力。
+7. **未执行的共享门禁**：完整 Python/Web/E2E、wheel、容器 fresh/restart/53→54 升级与 security
+   smoke、desktop/narrow 截图等均由 B 按 T4 执行；本报告不宣称这些结果。
 
 ## B Review Result
 
-尚未审查，无 PASS / FIX REQUIRED 决定。Task 与 Slice 结果均待实现和对应角色验收。
+尚未审查。等 B 独立复核 `Task Base..candidate`、复现 T2/T4/T6/T8，并执行适用 T4 门禁后填写
+PASS 或 FIX REQUIRED；Slice 结果仍待该验收。
