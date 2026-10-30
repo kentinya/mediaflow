@@ -24,7 +24,7 @@ today's Active configuration.
 
 from __future__ import annotations
 
-from dataclasses import dataclass
+from dataclasses import dataclass, replace
 from datetime import datetime
 from enum import StrEnum
 from typing import Protocol
@@ -171,6 +171,151 @@ class TaskSchedulingBypass(TaskSchedulingError):
     write — would publish without the claim comparison, so it is refused
     instead of silently becoming an unfenced back door.
     """
+
+
+class TaskSourceIdentityConflict(TaskSchedulingError):
+    """A publication tried to replace an already known exact source.
+
+    The same Task/path may legitimately be resumed or retried, but resuming is
+    not permission to substitute another file version, ResourceLibrary binding
+    or first observation under the existing work.  The refusal writes nothing:
+    the original item, Result history, evidence, claim and capacity stay as
+    they were.
+    """
+
+
+def _known_source_conflict(
+    stored: PersistentTaskItem,
+    published: PersistentTaskItem,
+    *,
+    include_observed_at: bool,
+) -> str | None:
+    """The first known source fact a publication would replace, if any.
+
+    A value the previous row never had may be supplied for the first time (a
+    legacy item can gain evidence), and omitting an optional value never
+    clears or downgrades what is already known.  Only a *different known*
+    value is a substitution.
+    """
+
+    if published.resource_library_id != stored.resource_library_id:
+        return "ResourceLibrary binding"
+    for label, old_value, new_value in (
+        ("source occurrence", stored.source_occurrence_id, published.source_occurrence_id),
+        ("source fingerprint", stored.source_fingerprint, published.source_fingerprint),
+        ("source Storage path", stored.source_storage_path, published.source_storage_path),
+    ):
+        if old_value is not None and new_value is not None and new_value != old_value:
+            return label
+    if (
+        stored.source_fingerprint_state == "verified"
+        and published.source_occurrence_id is not None
+        and published.source_fingerprint_state != "verified"
+    ):
+        return "verified source fingerprint state"
+    if (
+        include_observed_at
+        and stored.source_observed_at is not None
+        and published.source_observed_at is not None
+        and published.source_observed_at != stored.source_observed_at
+    ):
+        return "first source observation"
+    return None
+
+
+def resume_item_source_binding(
+    previous: PersistentTaskItem, item: PersistentTaskItem
+) -> PersistentTaskItem:
+    """Merge one resumed attempt onto the item's durable exact source.
+
+    A paused/pending/failed item can continue, but its known occurrence,
+    fingerprint, ResourceLibrary/Storage path and first observation are
+    evidence of the source the Task was admitted for.  They are preserved even
+    when the caller omits them, and a conflicting known version is refused
+    instead of being silently rewritten by the new attempt.
+    """
+
+    conflict = _known_source_conflict(previous, item, include_observed_at=False)
+    if conflict is not None:
+        raise TaskSourceIdentityConflict(
+            f"this TaskItem is already bound to a different {conflict}; resuming it cannot "
+            "replace the known source version"
+        )
+    return replace(
+        item,
+        resource_library_id=previous.resource_library_id,
+        source_occurrence_id=previous.source_occurrence_id or item.source_occurrence_id,
+        source_fingerprint=previous.source_fingerprint or item.source_fingerprint,
+        source_fingerprint_state=(
+            previous.source_fingerprint_state
+            if previous.source_occurrence_id is not None
+            else item.source_fingerprint_state
+        ),
+        source_observed_at=previous.source_observed_at or item.source_observed_at,
+        source_storage_path=previous.source_storage_path or item.source_storage_path,
+    )
+
+
+def require_preserved_item_source(
+    stored: PersistentTaskItem, published: PersistentTaskItem
+) -> None:
+    """Refuse a start/progress/outcome that replaces a known source fact."""
+
+    conflict = _known_source_conflict(stored, published, include_observed_at=True)
+    if conflict is not None:
+        raise TaskSourceIdentityConflict(
+            f"this TaskItem's durable {conflict} cannot be replaced by a later publication"
+        )
+
+
+def require_result_matches_item_source(
+    stored: PersistentTaskItem, result: PersistentResultRecord
+) -> None:
+    """Refuse a Result that describes another version of the durable item's source.
+
+    A Result may omit the optional occurrence/fingerprint (the repository then
+    binds the item's known facts, preserving the existing compatibility path),
+    but it may never name a different known version or observation than the
+    durable TaskItem.
+    """
+
+    if result.source_storage_id != stored.storage_id or result.source_path != stored.source_path:
+        raise TaskSourceIdentityConflict(
+            "a published Result must describe this TaskItem's exact source"
+        )
+    if (
+        stored.source_occurrence_id is not None
+        and result.source_occurrence_id is not None
+        and result.source_occurrence_id != stored.source_occurrence_id
+    ):
+        raise TaskSourceIdentityConflict(
+            "a published Result cannot replace this TaskItem's known source occurrence"
+        )
+    if (
+        stored.source_fingerprint is not None
+        and result.source_fingerprint is not None
+        and result.source_fingerprint != stored.source_fingerprint
+    ):
+        raise TaskSourceIdentityConflict(
+            "a published Result cannot replace this TaskItem's known source fingerprint"
+        )
+    if (
+        stored.source_fingerprint_state == "verified"
+        and result.source_occurrence_id is not None
+        and result.source_fingerprint is not None
+        and result.source_fingerprint_state != "verified"
+    ):
+        raise TaskSourceIdentityConflict(
+            "a published Result cannot downgrade this TaskItem's verified source fingerprint"
+        )
+    if (
+        stored.source_observed_at is not None
+        and result.source_observed_at is not None
+        and result.source_observed_at != stored.source_observed_at
+    ):
+        raise TaskSourceIdentityConflict(
+            "a published Result cannot replace this TaskItem's first source observation"
+        )
 
 
 def bounded_text(value: object, label: str, *, maximum: int) -> str:

@@ -57,6 +57,7 @@ from mediaflow.domain.task_scheduling import (
     TaskTrigger,
     require_capacity,
     require_lease_seconds,
+    resume_item_source_binding,
 )
 
 DEFAULT_TASK_LEASE_SECONDS = 30.0
@@ -459,7 +460,10 @@ class TaskSchedulingService:
         preserved: only the attempt counter advances.  A source that already
         succeeded, was ignored or recorded a non-empty/unverified effect is not
         started again; only a new source, a paused/pending item or a provably
-        effect-free failed analysis attempt may continue.
+        effect-free failed analysis attempt may continue.  Resuming the same
+        item keeps its known occurrence/fingerprint, ResourceLibrary/Storage
+        path and first observation: a different known version is refused rather
+        than becoming the work's new source.
         """
 
         current = self._now(now)
@@ -489,6 +493,13 @@ class TaskSchedulingService:
             source_observed_at=source_observed_at,
             source_storage_path=source_storage_path,
         )
+        if previous is not None:
+            # A resumed attempt continues the *same* admitted source.  Keeping
+            # its known binding and first observation here is also what makes
+            # the repository's in-transaction comparison a no-op for a legal
+            # continuation, while a direct writer that names another version
+            # is refused there.
+            started = resume_item_source_binding(previous, started)
         if not self._repository.upsert_scheduled_item(
             claim.fence(current), started, stage=TaskItemPublication.START
         ):

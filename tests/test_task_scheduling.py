@@ -994,6 +994,424 @@ class ReplaySafetyTests(SchedulingKernelTestCase):
         )
 
 
+class SourceVersionIntegrityTests(SchedulingKernelTestCase):
+    """A resumed Task may not silently start working on another source version."""
+
+    path = "媒体/电影/A.mkv"
+
+    def setUp(self) -> None:
+        super().setUp()
+        self.repository.register_worker(
+            "worker-2",
+            "worker two",
+            5.0,
+            ("organize",),
+            None,
+            None,
+            SCHEMA_VERSION,
+            NOW,
+        )
+
+    def versioned_item(self, service, claim, *, observed=None, now=None):
+        at = now or NOW + timedelta(seconds=2)
+        return service.begin_item(
+            claim,
+            storage_id="local",
+            resource_library_id="library",
+            source_path=self.path,
+            source_display=self.path,
+            source_occurrence_id="occ-v1",
+            source_fingerprint="fingerprint-A",
+            source_fingerprint_state="verified",
+            source_observed_at=observed or NOW + timedelta(seconds=2),
+            source_storage_path=self.path,
+            now=at,
+        )
+
+    def paused_and_requeued(self, service):
+        admission = _admit(service)
+        first = self.claimed(service)
+        item = self.versioned_item(service, first)
+        service.request_control(
+            admission.task.task_id, TaskControl.PAUSE, now=NOW + timedelta(seconds=3)
+        )
+        service.acknowledge_control(first, now=NOW + timedelta(seconds=3))
+        service.requeue(
+            admission.task.task_id,
+            expected_snapshot_id="snapshot-1",
+            expected_snapshot_digest="digest-1",
+            expected_control_revision=1,
+            now=NOW + timedelta(seconds=4),
+        )
+        second = self.claimed(service, now=NOW + timedelta(seconds=5), worker="worker-2")
+        return admission, item, second
+
+    def test_resuming_an_item_cannot_replace_its_known_source_version(self) -> None:
+        service = self.service()
+        admission, original, claim = self.paused_and_requeued(service)
+
+        with self.assertRaises(TaskSchedulingError):
+            service.begin_item(
+                claim,
+                storage_id="local",
+                resource_library_id="library",
+                source_path=self.path,
+                source_display=self.path,
+                source_occurrence_id="occ-v2",
+                source_fingerprint="fingerprint-B",
+                source_fingerprint_state="verified",
+                source_observed_at=NOW + timedelta(seconds=7),
+                source_storage_path=self.path,
+                now=NOW + timedelta(seconds=7),
+            )
+
+        stored = self.repository.get_item(original.item_id)
+        self.assertEqual(stored.attempts, 1)
+        self.assertIs(stored.status, TaskItemStatus.PAUSED)
+        self.assertEqual(stored.source_occurrence_id, "occ-v1")
+        self.assertEqual(stored.source_fingerprint, "fingerprint-A")
+        self.assertEqual(stored.source_fingerprint_state, "verified")
+        self.assertEqual(stored.source_observed_at, NOW + timedelta(seconds=2))
+        self.assertEqual(stored.source_storage_path, self.path)
+        self.assertIsNone(
+            self.repository.get_task_scheduling(admission.task.task_id).mutation_state
+        )
+        # The refused work never entered a mutation boundary either.
+        with self.assertRaises(TaskSchedulingError):
+            service.begin_mutation(claim, stored, "move", now=NOW + timedelta(seconds=8))
+
+        # The legitimate continuation keeps the known version and the first
+        # observation even when the caller passes a newer observation instant.
+        resumed = service.begin_item(
+            claim,
+            storage_id="local",
+            resource_library_id="library",
+            source_path=self.path,
+            source_display=self.path,
+            source_occurrence_id="occ-v1",
+            source_fingerprint="fingerprint-A",
+            source_fingerprint_state="verified",
+            source_observed_at=NOW + timedelta(seconds=8),
+            source_storage_path=self.path,
+            now=NOW + timedelta(seconds=8),
+        )
+        self.assertEqual(resumed.attempts, 2)
+        self.assertEqual(resumed.source_occurrence_id, "occ-v1")
+        self.assertEqual(resumed.source_fingerprint, "fingerprint-A")
+        self.assertEqual(resumed.source_observed_at, NOW + timedelta(seconds=2))
+        service.begin_mutation(claim, resumed, "move", now=NOW + timedelta(seconds=9))
+        self.assertEqual(
+            self.repository.get_task_scheduling(admission.task.task_id).mutation_item_id,
+            original.item_id,
+        )
+
+    def test_omitted_identity_arguments_keep_the_known_source_and_observation(self) -> None:
+        service = self.service()
+        _admission, _original, claim = self.paused_and_requeued(service)
+
+        resumed = service.begin_item(
+            claim,
+            storage_id="local",
+            resource_library_id="library",
+            source_path=self.path,
+            source_display=self.path,
+            now=NOW + timedelta(seconds=7),
+        )
+        self.assertEqual(resumed.attempts, 2)
+        self.assertEqual(resumed.source_occurrence_id, "occ-v1")
+        self.assertEqual(resumed.source_fingerprint, "fingerprint-A")
+        self.assertEqual(resumed.source_fingerprint_state, "verified")
+        self.assertEqual(resumed.source_observed_at, NOW + timedelta(seconds=2))
+        self.assertEqual(resumed.source_storage_path, self.path)
+
+        completed = replace(
+            resumed,
+            status=TaskItemStatus.SUCCESS,
+            stage="completed",
+            updated_at=NOW + timedelta(seconds=8),
+        )
+        service.complete_item(
+            claim, completed, result=_result(resumed), now=NOW + timedelta(seconds=8)
+        )
+        stored_result = self.repository.list_results(resumed.task_id)[0]
+        self.assertEqual(stored_result.source_occurrence_id, "occ-v1")
+        self.assertEqual(stored_result.source_fingerprint, "fingerprint-A")
+        self.assertEqual(stored_result.source_observed_at, NOW + timedelta(seconds=2))
+
+    def test_missing_legacy_evidence_is_not_invented_by_omission(self) -> None:
+        service = self.service()
+        admission = _admit(service)
+        first = self.claimed(service)
+        legacy_path = "媒体/电影/legacy.mkv"
+        item = service.begin_item(
+            first,
+            storage_id="local",
+            resource_library_id="library",
+            source_path=legacy_path,
+            source_display=legacy_path,
+            source_observed_at=NOW + timedelta(seconds=2),
+            now=NOW + timedelta(seconds=2),
+        )
+        self.assertIsNone(item.source_occurrence_id)
+        self.assertIsNone(item.source_fingerprint)
+        self.assertEqual(item.source_fingerprint_state, "unverified")
+        service.request_control(
+            admission.task.task_id, TaskControl.PAUSE, now=NOW + timedelta(seconds=3)
+        )
+        service.acknowledge_control(first, now=NOW + timedelta(seconds=3))
+        service.requeue(
+            admission.task.task_id,
+            expected_snapshot_id="snapshot-1",
+            expected_snapshot_digest="digest-1",
+            expected_control_revision=1,
+            now=NOW + timedelta(seconds=4),
+        )
+        claim = self.claimed(service, now=NOW + timedelta(seconds=5), worker="worker-2")
+        resumed = service.begin_item(
+            claim,
+            storage_id="local",
+            resource_library_id="library",
+            source_path=legacy_path,
+            source_display=legacy_path,
+            now=NOW + timedelta(seconds=7),
+        )
+        self.assertEqual(resumed.attempts, 2)
+        self.assertIsNone(resumed.source_occurrence_id)
+        self.assertIsNone(resumed.source_fingerprint)
+        self.assertEqual(resumed.source_fingerprint_state, "unverified")
+        self.assertEqual(resumed.source_observed_at, NOW + timedelta(seconds=2))
+
+    def test_verified_evidence_can_legally_fill_a_previously_unknown_source(self) -> None:
+        service = self.service()
+        admission = _admit(service)
+        first = self.claimed(service)
+        legacy_path = "媒体/电影/legacy.mkv"
+        service.begin_item(
+            first,
+            storage_id="local",
+            resource_library_id="library",
+            source_path=legacy_path,
+            source_display=legacy_path,
+            source_observed_at=NOW + timedelta(seconds=2),
+            now=NOW + timedelta(seconds=2),
+        )
+        service.request_control(
+            admission.task.task_id, TaskControl.PAUSE, now=NOW + timedelta(seconds=3)
+        )
+        service.acknowledge_control(first, now=NOW + timedelta(seconds=3))
+        service.requeue(
+            admission.task.task_id,
+            expected_snapshot_id="snapshot-1",
+            expected_snapshot_digest="digest-1",
+            expected_control_revision=1,
+            now=NOW + timedelta(seconds=4),
+        )
+        claim = self.claimed(service, now=NOW + timedelta(seconds=5), worker="worker-2")
+        resumed = service.begin_item(
+            claim,
+            storage_id="local",
+            resource_library_id="library",
+            source_path=legacy_path,
+            source_display=legacy_path,
+            source_occurrence_id="occ-v1",
+            source_fingerprint="fingerprint-A",
+            source_fingerprint_state="verified",
+            source_observed_at=NOW + timedelta(seconds=6),
+            source_storage_path=legacy_path,
+            now=NOW + timedelta(seconds=7),
+        )
+        self.assertEqual(resumed.attempts, 2)
+        self.assertEqual(resumed.source_occurrence_id, "occ-v1")
+        self.assertEqual(resumed.source_fingerprint, "fingerprint-A")
+        self.assertEqual(resumed.source_fingerprint_state, "verified")
+        self.assertEqual(resumed.source_observed_at, NOW + timedelta(seconds=2))
+
+    def test_an_outcome_cannot_name_another_source_version(self) -> None:
+        service = self.service()
+        admission = _admit(service)
+        claim = self.claimed(service)
+        item = self.versioned_item(service, claim)
+        service.begin_mutation(claim, item, "move", now=NOW + timedelta(seconds=3))
+        completed = replace(
+            item,
+            status=TaskItemStatus.SUCCESS,
+            stage="completed",
+            updated_at=NOW + timedelta(seconds=4),
+        )
+        other_version = replace(
+            _result(item),
+            source_occurrence_id="occ-v2",
+            source_fingerprint="fingerprint-B",
+            source_fingerprint_state="verified",
+        )
+        with self.assertRaises(TaskSchedulingError):
+            service.complete_item(
+                claim, completed, result=other_version, now=NOW + timedelta(seconds=4)
+            )
+
+        stored = self.repository.get_item(item.item_id)
+        self.assertEqual(stored.attempts, 1)
+        self.assertIs(stored.status, TaskItemStatus.PROCESSING)
+        self.assertEqual(stored.source_occurrence_id, "occ-v1")
+        self.assertEqual(self.repository.list_results(item.task_id), ())
+        self.assertEqual(self.repository.list_evidence_for_item(item.item_id), ())
+        refused = self.repository.get_task_scheduling(admission.task.task_id)
+        self.assertEqual(refused.mutation_state, TASK_MUTATION_IN_FLIGHT)
+        self.assertEqual(refused.mutation_item_id, item.item_id)
+
+        # Closing and reopening the database does not turn the refused attempt
+        # into an accepted Result or clear the in-flight boundary.
+        self.reopen()
+        restarted = self.service()
+        persisted = restarted.state(admission.task.task_id)
+        self.assertEqual(persisted.mutation_state, TASK_MUTATION_IN_FLIGHT)
+        self.assertEqual(self.repository.list_results(item.task_id), ())
+        self.assertIs(self.repository.get_item(item.item_id).status, TaskItemStatus.PROCESSING)
+
+        restarted.complete_item(
+            claim,
+            completed,
+            result=_result(item),
+            evidence=_evidence(item),
+            now=NOW + timedelta(seconds=5),
+        )
+        stored_result = self.repository.list_results(item.task_id)[0]
+        self.assertEqual(stored_result.source_occurrence_id, "occ-v1")
+        self.assertEqual(stored_result.source_fingerprint, "fingerprint-A")
+        self.assertIsNone(
+            self.repository.get_task_scheduling(admission.task.task_id).mutation_state
+        )
+        self.assertEqual(len(self.repository.list_evidence_for_item(item.item_id)), 1)
+
+    def test_evidence_cannot_replace_the_admitted_configuration_pin(self) -> None:
+        service = self.service()
+        admission = _admit(service)
+        claim = self.claimed(service)
+        sibling_path = "媒体/电影/sibling.mkv"
+        sibling = service.begin_item(
+            claim,
+            storage_id="local",
+            resource_library_id="library",
+            source_path=sibling_path,
+            source_display=sibling_path,
+            source_occurrence_id="occ-sibling",
+            source_fingerprint="fingerprint-sibling",
+            source_fingerprint_state="verified",
+            source_storage_path=sibling_path,
+            now=NOW + timedelta(seconds=2),
+        )
+        service.complete_item(
+            claim,
+            replace(
+                sibling,
+                status=TaskItemStatus.SUCCESS,
+                stage="completed",
+                updated_at=NOW + timedelta(seconds=3),
+            ),
+            result=_result(sibling),
+            now=NOW + timedelta(seconds=3),
+        )
+        recorded = self.repository.list_results(admission.task.task_id)
+        item = self.versioned_item(service, claim, now=NOW + timedelta(seconds=3))
+        service.begin_mutation(claim, item, "move", now=NOW + timedelta(seconds=4))
+        completed = replace(
+            item,
+            status=TaskItemStatus.SUCCESS,
+            stage="completed",
+            updated_at=NOW + timedelta(seconds=5),
+        )
+        other_pin = replace(
+            _evidence(item),
+            configuration_snapshot_id="snapshot-other",
+            configuration_snapshot_digest="digest-other",
+        )
+        with self.assertRaises(TaskSchedulingError):
+            service.complete_item(
+                claim,
+                completed,
+                result=_result(item),
+                evidence=other_pin,
+                now=NOW + timedelta(seconds=5),
+            )
+
+        # The independent successful sibling keeps its verified result/history.
+        self.assertEqual(self.repository.list_results(item.task_id), recorded)
+        self.assertIs(self.repository.get_item(sibling.item_id).status, TaskItemStatus.SUCCESS)
+        self.assertEqual(self.repository.list_evidence_for_item(item.item_id), ())
+        self.assertIs(self.repository.get_item(item.item_id).status, TaskItemStatus.PROCESSING)
+        state = self.repository.get_task_scheduling(admission.task.task_id)
+        self.assertEqual(state.mutation_state, TASK_MUTATION_IN_FLIGHT)
+
+        service.complete_item(
+            claim,
+            completed,
+            result=_result(item),
+            evidence=_evidence(item),
+            now=NOW + timedelta(seconds=6),
+        )
+        self.assertIsNone(
+            self.repository.get_task_scheduling(admission.task.task_id).mutation_state
+        )
+        self.assertEqual(len(self.repository.list_evidence_for_item(item.item_id)), 1)
+        self.assertEqual(len(self.repository.list_results(item.task_id)), len(recorded) + 1)
+
+    def test_progress_and_direct_repository_writes_cannot_replace_the_source(self) -> None:
+        service = self.service()
+        _admit(service)
+        claim = self.claimed(service)
+        item = self.versioned_item(service, claim)
+        replaced = replace(
+            item,
+            source_occurrence_id="occ-v2",
+            source_fingerprint="fingerprint-B",
+            source_fingerprint_state="verified",
+            source_observed_at=NOW + timedelta(seconds=3),
+            source_storage_path="媒体/电影/other.mkv",
+            updated_at=NOW + timedelta(seconds=3),
+        )
+        with self.assertRaises(TaskSchedulingError):
+            service.record_item(claim, replaced, now=NOW + timedelta(seconds=3))
+        with self.assertRaises(TaskSchedulingError):
+            self.repository.upsert_scheduled_item(claim.fence(NOW + timedelta(seconds=3)), replaced)
+        with self.assertRaises(TaskSchedulingError):
+            self.repository.upsert_scheduled_item(
+                claim.fence(NOW + timedelta(seconds=3)),
+                replace(
+                    replaced,
+                    status=TaskItemStatus.PROCESSING,
+                    stage="pipeline",
+                    attempts=2,
+                ),
+                stage=TaskItemPublication.START,
+            )
+        with self.assertRaises(TaskSchedulingError):
+            self.repository.publish_scheduled_item_outcome(
+                claim.fence(NOW + timedelta(seconds=3)),
+                replace(
+                    replaced,
+                    status=TaskItemStatus.SUCCESS,
+                    stage="completed",
+                ),
+                replace(
+                    _result(item),
+                    source_occurrence_id="occ-v2",
+                    source_fingerprint="fingerprint-B",
+                    source_fingerprint_state="verified",
+                ),
+                None,
+                clear_mutation=False,
+            )
+
+        stored = self.repository.get_item(item.item_id)
+        self.assertEqual(stored.attempts, 1)
+        self.assertIs(stored.status, TaskItemStatus.PROCESSING)
+        self.assertEqual(stored.source_occurrence_id, "occ-v1")
+        self.assertEqual(stored.source_fingerprint, "fingerprint-A")
+        self.assertEqual(stored.source_observed_at, NOW + timedelta(seconds=2))
+        self.assertEqual(stored.source_storage_path, self.path)
+        self.assertEqual(self.repository.list_results(item.task_id), ())
+
+
 class PortConformanceTests(unittest.TestCase):
     def test_the_sqlite_repository_implements_the_declared_port(self) -> None:
         """The application depends on the port; the port must stay truthful."""

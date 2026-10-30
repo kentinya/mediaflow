@@ -260,6 +260,8 @@ from mediaflow.domain.task_scheduling import (
     bounded_text,
     require_capacity,
     require_lease_seconds,
+    require_preserved_item_source,
+    require_result_matches_item_source,
 )
 from mediaflow.domain.unattended_execution import (
     UnattendedExecutionGrant,
@@ -18740,13 +18742,27 @@ class SQLiteTaskRepository:
                 self._require_scheduled_item_locked(
                     fence.task_id, item, stage=TaskItemPublication.OUTCOME
                 )
+                stored_row = self._connection.execute(
+                    "SELECT * FROM task_items WHERE item_id=?", (item.item_id,)
+                ).fetchone()
+                if stored_row is None:
+                    raise TaskSchedulingError(
+                        "an outcome publication needs this TaskItem's durable row"
+                    )
+                stored_item = self._item(stored_row)
+                # The Result and evidence are compared with the *durable* item
+                # and Task pin, not only with the caller's projections: passing
+                # a matching item together with a Result/evidence that describes
+                # another source version or configuration never becomes this
+                # attempt's verified outcome.
                 if result.task_id != fence.task_id or result.item_id != item.item_id:
                     raise TaskSchedulingError(
                         "a published Result must belong to this Task and TaskItem"
                     )
+                require_result_matches_item_source(stored_item, result)
                 if (
-                    result.source_storage_id != item.storage_id
-                    or result.source_path != item.source_path
+                    result.source_storage_id != stored_item.storage_id
+                    or result.source_path != stored_item.source_path
                 ):
                     raise TaskSchedulingError(
                         "a published Result must describe this TaskItem's exact source"
@@ -18754,12 +18770,36 @@ class SQLiteTaskRepository:
                 if evidence is not None and (
                     evidence.task_id != fence.task_id
                     or evidence.item_id != item.item_id
-                    or evidence.source_storage_id != item.storage_id
-                    or evidence.source_path != item.source_path
+                    or evidence.source_storage_id != stored_item.storage_id
+                    or evidence.source_path != stored_item.source_path
                 ):
                     raise TaskSchedulingError(
                         "published evidence must belong to this TaskItem's exact source"
                     )
+                task_pin_row = self._connection.execute(
+                    """SELECT configuration_snapshot_id, configuration_snapshot_digest
+                    FROM tasks WHERE task_id=?""",
+                    (fence.task_id,),
+                ).fetchone()
+                if task_pin_row is None:
+                    raise LookupError(f"task {fence.task_id!r} was not found")
+                if evidence is not None and (
+                    evidence.configuration_snapshot_id is not None
+                    or evidence.configuration_snapshot_digest is not None
+                ):
+                    evidence_pin = (
+                        evidence.configuration_snapshot_id,
+                        evidence.configuration_snapshot_digest,
+                    )
+                    admitted_pin = (
+                        task_pin_row["configuration_snapshot_id"],
+                        task_pin_row["configuration_snapshot_digest"],
+                    )
+                    if evidence_pin != admitted_pin:
+                        raise TaskSchedulingError(
+                            "published evidence cannot replace this Task's admitted "
+                            "configuration pin; the Result is not recorded"
+                        )
                 try:
                     self._insert_result_locked(result, allow_replace=False)
                 except sqlite3.IntegrityError as error:
@@ -19105,6 +19145,12 @@ class SQLiteTaskRepository:
                     "cannot re-point it"
                 )
             stored = self._item(row)
+            # Every start/progress/outcome is compared with the durable row, not
+            # just with the caller's projection: a caller that swaps the item
+            # object (or calls the repository directly) still cannot replace a
+            # known source occurrence/fingerprint, ResourceLibrary/Storage
+            # binding or first observation with another version.
+            require_preserved_item_source(stored, item)
             stored_attempts: int | None = stored.attempts
         else:
             stored_attempts = None
@@ -20985,7 +21031,7 @@ class SQLiteTaskRepository:
             source_fingerprint=result.source_fingerprint or item["source_fingerprint"],
             source_fingerprint_state=(
                 result.source_fingerprint_state
-                if result.source_occurrence_id
+                if result.source_occurrence_id and result.source_fingerprint
                 else item["source_fingerprint_state"]
             ),
             source_observed_at=(
