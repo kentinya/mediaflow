@@ -238,6 +238,8 @@ async function deleteThroughNativePage(
       : "Browser-Delete-Media.txt";
   const tile = page.getByLabel(`文件条目 ${filename}`, { exact: true });
   await expect(tile).toBeVisible();
+  await tile.scrollIntoViewIfNeeded();
+  await expect(tile).toBeInViewport();
   await tile.focus();
   await page.keyboard.press("Shift+F10");
   await expect(page.getByRole("menu")).toBeVisible();
@@ -317,6 +319,8 @@ async function renameThroughNativePage(
   ]) {
     const tile = page.getByLabel(`文件条目 ${from}`, { exact: true });
     await expect(tile).toBeVisible();
+    await tile.scrollIntoViewIfNeeded();
+    await expect(tile).toBeInViewport();
     await tile.focus();
     await page.keyboard.press("Shift+F10");
     await expect(page.getByRole("menu")).toBeVisible();
