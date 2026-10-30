@@ -6239,12 +6239,6 @@ tr[aria-selected="true"] {
   padding: 8px 12px;
 }
 
-.mf-operations-inventory .mf-task-center-summary > .mf-dashboard-meta {
-  margin: 8px 0 0;
-  font-size: 0.82rem;
-  line-height: 1.35;
-}
-
 .mf-operations-inventory .mf-task-center-panel {
   margin-top: 0;
 }
@@ -6315,33 +6309,6 @@ tr[aria-selected="true"] {
   border-color: transparent;
   background: transparent;
   color: var(--accent-strong);
-}
-
-.mf-operations-inventory .mf-run-timezone {
-  display: inline-flex;
-  align-items: center;
-  gap: 4px;
-  color: var(--muted);
-  font-size: 0.82rem;
-  white-space: nowrap;
-}
-
-.mf-operations-inventory .mf-run-timezone-toggle {
-  width: 34px;
-  min-height: 34px;
-  padding: 4px;
-  border-color: transparent;
-  background: transparent;
-  font-size: 1rem;
-}
-
-.mf-operations-inventory .mf-run-timezone-note {
-  flex-basis: 100%;
-  margin: 0;
-  color: var(--muted);
-  font-size: 0.82rem;
-  line-height: 1.5;
-  overflow-wrap: anywhere;
 }
 
 /* A fixed table layout keeps the columns that carry business identity from

@@ -317,7 +317,6 @@ function RunTimeRangeFields({
   readonly onApply: (next: Partial<RunListFilters>) => void;
   readonly onClear: () => void;
 }) {
-  const [showTimeZoneNote, setShowTimeZoneNote] = useState(false);
   return (
     <>
       <div
@@ -335,7 +334,6 @@ function RunTimeRangeFields({
             type="date"
             value={filters.from}
             max={filters.to || undefined}
-            aria-describedby="run-time-filter-note"
             onChange={(event) => onApply({ from: event.target.value })}
           />
         </span>
@@ -349,7 +347,6 @@ function RunTimeRangeFields({
             type="date"
             value={filters.to}
             min={filters.from || undefined}
-            aria-describedby="run-time-filter-note"
             onChange={(event) => onApply({ to: event.target.value })}
           />
         </span>
@@ -363,26 +360,6 @@ function RunTimeRangeFields({
           </button>
         )}
       </div>
-      <span className="mf-run-timezone">
-        <span>本地时区</span>
-        <button
-          type="button"
-          className="mf-button mf-button-secondary mf-run-timezone-toggle"
-          aria-label="时区说明"
-          aria-expanded={showTimeZoneNote}
-          aria-controls="run-time-filter-note"
-          onClick={() => setShowTimeZoneNote((shown) => !shown)}
-        >
-          <span aria-hidden="true">ⓘ</span>
-        </button>
-      </span>
-      <p
-        className="mf-run-timezone-note"
-        id="run-time-filter-note"
-        hidden={!showTimeZoneNote}
-      >
-        按本机时区的创建日期筛选，结束日包含整天；列表和详情沿用同一时区并显示偏移。
-      </p>
     </>
   );
 }
@@ -947,10 +924,6 @@ function ViewSummary({
           </span>
         </p>
       )}
-      <p className="mf-dashboard-meta">
-        统计按当前筛选后的完整总体计算，翻页不改变数字。
-        任务列表合并授权范围内的 Job 与 Task，并按明确关联去重。
-      </p>
     </section>
   );
 }

@@ -259,10 +259,9 @@ describe("Operations run inventory landing", () => {
       screen.getAllByRole("button", { name: /需要处理/ }).length,
     ).toBeGreaterThan(0);
     expect(
-      screen.getByText(
-        /任务列表合并授权范围内的 Job 与 Task，并按明确关联去重/,
-      ),
-    ).toBeVisible();
+      screen.queryByText(/任务列表合并授权范围内的 Job 与 Task/),
+    ).toBeNull();
+    expect(screen.queryByText(/统计按当前筛选后的完整总体计算/)).toBeNull();
     expect(screen.queryByText(/unified job\/task run inventory/)).toBeNull();
     // The retired global Worker/resident block, discovery list and manual
     // operation section are all absent, together with their exclusive reads.
@@ -535,46 +534,28 @@ describe("Operations run inventory landing", () => {
     ).toBe(true);
   });
 
-  it("keeps the timezone disclosure local and date descriptions connected", async () => {
-    const user = userEvent.setup();
+  it("keeps the date range and clear without timezone explanations", async () => {
     stubInventoryJourney(pageDocument({ items: [], total: 0 }));
     authStore.setToken(TOKEN);
-    const { router } = renderApp(
-      "/ui-v2/operations?view=ended&from=2026-08-01&to=2026-08-02",
-    );
+    renderApp("/ui-v2/operations?view=ended&from=2026-08-01&to=2026-08-02");
     await screen.findByRole("heading", { name: "没有匹配的运行" });
     const filters = screen.getByRole("region", { name: "运行筛选" });
     expect(
-      within(filters).getAllByText("创建日期", { exact: true }),
-    ).toHaveLength(1);
-    expect(
-      within(filters).getAllByText("本地时区", { exact: true }),
-    ).toHaveLength(1);
-    expect(
       within(filters).getByRole("group", { name: "创建日期" }),
     ).toBeVisible();
+    expect(within(filters).queryByText("本地时区")).toBeNull();
+    expect(
+      within(filters).queryByRole("button", { name: "时区说明" }),
+    ).toBeNull();
     const from = within(filters).getByLabelText("开始日期");
     const to = within(filters).getByLabelText("结束日期");
-    const toggle = within(filters).getByRole("button", { name: "时区说明" });
-    const note = document.getElementById(toggle.getAttribute("aria-controls")!);
-    expect(note).not.toBeNull();
-    expect(note).not.toBeVisible();
-    expect(toggle).toHaveAttribute("aria-expanded", "false");
-    expect(from).toHaveAttribute("aria-describedby", note!.id);
-    expect(to).toHaveAttribute("aria-describedby", note!.id);
-    const location = router.history.location.href;
-    await user.click(toggle);
-    expect(note).toBeVisible();
-    expect(note).toHaveTextContent("结束日包含整天");
-    expect(toggle).toHaveAttribute("aria-expanded", "true");
-    await user.keyboard(" ");
-    expect(note).not.toBeVisible();
-    await user.keyboard("{Enter}");
-    expect(note).toBeVisible();
     expect(from).toHaveValue("2026-08-01");
     expect(to).toHaveValue("2026-08-02");
-    expect(router.history.location.href).toBe(location);
-    // Empty-state recovery and the low-emphasis toolbar clear remain distinct.
+    expect(from).not.toHaveAttribute(
+      "aria-describedby",
+      "run-time-filter-note",
+    );
+    expect(to).not.toHaveAttribute("aria-describedby", "run-time-filter-note");
     expect(within(filters).getByRole("button", { name: "清除" })).toBeVisible();
     expect(screen.getByRole("button", { name: "清除时间" })).toBeVisible();
   });

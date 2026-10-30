@@ -524,10 +524,10 @@ views share a compact 创建日期 group with independently named native 开始�
 apply either or both sides without a search submission, and clear back to the current view’s
 complete authorized population. The toolbar's low-emphasis 清除 appears when a date is set;
 existing empty/read-error recovery entries remain available in their applicable states.
-One 本地时区 label accompanies a collapsed 时区说明 button. Click, touch or keyboard activation
-reveals the local-day/whole-end-day and matching list/detail timezone explanation, with valid
-accessible descriptions. Toggling it preserves list context and issues no API request of its own;
-normal reads and polling continue. Filters and table align, and controls wrap without clipped text
+The summary's routine population/pagination/Job-Task explanation is omitted, as are the 本地时区
+label and 时区说明 control/content. Local-calendar filtering, full end-day inclusion, explicit
+list/detail time offsets and authoritative statistics/deduplication retain their existing behavior.
+Filters and table align, and controls wrap without clipped text
 or page overflow when narrow or when the selected detail reduces available space.
 Manual refresh shows 刷新 / 刷新中…
 without layout jumps; background polling updates quietly. Normal same-query refresh preserves
