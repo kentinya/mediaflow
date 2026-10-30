@@ -19,6 +19,56 @@ remain in [Progress](progress.md) and their Git Contracts; they are not addition
 Files owns new manual selection and ordinary-file progress; Task Center owns admitted organizing
 progress and four business recovery types; Automation owns saved-definition scheduled/one-run intent.
 
+## TARGET — One organizing Task across triggers and recovery (Slice47 ACTIVE)
+
+The user-authorized `V2-TASK-001–006` refactor is selected by [Slice47](../SLICE.md), not yet
+delivered. The CURRENT journeys below stay the accepted baseline; this target preserves their
+entries, authority, bounded scope, failure/recovery and original execution-record semantics while
+replacing Job/Task handoffs with one Task identity.
+
+- **Goal/entry:** organize live ResourceLibrary selections from Files, let an enabled saved
+  Automation definition run when due, or explicitly Run once on its saved scope. These entrances
+  admit the same kind of durable organizing Task before rule/metadata/target/conflict readiness.
+  Disabled Run once stays schedule-independent; browsing/analysis creates no execution authority.
+- **Visible state:** the exact Task shows queued/discovery/analysis/waiting/execution stage,
+  independent files, bounded explanations, real completed/partial/uncertain effects and current
+  allowed actions. Queued and pre-start failures are Task evidence rather than a separate Job to
+  locate. Close/reload/reconnect/restart finds that same work; unknown responses reconcile the exact
+  request instead of submitting another. No queue token/claim/revision becomes an operator chore.
+- **Action and success:** manual work reviews its exact in-task summary and explicitly confirms
+  selected items/effects. Due work uses configured rules and valid checked Enabled intent without
+  a per-run click; Run once's command supplies this run's intent without a second initial
+  confirmation. The shared engine validates each real plan/source/capability/permission before
+  OrganizerExecutor runs. Per-file Results/attachment effects remain durable; empty no-work,
+  policy skip, unstable/unreadable/incomplete scope and real success remain distinct.
+- **Failure and recovery:** Recognition, Metadata, Classification and Conflict keep their native
+  decision → analysis → exact summary → explicit continuation. Recovery stays in the same newly
+  admitted Task and affected TaskItems, preserving other siblings and original attempt evidence.
+  Save/analysis never executes media. Technical failures remain factual All/Ended history under
+  the existing V2 restriction; uncertain effects remain inspection-only. No fifth flow, generic
+  retry promise, successful-sibling replay or implicit authority refresh is introduced.
+- **Controls:** permitted pause/cancel/continue remain cooperative and backend-authoritative.
+  A request is distinct from its acknowledgement and cannot interrupt an in-flight call or undo
+  completed effects. Waiting/paused work retains identity/source ownership without being repeatedly
+  claimed. Worker unavailability has truthful task-local readiness; no global monitoring block returns.
+- **History and upgrade:** original Automation records keep this execution's actual outcome/time,
+  concise failure/next step and server outcome filtering. Later recovery does not rewrite a failed
+  original record or count as another original run. Existing Task/Result/attempt/decision/audit/log
+  identities and supported history survive Job migration, including old child attempts and
+  pre-start failures. Proven old links resolve read-only into the exact Task/history or explain
+  unavailability/denial; they never start work. Ambiguous/interrupted/uncertain history cannot gain
+  execution permission merely because the database upgraded.
+- **Existing surfaces:** Task Center retains eight organizing views and the four-type Attention
+  union; Files retains initial confirmation and exact task/preparation readback. Both library
+  kinds keep ordinary-operation progress/recovery locally. Automation keeps definition lifecycle,
+  records/metrics and consumed settings; Dashboard, scoped logs/export, API/CLI and health retain
+  their capabilities through Tasks. No Job management page/API/CLI command remains. Capacity is
+  bounded queued/claimed executable work, not new parallelism; immutable old configurations and
+  explicit runtime overrides retain their meaning.
+
+Full migration, compatibility limits and evidence requirements live in the Contract/Architecture.
+There is no history clearing, new recovery system, arbitrary historical Reprocess or rollback.
+
 ## Readable actions and Entry
 
 Open Entry or a V2 page/dialog → distinguish text, availability and focus → submit the permitted

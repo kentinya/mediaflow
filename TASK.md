@@ -1,5 +1,10 @@
 # NO ACTIVE IMPLEMENTATION TASK
 
+当前 Slice47 — **Unified Task Scheduling and Organizing Execution** — 已由用户授权 A 选定为
+ACTIVE，Base：`5144ab1fc2344b06194969cc2c496835729664c0`；Implementation Head：NOT SET。
+[SLICE.md](SLICE.md) 是范围权威；下一步 **B PLANS THE FIRST COHERENT TASK**。
+本次仅完成 A 范围/架构契约检查点，未制定活动实施 Task、实施代码或作出最终验收。
+
 最近独立修正：**PATCH-20261030-6 — 自动化执行记录只展示本次结果，B PASS（2026-10-30）**。
 六项验收全部满足，无待实施/返工项，不规划额外工作。
 
@@ -22,6 +27,8 @@
 完整旅程见 [Product Experience](docs/product-experience.md#current--complete-native-automation-workspace-accepted43-amended46)，
 读取分类与原始数据边界见 [Architecture](docs/architecture.md#current--v2-automation-workspace-and-consumed-engine-settings-slice43-pass--closed)。
 
-Slice46 保持 A 已接受的 **PASS / CLOSED**，原 Base/已接受 Head、SLICE/Roadmap/Progress
-及延期边界不变。下一大版本由 A 选择；本次不选择或授权下一 Task/Slice。
-生命周期遵循 [Development Workflow](docs/development-workflow.md#31-independent-minor-bugs)。
+上述独立修正保持 B PASS；完整历史保留在其检查点。Slice46 保持 A 已接受的
+**PASS / CLOSED**，原 Base/已接受 Head/终审及延期事实不改写；其 Contract 保留于
+`5144ab1fc2344b06194969cc2c496835729664c0:SLICE.md`。本次新选 Slice47 承接所需的队列/Worker
+整合，不把过去延期记为已交付。生命周期遵循
+[Development Workflow](docs/development-workflow.md)。

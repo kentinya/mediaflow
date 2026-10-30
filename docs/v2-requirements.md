@@ -21,10 +21,41 @@ outcome corrections are reflected in `V2-AUTO-001/006/007` and the current journ
 Prior Slice acceptance remains unchanged; standalone review records are reachable through
 [TASK.md](../TASK.md) and Git.
 
+Slice47 is ACTIVE for the user-authorized Task-only refactor. The following TARGET amendment is
+required work, not accepted CURRENT behavior; the Job-based baseline below remains an accurate
+description of the pre-refactor implementation until Slice47 passes final review.
+
+## Unified Task scheduling and organizing — TARGET (Slice47 ACTIVE)
+
+The user authorized removal of the independent Job system on 2026-10-30 and granted A scope
+authority. [Slice47](../SLICE.md) owns implementation boundaries, migration and final acceptance.
+One organizing work is one Task, its TaskItems and corresponding Results. Automation Definitions
+remain reusable configuration; occurrence records remain idempotency/history evidence, not work
+queues. These requirements replace the V2 Job-object realization of `REQ-TASK-008`, Job-emitting
+`REQ-SCHED-003`, Job-specific queue/readiness/settings terminology and Job/Task joining in affected
+`V2-OPS-002–005/007/008/014/016/017` and `V2-AUTO-004–008/010/011`. Existing authority, UX and
+data-preservation obligations remain. Frozen V1 and prior accepted implementation facts are retained.
+
+| ID | Requirement | Acceptance meaning |
+|---|---|---|
+| V2-TASK-001 | One organizing Task owns admission, scheduling, processing and the complete work identity. | Manual, due and Run once each admit one pinned Task before business readiness. Task owns bounded queue eligibility, claim/heartbeat/staleness, cooperative controls and fenced publication. Per-source TaskItems retain their own stage/checkpoint/results; no independent Job or renamed competing queue/lifecycle remains. Human-waiting/paused work is not repeatedly claimed or counted as new execution parallelism. |
+| V2-TASK-002 | All organizing triggers use the same application engine and policy pipeline. | Inputs carry source intent, trigger, limits, immutable pin and applicable authority. Manual exact summary/selected confirmation, checked Enabled scheduled intent and explicit one-run intent retain their existing meanings. Scheduler atomically admits Task plus occurrence/due evidence without choosing policies or mutating Storage. Preserve configured filtering, attachments, bounds, real stability and Run once's existing ceiling; no independent grant or second initial Automation confirmation returns. |
+| V2-TASK-003 | Recovery and continuation reuse the existing four business flows in the same organizing work. | Recognition, Metadata, Classification and Conflict keep existing decisions/checkpoints, source validation, analysis, exact summary and explicit continuation. New work keeps Task/TaskItem identity through recovery; only eligible remaining items run. Preserve attempt/result history and historical child identities. Save/analysis grants no effects; no successful/uncertain replay, consumed-authority renewal, fifth type or second recovery system. |
+| V2-TASK-004 | Job removal preserves data and execution evidence through safe migration. | Versioned failure-atomic upgrade/reopen covers linked and unlinked admission/history, pre-start failure, active/interrupted work, continuations, pins, requests, occurrences, authorization consumption, audit/logs and primary/attachment effects. Use exact durable links; no guessed merge, lost row, fabricated success or implicit replay. Preserve original identifiers/provenance and immutable configurations. Residual unknown/retired Job rows remain non-executable history with original meaning; no retired product/executor is restored. Compatible service quiescence/fences prevent old/new writers from competing; partial/uncertain effects never become Pending merely because of migration. |
+| V2-TASK-005 | Operator and administrative capabilities consume Tasks without redundant Job surfaces. | Task Center keeps its eight organizing views/four-type union and consistent server paging/counts; Files keeps exact readback/confirmation and local ordinary work. Automation definitions, records/metrics/settings, Dashboard, logs/export and readiness remain complete. Original execution outcomes/times stay distinct from later handling. Remove Job collections/submission/control/stale-requeue APIs/CLI/frontend; existing capabilities use safe Task equivalents. Proven old identifiers may resolve read-only to Task/history, never execution. |
+| V2-TASK-006 | The refactor completely removes the live Job model/schema/queue while preserving execution safety. | Fresh/upgraded runtime, source, installed package and container contain no redundant Job table/index/FK/domain/repository/dispatch or parallel writer. Bounded migration provenance and legacy configuration parsing may preserve supported history/pins without retaining a Job executor. RBAC, explicit effect intent, immutable pins, source ownership/confinement, claim/lease/fences, zero-mutation analysis, C→A identity and OrganizerExecutor-only mutation remain; test real native journeys and migration/restart, not only renamed models. |
+
+The shared Task scheduling bound covers pending/claimed executable organizing work once; waiting
+for a human or a pause retains the work and source ownership without an independently queued run.
+Capacity is not Worker/thread parallelism. Job-named settings in historical published snapshots must
+remain reproducible; adopt Task terminology/semantics through compatible parsing or explicit checked
+successors, never by changing an old revision/digest. No unrelated ordinary-file queue, notification
+delivery or supervision redesign is selected. Full outcomes/evidence are in the committed Contract.
+
 ## Slice46 authorized amendments — CURRENT
 
 The following stable amendments select readable actions, organizing-only Task Center, earlier Files
-manual admission, local ordinary-work feedback and enable-to-execute/real Run once. [Slice46](../SLICE.md)
+manual admission, local ordinary-work feedback and enable-to-execute/real Run once. [Slice46](https://github.com/kentinya/mediaflow/blob/5144ab1fc2344b06194969cc2c496835729664c0/SLICE.md)
 owns full scope/acceptance and retained stability behavior; Product Experience owns complete journeys.
 A reviewed the full immutable Base..Implementation Head and closed Slice46 on 2026-10-29. Prior
 independent-grant, all-folder-suffix and no-wait planning variants remain superseded; they are not

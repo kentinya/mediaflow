@@ -8,13 +8,19 @@ workflow authority. Closure rules live only in
 
 ## Current development pointer
 
-Slice46 — **V2 Organizing Task Center and Readable Actions** — is **PASS / CLOSED** by A on
-2026-10-29. Immutable Base: `e9f1a8dc607cfc6d5ea02141b058da8ce849cd70`; reviewed Implementation Head:
-`6469f45811ee59c875cfd10107d3aed129e9d489`. [SLICE.md](../SLICE.md) records all five outcomes,
-AC-1–18, independent final review and evidence limits. B's complete Closure Packet remains at
-`85696ab160e8ec1d1e29dcdfc046d426e2cc214c:TASK.md`.
-[TASK.md](../TASK.md) has no active implementation Task. Next: **A SELECTS THE NEXT LARGE SLICE**.
-No next Slice is selected by this closure.
+Slice47 — **Unified Task Scheduling and Organizing Execution** — is **ACTIVE**, selected by A
+under explicit user authorization on 2026-10-30. Immutable Base:
+`5144ab1fc2344b06194969cc2c496835729664c0`; Implementation Head: **NOT SET**.
+[SLICE.md](../SLICE.md) owns outcomes/acceptance; `V2-TASK-001–006` and journey/architecture TARGET
+sections describe required work, not accepted delivery. [TASK.md](../TASK.md) has no active
+implementation Task. Next: **B PLANS THE FIRST COHERENT TASK** against the committed Contract.
+No Slice47 closure or implementation is recorded by this scope action.
+
+The latest large-Slice acceptance remains Slice46, **PASS / CLOSED** by A on 2026-10-29, with
+original Base `e9f1a8dc607cfc6d5ea02141b058da8ce849cd70` and reviewed implementation
+`6469f45811ee59c875cfd10107d3aed129e9d489`. Its Contract/A review is retained at
+`5144ab1fc2344b06194969cc2c496835729664c0:SLICE.md`; B's complete Closure Packet remains at
+`85696ab160e8ec1d1e29dcdfc046d426e2cc214c:TASK.md`. The closure ledger below is unchanged.
 
 The ledger below retains each closure's original Base/accepted Head, delivered scope and deferrals.
 Current amendments may replace behavior without rewriting an older acceptance. Detailed43

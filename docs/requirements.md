@@ -29,6 +29,7 @@ scope and delivery state remain in root contracts, [Roadmap](roadmap.md) and [Pr
 
 | Authorized amendment | Superseded V1 meaning / retained boundary |
 |---|---|
+| 2026-10-30, `V2-TASK-001–006` — TARGET / Slice47 ACTIVE | Replace the independent Job with one organizing Task owning admission/queue/Worker execution, TaskItems and Results across manual/due/Run once and existing four-type recovery. Supersede the V2 object distinction of `REQ-TASK-008`/§98.1, Job-emitting `REQ-SCHED-003`/§98.2 and affected queue/readiness/settings/Job-Task projection wording. Definitions/occurrence evidence remain; migrate supported data, original records, pins, authorization, audit/logs and continuation links before removing Job schema/code/API/CLI/Web. No second engine/recovery model, destructive default, lost history, immutable-revision rewriting or completed/uncertain replay. This is authorized target work, not delivered behavior; the frozen V1 definition below remains historical baseline. |
 | 2026-10-13, `V2-AUTO-009` | Only automatic organization remains: remove scan-only/scan-and-plan values/aliases/defaults and exclusive branches, with no conversion or compatible executor. Unsupported values never grant organizing authority. |
 | 2026-10-15, `V2-OPS-009–012` | Nine sibling Task/recovery lists and in-context exact summary followed by explicit selected execution/continuation replace mandatory independent Preview pages and standalone `REQ-SCAN-001` entry. Cross-Task recovery is selected; cross-Task bulk mutation stays deferred. Shared full planning/diagnostics and `UX-006` separate authority remain. |
 | 2026-10-18, `V2-OPS-011` | Treat Scan as absent on first deployment, including definition modes: remove routes/aliases/help, work/schema/execution/recovery and dedicated retirement/history/migration layers. Ordinary authenticated not-found/argument/shared unsupported-type validation stops before discovery/admission/authority; no automatic conversion. Preserve shared filtering/real elapsed stability/planning, zero-mutation analysis (standalone Preview is separately superseded by V2-OPS-013), supported-work restart/pins/results/audit/permissions and completed/uncertain non-replay. No data/media clearing or V1-wide removal. |
@@ -50,7 +51,9 @@ UX-first does not weaken safety or justify unnecessary CLI/internal-token ceremo
 当前 V2 的已接受交付/延期见 [Progress](progress.md)，实现与旅程分别见 Architecture 和
 Product Experience。Slice46 已由 A 终审 PASS / CLOSED，稳定定义与覆盖关系统一见
 [V2 Requirements](v2-requirements.md#slice46-authorized-amendments--current)，当前边界及
-AC-1–18 见 [SLICE.md](../SLICE.md)。本文件保留上表修订索引、稳定需求 ID 和完整 V1 定义；
+AC-1–18 见 [Slice46 Contract](https://github.com/kentinya/mediaflow/blob/5144ab1fc2344b06194969cc2c496835729664c0/SLICE.md)。
+当前 [Slice47](../SLICE.md) 选择 Task 统一调度/执行与无损 Job 迁移，目标定义为 `V2-TASK-001–006`，
+尚未实现或验收。本文件保留上表修订索引、稳定需求 ID 和完整 V1 定义；
 目标收缩不删除耐久证据、权限/范围/执行安全，也不改写历史验收。
 
 任务中心后续已接受的界面修正统一由 [V2 Requirements](v2-requirements.md) 的
@@ -258,6 +261,10 @@ supplies the journey-level interpretation.
 
 ## Task and recovery requirements
 
+The frozen V1 Job distinction in `REQ-TASK-008` and Job-specific readiness wording below are
+superseded for the authorized V2 TARGET by `V2-TASK-001–006`; Task/item/result durability, controls,
+bounded admission, source ownership and recovery safety remain. See the amendment table above.
+
 | ID | Scope | Requirement | Canonical Source | Acceptance Meaning |
 |---|---|---|---|---|
 | REQ-TASK-001 | REQUIRED | Scan, recognition, metadata refresh and organization are represented as durable Tasks or composed child work. | §任务系统; §任务类型 | Long work is observable and not hidden inside an HTTP request or UI page. |
@@ -281,6 +288,9 @@ supplies the journey-level interpretation.
 | REQ-RECOVERY-009 | REQUIRED | A saved Conflict/Review decision is non-executing and leads through re-analysis plus explicit continuation authorization back to the blocked Organize item. | §冲突策略; §任务操作; §可操作错误与恢复 | Destructive decisions do not execute on save, successful siblings remain terminal, and uncertain mutation is never replayed automatically. |
 
 ## Scheduler and automation requirements
+
+`V2-TASK-002/004` replace V2 Job emission in `REQ-SCHED-003` with atomic pinned Task admission and
+occurrence evidence. They do not change Scheduler's timing-only responsibility or pipeline authority.
 
 | ID | Scope | Requirement | Canonical Source | Acceptance Meaning |
 |---|---|---|---|---|

@@ -8,9 +8,97 @@ workspace/settings foundation remains accepted. Slice46 is PASS / CLOSED; its cu
 below replace selected entry/query/intent behavior without changing prior acceptance or deferrals.
 Detailed former delivery notes remain at `865ebdce47b0b323064fd8e05fbfaa54546e6269:docs/architecture.md`.
 
+## TARGET — Unified Task scheduling and organizing execution (Slice47 ACTIVE)
+
+`V2-TASK-001–006` and committed [Slice47](../SLICE.md) select removal of the independent Job system.
+This section is the authorized target; the CURRENT Job/Task contracts below describe the accepted
+Base until implementation/final review. Slice46's Contract/A review remains at
+`5144ab1fc2344b06194969cc2c496835729664c0:SLICE.md`; no old acceptance is rewritten.
+
+```text
+Files manual / supported API-CLI / Automation Run once / Scheduler due occurrence
+  -> shared Task admission (scope + trigger + authority + immutable configuration pin)
+  -> Task-owned bounded queue eligibility and Worker claim/heartbeat/fence
+  -> shared organizing application engine
+  -> discovery / parse / recognition / metadata / naming / classification / plan
+  -> authorized OrganizerExecutor -> independent TaskItem / Result / effect evidence
+  -> existing four-type decisions + exact analysis/summary + explicit continuation
+     in the same Task, excluding completed/uncertain effects
+```
+
+### Task identity, scheduling and engine
+
+One newly admitted organizing work keeps one Task identity through discovery, business waiting,
+confirmation, execution and safe continuation. TaskItems keep source identity and independent
+checkpoint/plan/effect/outcome evidence. Internal attempts may append durable evidence, but have
+no independent queue or top-level work identity. Current Task lifecycle/stage and original attempt
+outcome are different facts; a later aggregate transition cannot erase original Results/failure.
+Pre-upgrade child Task identities/relations remain traceable historical evidence.
+
+Task owns atomic bounded admission, ready/queued eligibility, current Worker claim generation,
+heartbeat/staleness and cooperative controls. Every item/result/aggregate publication observes the
+same effective fence. Source ownership spans human waiting/paused work; an execution lease is not
+its substitute. Waiting or paused work does not busy-loop in claim selection. Shared capacity counts
+pending/claimed executable organizing work once; it is not process/thread parallelism. Discovery,
+manual intent/summary/authorization and execution-step records keep their real evidence and authority
+roles without acting as alternate organizing queues or competing scheduling owners.
+
+Manual and automatic entrances use one application engine. Entry context preserves existing source
+selection/filtering/limits/stability and trigger-specific authority. Files manual retains initial exact
+summary/selected confirmation. Scheduled work uses current checked Enabled intent; Run once supplies
+one-run saved-scope intent without changing due state or adding another initial confirmation.
+Four-type recovery retains explicit safe continuation in every case. Scheduler admits Task and
+occurrence/due-state idempotency atomically; it never chooses media policy or invokes Storage mutation.
+Worker consumes Task/pin directly; no CLI-output parsing or separate Job execution bridge remains.
+Only OrganizerExecutor mutates, with current permission/effect/scope/capability/source/fence checks.
+
+### Recovery, queries and original execution records
+
+Reuse existing Recognition, Metadata candidate/correction, Classification and Conflict forms,
+checkpoints, decisions, exact-source analysis, summary/selected confirmation and per-item safe
+remaining-scope checks. Migrate their dispatch/relations to Task/TaskItem; do not rebuild recovery or
+admit a second top-level organizing Task for newly started work's continuation. Do not repin,
+refresh consumed authority, reprocess successful siblings or replay uncertain effects.
+
+Queries use Task identity across authoritative organizing lists/counts/cursors, local Files readback,
+Automation inventory/records/metrics, Dashboard, bounded scoped logs/audit and JSON exports.
+Task Center's eight views/four-type union and technical-history restriction remain. Original
+Automation execution outcome/time/effects are retained independently of current handling, including
+no-work/pre-start failures and attachment evidence. A recovery neither creates another original
+execution nor changes the original records-only result. Immutable attempt evidence stays inside
+the Task/Result responsibility; no independent history execution engine is created.
+
+### Migration and removal boundary
+
+Runtime Base schema53 carries Job identity columns in 12 tables. Migration must account for
+`automation_jobs`, definition due/occurrences, legacy schedule/audit, execution authorization
+consumption/audit, recovery/metadata/scope continuations, recovery batch items and operational logs,
+plus embedded event/export/request/link evidence. Exact persisted links determine migration;
+names/timestamps/current Active never do. Reuse existing linked work, preserve every historical Task,
+and represent formerly unlinked admissions/pre-start failures as Task evidence without fabricated
+items/effects. Keep bounded old-identifier provenance where needed to resolve supported history.
+Residual unknown/retired-command Job rows also retain original kind/state as non-executable history;
+removing their table cannot silently discard them or convert them into organizing authority.
+
+Versioned migration supports fresh/reopen and actual Base upgrade, is repeatable/failure-atomic,
+and preserves pins, original results/times, control/decision/request state, authority consumption,
+occurrence uniqueness and all known/uncertain effects. Unstarted valid work retains its original
+safe eligibility; entered/partial/uncertain work is never blindly requeued. Use the deployment's
+safe service-quiescence/schema/fence boundary and reject incompatible writers; migration cannot
+interrupt an in-flight Storage call or be an opportunity to replay it. Failed migration leaves the
+previous authority intact without half-updated data or schema marker. Validation uses isolated copies.
+
+After verified migration remove Job tables/indexes, redundant Job-only columns/FKs, domain/repository/
+service/dispatch and API/CLI/frontend surfaces. There is no live compatibility executor, second queue
+or dual write. Necessary legacy configuration parsing and read-only exact identifier resolution may
+preserve supported pins/history without recreating Jobs or execution authority. Historical published
+JSON/digests are immutable: Task-oriented capacity/staleness publication and actual consumer adoption
+must support those pins and retain explicit overrides. Existing ordinary-file/transfer/notification
+consumers retain their behavior; integration does not authorize an unrelated queue/supervisor rewrite.
+
 ## CURRENT — Slice46 presentation and work-query ownership
 
-[Slice46](../SLICE.md) owns outcomes/acceptance; `V2-UX-004`, `V2-OPS-014–017`, `V2-FILES-007`
+[Slice46](https://github.com/kentinya/mediaflow/blob/5144ab1fc2344b06194969cc2c496835729664c0/SLICE.md) owns outcomes/acceptance; `V2-UX-004`, `V2-OPS-014–017`, `V2-FILES-007`
 and `V2-AUTO-010/011` identify the accepted amendments after A final review on 2026-10-29.
 Unchanged foundation contracts below remain current; this section owns the affected layer boundaries.
 

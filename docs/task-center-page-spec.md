@@ -1,10 +1,15 @@
 # 任务中心最终方案 — Slice46（CURRENT / PASS / CLOSED）
 
-[SLICE.md](../SLICE.md) 记录原始 Base、已审实现及 A 终审；稳定要求为
+[Slice46 Contract](https://github.com/kentinya/mediaflow/blob/5144ab1fc2344b06194969cc2c496835729664c0/SLICE.md)
+记录原始 Base、已审实现及 A 终审；稳定要求为
 `V2-OPS-009–017`、`V2-AUTO-010/011` 和 `V2-FILES-007`。
 Slice46 于 2026-10-29 通过 A 完整范围审查。本文是现行页面/交互契约；Slice45 的九视图、
 中心新建和通用失败恢复方案保留在 Git，其退役与执行安全边界继续有效。
 后续已验收的独立界面修正同步到下方现行行为；原 Slice 验收身份不变，独立审查记录留在 Task/Git。
+
+当前 [Slice47](../SLICE.md) 的 `V2-TASK-001–006` 目标将 Job/Task 合并投影替换为 Task
+自身的调度/状态/记录，尚未交付。八视图、四类恢复、筛选/统计、摘要确认及只读历史体验
+保持；本页 CURRENT 的 Job 关联文字在该目标验收后统一协调，不提前宣称实现完成。
 
 ### 页面归属与入口
 
