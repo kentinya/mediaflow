@@ -528,10 +528,14 @@ class TaskSchedulingRepository(Protocol):
         """Publish one queue transition (human-wait/pause/settle) atomically.
 
         ``fence`` is required for work that is still claimed; ``None`` is the
-        settlement of queued work that has no owner yet (its safe boundary is
-        immediate), and it is refused for a claimed Task.  The Task aggregate,
-        the affected items and the released slot commit together, and the write
-        is refused while an unverified in-flight mutation is still recorded.
+        settlement of queued/human-waiting/paused work that has no owner (its
+        safe boundary is immediate), and it is refused for a claimed Task.  The
+        Task aggregate, the affected items, this Task's short-lived execution
+        locks and the released slot commit together, and the write is refused
+        while an unverified in-flight mutation is still recorded or while any
+        durable sibling still has queued/processing machine work.  The Task and
+        the fence must name the same durable identity; a Worker may never
+        release another Task with its own claim.
         """
         ...
 
@@ -580,6 +584,14 @@ class TaskSchedulingRepository(Protocol):
         evidence: PipelineEvidence | None,
         *,
         clear_mutation: bool,
-    ) -> bool: ...
+    ) -> bool:
+        """Publish the current attempt's Result/item/evidence atomically.
+
+        ``clear_mutation`` is only a caller hint: the durable clearing decision
+        is re-derived from the persisted mutation target plus the Result's
+        certainty and uncertain-effect evidence, so neither the flag nor a
+        matching item ID alone can forget an unknown effect.
+        """
+        ...
 
     def publish_scheduled_task(self, fence: TaskClaimFence, task: PersistentTask) -> bool: ...

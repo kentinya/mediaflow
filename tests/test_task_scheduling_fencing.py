@@ -153,6 +153,67 @@ class FencingTestCase(unittest.TestCase):
             now=now or NOW + timedelta(seconds=2),
         )
 
+    def waiting_human(
+        self,
+        service,
+        *,
+        request_id="request-1",
+        success_first=False,
+        now=None,
+    ):
+        """One Task that reached the human boundary with a genuine real DB row."""
+
+        at = now or NOW
+        admission = self.admit(service, request_id=request_id)
+        claim = self.started(service, now=at)
+        success_item = None
+        offset = 2
+        if success_first:
+            success_item = self.item(
+                service,
+                claim,
+                path=f"媒体/电影/{request_id}-done.mkv",
+                now=at + timedelta(seconds=2),
+            )
+            service.complete_item(
+                claim,
+                replace(
+                    success_item,
+                    status=TaskItemStatus.SUCCESS,
+                    stage="completed",
+                    updated_at=at + timedelta(seconds=3),
+                ),
+                result=self.result(success_item),
+                now=at + timedelta(seconds=3),
+            )
+            offset = 3
+        item = self.item(
+            service,
+            claim,
+            path=f"媒体/电影/{request_id}-waiting.mkv",
+            now=at + timedelta(seconds=offset),
+        )
+        waiting = replace(
+            item,
+            status=TaskItemStatus.WAITING_CONFIRM,
+            stage="waiting_confirm",
+            updated_at=at + timedelta(seconds=offset + 1),
+        )
+        task = replace(
+            self.repository.get_task(claim.task_id),
+            status=PersistentTaskStatus.PARTIAL_SUCCESS,
+            total_items=2 if success_first else 1,
+            completed_items=1 if success_first else 0,
+            completed_at=at + timedelta(seconds=offset + 2),
+        )
+        service.defer_to_human(
+            claim,
+            task=task,
+            items=(waiting,),
+            now=at + timedelta(seconds=offset + 2),
+        )
+        return admission, claim, success_item
+
     def result(self, item):
         return PersistentResultRecord(
             f"{item.item_id}:{item.attempts}",
@@ -172,7 +233,7 @@ class FencingTestCase(unittest.TestCase):
             "move",
             "success",
             NOW + timedelta(seconds=3),
-            effect_certainty="complete",
+            effect_certainty="verified_complete",
         )
 
 
@@ -559,7 +620,10 @@ class ControlFenceTests(FencingTestCase):
         service = self.service()
         admission = self.admit(service)
         claim = self.started(service)
-        self.repository.acquire("local", "媒体/电影/A.mkv", claim.task_id, NOW)
+        self.repository.acquire(
+            "local", "媒体/电影/A.mkv", claim.task_id, NOW, owner_token="round-1-a"
+        )
+        self.repository.acquire("local", "媒体/电影/A.srt", claim.task_id, NOW)
         other = self.admit(service, request_id="request-2", scope_path="媒体/剧集")
         self.repository.acquire("local", "媒体/剧集/B.mkv", other.task.task_id, NOW)
         service.request_control(claim.task_id, TaskControl.PAUSE, now=NOW + timedelta(seconds=3))
@@ -567,11 +631,517 @@ class ControlFenceTests(FencingTestCase):
         self.assertFalse(
             self.repository.lock_owned("local", "媒体/电影/A.mkv", claim.task_id, owner_token=None)
         )
+        self.assertFalse(
+            self.repository.lock_owned("local", "媒体/电影/A.srt", claim.task_id, owner_token=None)
+        )
         self.assertTrue(self.repository.lock_owned("local", "媒体/剧集/B.mkv", other.task.task_id))
         self.assertEqual(self.service(capacity=2).capacity_use(), 1)
         self.assertIs(
             self.repository.get_task_scheduling(admission.task.task_id).queue_state,
             TaskQueueState.PAUSED,
+        )
+
+    def test_a_late_pause_cleanup_cannot_delete_the_next_rounds_lock(self) -> None:
+        from mediaflow.application.task_scheduling import TaskSchedulingService
+
+        service = self.service()
+        admission = self.admit(service)
+        claim = self.started(service)
+        item = self.item(service, claim)
+        self.repository.acquire(
+            "local", item.source_path, claim.task_id, NOW, owner_token="round-1"
+        )
+        service.request_control(claim.task_id, TaskControl.PAUSE, now=NOW + timedelta(seconds=3))
+        paused_committed = threading.Event()
+
+        original_release = self.repository.release_scheduled_claim
+
+        def release_and_signal(*args, **kwargs):
+            result = original_release(*args, **kwargs)
+            if result is not None:
+                paused_committed.set()
+            return result
+
+        self.repository.release_scheduled_claim = release_and_signal
+        cleanup_release = threading.Event()
+
+        class DelayedCleanup:
+            def reclaim_task_locks(inner, task_id, *, owner_token=None):
+                cleanup_release.wait(timeout=10)
+                return self.repository.reclaim_task_locks(task_id, owner_token=owner_token)
+
+        ack_service = TaskSchedulingService(self.repository, capacity=2, locks=DelayedCleanup())
+        errors: list[BaseException] = []
+
+        def acknowledge() -> None:
+            try:
+                ack_service.acknowledge_control(claim, now=NOW + timedelta(seconds=4))
+            except BaseException as error:  # pragma: no cover - surfaced below
+                errors.append(error)
+
+        thread = threading.Thread(target=acknowledge)
+        thread.start()
+        self.assertTrue(paused_committed.wait(timeout=10))
+
+        successor_repository = self.connection()
+        successor = self.service(repository=successor_repository)
+        requeued = successor.requeue(
+            admission.task.task_id,
+            expected_snapshot_id="snapshot-1",
+            expected_snapshot_digest="digest-1",
+            expected_control_revision=1,
+            now=NOW + timedelta(seconds=5),
+        )
+        self.assertIs(requeued.queue_state, TaskQueueState.QUEUED)
+        next_claim = successor.claim_next(worker_id="worker-2", now=NOW + timedelta(seconds=6))
+        self.assertIsNotNone(next_claim)
+        self.assertTrue(
+            successor_repository.adopt_or_acquire(
+                "local",
+                item.source_path,
+                admission.task.task_id,
+                NOW + timedelta(seconds=7),
+                owner_token="round-2",
+            )
+        )
+        # The previous round's claim generation is stale: it cannot heartbeat,
+        # publish or release the new owner's work even while its old token is
+        # still in memory.
+        stale_service = self.service(repository=self.connection())
+        with self.assertRaises(TaskClaimFenceLost):
+            stale_service.heartbeat(claim, now=NOW + timedelta(seconds=7))
+        with self.assertRaises(TaskClaimFenceLost):
+            stale_service.publish_task(
+                claim,
+                replace(
+                    self.repository.get_task(admission.task.task_id),
+                    updated_at=NOW + timedelta(seconds=7),
+                ),
+                now=NOW + timedelta(seconds=7),
+            )
+
+        cleanup_release.set()
+        thread.join(timeout=10)
+        self.assertFalse(thread.is_alive())
+        self.assertEqual(errors, [])
+        self.assertTrue(
+            successor_repository.lock_owned(
+                "local",
+                item.source_path,
+                admission.task.task_id,
+                owner_token="round-2",
+            )
+        )
+        # The new owner's own conditional release is the only thing that may
+        # retire its generation; a repeated cleanup is a harmless no-op.
+        self.assertEqual(
+            successor_repository.reclaim_task_locks(admission.task.task_id, owner_token="round-2"),
+            1,
+        )
+        self.assertEqual(
+            successor_repository.reclaim_task_locks(admission.task.task_id, owner_token="round-2"),
+            0,
+        )
+
+
+class CancellationTests(FencingTestCase):
+    def test_a_cancelled_human_wait_cannot_be_requeued(self) -> None:
+        service = self.service()
+        admission, claim, success_item = self.waiting_human(service, success_first=True)
+        recorded = self.repository.list_results(admission.task.task_id)
+        succeeded = self.repository.get_item(success_item.item_id)
+        generation = self.repository.get_task_scheduling(admission.task.task_id).claim_generation
+
+        cancelled = service.request_control(
+            admission.task.task_id, TaskControl.CANCEL, now=NOW + timedelta(seconds=6)
+        )
+        self.assertIs(cancelled.queue_state, TaskQueueState.SETTLED)
+        self.assertIs(cancelled.control_request, TaskControl.CANCEL)
+        self.assertFalse(cancelled.holds_capacity)
+        self.assertEqual(service.capacity_use(), 0)
+        self.assertIs(
+            self.repository.get_task(admission.task.task_id).status,
+            PersistentTaskStatus.CANCELLED,
+        )
+        # A successful sibling and its Result are history, never rewritten by
+        # the cancellation; the unfinished waiting sibling settles as cancelled.
+        self.assertEqual(self.repository.get_item(success_item.item_id), succeeded)
+        self.assertEqual(self.repository.list_results(admission.task.task_id), recorded)
+        statuses = {
+            item.item_id: item.status for item in self.repository.list_items(admission.task.task_id)
+        }
+        self.assertIs(statuses[success_item.item_id], TaskItemStatus.SUCCESS)
+        waiting = next(
+            item
+            for item in self.repository.list_items(admission.task.task_id)
+            if item.item_id != success_item.item_id
+        )
+        self.assertIs(waiting.status, TaskItemStatus.CANCELLED)
+
+        with self.assertRaises(TaskControlRejected):
+            service.requeue(
+                admission.task.task_id,
+                expected_snapshot_id="snapshot-1",
+                expected_snapshot_digest="digest-1",
+                expected_control_revision=cancelled.control_revision,
+                now=NOW + timedelta(seconds=7),
+            )
+        repeated = service.request_control(
+            admission.task.task_id, TaskControl.CANCEL, now=NOW + timedelta(seconds=8)
+        )
+        self.assertIs(repeated.queue_state, TaskQueueState.SETTLED)
+        self.assertIs(repeated.control_request, TaskControl.CANCEL)
+        stored = self.repository.get_task_scheduling(admission.task.task_id)
+        self.assertEqual(stored.claim_generation, generation)
+        self.assertFalse(stored.holds_capacity)
+        self.assertEqual(self.repository.list_results(admission.task.task_id), recorded)
+
+    def test_a_cancelled_pause_cannot_be_requeued(self) -> None:
+        service = self.service()
+        admission = self.admit(service)
+        claim = self.started(service)
+        item = self.item(service, claim)
+        self.repository.acquire(
+            "local", item.source_path, claim.task_id, NOW, owner_token="round-1"
+        )
+        service.request_control(claim.task_id, TaskControl.PAUSE, now=NOW + timedelta(seconds=3))
+        paused = service.acknowledge_control(claim, now=NOW + timedelta(seconds=4))
+        self.assertIs(paused.queue_state, TaskQueueState.PAUSED)
+        generation = paused.claim_generation
+
+        cancelled = service.request_control(
+            claim.task_id, TaskControl.CANCEL, now=NOW + timedelta(seconds=5)
+        )
+        self.assertIs(cancelled.queue_state, TaskQueueState.SETTLED)
+        self.assertIs(cancelled.control_request, TaskControl.CANCEL)
+        self.assertEqual(service.capacity_use(), 0)
+        self.assertIs(self.repository.get_item(item.item_id).status, TaskItemStatus.CANCELLED)
+        self.assertFalse(
+            self.repository.lock_owned("local", item.source_path, claim.task_id, owner_token=None)
+        )
+        with self.assertRaises(TaskControlRejected):
+            service.requeue(
+                admission.task.task_id,
+                expected_snapshot_id="snapshot-1",
+                expected_snapshot_digest="digest-1",
+                expected_control_revision=cancelled.control_revision,
+                now=NOW + timedelta(seconds=6),
+            )
+        stored = self.repository.get_task_scheduling(admission.task.task_id)
+        self.assertEqual(stored.claim_generation, generation)
+        self.assertIs(stored.control_request, TaskControl.CANCEL)
+        self.assertIs(
+            self.repository.get_task(admission.task.task_id).status,
+            PersistentTaskStatus.CANCELLED,
+        )
+
+    def test_cancel_and_requeue_resolve_in_transaction_order(self) -> None:
+        service = self.service()
+        admission, _, _ = self.waiting_human(service, request_id="request-cancel-first")
+        other = self.service(repository=self.connection())
+        cancelled = service.request_control(
+            admission.task.task_id, TaskControl.CANCEL, now=NOW + timedelta(seconds=6)
+        )
+        with self.assertRaises(TaskControlRejected):
+            other.requeue(
+                admission.task.task_id,
+                expected_snapshot_id="snapshot-1",
+                expected_snapshot_digest="digest-1",
+                expected_control_revision=cancelled.control_revision,
+                now=NOW + timedelta(seconds=7),
+            )
+        self.assertIs(
+            self.repository.get_task_scheduling(admission.task.task_id).queue_state,
+            TaskQueueState.SETTLED,
+        )
+
+        second, _, _ = self.waiting_human(service, request_id="request-requeue-first")
+        requeued = other.requeue(
+            second.task.task_id,
+            expected_snapshot_id="snapshot-1",
+            expected_snapshot_digest="digest-1",
+            expected_control_revision=0,
+            now=NOW + timedelta(seconds=8),
+        )
+        self.assertIs(requeued.queue_state, TaskQueueState.QUEUED)
+        cancelled_after = service.request_control(
+            second.task.task_id, TaskControl.CANCEL, now=NOW + timedelta(seconds=9)
+        )
+        self.assertIs(cancelled_after.queue_state, TaskQueueState.SETTLED)
+        self.assertIs(
+            self.repository.get_task_scheduling(second.task.task_id).queue_state,
+            TaskQueueState.SETTLED,
+        )
+        self.assertIs(
+            self.repository.get_task(second.task.task_id).status,
+            PersistentTaskStatus.CANCELLED,
+        )
+        self.assertEqual(service.capacity_use(), 0)
+
+
+class MixedReleaseTests(FencingTestCase):
+    def test_a_mixed_human_wait_keeps_the_slot_until_every_item_is_human(self) -> None:
+        service = self.service(capacity=1)
+        admission = self.admit(service)
+        claim = self.started(service)
+        waiting_item = self.item(service, claim, path="媒体/电影/A.mkv")
+        processing_item = self.item(
+            service, claim, path="媒体/电影/B.mkv", now=NOW + timedelta(seconds=3)
+        )
+        waiting = replace(
+            waiting_item,
+            status=TaskItemStatus.WAITING_CONFIRM,
+            stage="waiting_confirm",
+            updated_at=NOW + timedelta(seconds=4),
+        )
+        service.record_item(claim, waiting, now=NOW + timedelta(seconds=4))
+        before_task = self.repository.get_task(claim.task_id)
+        aggregate = replace(
+            before_task,
+            status=PersistentTaskStatus.PARTIAL_SUCCESS,
+            total_items=2,
+            completed_at=NOW + timedelta(seconds=4),
+        )
+
+        with self.assertRaises(TaskControlRejected):
+            service.defer_to_human(
+                claim, task=aggregate, items=(waiting,), now=NOW + timedelta(seconds=5)
+            )
+        state = self.repository.get_task_scheduling(admission.task.task_id)
+        self.assertIs(state.queue_state, TaskQueueState.CLAIMED)
+        self.assertEqual(state.claim_worker_id, "worker-1")
+        self.assertEqual(self.service(capacity=1).capacity_use(), 1)
+        self.assertEqual(self.repository.get_task(admission.task.task_id), before_task)
+        self.assertIs(
+            self.repository.get_item(waiting_item.item_id).status,
+            TaskItemStatus.WAITING_CONFIRM,
+        )
+        self.assertIs(
+            self.repository.get_item(processing_item.item_id).status,
+            TaskItemStatus.PROCESSING,
+        )
+        with self.assertRaises(TaskQueueFull):
+            self.admit(
+                self.service(capacity=1, repository=self.connection()),
+                request_id="request-2",
+            )
+
+        service.complete_item(
+            claim,
+            replace(
+                processing_item,
+                status=TaskItemStatus.SUCCESS,
+                stage="completed",
+                updated_at=NOW + timedelta(seconds=6),
+            ),
+            result=self.result(processing_item),
+            now=NOW + timedelta(seconds=6),
+        )
+        released = service.defer_to_human(
+            claim, task=aggregate, items=(), now=NOW + timedelta(seconds=7)
+        )
+        self.assertIs(released.queue_state, TaskQueueState.WAITING_HUMAN)
+        self.assertFalse(released.holds_capacity)
+        self.assertEqual(self.service(capacity=1).capacity_use(), 0)
+        with self.assertRaises(TaskClaimFenceLost):
+            service.defer_to_human(claim, task=aggregate, items=(), now=NOW + timedelta(seconds=8))
+        self.admit(service, request_id="request-2")
+        self.assertEqual(self.service(capacity=1).capacity_use(), 1)
+
+
+class WhollyHumanWaitingTests(FencingTestCase):
+    def test_two_items_can_become_wholly_human_waiting_once(self) -> None:
+        service = self.service(capacity=1)
+        admission = self.admit(service)
+        claim = self.started(service)
+        first = self.item(service, claim, path="媒体/电影/A.mkv")
+        second = self.item(service, claim, path="媒体/电影/B.mkv", now=NOW + timedelta(seconds=3))
+        waiting_a = replace(
+            first,
+            status=TaskItemStatus.WAITING_CONFIRM,
+            stage="waiting_confirm",
+            updated_at=NOW + timedelta(seconds=4),
+        )
+        waiting_b = replace(
+            second,
+            status=TaskItemStatus.WAITING_METADATA,
+            stage="waiting_metadata",
+            updated_at=NOW + timedelta(seconds=4),
+        )
+        service.record_item(claim, waiting_a, now=NOW + timedelta(seconds=4))
+        service.record_item(claim, waiting_b, now=NOW + timedelta(seconds=4))
+        aggregate = replace(
+            self.repository.get_task(claim.task_id),
+            status=PersistentTaskStatus.PARTIAL_SUCCESS,
+            total_items=2,
+            completed_at=NOW + timedelta(seconds=4),
+        )
+
+        released = service.defer_to_human(
+            claim, task=aggregate, items=(waiting_a,), now=NOW + timedelta(seconds=5)
+        )
+        self.assertIs(released.queue_state, TaskQueueState.WAITING_HUMAN)
+        self.assertFalse(released.holds_capacity)
+        self.assertEqual(self.service(capacity=1).capacity_use(), 0)
+        # The successful release is not replayed by a late frame.
+        with self.assertRaises(TaskClaimFenceLost):
+            service.defer_to_human(claim, task=aggregate, items=(), now=NOW + timedelta(seconds=6))
+
+        self.repository.close()
+        self.repository = SQLiteTaskRepository(self.database)
+        self.addCleanup(self.repository.close)
+        reopened = self.service(capacity=1)
+        stored = reopened.state(admission.task.task_id)
+        self.assertIs(stored.queue_state, TaskQueueState.WAITING_HUMAN)
+        self.assertEqual(reopened.capacity_use(), 0)
+        items = {item.item_id: item for item in self.repository.list_items(admission.task.task_id)}
+        self.assertIs(items[first.item_id].status, TaskItemStatus.WAITING_CONFIRM)
+        self.assertIs(items[second.item_id].status, TaskItemStatus.WAITING_METADATA)
+        self.assertEqual(items[first.item_id].attempts, 1)
+        self.assertEqual(items[second.item_id].attempts, 1)
+        self.assertEqual(self.repository.list_results(admission.task.task_id), ())
+
+
+class ReleaseAdmissionRaceTests(FencingTestCase):
+    def test_a_release_and_a_new_admission_never_overbook_the_last_slot(self) -> None:
+        service = self.service(capacity=1)
+        self.admit(service)
+        claim = self.started(service)
+        item = self.item(service, claim)
+        waiting = replace(
+            item,
+            status=TaskItemStatus.WAITING_CONFIRM,
+            stage="waiting_confirm",
+            updated_at=NOW + timedelta(seconds=3),
+        )
+        service.record_item(claim, waiting, now=NOW + timedelta(seconds=3))
+        aggregate = replace(
+            self.repository.get_task(claim.task_id),
+            status=PersistentTaskStatus.PARTIAL_SUCCESS,
+            total_items=1,
+            completed_at=NOW + timedelta(seconds=3),
+        )
+
+        barrier = threading.Barrier(2)
+        outcomes: dict[str, object] = {}
+        guard = threading.Lock()
+
+        def release() -> None:
+            repository = SQLiteTaskRepository(self.database)
+            try:
+                contender = self.service(capacity=1, repository=repository)
+                barrier.wait(timeout=10)
+                try:
+                    result = contender.defer_to_human(
+                        claim, task=aggregate, items=(waiting,), now=NOW + timedelta(seconds=4)
+                    )
+                except (TaskControlRejected, TaskClaimFenceLost) as error:
+                    result = error
+            finally:
+                repository.close()
+            with guard:
+                outcomes["release"] = result
+
+        def admit_new() -> None:
+            repository = SQLiteTaskRepository(self.database)
+            try:
+                contender = self.service(capacity=1, repository=repository)
+                barrier.wait(timeout=10)
+                try:
+                    result = self.admit(contender, request_id="request-2")
+                except TaskQueueFull as error:
+                    result = error
+            finally:
+                repository.close()
+            with guard:
+                outcomes["admit"] = result
+
+        threads = [threading.Thread(target=release), threading.Thread(target=admit_new)]
+        for thread in threads:
+            thread.start()
+        for thread in threads:
+            thread.join(timeout=30)
+
+        released = outcomes["release"]
+        admitted = outcomes["admit"]
+        self.assertNotIsInstance(released, Exception)
+        if isinstance(admitted, TaskQueueFull):
+            self.assertEqual(self.service(capacity=1).capacity_use(), 0)
+        else:
+            self.assertEqual(self.service(capacity=1).capacity_use(), 1)
+        with sqlite3.connect(self.database) as connection:
+            capacity_rows = connection.execute(
+                "SELECT COUNT(*) FROM task_scheduling WHERE queue_state IN ('queued','claimed')"
+            ).fetchone()[0]
+            orphan_rows = connection.execute(
+                "SELECT COUNT(*) FROM task_scheduling "
+                "LEFT JOIN tasks ON tasks.task_id=task_scheduling.task_id "
+                "WHERE tasks.task_id IS NULL"
+            ).fetchone()[0]
+        self.assertLessEqual(capacity_rows, 1)
+        self.assertEqual(orphan_rows, 0)
+
+
+class CrossTaskPublicationTests(FencingTestCase):
+    def test_a_claim_can_only_publish_its_own_task(self) -> None:
+        service = self.service()
+        first = self.admit(service, request_id="request-a")
+        second = self.admit(service, request_id="request-b")
+        claim_a = self.started(service, worker="worker-1")
+        claim_b = self.started(service, worker="worker-2")
+        item_a = self.item(service, claim_a, path="媒体/电影/A.mkv")
+        waiting_a = replace(
+            item_a,
+            status=TaskItemStatus.WAITING_CONFIRM,
+            stage="waiting_confirm",
+            updated_at=NOW + timedelta(seconds=3),
+        )
+        service.record_item(claim_a, waiting_a, now=NOW + timedelta(seconds=3))
+        task_a = self.repository.get_task(first.task.task_id)
+        state_a = self.repository.get_task_scheduling(first.task.task_id)
+        state_b = self.repository.get_task_scheduling(second.task.task_id)
+
+        with self.assertRaises(TaskSchedulingError):
+            service.defer_to_human(
+                claim_b,
+                task=task_a,
+                items=(waiting_a,),
+                now=NOW + timedelta(seconds=4),
+            )
+        with self.assertRaises(TaskSchedulingError):
+            self.repository.release_scheduled_claim(
+                claim_b.fence(NOW + timedelta(seconds=4)),
+                task=task_a,
+                items=(waiting_a,),
+                queue_state=TaskQueueState.WAITING_HUMAN,
+                stage=None,
+            )
+        self.assertEqual(self.repository.get_task_scheduling(first.task.task_id), state_a)
+        self.assertEqual(self.repository.get_task_scheduling(second.task.task_id), state_b)
+        self.assertIs(
+            self.repository.get_task(first.task.task_id).status,
+            PersistentTaskStatus.RUNNING,
+        )
+        self.assertIs(
+            self.repository.get_item(item_a.item_id).status,
+            TaskItemStatus.WAITING_CONFIRM,
+        )
+        self.assertEqual(service.capacity_use(), 2)
+
+        released = service.defer_to_human(
+            claim_a,
+            task=replace(
+                task_a,
+                status=PersistentTaskStatus.PARTIAL_SUCCESS,
+                completed_at=NOW + timedelta(seconds=5),
+            ),
+            items=(),
+            now=NOW + timedelta(seconds=5),
+        )
+        self.assertIs(released.queue_state, TaskQueueState.WAITING_HUMAN)
+        self.assertIs(
+            self.repository.get_task_scheduling(second.task.task_id).queue_state,
+            TaskQueueState.CLAIMED,
         )
 
 

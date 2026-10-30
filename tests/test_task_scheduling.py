@@ -24,9 +24,11 @@ from mediaflow.domain.task_persistence import (
     TaskItemStatus,
 )
 from mediaflow.domain.task_scheduling import (
+    TASK_MUTATION_IN_FLIGHT,
     TaskAdmissionConflict,
     TaskControl,
     TaskControlRejected,
+    TaskItemPublication,
     TaskMachineStage,
     TaskQueueFull,
     TaskQueueState,
@@ -62,7 +64,7 @@ def _admit(service, *, request_id="request-1", principal="operator", **overrides
     return service.admit("organize", **arguments)
 
 
-def _result(item, *, status="success", certainty="complete"):
+def _result(item, *, status="success", certainty="verified_complete", uncertain_effects=()):
     return PersistentResultRecord(
         f"{item.item_id}:{item.attempts}",
         item.task_id,
@@ -82,6 +84,7 @@ def _result(item, *, status="success", certainty="complete"):
         status,
         datetime(2026, 10, 30, 9, 0, tzinfo=UTC),
         effect_certainty=certainty,
+        uncertain_effects=tuple(uncertain_effects),
     )
 
 
@@ -284,15 +287,29 @@ class AdmissionTests(SchedulingKernelTestCase):
         claim = self.claimed(service)
         for index in range(3):
             self.item(service, claim, path=f"媒体/电影/{index}.mkv")
-        first = service.begin_item(
+        first = self.repository.list_items(claim.task_id)[0]
+        # A provably effect-free attempt may continue; that is a new attempt of
+        # the same source, not a replay of a settled outcome.
+        service.complete_item(
+            claim,
+            replace(
+                first,
+                status=TaskItemStatus.FAILED,
+                stage="failed",
+                updated_at=NOW + timedelta(seconds=3),
+            ),
+            result=_result(first, status="failed", certainty="none"),
+            now=NOW + timedelta(seconds=3),
+        )
+        second = service.begin_item(
             claim,
             storage_id="local",
             resource_library_id="library",
-            source_path="媒体/电影/0.mkv",
-            source_display="媒体/电影/0.mkv",
+            source_path=first.source_path,
+            source_display=first.source_path,
             now=NOW + timedelta(seconds=10),
         )
-        self.assertEqual(first.attempts, 2)
+        self.assertEqual(second.attempts, 2)
         self.assertEqual(service.capacity_use(), 1)
         self.assertEqual(len(self.repository.list_items(claim.task_id)), 3)
 
@@ -610,15 +627,17 @@ class PublicationTests(SchedulingKernelTestCase):
         admission = _admit(service)
         claim = self.claimed(service)
         first = self.item(service, claim)
+        # A failed analysis attempt that proves no effect may continue; a
+        # success/ignore/dry-run outcome would not be allowed to start again.
         service.complete_item(
             claim,
             replace(
                 first,
-                status=TaskItemStatus.SUCCESS,
-                stage="completed",
+                status=TaskItemStatus.FAILED,
+                stage="failed",
                 updated_at=NOW + timedelta(seconds=3),
             ),
-            result=_result(first),
+            result=_result(first, status="failed", certainty="none"),
             now=NOW + timedelta(seconds=3),
         )
         recorded = self.repository.list_results(first.task_id)
@@ -646,11 +665,11 @@ class PublicationTests(SchedulingKernelTestCase):
             claim,
             replace(
                 second,
-                status=TaskItemStatus.FAILED,
-                stage="failed",
+                status=TaskItemStatus.SUCCESS,
+                stage="completed",
                 updated_at=NOW + timedelta(seconds=5),
             ),
-            result=_result(second, status="failed", certainty="none"),
+            result=_result(second),
             now=NOW + timedelta(seconds=5),
         )
         self.assertEqual(
@@ -678,6 +697,17 @@ class PublicationTests(SchedulingKernelTestCase):
                     updated_at=NOW + timedelta(seconds=3),
                 ),
                 result=replace(_result(item), item_id="another-item"),
+                now=NOW + timedelta(seconds=3),
+            )
+        with self.assertRaises(TaskSchedulingError):
+            service.complete_item(
+                claim,
+                replace(
+                    item,
+                    status=TaskItemStatus.SUCCESS,
+                    updated_at=NOW + timedelta(seconds=3),
+                ),
+                result=replace(_result(item), source_path="媒体/电影/other.mkv"),
                 now=NOW + timedelta(seconds=3),
             )
         self.assertEqual(self.repository.list_results(item.task_id), ())
@@ -743,6 +773,225 @@ class PublicationTests(SchedulingKernelTestCase):
         service = self.service()
         self.assertIsNone(service.claim_next(worker_id="worker-1", now=NOW))
         self.assertEqual(service.capacity_use(), 0)
+
+
+class ReplaySafetyTests(SchedulingKernelTestCase):
+    def test_a_successful_item_is_never_started_or_mutated_again(self) -> None:
+        service = self.service()
+        _admit(service)
+        claim = self.claimed(service)
+        item = self.item(service, claim)
+        service.complete_item(
+            claim,
+            replace(
+                item,
+                status=TaskItemStatus.SUCCESS,
+                stage="completed",
+                destination_storage_id="local",
+                destination_path="Media/A/A.mkv",
+                updated_at=NOW + timedelta(seconds=3),
+            ),
+            result=_result(item),
+            now=NOW + timedelta(seconds=3),
+        )
+        recorded = self.repository.list_results(item.task_id)
+        succeeded = self.repository.get_item(item.item_id)
+
+        with self.assertRaises(TaskSchedulingError):
+            service.begin_item(
+                claim,
+                storage_id=item.storage_id,
+                resource_library_id=item.resource_library_id,
+                source_path=item.source_path,
+                source_display=item.source_path,
+                now=NOW + timedelta(seconds=4),
+            )
+        with self.assertRaises(TaskSchedulingError):
+            service.begin_mutation(claim, succeeded, "move", now=NOW + timedelta(seconds=4))
+        with self.assertRaises(TaskSchedulingError):
+            service.record_item(
+                claim,
+                replace(
+                    succeeded,
+                    status=TaskItemStatus.PROCESSING,
+                    stage="pipeline",
+                    updated_at=NOW + timedelta(seconds=4),
+                ),
+                now=NOW + timedelta(seconds=4),
+            )
+        # A direct repository start is refused by the same transaction rule.
+        with self.assertRaises(TaskSchedulingError):
+            self.repository.upsert_scheduled_item(
+                claim.fence(NOW + timedelta(seconds=5)),
+                replace(
+                    succeeded,
+                    status=TaskItemStatus.PROCESSING,
+                    stage="pipeline",
+                    attempts=2,
+                    updated_at=NOW + timedelta(seconds=5),
+                ),
+                stage=TaskItemPublication.START,
+            )
+
+        stored = self.repository.get_item(item.item_id)
+        self.assertEqual(stored.attempts, 1)
+        self.assertIs(stored.status, TaskItemStatus.SUCCESS)
+        self.assertEqual(self.repository.list_results(item.task_id), recorded)
+
+    def test_an_uncertain_outcome_keeps_the_mutation_boundary_and_is_never_replayed(self) -> None:
+        service = self.service()
+        admission = _admit(service)
+        claim = self.claimed(service)
+        item = self.item(service, claim)
+        service.begin_mutation(claim, item, "move", now=NOW + timedelta(seconds=3))
+        service.complete_item(
+            claim,
+            replace(
+                item,
+                status=TaskItemStatus.FAILED,
+                stage="failed",
+                error="move outcome could not be verified",
+                updated_at=NOW + timedelta(seconds=4),
+            ),
+            result=_result(
+                item,
+                status="failed",
+                certainty="attempted_unverified",
+                uncertain_effects=("move",),
+            ),
+            now=NOW + timedelta(seconds=4),
+        )
+        state = self.repository.get_task_scheduling(admission.task.task_id)
+        self.assertEqual(state.mutation_state, TASK_MUTATION_IN_FLIGHT)
+        self.assertEqual(state.mutation_item_id, item.item_id)
+
+        with self.assertRaises(TaskSchedulingError):
+            service.begin_item(
+                claim,
+                storage_id=item.storage_id,
+                resource_library_id=item.resource_library_id,
+                source_path=item.source_path,
+                source_display=item.source_path,
+                now=NOW + timedelta(seconds=5),
+            )
+        with self.assertRaises(TaskSchedulingError):
+            service.begin_mutation(
+                claim,
+                self.repository.get_item(item.item_id),
+                "move",
+                now=NOW + timedelta(seconds=5),
+            )
+        # Even a live claim cannot start a fresh attempt over the persisted
+        # uncertain Result; the refusal does not depend on the lease expiring.
+        with self.assertRaises(TaskSchedulingError):
+            self.repository.upsert_scheduled_item(
+                claim.fence(NOW + timedelta(seconds=5)),
+                replace(
+                    self.repository.get_item(item.item_id),
+                    status=TaskItemStatus.PROCESSING,
+                    stage="pipeline",
+                    attempts=2,
+                    updated_at=NOW + timedelta(seconds=5),
+                ),
+                stage=TaskItemPublication.START,
+            )
+
+        # Timeout, a lost lease and a restart are not proof that the effect did
+        # not happen: the uncertain boundary survives all of them.
+        later = NOW + timedelta(minutes=5)
+        self.repository.heartbeat_worker("worker-1", later)
+        self.assertIsNone(
+            self.service(repository=self.reopen()).claim_next(worker_id="worker-1", now=later)
+        )
+        restarted = self.service()
+        persisted = restarted.state(admission.task.task_id)
+        self.assertEqual(persisted.mutation_state, TASK_MUTATION_IN_FLIGHT)
+        with self.assertRaises(TaskControlRejected):
+            restarted.requeue(
+                admission.task.task_id,
+                expected_snapshot_id="snapshot-1",
+                expected_snapshot_digest="digest-1",
+                now=later,
+            )
+        with self.assertRaises(TaskSchedulingError):
+            restarted.begin_item(
+                claim,
+                storage_id=item.storage_id,
+                resource_library_id=item.resource_library_id,
+                source_path=item.source_path,
+                source_display=item.source_path,
+                now=later,
+            )
+        self.assertEqual(
+            [value.result_id for value in self.repository.list_results(item.task_id)],
+            [f"{item.item_id}:1"],
+        )
+
+    def test_a_zero_certainty_result_that_still_names_effects_is_not_replayable(self) -> None:
+        service = self.service()
+        _admit(service)
+        claim = self.claimed(service)
+        item = self.item(service, claim)
+        service.complete_item(
+            claim,
+            replace(
+                item,
+                status=TaskItemStatus.FAILED,
+                stage="failed",
+                updated_at=NOW + timedelta(seconds=3),
+            ),
+            result=replace(
+                _result(item, status="failed", certainty="none"),
+                completed_operations=("move",),
+            ),
+            now=NOW + timedelta(seconds=3),
+        )
+        with self.assertRaises(TaskSchedulingError):
+            service.begin_item(
+                claim,
+                storage_id=item.storage_id,
+                resource_library_id=item.resource_library_id,
+                source_path=item.source_path,
+                source_display=item.source_path,
+                now=NOW + timedelta(seconds=4),
+            )
+        self.assertEqual(self.repository.get_item(item.item_id).attempts, 1)
+
+    def test_a_proven_no_effect_attempt_can_continue_without_replay(self) -> None:
+        service = self.service()
+        _admit(service)
+        claim = self.claimed(service)
+        item = self.item(service, claim)
+        service.begin_mutation(claim, item, "move", now=NOW + timedelta(seconds=3))
+        service.complete_item(
+            claim,
+            replace(
+                item,
+                status=TaskItemStatus.FAILED,
+                stage="failed",
+                updated_at=NOW + timedelta(seconds=4),
+            ),
+            result=_result(item, status="failed", certainty="none"),
+            now=NOW + timedelta(seconds=4),
+        )
+        state = self.repository.get_task_scheduling(claim.task_id)
+        self.assertIsNone(state.mutation_state)
+
+        second = service.begin_item(
+            claim,
+            storage_id=item.storage_id,
+            resource_library_id=item.resource_library_id,
+            source_path=item.source_path,
+            source_display=item.source_path,
+            now=NOW + timedelta(seconds=5),
+        )
+        self.assertEqual(second.attempts, 2)
+        self.assertIs(second.status, TaskItemStatus.PROCESSING)
+        service.begin_mutation(claim, second, "move", now=NOW + timedelta(seconds=6))
+        self.assertEqual(
+            self.repository.get_task_scheduling(claim.task_id).mutation_item_id,
+            second.item_id,
+        )
 
 
 class PortConformanceTests(unittest.TestCase):

@@ -524,6 +524,35 @@ _TASK_SCHEDULING_INSERT = (
     f"({', '.join('?' for _ in _TASK_SCHEDULING_COLUMNS)})"
 )
 
+#: TaskItem states from which a fresh attempt may start under the scheduling
+#: kernel.  A processed item that already recorded a success/ignore/dry-run is
+#: history, a waiting item needs its decision first, and a processing item is
+#: already active; none of those may be started again.  Queued, paused and
+#: provably effect-free failed work may continue.
+_KERNEL_RESUMABLE_ITEM_STATUSES = frozenset(
+    {
+        TaskItemStatus.PENDING,
+        TaskItemStatus.PAUSED,
+        TaskItemStatus.FAILED,
+    }
+)
+
+#: Item states that still represent admitted machine work.  A release to
+#: human-waiting/paused/terminal is truthful only when every durable sibling is
+#: outside this set.
+_KERNEL_MACHINE_ITEM_STATUSES = frozenset(
+    {
+        TaskItemStatus.PENDING,
+        TaskItemStatus.PROCESSING,
+    }
+)
+
+#: The only Result certainties that can clear an in-flight mutation boundary:
+#: ``none`` proves no effect happened and ``verified_complete`` proves the
+#: mutated effect is durable and verified.  Anything else (unknown,
+#: attempted_unverified, an unexpected historical value) keeps the boundary.
+_KERNEL_BOUNDARY_CLEARING_CERTAINTIES = frozenset({"none", "verified_complete"})
+
 #: The explicit-column ``tasks`` INSERT used by the scheduling kernel.  The
 #: legacy positional INSERTs stay exactly as they are: a Task admitted here
 #: carries the same 17 columns plus its own scheduling row.
@@ -18300,13 +18329,16 @@ class SQLiteTaskRepository:
                     raise TaskControlRejected(
                         f"task {task_id!r} was not admitted by the Task scheduling kernel"
                     )
+                if state.control_request is control:
+                    # A repeated pause/cancel is the same durable intent, even
+                    # after it settled.  Returning the stored state keeps the
+                    # request/acknowledgement history idempotent.
+                    self._connection.commit()
+                    return state
                 if state.queue_state is TaskQueueState.SETTLED:
                     raise TaskControlRejected(
                         f"task {task_id!r} has already finished; there is nothing to stop"
                     )
-                if state.control_request is control:
-                    self._connection.commit()
-                    return state
                 if state.control_request is TaskControl.CANCEL:
                     raise TaskControlRejected(
                         "a cancel was already accepted for this Task; it cannot be downgraded "
@@ -18360,6 +18392,19 @@ class SQLiteTaskRepository:
             stage = TaskMachineStage(stage)
         if not isinstance(task, PersistentTask):
             raise ValueError("the resulting Task projection is required")
+        if fence is not None and task.task_id != fence.task_id:
+            # The Task identity and the ownership generation must name the same
+            # durable work.  Never rewrite one side to "repair" a mismatched
+            # pair: a Worker holding Task B's claim may not publish Task A.
+            raise TaskSchedulingError(
+                "the published Task does not match the claim fence; a Worker may only "
+                "publish its own Task"
+            )
+        for item in items:
+            if item.task_id != task.task_id:
+                raise TaskSchedulingError(
+                    "a released TaskItem must belong to the Task being released"
+                )
         now = fence.now if fence is not None else task.updated_at
         if now.tzinfo is None:
             raise ValueError("Task release timestamp needs timezone")
@@ -18402,6 +18447,11 @@ class SQLiteTaskRepository:
                     raise TaskControlRejected(
                         "a claimed Task is only released by its current claim owner"
                     )
+                # A release says the whole Task has no more machine work.  That
+                # is only true when *every* durable sibling agrees, not just the
+                # items this caller happened to pass: a queued/processing item
+                # left outside the parameter still holds real work and its slot.
+                self._require_no_machine_items_locked(task.task_id, items)
                 self._require_scheduled_authority_locked(task)
                 self._connection.execute(
                     _TASK_SCHEDULED_PUBLICATION_UPDATE,
@@ -18413,6 +18463,12 @@ class SQLiteTaskRepository:
                     )
                     bound = self._bind_item_to_current_occurrence(item)
                     self._connection.execute(_TASK_ITEM_UPSERT, self._item_values(bound))
+                # Retire exactly this round's short-lived execution locks in the
+                # same transaction that gives the claim back.  A new owner can
+                # only acquire its own generation after this commit, so a late
+                # cleanup can never delete the next round's lock.  Durable
+                # source ownership lives on the items and is untouched.
+                self._connection.execute("DELETE FROM file_locks WHERE task_id=?", (task.task_id,))
                 acknowledged_at = (
                     now if state.control_request is not None else state.control_acknowledged_at
                 )
@@ -18486,6 +18542,13 @@ class SQLiteTaskRepository:
                     raise TaskControlRejected(
                         "this Task has an unverified in-flight mutation; it is never re-queued "
                         "as if nothing happened"
+                    )
+                if state.control_request is TaskControl.CANCEL:
+                    # Even the newest control revision cannot turn an accepted
+                    # cancellation back into runnable work.  A fresh organizing
+                    # request is a new admission, not a resume of this Task.
+                    raise TaskControlRejected(
+                        "a cancel was already accepted for this Task; it is not re-queued"
                     )
                 if (
                     expected_control_revision is not None
@@ -18598,11 +18661,22 @@ class SQLiteTaskRepository:
                     self._connection.rollback()
                     return False
                 item = self._connection.execute(
-                    "SELECT task_id FROM task_items WHERE item_id=?", (item_id,)
+                    "SELECT task_id, status, attempts FROM task_items WHERE item_id=?", (item_id,)
                 ).fetchone()
                 if item is None or item["task_id"] != fence.task_id:
                     raise TaskSchedulingError(
                         "a Task mutation boundary must name one item of this Task"
+                    )
+                stored_status = TaskItemStatus(item["status"])
+                if stored_status is not TaskItemStatus.PROCESSING:
+                    raise TaskSchedulingError(
+                        "only a processing TaskItem can enter a Storage mutation; a settled or "
+                        "waiting item is not started again"
+                    )
+                if not self._scheduled_item_effect_history_is_replay_safe_locked(item_id):
+                    raise TaskSchedulingError(
+                        "this TaskItem recorded a non-empty or unverified effect; it is never "
+                        "mutated again"
                     )
                 state = self._scheduled_state_locked(fence.task_id)
                 if state is None:
@@ -18647,8 +18721,12 @@ class SQLiteTaskRepository:
         in-flight mutation all resolve in this one transaction: a Worker that
         lost its claim writes nothing, a Result can never be re-pointed at
         another Task/item, an earlier attempt's Result is never replaced, and
-        publishing the verified outcome of the affected item is the only way the
-        mutation boundary is cleared.
+        the affected item's *verified* outcome is the only way the mutation
+        boundary is cleared.  ``clear_mutation`` is only the caller's hint; the
+        durable decision is re-derived here from the persisted mutation target
+        and the Result's certainty/uncertain-effects evidence, so passing
+        ``True`` (or merely publishing the same item ID) can never erase an
+        unknown/attempted-unverified effect.
         """
 
         if not isinstance(fence, TaskClaimFence):
@@ -18666,11 +18744,21 @@ class SQLiteTaskRepository:
                     raise TaskSchedulingError(
                         "a published Result must belong to this Task and TaskItem"
                     )
-                if evidence is not None and (
-                    evidence.task_id != fence.task_id or evidence.item_id != item.item_id
+                if (
+                    result.source_storage_id != item.storage_id
+                    or result.source_path != item.source_path
                 ):
                     raise TaskSchedulingError(
-                        "published evidence must belong to this Task and TaskItem"
+                        "a published Result must describe this TaskItem's exact source"
+                    )
+                if evidence is not None and (
+                    evidence.task_id != fence.task_id
+                    or evidence.item_id != item.item_id
+                    or evidence.source_storage_id != item.storage_id
+                    or evidence.source_path != item.source_path
+                ):
+                    raise TaskSchedulingError(
+                        "published evidence must belong to this TaskItem's exact source"
                     )
                 try:
                     self._insert_result_locked(result, allow_replace=False)
@@ -18683,7 +18771,18 @@ class SQLiteTaskRepository:
                 self._connection.execute(_TASK_ITEM_UPSERT, self._item_values(bound))
                 if evidence is not None:
                     self._append_evidence_locked(evidence)
-                if clear_mutation:
+                state = self._scheduled_state_locked(fence.task_id)
+                clears_boundary = (
+                    state is not None
+                    and state.mutation_item_id == item.item_id
+                    and result.effect_certainty in _KERNEL_BOUNDARY_CLEARING_CERTAINTIES
+                    and not self._result_uncertain_effects_present(result.uncertain_effects)
+                    and (
+                        result.effect_certainty == "verified_complete"
+                        or not result.completed_operations
+                    )
+                )
+                if clears_boundary:
                     self._connection.execute(
                         """UPDATE task_scheduling
                         SET mutation_state=NULL, mutation_item_id=NULL, mutation_action=NULL,
@@ -18881,25 +18980,122 @@ class SQLiteTaskRepository:
         ).fetchone()
         return self._scheduling_state(row) if row is not None else None
 
+    def _require_no_machine_items_locked(
+        self, task_id: str, items: tuple[PersistentTaskItem, ...]
+    ) -> None:
+        """Whether every durable sibling agrees that no machine work remains.
+
+        The caller's item tuple is only an overlay of the rows it intends to
+        change.  Rows outside that tuple still hold real queued or processing
+        work and keep the Task's slot; trusting ``total_items``/``completed_items``
+        or the passed subset would release a mixed batch early.  Rows are read
+        inside the same release transaction, so the decision cannot be based on
+        a stale in-memory projection.
+        """
+
+        rows = self._connection.execute(
+            "SELECT item_id, status FROM task_items WHERE task_id=?", (task_id,)
+        ).fetchall()
+        statuses = {row["item_id"]: row["status"] for row in rows}
+        for item in items:
+            statuses[item.item_id] = item.status.value
+        remaining = [
+            status for status in statuses.values() if status in _KERNEL_MACHINE_ITEM_STATUSES
+        ]
+        if remaining:
+            raise TaskControlRejected(
+                "this Task still has queued or processing machine work in "
+                f"{len(remaining)} item(s); its slot is kept until every item is human-waiting, "
+                "safely paused or settled"
+            )
+
+    def _stored_uncertain_effects(self, value: object) -> bool:
+        """Whether one persisted ``uncertain_effects`` document names any effect."""
+
+        if value is None or value == "":
+            return False
+        try:
+            decoded = json.loads(str(value))
+        except (TypeError, ValueError):
+            return True
+        return not isinstance(decoded, list) or bool(decoded)
+
+    def _scheduled_item_effect_history_is_replay_safe_locked(self, item_id: str) -> bool:
+        """Whether every recorded Result of this item proves a zero effect.
+
+        Only ``none`` with an empty uncertain-effect list is proof that nothing
+        happened.  Unknown/attempted-unverified certainty, a non-empty uncertain
+        list or an undecodable document all keep the item non-replayable.
+        """
+
+        rows = self._connection.execute(
+            """SELECT status, effect_certainty, uncertain_effects, completed_operations
+            FROM task_results WHERE item_id=?""",
+            (item_id,),
+        ).fetchall()
+        for row in rows:
+            if row["effect_certainty"] != "none":
+                return False
+            if row["status"] in {"success", "partial"}:
+                return False
+            if self._stored_uncertain_effects(row["uncertain_effects"]):
+                return False
+            if not self._stored_effect_list_is_empty(row["completed_operations"]):
+                return False
+        return True
+
+    @staticmethod
+    def _stored_effect_list_is_empty(value: object) -> bool:
+        """Whether one persisted operation list is the empty JSON/document list."""
+
+        if value is None or value == "":
+            return True
+        try:
+            decoded = json.loads(str(value))
+        except (TypeError, ValueError):
+            return False
+        return isinstance(decoded, list) and not decoded
+
+    @staticmethod
+    def _result_uncertain_effects_present(value: object) -> bool:
+        """Whether one in-memory Result document names an uncertain effect."""
+
+        if not value:
+            return False
+        if isinstance(value, str):
+            try:
+                decoded = json.loads(value)
+            except (TypeError, ValueError):
+                return True
+            return not isinstance(decoded, list) or bool(decoded)
+        try:
+            return bool(tuple(value))
+        except TypeError:
+            return True
+
     def _require_scheduled_item_locked(
         self, task_id: str, item: PersistentTaskItem, *, stage: TaskItemPublication
     ) -> None:
-        """One TaskItem row belongs to exactly one Task, source and attempt.
+        """One TaskItem row belongs to exactly one Task, source, attempt and history.
 
         ``stage`` names which publication is being attempted, because the three
-        legitimate ones have different attempt rules: a *start* must advance
-        exactly one attempt, *progress* must stay inside the current attempt, and
-        an *outcome* must match the current attempt exactly.  A stale frame can
-        therefore never rewind a recorded outcome or impersonate the next
-        attempt, and the previous attempt's own row/history is never rewritten.
+        legitimate ones have different rules: a *start* must advance exactly one
+        attempt from a state whose recorded history proves it is safe to
+        continue, *progress* must stay inside the current attempt, and an
+        *outcome* must match the current processing attempt.  A successful or
+        ignored item is never started again, a recorded non-empty/unknown effect
+        is never replaid, and a recorded outcome cannot be rewritten back into a
+        machine state.  These checks run inside the write transaction, not only
+        in the application service, so a direct repository call cannot bypass
+        them.
         """
 
         if item.task_id != task_id:
             raise TaskSchedulingError("a TaskItem publication must belong to the claimed Task")
         row = self._connection.execute(
-            "SELECT task_id, storage_id, source_path, attempts FROM task_items WHERE item_id=?",
-            (item.item_id,),
+            "SELECT * FROM task_items WHERE item_id=?", (item.item_id,)
         ).fetchone()
+        stored = None
         if row is not None:
             if row["task_id"] != item.task_id:
                 raise TaskSchedulingError("this TaskItem identity is bound to another Task")
@@ -18908,7 +19104,8 @@ class SQLiteTaskRepository:
                     "this TaskItem identity is bound to a different source; a publication "
                     "cannot re-point it"
                 )
-            stored_attempts = int(row["attempts"])
+            stored = self._item(row)
+            stored_attempts: int | None = stored.attempts
         else:
             stored_attempts = None
         expected = (
@@ -18920,6 +19117,38 @@ class SQLiteTaskRepository:
             raise TaskSchedulingError(
                 "a TaskItem publication must match the current attempt; this frame is stale"
             )
+        if stage is TaskItemPublication.START:
+            if stored is not None:
+                if stored.status not in _KERNEL_RESUMABLE_ITEM_STATUSES:
+                    raise TaskSchedulingError(
+                        "this TaskItem already recorded an outcome that is not a supported "
+                        "remaining-analysis continuation; it is not started again"
+                    )
+                if not self._scheduled_item_effect_history_is_replay_safe_locked(item.item_id):
+                    raise TaskSchedulingError(
+                        "this TaskItem recorded a non-empty or unverified effect; it is never "
+                        "started again"
+                    )
+            state = self._scheduled_state_locked(task_id)
+            if state is not None and state.mutation_item_id == item.item_id:
+                raise TaskSchedulingError(
+                    "this TaskItem has an unverified in-flight mutation; it is never started again"
+                )
+            return
+        if stored is None:
+            raise TaskSchedulingError("a progress/outcome publication needs an existing TaskItem")
+        if stage is TaskItemPublication.OUTCOME and stored.status is not TaskItemStatus.PROCESSING:
+            raise TaskSchedulingError("only a processing TaskItem can publish its attempt outcome")
+        recorded = self._connection.execute(
+            "SELECT 1 FROM task_results WHERE item_id=? AND result_id=?",
+            (item.item_id, f"{item.item_id}:{item.attempts}"),
+        ).fetchone()
+        if recorded is not None or stored.status in SETTLED_ITEM_STATUSES:
+            expected_item = replace(stored, updated_at=item.updated_at)
+            if replace(item, lock_owner_token=None) != expected_item:
+                raise TaskSchedulingError(
+                    "a TaskItem with a recorded outcome cannot be rewritten by a later publication"
+                )
 
     def _require_scheduled_authority_locked(self, task: PersistentTask) -> None:
         """Refuse any publication that would rewrite the admitted identity."""

@@ -145,7 +145,7 @@ with SQLiteTaskRepository(database) as repository:
             now,
             title="矩阵",
             completed_operations=("move",),
-            effect_certainty="complete",
+            effect_certainty="verified_complete",
             primary_completed=True,
         )
     )
@@ -302,7 +302,7 @@ class TaskSchedulingMigrationTests(unittest.TestCase):
         self.assertEqual([value.result_id for value in results], ["base-item-1:1"])
         self.assertEqual(results[0].recognition_type, "C")
         self.assertEqual(results[0].naming_policy_id, "naming-A")
-        self.assertEqual(results[0].effect_certainty, "complete")
+        self.assertEqual(results[0].effect_certainty, "verified_complete")
         linked = repository.get_job("base-job-linked")
         self.assertIsNotNone(linked)
         assert linked is not None

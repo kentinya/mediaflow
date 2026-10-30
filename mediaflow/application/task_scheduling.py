@@ -66,8 +66,21 @@ DEFAULT_TASK_LEASE_SECONDS = 30.0
 #: outcome — success, dry run, skipped, failed, ignored, cancelled — is settled
 #: evidence and is never rewritten by a control transition.
 _PAUSABLE_ITEM_STATUSES = frozenset({TaskItemStatus.PENDING, TaskItemStatus.PROCESSING})
+#: Cancelling is the operator's final intent for the unfinished work of this
+#: Task.  A waiting-for-human item is unfinished work too, so it settles with
+#: the cancellation; an item that already recorded its own outcome is history
+#: and is never rewritten.
 _CANCELLABLE_ITEM_STATUSES = frozenset(
-    {TaskItemStatus.PENDING, TaskItemStatus.PROCESSING, TaskItemStatus.PAUSED}
+    {
+        TaskItemStatus.PENDING,
+        TaskItemStatus.PROCESSING,
+        TaskItemStatus.PAUSED,
+        TaskItemStatus.WAITING_CONFIRM,
+        TaskItemStatus.WAITING_RECOGNITION,
+        TaskItemStatus.WAITING_METADATA,
+        TaskItemStatus.WAITING_METADATA_CORRECTION,
+        TaskItemStatus.WAITING_CLASSIFICATION,
+    }
 )
 
 
@@ -84,6 +97,11 @@ class TaskSchedulingService:
     ) -> None:
         self._repository = repository
         self._capacity = require_capacity(capacity)
+        # Kept for callers that already pass their lock port.  Retiring one
+        # round's short-lived execution locks is part of the repository's
+        # claim-validated release transaction, never a separate Task-level
+        # delete after the claim was given back: that late delete could remove
+        # the next owner's fresh generation.
         self._locks = locks
         self._lease_seconds = require_lease_seconds(lease_seconds)
 
@@ -274,15 +292,24 @@ class TaskSchedulingService:
 
         The request is durable evidence, not an effect: a Task whose machine work
         is still running keeps its slot until its current owner acknowledges the
-        safe boundary.  Work that has not been claimed yet has no owner and no
-        in-flight call, so its safe boundary is immediate and the Task settles
-        here in the same call.  Nothing here interrupts an external call, frees a
-        source lock of in-flight work or releases an uncertain effect.
+        safe boundary.  Queued, wholly human-waiting and safely paused work has
+        no owner and no in-flight call, so its safe boundary is immediate and
+        the request/acknowledgement settle atomically here.  In particular an
+        accepted cancel can never be cleared by a later resume.  Nothing here
+        interrupts an external call, frees a source lock of in-flight work or
+        releases an uncertain effect.
         """
 
         current = self._now(now)
         state = self._repository.request_scheduled_control(task_id, control, now=current)
-        if state.claim_token is None and state.queue_state is TaskQueueState.QUEUED:
+        if state.claim_token is None and state.queue_state in {
+            TaskQueueState.QUEUED,
+            TaskQueueState.WAITING_HUMAN,
+            TaskQueueState.PAUSED,
+        }:
+            # No owner and no in-flight call means the safe boundary is already
+            # here: the request and its acknowledgement settle together.  An
+            # accepted cancel therefore can never be cleared by a later resume.
             task = self._require_task(task_id)
             return self._settle_control(task, state, current, fence=None)
         return state
@@ -324,10 +351,14 @@ class TaskSchedulingService:
         """Release the slot because every remaining item now waits for a human.
 
         The Task keeps its identity, its source ownership, its saved decisions
-        and its results: only the machine-work slot is given back.
+        and its results: only the machine-work slot is given back.  The release
+        transaction re-reads every durable sibling, so a processing/queued item
+        omitted from ``items`` still keeps the slot; the Task must also be the
+        exact Task named by this claim.
         """
 
         current = self._now(now)
+        self._require_task_matches_claim(claim, task)
         released = self._repository.release_scheduled_claim(
             claim.fence(current),
             task=replace(task, updated_at=current),
@@ -356,6 +387,7 @@ class TaskSchedulingService:
         """
 
         current = self._now(now)
+        self._require_task_matches_claim(claim, task)
         released = self._repository.release_scheduled_claim(
             claim.fence(current),
             task=replace(task, updated_at=current),
@@ -424,7 +456,10 @@ class TaskSchedulingService:
         The item identity is derived from the Task and the exact source, so two
         Workers of the same Task can never create two competing rows for one
         source.  The previous attempt's row (and its recorded outcome) is
-        preserved: only the attempt counter advances.
+        preserved: only the attempt counter advances.  A source that already
+        succeeded, was ignored or recorded a non-empty/unverified effect is not
+        started again; only a new source, a paused/pending item or a provably
+        effect-free failed analysis attempt may continue.
         """
 
         current = self._now(now)
@@ -484,11 +519,12 @@ class TaskSchedulingService:
     ) -> None:
         """Record the durable boundary immediately before one Storage mutation.
 
-        This is the seam a future ``OrganizerExecutor`` integration uses.  Once
-        this boundary is recorded, a crash, a timeout, a lease expiry or a
-        restart leaves the Task non-claimable and non-re-queueable until the
-        affected item's verified outcome is published by this same owner; the
-        service itself never calls Storage.
+        This is the seam a future ``OrganizerExecutor`` integration uses.  Only
+        a currently processing item whose durable history proves no earlier
+        effect may enter it.  Once this boundary is recorded, a crash, a
+        timeout, a lease expiry or a restart leaves the Task non-claimable and
+        non-re-queueable until the affected item's verified outcome is published
+        by this same owner; the service itself never calls Storage.
         """
 
         current = self._now(now)
@@ -509,9 +545,12 @@ class TaskSchedulingService:
         """Publish this attempt's item outcome, Result and evidence atomically.
 
         The Result is identified by the exact TaskItem attempt, so a later
-        attempt can never replace an earlier recorded outcome; the affected
-        item's verified outcome is also the only publication that clears an
-        in-flight mutation boundary.
+        attempt can never replace an earlier recorded outcome.  The repository
+        re-derives whether an in-flight mutation boundary may be cleared from
+        the persisted target and this Result's certainty/uncertain-effect
+        evidence: only ``none`` or ``verified_complete`` with no uncertain
+        effects clears it, so an unknown/attempted-unverified outcome stays
+        inspectable and non-replayable.
         """
 
         current = self._now(now)
@@ -613,13 +652,28 @@ class TaskSchedulingService:
         )
         if released is None:
             raise TaskClaimFenceLost(f"task {task.task_id!r} is no longer owned by this Worker")
-        if self._locks is not None:
-            # The owner reached its supported safe boundary: the short-lived
-            # execution exclusion is retired with the settled transition.  The
-            # Task's durable source ownership stays with the items themselves,
-            # so giving the slot back never frees a source for a competing work.
-            self._locks.reclaim_task_locks(task.task_id)
+        # The release transaction retires this Task's short-lived execution
+        # locks under the same validated claim/control boundary.  A post-commit
+        # task-level cleanup would be able to delete the next round's fresh
+        # generation after a quick pause -> requeue -> claim handoff.  Durable
+        # source ownership stays with the items themselves, so giving the slot
+        # back never frees a source for competing work.
         return released
+
+    @staticmethod
+    def _require_task_matches_claim(claim: ScheduledTaskClaim, task: PersistentTask) -> None:
+        """One claim may publish only its own Task's aggregate.
+
+        The Task identity carried by the caller must be the identity named by
+        the claim fence; a mismatched pair is refused before any write instead
+        of being corrected by rewriting one side.
+        """
+
+        if task.task_id != claim.task_id:
+            raise TaskControlRejected(
+                "the published Task does not match the claim; a Worker may only publish its "
+                "own Task"
+            )
 
     def _require_no_pending_control(self, task_id: str) -> None:
         state = self._require_state(task_id)
