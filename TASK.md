@@ -14,7 +14,7 @@ Slice46 维持 A 已接受的 **PASS / CLOSED**；SLICE/Roadmap/Progress、原 B
 Task ID: PATCH-20261030-2
 Task Type: STANDALONE MINOR BUG
 Parent Slice: NONE
-Status: PLANNED
+Status: READY FOR B REVIEW
 Task Base: b50e4834b48a1f1fd3347a36ce5cdbb16aad51ce
 Difficulty: Low
 Test Level: T2
@@ -176,13 +176,60 @@ Provider。真实 API 日期用例作为控件名称变更直接影响的回归�
 
 ## Developer Completion Report
 
-未开始。Developer 实施后填写 checkpoint、实际变更、受影响测试结果和风险，
-状态交至 `READY FOR B REVIEW`。验收由 B 独立完成。
+### Candidate — 2026-10-30
+
+- Implementation checkpoint：`390e0db50cfc2e05013e0ca70bb0d9d568c04667`；
+  Task Base 保持 `b50e4834b48a1f1fd3347a36ce5cdbb16aad51ce`。
+  真实 Web 源码树：`34aac81e522e9421554d3150408d6e3ef4952869`。
+  本报告为仅 `TASK.md` 的后继 checkpoint，产品/测试/harness/构建输入不再变化；
+  B 审查完整 Base..交接 Head。状态为 **READY FOR B REVIEW**，不是独立 PASS。
+- 产品只改 `OperationsLanding.tsx` / 任务中心局部 CSS：删除标签下重复标题/通用描述；
+  合并创建日期组及低强调清除；独立开始/结束日期名称；默认收起、鼠标/键盘/触摸可开的
+  时区说明，带展开状态/关联和有效日期描述；移除嵌套水平留白，日期保留原生宽度并换行。
+  四类问题/失败证据、页头/统计/详情保留；后端、`run-time.ts`、URL、查询/轮询和权限未改。
+- 测试仅同步四个直接受影响文件，保留既有日期/总数/失败/上下文断言；新增本地说明、
+  四视口实测、说明展开/详情收窄、原生控件可访问描述及触摸验证。
+  请求验证在现有列表正常轮询之间记录路由/方法/时间，等待下一次正常轮询成功；不禁用
+  轮询、不使用前后总请求数相等断言。所有场景从现有路由、标签、日期和详情入口发生；
+  使用既有 Node fake 或隔离 Python/API/SQLite harness，无新增测试入口或用户库/媒体。
+
+### Actual affected verification
+
+下表命令 cwd 为 `web/`（根目录检查单列）；原始日志/截图/输入与产物 SHA256 保存于本机
+ignored `.git/validation-evidence/developer-patch-20261030-2/`，索引见其中 `README.md`。
+
+| Command | Actual result |
+|---|---|
+| `npm run test -- run src/features/operations/OperationsInventory.test.tsx src/shared/ui/AppShell.test.tsx src/features/operations/TaskRefreshControl.test.tsx` | 3 files / **61 passed**，6.01s，0 skips；`components-final.log` |
+| `npm run typecheck` | 通过；`typecheck-final.log` |
+| `npx eslint src/features/operations/OperationsLanding.tsx src/features/operations/OperationsInventory.test.tsx src/shared/ui/AppShell.test.tsx tests/e2e/task-center-layout.spec.ts tests/e2e/operations-inventory.python.spec.ts` | 通过；`eslint-final.log` |
+| `npx prettier --check src/features/operations/OperationsLanding.tsx src/shared/ui/styles.css src/features/operations/OperationsInventory.test.tsx src/shared/ui/AppShell.test.tsx tests/e2e/task-center-layout.spec.ts tests/e2e/operations-inventory.python.spec.ts` | 通过；`prettier.log` |
+| `npm run build` | 通过；`build.log`；产物 `index-DW6J-cHO.js` / `index-IPyNb6dh.css`，用于两种浏览器 harness |
+| `npm run test:e2e -- tests/e2e/task-center-layout.spec.ts --output=../.git/validation-evidence/developer-patch-20261030-2/layout-verified-results` | Chromium **13 passed**，18.0s，0 skips；`layout-verified.log` |
+| `npm run test:e2e -- --config=playwright.python.config.ts tests/e2e/operations-inventory.python.spec.ts tests/e2e/operations-task-center-visual.python.spec.ts --grep 'time filter:|capture the eight task-center views' --output=../.git/validation-evidence/developer-patch-20261030-2/python-results` | 真实 Python **5 passed**，6.6s，0 skips；含本地日两端/单侧/清除、分页/详情返回/重连、八视图及实际问题文件入口；`python-browser.log` |
+| 根目录 `python3 scripts/check_governance.py`、`git diff --check` / staged diff check | 通过；preflight/交接检查均执行 |
+
+视觉实际检查：1536×1024、1280×800 默认及筛选/展开均紧凑单行；390×844、320px 日期按组
+换行，日期文字/日历图标/清除/说明按钮可读可达，无页面横向溢出；说明在文档流内完整显示。
+1280 桌面加载完成的详情使列表收窄后仍可读；手机保留原全屏详情、关闭后说明/日期不丢失。
+另检查真实 Python 的 All、元数据恢复及问题文件入口截图，必要问题说明仍存在。
+
+### Failures and remaining limits
+
+- 初轮 typecheck 报新增 Testing Library `getByRole` 选项不支持 `exact`；已使用区域限定的
+  精确字符串名称修复，随后静态/组件检查通过。保留初轮失败 `typecheck.log`，没有弱化断言。
+  两次 formatter 命令因误用根目录 cwd 未找到文件，随后均在 `web/` 正确执行；不算通过。
+- 验证浏览器为 Chromium；触摸是 Playwright 的真实触摸事件模拟，不声称实机 iOS/Safari/
+  Firefox、读屏软件或所有字体/缩放组合已验收。原生日历跨浏览器差异不承诺像素一致。
+- 已有 jsdom `scrollTo` 未实现、Node NO_COLOR/FORCE_COLOR 和 Vite 大 chunk 警告；无新增
+  产品失败。未跑全仓 Python/Web/E2E 或容器矩阵，按本 T2 Developer 分工交 B 独立验收。
+- 未改 SLICE/Roadmap/Progress/需求/架构；没有子代理、自签 PASS、推送或发布。
+  原有 untracked/private 文件未加入 checkpoint；无本 Task 外产品改动。
 
 ## B Review Result
 
-待实施候选。激活不构成实施或 PASS；后续记录精确 `Task Base..Head`、实际验收结果及
-`PASS / FIX REQUIRED`。独立修正 PASS 后回到无活跃实施 Task，不声明 Slice 关闭。
+待 B 对交接候选独立审查；Developer 验证不构成 PASS。B 记录精确 `Task Base..Head`、
+实际验收结果及 `PASS / FIX REQUIRED`；独立修正 PASS 后回到无活跃实施 Task，不声明 Slice 关闭。
 
 ## Workspace record
 
@@ -204,3 +251,11 @@ Provider。真实 API 日期用例作为控件名称变更直接影响的回归�
 - `Task Base..HEAD` 仅含本 `TASK.md` 的规划/断言修订，产品实现输入未变；保留原
   Task Base `b50e4834b48a1f1fd3347a36ce5cdbb16aad51ce`、Goal、范围、AC 和 Low/T2 分级。
 - 激活前治理检查 PASS；本次只提升 Task 状态及授权说明，尚未实施或运行产品测试。
+
+
+### Developer workspace — 2026-10-30
+
+- Branch：`main`；实施前 HEAD：`39e493cd0f52e94d9de1bf3c0bfe69f4d6929eb4`。
+  工作区/Git index 可写，无 pre-existing tracked/staged 改动；上列原有 untracked 全部保留。
+- 治理检查通过后仅本 Task 由 IN PROGRESS 转 READY FOR B REVIEW；只 stage 六个源码/测试
+  文件与本报告，没有改动或收录已有日志、OS 文件、参考图片、私有配置或用户运行数据。
