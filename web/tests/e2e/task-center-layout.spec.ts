@@ -1,7 +1,8 @@
 import { expect, test, type Page } from "@playwright/test";
 
 /**
- * Built-artifact proof for PATCH-20261029-2.
+ * Built-artifact proof for task-center presentation corrections, including
+ * PATCH-20261030-2 compact creation-date filters.
  *
  * The Node fake API remains the authority for the surrounding files; this
  * spec only substitutes representative read-only `source_scope` values on the
@@ -282,7 +283,7 @@ test("shared sidebar Files stays ordinary from default, filtered and selected ce
 
   await page.getByRole("link", { name: "任务中心", exact: true }).click();
   await expect(page.getByRole("table", { name: "运行清单" })).toBeVisible();
-  await page.getByLabel("创建时间从（本地）").fill("2026-08-01");
+  await page.getByLabel("开始日期").fill("2026-08-01");
   await expect(page).toHaveURL(/from=2026-08-01/);
   await expect(filesLink).toHaveAttribute("href", "/ui-v2/resourcelib/files");
   await filesLink.click();
@@ -358,14 +359,16 @@ test("task center stays usable and keyboard reachable at 1280 and 390", async ({
   const search = page.locator("#run-search");
   await expect(search).toHaveCount(0);
   await expect(page.getByLabel("状态", { exact: true })).toHaveCount(0);
-  const fromFilter = page.getByLabel("创建时间从（本地）");
+  const fromFilter = page.getByLabel("开始日期");
   await fromFilter.focus();
   await expect(fromFilter).toBeFocused();
-  const toFilter = page.getByLabel("至（本地）");
+  const toFilter = page.getByLabel("结束日期");
   await toFilter.focus();
   await expect(toFilter).toBeFocused();
   await fromFilter.fill("2026-08-01");
-  const clearTime = page.getByRole("button", { name: "清除时间" }).first();
+  const clearTime = page
+    .getByRole("region", { name: "运行筛选" })
+    .getByRole("button", { name: "清除", exact: true });
   await clearTime.focus();
   await expect(clearTime).toBeFocused();
   await clearTime.click();
@@ -439,11 +442,20 @@ for (const viewport of [
     ]) {
       await views.getByRole("button", { name, exact: true }).click();
       const filters = page.getByRole("region", { name: "运行筛选" });
+      await expect(
+        page.getByRole("heading", { name, exact: true }),
+      ).toHaveCount(0);
+      await expect(filters.getByText("创建日期", { exact: true })).toHaveCount(
+        1,
+      );
+      await expect(filters.getByText("本地时区", { exact: true })).toHaveCount(
+        1,
+      );
       await expect(filters.getByRole("searchbox")).toHaveCount(0);
-      await expect(filters.getByLabel("创建时间从（本地）")).toBeVisible();
-      await filters.getByLabel("创建时间从（本地）").fill("2026-01-01");
+      await expect(filters.getByLabel("开始日期")).toBeVisible();
+      await filters.getByLabel("开始日期").fill("2026-01-01");
       await expect(page).toHaveURL(/from=2026-01-01/);
-      await filters.getByRole("button", { name: "清除时间" }).click();
+      await filters.getByRole("button", { name: "清除", exact: true }).click();
       await expect(page).not.toHaveURL(/from=/);
       expect(await pageHorizontalOverflow(page)).toBe(0);
     }
@@ -480,3 +492,226 @@ for (const viewport of [
     expect(await pageHorizontalOverflow(page)).toBe(0);
   });
 }
+
+// Reach the existing route, dates, detail and disclosure through normal UI
+// controls. Only the established fake API supplies records, never new entrypoints.
+for (const viewport of [
+  { width: 1536, height: 1024 },
+  { width: 1280, height: 800 },
+  { width: 390, height: 844 },
+  { width: 320, height: 844 },
+]) {
+  test(`compact date groups and expanded explanation remain readable at ${viewport.width}px`, async ({
+    page,
+  }, testInfo) => {
+    await page.setViewportSize(viewport);
+    await connect(page);
+    await openOperations(page);
+    const filters = page.getByRole("region", { name: "运行筛选" });
+    const from = filters.getByLabel("开始日期");
+    const to = filters.getByLabel("结束日期");
+    const toggle = filters.getByRole("button", { name: "时区说明" });
+    const note = page.locator("#run-time-filter-note");
+    await expect(note).toBeHidden();
+    await expect(toggle).toHaveAttribute("aria-expanded", "false");
+    await expect(toggle).toHaveAttribute(
+      "aria-controls",
+      "run-time-filter-note",
+    );
+    for (const date of [from, to]) {
+      await expect(date).toHaveAttribute("type", "date");
+      await expect(date).toHaveAttribute(
+        "aria-describedby",
+        "run-time-filter-note",
+      );
+      await expect(date).toHaveAccessibleDescription(
+        "按本机时区的创建日期筛选，结束日包含整天；列表和详情沿用同一时区并显示偏移。",
+      );
+    }
+    const checkLayout = async (singleLine: boolean) => {
+      const geometry = await filters.evaluate((element) => {
+        const bounds = element.getBoundingClientRect();
+        const controls = Array.from(
+          element.querySelectorAll("input, button"),
+        ).map((control) => control.getBoundingClientRect().toJSON());
+        const table = document
+          .querySelector(".mf-run-table-wrap")!
+          .getBoundingClientRect();
+        return { x: bounds.x, right: bounds.right, tableX: table.x, controls };
+      });
+      expect(Math.abs(geometry.x - geometry.tableX)).toBeLessThanOrEqual(1);
+      for (const control of geometry.controls) {
+        expect(control.x).toBeGreaterThanOrEqual(geometry.x);
+        expect(control.right).toBeLessThanOrEqual(geometry.right + 1);
+        expect(control.height).toBeGreaterThanOrEqual(34);
+      }
+      if (singleLine) {
+        const tops = geometry.controls.map((control) => control.y);
+        expect(Math.max(...tops) - Math.min(...tops)).toBeLessThanOrEqual(1);
+      }
+      expect(await pageHorizontalOverflow(page)).toBeLessThanOrEqual(1);
+    };
+    await expect(page.getByRole("table", { name: "运行清单" })).toBeVisible();
+    await checkLayout(viewport.width >= 1280);
+    await page.screenshot({
+      path: testInfo.outputPath(`compact-default-${viewport.width}.png`),
+    });
+    await from.fill("2026-01-01");
+    await to.fill("2026-12-31");
+    await expect(from).toHaveAttribute("max", "2026-12-31");
+    await expect(to).toHaveAttribute("min", "2026-01-01");
+    const clear = filters.getByRole("button", { name: "清除", exact: true });
+    await expect(clear).toBeVisible();
+    await expect(page.getByRole("table", { name: "运行清单" })).toBeVisible();
+    await checkLayout(viewport.width >= 1280);
+    await toggle.click();
+    await expect(note).toBeVisible();
+    await expect(toggle).toHaveAttribute("aria-expanded", "true");
+    await expect(note).toHaveText(
+      "按本机时区的创建日期筛选，结束日包含整天；列表和详情沿用同一时区并显示偏移。",
+    );
+    const noteBox = await note.boundingBox();
+    const filterBox = await filters.boundingBox();
+    expect(noteBox!.x).toBeGreaterThanOrEqual(filterBox!.x);
+    expect(noteBox!.x + noteBox!.width).toBeLessThanOrEqual(
+      filterBox!.x + filterBox!.width + 1,
+    );
+    expect(noteBox!.y + noteBox!.height).toBeLessThanOrEqual(
+      filterBox!.y + filterBox!.height + 1,
+    );
+    await checkLayout(viewport.width >= 1280);
+    await page.screenshot({
+      path: testInfo.outputPath(
+        `compact-filtered-expanded-${viewport.width}.png`,
+      ),
+    });
+    // Native button activation handles both keys without changing the dates.
+    await toggle.focus();
+    await page.keyboard.press("Space");
+    await expect(note).toBeHidden();
+    await page.keyboard.press("Enter");
+    await expect(note).toBeVisible();
+    await expect(from).toHaveValue("2026-01-01");
+    await expect(to).toHaveValue("2026-12-31");
+    const firstRun = page
+      .getByRole("table", { name: "运行清单" })
+      .getByRole("button")
+      .first();
+    await firstRun.click();
+    await expect(page.getByRole("region", { name: "运行详情" })).toBeVisible();
+    await expect(
+      page
+        .getByRole("region", { name: "运行详情" })
+        .getByText("目标范围", { exact: true }),
+    ).toBeVisible();
+    if (viewport.width >= 1280) await checkLayout(false);
+    expect(await pageHorizontalOverflow(page)).toBeLessThanOrEqual(1);
+    await page.screenshot({
+      path: testInfo.outputPath(
+        `compact-expanded-detail-${viewport.width}.png`,
+      ),
+    });
+    await page.keyboard.press("Escape");
+    await expect(page.getByRole("region", { name: "运行详情" })).toHaveCount(0);
+    await expect(note).toBeVisible();
+    await clear.click();
+    await expect(page).not.toHaveURL(/from=|to=/);
+    await expect(from).toHaveValue("");
+    await expect(to).toHaveValue("");
+  });
+}
+
+test("timezone disclosure adds no reads between normal polls and preserves the selected context", async ({
+  page,
+}) => {
+  await page.setViewportSize({ width: 1536, height: 1024 });
+  await connect(page);
+  await openOperations(page);
+  await page.getByLabel("开始日期").fill("2026-01-01");
+  await expect(page.getByRole("table", { name: "运行清单" })).toBeVisible();
+  await page
+    .getByRole("table", { name: "运行清单" })
+    .getByRole("button")
+    .first()
+    .click();
+  await expect(page.getByRole("region", { name: "运行详情" })).toBeVisible();
+  const contextUrl = page.url();
+  // Synchronize immediately after a real inventory poll completes. Polling is
+  // never disabled: an action-triggered read would arrive before the next 5s
+  // cadence, and the following normal poll must still complete while expanded.
+  const isInventory = (url: string) =>
+    /\/api\/v1\/operations\/runs\?/.test(url);
+  await page.waitForResponse(
+    (response) => isInventory(response.url()) && response.ok(),
+  );
+  const settledAt = Date.now();
+  const calls: Array<{ url: string; method: string; elapsed: number }> = [];
+  page.on("request", (request) => {
+    if (request.url().includes("/api/"))
+      calls.push({
+        url: request.url(),
+        method: request.method(),
+        elapsed: Date.now() - settledAt,
+      });
+  });
+  const filters = page.getByRole("region", { name: "运行筛选" });
+  const toggle = filters.getByRole("button", { name: "时区说明" });
+  await toggle.click();
+  await expect(toggle).toHaveAttribute("aria-expanded", "true");
+  await toggle.focus();
+  await page.keyboard.press("Space");
+  await expect(toggle).toHaveAttribute("aria-expanded", "false");
+  await page.keyboard.press("Enter");
+  await expect(toggle).toHaveAttribute("aria-expanded", "true");
+  await page.waitForResponse(
+    (response) => isInventory(response.url()) && response.ok(),
+  );
+  // Count/totals may change through normal reads; attribution is by route,
+  // method and cadence, not an invalid pre/post total-request equality.
+  expect(calls.some((call) => call.elapsed < 4000)).toBe(false);
+  expect(
+    calls.some((call) => isInventory(call.url) && call.elapsed >= 4000),
+  ).toBe(true);
+  expect(calls.every((call) => call.method === "GET")).toBe(true);
+  await expect(page).toHaveURL(contextUrl);
+  await expect(filters.getByLabel("开始日期")).toHaveValue("2026-01-01");
+  await expect(page.getByRole("region", { name: "运行详情" })).toBeVisible();
+  await expect(toggle).toHaveAttribute("aria-expanded", "true");
+  await page
+    .locator(".mf-operations-inventory > header")
+    .getByRole("button", { name: "刷新", exact: true })
+    .click();
+  await expect(page.getByRole("table", { name: "运行清单" })).toBeVisible();
+  await expect(page.getByRole("region", { name: "运行详情" })).toBeVisible();
+  await expect(toggle).toHaveAttribute("aria-expanded", "true");
+});
+
+test.describe("touch timezone disclosure", () => {
+  test.use({
+    hasTouch: true,
+    isMobile: true,
+    viewport: { width: 390, height: 844 },
+  });
+  test("a touch tap opens and closes the explanation without changing the range", async ({
+    page,
+  }, testInfo) => {
+    await connect(page);
+    await openOperations(page);
+    await page.getByLabel("开始日期").fill("2026-01-01");
+    await expect(page.getByRole("table", { name: "运行清单" })).toBeVisible();
+    const url = page.url();
+    const toggle = page.getByRole("button", { name: "时区说明" });
+    await toggle.tap();
+    await expect(toggle).toHaveAttribute("aria-expanded", "true");
+    await expect(page.locator("#run-time-filter-note")).toBeVisible();
+    expect(await pageHorizontalOverflow(page)).toBeLessThanOrEqual(1);
+    await page.screenshot({
+      path: testInfo.outputPath("compact-touch-390.png"),
+    });
+    await toggle.tap();
+    await expect(toggle).toHaveAttribute("aria-expanded", "false");
+    await expect(page.locator("#run-time-filter-note")).toBeHidden();
+    await expect(page).toHaveURL(url);
+    await expect(page.getByLabel("开始日期")).toHaveValue("2026-01-01");
+  });
+});

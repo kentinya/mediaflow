@@ -412,8 +412,8 @@ describe("Operations run inventory landing", () => {
     expect(screen.queryByLabelText("来源")).toBeNull();
     expect(screen.queryByLabelText("状态")).toBeNull();
     expect(screen.queryByLabelText("操作类型")).toBeNull();
-    const from = screen.getByLabelText("创建时间从（本地）");
-    const to = screen.getByLabelText("至（本地）");
+    const from = screen.getByLabelText("开始日期");
+    const to = screen.getByLabelText("结束日期");
     expect(from).not.toHaveAttribute("max");
     expect(to).not.toHaveAttribute("min");
 
@@ -454,7 +454,12 @@ describe("Operations run inventory landing", () => {
     expect(from).toHaveAttribute("max", "2026-08-02");
     expect(to).toHaveAttribute("min", "2026-08-01");
 
-    await user.click(screen.getAllByRole("button", { name: "清除时间" })[0]!);
+    await user.click(
+      within(screen.getByRole("region", { name: "运行筛选" })).getByRole(
+        "button",
+        { name: "清除" },
+      ),
+    );
     await waitFor(() => expect(router.history.location.search).toBe(""));
     await waitFor(() =>
       expect(
@@ -494,13 +499,18 @@ describe("Operations run inventory landing", () => {
         /q=|status=|source=|command=|attention=|problem=|cursor=/,
       ),
     );
-    fireEvent.change(screen.getByLabelText("创建时间从（本地）"), {
+    fireEvent.change(screen.getByLabelText("开始日期"), {
       target: { value: "2026-08-01" },
     });
     await waitFor(() =>
       expect(router.history.location.search).toContain("from=2026-08-01"),
     );
-    await user.click(screen.getAllByRole("button", { name: "清除时间" })[0]!);
+    await user.click(
+      within(screen.getByRole("region", { name: "运行筛选" })).getByRole(
+        "button",
+        { name: "清除" },
+      ),
+    );
     await waitFor(() =>
       expect(router.history.location.search).not.toContain("from="),
     );
@@ -523,6 +533,50 @@ describe("Operations run inventory landing", () => {
           );
         }),
     ).toBe(true);
+  });
+
+  it("keeps the timezone disclosure local and date descriptions connected", async () => {
+    const user = userEvent.setup();
+    stubInventoryJourney(pageDocument({ items: [], total: 0 }));
+    authStore.setToken(TOKEN);
+    const { router } = renderApp(
+      "/ui-v2/operations?view=ended&from=2026-08-01&to=2026-08-02",
+    );
+    await screen.findByRole("heading", { name: "没有匹配的运行" });
+    const filters = screen.getByRole("region", { name: "运行筛选" });
+    expect(
+      within(filters).getAllByText("创建日期", { exact: true }),
+    ).toHaveLength(1);
+    expect(
+      within(filters).getAllByText("本地时区", { exact: true }),
+    ).toHaveLength(1);
+    expect(
+      within(filters).getByRole("group", { name: "创建日期" }),
+    ).toBeVisible();
+    const from = within(filters).getByLabelText("开始日期");
+    const to = within(filters).getByLabelText("结束日期");
+    const toggle = within(filters).getByRole("button", { name: "时区说明" });
+    const note = document.getElementById(toggle.getAttribute("aria-controls")!);
+    expect(note).not.toBeNull();
+    expect(note).not.toBeVisible();
+    expect(toggle).toHaveAttribute("aria-expanded", "false");
+    expect(from).toHaveAttribute("aria-describedby", note!.id);
+    expect(to).toHaveAttribute("aria-describedby", note!.id);
+    const location = router.history.location.href;
+    await user.click(toggle);
+    expect(note).toBeVisible();
+    expect(note).toHaveTextContent("结束日包含整天");
+    expect(toggle).toHaveAttribute("aria-expanded", "true");
+    await user.keyboard(" ");
+    expect(note).not.toBeVisible();
+    await user.keyboard("{Enter}");
+    expect(note).toBeVisible();
+    expect(from).toHaveValue("2026-08-01");
+    expect(to).toHaveValue("2026-08-02");
+    expect(router.history.location.href).toBe(location);
+    // Empty-state recovery and the low-emphasis toolbar clear remain distinct.
+    expect(within(filters).getByRole("button", { name: "清除" })).toBeVisible();
+    expect(screen.getByRole("button", { name: "清除时间" })).toBeVisible();
   });
 
   it("drops removed All-view filters from an old link without losing its run", async () => {
@@ -588,7 +642,7 @@ describe("Operations run inventory landing", () => {
     pending.get("all")!(jsonResponse(pageDocument()));
     await screen.findByRole("table");
 
-    const from = screen.getByLabelText("创建时间从（本地）");
+    const from = screen.getByLabelText("开始日期");
     const first = localDayStartIso("2026-08-01");
     const second = localDayStartIso("2026-08-02");
     expect(first).not.toBeNull();
@@ -767,7 +821,7 @@ describe("Operations run inventory landing", () => {
     authStore.setToken(TOKEN);
     const { router } = renderApp("/ui-v2/operations");
     await screen.findByRole("table");
-    fireEvent.change(screen.getByLabelText("创建时间从（本地）"), {
+    fireEvent.change(screen.getByLabelText("开始日期"), {
       target: { value: "2026-08-01" },
     });
     await screen.findByRole("heading", { name: "Operations unavailable" });
@@ -777,9 +831,7 @@ describe("Operations run inventory landing", () => {
     await user.click(screen.getAllByRole("button", { name: "刷新" })[0]!);
     await screen.findByRole("table");
     expect(requested.at(-1)).toBe(failedRead);
-    expect(screen.getByLabelText("创建时间从（本地）")).toHaveValue(
-      "2026-08-01",
-    );
+    expect(screen.getByLabelText("开始日期")).toHaveValue("2026-08-01");
   });
 
   it("pages forward only through server cursors without merging pages", async () => {

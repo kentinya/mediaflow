@@ -113,17 +113,6 @@ interface ProblemPageState {
   readonly direction: "forward" | "backward";
 }
 
-const RUN_VIEW_DESCRIPTIONS: Readonly<Record<RunView, string>> = {
-  all: "任务与 Job 的实际阶段、进度和范围来自受理时记录。",
-  running: "当前阶段与已处理进度；未知值会明确显示不可用。",
-  attention: "仍待跟进的决定、修复或后续步骤，可进入文件证据。",
-  ended: "每项运行的结果摘要、失败数量和结束状态。",
-  recognition: "核对未确定的识别候选或规则，再查看文件记录。",
-  metadata: "核对待确认或补正的媒体身份标题、年份与候选。",
-  classification: "目标媒体库或相对路径尚未确定，检查分类依据。",
-  conflict: "目标位置存在冲突，核对冲突文件和处理策略。",
-};
-
 const RECOVERY_VIEW_EXPLANATIONS: Readonly<Record<RunProblemType, string>> = {
   recognition: "识别仍有待核对项；打开文件记录查看候选与识别依据。",
   metadata: "元数据身份仍待确认或补正；打开文件记录核对当前候选。",
@@ -322,34 +311,78 @@ function formatDate(value: string): string {
 function RunTimeRangeFields({
   filters,
   onApply,
+  onClear,
 }: {
   readonly filters: RunListFilters;
   readonly onApply: (next: Partial<RunListFilters>) => void;
+  readonly onClear: () => void;
 }) {
+  const [showTimeZoneNote, setShowTimeZoneNote] = useState(false);
   return (
     <>
-      <span className="mf-run-filter-field">
-        <label htmlFor="run-from-filter">创建时间从（本地）</label>
-        <input
-          id="run-from-filter"
-          type="date"
-          value={filters.from}
-          max={filters.to || undefined}
-          aria-describedby="run-time-filter-note"
-          onChange={(event) => onApply({ from: event.target.value })}
-        />
+      <div
+        className="mf-run-date-group"
+        role="group"
+        aria-labelledby="run-date-label"
+      >
+        <span id="run-date-label">创建日期</span>
+        <span className="mf-run-filter-field">
+          <label className="mf-visually-hidden" htmlFor="run-from-filter">
+            开始日期
+          </label>
+          <input
+            id="run-from-filter"
+            type="date"
+            value={filters.from}
+            max={filters.to || undefined}
+            aria-describedby="run-time-filter-note"
+            onChange={(event) => onApply({ from: event.target.value })}
+          />
+        </span>
+        <span className="mf-run-filter-field">
+          <span aria-hidden="true">—</span>
+          <label className="mf-visually-hidden" htmlFor="run-to-filter">
+            结束日期
+          </label>
+          <input
+            id="run-to-filter"
+            type="date"
+            value={filters.to}
+            min={filters.from || undefined}
+            aria-describedby="run-time-filter-note"
+            onChange={(event) => onApply({ to: event.target.value })}
+          />
+        </span>
+        {isFiltered(filters) && (
+          <button
+            type="button"
+            className="mf-button mf-button-secondary mf-run-date-clear"
+            onClick={onClear}
+          >
+            清除
+          </button>
+        )}
+      </div>
+      <span className="mf-run-timezone">
+        <span>本地时区</span>
+        <button
+          type="button"
+          className="mf-button mf-button-secondary mf-run-timezone-toggle"
+          aria-label="时区说明"
+          aria-expanded={showTimeZoneNote}
+          aria-controls="run-time-filter-note"
+          onClick={() => setShowTimeZoneNote((shown) => !shown)}
+        >
+          <span aria-hidden="true">ⓘ</span>
+        </button>
       </span>
-      <span className="mf-run-filter-field">
-        <label htmlFor="run-to-filter">至（本地）</label>
-        <input
-          id="run-to-filter"
-          type="date"
-          value={filters.to}
-          min={filters.from || undefined}
-          aria-describedby="run-time-filter-note"
-          onChange={(event) => onApply({ to: event.target.value })}
-        />
-      </span>
+      <p
+        className="mf-run-timezone-note"
+        id="run-time-filter-note"
+        hidden={!showTimeZoneNote}
+      >
+        按本机时区的创建日期筛选，结束日包含整天；列表和详情沿用同一时区并显示偏移。
+      </p>
     </>
   );
 }
@@ -673,20 +706,9 @@ export function OperationsLanding() {
                       <RunTimeRangeFields
                         filters={filters}
                         onApply={applyFilters}
+                        onClear={resetFilters}
                       />
-                      {filtered && (
-                        <button
-                          type="button"
-                          className="mf-button mf-button-secondary"
-                          onClick={resetFilters}
-                        >
-                          清除时间
-                        </button>
-                      )}
                     </div>
-                    <p className="mf-dashboard-meta" id="run-time-filter-note">
-                      创建时间按本机时区选择；列表时间显示同一时区及明确偏移。
-                    </p>
                   </section>
                   {query.data === undefined ? (
                     <StatusBanner variant="info" title="正在加载运行清单">
@@ -966,10 +988,6 @@ function ViewNavigation({
           </button>
         ))}
       </nav>
-      <div className="mf-run-view-heading">
-        <h3>{RUN_VIEW_LABELS[view]}</h3>
-        <p>{RUN_VIEW_DESCRIPTIONS[view]}</p>
-      </div>
     </div>
   );
 }

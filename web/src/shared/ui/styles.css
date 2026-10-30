@@ -4338,21 +4338,6 @@ button.mf-grid-button {
 .mf-task-center-panel .mf-run-view-context {
   gap: 0;
 }
-.mf-task-center-panel .mf-run-view-heading {
-  display: flex;
-  align-items: baseline;
-  gap: 12px;
-  flex-wrap: wrap;
-  padding: 16px 20px 0;
-}
-.mf-task-center-panel .mf-run-view-heading h3 {
-  margin: 0;
-  font-size: 1rem;
-}
-.mf-task-center-panel .mf-run-view-heading p {
-  margin: 0;
-  color: var(--muted);
-}
 .mf-task-center-panel .mf-run-tabs.mf-view-tabs {
   padding: 0 12px;
   border-bottom: 1px solid var(--line);
@@ -4376,8 +4361,7 @@ button.mf-grid-button {
   font-weight: 600;
   background: none;
 }
-.mf-task-center-panel .mf-run-layout,
-.mf-task-center-panel .mf-run-main {
+.mf-task-center-panel .mf-run-layout {
   padding: 0 20px 20px;
 }
 .mf-task-center-panel .mf-run-filters {
@@ -6275,23 +6259,8 @@ tr[aria-selected="true"] {
   font-size: 0.9rem;
 }
 
-.mf-task-center-panel .mf-run-view-heading {
-  padding: 10px 18px 0;
-  gap: 4px 12px;
-}
-
-.mf-task-center-panel .mf-run-view-heading h3 {
-  font-size: 0.95rem;
-}
-
-.mf-task-center-panel .mf-run-view-heading p {
-  font-size: 0.84rem;
-  line-height: 1.35;
-}
-
-.mf-task-center-panel .mf-run-layout,
-.mf-task-center-panel .mf-run-main {
-  padding: 0 16px 16px;
+.mf-task-center-panel .mf-run-layout {
+  padding: 0 18px 16px;
 }
 
 .mf-task-center-panel .mf-run-filters {
@@ -6311,6 +6280,68 @@ tr[aria-selected="true"] {
 
 .mf-operations-inventory .mf-run-search-field {
   flex: 1 1 220px;
+}
+
+/* Creation dates form one compact, wrapping group; native calendars keep
+   their intrinsic width rather than shrinking when the detail column opens. */
+.mf-operations-inventory .mf-run-date-group {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: 8px 10px;
+  min-width: 0;
+  max-width: 100%;
+}
+
+.mf-operations-inventory .mf-run-date-group > span:first-child {
+  font-size: 0.9rem;
+  white-space: nowrap;
+}
+
+.mf-operations-inventory .mf-run-date-group .mf-run-filter-field {
+  flex: 0 0 auto;
+  gap: 10px;
+}
+
+.mf-operations-inventory .mf-run-date-group input {
+  width: auto;
+  max-width: none;
+  font-size: 0.9rem;
+}
+
+.mf-operations-inventory .mf-run-date-clear {
+  min-height: 34px;
+  padding: 5px 8px;
+  border-color: transparent;
+  background: transparent;
+  color: var(--accent-strong);
+}
+
+.mf-operations-inventory .mf-run-timezone {
+  display: inline-flex;
+  align-items: center;
+  gap: 4px;
+  color: var(--muted);
+  font-size: 0.82rem;
+  white-space: nowrap;
+}
+
+.mf-operations-inventory .mf-run-timezone-toggle {
+  width: 34px;
+  min-height: 34px;
+  padding: 4px;
+  border-color: transparent;
+  background: transparent;
+  font-size: 1rem;
+}
+
+.mf-operations-inventory .mf-run-timezone-note {
+  flex-basis: 100%;
+  margin: 0;
+  color: var(--muted);
+  font-size: 0.82rem;
+  line-height: 1.5;
+  overflow-wrap: anywhere;
 }
 
 /* A fixed table layout keeps the columns that carry business identity from
@@ -6461,9 +6492,7 @@ tr[aria-selected="true"] {
     overscroll-behavior-x: contain;
   }
 
-  .mf-task-center-panel .mf-run-view-heading,
-  .mf-task-center-panel .mf-run-layout,
-  .mf-task-center-panel .mf-run-main {
+  .mf-task-center-panel .mf-run-layout {
     padding-right: 12px;
     padding-left: 12px;
   }

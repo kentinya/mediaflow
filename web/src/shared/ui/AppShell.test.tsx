@@ -187,7 +187,7 @@ describe("AppShell", () => {
       "/ui-v2/resourcelib/files",
     );
 
-    fireEvent.change(screen.getByLabelText("创建时间从（本地）"), {
+    fireEvent.change(screen.getByLabelText("开始日期"), {
       target: { value: "2026-08-01" },
     });
     await waitFor(() =>

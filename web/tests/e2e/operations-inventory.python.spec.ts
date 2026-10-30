@@ -4449,8 +4449,8 @@ test("time filter: a local day includes both boundaries and clears to all", asyn
   await expect(page.getByLabel("操作类型", { exact: true })).toHaveCount(0);
   await expectRunTotal(page, defaultTotal);
 
-  await page.getByLabel("创建时间从（本地）").fill(seeded.targetDate);
-  await page.getByLabel("至（本地）").fill(seeded.targetDate);
+  await page.getByLabel("开始日期").fill(seeded.targetDate);
+  await page.getByLabel("结束日期").fill(seeded.targetDate);
   await expect(page).toHaveURL(new RegExp(`from=${seeded.targetDate}`));
   await expect(page).toHaveURL(new RegExp(`to=${seeded.targetDate}`));
   await expectRunTotal(page, seeded.targetTotal);
@@ -4468,16 +4468,16 @@ test("time filter: a local day includes both boundaries and clears to all", asyn
 
   // Each side of the range remains independently usable. A to-only past day
   // and a from-only future day each select exactly their own real row.
-  await page.getByLabel("创建时间从（本地）").fill("");
+  await page.getByLabel("开始日期").fill("");
   await expect(page).not.toHaveURL(/from=/);
-  await page.getByLabel("至（本地）").fill(seeded.previousDate);
+  await page.getByLabel("结束日期").fill(seeded.previousDate);
   await expectRunTotal(page, seeded.singleDayTotal);
   await expect(
     page.getByRole("row").filter({ hasText: seeded.previousSource }),
   ).toHaveCount(1);
 
-  await page.getByLabel("至（本地）").fill("");
-  await page.getByLabel("创建时间从（本地）").fill("2999-01-01");
+  await page.getByLabel("结束日期").fill("");
+  await page.getByLabel("开始日期").fill("2999-01-01");
   await expect(
     page.getByRole("heading", { name: "没有匹配的运行" }),
   ).toBeVisible();
@@ -4487,7 +4487,10 @@ test("time filter: a local day includes both boundaries and clears to all", asyn
 
   // Clearing the time returns to the complete authorized population and
   // drops the cursor from the previous range.
-  await page.getByRole("button", { name: "清除时间" }).first().click();
+  await page
+    .getByRole("region", { name: "运行筛选" })
+    .getByRole("button", { name: "清除", exact: true })
+    .click();
   await expect(page).not.toHaveURL(/from=|to=|cursor=/);
   await expectRunTotal(page, defaultTotal);
 });
@@ -4500,8 +4503,8 @@ test("time filter: pages, returns from detail, and survives reconnect", async ({
   await connect(page);
   await openInventory(page);
 
-  await page.getByLabel("创建时间从（本地）").fill(seeded.targetDate);
-  await page.getByLabel("至（本地）").fill(seeded.targetDate);
+  await page.getByLabel("开始日期").fill(seeded.targetDate);
+  await page.getByLabel("结束日期").fill(seeded.targetDate);
   await expectRunTotal(page, seeded.targetTotal);
   await page.getByRole("button", { name: "下一页" }).click();
   await expect(page).toHaveURL(/cursor=/);
@@ -4531,18 +4534,16 @@ test("time filter: pages, returns from detail, and survives reconnect", async ({
   await expect(page).toHaveURL(new RegExp(`from=${seeded.targetDate}`));
   await expect(page).toHaveURL(new RegExp(`to=${seeded.targetDate}`));
   await expect(page).toHaveURL(/cursor=/);
-  await expect(page.getByLabel("创建时间从（本地）")).toHaveValue(
-    seeded.targetDate,
-  );
+  await expect(page.getByLabel("开始日期")).toHaveValue(seeded.targetDate);
   await expect(
     page.getByRole("row").filter({ hasText: seeded.firstSource }),
   ).toHaveCount(1);
 
   // A changed range starts from its own first page; the old cursor is never
   // replayed against the new population.
-  await page.getByLabel("至（本地）").fill("");
-  await page.getByLabel("创建时间从（本地）").fill(seeded.nextDate);
-  await page.getByLabel("至（本地）").fill(seeded.nextDate);
+  await page.getByLabel("结束日期").fill("");
+  await page.getByLabel("开始日期").fill(seeded.nextDate);
+  await page.getByLabel("结束日期").fill(seeded.nextDate);
   await expect(page).not.toHaveURL(/cursor=/);
   await expectRunTotal(page, seeded.singleDayTotal);
   await expect(
@@ -4589,7 +4590,7 @@ test("time filter: an old All link never keeps its removed hidden filters", asyn
     await expect(
       page.locator(".mf-run-filter-bar").getByRole("searchbox"),
     ).toHaveCount(0);
-    await expect(page.getByLabel("创建时间从（本地）")).toBeVisible();
+    await expect(page.getByLabel("开始日期")).toBeVisible();
     await expect(page.getByLabel("来源", { exact: true })).toHaveCount(0);
   }
 });
@@ -4617,8 +4618,8 @@ test("time filter: running, ended and business views preserve their own dated po
     );
     const total = (await baseline.json()).total as number;
     await expectRunTotal(page, total);
-    await page.getByLabel("创建时间从（本地）").fill(seeded.targetDate);
-    await page.getByLabel("至（本地）").fill(seeded.targetDate);
+    await page.getByLabel("开始日期").fill(seeded.targetDate);
+    await page.getByLabel("结束日期").fill(seeded.targetDate);
     const params = await page.evaluate(() => {
       const from = (
         document.querySelector("#run-from-filter") as HTMLInputElement
@@ -4634,7 +4635,10 @@ test("time filter: running, ended and business views preserve their own dated po
       { headers: { Authorization: `Bearer ${ADMIN_TOKEN}` } },
     );
     await expectRunTotal(page, (await actual.json()).total);
-    await page.getByRole("button", { name: "清除时间" }).first().click();
+    await page
+      .getByRole("region", { name: "运行筛选" })
+      .getByRole("button", { name: "清除", exact: true })
+      .click();
     await expect(page).toHaveURL(new RegExp(`view=${view}`));
     await expectRunTotal(page, total);
   }
