@@ -308,21 +308,6 @@ export function AutomationDefinitionRow({
   );
 }
 
-const OWNERSHIP_LABELS: Readonly<Record<string, string>> = {
-  task_center: "由任务中心负责恢复",
-  prestart_repair: "整理开始前失败：修复前置条件后重新发起",
-  reconcile: "移交状态不确定：先核对再操作",
-};
-
-const HANDLING_LABELS: Readonly<Record<string, string>> = {
-  unhandled: "尚未处理",
-  handling: "正在处理",
-  resolved: "后续处理已完成",
-  recovery_failed: "后续处理未成功",
-  investigation: "需要核对",
-  unavailable: "后续处理状态不可用",
-};
-
 const RECORD_RESULT_LABELS: Readonly<Record<string, string>> = {
   completed: "成功",
   partial_success: "部分成功",
@@ -339,10 +324,8 @@ const RECORD_RESULT_LABELS: Readonly<Record<string, string>> = {
  * One read-only Automation execution record.
  *
  * The row reports the *original* durable result, its real execution window,
- * its bounded failure stage/reason and the separately linked follow-up handling
- * state, followed by its exact next action. It renders no file-decision form,
- * no re-analysis and no execution control: a formal organizing Task sends every
- * recovery command to Task Center.
+ * its concise reason and next step. It never renders linked handling,
+ * recovery instructions, navigation, or execution controls.
  */
 export function AutomationRecordRow({
   record,
@@ -351,7 +334,7 @@ export function AutomationRecordRow({
 }) {
   const [expanded, setExpanded] = useState(false);
   const detailId = useId();
-  const { handoff, result, handling, failureStage, nextAction } = record;
+  const outcome = record.recordOutcome;
   return (
     <>
       <tr>
@@ -368,10 +351,10 @@ export function AutomationRecordRow({
           </p>
         </td>
         <td>
-          <span className={resultBadgeClass(record.status)}>
-            {RECORD_RESULT_LABELS[record.status] ?? record.status}
+          <span className={resultBadgeClass(outcome.status)}>
+            {RECORD_RESULT_LABELS[outcome.status]}
           </span>
-          {result.noWork && <p className="mf-dashboard-meta">无工作完成</p>}
+          {outcome.noWork && <p className="mf-dashboard-meta">无工作完成</p>}
         </td>
         <td className="mf-automation-time">
           <AutomationTime value={record.executionStartedAt} />
@@ -382,7 +365,7 @@ export function AutomationRecordRow({
         <td>
           {record.totalItems === null
             ? "—"
-            : `${record.completedItems ?? 0}/${record.totalItems}${record.failedItems ? ` · 失败 ${record.failedItems}` : ""}`}
+            : `${outcome.successItems}/${record.totalItems}`}
         </td>
         <td>
           <div className="mf-actions">
@@ -406,8 +389,8 @@ export function AutomationRecordRow({
         <td colSpan={6}>
           <div className="mf-automation-record-evidence">
             <div>
-              <h3>执行结果与时间</h3>
-              <p>{result.statement}</p>
+              <h3>执行结果和时间</h3>
+              <p>{outcome.statement}</p>
               <p>
                 开始：<span>{record.executionStartedAt ?? "—"}</span>
               </p>
@@ -415,106 +398,15 @@ export function AutomationRecordRow({
                 结束：<span>{record.executionFinishedAt ?? "—"}</span>
               </p>
             </div>
-            <div>
-              <h3>原始结果与失败阶段</h3>
-              {failureStage === null ? (
-                <p className="mf-dashboard-meta">
-                  原始结果：
-                  {result.organized ? "已整理出条目" : "没有整理成功条目"}
-                </p>
-              ) : (
-                <>
-                  <p className="mf-dashboard-meta">
-                    阶段：{failureStage.stage}
-                  </p>
-                  <p className="mf-dashboard-meta">{failureStage.statement}</p>
-                  {failureStage.category !== null && (
-                    <p className="mf-dashboard-meta">
-                      原因：{failureStage.category}
-                    </p>
-                  )}
-                  {failureStage.unavailable && (
-                    <p className="mf-dashboard-meta">
-                      持久化的逐项失败原因当前不可读；请在任务中心核对该运行的条目证据
-                    </p>
-                  )}
-                  {failureStage.items.length > 0 && (
-                    <p className="mf-dashboard-meta">
-                      已知效果：无效果 {failureStage.effects.none} · 已确认{" "}
-                      {failureStage.effects.known} · 不确定{" "}
-                      {failureStage.effects.uncertain} · 部分{" "}
-                      {failureStage.effects.partial}
-                    </p>
-                  )}
-                  {failureStage.items.length > 0 && (
-                    <details>
-                      <summary className="mf-dashboard-meta">
-                        逐项失败原因与已知效果（{failureStage.items.length}）
-                        {failureStage.itemsTruncated ? "，已截断" : ""}
-                      </summary>
-                      <ul className="mf-dashboard-meta">
-                        {failureStage.items.map((item, index) => (
-                          <li key={item.itemId ?? `item-${index}`}>
-                            {item.message ?? "该项的持久化原因当前不可读"}
-                            {item.destination !== null &&
-                              ` · 目标 ${item.destination}`}
-                            {item.sideEffects !== null &&
-                              ` · 已知效果 ${item.sideEffects}`}
-                            {item.nextAction !== null &&
-                              ` · 下一步：${item.nextAction}`}
-                          </li>
-                        ))}
-                      </ul>
-                    </details>
-                  )}
-                  {result.admittedItemBound !== null && (
-                    <p className="mf-dashboard-meta">
-                      {result.reachedItemBound
-                        ? `已达到本次上限 ${result.admittedItemBound} 个条目（不代表来源已全部处理）`
-                        : `本次上限 ${result.admittedItemBound} 个条目，未达到`}
-                    </p>
-                  )}
-                </>
-              )}
-            </div>
-            <div>
-              <h3>后续处理</h3>
-              <span className="mf-status-badge">
-                {HANDLING_LABELS[handling.state] ?? handling.state}
-              </span>
-              {handling.latestKind !== null && (
-                <p className="mf-dashboard-meta">
-                  最近关联：{handling.latestKind}
-                  {handling.latestStatus === null
-                    ? ""
-                    : ` · ${handling.latestStatus}`}
-                </p>
-              )}
-              {handling.affectedItems !== null &&
-                handling.resolvedItems !== null &&
-                handling.unresolvedItems !== null && (
-                  <p className="mf-dashboard-meta">
-                    受影响条目 {handling.affectedItems} · 已确认恢复{" "}
-                    {handling.resolvedItems}
-                    {handling.unresolvedItems > 0
-                      ? ` · 仍未解决 ${handling.unresolvedItems}`
-                      : ""}
-                  </p>
-                )}
-              {handling.nextAction !== null && (
-                <p className="mf-dashboard-meta">{handling.nextAction}</p>
-              )}
-            </div>
+            {outcome.status === "failed" && (
+              <div>
+                <h3>失败原因</h3>
+                <p>{outcome.failureReason}</p>
+              </div>
+            )}
             <div>
               <h3>下一步</h3>
-              <p className="mf-dashboard-meta">
-                {OWNERSHIP_LABELS[handoff.ownership]}
-              </p>
-              <p className="mf-dashboard-meta">{handoff.explanation}</p>
-              {nextAction !== null && (
-                <p className="mf-dashboard-meta">{nextAction.statement}</p>
-              )}
-              <p className="mf-dashboard-meta">{handoff.retryExplanation}</p>
+              <p>{outcome.nextStep}</p>
             </div>
           </div>
         </td>

@@ -1,5 +1,11 @@
+import recordFixture from "../../../tests/fixtures/automation-records-prestart.json";
 import { afterEach, describe, expect, it, vi } from "vitest";
-import { dashboardUrl, fetchDashboard } from "./api-client";
+import {
+  dashboardUrl,
+  fetchDashboard,
+  automationRecordsUrl,
+  fetchAutomationRecords,
+} from "./api-client";
 import { DashboardApiError } from "./api-errors";
 import { dashboardModel, dashboardPayload } from "../../../tests/fixtures";
 
@@ -117,5 +123,30 @@ describe("fetchDashboard", () => {
       expect((error as Error).message).not.toContain(TOKEN);
       expect((error as Error).message.length).toBeLessThan(200);
     }
+  });
+});
+
+describe("records-only outcome API", () => {
+  it("adds a scoped outcome without changing legacy status filters", async () => {
+    const fetchMock = stubFetch(async () => jsonResponse(recordFixture));
+    const read = await fetchAutomationRecords(TOKEN, {
+      outcome: "failed",
+      status: "partial_success",
+      definition: "auto-task",
+      trigger: "scheduled",
+      direction: "previous",
+      cursor: "bounded",
+      limit: 7,
+    });
+    expect(read.ok).toBe(true);
+    const [input, init] = fetchMock.mock.calls[0] as [string, RequestInit];
+    const params = new URL(input, "http://test").searchParams;
+    expect(params.get("outcome")).toBe("failed");
+    expect(params.get("status")).toBe("partial_success");
+    expect(params.get("direction")).toBe("previous");
+    expect(init.method).toBe("GET");
+    expect(automationRecordsUrl({ status: "failed" })).toBe(
+      "/api/v1/operations/automation/records?status=failed",
+    );
   });
 });

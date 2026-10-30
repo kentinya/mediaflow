@@ -18,6 +18,7 @@ from mediaflow.application.automation import AutomationJobService, ProcessingWor
 from mediaflow.application.automation_definition_occurrence import (
     AutomationDefinitionOccurrenceService,
 )
+from mediaflow.application.automation_record_display import automation_record_display
 from mediaflow.application.automation_run_once import (
     AutomationRunOnceError,
     AutomationRunOnceService,
@@ -15145,6 +15146,7 @@ class MediaFlowApi:
             "definition",
             "trigger",
             "status",
+            "outcome",
             "from",
             "to",
         }
@@ -15370,7 +15372,7 @@ class MediaFlowApi:
         ):
             raise ValueError(
                 "automation records query accepts limit, cursor, direction, definition, "
-                "trigger, status, from, and to once"
+                "trigger, status, outcome, from, and to once"
             )
         limit = cls._parse_bounded_limit(values.get("limit", ["20"])[0], "automation record")
         raw_direction = values.get("direction", ["next"])[0]
@@ -15394,6 +15396,18 @@ class MediaFlowApi:
             status = raw_status
         else:
             raise ValueError("automation record status filter is invalid")
+        raw_outcome = values.get("outcome", [""])[0]
+        outcome = None if raw_outcome in {"", "all"} else raw_outcome
+        if outcome is not None and outcome not in {
+            "completed",
+            "failed",
+            "pending",
+            "running",
+            "paused",
+            "waiting",
+            "unknown",
+        }:
+            raise ValueError("automation record outcome filter is invalid")
         created_after = cls._run_time_filter(values.get("from", [""])[0], "from")
         created_before = cls._run_time_filter(values.get("to", [""])[0], "to")
         if created_after is not None and created_before is not None:
@@ -15406,6 +15420,7 @@ class MediaFlowApi:
                 f"definition={definition_id or 'all'}",
                 f"trigger={trigger or 'all'}",
                 f"status={status or 'all'}",
+                *((f"outcome={outcome}",) if outcome is not None else ()),
                 f"from={created_after.isoformat() if created_after else ''}",
                 f"to={created_before.isoformat() if created_before else ''}",
             )
@@ -15424,6 +15439,7 @@ class MediaFlowApi:
             "definition_id": definition_id,
             "trigger": trigger,
             "status": status,
+            "outcome": outcome,
             "created_after": created_after,
             "created_before": created_before,
             "cursor": cursor,
@@ -15480,6 +15496,8 @@ class MediaFlowApi:
             "definition_id": query["definition_id"],
             "trigger": query["trigger"],
             "automation_admissions": True,
+            "record_evidence": True,
+            "record_outcome": query["outcome"],
         }
         cursor = query["cursor"]
         if cursor is not None and cursor.direction is CursorDirection.PREVIOUS:
@@ -15508,6 +15526,7 @@ class MediaFlowApi:
                 "definition": query["definition_id"],
                 "trigger": query["trigger"],
                 "status": query["status"],
+                "outcome": query["outcome"],
                 "from": (query["created_after"].isoformat() if query["created_after"] else None),
                 "to": (query["created_before"].isoformat() if query["created_before"] else None),
                 "total": window.total,
@@ -15692,6 +15711,7 @@ class MediaFlowApi:
             "statement": self._automation_record_result_statement(overview),
         }
         document["failureStage"] = self._automation_record_failure_stage(overview, failure_evidence)
+        document["recordOutcome"] = automation_record_display(overview, failure_evidence)
         document["nextAction"] = route["next_action"]
         # The separately linked follow-up handling state.  It never rewrites the
         # original outcome; a recovery attempt is not a new scheduled trigger and

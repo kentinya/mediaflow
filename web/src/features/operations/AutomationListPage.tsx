@@ -60,11 +60,12 @@ const SORT_OPTIONS = [
 const RECORD_STATUS_OPTIONS = [
   ["", "全部结果"],
   ["completed", "成功"],
-  ["partial_success", "部分成功"],
   ["failed", "失败"],
-  ["cancelled", "已取消"],
   ["running", "进行中"],
-  ["pending", "等待中"],
+  ["pending", "等待执行"],
+  ["paused", "已暂停"],
+  ["waiting", "等待中"],
+  ["unknown", "状态未知"],
 ] as const;
 
 const RECORD_TRIGGER_OPTIONS = [
@@ -207,7 +208,7 @@ export function AutomationListPage() {
         definition:
           recordDefinition.trim() === "" ? null : recordDefinition.trim(),
         trigger: recordTrigger === "" ? null : recordTrigger,
-        status: recordStatus === "" ? null : recordStatus,
+        outcome: recordStatus === "" ? null : recordStatus,
         from: utcBoundary(recordFrom),
         to: utcBoundary(recordTo),
         direction,
@@ -494,6 +495,15 @@ export function AutomationListPage() {
                 <StatusBanner variant="error" title={data.failure.title}>
                   <p>{data.failure.nextAction}</p>
                   <div className="mf-actions">
+                    {recordFiltered && (
+                      <button
+                        type="button"
+                        className="mf-button mf-button-secondary"
+                        onClick={() => submitSearch({ tab: "records" })}
+                      >
+                        清除筛选
+                      </button>
+                    )}
                     <RefreshControl
                       label="刷新"
                       refreshingLabel="刷新中…"
@@ -869,6 +879,10 @@ function RecordsTab({
             value={status}
             onChange={(event) => onStatus(event.target.value)}
           >
+            {status !== "" &&
+              !RECORD_STATUS_OPTIONS.some(([value]) => value === status) && (
+                <option value={status}>无效结果筛选</option>
+              )}
             {RECORD_STATUS_OPTIONS.map(([value, label]) => (
               <option key={value} value={value}>
                 {label}

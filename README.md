@@ -58,7 +58,11 @@ families keeps one local search and state filter. Settings retains configuration
 
 The [Automation workspace](docs/product-experience.md#current--complete-native-automation-workspace-accepted43-amended46)
 contains `任务列表 / 执行记录 / 全局设置`. Execution-record rows offer only `查看详情 / 收起详情`;
-details retain exact times, original results, failure stages, per-item effects and next actions.
+details show only this run’s result and actual times, a concise Chinese failure reason when failed,
+and a short next step. Finished admitted work (including attachments) must all succeed to show 成功;
+partial/skipped/cancelled/uncertain work shows 失败, and the same server-side result filter applies
+before paging. Proven empty no-work and live/unknown states remain distinct. Later recovery status
+is not displayed and never changes the original result; raw API status and global metrics are unchanged.
 Definition management and organizing recovery use their own workspace entries.
 
 ## V2 frontend (web/)

@@ -6583,6 +6583,13 @@ tr[aria-selected="true"] {
   .mf-automation-workspace .mf-automation-table {
     min-width: 820px;
   }
+  /* Detail copy stays readable when keyboard focus scrolls to the action column. */
+  .mf-automation-record-evidence {
+    position: sticky;
+    left: 0;
+    width: calc(100vw - 52px);
+    max-width: 100%;
+  }
 }
 
 .mf-automation-workspace .mf-automation-table .mf-actions {

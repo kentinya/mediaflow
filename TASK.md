@@ -10,7 +10,7 @@ Authority: 用户要求详情只保留“执行结果和时间、失败原因、
 Task ID: PATCH-20261030-6
 Task Type: STANDALONE MINOR BUG
 Parent Slice: NONE
-Status: PLANNED
+Status: READY FOR B REVIEW
 Task Base: 9b9626d130a46eb8676b3514558ed845e26c598b
 Difficulty: Medium
 Test Level: T3
@@ -158,8 +158,59 @@ B — 独立审查和验收：
 Task Base 保持 `9b9626d130a46eb8676b3514558ed845e26c598b`；从 Base 到激活前 HEAD
 仅 `TASK.md` 变化，产品代码不变。预存未跟踪文件原样保留，清单见本机
 `.git/validation-evidence/plan-PATCH-20261030-6/baseline.txt`。
-本次仅激活 Task，尚未实施；产品验收尚未执行，无 PASS 声明。
-Developer 按本 Task 实施，提交连贯 checkpoint 和实际受影响测试结果至 READY FOR B REVIEW；
-B 独立给 PASS 或 FIX REQUIRED。PASS 后恢复简短无活动 Task 通知，保持 Slice46
+Developer 已按本 Task 实施，交本文件所在本地 implementation checkpoint 给 B；
+全部验收框保留未勾选，等待 B 独立给 PASS 或 FIX REQUIRED，不代表实现者自签验收。
+PASS 后由 B 恢复简短无活动 Task 通知，保持 Slice46
 PASS / CLOSED，不规划额外工作。前次独立修正的 B 审查保留于
 `5bd95546921d7dcee7f95b0360a0d6200f0a8791:TASK.md`。
+
+## Developer handoff — 2026-10-30
+
+**Candidate / workspace：** 本文件所在 implementation commit（使用 `git rev-parse HEAD` 获取
+完整 SHA）；B 审查 `9b9626d130a46eb8676b3514558ed845e26c598b..candidate`。
+实现起点为 `main` / `0a3c4658c3f96e25b84e58ea36c728ecda008e1f`；起点无已跟踪修改。
+预存未跟踪文件保持原样、未暂存，基线见本机证据 `baseline.txt`。未推送或发布。
+
+**实现：** 现有记录 GET 增加 records-only `recordOutcome` 和可选 `outcome` 筛选；SQLite
+在完整授权人口计数/双向分页前使用相同分类，读取原次 TaskItem、Result 和附件证据，
+不消费恢复完成投影。原始 status/result/handling/handoff、状态筛选和全局统计保持。
+Web 严格解码并统一摘要/详情/筛选，仅显示最多三个简短中文内容区，无恢复或导航入口。
+非法旧结果条件沿用有界拒绝并可清除；窄屏详情在表格内部滚动时仍可读。
+仅同步直接受影响文档，未改 SLICE/Roadmap/Progress、schema、调度、执行或权限。
+
+**实际验证：** 日志均在本机 `.git/validation-evidence/PATCH-20261030-6/`，不是远程证据。
+下表结果属于 Developer，不代替 B 独立验收；执行输入在最后成功运行后未再修改。
+
+| cwd / 实际检查 | 最终结果 | 日志 |
+|---|---|---|
+| 根目录 `.venv/bin/python -m unittest tests.test_automation_workspace_read_model tests.test_operations_run_inventory` | 81 tests，OK | `python-verified.log` |
+| 根目录 `.venv/bin/python -m unittest tests.test_task_center_recovery_lineage tests.test_v2_automation_run_once` | 36 tests，OK | `related-regression.log` |
+| `web/`：Required Tests 所列四模块的 `npm run test -- run ...` | 4 files / 68 tests 通过 | `web-final-gates.log` |
+| `web/`：`npm run typecheck`、修改 TS/TSX 的 ESLint、修改 Web 文件的 Prettier 检查、`npm run build` | 通过 | `web-final-gates.log` |
+| 根目录 `.venv/bin/ruff check` / `format --check`（本次 5 个 Python 文件）、`python3 scripts/check_governance.py`、`git diff --check` | 通过 | `python-static-final.log` |
+| `web/`：`npm run test:e2e -- tests/e2e/automation-presentation.spec.ts` | 2 tests 通过，1536/390px | `e2e-presentation-verified.log` |
+| `web/`：`npm run test:e2e -- --config=playwright.python.automation.config.ts tests/e2e/automation-workspace.python.spec.ts` | 8 tests 通过，真实 Python/API/SQLite/Worker | `e2e-python-verified.log` |
+
+已人工查看 `presentation-verified-artifacts/**/record-detail.png` 和
+`python-verified-artifacts/**/records-technical-{1536,390}.png`：简短中文原因/下一步可读，
+详情不被右侧按钮焦点带来的横向滚动隐藏。实际记录 GET/组件路由为验证入口；跨页取消
+使用任务中心读取所提供的可用 cancel 路径及 `expectedUpdatedAt`，没有新增产品或
+测试专用取消入口。技术混合结果通过真实 Run once/Worker 产生；历史损坏、缺失证据
+单元用例使用隔离 SQLite。读取/展开零写入、已成功效果保留及后续处理不改原次失败
+均有实际断言。所有用例使用隔离假服务/临时媒体，未读取用户数据库/配置/媒体。
+
+**源码/构建身份：** 本机 `source-inputs.sha256` 包含 644 个源码、测试、harness、锁文件
+及配置输入，manifest SHA-256 为
+`1ff99a97c87ef363a93d28c60799b670df35352dbe47c61813a42b905f79e31c`。
+`build-artifacts.sha256` 的 SHA-256 为
+`214b942ceac8c205287bcda7916ff08e91a34230e60fed9a280cc5e362c3a64b`；
+`source-identity.json` 说明这是交接时对未再修改输入/最终构建的快照，非冒称测试当时
+已生成 manifest。环境 Python 3.13.14 / Node v22.23.3 / npm 10.9.9。
+
+**失败与剩余风险：** 早期 import、未进入 unittest discovery 的新用例、错误断言、
+取消请求字段及窄屏详情/viewport 断言曾失败，修正后上述最终运行通过；原失败日志
+保留，未删除断言/增加重试掩盖。构建 chunk-size、JSDOM `scrollTo`、SQLite
+ResourceWarning 和 Playwright 颜色环境提示仍存在。静态/构建累计（含失败运行）低于
+本轮总用时 50%，未以等待凑比例。未执行/不声称全仓、容器、外部服务或发布验收。
+记录全人口 SQL 分类的规模性能未做专项压测；B 仍需独立核对全部验收、原始消费者
+不变及真实旅程可达性。本报告不声明独立 PASS。

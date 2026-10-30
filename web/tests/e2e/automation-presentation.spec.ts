@@ -106,12 +106,43 @@ for (const width of [1536, 390]) {
         writes.push(request.method());
     });
     const detailId = await details.getAttribute("aria-controls");
-    await details.click();
+    await details.focus();
+    await page.keyboard.press("Enter");
     const evidence = page.locator(`[id="${detailId}"]`);
-    await expect(evidence.getByText(/原因：scope_root_missing/)).toBeVisible();
     await expect(
-      evidence.getByText(/没有创建正式整理任务，也没有产生媒体效果/),
+      evidence.getByRole("heading", { name: "执行结果和时间" }),
     ).toBeVisible();
+    await expect(
+      evidence.getByRole("heading", { name: "失败原因" }),
+    ).toBeVisible();
+    await expect(
+      evidence.getByRole("heading", { name: "下一步" }),
+    ).toBeVisible();
+    await expect(evidence.getByRole("heading")).toHaveCount(3);
+    await expect(evidence.getByText("来源目录不存在")).toBeVisible();
+    await expect(
+      evidence.getByText("检查来源目录和自动化范围设置"),
+    ).toBeVisible();
+    await expect(
+      evidence.getByText(
+        /后续处理|恢复|scope_root_missing|before_formal_execution|retry/,
+      ),
+    ).toHaveCount(0);
+    await evidence
+      .getByRole("heading", { name: "失败原因" })
+      .scrollIntoViewIfNeeded();
+    await expect(evidence.getByText("来源目录不存在")).toBeInViewport();
+    await evidence
+      .getByText("检查来源目录和自动化范围设置")
+      .scrollIntoViewIfNeeded();
+    await expect(
+      evidence.getByText("检查来源目录和自动化范围设置"),
+    ).toBeInViewport();
+    await assertNoOverflow();
+    await page.screenshot({
+      fullPage: true,
+      path: testInfo.outputPath("record-detail.png"),
+    });
     await expect(evidence.getByText("2026-01-01T12:00:00+00:00")).toHaveCount(
       2,
     );

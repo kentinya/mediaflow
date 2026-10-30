@@ -854,16 +854,28 @@ one-run command intent; min(definition ceiling,100) bounds primaries, incomplete
 a first-N prefix, and schedule due state/history grants do not become manual authority.
 Durable origin/request/principal/pin links preserve deduplication and truthful historical metrics.
 
-Automation execution records are a read-only projection of existing results, stages/reasons, known
-effects and bounded ownership/next-action statements, not another recovery surface/store/queue.
-The records UI exposes only its detail toggle, with no Task Center/definition navigation controls;
-the API's durable handoff links remain unchanged for other consumers. Proven pre-start
-failure may guide explicit supported retry only after the prior attempt is settled/fenced and its
-permissions, context and authority are revalidated. Formal organizing handoff uses existing durable
-Task/execution origin links/checkpoints, not first media mutation; all later controls and per-item
-recovery stay in Task Center, including pre-mutation scanning/metadata failure. A missing link alone
-does not prove non-execution; unknown admission/handoff/effects require reconciliation/investigation,
-not replay or synthetic Tasks. Historical results and recovery-attempt links remain distinct.
+Automation execution records add a records-only `recordOutcome` envelope on the existing bounded
+GET: status, noWork, confirmed primary success count and concise Chinese statement/failureReason/
+nextStep. SQLite derives the original lifecycle and exact TaskItem/Result/attachment evidence without
+consuming recovery lineage, changing persisted states/schema or traversing Storage. A terminal
+failed/partial/cancelled original stays failed; completed work with skipped/ignored/failed/partial/
+uncertain admitted work (including attachments) is failed. Fully verified success and proven empty
+no-work are completed; incomplete/inconsistent proof is unknown and live/cancel-requested work stays
+unfinished. Subsequent handling and restart cannot turn original failure into success.
+
+The optional `outcome` records filter consumes this same SQL classification over the mandatory
+original-Automation population, before counts, page windows and bidirectional cursors. Principal,
+definition/trigger/raw-status/outcome/time/direction scope and query keys bind the actual conditions.
+Raw `status` filtering, raw result/handling/handoff fields and other shared callers' default behavior,
+Task Center recovery, latest outcomes and metrics remain unchanged. No client-side page filtering,
+unbounded record loading, new history store or execution authority is introduced.
+
+The UI consumes only this original-result envelope and real execution times. Its detail toggle opens
+at most 执行结果和时间 / 失败原因 (failed only) / 下一步; it never renders later handling, recovery
+counts/instructions, ownership, raw categories/exceptions, Task Center/definition navigation or
+commands. Cancelled runs are named as cancelled, not program exceptions; uncertain effects require
+inspection, never a no-effect or retry promise. Independent workspaces retain their existing recovery
+entry and safe authority; a missing Task link never proves non-execution or authorizes replay.
 
 The records API publishes one complete `failureStage` envelope across proven pre-start and formal
 Task failures. A settled pre-start failure retains its durable stage/category/nextAction/statement,

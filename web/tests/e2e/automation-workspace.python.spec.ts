@@ -14,8 +14,8 @@ import { expect, test, type Page } from "@playwright/test";
  * Proven journey: the operator lands on `自动化`, reads four full-population
  * cards from the backend metrics document, filters/sorts/pages the definition
  * table through real server queries, switches to the read-only `执行记录` tab,
- * filters admitted runs by definition/trigger/outcome, follows the exact next
- * action of a record, and returns to the same context — with no file-decision
+ * filters admitted runs by definition/trigger/records-only outcome and reads
+ * concise Chinese result/reason/next steps — with no later handling or file-decision
  * form, no re-analysis and no execution control anywhere in the records.
  *
  * No production media, credential, external Storage or Provider is involved;
@@ -180,7 +180,7 @@ test("the inventory reads full-population cards, filters and pages from the serv
   expect(after.activeRevisionId).toBe(before.activeRevisionId);
 });
 
-test("the records tab reports read-only admitted runs with their recovery owner", async ({
+test("the records tab reports this execution only, without recovery details", async ({
   page,
 }) => {
   await publishDefinition(page, {
@@ -243,11 +243,8 @@ test("the records tab reports read-only admitted runs with their recovery owner"
   ).toHaveCount(0);
   await expect(page.getByLabel(/选择 .*\.mkv/)).toHaveCount(0);
 
-  // This scheduled admission has not yet acquired a formal Task, so the
-  // record truthfully reports an uncertain handoff: it must NOT offer a
-  // start-again retry or any execution control, and it must not invent a Task
-  // Center link for work that has no Task. The exact Task Center link (with a
-  // real formal Task) is proven by the Run once journey below.
+  // This Scheduler admission is still pending; its record is not a finished
+  // failure and offers no later handling, navigation or execution control.
   const ownRow = ownRegion
     .getByRole("row")
     .filter({ hasText: /Records workspace|harness-workspace-definition/ });
@@ -256,9 +253,11 @@ test("the records tab reports read-only admitted runs with their recovery owner"
   const detailId = await detailToggle.getAttribute("aria-controls");
   await detailToggle.click();
   const ownDetails = page.locator(`[id="${detailId}"]`);
+  await expect(ownDetails.getByText("本次正在等待执行")).toBeVisible();
+  await expect(ownDetails.getByRole("heading")).toHaveCount(2);
   await expect(
-    ownDetails.getByText(/移交状态不确定|先核对再操作/).first(),
-  ).toBeVisible();
+    ownDetails.getByText(/后续处理|移交|恢复|reconcile/),
+  ).toHaveCount(0);
   await expect(
     ownRegion.getByRole("button", { name: "打开任务中心运行" }),
   ).toHaveCount(0);
@@ -290,8 +289,29 @@ test("the records page traverses beyond one page and back with its own filters",
   const seeded = await page.request.post(
     "/__harness__/seed-automation-record-page?runs=26",
   );
-  const seededBody = (await seeded.json()) as { recordTotal?: number };
+  const seededBody = (await seeded.json()) as {
+    recordTotal?: number;
+    emitted: string[];
+  };
   expect(seededBody.recordTotal ?? 0).toBeGreaterThan(20);
+  const headers = { Authorization: `Bearer ${ADMIN_TOKEN}` };
+  for (const runId of seededBody.emitted.slice(2)) {
+    const selectedResponse = await page.request.get(
+      `/api/v1/operations/runs/${runId}`,
+      { headers },
+    );
+    expect(selectedResponse.ok()).toBe(true);
+    const selected = await selectedResponse.json();
+    const cancel = selected.lifecycle.actions.find(
+      (a: { action: string }) => a.action === "cancel",
+    );
+    expect(cancel.available).toBe(true);
+    const response = await page.request.post(cancel.path, {
+      headers,
+      data: { expectedUpdatedAt: selected.lifecycle.version },
+    });
+    expect(response.ok()).toBe(true);
+  }
 
   await connectOn(page, "/ui-v2/operations/automation");
   await page.getByRole("button", { name: "执行记录" }).click();
@@ -306,6 +326,15 @@ test("the records page traverses beyond one page and back with its own filters",
 
   // First page -> next page -> previous page through the real controls. The
   // backward turn submits `direction=previous`, which the backend requires.
+  await page.getByLabel("结果", { exact: true }).selectOption("failed");
+  await expect(
+    region.getByText(`共 ${seededBody.emitted.length - 2} 条执行记录`, {
+      exact: false,
+    }),
+  ).toBeVisible();
+  await expect(
+    region.getByRole("cell", { name: "失败", exact: true }),
+  ).toHaveCount(20);
   const firstPageUrl = page.url();
   await region.getByRole("button", { name: "下一页" }).click();
   await expect(page).toHaveURL(/cursor=/);
@@ -320,6 +349,7 @@ test("the records page traverses beyond one page and back with its own filters",
   expect((await backward).url()).toContain("direction=previous");
   // Back on the first page, the submitted filter is still in effect.
   await expect(page.getByLabel("定义")).toHaveValue(DEFINITION_ID);
+  await expect(page.getByLabel("结果", { exact: true })).toHaveValue("failed");
   expect(firstPageUrl).toContain(`rdefinition=${DEFINITION_ID}`);
 
   // A reload of the exact URL keeps the tab and the filter.
@@ -327,6 +357,7 @@ test("the records page traverses beyond one page and back with its own filters",
   const reloaded = page.getByRole("region", { name: "自动化执行记录" });
   await expect(reloaded).toBeVisible();
   await expect(page.getByLabel("定义")).toHaveValue(DEFINITION_ID);
+  await expect(page.getByLabel("结果", { exact: true })).toHaveValue("failed");
 });
 
 test("a technical record preserves original results without a generic retry entry", async ({
@@ -429,10 +460,15 @@ test("a technical record preserves original results without a generic retry entr
     .getByRole("button", { name: "收起详情" })
     .getAttribute("aria-controls");
   const ownDetails = page.locator(`[id="${detailId}"]`);
-  await expect(ownRow.getByText(/部分成功/)).toBeVisible();
-  await expect(ownDetails.getByText(/阶段：/)).toBeVisible();
-  await expect(ownDetails.getByText(/Storage failure/).first()).toBeVisible();
-  await expect(ownDetails.getByText(/尚未处理/)).toBeVisible();
+  await expect(ownRow.getByText("失败", { exact: true })).toBeVisible();
+  await expect(
+    ownDetails.getByRole("heading", { name: "失败原因" }),
+  ).toBeVisible();
+  await expect(ownDetails.getByText("文件存储操作未完成")).toBeVisible();
+  await expect(ownDetails.getByText(/已确认整理 1 个文件/)).toBeVisible();
+  await expect(
+    ownDetails.getByText(/后续处理|恢复|Storage failure|阶段：/),
+  ).toHaveCount(0);
   await expect(
     region.getByRole("button", { name: /重新分析|暂停|继续|取消|运行一次/ }),
   ).toHaveCount(0);
@@ -462,7 +498,7 @@ test("a technical record preserves original results without a generic retry entr
 
 test("two technical failures retain independent evidence without false resolution", async ({
   page,
-}) => {
+}, testInfo) => {
   // The real Run once journey fails TWO items before effects. Current Task
   // Center retains technical history without a generic retry entry.
   await page.request.post("/__harness__/seed-run-once-two-failure-scope");
@@ -539,6 +575,7 @@ test("two technical failures retain independent evidence without false resolutio
   expect(initial.handling?.affectedItems).toBe(2);
   expect(initial.handling?.resolvedItems).toBe(0);
 
+  const recordReads = recordApiCalls(page);
   // The records row publishes both original reasons and no completion claim.
   await connectOn(page, "/ui-v2/operations/automation");
   await page.getByRole("button", { name: "执行记录" }).click();
@@ -554,13 +591,32 @@ test("two technical failures retain independent evidence without false resolutio
     .getByRole("button", { name: "收起详情" })
     .getAttribute("aria-controls");
   const ownDetails = page.locator(`[id="${detailId}"]`);
-  await expect(ownRow.getByText(/部分成功/)).toBeVisible();
-  await expect(ownDetails.getByText(/Storage failure/).first()).toBeVisible();
+  await expect(ownRow.getByText("失败", { exact: true })).toBeVisible();
+  await expect(ownDetails.getByText("文件存储操作未完成")).toBeVisible();
+  await expect(ownDetails.getByText(/已确认整理 1 个文件/)).toBeVisible();
+  await expect(ownDetails.getByRole("heading")).toHaveCount(3);
   await expect(
-    ownDetails.getByText(/已知效果：无效果 2 · 已确认 0 · 不确定 0 · 部分 0/),
-  ).toBeVisible();
-  await expect(ownDetails.getByText(/尚未处理/)).toBeVisible();
-  await expect(ownDetails.getByText(/后续处理已完成/)).toHaveCount(0);
+    ownDetails.getByText(/后续处理|恢复|Storage failure|阶段：/),
+  ).toHaveCount(0);
+
+  for (const width of [1536, 390]) {
+    await page.setViewportSize({ width, height: width === 1536 ? 1024 : 844 });
+    await ownDetails.getByText("文件存储操作未完成").scrollIntoViewIfNeeded();
+    await expect(ownDetails.getByText("文件存储操作未完成")).toBeInViewport();
+    const nextStep = ownDetails.getByText("检查来源、目标文件和存储连接及权限");
+    await nextStep.scrollIntoViewIfNeeded();
+    await expect(nextStep).toBeInViewport();
+    expect(
+      await page.evaluate(
+        () => document.documentElement.scrollWidth <= window.innerWidth + 1,
+      ),
+    ).toBe(true);
+    await page.screenshot({
+      fullPage: true,
+      path: testInfo.outputPath(`records-technical-${width}.png`),
+    });
+  }
+  expect(recordReads.every((request) => request.method === "GET")).toBe(true);
 
   // Both failures remain factual history. No unsupported technical recovery
   // control can hide one sibling or turn this partial run into success.

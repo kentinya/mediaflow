@@ -443,28 +443,31 @@ normal runs use normal scope/checks; no failed-item selection or cross-run obser
   Task before readiness and executes ready items without a second initial confirmation. Four-type
   recovery still needs explicit continuation; no schedule advancement or old grant consumption.
   Overflow/incomplete scope refuses execution and explains narrowing/re-analysis, not first-N success.
-- **Execution records:** compact rows show status, local start/end times, item counts and only
-  查看详情 / 收起详情 in the action column. Details expose exact timestamps, original results,
-  failure stage/reason, known per-item effects and next actions. Neither the list nor expanded details
-  provides Task Center/definition navigation buttons or links; use those workspaces' own entries.
-  Expanding or collapsing details is read-only. No local file decisions, re-analysis or execution
-  controls. Bounded authoritative queries reach every authorized row; actual admitted runs
-  count once, unavailable/unknown data are not zero/success, and bound reached is not scope exhaustion.
-- **Before organizing starts:** explain the failed prerequisite and identify its correction. Proven
-  pre-start failure rows remain visible alongside normal/no-work records, including existing history;
-  absent per-item results/media effects do not mean the history is unreadable. Refresh is the same
-  read-only query, not another attempt. After repair,
-  explicitly retry through existing supported commands only if durable evidence proves no formal
-  execution/media effects and the old attempt is settled/fenced, with current permissions/context/
-  authority rechecked. Do not duplicate queued work or silently repin a changed definition; unsupported
-  old-context retry instead explains an explicit new Run once or next scheduled evaluation. Unknown
-  submission/handoff reconciles first, never blindly retries.
-- **After organizing starts:** durable formal organizing-task handoff, not the first media mutation,
-  assigns organizing history/controls to the exact run accessed through Task Center's own entry.
-  Four business problems retain native recovery; technical/uncertain outcomes stay factual read-only
-  history, including failures before moving any file. A missing link does not prove pre-start;
-  uncertain effects permit investigation only. Preserve return context, successful siblings and
-  independently linked recovery attempts; recovery never rewrites the original run result.
+- **Execution records:** 自动化 → 执行记录 → 查看详情 reads only this execution. Compact rows
+  show its records-only result, actual local start/end times, item counts and a single
+  查看详情 / 收起详情 button. Details contain at most 执行结果和时间 / 失败原因 (failed only) /
+  下一步, in concise ordinary Chinese. Missing times are `—`, never creation/update times.
+  Finished work succeeds only when every admitted primary and associated attachment has explicit
+  success proof. Partial/failed/skipped/ignored/cancelled/uncertain work is 失败; known successful
+  effects remain stated. A proven healthy empty scope is 成功 / 无工作完成, not skipped-only work.
+  Pending/running/paused/waiting remain unfinished; a requested but unsettled cancellation is not
+  failure. Unknown proof remains unknown, unreadable/truncated reasons are explicit, and uncertain
+  effects say to check first and not repeat. Cancelling one admitted run through Task Center's
+  existing controls is distinct from disabling an Automation definition.
+- **Result/reason/next step:** success says this run needs no repair, not that the source was fully
+  exhausted. Unfinished work says to wait; policy skip identifies the relevant files/settings;
+  cancellation says this run was cancelled and completed operations remain. Errors identify what
+  to check; correcting configuration is not recovery of the old Task and never promises auto-retry.
+  No later handling, recovery status/counts, recovery tutorial, Task Center/definition links or
+  local decisions/execution controls appear in records. Those workspaces retain their independent
+  entries and responsibilities. Later recovery cannot change this original result.
+- **Read/failure recovery:** the same record-specific outcome filter is applied server-side to the
+  whole authorized population before count/paging. Definition/trigger/time filters, clear, refresh,
+  forward/backward paging and reconnect preserve exact conditions; stale/invalid filters/cursors
+  are bounded read refusals. A failed read offers refresh and filtered reads can clear conditions.
+  Expanding/collapsing and reads create no work or Provider/Storage effects. Pre-Task failures and
+  unknown handoff remain truthful; missing Task linkage never authorizes replay. Raw API outcomes,
+  independent recovery evidence, latest outcomes and metrics retain their own existing semantics.
 - **Read/save safety:** stale/failed Save retains Active/input; reads/refresh/paging create no work or
   Provider/media effects. Preparation-only findings remain distinct from execution failures.
 - **Settings:** a compact four-field form keeps concise meanings and backend constraints; engine

@@ -6686,6 +6686,113 @@ class SQLiteTaskRepository:
         )
         return page
 
+    @staticmethod
+    def _automation_record_query_document(document: str) -> str:
+        """Records-only original outcomes, before filtering/counting/paging.
+
+        No recovery lineage, Storage traversal, or new historical store. Results
+        belong to this exact Task, including attached-file dispositions. Missing
+        or inconsistent proof is unknown, never an inferred success/failure.
+        """
+        return f"""
+            WITH latest AS (
+                SELECT r.*, ROW_NUMBER() OVER (
+                    PARTITION BY task_id, item_id
+                    ORDER BY created_at DESC, result_id DESC
+                ) AS rank FROM task_results r
+            ), item_evidence AS (
+                SELECT i.task_id,
+                    COALESCE(lower(r.status), i.status) AS disposition,
+                    CASE WHEN r.effect_certainty = 'verified_complete'
+                         AND lower(r.status) = 'success' THEN 1
+                         WHEN r.primary_completed = 1 THEN 1 ELSE 0 END AS succeeded,
+                    CASE WHEN r.effect_certainty IN ('unknown', 'attempted_unverified')
+                         OR (json_valid(r.uncertain_effects) AND
+                             json_array_length(r.uncertain_effects) > 0)
+                         THEN 1 ELSE 0 END AS uncertain,
+                    CASE WHEN r.effect_certainty = 'partial' THEN 1 ELSE 0 END AS partial_effect,
+                    CASE WHEN r.result_id IS NULL OR
+                         r.effect_certainty NOT IN ('none', 'verified_complete', 'partial',
+                                                   'unknown', 'attempted_unverified')
+                         OR NOT json_valid(r.attachment_results)
+                         OR NOT json_valid(r.uncertain_effects)
+                         THEN 1
+                         WHEN json_type(r.attachment_results) <> 'array'
+                           OR json_type(r.uncertain_effects) <> 'array'
+                           OR json_array_length(r.attachment_results) <> r.attachment_count
+                         THEN 1 ELSE 0 END AS unreadable,
+                    (SELECT COUNT(*) FROM json_each(
+                        CASE WHEN json_valid(r.attachment_results)
+                             THEN r.attachment_results ELSE '[]' END
+                    ) a WHERE a.type = 'object' AND
+                        (lower(json_extract(a.value, '$.status')) IN
+                            ('failed', 'partial', 'skipped', 'ignored', 'cancelled', 'unexecuted')
+                         OR json_extract(a.value, '$.effect_certainty') IN
+                            ('unknown', 'attempted_unverified', 'partial'))
+                    ) AS attachment_failed,
+                    (SELECT COUNT(*) FROM json_each(
+                        CASE WHEN json_valid(r.attachment_results)
+                             THEN r.attachment_results ELSE '[]' END
+                    ) a WHERE CASE WHEN a.type <> 'object' THEN 1
+                        WHEN json_extract(a.value, '$.status') IS NULL
+                          OR lower(json_extract(a.value, '$.status')) NOT IN
+                            ('success', 'failed', 'partial', 'skipped', 'ignored', 'cancelled',
+                             'unexecuted')
+                          OR json_extract(a.value, '$.effect_certainty') IS NULL
+                          OR json_extract(a.value, '$.effect_certainty') NOT IN
+                            ('none', 'verified_complete', 'partial', 'unknown',
+                             'attempted_unverified')
+                          OR (lower(json_extract(a.value, '$.status')) = 'success'
+                              AND json_extract(a.value, '$.effect_certainty')
+                                  <> 'verified_complete')
+                        THEN 1 ELSE 0 END
+                    ) AS attachment_unreadable
+                FROM task_items i LEFT JOIN latest r
+                    ON r.task_id = i.task_id AND r.item_id = i.item_id AND r.rank = 1
+            ), evidence AS (
+                SELECT task_id, COUNT(*) AS item_count,
+                    SUM(succeeded) AS success_count, SUM(uncertain) AS uncertain_count,
+                    SUM(partial_effect) AS partial_effect_count,
+                    SUM(CASE WHEN disposition IN ('skipped', 'ignored') THEN 1 ELSE 0 END)
+                        AS skipped_count,
+                    SUM(CASE WHEN disposition = 'cancelled' THEN 1 ELSE 0 END) AS cancelled_count,
+                    SUM(CASE WHEN disposition IN ('failed', 'partial') THEN 1 ELSE 0 END)
+                        AS failed_count,
+                    SUM(attachment_failed) AS attachment_failed_count,
+                    SUM(CASE WHEN unreadable OR attachment_unreadable OR disposition NOT IN
+                        ('success', 'failed', 'partial', 'skipped', 'ignored', 'cancelled')
+                        THEN 1 ELSE 0 END) AS unreadable_count
+                FROM item_evidence GROUP BY task_id
+            ), original AS (
+                SELECT population.*, e.*,
+                    CASE WHEN linked_task_status = 'paused' THEN 'paused'
+                         WHEN linked_task_status = 'pending' THEN 'pending'
+                         WHEN linked_task_status = 'running' THEN 'running'
+                         WHEN job_status IN ('pending', 'running') THEN job_status
+                         WHEN linked_task_status IN ('completed', 'partial_success', 'failed',
+                                                     'cancelled') THEN linked_task_status
+                         WHEN job_status IN ('completed', 'failed', 'cancelled') THEN job_status
+                         ELSE 'unknown' END AS original_status
+                FROM ({document}) population LEFT JOIN evidence e
+                    ON e.task_id = COALESCE(linked_task_id, transfer_task_id, anchor_id)
+            ) SELECT original.*,
+                CASE WHEN original_status IN ('pending', 'running', 'paused', 'waiting')
+                         THEN original_status
+                     WHEN original_status IN ('failed', 'partial_success', 'cancelled')
+                         THEN 'failed'
+                     WHEN original_status <> 'completed' THEN 'unknown'
+                     WHEN COALESCE(failed_count, 0) + COALESCE(skipped_count, 0)
+                        + COALESCE(cancelled_count, 0) + COALESCE(uncertain_count, 0)
+                        + COALESCE(partial_effect_count, 0)
+                        + COALESCE(attachment_failed_count, 0) > 0 THEN 'failed'
+                     WHEN total_items IS NULL OR total_items <> COALESCE(item_count, 0)
+                        OR COALESCE(unreadable_count, 0) > 0 THEN 'unknown'
+                     WHEN total_items = 0 THEN 'completed'
+                     WHEN success_count = item_count THEN 'completed'
+                     ELSE 'unknown' END AS record_outcome
+            FROM original
+        """
+
     def operations_runs_window(
         self,
         *,
@@ -6704,6 +6811,8 @@ class SQLiteTaskRepository:
         definition_id: str | None = None,
         trigger: str | None = None,
         automation_admissions: bool = False,
+        record_outcome: str | None = None,
+        record_evidence: bool = False,
     ) -> OperationsRunsWindow:
         """One page window plus filter-scoped totals from one read snapshot.
 
@@ -6731,7 +6840,21 @@ class SQLiteTaskRepository:
         if after is not None and before is not None:
             raise ValueError("after and before are mutually exclusive")
         reverse = before is not None
+        if record_outcome is not None and record_outcome not in {
+            "completed",
+            "failed",
+            "pending",
+            "running",
+            "paused",
+            "waiting",
+            "unknown",
+        }:
+            raise ValueError("automation record outcome is invalid")
+        if (record_evidence or record_outcome is not None) and not automation_admissions:
+            raise ValueError("record outcomes require the Automation admission population")
         document = self._run_query_document()
+        if record_evidence or record_outcome is not None:
+            document = self._automation_record_query_document(document)
         # The business filters shape both the page window and the reported
         # totals; the cursor clause is added to the page query only.
         filter_clauses, filter_parameters = self._run_query_clauses(
@@ -6748,6 +6871,9 @@ class SQLiteTaskRepository:
             trigger=trigger,
             automation_admissions=automation_admissions,
         )
+        if record_outcome is not None:
+            filter_clauses.append("record_outcome = ?")
+            filter_parameters.append(record_outcome)
         filter_where = f"WHERE {' AND '.join(filter_clauses)}" if filter_clauses else ""
         page_clauses = list(filter_clauses)
         page_parameters = list(filter_parameters)
@@ -7489,7 +7615,7 @@ class SQLiteTaskRepository:
             SELECT latest.task_id AS task_id, latest.item_id AS item_id,
                    lower(latest.status) AS status, latest.created_at AS sort_at,
                    latest.error AS result_error, latest.effect_certainty,
-                   latest.uncertain_effects, 'result' AS status_source
+                   latest.uncertain_effects, latest.attachment_results, 'result' AS status_source
             FROM (
                 SELECT results.*, ROW_NUMBER() OVER (
                     PARTITION BY results.task_id, results.item_id
@@ -7502,7 +7628,7 @@ class SQLiteTaskRepository:
             WHERE latest.result_rank = 1
             UNION ALL
             SELECT items.task_id, items.item_id, items.status, items.updated_at,
-                   items.error, NULL, NULL, 'task_item'
+                   items.error, NULL, NULL, '[]', 'task_item'
             FROM task_items items
             WHERE items.task_id IN ({placeholders})
             AND items.status IN ('failed', 'partial')
@@ -7584,9 +7710,30 @@ class SQLiteTaskRepository:
                 bucket["truncated"] = True
                 continue
             uncertain_effects = row["uncertain_effects"] or "[]"
+            try:
+                attachments = json.loads(row["attachment_results"] or "[]")
+            except (TypeError, ValueError):
+                attachments = []
+            attachment_reasons = (
+                [
+                    value.get("reason")
+                    for value in attachments[:64]
+                    if isinstance(value, dict)
+                    and value.get("reason")
+                    in {
+                        "attachment_collision",
+                        "source_missing",
+                        "authority_refused",
+                        "execution_stopped",
+                    }
+                ]
+                if isinstance(attachments, list)
+                else []
+            )
             bucket["items"].append(
                 {
                     "itemId": str(row["item_id"]),
+                    "attachmentReasons": attachment_reasons,
                     "status": str(row["status"]),
                     "stage": str(row["item_stage"]) if row["item_stage"] else None,
                     "destination": (
@@ -8997,6 +9144,26 @@ class SQLiteTaskRepository:
                 else None
             ),
             recovered_completion=bool(row["recovered_completion"]),
+            automation_record_evidence=(
+                {
+                    key: row[key]
+                    for key in (
+                        "record_outcome",
+                        "original_status",
+                        "item_count",
+                        "success_count",
+                        "uncertain_count",
+                        "partial_effect_count",
+                        "skipped_count",
+                        "cancelled_count",
+                        "failed_count",
+                        "attachment_failed_count",
+                        "unreadable_count",
+                    )
+                }
+                if "record_outcome" in row.keys()
+                else None
+            ),
         )
 
     def claim_next_job(

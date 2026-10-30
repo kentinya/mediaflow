@@ -5768,6 +5768,8 @@ export interface AutomationRecordsQueryOptions {
   readonly definition?: string | null;
   readonly trigger?: string | null;
   readonly status?: string | null;
+  /** Records-only result filter; status retains the raw API contract. */
+  readonly outcome?: string | null;
   readonly from?: string | null;
   readonly to?: string | null;
   readonly limit?: number;
@@ -5789,6 +5791,7 @@ export function automationRecordsUrl(
   if (options.definition) params.set("definition", options.definition);
   if (options.trigger) params.set("trigger", options.trigger);
   if (options.status) params.set("status", options.status);
+  if (options.outcome) params.set("outcome", options.outcome);
   if (options.from) params.set("from", options.from);
   if (options.to) params.set("to", options.to);
   if (options.direction) params.set("direction", options.direction);

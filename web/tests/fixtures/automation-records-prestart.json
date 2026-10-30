@@ -98,7 +98,15 @@
       "total_items": 0,
       "trigger": "scheduled",
       "updated_at": "2026-01-01T12:00:00+00:00",
-      "worker_id": null
+      "worker_id": null,
+      "recordOutcome": {
+        "status": "completed",
+        "noWork": true,
+        "successItems": 0,
+        "statement": "本次成功：无工作完成",
+        "failureReason": null,
+        "nextStep": "本次无需修复；不代表来源文件已全部处理"
+      }
     },
     {
       "attention": false,
@@ -207,7 +215,15 @@
       "total_items": null,
       "trigger": "scheduled",
       "updated_at": "2026-01-01T12:00:00+00:00",
-      "worker_id": null
+      "worker_id": null,
+      "recordOutcome": {
+        "status": "failed",
+        "noWork": false,
+        "successItems": 0,
+        "statement": "本次失败，未全部完成",
+        "failureReason": "来源目录不存在",
+        "nextStep": "检查来源目录和自动化范围设置"
+      }
     }
   ],
   "limit": 20,
@@ -223,5 +239,6 @@
   "to": null,
   "total": 2,
   "trigger": null,
-  "truncated": false
+  "truncated": false,
+  "outcome": null
 }

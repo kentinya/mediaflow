@@ -2118,6 +2118,8 @@ class AutomationWorkspaceReadModelTests(unittest.TestCase):
                         {"failed-two", "failed-three"},
                     )
                     # The original outcome is never rewritten by handling.
+                    self.assertEqual(reopened["recordOutcome"], record["recordOutcome"])
+                    self.assertEqual(reopened["recordOutcome"]["status"], "failed")
                     self.assertEqual(reopened["status"], "partial_success")
                     self.assertEqual(reopened["result"]["successItems"], 1)
 
@@ -2388,6 +2390,265 @@ class AutomationWorkspaceReadModelTests(unittest.TestCase):
             # The other definition's history keeps its own bounded window.
             other = value.runtime.list_definition_run_once_discoveries("other-definition", limit=2)
             self.assertEqual([item.discovery_id for item in other], ["other-4", "other-3"])
+
+    def test_record_outcome_uses_original_complete_population_and_attachments(self):
+        """Existing records GET over the exact durable producer vocabulary."""
+        with self._runtime() as value:
+            scenarios = {
+                "success": (PersistentTaskStatus.COMPLETED, "SUCCESS", "verified_complete"),
+                "skipped": (PersistentTaskStatus.COMPLETED, "SKIPPED", "none"),
+                "ignored": (PersistentTaskStatus.COMPLETED, "ignored", "none"),
+                "uncertain": (PersistentTaskStatus.COMPLETED, "success", "attempted_unverified"),
+                "attachment": (
+                    PersistentTaskStatus.PARTIAL_SUCCESS,
+                    "PARTIAL",
+                    "verified_complete",
+                ),
+                "partial": (PersistentTaskStatus.PARTIAL_SUCCESS, "partial", "partial"),
+                "failed": (PersistentTaskStatus.FAILED, "failed", "none"),
+                "cancelled": (PersistentTaskStatus.CANCELLED, "cancelled", "none"),
+                "missing-proof": (PersistentTaskStatus.COMPLETED, "success", "verified_complete"),
+                "malformed-attachment": (
+                    PersistentTaskStatus.COMPLETED,
+                    "success",
+                    "verified_complete",
+                ),
+            }
+            for name, (task_status, result_status, certainty) in scenarios.items():
+                task = dataclasses.replace(
+                    _task(name, status=task_status),
+                    total_items=1,
+                    completed_at=_NOW,
+                    completed_items=1,
+                )
+                value.runtime.create_task(
+                    task,
+                    display=RunDisplayContext(
+                        origin_definition_id="auto-task",
+                        origin_kind="definition-run-once",
+                    ),
+                )
+                item_status = {
+                    "success": TaskItemStatus.SUCCESS,
+                    "skipped": TaskItemStatus.SKIPPED,
+                    "ignored": TaskItemStatus.IGNORED,
+                    "uncertain": TaskItemStatus.SUCCESS,
+                    "attachment": TaskItemStatus.PARTIAL,
+                    "partial": TaskItemStatus.PARTIAL,
+                    "failed": TaskItemStatus.FAILED,
+                    "cancelled": TaskItemStatus.CANCELLED,
+                    "missing-proof": TaskItemStatus.SUCCESS,
+                    "malformed-attachment": TaskItemStatus.SUCCESS,
+                }[name]
+                value.runtime.upsert_item(_run_item(name, name + "-item", item_status))
+                if name != "missing-proof":
+                    result = dataclasses.replace(
+                        _run_result(
+                            name, name + "-item", status=result_status, effect_certainty=certainty
+                        ),
+                        primary_completed=name in {"success", "attachment", "malformed-attachment"},
+                        attachment_count=1 if name == "attachment" else 0,
+                        attachment_results=(
+                            {
+                                "status": "skipped",
+                                "reason": "attachment_collision",
+                                "effect_certainty": "none",
+                            },
+                        )
+                        if name == "attachment"
+                        else (),
+                    )
+                    value.runtime.append_result(result)
+            # Corrupted historic proof is a supported read failure, not a new product entry.
+            value.runtime._connection.execute(
+                "UPDATE task_results SET attachment_results = ? WHERE task_id = ?",
+                ("not-json", "malformed-attachment"),
+            )
+            value.runtime._connection.commit()
+            value.runtime.create_task(
+                dataclasses.replace(
+                    _task("empty"),
+                    total_items=0,
+                    completed_items=0,
+                ),
+                display=RunDisplayContext(
+                    origin_definition_id="auto-task", origin_kind="definition-run-once"
+                ),
+            )
+            # This noncandidate was never admitted; no Storage enumeration is done by the read.
+            (value.root / "source" / "unrelated.txt").write_text("not admitted")
+            code, body = _request(value.api, RECORDS_ROUTE, query="limit=100")
+            self.assertEqual(code, 200)
+            records = {row["recordId"]: row for row in body["items"]}
+            for name in scenarios:
+                expected = (
+                    "completed"
+                    if name == "success"
+                    else (
+                        "unknown" if name in {"missing-proof", "malformed-attachment"} else "failed"
+                    )
+                )
+                self.assertEqual(records[name]["recordOutcome"]["status"], expected, name)
+                self.assertFalse(records[name]["recordOutcome"]["noWork"], name)
+            self.assertTrue(records["empty"]["recordOutcome"]["noWork"])
+            attached = records["attachment"]["recordOutcome"]
+            self.assertEqual(attached["successItems"], 1)
+            self.assertIn("关联附件", attached["failureReason"])
+            self.assertIn("同名附件", attached["failureReason"])
+            self.assertIn("已完成的操作保留", attached["statement"])
+            self.assertIn("勿重复执行", records["uncertain"]["recordOutcome"]["nextStep"])
+            self.assertIn("本次运行已取消", records["cancelled"]["recordOutcome"]["failureReason"])
+            self.assertIn("具体原因当前不可读", records["failed"]["recordOutcome"]["failureReason"])
+            # The old raw read/metric contract still has its own status/no-work vocabulary.
+            self.assertEqual(records["skipped"]["status"], "completed")
+            self.assertEqual(records["attachment"]["status"], "partial_success")
+            self.assertEqual(
+                value.runtime.get_task("attachment").status, PersistentTaskStatus.PARTIAL_SUCCESS
+            )
+            for outcome, expected_names in {
+                "completed": {"success", "empty"},
+                "failed": set(scenarios) - {"success", "missing-proof", "malformed-attachment"},
+                "unknown": {"missing-proof", "malformed-attachment"},
+            }.items():
+                code, filtered = _request(
+                    value.api, RECORDS_ROUTE, query=f"outcome={outcome}&limit=100"
+                )
+                self.assertEqual(code, 200)
+                self.assertEqual({r["recordId"] for r in filtered["items"]}, expected_names)
+                self.assertEqual(filtered["total"], len(expected_names))
+
+    def test_record_failure_filter_is_complete_before_bidirectional_pages(self):
+        with self._runtime() as value:
+            for index in range(47):
+                identity = f"outcome-{index:02}"
+                status = (
+                    PersistentTaskStatus.COMPLETED
+                    if index % 3 == 0
+                    else (
+                        PersistentTaskStatus.CANCELLED
+                        if index % 3 == 1
+                        else PersistentTaskStatus.PARTIAL_SUCCESS
+                    )
+                )
+                self._admitted_automation_run(
+                    value,
+                    identity,
+                    status=status,
+                    created_at=_NOW - timedelta(seconds=index),
+                    succeeded_items=2,
+                )
+            before_metrics = _request(value.api, METRICS_ROUTE)[1]
+            base = (
+                "outcome=failed&definition=auto-task&trigger=scheduled"
+                "&from=2026-03-15T00:00:00Z&limit=7"
+            )
+            code, first = _request(value.api, RECORDS_ROUTE, query=base)
+            self.assertEqual(code, 200)
+            self.assertEqual(first["total"], 31)
+            self.assertEqual(len(first["items"]), 7)
+            self.assertEqual(first["outcome"], "failed")
+            cursor = first["next_cursor"]
+            code, second = _request(value.api, RECORDS_ROUTE, query=base + f"&cursor={cursor}")
+            self.assertEqual(code, 200)
+            code, previous = _request(
+                value.api,
+                RECORDS_ROUTE,
+                query=base + f"&direction=previous&cursor={second['previous_cursor']}",
+            )
+            self.assertEqual(code, 200)
+            self.assertEqual(previous["items"], first["items"])
+            seen = [r["recordId"] for r in first["items"]]
+            page = first
+            while page["next_cursor"]:
+                code, page = _request(
+                    value.api, RECORDS_ROUTE, query=base + f"&cursor={page['next_cursor']}"
+                )
+                self.assertEqual(code, 200)
+                self.assertEqual(page["total"], 31)
+                self.assertTrue(
+                    all(r["recordOutcome"]["status"] == "failed" for r in page["items"])
+                )
+                seen.extend(r["recordId"] for r in page["items"])
+            self.assertEqual(len(set(seen)), 31)
+            for query in (
+                base.replace("outcome=failed", "outcome=completed") + f"&cursor={cursor}",
+                base.replace("outcome=failed&", "") + f"&cursor={cursor}",
+                base + f"&direction=previous&cursor={cursor}",
+                "outcome=partial_success",
+                "outcome=cancelled",
+                "outcome=failed&outcome=failed",
+            ):
+                self.assertEqual(_request(value.api, RECORDS_ROUTE, query=query)[0], 400)
+            self.assertEqual(
+                _request(
+                    value.api, RECORDS_ROUTE, query=base + f"&cursor={cursor}", token=VIEWER_TOKEN
+                )[0],
+                400,
+            )
+            self.assertEqual(
+                _request(value.api, RECORDS_ROUTE, query=base, token="invalid")[0], 401
+            )
+            self.assertEqual(_request(value.api, METRICS_ROUTE)[1], before_metrics)
+            self.assertEqual(
+                _request(value.api, RECORDS_ROUTE, query="status=partial_success")[1]["total"], 15
+            )
+
+    def test_record_cancel_request_is_not_confirmed_cancellation(self):
+        """The existing center RunLifecycleControls reads these exact Job controls."""
+        with self._runtime() as value:
+            job = _job(
+                "live-cancel",
+                status=AutomationJobStatus.RUNNING,
+                definition_id="auto-task",
+                schedule_id="schedule-1",
+            )
+            value.runtime.create_job(job)
+            # Run control is actually offered by the mounted Task Center read.
+            code, selected = _request(value.api, "/api/v1/operations/runs/live-cancel")
+            self.assertEqual(code, 200)
+            self.assertTrue(
+                any(
+                    a["action"] == "cancel" and a["available"]
+                    for a in selected["lifecycle"]["actions"]
+                )
+            )
+            action = next(a for a in selected["lifecycle"]["actions"] if a["action"] == "cancel")
+            code, _ = _request(
+                value.api,
+                action["path"],
+                method="POST",
+                body={"expectedUpdatedAt": selected["lifecycle"]["version"]},
+            )
+            self.assertEqual(code, 200)
+            self.assertTrue(value.runtime.get_job(job.job_id).cancellation_requested)
+            code, page = _request(value.api, RECORDS_ROUTE)
+            self.assertEqual(code, 200)
+            self.assertEqual(page["items"][0]["recordOutcome"]["status"], "running")
+            self.assertIsNone(page["items"][0]["recordOutcome"]["failureReason"])
+            # The same mounted control immediately settles an admitted pending Job.
+            value.runtime.create_job(
+                _job(
+                    "pending-cancel",
+                    status=AutomationJobStatus.PENDING,
+                    definition_id="auto-task",
+                    schedule_id="schedule-1",
+                )
+            )
+            code, selected = _request(value.api, "/api/v1/operations/runs/pending-cancel")
+            self.assertEqual(code, 200)
+            action = next(a for a in selected["lifecycle"]["actions"] if a["action"] == "cancel")
+            self.assertTrue(action["available"])
+            code, _ = _request(
+                value.api,
+                action["path"],
+                method="POST",
+                body={"expectedUpdatedAt": selected["lifecycle"]["version"]},
+            )
+            self.assertEqual(code, 200)
+            code, page = _request(value.api, RECORDS_ROUTE, query="outcome=failed")
+            self.assertEqual(code, 200)
+            self.assertEqual(page["total"], 1)
+            self.assertEqual(page["items"][0]["recordOutcome"]["failureReason"], "本次运行已取消")
 
 
 if __name__ == "__main__":  # pragma: no cover

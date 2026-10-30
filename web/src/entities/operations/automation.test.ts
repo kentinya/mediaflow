@@ -1,3 +1,4 @@
+import recordFixture from "../../../tests/fixtures/automation-records-prestart.json";
 import { describe, expect, it } from "vitest";
 import {
   AUTOMATION_AUTOMATIC_ORGANIZATION_MODE,
@@ -10,6 +11,7 @@ import {
   normalizeAutomationEligibility,
   normalizeAutomationGrantState,
   normalizeAutomationPreview,
+  normalizeAutomationRecordsPage,
   AutomationNormalizationError,
   type AutomationPreviewModel,
 } from "./automation";
@@ -961,5 +963,33 @@ describe("automation run-mode vocabulary", () => {
     expect(
       describeAutomationRunMode(AUTOMATION_AUTOMATIC_ORGANIZATION_MODE),
     ).toBe(AUTOMATION_AUTOMATIC_ORGANIZATION_MODE);
+  });
+});
+
+describe("records-only outcome decoding", () => {
+  it("keeps original raw fields and strictly decodes the display outcome", () => {
+    const model = normalizeAutomationRecordsPage(recordFixture);
+    expect(model.items[0].recordOutcome.noWork).toBe(true);
+    expect(model.items[1].recordOutcome.status).toBe("failed");
+    expect(model.items[1].status).toBe("failed");
+    expect(model.items[1].handling.state).toBe("unhandled");
+  });
+  it.each([
+    undefined,
+    null,
+    { status: "partial_success" },
+    { ...recordFixture.items[1].recordOutcome, noWork: true },
+    { ...recordFixture.items[1].recordOutcome, status: "running" },
+    { ...recordFixture.items[1].recordOutcome, failureReason: null },
+    { ...recordFixture.items[0].recordOutcome, noWork: "true" },
+    { ...recordFixture.items[0].recordOutcome, noWork: false },
+    { ...recordFixture.items[1].recordOutcome, successItems: -1 },
+  ])("refuses missing, coerced or contradictory proof", (outcome) => {
+    expect(() =>
+      normalizeAutomationRecordsPage({
+        ...recordFixture,
+        items: [{ ...recordFixture.items[1], recordOutcome: outcome }],
+      }),
+    ).toThrow(AutomationNormalizationError);
   });
 });

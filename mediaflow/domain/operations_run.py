@@ -517,6 +517,8 @@ class OperationsRunOverview:
     #: four-type problem, an unsettled/uncertain effect or a sibling failure
     #: without its own verified follow-up.
     recovered_completion: bool = False
+    #: Optional records-only evidence; shared status/metrics never consume it.
+    automation_record_evidence: Mapping[str, object] | None = None
 
     @property
     def organized_successfully(self) -> bool:

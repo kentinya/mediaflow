@@ -2016,8 +2016,57 @@ export interface AutomationRecordFailureStageModel {
   readonly unavailable: boolean;
 }
 
+export const AUTOMATION_RECORD_OUTCOMES = [
+  "completed",
+  "failed",
+  "pending",
+  "running",
+  "paused",
+  "waiting",
+  "unknown",
+] as const;
+
+/** Records-only original result; shared status and recovery evidence are unchanged. */
+export interface AutomationRecordOutcomeModel {
+  readonly status: (typeof AUTOMATION_RECORD_OUTCOMES)[number];
+  readonly noWork: boolean;
+  readonly successItems: number;
+  readonly statement: string;
+  readonly failureReason: string | null;
+  readonly nextStep: string;
+}
+
+function normalizeRecordOutcome(value: unknown): AutomationRecordOutcomeModel {
+  const source = optionalRecord(value, "recordOutcome");
+  if (source === null) return fail("recordOutcome");
+  const status = enumOrFail(
+    source["status"],
+    "recordOutcome.status",
+    AUTOMATION_RECORD_OUTCOMES,
+  );
+  const noWork = flag(source, "noWork");
+  const successItems = count(source, "successItems");
+  const failureReason = optionalText(source, "failureReason");
+  if (
+    (status === "failed") !== (failureReason !== null) ||
+    (noWork && (status !== "completed" || successItems !== 0)) ||
+    (status === "completed" && !noWork && successItems === 0)
+  ) {
+    return fail("recordOutcome");
+  }
+  return {
+    status,
+    noWork,
+    successItems,
+    failureReason,
+    statement: text(source, "statement"),
+    nextStep: text(source, "nextStep"),
+  };
+}
+
 export interface AutomationRecordModel {
   readonly recordId: string;
+  readonly recordOutcome: AutomationRecordOutcomeModel;
   readonly runKind: string;
   readonly status: string;
   readonly trigger: string;
@@ -2101,6 +2150,7 @@ function normalizeAutomationRecord(
   const handling = readRecord(source["handling"], `${field}.handling`);
   return {
     recordId: text(source, "recordId"),
+    recordOutcome: normalizeRecordOutcome(source["recordOutcome"]),
     runKind: text(source, "run_kind"),
     status: text(source, "status"),
     trigger: text(source, "trigger"),
@@ -2191,6 +2241,7 @@ export interface AutomationRecordsPage {
   readonly definition: string | null;
   readonly trigger: string | null;
   readonly status: string | null;
+  readonly outcome: string | null;
   readonly from: string | null;
   readonly to: string | null;
   readonly total: number;
@@ -2215,6 +2266,7 @@ export function normalizeAutomationRecordsPage(
     definition: optionalText(source, "definition"),
     trigger: optionalText(source, "trigger"),
     status: optionalText(source, "status"),
+    outcome: optionalText(source, "outcome"),
     from: optionalText(source, "from"),
     to: optionalText(source, "to"),
     total: count(source, "total"),

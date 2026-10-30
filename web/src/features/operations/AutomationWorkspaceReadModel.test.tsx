@@ -6,9 +6,8 @@
  * - **R2**: the four cards read the backend's full-population aggregates, so a
  *   filtered or paged read cannot change them, and a definition's latest result
  *   comes from the merged scheduled/manual admitted-run evidence.
- * - **R3**: a record renders the original result, its real execution window, its
- *   failure stage/reason and a *separately* linked handling state, with no
- *   local recovery control.
+ * - **R3**: a record renders only its original result, real times and concise
+ *   Chinese reason/next step, with no later handling, recovery or navigation.
  * - **R4**: backwards paging submits the cursor's own direction, and the exact
  *   submitted tab/filters/page survive a reload because they live in the URL.
  *
@@ -299,6 +298,14 @@ function listDocument(overrides: Json = {}): Json {
 function recordDocument(overrides: Json = {}): Json {
   return {
     recordId: "run-1",
+    recordOutcome: {
+      status: "failed",
+      noWork: false,
+      successItems: 1,
+      statement: "本次失败，未全部完成；已确认整理 1 个文件，已完成的操作保留",
+      failureReason: "文件存储操作未完成；有操作的效果尚未确认",
+      nextStep: "先核对来源和目标文件，勿重复执行",
+    },
     run_kind: "job",
     run_id: "run-1",
     command: "organize",
@@ -587,7 +594,7 @@ describe("V2 Automation workspace read model", () => {
     expect(screen.getByText("27")).toBeVisible();
   });
 
-  it("renders the original result, real window and separate handling state", async () => {
+  it("renders three concise sections without later handling or recovery", async () => {
     recordingFetch((call) => {
       if (call.url === LIST_URL) {
         return jsonResponse(listDocument());
@@ -615,37 +622,32 @@ describe("V2 Automation workspace read model", () => {
     expect(within(region).queryByRole("link", { hidden: true })).toBeNull();
     expect(detail).toHaveAttribute("aria-expanded", "false");
     expect(
-      within(region).getByText(/阶段：organizing_stage/),
+      within(region).getByRole("heading", { name: "失败原因", hidden: true }),
     ).not.toBeVisible();
     await userEvent.setup().click(detail);
     expect(detail).toHaveAttribute("aria-expanded", "true");
-    // The original result and its statement are published.
-    expect(within(region).getAllByText("失败").length).toBeGreaterThan(0);
+    expect(within(summaryRow).getByText("失败")).toBeVisible();
     expect(
-      within(region).getByText(/本次执行失败；已受理的运行和逐项结果仍然保留/),
+      within(region).getByText(/本次失败，未全部完成；已确认整理 1 个文件/),
     ).toBeVisible();
-    // The real execution window, never created_at/updated_at.
     expect(within(region).getByText("2026-03-15T09:00:07+00:00")).toBeVisible();
     expect(within(region).getByText("2026-03-15T09:04:00+00:00")).toBeVisible();
-    // The failure stage/reason is separate from the original outcome.
-    expect(within(region).getByText(/阶段：organizing_stage/)).toBeVisible();
-    expect(within(region).getByText(/原因：storage_failure/)).toBeVisible();
-    // The linked follow-up is shown separately, with its per-original-item
-    // coverage counts published by the backend.
-    expect(within(region).getByText("正在处理")).toBeVisible();
     expect(
-      within(region).getByText(/最近关联：recovery · running/),
+      within(region)
+        .getAllByRole("heading", { level: 3 })
+        .map((h) => h.textContent),
+    ).toEqual(["执行结果和时间", "失败原因", "下一步"]);
+    expect(
+      within(region).getByText(/文件存储操作未完成；有操作的效果尚未确认/),
     ).toBeVisible();
     expect(
-      within(region).getByText(/受影响条目 1 · 已确认恢复 0 · 仍未解决 1/),
+      within(region).getByText("先核对来源和目标文件，勿重复执行"),
     ).toBeVisible();
-    // The known-effect partition covers the whole failed population, so the
-    // operator can tell "no effect" apart from "partial/unknown effect".
     expect(
-      within(region).getByText(
-        /已知效果：无效果 1 · 已确认 0 · 不确定 0 · 部分 0/,
+      within(region).queryByText(
+        /后续处理|最近关联|已确认恢复|storage_failure|organizing_stage|recovery/,
       ),
-    ).toBeVisible();
+    ).toBeNull();
     // Records never embed a recovery/execution control.
     expect(
       within(region).queryByRole("button", {
@@ -701,28 +703,18 @@ describe("V2 Automation workspace read model", () => {
       detailToggle.getAttribute("aria-controls")!,
     )!;
     expect(failedDetail).toBeVisible();
+    expect(within(failedDetail).getByText("来源目录不存在")).toBeVisible();
     expect(
-      within(failedDetail).getByText(/整理开始前失败：没有创建正式整理任务/),
+      within(failedDetail).getByText("检查来源目录和自动化范围设置"),
     ).toBeVisible();
     expect(
-      within(failedDetail).getByText(/阶段：before_formal_execution/),
-    ).toBeVisible();
-    expect(
-      within(failedDetail).getByText(/原因：scope_root_missing/),
-    ).toBeVisible();
-    expect(
-      within(failedDetail).getByText(
-        /没有创建正式整理任务，也没有产生媒体效果/,
+      within(failedDetail).queryByText(
+        /后续处理|scope_root_missing|before_formal_execution|retry/,
       ),
-    ).toBeVisible();
-    // The empty item/effect partition is not fabricated into a per-item
-    // section, and the record does not claim its evidence is unreadable.
-    expect(
-      within(failedDetail).queryByText(/逐项失败原因与已知效果/),
     ).toBeNull();
     expect(
-      within(failedDetail).queryByText(/持久化的逐项失败原因当前不可读/),
-    ).toBeNull();
+      within(failedDetail).getAllByRole("heading", { level: 3 }),
+    ).toHaveLength(3);
 
     // A real completed no-work run is rendered beside the failure instead of
     // being hidden by the strict-read failure.
@@ -864,5 +856,175 @@ describe("V2 Automation workspace read model", () => {
     expect(
       document.getElementById("record-trigger") as HTMLSelectElement,
     ).toHaveValue("scheduled");
+  });
+  it.each([
+    ["completed", "成功", null, "本次无需修复；不代表来源文件已全部处理"],
+    [
+      "failed",
+      "失败",
+      "按策略跳过了 1 个文件",
+      "检查目标文件和同名文件处理设置",
+    ],
+    ["failed", "失败", "本次运行已取消", "本次已取消；已完成的操作保留"],
+    [
+      "failed",
+      "失败",
+      "关联附件未全部完成",
+      "检查关联附件的来源、目标和处理设置",
+    ],
+    [
+      "failed",
+      "失败",
+      "本次未全部完成，具体原因当前不可读",
+      "刷新核对失败原因，并检查对应文件",
+    ],
+    ["running", "进行中", null, "等待本次运行结束后刷新查看结果"],
+    ["paused", "已暂停", null, "本次仍处于暂停状态，结束后再查看结果"],
+    ["unknown", "状态未知", null, "刷新记录以核对结果；核对前勿重复执行"],
+  ])(
+    "shows the original %s result without raw or follow-up details",
+    async (status, label, reason, nextStep) => {
+      const { calls } = recordingFetch((call) => {
+        if (call.url.startsWith("/api/v1/operations/automation/records"))
+          return jsonResponse(
+            recordsDocument({
+              items: [
+                recordDocument({
+                  status: status === "failed" ? "partial_success" : status,
+                  executionStartedAt: null,
+                  executionFinishedAt: null,
+                  recordOutcome: {
+                    status,
+                    noWork: false,
+                    successItems: 1,
+                    statement:
+                      status === "failed"
+                        ? "本次失败，未全部完成；已确认整理 1 个文件，已完成的操作保留"
+                        : `本次${label}`,
+                    failureReason: reason,
+                    nextStep,
+                  },
+                  handling: {
+                    state: "resolved",
+                    attempts: 9,
+                    latestKind: "recovery",
+                    latestStatus: "completed",
+                    affectedItems: 2,
+                    resolvedItems: 2,
+                    unresolvedItems: 0,
+                    nextAction: "later recovery finished",
+                  },
+                }),
+              ],
+            }),
+          );
+        if (call.url === LIST_URL) return jsonResponse(listDocument());
+        return undefined;
+      });
+      authStore.setToken(TOKEN);
+      renderApp("/ui-v2/operations/automation?tab=records");
+      const region = await screen.findByRole("region", {
+        name: "自动化执行记录",
+      });
+      const toggle = within(region).getByRole("button", { name: "查看详情" });
+      expect(within(toggle.closest("tr")!).getByText(label)).toBeVisible();
+      await userEvent.setup().click(toggle);
+      const detail = document.getElementById(
+        toggle.getAttribute("aria-controls")!,
+      )!;
+      expect(within(detail).getAllByRole("heading")).toHaveLength(
+        reason === null ? 2 : 3,
+      );
+      if (reason !== null)
+        expect(within(detail).getByText(reason)).toBeVisible();
+      expect(within(detail).getByText(nextStep)).toBeVisible();
+      expect(
+        within(detail).queryByText(
+          /后续处理|最近关联|恢复|organizing_stage|storage_failure|recovery|later/,
+        ),
+      ).toBeNull();
+      expect(within(detail).getAllByText("—")).toHaveLength(2);
+      expect(within(detail).queryByRole("button")).toBeNull();
+      expect(within(detail).queryByRole("link")).toBeNull();
+      expect(calls.every((c) => c.method === "GET")).toBe(true);
+    },
+  );
+
+  it("uses the records outcome filter and resets mismatched cursors", async () => {
+    const user = userEvent.setup();
+    const { calls } = recordingFetch((call) => {
+      if (call.url.startsWith("/api/v1/operations/automation/records"))
+        return jsonResponse(recordsDocument({ outcome: "failed" }));
+      if (call.url === LIST_URL) return jsonResponse(listDocument());
+      return undefined;
+    });
+    authStore.setToken(TOKEN);
+    const { router } = renderApp(
+      "/ui-v2/operations/automation?tab=records&rstatus=failed&cursor=original&dir=previous",
+    );
+    const region = await screen.findByRole("region", {
+      name: "自动化执行记录",
+    });
+    expect(within(region).getByLabelText("结果")).toHaveValue("failed");
+    await waitFor(() =>
+      expect(
+        calls.some(
+          (c) =>
+            c.url.includes("outcome=failed") &&
+            c.url.includes("direction=previous"),
+        ),
+      ).toBe(true),
+    );
+    expect(
+      calls
+        .filter((c) => c.url.includes("automation/records"))
+        .every(
+          (c) => !new URL(c.url, "http://test").searchParams.has("status"),
+        ),
+    ).toBe(true);
+    expect(
+      within(region).queryByRole("option", { name: "部分成功" }),
+    ).toBeNull();
+    expect(within(region).queryByRole("option", { name: "已取消" })).toBeNull();
+    await user.selectOptions(
+      within(region).getByLabelText("结果"),
+      "completed",
+    );
+    await waitFor(() =>
+      expect(router.state.location.searchStr).toContain("completed"),
+    );
+    expect(router.state.location.searchStr).not.toContain("cursor");
+    expect(router.state.location.searchStr).not.toContain("previous");
+    await waitFor(() =>
+      expect(
+        calls.some(
+          (c) =>
+            c.url.includes("outcome=completed") && !c.url.includes("cursor="),
+        ),
+      ).toBe(true),
+    );
+  });
+
+  it("rejects an old unsupported result URL and lets the operator clear it", async () => {
+    const { calls } = recordingFetch((call) => {
+      if (call.url.startsWith("/api/v1/operations/automation/records")) {
+        return call.url.includes("outcome=partial_success")
+          ? jsonResponse({ error: { code: "invalid_request" } }, 400)
+          : jsonResponse(recordsDocument());
+      }
+      if (call.url === LIST_URL) return jsonResponse(listDocument());
+      return undefined;
+    });
+    authStore.setToken(TOKEN);
+    renderApp(
+      "/ui-v2/operations/automation?tab=records&rstatus=partial_success",
+    );
+    const clear = await screen.findByRole("button", { name: "清除筛选" });
+    expect(screen.queryByRole("table", { name: "自动化执行记录" })).toBeNull();
+    await userEvent.setup().click(clear);
+    await screen.findByRole("table", { name: "自动化执行记录" });
+    expect(
+      calls.filter((c) => c.url.includes("automation/records")).at(-1)?.url,
+    ).not.toContain("outcome=");
   });
 });

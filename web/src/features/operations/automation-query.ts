@@ -90,6 +90,7 @@ export function automationRecordsQueryOptions(
       options.definition ?? null,
       options.trigger ?? null,
       options.status ?? null,
+      options.outcome ?? null,
       options.from ?? null,
       options.to ?? null,
       // The paging direction is part of the key: the backend refuses a cursor
