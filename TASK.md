@@ -9,7 +9,7 @@ Authority: committed [SLICE.md](SLICE.md) at `45d2e951eb00ffdd4cecbaafed50039668
 Task ID: 47.1
 Task Type: SLICE
 Parent Slice: 47
-Status: READY FOR B REVIEW
+Status: FIX REQUIRED
 Task Base: 45d2e951eb00ffdd4cecbaafed50039668e445f0
 Difficulty: High
 Test Level: T4
@@ -321,215 +321,136 @@ Status: READY FOR B REVIEW — full T4/acceptance and the Closure Packet are B's
 
 ```text
 Reviewed Base: 45d2e951eb00ffdd4cecbaafed50039668e445f0
-Reviewed Head: 21fe2a58f029baf58f6359eeafd41b551015116f
-Implementation: e53e38999459f81da65f625ee3b73d39e9ff793e
-Decision: FIX REQUIRED — 5 P1 blockers, same Task fix loop
+Reviewed Head: 894eaa1d920dcfbdf3e5c96ffdba0ff26ec69f52
+Implementation: e53e38999459f81da65f625ee3b73d39e9ff793e + f8a7c0e6bd37dca36c5810f083d8506f164cd490
+Decision: FIX REQUIRED — 1 remaining P1: T5 source-version / evidence-pin integrity
+Previous five blockers: reproduced correction paths PASS; not a Task/T4 PASS
 Slice Required Outcomes / Surfaces all satisfied: NO
 Next: SAME TASK FIX LOOP; preserve Task ID/Base/Goal/Scope
 ```
 
-B 独立审查完整 Base..Head 的15个文件（含实现、测试、脚本、版本断言和交接记录），未修改
-产品实现或测试，没有自审/角色例外。范围先按本 Task 的内部内核交付评估：生产三入口未切换、
-旧 Job 未转换/退休是既定边界，不作为缺陷，也不误记为 Slice 完成。
+B 独立审查完整 Task Base..Reviewed Head 的15个文件，逐项核对实现、测试、schema/版本消费者、
+升级演练脚本与交接记录；本轮仅更新本 Task 的审查/指导，没有修改产品或测试实现，无角色例外。
+原五项审查及详细指导保留在 `a13c4a71` / `792040a1`，原 Base 不变，不以新问题重开/扩张 Slice。
 
-### 五项阻塞的开发指导
+### 原五项修复复核
 
-以下指导细化同一 Task 的修正，不改变 Goal/Base/Difficulty/Test Level 或 T1–T10。
-修正范围限于现有调度内核及直接受影响测试，不接生产入口，不增加恢复类型、队列、后台补偿器或
-对外接口。下面的生活化例子解释接入后的保护目标；实际缺陷均从已有内部服务/锁端口复现，
-不是当前 Web 故障证据。尤其第4项没有已证实的正常用户操作触发链，按内部归属契约修复。
-
-主要修改位置：[应用服务](mediaflow/application/task_scheduling.py)、
-[调度端口](mediaflow/domain/task_scheduling.py)、[SQLite 持久化](mediaflow/infrastructure/sqlite_runtime.py)；
-回归放在既有[调度测试](tests/test_task_scheduling.py)与[栅栏/并发测试](tests/test_task_scheduling_fencing.py)，
-不另建过程工具。
-
-建议先修第4项的共用身份检查，再修第1项的执行资格、第2/3项的状态转换，最后完成第5项的
-锁清理交错验证；可以合并共享事务逻辑，不拆新 Task。先把已复现链写进现有测试并确认失败，
-再改实现；只做解决下述结果所必需的调整。
-
-#### 1. P1 — 继续剩余文件时，不能重做成功项或结果不明的操作（T5/T6）
-
-**保护目标与复现。** 同批 A 已成功、B 还需处理，继续时只能处理 B；A 的移动结果不明时，
-也不能因为再试一次就重新移动 A。现有入口是 `TaskSchedulingService.begin_item()`、
-`begin_mutation()`、`complete_item()`。已复现成功 A → 再 begin_item(A) → 再 begin_mutation(A)，
-以及 begin_mutation(A) → 发布 partial/unknown Result → mutation 标记清除 → A 再次开始变更。
-
-**开发步骤：**
-
-1. 在 `mediaflow/application/task_scheduling.py` 明确开始/继续的资格；在
-   `sqlite_runtime.py` 的 `_require_scheduled_item_locked()` / `upsert_scheduled_item()`
-   等实际写入事务中重查耐久 item、Result、已有 checkpoint/effect 事实和当前 claim。
-   不能只在服务层读一次状态，也不能仅凭 attempt +1 许可重做。
-2. 已成功、已忽略的项不能重新开始；已派发但未证实的效果不能再次执行。首次未派发的新项
-   仍可正常开始；证实无效果且已有规则允许的剩余分析/续作保留。复用
-   `mediaflow/domain/processing_checkpoint.py`、`mediaflow/application/processing_checkpoint.py` 的安全语义，
-   不把所有失败都当可重试，也不把所有历史项一律封死；本轮不接四类恢复的生产 dispatch。
-3. `publish_scheduled_item_outcome()` 应在结果/item/evidence 同一事务中，按该次操作的证据
-   决定能否清除 mutation 边界。`clear_mutation=True` 或 item ID 相同均不是安全证明。
-   unknown、attempted_unverified 或非空 uncertain_effects 必须保留不重放保护；记录事实仍可
-   落库，不能丢弃 uncertain Result 来过测试。成功证明和证实无效果按既有语义处理。
-4. 核对现有 `record_item()` / `begin_mutation()` 不能绕过同一保护，拒绝将成功/不确定项改回
-   可执行状态后重放。拒绝须保留原 item/attempt/Result/evidence、pin、授权和源占用。
-
-**回归验收：**
-
-- 在 `tests/test_task_scheduling.py` / `test_task_scheduling_fencing.py` 增加上述两条失败链；
-  成功项再次开始或直接再次申请变更均拒绝，成功 sibling 的历史保持原值。
-- uncertain Result 保存后，从另一真实 SQLite 连接及关闭重开后仍不能重放；超时/租约到期
-  不会将其变成“未发生”。合法首次开始、证实结果清除边界和允许的无效果分析续作仍通过。
-- 调整 `test_a_later_attempt_cannot_replace_a_recorded_outcome`：不再用重做成功项制造 attempt2，
-  改用既有允许、明确无效果的分析尝试；保留旧 Result 不可覆盖和新历史可追加两类断言。
-  证据 fixture 使用既有枚举含义（如 `verified_complete` / `none`），不能把非标准 `complete`
-  当作已证实效果。沿用结果/item/evidence 的故障回滚测试。
-
-#### 2. P1 — 等待或暂停时取消，之后不能又恢复执行（T4）
-
-**保护目标与复现。** 用户在等待确认时取消本次整理，这个 Task 后续不能又排队执行；取消不
-撤销已完成文件的效果。现有 `request_control()` 仅立即结算未领取的 QUEUED；已复现
-waiting_human → request_control(CANCEL) → 带最新 control_revision 的 requeue → pending/queued，
-已接受的 CANCEL 被清空。paused 的相同入口也须覆盖。
-
-**开发步骤：**
-
-1. 修改 `request_control()` 及其仓储边界：对已支持、无活动 owner 且无 in-flight 的等待/暂停
-   状态，确认安全后完成取消；Task、适用未完成项、queue 和取消确认事实保持原子一致。
-   所有安全条件和 control_revision 均在事务内重查，不能拿服务层旧快照释放后来取得的 claim。
-2. 在 `requeue_scheduled_task()` 的事务内，除 Task.status 外还必须检查已接受的 CANCEL；
-   即使调用方携带最新 revision，也不能把 CANCEL 清掉再入队。拒绝时不改 generation、pin、
-   choices/summary/Results 或容量，不消耗/刷新授权。
-3. 仍有 owner 或 in-flight 时只保存取消意图，由当前 owner 按原安全边界确认；不强制解锁、
-   不打断 Storage 调用。保留取消请求/确认和历史，重复请求幂等，不允许 CANCEL 降级成 PAUSE。
-   正常 PAUSE → 显式恢复仍保留，不能用“所有控制都禁止恢复”堵住问题。
-
-**回归验收：**
-
-- waiting_human、paused 各做“取消 → 恢复”和重复取消：最终取消事实保留，恢复零写入拒绝；
-  已成功项和历史 Result 不改写。保留排队取消及 owner 安全确认的现有正向测试。
-- 两个真实连接竞争取消/恢复，按事务先后验收：取消先提交，恢复不能抹掉它；恢复先提交，
-  后续取消仍按恢复后的真实状态生效。不要求取消回溯撤销已经完成的效果。
-- pending-control/in-flight 的名额不提前释放，正常暂停恢复、pin/revision 拒绝及满容量保留
-  原状态的既有测试继续通过。
-
-#### 3. P1 — 一部等待确认，另一部仍处理时，整批不能提前释放名额（T2/T4）
-
-**保护目标与复现。** A 等用户选影片、B 仍处理中时，B 继续受当前 Worker 管理，这一批仍占
-一个名额。现有 `defer_to_human()` 只提交 A 为 WAITING_CONFIRM、遗漏仍 PROCESSING 的 B，
-`release_scheduled_claim()` 就接受整批 waiting_human、清除 owner，容量1→0并允许另一 Task 入队。
-
-**开发步骤：**
-
-1. 在 `release_scheduled_claim()` 的同一释放事务内，读取该 Task 已有 item/机器阶段事实，
-   合并本次拟更新后判断是否真的全人工等待；遗漏在调用参数外的 sibling 也要参加判断。
-   不能只相信 task.total_items/completed_items、传入 items 子集，或“没有 mutation 标记”。
-2. 对仍有 PROCESSING/PENDING 机器工作的混合项，`defer_to_human()` 零写入拒绝释放。
-   单个 A 的等待状态可经现有 `record_item()` 保存，B 继续用原 claim 发布；不新增调度入口，
-   不把 B 改成等待来满足计数。只有真正全等待，才原子提交聚合、items 和名额释放。
-3. 保持其他合法边界：全等待/安全确认暂停/终结依原语义释放，in-flight 继续拒绝；释放容量
-   不释放耐久源占用、不删除已保存选择或成功/不确定效果。复用第4项的同 Task 身份检查。
-
-**回归验收：**
-
-- 创建同一 Task 的 A/B 两项，仅 A 等待、B PROCESSING（并覆盖仍排队的机器项）时释放被拒，
-  owner/generation/容量保持，B 仍能合法发布。拒绝不会留下半个聚合更新。
-- 对照：A/B 均进入合法人工等待后，名额只释放一次；重开仍为 waiting_human，源占用、选择、
-  Results 保持。混合项变全等待的正常链仍可完成。
-- capacity=1，用两个真实连接验证混合项期间新准入仍 QueueFull；全等待释放与新准入竞争
-  不超额、不留孤儿 Task。不要只断言返回值，读回 claim、容量和 sibling 结果。
-
-#### 4. P1 — 甲任务的数据不能用乙任务的领取凭据发布（T4/T5）
-
-**证据边界与复现。** 这是已有内部接口的归属校验缺口；没有证实普通用户同时操作两个任务
-就会触发。两个 Task 分别正常领取后，`defer_to_human(claim_B, task=A, items=A的项)` 会释放 A，
-B 仍 claimed。没有伪造 token；原因是 `release_scheduled_claim()` 按 task.task_id 读目标，
-却独立验证 fence 指向的 Task。
-
-**开发步骤：**
-
-1. 在任何写入前，验证 `task.task_id == fence.task_id`，并确保随后的 claim 检查、Task/item
-   更新、控制版本、queue transition 均针对同一持久身份和领取代次。
-2. 服务层可给出明确拒绝，仓储边界必须同样校验，不能让现有 repository 调用绕过。错误输入
-   按既有有界领域错误拒绝，不得通过改写参数中的 task_id“纠正”后继续发布。
-3. 保留 `fence=None` 仅适用于既有无 owner 安全控制结算的边界；不能借此释放已领取 Task。
-   不新增前端参数、路由、权限弹窗或第二套身份映射。
-
-**回归验收：**
-
-- 用两个 Task、两个不同 Worker 的正常 claim，经上述已有服务复现交叉输入，修后拒绝；
-  两个 Task 的聚合、items、queue/claim/generation、control、Result/evidence、锁均保持原值。
-- 在实际仓储入口补绕过服务的同类拒绝，正确 claim_A + task_A 的释放仍成功；旧 owner/
-  错代次/过期 claim 及无 fence 不能释放有 owner Task 的既有测试继续通过。
-- 不为制造用户链路增加 Web/API 消费者；测试结论只写内部契约，不声称已复现当前页面串任务。
-
-#### 5. P1 — 暂停后马上恢复，旧一轮收尾不能删掉新一轮的文件保护（T4）
-
-**保护目标与复现。** 文件有“正在处理，其他执行者别碰”的保护。暂停后马上恢复，新 Worker
-取得了新一轮保护，旧一轮迟到的收尾只能清理自己的保护。当前 `_settle_control()` 先提交暂停/
-释放 claim，再调用不带 owner_token 的 `reclaim_task_locks(task_id)`，会删掉同 Task 的全部锁。
-已用现有锁端口、两个连接和同步屏障复现“新锁存在 → 旧清理到达 → 新锁消失”。已证明的是
-执行锁被误删，未证明当前页面已发生重复移动；耐久源占用也不能代替修复执行锁的归属错误。
-
-**开发步骤：**
-
-1. 核对 `_settle_control()`、`release_scheduled_claim()` 及既有
-   `FileOperationLockRepository` 的 acquire/adopt/release 语义，明确本次实际拥有的锁代次。
-   `owner_token` 是锁的实际代次，不能未经关联就假定它等于 Task 的 claim_token。
-2. 选择一个最小、可证明的修法：在现有同库、仍验证当前 claim 的释放事务中清理该轮执行锁，
-   与暂停确认一起提交；或在交出 claim 前绑定本轮实际锁代次，之后只对这些代次条件删除。
-   跨两个独立仓储调用不能只靠调用顺序宣称原子。不引入新锁系统、额外清理 Worker 或等待时间。
-3. 旧 owner 迟到/重复 cleanup 必须对新代次无效，不能在未匹配时回退到按 Task ID 全删。
-   对既有 owner_token=None 锁走受 claim 保护的安全兼容处理，不能用 None 删除未来新锁；
-   也不能简单移除全部清理造成旧执行锁永久残留。保留耐久源占用与短期执行锁的区别。
-4. 暂停/取消仍只在原支持的安全边界确认；in-flight/uncertain 时不强行解锁。不改普通 transfer/
-   manual 等尚未接入内核的锁语义，除非共享改动确实直接影响且附相应回归。
-
-**回归验收：**
-
-- 在 `tests/test_task_scheduling_fencing.py` 使用真实临时 SQLite 两连接、线程 Event/Barrier
-  控制既有暂停结算与 cleanup 的交错，不用 sleep 碰运气，不直接改数据库伪造 claim/锁。
-- 对暂停提交后的延迟清理方案：原 Task requeue → worker-2 正常领取 → 现有 adopt_or_acquire
-  取得新 owner_token → 允许旧 cleanup 继续；新锁归属必须仍在，旧 claim 不能发布/删除它。
-  若选择同事务清理，应证明恢复只能在该事务完成后取得新锁，旧确认返回后不会再做无归属清理。
-- 正常暂停/取消仍清掉该轮应释放的旧执行锁，其他 Task 的锁不受影响；覆盖带 token 和既有
-  None 锁、重复 cleanup、新 owner 自身合法释放，并保留源占用。沿用/扩展
-  `test_acknowledging_a_pause_retires_only_this_tasks_execution_locks`，不能仅令清理完全不发生。
-
-### 实际验证、范围及限制
-
-以下产品验证对应上方 Reviewed Head，未因补充指导而重新运行。本次指导补充起点为 `main` /
-`a13c4a7162f3f153743bac0f45482d308dcfe9d4`，只修改 TASK.md，保留既有无关 untracked 文件；
-未改产品/测试实现，未新增产品测试结果。治理及差异检查通过，Task 仍为 FIX REQUIRED。
-
-- 新增3模块：`.venv/bin/python -m unittest tests.test_task_scheduling tests.test_task_scheduling_fencing tests.test_task_scheduling_migration`
-  **46 / OK**，runner 3.163s、完整子进程墙钟3.345s；存在未关闭 SQLite 连接 ResourceWarning。
-  通过并未覆盖以上拒绝/交错场景，不据此接受 T4。
-- 使用上述已有测试夹具与真实临时 SQLite，从已有 `TaskSchedulingService` 方法及现有锁端口
-  复现6条缺陷链（第1项两条，第2–5项各一条）。没有构造不存在的路由、改写原始数据，或把
-  尚未接入内核的普通 UI/生产用户声称为已遭受影响。第5项仅在现有锁释放调用处设置同步屏障。
-- 复用原测试相同的真实 Task Base schema53 建库/公开 repository 升级入口及容量索引故障注入：
-  失败后 schema 仍53，`task_scheduling*` 残留对象为零。这次检查未发现迁移回滚阻塞；不扩大为
-  所有历史版本/容器升级已通过。版本常量同步及演练脚本签名适配在必要范围内。
-- 原始日志/可重复调用脚本仅本机 ignored evidence 可达：
-  `.git/validation-evidence/b-task47.1-21fe2a58/` 下 `focused-tests.log`、`repro.log`、
-  `lock-repro.log` 和对应脚本/README。未使用用户运行库、媒体、私有配置或外部服务。
-- 本轮计时从 2026-10-30 11:39:48 UTC 开始；截至11:47:55 已有487秒复核，测试保守合计不足6秒，
-  低于本轮50%限制。没有通过等待凑时长，也未把读码或写审查记录算成测试。
-- 按 workflow §6，已证实 Task 阻塞，先 FIX REQUIRED，未执行昂贵全 Python/Web/E2E、wheel、
-  native/截图和容器矩阵；它们仍是 B 在修正候选上的 T4 责任，不转交 Developer，不标通过。
-
-### 修正交接与 Slice 全结果重评
-
-Developer 在同一 Task 修正以上5项，运行新增失败回归、新增/变更及直接受影响测试，保留真实
-失败和结果；无需先跑 B 的全量门禁。按用户要求安排实际工作使本轮测试时间低于总用时50%，
-不通过删除安全断言、加重试或过度开发过程工具解决。提交新 checkpoint 后再次 READY FOR B REVIEW。
-B 随后审完整 Base..新 Head，先重现上述关键链，再执行仍适用的 T4 验收。
-
-| Slice outcome | 本次实际结论 |
+| 原阻塞 | 实际结论 |
 |---|---|
-| RO-1 Task 统一调度/执行 | 内核已实现部分能力，但上述阻塞未解决；未完成 |
-| RO-2 三入口共用引擎 | 本 Task 明确未接生产入口；未交付 |
-| RO-3 同工作四类恢复 | 只有内核基础，既有四类生产改接未交付，非重放/控制仍有本 Task 阻塞 |
-| RO-4 数据保留并删除 Job | 增量54及代表性回滚检查通过；Job 整体转换/结构删除及完整升级门禁仍未完成 |
-| RO-5 操作与管理旅程完整 | 仍保留原入口，Task 化集成尚未交付；完整兼容/最终验收未完成 |
+| 成功/不确定项再次变更 | 原重放链已拒绝，uncertain Result 保留 marker，合法无效果失败可继续；通过 |
+| waiting/paused 取消被恢复清除 | 无 owner 的取消能结算，最新 revision 也不能恢复已接受 CANCEL，成功 sibling 不变；通过 |
+| 混合项提前释放容量 | 事务读取全部 durable siblings，混合项释放拒绝，全人工等待可释放，最后名额竞争未超额；通过 |
+| 乙的 claim 释放甲 Task | 服务及仓储均拒绝交叉身份，合法自身释放仍可完成；通过 |
+| 旧清理删除恢复后的新锁 | 执行锁在验证 claim 的释放事务内删除，不再有提交后的无归属清理；双连接交错下新锁保留；通过 |
 
-Slice47 保持 ACTIVE，不关闭 Slice、不改变 A 的 Contract/原 Base，不规划下一 Task。
+以上由本轮实际运行的58项内核/迁移测试及对测试链的独立读码核对支持，不将“测试数增加”当作
+全部 T1–T10 已通过。取消请求先由 `request_scheduled_control()` 持久化，安全确认在另一事务完成；
+确认内 Task/item/queue/执行锁一起提交，重入队事务拒绝已接受 CANCEL。Developer 报告的“请求与
+确认一起原子提交”不符合实际代码，不作为本轮证据；这不否定已接受取消不会被恢复清除的修复。
+
+### 仍需修正的 P1 — 同一 Task 的源版本与结果/配置证据可以被替换（T5；关联 T3/T6）
+
+**要保护什么。** 整理 A.mkv 后暂停，期间同名文件被另一份内容替换，恢复不能把原任务悄悄
+改为处理新文件；任务原本绑定配置 A，成功记录也不能混入配置 B 的处理证据。这里复现的是
+新内核现有服务接口的身份/证据保护失败，尚无生产消费者，不声称当前页面已移动错文件。
+这属于原 T5“错 Task/item/pin/源版本不能写入”的未完成验收，不新增恢复或生产入口要求。
+
+**已独立复现的三条链（均为真实临时 SQLite、现有服务/读取端口）：**
+
+1. `admit → claim/begin_work → begin_item` 保存 verified 的 occurrence-v1 / fingerprint-A /
+   首次观察时间 → `request_control(PAUSE) → acknowledge_control → requeue → worker-2 正常领取`
+   → 对同一 storage/path `begin_item` 传 occurrence-v2 / fingerprint-B / 新观察时间。
+   同 Task、同 item 被写成版本2，原首次观察时间被覆盖，随后 `begin_mutation(move)` 被接受。
+2. Item 仍是版本1，已进入 mutation 边界，`complete_item()` 的 Result 填版本2、其余保持同
+   Task/item/storage/path；成功 Result 被保存，item 与 Result 指向不同版本，mutation 标记清除。
+3. Item 与 Result 都保持版本1，仅把 PipelineEvidence 的 snapshot/digest 改为另一对值；
+   Task 仍 pinned snapshot-1，evidence 保存为 snapshot-other，成功发布同样清除 mutation 标记。
+   第2/3条分别验证，不能仅用一次“版本和 pin 都错”的组合拒绝掩盖另一条未校验。
+
+**代码位置与原因。** [begin_item](mediaflow/application/task_scheduling.py) 重建现有 item 时
+直接采用传入身份/首次观察字段；[SQLite 持久化](mediaflow/infrastructure/sqlite_runtime.py) 的
+`_require_scheduled_item_locked()` 只比 storage_id/source_path 与 attempts，没有保护已知源版本。
+`publish_scheduled_item_outcome()` 新增了 storage/path 比较，但仍没比 Result 的源版本及
+PipelineEvidence 的 configuration_snapshot_id/digest，随后可将这些记录当成已证实结果清除边界。
+最初缺口来自 `e53e3899`（2026-10-30 19:27:53 +08:00），本次 `f8a7c0e6` 未补完整。
+
+**Developer 在本 Task 内按以下步骤修正：**
+
+1. 明确现有 TaskItem 已绑定的源身份和版本，复用已有 source-occurrence/fingerprint、库/Storage
+   路径及 checkpoint 语义；可参照 `manual_organize_execution.py` 的现有精确来源比较，不增加
+   全局索引、版本登记库或第二套恢复规则。只读内核不自行访问 Storage/Provider 验证文件。
+2. `begin_item()` 恢复同项时保留已有身份及首次 source_observed_at。省略可选入参不能把已知
+   证据清空/降级；已知版本冲突须有界拒绝，不因同名路径或 attempt +1 就替换内容/库绑定。
+   首次新项仍能开始；真正缺失的旧证据保持未验证，合法补充依现有语义处理，不能捏造已验证。
+3. 在实际持久化事务内对 start/progress/outcome 重查原 item 的已知绑定，防止通过
+   `record_item()` 或既有 repository 端口绕过服务层检查。以耐久原值为准，不只比较调用方传入
+   的 item 与 result（两者可能一起被换掉）。拒绝时不递增 attempt、不写半套状态/证据。
+4. `publish_scheduled_item_outcome()` 同事务验证 Result 与耐久 item 的精确源版本、提供的
+   PipelineEvidence pin 与 Task 原 pin。不要从当前 Active 换 pin，也不要把冲突字段自动修正后
+   当成成功证据。合法缺省/无 evidence 的既有场景按原兼容语义保留，不强制新增证据产品。
+   错版本或错 pin 拒绝后，原 Result/item/evidence/claim/容量/授权/源占用保持，mutation 保护不清除。
+5. 保持原五项修复和合法原 Task 续作；来源发生变化时保留事实并按现有安全边界拒绝继续，
+   不增加“技术失败恢复”、自动重新整理、任意历史 Reprocess 或新的用户确认流程。
+
+**必须补的回归验收：**
+
+- 在现有 `tests/test_task_scheduling.py` / `test_task_scheduling_fencing.py` 中先落下上述三条
+  失败回归，经现有服务和真实 SQLite 验证；每条独立断言拒绝且 durable state 零改写。
+- 补正向对照：同版本/原 pin 的新项与合法暂停续作仍成功，省略可选身份参数仍保留原证据与
+  首次观察时间；未验证旧证据不能凭缺失变成已验证。同一项历史 attempt/Result 不丢。
+- 覆盖现有 progress/仓储写入的同类绕过、错证据拒绝后的关闭重开、结果/item/evidence
+  故障回滚；确认 mutation marker 未因错版本/错 pin 消失，原成功/不确定 siblings 不受影响。
+- Developer 运行新增失败回归、新增/变更与直接受影响测试及静态检查，沿用本 Task 已列的
+  affected 命令；共享源比较有改动时补其直接受影响回归。B 在新 checkpoint 再审完整 Base..Head。
+  不能只改测试预期允许身份替换，也不把 B 的全量 Python/Web/E2E/容器门禁转交 Developer。
+
+### 本轮实际验证与未完成门禁
+
+本轮起点：`main` / `894eaa1d920dcfbdf3e5c96ffdba0ff26ec69f52`；开始无 tracked edits，既有
+untracked OS/log/图片/压缩包保留且不暂存。治理 preflight PASS。未读用户运行库、媒体或私有配置。
+
+| 命令 / 范围 | B 实际结果 |
+|---|---|
+| 三个 Task scheduling / fencing / migration 模块 | 58 tests / OK；runner 3.745s，完整进程3.972s |
+| `.venv/bin/python -m unittest discover -s tests` | 2994 tests / OK，skipped=7；runner 342.326s，完整进程342.759s |
+| 全仓 ruff format/check、compileall、pip check、两份示例 config validate | 全部通过；禁止依赖 rg 无匹配（预期 exit1） |
+| Web typecheck / lint / format:check / build | 通过；保留 bundle-size warning |
+| `npm run test -- run` | 1319 passed / 1 failed（1320），88文件中87通过；完整进程101.595s |
+| 真正 Task Base 的 Web 单用例对照，同一 node_modules/未改 lockfile | 同一 status 断言失败；1 failed / 25因筛选未运行，不是重跑全套 |
+| 现有服务的三条源版本/pin 链 | 全部错误接受，已确认 T5 阻塞；无 Storage mutation 调用 |
+| governance / Base..Head diff whitespace | 通过 |
+
+Web 失败位于 `web/src/features/operations/OrganizeRouter.test.tsx:985`，要求返回任务中心时保留
+`status=paused`，实际为 null。普通临时目录中的真实 Base 对照执行到同一断言并失败；本 Task
+未改 Web 源码/测试/依赖。现行 Task Center 规格与 `operationsLandingSearch()` 已去掉隐藏状态
+筛选，邻近导航单测也验证丢弃它。这是既存测试预期与当前契约不一致，不能冒充本次内核回归；
+不在此 Task 扩改 Web，也不删断言/加重试把红门禁说成绿。Web 全量结果仍为失败、未获豁免，
+其证据处理留在 B，不把它添加为本 Task 的产品修复项。
+
+原始日志/脚本仅本机 ignored evidence 可达：`.git/validation-evidence/b-task47.1-894eaa1d/`。
+`focused`、`python-full`、`quality`、`web` 的日志/JSON 保留完整命令/结果/时长；
+`web-base-failure` 为实际 Base 断言对照，`source-context-repro` 为三条独立内核复现。
+首次 Base 放在隐藏目录时夹具加载失败、首次探针的证据读取方法名错误均已纠正，原日志保留，
+不计为产品失败或正确 Base 断言复现。数据库 ResourceWarnings 保留，未改成静默通过。
+
+本轮从 2026-10-30 14:18:13 UTC 开始；截至14:35:28，实际复核1035秒。各测试/检查进程的
+墙钟保守累计不足480秒（并行命令也逐项累加），低于47%，符合用户要求的小于50%。已通过的
+同候选全量结果不机械重跑；没有通过等待凑时长，剩余产品门禁按阻塞规则停止。
+
+发现实际 T5 阻塞后按 workflow §6 提前 FIX REQUIRED，未继续运行 native浏览器/E2E/截图、
+源码外 wheel、新候选容器 fresh/restart/53→54 升级/security 及更广升级演练。本轮6个迁移测试
+覆盖真实53→54/重开/故障边界，但不替代上述门禁。Docker daemon 实际可用，未把未运行写成
+环境不可用；这些门禁仍由 B 在修正候选完成，未豁免、不标 PASS。
+
+### Slice 全结果重评与交接
+
+| Slice outcome | 本次结论 |
+|---|---|
+| RO-1 Task 统一调度/执行 | 内核原五项已修，T5 源版本/证据 pin 仍阻塞；未完成 |
+| RO-2 三入口共用引擎 | 本 Task 明确未接生产入口；未交付 |
+| RO-3 同工作四类恢复 | 仍是内核基础；生产四类改接未交付，本 Task 的身份/证据保护须先完成 |
+| RO-4 数据保留并删除 Job | additive54/代表性迁移回归通过；Job 转换/删除及完整升级证明未完成 |
+| RO-5 操作与管理旅程完整 | 原入口兼容待剩余门禁；Task 化生产集成和最终验收未完成 |
+
+Developer 保留同一 Task ID/Base/Goal/Scope 修正上述1项 P1、提交新 checkpoint 后再
+READY FOR B REVIEW。Slice47 保持 ACTIVE，不改 A 的 Contract/Roadmap/Progress，不规划下一 Task。
