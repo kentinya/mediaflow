@@ -1,37 +1,10 @@
-# NO ACTIVE IMPLEMENTATION TASK
-
-本轮仅规划。下方 PATCH-20261030-6 为完整规划草案，不授权实施；进入实施前由 B 核对
-当时工作区和 Base 后，将草案转为正式 Task。此次不修改产品实现或现行产品文档。
-
-最近独立修正：**PATCH-20261030-5 — 执行记录仅保留详情按钮，B PASS（2026-10-30）**。
-四项验收全部满足，无待实施/返工项。记录操作仅有查看/收起详情，完整证据与筛选分页保留。
-
-- Task Type：STANDALONE MINOR BUG；Parent Slice：NONE；Difficulty：Low；Test Level：T2。
-- Reviewed Base：`a7bcd92fb5b40dbf636e5aeab99aafc5db701e39`。
-- Reviewed Head：`64793019d522116a6d7a60e5c83baa62e24c96c0`；产品实现：
-  `a4d6057cb228d4cd2027cd2e00de18cc3c1d47a5`。
-- 完整授权、计划、验收与 Developer 交接保留于上述 Reviewed Head 的 `TASK.md`。
-  B 完整范围独立审查、实际验收及证据限制：
-  `5bd95546921d7dcee7f95b0360a0d6200f0a8791:TASK.md`；无角色例外。
-- B 验收组件/路由 **20/20**、桌面/窄屏浏览器 **2/2**、真实 Python 记录旅程 **3/3**
-  及适用静态/构建检查通过，无失败、跳过或重试；测试时间符合用户的 50% 限制。
-  证据限隔离 Node/Python/SQLite 与 Chromium 模拟视口，原始日志及截图仅本机 ignored
-  存储可达，精确命令/耗时与位置见上述 B 审查记录。
-
-现行要求见 [V2 Requirements](docs/v2-requirements.md#automation-workspace-requirements--current-slice-43-pass--closed)，
-完整旅程见 [Product Experience](docs/product-experience.md#current--complete-native-automation-workspace-accepted43-amended46)，
-界面与 API 关联数据的边界见 [Architecture](docs/architecture.md#current--v2-automation-workspace-and-consumed-engine-settings-slice43-pass--closed)。
-
-Slice46 保持 A 已接受的 **PASS / CLOSED**，原 Base/已接受 Head、SLICE/Roadmap/Progress
-及延期边界不变。下一大版本由 A 选择；本次不选择或授权下一 Task/Slice。
-生命周期遵循 [Development Workflow](docs/development-workflow.md#31-independent-minor-bugs)。
-
-## 规划草案 — PATCH-20261030-6：自动化执行记录只展示本次结果
+# Task PATCH-20261030-6 — 自动化执行记录只展示本次结果
 
 Authority: 用户要求详情只保留“执行结果和时间、失败原因、下一步”，不提供失败后恢复
 入口、不显示后续状态；一次执行结束后有任何受理条目未成功，就显示失败。记录须使用
-普通使用者能理解的简洁中文，说清结果、原因和下一步。当前仅授权规划，范围限定记录
-的只读展示及与其一致的结果筛选，不改变全局执行语义。
+普通使用者能理解的简洁中文，说清结果、原因和下一步。用户已授权激活本 Task，范围限定
+记录的只读展示及与其一致的结果筛选，不改变全局执行语义。
+生命周期遵循 [Development Workflow](docs/development-workflow.md#31-independent-minor-bugs)。
 
 ```text
 Task ID: PATCH-20261030-6
@@ -42,10 +15,10 @@ Task Base: 9b9626d130a46eb8676b3514558ed845e26c598b
 Difficulty: Medium
 Test Level: T3
 Planner / Reviewer: B
-Implementation Authorization: NOT GRANTED — PLANNING ONLY
+Implementation Authorization: USER ACTIVATED TASK — 2026-10-30
 ```
 
-### Goal / Existing entry and gap
+## Goal / Existing entry and gap
 
 入口是 自动化 → 执行记录 → 某行“查看详情”。目前 `AutomationRecordRow` 展示四区，
 直接输出 `handling` 状态/恢复计数和多段 `handoff`/恢复建议；行标签仍有“部分成功”。
@@ -68,9 +41,9 @@ Implementation Authorization: NOT GRANTED — PLANNING ONLY
 `REQ-RECOVERY-001/002`、`REQ-API-002/003`、`REQ-SAFE-005/007`。
 已读 [完整自动化旅程](docs/product-experience.md#current--complete-native-automation-workspace-accepted43-amended46)
 及 [CURRENT 架构](docs/architecture.md#current--v2-automation-workspace-and-consumed-engine-settings-slice43-pass--closed)。
-本草案记录用户对记录页的明确修订；既有 Slice 验收身份和任务中心恢复契约不变。
+本 Task 记录用户对记录页的明确修订；既有 Slice 验收身份和任务中心恢复契约不变。
 
-### Implementation Scope / ordered steps
+## Implementation Scope / ordered steps
 
 1. 在现有记录读取链路统一本页的结果分类，复用原始受理/TaskItem/Result 证据。
    既有原始 `status`、`result`、`handling`、`handoff` 语义及共享状态枚举保留。
@@ -119,7 +92,7 @@ Implementation Authorization: NOT GRANTED — PLANNING ONLY
    CURRENT 记录架构及 README 中直接受影响的表述，说明记录专用分类与原始数据边界；
    不开展额外文档治理，不改 SLICE/Roadmap/Progress。
 
-### Acceptance Criteria
+## Acceptance Criteria
 
 - [ ] 详情最多上述三个区；失败原因仅失败时出现。无“后续处理”及其状态、关联、恢复
   数量或移位替代；每行保留一个可访问的查看/收起详情按钮。
@@ -138,7 +111,7 @@ Implementation Authorization: NOT GRANTED — PLANNING ONLY
   仅必要文档随实现同步，原 Slice Base/Head/关闭事实、权限、调度/执行和成功/不确定
   条目不重放等安全契约保持。
 
-### Required Tests
+## Required Tests
 
 遵循 [测试分工](docs/development-workflow.md#6-test-levels)。所有用例从现有记录 GET、
 组件路由和自动化实际入口开展，使用现有隔离假服务/临时 SQLite/Local 媒体；不猜测或
@@ -175,15 +148,18 @@ B — 独立审查和验收：
   不用 CSS/DOM 结构或示例文案逐字相等代替可读性验收。记录候选、实际数量/失败/跳过
   与本机 ignored 日志位置。该 T3 不要求无关全仓、容器或外部服务验收。
 
-### Non-goals / Workspace / handoff
+## Non-goals / Workspace / handoff
 
 不改持久化状态、schema、执行成功判定、调度/授权/Worker、任务中心恢复或全局统计；
 不删除其他消费者的 `handling`/`handoff`，不新增队列、历史快照或通用状态系统，不重构
 共享查询。必要 SQL 增量仅服务记录专用分类/筛选，所有既有调用默认行为保持。
 
-规划工作区为 `main` / 上述 Task Base，无预存已跟踪修改；预存未跟踪文件原样保留，
-清单见本机 `.git/validation-evidence/plan-PATCH-20261030-6/baseline.txt`。本轮仅修改
-本 Task 草案；实施前复核期间变化，不静默更换 Base。产品验收尚未执行，无 PASS 声明。
-之后获授权的 Developer 只实现本 Task，提交连贯 checkpoint 和实际受影响测试结果至
-READY FOR B REVIEW；B 独立给 PASS 或 FIX REQUIRED。PASS 后恢复简短无活动 Task 通知，
-保持 Slice46 PASS / CLOSED，不规划额外工作。
+激活工作区：`main` / `611bf628862f42f84e06bef35ca6eedbbd792ef0`，无预存已跟踪修改。
+Task Base 保持 `9b9626d130a46eb8676b3514558ed845e26c598b`；从 Base 到激活前 HEAD
+仅 `TASK.md` 变化，产品代码不变。预存未跟踪文件原样保留，清单见本机
+`.git/validation-evidence/plan-PATCH-20261030-6/baseline.txt`。
+本次仅激活 Task，尚未实施；产品验收尚未执行，无 PASS 声明。
+Developer 按本 Task 实施，提交连贯 checkpoint 和实际受影响测试结果至 READY FOR B REVIEW；
+B 独立给 PASS 或 FIX REQUIRED。PASS 后恢复简短无活动 Task 通知，保持 Slice46
+PASS / CLOSED，不规划额外工作。前次独立修正的 B 审查保留于
+`5bd95546921d7dcee7f95b0360a0d6200f0a8791:TASK.md`。
