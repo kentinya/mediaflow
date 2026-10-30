@@ -4598,7 +4598,18 @@ test("time filter: running, ended and business views preserve their own dated po
   request,
 }) => {
   const seeded = await seedTimeFilterPopulation(request);
-  const business = await seedNativeRecovery(request, "metadata");
+  // The native recovery journey above resolves its cached metadata seed.
+  // Reuse the existing read-only paging fixture whose decisions stay pending.
+  const businessResponse = await request.post(
+    `${BASE}/__harness__/seed-task-center-problem-page`,
+  );
+  expect(businessResponse.ok()).toBeTruthy();
+  const business = (await businessResponse.json()) as {
+    readonly taskId: string;
+    readonly itemCount: number;
+  };
+  expect(business.itemCount).toBe(21);
+  const source = "TaskCenter/PagedMetadata";
   const api = recordApiCalls(page);
   await connect(page, ADMIN_TOKEN);
   await openInventory(page);
@@ -4643,13 +4654,18 @@ test("time filter: running, ended and business views preserve their own dated po
   // A bookmark produced by the former metadata view keeps its exact problem
   // context while removed list limits disappear before the first list read.
   await page.goto(
-    `/ui-v2/operations?${new URLSearchParams({ view: "metadata", source: business.sourcePath, q: business.sourcePath, status: "failed", problemRun: business.runId, problemType: "metadata" })}`,
+    `/ui-v2/operations?${new URLSearchParams({ view: "metadata", source, q: source, status: "failed", problemRun: business.taskId, problemType: "metadata" })}`,
   );
   await reconnectAtCurrentRoute(page, ADMIN_TOKEN);
   await expect(page).not.toHaveURL(/source=|q=|status=/);
   await expect(page).toHaveURL(/problemRun=/);
   const panel = page.getByRole("region", { name: "问题文件处理" });
-  await panel.getByRole("button", { name: "查看该文件证据与恢复记录" }).click();
+  const file = panel
+    .getByRole("listitem")
+    .filter({ hasText: "Metadata00.mkv" });
+  await expect(file).toHaveCount(1);
+  await file.getByRole("button", { name: "查看该文件证据与恢复记录" }).click();
+  await expect(page).toHaveURL(new RegExp(`run=${business.taskId}`));
   const detail = page.getByRole("region", { name: "运行详情" });
   await expect(detail).toBeVisible();
   await detail.getByRole("button", { name: "关闭详情" }).click();
