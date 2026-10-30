@@ -34,7 +34,6 @@ import {
   AUTOMATION_TABS,
   AUTOMATION_TAB_LABELS,
   AutomationDefinitionRow,
-  AutomationMetricBasis,
   AutomationMetricCards,
   AutomationRecordRow,
   type AutomationTab,
@@ -295,13 +294,6 @@ export function AutomationListPage() {
     });
   }
 
-  function openSettings() {
-    // The header shortcut opens the same focused engine-settings surface the
-    // `全局设置` tab renders in place: one form, one publication authority and
-    // one adoption readback, reached without leaving the workspace.
-    selectedTab("settings");
-  }
-
   function openTaskCenter(runId: string) {
     void navigate({
       to: "/operations",
@@ -348,7 +340,7 @@ export function AutomationListPage() {
   );
 
   return (
-    <div className="mf-dashboard">
+    <div className="mf-dashboard mf-automation-workspace">
       <header className="mf-dashboard-head">
         <div>
           <h2>自动化</h2>
@@ -357,13 +349,6 @@ export function AutomationListPage() {
           </p>
         </div>
         <div className="mf-actions">
-          <button
-            type="button"
-            className="mf-button mf-button-secondary"
-            onClick={openSettings}
-          >
-            系统设置
-          </button>
           {createAvailable && (
             <Link
               className="mf-button mf-button-primary"
@@ -374,6 +359,8 @@ export function AutomationListPage() {
             </Link>
           )}
           <RefreshControl
+            label="刷新"
+            refreshingLabel="刷新中…"
             onRefresh={() => {
               void listQuery.refetch();
               void recordsQuery.refetch();
@@ -383,14 +370,19 @@ export function AutomationListPage() {
         </div>
       </header>
 
-      {definitionsPage !== null && (
+      {definitionsPage !== null && tab !== "settings" && (
         <section className="mf-automation-metrics" aria-label="自动化统计">
           <AutomationMetricCards
             metrics={definitionsPage.metrics}
             inventoryCounts={inventoryCounts}
             onOpenDefinitions={() => selectedTab("definitions")}
           />
-          <AutomationMetricBasis metrics={definitionsPage.metrics} />
+          {!definitionsPage.metrics.available && (
+            <p className="mf-dashboard-meta" role="status">
+              指标暂不可用：
+              {definitionsPage.metrics.nextAction ?? "请刷新后核对"}
+            </p>
+          )}
         </section>
       )}
 
@@ -428,6 +420,8 @@ export function AutomationListPage() {
                   <p>{data.failure.nextAction}</p>
                   <div className="mf-actions">
                     <RefreshControl
+                      label="刷新"
+                      refreshingLabel="刷新中…"
                       onRefresh={refresh}
                       refreshing={isFetching}
                     />
@@ -513,6 +507,8 @@ export function AutomationListPage() {
                   <p>{data.failure.nextAction}</p>
                   <div className="mf-actions">
                     <RefreshControl
+                      label="刷新"
+                      refreshingLabel="刷新中…"
                       onRefresh={refresh}
                       refreshing={isFetching}
                     />
@@ -631,69 +627,79 @@ function DefinitionsTab({
   return (
     <section className="mf-count-section" aria-label="自动化任务列表">
       <div className="mf-actions mf-automation-filters">
-        <label htmlFor="automation-search">搜索</label>
-        <input
-          id="automation-search"
-          type="search"
-          value={search}
-          placeholder="名称、来源库或范围"
-          onChange={(event) => onSearchChange(event.target.value)}
-          onBlur={(event) => onSearchSubmit(event.target.value)}
-          onKeyDown={(event) => {
-            if (event.key === "Enter") {
-              event.preventDefault();
-              onSearchSubmit(event.currentTarget.value);
-            }
-          }}
-        />
-        <label htmlFor="automation-enabled">启用状态</label>
-        <select
-          id="automation-enabled"
-          value={enabled}
-          onChange={(event) => onEnabled(event.target.value)}
-        >
-          <option value="">全部</option>
-          <option value="true">已启用</option>
-          <option value="false">未启用</option>
-        </select>
-        <label htmlFor="automation-state">发布状态</label>
-        <select
-          id="automation-state"
-          value={state}
-          onChange={(event) => onState(event.target.value)}
-        >
-          {DEFINITIONS_STATE_OPTIONS.map(([value, label]) => (
-            <option key={value} value={value}>
-              {label}
-            </option>
-          ))}
-        </select>
-        <label htmlFor="automation-library">来源库</label>
-        <input
-          id="automation-library"
-          type="text"
-          value={library}
-          onChange={(event) => onLibraryChange(event.target.value)}
-          onBlur={(event) => onLibrarySubmit(event.target.value)}
-          onKeyDown={(event) => {
-            if (event.key === "Enter") {
-              event.preventDefault();
-              onLibrarySubmit(event.currentTarget.value);
-            }
-          }}
-        />
-        <label htmlFor="automation-sort">排序</label>
-        <select
-          id="automation-sort"
-          value={sort}
-          onChange={(event) => onSort(event.target.value)}
-        >
-          {SORT_OPTIONS.map(([value, label]) => (
-            <option key={value} value={value}>
-              {label}
-            </option>
-          ))}
-        </select>
+        <div className="mf-automation-filter-field">
+          <label htmlFor="automation-search">搜索</label>
+          <input
+            id="automation-search"
+            type="search"
+            value={search}
+            placeholder="名称、来源库或范围"
+            onChange={(event) => onSearchChange(event.target.value)}
+            onBlur={(event) => onSearchSubmit(event.target.value)}
+            onKeyDown={(event) => {
+              if (event.key === "Enter") {
+                event.preventDefault();
+                onSearchSubmit(event.currentTarget.value);
+              }
+            }}
+          />
+        </div>
+        <div className="mf-automation-filter-field">
+          <label htmlFor="automation-enabled">启用状态</label>
+          <select
+            id="automation-enabled"
+            value={enabled}
+            onChange={(event) => onEnabled(event.target.value)}
+          >
+            <option value="">全部</option>
+            <option value="true">已启用</option>
+            <option value="false">未启用</option>
+          </select>
+        </div>
+        <div className="mf-automation-filter-field">
+          <label htmlFor="automation-state">发布状态</label>
+          <select
+            id="automation-state"
+            value={state}
+            onChange={(event) => onState(event.target.value)}
+          >
+            {DEFINITIONS_STATE_OPTIONS.map(([value, label]) => (
+              <option key={value} value={value}>
+                {label}
+              </option>
+            ))}
+          </select>
+        </div>
+        <div className="mf-automation-filter-field">
+          <label htmlFor="automation-library">来源库</label>
+          <input
+            id="automation-library"
+            type="text"
+            value={library}
+            onChange={(event) => onLibraryChange(event.target.value)}
+            onBlur={(event) => onLibrarySubmit(event.target.value)}
+            onKeyDown={(event) => {
+              if (event.key === "Enter") {
+                event.preventDefault();
+                onLibrarySubmit(event.currentTarget.value);
+              }
+            }}
+          />
+        </div>
+        <div className="mf-automation-filter-field">
+          <label htmlFor="automation-sort">排序</label>
+          <select
+            id="automation-sort"
+            value={sort}
+            onChange={(event) => onSort(event.target.value)}
+          >
+            {SORT_OPTIONS.map(([value, label]) => (
+              <option key={value} value={value}>
+                {label}
+              </option>
+            ))}
+          </select>
+        </div>
         {filtered && (
           <button
             type="button"
@@ -845,63 +851,69 @@ function RecordsTab({
   }
   return (
     <section className="mf-count-section" aria-label="自动化执行记录">
-      <p className="mf-dashboard-meta">
-        执行记录只读：这里报告原始结果、失败阶段与原因，以及下一步应去哪里处理。
-        整理任务一旦建立，全部执行与恢复操作都属于对应的任务中心运行。
-      </p>
       <div className="mf-actions mf-automation-filters">
-        <label htmlFor="record-definition">定义</label>
-        <input
-          id="record-definition"
-          type="text"
-          value={definition}
-          onChange={(event) => onDefinitionChange(event.target.value)}
-          onBlur={(event) => onDefinitionSubmit(event.target.value)}
-          onKeyDown={(event) => {
-            if (event.key === "Enter") {
-              event.preventDefault();
-              onDefinitionSubmit(event.currentTarget.value);
-            }
-          }}
-        />
-        <label htmlFor="record-trigger">触发方式</label>
-        <select
-          id="record-trigger"
-          value={trigger}
-          onChange={(event) => onTrigger(event.target.value)}
-        >
-          {RECORD_TRIGGER_OPTIONS.map(([value, label]) => (
-            <option key={value} value={value}>
-              {label}
-            </option>
-          ))}
-        </select>
-        <label htmlFor="record-status">结果</label>
-        <select
-          id="record-status"
-          value={status}
-          onChange={(event) => onStatus(event.target.value)}
-        >
-          {RECORD_STATUS_OPTIONS.map(([value, label]) => (
-            <option key={value} value={value}>
-              {label}
-            </option>
-          ))}
-        </select>
-        <label htmlFor="record-from">起始时间（UTC）</label>
-        <input
-          id="record-from"
-          type="datetime-local"
-          value={from}
-          onChange={(event) => onFrom(event.target.value)}
-        />
-        <label htmlFor="record-to">结束时间（UTC）</label>
-        <input
-          id="record-to"
-          type="datetime-local"
-          value={to}
-          onChange={(event) => onTo(event.target.value)}
-        />
+        <div className="mf-automation-filter-field">
+          <label htmlFor="record-definition">定义</label>
+          <input
+            id="record-definition"
+            type="text"
+            value={definition}
+            onChange={(event) => onDefinitionChange(event.target.value)}
+            onBlur={(event) => onDefinitionSubmit(event.target.value)}
+            onKeyDown={(event) => {
+              if (event.key === "Enter") {
+                event.preventDefault();
+                onDefinitionSubmit(event.currentTarget.value);
+              }
+            }}
+          />
+        </div>
+        <div className="mf-automation-filter-field">
+          <label htmlFor="record-trigger">触发方式</label>
+          <select
+            id="record-trigger"
+            value={trigger}
+            onChange={(event) => onTrigger(event.target.value)}
+          >
+            {RECORD_TRIGGER_OPTIONS.map(([value, label]) => (
+              <option key={value} value={value}>
+                {label}
+              </option>
+            ))}
+          </select>
+        </div>
+        <div className="mf-automation-filter-field">
+          <label htmlFor="record-status">结果</label>
+          <select
+            id="record-status"
+            value={status}
+            onChange={(event) => onStatus(event.target.value)}
+          >
+            {RECORD_STATUS_OPTIONS.map(([value, label]) => (
+              <option key={value} value={value}>
+                {label}
+              </option>
+            ))}
+          </select>
+        </div>
+        <div className="mf-automation-filter-field">
+          <label htmlFor="record-from">起始时间（UTC）</label>
+          <input
+            id="record-from"
+            type="datetime-local"
+            value={from}
+            onChange={(event) => onFrom(event.target.value)}
+          />
+        </div>
+        <div className="mf-automation-filter-field">
+          <label htmlFor="record-to">结束时间（UTC）</label>
+          <input
+            id="record-to"
+            type="datetime-local"
+            value={to}
+            onChange={(event) => onTo(event.target.value)}
+          />
+        </div>
         {filtered && (
           <button
             type="button"
@@ -931,12 +943,10 @@ function RecordsTab({
                 <tr>
                   <th scope="col">定义</th>
                   <th scope="col">结果</th>
-                  <th scope="col">开始</th>
-                  <th scope="col">结束</th>
+                  <th scope="col">开始（本地时间）</th>
+                  <th scope="col">结束（本地时间）</th>
                   <th scope="col">条目</th>
-                  <th scope="col">原始结果与失败阶段</th>
-                  <th scope="col">后续处理</th>
-                  <th scope="col">下一步</th>
+                  <th scope="col">操作</th>
                 </tr>
               </thead>
               <tbody>
@@ -953,7 +963,7 @@ function RecordsTab({
           </div>
           <p className="mf-dashboard-meta" role="status">
             共 {page.total} 条执行记录
-            {page.truncated ? "（还有更多，请翻页）" : ""} · {page.historyBasis}
+            {page.truncated ? "（还有更多，请翻页）" : ""}
           </p>
           <div className="mf-actions">
             <button

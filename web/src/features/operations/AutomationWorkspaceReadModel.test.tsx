@@ -603,6 +603,13 @@ describe("V2 Automation workspace read model", () => {
     const region = await screen.findByRole("region", {
       name: "自动化执行记录",
     });
+    const detail = within(region).getByRole("button", { name: "查看详情" });
+    expect(detail).toHaveAttribute("aria-expanded", "false");
+    expect(
+      within(region).getByText(/阶段：organizing_stage/),
+    ).not.toBeVisible();
+    await userEvent.setup().click(detail);
+    expect(detail).toHaveAttribute("aria-expanded", "true");
     // The original result and its statement are published.
     expect(within(region).getAllByText("失败").length).toBeGreaterThan(0);
     expect(
@@ -671,27 +678,35 @@ describe("V2 Automation workspace read model", () => {
       .filter((row) => row.textContent?.includes("missing"));
     expect(failedRow).toHaveLength(1);
     expect(within(failedRow[0]).getByText("失败")).toBeVisible();
+    const detailToggle = within(failedRow[0]).getByRole("button", {
+      name: "查看详情",
+    });
+    await user.click(detailToggle);
+    const failedDetail = document.getElementById(
+      detailToggle.getAttribute("aria-controls")!,
+    )!;
+    expect(failedDetail).toBeVisible();
     expect(
-      within(failedRow[0]).getByText(/整理开始前失败：没有创建正式整理任务/),
+      within(failedDetail).getByText(/整理开始前失败：没有创建正式整理任务/),
     ).toBeVisible();
     expect(
-      within(failedRow[0]).getByText(/阶段：before_formal_execution/),
+      within(failedDetail).getByText(/阶段：before_formal_execution/),
     ).toBeVisible();
     expect(
-      within(failedRow[0]).getByText(/原因：scope_root_missing/),
+      within(failedDetail).getByText(/原因：scope_root_missing/),
     ).toBeVisible();
     expect(
-      within(failedRow[0]).getByText(
+      within(failedDetail).getByText(
         /没有创建正式整理任务，也没有产生媒体效果/,
       ),
     ).toBeVisible();
     // The empty item/effect partition is not fabricated into a per-item
     // section, and the record does not claim its evidence is unreadable.
     expect(
-      within(failedRow[0]).queryByText(/逐项失败原因与已知效果/),
+      within(failedDetail).queryByText(/逐项失败原因与已知效果/),
     ).toBeNull();
     expect(
-      within(failedRow[0]).queryByText(/持久化的逐项失败原因当前不可读/),
+      within(failedDetail).queryByText(/持久化的逐项失败原因当前不可读/),
     ).toBeNull();
 
     // A real completed no-work run is rendered beside the failure instead of
@@ -710,7 +725,7 @@ describe("V2 Automation workspace read model", () => {
         call.url.startsWith("/api/v1/operations/automation/records"),
       ).length;
     const beforeRefresh = recordsCalls();
-    await user.click(screen.getByRole("button", { name: "Refresh" }));
+    await user.click(screen.getByRole("button", { name: "刷新" }));
     await waitFor(() => expect(recordsCalls()).toBeGreaterThan(beforeRefresh));
     await waitFor(() =>
       expect(within(region).getByText(/共 2 条执行记录/)).toBeVisible(),

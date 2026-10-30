@@ -1,5 +1,5 @@
 import { afterEach, describe, expect, it, vi } from "vitest";
-import { cleanup, screen, waitFor } from "@testing-library/react";
+import { cleanup, screen, waitFor, within } from "@testing-library/react";
 import userEvent from "@testing-library/user-event";
 import { authStore } from "../../shared/api/auth-store";
 import { renderApp } from "../../../tests/utils";
@@ -573,6 +573,14 @@ describe("V2 Automation journey", () => {
     renderApp("/ui-v2/operations/automation");
 
     await screen.findByRole("heading", { name: "自动化" });
+    const main = screen.getByRole("main");
+    expect(within(main).getAllByText("自动化", { exact: true })).toHaveLength(
+      1,
+    );
+    expect(main.querySelector(".mf-page-context")).toBeNull();
+    expect(
+      within(main).queryByText(/统计范围：|统计时区：|skipped files/),
+    ).toBeNull();
     // The reference-style table publishes the definition's real schedule and
     // its truthful "no result yet" state.
     expect(await screen.findByText(/Nightly automation/)).toBeVisible();
@@ -593,7 +601,7 @@ describe("V2 Automation journey", () => {
     // reference composition.
     expect(screen.getByRole("button", { name: "任务列表" })).toBeVisible();
     expect(screen.getByRole("button", { name: "执行记录" })).toBeVisible();
-    expect(screen.getByRole("button", { name: "系统设置" })).toBeVisible();
+    expect(screen.getByRole("button", { name: "全局设置" })).toBeVisible();
   });
 
   it("renders an explicit unavailable card value instead of a fabricated zero", async () => {

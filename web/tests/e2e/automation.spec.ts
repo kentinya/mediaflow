@@ -101,7 +101,7 @@ test("the Operations landing links the Automation workspace with cards, tabs and
   await expect(tabs.getByRole("button", { name: "任务列表" })).toBeVisible();
   await expect(tabs.getByRole("button", { name: "执行记录" })).toBeVisible();
   await expect(tabs.getByRole("button", { name: "全局设置" })).toBeVisible();
-  await expect(page.getByRole("button", { name: "系统设置" })).toBeVisible();
+  await expect(page.getByRole("button", { name: "全局设置" })).toBeVisible();
 
   // The table is the reference-aligned inventory: one row per definition with
   // its source, schedule, limit, next run and latest result.
@@ -154,9 +154,11 @@ test("the read-only execution records tab reads an honest empty history", async 
 
   const region = page.getByRole("region", { name: "自动化执行记录" });
   await expect(region).toBeVisible();
-  // The records surface is explicitly read-only: it reports original results
-  // and where to handle them, and offers no local control.
-  await expect(region.getByText(/执行记录只读/)).toBeVisible();
+  // Records remain read-only without a repeated explanatory paragraph.
+  await expect(region.getByText(/执行记录只读/)).toHaveCount(0);
+  await expect(
+    region.getByRole("button", { name: /运行一次|重新分析|重试/ }),
+  ).toHaveCount(0);
   await expect(region.getByText("还没有执行记录")).toBeVisible();
   // No admitted run exists, so the truthful read is an empty page, not an
   // unavailable error and never a fabricated row.
@@ -175,9 +177,8 @@ test("the settings tab renders the four-field form and an honest adoption readba
 }) => {
   await connect(page);
   await openAutomation(page);
-  // The header shortcut and the tab reach the same in-place surface: one form,
-  // no navigation away to a generic settings store.
-  await page.getByRole("button", { name: "系统设置" }).click();
+  // The global-settings tab is the single in-place settings entry.
+  await page.getByRole("button", { name: "全局设置" }).click();
   await expect(page).toHaveURL(
     /\/ui-v2\/operations\/automation\?tab=settings$/,
   );

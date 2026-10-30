@@ -31,6 +31,7 @@ import { useQuery, useQueryClient } from "@tanstack/react-query";
 import { useAuthGeneration, useAuthToken } from "../../shared/api/auth-context";
 import { AuthorizedReadBoundary } from "../../shared/auth/AuthorizedReadBoundary";
 import { Button } from "../../shared/ui/Button";
+import { AutomationTime } from "./AutomationInventory";
 import { RefreshControl } from "../../shared/ui/RefreshControl";
 import { StatusBanner } from "../../shared/ui/StatusBanner";
 import {
@@ -73,6 +74,14 @@ const FAILURE_STAGE_LABELS: Readonly<Record<string, string>> = {
   validate: "整份候选校验",
   prepare: "准备运行时绑定",
   activate: "发布 Active",
+};
+
+const FIELD_SUMMARIES: Readonly<Record<AutomationEngineField, string>> = {
+  "automation.maximumActiveJobs": "等待与运行中的 Job 总数上限。",
+  "automation.staleJobAgeSeconds":
+    "运行中的 Job 持续无更新时，判定失效的等待时间。",
+  "automation.workerPollSeconds": "执行器检查待处理工作的间隔。",
+  "automation.schedulerPollSeconds": "调度器检查到期任务的间隔。",
 };
 
 type FormState = Readonly<Record<string, string>>;
@@ -211,117 +220,127 @@ function ConsumerAdoption({
       <h3>{label}</h3>
       <p className="mf-dashboard-meta">
         {cadence
-          ? "每个正在运行的进程在自己的安全边界读取并采用发布值,并在采用之后写入自己的报告。只有全部实例都报告采用当前发布值时,才视为该服务已采用。"
-          : (consumer.explanation ??
-            "这些值由准入/观察边界各自读取当前 Active,不是常驻进程的轮询值。")}
+          ? consumer.adopted
+            ? "全部当前实例已采用"
+            : "尚未整体采用"
+          : "使用当前发布值"}
       </p>
-      {cadence && consumer.instances.length === 0 ? (
-        <p className="mf-dashboard-meta">
-          {consumer.historyCount > 0
-            ? "当前没有该服务的存活实例(心跳新鲜的进程),因此没有进程能报告采用情况,也不存在整体采用。下方「历史注册」只是已保留的旧身份,不能作为当前采用的证据;请确认该服务正在运行并能访问共享数据库,它恢复心跳后会重新进入当前检查。"
-            : "当前没有该服务的注册实例,因此没有进程可以报告采用情况。启动该服务后无需重启即可采用发布值。"}
-        </p>
-      ) : null}
-      {cadence && consumer.instances.length > 0 ? (
-        <div className="mf-automation-settings-table">
-          <table className="mf-table">
-            <caption>{label}当前实例采用情况</caption>
-            <thead>
-              <tr>
-                <th scope="col">实例</th>
-                <th scope="col">状态</th>
-                <th scope="col">实际使用值</th>
-                <th scope="col">下一步</th>
-                <th scope="col">诊断标识</th>
-              </tr>
-            </thead>
-            <tbody>
-              {consumer.instances.map((instance: ConsumerInstanceView) => (
-                <tr key={instance.instanceId}>
-                  <td>
-                    <code>{instance.instanceId}</code>
-                  </td>
-                  <td>{ADOPTION_STATUS_LABELS[instance.status]}</td>
-                  <td>
-                    {instance.effectiveValue === null
-                      ? "—"
-                      : String(instance.effectiveValue)}
-                    {instance.overrideSource === "cli"
-                      ? "(命令行覆盖)"
-                      : instance.overrideSource === "deployment"
-                        ? "(部署覆盖)"
-                        : ""}
-                  </td>
-                  <td>{instance.nextAction}</td>
-                  <td>
-                    <details className="mf-automation-settings-diagnostics">
-                      <summary>展开</summary>
-                      <dl>
-                        <dt>发布的修订</dt>
-                        <dd>
-                          <code>{instance.publishedRevisionId ?? "—"}</code>
-                        </dd>
-                        <dt>进程报告的修订</dt>
-                        <dd>
-                          <code>{instance.reportedRevisionId ?? "—"}</code>
-                        </dd>
-                        <dt>报告时间</dt>
-                        <dd>{instance.reportedAt ?? "—"}</dd>
-                        <dt>状态代码</dt>
-                        <dd>{instance.durableState || "—"}</dd>
-                      </dl>
-                    </details>
-                  </td>
-                </tr>
-              ))}
-            </tbody>
-          </table>
-        </div>
-      ) : null}
-      {cadence ? (
-        <p className="mf-dashboard-meta">
-          {consumer.adopted
-            ? "该服务的全部当前实例都已采用当前发布值。"
-            : "该服务尚未达到整体采用;上表逐实例说明真实状态。"}
-        </p>
-      ) : null}
-      {cadence && !consumer.adopted && consumer.nextAction ? (
-        <p className="mf-dashboard-meta">下一步:{consumer.nextAction}</p>
-      ) : null}
-      {cadence && !consumer.adopted && consumer.durableState ? (
-        <p className="mf-dashboard-meta">
-          状态代码:<code>{consumer.durableState}</code>
-        </p>
-      ) : null}
-      {cadence && consumer.historyCount > 0 ? (
-        <details className="mf-automation-settings-history">
-          <summary>
-            历史注册 ({consumer.historyCount}个已停止/心跳过期的身份)
-          </summary>
+      <details
+        open={cadence && !consumer.adopted}
+        className="mf-automation-consumer-details"
+      >
+        <summary>
+          实例详情{cadence ? `（${consumer.instances.length}）` : ""}
+        </summary>
+        {!cadence && <p>{consumer.explanation}</p>}
+        {cadence && consumer.instances.length === 0 ? (
           <p className="mf-dashboard-meta">
-            {
-              "这些身份已被保留但不再是当前消费者:它们既不能让当前采用失效,也不能证明当前采用。如果某个进程仍在运行,恢复心跳后它会重新进入当前检查。"
-            }
+            {consumer.historyCount > 0
+              ? "当前没有该服务的存活实例(心跳新鲜的进程),因此没有进程能报告采用情况,也不存在整体采用。下方「历史注册」只是已保留的旧身份,不能作为当前采用的证据;请确认该服务正在运行并能访问共享数据库,它恢复心跳后会重新进入当前检查。"
+              : "当前没有该服务的注册实例,因此没有进程可以报告采用情况。启动该服务后无需重启即可采用发布值。"}
           </p>
-          <ul className="mf-automation-settings-history-list">
-            {consumer.history.map((entry) => (
-              <li key={entry.instanceId}>
-                <code>{entry.instanceId}</code>
-                <span className="mf-dashboard-meta">
-                  {entry.liveness === "stopped" ? "已停止" : "心跳过期"}
-                  {entry.nextAction ? ` · ${entry.nextAction}` : ""}
-                </span>
-              </li>
-            ))}
-          </ul>
-          {consumer.historyCount > consumer.history.length ? (
+        ) : null}
+        {cadence && consumer.instances.length > 0 ? (
+          <div className="mf-automation-settings-table">
+            <table className="mf-table">
+              <caption>{label}当前实例采用情况</caption>
+              <thead>
+                <tr>
+                  <th scope="col">实例</th>
+                  <th scope="col">状态</th>
+                  <th scope="col">实际使用值</th>
+                  <th scope="col">下一步</th>
+                  <th scope="col">诊断标识</th>
+                </tr>
+              </thead>
+              <tbody>
+                {consumer.instances.map((instance: ConsumerInstanceView) => (
+                  <tr key={instance.instanceId}>
+                    <td>
+                      <code>{instance.instanceId}</code>
+                    </td>
+                    <td>{ADOPTION_STATUS_LABELS[instance.status]}</td>
+                    <td>
+                      {instance.effectiveValue === null
+                        ? "—"
+                        : String(instance.effectiveValue)}
+                      {instance.overrideSource === "cli"
+                        ? "(命令行覆盖)"
+                        : instance.overrideSource === "deployment"
+                          ? "(部署覆盖)"
+                          : ""}
+                    </td>
+                    <td>{instance.nextAction}</td>
+                    <td>
+                      <details className="mf-automation-settings-diagnostics">
+                        <summary>展开</summary>
+                        <dl>
+                          <dt>发布的修订</dt>
+                          <dd>
+                            <code>{instance.publishedRevisionId ?? "—"}</code>
+                          </dd>
+                          <dt>进程报告的修订</dt>
+                          <dd>
+                            <code>{instance.reportedRevisionId ?? "—"}</code>
+                          </dd>
+                          <dt>报告时间</dt>
+                          <dd>{instance.reportedAt ?? "—"}</dd>
+                          <dt>状态代码</dt>
+                          <dd>{instance.durableState || "—"}</dd>
+                        </dl>
+                      </details>
+                    </td>
+                  </tr>
+                ))}
+              </tbody>
+            </table>
+          </div>
+        ) : null}
+        {cadence ? (
+          <p className="mf-dashboard-meta">
+            {consumer.adopted
+              ? "该服务的全部当前实例都已采用当前发布值。"
+              : "该服务尚未达到整体采用;上表逐实例说明真实状态。"}
+          </p>
+        ) : null}
+        {cadence && !consumer.adopted && consumer.nextAction ? (
+          <p className="mf-dashboard-meta">下一步:{consumer.nextAction}</p>
+        ) : null}
+        {cadence && !consumer.adopted && consumer.durableState ? (
+          <p className="mf-dashboard-meta">
+            状态代码:<code>{consumer.durableState}</code>
+          </p>
+        ) : null}
+        {cadence && consumer.historyCount > 0 ? (
+          <details className="mf-automation-settings-history">
+            <summary>
+              历史注册 ({consumer.historyCount}个已停止/心跳过期的身份)
+            </summary>
             <p className="mf-dashboard-meta">
-              仅显示最近的 {consumer.history.length} 个历史身份,共{" "}
-              {consumer.historyCount} 个。
+              {
+                "这些身份已被保留但不再是当前消费者:它们既不能让当前采用失效,也不能证明当前采用。如果某个进程仍在运行,恢复心跳后它会重新进入当前检查。"
+              }
             </p>
-          ) : null}
-        </details>
-      ) : null}
+            <ul className="mf-automation-settings-history-list">
+              {consumer.history.map((entry) => (
+                <li key={entry.instanceId}>
+                  <code>{entry.instanceId}</code>
+                  <span className="mf-dashboard-meta">
+                    {entry.liveness === "stopped" ? "已停止" : "心跳过期"}
+                    {entry.nextAction ? ` · ${entry.nextAction}` : ""}
+                  </span>
+                </li>
+              ))}
+            </ul>
+            {consumer.historyCount > consumer.history.length ? (
+              <p className="mf-dashboard-meta">
+                仅显示最近的 {consumer.history.length} 个历史身份,共{" "}
+                {consumer.historyCount} 个。
+              </p>
+            ) : null}
+          </details>
+        ) : null}
+      </details>
     </section>
   );
 }
@@ -848,13 +867,11 @@ export function AutomationSettingsPanel() {
                 <header className="mf-panel-header">
                   <div>
                     <h2>自动化引擎设置</h2>
-                    <p className="mf-dashboard-meta">
-                      这些设置控制整个自动化执行引擎,不属于任何一个具体任务。一次保存只发布这四个字段;
-                      其他设置、定义与草稿保持不变。
-                    </p>
                   </div>
                   <span className="mf-automation-settings-refresh">
                     <RefreshControl
+                      label="刷新"
+                      refreshingLabel="刷新中…"
                       onRefresh={refresh}
                       refreshing={isFetching}
                     />
@@ -990,8 +1007,7 @@ export function AutomationSettingsPanel() {
                         </div>
                       ) : null}
                       <p className="mf-field-help">
-                        {field.meaning}
-                        {field.notMeaning ? ` ${field.notMeaning}` : ""}
+                        {FIELD_SUMMARIES[field.fieldPath]}
                         {field.minimum !== null && field.maximum !== null
                           ? ` 允许范围 ${field.minimum}–${field.maximum}。`
                           : " 必须是有限正数。"}
@@ -1057,7 +1073,13 @@ export function AutomationSettingsPanel() {
                   </div>
                   <div>
                     <dt>读取时间</dt>
-                    <dd>{model.asOf ?? "—"}</dd>
+                    <dd>
+                      {model.asOf === null ? (
+                        "—"
+                      ) : (
+                        <AutomationTime value={model.asOf} />
+                      )}
+                    </dd>
                   </div>
                   <div>
                     <dt>部署整体采用</dt>
@@ -1081,6 +1103,10 @@ export function AutomationSettingsPanel() {
                 <details className="mf-automation-settings-diagnostics">
                   <summary>诊断标识</summary>
                   <dl>
+                    <dt>精确读取时间</dt>
+                    <dd>{model.asOf ?? "—"}</dd>
+                    <dt>配置复检上限</dt>
+                    <dd>{model.configRecheckSeconds} 秒</dd>
                     <dt>Active 修订</dt>
                     <dd>
                       <code>{target.revisionId}</code>
@@ -1099,63 +1125,13 @@ export function AutomationSettingsPanel() {
                     )}
                   </dl>
                 </details>
-                <p className="mf-dashboard-meta">
-                  配置复检上限:{model.configRecheckSeconds}
-                  秒。复检只更新配置与报告,不会提前领取工作或提前触发调度。
-                </p>
               </section>
-              <aside className="mf-panel mf-automation-settings-help">
-                <h2>关于自动化引擎</h2>
-                <p>
-                  自动化引擎负责按任务的调度计划定时触发扫描、识别和整理流程。
-                  它会根据系统资源情况控制并发任务数量,并监控任务的执行状态。
-                  这些设置是全局性的,所有自动化任务都会受到这些参数的影响。
-                </p>
-                <p className="mf-automation-settings-warning">
-                  注意事项:发布设置与常驻进程真正生效是两个独立结果。发布成功后,
-                  每个常驻进程会在自己的安全边界采用新值,无需重启;停止、心跳过期、
-                  版本不一致或使用命令行/部署覆盖的进程会单独显示真实状态与下一步。
-                </p>
-                <p>
-                  建议值仅作参考,不是额外范围:默认并发 100、失效判定 3600
-                  秒、Worker 2 秒、调度器 5 秒。
-                </p>
-              </aside>
             </div>
-            <section className="mf-panel" aria-label="调度与时区说明">
-              <h2>调度与时区说明</h2>
-              <div className="mf-automation-settings-grid">
-                <div>
-                  <h3>任务调度方式</h3>
-                  <p>每个自动化任务可以选择以下一种调度方式:</p>
-                  <ul>
-                    <li>固定间隔:按设定的秒数循环执行(intervalSeconds)。</li>
-                    <li>Cron 表达式:使用标准的 Cron 表达式(cron)。</li>
-                    <li>Cron 任务必须指定时区(timezone),用于确定执行时间。</li>
-                  </ul>
-                  <p>
-                    这里的两个轮询间隔只决定常驻进程多久检查一次,不会改变任何任务的间隔、Cron
-                    表达式或时区。
-                  </p>
-                </div>
-                <div>
-                  <h3>配置示例(全局设置)</h3>
-                  <pre className="mf-automation-settings-example">
-                    {`{
-  "automation": {
-    "maximumActiveJobs": ${form["automation.maximumActiveJobs"] ?? "100"},
-    "staleJobAgeSeconds": ${form["automation.staleJobAgeSeconds"] ?? "3600"},
-    "workerPollSeconds": ${form["automation.workerPollSeconds"] ?? "2"},
-    "schedulerPollSeconds": ${form["automation.schedulerPollSeconds"] ?? "5"}
-  }
-}`}
-                  </pre>
-                </div>
-              </div>
-            </section>
-            {model.consumers.map((consumer) => (
-              <ConsumerAdoption key={consumer.service} consumer={consumer} />
-            ))}
+            <div className="mf-automation-consumers">
+              {model.consumers.map((consumer) => (
+                <ConsumerAdoption key={consumer.service} consumer={consumer} />
+              ))}
+            </div>
           </div>
         );
       }}

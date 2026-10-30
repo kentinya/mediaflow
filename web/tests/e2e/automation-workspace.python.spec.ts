@@ -126,11 +126,8 @@ test("the inventory reads full-population cards, filters and pages from the serv
   for (const label of ["自动化任务数", "本月执行次数", "成功率", "较上月"]) {
     await expect(page.getByText(label, { exact: true })).toBeVisible();
   }
-  // The read basis is stated explicitly (full population, system timezone).
-  await expect(
-    page.getByText(/统计范围：全部已授权的自动化执行/),
-  ).toBeVisible();
-  await expect(page.getByText(/统计时区：/)).toBeVisible();
+  // Statistics keep their server basis without a full-page explanatory block.
+  await expect(page.getByText(/统计范围：|统计时区：/)).toHaveCount(0);
 
   // The table publishes the real schedule/limit/state of the definition. The
   // assertion is scoped to this definition's own row: the shared harness may
@@ -418,10 +415,15 @@ test("a technical record preserves original results without a generic retry entr
   const ownRow = region
     .getByRole("row")
     .filter({ hasText: "Handled records workspace" });
+  await ownRow.getByRole("button", { name: "查看详情" }).click();
+  const detailId = await ownRow
+    .getByRole("button", { name: "收起详情" })
+    .getAttribute("aria-controls");
+  const ownDetails = page.locator(`[id="${detailId}"]`);
   await expect(ownRow.getByText(/部分成功/)).toBeVisible();
-  await expect(ownRow.getByText(/阶段：/)).toBeVisible();
-  await expect(ownRow.getByText(/Storage failure/).first()).toBeVisible();
-  await expect(ownRow.getByText(/尚未处理/)).toBeVisible();
+  await expect(ownDetails.getByText(/阶段：/)).toBeVisible();
+  await expect(ownDetails.getByText(/Storage failure/).first()).toBeVisible();
+  await expect(ownDetails.getByText(/尚未处理/)).toBeVisible();
   await expect(
     region.getByRole("button", { name: /重新分析|暂停|继续|取消|运行一次/ }),
   ).toHaveCount(0);
@@ -538,13 +540,18 @@ test("two technical failures retain independent evidence without false resolutio
   const ownRow = region
     .getByRole("row")
     .filter({ hasText: "Subset records workspace" });
+  await ownRow.getByRole("button", { name: "查看详情" }).click();
+  const detailId = await ownRow
+    .getByRole("button", { name: "收起详情" })
+    .getAttribute("aria-controls");
+  const ownDetails = page.locator(`[id="${detailId}"]`);
   await expect(ownRow.getByText(/部分成功/)).toBeVisible();
-  await expect(ownRow.getByText(/Storage failure/).first()).toBeVisible();
+  await expect(ownDetails.getByText(/Storage failure/).first()).toBeVisible();
   await expect(
-    ownRow.getByText(/已知效果：无效果 2 · 已确认 0 · 不确定 0 · 部分 0/),
+    ownDetails.getByText(/已知效果：无效果 2 · 已确认 0 · 不确定 0 · 部分 0/),
   ).toBeVisible();
-  await expect(ownRow.getByText(/尚未处理/)).toBeVisible();
-  await expect(ownRow.getByText(/后续处理已完成/)).toHaveCount(0);
+  await expect(ownDetails.getByText(/尚未处理/)).toBeVisible();
+  await expect(ownDetails.getByText(/后续处理已完成/)).toHaveCount(0);
 
   // Both failures remain factual history. No unsupported technical recovery
   // control can hide one sibling or turn this partial run into success.

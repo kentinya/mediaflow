@@ -8,7 +8,7 @@ Authority: 用户 2026-10-30 在只读调查后明确授权删除说明、统一
 Task ID: PATCH-20261030-4
 Task Type: STANDALONE MINOR BUG
 Parent Slice: NONE
-Status: IN PROGRESS
+Status: READY FOR B REVIEW
 Task Base: 62beb31fdefe738c4fc90d2229bf3051fe3ec931
 Difficulty: Medium
 Test Level: T2
@@ -34,11 +34,11 @@ Planner / Reviewer: B
 
 ## Acceptance Criteria
 
-- [ ] 三个分区无长篇统计/教程说明，仅一个主内容标题，首屏可达主要内容。
-- [ ] 桌面与窄屏控件、标签页、标题协调其他页，无页面横向溢出；焦点可见。
-- [ ] 记录紧凑，可展开完整证据，正确进入对应任务/定义；无新执行或恢复命令。
-- [ ] 设置字段、保存/只读/冲突/失败/未知提交与真实消费状态保持可用。
-- [ ] 无 API、权限、统计口径、调度/执行、数据模型、Slice/Roadmap/Progress 修改。
+- [x] 三个分区无长篇统计/教程说明，仅一个主内容标题，首屏可达主要内容。
+- [x] 桌面与窄屏控件、标签页、标题协调其他页，无页面横向溢出；焦点可见。
+- [x] 记录紧凑，可展开完整证据，正确进入对应任务/定义；无新执行或恢复命令。
+- [x] 设置字段、保存/只读/冲突/失败/未知提交与真实消费状态保持可用。
+- [x] 无 API、权限、统计口径、调度/执行、数据模型、Slice/Roadmap/Progress 修改。
 
 ## Required Tests
 
@@ -65,4 +65,21 @@ B 独立验收候选 Base..Head：上述功能/布局与相关 Settings 恢复�
 
 ## Developer Completion Report
 
-实施中，待受影响验证后提交 READY FOR B REVIEW；独立 B 审查尚未进行。
+Status: READY FOR B REVIEW。实现 checkpoint 见本 Task 后续提交的精确 SHA。
+
+- 已删除长说明/教程/JSON 示例和重复英文主标题；共享任务中心标题边界/标签页样式。
+  控件使用现有浅色主题，桌面五列、窄屏两列筛选；记录时间本地化且精确值保留。
+- 记录默认仅显示摘要，独立展开完整结果/时间/失败/效果/后续处理；路由入口不变且无
+  新执行命令。四字段设置双列展示，保留后端范围、发布/采用区分及全部保存核对机制。
+- 组件/路由/Shell/Settings 受影响回归 **62/62**；Node 假 API 浏览器功能与布局
+  **15/15**，最后 CSS/截图调整后的桌面/390px 布局复查 **2/2**。新用例检查只读展开、
+  收起、焦点、无页面横向溢出、记录行高度及完整失败证据，已人工查看六张最终截图。
+- `npm run typecheck`、`npm run lint`、修改文件 Prettier、`npm run build`、governance、
+  `git diff --check` 通过；构建仍报告 bundle 大小提示，无构建错误。
+- 首轮组件 5 项失败：旧入口/旧展开状态断言不符，另有指标不可用下一步遗漏及采用
+  状态重复；已恢复动态失败提示、去重并按真实展开入口验证完整证据。首轮浏览器另有
+  JSON ESM 导入及展开后 locator 名称变化；均已修正，不添加重试/放宽超时。
+- 本机原始日志：`.git/validation-evidence/PATCH-20261030-4/` 的 `components.log`、
+  `browser.log`、`layout-final.log`、`lint.log`、`build.log`；最终六张截图在其 `screenshots/`。
+- 证据限 Chromium、1536/390px 与隔离 Node API；真实 Python 验收按计划交 B，未宣称
+  全仓/容器/外部服务通过。无部署/推送；预存未跟踪文件未包含在提交中。独立 B 审查待办。

@@ -198,6 +198,7 @@ export function AppShell({ children }: AppShellProps) {
         <main id="main-content" className="mf-shell-main" tabIndex={-1}>
           {destination !== undefined &&
           destination.id !== "operations" &&
+          pathname !== "/operations/automation" &&
           !searchIsRules ? (
             <p className="mf-page-context">{destination.label}</p>
           ) : null}

@@ -7,11 +7,12 @@
  * renders a control whose action the backend did not advertise.
  */
 
+import { useId, useState } from "react";
+
 import type {
   AutomationDefinitionModel,
   AutomationInventoryCountsModel,
   AutomationLatestRunModel,
-  AutomationMetricWindowModel,
   AutomationMetricsModel,
   AutomationRecordModel,
 } from "../../entities/operations/automation";
@@ -110,8 +111,8 @@ export function AutomationMetricCards({
         </span>
         <span className="mf-count-label">
           {metrics.monthToDateActive === null
-            ? `${metrics.timezone} 月历`
-            : `进行中 ${metrics.monthToDateActive} · ${metrics.timezone} 月历`}
+            ? ""
+            : `进行中 ${metrics.monthToDateActive}`}
         </span>
       </li>
       <li className="mf-count-card">
@@ -120,7 +121,9 @@ export function AutomationMetricCards({
           {metricValue(metrics, "success", null)}
         </span>
         <span className="mf-count-label">
-          {metrics.denominatorStatement}
+          {metrics.monthToDateTerminal === null
+            ? ""
+            : `已结束 ${metrics.monthToDateTerminal} 次`}
           {metrics.monthToDateNoWork === null || metrics.monthToDateNoWork === 0
             ? ""
             : ` · 其中无工作完成 ${metrics.monthToDateNoWork}`}
@@ -132,61 +135,10 @@ export function AutomationMetricCards({
           {metricValue(metrics, "comparison", null)}
         </span>
         <span className="mf-count-label">
-          {metrics.comparisonAvailable
-            ? "上一日历同期已计入的执行次数"
-            : NO_COMPARABLE_DATA}
+          {metrics.comparisonAvailable ? "上一日历同期已计入的执行次数" : ""}
         </span>
       </li>
     </ul>
-  );
-}
-
-/** The one visible statement of the metric read basis. */
-export function AutomationMetricBasis({
-  metrics,
-}: {
-  readonly metrics: AutomationMetricsModel;
-}) {
-  const current: AutomationMetricWindowModel | null =
-    metrics.windows?.current ?? null;
-  const previous: AutomationMetricWindowModel | null =
-    metrics.windows?.previous ?? null;
-  return (
-    <div className="mf-dashboard-meta" role="note">
-      <p>
-        统计范围：全部已授权的自动化执行（与当前筛选、分页无关）。每次原始执行仅计一次，
-        成功率分母为已终态的执行；进行中的执行单独计数、不计入分母。
-      </p>
-      <p>
-        统计时区：{metrics.timezone}（系统时区，与 Cron
-        任务时区、浏览器时区相互独立）。
-        {current === null
-          ? ""
-          : ` 本月窗口 ${current.startLocal} → ${current.endLocal}`}
-        {previous === null
-          ? ""
-          : `；上月可比窗口 ${previous.startLocal} → ${previous.endLocal}`}
-      </p>
-      {metrics.available ? (
-        <>
-          <p>{metrics.noWorkStatement}</p>
-          <p>
-            成功率只统计已真正整理出条目的执行；已完成的队列或准备记录、无工作完成、
-            以及效果不确定的条目都不计为整理成功。
-            {metrics.monthToDateUncertain === null ||
-            metrics.monthToDateUncertain === 0
-              ? ""
-              : ` 本月有 ${metrics.monthToDateUncertain} 次执行含效果不确定的成功条目。`}
-          </p>
-        </>
-      ) : (
-        <p>
-          指标暂不可用：
-          {metrics.nextAction ??
-            "刷新以重新读取运行时数据库的完整执行总体；当前数值不代表 0。"}
-        </p>
-      )}
-    </div>
   );
 }
 
@@ -241,9 +193,6 @@ function latestRunCell(latest: AutomationLatestRunModel | null) {
     };
   }
   const meta: string[] = [];
-  if (latest.admittedAt) {
-    meta.push(latest.admittedAt);
-  }
   meta.push(
     latest.trigger
       ? (LATEST_RUN_TRIGGER_LABELS[latest.trigger] ?? latest.trigger)
@@ -258,7 +207,9 @@ function latestRunCell(latest: AutomationLatestRunModel | null) {
   }
   return {
     status: latest.status,
-    text: latest.status ?? "状态未知",
+    text: latest.status
+      ? (RECORD_RESULT_LABELS[latest.status] ?? latest.status)
+      : "状态未知",
     meta,
   };
 }
@@ -288,7 +239,7 @@ export function AutomationDefinitionRow({
           {definition.document.name}
         </button>
         <p className="mf-dashboard-meta">
-          {definition.document.sourceScope ?? "ResourceLibrary 根目录"}
+          {definition.document.sourceScope ?? "资源库根目录"}
           {draftOnly ? " · 仅存在于草稿" : ""}
         </p>
       </td>
@@ -298,13 +249,20 @@ export function AutomationDefinitionRow({
         </span>
         {draftOnly && <span className="mf-status-badge">草稿</span>}
       </td>
-      <td>{definition.document.mode}</td>
+      <td>自动整理</td>
       <td>{definition.document.resourceLibraryId}</td>
       <td>{scheduleText(definition)}</td>
       <td>{definition.document.itemLimit}</td>
-      <td>{definition.nextRunAt ?? "—"}</td>
+      <td className="mf-automation-time">
+        <AutomationTime value={definition.nextRunAt} />
+      </td>
       <td>
         <span className={resultBadgeClass(latest.status)}>{latest.text}</span>
+        {latestRun?.admittedAt && !latestRun.unavailable && (
+          <p className="mf-dashboard-meta">
+            <AutomationTime value={latestRun.admittedAt} />
+          </p>
+        )}
         {latest.meta.map((line) => (
           <p key={line} className="mf-dashboard-meta">
             {line}
@@ -395,151 +353,218 @@ export function AutomationRecordRow({
   readonly onOpenTaskCenter: (runId: string) => void;
   readonly onOpenDefinition: (definitionId: string) => void;
 }) {
+  const [expanded, setExpanded] = useState(false);
+  const detailId = useId();
   const { handoff, result, handling, failureStage, nextAction } = record;
   const definitionIdentity =
     handoff.definitionSettings?.split("/").filter(Boolean).pop() ?? null;
   return (
-    <tr>
-      <td>
-        {record.definitionName ?? record.definitionId ?? "已移除的定义"}
-        <p className="mf-dashboard-meta">
-          {record.trigger === "scheduled"
-            ? "定时触发"
-            : record.trigger === "manual"
-              ? "手动运行一次"
-              : record.trigger}
-        </p>
-      </td>
-      <td>
-        <span className={resultBadgeClass(record.status)}>
-          {RECORD_RESULT_LABELS[record.status] ?? record.status}
-        </span>
-        <p className="mf-dashboard-meta">{result.statement}</p>
-      </td>
-      <td>{record.executionStartedAt ?? "—"}</td>
-      <td>{record.executionFinishedAt ?? "—"}</td>
-      <td>
-        {record.totalItems === null
-          ? "—"
-          : `${record.completedItems ?? 0}/${record.totalItems}${
-              record.failedItems ? ` · 失败 ${record.failedItems}` : ""
-            }`}
-      </td>
-      <td>
-        {failureStage === null ? (
+    <>
+      <tr>
+        <td>
+          <strong>
+            {record.definitionName ?? record.definitionId ?? "已移除的定义"}
+          </strong>
           <p className="mf-dashboard-meta">
-            原始结果：{result.organized ? "已整理出条目" : "没有整理成功条目"}
+            {record.trigger === "scheduled"
+              ? "定时触发"
+              : record.trigger === "manual"
+                ? "手动运行一次"
+                : record.trigger}
           </p>
-        ) : (
-          <>
-            <p className="mf-dashboard-meta">阶段：{failureStage.stage}</p>
-            <p className="mf-dashboard-meta">{failureStage.statement}</p>
-            {failureStage.category !== null && (
-              <p className="mf-dashboard-meta">原因：{failureStage.category}</p>
-            )}
-            {failureStage.unavailable && (
-              <p className="mf-dashboard-meta">
-                持久化的逐项失败原因当前不可读；请在任务中心核对该运行的条目证据
-              </p>
-            )}
-            {failureStage.items.length > 0 && (
-              <p className="mf-dashboard-meta">
-                已知效果：无效果 {failureStage.effects.none} · 已确认{" "}
-                {failureStage.effects.known} · 不确定{" "}
-                {failureStage.effects.uncertain} · 部分{" "}
-                {failureStage.effects.partial}
-              </p>
-            )}
-            {failureStage.items.length > 0 && (
-              <details>
-                <summary className="mf-dashboard-meta">
-                  逐项失败原因与已知效果（{failureStage.items.length}）
-                  {failureStage.itemsTruncated ? "，已截断" : ""}
-                </summary>
-                <ul className="mf-dashboard-meta">
-                  {failureStage.items.map((item, index) => (
-                    <li key={item.itemId ?? `item-${index}`}>
-                      {item.message ?? "该项的持久化原因当前不可读"}
-                      {item.destination !== null &&
-                        ` · 目标 ${item.destination}`}
-                      {item.sideEffects !== null &&
-                        ` · 已知效果 ${item.sideEffects}`}
-                      {item.nextAction !== null &&
-                        ` · 下一步：${item.nextAction}`}
-                    </li>
-                  ))}
-                </ul>
-              </details>
-            )}
-            {result.admittedItemBound !== null && (
-              <p className="mf-dashboard-meta">
-                {result.reachedItemBound
-                  ? `已达到本次上限 ${result.admittedItemBound} 个条目（不代表来源已全部处理）`
-                  : `本次上限 ${result.admittedItemBound} 个条目，未达到`}
-              </p>
-            )}
-          </>
-        )}
-      </td>
-      <td>
-        <span className="mf-status-badge">
-          {HANDLING_LABELS[handling.state] ?? handling.state}
-        </span>
-        {handling.latestKind !== null && (
-          <p className="mf-dashboard-meta">
-            最近关联：{handling.latestKind}
-            {handling.latestStatus === null
-              ? ""
-              : ` · ${handling.latestStatus}`}
-          </p>
-        )}
-        {handling.affectedItems !== null &&
-          handling.resolvedItems !== null &&
-          handling.unresolvedItems !== null && (
-            <p className="mf-dashboard-meta">
-              受影响条目 {handling.affectedItems} · 已确认恢复{" "}
-              {handling.resolvedItems}
-              {handling.unresolvedItems > 0
-                ? ` · 仍未解决 ${handling.unresolvedItems}`
-                : ""}
-            </p>
-          )}
-        {handling.nextAction !== null && (
-          <p className="mf-dashboard-meta">{handling.nextAction}</p>
-        )}
-      </td>
-      <td>
-        <p className="mf-dashboard-meta">
-          {OWNERSHIP_LABELS[handoff.ownership]}
-        </p>
-        <p className="mf-dashboard-meta">{handoff.explanation}</p>
-        {nextAction !== null && (
-          <p className="mf-dashboard-meta">{nextAction.statement}</p>
-        )}
-        <div className="mf-actions">
-          {handoff.taskCenterRunId !== null && (
+        </td>
+        <td>
+          <span className={resultBadgeClass(record.status)}>
+            {RECORD_RESULT_LABELS[record.status] ?? record.status}
+          </span>
+          {result.noWork && <p className="mf-dashboard-meta">无工作完成</p>}
+        </td>
+        <td className="mf-automation-time">
+          <AutomationTime value={record.executionStartedAt} />
+        </td>
+        <td className="mf-automation-time">
+          <AutomationTime value={record.executionFinishedAt} />
+        </td>
+        <td>
+          {record.totalItems === null
+            ? "—"
+            : `${record.completedItems ?? 0}/${record.totalItems}${record.failedItems ? ` · 失败 ${record.failedItems}` : ""}`}
+        </td>
+        <td>
+          <div className="mf-actions">
             <button
               type="button"
               className="mf-button mf-button-secondary"
-              onClick={() =>
-                onOpenTaskCenter(handoff.taskCenterRunId as string)
-              }
+              aria-expanded={expanded}
+              aria-controls={detailId}
+              onClick={() => setExpanded(!expanded)}
             >
-              打开任务中心运行
+              {expanded ? "收起详情" : "查看详情"}
             </button>
-          )}
-          {definitionIdentity !== null && (
-            <button
-              type="button"
-              className="mf-button mf-button-secondary"
-              onClick={() => onOpenDefinition(definitionIdentity)}
-            >
-              打开定义设置
-            </button>
-          )}
-        </div>
-        <p className="mf-dashboard-meta">{handoff.retryExplanation}</p>
-      </td>
-    </tr>
+            {handoff.taskCenterRunId !== null && (
+              <button
+                type="button"
+                className="mf-button mf-button-secondary"
+                onClick={() =>
+                  onOpenTaskCenter(handoff.taskCenterRunId as string)
+                }
+              >
+                打开任务中心运行
+              </button>
+            )}
+            {definitionIdentity !== null && (
+              <button
+                type="button"
+                className="mf-button mf-button-secondary"
+                onClick={() => onOpenDefinition(definitionIdentity)}
+              >
+                打开定义设置
+              </button>
+            )}
+          </div>
+        </td>
+      </tr>
+      <tr
+        hidden={!expanded}
+        id={detailId}
+        className="mf-automation-record-detail"
+      >
+        <td colSpan={6}>
+          <div className="mf-automation-record-evidence">
+            <div>
+              <h3>执行结果与时间</h3>
+              <p>{result.statement}</p>
+              <p>
+                开始：<span>{record.executionStartedAt ?? "—"}</span>
+              </p>
+              <p>
+                结束：<span>{record.executionFinishedAt ?? "—"}</span>
+              </p>
+            </div>
+            <div>
+              <h3>原始结果与失败阶段</h3>
+              {failureStage === null ? (
+                <p className="mf-dashboard-meta">
+                  原始结果：
+                  {result.organized ? "已整理出条目" : "没有整理成功条目"}
+                </p>
+              ) : (
+                <>
+                  <p className="mf-dashboard-meta">
+                    阶段：{failureStage.stage}
+                  </p>
+                  <p className="mf-dashboard-meta">{failureStage.statement}</p>
+                  {failureStage.category !== null && (
+                    <p className="mf-dashboard-meta">
+                      原因：{failureStage.category}
+                    </p>
+                  )}
+                  {failureStage.unavailable && (
+                    <p className="mf-dashboard-meta">
+                      持久化的逐项失败原因当前不可读；请在任务中心核对该运行的条目证据
+                    </p>
+                  )}
+                  {failureStage.items.length > 0 && (
+                    <p className="mf-dashboard-meta">
+                      已知效果：无效果 {failureStage.effects.none} · 已确认{" "}
+                      {failureStage.effects.known} · 不确定{" "}
+                      {failureStage.effects.uncertain} · 部分{" "}
+                      {failureStage.effects.partial}
+                    </p>
+                  )}
+                  {failureStage.items.length > 0 && (
+                    <details>
+                      <summary className="mf-dashboard-meta">
+                        逐项失败原因与已知效果（{failureStage.items.length}）
+                        {failureStage.itemsTruncated ? "，已截断" : ""}
+                      </summary>
+                      <ul className="mf-dashboard-meta">
+                        {failureStage.items.map((item, index) => (
+                          <li key={item.itemId ?? `item-${index}`}>
+                            {item.message ?? "该项的持久化原因当前不可读"}
+                            {item.destination !== null &&
+                              ` · 目标 ${item.destination}`}
+                            {item.sideEffects !== null &&
+                              ` · 已知效果 ${item.sideEffects}`}
+                            {item.nextAction !== null &&
+                              ` · 下一步：${item.nextAction}`}
+                          </li>
+                        ))}
+                      </ul>
+                    </details>
+                  )}
+                  {result.admittedItemBound !== null && (
+                    <p className="mf-dashboard-meta">
+                      {result.reachedItemBound
+                        ? `已达到本次上限 ${result.admittedItemBound} 个条目（不代表来源已全部处理）`
+                        : `本次上限 ${result.admittedItemBound} 个条目，未达到`}
+                    </p>
+                  )}
+                </>
+              )}
+            </div>
+            <div>
+              <h3>后续处理</h3>
+              <span className="mf-status-badge">
+                {HANDLING_LABELS[handling.state] ?? handling.state}
+              </span>
+              {handling.latestKind !== null && (
+                <p className="mf-dashboard-meta">
+                  最近关联：{handling.latestKind}
+                  {handling.latestStatus === null
+                    ? ""
+                    : ` · ${handling.latestStatus}`}
+                </p>
+              )}
+              {handling.affectedItems !== null &&
+                handling.resolvedItems !== null &&
+                handling.unresolvedItems !== null && (
+                  <p className="mf-dashboard-meta">
+                    受影响条目 {handling.affectedItems} · 已确认恢复{" "}
+                    {handling.resolvedItems}
+                    {handling.unresolvedItems > 0
+                      ? ` · 仍未解决 ${handling.unresolvedItems}`
+                      : ""}
+                  </p>
+                )}
+              {handling.nextAction !== null && (
+                <p className="mf-dashboard-meta">{handling.nextAction}</p>
+              )}
+            </div>
+            <div>
+              <h3>下一步</h3>
+              <p className="mf-dashboard-meta">
+                {OWNERSHIP_LABELS[handoff.ownership]}
+              </p>
+              <p className="mf-dashboard-meta">{handoff.explanation}</p>
+              {nextAction !== null && (
+                <p className="mf-dashboard-meta">{nextAction.statement}</p>
+              )}
+              <p className="mf-dashboard-meta">{handoff.retryExplanation}</p>
+            </div>
+          </div>
+        </td>
+      </tr>
+    </>
+  );
+}
+
+/** Human-readable local time; the exact persisted timestamp remains available. */
+export function AutomationTime({ value }: { readonly value: string | null }) {
+  if (value === null) return <>—</>;
+  const date = new Date(value);
+  if (!Number.isFinite(date.getTime()))
+    return <span title={value}>时间不可用</span>;
+  return (
+    <time dateTime={value} title={value}>
+      {new Intl.DateTimeFormat("zh-CN", {
+        year: "numeric",
+        month: "2-digit",
+        day: "2-digit",
+        hour: "2-digit",
+        minute: "2-digit",
+        hour12: false,
+      }).format(date)}
+    </time>
   );
 }
