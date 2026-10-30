@@ -309,9 +309,10 @@ with SQLiteTaskRepository(DATABASE) as repository:
                 NOW,
                 NOW,
                 NOW,
-                NOW,
-                "completed",
-                "rehearsal-scan",
+                occurrence_id="rehearsal-scan",
+                occurrence_state="verified",
+                fingerprint="a" * 64,
+                fingerprint_algorithm="size-mtime-v1",
             )
             choice = ManualChoice("C", None, "naming-a", "classification-a", "organize-a")
             manual_item = ManualIntentItem(
@@ -880,6 +881,31 @@ with SQLiteTaskRepository(DATABASE) as repository:
     )
 
     if SEEDED.get("tasks"):
+
+        def verify_scheduling_facts():
+            # Schema 54 adds the Task-owned scheduling row.  An upgraded legacy
+            # Task must gain no queue eligibility at all: the migration is
+            # additive evidence, never a fabricated admission or continuation.
+            expected_schema = FACTS["task"].get("configuration_snapshot_id")
+            expected_digest = FACTS["task"].get("configuration_snapshot_digest")
+            check(
+                "task_scheduling.absent_for_legacy_task",
+                repository.get_task_scheduling(FACTS["task"]["task_id"]) is None,
+            )
+            check(
+                "task_scheduling.no_capacity_use",
+                repository.count_scheduled_capacity_use() == 0,
+                {"actual": repository.count_scheduled_capacity_use()},
+            )
+            task = repository.get_task(FACTS["task"]["task_id"])
+            check(
+                "task_scheduling.pin_unchanged",
+                task is not None
+                and task.configuration_snapshot_id == expected_schema
+                and task.configuration_snapshot_digest == expected_digest,
+            )
+
+        guard("task_scheduling.absent_for_legacy_task", verify_scheduling_facts)
 
         def verify_task():
             task = repository.get_task(FACTS["task"]["task_id"])

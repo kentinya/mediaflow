@@ -600,8 +600,9 @@ class ManagedOrganizePolicyJourneyTests(unittest.TestCase):
                     ).fetchone()[0]
                 self.assertEqual(marker, CONFIGURATION_SCHEMA_VERSION)
                 # Runtime schema 43 adds durable scope continuations; schema
-                # 44 links exact-Preview recovery to the paused source Task.
-                self.assertEqual(RUNTIME_SCHEMA_VERSION, 53)
+                # 44 links exact-Preview recovery to the paused source Task and
+                # schema 54 adds the Task-owned scheduling facts.
+                self.assertEqual(RUNTIME_SCHEMA_VERSION, 54)
 
                 optional = copy.deepcopy(document)
                 optional.pop("organizePolicies")

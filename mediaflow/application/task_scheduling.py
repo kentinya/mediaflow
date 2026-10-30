@@ -1,0 +1,656 @@
+"""The application engine of the Task scheduling kernel.
+
+Slice 47 RO-1 makes one organizing Task own its whole machine life: admission,
+queue eligibility, Worker claim, heartbeat, cooperative control, item/Result
+publication and the fenced transition that gives the shared slot back.  This
+module is that application boundary.  It owns the *rules* — what a valid
+admission context is, which state may be claimed or re-queued, how a control
+request and its acknowledgement differ, when an in-flight mutation keeps the
+slot, and which publications must be refused — while the repository owns only
+the durable compare-and-set.
+
+Nothing here executes media strategy: no Storage, Provider, Planner, Naming,
+Classification or ``OrganizerExecutor`` call is made, so admitting, claiming,
+reading or reopening can never mutate Storage.  Nothing here issues or consumes
+execution authority either: ``execute_authorized`` is an explicit input that is
+stored once at admission, and every later scheduling transition is forbidden
+from changing it, together with the command, scope, limit and configuration pin.
+
+This round deliberately exposes no production entrance.  The existing
+Files/Scheduler/Run once/API/CLI/Worker paths keep their current behavior and
+their own Job/Task ownership until a later Task switches them over; this service
+is the reusable engine those entrances will call, and no resident loop consumes
+it yet.
+"""
+
+from __future__ import annotations
+
+import secrets
+from dataclasses import replace
+from datetime import UTC, datetime
+from uuid import NAMESPACE_URL, uuid4, uuid5
+
+from mediaflow.domain.media_evidence import PipelineEvidence
+from mediaflow.domain.task_persistence import (
+    FileOperationLockRepository,
+    PersistentResultRecord,
+    PersistentTask,
+    PersistentTaskItem,
+    PersistentTaskStatus,
+    RunDisplayContext,
+    TaskItemStatus,
+)
+from mediaflow.domain.task_scheduling import (
+    ScheduledTaskAdmission,
+    ScheduledTaskClaim,
+    TaskAdmissionContext,
+    TaskAdmissionRequest,
+    TaskClaimFence,
+    TaskClaimFenceLost,
+    TaskControl,
+    TaskControlRejected,
+    TaskItemPublication,
+    TaskMachineStage,
+    TaskQueueState,
+    TaskSchedulingRepository,
+    TaskSchedulingState,
+    TaskTrigger,
+    require_capacity,
+    require_lease_seconds,
+)
+
+DEFAULT_TASK_LEASE_SECONDS = 30.0
+
+#: The TaskItem states one cooperative pause may suspend: queued work and the
+#: item the owner is currently holding.  A sibling that already recorded its own
+#: outcome — success, dry run, skipped, failed, ignored, cancelled — is settled
+#: evidence and is never rewritten by a control transition.
+_PAUSABLE_ITEM_STATUSES = frozenset({TaskItemStatus.PENDING, TaskItemStatus.PROCESSING})
+_CANCELLABLE_ITEM_STATUSES = frozenset(
+    {TaskItemStatus.PENDING, TaskItemStatus.PROCESSING, TaskItemStatus.PAUSED}
+)
+
+
+class TaskSchedulingService:
+    """Admission, claim, control and fenced publication for organizing Tasks."""
+
+    def __init__(
+        self,
+        repository: TaskSchedulingRepository,
+        *,
+        capacity: int,
+        locks: FileOperationLockRepository | None = None,
+        lease_seconds: float = DEFAULT_TASK_LEASE_SECONDS,
+    ) -> None:
+        self._repository = repository
+        self._capacity = require_capacity(capacity)
+        self._locks = locks
+        self._lease_seconds = require_lease_seconds(lease_seconds)
+
+    # -- Read-only inspection ------------------------------------------------
+
+    @property
+    def capacity(self) -> int:
+        return self._capacity
+
+    @property
+    def lease_seconds(self) -> float:
+        return self._lease_seconds
+
+    def capacity_use(self) -> int:
+        """How many distinct organizing Tasks currently hold one slot."""
+
+        return self._repository.count_scheduled_capacity_use()
+
+    def state(self, task_id: str) -> TaskSchedulingState | None:
+        return self._repository.get_task_scheduling(task_id)
+
+    def inspect(self, task_id: str) -> tuple[PersistentTask, TaskSchedulingState]:
+        task = self._require_task(task_id)
+        return (task, self._require_state(task_id))
+
+    # -- Admission -----------------------------------------------------------
+
+    def admit(
+        self,
+        command: str,
+        *,
+        execute_authorized: bool,
+        trigger: TaskTrigger,
+        principal: str,
+        request_id: str | None = None,
+        scope_path: str | None = None,
+        item_limit: int | None = None,
+        configuration_snapshot_id: str | None = None,
+        configuration_snapshot_digest: str | None = None,
+        require_configuration_snapshot: bool = False,
+        stage: TaskMachineStage | None = None,
+        eligible_at: datetime | None = None,
+        display: RunDisplayContext | None = None,
+        now: datetime | None = None,
+    ) -> ScheduledTaskAdmission:
+        """Commit one queued organizing Task and its shared slot.
+
+        The Task is admitted *before* any business readiness, so a restart, a
+        refusal or a human decision always has a durable identity to resume
+        under.  Admission never infers execution authority: ``execute_authorized``
+        is stored exactly as given, and an analysis-only request therefore stays
+        analysis-only for its whole life.  The bounded configuration pin, when
+        required, must be complete — it is the context later Worker claims are
+        reconstructed from instead of today's Active configuration.
+        """
+
+        current = self._now(now)
+        if eligible_at is not None and eligible_at.tzinfo is None:
+            raise ValueError("Task queue eligibility instant needs timezone")
+        if stage is not None:
+            stage = TaskMachineStage(stage)
+        request = TaskAdmissionRequest(
+            command=command,
+            execute_authorized=execute_authorized,
+            context=TaskAdmissionContext(
+                trigger=trigger,
+                principal=principal,
+                request_id=request_id,
+            ),
+            scope_path=scope_path,
+            item_limit=item_limit,
+            configuration_snapshot_id=configuration_snapshot_id,
+            configuration_snapshot_digest=configuration_snapshot_digest,
+        )
+        if require_configuration_snapshot and request.configuration_snapshot_id is None:
+            raise ValueError("managed Task admission requires a configuration snapshot pin")
+        task = PersistentTask(
+            str(uuid4()),
+            request.command,
+            PersistentTaskStatus.PENDING,
+            request.execute_authorized,
+            current,
+            current,
+            scope_path=request.scope_path,
+            item_limit=request.item_limit,
+            configuration_snapshot_id=request.configuration_snapshot_id,
+            configuration_snapshot_digest=request.configuration_snapshot_digest,
+        )
+        state = TaskSchedulingState(
+            task_id=task.task_id,
+            queue_state=TaskQueueState.QUEUED,
+            admission_trigger=request.context.trigger,
+            admission_principal=request.context.principal,
+            admission_request_id=request.context.request_id,
+            created_at=current,
+            updated_at=current,
+            machine_stage=stage,
+            queue_eligible_at=eligible_at,
+        )
+        return self._repository.admit_scheduled_task(
+            task, state, capacity=self._capacity, display=display
+        )
+
+    # -- Claim, heartbeat and the running boundary ---------------------------
+
+    def claim_next(
+        self,
+        *,
+        worker_id: str,
+        claim_token: str | None = None,
+        now: datetime | None = None,
+        lease_seconds: float | None = None,
+    ) -> ScheduledTaskClaim | None:
+        """Take the oldest eligible Task, or ``None`` when nothing is claimable.
+
+        The claim is granted only to an eligible Worker (registered, live,
+        schema-compatible, known command, matching pin); the returned claim
+        carries the Task's *admitted* pin so the caller reconstructs its runtime
+        from that snapshot.
+        """
+
+        current = self._now(now)
+        return self._repository.claim_next_scheduled_task(
+            current,
+            worker_id=worker_id,
+            claim_token=claim_token or secrets.token_urlsafe(32),
+            lease_seconds=self._lease(lease_seconds),
+        )
+
+    def heartbeat(
+        self,
+        claim: ScheduledTaskClaim,
+        *,
+        now: datetime | None = None,
+        lease_seconds: float | None = None,
+    ) -> ScheduledTaskClaim:
+        """Extend this exact claim, or report that ownership was lost.
+
+        The heartbeat never touches the operator-visible control revision, so a
+        legitimate pause/cancel request can never look stale merely because the
+        owner is alive.
+        """
+
+        current = self._now(now)
+        state = self._repository.heartbeat_scheduled_claim(
+            claim.fence(current), lease_seconds=self._lease(lease_seconds)
+        )
+        if state is None:
+            raise TaskClaimFenceLost(
+                f"task {claim.task_id!r} is no longer claimed by {claim.worker_id!r}"
+            )
+        return ScheduledTaskClaim(self._require_task(claim.task_id), state)
+
+    def begin_work(
+        self,
+        claim: ScheduledTaskClaim,
+        *,
+        stage: TaskMachineStage = TaskMachineStage.DISCOVERY,
+        now: datetime | None = None,
+    ) -> ScheduledTaskClaim:
+        """Publish the running boundary of the claimed Task.
+
+        A Task becomes ``running`` here and only here — under the Worker's claim,
+        never inside the admitting request — and only while it is still pending.
+        A control request that was already accepted before this boundary is not
+        overridden by it: the owner acknowledges that request instead.
+        """
+
+        current = self._now(now)
+        self._require_no_pending_control(claim.task_id)
+        state = self._repository.begin_scheduled_work(claim.fence(current), stage=stage)
+        if state is None:
+            raise TaskClaimFenceLost(
+                f"task {claim.task_id!r} cannot enter its running boundary under this claim"
+            )
+        return ScheduledTaskClaim(self._require_task(claim.task_id), state)
+
+    # -- Cooperative control -------------------------------------------------
+
+    def request_control(
+        self,
+        task_id: str,
+        control: TaskControl,
+        *,
+        now: datetime | None = None,
+    ) -> TaskSchedulingState:
+        """Record one pause/cancel intent.
+
+        The request is durable evidence, not an effect: a Task whose machine work
+        is still running keeps its slot until its current owner acknowledges the
+        safe boundary.  Work that has not been claimed yet has no owner and no
+        in-flight call, so its safe boundary is immediate and the Task settles
+        here in the same call.  Nothing here interrupts an external call, frees a
+        source lock of in-flight work or releases an uncertain effect.
+        """
+
+        current = self._now(now)
+        state = self._repository.request_scheduled_control(task_id, control, now=current)
+        if state.claim_token is None and state.queue_state is TaskQueueState.QUEUED:
+            task = self._require_task(task_id)
+            return self._settle_control(task, state, current, fence=None)
+        return state
+
+    def acknowledge_control(
+        self,
+        claim: ScheduledTaskClaim,
+        *,
+        now: datetime | None = None,
+    ) -> TaskSchedulingState:
+        """Acknowledge the accepted pause/cancel at the owner's safe boundary.
+
+        Only the current owner may acknowledge, and only the exact accepted
+        request may be settled: a concurrent escalation (pause → cancel) makes
+        this call fail closed instead of settling a request the owner never saw.
+        The Task aggregate and its affected items commit with the released slot,
+        so the durable record can never show a released slot beside work that
+        still claims to be running.
+        """
+
+        current = self._now(now)
+        state = self._require_state(claim.task_id)
+        if state.control_request is None:
+            raise TaskControlRejected(
+                f"task {claim.task_id!r} has no accepted control request to acknowledge"
+            )
+        return self._settle_control(
+            self._require_task(claim.task_id), state, current, fence=claim.fence(current)
+        )
+
+    def defer_to_human(
+        self,
+        claim: ScheduledTaskClaim,
+        *,
+        task: PersistentTask,
+        items: tuple[PersistentTaskItem, ...] = (),
+        now: datetime | None = None,
+    ) -> TaskSchedulingState:
+        """Release the slot because every remaining item now waits for a human.
+
+        The Task keeps its identity, its source ownership, its saved decisions
+        and its results: only the machine-work slot is given back.
+        """
+
+        current = self._now(now)
+        released = self._repository.release_scheduled_claim(
+            claim.fence(current),
+            task=replace(task, updated_at=current),
+            items=tuple(replace(item, updated_at=current) for item in items),
+            queue_state=TaskQueueState.WAITING_HUMAN,
+            stage=None,
+            expected_control_revision=None,
+        )
+        if released is None:
+            raise TaskClaimFenceLost(f"task {claim.task_id!r} is no longer owned by this Worker")
+        return released
+
+    def settle(
+        self,
+        claim: ScheduledTaskClaim,
+        *,
+        task: PersistentTask,
+        items: tuple[PersistentTaskItem, ...] = (),
+        now: datetime | None = None,
+    ) -> TaskSchedulingState:
+        """Publish one terminal Task outcome and release its slot.
+
+        The aggregate and any final item state commit together under the claim
+        fence; a Worker that already lost the Task writes nothing, so a stale
+        frame can never publish a terminal outcome over the current owner.
+        """
+
+        current = self._now(now)
+        released = self._repository.release_scheduled_claim(
+            claim.fence(current),
+            task=replace(task, updated_at=current),
+            items=tuple(replace(item, updated_at=current) for item in items),
+            queue_state=TaskQueueState.SETTLED,
+            stage=None,
+            expected_control_revision=None,
+        )
+        if released is None:
+            raise TaskClaimFenceLost(f"task {claim.task_id!r} is no longer owned by this Worker")
+        return released
+
+    # -- Safe re-entry -------------------------------------------------------
+
+    def requeue(
+        self,
+        task_id: str,
+        *,
+        expected_snapshot_id: str | None,
+        expected_snapshot_digest: str | None,
+        expected_control_revision: int | None = None,
+        stage: TaskMachineStage | None = None,
+        eligible_at: datetime | None = None,
+        now: datetime | None = None,
+    ) -> TaskSchedulingState:
+        """Re-admit this Task's remaining machine work after a human boundary.
+
+        Re-entry is only for work that provably has no machine stage running
+        (human-waiting or acknowledged-paused), verifies the caller's observed
+        control revision and the Task's original pin, and re-checks the shared
+        capacity inside the same transaction.  At full capacity nothing changes:
+        the saved choices, summary, results and consumed authority stay, no
+        automatic continuation is registered, and the caller may retry later.
+        """
+
+        return self._repository.requeue_scheduled_task(
+            task_id=task_id,
+            expected_snapshot_id=expected_snapshot_id,
+            expected_snapshot_digest=expected_snapshot_digest,
+            expected_control_revision=expected_control_revision,
+            capacity=self._capacity,
+            now=self._now(now),
+            stage=stage,
+            queue_eligible_at=eligible_at,
+        )
+
+    # -- Fenced publication --------------------------------------------------
+
+    def begin_item(
+        self,
+        claim: ScheduledTaskClaim,
+        *,
+        storage_id: str,
+        resource_library_id: str,
+        source_path: str,
+        source_display: str,
+        source_occurrence_id: str | None = None,
+        source_fingerprint: str | None = None,
+        source_fingerprint_state: str = "unverified",
+        source_observed_at: datetime | None = None,
+        source_storage_path: str | None = None,
+        now: datetime | None = None,
+    ) -> PersistentTaskItem:
+        """Start one concrete source of this claimed Task.
+
+        The item identity is derived from the Task and the exact source, so two
+        Workers of the same Task can never create two competing rows for one
+        source.  The previous attempt's row (and its recorded outcome) is
+        preserved: only the attempt counter advances.
+        """
+
+        current = self._now(now)
+        task = self._require_task(claim.task_id)
+        if task.status is not PersistentTaskStatus.RUNNING:
+            raise TaskControlRejected(
+                "the Task's running boundary must be published before its items start"
+            )
+        self._require_no_pending_control(claim.task_id)
+        item_id = str(uuid5(NAMESPACE_URL, f"{claim.task_id}:{storage_id}:{source_path}"))
+        previous = self._repository.get_item(item_id)
+        started = PersistentTaskItem(
+            item_id,
+            claim.task_id,
+            storage_id,
+            resource_library_id,
+            source_path,
+            source_display,
+            TaskItemStatus.PROCESSING,
+            "pipeline",
+            (previous.attempts if previous else 0) + 1,
+            previous.created_at if previous else current,
+            current,
+            source_occurrence_id=source_occurrence_id,
+            source_fingerprint=source_fingerprint,
+            source_fingerprint_state=source_fingerprint_state,
+            source_observed_at=source_observed_at,
+            source_storage_path=source_storage_path,
+        )
+        if not self._repository.upsert_scheduled_item(
+            claim.fence(current), started, stage=TaskItemPublication.START
+        ):
+            raise TaskClaimFenceLost(f"task {claim.task_id!r} is no longer owned by this Worker")
+        return self._repository.get_item(item_id) or started
+
+    def record_item(
+        self,
+        claim: ScheduledTaskClaim,
+        item: PersistentTaskItem,
+        *,
+        now: datetime | None = None,
+    ) -> PersistentTaskItem:
+        """Publish one item's progress/evidence state under the claim fence."""
+
+        current = self._now(now)
+        if not self._repository.upsert_scheduled_item(claim.fence(current), item):
+            raise TaskClaimFenceLost(f"task {claim.task_id!r} is no longer owned by this Worker")
+        return self._repository.get_item(item.item_id) or item
+
+    def begin_mutation(
+        self,
+        claim: ScheduledTaskClaim,
+        item: PersistentTaskItem,
+        action: str,
+        *,
+        now: datetime | None = None,
+    ) -> None:
+        """Record the durable boundary immediately before one Storage mutation.
+
+        This is the seam a future ``OrganizerExecutor`` integration uses.  Once
+        this boundary is recorded, a crash, a timeout, a lease expiry or a
+        restart leaves the Task non-claimable and non-re-queueable until the
+        affected item's verified outcome is published by this same owner; the
+        service itself never calls Storage.
+        """
+
+        current = self._now(now)
+        if not self._repository.begin_scheduled_mutation(
+            claim.fence(current), item_id=item.item_id, action=action
+        ):
+            raise TaskClaimFenceLost(f"task {claim.task_id!r} is no longer owned by this Worker")
+
+    def complete_item(
+        self,
+        claim: ScheduledTaskClaim,
+        item: PersistentTaskItem,
+        *,
+        result: PersistentResultRecord,
+        evidence: PipelineEvidence | None = None,
+        now: datetime | None = None,
+    ) -> PersistentTaskItem:
+        """Publish this attempt's item outcome, Result and evidence atomically.
+
+        The Result is identified by the exact TaskItem attempt, so a later
+        attempt can never replace an earlier recorded outcome; the affected
+        item's verified outcome is also the only publication that clears an
+        in-flight mutation boundary.
+        """
+
+        current = self._now(now)
+        expected_result_id = f"{item.item_id}:{item.attempts}"
+        if result.result_id != expected_result_id:
+            raise ValueError("a scheduled Result must be identified by its exact TaskItem attempt")
+        state = self._require_state(claim.task_id)
+        clear_mutation = state.mutation_item_id == item.item_id
+        if not self._repository.publish_scheduled_item_outcome(
+            claim.fence(current),
+            item,
+            result,
+            evidence,
+            clear_mutation=clear_mutation,
+        ):
+            raise TaskClaimFenceLost(f"task {claim.task_id!r} is no longer owned by this Worker")
+        return self._repository.get_item(item.item_id) or item
+
+    def publish_task(
+        self,
+        claim: ScheduledTaskClaim,
+        task: PersistentTask,
+        *,
+        now: datetime | None = None,
+    ) -> PersistentTask:
+        """Publish the Task aggregate's progress under the claim fence."""
+
+        current = self._now(now)
+        updated = replace(task, updated_at=current)
+        if not self._repository.publish_scheduled_task(claim.fence(current), updated):
+            raise TaskClaimFenceLost(f"task {claim.task_id!r} is no longer owned by this Worker")
+        return self._require_task(claim.task_id)
+
+    # -- Internal ------------------------------------------------------------
+
+    def _settle_control(
+        self,
+        task: PersistentTask,
+        state: TaskSchedulingState,
+        now: datetime,
+        *,
+        fence: TaskClaimFence | None,
+    ) -> TaskSchedulingState:
+        control = state.control_request
+        if control is None:
+            raise TaskControlRejected(
+                f"task {task.task_id!r} has no accepted control request to settle"
+            )
+        items = self._repository.list_items(task.task_id)
+        if control is TaskControl.PAUSE:
+            updated_items = tuple(
+                replace(
+                    item,
+                    status=TaskItemStatus.PAUSED,
+                    stage="paused",
+                    updated_at=now,
+                    error=None,
+                )
+                for item in items
+                if item.status in _PAUSABLE_ITEM_STATUSES
+            )
+            settled = replace(
+                task,
+                status=PersistentTaskStatus.PAUSED,
+                updated_at=now,
+                completed_at=None,
+                error=None,
+                pause_requested=False,
+            )
+            queue_state = TaskQueueState.PAUSED
+        else:
+            updated_items = tuple(
+                replace(
+                    item,
+                    status=TaskItemStatus.CANCELLED,
+                    stage="cancelled",
+                    updated_at=now,
+                    error="task cancelled",
+                )
+                for item in items
+                if item.status in _CANCELLABLE_ITEM_STATUSES
+            )
+            settled = replace(
+                task,
+                status=PersistentTaskStatus.CANCELLED,
+                updated_at=now,
+                completed_at=now,
+                error="task cancelled",
+                pause_requested=False,
+            )
+            queue_state = TaskQueueState.SETTLED
+        released = self._repository.release_scheduled_claim(
+            fence,
+            task=settled,
+            items=updated_items,
+            queue_state=queue_state,
+            stage=None,
+            expected_control_revision=state.control_revision,
+        )
+        if released is None:
+            raise TaskClaimFenceLost(f"task {task.task_id!r} is no longer owned by this Worker")
+        if self._locks is not None:
+            # The owner reached its supported safe boundary: the short-lived
+            # execution exclusion is retired with the settled transition.  The
+            # Task's durable source ownership stays with the items themselves,
+            # so giving the slot back never frees a source for a competing work.
+            self._locks.reclaim_task_locks(task.task_id)
+        return released
+
+    def _require_no_pending_control(self, task_id: str) -> None:
+        state = self._require_state(task_id)
+        if state.control_request is not None:
+            raise TaskControlRejected(
+                f"task {task_id!r} has an accepted {state.control_request.value} request; "
+                "acknowledge it instead of starting more machine work"
+            )
+
+    def _require_task(self, task_id: str) -> PersistentTask:
+        task = self._repository.get_task(task_id)
+        if task is None:
+            raise LookupError(f"task {task_id!r} was not found")
+        return task
+
+    def _require_state(self, task_id: str) -> TaskSchedulingState:
+        state = self._repository.get_task_scheduling(task_id)
+        if state is None:
+            raise TaskControlRejected(
+                f"task {task_id!r} was not admitted by the Task scheduling kernel"
+            )
+        return state
+
+    def _lease(self, lease_seconds: float | None) -> float:
+        return require_lease_seconds(
+            self._lease_seconds if lease_seconds is None else lease_seconds
+        )
+
+    @staticmethod
+    def _now(now: datetime | None) -> datetime:
+        current = now or datetime.now(UTC)
+        if current.tzinfo is None:
+            raise ValueError("Task scheduling timestamps need timezone")
+        return current
