@@ -16,7 +16,9 @@ CURRENT journeys/contracts live in Product Experience/Architecture; reference im
 runtime authority. Accepted43–45 foundations remain; the accepted Slice46 amendments below define
 changed CURRENT behavior. The accepted Task Center filter correction is reflected in
 `V2-OPS-001/003`; the accepted Rules presentation correction is reflected in `V2-RULES-001`
-and current page/journey documents. Prior Slice acceptance remains unchanged.
+and current page/journey documents. Accepted Automation presentation and record-action corrections
+are reflected in `V2-AUTO-001/006/007` and the current journey/architecture. Prior Slice acceptance
+remains unchanged; standalone review records are reachable through [TASK.md](../TASK.md) and Git.
 
 ## Slice46 authorized amendments — CURRENT
 

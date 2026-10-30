@@ -56,6 +56,11 @@ The [Rules workspace](docs/configuration.md#native-v2-organizing-rules-managemen
 description and refresh in the content header. Overview has no inventory search; each of the seven
 families keeps one local search and state filter. Settings retains configuration diagnostics/recovery.
 
+The [Automation workspace](docs/product-experience.md#current--complete-native-automation-workspace-accepted43-amended46)
+contains `任务列表 / 执行记录 / 全局设置`. Execution-record rows offer only `查看详情 / 收起详情`;
+details retain exact times, original results, failure stages, per-item effects and next actions.
+Definition management and organizing recovery use their own workspace entries.
+
 ## V2 frontend (web/)
 
 React/TypeScript/Vite, TanStack Router/Query and a central typed API boundary render `/ui-v2/`.
