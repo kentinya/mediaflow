@@ -250,7 +250,7 @@ test("the records tab reports read-only admitted runs with their recovery owner"
   // real formal Task) is proven by the Run once journey below.
   const ownRow = ownRegion
     .getByRole("row")
-    .filter({ hasText: "Records workspace" });
+    .filter({ hasText: /Records workspace|harness-workspace-definition/ });
   const detailToggle = ownRow.getByRole("button", { name: "查看详情" });
   await expect(detailToggle).toHaveAttribute("aria-expanded", "false");
   const detailId = await detailToggle.getAttribute("aria-controls");

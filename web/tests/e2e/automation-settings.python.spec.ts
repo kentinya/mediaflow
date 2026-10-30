@@ -289,6 +289,13 @@ test("a graceful resident restart restores current adoption and keeps the predec
     name: "调度器轮询采用情况",
   });
   await expect(
+    schedulerAdoption.getByText("全部当前实例已采用", { exact: true }),
+  ).toBeVisible();
+  await expect(
+    schedulerAdoption.getByText("已采用当前发布值").first(),
+  ).toBeHidden();
+  await schedulerAdoption.getByText(/^实例详情/).click();
+  await expect(
     schedulerAdoption.getByText("已采用当前发布值").first(),
   ).toBeVisible({ timeout: 20_000 });
   // History is folded diagnosis: expanding it is how the operator reads it, and
