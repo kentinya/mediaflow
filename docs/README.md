@@ -16,7 +16,7 @@
 | 配置操作 / 自托管部署 | [Configuration](configuration.md) / [Deployment](deployment.md) |
 | 发布、升级与验证边界 | [Release](release.md) / [Storage Acceptance](storage-acceptance.md)；开发关闭不等于发布 |
 | 页面组成与交互 | [Files](file-page-visual-spec.md)、[MediaLibrary](media-library-page-visual-spec.md)、[Task Center](task-center-page-spec.md)；图片是视觉参考，不是运行数据或权限 |
-| 自动化任务、执行记录与全局设置 | [完整旅程](product-experience.md#current--complete-native-automation-workspace-accepted43-amended46)、[现行要求](v2-requirements.md#automation-workspace-requirements--current-slice-43-pass--closed)、[设置字段与保存/采用](configuration.md#automation-engine-settings-native-focused)；记录操作仅有查看/收起详情，定义管理和整理恢复从各自工作区进入 |
+| 自动化任务、执行记录与全局设置 | [完整旅程](product-experience.md#current--complete-native-automation-workspace-accepted43-amended46)、[现行要求](v2-requirements.md#automation-workspace-requirements--current-slice-43-pass--closed)、[设置字段与保存/采用](configuration.md#automation-engine-settings-native-focused)；记录只读展示本次结果和时间、失败原因、下一步，无后续处理状态或恢复入口；定义管理和整理恢复从各自工作区进入 |
 | 已退役能力的现行边界 | [FileIndex](file-index-retirement-spec.md) / [Preview](preview-retirement-spec.md)；不恢复旧入口或兼容执行器 |
 | 角色经验 / Task 模板 | [A](agent-experience/slice-owner-architect-final-reviewer.md)、[B](agent-experience/task-planner-reviewer.md)、[Developer](agent-experience/developer-implementation-role.md) / [Task Template](../Task/TEMPLATE.md) |
 

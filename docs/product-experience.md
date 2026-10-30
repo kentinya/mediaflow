@@ -5,7 +5,9 @@ This document owns operator journeys and completion semantics. Stable scope/IDs 
 [Architecture](architecture.md). [Progress](progress.md) records accepted baselines and deferrals.
 The committed [Slice](../SLICE.md) owns current scope. Accepted live-list/retirement and Automation
 workspace/settings foundations remain; current journeys include the accepted46 entry, readability,
-work-ownership and execution-intent amendments.
+work-ownership and execution-intent amendments and subsequent accepted presentation/record-result
+corrections. Original Slice acceptance identities remain in Progress and Git; [TASK.md](../TASK.md)
+points to the latest standalone review.
 Detailed superseded delivery notes are retained at
 `865ebdce47b0b323064fd8e05fbfaa54546e6269:docs/product-experience.md`.
 
