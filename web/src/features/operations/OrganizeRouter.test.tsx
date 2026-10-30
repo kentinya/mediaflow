@@ -982,7 +982,7 @@ describe("V2 manual Organize journey", () => {
     );
     const search = new URLSearchParams(router.history.location.search);
     expect(search.get("run")).toBe("task-1");
-    expect(search.get("status")).toBe("paused");
+    expect(search.get("status")).toBeNull();
   });
 
   it("locks a plan that already has durable execution history", async () => {
