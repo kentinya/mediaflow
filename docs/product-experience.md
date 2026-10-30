@@ -518,9 +518,18 @@ exact organizing context or the proven ordinary-operation library page; missing/
 identity stays a bounded read-only explanation, with no generic failure recovery or guessed work.
 
 The center has one page title, with content boundaries and spacing coordinated with MediaLibrary.
-The shared shell keyword input is not shown there. All eight views keep only the local-timezone
-creation-day range, apply either or both sides without a search submission, and clear back
-to the current view’s complete authorized population. Manual refresh shows 刷新 / 刷新中…
+The shared shell keyword input is not shown there. The selected tab supplies current-view context;
+no duplicate view heading or generic description appears between the tabs and filters. All eight
+views share a compact 创建日期 group with independently named native 开始日期/结束日期 controls,
+apply either or both sides without a search submission, and clear back to the current view’s
+complete authorized population. The toolbar's low-emphasis 清除 appears when a date is set;
+existing empty/read-error recovery entries remain available in their applicable states.
+One 本地时区 label accompanies a collapsed 时区说明 button. Click, touch or keyboard activation
+reveals the local-day/whole-end-day and matching list/detail timezone explanation, with valid
+accessible descriptions. Toggling it preserves list context and issues no API request of its own;
+normal reads and polling continue. Filters and table align, and controls wrap without clipped text
+or page overflow when narrow or when the selected detail reduces available space.
+Manual refresh shows 刷新 / 刷新中…
 without layout jumps; background polling updates quietly. Normal same-query refresh preserves
 visible lists/details and valid context; real changes and read/permission failures remain visible.
 Management-API consumers outside that control keep their existing filter semantics.
