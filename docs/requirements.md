@@ -53,13 +53,12 @@ Product Experience。Slice46 已由 A 终审 PASS / CLOSED，稳定定义与覆�
 AC-1–18 见 [SLICE.md](../SLICE.md)。本文件保留上表修订索引、稳定需求 ID 和完整 V1 定义；
 目标收缩不删除耐久证据、权限/范围/执行安全，也不改写历史验收。
 
-后续已接受的现行界面修正归入 `V2-OPS-001/003`：任务中心顶部不显示通用搜索；八个标签
-均仅提供创建日期范围选择和清除，未选/清除时读取当前标签完整获准总体，选定后只显示范围内任务。
-日期范围以紧凑分组呈现，标签下不重复当前视图标题；不显示统计口径说明段落、本地时区标签或
-时区说明入口/内容。统计口径、去重及本机时区筛选/展示语义保留。
-手动刷新提供中文忙碌反馈，后台轮询静默更新，正常同条件刷新保留内容和上下文。
-管理 API 保留既有筛选；完整现行交互见
-[Task Center specification](task-center-page-spec.md)。这不改写下方原 Slice 的接受事实或冻结 V1 定义。
+任务中心后续已接受的界面修正统一由 [V2 Requirements](v2-requirements.md) 的
+`V2-OPS-001/003` 定义；紧凑日期筛选、统计/时区说明移除和只读刷新交互见
+[Task Center specification](task-center-page-spec.md)，完整旅程见
+[Product Experience](product-experience.md#task-center-integration)。管理 API 筛选、总体统计/去重、
+本机时区及权限/执行语义不变。独立修正的审查指针见 [TASK.md](../TASK.md)，不改写原 Slice
+的接受事实或冻结 V1 定义。
 
 整理规则的已接受展示修正归入 `V2-RULES-001`：内容区页头负责标题、说明和刷新，概览无清单
 搜索，七类清单各保留一个本地搜索及状态筛选；八分类卡片和清单内部设计保留。正常态不常驻

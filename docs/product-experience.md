@@ -527,10 +527,9 @@ existing empty/read-error recovery entries remain available in their applicable 
 The summary's routine population/pagination/Job-Task explanation is omitted, as are the 本地时区
 label and 时区说明 control/content. Local-calendar filtering, full end-day inclusion, explicit
 list/detail time offsets and authoritative statistics/deduplication retain their existing behavior.
-Filters and table align, and controls wrap without clipped text
-or page overflow when narrow or when the selected detail reduces available space.
-Manual refresh shows 刷新 / 刷新中…
-without layout jumps; background polling updates quietly. Normal same-query refresh preserves
+Filters and table align, and controls wrap without clipped text or page overflow when narrow or
+when the selected detail reduces available space. Manual refresh shows 刷新 / 刷新中… without layout
+jumps; background polling updates quietly. Normal same-query refresh preserves
 visible lists/details and valid context; real changes and read/permission failures remain visible.
 Management-API consumers outside that control keep their existing filter semantics.
 Long names/scopes retain readable status/progress columns and complete mouse/keyboard-accessible
