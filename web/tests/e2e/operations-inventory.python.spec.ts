@@ -4088,7 +4088,7 @@ test("verified primary completes with durable policy-specific attachment collisi
     seeded,
     "partial_success",
   );
-  await page.getByRole("button", { name: "刷新", exact: true }).click();
+  await page.getByRole("button", { name: "Refresh", exact: true }).click();
   const results = page.getByRole("region", { name: "附件执行结果" });
   await expect(results.getByText("主文件已完成；附件有警告")).toBeVisible();
   await expect(results).toContainText("AttachmentRecovery (2022).en.srt");

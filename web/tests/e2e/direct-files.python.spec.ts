@@ -136,6 +136,10 @@ async function deleteOverInsecureLanHttp(
 
   const tile = page.getByLabel(`文件条目 ${filename}`, { exact: true });
   await expect(tile).toBeVisible();
+  // Keyboard focus can scroll an off-screen tile and close the anchored menu.
+  // Bring the real target into the viewport before invoking its context menu.
+  await tile.scrollIntoViewIfNeeded();
+  await expect(tile).toBeInViewport();
   await tile.focus();
   await page.keyboard.press("Shift+F10");
   await page.getByRole("menu").getByRole("menuitem", { name: "删除" }).click();

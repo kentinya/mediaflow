@@ -155,7 +155,7 @@ test("任务中心 inventory shows the run list, views and workspace links", asy
   await expect(page.getByRole("region", { name: "运行详情" })).toHaveCount(0);
 });
 
-test("the submitted creation-date range survives reconnect", async ({
+test("the submitted creation-date range survives reload and re-authentication", async ({
   page,
 }) => {
   await connect(page);
@@ -173,7 +173,9 @@ test("the submitted creation-date range survives reconnect", async ({
   await expect(page).not.toHaveURL(/status=/);
   await expect(page.getByRole("row", { name: FAILED_ROW })).toBeVisible();
 
-  await page.getByRole("button", { name: "Disconnect" }).click();
+  // Reload loses the memory-only token but preserves the route for explicit
+  // auth continuation. Disconnect deliberately clears that navigation intent.
+  await page.reload();
   await expect(page.getByLabel("API token")).toBeVisible();
   await page.getByLabel("API token").fill(VIEWER_TOKEN);
   await page.getByRole("button", { name: "Connect" }).click();
