@@ -1543,7 +1543,10 @@ class ManualTaskDiscoveryTests(_DiscoveryFixture):
             self.assertIsNotNone(preparation)
             self.assertEqual("prepared", preparation["status"])
             self.assertEqual(discovery.preview_id, preparation["preview_id"])
-            self.assertEqual("native:" + discovery.discovery_id, preparation["preparation_id"])
+            self.assertEqual(
+                "native:" + discovery.discovery_id + ":" + discovery.preview_id,
+                preparation["preparation_id"],
+            )
 
             # Preparing the summary is a bounded re-read of that same record.
             status, prepared = self.request(
@@ -1704,6 +1707,303 @@ class ManualTaskDiscoveryTests(_DiscoveryFixture):
             self.assertEqual(1, len(value.repository.list_results(task_id)))
             self.assertEqual((), value.repository.list_jobs(limit=10))
             self.assertFalse((self.source_root / "Movies/One.2001.mkv").exists())
+
+    # -- Exact native confirmation, history and per-item scope ----------------
+
+    def _native_confirm(self, value, preparation, ready, *, expect=202):
+        status, reply = self.request(
+            value,
+            f"/api/v1/manual-recovery-preparations/{preparation['preparation_id']}/confirm",
+            "POST",
+            {
+                "itemIds": list(ready),
+                "confirmation": True,
+                "allowOverwrite": False,
+                "allowSourceCleanup": False,
+            },
+        )
+        self.assertEqual(expect, status, reply)
+        return reply
+
+    def test_native_confirmation_is_bound_to_the_reviewed_preview(self) -> None:
+        """The old page can never execute a newer, unreviewed plan.
+
+        The operator reads summary A, another explicit analysis publishes
+        summary B for the same discovery, and the still-open page A submits its
+        confirmation.  A is refused without consuming authority or mutating
+        Storage; only confirming the plan that was actually reviewed executes.
+        """
+
+        self.media("Movies/One.2001.mkv")
+        provider = SyntheticMetadataProvider(
+            (
+                MediaCandidate(
+                    "tmdb",
+                    "201",
+                    MediaType.MOVIE,
+                    "One",
+                    year=2001,
+                    genres=("Animation",),
+                    countries=("JP",),
+                ),
+            )
+        )
+        with self.journey(provider=provider, task_scheduling=True) as value:
+            status, admitted = self._admit(value, ["Movies/One.2001.mkv"])
+            self.assertEqual(202, status, admitted)
+            task_id = admitted["organizeTaskId"]
+            discovery = self._drive(value, task_id)
+            item = value.repository.list_items(task_id)[0]
+            saved = self._decide_recognition(value, task_id, item)
+            status, accepted = self._continue_from_task_center(value, task_id, item.item_id, saved)
+            self.assertEqual(202, status, accepted)
+            discovery = self._drive(value, task_id)
+            status, detail = self.request(
+                value, f"/api/v1/tasks/{task_id}/items/{item.item_id}/recovery"
+            )
+            self.assertEqual(200, status, detail)
+            old_preparation = detail["manualRecoveryPreparation"]
+            old_ready = [
+                entry["itemId"]
+                for entry in self.request(
+                    value,
+                    f"/api/v1/operations/organize/previews/{old_preparation['preview_id']}",
+                )[1]["items"]
+                if entry["status"] == "previewed"
+            ]
+
+            # A second explicit analysis supersedes the reviewed Preview while
+            # the first page still displays summary A.
+            fresh_preview = self._analyze(value, task_id, discovery)
+            self.assertNotEqual(old_preparation["preview_id"], fresh_preview["previewId"])
+
+            refused = self._native_confirm(value, old_preparation, old_ready, expect=409)
+            self.assertEqual("preparation_stale", refused["error"]["code"])
+            self.assertEqual("none", refused["error"]["details"]["sideEffects"])
+            self.assertEqual([], value.source.mutations)
+            self.assertEqual([], value.target.mutations)
+            self.assertEqual((), value.repository.list_results(task_id))
+            self.assertEqual((), value.repository.list_manual_executions_for_task(task_id))
+
+            # The plan the operator actually reviewed is the only one that runs.
+            status, detail = self.request(
+                value, f"/api/v1/tasks/{task_id}/items/{item.item_id}/recovery"
+            )
+            self.assertEqual(200, status, detail)
+            current = detail["manualRecoveryPreparation"]
+            self.assertNotEqual(old_preparation["preparation_id"], current["preparation_id"])
+            ready = [
+                entry["itemId"]
+                for entry in fresh_preview["items"]
+                if entry["status"] == "previewed"
+            ]
+            execution = self._native_confirm(value, current, ready)
+            self.assertEqual(task_id, execution["taskId"])
+            for _ in range(8):
+                value.task_engine.run_next()
+            final = value.repository.get_task(task_id)
+            self.assertIs(final.status, PersistentTaskStatus.COMPLETED, final.error)
+            self.assertEqual(1, len(value.repository.list_results(task_id)))
+            self.assertFalse((self.source_root / "Movies/One.2001.mkv").exists())
+
+    def test_confirmed_execution_keeps_the_original_item_link_readable(self) -> None:
+        """The exact confirmation preserves the original item URL and history.
+
+        A normal current-summary confirmation reuses the one durable TaskItem
+        identity of that source, so the operator's original item link keeps
+        reading its decision/history and the admitted execution before, during
+        and after the Worker runs, and across a reopen.
+        """
+
+        self.media("Movies/One.2001.mkv")
+        provider = SyntheticMetadataProvider(
+            (
+                MediaCandidate(
+                    "tmdb",
+                    "201",
+                    MediaType.MOVIE,
+                    "One",
+                    year=2001,
+                    genres=("Animation",),
+                    countries=("JP",),
+                ),
+            )
+        )
+        with self.journey(provider=provider, task_scheduling=True) as value:
+            status, admitted = self._admit(value, ["Movies/One.2001.mkv"])
+            self.assertEqual(202, status, admitted)
+            task_id = admitted["organizeTaskId"]
+            self._drive(value, task_id)
+            item = value.repository.list_items(task_id)[0]
+            saved = self._decide_recognition(value, task_id, item)
+            status, accepted = self._continue_from_task_center(value, task_id, item.item_id, saved)
+            self.assertEqual(202, status, accepted)
+            self._drive(value, task_id)
+            status, detail = self.request(
+                value, f"/api/v1/tasks/{task_id}/items/{item.item_id}/recovery"
+            )
+            self.assertEqual(200, status, detail)
+            preparation = detail["manualRecoveryPreparation"]
+            ready = [
+                entry["itemId"]
+                for entry in self.request(
+                    value,
+                    f"/api/v1/operations/organize/previews/{preparation['preview_id']}",
+                )[1]["items"]
+                if entry["status"] == "previewed"
+            ]
+            execution = self._native_confirm(value, preparation, ready)
+
+            # The original URL is readable immediately after admission, before
+            # the Worker has run, and points at the admitted execution.
+            status, before = self.request(
+                value, f"/api/v1/tasks/{task_id}/items/{item.item_id}/recovery"
+            )
+            self.assertEqual(200, status, before)
+            self.assertEqual("confirmed", before["manualRecoveryPreparation"]["status"])
+            self.assertEqual(
+                execution["executionId"], before["manualRecoveryPreparation"]["execution_id"]
+            )
+
+            for _ in range(8):
+                value.task_engine.run_next()
+            status, after = self.request(
+                value, f"/api/v1/tasks/{task_id}/items/{item.item_id}/recovery"
+            )
+            self.assertEqual(200, status, after)
+            self.assertEqual("confirmed", after["manualRecoveryPreparation"]["status"])
+            self.assertEqual(
+                execution["executionId"], after["manualRecoveryPreparation"]["execution_id"]
+            )
+            self.assertEqual("success", after["checkpoint"]["status"])
+            # The one durable source keeps the one durable item identity.
+            current_items = value.repository.list_items(task_id)
+            self.assertEqual(1, len(current_items))
+            self.assertEqual(item.item_id, current_items[0].item_id)
+            self.assertEqual(1, len(value.repository.list_results(task_id)))
+
+            with SQLiteTaskRepository(self.database) as reopened:
+                reopened_item = reopened.list_items(task_id)[0]
+                self.assertEqual(item.item_id, reopened_item.item_id)
+                self.assertEqual(1, len(reopened.list_results(task_id)))
+
+    def test_unselected_sibling_keeps_its_own_summary_and_confirms(self) -> None:
+        """Only the confirmed subset is bound to the execution.
+
+        Two ready sources are confirmed one at a time through the native
+        summary.  The unselected sibling never borrows the first file's
+        execution: it keeps its own prepared/pending state, re-analyzes under
+        the existing freshness rule, and completes its own Result on the same
+        Task without replaying the first.
+        """
+
+        provider = self._two_file_recognition_journey()
+        with self.journey(provider=provider, task_scheduling=True) as value:
+            status, admitted = self._admit(value, ["Movies/One.2001.mkv", "Movies/Two.2002.mkv"])
+            self.assertEqual(202, status, admitted)
+            task_id = admitted["organizeTaskId"]
+            discovery = self._drive(value, task_id)
+            items = {item.source_path: item for item in value.repository.list_items(task_id)}
+            first = items["Movies/One.2001.mkv"]
+            second = items["Movies/Two.2002.mkv"]
+            self._decide_recognition(value, task_id, first)
+            self._decide_recognition(value, task_id, second)
+            preview = self._analyze(value, task_id, discovery)
+            ready = [
+                entry["itemId"] for entry in preview["items"] if entry["status"] == "previewed"
+            ]
+            self.assertEqual(2, len(ready), preview)
+            first_item_id = next(
+                entry["itemId"]
+                for entry in preview["items"]
+                if entry["source"]["path"] == "Movies/One.2001.mkv"
+            )
+            second_item_id = next(
+                entry["itemId"]
+                for entry in preview["items"]
+                if entry["source"]["path"] == "Movies/Two.2002.mkv"
+            )
+            status, detail = self.request(
+                value, f"/api/v1/tasks/{task_id}/items/{first.item_id}/recovery"
+            )
+            self.assertEqual(200, status, detail)
+            execution = self._native_confirm(
+                value, detail["manualRecoveryPreparation"], [first_item_id]
+            )
+            for _ in range(4):
+                value.task_engine.run_next()
+
+            # The unselected sibling keeps its own pending summary and does not
+            # borrow the first file's execution.
+            status, sibling = self.request(
+                value, f"/api/v1/tasks/{task_id}/items/{second.item_id}/recovery"
+            )
+            self.assertEqual(200, status, sibling)
+            sibling_preparation = sibling["manualRecoveryPreparation"]
+            self.assertEqual("stale", sibling_preparation["status"])
+            self.assertIsNone(sibling_preparation["execution_id"])
+            self.assertEqual([], sibling_preparation["selected_item_ids"])
+            self.assertEqual("business_problem", sibling["recoveryKind"])
+            self.assertEqual(["retry"], sibling["checkpoint"]["permitted_action_ids"])
+            self.assertEqual("none", sibling["checkpoint"]["effects"]["certainty"])
+            self.assertTrue((self.source_root / "Movies/Two.2002.mkv").exists())
+
+            # Re-analyze the remaining source under the existing freshness rule,
+            # then confirm and execute it on the same Task.
+            status, continued = self.request(
+                value,
+                f"/api/v1/tasks/{task_id}/items/{second.item_id}/recovery/continue",
+                "POST",
+                {"expectedCheckpointVersion": sibling["checkpoint"]["checkpoint_version"]},
+            )
+            self.assertEqual(202, status, continued)
+            fresh = self._drive(value, task_id)
+            status, fresh_preview = self.request(
+                value, f"/api/v1/operations/organize/previews/{fresh.preview_id}"
+            )
+            self.assertEqual(200, status, fresh_preview)
+            second_ready = [
+                entry["itemId"]
+                for entry in fresh_preview["items"]
+                if entry["status"] == "previewed"
+            ]
+            self.assertEqual([second_item_id], second_ready)
+            status, detail = self.request(
+                value, f"/api/v1/tasks/{task_id}/items/{second.item_id}/recovery"
+            )
+            self.assertEqual(200, status, detail)
+            self._native_confirm(value, detail["manualRecoveryPreparation"], second_ready)
+            for _ in range(8):
+                value.task_engine.run_next()
+
+            final = value.repository.get_task(task_id)
+            self.assertIs(final.status, PersistentTaskStatus.COMPLETED, final.error)
+            self.assertEqual(
+                (2, 2, 0), (final.total_items, final.completed_items, final.failed_items)
+            )
+            results = value.repository.list_results(task_id)
+            self.assertEqual(2, len(results), results)
+            # Each confirmed source keeps its own execution; the first result is
+            # never replayed or overwritten by the second confirmation.
+            first_row = value.repository.manual_execution_item_for_task_item(task_id, first.item_id)
+            self.assertIsNotNone(first_row)
+            self.assertEqual(execution["executionId"], first_row["execution_id"])
+            self.assertEqual(2, len(value.repository.list_manual_executions_for_task(task_id)))
+            self.assertFalse((self.source_root / "Movies/One.2001.mkv").exists())
+            self.assertFalse((self.source_root / "Movies/Two.2002.mkv").exists())
+
+            with SQLiteTaskRepository(self.database) as reopened:
+                reopened_task = reopened.get_task(task_id)
+                self.assertIs(reopened_task.status, PersistentTaskStatus.COMPLETED)
+                self.assertEqual(2, len(reopened.list_results(task_id)))
+                self.assertEqual(
+                    (2, 2, 0),
+                    (
+                        reopened_task.total_items,
+                        reopened_task.completed_items,
+                        reopened_task.failed_items,
+                    ),
+                )
 
 
 if __name__ == "__main__":

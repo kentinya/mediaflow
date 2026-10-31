@@ -55,19 +55,37 @@ from mediaflow.domain.task_persistence import TaskItemStatus
 NATIVE_PREPARATION_PREFIX = "native:"
 
 
-def native_preparation_id(discovery_id: str) -> str:
-    """The stable, operator-readable identity of one native Task summary."""
+def native_preparation_id(discovery_id: str, preview_id: str) -> str:
+    """The stable, operator-readable identity of one native Task summary.
 
-    return NATIVE_PREPARATION_PREFIX + discovery_id
+    The identity binds the Task's own linked bounded discovery to the *exact
+    immutable Preview* the operator reviewed.  Re-running the analysis
+    supersedes that Preview, so the older summary can never be confirmed
+    against a newer plan merely because it belongs to the same discovery.
+    """
+
+    return f"{NATIVE_PREPARATION_PREFIX}{discovery_id}:{preview_id}"
+
+
+def native_preparation_ref(preparation_id: str) -> tuple[str, str] | None:
+    """The ``(discovery_id, preview_id)`` a native summary names, or ``None``."""
+
+    if not isinstance(preparation_id, str) or not preparation_id.startswith(
+        NATIVE_PREPARATION_PREFIX
+    ):
+        return None
+    body = preparation_id[len(NATIVE_PREPARATION_PREFIX) :]
+    discovery_id, separator, preview_id = body.partition(":")
+    if not separator or not discovery_id or not preview_id:
+        return None
+    return discovery_id, preview_id
 
 
 def native_preparation_discovery_id(preparation_id: str) -> str | None:
     """The discovery a native summary confirmation names, or ``None``."""
 
-    if isinstance(preparation_id, str) and preparation_id.startswith(NATIVE_PREPARATION_PREFIX):
-        value = preparation_id[len(NATIVE_PREPARATION_PREFIX) :]
-        return value or None
-    return None
+    ref = native_preparation_ref(preparation_id)
+    return ref[0] if ref is not None else None
 
 
 class ManualRecoveryContinuationError(ManualExecutionError):
@@ -896,26 +914,34 @@ class ManualRecoveryContinuationService:
         returns ``None`` for a Task that does not own a linked preparation, for
         an item that already settled with no admitted execution, or for a
         different principal's/ Task's item.
+
+        The confirmed step is bound to the *exact source item* an execution
+        admitted, never to "any execution of the same discovery".  A sibling
+        that was not part of the confirmed subset therefore keeps its own
+        pending summary instead of borrowing another file's execution.  The
+        summary identity binds the discovery to the exact reviewed Preview, so
+        the confirm path can prove the operator still reviewed the current plan.
         """
 
         finder = getattr(self._repository, "get_media_discovery_for_task", None)
         if not callable(finder):
             return None
         discovery = finder(source_task_id)
-        if (
-            discovery is None
-            or discovery.organize_task_id != source_task_id
-            or not discovery.preview_id
-        ):
+        if discovery is None or discovery.organize_task_id != source_task_id:
             return None
         item = self._repository.get_item(source_item_id)
         if item is None or item.task_id != source_task_id:
             return None
-        getter = getattr(self._repository, "get_manual_preview", None)
-        preview = getter(discovery.preview_id) if callable(getter) else None
+        preview_getter = getattr(self._repository, "get_manual_preview", None)
+        if not callable(preview_getter):
+            return None
+        execution = self._native_admitted_execution_for_item(source_task_id, source_item_id)
+        preview_id = execution.preview_id if execution is not None else discovery.preview_id
+        if not preview_id:
+            return None
+        preview = preview_getter(preview_id)
         if preview is None:
             return None
-        execution = self._native_admitted_execution(discovery.preview_id)
         if execution is None:
             # The summary is only the operator's confirmable boundary once the
             # complete analysis parked this exact source at ``waiting_confirm``
@@ -928,24 +954,64 @@ class ManualRecoveryContinuationService:
             problem_reader = getattr(self._repository, "has_current_four_type_problem", None)
             if not callable(problem_reader) or not problem_reader(source_item_id):
                 return None
+        document = self._native_summary_document(discovery, item, preview, execution=execution)
+        if (
+            document is not None
+            and execution is None
+            and self._preview_is_stale(preview.preview_id)
+        ):
+            # The reviewed Preview is no longer executable (for example a
+            # confirmed sibling changed the shared evidence).  Report the
+            # summary as stale so the page steers to the required fresh
+            # analysis instead of offering a confirmation that can only be
+            # refused; the durable history stays readable either way.
+            document["status"] = ManualRecoveryPreparationStatus.STALE.value
+        return document
+
+    def _preview_is_stale(self, preview_id: str) -> bool:
+        reader = getattr(self._previews, "get_readonly", None)
+        if not callable(reader):
+            return False
         try:
-            checkpoint = self._checkpoint_service.get(source_item_id, task_id=source_task_id)
+            projected = reader(preview_id)
+        except Exception:
+            return False
+        return projected is not None and not projected.current
+
+    def _native_summary_document(self, discovery, item, preview, *, execution):
+        """One durable projection of the Task's own linked summary.
+
+        The identity binds the discovery to the exact immutable Preview the
+        operator reviewed.  A confirmed execution is reported only for the
+        source item it actually admitted; every other sibling keeps its own
+        prepared state and a fresh preview identity after any re-analysis.
+        """
+
+        try:
+            checkpoint = self._checkpoint_service.get(
+                item.item_id, task_id=discovery.organize_task_id
+            )
         except LookupError:
             return None
         input_fingerprint = ""
         for value in preview.items:
-            if value.item_id == item.item_id or not input_fingerprint:
+            source = getattr(value, "source", None)
+            matches_item = (
+                getattr(source, "path", None) == item.source_path
+                and getattr(source, "storage_id", None) == item.storage_id
+            )
+            if matches_item or not input_fingerprint:
                 input_fingerprint = value.input_fingerprint or input_fingerprint
         confirmed = execution is not None
         return {
-            "preparation_id": native_preparation_id(discovery.discovery_id),
-            "source_task_id": source_task_id,
-            "source_item_id": source_item_id,
+            "preparation_id": native_preparation_id(discovery.discovery_id, preview.preview_id),
+            "source_task_id": discovery.organize_task_id,
+            "source_item_id": item.item_id,
             "analysis_continuation_id": "",
-            "analysis_task_id": source_task_id,
+            "analysis_task_id": discovery.organize_task_id,
             "analysis_result_id": "",
             "intent_id": preview.intent_id,
-            "preview_id": discovery.preview_id,
+            "preview_id": preview.preview_id,
             "intent_version": preview.intent_version,
             "checkpoint_version": checkpoint.checkpoint_version,
             "input_fingerprint": input_fingerprint,
@@ -977,7 +1043,7 @@ class ManualRecoveryContinuationService:
                     "explicitly confirm the exact Organize action"
                 )
             ),
-            "previewPath": "/api/v1/manual-previews/" + discovery.preview_id,
+            "previewPath": "/api/v1/manual-previews/" + preview.preview_id,
             "executionPath": (
                 "/api/v1/manual-executions/" + execution.execution_id
                 if execution is not None
@@ -985,15 +1051,29 @@ class ManualRecoveryContinuationService:
             ),
         }
 
-    def _native_admitted_execution(self, preview_id: str):
-        reader = getattr(self._repository, "list_manual_executions_for_preview", None)
+    def _native_admitted_execution_for_item(self, task_id: str, task_item_id: str):
+        """The one admitted execution that contains this exact TaskItem, if any.
+
+        The relation is the durable ``manual_execution_items`` linkage of the
+        exact ``(task_id, task_item_id)`` pair, not a time-, path- or
+        list-order guess.  A sibling that was never selected therefore never
+        matches, even though it belongs to the same discovery/preview.
+        """
+
+        reader = getattr(self._repository, "list_manual_executions_for_task", None)
         if not callable(reader):
             return None
         try:
-            values = tuple(reader(preview_id, limit=100))
+            values = tuple(reader(task_id, limit=100))
         except Exception:
             return None
-        return values[0] if values else None
+        for execution in values:
+            if any(
+                value.task_id == task_id and value.task_item_id == task_item_id
+                for value in execution.items
+            ):
+                return execution
+        return None
 
     def confirm_native_preparation(
         self,
@@ -1013,15 +1093,21 @@ class ManualRecoveryContinuationService:
         one-shot authority are validated by the production execution service,
         and the resulting execution re-registers the *same* Task through the
         scheduling kernel.  It mints no Job, child Task or second preparation.
+
+        The confirmation is bound to the exact immutable Preview the operator
+        reviewed: if a newer analysis superseded that Preview, the old page is
+        refused without consuming authority, mutating Storage or executing the
+        newer, unreviewed plan.
         """
 
-        discovery_id = native_preparation_discovery_id(preparation_id)
-        if discovery_id is None:
+        ref = native_preparation_ref(preparation_id)
+        if ref is None:
             raise ManualRecoveryContinuationError(
                 "the recovery plan summary is not a native Task summary",
                 code="preparation_not_found",
                 status=404,
             )
+        discovery_id, reviewed_preview_id = ref
         actor = self._actor(actor)
         if permission != MANUAL_EXECUTION_PERMISSION:
             raise ManualRecoveryContinuationError(
@@ -1042,6 +1128,18 @@ class ManualRecoveryContinuationService:
                 code="preparation_stale",
                 next_action="reload the organizing work and inspect its current state",
             )
+        if discovery.preview_id != reviewed_preview_id:
+            # A newer analysis replaced the Preview the operator reviewed.  The
+            # old page must never execute the newer plan: nothing is consumed or
+            # mutated, and the operator is pointed at the current summary.
+            raise ManualRecoveryContinuationError(
+                "a newer plan summary replaced the one you reviewed",
+                code="preparation_stale",
+                next_action=(
+                    "reload the current plan summary, review it and confirm its ready subset again"
+                ),
+                details={"previewId": discovery.preview_id},
+            )
         if discovery.actor != actor:
             raise ManualRecoveryContinuationError(
                 "the linked preparation belongs to another operator",
@@ -1052,16 +1150,16 @@ class ManualRecoveryContinuationService:
                 ),
             )
         preview_getter = getattr(self._repository, "get_manual_preview", None)
-        preview = preview_getter(discovery.preview_id) if callable(preview_getter) else None
-        if preview is None:
+        preview = preview_getter(reviewed_preview_id) if callable(preview_getter) else None
+        if preview is None or not preview.current:
             raise ManualRecoveryContinuationError(
-                "the linked plan summary is unavailable",
+                "the reviewed plan summary is no longer current",
                 code="preparation_stale",
-                next_action="reload the organizing work and inspect its current state",
+                next_action="reload the current plan summary and confirm it again",
             )
         try:
             return self._execution.begin_web_execution(
-                discovery.preview_id,
+                reviewed_preview_id,
                 list(item_ids),
                 expected_intent_version=preview.intent_version,
                 actor=actor,

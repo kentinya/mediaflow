@@ -13254,13 +13254,25 @@ class SQLiteTaskRepository:
                 for item in items:
                     task_item = self._manual_task_item(item, execution, now)
                     task_item = self._bind_item_to_current_occurrence(task_item)
+                    if adopt_task_id is not None:
+                        # The admitted organizing Task already holds the analysis
+                        # TaskItem of this exact concrete source.  The confirmed
+                        # execution is that same durable work continuing, so it
+                        # reuses the one durable item identity instead of
+                        # deleting the row and stranding the operator's original
+                        # item/decision/Result link.  An identity that already
+                        # belongs to another execution is never reused; the
+                        # execution-item table keeps one durable row per item.
+                        reused_item_id = self._reusable_task_item_id_locked(task_item)
+                        if reused_item_id is not None and reused_item_id != task_item.item_id:
+                            task_item = replace(task_item, item_id=reused_item_id)
+                            item = replace(item, task_item_id=reused_item_id)
                     # The admitted organizing Task may already hold an analysis
                     # TaskItem for this same concrete source (its own four-type
-                    # problem).  The confirmed execution is that same durable work
-                    # continuing, so the older wrapper row of this exact
-                    # Task/source is retired before the execution item is written:
-                    # one source keeps one item, and the shared review/plan rows
-                    # keep their own history.
+                    # problem).  When its durable identity is not reused, the
+                    # older wrapper row of this exact Task/source is retired
+                    # before the execution item is written: one source keeps one
+                    # item, and the shared review/plan rows keep their history.
                     self._connection.execute(
                         "DELETE FROM task_items WHERE task_id=? AND storage_id=? "
                         "AND source_path=? AND item_id<>?",
@@ -22218,6 +22230,32 @@ class SQLiteTaskRepository:
             json.loads(row["details_json"] or "{}"),
             datetime.fromisoformat(row["created_at"]),
         )
+
+    def _reusable_task_item_id_locked(self, task_item: PersistentTaskItem) -> str | None:
+        """The durable TaskItem identity this exact source already owns, if any.
+
+        Only called inside the admission write transaction.  The lookup is the
+        exact ``(task_id, storage_id, source_path)`` UNIQUE key, so it never
+        guesses a relation from time or text.  An identity already bound to a
+        ``manual_execution_items`` row is refused: that source was already
+        admitted and a second durable row would be a duplicate execution.
+        """
+
+        row = self._connection.execute(
+            "SELECT item_id FROM task_items WHERE task_id=? AND storage_id=? AND source_path=?",
+            (task_item.task_id, task_item.storage_id, task_item.source_path),
+        ).fetchone()
+        if row is None:
+            return None
+        candidate = row["item_id"]
+        if candidate == task_item.item_id:
+            return candidate
+        conflict = self._connection.execute(
+            "SELECT 1 FROM manual_execution_items WHERE task_item_id=?", (candidate,)
+        ).fetchone()
+        if conflict is not None:
+            return None
+        return candidate
 
     @staticmethod
     def _manual_task_item(

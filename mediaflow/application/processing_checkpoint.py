@@ -366,6 +366,22 @@ class ProcessingCheckpointService:
             # analysis attempt. It may prove zero effects when no Result row
             # was produced, while legacy/malformed failures remain unknown.
             certainty = EffectCertainty.NONE
+        if latest is None and item_status in {
+            TaskItemStatus.WAITING_CONFIRM,
+            TaskItemStatus.WAITING_RECOGNITION,
+            TaskItemStatus.WAITING_METADATA,
+            TaskItemStatus.WAITING_METADATA_CORRECTION,
+            TaskItemStatus.WAITING_CLASSIFICATION,
+        }:
+            # A persisted human-waiting analysis state is strictly before the
+            # OrganizerExecutor boundary: the exact source was parked for a
+            # decision or an explicit confirmation and no execution was ever
+            # dispatched for it.  Its true effect certainty is therefore
+            # ``none`` -- not unknown -- so a still-pending sibling keeps its
+            # real waiting state instead of being read as an uncertain effect.
+            # A dispatched-but-unproved item stays ``pending``/``processing``
+            # and is never cleared by this rule.
+            certainty = EffectCertainty.NONE
         # A persisted review resolution is still on the analysis side of the
         # OrganizerExecutor boundary. When no Result exists, its known zero-
         # mutation stage is sufficient evidence to offer one explicit DryRun
@@ -916,6 +932,36 @@ def _actions(
             (
                 CheckpointAction(
                     "retry", "Continue safe analysis", True, "task_recovery", None, True
+                ),
+            ),
+            None,
+        )
+    if status is TaskItemStatus.WAITING_CONFIRM and certainty is EffectCertainty.NONE:
+        # A parked confirmation may need a fresh analysis before its own
+        # explicit confirmation (for example a confirmed sibling changed the
+        # shared preview evidence).  Re-running the complete zero-mutation
+        # analysis is a safe, explicitly requested boundary: it grants no
+        # execution authority and never mutates Storage.
+        if snapshot_resolvable is not True:
+            return (
+                RetrySafety.UNSAFE,
+                (
+                    CheckpointAction(
+                        "investigate",
+                        "Inspect unavailable configuration",
+                        False,
+                        "none",
+                        None,
+                        False,
+                    ),
+                ),
+                "analysis continuation is unavailable because the Task pin cannot be resolved",
+            )
+        return (
+            RetrySafety.SAFE,
+            (
+                CheckpointAction(
+                    "retry", "Re-run the safe plan analysis", True, "task_recovery", None, True
                 ),
             ),
             None,
