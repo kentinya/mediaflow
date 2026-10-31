@@ -91,6 +91,7 @@ from mediaflow.domain.manual_organize_preview import (
     ManualPreviewItemStatus,
     ManualPreviewStatus,
     ManualPreviewUnavailable,
+    manual_preview_plan_problem,
 )
 from mediaflow.domain.manual_recovery import (
     ManualRecoveryLink,
@@ -15981,12 +15982,42 @@ class SQLiteTaskRepository:
                         for value in values:
                             source = value.source
                             existing = self._connection.execute(
-                                "SELECT 1 FROM task_items WHERE task_id=? AND storage_id=? "
-                                "AND source_path=?",
+                                "SELECT item_id, status FROM task_items WHERE task_id=? "
+                                "AND storage_id=? AND source_path=?",
                                 (discovery.organize_task_id, source.storage_id, source.path),
                             ).fetchone()
                             if existing is not None:
-                                continue  # Preserve reviews, attempts and settled siblings.
+                                existing_status = TaskItemStatus(existing["status"])
+                                # Settled history (a recorded success/ignore/
+                                # cancellation/failure) and the reviews, attempts
+                                # and effects of finished siblings are never
+                                # overwritten.  A genuine native four-type problem
+                                # was already projected onto this exact item by
+                                # ``publish_task_item_problem``, and a ready item
+                                # needs no item change: the linked plan carries the
+                                # fresh summary.  Only a real technical/planning
+                                # failure has no durable home yet, so it is
+                                # synchronized onto the item this source already
+                                # owns instead of being dropped because an item
+                                # exists.
+                                if existing_status in SETTLED_ITEM_STATUSES:
+                                    continue
+                                if value.status is ManualPreviewItemStatus.PREVIEWED:
+                                    continue
+                                if manual_preview_plan_problem(value.plan) is not None:
+                                    continue
+                                self._connection.execute(
+                                    "UPDATE task_items SET status=?, stage=?, error=?, "
+                                    "updated_at=? WHERE item_id=?",
+                                    (
+                                        TaskItemStatus.FAILED.value,
+                                        "analysis_failed",
+                                        value.error,
+                                        discovery.updated_at.isoformat(),
+                                        existing["item_id"],
+                                    ),
+                                )
+                                continue
                             occurrence = source.occurrence_id or source.fingerprint or ""
                             item_id = str(
                                 uuid5(

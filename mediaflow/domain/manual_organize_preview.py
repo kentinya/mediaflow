@@ -197,6 +197,48 @@ def _stage_for_plan(plan: dict[str, object] | None) -> str:
     return "planning"
 
 
+def manual_preview_plan_problem(plan: dict[str, object] | None) -> str | None:
+    """The native four-type problem one analyzed plan still represents, if any.
+
+    Mirrors the exact outcomes the shared analysis publishes through its own
+    problem boundary: an unresolved RecognitionType (``recognition``), a
+    metadata candidate/identity that still needs the operator
+    (``metadata``/``metadata_correction``), an unclassified source
+    (``classification``) or a destination conflict (``conflict``).  Every other
+    non-ready outcome — an upstream/provider error, a missing policy, a naming
+    or storage failure, an inadmissible source — is a technical condition and
+    returns ``None``.  A caller can therefore tell a genuine operator decision
+    (already projected onto its TaskItem) apart from a technical or planning
+    failure that still has to be synchronized to that same item.
+    """
+
+    if not isinstance(plan, dict):
+        return None
+    analysis = plan.get("analysis")
+    if isinstance(analysis, dict):
+        stage = analysis.get("stage")
+        if stage == "recognition":
+            return "recognition"
+        recognition = analysis.get("recognition")
+        if isinstance(recognition, dict) and recognition.get("status") not in (None, "matched"):
+            return "recognition"
+        metadata = analysis.get("metadata")
+        if isinstance(metadata, dict):
+            status = metadata.get("status")
+            if status in ("need_confirm", "ambiguous"):
+                return "metadata"
+            if status == "not_found":
+                return "metadata_correction"
+        classification = analysis.get("classification")
+        if isinstance(classification, dict) and classification.get("status") == "unclassified":
+            return "classification"
+    if plan.get("conflicts"):
+        capabilities = plan.get("capabilities")
+        if not (isinstance(capabilities, dict) and capabilities.get("verdict") == "capability_gap"):
+            return "conflict"
+    return None
+
+
 @dataclass(frozen=True)
 class ManualPreviewItem:
     """One independent and restart-safe item result from a Preview request."""

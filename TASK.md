@@ -456,3 +456,66 @@ Task Base、High/T4、schema55与父Slice边界不变;只修B已确认的两项P
 - 确认/准入事务内的settled断言是纵深保护:经当前单操作员HTTP入口,新summary已不再包含
   ignored来源,因此该断言未构造产品级不可达场景的单测;主保护由真实入口回归覆盖。
 - 只改本轮Task内3个执行文件、1个测试文件与TASK报告;未改A-owned合同/路线图,未推进Slice关闭。
+
+## Developer Fix Report — P1 reanalysis-failure item sync (third round)
+
+Status: **READY FOR B REVIEW**.本段由 Developer 实施并交接,不是独立 B 复审,不自审 PASS。
+本轮起点为记录 B 复审阻塞的 `cf1a7d1d70376cd74e3bf4dcb016ef70167d7791`;修复 checkpoint 见本次提交
+(真实源码身份由 `git log` 给出)。Task Base、High/T4、schema55 与父 Slice 边界不变;只修 B 已确认的
+唯一 P1(既有条目重新分析技术失败未同步、Task 永久 running),不新增恢复/调度系统、不改范围。
+
+**修改行为**
+
+- 在既有 claim/fence 保护的 `publish_media_discovery_plan_with_plan` 原子发布事务内,对同一
+  `(task_id, storage_id, source_path)` 的既有 TaskItem 不再无条件跳过:
+  - `SETTLED_ITEM_STATUSES`(success/ignored/failed/skipped/cancelled/dry_run)保持原样,连同其决定、
+    审计、attempt、Result 与效果一律不覆盖;
+  - 新分析为 `PREVIEWED` 的既有项不改动(链接 plan 已携带新摘要);
+  - 新分析为真实四类问题(已由 `publish_task_item_problem` 投影为对应 waiting 项)不改动;
+  - 其余真实技术/规划失败则就地把该来源既有条目置为 `FAILED`/`analysis_failed` 并记录 `error`,
+    保留 item_id、精确源版本/pin、occurrence/fingerprint 与兄弟历史,随后沿用既有
+    `_refresh_task_item_counts_locked` 与 `manual_task_engine._wait_for_human` 的安全结算。零 Storage
+    变更、无新 Job、无第二套队列。
+- 新增纯函数 `manual_preview_plan_problem(plan)`(domain/manual_organize_preview.py),按共享分析
+  自身写入 plan 的字段识别四类原生问题(recognition/metadata/metadata_correction/classification/
+  conflict);Provider 错误、缺策略、source admission、naming/storage 失败与 capability gap 均返回
+  `None`,因此只有真实技术失败会同步到既有条目,不误伤任何四类人工等待。
+
+**B P1 复现脚本在真实入口下的当前结果**
+
+- `reanalysis-failure-repro.py`:重新分析超时后 `task=failed, queue=settled`,既有条目
+  `failed/analysis_failed/error=synthetic upstream timeout on explicit re-analysis`,零 Result、零
+  Storage 变更、无 Job;再跑 5 次空闲 Worker 不变(日志 `reanalysis-failure-repro.log`)。
+- `ignored-source-repro.py` 与 `settled-analysis-repro.py` 保持已修正结果(partial_success/failed +
+  settled、零变更),日志同名。
+
+**新增自动回归(真实 Files/API + 生产 Task engine)**
+
+`tests/test_manual_task_engine.py` 新增3例:ready 来源重新分析超时→既有条目 FAILED、Task/API 结算
+Failed 且重开一致、零变更/无 Job;两部中成功兄弟保持 SUCCESS+Result/源效果、另一部超时→
+PartialSuccess/2-1-1、不重放;一待决定 + 一已决定重新分析超时→已决定项 FAILED、待决定兄弟仍
+WAITING_RECOGNITION 且保持 pending 复核与等待,不被提前结束。三例在未打补丁的 HEAD 源码上分别复现
+`waiting_confirm != failed`(已用 `git checkout --` 精确对照,修复后恢复)。
+`tests/test_manual_organize_preview.py` 新增 `ManualPreviewPlanProblemTests` 两例锁定四类分类与
+技术/ready 反向判定。
+
+**修改与直接受影响测试(当前工作区实际结果)**
+
+| 命令(仓库根) | 结果 |
+|---|---|
+| `.venv/bin/python -m unittest tests.test_manual_task_engine tests.test_manual_organize_preview tests.test_task_scheduling tests.test_task_scheduling_fencing tests.test_task_scheduling_migration tests.test_media_discovery tests.test_manual_organize_intent tests.test_manual_organize_execution tests.test_task_center_recovery_lineage tests.test_recovery_continuation tests.test_processing_checkpoint` | 406 tests OK,45.163s;`affected-python-1.log` |
+| `.venv/bin/python -m unittest tests.test_automation_admission tests.test_automation_job_fencing tests.test_automation_definition_occurrence tests.test_v2_automation_run_once tests.test_processing_worker_readiness tests.test_automation_settings_resident tests.test_direct_file_transfers tests.test_media_library_transfers` | 230 tests OK,111.284s;`affected-python-2.log` |
+| `.venv/bin/python -m unittest tests.test_manual_ignore tests.test_manual_ignore_batch tests.test_scope_continuation tests.test_operations_task_center tests.test_processing_recovery_admission tests.test_task_pause_resume tests.test_task_persistence tests.test_task_retry tests.test_task_scope tests.test_v2_manual_organize tests.test_organize_preparation tests.test_preview_retirement tests.test_recovery_batch tests.test_manual_preview tests.test_organizer_rollback` | 342 tests OK,22.006s;`affected-python-3.log` |
+| 3 个 B 复现脚本(真实 Files/API/engine) | 全部符合预期;三个同名 log |
+| 4个改动Python文件 `ruff format --check`/`ruff check`、`compileall -q mediaflow tests scripts`、`git diff --check` | 通过;`quality-gates.log`;无timeout/retry/skip放宽 |
+
+证据根:`.git/validation-evidence/dev-task47.2-p1-reanalysis/`(本地忽略存储,不宣称远程可访问)。
+
+**交接限制与剩余风险**
+
+- 本轮未跑完整 Python/Web/新 wheel/Docker/真实浏览器门禁,由独立 B 在修正候选上执行 T4;
+  旧候选日志与全量制品不能作为本 checkpoint PASS。
+- 四类识别由 plan 文档派生而非读取 `_PreviewOutcome.problem`;单测与技术/ready 反例已锁定当前共享
+  分析写入的字段形状。若后续共享分析新增第五类原生问题或改变 plan 字段,该派生需同步更新(现有
+  `publish_task_item_problem` 与 plan 文档仍一一对应,未发现偏离)。
+- 只改本轮 Task 内 2 个执行文件、2 个测试文件与 TASK 报告;未改 A-owned 合同/路线图,未推进 Slice 关闭。

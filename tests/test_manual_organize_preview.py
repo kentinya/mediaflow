@@ -28,6 +28,7 @@ from mediaflow.domain.manual_organize_preview import (
     ManualPreviewConflict,
     ManualPreviewItemStatus,
     ManualPreviewStatus,
+    manual_preview_plan_problem,
 )
 from mediaflow.domain.metadata import (
     MediaCandidate,
@@ -956,6 +957,95 @@ class ManualOrganizePreviewTests(unittest.TestCase):
         finally:
             directory.cleanup()
             target_directory.cleanup()
+
+
+class ManualPreviewPlanProblemTests(unittest.TestCase):
+    """The native four-type classifier used to reconcile an existing item.
+
+    A genuine operator decision is already projected onto its TaskItem, while a
+    technical/planning failure still has to be synchronized to that same item.
+    The classifier therefore has to name exactly the four native problems and
+    nothing else.
+    """
+
+    def test_native_problems_are_classified(self) -> None:
+        self.assertEqual(
+            "recognition",
+            manual_preview_plan_problem({"analysis": {"stage": "recognition"}}),
+        )
+        self.assertEqual(
+            "recognition",
+            manual_preview_plan_problem({"analysis": {"recognition": {"status": "ambiguous"}}}),
+        )
+        self.assertEqual(
+            "metadata",
+            manual_preview_plan_problem({"analysis": {"metadata": {"status": "need_confirm"}}}),
+        )
+        self.assertEqual(
+            "metadata",
+            manual_preview_plan_problem({"analysis": {"metadata": {"status": "ambiguous"}}}),
+        )
+        self.assertEqual(
+            "metadata_correction",
+            manual_preview_plan_problem({"analysis": {"metadata": {"status": "not_found"}}}),
+        )
+        self.assertEqual(
+            "classification",
+            manual_preview_plan_problem(
+                {"analysis": {"classification": {"status": "unclassified"}}}
+            ),
+        )
+        self.assertEqual(
+            "conflict",
+            manual_preview_plan_problem(
+                {
+                    "analysis": {},
+                    "conflicts": [{"type": "destination_exists"}],
+                    "capabilities": {"verdict": "ok"},
+                }
+            ),
+        )
+
+    def test_technical_and_ready_plans_are_not_problems(self) -> None:
+        self.assertIsNone(manual_preview_plan_problem(None))
+        self.assertIsNone(manual_preview_plan_problem({}))
+        # A ready plan: matched recognition, available metadata/classification,
+        # no conflicts.
+        self.assertIsNone(
+            manual_preview_plan_problem(
+                {
+                    "analysis": {
+                        "recognition": {"status": "matched"},
+                        "metadata": {"available": True, "status": "matched"},
+                        "classification": {"status": "classified"},
+                    },
+                    "conflicts": [],
+                    "capabilities": {"verdict": "supported"},
+                }
+            )
+        )
+        # A Provider failure is technical, never a metadata decision.
+        self.assertIsNone(
+            manual_preview_plan_problem(
+                {"analysis": {"metadata": {"available": False, "status": "provider_error"}}}
+            )
+        )
+        # An inadmissible source is technical.
+        self.assertIsNone(
+            manual_preview_plan_problem(
+                {"analysis": {"stage": "source_admission", "status": "blocked"}}
+            )
+        )
+        # A pure storage capability gap keeps its own technical outcome.
+        self.assertIsNone(
+            manual_preview_plan_problem(
+                {
+                    "analysis": {},
+                    "conflicts": [{"type": "destination_exists"}],
+                    "capabilities": {"verdict": "capability_gap"},
+                }
+            )
+        )
 
 
 def request(api, path: str, *, method: str = "GET", body=None, token: str = "operator-token"):

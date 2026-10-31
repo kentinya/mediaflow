@@ -2278,6 +2278,252 @@ class ManualTaskDiscoveryTests(_DiscoveryFixture):
             with SQLiteTaskRepository(self.database) as reopened:
                 self.assertIs(reopened.get_task(task_id).status, PersistentTaskStatus.FAILED)
 
+    def test_reanalysis_failure_settles_the_reused_items_task(self) -> None:
+        """A failed re-analysis of a ready source ends its own Task honestly.
+
+        A source needing no business decision waits for the operator's exact
+        initial confirmation.  When the operator re-runs the analysis and the
+        upstream Provider fails, that failure belongs to the source's *existing*
+        item: the item, the Task, the counters and the run API must record the
+        factual failure and settle, instead of leaving the item forever at
+        waiting_confirm and the Task forever Running with no problem and no
+        machine work.
+        """
+
+        class Unavailable(SyntheticMetadataProvider):
+            unavailable = False
+
+            def search_movie(self, *args, **kwargs):
+                if self.unavailable:
+                    raise TimeoutError("synthetic upstream timeout on explicit re-analysis")
+                return super().search_movie(*args, **kwargs)
+
+        self.media("Movies/One.2001.mkv")
+        provider = Unavailable(
+            (
+                MediaCandidate(
+                    "tmdb", "201", MediaType.MOVIE, "One", year=2001, genres=("Animation",)
+                ),
+            )
+        )
+        with self.journey(provider=provider, task_scheduling=True, attachments=True) as value:
+            status, admitted = self._admit(value, ["Movies/One.2001.mkv"])
+            self.assertEqual(202, status, admitted)
+            task_id = admitted["organizeTaskId"]
+            discovery = self._drive(value, task_id)
+            item = value.repository.list_items(task_id)[0]
+            self.assertIs(item.status, TaskItemStatus.WAITING_CONFIRM)
+            self.assertIs(value.repository.get_task(task_id).status, PersistentTaskStatus.RUNNING)
+
+            provider.unavailable = True
+            fresh = self._analyze(value, task_id, discovery)
+            self.assertEqual(["failed"], [entry["status"] for entry in fresh["items"]])
+            self.assertEqual([], value.source.mutations)
+            self.assertEqual([], value.target.mutations)
+
+            stored = value.repository.get_item(item.item_id)
+            self.assertIs(stored.status, TaskItemStatus.FAILED)
+            self.assertEqual("analysis_failed", stored.stage)
+            self.assertIn("synthetic upstream timeout", stored.error or "")
+            task = value.repository.get_task(task_id)
+            self.assertIs(task.status, PersistentTaskStatus.FAILED, task.error)
+            self.assertEqual((1, 0, 1), (task.total_items, task.completed_items, task.failed_items))
+            state = value.repository.get_task_scheduling(task_id)
+            self.assertIs(state.queue_state, TaskQueueState.SETTLED)
+            self.assertFalse(state.holds_capacity)
+            self.assertEqual(0, value.repository.count_scheduled_capacity_use())
+            counts, run_counts = self._task_api_counts(value, task_id)
+            self.assertEqual((1, 0, 1), counts)
+            self.assertEqual((1, 0, 1), run_counts)
+            status, run = self.request(value, f"/api/v1/operations/runs/{task_id}")
+            self.assertEqual(200, status, run)
+            self.assertTrue(run["lifecycle"]["terminal"])
+            self.assertEqual("failed", run["status"])
+            self.assertEqual((), value.repository.list_results(task_id))
+            self.assertEqual((), value.repository.list_jobs(limit=10))
+            # Idle Worker passes never change the settled factual end.
+            for _ in range(5):
+                value.task_engine.run_next()
+            self.assertIs(value.repository.get_task(task_id).status, PersistentTaskStatus.FAILED)
+            with SQLiteTaskRepository(self.database) as reopened:
+                self.assertIs(reopened.get_task(task_id).status, PersistentTaskStatus.FAILED)
+                self.assertIs(reopened.get_item(item.item_id).status, TaskItemStatus.FAILED)
+                self.assertIs(
+                    reopened.get_task_scheduling(task_id).queue_state, TaskQueueState.SETTLED
+                )
+
+    def test_reanalysis_failure_preserves_a_successful_sibling(self) -> None:
+        """A source failure never rewrites or replays a finished sibling.
+
+        One of two ready sources is explicitly confirmed and organized, so it
+        owns a Result and a settled item.  The remaining source then fails on a
+        fresh analysis.  That source must record its own failure on the same
+        Task while the successful sibling keeps its item, Result and effect; the
+        Task ends PartialSuccess and never replays the finished source.
+        """
+
+        class Unavailable(SyntheticMetadataProvider):
+            unavailable = False
+
+            def search_movie(self, *args, **kwargs):
+                if self.unavailable:
+                    raise TimeoutError("synthetic upstream timeout on explicit re-analysis")
+                return super().search_movie(*args, **kwargs)
+
+        self.media("Movies/One.2001.mkv")
+        self.media("Movies/Two.2002.mkv")
+        provider = Unavailable(
+            (
+                MediaCandidate(
+                    "tmdb", "201", MediaType.MOVIE, "One", year=2001, genres=("Animation",)
+                ),
+                MediaCandidate(
+                    "tmdb", "202", MediaType.MOVIE, "Two", year=2002, genres=("Animation",)
+                ),
+            )
+        )
+        with self.journey(provider=provider, task_scheduling=True, attachments=True) as value:
+            status, admitted = self._admit(value, ["Movies/One.2001.mkv", "Movies/Two.2002.mkv"])
+            self.assertEqual(202, status, admitted)
+            task_id = admitted["organizeTaskId"]
+            discovery = self._drive(value, task_id)
+            items = {item.source_path: item for item in value.repository.list_items(task_id)}
+            self.assertEqual(2, len(items))
+            status, preview = self.request(
+                value, f"/api/v1/operations/organize/previews/{discovery.preview_id}"
+            )
+            self.assertEqual(200, status, preview)
+            first = next(
+                entry["itemId"]
+                for entry in preview["items"]
+                if entry["source"]["path"] == "Movies/One.2001.mkv"
+            )
+            task = self._execute(value, task_id, preview, [first])
+            self.assertIs(task.status, PersistentTaskStatus.RUNNING, task.error)
+            self.assertEqual((2, 1, 0), (task.total_items, task.completed_items, task.failed_items))
+            self.assertEqual(1, len(value.repository.list_results(task_id)))
+            first_result = value.repository.list_results(task_id)[0]
+            self.assertIs(
+                value.repository.get_item(items["Movies/One.2001.mkv"].item_id).status,
+                TaskItemStatus.SUCCESS,
+            )
+            self.assertFalse((self.source_root / "Movies/One.2001.mkv").exists())
+
+            provider.unavailable = True
+            fresh = self._analyze(value, task_id, discovery)
+            self.assertEqual(
+                ["Movies/Two.2002.mkv"],
+                [entry["source"]["path"] for entry in fresh["items"]],
+            )
+            self.assertEqual(["failed"], [entry["status"] for entry in fresh["items"]])
+
+            self.assertIs(
+                value.repository.get_item(items["Movies/Two.2002.mkv"].item_id).status,
+                TaskItemStatus.FAILED,
+            )
+            self.assertIs(
+                value.repository.get_item(items["Movies/One.2001.mkv"].item_id).status,
+                TaskItemStatus.SUCCESS,
+            )
+            task = value.repository.get_task(task_id)
+            self.assertIs(task.status, PersistentTaskStatus.PARTIAL_SUCCESS, task.error)
+            self.assertEqual((2, 1, 1), (task.total_items, task.completed_items, task.failed_items))
+            self.assertIs(
+                value.repository.get_task_scheduling(task_id).queue_state,
+                TaskQueueState.SETTLED,
+            )
+            self.assertEqual(0, value.repository.count_scheduled_capacity_use())
+            counts, run_counts = self._task_api_counts(value, task_id)
+            self.assertEqual((2, 1, 1), counts)
+            self.assertEqual((2, 1, 1), run_counts)
+            results = value.repository.list_results(task_id)
+            self.assertEqual(1, len(results), results)
+            self.assertEqual(first_result.result_id, results[0].result_id)
+            self.assertEqual("Movies/One.2001.mkv", results[0].source_path)
+            self.assertFalse((self.source_root / "Movies/One.2001.mkv").exists())
+            self.assertTrue((self.source_root / "Movies/Two.2002.mkv").exists())
+            self.assertEqual((), value.repository.list_jobs(limit=10))
+            with SQLiteTaskRepository(self.database) as reopened:
+                self.assertIs(
+                    reopened.get_task(task_id).status, PersistentTaskStatus.PARTIAL_SUCCESS
+                )
+                self.assertEqual(1, len(reopened.list_results(task_id)))
+                self.assertIs(
+                    reopened.get_item(items["Movies/Two.2002.mkv"].item_id).status,
+                    TaskItemStatus.FAILED,
+                )
+
+    def test_reanalysis_failure_keeps_an_undecided_sibling_waiting(self) -> None:
+        """A failed re-analysis never ends another source's pending decision.
+
+        Two sources await their own RecognitionType.  The operator decides only
+        the first, and the upstream Provider then fails while re-analyzing it.
+        The decided source records its own factual failure on its existing item,
+        while the still-undecided sibling keeps its pending review, waiting item
+        and untouched source on the same Task instead of being settled
+        prematurely.
+        """
+
+        class Unavailable(SyntheticMetadataProvider):
+            unavailable = False
+
+            def search_movie(self, *args, **kwargs):
+                if self.unavailable:
+                    raise TimeoutError("synthetic upstream timeout on explicit re-analysis")
+                return super().search_movie(*args, **kwargs)
+
+        for name in ("One.2001.mkv", "Two.2002.mkv"):
+            self.media(f"Movies/{name}")
+        provider = Unavailable(
+            tuple(
+                MediaCandidate(
+                    "tmdb",
+                    str(201 + index),
+                    MediaType.MOVIE,
+                    title,
+                    year=2001 + index,
+                    genres=("Animation",),
+                    countries=("JP",),
+                )
+                for index, title in enumerate(("One", "Two"))
+            )
+        )
+        with self.journey(provider=provider, task_scheduling=True) as value:
+            status, admitted = self._admit(value, ["Movies/One.2001.mkv", "Movies/Two.2002.mkv"])
+            self.assertEqual(202, status, admitted)
+            task_id = admitted["organizeTaskId"]
+            discovery = self._drive(value, task_id)
+            items = {item.source_path: item for item in value.repository.list_items(task_id)}
+            first = items["Movies/One.2001.mkv"]
+            second = items["Movies/Two.2002.mkv"]
+            self.assertIs(first.status, TaskItemStatus.WAITING_RECOGNITION)
+            self.assertIs(second.status, TaskItemStatus.WAITING_RECOGNITION)
+
+            self._decide_recognition(value, task_id, first)
+            provider.unavailable = True
+            fresh = self._analyze(value, task_id, discovery)
+
+            statuses = {entry["source"]["path"]: entry["status"] for entry in fresh["items"]}
+            self.assertEqual("failed", statuses["Movies/One.2001.mkv"])
+            self.assertIn(statuses["Movies/Two.2002.mkv"], {"blocked", "unavailable"})
+            self.assertIs(value.repository.get_item(first.item_id).status, TaskItemStatus.FAILED)
+            self.assertIs(
+                value.repository.get_item(second.item_id).status,
+                TaskItemStatus.WAITING_RECOGNITION,
+            )
+            pending = value.repository.get_recognition_review_for_item(second.item_id)
+            self.assertIsNotNone(pending)
+            self.assertEqual("pending", pending.status.value)
+            task = value.repository.get_task(task_id)
+            self.assertIs(task.status, PersistentTaskStatus.RUNNING, task.error)
+            state = value.repository.get_task_scheduling(task_id)
+            self.assertIs(state.queue_state, TaskQueueState.WAITING_HUMAN)
+            self.assertEqual(0, value.repository.count_scheduled_capacity_use())
+            self.assertEqual([], value.source.mutations)
+            self.assertEqual([], value.target.mutations)
+            self.assertEqual((), value.repository.list_results(task_id))
+            self.assertEqual((), value.repository.list_jobs(limit=10))
+
     def test_ignore_keeps_the_task_waiting_while_a_sibling_is_undecided(self) -> None:
         """A still-undecided sibling is never settled prematurely by an ignore.
 
