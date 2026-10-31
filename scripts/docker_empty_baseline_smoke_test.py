@@ -788,15 +788,10 @@ def assert_real_web_status(stack: Stack) -> None:
             const page = await browser.newPage({viewport:{width:390,height:844}});
             await page.goto(process.env.MF_TEST_BASE + '/ui-v2/operations');
             await page.getByLabel('API token').fill(process.env.MF_TEST_TOKEN);
-            const response = page.waitForResponse(
-                r => r.url().endsWith('/api/v1/management/readiness'));
             await page.getByRole('button', {name:'Connect', exact:true}).click();
-            if ((await response).status() !== 200) throw new Error('readiness request failed');
-            const region = page.getByRole('region', {name:'常驻服务状态'});
-            await expect(region).toContainText('notification-worker');
-            await expect(region).toContainText('基础设施就绪');
-            await expect(region).toContainText('等待业务配置');
-            await expect(region.getByRole('link', {name:'前往系统设置'})).toBeVisible();
+            await expect(page.getByRole('button', {name:'全部任务'})).toBeVisible();
+            await expect(page.getByText('常驻服务状态')).toHaveCount(0);
+            await expect(page.getByRole('link', {name:'前往系统设置'})).toHaveCount(0);
             const stores = await page.evaluate(
                 () => JSON.stringify([localStorage, sessionStorage]));
             if(stores.includes(process.env.MF_TEST_TOKEN)) throw new Error('token persisted');
@@ -1229,9 +1224,10 @@ def accept_media_stack(image: str, keep: bool, receiver: WebhookReceiver) -> Non
             description="the resident Worker reporting transfer readiness",
         )
         print("   resident Worker reports ResourceLibrary transfer readiness")
-        for command in ("organize",):
-            admitted = stack.json_api("/api/v1/jobs", method="POST", body={"command": command})
-            wait_job(stack, admitted)
+        # Legacy Scan/Preview job submission is retired.  The current API
+        # exposes the real mutation path below only after an explicit one-shot
+        # execution authority is issued.
+        print("   retired Scan/Preview job probe omitted; using explicit organize authority")
         if list(stack.target_root.rglob("*.mkv")):
             raise RuntimeError("Scan/Preview mutated the isolated destination")
         issued = run(

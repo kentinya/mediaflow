@@ -316,7 +316,7 @@ for (const technicalSibling of [false, true]) {
     expect(afterAnalysis.handling.resolvedItems).toBe(0);
     expect(afterAnalysis.handling.state).not.toBe("resolved");
     await page.request.post("/__harness__/register-manual-worker");
-    await recovery.getByRole("button", { name: "Refresh" }).click();
+    await recovery.getByRole("button", { name: "刷新" }).click();
     const prepared = page.waitForResponse(
       (response) =>
         response.request().method() === "POST" &&
