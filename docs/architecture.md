@@ -10,6 +10,15 @@ Detailed former delivery notes remain at `865ebdce47b0b323064fd8e05fbfaa54546e62
 
 ## TARGET — Unified Task scheduling and organizing execution (Slice47 ACTIVE)
 
+**2026-10-31 user amendment:** Organizing has no Pause or resume-from-pause capability across
+manual/due/Run once/API/CLI. This supersedes organizing pause/resume wording in CURRENT and TARGET
+sections (including REQ-TASK-004 / V2-OPS-007); accepted historical facts stay in Git. Cancellation
+remains cooperative. Four-type decision/analysis/summary/explicit continuation, human/stability
+waiting, safety fences and uncertain-effect non-replay remain. Historical paused work keeps its
+identity/pin/effects/results, is never automatically resumed or relabelled, and exposes only proven
+safe cancellation/inspection with retirement guidance. Ordinary-file Pause/Resume is unchanged.
+Implementation and final acceptance remain pending under Slice47 AC-19 / V2-TASK-007.
+
 `V2-TASK-001–006` and committed [Slice47](../SLICE.md) select removal of the independent Job system.
 This section is the authorized target; the CURRENT Job/Task contracts below describe the accepted
 Base until implementation/final review. Slice46's Contract/A review remains at
@@ -41,13 +50,13 @@ child Task identities/relations remain traceable historical evidence.
 
 Task owns atomic bounded admission, ready/queued eligibility, current Worker claim generation,
 heartbeat/staleness and cooperative controls. Every item/result/aggregate publication observes the
-same effective fence. Source ownership spans human waiting/paused work; an execution lease is not
-its substitute. Waiting or paused work does not busy-loop in claim selection. Shared capacity counts
+same effective fence. Source ownership spans human waiting work; an execution lease is not
+its substitute. Human-waiting work does not busy-loop in claim selection. Shared capacity counts
 distinct Tasks with pending machine work or a running Worker stage once, including discovery,
-analysis, execution and machine-timed stability waiting. Wholly human-waiting/acknowledged-paused
-Tasks with no queued/claimed machine work use zero slots. Pause/cancel requests keep the slot until
+analysis, execution and machine-timed stability waiting. Wholly human-waiting
+Tasks with no queued/claimed machine work use zero slots. Cancellation requests keep the slot until
 active work/calls reach the acknowledged safe boundary. Re-entry and authority consumption share
-the capacity transaction: full capacity preserves the existing waiting/paused Task and choices/
+the capacity transaction: full capacity preserves the existing waiting Task and choices/
 summary/results without consuming authority or registering automatic continuation. A full due tick
 keeps occurrence/due state unchanged; an exact admitted duplicate reconciles without another slot.
 Decision Save is non-queued and needs no slot. Slot release changes neither source ownership nor

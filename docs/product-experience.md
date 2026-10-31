@@ -21,6 +21,15 @@ progress and four business recovery types; Automation owns saved-definition sche
 
 ## TARGET — One organizing Task across triggers and recovery (Slice47 ACTIVE)
 
+**2026-10-31 user amendment:** Organizing has no Pause or resume-from-pause capability across
+manual/due/Run once/API/CLI. This supersedes organizing pause/resume wording in CURRENT and TARGET
+sections (including REQ-TASK-004 / V2-OPS-007); accepted historical facts stay in Git. Cancellation
+remains cooperative. Four-type decision/analysis/summary/explicit continuation, human/stability
+waiting, safety fences and uncertain-effect non-replay remain. Historical paused work keeps its
+identity/pin/effects/results, is never automatically resumed or relabelled, and exposes only proven
+safe cancellation/inspection with retirement guidance. Ordinary-file Pause/Resume is unchanged.
+Implementation and final acceptance remain pending under Slice47 AC-19 / V2-TASK-007.
+
 The user-authorized `V2-TASK-001–006` refactor is selected by [Slice47](../SLICE.md), not yet
 delivered. The CURRENT journeys below stay the accepted baseline; this target preserves their
 entries, authority, bounded scope, failure/recovery and original execution-record semantics while
@@ -49,12 +58,12 @@ replacing Job/Task handoffs with one Task identity.
   Save/analysis never executes media. Technical failures remain factual All/Ended history under
   the existing V2 restriction; uncertain effects remain inspection-only. No fifth flow, generic
   retry promise, successful-sibling replay or implicit authority refresh is introduced.
-- **Controls:** permitted pause/cancel/continue remain cooperative and backend-authoritative.
+- **Controls:** cancellation and four-type continuation remain cooperative and backend-authoritative.
   A request is distinct from its acknowledgement and cannot interrupt an in-flight call or undo
-  completed effects. A Task wholly waiting for a human or safely paused uses no queue slot when no
-  machine work remains; it keeps identity/source ownership without being repeatedly claimed. A pause
+  completed effects. A Task wholly waiting for a human uses no queue slot when no
+  machine work remains; it keeps identity/source ownership without being repeatedly claimed. A cancellation
   request still in progress keeps its slot until the active call/work reaches a safe boundary. When
-  continuation/confirmation is refused because the queue is full, the Task stays waiting/paused with
+  continuation/confirmation is refused because the queue is full, the Task stays waiting with
   choices/summary/results retained and no authority consumed. It explains the refusal; the operator
   can explicitly retry later with normal checks. Saving a decision needs no queue slot. Worker
   unavailability has truthful task-local readiness; no global monitoring block returns.

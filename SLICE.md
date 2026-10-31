@@ -11,7 +11,7 @@ Working Branch: main
 Development Authorization: USER-REQUESTED REFACTOR; A SCOPE AUTHORITY — 2026-10-30
 Risk: High
 Final Test Level: T4
-Next Action: B PLANS THE FIRST COHERENT TASK
+Next Action: B ADJUSTS TASK47.2 TO THE USER-AUTHORIZED ORGANIZING PAUSE RETIREMENT
 ```
 
 ## Authority and accepted baseline
@@ -38,9 +38,31 @@ integration only as required below; it does not reopen or rewrite earlier accept
 - 删除冗余 Job 代码、数据库结构和接口，保留现有功能、数据、安全机制及执行记录。
 - 先分析依赖，再实施迁移和重构，完成适用测试；不创建第二套执行或恢复系统。
 
+## User-authorized scope amendment — 2026-10-31
+
+The user explicitly removed organizing Pause and resume-from-pause. This scope action uses the
+previously granted A scope authority; the same agent also acts as B, which is disclosed here.
+This is a Contract amendment, not implementation, Task PASS or A Final Review. Original Slice Base
+and accepted history stay unchanged. No A Final Review of this Slice is performed by this agent.
+
+Manual, scheduled, Run once and supported API/CLI organizing expose cancellation, not Pause or
+resume-from-pause. Retire their Web/API/CLI actions and dedicated live branches; a hidden button
+alone is insufficient. Shared control routes still serve ordinary-file Tasks, but reject organizing
+pause/resume with bounded no-effect guidance. Four-type decision → analysis → summary → explicit
+continuation remains required and is not resume-from-pause. Human waiting, timed stability waiting,
+claim/fence safety stops and uncertain-effect inspection remain intact.
+
+Preserve historical paused rows, IDs, pins, Results and known/uncertain effects. They are not
+silently deleted, relabelled Failed/Cancelled or reset to Pending. Show the retired capability and
+only offer a backend-proven safe cancellation/inspection action; no automatic resume or new effect
+authority. Cancellation stops unperformed work at a safe boundary without undoing completed effects.
+Ordinary-file Copy/Move and other existing non-organizing controls remain unchanged.
+This amendment supersedes organizing Pause/resume obligations in REQ-TASK-004, V2-OPS-007 and the
+CURRENT/TARGET prose; it does not weaken RBAC, source ownership, data preservation or non-replay.
+
 ## Requirements and journeys
 
-- Authorized TARGET amendment `V2-TASK-001–006` in [V2 Requirements](docs/v2-requirements.md).
+- Authorized TARGET amendment `V2-TASK-001–007` in [V2 Requirements](docs/v2-requirements.md).
   It supersedes the V2 Job-object requirement in `REQ-TASK-008`, Job-emitting `REQ-SCHED-003`,
   Job-specific queue/readiness wording and Job/Task merging in the affected V2 Operations/Automation
   contracts. Frozen V1 meaning and accepted historical facts remain in Git/current baseline sections.
@@ -87,7 +109,7 @@ continuing that work must not mint a Job or a new top-level organizing Task. A d
 new organizing request remains new work, with existing source-ownership and non-replay checks.
 
 Task owns bounded queue eligibility/admission, Worker claim ownership, heartbeat/staleness,
-cooperative pause/cancel/continue and fenced publication. Keep lifecycle, processing stage and
+cooperative cancellation, four-type continuation and fenced publication. Keep lifecycle, processing stage and
 per-item outcome explicit and consistent; do not introduce a separately managed queue object with
 its own competing lifecycle. Internal per-attempt/decision/plan evidence may remain within the Task;
 it is not another operator work or scheduler. Existing safe evidence/authority records are not
@@ -101,15 +123,15 @@ Machine-timed stability waiting remains queued work. The counting boundary is:
 | Situation | Capacity use |
 |---|---|
 | Pending machine work or an active Worker stage, including a Task with other human-blocked items | One slot for the Task |
-| Entire Task waiting for a human decision/initial confirmation, or safely acknowledged as paused, with no remaining queued/claimed machine work | Zero slots; retain Task/source ownership and all evidence |
-| Pause/cancel requested while work or an in-flight call is still active | Keep its slot until the safe boundary is acknowledged and no admitted machine work remains |
+| Entire Task waiting for a human decision/initial confirmation, with no remaining queued/claimed machine work | Zero slots; retain Task/source ownership and all evidence |
+| Cancellation requested while work or an in-flight call is still active | Keep its slot until the safe boundary is acknowledged and no admitted machine work remains |
 | Terminal work with no active/queued machine work | Zero slots; retain results and any uncertainty/non-replay protection |
 
-New admission and every transition from non-queued waiting/paused work back to machine work check
+New admission and every transition from non-queued waiting work back to machine work check
 capacity atomically with queue eligibility and applicable authority consumption. Full capacity refuses
 new manual/Run once work without an orphan Task or consumed authority; a due occurrence remains due,
 without occurrence creation/due advance, for a normal later Scheduler tick. A refused confirmation,
-analysis continuation or resume of an existing Task preserves its waiting/paused state, saved choices,
+analysis continuation of an existing Task preserves its waiting state, saved choices,
 summary and results, publishes a bounded queue-full answer and consumes no execution authority.
 The operator can explicitly retry that command when capacity is available, with normal freshness/
 authority checks; refusal does not register an automatic continuation. Decision Save alone needs no
@@ -162,7 +184,7 @@ duplicate source ownership/effects. An ID change cannot widen scope, substitute 
 grant authority. No new mapping/recovery subsystem is required. Pre-upgrade child Task identities
 remain traceable historical evidence rather than being destroyed or silently merged.
 
-Continuation after pause/restart/claim loss is conditional on the existing supported control/recovery
+Continuation after restart/claim loss is conditional on the existing supported control/recovery
 boundary and durable proof that the remaining stage/step is safe to run, plus the normal pin/source/
 authority/fence rechecks. If a Storage mutation was dispatched but its outcome was not durably proved,
 retain the affected step as uncertain, prevent replay and preserve factual inspection evidence.
@@ -250,13 +272,13 @@ RecognitionType C remains C with NamingPolicy A and ClassificationPolicy A. No F
 | ID | Required proof |
 |---|---|
 | AC-1 | Manual file/folder/mixed submission, due occurrence and Run once each admit exactly one stable organizing Task before business readiness and preserve source scope/limits/pins and exact request readback. |
-| AC-2 | Manual/due/Run once and permitted continuation share one distinct-Task bound under concurrency; simultaneous Scheduler ticks admit one Task per occurrence with atomic due advance. Prove one slot across multiple items/attempts, zero for wholly human-waiting/acknowledged-paused work, one while other machine work or an unacknowledged active call remains, and atomic re-entry. Full capacity preserves existing waiting/paused work and saved choices/results without authority consumption or automatic continuation; new admission has no orphan, an existing duplicate still reconciles, and a refused due tick leaves its occurrence/due state unchanged. |
-| AC-3 | Concurrent Workers claim at most one effective owner; stale-owner heartbeats/item/result/aggregate writes and controls cannot defeat current ownership. Capacity release follows the documented safe boundary; human wait/pause is not busy-loop claimed or used to release source ownership. Readiness is Task-based and read-only. |
+| AC-2 | Manual/due/Run once and permitted continuation share one distinct-Task bound under concurrency; simultaneous Scheduler ticks admit one Task per occurrence with atomic due advance. Prove one slot across multiple items/attempts, zero for wholly human-waiting work, one while other machine work or an unacknowledged active call remains, and atomic re-entry. Full capacity preserves existing waiting work and saved choices/results without authority consumption or automatic continuation; new admission has no orphan, an existing duplicate still reconciles, and a refused due tick leaves its occurrence/due state unchanged. |
+| AC-3 | Concurrent Workers claim at most one effective owner; stale-owner heartbeats/item/result/aggregate writes and controls cannot defeat current ownership. Capacity release follows the documented safe boundary; human waiting is not busy-loop claimed or used to release source ownership. Readiness is Task-based and read-only. |
 | AC-4 | All organizing entrances use the shared application engine and production pipeline/Executor; no Job queue, CLI-output Task extraction or second engine remains. |
 | AC-5 | Files manual exact summary/selected confirmation, scheduled enable intent and disabled Run once follow existing distinct authority semantics; denied/stale/unknown requests, disable/remove/permission-loss races fail safely. |
 | AC-6 | Filtering, primary/attachment identity, configured limits, complete bounds and real stability are preserved; ready/unstable/empty/unreadable/overflow outcomes remain distinct, with no first-N execution or fabricated success. |
 | AC-7 | Four business decision → analysis → exact summary → selected continuation journeys finish inside the same newly admitted Task after refresh/restart. Assert exact per-file source/version/pin and durable item/attempt/result lineage, accurate counts and supported links, rather than mandatory equality of internal TaskItem IDs. Mixed batches keep independent accepted/refused results and no fifth recovery type. |
-| AC-8 | At supported pause/resume/cancel/restart/claim-loss boundaries, prove safe remaining stages can continue only with durable safety evidence and normal authority/fence checks. Inject interruption before mutation dispatch and after dispatch before durable outcome proof: the latter remains uncertain and cannot replay, even after timeout/lease expiry/restart. Preserve completed/ignored siblings, pins and consumed authority; technical history stays read-only in V2. Do not require seamless automatic continuation at every crash point or add a new recovery path. |
+| AC-8 | At supported cancel/restart/claim-loss and four-type continuation boundaries, prove safe remaining stages can continue only with durable safety evidence and normal authority/fence checks. Inject interruption before mutation dispatch and after dispatch before durable outcome proof: the latter remains uncertain and cannot replay, even after timeout/lease expiry/restart. Preserve completed/ignored siblings, pins and consumed authority; technical history stays read-only in V2. Do not require seamless automatic continuation at every crash point or add a new recovery path. |
 | AC-9 | Genuine Base schema53 fixtures migrate/reopen with linked/unlinked Jobs, every supported status, pre-start failures, old continuation chains, request/due uniqueness, consumed/revoked authority and exact audit/log/attachment/result identity intact. Residual unknown/retired Job rows survive as non-executable history with their original meaning. |
 | AC-10 | Failure injection proves migration rollback, unchanged prior authority/schema marker and safe repeat/reopen; quiescence/schema/fence checks reject incompatible writers and never restart entered uncertain work automatically. |
 | AC-11 | Fresh and upgraded databases have no live Job table/index/FK/queue; source/wheel/container expose no redundant Job domain/repository/dispatch/API/CLI/Web path. Provenance/parser exceptions are bounded/read-only, not a compatibility executor. |
@@ -267,6 +289,7 @@ RecognitionType C remains C with NamingPolicy A and ClassificationPolicy A. No F
 | AC-16 | RBAC, source ownership/confinement, zero-mutation reads/analysis, C→A identity, explicit destructive permission, immutable pins, attachments and completed/uncertain non-replay pass automated coverage. |
 | AC-17 | Real Python/API/SQLite/Worker/Scheduler browser journeys using built assets, desktop/narrow inspection, installed wheel and Docker fresh/restart/upgrade/security gates establish the same Task lifecycle and preserved records. |
 | AC-18 | B supplies applicable full T4 results and exact Base..Head evidence; unavailable gates remain pending/disclosed. A independently reviews the whole Slice before PASS / CLOSED and CURRENT reconciliation. |
+| AC-19 | Organizing exposes no Pause/resume-from-pause in Web/API/CLI or live dedicated dispatch. Old requests are refused without effects; historical paused work retains exact evidence and safe cancellation/inspection. Ordinary-file Pause/Resume and four-type organizing continuation still work. |
 
 ## Validation and handoff
 

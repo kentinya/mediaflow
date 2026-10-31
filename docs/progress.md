@@ -11,9 +11,8 @@ workflow authority. Closure rules live only in
 Slice47 — **Unified Task Scheduling and Organizing Execution** — is **ACTIVE**, selected by A
 under explicit user authorization on 2026-10-30. Immutable Base:
 `5144ab1fc2344b06194969cc2c496835729664c0`; Implementation Head: **NOT SET**.
-[SLICE.md](../SLICE.md) owns outcomes/acceptance; `V2-TASK-001–006` and journey/architecture TARGET
-sections describe required work, not accepted delivery. [TASK.md](../TASK.md) has no active
-implementation Task. Next: **B PLANS THE FIRST COHERENT TASK** against the committed Contract.
+[SLICE.md](../SLICE.md) owns outcomes/acceptance; `V2-TASK-001–007` and journey/architecture TARGET
+sections describe required work, not accepted delivery. [TASK.md](../TASK.md) retains Task47.2 in FIX REQUIRED. Next: **B ADJUSTS TASK47.2 TO ORGANIZING PAUSE RETIREMENT** against the committed Contract.
 No Slice47 closure or implementation is recorded by this scope action.
 
 The latest large-Slice acceptance remains Slice46, **PASS / CLOSED** by A on 2026-10-29, with
