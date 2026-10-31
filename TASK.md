@@ -270,9 +270,10 @@ self-approved PASS and does not close Task47.3 or Slice47.
 ### Candidate identity
 
 - Repository `/Users/songzhidong/mediaflow`, branch `main`.
-- Task Base `dfcfebbdb9c879b38806e29c7b41c9192aeca83e`; candidate full SHA recorded by the handoff
-  commit (see below). Base was not repinned; intervening `TASK.md`/`SLICE.md` doc commits were not
-  silently included in scope.
+- Task Base `dfcfebbdb9c879b38806e29c7b41c9192aeca83e`; candidate implementation
+  `2ae1b1bf48be179d447a21aa421817931299ccb4` (this report's follow-up doc commit records it; the
+  code/tests checkpoint is that SHA). Base was not repinned; intervening `TASK.md`/`SLICE.md` doc
+  commits were not silently included in scope.
 - Pre-existing untracked OS logs, `15`, reference PNGs and the imagegen ZIP were left untouched and
   unstaged. No push, deployment or self-approval performed.
 
