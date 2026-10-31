@@ -27,14 +27,14 @@ description of the pre-refactor implementation until Slice47 passes final review
 
 ## Unified Task scheduling and organizing — TARGET (Slice47 ACTIVE)
 
-**2026-10-31 user amendment:** Organizing has no Pause or resume-from-pause capability across
-manual/due/Run once/API/CLI. This supersedes organizing pause/resume wording in CURRENT and TARGET
-sections (including REQ-TASK-004 / V2-OPS-007); accepted historical facts stay in Git. Cancellation
-remains cooperative. Four-type decision/analysis/summary/explicit continuation, human/stability
-waiting, safety fences and uncertain-effect non-replay remain. Historical paused work keeps its
-identity/pin/effects/results, is never automatically resumed or relabelled, and exposes only proven
-safe cancellation/inspection with retirement guidance. Ordinary-file Pause/Resume is unchanged.
-Implementation and final acceptance remain pending under Slice47 AC-19 / V2-TASK-007.
+**2026-10-31 user amendment:** Organizing AND ordinary-file operations (including Copy/Move)
+retire Pause and resume-from-pause across Web/API/CLI and live dedicated dispatch. This supersedes
+REQ-TASK-004 / V2-OPS-007 and affected CURRENT/TARGET pause requirements. Cancellation remains
+cooperative and preserves completed/uncertain effects. Four-type organizing decision/analysis/
+summary/explicit continuation, human/stability waiting and fences remain. The user confirms no
+currently paused organizing Tasks: do not build a pause migration, restoration or compatibility
+executor. Existing history stays readable without deletion, false relabelling or automatic replay.
+Implementation/final acceptance remain pending under Slice47 AC-19 / V2-TASK-007.
 
 The user authorized removal of the independent Job system on 2026-10-30 and granted A scope
 authority. [Slice47](../SLICE.md) owns implementation boundaries, migration and final acceptance.
@@ -53,7 +53,7 @@ data-preservation obligations remain. Frozen V1 and prior accepted implementatio
 | V2-TASK-004 | Job removal preserves data and execution evidence through safe migration. | Versioned failure-atomic upgrade/reopen covers linked and unlinked admission/history, pre-start failure, active/interrupted work, continuations, pins, requests, occurrences, authorization consumption, audit/logs and primary/attachment effects. Use exact durable links; no guessed merge, lost row, fabricated success or implicit replay. Preserve original identifiers/provenance and immutable configurations. Residual unknown/retired Job rows remain non-executable history with original meaning; no retired product/executor is restored. Compatible service quiescence/fences prevent old/new writers from competing; partial/uncertain effects never become Pending merely because of migration. |
 | V2-TASK-005 | Operator and administrative capabilities consume Tasks without redundant Job surfaces. | Task Center keeps its eight organizing views/four-type union and consistent server paging/counts; Files keeps exact readback/confirmation and local ordinary work. Automation definitions, records/metrics/settings, Dashboard, logs/export and readiness remain complete. Original execution outcomes/times stay distinct from later handling. Remove Job collections/submission/control/stale-requeue APIs/CLI/frontend; existing capabilities use safe Task equivalents. Proven old identifiers may resolve read-only to Task/history, never execution. |
 | V2-TASK-006 | The refactor completely removes the live Job model/schema/queue while preserving execution safety. | Fresh/upgraded runtime, source, installed package and container contain no redundant Job table/index/FK/domain/repository/dispatch or parallel writer. Bounded migration provenance and legacy configuration parsing may preserve supported history/pins without retaining a Job executor. RBAC, explicit effect intent, immutable pins, source ownership/confinement, claim/lease/fences, zero-mutation analysis, C→A identity and OrganizerExecutor-only mutation remain; test real native journeys and migration/restart, not only renamed models. |
-| V2-TASK-007 | Retire organizing Pause and resume-from-pause under the explicit user scope change. | No organizing Web/API/CLI action or live dedicated pause/resume dispatch remains; shared routes refuse these organizing commands without effects. Preserve historical paused work and safe cancellation/inspection, ordinary-file controls and four-type continuation. |
+| V2-TASK-007 | Retire Pause and resume-from-pause for organizing and ordinary-file operations under the user scope change. | No Web/API/CLI action or dedicated live dispatch remains; old commands are refused without effects. Keep safe cancellation, four-type organizing continuation and readable history. No dedicated paused-organizing migration/restoration system is required. |
 
 The shared scheduling bound counts each organizing Task with pending machine work or an active
 Worker stage once, including discovery/analysis/execution and machine-timed stability waiting.

@@ -40,25 +40,26 @@ integration only as required below; it does not reopen or rewrite earlier accept
 
 ## User-authorized scope amendment — 2026-10-31
 
-The user explicitly removed organizing Pause and resume-from-pause. This scope action uses the
-previously granted A scope authority; the same agent also acts as B, which is disclosed here.
-This is a Contract amendment, not implementation, Task PASS or A Final Review. Original Slice Base
-and accepted history stay unchanged. No A Final Review of this Slice is performed by this agent.
+The user explicitly removed Pause and resume-from-pause from organizing AND ordinary-file
+operations, and confirmed there are no currently paused organizing Tasks. This scope action uses
+the previously granted A scope authority; the same agent acts as B, disclosed here. It is a Contract
+amendment, not implementation, Task PASS or A Final Review. Original Slice Base/history stay intact.
+No A Final Review of this Slice is performed by this agent.
 
-Manual, scheduled, Run once and supported API/CLI organizing expose cancellation, not Pause or
-resume-from-pause. Retire their Web/API/CLI actions and dedicated live branches; a hidden button
-alone is insufficient. Shared control routes still serve ordinary-file Tasks, but reject organizing
-pause/resume with bounded no-effect guidance. Four-type decision → analysis → summary → explicit
-continuation remains required and is not resume-from-pause. Human waiting, timed stability waiting,
-claim/fence safety stops and uncertain-effect inspection remain intact.
+Manual/due/Run once/API/CLI organizing and ordinary-file operations (including Copy/Move) expose
+cancellation, not Pause or resume-from-pause. Remove their Web/API/CLI actions, availability projections
+and dedicated live dispatch; hiding buttons alone is insufficient. Shared routes reject retired
+commands without effects; do not leave a callable back door. Cancellation stops unperformed work
+at a safe boundary without interrupting in-flight calls or undoing completed effects.
 
-Preserve historical paused rows, IDs, pins, Results and known/uncertain effects. They are not
-silently deleted, relabelled Failed/Cancelled or reset to Pending. Show the retired capability and
-only offer a backend-proven safe cancellation/inspection action; no automatic resume or new effect
-authority. Cancellation stops unperformed work at a safe boundary without undoing completed effects.
-Ordinary-file Copy/Move and other existing non-organizing controls remain unchanged.
-This amendment supersedes organizing Pause/resume obligations in REQ-TASK-004, V2-OPS-007 and the
-CURRENT/TARGET prose; it does not weaken RBAC, source ownership, data preservation or non-replay.
+Four-type decision → analysis → summary → explicit continuation remains; it is not resume-from-pause.
+Human waiting, timed stability waiting, claim/fence safety stops, independent effects/results and
+uncertain-effect inspection/non-replay remain. No new pause migration, restoration or compatibility
+executor is required given the user's confirmed absence of paused organizing work. Existing historical
+data remains readable and is never deleted, falsely relabelled or automatically replayed by retirement.
+This narrowly authorizes removal of ordinary-file Pause/Resume, not a redesign of those operations.
+It supersedes Pause/resume obligations in REQ-TASK-004, V2-OPS-007 and affected CURRENT/TARGET prose;
+all other permissions, cancellation, authority, confinement and evidence guarantees remain.
 
 ## Requirements and journeys
 
@@ -256,7 +257,8 @@ Out of scope: new providers or Storage/media commands, distributed scheduling/da
 supervision redesign, new parallelism/overlap/backfill policies, unbounded discovery, MediaLibrary
 organizing, new auth/Secret Store, wholesale UI redesign/V1 cutover, retired product restoration,
 history deletion/retention, new recovery types, automatic uncertain replay and universal rollback.
-Necessary integration in existing ordinary-file/notification consumers preserves their behavior;
+Necessary integration in existing ordinary-file/notification consumers preserves their behavior except
+for the explicitly authorized ordinary-file Pause/Resume retirement;
 it does not authorize a new global operation/recovery center or unrelated refactors.
 
 ## Safety invariants
@@ -289,7 +291,7 @@ RecognitionType C remains C with NamingPolicy A and ClassificationPolicy A. No F
 | AC-16 | RBAC, source ownership/confinement, zero-mutation reads/analysis, C→A identity, explicit destructive permission, immutable pins, attachments and completed/uncertain non-replay pass automated coverage. |
 | AC-17 | Real Python/API/SQLite/Worker/Scheduler browser journeys using built assets, desktop/narrow inspection, installed wheel and Docker fresh/restart/upgrade/security gates establish the same Task lifecycle and preserved records. |
 | AC-18 | B supplies applicable full T4 results and exact Base..Head evidence; unavailable gates remain pending/disclosed. A independently reviews the whole Slice before PASS / CLOSED and CURRENT reconciliation. |
-| AC-19 | Organizing exposes no Pause/resume-from-pause in Web/API/CLI or live dedicated dispatch. Old requests are refused without effects; historical paused work retains exact evidence and safe cancellation/inspection. Ordinary-file Pause/Resume and four-type organizing continuation still work. |
+| AC-19 | Organizing and ordinary-file operations expose no Pause/resume-from-pause in Web/API/CLI or dedicated live dispatch. Old requests are refused without effects; safe cancellation and four-type organizing continuation still work. No paused-organizing migration/restoration system is required; preserve existing readable history and non-replay. |
 
 ## Validation and handoff
 

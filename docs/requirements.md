@@ -261,9 +261,11 @@ supplies the journey-level interpretation.
 
 ## Task and recovery requirements
 
-The 2026-10-31 user-authorized V2 amendment `V2-TASK-007` retires organizing Pause and
-resume-from-pause from `REQ-TASK-004`. Cancellation, four-type continuation, historical evidence
-and non-replay remain; ordinary-file Pause/Resume and frozen V1 requirements below are unchanged.
+The 2026-10-31 user-authorized V2 amendment `V2-TASK-007` retires Pause and resume-from-pause
+for organizing and ordinary-file operations from `REQ-TASK-004`. Safe cancellation, four-type
+organizing continuation, historical evidence and non-replay remain; frozen V1 wording below records
+the prior baseline. No dedicated paused-organizing migration/restoration system is selected.
+
 
 The frozen V1 Job distinction in `REQ-TASK-008` and Job-specific readiness wording below are
 superseded for the authorized V2 TARGET by `V2-TASK-001–006`; Task/item/result durability, controls,

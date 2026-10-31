@@ -10,14 +10,14 @@ Detailed former delivery notes remain at `865ebdce47b0b323064fd8e05fbfaa54546e62
 
 ## TARGET — Unified Task scheduling and organizing execution (Slice47 ACTIVE)
 
-**2026-10-31 user amendment:** Organizing has no Pause or resume-from-pause capability across
-manual/due/Run once/API/CLI. This supersedes organizing pause/resume wording in CURRENT and TARGET
-sections (including REQ-TASK-004 / V2-OPS-007); accepted historical facts stay in Git. Cancellation
-remains cooperative. Four-type decision/analysis/summary/explicit continuation, human/stability
-waiting, safety fences and uncertain-effect non-replay remain. Historical paused work keeps its
-identity/pin/effects/results, is never automatically resumed or relabelled, and exposes only proven
-safe cancellation/inspection with retirement guidance. Ordinary-file Pause/Resume is unchanged.
-Implementation and final acceptance remain pending under Slice47 AC-19 / V2-TASK-007.
+**2026-10-31 user amendment:** Organizing AND ordinary-file operations (including Copy/Move)
+retire Pause and resume-from-pause across Web/API/CLI and live dedicated dispatch. This supersedes
+REQ-TASK-004 / V2-OPS-007 and affected CURRENT/TARGET pause requirements. Cancellation remains
+cooperative and preserves completed/uncertain effects. Four-type organizing decision/analysis/
+summary/explicit continuation, human/stability waiting and fences remain. The user confirms no
+currently paused organizing Tasks: do not build a pause migration, restoration or compatibility
+executor. Existing history stays readable without deletion, false relabelling or automatic replay.
+Implementation/final acceptance remain pending under Slice47 AC-19 / V2-TASK-007.
 
 `V2-TASK-001–006` and committed [Slice47](../SLICE.md) select removal of the independent Job system.
 This section is the authorized target; the CURRENT Job/Task contracts below describe the accepted
