@@ -18,6 +18,7 @@ from dataclasses import replace
 from datetime import UTC, datetime, timedelta
 from pathlib import Path
 from typing import TextIO
+from uuid import uuid4
 from zoneinfo import ZoneInfo
 
 from mediaflow.application.automation import (
@@ -66,7 +67,7 @@ from mediaflow.application.scope_continuation import (
 from mediaflow.application.storage_browser import StorageBrowserError
 from mediaflow.application.strategy_test import strategy_runner_from_configuration
 from mediaflow.application.task_retry import TaskRetryRequestService
-from mediaflow.application.task_runtime import PersistentTaskCoordinator
+from mediaflow.application.task_runtime import KernelTaskCoordinator, PersistentTaskCoordinator
 from mediaflow.application.unattended_execution import UnattendedExecutionGrantService
 from mediaflow.cli import render_strategy_result
 from mediaflow.domain.automation import (
@@ -106,7 +107,10 @@ from mediaflow.domain.task_persistence import (
     PersistentTaskStatus,
     TaskItemStatus,
     direct_command_task_command,
+    task_item_counts,
+    task_work_status,
 )
+from mediaflow.domain.task_scheduling import TaskControl
 from mediaflow.infrastructure.json_history import JsonLinesOperationHistoryRepository
 from mediaflow.infrastructure.metadata_provider_bootstrap import (
     LazyMetadataProviderRegistryFactory,
@@ -1198,6 +1202,7 @@ def final_main(
                 else None
             )
             coordinator = PersistentTaskCoordinator(repository, repository)
+            kernel_context = None
             retry_items: tuple[PersistentTaskItem, ...] | None = None
             if arguments.command == "tasks":
                 original = coordinator.require(arguments.task_id)
@@ -1226,17 +1231,50 @@ def final_main(
                 )
             else:
                 execute = arguments.command == "organize" and arguments.execute
-                task = coordinator.create(
-                    arguments.command,
-                    execute_authorized=execute,
-                    scope_path=arguments.path,
-                    item_limit=arguments.limit,
-                    configuration_snapshot_id=configuration.configuration_snapshot_id,
-                    configuration_snapshot_digest=configuration.configuration_snapshot_digest,
-                    require_configuration_snapshot=(
-                        configuration.configuration_authority == "MANAGED"
-                    ),
-                )
+                kernel_context = None
+                if execute:
+                    # RO-2: a direct CLI organize execution is the same shared
+                    # Task work every other entrance runs.  The Task is admitted
+                    # through the scheduling kernel — capacity, pin, claim fence
+                    # and results included — and this process drives its own
+                    # execution under the live claim instead of a parallel
+                    # generic executor.
+                    task, scheduling = _admit_direct_organize_task(
+                        repository,
+                        configuration,
+                        path=arguments.path,
+                        limit=arguments.limit,
+                    )
+                    claim, _direct_worker_id = _drive_direct_organize_claim(
+                        repository, scheduling, task
+                    )
+                    kernel_context = (scheduling, claim)
+                    coordinator = KernelTaskCoordinator(
+                        repository,
+                        repository,
+                        scheduling,
+                        claim,
+                        heartbeat=lambda: (
+                            scheduling.heartbeat(
+                                claim,
+                                now=datetime.now(UTC),
+                                lease_seconds=900.0,
+                            )
+                            is not None
+                        ),
+                    )
+                else:
+                    task = coordinator.create(
+                        arguments.command,
+                        execute_authorized=execute,
+                        scope_path=arguments.path,
+                        item_limit=arguments.limit,
+                        configuration_snapshot_id=configuration.configuration_snapshot_id,
+                        configuration_snapshot_digest=configuration.configuration_snapshot_digest,
+                        require_configuration_snapshot=(
+                            configuration.configuration_authority == "MANAGED"
+                        ),
+                    )
             if _task_observer is not None:
                 # The durable Task identity is handed to the application caller
                 # structurally.  Rendered CLI text remains the operator output
@@ -1406,7 +1444,20 @@ def final_main(
                     )
                     summary = MediaOrganizerBatchResult((item,))
             cancelled = bool(cancellation_check and cancellation_check())
-            if cancelled:
+            if kernel_context is not None:
+                scheduling, claim = kernel_context
+                state = scheduling.state(task.task_id)
+                if cancelled and (state is None or state.control_request is None):
+                    scheduling.request_control(task.task_id, TaskControl.CANCEL)
+                    state = scheduling.state(task.task_id)
+                if state is not None and state.control_request is not None:
+                    # The operator's accepted control owns the outcome at this
+                    # safe boundary: finished items keep their recorded results,
+                    # the unfinished tail settles with the control.
+                    scheduling.acknowledge_control(claim, now=datetime.now(UTC))
+                else:
+                    _settle_direct_organize(repository, scheduling, claim, task)
+            elif cancelled:
                 coordinator.cancel(task.task_id)
             elif coordinator.cancellation_observed(task.task_id):
                 # A durable cooperative cancellation already owns this Task
@@ -2616,6 +2667,214 @@ def _definition_scoped_service(
     )
 
 
+@contextmanager
+def _automatic_continuation_context(repository, configured_path: str | None):
+    """Open the zero-mutation continuation-analysis boundary for one pass.
+
+    The continuation reuses the existing intent/Preview analysis machinery
+    under the Task's admitted pin, so the automatic Task's saved decision
+    produces the same durable plan summary a Files Task owns — without faking
+    a Files submission and without a second engine.  The checkpoint service
+    carries the same managed snapshot validator the confirmation path reads,
+    so the summary's durable version fence is the one fence everywhere.
+    """
+
+    from mediaflow.application.automatic_task_continuation import (
+        AutomaticTaskContinuationService,
+    )
+    from mediaflow.application.manual_organize import ManualOrganizeIntentService
+    from mediaflow.application.manual_organize_preview import ManualOrganizePreviewService
+    from mediaflow.application.processing_checkpoint import ProcessingCheckpointService
+
+    bootstrap_document = _configuration_document(configured_path)
+    database_path = _bootstrap_database_path(bootstrap_document)
+    with SQLiteConfigurationRepository(database_path) as configuration_repository:
+        configuration_service = ManagedConfigurationService(
+            configuration_repository,
+            bootstrap_database_path=database_path,
+            bootstrap_document=bootstrap_document,
+        )
+        intents = ManualOrganizeIntentService(
+            repository,
+            configuration_service,
+            storage_factory=lambda runtime, ids: runtime.create_storages(storage_ids=set(ids)),
+        )
+        previews = ManualOrganizePreviewService(
+            repository,
+            intents,
+            configuration_service=configuration_service,
+            metadata_provider_registry_factory=LazyMetadataProviderRegistryFactory(
+                metadata_provider_registry_from_environment
+            ),
+            storage_factory=lambda runtime, ids: runtime.create_storages(storage_ids=set(ids)),
+        )
+        yield AutomaticTaskContinuationService(
+            repository,
+            intent_service=intents,
+            preview_service=previews,
+            checkpoint_service=ProcessingCheckpointService(
+                repository,
+                snapshot_validator=configuration_service.validate_runtime_snapshot,
+            ),
+        )
+
+
+def _admit_direct_organize_task(repository, configuration, *, path, limit):
+    """Admit one direct CLI organize execution through the shared Task kernel.
+
+    The admitted Task — not a parallel generic coordinator row — is the durable
+    subject of the run: the same shared capacity, pin, claim fence and results
+    every other organizing entrance uses.  Admission is atomic and
+    capacity-checked; a full queue refuses the run before any work starts
+    instead of queueing it invisibly.
+    """
+
+    from mediaflow.application.task_scheduling import (
+        TaskSchedulingService,
+        build_scheduled_task_admission,
+    )
+    from mediaflow.domain.task_persistence import RunDisplayContext
+    from mediaflow.domain.task_scheduling import TaskQueueFull, TaskTrigger
+
+    scheduling = TaskSchedulingService(
+        repository,
+        capacity=getattr(configuration, "automation_maximum_active_jobs", 100),
+        locks=repository,
+    )
+    task, state = build_scheduled_task_admission(
+        "organize",
+        execute_authorized=True,
+        trigger=TaskTrigger.MANUAL,
+        principal="cli",
+        scope_path=path,
+        item_limit=limit,
+        configuration_snapshot_id=configuration.configuration_snapshot_id,
+        configuration_snapshot_digest=configuration.configuration_snapshot_digest,
+        require_configuration_snapshot=(configuration.configuration_authority == "MANAGED"),
+        now=datetime.now(UTC),
+    )
+    display = RunDisplayContext(
+        source_scope=path,
+        origin_kind="direct-organize",
+    )
+    try:
+        admitted = repository.admit_scheduled_task(
+            task,
+            state,
+            capacity=scheduling.capacity,
+            display=display,
+        )
+    except TaskQueueFull as error:
+        raise ValueError(
+            "the shared organizing queue is full; no organize run was started"
+        ) from error
+    if admitted.duplicate:
+        task, state = admitted.task, admitted.state
+    return task, scheduling
+
+
+def _drive_direct_organize_claim(repository, scheduling, task, *, lease_seconds=900.0):
+    """Claim the admitted direct organize Task for this process' own execution.
+
+    The claim is the same kernel boundary a resident Worker holds, so the
+    synchronous CLI run publishes every item and Result under the live fence
+    and can never write over a successor.  A bounded transient Worker
+    registration carries the claim eligibility; it is stopped with the Task's
+    own settlement.
+    """
+
+    from mediaflow.domain.task_scheduling import TaskWorkerRejected
+    from mediaflow.infrastructure.sqlite_runtime import SCHEMA_VERSION
+
+    worker_id = f"direct-organize-{uuid4().hex[:12]}"
+    repository.register_worker(
+        worker_id,
+        worker_id,
+        lease_seconds,
+        ("organize",),
+        None,
+        None,
+        SCHEMA_VERSION,
+        datetime.now(UTC),
+    )
+    claim = scheduling.claim_next(
+        worker_id=worker_id,
+        now=datetime.now(UTC),
+        lease_seconds=lease_seconds,
+    )
+    if claim is None or claim.task_id != task.task_id:
+        raise TaskWorkerRejected(
+            "the admitted organize Task is not claimable in this run; inspect its queue state"
+        )
+    claim = scheduling.begin_work(claim, now=datetime.now(UTC))
+    return claim, worker_id
+
+
+def _settle_direct_organize(repository, scheduling, claim, task):
+    """Settle one directly driven organize Task under its live claim.
+
+    The aggregate is the independent sum of the Task's own durable item
+    outcomes — the same rule every engine settlement uses — so a failed or
+    ignored sibling is never masked by a successful one.  A source still waiting
+    for its operator's own confirmation returns the Task to human waiting with
+    zero slots instead of settling as if every source were done.
+    """
+
+    from mediaflow.domain.task_scheduling import TaskMachineStage
+
+    now = datetime.now(UTC)
+    items = repository.list_items(task.task_id)
+    total, completed, failed = task_item_counts(items)
+    waiting = tuple(
+        item
+        for item in items
+        if item.status
+        in {
+            TaskItemStatus.WAITING_CONFIRM,
+            TaskItemStatus.WAITING_RECOGNITION,
+            TaskItemStatus.WAITING_METADATA,
+            TaskItemStatus.WAITING_METADATA_CORRECTION,
+            TaskItemStatus.WAITING_CLASSIFICATION,
+        }
+    )
+    machine = tuple(
+        item for item in items if item.status in {TaskItemStatus.PENDING, TaskItemStatus.PROCESSING}
+    )
+    updated = replace(
+        task,
+        updated_at=now,
+        total_items=total,
+        completed_items=completed,
+        failed_items=failed,
+        error=None,
+        pause_requested=False,
+    )
+    if machine:
+        # A still-processing sibling is genuine machine work; keep the slot and
+        # let the next claim finish it instead of settling under a terminal
+        # outcome this run does not own.
+        running = replace(updated, status=PersistentTaskStatus.RUNNING, completed_at=None)
+        scheduling.publish_task(claim, running, now=now)
+        scheduling.yield_claim(
+            claim,
+            task=running,
+            stage=TaskMachineStage.EXECUTION,
+            now=now,
+        )
+        return
+    if waiting:
+        scheduling.publish_task(claim, updated, now=now)
+        scheduling.defer_to_human(claim, task=updated, items=(), now=now)
+        return
+    status = task_work_status(items) if items else PersistentTaskStatus.COMPLETED
+    settled = replace(
+        updated,
+        status=status,
+        completed_at=now,
+    )
+    scheduling.settle(claim, task=settled, items=items, now=now)
+
+
 def _automatic_task_runner(repository, configured_path, scheduling_service):
     """Build the resident runner for one adopted Scheduler/Run once Task.
 
@@ -2624,6 +2883,11 @@ def _automatic_task_runner(repository, configured_path, scheduling_service):
     the legacy Job handoff uses — under the Task's live claim fence and with the
     existing publication/authority continuity checks intact.  No Job row is
     written, no CLI text is parsed and no second engine is invoked.
+
+    A Task that already owns durable TaskItems is a *continuation*: its saved
+    four-type decision re-entered the same Task's zero-mutation analysis, so
+    this runner advances that analysis instead of re-running the initial
+    automatic intent.
     """
 
     def run(task, claim, clock=None, heartbeat=None) -> None:
@@ -2636,6 +2900,19 @@ def _automatic_task_runner(repository, configured_path, scheduling_service):
         from mediaflow.domain.task_scheduling import TaskTrigger
 
         display = repository.get_run_display_context(task.task_id)
+        if repository.list_items(task.task_id):
+            # A continuation pass: the Task's own saved decisions re-entered its
+            # zero-mutation analysis.  The pinned runtime is reconstructed from
+            # the Task's admitted pin inside the continuation boundary.
+            with _automatic_continuation_context(repository, configured_path) as continuation:
+                continuation.run_pass(
+                    task,
+                    scheduling_service,
+                    claim,
+                    clock=clock,
+                    heartbeat=heartbeat,
+                )
+            return
         if display is not None and display.origin_kind == "legacy-schedule":
             # A legacy interval/Cron occurrence has no saved definition.  It
             # still runs through the same production pipeline and claim fence;
@@ -2656,6 +2933,30 @@ def _automatic_task_runner(repository, configured_path, scheduling_service):
                 scheduling_service,
                 claim,
                 cancellation_check=legacy_cancelled,
+                clock=clock,
+                heartbeat=heartbeat,
+            )
+            return
+        if display is not None and display.origin_kind in {"remote-organize", "direct-organize"}:
+            # A remote-ticket or direct CLI organize admission: the same shared
+            # pipeline, the Task's own admitted scope/limit and pin, no
+            # definition and no second executor.
+            configuration = _configuration(
+                configured_path,
+                snapshot_id=task.configuration_snapshot_id,
+                snapshot_digest=task.configuration_snapshot_digest,
+            )
+
+            def direct_cancelled() -> bool:
+                current = scheduling_service.state(task.task_id)
+                return current is not None and current.control_request is not None
+
+            service = _definition_scoped_service(repository, configuration, configured_path)
+            service.run_direct_organize(
+                task,
+                scheduling_service,
+                claim,
+                cancellation_check=direct_cancelled,
                 clock=clock,
                 heartbeat=heartbeat,
             )

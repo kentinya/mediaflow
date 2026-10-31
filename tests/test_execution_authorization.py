@@ -11,14 +11,11 @@ from pathlib import Path
 from threading import Barrier, Thread
 from unittest.mock import patch
 
-from mediaflow.application.automation import AutomationJobService, AutomationWorker
+from mediaflow.application.automation import AutomationJobService
 from mediaflow.application.execution_authorization import ExecutionAuthorizationService
-from mediaflow.application.organizer import OrganizerExecutor
-from mediaflow.domain.automation import AutomationCommand, CronSchedule, IntervalSchedule
+from mediaflow.domain.automation import CronSchedule, IntervalSchedule
 from mediaflow.domain.execution_authorization import ExecutionAuthorizationStatus
-from mediaflow.domain.organizer import ExecutionStatus, OrganizePlan, PlanOperation
 from mediaflow.final_cli import _run_queued_workflow, final_main
-from mediaflow.infrastructure.local_storage import LocalStorage
 from mediaflow.infrastructure.runtime_configuration import load_runtime_configuration
 from mediaflow.infrastructure.sqlite_runtime import SCHEMA_VERSION, SQLiteTaskRepository
 from mediaflow.interfaces.service_api import MediaFlowApi
@@ -110,24 +107,36 @@ class ExecutionAuthorizationTests(unittest.TestCase):
             connection.close()
             self.assertNotIn("one-time-secret", raw)
 
-    def test_consume_is_single_use_limit_bounded_and_creates_authorized_job(self) -> None:
+    def test_consume_is_single_use_limit_bounded_and_admits_authorized_task(self) -> None:
         with tempfile.TemporaryDirectory() as directory:
             with SQLiteTaskRepository(Path(directory, "runtime.sqlite3")) as repository:
                 authorizer = service(repository)
                 issued = authorizer.issue(ttl_seconds=60, max_items=2)
                 with self.assertRaisesRegex(ValueError, "exceeds"):
                     authorizer.submit_organize(issued.token, limit=3)
-                job = authorizer.submit_organize(issued.token, limit=2)
-                self.assertEqual(job.command, AutomationCommand.ORGANIZE)
-                self.assertTrue(job.execute_authorized)
-                self.assertEqual(repository.get_job(job.job_id), job)
+                submission = authorizer.submit_organize(issued.token, limit=2)
+                task = submission.task
+                self.assertEqual(task.command, "organize")
+                self.assertTrue(task.execute_authorized)
+                self.assertEqual(repository.get_task(task.task_id), task)
+                state = repository.get_task_scheduling(task.task_id)
+                self.assertIsNotNone(state)
+                self.assertEqual(state.queue_state.value, "queued")
+                self.assertEqual(state.admission_principal, "remote-execution")
+                self.assertEqual((), repository.list_jobs())
                 with self.assertRaisesRegex(ValueError, "consumed"):
                     authorizer.submit_organize(issued.token, limit=1)
                 stored = repository.get_execution_authorization(
                     issued.authorization.authorization_id
                 )
                 self.assertEqual(stored.status, ExecutionAuthorizationStatus.CONSUMED)
-                self.assertEqual(stored.consumed_job_id, job.job_id)
+                # The legacy column keeps its name and carries the substantive
+                # Task identity, exactly like the occurrence link.
+                self.assertEqual(stored.consumed_job_id, task.task_id)
+                audit = repository.list_execution_authorization_audit(stored.authorization_id)
+                self.assertEqual(
+                    [item.job_id for item in audit if item.action == "consumed"], [task.task_id]
+                )
 
     def test_expired_revoked_invalid_and_validation(self) -> None:
         clock = [NOW]
@@ -158,7 +167,7 @@ class ExecutionAuthorizationTests(unittest.TestCase):
                     with self.subTest(ttl=ttl, items=items), self.assertRaises(ValueError):
                         authorizer.issue(ttl_seconds=ttl, max_items=items)
 
-    def test_concurrent_token_consumption_creates_one_job(self) -> None:
+    def test_concurrent_token_consumption_admits_one_task(self) -> None:
         with tempfile.TemporaryDirectory() as directory:
             database = Path(directory, "runtime.sqlite3")
             with SQLiteTaskRepository(database) as repository:
@@ -183,7 +192,8 @@ class ExecutionAuthorizationTests(unittest.TestCase):
                 thread.join()
             with SQLiteTaskRepository(database) as repository:
                 self.assertEqual(sum(item is not None for item in results), 1)
-                self.assertEqual(len(repository.list_jobs()), 1)
+                self.assertEqual(len(repository.list_jobs()), 0)
+                self.assertEqual(len(repository.list_tasks()), 1)
 
     def test_api_requires_feature_bearer_separate_header_and_execute_true(self) -> None:
         with tempfile.TemporaryDirectory() as directory:
@@ -224,14 +234,26 @@ class ExecutionAuthorizationTests(unittest.TestCase):
                     execution_token=issued.token,
                 )
                 self.assertEqual(status, 202)
-                self.assertTrue(result["execute_authorized"])
+                self.assertTrue(result["executeAuthorized"])
+                self.assertTrue(result["taskId"])
+                self.assertEqual(result["executionMethod"], "task_engine")
                 self.assertNotIn(issued.token, json.dumps(result))
+                # The admitted run is one shared Task: no Job row exists and the
+                # queued Task is the only durable identity.
+                self.assertEqual((), repository.list_jobs())
+                self.assertIsNotNone(repository.get_task(result["taskId"]))
 
-    def test_worker_adds_execute_only_for_persisted_authorized_organize(self) -> None:
+    def test_worker_refuses_unauthorized_organize_and_ticket_admits_authorized_task(self) -> None:
         with tempfile.TemporaryDirectory() as directory:
             with SQLiteTaskRepository(Path(directory, "runtime.sqlite3")) as repository:
                 issued = service(repository).issue(ttl_seconds=60, max_items=1)
-                job = service(repository).submit_organize(issued.token, limit=1)
+                submission = service(repository).submit_organize(issued.token, limit=1)
+                # The consumed ticket admits one execute-authorized Task; no
+                # legacy Job path exists for it any more.
+                self.assertTrue(submission.task.execute_authorized)
+                self.assertIsNotNone(repository.get_task_scheduling(submission.task.task_id))
+                self.assertEqual((), repository.list_jobs())
+                unauthorized = AutomationJobService(repository).submit("organize", limit=1)
                 calls = []
 
                 def fake_main(args, **kwargs):
@@ -240,12 +262,6 @@ class ExecutionAuthorizationTests(unittest.TestCase):
                     kwargs["stdout"].write("Task ID: task-execute\n")
                     return 0
 
-                with patch("mediaflow.final_cli.final_main", side_effect=fake_main):
-                    task_id = _run_queued_workflow(job, None, lambda: False)
-                self.assertEqual(task_id, "task-execute")
-                self.assertIn("--execute", calls[0])
-                unauthorized = AutomationJobService(repository).submit("organize", limit=1)
-                calls.clear()
                 with (
                     patch("mediaflow.final_cli.final_main", side_effect=fake_main),
                     self.assertRaisesRegex(RuntimeError, "lacks persisted execute authorization"),
@@ -253,11 +269,10 @@ class ExecutionAuthorizationTests(unittest.TestCase):
                     _run_queued_workflow(unauthorized, None, lambda: False)
                 self.assertEqual(calls, [])
 
-    def test_api_job_worker_executes_existing_local_storage_boundary(self) -> None:
+    def test_api_ticket_admits_one_queued_authorized_task_without_a_job(self) -> None:
         with tempfile.TemporaryDirectory() as directory:
             root = Path(directory)
             (root / "source.mkv").write_bytes(b"media")
-            storage = LocalStorage("local", root)
             with SQLiteTaskRepository(root / "runtime.sqlite3") as repository:
                 issued = service(repository, clock=lambda: datetime.now(UTC)).issue(
                     ttl_seconds=60, max_items=1
@@ -269,31 +284,252 @@ class ExecutionAuthorizationTests(unittest.TestCase):
                     execution_token=issued.token,
                 )
                 self.assertEqual(status, 202)
+                task_id = submitted["taskId"]
+                task = repository.get_task(task_id)
+                self.assertIsNotNone(task)
+                self.assertTrue(task.execute_authorized)
+                self.assertIsNone(task.scope_path)
+                self.assertEqual(task.item_limit, 1)
+                state = repository.get_task_scheduling(task_id)
+                self.assertEqual(state.queue_state.value, "queued")
+                self.assertEqual(state.admission_trigger.value, "manual")
+                self.assertEqual((), repository.list_jobs())
+                # The whole-library scope is the Task's own admitted shape; the
+                # resident engine owns its execution, so nothing ran here.
+                self.assertFalse((root / "target").exists())
+                self.assertTrue((root / "source.mkv").exists())
 
-                def execute(job, cancelled):
-                    self.assertTrue(job.execute_authorized)
-                    plan = OrganizePlan(
-                        "local",
-                        "local",
-                        "source.mkv",
-                        "target/movie.mkv",
-                        "A",
-                        "A",
-                        "A",
-                        "A",
-                        operation=PlanOperation.MOVE,
-                    )
-                    result = OrganizerExecutor().execute(
-                        plan, {"local": storage}, execute=job.execute_authorized
-                    )
-                    self.assertEqual(result.status, ExecutionStatus.SUCCESS)
-                    return "task-real-execute"
+    def test_cli_organize_execute_admits_and_executes_one_kernel_task(self) -> None:
+        """Task47.3: the direct CLI execute entrance is one shared Task run.
 
-                completed = AutomationWorker(repository, execute).run_next()
-                self.assertEqual(completed.job_id, submitted["job_id"])
-                self.assertEqual(completed.status.value, "completed")
-                self.assertFalse((root / "source.mkv").exists())
-                self.assertEqual((root / "target" / "movie.mkv").read_bytes(), b"media")
+        The admitted Task — not a parallel generic coordinator row — carries the
+        run: the shared kernel admission, the claim-fenced publication, the
+        settled aggregate and the honest exit code.  No Job row exists and the
+        analysis-only command keeps its own zero-mutation shape.
+        """
+
+        document = json.loads(Path("config/strategy.example.json").read_text(encoding="utf-8"))
+        with tempfile.TemporaryDirectory() as directory:
+            root = Path(directory)
+            source_root = root / "source"
+            target_root = root / "target"
+            source_root.mkdir()
+            target_root.mkdir()
+            (source_root / "Movies").mkdir()
+            media = source_root / "Movies" / "One.2001.mkv"
+            media.write_bytes(b"m" * 512)
+            document["persistence"] = {"databasePath": str(root / "runtime.sqlite3")}
+            document["historyPath"] = str(root / "history.jsonl")
+            document["storages"] = [
+                {
+                    "id": "source",
+                    "name": "Source",
+                    "type": "local",
+                    "rootPath": str(source_root),
+                    "enabled": True,
+                },
+                {
+                    "id": "target",
+                    "name": "Target",
+                    "type": "local",
+                    "rootPath": str(target_root),
+                    "enabled": True,
+                },
+            ]
+            document["resourceLibraries"] = [
+                {
+                    "id": "library",
+                    "name": "Library",
+                    "storageId": "source",
+                    "storagePath": "",
+                    "enabled": True,
+                    "extensions": ["mkv", "mp4"],
+                }
+            ]
+            document["mediaLibraries"] = [
+                {
+                    "id": "movies",
+                    "name": "Movies",
+                    "storageId": "target",
+                    "rootPath": "Organized/Movies",
+                    "enabled": True,
+                },
+                {
+                    "id": "tv",
+                    "name": "TV",
+                    "storageId": "target",
+                    "rootPath": "Organized/TV",
+                    "enabled": True,
+                },
+            ]
+            document["automationTaskDefinitions"] = []
+            document["recognitionRules"] = [
+                {
+                    "id": "movies",
+                    "name": "Movies",
+                    "priority": 100,
+                    "score": 100,
+                    "stopOnMatch": True,
+                    "condition": {
+                        "field": "extension",
+                        "operator": "in",
+                        "value": ["mkv", "mp4"],
+                    },
+                    "outputRecognitionType": "A",
+                }
+            ]
+            config = root / "config.json"
+            config.write_text(json.dumps(document), encoding="utf-8")
+            from mediaflow.application.metadata import MetadataProviderRegistry
+            from mediaflow.application.strategy_test import SyntheticMetadataProvider
+            from mediaflow.domain.metadata import MediaCandidate, MediaType
+
+            provider = MetadataProviderRegistry(
+                (
+                    SyntheticMetadataProvider(
+                        (MediaCandidate("tmdb", "1", MediaType.MOVIE, "One", year=2001),)
+                    ),
+                )
+            )
+            output, errors = io.StringIO(), io.StringIO()
+            with patch(
+                "mediaflow.final_cli.metadata_provider_registry_from_environment",
+                return_value=provider,
+            ):
+                code = final_main(
+                    ["--config", str(config), "organize", "--execute", "--limit", "5"],
+                    stdout=output,
+                    stderr=errors,
+                )
+            self.assertEqual(0, code, errors.getvalue())
+            self.assertIn("Task ID:", output.getvalue())
+            self.assertFalse(media.exists())
+            organized = list((target_root / "Organized" / "Movies").rglob("*.mkv"))
+            self.assertEqual(1, len(organized), organized)
+            with SQLiteTaskRepository(root / "runtime.sqlite3") as repository:
+                self.assertEqual((), repository.list_jobs())
+                tasks = repository.list_tasks()
+                self.assertEqual(1, len(tasks), tasks)
+                task = tasks[0]
+                self.assertEqual("organize", task.command)
+                self.assertTrue(task.execute_authorized)
+                self.assertEqual("completed", task.status.value)
+                state = repository.get_task_scheduling(task.task_id)
+                self.assertIsNotNone(state)
+                self.assertEqual(state.queue_state.value, "settled")
+                self.assertEqual(state.admission_trigger.value, "manual")
+                (item,) = repository.list_items(task.task_id)
+                self.assertEqual("success", item.status.value)
+                self.assertEqual(1, len(repository.list_results(task.task_id)))
+
+    def test_cli_organize_without_execute_keeps_analysis_only_shape(self) -> None:
+        document = json.loads(Path("config/strategy.example.json").read_text(encoding="utf-8"))
+        with tempfile.TemporaryDirectory() as directory:
+            root = Path(directory)
+            source_root = root / "source"
+            target_root = root / "target"
+            source_root.mkdir()
+            target_root.mkdir()
+            (source_root / "Movies").mkdir()
+            media = source_root / "Movies" / "One.2001.mkv"
+            media.write_bytes(b"m" * 512)
+            document["persistence"] = {"databasePath": str(root / "runtime.sqlite3")}
+            document["historyPath"] = str(root / "history.jsonl")
+            document["storages"] = [
+                {
+                    "id": "source",
+                    "name": "Source",
+                    "type": "local",
+                    "rootPath": str(source_root),
+                    "enabled": True,
+                },
+                {
+                    "id": "target",
+                    "name": "Target",
+                    "type": "local",
+                    "rootPath": str(target_root),
+                    "enabled": True,
+                },
+            ]
+            document["resourceLibraries"] = [
+                {
+                    "id": "library",
+                    "name": "Library",
+                    "storageId": "source",
+                    "storagePath": "",
+                    "enabled": True,
+                    "extensions": ["mkv", "mp4"],
+                }
+            ]
+            document["mediaLibraries"] = [
+                {
+                    "id": "movies",
+                    "name": "Movies",
+                    "storageId": "target",
+                    "rootPath": "Organized/Movies",
+                    "enabled": True,
+                },
+                {
+                    "id": "tv",
+                    "name": "TV",
+                    "storageId": "target",
+                    "rootPath": "Organized/TV",
+                    "enabled": True,
+                },
+            ]
+            document["automationTaskDefinitions"] = []
+            document["recognitionRules"] = [
+                {
+                    "id": "movies",
+                    "name": "Movies",
+                    "priority": 100,
+                    "score": 100,
+                    "stopOnMatch": True,
+                    "condition": {
+                        "field": "extension",
+                        "operator": "in",
+                        "value": ["mkv", "mp4"],
+                    },
+                    "outputRecognitionType": "A",
+                }
+            ]
+            config = root / "config.json"
+            config.write_text(json.dumps(document), encoding="utf-8")
+            from mediaflow.application.metadata import MetadataProviderRegistry
+            from mediaflow.application.strategy_test import SyntheticMetadataProvider
+            from mediaflow.domain.metadata import MediaCandidate, MediaType
+
+            provider = MetadataProviderRegistry(
+                (
+                    SyntheticMetadataProvider(
+                        (MediaCandidate("tmdb", "1", MediaType.MOVIE, "One", year=2001),)
+                    ),
+                )
+            )
+            output, errors = io.StringIO(), io.StringIO()
+            with patch(
+                "mediaflow.final_cli.metadata_provider_registry_from_environment",
+                return_value=provider,
+            ):
+                code = final_main(
+                    ["--config", str(config), "organize", "--limit", "5"],
+                    stdout=output,
+                    stderr=errors,
+                )
+            self.assertEqual(0, code, errors.getvalue())
+            self.assertTrue(media.exists())
+            self.assertEqual([], list((target_root / "Organized").rglob("*.mkv")))
+            with SQLiteTaskRepository(root / "runtime.sqlite3") as repository:
+                self.assertEqual((), repository.list_jobs())
+                tasks = repository.list_tasks()
+                self.assertEqual(1, len(tasks), tasks)
+                task = tasks[0]
+                self.assertFalse(task.execute_authorized)
+                # The analysis-only run stays outside the organizing execution
+                # queue: no kernel scheduling row claims it.
+                self.assertIsNone(repository.get_task_scheduling(task.task_id))
+                (item,) = repository.list_items(task.task_id)
+                self.assertEqual("dry_run", item.status.value)
 
     def test_cli_issues_token_once_and_lists_without_token_or_digest(self) -> None:
         document = json.loads(Path("config/strategy.example.json").read_text(encoding="utf-8"))

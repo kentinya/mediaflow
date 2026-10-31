@@ -35,7 +35,6 @@ from mediaflow.domain.task_scheduling import (
     TaskControl,
     TaskControlRejected,
     TaskMachineStage,
-    TaskTrigger,
 )
 
 DEFAULT_LEASE_SECONDS = 300.0
@@ -52,7 +51,6 @@ _WAITING_ITEM_STATUSES = frozenset(
         TaskItemStatus.WAITING_CLASSIFICATION,
     }
 )
-_AUTOMATIC_TRIGGERS = frozenset({TaskTrigger.SCHEDULE, TaskTrigger.RUN_ONCE})
 _TERMINAL_EXECUTION_STATUSES = frozenset(
     {
         ManualExecutionStatus.COMPLETED,
@@ -456,12 +454,18 @@ class ManualTaskEngineWorker:
     # -- Automatic (Scheduler due / Run once) --------------------------------
 
     def _is_automatic(self, claim) -> bool:
-        """Whether this admitted Task is an automatic (non-Files) intent."""
+        """Whether this claimed Task advances through the shared automatic runner.
+
+        The branch is only reached when the Task owns neither a live manual
+        execution nor a linked Files discovery.  Every kernel-admitted Task in
+        that shape — Scheduler due, Run once, a remote-ticket or direct CLI
+        organize admission — runs the one shared organizing pipeline; the
+        admission trigger is display/search evidence, never the router.  A
+        Task without a scheduling row keeps its original non-kernel path.
+        """
 
         state = self._scheduling.state(claim.task_id)
-        if state is None:
-            return False
-        return state.admission_trigger in _AUTOMATIC_TRIGGERS
+        return state is not None
 
     def _run_automatic(self, claim) -> PersistentTask:
         """Advance one adopted Scheduler/Run once Task through the shared pipeline.
@@ -477,9 +481,13 @@ class ManualTaskEngineWorker:
             return self._fail_unlinked(claim)
         task = self._task(claim.task_id)
         if task.status is PersistentTaskStatus.PENDING:
-            claim = self._scheduling.begin_work(
-                claim, stage=TaskMachineStage.DISCOVERY, now=self._clock()
+            state = self._scheduling.state(claim.task_id)
+            stage = (
+                state.machine_stage
+                if state is not None and state.machine_stage is not None
+                else TaskMachineStage.DISCOVERY
             )
+            claim = self._scheduling.begin_work(claim, stage=stage, now=self._clock())
             task = claim.task
         try:
             self._automatic_runner(

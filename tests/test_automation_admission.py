@@ -165,8 +165,15 @@ class AutomationAdmissionTests(unittest.TestCase):
                 self.assertEqual(unchanged.status, ExecutionAuthorizationStatus.ACTIVE)
                 self.assertIsNone(unchanged.consumed_job_id)
                 AutomationJobService(repository).cancel(filler.job_id)
-                job = authorizations.submit_organize("one-time-token", limit=1)
+                submission = authorizations.submit_organize("one-time-token", limit=1)
+                job = submission.task
                 self.assertTrue(job.execute_authorized)
+                self.assertIsNotNone(repository.get_task_scheduling(job.task_id))
+                # The only Job row is the cancelled legacy filler; the ticket
+                # admitted no Job of its own.
+                self.assertEqual(
+                    ["cancelled"], [value.status.value for value in repository.list_jobs()]
+                )
                 consumed = authorizations.get(issued.authorization.authorization_id)
                 self.assertEqual(consumed.status, ExecutionAuthorizationStatus.CONSUMED)
                 with self.assertRaisesRegex(ValueError, "consumed"):

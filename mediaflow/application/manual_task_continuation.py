@@ -22,6 +22,13 @@ from dataclasses import dataclass
 
 from mediaflow.domain.media_discovery import DiscoveryError
 from mediaflow.domain.processing_checkpoint import EffectCertainty
+from mediaflow.domain.task_scheduling import (
+    TaskControlRejected,
+    TaskMachineStage,
+    TaskQueueFull,
+    TaskQueueState,
+    TaskTrigger,
+)
 
 #: The checkpoint actions that can re-enter the zero-mutation analysis.  A
 #: saved decision exposes ``retry``; an already admitted continuation may still
@@ -59,16 +66,40 @@ class NativeTaskContinuation:
     execution authority exists.  It names the same Task, its linked Files
     preparation and that preparation's new analysis version so the operator can
     read the answer back after a reload.
+
+    A Scheduler/Run once admitted Task owns no Files discovery.  Its
+    continuation re-enters the *same* Task's own zero-mutation analysis through
+    the scheduling kernel, so ``source`` is ``"automatic"`` and the durable
+    identity it names is the Task and TaskItem themselves — never a fabricated
+    Files submission.
     """
 
     task_id: str
     item_id: str
-    discovery_id: str
-    version: int
-    status: str
+    discovery_id: str | None
+    version: int | None
+    status: str | None
     preview_id: str | None
+    source: str = "files"
 
     def document(self) -> dict[str, object]:
+        if self.source == "automatic":
+            return {
+                "taskId": self.task_id,
+                "itemId": self.item_id,
+                "nativeAnalysis": {
+                    "taskId": self.task_id,
+                    "itemId": self.item_id,
+                    "stage": self.status,
+                },
+                "sideEffects": "none",
+                "executionMode": "dry_run",
+                "nextAction": (
+                    "the resident Processing Worker is re-running the complete zero-mutation "
+                    "analysis of this same automatic Task; review the fresh plan summary and "
+                    "confirm the ready subset explicitly before any organizing"
+                ),
+            }
         return {
             "taskId": self.task_id,
             "itemId": self.item_id,
@@ -93,10 +124,16 @@ class NativeTaskContinuation:
 class ManualTaskContinuationService:
     """Continue one Task Center review on the Task engine that already owns it."""
 
-    def __init__(self, repository, discovery_service, *, checkpoint_service) -> None:
+    def __init__(
+        self, repository, discovery_service, *, checkpoint_service, scheduling=None
+    ) -> None:
         self._repository = repository
         self._discovery = discovery_service
         self._checkpoints = checkpoint_service
+        # The scheduling kernel boundary for an automatic Task's own re-entry.
+        # A callable keeps the API's per-binding capacity current without this
+        # module knowing any configuration value.
+        self._scheduling = scheduling
 
     def applies(self, task_id: str) -> bool:
         """Whether this Task's machine work is owned by the Task scheduling kernel.
@@ -105,10 +142,11 @@ class ManualTaskContinuationService:
         review: it re-enters its own bounded analysis.  A Task admitted before
         the kernel switch keeps its original Job-based continuation path, so this
         decision is read from the durable scheduling row alone and never guessed
-        from today's configuration.
+        from today's configuration.  The Files and automatic continuations pick
+        their own durable work context after this gate.
         """
 
-        if self._discovery is None or not isinstance(task_id, str) or not task_id:
+        if not isinstance(task_id, str) or not task_id:
             return False
         reader = getattr(self._repository, "get_task_scheduling", None)
         if not callable(reader):
@@ -180,10 +218,11 @@ class ManualTaskContinuationService:
             )
         discovery = self._linked_discovery(task_id)
         if discovery is None:
-            raise ManualTaskContinuationError(
-                "this Task has no linked Files preparation to re-analyze",
-                code="no_linked_preparation",
-                next_action="open the organizing work this Task was admitted from",
+            return self._continue_automatic_analysis(
+                task_id,
+                item_id,
+                checkpoint,
+                actor=actor,
             )
         pin = checkpoint.configuration
         if (
@@ -219,6 +258,100 @@ class ManualTaskContinuationService:
             version=updated.version,
             status=updated.status.value,
             preview_id=updated.preview_id,
+        )
+
+    def _continue_automatic_analysis(
+        self,
+        task_id: str,
+        item_id: str,
+        checkpoint,
+        *,
+        actor: str,
+    ) -> NativeTaskContinuation:
+        """Re-enter one automatic Task's own zero-mutation analysis.
+
+        A Scheduler due / Run once admitted Task owns no Files discovery: its
+        admitted sources, saved decisions and pinned configuration *are* the
+        continuable work context.  The saved decision therefore re-queues this
+        same Task's remaining machine work through the scheduling kernel, and
+        the resident engine re-runs the shared zero-mutation analysis for the
+        sources this Task still allows.  Nothing here executes, mutates Storage
+        or consumes authority, and a full shared queue leaves the saved
+        decision, every result and the human-waiting state exactly as they were.
+        """
+
+        scheduling = self._scheduling() if callable(self._scheduling) else None
+        if scheduling is None:
+            raise ManualTaskContinuationError(
+                "this Task has no linked Files preparation to re-analyze",
+                code="no_linked_preparation",
+                next_action="open the organizing work this Task was admitted from",
+            )
+        state = scheduling.state(task_id)
+        if state is None or state.admission_trigger not in {
+            TaskTrigger.SCHEDULE,
+            TaskTrigger.RUN_ONCE,
+        }:
+            raise ManualTaskContinuationError(
+                "this Task has no linked Files preparation to re-analyze",
+                code="no_linked_preparation",
+                next_action="open the organizing work this Task was admitted from",
+            )
+        task = self._repository.get_task(task_id)
+        if task is None:
+            raise ManualTaskContinuationError(
+                "Task was not found",
+                code="not_found",
+                status=404,
+                next_action="reload the Task and select the exact item again",
+            )
+        pin = checkpoint.configuration
+        if (
+            not pin.snapshot_id
+            or not pin.snapshot_digest
+            or pin.snapshot_id != task.configuration_snapshot_id
+            or pin.snapshot_digest != task.configuration_snapshot_digest
+        ):
+            raise ManualTaskContinuationError(
+                "the item checkpoint does not share the Task's admitted pin",
+                code="configuration_unavailable",
+                status=503,
+                next_action="restore the Task's published configuration snapshot, then reload",
+            )
+        try:
+            scheduling.requeue(
+                task_id,
+                expected_snapshot_id=task.configuration_snapshot_id,
+                expected_snapshot_digest=task.configuration_snapshot_digest,
+                stage=TaskMachineStage.ANALYSIS,
+            )
+        except TaskQueueFull as error:
+            raise ManualTaskContinuationError(
+                "the shared organizing queue is full; the saved decision is kept",
+                code="queue_full",
+                next_action=(
+                    "wait for another organizing Task to finish, then continue this same "
+                    "item's analysis again; nothing was changed"
+                ),
+                details={"durableState": "decision_saved_analysis_not_queued"},
+            ) from error
+        except TaskControlRejected as error:
+            raise ManualTaskContinuationError(
+                str(error),
+                code="continuation_not_admitted",
+                next_action=(
+                    "reload the Task and inspect its current stage; the saved decision and "
+                    "every recorded result are unchanged"
+                ),
+            ) from error
+        return NativeTaskContinuation(
+            task_id=task_id,
+            item_id=item_id,
+            discovery_id=None,
+            version=None,
+            status=TaskQueueState.QUEUED.value,
+            preview_id=None,
+            source="automatic",
         )
 
     def refuse_batch(self, task_id: str) -> ManualTaskContinuationError:

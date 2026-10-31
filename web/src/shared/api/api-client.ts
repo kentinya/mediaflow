@@ -2062,16 +2062,26 @@ function normalizeRecoveryCommandAck(payload: unknown): RecoveryCommandAck {
   if (source["sideEffects"] !== "none") {
     throw new Error("recovery command side effects did not match the contract");
   }
-  // A Task-engine continuation names the same Task's linked Files preparation
-  // as its durable identity.  It never publishes a Job or a child Task, so the
-  // caller must not be given a fabricated continuation identity.
+  // A Task-engine continuation names the same Task's durable analysis as its
+  // identity.  A Files Task names its linked discovery; an automatic Task
+  // (Scheduler due / Run once / remote or direct organize) names the same Task
+  // and TaskItem its zero-mutation analysis re-entered.  Neither publishes a
+  // Job or a child Task, so the caller must not be given a fabricated
+  // continuation identity.
   const nativeAnalysis = source["nativeAnalysis"];
-  const nativeIdentity =
+  const nativeIdentitySource =
     typeof nativeAnalysis === "object" &&
     nativeAnalysis !== null &&
     !Array.isArray(nativeAnalysis)
-      ? (nativeAnalysis as Record<string, unknown>)["discoveryId"]
+      ? (nativeAnalysis as Record<string, unknown>)
       : undefined;
+  const nativeIdentity =
+    typeof nativeIdentitySource?.["discoveryId"] === "string" &&
+    nativeIdentitySource["discoveryId"]
+      ? nativeIdentitySource["discoveryId"]
+      : typeof nativeIdentitySource?.["taskId"] === "string"
+        ? nativeIdentitySource["taskId"]
+        : undefined;
   const identity =
     source["continuation_id"] ??
     source["continuationId"] ??

@@ -14,7 +14,11 @@ from mediaflow.application.automation import (
     AutomationConfigurationUnavailable,
     AutomationWorkflowFailed,
 )
-from mediaflow.application.media_organizer import IncompleteOrganizingScope, MediaOrganizerService
+from mediaflow.application.media_organizer import (
+    IncompleteOrganizingScope,
+    MediaOrganizerBatchResult,
+    MediaOrganizerService,
+)
 from mediaflow.application.organizer import OrganizerExecutor
 from mediaflow.application.scanner import StorageScanner, normalize_resource_root
 from mediaflow.application.task_runtime import KernelTaskCoordinator, PersistentTaskCoordinator
@@ -704,6 +708,161 @@ class DefinitionScopedExecutionService:
         coordinator.finish(task.task_id, summary)
         return task.task_id
 
+    def run_direct_organize(
+        self,
+        task,
+        scheduling,
+        claim,
+        *,
+        cancellation_check: Callable[[], bool],
+        clock=None,
+        heartbeat: Callable[[], bool] | None = None,
+    ) -> str:
+        """Advance one already-admitted remote-ticket or direct CLI organize Task.
+
+        This is the same production ``MediaOrganizerService``/
+        ``OrganizerExecutor`` pipeline and claim-fenced publication coordinator
+        a definition occurrence uses.  The Task's own admitted scope decides the
+        shape: no scope runs every configured ResourceLibrary, a directory scope
+        runs its containing ResourceLibrary and a file scope runs that exact
+        source — the same semantics the direct CLI path always had, now under
+        the shared kernel admission, claim fence and results.
+        """
+
+        if getattr(claim, "task_id", None) != getattr(task, "task_id", None):
+            raise ValueError("direct organize Task claim identity does not match")
+        if not task.execute_authorized:
+            raise RuntimeError("direct organize Task lacks persisted execute authorization")
+        if self._provider_factory is None or self._strategy_factory is None:
+            raise RuntimeError("direct organize analysis factories are unavailable")
+        if self._history_factory is None:
+            raise RuntimeError("direct organize history factory is unavailable")
+        storages = self._storage_factory(external={})
+        if heartbeat is not None:
+            storages = {key: _HeartbeatStorage(value, heartbeat) for key, value in storages.items()}
+        provider_ids = tuple(
+            dict.fromkeys(
+                policy.provider_id
+                for policy in getattr(self._configuration.strategy, "metadata_policies", ())
+                if getattr(policy, "enabled", True) and getattr(policy, "provider_id", None)
+            )
+        ) or ("tmdb",)
+        providers = self._provider_factory(provider_ids)
+        if heartbeat is not None:
+            providers = _HeartbeatProviderRegistry(providers, heartbeat)
+        strategy = self._strategy_factory(
+            self._configuration.strategy,
+            providers,
+            storages=storages,
+        )
+        coordinator = KernelTaskCoordinator(
+            self._repository,
+            self._repository,
+            scheduling,
+            claim,
+            clock=clock,
+            heartbeat=heartbeat,
+        )
+
+        def workflow_stop() -> bool:
+            return bool(
+                cancellation_check()
+                or coordinator.pause_requested(task.task_id)
+                or coordinator.cancellation_observed(task.task_id)
+            )
+
+        service = MediaOrganizerService(
+            strategy,
+            StorageScanner(storages, logger=self._logger),
+            storages,
+            {item.library_id: item for item in getattr(self._configuration, "media_libraries", ())},
+            self._configuration.strategy.recognition_type_policies,
+            self._history_factory(self._configuration.history_path),
+            executor=OrganizerExecutor(self._logger),
+            source_display_roots=dict(getattr(self._configuration, "resource_display_roots", ())),
+            logger=self._logger,
+            task_coordinator=coordinator,
+            task_id=task.task_id,
+            retry_policy=self._configuration.workflow_retry_policy,
+            retry_cancellation_check=workflow_stop,
+            secret_free_errors=True,
+            persist_failure_explanations=True,
+            enforce_source_ownership=True,
+        )
+        scope = (task.scope_path or "").strip() if isinstance(task.scope_path, str) else ""
+        if not scope:
+            summary = service.process_all_libraries(
+                self._configuration.resource_libraries,
+                execute=True,
+                limit=task.item_limit,
+                cancellation_check=workflow_stop,
+            )
+        else:
+            library, display_root = self._resolve_direct_scope(scope)
+            from pathlib import Path
+
+            candidate = Path(scope).resolve(strict=False)
+            if candidate.is_file():
+                storage_path = _storage_relative_path(library.root_path, display_root, candidate)
+                item = service.process_file(
+                    candidate.as_posix(),
+                    resource_library=library,
+                    storage_path=storage_path,
+                    execute=True,
+                )
+                summary = MediaOrganizerBatchResult((item,))
+            else:
+                summary = service.process_library(
+                    library,
+                    execute=True,
+                    limit=task.item_limit,
+                    cancellation_check=workflow_stop,
+                )
+        if cancellation_check():
+            raise AutomationCancelled(task.task_id)
+        coordinator.finish(task.task_id, summary)
+        return task.task_id
+
+    def _resolve_direct_scope(self, scope: str):
+        """The pinned ResourceLibrary one direct organize scope belongs to."""
+
+        from pathlib import Path
+
+        candidate = Path(scope).resolve(strict=False)
+        roots = []
+        libraries = {
+            item.library_id: item for item in getattr(self._configuration, "resource_libraries", ())
+        }
+        for library_id, value in dict(
+            getattr(self._configuration, "resource_display_roots", ()) or ()
+        ).items():
+            root = Path(value).resolve(strict=False)
+            if candidate == root or root in candidate.parents:
+                roots.append((len(root.parts), library_id, root.as_posix()))
+        if not roots:
+            raise AutomationConfigurationUnavailable(
+                AutomationFailureEvidence(
+                    "direct_scope_unresolved",
+                    "the admitted organize scope is not inside a configured ResourceLibrary",
+                    "none",
+                    False,
+                    "inspect the admitted Task's recorded scope; no media effect was started",
+                )
+            )
+        _, library_id, root = max(roots)
+        library = libraries.get(library_id)
+        if library is None:
+            raise AutomationConfigurationUnavailable(
+                AutomationFailureEvidence(
+                    "direct_scope_unresolved",
+                    "the admitted organize scope's ResourceLibrary is unavailable",
+                    "none",
+                    False,
+                    "inspect the admitted Task's recorded scope; no media effect was started",
+                )
+            )
+        return library, root
+
     def _coordinator(self, task_context, *, clock=None, heartbeat=None):
         """The publication coordinator for this run.
 
@@ -756,6 +915,19 @@ def _effective_item_limit(job, definition: AutomationTaskDefinition) -> int:
 
 def _contains(parent: str, child: str) -> bool:
     return not parent or child == parent or child.startswith(parent.rstrip("/") + "/")
+
+
+def _storage_relative_path(library_root: str, display_root: str, candidate) -> str:
+    """The Storage-relative path of one direct organize file scope.
+
+    The admitted scope is the operator's display path; the pipeline consumes the
+    exact Storage-relative media path, exactly as the direct CLI always built it.
+    """
+
+    from pathlib import Path
+
+    relative = candidate.relative_to(Path(display_root).resolve(strict=False)).as_posix()
+    return "/".join(value.strip("/") for value in (library_root, relative) if value.strip("/"))
 
 
 def _relative_scope(library_root: str, scope_root: str) -> str | None:

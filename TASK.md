@@ -12,7 +12,7 @@ Recheck intervening commits without silently repinning the Task Base.
 Task ID: 47.3
 Task Type: SLICE
 Parent Slice: 47
-Status: FIX REQUIRED
+Status: IN PROGRESS
 Task Base: dfcfebbdb9c879b38806e29c7b41c9192aeca83e
 Difficulty: High
 Test Level: T4
@@ -598,3 +598,129 @@ Local ignored evidence:
 
 Keep fixes in Task47.3; no new Task is planned. Task47.2's prior PASS and A-owned Slice/Roadmap/
 Progress are unchanged. Slice47 remains ACTIVE; no Closure Packet or A Final Review/closure claimed.
+
+## Developer Completion Report — Round 3
+
+**Status: READY FOR B REVIEW.** Same-Task correction checkpoint for the three B blockers of
+Round 2; not a self-approved PASS. Candidate identity follows this report.
+
+### Corrections implemented
+
+1. **P1 — 自动任务的决定、分析、摘要和明确执行已接通（同一 Task，无新 Job）。**
+   - `application/manual_task_continuation.py`: 自动分支——无 Files discovery 的 kernel
+     automatic Task 在既有全部校验（checkpoint 版本、不确定效果、permitted action、活跃
+     continuation、pin 一致）之后，通过 `TaskSchedulingService.requeue()` 原子地把同一 Task
+     重新排入 ANALYSIS 阶段；满队列返回有界 409（`queue_full`，决定/结果/人等状态不变），
+     已排队时的重复 continue 返回有界 409，不多排工作。
+   - 新 `application/automatic_task_continuation.py`: Worker 续作通道。仅对 PENDING 且
+     stage 为 `*_resolved` 的本 Task 条目做零变更重分析：先 claim-fenced `begin_item`
+     （含跨 Task 源所有权检查），再经既有 intent/Preview 分析机器（受理 pin +
+     `collect_resolved_continuation_decisions` 应用已保存决定）生成计划摘要，条目发布为
+     `waiting_confirm`/`continuation_planned` 并写入真实的 `manual_recovery_preparations`
+     行。源失效、决策不完整、Preview 被阻、异常分别发布为有界 effect-free FAILED 条目；
+     成功/忽略/不确定 sibling 与仍等待决策的 sibling 一律跳过，不重放。
+   - 摘要/确认：`native_preparation_summary` 扩展自动 Task 分支（读真实 preparation 行，
+     PREPARED/CONFIRMED/STALE 语义与 Files 一致）；`confirm_prepared` 复用既有
+     `begin_web_execution` 一次性授权；`_adopted_organize_task` 增加以 preparation 行的
+     (intent_id, actor, pin, 未完成 Task, WAITING_CONFIRM item) 为证明的同 Task 采纳；
+     `admit_manual_execution` 的采纳分支把 summary 版本栅栏移到条目重写之前，并保留被采纳
+     Task 的既有 display 身份（不覆盖定义 origin）。确认后 Task 由 SQL 采纳事务原子重排入
+     EXECUTION，Worker 经既有 `_run_execution`/`run_admitted` 在 claim fence 下执行允许子集。
+   - Task Center 判定：`_native_pending_confirmation_sql` 接受自动 Task 的
+     manual_recovery_preparations 关联，四类问题在 保存决定→分析→摘要→确认 全程保持
+     business_problem，不被折叠为技术历史。
+   - Web：`normalizeRecoveryCommandAck` 接受自动续作文档（nativeAnalysis 存在即原生续作，
+     identity 回退到 taskId），UI 文案分支（“原 Task 已重新排入零变更分析”）保持不变。
+
+2. **P1 — 定时 occurrence/定义详情/运行结果读回接上真实 Task 关联。**
+   - `list_automation_definition_occurrences` / `list_latest_automation_definition_occurrences`
+     的关联解码改为可证明关系：有 `automation_jobs` 行的旧发生点仍经 Job 解码（含
+     failure_category）；无 Job 行且 `tasks` 表存在该 id 的新发生点，把旧命名 `job_id`
+     列内容解码为受理 Task id；两者都不是则保持 NULL，不按时间/名称/Active 猜测。
+   - `_automation_occurrence_operator_document` 不再为 Task-only 发生点公布指向
+     `/api/v1/operations/jobs/{taskId}` 的动作（该链接此前 404）；Task 动作照常公布。
+   - latest/outcome summary（per-item 计数、attention、`lastTaskId`）经同一解码自然恢复；
+     `AutomationDefinitionOccurrenceService` 投影无需改动即读到真实 Task 与条目状态。
+
+3. **P1 — 直接 CLI 与 remote API 整理统一到共同 Task 调度。**
+   - `final_main` 的 `organize --execute`（含 batch 归一后的 path=None）改为共享 kernel
+     准入（`build_scheduled_task_admission` + `admit_scheduled_task`，display
+     origin=`direct-organize`，principal=`cli`，受理 pin/limit/scope），随后以受控临时
+     Worker 注册、claim、`begin_work`，用 `KernelTaskCoordinator` 在 claim fence 下驱动
+     同一生产管线并按既有聚合规则 settle（等待项→defer_to_human，终局→settle）。CLI
+     输出文本与退出码语义保持；claim 900s lease + 心跳续约；取消经既有 control 边界。
+     无 `--execute` 的分析保持原 generic coordinator 路径与零修改语义，不进执行队列。
+   - `run_direct_organize`（`automation_definition_execution.py`）为常驻 Worker 消费该类
+     Task 的恢复分支：无 scope→全库，目录→所在 ResourceLibrary，文件→该源，复用
+     `run_legacy_schedule` 同一管线/围栏/结果发布。
+   - remote：`ExecutionAuthorizationService.submit_organize` 与 repository 新
+     `consume_execution_authorization_task` 事务改为原子消费票据并受理 Task（共享容量
+     检查、`consumed_job_id`/audit 携带 Task id），不写 Job；满队列保持既有
+     `AutomationQueueFull` 传输语义。`POST /api/v1/jobs` organize 分支返回 202 + 明确
+     Task 身份（`taskId`/`task` 读回路径/`executionMethod`）；remote enablement、
+     REMOTE_EXECUTE、`execute=true`、header ticket、limit 检查全部保留。
+   - Worker 路由：`ManualTaskEngineWorker._is_automatic` 按 durable 形态（无 discovery/
+     无执行/有 scheduling row）路由到共享 runner，不再按 trigger 标签拒绝。
+
+### Actual validation（本轮命令与结果）
+
+```sh
+# 本轮新增/修改的端到端与受影响组
+.venv/bin/python -m unittest tests.test_v2_automation_run_once tests.test_manual_task_engine
+# Ran 63 tests — OK（含新增 test_recognition_decision_continures... 全链路）
+
+.venv/bin/python -m unittest tests.test_task_scheduling tests.test_task_scheduling_fencing \
+  tests.test_automation_task_admission tests.test_execution_authorization
+# Ran 84 tests — OK
+
+.venv/bin/python -m unittest tests.test_recovery_continuation tests.test_automation_definition_occurrence \
+  tests.test_operations_run_inventory tests.test_operations_task_center
+# Ran 159 tests — OK
+
+.venv/bin/python -m unittest tests.test_batch_cli tests.test_automation_api \
+  tests.test_automation_definition_execution tests.test_automation_run_once \
+  tests.test_automation_admission tests.test_automation_definition_occurrence
+# Ran 116 tests — OK
+
+.venv/bin/python -m unittest tests.test_automation_workspace_read_model \
+  tests.test_automation_definition_execution tests.test_automation_run_once \
+  tests.test_automation_task_admission tests.test_automation_execution_intent
+# Ran 128 tests — OK
+
+.venv/bin/python -m unittest tests.test_manual_operations tests.test_manual_organize_execution \
+  tests.test_manual_organize_preview tests.test_processing_worker_readiness \
+  tests.test_automation_job_fencing
+# Ran 99 tests — OK
+
+.venv/bin/ruff check mediaflow tests/test_automation_admission.py \
+  tests/test_v2_automation_run_once.py tests/test_execution_authorization.py
+# All checks passed!
+.venv/bin/python -m compileall -q mediaflow tests   # OK
+git diff --check                                     # clean
+```
+
+新增关键链路测试 `test_recognition_decision_continues_analysis_summary_and_execution_on_one_task`
+真实驱动：API Run once → 真实 Worker 产生 Recognition 问题 → decision → continue(202) →
+重复 continue(409) → 续作通道零变更分析 → `waiting_confirm` + preparation → GET recovery/
+preview → confirm(202, 同 Task 采纳) → Worker 执行 → COMPLETED + 1 SUCCESS Result + 文件
+真实移动 + 全程 0 Job、分析期 0 Storage 变更。CLI 两条新测试分别证明 execute 入口为 kernel
+Task 且文件真实移动，analysis-only 入口无 scheduling 行、零执行。
+
+### Remaining work / risks（如实陈述，未自评 PASS）
+
+1. **Metadata/Metadata-correction/Classification/Conflict 四类的自动续作链未各自写端到端
+   测试。** 共用同一通道与决定装载（`collect_resolved_continuation_decisions`），Recognition
+   已端到端验证；其余三类的真实 API 序列测试是本轮未完成的必要覆盖，请 B 在验收中复现或
+   退回补齐。
+2. **读回面只改了 occurrence/definition/records 已验证部分。** inventory/latest/metrics/
+   Dashboard/readiness 的 Job-less 读回未逐一独立复核（上一轮遗留风险延续）。
+3. **direct CLI 崩溃窗口：** admit 与 claim 之间崩溃时 Task 保持 QUEUED，由常驻 Worker 经
+   `run_direct_organize` 恢复（含文件/目录/全库三种范围）；该恢复分支未写独立测试。
+4. **历史 Job 兼容边界保持过渡态**：`IntervalScheduler` 无 kernel 时的 Job 回退、旧 queued
+   Jobs 的只读/取消能力、RO-4 全量迁移/删除均不在本 Task。
+
+### Scope statement
+
+无 schema 版本变更（复用既有 schema55 列语义）；未读写用户数据库/生产媒体；未修改
+A-owned Slice/Roadmap/Progress；未 push/部署；预存无关未跟踪文件保持未暂存。B 负责 T4
+full/native/package 门禁与独立审查。

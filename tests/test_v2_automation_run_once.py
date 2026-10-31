@@ -354,6 +354,8 @@ class RunOnceApiTests(unittest.TestCase):
                 runtime=runtime,
                 discovery=discovery,
                 run_once=run_once,
+                intents=intents,
+                previews=previews,
                 clock=self.clock,
                 source=source,
                 target=target,
@@ -565,7 +567,8 @@ class RunOnceApiTests(unittest.TestCase):
                 MediaCandidate("tmdb", "2", MediaType.MOVIE, "Two", year=2002),
             )
         )
-        service = self._run_once_service(value, lambda ids: MetadataProviderRegistry((provider,)))
+        provider_registry = MetadataProviderRegistry((provider,))
+        service = self._run_once_service(value, lambda ids: provider_registry)
         legacy = AutomationWorker(value.repository, service.run).run_next()
         if legacy is not None:
             return legacy
@@ -586,6 +589,49 @@ class RunOnceApiTests(unittest.TestCase):
 
         def runner(task, claim, clock=None, heartbeat=None):
             state = scheduling.state(task.task_id)
+            if value.repository.list_items(task.task_id):
+                # A continuation pass: the Task's own saved decision re-entered
+                # its zero-mutation analysis through the same kernel claim.
+                from mediaflow.application.automatic_task_continuation import (
+                    AutomaticTaskContinuationService,
+                )
+                from mediaflow.application.manual_organize import (
+                    ManualOrganizeIntentService,
+                )
+                from mediaflow.application.manual_organize_preview import (
+                    ManualOrganizePreviewService,
+                )
+                from mediaflow.application.processing_checkpoint import (
+                    ProcessingCheckpointService,
+                )
+
+                intents = ManualOrganizeIntentService(
+                    value.repository,
+                    value.managed,
+                    runtime_resolver=lambda snapshot_id, digest: value.runtime,
+                    storage_factory=lambda runtime, ids: dict(
+                        {"source": value.source, "target": value.target}
+                    ),
+                )
+                previews = ManualOrganizePreviewService(
+                    value.repository,
+                    intents,
+                    configuration_service=value.managed,
+                    storages={"source": value.source, "target": value.target},
+                    providers=provider_registry,
+                    clock=value.clock,
+                )
+                continuation = AutomaticTaskContinuationService(
+                    value.repository,
+                    intent_service=intents,
+                    preview_service=previews,
+                    checkpoint_service=ProcessingCheckpointService(
+                        value.repository,
+                        snapshot_validator=value.managed.validate_runtime_snapshot,
+                    ),
+                )
+                continuation.run_pass(task, scheduling, claim, clock=clock, heartbeat=heartbeat)
+                return
             job = self._run_once_job(value, task, state)
             try:
                 service.run(
@@ -1053,6 +1099,206 @@ class RunOnceApiTests(unittest.TestCase):
             self.assertEqual(200, status, page)
             self.assertEqual(1, page["total"])
             self.assertEqual([], value.source.mutations)
+
+    def test_recognition_decision_continues_analysis_summary_and_execution_on_one_task(self):
+        """Task47.3: the automatic Task's saved decision completes its own journey.
+
+        A real Run once admits one Task whose real Worker parks its only source
+        at a Recognition review.  The operator saves the decision, the same Task
+        re-enters its own zero-mutation analysis through the kernel re-entry
+        boundary, the fresh plan summary becomes the item's own confirmable
+        preparation, and the explicit confirmation executes the allowed subset
+        on the same Task — with zero Jobs, zero analysis mutations and one
+        honest Result.
+        """
+
+        self.media("One.2001.mkv")
+        self.change_document = lambda document: document.update({"recognitionRules": []})
+        with self.journey() as value:
+            status, admitted = self.admit(value)
+            self.assertEqual(202, status, admitted)
+            result = self.execute(value)
+            task_id = result.task_id
+            (item,) = value.repository.list_items(task_id)
+            self.assertEqual("waiting_recognition", item.status.value)
+            state = value.repository.get_task_scheduling(task_id)
+            self.assertEqual(state.queue_state.value, "waiting_human")
+            self.assertEqual(0, value.repository.count_scheduled_capacity_use())
+            self.assertEqual((), value.repository.list_jobs())
+
+            status, detail = self.request(
+                value, "GET", f"/api/v1/tasks/{task_id}/items/{item.item_id}/recovery"
+            )
+            self.assertEqual(200, status, detail)
+            self.assertEqual("business_problem", detail["recoveryKind"])
+            self.assertIsNone(detail["manualRecoveryPreparation"])
+
+            status, decided = self.request(
+                value,
+                "POST",
+                f"/api/v1/tasks/{task_id}/items/{item.item_id}/recovery/decision",
+                {
+                    "kind": "recognition",
+                    "expectedCheckpointVersion": detail["checkpoint"]["checkpoint_version"],
+                    "recognitionTypeId": "A",
+                },
+            )
+            self.assertEqual(200, status, decided)
+
+            status, continued = self.request(
+                value,
+                "POST",
+                f"/api/v1/tasks/{task_id}/items/{item.item_id}/recovery/continue",
+                {"expectedCheckpointVersion": decided["checkpoint"]["checkpoint_version"]},
+            )
+            self.assertEqual(202, status, continued)
+            self.assertTrue(continued["nativeAnalysis"]["taskId"], continued)
+            self.assertNotIn("discoveryId", continued["nativeAnalysis"])
+            state = value.repository.get_task_scheduling(task_id)
+            self.assertEqual(state.queue_state.value, "queued")
+            self.assertEqual(1, value.repository.count_scheduled_capacity_use())
+            self.assertEqual((), value.repository.list_jobs())
+            self.assertEqual([], value.source.mutations)
+            self.assertEqual([], value.target.mutations)
+
+            # A duplicate continue while the analysis is queued is a bounded
+            # refusal that changes nothing.
+            status, repeat = self.request(
+                value,
+                "POST",
+                f"/api/v1/tasks/{task_id}/items/{item.item_id}/recovery/continue",
+                {"expectedCheckpointVersion": decided["checkpoint"]["checkpoint_version"]},
+            )
+            self.assertEqual(409, status, repeat)
+            self.assertEqual(1, value.repository.count_scheduled_capacity_use())
+
+            result = self.execute(value)
+            self.assertIsNotNone(result)
+            (item,) = value.repository.list_items(task_id)
+            self.assertEqual("waiting_confirm", item.status.value, item)
+            self.assertEqual("continuation_planned", item.stage)
+            state = value.repository.get_task_scheduling(task_id)
+            self.assertEqual(state.queue_state.value, "waiting_human")
+            self.assertEqual(0, value.repository.count_scheduled_capacity_use())
+            self.assertEqual([], value.source.mutations)
+            self.assertEqual([], value.target.mutations)
+
+            status, detail = self.request(
+                value, "GET", f"/api/v1/tasks/{task_id}/items/{item.item_id}/recovery"
+            )
+            self.assertEqual(200, status, detail)
+            preparation = detail["manualRecoveryPreparation"]
+            self.assertIsNotNone(preparation, detail)
+            self.assertEqual("prepared", preparation["status"])
+            self.assertTrue(detail["manualRecoveryAvailable"])
+            self.assertTrue(detail["manualRecoveryAnalysisReady"])
+
+            status, preview = self.request(
+                value, "GET", f"/api/v1/manual-previews/{preparation['preview_id']}"
+            )
+            self.assertEqual(200, status, preview)
+            ready = [
+                entry["itemId"] for entry in preview["items"] if entry["status"] == "previewed"
+            ]
+            self.assertEqual(1, len(ready), preview)
+
+            status, confirmed = self.request(
+                value,
+                "POST",
+                f"/api/v1/manual-recovery-preparations/{preparation['preparation_id']}/confirm",
+                {"itemIds": ready, "confirmation": True},
+            )
+            self.assertEqual(202, status, confirmed)
+            self.assertEqual(ready, confirmed["selectedItemIds"], confirmed)
+            self.assertEqual(task_id, confirmed["taskId"], confirmed)
+            self.assertEqual((), value.repository.list_jobs())
+
+            # The confirmed execution runs on the same Task through the resident
+            # engine's manual-execution branch.
+            from mediaflow.application.manual_organize_execution import (
+                ManualOrganizeExecutionService,
+            )
+            from mediaflow.application.manual_task_engine import ManualTaskEngineWorker
+            from mediaflow.application.task_scheduling import TaskSchedulingService
+            from mediaflow.infrastructure.sqlite_runtime import SCHEMA_VERSION
+
+            scheduling = TaskSchedulingService(value.repository, capacity=100)
+            from mediaflow.application.manual_organize_preview import (
+                ManualOrganizePreviewService,
+            )
+            from mediaflow.application.metadata import MetadataProviderRegistry
+            from mediaflow.application.strategy_test import SyntheticMetadataProvider
+            from mediaflow.domain.metadata import MediaCandidate, MediaType
+
+            provider_registry = MetadataProviderRegistry(
+                (
+                    SyntheticMetadataProvider(
+                        (
+                            MediaCandidate("tmdb", "1", MediaType.MOVIE, "One", year=2001),
+                            MediaCandidate("tmdb", "2", MediaType.MOVIE, "Two", year=2002),
+                        )
+                    ),
+                )
+            )
+            previews = ManualOrganizePreviewService(
+                value.repository,
+                value.intents,
+                configuration=value.runtime,
+                storages={"source": value.source, "target": value.target},
+                providers=provider_registry,
+                clock=value.clock,
+            )
+            execution_service = ManualOrganizeExecutionService(
+                value.repository,
+                previews,
+                value.intents,
+                configuration=value.runtime,
+                storages={"source": value.source, "target": value.target},
+                clock=value.clock,
+            )
+            worker_id = f"continuation-test-{len(value.repository.list_tasks())}"
+            value.repository.register_worker(
+                worker_id,
+                worker_id,
+                5.0,
+                ("organize",),
+                None,
+                None,
+                SCHEMA_VERSION,
+                value.clock.now,
+            )
+            worker = ManualTaskEngineWorker(
+                value.repository,
+                scheduling,
+                None,
+                execution_service,
+                worker_id=worker_id,
+                clock=value.clock,
+            )
+            settled = worker.run_next()
+            self.assertIsNotNone(settled)
+            self.assertEqual("completed", settled.status.value, settled.error)
+            self.assertEqual((), value.repository.list_jobs())
+            self.assertFalse((self.source_root / "One.2001.mkv").exists())
+            organized = list((self.target_root / "Organized" / "Movies").rglob("*.mkv"))
+            self.assertEqual(1, len(organized), organized)
+            results = value.repository.list_results(task_id)
+            self.assertEqual(1, len(results), results)
+            self.assertEqual("SUCCESS", results[0].status)
+            state = value.repository.get_task_scheduling(task_id)
+            self.assertEqual(state.queue_state.value, "settled")
+            self.assertEqual(0, value.repository.count_scheduled_capacity_use())
+
+            # The original execution facts survive a reload; the confirmed
+            # summary reads back as confirmed with its linked execution.
+            status, detail = self.request(
+                value, "GET", f"/api/v1/tasks/{task_id}/items/{item.item_id}/recovery"
+            )
+            self.assertEqual(200, status, detail)
+            confirmed_summary = detail["manualRecoveryPreparation"]
+            self.assertIsNotNone(confirmed_summary, detail)
+            self.assertEqual("confirmed", confirmed_summary["status"])
+            self.assertEqual(confirmed["executionId"], confirmed_summary["execution_id"])
 
     def test_cancel_pending_run_once_settles_its_admitted_task(self):
         with self.journey() as value:

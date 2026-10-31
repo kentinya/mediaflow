@@ -1473,7 +1473,13 @@ class TransitionBoundaryTests(unittest.TestCase):
             # Task/slot/request identity instead of a Job.
             "application/automation_run_once.py",
             "application/automation_definition_execution.py",
+            # Task47.3 round 3: the automatic Task's saved decision re-enters
+            # its own zero-mutation analysis through the kernel re-entry
+            # boundary, and the remote ticket consumes into a Task admission.
+            "application/automatic_task_continuation.py",
+            "application/execution_authorization.py",
             "application/manual_organize_execution.py",
+            "application/manual_recovery_continuation.py",
             "application/manual_task_continuation.py",
             "application/manual_task_engine.py",
             "application/media_discovery.py",

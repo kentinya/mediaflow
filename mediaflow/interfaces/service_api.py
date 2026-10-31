@@ -125,6 +125,7 @@ from mediaflow.application.system_settings import (
     SystemSettingsValidationError,
 )
 from mediaflow.application.task_item_recovery import TaskItemRecoveryError, TaskItemRecoveryService
+from mediaflow.application.task_scheduling import TaskSchedulingService
 from mediaflow.application.unattended_execution import (
     UnattendedExecutionGrantError,
     UnattendedExecutionGrantService,
@@ -588,11 +589,18 @@ class MediaFlowApi:
         # One newly admitted Files manual Task continues its own review instead
         # of minting a legacy recovery Job: this boundary re-registers that same
         # Task's zero-mutation analysis through the scheduling kernel.  Work
-        # admitted before the kernel switch keeps its original Job path.
+        # admitted before the kernel switch keeps its original Job path.  A
+        # Scheduler/Run once admitted Task re-enters its own analysis through
+        # the same kernel; the factory keeps the shared capacity current with
+        # the Active runtime binding.
         self._manual_task_continuation = ManualTaskContinuationService(
             repository,
             self._media_discovery,
             checkpoint_service=self._checkpoint_service,
+            scheduling=lambda: TaskSchedulingService(
+                repository,
+                capacity=self._runtime_binding.maximum_active_jobs,
+            ),
         )
         self._task_item_recovery = TaskItemRecoveryService(
             repository,
@@ -8250,8 +8258,29 @@ class MediaFlowApi:
                             f"unsupported remote organize field {sorted(unsupported)[0]!r}"
                         )
                     token = str(environ.get("HTTP_X_MEDIAFLOW_EXECUTION_TOKEN", ""))
-                    job = binding.execution_authorizations.submit_organize(
+                    submission = binding.execution_authorizations.submit_organize(
                         token, limit=document.get("limit")
+                    )
+                    # Slice 47 RO-2: the remote organize submission is one
+                    # shared Task, not a Job.  The response names the durable
+                    # Task identity and its read path so the caller can follow
+                    # the real run instead of a retired queue row.
+                    admitted_task = submission.task
+                    return self._response(
+                        start_response,
+                        202,
+                        redact_manual_value(
+                            {
+                                "taskId": admitted_task.task_id,
+                                "command": admitted_task.command,
+                                "status": "queued",
+                                "executeAuthorized": bool(admitted_task.execute_authorized),
+                                "itemLimit": admitted_task.item_limit,
+                                "executionMethod": "task_engine",
+                                "task": f"/api/v1/operations/tasks/{admitted_task.task_id}",
+                                "sideEffects": "none",
+                            }
+                        ),
                     )
                 else:
                     self._require(principal, ApiPermission.SUBMIT_DRY_RUN)
@@ -13545,6 +13574,7 @@ class MediaFlowApi:
         operator = self._strip_automation_operator_evidence(document)
         actions: dict[str, object] = {}
         task_id = operator.get("taskId")
+        job_id = operator.get("jobId")
         if isinstance(task_id, str) and task_id:
             actions["task"] = {
                 "available": True,
@@ -13555,8 +13585,16 @@ class MediaFlowApi:
                 "durableOutcome": None,
                 "nextAction": "inspect the durable Task and its per-item Results",
             }
-        job_id = operator.get("jobId")
-        if isinstance(job_id, str) and job_id:
+        if (
+            isinstance(job_id, str)
+            and job_id
+            # A Task-only admission writes the Task identity into the
+            # occurrence's legacy link column, so no Job row exists to open:
+            # advertising a Job transport there would publish a link that can
+            # only 404.  A historical Job-backed occurrence keeps its own
+            # action because its Job id and Task id are distinct identities.
+            and job_id != task_id
+        ):
             actions["job"] = {
                 "available": True,
                 "reason": None,

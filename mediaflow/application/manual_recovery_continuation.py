@@ -927,8 +927,13 @@ class ManualRecoveryContinuationService:
         if not callable(finder):
             return None
         discovery = finder(source_task_id)
-        if discovery is None or discovery.organize_task_id != source_task_id:
-            return None
+        if discovery is not None and discovery.organize_task_id == source_task_id:
+            return self._files_native_summary(source_task_id, source_item_id, discovery)
+        return self._automatic_native_summary(source_task_id, source_item_id)
+
+    def _files_native_summary(self, source_task_id: str, source_item_id: str, discovery):
+        """The Files-admitted Task's own linked discovery/preview summary."""
+
         item = self._repository.get_item(source_item_id)
         if item is None or item.task_id != source_task_id:
             return None
@@ -965,6 +970,66 @@ class ManualRecoveryContinuationService:
             # summary as stale so the page steers to the required fresh
             # analysis instead of offering a confirmation that can only be
             # refused; the durable history stays readable either way.
+            document["status"] = ManualRecoveryPreparationStatus.STALE.value
+        return document
+
+    def _automatic_native_summary(self, source_task_id: str, source_item_id: str):
+        """One kernel-admitted automatic Task's own durable continuation summary.
+
+        A Scheduler due / Run once / remote or direct organize Task owns no Files
+        discovery.  Its continuation analysis produces the same durable
+        non-authorizing summary through a real ``manual_recovery_preparations``
+        row the resident engine wrote for this exact TaskItem, so the Task Center
+        reads and confirms that record instead of inventing a Files submission.
+        The method is read-only and returns ``None`` for a Task the kernel does
+        not own, an item without a current summary, or a different Task's item.
+        """
+
+        reader = getattr(self._repository, "get_task_scheduling", None)
+        if not callable(reader):
+            return None
+        try:
+            state = reader(source_task_id)
+        except Exception:  # noqa: BLE001 - an unreadable kernel row keeps None
+            return None
+        if state is None:
+            return None
+        item = self._repository.get_item(source_item_id)
+        if item is None or item.task_id != source_task_id:
+            return None
+        preparation = self._repository.get_current_manual_recovery_preparation(
+            source_task_id, source_item_id
+        )
+        if preparation is None:
+            return None
+        preview_getter = getattr(self._repository, "get_manual_preview", None)
+        if not callable(preview_getter):
+            return None
+        execution = self._native_admitted_execution_for_item(source_task_id, source_item_id)
+        preview = preview_getter(preparation.preview_id)
+        if preview is None:
+            return None
+        if execution is None and item.status is not TaskItemStatus.WAITING_CONFIRM:
+            # A summary is only the operator's confirmable boundary while this
+            # exact source is parked at its own plan summary.  A decided item
+            # whose analysis has not run yet, a processing execution or settled
+            # history is never published as a pending summary.
+            return None
+        document = dict(preparation.document())
+        document["hasExecutionAuthority"] = False
+        document["previewPath"] = "/api/v1/manual-previews/" + preparation.preview_id
+        document["executionPath"] = (
+            "/api/v1/manual-executions/" + execution.execution_id if execution is not None else None
+        )
+        document["next_action"] = preparation.next_action()
+        if document.get(
+            "status"
+        ) == ManualRecoveryPreparationStatus.PREPARED.value and self._preview_is_stale(
+            preparation.preview_id
+        ):
+            # The reviewed Preview is no longer executable; steer to the
+            # required fresh analysis instead of offering a confirmation that
+            # can only be refused.  The durable history stays readable.
             document["status"] = ManualRecoveryPreparationStatus.STALE.value
         return document
 

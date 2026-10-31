@@ -2355,6 +2355,28 @@ class SQLiteTaskRepository:
             ).fetchone()
         return self._manual_recovery_preparation(row) if row else None
 
+    def find_current_manual_recovery_preparation_by_intent(
+        self, intent_id: str
+    ) -> ManualRecoveryPreparation | None:
+        """The current summary one continuation intent was prepared for.
+
+        The lookup is the exact persisted ``intent_id`` of the summary row —
+        never a time, name or path guess — so an execution admission can prove
+        which source Task its reviewed plan belongs to when the Task owns no
+        Files discovery.
+        """
+
+        if not isinstance(intent_id, str) or not intent_id.strip():
+            raise ValueError("manual recovery intent ID is required")
+        with self._lock:
+            row = self._connection.execute(
+                """SELECT * FROM manual_recovery_preparations
+                WHERE intent_id=? AND current=1
+                ORDER BY created_at DESC, preparation_id DESC LIMIT 1""",
+                (intent_id,),
+            ).fetchone()
+        return self._manual_recovery_preparation(row) if row else None
+
     def list_manual_recovery_preparations(
         self, source_task_id: str, source_item_id: str, *, limit: int = 32
     ) -> tuple[ManualRecoveryPreparation, ...]:
@@ -8912,18 +8934,25 @@ class SQLiteTaskRepository:
         saved decision and parks the exact source at ``waiting_confirm`` once a
         usable plan is ready.  That state is the same required human step the
         legacy chain publishes, but it deliberately creates no Job or child
-        recovery Task; the durable link to the Task's own Files preparation
-        (``media_discoveries.organize_task_id`` with a linked Preview) is the
-        exact evidence that this summary belongs to this Task and is not a
-        plain initial confirmation.  A settled sibling, a different Task or a
+        recovery Task.  The durable link is either the Task's own Files
+        preparation (``media_discoveries.organize_task_id`` with a linked
+        Preview) or — for an automatic Task that owns no Files discovery — the
+        current ``manual_recovery_preparations`` summary the resident engine
+        wrote for this exact TaskItem.  A settled sibling, a different Task or a
         source without its own saved decision therefore never matches.
         """
 
         return (
             f"({item_alias}.status = 'waiting_confirm' "
-            "AND EXISTS (SELECT 1 FROM media_discoveries native_ready "
+            "AND ("
+            "EXISTS (SELECT 1 FROM media_discoveries native_ready "
             f"WHERE native_ready.organize_task_id = {item_alias}.task_id "
             "AND native_ready.preview_id IS NOT NULL) "
+            "OR EXISTS (SELECT 1 FROM manual_recovery_preparations native_prep "
+            f"WHERE native_prep.source_task_id = {item_alias}.task_id "
+            f"AND native_prep.source_item_id = {item_alias}.item_id "
+            "AND native_prep.status IN ('prepared', 'confirmed'))"
+            ") "
             f"AND {cls._native_current_decision_kind_sql(item_alias)} "
             f"= {_sql_string(problem_type)})"
         )
@@ -11229,7 +11258,11 @@ class SQLiteTaskRepository:
         if after is not None and before is not None:
             raise ValueError("after and before are mutually exclusive")
         query = (
-            "SELECT occurrence.*, jobs.task_id AS linked_task_id, "
+            "SELECT occurrence.*, "
+            "CASE WHEN jobs.job_id IS NOT NULL THEN jobs.task_id "
+            "WHEN EXISTS (SELECT 1 FROM tasks link_task "
+            "WHERE link_task.task_id = occurrence.job_id) THEN occurrence.job_id "
+            "ELSE NULL END AS linked_task_id, "
             "jobs.failure_category AS linked_failure_category "
             "FROM automation_definition_occurrences occurrence "
             "LEFT JOIN automation_jobs jobs ON jobs.job_id=occurrence.job_id "
@@ -11272,7 +11305,11 @@ class SQLiteTaskRepository:
             return ()
         placeholders = ", ".join("?" for _ in values)
         query = (
-            "SELECT occurrence.*, jobs.task_id AS linked_task_id, "
+            "SELECT occurrence.*, "
+            "CASE WHEN jobs.job_id IS NOT NULL THEN jobs.task_id "
+            "WHEN EXISTS (SELECT 1 FROM tasks link_task "
+            "WHERE link_task.task_id = occurrence.job_id) THEN occurrence.job_id "
+            "ELSE NULL END AS linked_task_id, "
             "jobs.failure_category AS linked_failure_category "
             "FROM automation_definition_occurrences occurrence "
             "LEFT JOIN automation_jobs jobs ON jobs.job_id=occurrence.job_id "
@@ -11362,6 +11399,88 @@ class SQLiteTaskRepository:
                 ),
             )
         return cursor.rowcount
+
+    def consume_execution_authorization_task(
+        self,
+        token_digest: str,
+        task: PersistentTask,
+        scheduling: TaskSchedulingState,
+        now: datetime,
+        audit: ExecutionAuthorizationAudit,
+        capacity: int,
+        display: RunDisplayContext | None = None,
+    ) -> ExecutionAuthorization:
+        """Consume one remote ticket into one admitted organizing Task, atomically.
+
+        The exact ticket validation, the shared Task scheduling capacity and the
+        Task/queue/display/audit commit are one transaction: an invalid, expired,
+        over-bound or already-consumed ticket writes nothing, and a full shared
+        queue consumes no authority and admits no orphan Task.  The legacy
+        ``consumed_job_id`` column and the audit's ``job_id`` field keep their
+        names and carry the substantive Task identity, exactly like the
+        occurrence link, so existing readers stay unambiguous.
+        """
+
+        require_capacity(capacity)
+        self._require_scheduled_admission_values(task, scheduling)
+        if now.tzinfo is None:
+            raise ValueError("execution authorization consumption instant needs timezone")
+        with self._lock:
+            self._connection.execute("BEGIN IMMEDIATE")
+            try:
+                row = self._connection.execute(
+                    "SELECT * FROM execution_authorizations WHERE token_digest=?", (token_digest,)
+                ).fetchone()
+                if row is None:
+                    raise ValueError("execution authorization is invalid")
+                value = self._execution_authorization(row)
+                if value.status is not ExecutionAuthorizationStatus.ACTIVE:
+                    raise ValueError(f"execution authorization is {value.status.value}")
+                if value.expires_at <= now:
+                    self._connection.execute(
+                        "UPDATE execution_authorizations SET status=? WHERE authorization_id=?",
+                        (ExecutionAuthorizationStatus.EXPIRED.value, value.authorization_id),
+                    )
+                    self._connection.commit()
+                    raise ValueError("execution authorization is expired")
+                if task.item_limit is None or task.item_limit > value.max_items:
+                    raise ValueError("remote organize limit exceeds execution authorization")
+                if self._shared_capacity_use_locked() >= capacity:
+                    raise TaskQueueFull(
+                        "the shared Task scheduling capacity is in use by other admitted work"
+                    )
+                cursor = self._connection.execute(
+                    "UPDATE execution_authorizations SET status=?, consumed_at=?, "
+                    "consumed_job_id=? WHERE authorization_id=? AND status=?",
+                    (
+                        ExecutionAuthorizationStatus.CONSUMED.value,
+                        now.isoformat(),
+                        task.task_id,
+                        value.authorization_id,
+                        ExecutionAuthorizationStatus.ACTIVE.value,
+                    ),
+                )
+                if cursor.rowcount != 1:
+                    raise ValueError("execution authorization was already consumed")
+                self._connection.execute(_TASK_INSERT, self._task_values(task))
+                if display is not None:
+                    self._insert_run_display_locked(task.task_id, display, task.created_at)
+                self._connection.execute(
+                    _TASK_SCHEDULING_INSERT,
+                    self._scheduling_values(scheduling),
+                )
+                self._insert_execution_authorization_audit(
+                    replace(audit, authorization_id=value.authorization_id, job_id=task.task_id)
+                )
+                updated = self._connection.execute(
+                    "SELECT * FROM execution_authorizations WHERE authorization_id=?",
+                    (value.authorization_id,),
+                ).fetchone()
+            except BaseException:
+                self._connection.rollback()
+                raise
+            self._connection.commit()
+        return self._execution_authorization(updated)
 
     def consume_execution_authorization(
         self,
@@ -13257,6 +13376,55 @@ class SQLiteTaskRepository:
                     else None,
                     sources=((item.source.storage_id, item.source.path) for item in items),
                 )
+                if preparation_id is not None:
+                    # The summary's own version fence is checked BEFORE any
+                    # TaskItem is written: an adopted confirmation reuses the
+                    # source Task's durable item identity, so the projection
+                    # must see the item exactly as the operator reviewed it.
+                    # The guarded link update itself stays at the end of this
+                    # transaction, so the summary is never confirmed without
+                    # the durable execution it names.
+                    preparation = self._connection.execute(
+                        "SELECT * FROM manual_recovery_preparations "
+                        "WHERE preparation_id=? AND status=? AND current=1",
+                        (
+                            preparation_id,
+                            ManualRecoveryPreparationStatus.PREPARED.value,
+                        ),
+                    ).fetchone()
+                    if preparation is None:
+                        raise ManualExecutionError(
+                            "the recovery plan summary changed before confirmation",
+                            code="preparation_stale",
+                            next_action="reload the current plan summary and confirm again",
+                        )
+                    context = self._get_processing_checkpoint_context_locked(
+                        preparation["source_item_id"], result_limit=32, audit_limit=64
+                    )
+                    if context is None:
+                        raise ManualExecutionError(
+                            "the original recovery item is unavailable",
+                            code="stale_checkpoint",
+                            next_action="reload the current item and prepare a fresh summary",
+                        )
+                    if checkpoint_projector is None:
+                        from mediaflow.application.processing_checkpoint import (
+                            ProcessingCheckpointService,
+                        )
+
+                        current = ProcessingCheckpointService(self)._project(context)
+                    else:
+                        current = checkpoint_projector(context)
+                    if (
+                        context.item.task_id != preparation["source_task_id"]
+                        or current.checkpoint_version != preparation["checkpoint_version"]
+                    ):
+                        raise ManualExecutionError(
+                            "the item changed after the summary was prepared",
+                            code="stale_checkpoint",
+                            next_action="reload the current item and prepare a fresh summary",
+                            details={"currentCheckpointVersion": current.checkpoint_version},
+                        )
                 intent = self._connection.execute(
                     "SELECT status, version, configuration_snapshot_id, "
                     "configuration_snapshot_digest FROM manual_intents WHERE intent_id=?",
@@ -13491,7 +13659,16 @@ class SQLiteTaskRepository:
                                 adopt_task_id,
                             ),
                         )
-                    if display is not None:
+                    if (
+                        display is not None
+                        and not self._connection.execute(
+                            "SELECT 1 FROM operations_run_display WHERE task_id=?", (adopt_task_id,)
+                        ).fetchone()
+                    ):
+                        # The adopted Task's own admission display is its durable
+                        # identity evidence (for example an automatic Task's
+                        # definition origin).  A subset confirmation continues
+                        # that same work and must never rewrite it.
                         self._insert_run_display_locked(
                             adopt_task_id, display, execution.created_at
                         )
@@ -13635,53 +13812,9 @@ class SQLiteTaskRepository:
                     # an orphaned authority or execution.  The exact confirmed
                     # selection and destructive permissions are persisted with
                     # the execution identity so a repeat confirmation can prove
-                    # equivalence.  The original item's checkpoint is
-                    # re-projected inside this transaction (the same bounded,
-                    # side-effect-free projection the HTTP preflight used) so a
-                    # concurrent decision/result cannot be admitted against a
-                    # stale summary.  No Provider, Storage or long analysis is
-                    # invoked while the write transaction is held.
-                    preparation = self._connection.execute(
-                        "SELECT * FROM manual_recovery_preparations "
-                        "WHERE preparation_id=? AND status=? AND current=1",
-                        (
-                            preparation_id,
-                            ManualRecoveryPreparationStatus.PREPARED.value,
-                        ),
-                    ).fetchone()
-                    if preparation is None:
-                        raise ManualExecutionError(
-                            "the recovery plan summary changed before confirmation",
-                            code="preparation_stale",
-                            next_action="reload the current plan summary and confirm again",
-                        )
-                    context = self._get_processing_checkpoint_context_locked(
-                        preparation["source_item_id"], result_limit=32, audit_limit=64
-                    )
-                    if context is None:
-                        raise ManualExecutionError(
-                            "the original recovery item is unavailable",
-                            code="stale_checkpoint",
-                            next_action="reload the current item and prepare a fresh summary",
-                        )
-                    if checkpoint_projector is None:
-                        from mediaflow.application.processing_checkpoint import (
-                            ProcessingCheckpointService,
-                        )
-
-                        current = ProcessingCheckpointService(self)._project(context)
-                    else:
-                        current = checkpoint_projector(context)
-                    if (
-                        context.item.task_id != preparation["source_task_id"]
-                        or current.checkpoint_version != preparation["checkpoint_version"]
-                    ):
-                        raise ManualExecutionError(
-                            "the item changed after the summary was prepared",
-                            code="stale_checkpoint",
-                            next_action="reload the current item and prepare a fresh summary",
-                            details={"currentCheckpointVersion": current.checkpoint_version},
-                        )
+                    # equivalence.  The summary's own checkpoint-version fence
+                    # was already checked against the untouched item at the
+                    # start of this transaction.
                     completed = self._connection.execute(
                         """UPDATE manual_recovery_preparations
                         SET status=?, authorization_id=?, execution_id=?,

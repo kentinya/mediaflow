@@ -704,31 +704,87 @@ class ManualOrganizeExecutionService:
         the Task must still be unfinished.  Anything else — a plain manual intent
         with no Files admission, a foreign pin, a settled Task — returns ``None``
         so the ordinary new-Task admission is unchanged.
+
+        A kernel-admitted automatic Task owns no Files discovery.  Its saved
+        decision's continuation summary was prepared as a durable
+        ``manual_recovery_preparations`` row naming this exact intent and the
+        source Task, so that row — matched by identity, actor and pin, with the
+        Task still unfinished — is the equally exact adoption evidence.
         """
 
         finder = getattr(self._repository, "find_media_discovery_for_intent", None)
-        if not callable(finder):
+        if callable(finder):
+            try:
+                discovery = finder(intent.intent_id)
+            except Exception:  # noqa: BLE001 - an unreadable link keeps the ordinary path
+                discovery = None
+            if discovery is not None:
+                task_id = getattr(discovery, "organize_task_id", None)
+                if isinstance(task_id, str) and task_id:
+                    if getattr(discovery, "actor", None) != authority.actor:
+                        return None
+                    if (
+                        getattr(discovery, "resource_library_id", None) is None
+                        or getattr(discovery, "snapshot_id", None)
+                        != authority.configuration_snapshot_id
+                        or getattr(discovery, "snapshot_digest", None)
+                        != authority.configuration_snapshot_digest
+                    ):
+                        return None
+                    reader = getattr(self._repository, "get_task", None)
+                    task = reader(task_id) if callable(reader) else None
+                    if task is None:
+                        return None
+                    if task.status in {
+                        PersistentTaskStatus.COMPLETED,
+                        PersistentTaskStatus.PARTIAL_SUCCESS,
+                        PersistentTaskStatus.FAILED,
+                        PersistentTaskStatus.CANCELLED,
+                    }:
+                        return None
+                    if task.configuration_snapshot_id != authority.configuration_snapshot_id:
+                        return None
+                    if (
+                        task.configuration_snapshot_digest
+                        != authority.configuration_snapshot_digest
+                    ):
+                        return None
+                    return task_id
+        return self._adopted_continuation_task(intent, authority)
+
+    def _adopted_continuation_task(self, intent, authority) -> str | None:
+        """The automatic source Task one continuation summary was prepared for.
+
+        The durable chain is exact: the summary row names this intent, its source
+        Task/TaskItem, its actor and the pin it was prepared under.  The
+        adoption is refused unless the same principal confirms it, the Task is
+        still unfinished under the same pin, and the source item is still the
+        decided item the summary belongs to.  The atomic admission re-checks the
+        Task's queue state and capacity inside its own transaction.
+        """
+
+        reader = getattr(
+            self._repository,
+            "find_current_manual_recovery_preparation_by_intent",
+            None,
+        )
+        if not callable(reader):
             return None
         try:
-            discovery = finder(intent.intent_id)
+            preparation = reader(intent.intent_id)
         except Exception:  # noqa: BLE001 - an unreadable link keeps the ordinary path
             return None
-        if discovery is None:
+        if preparation is None:
             return None
-        task_id = getattr(discovery, "organize_task_id", None)
-        if not isinstance(task_id, str) or not task_id:
-            return None
-        if getattr(discovery, "actor", None) != authority.actor:
+        if preparation.actor != authority.actor:
             return None
         if (
-            getattr(discovery, "resource_library_id", None) is None
-            or getattr(discovery, "snapshot_id", None) != authority.configuration_snapshot_id
-            or getattr(discovery, "snapshot_digest", None)
-            != authority.configuration_snapshot_digest
+            preparation.configuration_snapshot_id != authority.configuration_snapshot_id
+            or preparation.configuration_snapshot_digest != authority.configuration_snapshot_digest
         ):
             return None
-        reader = getattr(self._repository, "get_task", None)
-        task = reader(task_id) if callable(reader) else None
+        task_reader = getattr(self._repository, "get_task", None)
+        task = task_reader(preparation.source_task_id) if callable(task_reader) else None
         if task is None:
             return None
         if task.status in {
@@ -738,11 +794,18 @@ class ManualOrganizeExecutionService:
             PersistentTaskStatus.CANCELLED,
         }:
             return None
-        if task.configuration_snapshot_id != authority.configuration_snapshot_id:
+        if (
+            task.configuration_snapshot_id != authority.configuration_snapshot_id
+            or task.configuration_snapshot_digest != authority.configuration_snapshot_digest
+        ):
             return None
-        if task.configuration_snapshot_digest != authority.configuration_snapshot_digest:
+        item_reader = getattr(self._repository, "get_item", None)
+        item = item_reader(preparation.source_item_id) if callable(item_reader) else None
+        if item is None or item.task_id != preparation.source_task_id:
             return None
-        return task_id
+        if item.status is not TaskItemStatus.WAITING_CONFIRM:
+            return None
+        return preparation.source_task_id
 
     def _with_definition_origin(self, display, *, intent):
         """Attach the durable manual definition origin of one Run once.

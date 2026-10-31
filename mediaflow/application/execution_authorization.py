@@ -7,7 +7,7 @@ from dataclasses import dataclass
 from datetime import UTC, datetime, timedelta
 from uuid import uuid4
 
-from mediaflow.domain.automation import AutomationCommand, AutomationJob, AutomationJobStatus
+from mediaflow.domain.automation import AutomationCommand
 from mediaflow.domain.execution_authorization import (
     ExecutionAuthorization,
     ExecutionAuthorizationAudit,
@@ -20,6 +20,20 @@ from mediaflow.domain.execution_authorization import (
 class IssuedExecutionAuthorization:
     authorization: ExecutionAuthorization
     token: str
+
+
+@dataclass(frozen=True)
+class ScheduledOrganizeSubmission:
+    """The durable Task one consumed remote ticket admitted.
+
+    The Task is the run's only identity: it is queued in the shared scheduling
+    kernel with its own pin, limit and principal, and the resident Task engine
+    owns its whole machine life.  No Job row exists for it.
+    """
+
+    task: object
+    state: object
+    authorization: ExecutionAuthorization
 
 
 class ExecutionAuthorizationService:
@@ -98,33 +112,63 @@ class ExecutionAuthorizationService:
         )
         return IssuedExecutionAuthorization(value, token)
 
-    def submit_organize(self, token: str, *, limit: int) -> AutomationJob:
+    def submit_organize(self, token: str, *, limit: int) -> ScheduledOrganizeSubmission:
+        """Consume one remote ticket into one admitted organizing Task.
+
+        Slice 47 RO-2: the remote organize submission is the same shared Task
+        work every other entrance runs.  The exact ticket validation, the shared
+        Task scheduling capacity and the Task/queue/audit commit are one atomic
+        transaction; no Job row is written and no second queue exists.  The
+        returned submission names the durable Task identity and its queued
+        scheduling state so the caller can read the run back by that identity.
+        """
+
+        from mediaflow.application.task_scheduling import build_scheduled_task_admission
+        from mediaflow.domain.automation import AutomationQueueFull
+        from mediaflow.domain.task_persistence import RunDisplayContext
+        from mediaflow.domain.task_scheduling import TaskQueueFull, TaskTrigger
+
         if not token:
             raise ValueError("execution authorization token is required")
         if isinstance(limit, bool) or not isinstance(limit, int) or limit < 1:
             raise ValueError("remote organize limit must be a positive integer")
         now = self._clock()
-        job = AutomationJob(
-            str(uuid4()),
-            AutomationCommand.ORGANIZE,
-            AutomationJobStatus.PENDING,
-            now,
-            now,
-            limit=limit,
+        task, state = build_scheduled_task_admission(
+            AutomationCommand.ORGANIZE.value,
             execute_authorized=True,
+            trigger=TaskTrigger.MANUAL,
+            principal="remote-execution",
+            item_limit=limit,
             configuration_snapshot_id=self._configuration_snapshot_id,
             configuration_snapshot_digest=self._configuration_snapshot_digest,
+            require_configuration_snapshot=self._configuration_snapshot_id is not None,
+            now=now,
         )
-        self._repository.consume_execution_authorization(
-            self.digest(token),
-            job,
-            now,
-            ExecutionAuthorizationAudit(
-                str(uuid4()), "resolved-by-digest", "consumed", now, job_id=job.job_id
-            ),
-            self._maximum_active_jobs,
+        display = RunDisplayContext(
+            source_scope=None,
+            origin_kind="remote-organize",
         )
-        return job
+        try:
+            authorization = self._repository.consume_execution_authorization_task(
+                self.digest(token),
+                task,
+                state,
+                now,
+                ExecutionAuthorizationAudit(
+                    str(uuid4()), "resolved-by-digest", "consumed", now, job_id=task.task_id
+                ),
+                self._maximum_active_jobs,
+                display=display,
+            )
+        except TaskQueueFull as error:
+            # The shared queue-full boundary keeps its established transport
+            # error type; nothing was written and no authority was consumed.
+            raise AutomationQueueFull(str(error)) from error
+        return ScheduledOrganizeSubmission(
+            task=task,
+            state=state,
+            authorization=authorization,
+        )
 
     def list(self) -> tuple[ExecutionAuthorization, ...]:
         self._repository.expire_execution_authorizations(self._clock())
