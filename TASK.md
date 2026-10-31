@@ -53,23 +53,28 @@ Copy/Move等操作及既有Web/API/CLI控制入口均不再提供该能力；这
 
 ## Actual-code gap — current candidate
 
-本轮B复核冻结候选`82a0739df84a60040dcf896b39c888ac6a0222ca`，完整Task Base..Head为64文件。
-Task Base、High/T4与schema55不变。结论FIX REQUIRED；本轮只审查/验证并更新Task，不实施修复。
+本轮B复核冻结候选`b72675ef35beffe5d14b3e4b9910abfae618fbdb`，完整Task Base..Head为66文件。
+Task Base、High/T4与schema55不变。结论FIX REQUIRED；本轮只独立审查/验证并更新Task，不实施修复。
 
-上轮两项复现现已得到修正：ignored来源不再进入同一Task的新摘要；初次分析全部技术失败、
-最后一项ignore能够结算。但既有未结束条目在重新分析遇到技术失败时，失败没有同步到原条目，
-仍会留下永久running/waiting_human的Task。这是当前唯一确认的P1，详见B Review。
+原三项复现均已修正：ignored来源不再回到新摘要/执行，全部技术失败或最后ignore能够结算，
+既有ready条目重新分析超时也能同步FAILED并结束。但正常长批次分析没有续Task claim：累计分析
+超过默认300秒后，活着的Worker无法发布摘要，Task永久running/claimed并占名额。这是当前唯一
+确认的P1；它来自本Task早期接线，而非本次失败同步补丁。完整复核不能只验最后一笔delta。
 
 ## Next implementation order
 
-1. 修正现有fenced plan/discovery发布事务：区分已结束历史与本次重新分析的未结束来源，
-   将实际技术失败同步到该来源既有TaskItem，不因“已有item”而跳过；保留ID/精确源版本/pin、
-   已保存决定、审核审计和兄弟历史，不能覆盖成功、ignored、cancelled或uncertain效果。
-2. 复用既有计数、`task_work_status`和安全结算：无合法人工/机器工作时按真实结果结束；仍有
-   待决定/待确认、queued/claimed或in-flight工作时不提前结束，不新增队列或第五恢复入口。
-3. Developer补真实入口ready→重新分析失败及混合兄弟对照，交修改与直接受影响测试/风险；不要求Developer
-   重跑全套。独立B复审完整Base..新Head，再完成适用M1–M10和T4/发布门禁。
-   不新增通用恢复、暂停或第二套系统，不先规划47.3，不做验收平台重构。
+1. 沿现有`ManualTaskEngineWorker._run_discovery`→`MediaDiscoveryService.run_claimed/_analyze`
+   →共享Preview链补齐长分析保活。复用已有阶段/Provider前后`analysis_checkpoint`及现有lease-keeper
+   能力，使真实Task owner与容器内父Worker在批量分析和单个慢调用期间续租/更新liveness；不新建
+   队列、执行引擎或并行处理系统，也不以单纯延长租约掩盖缺失的保活。
+2. 保持claim token/generation/有效期、取消与原子plan发布栅栏；真正丢失owner时不得发布摘要、
+   写入后续条目或执行效果。不能放宽过期fence、自动抢占已开始工作或通过重置状态绕过保护。
+   保留前轮三项修正、独立兄弟结果/历史、精确pin、授权与uncertain非重放。
+3. 在现有Files/API+生产Task engine fixture补正常短批次与超过300秒长批次对照，使用可控时钟/
+   本地Provider而非长时间sleep；证明原Task完整摘要、正确文件数、人工等待释放容量、零变更/无Job。
+   覆盖单次慢调用的现有保活机制及真正owner丢失/取消的直接受影响边界。Developer仅跑新增/失败及
+   直接受影响测试；B复审完整Base..新Head并承担T4。既有验收harness的失配由B处理，不转嫁全套
+   门禁给Developer。不先规划47.3、不改摘要交互或增加“有效但错误元数据”的新人工纠正能力。
 
 ## Implementation Scope
 
@@ -272,250 +277,124 @@ RO-5 原界面兼容已验而 Task 化全表面未交付。因此继续规划本
 ## B Review Result — current candidate
 
 Reviewed Task Base: `c942c4b4b9d3abf105341e8163c1be2d95d9a671`。
-Reviewed Head: `82a0739df84a60040dcf896b39c888ac6a0222ca`。
-范围：完整Base..Head的64文件，含已提交范围改约、生产链、消费者及测试退役/替换。
+Reviewed Head: `b72675ef35beffe5d14b3e4b9910abfae618fbdb`。
+范围：完整Base..Head的66文件，包括范围改约、生产链、共享writer/消费者及测试退役/替换；不是只审最后5文件补丁。
 Decision: **FIX REQUIRED**，一项确认的P1；未宣告Task/Slice PASS。
 
-本轮以B执行独立复核，未实施产品修复、未使用子代理。治理通过；main无既有tracked edits，
-原有OS/log/图片/zip等untracked原样保留且不暂存；未访问用户运行库、媒体或私有配置。
-已核对手动Task链、逐项历史/聚合、分析/确认/执行、取消、四类续作、暂停退役、新旧Worker共存
-及API/CLI/Web消费者。大量删测对应用户已取消的暂停恢复旅程，不能视为这些旧旅程修复通过；
-保留退役入口的拒绝/零效果/历史读取验证。当前原生浏览器组的部分四类seed仍走legacy链，
-其44项通过不能单独证明新Task链的全部M4。本轮只报告真实已确认的可达问题。
+B独立复核；main无既有tracked edits，治理PASS。原有OS/log/图片/zip等untracked原样保留、不暂存；
+未读取用户运行库/媒体/私有配置，未实施产品修复、未使用子代理、不push、不改A-owned文档。
+已核对准入、发现/分析/摘要/确认/执行、原条目与兄弟历史、四类续作、取消、容量、claim与效果栅栏、
+resident组装、新旧runner排除及API/CLI/Web消费者。所有探测沿已有Files/API/Worker入口，不改数据库
+制造状态，不恢复已取消的暂停旅程；不把用户只讨论的元数据人工修订纳入范围。
 
-### 已验证修正的前两项复现
+### 已验证的本次修正
 
-- `ignored-source-repro.py`：同一Task重新分析只含Two；One保持ignored且源仍存在，最终
-  partial_success，只有Two的1个Result、无Job。已忽略文件重新被实际整理的旧复现未再出现。
-- `settled-analysis-repro.py`：最后一项ignore→partial_success/settled；初次分析全技术失败
-  →failed/settled；均零Storage变更。此修正确实有效，但不覆盖下述既有条目的重新分析失败。
+- `reanalysis-failure-repro.log`：ready来源重新分析超时，原item为failed/analysis_failed，Task为
+  failed/settled；再推进5次Worker不变，零Result/Storage变更、不占容量。上一轮唯一P1已修正。
+- `ignored-source-repro.log`：新摘要仅含合法Two；One仍ignored、源保留，最终partial_success，
+  只有Two的1个Result、无Job。`settled-analysis-repro.log`证明最后ignore及初次全技术失败正常结算。
+- 新增helper按真实plan producer字段区分四类人工问题与技术失败；核对现有共享producer及其消费者，
+  未确认分类偏离。成功/ignored/uncertain兄弟不应因失败同步被重置。
 
-### P1 — 重新分析失败未同步原条目，Task仍永久等待
+### P1 — 正常长批次分析未保活，过期后永久卡住并占名额
 
-**真实操作：** Files提交一部影片，第一次分析正常，原TaskItem到waiting_confirm。用户通过
-现有“重新分析”入口重算同一工作，此时Metadata Provider超时。新摘要该项为failed，原条目却
-仍是waiting_confirm、无error；Task/API仍running，调度为waiting_human且不占容量，没有问题
-类型和可执行工作。再运行真实Task engine五次仍不改变，零Result、零Storage变更。
-这不是暂停任务、额外恢复类型或猜造入口；只替换synthetic Provider的正常返回/超时，未改DB/claim。
+**用户触发：** 从现有资源库Files入口选择一批合法影片并整理；元数据请求都正常完成，但整批分析
+累计超过5分钟。当前新Task链分析期间不续Task claim，摘要最终不能发布，页面/API一直处理中，
+没有摘要、没有人工待处理项，仍占一个调度名额。不是进程崩溃/历史暂停/额外技术恢复场景。
 
-**根因：** `mediaflow/infrastructure/sqlite_runtime.py:publish_media_discovery_plan_with_plan`
-在本次分析发布事务中按task/storage/path查到任何existing item就无条件continue。保留历史的
-意图连同未结束条目一起跳过了，导致新失败只存在于摘要，原TaskItem仍被当作人工待确认项。
-`manual_task_engine.py:_wait_for_human`的新“全部settled”判断因此无法触发。
+**独立对照：** 复用`ManualTaskDiscoveryTests/_DiscoveryFixture`的真实认证Files API、SQLite、
+已发布策略、LocalStorage及生产Task engine。20部/40部不同片名均在100上限内，synthetic Provider
+每次正常search用fixture时钟前进10秒；未直接篡改claim/持久状态、未等待实际200/400秒。每个resident tick
+按生产方式更新Worker注册，再调用原engine。`analysis-duration-control.py`当前断言结果：
 
-**同Task修正与验收：**
+| 输入 | 实际耐久结果（5次后续Worker轮询后仍相同） |
+|---|---|
+| 20部，模拟累计200秒 | completed discovery、有摘要、20 TaskItems、waiting_human、不占容量、零Result/变更 |
+| 40部，模拟累计400秒 | discovery=analyzing、无摘要、0 TaskItems；Task=running/claimed、claim已过期、仍占容量、零Result/变更 |
 
-1. 在既有claim/fence保护的原子发布事务内，区分已settled历史与本次精确来源的未结束条目；
-   将实际技术失败发布到既有条目，保留ID/源版本/pin、决定/审计/attempt和兄弟结果，不笼统
-   重置所有existing项，也不覆盖ignored/success/cancelled/uncertain。
-2. 复用现有计数/聚合/安全结算；最后一个合法未结束来源失败后，Task/API按真实失败结束，
-   failure stage/原因与安全下一步可回读。仍有合法待决定/待确认、queued/claimed或in-flight
-   工作时保留正确等待/名额/效果保护，不新增恢复或调度系统。
-3. 从现有Files/API+生产Task engine增加ready→重新分析超时回归，核对新摘要、原item、Task、
-   API和重开一致、零变更/无Job；增加直接相关混合对照，另一待决定/待确认项不被提前结束，
-   已成功/ignored兄弟保持原结果且不重放。Developer仅跑失败及直接受影响测试，B负责T4。
+后者API200仍为running/total_items=0/problem_types=[]，不是短时刷新延迟。
+日志：`duration-control2-200s.log`、`duration-control2-400s.log`；均exit0（断言复现/对照符合预期，
+不是产品验收PASS）。早期fixture/harness失败日志也保留，未当成产品缺陷。
 
-证据：`.git/validation-evidence/b-task47.2-82a0739d/reanalysis-failure-repro.py`及同名`.log`。
-本问题阻塞M1/M4/M8的逐项状态、失败完成与用户结果闭环；其余门禁通过不能替代此交付缺口。
+**根因与定位：** `manual_task_engine.py:181–186`直接调用`run_claimed`，绕开旧
+`MediaDiscoveryService.claim_and_run:3065`的lease keeper；`media_discovery.py:3305–3312`
+进入`_analyze:4564`后，共享Preview creator调用没有传`analysis_checkpoint`，整批Provider阶段
+既没有Task续租，也没有父Worker liveness更新。默认Task lease为300秒，发布仍正确受过期fence
+拒绝；普通claim只可领取PENDING，已RUNNING任务不会被下一轮自动接管，因此一直卡住。
+引入接线：`b5a21ea39315e4e742e8ff2079216c31b8043fc6`（2026-10-31 07:30:35 +08:00）。
+
+**同Task修正：** 按Next implementation order恢复真实保活并补短/长批次与失去owner对照；
+不能削弱过期fence、取消/uncertain保护或自动重放。阻塞M1/M5/M6/M8及M9的正常长运行闭环。
+不因已有非重放约束就接受正常工作的必然超时，也不扩成所有崩溃点自动恢复。
 
 ### 本轮门禁与限制
 
-证据根：`.git/validation-evidence/b-task47.2-82a0739d/`，命令/结果清单见`review-summary.md`。
-原始复现及完整测试日志保留在本地忽略存储，不宣称远程可访问。
+证据根：`.git/validation-evidence/b-task47.2-b72675ef/`；本地忽略存储，不宣称远程可访问。
+完整命令/时间/制品身份见该目录`review-summary.md`、`browser-gates.json`和原始日志。
 
 | 验证 | 当前候选实际结果 |
 |---|---|
-| 治理、完整diff/manifest、ruff format/check、compileall、pip check、两份示例配置、diff空白 | 通过；398 Python文件格式检查通过 |
-| Web typecheck/lint/format:check/build | 通过；build有常规大chunk提示 |
-| Web完整单测 | 88文件/1320项通过；`web-unit.log`，103.61s |
-| 真实Python浏览器operations-inventory组 | 44 passed；`browser-inventory.log`，71.50s；上述新/旧链证明范围限制保留 |
-| 前两项真实入口复现 | 当前候选已修正；`ignored-source-repro.log`、`settled-analysis-repro.log` |
-| 本轮重新分析失败复现 | 确认P1，原item不更新、Task不结束；五次空闲Worker推进无效 |
-| 完整Python unittest discover | 确认P1后主动Ctrl-C停止，257.15s/exit130；未完成，无最终计数，不记PASS或产品断言失败 |
-| 常规Web E2E、其余三组原生浏览器/截图QA、当前wheel/源码外消费者、53/54升级、Docker fresh/restart/security | 因已确认P1未执行；修正候选由B补齐适用门禁 |
+| 治理、ruff format/check、compileall、pip check、两份示例配置、diff空白、禁用依赖检查 | 通过；398 Python文件；ffmpeg/ffprobe无匹配 |
+| 完整Python unittest discover | 2984 tests OK，skipped=7，449.416s；`python-full.log` |
+| 完整Web单测 | 88文件/1320 tests通过，99.1s；`web-unit.log` |
+| Web typecheck/lint/format:check/build | 通过；build仅大chunk警告；`quality.log` |
+| 常规Web E2E | 253 passed；`web-e2e.log` |
+| 原生inventory / task-center visual / direct-files | 44 / 2 / 22 passed；对应同名日志 |
+| 自动Run once原生浏览器组 | 3 passed / 2 failed；旧harness查找英文Refresh，而实际四类panel为“刷新”；`automation-run-once.log` |
+| 新Task独立四类浏览器链 | 真实Files准入→识别→元数据→分类→冲突rename→摘要确认→MOVE/Result，原Task completed；`native-four-result.log` |
+| 当前wheel、源码外安装消费者、迁移演练 | wheel smoke与7项installed native通过；TaskBase54→55及SliceBase53→55 rehearsal通过；`packaging.log`/`installed-native.log` |
+| Docker release security / restart-fault / upgrade-recovery | 均通过；真实四服务/手动Task/权限与敏感信息/不确定效果/54→55故障原子性；`docker-*.log` |
+| Docker empty-baseline | 未通过：旧脚本等待Slice46已移除的任务中心全局常驻服务/readiness区块；基础设施四服务已健康，未完成该脚本后续阶段 |
+| 三项既有复现 / 长批次对照 | 前三项已修正；正常长分析确认P1，不能以全量通过代替实际交付 |
 
-Python中断时的ResourceWarnings/KeyboardInterrupt保留；未放宽timeout/retry/skip。旧候选全量、
-wheel/Docker和Developer受影响测试不能替代当前T4。测试并行墙钟及本轮时间约束记录于证据清单；
-发现P1即停止昂贵测试，后续仅完成代码/文档审查与受影响治理检查。
+7个skip来自真实SMB/S3/OpenList专用验收环境缺失（3项）及Local/SMB/S3/OpenList专用耐久环境
+缺失（4项）；`skip-reasons.txt`列出原有装饰器原因，未改skip或读取生产环境。Python既有SQLite/
+TemporaryDirectory ResourceWarnings原样保留。源码外消费者确实来自独立venv的site-packages，
+不是源码PYTHONPATH；该7项不冒称包含本次新增三项失败同步测试。
+
+部分inventory四类seed仍走legacy，44项本身不等于新链全覆盖。本轮另跑新Task的四类串联及
+明确subset确认/真实MOVE，刷新重连后原Task/Result仍可读，完成桌面1536/窄屏380结果截图实看。
+少数过渡截图未捕获完整表单，不冒称每张都证明全部状态。第一次浏览器helper的Refresh语言及
+刷新后未重连错误保留，修正helper后结果成功；未改产品来迁就harness。
+
+Run once与empty-baseline的旧harness失配与代码/已接受Slice46语义一致，不能当本Task产品P1，
+也不能把这两项标PASS；未来修正候选由B维护验收并补齐。当前已确认真实P1，停止昂贵门禁，
+不让Developer先重构测试平台。测试墙钟区间合并及总时长口径见`timing.json`；遵守本轮测试
+小于总用时50%，没有通过空等或重复测试凑比例。
 
 ### M1–M10与全部Slice结果重评
 
 | Task验收 | 当前结论 |
 |---|---|
-| M1 | 新工作同Task/无Job链已接；本次重新分析失败后不能结束，P1阻塞 |
-| M2 | 有界发现/稳定性/附件范围不变；本轮无新增确认阻塞，全部当前原生门禁尚未完成 |
-| M3 | ignored重入旧复现已修正，精确确认/权限/身份约束仍需完整当前T4；不据局部结果宣告通过 |
-| M4 | 重新分析失败与原条目不一致，失败/独立历史闭环被P1阻塞；四类完整新链证明尚未完成 |
-| M5 | claim/取消/未知效果边界已审；当前完整并发/部署门禁未完成，不记PASS |
-| M6 | 新旧共享容量/原子准入仍在本Task；未完成当前全部共存门禁，不记PASS |
-| M7 | ignored兄弟不重放旧复现已修正；其余安全续作要求保持，当前完整门禁未完成 |
-| M8 | 新摘要failed、原Task/API永久running，实际用户结果被P1阻塞 |
-| M9 | 当前完整Python、打包/升级/容器验收未完成；由B在修正候选上完成 |
-| M10 | Pause退役及拒绝入口已有代码/测试；无新增暂停迁移义务，当前全量验收未完成 |
+| M1 | 新手动同Task/无Job链成立；正常长分析不能产生摘要，P1阻塞完整旅程 |
+| M2 | 有界direct/folder/mixed、稳定性/附件测试与原生门禁通过；无新增确认缺口 |
+| M3 | Save/分析零变更、精确subset确认/权限/pin、C→A身份及ignored排除已有回归；无新增确认缺口 |
+| M4 | 本轮新Task四类真实串联至Result成立，旧深链/兄弟与原失败同步已验证；整体仍受长分析P1影响 |
+| M5 | 失效owner拒绝与效果栅栏保留；正常owner却因缺保活过期，长运行要求未满足 |
+| M6 | 短链共享容量/拒绝保护已覆盖；长分析永久占名额，P1阻塞 |
+| M7 | 已成功/ignored/uncertain非重放、取消/重启证据通过；不以自动接管绕过本轮缺口 |
+| M8 | 新链实际四类/摘要/结果、导出/历史多数已验证；长批次API永久running，P1阻塞；Run once旧harness待B补正 |
+| M9 | 当前全量/打包/installed/53与54升级/安全容器已执行；empty-baseline旧harness未通过，长分析仍不能验收 |
+| M10 | 全操作Pause退役、真实入口拒绝/零效果及取消/四类继续已覆盖；不恢复暂停迁移义务 |
 
 | Slice outcome | 当前结论 |
 |---|---|
-| RO-1 | 手动生产链已接；既有条目重新分析失败后的终态不实，未完整交付 |
-| RO-2 | 手动链已接；due/Run once/独立API-CLI引擎切换仍为后续工作，本Task不承担切换 |
-| RO-3 | 四类复用/同Task已实现接线；本次逐项失败/完成语义仍有缺口，完整新链验收未完成 |
-| RO-4 | schema55加法在本Task范围；Job历史迁移/删除仍后续，当前升级门禁未完成 |
-| RO-5 | Files/Task Center重新分析失败结果未闭环；其他新表面仍需完整验收 |
+| RO-1 | 内核与手动生产链已接，但正常分析租约/容量生命周期存在本轮P1；未完整交付 |
+| RO-2 | 手动新引擎已接；due/Run once/独立API-CLI切换仍后续，本Task不承担该切换 |
+| RO-3 | 新手动四类同Task已实际完成，旧三项失败/历史缺口修正；长分析尚会阻断续作，无新增恢复种类 |
+| RO-4 | additive55、53/54升级及故障原子性已验证；Job历史转换/删除尚未做，仍属后续 |
+| RO-5 | 新手动多数现有Web/API/容器表面已证；长批次无摘要/结果闭环，全部触发表面仍未交付 |
 
-同Task修复这一项P1；Slice47保持ACTIVE，不规划下一Task，不修改A-owned合同/路线图/进度。
-以下Developer报告是历史实施交接，本轮状态与结论以上文为准。
+同Task修正这一项P1；Slice47保持ACTIVE，不规划下一Task，不修改A-owned合同/路线图/进度。
 
-## Developer Completion Report — user-authorized direct fix
+## Developer handoff — current reviewed implementation
 
-Checkpoint: `2f682703ce899dee691eedfc910742b2a729c809`。
-Status: **READY FOR B REVIEW**。用户授权后本代理由B转为Developer实施，本段不是独立B复审。
+Checkpoint: `b72675ef35beffe5d14b3e4b9910abfae618fbdb`。Developer提交时为READY FOR B REVIEW，
+本轮独立B结论以上文为准；此前详细fix-round报告保留在Git，不在当前Task重复流水账。
 
-**交付行为**
-
-- 分析完成的原子plan/discovery发布事务内，为尚无TaskItem的具体来源创建耐久条目；ready项
-  等待明确确认，技术失败保留失败事实。检查同一Task的live claim/token，再一并更新文件计数；
-  任一步失败整体回滚。已有审核/尝试/效果/已完成兄弟项不覆盖，未新增表或恢复系统。
-- 两部直接ready的影片先整理一部后，Task保持2项/完成1项并等待人工；第二部仍属于原Task，
-  可以修改RecognitionType、再分析并单独确认；最终2/2、两个独立Result，首部不重放。
-- 既有浏览器helper保留旧runner并接真实Task engine；按精确Task/execution关系及前后耐久
-  execution记录回读本次推进结果，不凭时间/文件名猜关联、不报告上一子集为新执行。
-- remaining-scope接口的旧pin恢复断言改为退役拒绝，保留409/零效果/无摘要/历史对照。
-
-**修改与直接受影响测试（当前checkpoint实际结果）**
-
-| 命令（仓库根，Web命令在web/） | 结果 |
-|---|---|
-| `.venv/bin/python -m unittest tests.test_manual_task_engine tests.test_task_scheduling tests.test_task_scheduling_fencing tests.test_task_scheduling_migration tests.test_media_discovery tests.test_manual_organize_preview tests.test_manual_organize_execution tests.test_processing_checkpoint` | 310 tests OK，32.551s；`ready-affected-python.log` |
-| `.venv/bin/python -m unittest tests.test_task_center_recovery_lineage tests.test_scope_continuation` | 59 tests OK，7.146s；`adapter-python-final.log` |
-| `npm run test:e2e -- --config=playwright.python.config.ts --workers=1 tests/e2e/operations-inventory.python.spec.ts` | 44 passed，1.3m；`inventory-final-fix.log`；原6项及真实首部完成后第二部修正均通过 |
-| 修改3个Python文件ruff format/check、compileall；修改Web spec的Prettier、`git diff --check` | 通过；无timeout/retry/skip放宽 |
-
-新增自动回归从既有Files API准入两部无需人工决定的来源，覆盖首次等待零变更、首部确认后
-2/1计数/等待态、剩余项同Task再分析/确认、2/2独立Result、首部结果保留、无Job、重开一致。
-为定位修正前原因，在当前依赖中只加载`8f67b3a2`原publish方法运行该新例，复现`2 != 0`；
-这是精确旧方法对照，不冒称整个旧版本全量回归（`ready-subset-before-fix.log`）。
-
-本轮自`2026-10-31 07:06:27 UTC`开始；截至`07:38:37 UTC`已用约1930秒。测试并行墙钟
-区间合并约901秒（复用日志的起止区间连中间空档也保守计入），另计零碎检查保守不超过
-940秒，低于本轮50%；`timing.json`保留测量口径。未为凑比例等待或重复已通过测试。
-
-**交接限制**
-
-- schema55未变；本轮只修改当前Task内4个执行/测试文件与TASK报告，未改A-owned合同/路线图。
-- 本checkpoint未重跑完整Python/Web/新wheel/Docker及其余真实浏览器组；独立B负责，旧制品
-  hash与旧2974项全量不能作为新checkpoint PASS。新回归总测试数相应增加。
-- 已关闭本代理启动的两个临时原生页面服务器并清理其fixture；浏览器harness随测试正常退出。
-- 本次开发交接当时为READY FOR B REVIEW；当前独立B判定见上文，不自审PASS、不规划下一Task、不关闭Slice。
-
-## Developer Fix Report — P1-1/P1-2 second round
-
-Status: **READY FOR B REVIEW**.本段由 Developer实施并交接,不是独立B复审,不自审PASS。
-起点为记录B复审的 `4e7d99d7`;修复checkpoint见本次提交(真实源码身份由 `git log` 给出)。
-Task Base、High/T4、schema55与父Slice边界不变;只修B已确认的两项P1,不新增恢复系统。
-
-**修改行为**
-
-- **P1-1(已忽略来源不再回到同一Task可执行范围)。** 原生(非 recovery)分析在冻结manifest
-  求剩余scope时,除既有执行准入外,再按本Task自身耐久TaskItem的 `(storage_id, source_path)`
-  settled disposition(ignored/success/failed/skipped/cancelled/dry_run)排除已结束来源,仍保留
-  等待决定/等待确认的合法兄弟。确认/准入事务内对同一 `(task_id, storage_id, source_path)`
-  断言未settled:一个stale summary或直接确认不能把已ignored项覆盖回pending/success,整笔
-  确认回滚且保留原选择与结果。诚实修正“无剩余scope”提示,使其同时覆盖“已执行/已忽略/已失败”。
-- **P1-2(全部条目结束后Task正确结算)。** 分析完成时若整个耐久条目集已全部settled且无
-  queued/processing,复用 `task_work_status`/计数/claim settle安全结算(纯技术失败→Failed,
-  纯ignored→保留非成功语义的PartialSuccess),不再永久Running/waiting_human。最后一项ignore
-  在既有 `admit_recovery_request` 事务内、仅当该Task处于WAITING_HUMAN且无claim/control/
-  in-flight effect时,按真实条目聚合结算并释放名额。仍有待决定/待确认/机器工作/in-flight时
-  绝不提前结算;合法性取消、四类继续与源/权限/pin保护不变。
-
-**B两项复现脚本在真实入口下的当前结果**
-
-- `ignored-source-repro.py`:`REANALYZE`只含Two;`FINAL`为 `partial_success`,One保持`ignored`、
-  源仍存在、仅1个Result、0 Job(日志`.git/validation-evidence/dev-task47.2-fix/p1-1-repro.log`)。
-- `settled-analysis-repro.py`:`ALL_IGNORED`→`task=partial_success, queue=settled`;
-  `ALL_TECHNICAL_FAILED`→`task=failed, queue=settled`(日志`p1-2-repro.log`)。
-
-**新增自动回归(真实Files/Task/Executor链)**
-
-`tests/test_manual_task_engine.py`新增4例:ignored来源经Provider正常新返回后不再进重分析summary、
-仍保持ignored/源在/无新Result、兄弟正常完成并跨重开一致;最后一项ignore结算Task(API终态、
-零变更、重复Worker无新增);纯技术失败结算Failed;同类兄弟仍待决定时ignore不得提前结算。
-
-**修改与直接受影响测试(当前工作区实际结果)**
-
-| 命令(仓库根) | 结果 |
-|---|---|
-| `.venv/bin/python -m unittest tests.test_manual_task_engine tests.test_task_scheduling tests.test_task_scheduling_fencing tests.test_task_scheduling_migration tests.test_media_discovery tests.test_manual_organize_intent tests.test_manual_organize_preview tests.test_manual_organize_execution tests.test_task_center_recovery_lineage tests.test_recovery_continuation tests.test_processing_checkpoint` | 401 tests OK,46.286s;`affected-python-1.log` |
-| `.venv/bin/python -m unittest tests.test_automation_admission tests.test_automation_job_fencing tests.test_automation_definition_occurrence tests.test_v2_automation_run_once tests.test_processing_worker_readiness tests.test_automation_settings_resident tests.test_direct_file_transfers tests.test_media_library_transfers` | 230 tests OK,110.997s;`affected-python-2.log` |
-| `.venv/bin/python -m unittest tests.test_manual_ignore{,_batch} tests.test_processing_checkpoint tests.test_scope_continuation tests.test_task_center_recovery_lineage tests.test_recovery_continuation tests.test_manual_operations{,_contract} tests.test_operations_task_center tests.test_processing_recovery_admission tests.test_task_pause_resume tests.test_task_persistence tests.test_task_retry tests.test_task_scope tests.test_v2_manual_organize tests.test_organize_preparation tests.test_preview_retirement tests.test_recovery_batch tests.test_manual_preview tests.test_organizer_rollback` | 307 tests OK,20.502s;`affected-python-3.log` |
-| 4个改动Python文件 `ruff format --check`/`ruff check`、`compileall -q mediaflow tests scripts`、`git diff --check` | 通过;无timeout/retry/skip放宽 |
-
-**交接限制与剩余风险**
-
-- 本轮未跑完整Python/Web/新wheel/Docker/真实浏览器门禁,由独立B在修正候选上执行T4;
-  旧候选日志与全量制品不能作为本checkpoint PASS。
-- 确认/准入事务内的settled断言是纵深保护:经当前单操作员HTTP入口,新summary已不再包含
-  ignored来源,因此该断言未构造产品级不可达场景的单测;主保护由真实入口回归覆盖。
-- 只改本轮Task内3个执行文件、1个测试文件与TASK报告;未改A-owned合同/路线图,未推进Slice关闭。
-
-## Developer Fix Report — P1 reanalysis-failure item sync (third round)
-
-Status: **READY FOR B REVIEW**.本段由 Developer 实施并交接,不是独立 B 复审,不自审 PASS。
-本轮起点为记录 B 复审阻塞的 `cf1a7d1d70376cd74e3bf4dcb016ef70167d7791`;修复 checkpoint 见本次提交
-(真实源码身份由 `git log` 给出)。Task Base、High/T4、schema55 与父 Slice 边界不变;只修 B 已确认的
-唯一 P1(既有条目重新分析技术失败未同步、Task 永久 running),不新增恢复/调度系统、不改范围。
-
-**修改行为**
-
-- 在既有 claim/fence 保护的 `publish_media_discovery_plan_with_plan` 原子发布事务内,对同一
-  `(task_id, storage_id, source_path)` 的既有 TaskItem 不再无条件跳过:
-  - `SETTLED_ITEM_STATUSES`(success/ignored/failed/skipped/cancelled/dry_run)保持原样,连同其决定、
-    审计、attempt、Result 与效果一律不覆盖;
-  - 新分析为 `PREVIEWED` 的既有项不改动(链接 plan 已携带新摘要);
-  - 新分析为真实四类问题(已由 `publish_task_item_problem` 投影为对应 waiting 项)不改动;
-  - 其余真实技术/规划失败则就地把该来源既有条目置为 `FAILED`/`analysis_failed` 并记录 `error`,
-    保留 item_id、精确源版本/pin、occurrence/fingerprint 与兄弟历史,随后沿用既有
-    `_refresh_task_item_counts_locked` 与 `manual_task_engine._wait_for_human` 的安全结算。零 Storage
-    变更、无新 Job、无第二套队列。
-- 新增纯函数 `manual_preview_plan_problem(plan)`(domain/manual_organize_preview.py),按共享分析
-  自身写入 plan 的字段识别四类原生问题(recognition/metadata/metadata_correction/classification/
-  conflict);Provider 错误、缺策略、source admission、naming/storage 失败与 capability gap 均返回
-  `None`,因此只有真实技术失败会同步到既有条目,不误伤任何四类人工等待。
-
-**B P1 复现脚本在真实入口下的当前结果**
-
-- `reanalysis-failure-repro.py`:重新分析超时后 `task=failed, queue=settled`,既有条目
-  `failed/analysis_failed/error=synthetic upstream timeout on explicit re-analysis`,零 Result、零
-  Storage 变更、无 Job;再跑 5 次空闲 Worker 不变(日志 `reanalysis-failure-repro.log`)。
-- `ignored-source-repro.py` 与 `settled-analysis-repro.py` 保持已修正结果(partial_success/failed +
-  settled、零变更),日志同名。
-
-**新增自动回归(真实 Files/API + 生产 Task engine)**
-
-`tests/test_manual_task_engine.py` 新增3例:ready 来源重新分析超时→既有条目 FAILED、Task/API 结算
-Failed 且重开一致、零变更/无 Job;两部中成功兄弟保持 SUCCESS+Result/源效果、另一部超时→
-PartialSuccess/2-1-1、不重放;一待决定 + 一已决定重新分析超时→已决定项 FAILED、待决定兄弟仍
-WAITING_RECOGNITION 且保持 pending 复核与等待,不被提前结束。三例在未打补丁的 HEAD 源码上分别复现
-`waiting_confirm != failed`(已用 `git checkout --` 精确对照,修复后恢复)。
-`tests/test_manual_organize_preview.py` 新增 `ManualPreviewPlanProblemTests` 两例锁定四类分类与
-技术/ready 反向判定。
-
-**修改与直接受影响测试(当前工作区实际结果)**
-
-| 命令(仓库根) | 结果 |
-|---|---|
-| `.venv/bin/python -m unittest tests.test_manual_task_engine tests.test_manual_organize_preview tests.test_task_scheduling tests.test_task_scheduling_fencing tests.test_task_scheduling_migration tests.test_media_discovery tests.test_manual_organize_intent tests.test_manual_organize_execution tests.test_task_center_recovery_lineage tests.test_recovery_continuation tests.test_processing_checkpoint` | 406 tests OK,45.163s;`affected-python-1.log` |
-| `.venv/bin/python -m unittest tests.test_automation_admission tests.test_automation_job_fencing tests.test_automation_definition_occurrence tests.test_v2_automation_run_once tests.test_processing_worker_readiness tests.test_automation_settings_resident tests.test_direct_file_transfers tests.test_media_library_transfers` | 230 tests OK,111.284s;`affected-python-2.log` |
-| `.venv/bin/python -m unittest tests.test_manual_ignore tests.test_manual_ignore_batch tests.test_scope_continuation tests.test_operations_task_center tests.test_processing_recovery_admission tests.test_task_pause_resume tests.test_task_persistence tests.test_task_retry tests.test_task_scope tests.test_v2_manual_organize tests.test_organize_preparation tests.test_preview_retirement tests.test_recovery_batch tests.test_manual_preview tests.test_organizer_rollback` | 342 tests OK,22.006s;`affected-python-3.log` |
-| 3 个 B 复现脚本(真实 Files/API/engine) | 全部符合预期;三个同名 log |
-| 4个改动Python文件 `ruff format --check`/`ruff check`、`compileall -q mediaflow tests scripts`、`git diff --check` | 通过;`quality-gates.log`;无timeout/retry/skip放宽 |
-
-证据根:`.git/validation-evidence/dev-task47.2-p1-reanalysis/`(本地忽略存储,不宣称远程可访问)。
-
-**交接限制与剩余风险**
-
-- 本轮未跑完整 Python/Web/新 wheel/Docker/真实浏览器门禁,由独立 B 在修正候选上执行 T4;
-  旧候选日志与全量制品不能作为本 checkpoint PASS。
-- 四类识别由 plan 文档派生而非读取 `_PreviewOutcome.problem`;单测与技术/ready 反例已锁定当前共享
-  分析写入的字段形状。若后续共享分析新增第五类原生问题或改变 plan 字段,该派生需同步更新(现有
-  `publish_task_item_problem` 与 plan 文档仍一一对应,未发现偏离)。
-- 只改本轮 Task 内 2 个执行文件、2 个测试文件与 TASK 报告;未改 A-owned 合同/路线图,未推进 Slice 关闭。
+本次实现：fenced plan/discovery事务对尚未结束的既有精确来源同步技术失败，保留ID/源版本/pin/
+审核/兄弟历史及settled结果；纯helper区分四类人工问题与技术失败，复用原聚合结算。
+新增3项真实Files/API/engine回归（单项失败结算、成功兄弟不重放、待决定兄弟不提前结束）与
+2项helper分类测试。Developer实际affected组406/230/342 tests均OK，3个B复现脚本和修改文件
+质量检查通过，证据`.git/validation-evidence/dev-task47.2-p1-reanalysis/`。未要求Developer跑全套；
+本轮B的当前候选T4结果、限制和新增P1单独记录于上文。
