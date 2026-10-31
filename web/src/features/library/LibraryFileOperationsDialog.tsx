@@ -674,8 +674,8 @@ function OperationDetail({
       ) : (
         <p className="mf-dialog-hint">
           {lifecycle === null
-            ? "当前无法读取该操作的控制投影，因此未提供暂停/取消/继续按钮。"
-            : "后端未对该操作和当前账号提供任何可用的暂停/取消/继续控制。"}
+            ? "当前无法读取该操作的控制投影，因此未提供取消按钮。"
+            : "后端未对该操作和当前账号提供任何可用的取消控制。"}
         </p>
       )}
       {(lifecycle?.actions ?? []).some((action) => !action.available) && (

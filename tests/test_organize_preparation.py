@@ -553,7 +553,14 @@ class PreparationJourneyTests(_PreparationFixture):
                 "POST",
                 {"expectedVersion": current.version},
             )
-            self.assertEqual(200, status, controlled)
+            if control == "pause":
+                # Pause is retired: the real API refuses it with no effect, so
+                # the running analysis is never disturbed.
+                self.assertEqual(409, status, controlled)
+                self.assertEqual("pause_retired", controlled["error"]["code"])
+                self.assertEqual("none", controlled["error"]["details"]["sideEffects"])
+            else:
+                self.assertEqual(200, status, controlled)
         release.set()
         thread.join(timeout=30)
         self.assertFalse(thread.is_alive())
@@ -721,48 +728,26 @@ class PreparationJourneyTests(_PreparationFixture):
             self.assertEqual([], value.source.mutations)
             self.assertEqual([], value.target.mutations)
 
-    def test_a_pause_that_wins_a_partial_analysis_leaves_no_plan(self) -> None:
-        """B's P1 fence: the known-subset plan is protected by the atomic write.
+    def test_a_retired_pause_never_disturbs_a_partial_analysis(self) -> None:
+        """Retirement: the pause control is refused and the analysis completes.
 
-        While the Worker analyzes the legal partial manifest the operator pauses
-        through the real API.  The accepted control wins the publication, so the
-        plan rows and the run link are refused together: no plan row, no intent
-        summary and no confirmable work.  Continuing then publishes exactly one
-        real plan for that subset.
+        While the Worker analyzes the legal partial manifest the operator's
+        retired pause reaches the real API.  The bounded refusal has no effect,
+        so the production analysis publishes exactly one real plan for that
+        reviewed subset and mutates no media.
         """
 
         with self.journey() as value:
             readback = self._partial_analysis_race(value, "pause")
-            self.assertEqual("paused", readback["status"], readback)
-            self.assertTrue(readback["pauseRequested"], readback)
-            self.assertIsNone(readback["previewId"], readback)
-            self.assertFalse(readback["prepared"], readback)
+            self.assertEqual("partial_success", readback["status"], readback)
+            self.assertFalse(readback["pauseRequested"], readback)
+            self.assertTrue(readback["prepared"], readback)
+            self.assertIsNotNone(readback["previewId"], readback)
             intent_id = readback["intentId"]
             self.assertIsNotNone(intent_id)
-            self.assertEqual((), value.repository.list_manual_previews(intent_id))
-            self.assertIsNone(value.repository.get_latest_manual_preview(intent_id))
-            self.assertIsNone(
-                value.repository.media_discovery_claim(readback["discoveryId"])["claimToken"]
-            )
-            self.assertEqual([], value.source.mutations)
-            self.assertEqual([], value.target.mutations)
-            # RO-2: the organizing Task admitted with the selection is real and
-            # durable, but a paused/cancelled walk leaves no confirmable subset and
-            # no TaskItem, so nothing can ever be executed from it.
-            self.assert_no_executable_work(value)
-
-            status, resumed = self.request(
-                value,
-                f"/api/v1/operations/organize/discoveries/{readback['discoveryId']}/resume",
-                "POST",
-                {"expectedVersion": readback["version"]},
-            )
-            self.assertEqual(200, status, resumed)
-            finalized = self.run_worker(value)
-            self.assertTrue(finalized["prepared"], finalized)
-            self.assertEqual("partial_success", finalized["status"], finalized)
             status, plan = self.request(
-                value, f"/api/v1/operations/organize/previews/{finalized['previewId']}"
+                value,
+                f"/api/v1/operations/organize/previews/{readback['previewId']}",
             )
             self.assertEqual(200, status, plan)
             self.assertEqual(
@@ -2039,14 +2024,13 @@ class AdmittedSourceOwnershipTests(_PreparationFixture):
                 value.target.exists("Organized/Movies/Movies/Anime/Two (2002) [tmdbid-202]")
             )
 
-    def test_a_paused_files_admission_still_owns_its_source(self) -> None:
-        """A paused Files work holds no execution lease and still owns the source.
+    def test_a_queued_files_admission_still_owns_its_source(self) -> None:
+        """A queued Files work holds no execution lease and still owns its source.
 
-        The operator pauses the admitted work *before* the Worker ever walks it,
-        so no ``file_locks`` row and no TaskItem exist and the record only carries
-        a pending cooperative pause.  Ownership must still answer from the durable
-        admission: neither a control request nor the absence of an execution lease
-        releases an unresolved source.
+        The admitted work has no ``file_locks`` row and no TaskItem yet, and its
+        pause control is retired, so the durable admission alone must answer the
+        ownership question.  The competing automatic run is refused with the
+        owning Files work as evidence and nothing is mutated.
         """
 
         self.media("Movies/One.2001.mkv", size=64)
@@ -2058,14 +2042,18 @@ class AdmittedSourceOwnershipTests(_PreparationFixture):
                 f"/api/v1/operations/organize/discoveries/{manual['discoveryId']}",
             )
             self.assertEqual(200, status, detail)
-            status, paused = self.request(
+            # Pause is retired: the control refuses with no effect, so the
+            # admitted work keeps its own durable state untouched.
+            status, refused = self.request(
                 value,
                 f"/api/v1/operations/organize/discoveries/{manual['discoveryId']}/pause",
                 "POST",
                 {"expectedVersion": detail["version"]},
             )
-            self.assertEqual(200, status, paused)
-            self.assertTrue(paused["pauseRequested"], paused)
+            self.assertEqual(409, status, refused)
+            self.assertEqual("pause_retired", refused["error"]["code"])
+            self.assertEqual("none", refused["error"]["details"]["sideEffects"])
+            self.assertFalse(refused["error"]["details"]["retrySafe"])
             # No execution lease and no TaskItem exist yet, so a lease cannot be
             # what answers this ownership question.
             self.assertEqual((), value.repository.list_items(manual["organizeTaskId"]))
@@ -2080,11 +2068,11 @@ class AdmittedSourceOwnershipTests(_PreparationFixture):
             )
             self.assertTrue(value.source.exists("Movies/One.2001.mkv"))
             current = value.repository.get_task(manual["organizeTaskId"]).status.value
-            self.assertIn(current, {"pending", "running", "paused"})
+            self.assertIn(current, {"pending", "running"})
             self.assertNotIn(
                 current,
                 {"completed", "partial_success", "failed", "cancelled"},
-                "the paused owner keeps its unfinished state",
+                "the queued owner keeps its unfinished state",
             )
             self.assertEqual([], value.source.mutations)
             self.assertEqual([], value.target.mutations)

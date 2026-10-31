@@ -399,29 +399,6 @@ export function AutomationRunOncePage() {
               ) : null}
 
               <div className="mf-dashboard-actions">
-                {model.actions.pause.available ? (
-                  <Button
-                    variant="secondary"
-                    onClick={() => controlMutation.mutate("pause")}
-                    disabled={controlMutation.isPending}
-                  >
-                    暂停分析
-                  </Button>
-                ) : null}
-                {model.actions.resume.available ? (
-                  <Button
-                    variant="secondary"
-                    onClick={() => controlMutation.mutate("resume")}
-                    disabled={controlMutation.isPending}
-                  >
-                    继续分析
-                  </Button>
-                ) : null}
-                {model.phase === "pausing" ? (
-                  <Button variant="secondary" disabled>
-                    等待暂停确认
-                  </Button>
-                ) : null}
                 {model.actions.cancel.available ? (
                   <Button
                     variant="secondary"

@@ -188,8 +188,6 @@ def final_main(
     task_show_item = task_commands.add_parser("show-item")
     task_show_item.add_argument("task_id")
     task_show_item.add_argument("item_id")
-    task_pause = task_commands.add_parser("pause")
-    task_pause.add_argument("task_id")
     task_ignore = task_commands.add_parser("ignore-item")
     task_ignore.add_argument("task_id")
     task_ignore.add_argument("item_id")
@@ -205,7 +203,11 @@ def final_main(
     task_retry_request.add_argument("--note")
     task_retry_request.add_argument("--limit", type=int, default=100)
     task_retry_request.add_argument("--task-id")
-    for name in ("resume", "retry-failed"):
+    # ``pause`` and ``resume`` were retired for every media operation and are
+    # deliberately absent from the command surface: invoking one is an
+    # unrecognized-command error with zero effect.  ``retry-failed`` keeps its
+    # own reviewed-recovery path and does not resume a pause.
+    for name in ("retry-failed",):
         task_retry = task_commands.add_parser(name)
         task_retry.add_argument("task_id")
         task_retry.add_argument("--execute", action="store_true")
@@ -482,7 +484,7 @@ def final_main(
         if (
             not snapshot_id
             and arguments.command == "tasks"
-            and arguments.task_command in {"resume", "retry-failed"}
+            and arguments.task_command in {"retry-failed"}
         ):
             pinned = _task_snapshot_identity(arguments.config, arguments.task_id)
             if pinned is not None:
@@ -961,7 +963,6 @@ def final_main(
             "list",
             "show",
             "show-item",
-            "pause",
             "ignore-item",
             "ignore-pending",
             "retry-request",
@@ -996,10 +997,6 @@ def final_main(
                         arguments.item_id, task_id=arguments.task_id
                     )
                     stdout.write(render_recovery_checkpoint(checkpoint))
-                elif arguments.task_command == "pause":
-                    coordinator = PersistentTaskCoordinator(repository, repository)
-                    task = coordinator.request_pause(arguments.task_id)
-                    stdout.write(render_task(task, repository.list_items(task.task_id)))
                 elif arguments.task_command == "ignore-pending":
                     decisions = ManualIgnoreService(
                         repository, recovery_admission=recovery_admission
@@ -1204,16 +1201,10 @@ def final_main(
             )
             coordinator = PersistentTaskCoordinator(repository, repository)
             retry_items: tuple[PersistentTaskItem, ...] | None = None
-            paused_resume = False
-            original_items: tuple[PersistentTaskItem, ...] = ()
             if arguments.command == "tasks":
                 original = coordinator.require(arguments.task_id)
                 if original.command not in {"organize"}:
                     raise ValueError("unsupported workflow Task command")
-                paused_resume = (
-                    arguments.task_command == "resume"
-                    and original.status is PersistentTaskStatus.PAUSED
-                )
                 if arguments.execute and not original.execute_authorized:
                     raise ValueError(
                         "original task was not execute-authorized; retry cannot enable execute"
@@ -1222,13 +1213,10 @@ def final_main(
                     original.task_id,
                     failed_only=arguments.task_command == "retry-failed",
                 )
-                original_items = repository.list_items(original.task_id)
                 repository.reclaim_task_locks(original.task_id)
                 execute = bool(arguments.execute and original.execute_authorized)
                 task = coordinator.create(
-                    original.command
-                    if paused_resume
-                    else f"{arguments.task_command}:{original.task_id}",
+                    f"{arguments.task_command}:{original.task_id}",
                     execute_authorized=execute,
                     scope_path=original.scope_path,
                     item_limit=original.item_limit,
@@ -1379,32 +1367,6 @@ def final_main(
                         )
                     )
                 summary = MediaOrganizerBatchResult(tuple(retried))
-                if paused_resume:
-                    already_seen = {
-                        (stored.storage_id, stored.source_path) for stored in original_items
-                    }
-                    remaining_limit = (
-                        max(0, original.item_limit - len(original_items))
-                        if original.item_limit is not None
-                        else None
-                    )
-                    continued = _continue_paused_scope(
-                        service,
-                        configuration,
-                        original,
-                        storages,
-                        coordinator,
-                        task.task_id,
-                        execute,
-                        remaining_limit,
-                        already_seen,
-                        workflow_stop,
-                        stdout,
-                    )
-                    summary = MediaOrganizerBatchResult(
-                        summary.items + continued.items,
-                        summary.scan_errors + continued.scan_errors,
-                    )
             elif arguments.path is None:
                 summary = service.process_all_libraries(
                     configuration.resource_libraries,
@@ -1472,63 +1434,6 @@ def _runtime_lease_mode(arguments: argparse.Namespace) -> RuntimeLeaseMode | Non
     if arguments.command == "database" and arguments.database_command == "restore":
         return RuntimeLeaseMode.EXCLUSIVE
     return RuntimeLeaseMode.SHARED
-
-
-def _continue_paused_scope(
-    service: MediaOrganizerService,
-    configuration,
-    original: PersistentTask,
-    storages,
-    coordinator: PersistentTaskCoordinator,
-    task_id: str,
-    execute: bool,
-    limit: int | None,
-    skip_sources: set[tuple[str, str]],
-    cancellation_check: Callable[[], bool],
-    stdout: TextIO,
-) -> MediaOrganizerBatchResult:
-    if limit == 0:
-        return MediaOrganizerBatchResult(())
-    if original.command not in {"organize"}:
-        raise ValueError("paused task command cannot be continued")
-    if original.scope_path is None:
-        return service.process_all_libraries(
-            configuration.resource_libraries,
-            execute=execute,
-            limit=limit,
-            progress=lambda done, total, source: stdout.write(
-                f"PROGRESS {done}/{total or '?'} {source}\n"
-            ),
-            cancellation_check=cancellation_check,
-            skip_sources=skip_sources,
-        )
-    library, display_root = _resource_library(configuration, original.scope_path)
-    path = Path(original.scope_path).resolve(strict=False)
-    if path.is_dir():
-        return service.process_library(
-            library,
-            execute=execute,
-            limit=limit,
-            progress=lambda done, total, source: stdout.write(
-                f"PROGRESS {done}/{total or '?'} {source}\n"
-            ),
-            cancellation_check=cancellation_check,
-            skip_sources=skip_sources,
-        )
-    relative = path.relative_to(Path(display_root).resolve(strict=False)).as_posix()
-    storage_path = _storage_path(library.root_path, relative)
-    if (library.storage_id, storage_path) in skip_sources:
-        return MediaOrganizerBatchResult(())
-    return MediaOrganizerBatchResult(
-        (
-            service.process_file(
-                path.as_posix(),
-                resource_library=library,
-                storage_path=storage_path,
-                execute=execute,
-            ),
-        )
-    )
 
 
 def render_summary(

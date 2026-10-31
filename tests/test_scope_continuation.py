@@ -4563,13 +4563,11 @@ class ScopeContinuationWorkerJourneyTests(unittest.TestCase):
             task = original_create(coordinator, *args, **kwargs)
             report["task_id"] = task.task_id
             report["scope_path"] = task.scope_path
-            status, body = request(
-                api,
-                f"/api/v1/tasks/{task.task_id}/pause",
-                method="POST",
-                body={"expectedUpdatedAt": task.updated_at.isoformat()},
-            )
-            self.assertEqual(status, 200, body)
+            # Pause is retired from every operator entry point, so this fixture
+            # records the durable pause request directly to drive the retained
+            # old-work remaining-scope recovery.  The CLI still observes and
+            # acknowledges it at its own safe boundary exactly as before.
+            coordinator.request_pause(task.task_id)
             return task
 
         stdout = io.StringIO()

@@ -1254,21 +1254,20 @@ class LibraryFileOperationHistoryTests(unittest.TestCase):
                 self.assertEqual("transferred", children[path]["effect"], children[path])
                 self.assertTrue(children[path]["destination"].startswith("Movies/show/"))
 
-            # A safe continuation is offered and moves only the remaining files.
-            # The control is the exact shared Task lifecycle route with the
-            # version the operator just read.
+            # Resume-from-pause is retired for the folder Move: the real route
+            # refuses it with no effect, so the moved children stay terminal and
+            # the remaining source files are never replayed by the request.
             code, resume = request(
                 api,
                 f"/api/v1/tasks/{task_id}/resume",
                 method="POST",
                 body={"expectedUpdatedAt": detail["version"]},
             )
-            self.assertEqual(202, code, resume)
-            worker = FilesTransferWorker(
-                transfers, runtime, lease_seconds=3600.0, worker_id="worker-test"
-            )
-            self.assertIsNotNone(worker.run_next())
-            code, finished = self._detail(api, "resource", "source", task_id)
-            self.assertEqual(200, code, finished)
-            self.assertEqual("verified_complete", finished["effectCertainty"], finished)
-            self.assertEqual(6, len(list((root / "source" / "Movies" / "show").glob("*.mkv"))))
+            self.assertEqual(409, code, resume)
+            self.assertEqual("pause_retired", resume["error"]["code"])
+            self.assertEqual("none", resume["error"]["details"]["sideEffects"])
+            code, still_paused = self._detail(api, "resource", "source", task_id)
+            self.assertEqual(200, code, still_paused)
+            self.assertEqual("task_paused", still_paused["durableState"], still_paused)
+            self.assertEqual("partial", still_paused["effectCertainty"], still_paused)
+            self.assertEqual(3, len(list((root / "source" / "Movies" / "show").glob("*.mkv"))))

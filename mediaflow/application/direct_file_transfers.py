@@ -4959,26 +4959,17 @@ def _projection_destination_library(
 
 
 def _transfer_actions(task: PersistentTask, claim_live: bool) -> list[dict[str, object]]:
-    """The backend-advertised lifecycle actions of one durable transfer."""
+    """The backend-advertised lifecycle actions of one durable transfer.
 
-    permitted = True
+    Pause and resume-from-pause were retired for every media operation, so a
+    transfer advertises cancellation only; a running item keeps its own
+    effects and a completed sibling keeps its recorded outcome.  The
+    ``claim_live`` argument is retained for callers but no longer selects a
+    control.
+    """
+
+    del claim_live
     actions: list[dict[str, object]] = []
-    if task.status is PersistentTaskStatus.RUNNING and not task.pause_requested:
-        actions.append(
-            {
-                "action": "pause",
-                "available": True,
-                "path": f"/api/v1/tasks/{task.task_id}/pause",
-            }
-        )
-    else:
-        actions.append(
-            {
-                "action": "pause",
-                "available": False,
-                "reason": f"a {task.status.value} transfer cannot be paused",
-            }
-        )
     if task.status in {
         PersistentTaskStatus.PENDING,
         PersistentTaskStatus.RUNNING,
@@ -4999,29 +4990,6 @@ def _transfer_actions(task: PersistentTask, claim_live: bool) -> list[dict[str, 
                 "reason": "the transfer already reached a terminal state",
             }
         )
-    if task.status is PersistentTaskStatus.PAUSED or (
-        task.status is PersistentTaskStatus.RUNNING and not claim_live
-    ):
-        actions.append(
-            {
-                "action": "resume",
-                "available": True,
-                "path": f"/api/v1/tasks/{task.task_id}/resume",
-            }
-        )
-    else:
-        actions.append(
-            {
-                "action": "resume",
-                "available": False,
-                "reason": (
-                    "the transfer is queued or running"
-                    if not claim_live
-                    else "the transfer is running under a live Worker claim"
-                ),
-            }
-        )
-    del permitted
     return actions
 
 

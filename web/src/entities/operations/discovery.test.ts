@@ -133,7 +133,10 @@ describe("normalizeOrganizeDiscovery", () => {
     expect(model.sources).toHaveLength(1);
     expect(model.actions.finalize.available).toBe(true);
     expect(model.actions.finalize.refusal).toBeNull();
-    expect(model.actions.resume.available).toBe(false);
+    // Pause and resume-from-pause are retired: the normalized model exposes no
+    // such action at all, even when a stale payload carries them.
+    expect("pause" in model.actions).toBe(false);
+    expect("resume" in model.actions).toBe(false);
     expect(model.zeroMutation).toBe(true);
     expect(model.execution).toBe("not_available_from_discovery");
   });

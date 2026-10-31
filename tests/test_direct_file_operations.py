@@ -2286,17 +2286,20 @@ class DirectFileOperationsTests(unittest.TestCase):
             self.assertEqual(len(success_paths), 1)
 
             task = runtime.get_task(str(admitted["taskId"]))
+            # Resume-from-pause is retired for ordinary Delete too: the real
+            # route refuses with no effect and the completed item stays terminal
+            # while the unprocessed siblings are never replayed.
             resumed = request(
                 api,
                 f"/api/v1/tasks/{task.task_id}/resume",
                 method="POST",
                 body={"expectedUpdatedAt": task.updated_at.isoformat()},
             )
-            self.assertEqual(resumed[0], 202, resumed[1])
-            self.assertEqual(resumed[1]["taskStatus"], "pending")
-            completed = self._run_admitted_delete(service, admitted)
-            self.assertEqual(completed["status"], "SUCCESS")
-            self.assertFalse(folder.exists())
+            self.assertEqual(resumed[0], 409, resumed[1])
+            self.assertEqual(resumed[1]["error"]["code"], "pause_retired")
+            self.assertEqual(resumed[1]["error"]["details"]["sideEffects"], "none")
+            self.assertEqual(service.delete_projection(task.task_id)["status"], "PAUSED")
+            self.assertTrue(folder.exists())
             self.assertEqual(
                 sum(
                     item.source_display in success_paths

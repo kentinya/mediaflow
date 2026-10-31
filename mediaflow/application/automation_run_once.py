@@ -488,22 +488,9 @@ class AutomationRunOnceService:
             terminal and refusal is None and bool(discovery.sources) and not discovery.frozen
         )
         # The operator's control owns these actions.  A cancellation request is
-        # already a durable terminal settlement, an acknowledged pause is not
-        # pausable again, and a pause that is still pending acknowledgement must
-        # neither be re-requested nor refused as if it were already settled.
+        # already a durable terminal settlement.  Pause and resume-from-pause
+        # were retired for every media operation, so neither is advertised here.
         cancelled = discovery.cancel_requested or discovery.status is DiscoveryStatus.CANCELLED
-        paused = discovery.status is DiscoveryStatus.PAUSED
-        pause = (
-            not cancelled
-            and not paused
-            and not discovery.pause_requested
-            and discovery.status
-            in {
-                DiscoveryStatus.QUEUED,
-                DiscoveryStatus.RUNNING,
-                DiscoveryStatus.ANALYZING,
-            }
-        )
         cancel = not cancelled and discovery.status in {
             DiscoveryStatus.QUEUED,
             DiscoveryStatus.RUNNING,
@@ -511,19 +498,13 @@ class AutomationRunOnceService:
             DiscoveryStatus.PAUSED,
             DiscoveryStatus.ANALYZING,
         }
-        # Continue is meaningful only after the Worker acknowledged the pause at
-        # a safe boundary; the pending stage is reported through the phase and
-        # next action instead of being advertised as an available action.
-        resume = paused and discovery.pause_requested
         # The exact plan identity the same page re-reads after a reload.  It is
         # resolved from the durable intent association so the advertised action
         # path is never published as unavailable-with-a-null-route while the
         # plan itself is readable.
         plan_id = self._durable_plan_id(discovery)
         return {
-            "pause": {"available": pause, "method": "POST", "sideEffects": "none"},
             "cancel": {"available": cancel, "method": "POST", "sideEffects": "none"},
-            "resume": {"available": resume, "method": "POST", "sideEffects": "none"},
             "finalize": {
                 "available": finalizable,
                 "method": "POST",
@@ -553,14 +534,16 @@ class AutomationRunOnceService:
                 # re-analysing the manifest.  While the resident Worker is still
                 # building the plan the action is available but its route is
                 # honestly null; the page shows the durable analysis stage and
-                # the plan appears here once it completes.  A paused, pause-
-                # pending or cancelled run publishes no plan action at all: the
-                # operator's control won, so no confirmable summary is offered.
+                # the plan appears here once it completes.  A cancelled run
+                # publishes no plan action at all: the operator's control won,
+                # so no confirmable summary is offered.  A historically paused
+                # run likewise exposes nothing, though pause can no longer be
+                # requested.
                 "available": (
                     bool(plan_id)
                     or (
                         not cancelled
-                        and not paused
+                        and discovery.status is not DiscoveryStatus.PAUSED
                         and not discovery.pause_requested
                         and discovery.frozen
                         and discovery.intent_id is not None

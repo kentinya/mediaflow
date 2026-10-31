@@ -204,7 +204,6 @@ from mediaflow.domain.system_settings import (
     SystemSettingsEdit,
 )
 from mediaflow.domain.task_persistence import (
-    FILES_DELETE_TASK_COMMAND,
     FILES_TRANSFER_TASK_COMMAND,
     ConfirmationStatus,
     PersistentTaskStatus,
@@ -2451,10 +2450,12 @@ class MediaFlowApi:
             and parts[6] in {"pause", "cancel", "resume"}
             and method == "POST"
         ):
-            # Cooperative, versioned control.  Pause and cancel only record a
-            # request the resident Worker honours at its next safe boundary;
-            # they never grant execution authority and never interrupt an
-            # in-flight provider call.
+            # Cooperative, versioned control.  Cancellation records a request
+            # the resident Worker honours at its next safe boundary; it never
+            # grants execution authority and never interrupts an in-flight
+            # provider call.  Pause/resume-from-pause were retired for every
+            # media operation, so an old client or bookmark reaches a bounded
+            # no-effect refusal instead of a hidden back door.
             self._require(principal, ApiPermission.MANAGE_MANUAL_ORGANIZE)
             self._require_empty_query(environ, "operations organize discovery control")
             service = getattr(self, "_media_discovery", None)
@@ -2466,25 +2467,14 @@ class MediaFlowApi:
                     "operations organize discovery control requires only expectedVersion"
                 )
             action = parts[6]
+            if action in {"pause", "resume"}:
+                return self._retired_pause_control(start_response, action)
             try:
-                if action == "pause":
-                    value = service.request_pause(
-                        parts[5],
-                        actor=principal.principal_id,
-                        expected_version=document["expectedVersion"],
-                    )
-                elif action == "cancel":
-                    value = service.request_cancel(
-                        parts[5],
-                        actor=principal.principal_id,
-                        expected_version=document["expectedVersion"],
-                    )
-                else:
-                    value = service.resume(
-                        parts[5],
-                        actor=principal.principal_id,
-                        expected_version=document["expectedVersion"],
-                    )
+                value = service.request_cancel(
+                    parts[5],
+                    actor=principal.principal_id,
+                    expected_version=document["expectedVersion"],
+                )
             except DiscoveryError as error:
                 return self._discovery_step_error(start_response, error)
             return self._response(
@@ -7625,11 +7615,14 @@ class MediaFlowApi:
             and parts[4] in {"cancel", "pause", "resume"}
             and method == "POST"
         ):
-            # Cooperative Task lifecycle control.  The advertised action, the
-            # exact current version and the permission check all come from the
-            # same backend projection the V2 client renders; a rejected or
-            # stale control performs no Provider/Storage work and is never
-            # replayed automatically.
+            # Cooperative Task lifecycle control.  Pause is retired for every
+            # media operation, and resume-from-pause is retired for the
+            # kernel-managed manual work and the ordinary Files transfers and
+            # deletes.  The legacy queued continuation of a historically paused
+            # Task remains as the old-work recovery path the Contract preserves;
+            # it cannot be reached by new work because no new pause can be
+            # created.  A rejected or stale control performs no Provider/Storage
+            # work and is never replayed automatically.
             self._require(principal, ApiPermission.CANCEL_JOB)
             self._require_empty_query(environ, f"Task {parts[4]}")
             action = parts[4]
@@ -7639,102 +7632,23 @@ class MediaFlowApi:
                 snapshot_validator=self._scope_continuations._snapshot_validator,
                 mutation_authority=binding.scope_continuation_authority,
             )
-            media_transfer_command = direct_command_task_command(
-                FILES_TRANSFER_TASK_COMMAND, media_library=True
-            )
-            media_delete_command = direct_command_task_command(
-                FILES_DELETE_TASK_COMMAND, media_library=True
-            )
+            if action == "pause":
+                return self._retired_pause_control(start_response, action)
             if action == "resume":
                 task = service.require(parts[3])
                 service.require_version(task, expected_version)
-                if service.is_kernel_managed(task.task_id):
-                    # A kernel-managed organizing Task resumes on the same durable
-                    # identity instead of queueing a legacy continuation Job.
-                    current = service.resume(
-                        task.task_id,
-                        expected_version=expected_version,
-                        capacity=binding.maximum_active_jobs,
-                    )
-                    lifecycle = self._task_lifecycle(
-                        service,
-                        current,
-                        principal,
-                        results=service.results(current.task_id),
-                    )
-                    return self._response(
-                        start_response,
-                        202,
-                        {
-                            "action": action,
-                            "taskId": current.task_id,
-                            "task": task_operator_document(current),
-                            "lifecycle": lifecycle,
-                            "durableOutcome": next(
-                                (
-                                    item["durableOutcome"]
-                                    for item in lifecycle["actions"]
-                                    if item["action"] == action
-                                ),
-                                None,
-                            ),
-                        },
-                    )
-                if is_files_worker_task_command(task.command):
-                    is_delete = task.command in {
-                        FILES_DELETE_TASK_COMMAND,
-                        direct_command_task_command(FILES_DELETE_TASK_COMMAND, media_library=True),
-                    }
-                    is_media = task.command in {media_transfer_command, media_delete_command}
-                    transfer_service = (
-                        binding.direct_media_transfers if is_media else binding.direct_transfers
-                    )
-                    if is_delete and transfer_service is None:
-                        transfer_service = self._durable_transfer_reader(
-                            binding, media_library=is_media
-                        )
-                    if transfer_service is not None:
-                        # The accepted continuation only requeues the persisted
-                        # bounded authority. The resident Worker later claims
-                        # it and continues from terminal per-item evidence;
-                        # uncertain mutation is never replayed.
-                        requeued = (
-                            transfer_service.requeue_delete(task.task_id)
-                            if is_delete
-                            else transfer_service.requeue_transfer(task.task_id)
-                        )
-                        current = service.require(task.task_id)
-                        lifecycle = self._task_lifecycle(
-                            service,
-                            current,
-                            principal,
-                            results=service.results(current.task_id),
-                        )
-                        return self._response(
-                            start_response,
-                            202,
-                            {
-                                **requeued,
-                                "action": action,
-                                "task": task_operator_document(current),
-                                "lifecycle": lifecycle,
-                                "durableOutcome": next(
-                                    (
-                                        item["durableOutcome"]
-                                        for item in lifecycle["actions"]
-                                        if item["action"] == action
-                                    ),
-                                    None,
-                                ),
-                            },
-                        )
-                # The shared durable queued continuation of one exact paused
-                # Task's remaining admitted scope.  The request performs zero
-                # Storage work: it revalidates the exact durable state, the live
-                # pin and the applicable execution authority, then queues a
-                # bounded continuation Job for the resident Worker.  A Task kind
-                # without that boundary is refused with the same actionable
-                # reason the projection states.
+                if service.is_kernel_managed(task.task_id) or is_files_worker_task_command(
+                    task.command
+                ):
+                    # The retired controls refuse the kernel-managed manual work
+                    # and the ordinary Files transfers/deletes with one bounded
+                    # no-effect answer.
+                    return self._retired_pause_control(start_response, action)
+                # The legacy shared durable queued continuation of one exact
+                # paused Task's remaining admitted scope.  The request performs
+                # zero Storage work: it revalidates the exact durable state, the
+                # live pin and the applicable execution authority, then queues a
+                # bounded continuation Job for the resident Worker.
                 try:
                     submission = self._scope_continuations.submit(
                         task.task_id,
@@ -7784,10 +7698,7 @@ class MediaFlowApi:
                         "nextAction": submission.continuation.next_action(),
                     },
                 )
-            if action == "pause":
-                task = service.pause(parts[3], expected_version=expected_version)
-            else:
-                task = self._cancel_task(service, parts[3], expected_version, binding)
+            task = self._cancel_task(service, parts[3], expected_version, binding)
             lifecycle = self._task_lifecycle(
                 service, task, principal, results=service.results(task.task_id)
             )
@@ -12198,6 +12109,35 @@ class MediaFlowApi:
             },
         )
 
+    def _retired_pause_control(self, start_response: Callable, action: str) -> list[bytes]:
+        """Refuse a retired Pause/resume-from-pause control with zero effect.
+
+        The route stays reachable so an old Web client, a bookmarked link or a
+        script reaches a bounded, truthful refusal instead of a silent 404.  No
+        request is recorded, no Task state changes and no Worker work is
+        admitted: the operator is routed to Cancel (which still stops unfinished
+        work at a safe boundary) or to the reviewed problem item's own explicit
+        decision-and-continue journey.
+        """
+
+        return self._error(
+            start_response,
+            409,
+            "pause_retired",
+            "pause and resume-from-pause were retired for every media operation",
+            details={
+                "action": action if action in {"pause", "resume"} else None,
+                "durableState": "unchanged; no pause or resume request was recorded",
+                "sideEffects": "none",
+                "retrySafe": False,
+                "nextAction": (
+                    "use Cancel to stop unfinished work at a safe boundary, or continue a "
+                    "reviewed recognition/metadata/classification/conflict item from its own "
+                    "decision; inspect recorded item results for work that already ran"
+                ),
+            },
+        )
+
     def _discovery_step_error(self, start_response: Callable, error) -> list[bytes]:
         """One bounded, secret-free failure for a discovery step."""
 
@@ -12367,15 +12307,10 @@ class MediaFlowApi:
             ),
             "worker": worker,
             "actions": {
-                "pause": {
-                    "available": can_manage and not terminal and not discovery.pause_requested,
-                    "method": "POST",
-                    "path": (
-                        f"/api/v1/operations/organize/discoveries/{discovery.discovery_id}/pause"
-                    ),
-                    "requiresVersion": True,
-                    "sideEffects": "none",
-                },
+                # Pause and resume-from-pause are retired for every media
+                # operation, so no control is advertised for them.  Cancellation
+                # keeps its cooperative boundary and remains the only stop
+                # control.
                 "cancel": {
                     "available": can_manage and not terminal and not discovery.cancel_requested,
                     "method": "POST",
@@ -12384,35 +12319,6 @@ class MediaFlowApi:
                     ),
                     "requiresVersion": True,
                     "sideEffects": "none",
-                },
-                "resume": {
-                    # Continue is only offered once the resident Worker has
-                    # *acknowledged* the pause at its safe boundary: only then
-                    # has the interrupted pass's bounded work been settled and
-                    # the claim released.  A pending pause is a real transient
-                    # state, so the action is not advertised yet and the
-                    # application refuses a premature or stale-client Continue
-                    # with the same rule instead of accepting it and stranding
-                    # the record.  Cancellation keeps its own terminal path.
-                    "available": can_manage
-                    and discovery.pause_requested
-                    and discovery.status is DiscoveryStatus.PAUSED
-                    and not terminal,
-                    "method": "POST",
-                    "path": (
-                        f"/api/v1/operations/organize/discoveries/{discovery.discovery_id}/resume"
-                    ),
-                    "requiresVersion": True,
-                    "sideEffects": "none",
-                    "pendingReason": (
-                        "discovery_pause_pending"
-                        if (
-                            discovery.pause_requested
-                            and discovery.status is not DiscoveryStatus.PAUSED
-                            and not terminal
-                        )
-                        else None
-                    ),
                 },
                 "finalize": {
                     "available": can_manage
@@ -12757,15 +12663,9 @@ class MediaFlowApi:
                 "cancelRequested": discovery.cancel_requested,
                 "message": progress.message,
                 "actions": {
-                    "pause": {
-                        "available": can_manage
-                        and not terminal
-                        and not discovery.pause_requested
-                        and not discovery.cancel_requested,
-                        "method": "POST",
-                        "path": f"{base}/pause",
-                        "requiresVersion": True,
-                    },
+                    # Pause is retired: the analysis run advertises cancellation
+                    # only.  The reviewed problem item's own explicit decision
+                    # re-analyses it, which is not a pause/resume control.
                     "cancel": {
                         "available": can_manage and not terminal and not discovery.cancel_requested,
                         "method": "POST",
@@ -16270,32 +16170,24 @@ class MediaFlowApi:
             except (AutomationRunOnceError, DiscoveryError) as error:
                 return self._discovery_step_error(start_response, error)
         if action in {"pause", "cancel", "resume"} and method == "POST":
+            # Cancellation keeps its cooperative boundary; pause and
+            # resume-from-pause were retired for every media operation, so a
+            # stale Run once control reaches a bounded no-effect refusal.
             self._require(principal, ApiPermission.MANAGE_MANUAL_ORGANIZE)
             self._require_empty_query(environ, "automation Run once control")
+            if action in {"pause", "resume"}:
+                return self._retired_pause_control(start_response, action)
             if discovery_service is None:
                 return self._discovery_unavailable(start_response)
             document = self._document(environ)
             if set(document) != {"expectedVersion"}:
                 raise ValueError("automation Run once control requires only expectedVersion")
             try:
-                if action == "pause":
-                    value = discovery_service.request_pause(
-                        discovery_id,
-                        actor=principal.principal_id,
-                        expected_version=document["expectedVersion"],
-                    )
-                elif action == "cancel":
-                    value = discovery_service.request_cancel(
-                        discovery_id,
-                        actor=principal.principal_id,
-                        expected_version=document["expectedVersion"],
-                    )
-                else:
-                    value = discovery_service.resume(
-                        discovery_id,
-                        actor=principal.principal_id,
-                        expected_version=document["expectedVersion"],
-                    )
+                value = discovery_service.request_cancel(
+                    discovery_id,
+                    actor=principal.principal_id,
+                    expected_version=document["expectedVersion"],
+                )
                 return self._response(start_response, 200, service.document(value))
             except (AutomationRunOnceError, DiscoveryError) as error:
                 return self._discovery_step_error(start_response, error)

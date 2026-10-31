@@ -85,9 +85,9 @@ export interface AutomationRunOnceModel {
   readonly message: string;
   readonly error: string | null;
   readonly actions: {
-    readonly pause: AutomationRunOnceAction;
+    // Pause and resume-from-pause were retired for every media operation, so
+    // Run once advertises cancellation, freeze and plan review only.
     readonly cancel: AutomationRunOnceAction;
-    readonly resume: AutomationRunOnceAction;
     readonly finalize: AutomationRunOnceAction;
     readonly narrowScope: AutomationRunOnceAction;
     readonly preview: AutomationRunOnceAction;
@@ -188,9 +188,7 @@ export function normalizeAutomationRunOnce(
     message: optionalText(progress["message"]) ?? "",
     error: optionalText(record["error"]),
     actions: {
-      pause: action(actions, "pause"),
       cancel: action(actions, "cancel"),
-      resume: action(actions, "resume"),
       finalize: action(actions, "finalize"),
       narrowScope: action(actions, "narrowScope"),
       preview: action(actions, "preview"),

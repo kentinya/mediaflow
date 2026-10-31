@@ -70,51 +70,34 @@ class ManualTaskDiscoveryTests(_DiscoveryFixture):
             # No legacy Job was created for this work.
             self.assertEqual((), value.repository.list_jobs(limit=10))
 
-    def test_files_pause_releases_the_slot_and_resume_continues_the_same_task(self) -> None:
+    def test_files_pause_and_resume_are_retired_with_no_effect(self) -> None:
         self.media("Movies/One.2001.mkv")
         with self.journey(task_scheduling=True) as value:
             status, admitted = self._admit(value, ["Movies"])
             self.assertEqual(202, status, admitted)
             task_id = admitted["organizeTaskId"]
             discovery = value.repository.get_media_discovery_for_task(task_id)
+            before_status = value.repository.get_task(task_id).status
+            before_state = value.repository.get_task_scheduling(task_id).queue_state
             self.assertEqual(1, value.repository.count_scheduled_capacity_use())
 
-            status, paused = self.request(
-                value,
-                f"/api/v1/operations/organize/discoveries/{discovery.discovery_id}/pause",
-                "POST",
-                {"expectedVersion": discovery.version},
-            )
-            self.assertEqual(200, status, paused)
-            # A queued Task has no live owner, so the operator's pause reaches
-            # its safe boundary synchronously: the shared slot is released with
-            # no Worker pass and the same work is not claimable.
-            state = value.repository.get_task_scheduling(task_id)
-            self.assertIs(state.queue_state, TaskQueueState.PAUSED)
-            self.assertFalse(state.holds_capacity)
-            self.assertEqual(0, value.repository.count_scheduled_capacity_use())
+            for action in ("pause", "resume"):
+                status, refused = self.request(
+                    value,
+                    f"/api/v1/operations/organize/discoveries/{discovery.discovery_id}/{action}",
+                    "POST",
+                    {"expectedVersion": discovery.version},
+                )
+                self.assertEqual(409, status, refused)
+                self.assertEqual("pause_retired", refused["error"]["code"])
+                self.assertEqual("none", refused["error"]["details"]["sideEffects"])
+            # The retirement is a bounded refusal with no durable effect: the
+            # Task identity, its slot and the discovery are exactly as admitted.
+            self.assertIs(value.repository.get_task(task_id).status, before_status)
+            self.assertIs(value.repository.get_task_scheduling(task_id).queue_state, before_state)
+            self.assertEqual(1, value.repository.count_scheduled_capacity_use())
             self.assertEqual([], value.source.mutations)
-            self.assertIsNone(value.task_engine.run_next())
-            self.assertIs(
-                value.repository.get_task_scheduling(task_id).queue_state,
-                TaskQueueState.PAUSED,
-            )
-            self.assertEqual(
-                "paused", value.repository.get_media_discovery(discovery.discovery_id).status.value
-            )
-
-            paused_discovery = value.repository.get_media_discovery(discovery.discovery_id)
-            status, resumed = self.request(
-                value,
-                f"/api/v1/operations/organize/discoveries/{discovery.discovery_id}/resume",
-                "POST",
-                {"expectedVersion": paused_discovery.version},
-            )
-            self.assertEqual(200, status, resumed)
-            # The resume re-registers the *same* Task; a later Worker pass reads
-            # the original discovery and its saved scope back, not a new work.
-            state = value.repository.get_task_scheduling(task_id)
-            self.assertIn(state.queue_state, {TaskQueueState.QUEUED, TaskQueueState.CLAIMED})
+            # The untouched work still advances to its human boundary.
             driven = self._drive(value, task_id)
             self.assertEqual(task_id, driven.organize_task_id)
             self.assertIs(
@@ -122,50 +105,39 @@ class ManualTaskDiscoveryTests(_DiscoveryFixture):
                 TaskQueueState.WAITING_HUMAN,
             )
 
-    def test_task_center_pause_uses_the_same_task_control_boundary(self) -> None:
+    def test_task_center_pause_and_resume_are_retired_with_no_effect(self) -> None:
         self.media("Movies/One.2001.mkv")
         with self.journey(task_scheduling=True) as value:
             status, admitted = self._admit(value, ["Movies"])
             self.assertEqual(202, status, admitted)
             task_id = admitted["organizeTaskId"]
             task = value.repository.get_task(task_id)
-            # The operator-visible projection advertises the same pause the
-            # Task Center control really performs for kernel-managed work.
+            # The Task Center projection no longer advertises pause or resume:
+            # the retired controls are absent, not merely withheld.
             status, detail = self.request(value, f"/api/v1/tasks/{task_id}")
             self.assertEqual(200, status, detail)
-            pause_action = next(
-                action for action in detail["lifecycle"]["actions"] if action["action"] == "pause"
-            )
-            self.assertTrue(pause_action["available"], pause_action)
+            action_names = {action["action"] for action in detail["lifecycle"]["actions"]}
+            self.assertEqual({"cancel"}, action_names)
 
-            status, controlled = self.request(
-                value,
-                f"/api/v1/tasks/{task_id}/pause",
-                "POST",
-                {"expectedUpdatedAt": task.updated_at.isoformat()},
+            for action in ("pause", "resume"):
+                status, refused = self.request(
+                    value,
+                    f"/api/v1/tasks/{task_id}/{action}",
+                    "POST",
+                    {"expectedUpdatedAt": task.updated_at.isoformat()},
+                )
+                self.assertEqual(409, status, refused)
+                self.assertEqual("pause_retired", refused["error"]["code"])
+            # No requested state, no released slot and no new Worker work.
+            self.assertIs(
+                value.repository.get_task(task_id).status,
+                PersistentTaskStatus.PENDING,
             )
-            self.assertEqual(200, status, controlled)
-            state = value.repository.get_task_scheduling(task_id)
-            self.assertIs(state.queue_state, TaskQueueState.PAUSED)
-            self.assertEqual(0, value.repository.count_scheduled_capacity_use())
-            self.assertIsNone(value.task_engine.run_next())
-
-            paused_task = value.repository.get_task(task_id)
-            self.assertIs(paused_task.status, PersistentTaskStatus.PAUSED)
-            status, resumed = self.request(
-                value,
-                f"/api/v1/tasks/{task_id}/resume",
-                "POST",
-                {"expectedUpdatedAt": paused_task.updated_at.isoformat()},
-            )
-            self.assertEqual(202, status, resumed)
-            self.assertEqual(task_id, resumed["taskId"])
-            state = value.repository.get_task_scheduling(task_id)
-            self.assertIn(state.queue_state, {TaskQueueState.QUEUED, TaskQueueState.CLAIMED})
+            self.assertEqual(1, value.repository.count_scheduled_capacity_use())
             driven = self._drive(value, task_id)
             self.assertEqual(task_id, driven.organize_task_id)
 
-    def test_pausing_human_waiting_work_and_resuming_returns_to_waiting(self) -> None:
+    def test_pausing_human_waiting_work_is_retired_and_keeps_waiting(self) -> None:
         self.media("Movies/One.2001.mkv")
         with self.journey(task_scheduling=True) as value:
             status, admitted = self._admit(value, ["Movies"])
@@ -178,28 +150,16 @@ class ManualTaskDiscoveryTests(_DiscoveryFixture):
             )
 
             task = value.repository.get_task(task_id)
-            status, paused = self.request(
+            status, refused = self.request(
                 value,
                 f"/api/v1/tasks/{task_id}/pause",
                 "POST",
                 {"expectedUpdatedAt": task.updated_at.isoformat()},
             )
-            self.assertEqual(200, status, paused)
-            self.assertIs(
-                value.repository.get_task_scheduling(task_id).queue_state,
-                TaskQueueState.PAUSED,
-            )
-
-            paused_task = value.repository.get_task(task_id)
-            status, resumed = self.request(
-                value,
-                f"/api/v1/tasks/{task_id}/resume",
-                "POST",
-                {"expectedUpdatedAt": paused_task.updated_at.isoformat()},
-            )
-            self.assertEqual(202, status, resumed)
-            # A Task paused while waiting for a human has no machine work to
-            # queue: it returns to the same waiting state holding zero slots.
+            self.assertEqual(409, status, refused)
+            self.assertEqual("pause_retired", refused["error"]["code"])
+            # Human-waiting work keeps its own state and slot (zero machine
+            # slots) with no pause recorded and no Storage mutation.
             self.assertIs(
                 value.repository.get_task_scheduling(task_id).queue_state,
                 TaskQueueState.WAITING_HUMAN,

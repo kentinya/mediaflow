@@ -2495,18 +2495,17 @@ class AdmissionAndScopeTests(_DiscoveryFixture):
                     f"/api/v1/operations/organize/discoveries/{loser_admission['discoveryId']}",
                 )
                 self.assertEqual(200, status, detail)
-                status, paused = self.request(
+                # Pause is retired: the real entry point refuses it with no
+                # effect, so the loser's held write is what later settles.
+                status, refused = self.request(
                     value,
                     f"/api/v1/operations/organize/discoveries/"
                     f"{loser_admission['discoveryId']}/pause",
                     "POST",
                     {"expectedVersion": detail["version"]},
                 )
-                self.assertEqual(200, status, paused)
-                self.assertTrue(paused["pauseRequested"])
-                # Nothing has been refused yet: the pause request itself observed no
-                # competing owner.  Everything below therefore exercises the
-                # *acknowledgement* boundary, not the walk's first publication.
+                self.assertEqual(409, status, refused)
+                self.assertEqual("pause_retired", refused["error"]["code"])
                 self.assertEqual([], list(refused_attempts))
                 # Now the other work commits that exact source, and the loser's held
                 # write is released so it must settle against the fresh record.
@@ -2525,13 +2524,13 @@ class AdmissionAndScopeTests(_DiscoveryFixture):
                 worker.join(20)
                 self.assertFalse(worker.is_alive())
             settled = value.repository.get_media_discovery(loser_admission["discoveryId"])
-            # The durable boundary really refused the acknowledgement's first
+            # The durable boundary really refused the settlement's first
             # attempt at this source: the reconcile -> settle path is exercised, not
             # merely the walk's first publication and not an exception string.
             self.assertIn("Sub/Deep/One.2001.mkv", refused_attempts)
-            # The acknowledgement really happened ...
-            self.assertEqual("paused", settled.status.value, settled.progress.message)
-            self.assertTrue(settled.pause_requested)
+            # The settlement really happened and released ownership ...
+            self.assertNotEqual("paused", settled.status.value, settled.progress.message)
+            self.assertFalse(settled.pause_requested)
             self.assertIsNone(settled.claim_token)
             # ... and it kept the source pruned, with the exact owner recorded.
             self.assertEqual([], [item["path"] for item in settled.sources], settled.sources)
@@ -2554,7 +2553,8 @@ class AdmissionAndScopeTests(_DiscoveryFixture):
             # The same conclusion survives a real repository reopen.
             with SQLiteTaskRepository(self.database) as reopened:
                 stored = reopened.get_media_discovery(loser_admission["discoveryId"])
-                self.assertEqual("paused", stored.status.value)
+                self.assertNotEqual("paused", stored.status.value)
+                self.assertFalse(stored.pause_requested)
                 self.assertEqual([], [item["path"] for item in stored.sources])
                 self.assertEqual(
                     ["Sub/Deep/One.2001.mkv"],
@@ -2854,23 +2854,24 @@ class AdmissionAndScopeTests(_DiscoveryFixture):
                     ["Movies/Sub/One.2001.mkv", "Movies/Movies/Sub/One.2001.mkv"],
                     observed[0],
                 )
-                # Still the only work, so the operator's pause is accepted as-is.
+                # Pause is retired: the real entry point refuses it with no
+                # effect, so the held publication is what later settles.
                 status, detail = self.request(
                     value,
                     f"/api/v1/operations/organize/discoveries/{loser['discoveryId']}",
                 )
                 self.assertEqual(200, status, detail)
-                status, paused = self.request(
+                status, refused = self.request(
                     value,
                     f"/api/v1/operations/organize/discoveries/{loser['discoveryId']}/pause",
                     "POST",
                     {"expectedVersion": detail["version"]},
                 )
-                self.assertEqual(200, status, paused)
-                self.assertTrue(paused["pauseRequested"])
+                self.assertEqual(409, status, refused)
+                self.assertEqual("pause_retired", refused["error"]["code"])
                 # Now the other file is owned by another real work, and the held
-                # publication loses its version CAS so the pause is acknowledged
-                # against the fresh record: that acknowledgement prunes.
+                # publication loses its version CAS so it settles against the
+                # fresh record: that settlement prunes.
                 status, owner = self.request(
                     value, endpoint, "POST", {"paths": ["Movies/Sub/One.2001.mkv"]}
                 )
@@ -2881,8 +2882,8 @@ class AdmissionAndScopeTests(_DiscoveryFixture):
                 worker.join(20)
                 self.assertFalse(worker.is_alive())
             settled = value.repository.get_media_discovery(loser["discoveryId"])
-            self.assertEqual("paused", settled.status.value, settled.progress.message)
-            self.assertTrue(settled.pause_requested)
+            self.assertNotEqual("paused", settled.status.value, settled.progress.message)
+            self.assertFalse(settled.pause_requested)
             self.assertEqual(
                 ["Movies/Sub/One.2001.mkv"],
                 [source["path"] for source in settled.sources],
@@ -3792,7 +3793,7 @@ class WorkerOwnershipTests(_DiscoveryFixture):
                 )
             )
 
-    def test_pause_and_continue_preserve_findings_and_do_not_duplicate_items(self) -> None:
+    def test_pause_and_continue_are_retired_and_findings_stay_unique(self) -> None:
         for index in range(4):
             self.media(f"Movies/Bulk.{index:03d}.mkv")
         with self.journey() as value:
@@ -3802,36 +3803,30 @@ class WorkerOwnershipTests(_DiscoveryFixture):
                 "POST",
                 {"paths": ["Movies"]},
             )
-            value.repository.claim_next_media_discovery(
-                value.clock(), worker_id="worker-1", claim_token="token-1", lease_seconds=300
-            )
-            # A cooperative pause stops at the next safe boundary.
-            value.discovery.request_pause(
-                admitted["discoveryId"], actor="operator", expected_version=1
-            )
-            paused = value.discovery.run_claimed(
-                admitted["discoveryId"], worker_id="worker-1", claim_token="token-1"
-            )
-            self.assertEqual("paused", paused.status.value)
-            self.assertTrue(paused.pause_requested)
-            _, detail = self.request(
-                value,
-                f"/api/v1/operations/organize/discoveries/{admitted['discoveryId']}",
-            )
-            self.assertTrue(detail["pauseRequested"])
-            self.assertTrue(detail["actions"]["resume"]["available"])
-            # Continue: the same durable scope and counters are retained.
-            resumed = value.discovery.resume(
-                admitted["discoveryId"], actor="operator", expected_version=detail["version"]
-            )
-            self.assertFalse(resumed.pause_requested)
+            identifier = admitted["discoveryId"]
+            # Pause and resume-from-pause are retired: both controls refuse with
+            # no effect, so the admitted work is never interrupted and no pause
+            # state is stored.
+            for action in ("pause", "resume"):
+                status, refused = self.request(
+                    value,
+                    f"/api/v1/operations/organize/discoveries/{identifier}/{action}",
+                    "POST",
+                    {"expectedVersion": admitted["version"]},
+                )
+                self.assertEqual(409, status, refused)
+                self.assertEqual("pause_retired", refused["error"]["code"])
+                self.assertEqual("none", refused["error"]["details"]["sideEffects"])
             settled = self.run_discovery(value, steps=8)
             paths = [item["path"] for item in settled["sources"]]
             self.assertEqual(len(paths), len(set(paths)), paths)
             self.assertEqual(4, settled["progress"]["primarySources"], settled)
+            self.assertFalse(settled["pauseRequested"])
+            self.assert_zero_mutation_with_admitted_work(value)
+            self.assertEqual([], value.source.mutations)
 
-    def test_a_concurrent_pause_is_acknowledged_instead_of_losing_the_race(self) -> None:
-        """AC3: an accepted pause must not be lost to a Worker's version CAS."""
+    def test_pause_is_retired_while_a_worker_runs(self) -> None:
+        """Retirement: an in-flight walk is never interrupted by a pause request."""
 
         self.media("Movies/One.2001.mkv")
         self.media("Movies/Two.2002.mkv")
@@ -3858,51 +3853,38 @@ class WorkerOwnershipTests(_DiscoveryFixture):
             thread.start()
             try:
                 self.assertTrue(entered.wait(10))
-                # The operator pauses mid-walk, so the Worker's next publication
-                # loses the version CAS and must react to the fresh record.
-                paused = value.discovery.request_pause(
-                    identifier, actor="operator", expected_version=admitted["version"]
+                # The pause reaches the real entry point mid-walk and is refused
+                # with no effect: the Worker's pass and its ownership are
+                # untouched and the record is never paused or stranded.
+                _, before = self.request(
+                    value, f"/api/v1/operations/organize/discoveries/{identifier}"
                 )
-                self.assertTrue(paused.pause_requested)
+                status, refused = self.request(
+                    value,
+                    f"/api/v1/operations/organize/discoveries/{identifier}/pause",
+                    "POST",
+                    {"expectedVersion": before["version"]},
+                )
+                self.assertEqual(409, status, refused)
+                self.assertEqual("pause_retired", refused["error"]["code"])
             finally:
                 release.set()
                 thread.join(10)
                 self.assertFalse(thread.is_alive())
-            _, detail = self.request(value, f"/api/v1/operations/organize/discoveries/{identifier}")
-            # The accepted pause survived: it is durably acknowledged, natively
-            # continuable, and the record was never stranded on the conflict.
-            self.assertEqual("paused", detail["status"])
-            self.assertTrue(detail["pauseRequested"])
-            self.assertTrue(detail["actions"]["resume"]["available"])
-            self.assertIsNone(value.repository.media_discovery_claim(identifier)["claimToken"])
-            self.assertEqual([], value.source.mutations)
-            # Continue resumes the same permitted scope with no lost finding.
-            _, resumed = self.request(
-                value,
-                f"/api/v1/operations/organize/discoveries/{identifier}/resume",
-                "POST",
-                {"expectedVersion": detail["version"]},
+            _, settled = self.request(
+                value, f"/api/v1/operations/organize/discoveries/{identifier}"
             )
-            self.assertFalse(resumed["pauseRequested"])
-            settled = self.run_discovery(value, steps=8)
             self.assertEqual(
                 ["Movies/One.2001.mkv", "Movies/Two.2002.mkv"],
                 sorted(item["path"] for item in settled["sources"]),
                 settled,
             )
+            self.assertFalse(settled["pauseRequested"])
             self.assert_zero_mutation_with_admitted_work(value)
             self.assertEqual([], value.source.mutations)
 
-    def test_a_pause_racing_the_publication_keeps_the_bounded_work(self) -> None:
-        """B44-8-1: a same-owner pause must not discard completed bounded work.
-
-        The Worker really completes the bounded walk (101 primary candidates in
-        a real Local directory) and only its final publication loses the version
-        CAS to an accepted pause.  The acknowledgement must reconcile the
-        pause with that pass's counters, findings, manifest and monotonic
-        material refusal: discarding them would hide the encountered 100-item
-        limit and let a later Continue silently re-walk with reset accounting.
-        """
+    def test_a_bounded_walk_publishes_its_limit_refusal_without_a_pause(self) -> None:
+        """M2: a 100-item limit is published truthfully, never a silent truncation."""
 
         for index in range(101):
             self.media(f"Movies/Film.{index:03}.2001.mkv")
@@ -3914,68 +3896,14 @@ class WorkerOwnershipTests(_DiscoveryFixture):
                 {"paths": ["Movies"]},
             )
             identifier = admitted["discoveryId"]
-            entered, release = threading.Event(), threading.Event()
-            original = value.repository.record_media_discovery_progress
-            attempted: list[dict] = []
-
-            def delayed(discovery, **kwargs):
-                if kwargs.get("claim_token"):
-                    attempted.append(discovery.document())
-                    entered.set()
-                    if not release.wait(10):
-                        raise AssertionError("coordination timed out")
-                return original(discovery, **kwargs)
-
-            value.repository.record_media_discovery_progress = delayed
-            worker = MediaDiscoveryWorker(
-                value.discovery, clock=value.clock, worker_id="old-worker"
-            )
-            thread = threading.Thread(target=worker.run_next)
-            thread.start()
-            try:
-                self.assertTrue(entered.wait(10))
-                _, before = self.request(
-                    value, f"/api/v1/operations/organize/discoveries/{identifier}"
-                )
-                # The publication really carries the completed bounded work,
-                # including the encountered primary-limit refusal.
-                self.assertEqual("partial_success", attempted[0]["status"], attempted[0])
-                self.assertEqual(101, attempted[0]["progress"]["counters"]["visitedEntries"])
-                self.assertEqual(["primary_limit"], attempted[0]["progress"]["refusalReasons"])
-                _, accepted = self.request(
-                    value,
-                    f"/api/v1/operations/organize/discoveries/{identifier}/pause",
-                    "POST",
-                    {"expectedVersion": before["version"]},
-                )
-                self.assertTrue(accepted["pauseRequested"], accepted)
-            finally:
-                release.set()
-                thread.join(10)
-                self.assertFalse(thread.is_alive())
-            _, paused = self.request(value, f"/api/v1/operations/organize/discoveries/{identifier}")
-            # The accepted pause is acknowledged *with* the same owner's work:
-            # no reset counters, no lost finding, no hidden refusal.
-            self.assertEqual("paused", paused["status"])
-            self.assertTrue(paused["pauseRequested"])
-            self.assertEqual(101, paused["progress"]["visitedEntries"], paused["progress"])
-            self.assertEqual(2, paused["progress"]["pageFetches"], paused["progress"])
-            self.assertEqual(100, paused["progress"]["primarySources"], paused["progress"])
-            self.assertEqual(["primary_limit"], paused["progress"]["refusalReasons"])
-            self.assertEqual("primary_limit", paused["progress"]["materialRefusal"])
-            self.assertEqual(100, len(paused["sources"]), paused["sources"])
-            # Continue resumes the same scope; the consumed refusal stays durable
-            # and Finalize refuses instead of freezing a truncated prefix.
-            _, resumed = self.request(
-                value,
-                f"/api/v1/operations/organize/discoveries/{identifier}/resume",
-                "POST",
-                {"expectedVersion": paused["version"]},
-            )
-            self.assertFalse(resumed["pauseRequested"])
             settled = self.run_discovery(value, steps=8)
+            # The completed bounded walk keeps its encountered limit: the
+            # manifest is a truncated prefix and its refusal is monotonic.
             self.assertEqual(["primary_limit"], settled["progress"]["refusalReasons"], settled)
+            self.assertEqual(100, len(settled["sources"]), settled["sources"])
+            self.assertEqual("primary_limit", settled["progress"]["materialRefusal"])
             self.assertFalse(settled["actions"]["finalize"]["available"], settled)
+            self.assertFalse(settled["pauseRequested"])
             status, refused = self.request(
                 value,
                 f"/api/v1/operations/organize/discoveries/{identifier}/finalize",
@@ -3987,17 +3915,8 @@ class WorkerOwnershipTests(_DiscoveryFixture):
             self.assert_zero_mutation_with_admitted_work(value)
             self.assertEqual([], value.source.mutations)
 
-    def test_a_continue_racing_the_publication_is_refused_until_acknowledged(self) -> None:
-        """AC3/AC5: a pending pause refuses Continue, then continues the same work.
-
-        The Worker really completes the bounded walk (101 primary candidates in
-        a real Local directory) and its publication is held.  An accepted pause
-        is still pending acknowledgement, so a Continue in that window must be
-        refused actionably with the durable work unchanged instead of racing the
-        acknowledgement.  Once the pause is acknowledged with the same owner's
-        work, Continue is offered again and the same scope continues without a
-        reset or a redundant re-walk.
-        """
+    def test_a_bounded_walk_keeps_its_limit_refusal_without_pause_or_continue(self) -> None:
+        """Retirement: pause/continue refuse, and the durable walk keeps its limit."""
 
         for index in range(101):
             self.media(f"Movies/Film.{index:03}.2001.mkv")
@@ -4030,74 +3949,32 @@ class WorkerOwnershipTests(_DiscoveryFixture):
                 _, before = self.request(
                     value, f"/api/v1/operations/organize/discoveries/{identifier}"
                 )
-                _, paused = self.request(
-                    value,
-                    f"/api/v1/operations/organize/discoveries/{identifier}/pause",
-                    "POST",
-                    {"expectedVersion": before["version"]},
-                )
-                self.assertTrue(paused["pauseRequested"], paused)
-                # The pause is not acknowledged at a safe boundary yet, so the
-                # native Continue is not offered and the backend refuses a
-                # direct/stale-client Continue without changing any work.
-                self.assertFalse(paused["actions"]["resume"]["available"], paused)
-                self.assertEqual(
-                    "discovery_pause_pending",
-                    paused["actions"]["resume"]["pendingReason"],
-                    paused,
-                )
-                status, refused = self.request(
-                    value,
-                    f"/api/v1/operations/organize/discoveries/{identifier}/resume",
-                    "POST",
-                    {"expectedVersion": paused["version"]},
-                )
-                self.assertEqual(409, status, refused)
-                self.assertEqual("discovery_pause_pending", refused["error"]["code"], refused)
+                # Both retired controls are refused with no effect while the
+                # real publication is held, so the owner's work is unchanged.
+                for action in ("pause", "resume"):
+                    status, refused = self.request(
+                        value,
+                        f"/api/v1/operations/organize/discoveries/{identifier}/{action}",
+                        "POST",
+                        {"expectedVersion": before["version"]},
+                    )
+                    self.assertEqual(409, status, refused)
+                    self.assertEqual("pause_retired", refused["error"]["code"])
             finally:
                 release.set()
                 thread.join(10)
                 self.assertFalse(thread.is_alive())
-            _, acknowledged = self.request(
+            _, settled = self.request(
                 value, f"/api/v1/operations/organize/discoveries/{identifier}"
             )
-            # The acknowledgement preserved the same owner's completed bounded
-            # work and released ownership; only now is Continue offered.
-            self.assertEqual("paused", acknowledged["status"], acknowledged)
-            self.assertTrue(acknowledged["pauseRequested"], acknowledged)
-            self.assertEqual(
-                101, acknowledged["progress"]["visitedEntries"], acknowledged["progress"]
-            )
-            self.assertEqual(["primary_limit"], acknowledged["progress"]["refusalReasons"])
-            self.assertEqual(100, len(acknowledged["sources"]), acknowledged["sources"])
-            self.assertTrue(acknowledged["actions"]["resume"]["available"], acknowledged)
-            self.assertIsNone(value.repository.media_discovery_claim(identifier)["claimToken"])
-            _, resumed = self.request(
-                value,
-                f"/api/v1/operations/organize/discoveries/{identifier}/resume",
-                "POST",
-                {"expectedVersion": acknowledged["version"]},
-            )
-            self.assertFalse(resumed["pauseRequested"], resumed)
-            settled = self.run_discovery(value, steps=8)
             self.assertEqual(["primary_limit"], settled["progress"]["refusalReasons"], settled)
             self.assertFalse(settled["actions"]["finalize"]["available"], settled)
             self.assertEqual(100, len(settled["sources"]), settled["sources"])
             self.assert_zero_mutation_with_admitted_work(value)
             self.assertEqual([], value.source.mutations)
 
-    def test_a_premature_continue_never_strands_the_pause_acknowledgement(self) -> None:
-        """B44-8-2: pending Pause refuses Continue, then acknowledged Continue works.
-
-        This is the deterministic form of the reviewed defect sequence: the
-        Worker really completes the walk, its publication loses the version CAS
-        to an accepted pause, and the operator's Continue arrives while the
-        acknowledgement is still uncommitted.  Under the acknowledge-before-
-        Continue rule the premature Continue is refused without changing the
-        durable work, the acknowledgement then lands with that work preserved,
-        and the native Continue genuinely continues the same scope instead of
-        leaving the record durably ``paused`` with no usable Resume.
-        """
+    def test_a_pause_or_continue_never_strands_a_held_walk(self) -> None:
+        """Retirement: pause/continue refuse while a real publication is held."""
 
         self.media("Movies/Film.2001.mkv")
         with self.journey() as value:
@@ -4109,10 +3986,7 @@ class WorkerOwnershipTests(_DiscoveryFixture):
             )
             identifier = admitted["discoveryId"]
             publish_entered, publish_release = threading.Event(), threading.Event()
-            settle_entered, settle_release = threading.Event(), threading.Event()
             original_publish = value.repository.record_media_discovery_progress
-            original_settle = value.repository.settle_media_discovery_control
-            settlement_attempts: list[dict] = []
 
             def delayed_publish(discovery, **kwargs):
                 if kwargs.get("claim_token"):
@@ -4121,17 +3995,7 @@ class WorkerOwnershipTests(_DiscoveryFixture):
                         raise AssertionError("publication coordination timed out")
                 return original_publish(discovery, **kwargs)
 
-            def delayed_settle(discovery, **kwargs):
-                if kwargs.get("claim_token"):
-                    settlement_attempts.append(discovery.document())
-                    if len(settlement_attempts) == 1:
-                        settle_entered.set()
-                        if not settle_release.wait(10):
-                            raise AssertionError("settlement coordination timed out")
-                return original_settle(discovery, **kwargs)
-
             value.repository.record_media_discovery_progress = delayed_publish
-            value.repository.settle_media_discovery_control = delayed_settle
             worker = MediaDiscoveryWorker(
                 value.discovery, clock=value.clock, worker_id="live-worker"
             )
@@ -4142,55 +4006,30 @@ class WorkerOwnershipTests(_DiscoveryFixture):
                 _, before = self.request(
                     value, f"/api/v1/operations/organize/discoveries/{identifier}"
                 )
-                _, paused = self.request(
-                    value,
-                    f"/api/v1/operations/organize/discoveries/{identifier}/pause",
-                    "POST",
-                    {"expectedVersion": before["version"]},
-                )
-                self.assertTrue(paused["pauseRequested"], paused)
+                for action in ("pause", "resume"):
+                    status, refused = self.request(
+                        value,
+                        f"/api/v1/operations/organize/discoveries/{identifier}/{action}",
+                        "POST",
+                        {"expectedVersion": before["version"]},
+                    )
+                    self.assertEqual(409, status, refused)
+                    self.assertEqual("pause_retired", refused["error"]["code"])
                 publish_release.set()
-                self.assertTrue(settle_entered.wait(10))
-                # The operator's Continue arrives while the pause
-                # acknowledgement is still in flight and uncommitted.
-                status, refused = self.request(
-                    value,
-                    f"/api/v1/operations/organize/discoveries/{identifier}/resume",
-                    "POST",
-                    {"expectedVersion": paused["version"]},
-                )
-                self.assertEqual(409, status, refused)
-                self.assertEqual("discovery_pause_pending", refused["error"]["code"], refused)
             finally:
                 publish_release.set()
-                settle_release.set()
                 thread.join(10)
                 self.assertFalse(thread.is_alive())
-            # The acknowledgement settled the accepted pause with the same
-            # owner's completed bounded work, and it is natively continuable.
-            _, acknowledged = self.request(
+            # The held publication settles the same owner's bounded work: the
+            # refused controls left no pause and no lost finding.
+            _, settled = self.request(
                 value, f"/api/v1/operations/organize/discoveries/{identifier}"
             )
-            self.assertEqual("paused", acknowledged["status"], acknowledged)
-            self.assertTrue(acknowledged["pauseRequested"], acknowledged)
-            self.assertTrue(acknowledged["actions"]["resume"]["available"], acknowledged)
-            self.assertEqual(
-                1, acknowledged["progress"]["visitedEntries"], acknowledged["progress"]
-            )
-            self.assertEqual(1, len(acknowledged["sources"]), acknowledged["sources"])
-            self.assertIsNone(value.repository.media_discovery_claim(identifier)["claimToken"])
-            # The acknowledged Continue really continues the same scope.
-            _, resumed = self.request(
-                value,
-                f"/api/v1/operations/organize/discoveries/{identifier}/resume",
-                "POST",
-                {"expectedVersion": acknowledged["version"]},
-            )
-            self.assertFalse(resumed["pauseRequested"], resumed)
-            settled = self.run_discovery(value, steps=8)
             self.assertEqual(
                 ["Movies/Film.2001.mkv"], [item["path"] for item in settled["sources"]]
             )
+            self.assertFalse(settled["pauseRequested"])
+            self.assertIsNone(value.repository.media_discovery_claim(identifier)["claimToken"])
             self.assert_zero_mutation_with_admitted_work(value)
             self.assertEqual([], value.source.mutations)
 
@@ -4261,7 +4100,14 @@ class WorkerOwnershipTests(_DiscoveryFixture):
                 {"expectedVersion": admitted["version"]},
             )
             self.assertEqual("cancelled", cancelled["status"])
-            for action in ("resume", "pause", "cancel"):
+            # The retired pause/resume controls refuse before any state check;
+            # the still-supported cancel of an already-cancelled record refuses
+            # because it is no longer open.
+            for action, code in (
+                ("resume", "pause_retired"),
+                ("pause", "pause_retired"),
+                ("cancel", "discovery_not_open"),
+            ):
                 status, refused = self.request(
                     value,
                     f"/api/v1/operations/organize/discoveries/{identifier}/{action}",
@@ -4269,7 +4115,7 @@ class WorkerOwnershipTests(_DiscoveryFixture):
                     {"expectedVersion": cancelled["version"]},
                 )
                 self.assertEqual(409, status, refused)
-                self.assertEqual("discovery_not_open", refused["error"]["code"])
+                self.assertEqual(code, refused["error"]["code"])
             # Even the exact durable claim cannot resurrect cancelled work.
             value.clock.advance(600)
             self.assertIsNone(
@@ -4354,8 +4200,10 @@ class WorkerOwnershipTests(_DiscoveryFixture):
             self.assertEqual("cancelled", cancelled["status"])
             self.assertTrue(cancelled["cancelRequested"])
             self.assertFalse(cancelled["actions"]["finalize"]["available"])
-            self.assertFalse(cancelled["actions"]["pause"]["available"])
-            self.assertFalse(cancelled["actions"]["resume"]["available"])
+            # Pause and resume are retired: the cancelled projection exposes no
+            # such action at all.
+            self.assertNotIn("pause", cancelled["actions"])
+            self.assertNotIn("resume", cancelled["actions"])
             self.assertEqual("not_available_from_discovery", cancelled["execution"])
             # Three real Worker pickups find no claimable work, and the readback
             # never regresses to an open queued record.
@@ -4624,7 +4472,7 @@ class WorkerOwnershipTests(_DiscoveryFixture):
             )
             status, document = self.request(
                 value,
-                f"/api/v1/operations/organize/discoveries/{admitted['discoveryId']}/pause",
+                f"/api/v1/operations/organize/discoveries/{admitted['discoveryId']}/cancel",
                 "POST",
                 {"expectedVersion": 99},
             )

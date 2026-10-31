@@ -220,7 +220,7 @@ class TaskPauseResumeTest(unittest.TestCase):
             self.assertEqual(cancelled.status, PersistentTaskStatus.CANCELLED)
             self.assertIsNotNone(cancelled.completed_at)
 
-    def test_pause_command_constructs_no_storage_or_provider(self) -> None:
+    def test_pause_command_is_retired_without_constructing_storage(self) -> None:
         document = json.loads(Path("config/strategy.example.json").read_text(encoding="utf-8"))
         with tempfile.TemporaryDirectory() as directory:
             database = Path(directory, "runtime.sqlite3")
@@ -237,13 +237,18 @@ class TaskPauseResumeTest(unittest.TestCase):
                 "create_storages",
                 side_effect=AssertionError("pause constructed Storage"),
             ):
-                code = final_main(
-                    ["--config", str(config), "tasks", "pause", task.task_id],
-                    stdout=output,
-                    stderr=errors,
-                )
-            self.assertEqual(code, 0, errors.getvalue())
-            self.assertIn("Pause requested: YES", output.getvalue())
+                # ``tasks pause`` is no longer a recognized command: the CLI
+                # rejects it with a bounded argparse error and zero effect, so
+                # no Storage/Provider is ever constructed.
+                with self.assertRaises(SystemExit) as raised:
+                    final_main(
+                        ["--config", str(config), "tasks", "pause", task.task_id],
+                        stdout=output,
+                        stderr=errors,
+                    )
+            self.assertEqual(2, raised.exception.code)
+            with SQLiteTaskRepository(database) as reopened:
+                self.assertFalse(reopened.get_task(task.task_id).pause_requested)
 
     def test_task_output_is_bounded_and_shows_pause_state(self) -> None:
         with (

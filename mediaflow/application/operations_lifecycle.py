@@ -2030,155 +2030,21 @@ def task_lifecycle_document(
         next_action=cancel_next_action,
     )
 
-    pause_reason = permission_reason
-    pause_next_action = (
-        "refresh the Task to see whether the pause was acknowledged at an item boundary"
-    )
-    if (
-        pause_reason is None
-        and execution.path is TaskExecutionPath.SYNCHRONOUS_MANUAL_ORGANIZE
-        and not execution.kernel_managed
-    ):
-        pause_reason = _SYNCHRONOUS_PAUSE_REASON
-        pause_next_action = _SYNCHRONOUS_NEXT_ACTION
-    elif pause_reason is None and execution.kernel_managed:
-        if task.status not in {PersistentTaskStatus.PENDING, PersistentTaskStatus.RUNNING}:
-            pause_reason = (
-                f"only queued or running work accepts a pause request; this Task is "
-                f"{task.status.value}"
-            )
-    elif pause_reason is None and task.pause_requested:
-        pause_reason = (
-            "a durable pause request is already stored and is acknowledged at the next "
-            "supported item boundary"
-        )
-    elif pause_reason is None and task.status is not PersistentTaskStatus.RUNNING:
-        pause_reason = (
-            f"only a running Task accepts a pause request; this Task is {task.status.value}"
-        )
-    pause = _action(
-        action="pause",
-        label="Request pause",
-        path=f"/api/v1/tasks/{task.task_id}/pause",
-        available=(
-            permitted
-            and (
-                (
-                    execution.kernel_managed
-                    and task.status in {PersistentTaskStatus.PENDING, PersistentTaskStatus.RUNNING}
-                )
-                or (
-                    execution.path is TaskExecutionPath.OPERATOR_WORKFLOW
-                    and task.status is PersistentTaskStatus.RUNNING
-                )
-            )
-            and not task.pause_requested
-        ),
-        unavailable_reason=pause_reason,
-        durable_outcome=(
-            "a durable pause request is stored immediately; the Task becomes paused only when "
-            "the running work reaches a supported item boundary"
-        ),
-        side_effects="no Storage mutation; an in-flight Provider/Storage call is not interrupted",
-        next_action=pause_next_action,
-    )
-
-    if execution.kernel_managed:
-        # A kernel-managed organizing Task resumes on its own durable identity:
-        # an interrupted machine stage is re-queued, and a Task that paused while
-        # waiting for a human returns to that same waiting state with zero slots.
-        kernel_paused = task.status is PersistentTaskStatus.PAUSED
-        resume = _action(
-            action="resume",
-            label="Resume Task",
-            path=f"/api/v1/tasks/{task.task_id}/resume",
-            available=permitted and kernel_paused,
-            unavailable_reason=(
-                permission_reason
-                if not permitted
-                else (
-                    None
-                    if kernel_paused
-                    else f"only a paused Task can be resumed; this Task is {task.status.value}"
-                )
-            ),
-            durable_outcome=(
-                "the same Task is re-queued for the resident Worker only when safe remaining "
-                "work exists; an uncertain or already-settled outcome is never replayed"
-            ),
-            side_effects=(
-                "no Storage mutation in this request; a later Worker pass re-checks the "
-                "original pin, claim and source version before any effect"
-            ),
-            next_action="follow the Task's durable progress in Operations",
-        )
-    elif execution.resumable:
-        # A bounded Files transfer Task carries a durable per-item continuation
-        # authority: the resume request re-queues it for the resident Worker,
-        # which continues only from each item's recorded known-safe checkpoint.
-        resume = _action(
-            action="resume",
-            label="Resume Task",
-            path=f"/api/v1/tasks/{task.task_id}/resume",
-            available=permitted,
-            unavailable_reason=(
-                permission_reason or "resume requires the Task control permission"
-                if not permitted
-                else None
-            ),
-            durable_outcome=(
-                "the transfer is re-queued for the resident Worker; it continues only from "
-                "each item's recorded known-safe checkpoint and never replays completed or "
-                "uncertain mutations"
-            ),
-            side_effects=(
-                "no Storage mutation in this request; the Worker later continues the "
-                "remaining transfer through OrganizerExecutor"
-            ),
-            next_action=(
-                "resume re-queues the transfer; follow its progress in the Files workspace "
-                "or Operations"
-            ),
-        )
-    elif execution.durable_continuation and not execution.continuable:
-        # The same durable continuation authority exists, but the current
-        # durable state offers nothing to continue: a queued/running transfer is
-        # already owned by its Worker and a terminal one has no remaining work.
-        resume = _action(
-            action="resume",
-            label="Resume Task",
-            path=f"/api/v1/tasks/{task.task_id}/resume",
-            available=False,
-            unavailable_reason=(
-                permission_reason
-                or (
-                    "the transfer already reached a terminal state"
-                    if terminal
-                    else "the transfer is queued or running"
-                )
-            ),
-            durable_outcome=(
-                "the transfer is re-queued for the resident Worker; it continues only from "
-                "each item's recorded known-safe checkpoint and never replays completed or "
-                "uncertain mutations"
-            ),
-            side_effects=(
-                "no Storage mutation in this request; the Worker later continues the "
-                "remaining transfer through OrganizerExecutor"
-            ),
-            next_action=(
-                "follow the transfer's durable progress in the Files workspace or Operations"
-            ),
-        )
-    elif execution.continuable:
+    # Pause is retired for every media operation.  Resume-from-pause is retired
+    # for the kernel-managed manual work and the ordinary Files transfers and
+    # deletes (they carry ``resumable``/``durable_continuation``), so those
+    # projections advertise cancellation only.  The legacy shared queued
+    # continuation of a *historically* paused Task remains as the old-work
+    # recovery path the Contract preserves; new work can never reach it because
+    # no new pause can be created.  A rejected or stale control performs no
+    # Provider/Storage work and is never replayed automatically.
+    resume: dict[str, object] | None = None
+    if execution.continuable:
         # The shared durable queued continuation boundary: a paused Task of a
         # continuable kind admits exactly its remaining admitted scope for
-        # resident-Worker pickup.  The request itself performs zero Storage work
-        # and the Worker revalidates the live source, capability, permission and
-        # execution authority before any effect.
-        # Availability and its explanation are one decision: an advertised
-        # control must never also carry a reason, and a withheld one must always
-        # state its bounded obstacle (the Web contract rejects either mismatch).
+        # resident-Worker pickup.  Availability and its explanation are one
+        # decision: an advertised control must never also carry a reason, and a
+        # withheld one must always state its bounded obstacle.
         continuation_available = (
             permitted
             and task.status is PersistentTaskStatus.PAUSED
@@ -2221,12 +2087,6 @@ def task_lifecycle_document(
             # withheld but the run's remaining scope can still be reviewed: an
             # exact zero-mutation Preview of that scope under the run's own
             # historical pin, followed by one fresh explicit execution intent.
-            # Its eligibility is the shared boundary's own decision for the
-            # *recovery preparation* operation, never a match on one refusal
-            # code: a fully recorded budget leaves the queued continuation
-            # nothing to hand out while its still-undecided items remain exactly
-            # what the recovery preparation observes.  It is only reachable by a
-            # principal that may admit manual work.
             extra=(
                 {
                     "preview": {
@@ -2252,7 +2112,13 @@ def task_lifecycle_document(
                 else {}
             ),
         )
-    else:
+    elif (
+        not execution.kernel_managed
+        and not execution.resumable
+        and not execution.durable_continuation
+    ):
+        # A Task kind with no durable queued continuation states that honestly
+        # instead of advertising a control it cannot honour.
         resume = _action(
             action="resume",
             label="Resume Task",
@@ -2265,7 +2131,9 @@ def task_lifecycle_document(
             side_effects="none",
             next_action=RESUME_NEXT_ACTION,
         )
-
+    actions: list[dict[str, object]] = [cancel]
+    if resume is not None:
+        actions.append(resume)
     return {
         "objectType": "task",
         "objectId": task.task_id,
@@ -2286,7 +2154,7 @@ def task_lifecycle_document(
             if terminal
             else str(cancel["nextAction"])
         ),
-        "actions": [cancel, pause, resume],
+        "actions": actions,
     }
 
 

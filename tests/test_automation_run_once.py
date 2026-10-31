@@ -728,17 +728,13 @@ class RunOnceJourneyTests(_RunOnceFixture):
         self.assertEqual(DiscoveryStatus.ANALYZING, frozen.status)
         return frozen
 
-    def test_pause_during_analysis_withholds_the_plan_and_reaches_a_continuable_pause(
-        self,
-    ) -> None:
-        """B's pause race: the control wins, so no plan is ever published.
+    def test_a_retired_pause_never_disturbs_a_running_run_once(self) -> None:
+        """Retirement: the pause control is refused and the analysis completes.
 
-        The operator pauses this real definition-bound Run once *through the
-        real API* while the resident Worker is blocked inside the synthetic
-        Provider.  Releasing the Provider must not hand the paused run a freshly
-        persisted plan: the Worker acknowledges the pause at its safe boundary,
-        the run becomes continuable, and no execution authority or media
-        mutation is created.
+        The operator's retired pause reaches the real API while the resident
+        Worker is blocked in the Provider.  The bounded refusal has no effect,
+        so the Worker publishes exactly its own analyzed plan and neither an
+        execution authority nor a media mutation is created.
         """
 
         self.media("Movies/One.2001.mkv")
@@ -749,89 +745,40 @@ class RunOnceJourneyTests(_RunOnceFixture):
             with patch_search:
                 thread = self._advance_worker_in_thread(value, results)
                 self._wait_for_provider_call(entered)
-                status, paused = self.request(
+                status, refused = self.request(
                     value,
                     self._control_path(frozen.discovery_id, "pause"),
                     "POST",
                     {"expectedVersion": frozen.version},
                 )
-                self.assertEqual(200, status, paused)
-                # While the pause is only requested the page reports that real
-                # transient stage and already stops advertising a plan.
-                self.assertEqual("pausing", paused["phase"])
-                self.assertIsNone(paused["previewId"])
-                self.assertTrue(paused["actions"]["pause"]["available"] is False)
-                self.assertFalse(paused["actions"]["resume"]["available"])
-                self.assertFalse(paused["actions"]["preview"]["available"])
-                # The pause request is a deliberate operator action; a second
-                # pause converges instead of re-writing the record.
-                status, paused = self.request(
-                    value,
-                    self._control_path(frozen.discovery_id, "pause"),
-                    "POST",
-                    {"expectedVersion": paused["version"]},
-                )
-                self.assertEqual(200, status, paused)
+                self.assertEqual(409, status, refused)
+                self.assertEqual("pause_retired", refused["error"]["code"])
+                self.assertEqual("none", refused["error"]["details"]["sideEffects"])
             release.set()
             thread.join(timeout=20)
             self.assertFalse(thread.is_alive())
             durable = value.repository.get_media_discovery(frozen.discovery_id)
-            # The Worker did *not* publish the analyzed plan it had already
-            # computed: the accepted pause won the race.
-            self.assertEqual(DiscoveryStatus.PAUSED, durable.status)
-            self.assertTrue(durable.pause_requested)
-            self.assertIsNone(durable.preview_id)
+            # The refused control never touched the run: the analysis completes
+            # and publishes exactly one current plan.
+            self.assertEqual(DiscoveryStatus.COMPLETED, durable.status)
+            self.assertFalse(durable.pause_requested)
+            self.assertIsNotNone(durable.preview_id)
             self.assertIsNone(
                 value.repository.media_discovery_claim(frozen.discovery_id)["claimToken"]
             )
-            # ... and the losing pass leaves no plan row at all: the plan
-            # publication is one atomic commit that lost its fence, so nothing
-            # was ever readable as a current plan or re-exposed by the intent.
-            previews = value.repository.list_manual_previews(frozen.intent_id)
-            self.assertEqual((), previews, previews)
-            # The paused run is continuable and exposes no confirmable plan.
             status, readback = self.request(
                 value,
                 f"/api/v1/operations/automation/run-once/{frozen.discovery_id}",
             )
             self.assertEqual(200, status, readback)
-            self.assertEqual("paused", readback["phase"])
-            self.assertEqual("paused", readback["status"])
-            self.assertIsNone(readback["previewId"])
-            self.assertFalse(readback["actions"]["preview"]["available"])
-            self.assertIsNone(readback["actions"]["preview"]["path"])
-            self.assertTrue(readback["actions"]["resume"]["available"])
-            self.assertFalse(readback["actions"]["pause"]["available"])
+            self.assertEqual("frozen", readback["phase"])
+            self.assertEqual(durable.preview_id, readback["previewId"])
+            self.assertNotIn("pause", readback["actions"])
+            self.assertNotIn("resume", readback["actions"])
             self.assertEqual([], value.source.mutations)
             self.assertEqual([], value.target.mutations)
             self.assertEqual((), value.repository.list_tasks())
             self.assertIsNone(value.repository.get_active_unattended_execution_grant("nightly"))
-            # Continuing the same run re-analyzes the same frozen scope and
-            # links exactly one current plan; the previous attempt stays stale.
-            status, resumed = self.request(
-                value,
-                self._control_path(frozen.discovery_id, "resume"),
-                "POST",
-                {"expectedVersion": readback["version"]},
-            )
-            self.assertEqual(200, status, resumed)
-            self.assertFalse(resumed["pauseRequested"]) if "pauseRequested" in resumed else None
-            analyzed = value.discovery.claim_and_run(
-                worker_id="resume-worker", claim_token="resume-token"
-            )
-            self.assertIsNotNone(analyzed)
-            self.assertEqual(DiscoveryStatus.COMPLETED, analyzed.status)
-            self.assertIsNotNone(analyzed.preview_id)
-            # Exactly one current plan now exists: this run's own linked plan.
-            status, linked = self.request(
-                value,
-                f"/api/v1/operations/automation/run-once/{frozen.discovery_id}",
-            )
-            self.assertEqual(200, status, linked)
-            self.assertEqual("frozen", linked["phase"])
-            self.assertEqual(analyzed.preview_id, linked["previewId"])
-            self.assertEqual([], value.source.mutations)
-            self.assertEqual([], value.target.mutations)
 
     def test_cancel_during_analysis_discards_the_late_plan_and_stays_terminal(self) -> None:
         """B's cancel race: the accepted cancellation discards the late plan.
@@ -861,7 +808,9 @@ class RunOnceJourneyTests(_RunOnceFixture):
                 self.assertEqual("cancelled", cancelled["phase"])
                 self.assertIsNone(cancelled["previewId"])
                 self.assertFalse(cancelled["actions"]["preview"]["available"])
-                self.assertFalse(cancelled["actions"]["resume"]["available"])
+                # Pause and resume are retired: the projection exposes neither.
+                self.assertNotIn("resume", cancelled["actions"])
+                self.assertNotIn("pause", cancelled["actions"])
                 self.assertFalse(cancelled["actions"]["cancel"]["available"])
             release.set()
             thread.join(timeout=20)
@@ -889,9 +838,9 @@ class RunOnceJourneyTests(_RunOnceFixture):
             self.assertFalse(readback["actions"]["preview"]["available"])
             self.assertIsNone(readback["actions"]["preview"]["path"])
             # Terminal: no control resurrects the run and no work is queued.
-            self.assertFalse(readback["actions"]["resume"]["available"])
+            self.assertNotIn("resume", readback["actions"])
+            self.assertNotIn("pause", readback["actions"])
             self.assertFalse(readback["actions"]["cancel"]["available"])
-            self.assertFalse(readback["actions"]["pause"]["available"])
             self.assertFalse(readback["actions"]["finalize"]["available"])
             self.assertEqual([], value.source.mutations)
             self.assertEqual([], value.target.mutations)

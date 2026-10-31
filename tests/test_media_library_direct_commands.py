@@ -616,24 +616,26 @@ class MediaLibraryDirectCommandTests(unittest.TestCase):
             self.assertTrue(folder.exists())
 
             task = runtime.get_task(str(admitted["taskId"]))
+            # Resume-from-pause is retired for the media Delete too: the real
+            # route refuses with no effect and the completed item stays terminal
+            # while the unprocessed siblings are never replayed.
             resumed = request(
                 api,
                 f"/api/v1/tasks/{task.task_id}/resume",
                 method="POST",
                 body={"expectedUpdatedAt": task.updated_at.isoformat()},
             )
-            self.assertEqual(resumed[0], 202, resumed[1])
-            self.assertEqual(resumed[1]["taskStatus"], "pending")
-            self.assertIsNotNone(worker.run_next())
-            completed = media.delete_projection(str(admitted["taskId"]))
-            self.assertEqual(completed["status"], "SUCCESS")
-            self.assertFalse(folder.exists())
-            successful_after_resume = {
+            self.assertEqual(resumed[0], 409, resumed[1])
+            self.assertEqual(resumed[1]["error"]["code"], "pause_retired")
+            self.assertEqual(resumed[1]["error"]["details"]["sideEffects"], "none")
+            self.assertEqual(media.delete_projection(str(admitted["taskId"]))["status"], "PAUSED")
+            self.assertTrue(folder.exists())
+            successful_after_refusal = {
                 item.source_display
                 for item in runtime.list_items(str(admitted["taskId"]))
                 if item.status.value == "success"
             }
-            self.assertTrue(successful_before_resume.issubset(successful_after_resume))
+            self.assertEqual(successful_before_resume, successful_after_refusal)
 
     def test_media_mutation_is_executed_only_by_organizer_executor(self) -> None:
         with tempfile.TemporaryDirectory() as directory:

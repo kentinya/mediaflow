@@ -221,12 +221,13 @@ describe("bounded discovery refusal journey", () => {
     expect(screen.queryByText(/discovery_conflict/)).toBeNull();
   });
 
-  it("shows the pending pause stage and offers Continue only after acknowledgement", async () => {
+  it("never renders a pause or resume control even for a stale projection", async () => {
     authStore.setToken(TOKEN);
-    // The pause request is durable but the resident Worker has not yet
-    // acknowledged it at a safe boundary: Continue must not be offered, and the
-    // transient stage must be explained instead of looking like a dead end.
-    const pending = discoveryDocument({
+    // Pause and resume-from-pause were retired for every media operation.  A
+    // stale projection that still carries those action keys (an older cached
+    // response) must not produce a button: the backend route refuses them and
+    // the page surfaces cancellation only.
+    const stale = discoveryDocument({
       activeSeconds: 1.5,
       errorEntries: 0,
       excludedEntries: 0,
@@ -235,50 +236,7 @@ describe("bounded discovery refusal journey", () => {
       incompleteReason: null,
       refusalReasons: [],
       materialRefusal: null,
-      message:
-        "a cooperative pause was requested; the Worker stops at a safe boundary",
-      pageFetches: 3,
-      phase: "queued",
-      primarySources: 1,
-      reasons: [],
-      unstableEntries: 0,
-      visitedDirectories: 3,
-      visitedEntries: 20,
-    });
-    pending.pauseRequested = true;
-    pending.status = "queued";
-    pending.actions.pause = action("pause", false);
-    pending.actions.resume = action(
-      "resume",
-      false,
-      null,
-      "discovery_pause_pending",
-    );
-    stubFetch(pending);
-    renderApp(`/ui-v2/operations/organize/discovery/${DISCOVERY_ID}`);
-
-    await screen.findByRole("heading", { name: "整理发现" });
-    await waitFor(() => {
-      expect(
-        screen.getByText(/正在等待后台 Worker/, { exact: false }),
-      ).toBeTruthy();
-    });
-    expect(screen.queryByRole("button", { name: "继续发现" })).toBeNull();
-  });
-
-  it("offers Continue once the pause has been acknowledged", async () => {
-    authStore.setToken(TOKEN);
-    const acknowledged = discoveryDocument({
-      activeSeconds: 1.5,
-      errorEntries: 0,
-      excludedEntries: 0,
-      findings: [],
-      incomplete: false,
-      incompleteReason: null,
-      refusalReasons: [],
-      materialRefusal: null,
-      message:
-        "discovery is paused; findings and counters are durable and safe to continue",
+      message: "relating durable discovery facts",
       pageFetches: 3,
       phase: "paused",
       primarySources: 1,
@@ -287,17 +245,17 @@ describe("bounded discovery refusal journey", () => {
       visitedDirectories: 3,
       visitedEntries: 20,
     });
-    acknowledged.pauseRequested = true;
-    acknowledged.status = "paused";
-    acknowledged.actions.pause = action("pause", false);
-    acknowledged.actions.resume = action("resume", true);
-    stubFetch(acknowledged);
+    stale.pauseRequested = true;
+    stale.status = "paused";
+    // A legacy projection may still advertise the retired actions.
+    (stale.actions as Record<string, unknown>).pause = action("pause", true);
+    (stale.actions as Record<string, unknown>).resume = action("resume", true);
+    stubFetch(stale);
     renderApp(`/ui-v2/operations/organize/discovery/${DISCOVERY_ID}`);
 
     await screen.findByRole("heading", { name: "整理发现" });
-    await waitFor(() => {
-      expect(screen.getByRole("button", { name: "继续发现" })).toBeTruthy();
-    });
+    expect(screen.queryByRole("button", { name: "暂停发现" })).toBeNull();
+    expect(screen.queryByRole("button", { name: "继续发现" })).toBeNull();
     expect(
       screen.queryByText(/正在等待后台 Worker/, { exact: false }),
     ).toBeNull();

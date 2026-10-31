@@ -126,7 +126,7 @@ export function OrganizeDiscoveryPage() {
   };
 
   const controlMutation = useMutation({
-    mutationFn: async (action: "pause" | "resume" | "cancel") => {
+    mutationFn: async (action: "cancel") => {
       const read = query.data;
       if (read === undefined || !read.ok) {
         throw new Error("发现状态尚未就绪。");
@@ -254,12 +254,6 @@ export function OrganizeDiscoveryPage() {
                 <p>{model.nextAction}</p>
                 {model.progress.message !== "" ? (
                   <p>{model.progress.message}</p>
-                ) : null}
-                {model.actions.resume.pendingReason !== null ? (
-                  <p role="status">
-                    暂停请求已记录，正在等待后台 Worker
-                    在安全边界确认；确认完成后即可继续发现。
-                  </p>
                 ) : null}
                 {model.progress.incomplete ? (
                   <p role="status">
@@ -400,24 +394,6 @@ export function OrganizeDiscoveryPage() {
               ) : null}
 
               <div className="mf-dashboard-actions">
-                {model.actions.pause.available ? (
-                  <Button
-                    variant="secondary"
-                    onClick={() => controlMutation.mutate("pause")}
-                    disabled={controlMutation.isPending}
-                  >
-                    暂停发现
-                  </Button>
-                ) : null}
-                {model.actions.resume.available ? (
-                  <Button
-                    variant="secondary"
-                    onClick={() => controlMutation.mutate("resume")}
-                    disabled={controlMutation.isPending}
-                  >
-                    继续发现
-                  </Button>
-                ) : null}
                 {model.actions.cancel.available ? (
                   <Button
                     variant="secondary"

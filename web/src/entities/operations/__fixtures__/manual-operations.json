@@ -741,13 +741,6 @@
           "path": "/api/v1/operations/organize/discoveries/<uuid>/cancel",
           "requiresVersion": true,
           "sideEffects": "none"
-        },
-        "pause": {
-          "available": false,
-          "method": "POST",
-          "path": "/api/v1/operations/organize/discoveries/<uuid>/pause",
-          "requiresVersion": true,
-          "sideEffects": "none"
         }
       },
       "cancelRequested": false,

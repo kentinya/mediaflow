@@ -187,8 +187,8 @@ export interface OrganizeDiscoveryModel {
     readonly nextAction: string;
   };
   readonly actions: {
-    readonly pause: OrganizeDiscoveryAction;
-    readonly resume: OrganizeDiscoveryAction;
+    // Pause and resume-from-pause were retired for every media operation, so
+    // the backend advertises cancellation, freeze and re-analysis only.
     readonly cancel: OrganizeDiscoveryAction;
     readonly finalize: OrganizeDiscoveryAction;
     readonly prepare: OrganizeDiscoveryAction;
@@ -486,8 +486,6 @@ export function normalizeOrganizeDiscovery(
       nextAction: optionalText(worker, "nextAction") ?? "",
     },
     actions: {
-      pause: normalizeAction(actions, "pause"),
-      resume: normalizeAction(actions, "resume"),
       cancel: normalizeAction(actions, "cancel"),
       finalize: normalizeAction(actions, "finalize"),
       // The preparation re-analysis action is additive: a legacy projection

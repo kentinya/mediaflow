@@ -363,7 +363,9 @@ class OperationsWorkspaceTests(unittest.TestCase):
         lifecycle = detail["lifecycle"]
         self.assertTrue(lifecycle["permitted"])
         available = {item["action"] for item in lifecycle["actions"] if item["available"]}
-        self.assertEqual(available, {"cancel", "pause"})
+        # Pause is retired: only cancellation is ever available.  A withheld
+        # Continue may still be explained for the legacy old-work recovery path.
+        self.assertEqual(available, {"cancel"})
         self.assertEqual(
             lifecycle["version"], self.repository.get_task("task-run").updated_at.isoformat()
         )
@@ -439,64 +441,35 @@ class OperationsWorkspaceTests(unittest.TestCase):
 
     # -- cooperative control ----------------------------------------------
 
-    def test_pause_is_durable_and_rejects_stale_duplicate_and_terminal_use(self) -> None:
+    def test_pause_is_retired_without_changing_the_task(self) -> None:
         self.repository.create_task(
             self.task("task-run", status=PersistentTaskStatus.RUNNING, rank=0)
         )
-        task = self.repository.get_task("task-run")
-        version = task.updated_at.isoformat()
+        self.repository.create_task(self.task("task-done", rank=1))
 
-        status, body, _ = request(
-            self.api,
-            "POST",
-            "/api/v1/tasks/task-run/pause",
-            body=control_body(version),
-        )
-        self.assertEqual(status, 200)
-        self.assertTrue(body["task"]["pause_requested"])
-        self.assertEqual(body["task"]["status"], "running")
-        self.assertTrue(body["lifecycle"]["pauseRequested"])
+        for task_id in ("task-run", "task-done"):
+            current = self.repository.get_task(task_id)
+            status, body, _ = request(
+                self.api,
+                "POST",
+                f"/api/v1/tasks/{task_id}/pause",
+                body=control_body(current.updated_at.isoformat()),
+            )
+            self.assertEqual(status, 409, task_id)
+            self.assertEqual(body["error"]["code"], "pause_retired")
+            self.assertEqual(body["error"]["details"]["sideEffects"], "none")
+            self.assertFalse(body["error"]["details"]["retrySafe"])
 
-        # The Task is still running: the pause is a durable request, not an
-        # instant interruption.
-        self.assertEqual(self.repository.get_task("task-run").status, PersistentTaskStatus.RUNNING)
-
-        # A duplicate submission against the now-stale version is refused.
-        status, body, _ = request(
-            self.api,
-            "POST",
-            "/api/v1/tasks/task-run/pause",
-            body=control_body(version),
-        )
-        self.assertEqual(status, 409)
-        self.assertEqual(body["error"]["details"]["reason"], "stale_task_state")
-
-        # A fresh read shows the pending request and no longer offers pause.
-        current = self.repository.get_task("task-run")
+        # No pause was ever recorded and no Task state changed.
+        persisted = self.repository.get_task("task-run")
+        self.assertFalse(persisted.pause_requested)
+        self.assertEqual(persisted.status, PersistentTaskStatus.RUNNING)
+        # The projection no longer advertises a pause control at all.
         status, detail, _ = request(
             self.api, "GET", "/api/v1/tasks/task-run", token="operator-token"
         )
-        pause = next(item for item in detail["lifecycle"]["actions"] if item["action"] == "pause")
-        self.assertFalse(pause["available"])
-        self.assertIn("already stored", pause["unavailableReason"])
-        status, body, _ = request(
-            self.api,
-            "POST",
-            "/api/v1/tasks/task-run/pause",
-            body=control_body(current.updated_at.isoformat()),
-        )
-        self.assertEqual(status, 409)
-
-        self.repository.create_task(self.task("task-done", rank=1))
-        done = self.repository.get_task("task-done")
-        status, body, _ = request(
-            self.api,
-            "POST",
-            "/api/v1/tasks/task-done/pause",
-            body=control_body(done.updated_at.isoformat()),
-        )
-        self.assertEqual(status, 409)
-        self.assertEqual(body["error"]["details"]["reason"], "pause_unavailable")
+        self.assertEqual(status, 200)
+        self.assertNotIn("pause", {item["action"] for item in detail["lifecycle"]["actions"]})
 
     def test_cancel_is_general_terminal_safe_and_permission_checked(self) -> None:
         self.repository.create_task(
@@ -680,7 +653,10 @@ class OperationsWorkspaceTests(unittest.TestCase):
             "/api/v1/tasks/missing/pause",
             body=control_body(NOW.isoformat()),
         )
-        self.assertEqual(status, 404)
+        # Pause is retired before any Task lookup: a known and an unknown Task
+        # receive the same bounded no-effect refusal.
+        self.assertEqual(status, 409)
+        self.assertEqual(body["error"]["code"], "pause_retired")
 
         self.repository.create_task(
             self.task("task-run", status=PersistentTaskStatus.RUNNING, rank=0)
@@ -753,28 +729,19 @@ class OperationsControlFencingTests(unittest.TestCase):
             thread.join(10)
         return sorted(statuses)
 
-    def test_concurrent_pause_submissions_admit_exactly_one(self) -> None:
+    def test_concurrent_pause_submissions_are_both_retired(self) -> None:
         self.running_task("task-pause")
         version = self.repository.get_task("task-pause").updated_at.isoformat()
 
+        # Both identical submissions are refused with the same bounded answer;
+        # no pause is ever stored.
         self.assertEqual(
             self.concurrent_control("/api/v1/tasks/task-pause/pause", version),
-            [200, 409],
+            [409, 409],
         )
         task = self.repository.get_task("task-pause")
-        self.assertTrue(task.pause_requested)
+        self.assertFalse(task.pause_requested)
         self.assertEqual(task.status, PersistentTaskStatus.RUNNING)
-
-        # A further submission against the now-current version is refused for the
-        # durable reason instead of storing the request twice.
-        status, body, _ = request(
-            self.api,
-            "POST",
-            "/api/v1/tasks/task-pause/pause",
-            body=control_body(task.updated_at.isoformat()),
-        )
-        self.assertEqual(status, 409)
-        self.assertEqual(body["error"]["details"]["reason"], "already_requested")
 
     def test_concurrent_cancel_submissions_admit_exactly_one(self) -> None:
         self.running_task("task-cancel", execute=True)
@@ -862,16 +829,24 @@ class OperationsControlFencingTests(unittest.TestCase):
         self.assertEqual(lifecycle["executionPath"], "synchronous_manual_organize")
         self.assertFalse(any(item["available"] for item in lifecycle["actions"]))
 
-        for action in ("pause", "cancel"):
-            with self.subTest(action=action):
-                status, body, _ = request(
-                    self.api,
-                    "POST",
-                    f"/api/v1/tasks/manual-run/{action}",
-                    body=control_body(task.updated_at.isoformat()),
-                )
-                self.assertEqual(status, 409)
-                self.assertEqual(body["error"]["details"]["reason"], f"{action}_unavailable")
+        # Pause is retired for every execution path; cancellation keeps its own
+        # truthful refusal for the synchronous manual boundary.
+        status, body, _ = request(
+            self.api,
+            "POST",
+            "/api/v1/tasks/manual-run/pause",
+            body=control_body(task.updated_at.isoformat()),
+        )
+        self.assertEqual(status, 409)
+        self.assertEqual(body["error"]["code"], "pause_retired")
+        status, body, _ = request(
+            self.api,
+            "POST",
+            "/api/v1/tasks/manual-run/cancel",
+            body=control_body(task.updated_at.isoformat()),
+        )
+        self.assertEqual(status, 409)
+        self.assertEqual(body["error"]["details"]["reason"], "cancel_unavailable")
         persisted = self.repository.get_task("manual-run")
         self.assertEqual(persisted.status, PersistentTaskStatus.RUNNING)
         self.assertTrue(persisted.execute_authorized)
