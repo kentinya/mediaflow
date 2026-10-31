@@ -319,6 +319,7 @@ class TaskSchedulingService:
         self,
         claim: ScheduledTaskClaim,
         *,
+        discovery=None,
         now: datetime | None = None,
     ) -> TaskSchedulingState:
         """Acknowledge the accepted pause/cancel at the owner's safe boundary.
@@ -338,7 +339,11 @@ class TaskSchedulingService:
                 f"task {claim.task_id!r} has no accepted control request to acknowledge"
             )
         return self._settle_control(
-            self._require_task(claim.task_id), state, current, fence=claim.fence(current)
+            self._require_task(claim.task_id),
+            state,
+            current,
+            fence=claim.fence(current),
+            discovery=discovery,
         )
 
     def defer_to_human(
@@ -686,6 +691,7 @@ class TaskSchedulingService:
         now: datetime,
         *,
         fence: TaskClaimFence | None,
+        discovery=None,
     ) -> TaskSchedulingState:
         control = state.control_request
         if control is None:
@@ -742,6 +748,7 @@ class TaskSchedulingService:
             queue_state=queue_state,
             stage=None,
             expected_control_revision=state.control_revision,
+            discovery=discovery,
         )
         if released is None:
             raise TaskClaimFenceLost(f"task {task.task_id!r} is no longer owned by this Worker")

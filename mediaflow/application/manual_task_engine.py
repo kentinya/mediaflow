@@ -113,7 +113,11 @@ class ManualTaskEngineWorker:
                     # The safe boundary has not arrived: keep the slot and the
                     # uncertain effect.  A later acknowledgement is the only exit.
                     return self._task(claim.task_id)
-                self._scheduling.acknowledge_control(claim, now=self._clock())
+                self._scheduling.acknowledge_control(
+                    claim,
+                    discovery=self._linked_discovery(claim.task_id),
+                    now=self._clock(),
+                )
                 return self._task(claim.task_id)
             if state.mutation_in_flight:
                 # Never advance new work beside an unproved mutation.
@@ -382,7 +386,11 @@ class ManualTaskEngineWorker:
         state = self._scheduling.state(claim.task_id)
         if state is not None and state.control_request is not None:
             if not state.mutation_in_flight:
-                self._scheduling.acknowledge_control(claim, now=self._clock())
+                self._scheduling.acknowledge_control(
+                    claim,
+                    discovery=self._linked_discovery(claim.task_id),
+                    now=self._clock(),
+                )
                 return self._task(claim.task_id)
         if eligible_at.tzinfo is None:
             eligible_at = eligible_at.replace(tzinfo=UTC)
@@ -422,6 +430,14 @@ class ManualTaskEngineWorker:
         if task is None:
             raise LookupError(f"task {task_id!r} was not found")
         return task
+
+    def _linked_discovery(self, task_id: str) -> MediaDiscovery | None:
+        """The Files preparation of this Task, when it owns one."""
+
+        reader = getattr(self._repository, "get_media_discovery_for_task", None)
+        if not callable(reader):
+            return None
+        return reader(task_id)
 
     def _task_for_discovery(
         self, task: PersistentTask, discovery: MediaDiscovery, now: datetime

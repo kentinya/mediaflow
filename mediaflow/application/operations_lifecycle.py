@@ -70,6 +70,7 @@ from mediaflow.domain.task_persistence import (
     PersistentTaskRepository,
     PersistentTaskStatus,
 )
+from mediaflow.domain.task_scheduling import TaskControl, TaskControlRejected
 
 #: The durable transfer Task command of one library kind.  Both kinds reuse a
 #: single transfer lifecycle (Slice 38 RO-6), so their resume eligibility is
@@ -289,6 +290,11 @@ class TaskExecutionContext:
     #: boundary nothing to hand out while its still-undecided items remain exactly
     #: what the recovery preparation observes and offers.
     recovery_available: bool = False
+    #: Whether this exact Task is owned by the Task scheduling kernel.  A
+    #: kernel-managed manual organizing Task publishes its controls through the
+    #: same Task control boundary the Files page uses; the legacy synchronous
+    #: manual path keeps its own refusal because it has no Worker boundary.
+    kernel_managed: bool = False
 
 
 class OperationsLifecycleConflict(RuntimeError):
@@ -1994,7 +2000,11 @@ def task_lifecycle_document(
     cancel_reason = permission_reason
     cancel_next_action = _WORKFLOW_CANCEL_NEXT_ACTION
     cancel_outcome = _WORKFLOW_CANCEL_OUTCOME
-    if cancel_reason is None and execution.path is TaskExecutionPath.SYNCHRONOUS_MANUAL_ORGANIZE:
+    if (
+        cancel_reason is None
+        and execution.path is TaskExecutionPath.SYNCHRONOUS_MANUAL_ORGANIZE
+        and not execution.kernel_managed
+    ):
         cancel_reason = _SYNCHRONOUS_CANCEL_REASON
         cancel_next_action = _SYNCHRONOUS_NEXT_ACTION
     if cancel_reason is None and not cancelable:
@@ -2006,7 +2016,10 @@ def task_lifecycle_document(
         available=(
             permitted
             and cancelable
-            and execution.path is not TaskExecutionPath.SYNCHRONOUS_MANUAL_ORGANIZE
+            and (
+                execution.kernel_managed
+                or execution.path is not TaskExecutionPath.SYNCHRONOUS_MANUAL_ORGANIZE
+            )
         ),
         unavailable_reason=cancel_reason,
         durable_outcome=cancel_outcome,
@@ -2021,9 +2034,19 @@ def task_lifecycle_document(
     pause_next_action = (
         "refresh the Task to see whether the pause was acknowledged at an item boundary"
     )
-    if pause_reason is None and execution.path is TaskExecutionPath.SYNCHRONOUS_MANUAL_ORGANIZE:
+    if (
+        pause_reason is None
+        and execution.path is TaskExecutionPath.SYNCHRONOUS_MANUAL_ORGANIZE
+        and not execution.kernel_managed
+    ):
         pause_reason = _SYNCHRONOUS_PAUSE_REASON
         pause_next_action = _SYNCHRONOUS_NEXT_ACTION
+    elif pause_reason is None and execution.kernel_managed:
+        if task.status not in {PersistentTaskStatus.PENDING, PersistentTaskStatus.RUNNING}:
+            pause_reason = (
+                f"only queued or running work accepts a pause request; this Task is "
+                f"{task.status.value}"
+            )
     elif pause_reason is None and task.pause_requested:
         pause_reason = (
             "a durable pause request is already stored and is acknowledged at the next "
@@ -2039,8 +2062,16 @@ def task_lifecycle_document(
         path=f"/api/v1/tasks/{task.task_id}/pause",
         available=(
             permitted
-            and execution.path is TaskExecutionPath.OPERATOR_WORKFLOW
-            and task.status is PersistentTaskStatus.RUNNING
+            and (
+                (
+                    execution.kernel_managed
+                    and task.status in {PersistentTaskStatus.PENDING, PersistentTaskStatus.RUNNING}
+                )
+                or (
+                    execution.path is TaskExecutionPath.OPERATOR_WORKFLOW
+                    and task.status is PersistentTaskStatus.RUNNING
+                )
+            )
             and not task.pause_requested
         ),
         unavailable_reason=pause_reason,
@@ -2052,7 +2083,36 @@ def task_lifecycle_document(
         next_action=pause_next_action,
     )
 
-    if execution.resumable:
+    if execution.kernel_managed:
+        # A kernel-managed organizing Task resumes on its own durable identity:
+        # an interrupted machine stage is re-queued, and a Task that paused while
+        # waiting for a human returns to that same waiting state with zero slots.
+        kernel_paused = task.status is PersistentTaskStatus.PAUSED
+        resume = _action(
+            action="resume",
+            label="Resume Task",
+            path=f"/api/v1/tasks/{task.task_id}/resume",
+            available=permitted and kernel_paused,
+            unavailable_reason=(
+                permission_reason
+                if not permitted
+                else (
+                    None
+                    if kernel_paused
+                    else f"only a paused Task can be resumed; this Task is {task.status.value}"
+                )
+            ),
+            durable_outcome=(
+                "the same Task is re-queued for the resident Worker only when safe remaining "
+                "work exists; an uncertain or already-settled outcome is never replayed"
+            ),
+            side_effects=(
+                "no Storage mutation in this request; a later Worker pass re-checks the "
+                "original pin, claim and source version before any effect"
+            ),
+            next_action="follow the Task's durable progress in Operations",
+        )
+    elif execution.resumable:
         # A bounded Files transfer Task carries a durable per-item continuation
         # authority: the resume request re-queues it for the resident Worker,
         # which continues only from each item's recorded known-safe checkpoint.
@@ -2321,6 +2381,12 @@ class TaskLifecycleService:
 
     def execution_context(self, task: PersistentTask) -> TaskExecutionContext:
         if task.command == MANUAL_ORGANIZE_TASK_COMMAND:
+            if self.is_kernel_managed(task.task_id):
+                return TaskExecutionContext(
+                    TaskExecutionPath.SYNCHRONOUS_MANUAL_ORGANIZE,
+                    kernel_managed=True,
+                    resumable=task.status is PersistentTaskStatus.PAUSED,
+                )
             return TaskExecutionContext(TaskExecutionPath.SYNCHRONOUS_MANUAL_ORGANIZE)
         if is_files_worker_task_command(task.command):
             return TaskExecutionContext(
@@ -2421,6 +2487,8 @@ class TaskLifecycleService:
 
     def pause(self, task_id: str, *, expected_version: str | None) -> PersistentTask:
         task = self.require(task_id)
+        if self.is_kernel_managed(task_id):
+            return self._kernel_control(task_id, TaskControl.PAUSE, expected_version)
         context = self.execution_context(task)
         if context.path is not TaskExecutionPath.OPERATOR_WORKFLOW:
             reason = _SYNCHRONOUS_PAUSE_REASON
@@ -2468,6 +2536,8 @@ class TaskLifecycleService:
 
     def cancel(self, task_id: str, *, expected_version: str | None) -> PersistentTask:
         task = self.require(task_id)
+        if self.is_kernel_managed(task_id):
+            return self._kernel_control(task_id, TaskControl.CANCEL, expected_version)
         context = self.execution_context(task)
         if context.path is TaskExecutionPath.SYNCHRONOUS_MANUAL_ORGANIZE:
             raise OperationsLifecycleConflict(
@@ -2485,6 +2555,88 @@ class TaskLifecycleService:
         if updated is not None:
             return updated
         raise self._cancel_conflict(task_id, expected_version=expected_version)
+
+    def is_kernel_managed(self, task_id: str) -> bool:
+        """Whether this Task is owned by the Task scheduling kernel."""
+
+        reader = getattr(self._repository, "get_task_scheduling", None)
+        return callable(reader) and reader(task_id) is not None
+
+    def resume(
+        self,
+        task_id: str,
+        *,
+        expected_version: str | None,
+        capacity: int,
+    ) -> PersistentTask:
+        """Resume one acknowledged-paused kernel Task on its original identity."""
+
+        current = self.require(task_id)
+        if expected_version is not None and expected_version != current.updated_at.isoformat():
+            raise self._stale_conflict(current.updated_at.isoformat())
+        handler = getattr(self._repository, "resume_scheduled_task", None)
+        if not callable(handler):
+            raise OperationsLifecycleConflict(
+                "resume_unavailable",
+                "the Task scheduling kernel cannot resume this Task",
+                durable_state=f"the Task remains {current.status.value}",
+                next_action="refresh the Task and retry once the resident worker is available",
+                current_version=current.updated_at.isoformat(),
+            )
+        try:
+            return handler(
+                task_id,
+                expected_version=expected_version,
+                capacity=capacity,
+                now=datetime.now(UTC),
+            )
+        except TaskControlRejected as rejected:
+            fresh = self.require(task_id)
+            if expected_version is not None and expected_version != fresh.updated_at.isoformat():
+                raise self._stale_conflict(fresh.updated_at.isoformat()) from rejected
+            raise OperationsLifecycleConflict(
+                "resume_unavailable",
+                str(rejected),
+                durable_state=f"the Task remains {fresh.status.value}",
+                next_action="reload the Task and inspect its current state",
+                current_version=fresh.updated_at.isoformat(),
+            ) from rejected
+
+    def _kernel_control(
+        self, task_id: str, control: TaskControl, expected_version: str | None
+    ) -> PersistentTask:
+        """Route one Task Center control to the same boundary the Files page uses."""
+
+        current = self.require(task_id)
+        if expected_version is not None and expected_version != current.updated_at.isoformat():
+            raise self._stale_conflict(current.updated_at.isoformat())
+        handler = getattr(self._repository, "request_scheduled_task_control", None)
+        if not callable(handler):
+            raise OperationsLifecycleConflict(
+                "control_unavailable",
+                "the Task scheduling kernel cannot accept this control",
+                durable_state=f"the Task remains {current.status.value}",
+                next_action="refresh the Task and retry once the resident worker is available",
+                current_version=current.updated_at.isoformat(),
+            )
+        try:
+            return handler(
+                task_id,
+                control=control,
+                expected_version=expected_version,
+                now=datetime.now(UTC),
+            )
+        except TaskControlRejected as rejected:
+            fresh = self.require(task_id)
+            if expected_version is not None and expected_version != fresh.updated_at.isoformat():
+                raise self._stale_conflict(fresh.updated_at.isoformat()) from rejected
+            raise OperationsLifecycleConflict(
+                "control_unavailable",
+                str(rejected),
+                durable_state=f"the Task remains {fresh.status.value}",
+                next_action="reload the Task and inspect its current state",
+                current_version=fresh.updated_at.isoformat(),
+            ) from rejected
 
     def _cancel_conflict(
         self, task_id: str, *, expected_version: str | None = None

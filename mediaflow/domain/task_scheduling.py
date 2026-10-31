@@ -669,6 +669,7 @@ class TaskSchedulingRepository(Protocol):
         queue_state: TaskQueueState,
         stage: TaskMachineStage | None,
         expected_control_revision: int | None = None,
+        discovery: object | None = None,
     ) -> TaskSchedulingState | None:
         """Publish one queue transition (human-wait/pause/settle) atomically.
 

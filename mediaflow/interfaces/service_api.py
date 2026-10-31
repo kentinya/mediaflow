@@ -7648,6 +7648,38 @@ class MediaFlowApi:
             if action == "resume":
                 task = service.require(parts[3])
                 service.require_version(task, expected_version)
+                if service.is_kernel_managed(task.task_id):
+                    # A kernel-managed organizing Task resumes on the same durable
+                    # identity instead of queueing a legacy continuation Job.
+                    current = service.resume(
+                        task.task_id,
+                        expected_version=expected_version,
+                        capacity=binding.maximum_active_jobs,
+                    )
+                    lifecycle = self._task_lifecycle(
+                        service,
+                        current,
+                        principal,
+                        results=service.results(current.task_id),
+                    )
+                    return self._response(
+                        start_response,
+                        202,
+                        {
+                            "action": action,
+                            "taskId": current.task_id,
+                            "task": task_operator_document(current),
+                            "lifecycle": lifecycle,
+                            "durableOutcome": next(
+                                (
+                                    item["durableOutcome"]
+                                    for item in lifecycle["actions"]
+                                    if item["action"] == action
+                                ),
+                                None,
+                            ),
+                        },
+                    )
                 if is_files_worker_task_command(task.command):
                     is_delete = task.command in {
                         FILES_DELETE_TASK_COMMAND,

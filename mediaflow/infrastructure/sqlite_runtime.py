@@ -109,6 +109,7 @@ from mediaflow.domain.media_discovery import (
     DiscoveryConflict,
     DiscoveryEntryKind,
     DiscoveryError,
+    DiscoveryIncompleteReason,
     DiscoveryObservation,
     DiscoveryOwnershipLost,
     DiscoveryProgress,
@@ -5802,11 +5803,33 @@ class SQLiteTaskRepository:
                 raise
 
     def _has_job_capacity(self, maximum_active_jobs: int) -> bool:
+        # One shared admission capacity bounds every still-queued entrance during
+        # the phased coexistence: the legacy automation_jobs queue and the new
+        # Task kernel's queued/claimed Tasks draw from the same configured
+        # maximum.  A Job whose Task was later admitted to the kernel is counted
+        # once (through its scheduling row), never twice.
+        return self._shared_capacity_use_locked() < maximum_active_jobs
+
+    def _shared_capacity_use_locked(self) -> int:
+        """Distinct admissions currently occupying the one shared capacity.
+
+        The new Task kernel's queued/claimed work and the legacy Job queue are
+        the two entrances sharing the configured maximum.  A Job that names a
+        Task with a ``task_scheduling`` row is the *same* admission and is not
+        counted a second time.
+        """
+
+        return self._scheduled_capacity_use_locked() + self._legacy_job_capacity_use_locked()
+
+    def _legacy_job_capacity_use_locked(self) -> int:
         row = self._connection.execute(
-            "SELECT COUNT(*) AS count FROM automation_jobs WHERE status IN (?, ?)",
+            "SELECT COUNT(*) AS count FROM automation_jobs "
+            "WHERE status IN (?, ?) "
+            "AND (task_id IS NULL OR task_id NOT IN "
+            "(SELECT task_id FROM task_scheduling))",
             (AutomationJobStatus.PENDING.value, AutomationJobStatus.RUNNING.value),
         ).fetchone()
-        return int(row["count"]) < maximum_active_jobs
+        return int(row["count"]) if row is not None else 0
 
     def get_job(self, job_id: str) -> AutomationJob | None:
         with self._lock:
@@ -12993,7 +13016,7 @@ class SQLiteTaskRepository:
                                 next_action="restore the configured Worker capacity and retry",
                             )
                         require_capacity(scheduling_capacity)
-                        if self._scheduled_capacity_use_locked() >= scheduling_capacity:
+                        if self._shared_capacity_use_locked() >= scheduling_capacity:
                             raise TaskQueueFull(
                                 "the shared Task scheduling capacity is in use by other "
                                 "admitted work"
@@ -13967,7 +13990,7 @@ class SQLiteTaskRepository:
                                 "this discovery admission identity already exists",
                                 details={"taskId": existing[0].task_id},
                             )
-                    if self._scheduled_capacity_use_locked() >= capacity:
+                    if self._shared_capacity_use_locked() >= capacity:
                         raise TaskQueueFull(
                             "the shared Task scheduling capacity is in use by other admitted work"
                         )
@@ -18404,7 +18427,7 @@ class SQLiteTaskRepository:
                         self._require_exact_scheduled_admission(existing, task, state)
                         self._connection.commit()
                         return ScheduledTaskAdmission(existing[0], existing[1], True)
-                if self._scheduled_capacity_use_locked() >= capacity:
+                if self._shared_capacity_use_locked() >= capacity:
                     self._connection.rollback()
                     raise TaskQueueFull(
                         "the shared Task scheduling capacity is in use by other admitted work"
@@ -18635,6 +18658,294 @@ class SQLiteTaskRepository:
         assert state is not None
         return state
 
+    def request_scheduled_discovery_control(
+        self,
+        discovery: MediaDiscovery,
+        *,
+        control: TaskControl,
+        expected_version: int,
+        now: datetime,
+    ) -> MediaDiscovery:
+        """Record one pause/cancel for a kernel-managed Files work and its Task.
+
+        The operator's request is durable before anything is released: the Task
+        control fact is stored first, then, only when no Worker owns the claim
+        and no Storage mutation is in flight, the Task's safe boundary is here
+        and its slot is released together with the discovery display.  A claimed
+        Task keeps its slot until its owner acknowledges at the existing safe
+        boundary, and the engine settles the same discovery there.  No
+        authority is consumed and no historical item/Result is rewritten.
+        """
+
+        if not isinstance(discovery, MediaDiscovery):
+            raise ValueError("media discovery projection is required")
+        if discovery.organize_task_id is None:
+            raise ValueError("a kernel-managed discovery control requires its organizing Task")
+        control = TaskControl(control)
+        if now.tzinfo is None:
+            raise ValueError("Task control timestamp needs timezone")
+        current = self.get_media_discovery(discovery.discovery_id)
+        if current is None:
+            raise DiscoveryUnavailable("the discovery is no longer readable")
+        if current.version != expected_version:
+            raise DiscoveryConflict(
+                "the discovery changed before this control was published",
+                details={
+                    "discoveryId": discovery.discovery_id,
+                    "currentVersion": current.version,
+                },
+            )
+        if current.terminal:
+            raise DiscoveryError(
+                "a finished discovery cannot be controlled",
+                code="discovery_not_open",
+                status=409,
+                next_action="start a new bounded discovery from Files",
+            )
+        task_id = current.organize_task_id
+        assert task_id is not None
+        state = self.request_scheduled_control(task_id, control, now=now)
+        if not self._scheduled_control_settles_immediately_locked(state):
+            # A live owner or an unproved effect keeps the slot: record the
+            # durable request and let the existing safe boundary acknowledge it.
+            return self._persist_discovery_control_display(
+                current, control, now, expected_version=expected_version
+            )
+        task_row = self._connection.execute(
+            "SELECT * FROM tasks WHERE task_id=?", (task_id,)
+        ).fetchone()
+        if task_row is None:
+            raise LookupError(f"task {task_id!r} was not found")
+        task = self._task(task_row)
+        items, queue_state = self._scheduled_control_items_locked(task, control, now)
+        try:
+            released = self.release_scheduled_claim(
+                None,
+                task=self._scheduled_control_task(task, control, now),
+                items=items,
+                queue_state=queue_state,
+                stage=None,
+                expected_control_revision=state.control_revision,
+                discovery=current,
+            )
+        except TaskControlRejected:
+            released = None
+        if released is None:
+            # A concurrent claim won the boundary between the request and the
+            # release: keep the durable request and record the display only.
+            return self._persist_discovery_control_display(
+                current, control, now, expected_version=expected_version
+            )
+        loaded = self.get_media_discovery(discovery.discovery_id)
+        return loaded if loaded is not None else current
+
+    def request_scheduled_task_control(
+        self,
+        task_id: str,
+        *,
+        control: TaskControl,
+        expected_version: str | None,
+        now: datetime,
+    ) -> PersistentTask:
+        """Record one Task Center pause/cancel for a kernel-managed Task.
+
+        This is the same Task control boundary the Files surface uses: the
+        request is durable first, and a Task with no live owner settles its slot
+        immediately at the safe boundary.  A Task that owns a discovery syncs
+        that display in the same transaction.
+        """
+
+        control = TaskControl(control)
+        if now.tzinfo is None:
+            raise ValueError("Task control timestamp needs timezone")
+        current = self.get_task(task_id)
+        if current is None:
+            raise LookupError(f"task {task_id!r} was not found")
+        if expected_version is not None and expected_version != current.updated_at.isoformat():
+            raise TaskControlRejected("the Task changed before this control was submitted")
+        state = self.request_scheduled_control(task_id, control, now=now)
+        discovery = self.get_media_discovery_for_task(task_id)
+        if not self._scheduled_control_settles_immediately_locked(state):
+            return current
+        items, queue_state = self._scheduled_control_items_locked(current, control, now)
+        self.release_scheduled_claim(
+            None,
+            task=self._scheduled_control_task(current, control, now),
+            items=items,
+            queue_state=queue_state,
+            stage=None,
+            expected_control_revision=state.control_revision,
+            discovery=discovery,
+        )
+        return self.get_task(task_id) or current
+
+    @staticmethod
+    def _scheduled_control_settles_immediately_locked(state: TaskSchedulingState) -> bool:
+        """Whether a queued/human-waiting/paused Task has no live owner now."""
+
+        return (
+            state.claim_token is None
+            and not state.mutation_in_flight
+            and state.queue_state
+            in {TaskQueueState.QUEUED, TaskQueueState.WAITING_HUMAN, TaskQueueState.PAUSED}
+        )
+
+    def _scheduled_control_items_locked(
+        self, task: PersistentTask, control: TaskControl, now: datetime
+    ) -> tuple[tuple[PersistentTaskItem, ...], TaskQueueState]:
+        from dataclasses import replace
+
+        if control is TaskControl.PAUSE:
+            wanted = {TaskItemStatus.PENDING, TaskItemStatus.PROCESSING}
+            target = TaskItemStatus.PAUSED
+            stage = "paused"
+            error = None
+            queue_state = TaskQueueState.PAUSED
+        else:
+            wanted = {
+                TaskItemStatus.PENDING,
+                TaskItemStatus.PROCESSING,
+                TaskItemStatus.PAUSED,
+                TaskItemStatus.WAITING_CONFIRM,
+                TaskItemStatus.WAITING_RECOGNITION,
+                TaskItemStatus.WAITING_METADATA,
+                TaskItemStatus.WAITING_METADATA_CORRECTION,
+                TaskItemStatus.WAITING_CLASSIFICATION,
+            }
+            target = TaskItemStatus.CANCELLED
+            stage = "cancelled"
+            error = "task cancelled"
+            queue_state = TaskQueueState.SETTLED
+        items = tuple(
+            replace(item, status=target, stage=stage, updated_at=now, error=error)
+            for item in self.list_items(task.task_id)
+            if item.status in wanted
+        )
+        return (items, queue_state)
+
+    @staticmethod
+    def _scheduled_control_task(
+        task: PersistentTask, control: TaskControl, now: datetime
+    ) -> PersistentTask:
+        from dataclasses import replace
+
+        if control is TaskControl.PAUSE:
+            return replace(
+                task,
+                status=PersistentTaskStatus.PAUSED,
+                updated_at=now,
+                completed_at=None,
+                error=None,
+                pause_requested=False,
+            )
+        return replace(
+            task,
+            status=PersistentTaskStatus.CANCELLED,
+            updated_at=now,
+            completed_at=now,
+            error="task cancelled",
+            pause_requested=False,
+        )
+
+    def _persist_discovery_control_display(
+        self,
+        discovery: MediaDiscovery,
+        control: TaskControl,
+        now: datetime,
+        *,
+        expected_version: int,
+    ) -> MediaDiscovery:
+        """Write only the discovery's operator-visible control flag.
+
+        Used when a live owner keeps the slot: the durable Task request was
+        already stored, so the display row must not claim the safe boundary has
+        been reached yet.
+        """
+
+        updated = self._control_discovery_projection(discovery, control, now)
+        return self.update_media_discovery(updated, expected_version=expected_version)
+
+    def _publish_discovery_control_locked(
+        self,
+        discovery: MediaDiscovery,
+        control: TaskControl,
+        now: datetime,
+    ) -> None:
+        """Settle the linked discovery's display under the Task release."""
+
+        if control is TaskControl.PAUSE:
+            self._connection.execute(
+                "UPDATE media_discoveries SET status=?, version=version+1, "
+                "pause_requested=1, claim_worker_id=NULL, claim_token=NULL, "
+                "claim_expires_at=NULL, updated_at=? "
+                "WHERE discovery_id=? AND status NOT IN (?, ?, ?)",
+                (
+                    DiscoveryStatus.PAUSED.value,
+                    now.isoformat(),
+                    discovery.discovery_id,
+                    DiscoveryStatus.COMPLETED.value,
+                    DiscoveryStatus.PARTIAL_SUCCESS.value,
+                    DiscoveryStatus.CANCELLED.value,
+                ),
+            )
+        else:
+            self._connection.execute(
+                "UPDATE media_discoveries SET status=?, version=version+1, "
+                "cancel_requested=1, claim_worker_id=NULL, claim_token=NULL, "
+                "claim_expires_at=NULL, updated_at=? "
+                "WHERE discovery_id=? AND status NOT IN (?, ?)",
+                (
+                    DiscoveryStatus.CANCELLED.value,
+                    now.isoformat(),
+                    discovery.discovery_id,
+                    DiscoveryStatus.COMPLETED.value,
+                    DiscoveryStatus.PARTIAL_SUCCESS.value,
+                ),
+            )
+
+    @staticmethod
+    def _control_discovery_projection(
+        discovery: MediaDiscovery,
+        control: TaskControl,
+        now: datetime,
+    ) -> MediaDiscovery:
+        from dataclasses import replace
+
+        if control is TaskControl.PAUSE:
+            return replace(
+                discovery,
+                status=discovery.status,
+                version=discovery.version + 1,
+                pause_requested=True,
+                updated_at=now,
+                progress=replace(
+                    discovery.progress,
+                    phase=discovery.progress.phase,
+                    message=(
+                        "a cooperative pause was requested; the Worker stops at a safe boundary"
+                    ),
+                ),
+            )
+        return replace(
+            discovery,
+            status=DiscoveryStatus.CANCELLED,
+            version=discovery.version + 1,
+            cancel_requested=True,
+            claim_worker_id=None,
+            claim_token=None,
+            claim_expires_at=None,
+            updated_at=now,
+            progress=replace(
+                discovery.progress,
+                phase="cancelled",
+                incomplete_reason=DiscoveryIncompleteReason.CANCELLED,
+                message=(
+                    "discovery was cancelled cooperatively; known findings are preserved and "
+                    "no execution authority was created"
+                ),
+            ),
+        )
+
     def release_scheduled_claim(
         self,
         fence: TaskClaimFence | None,
@@ -18644,15 +18955,19 @@ class SQLiteTaskRepository:
         queue_state: TaskQueueState,
         stage: TaskMachineStage | None,
         expected_control_revision: int | None = None,
+        discovery: MediaDiscovery | None = None,
     ) -> TaskSchedulingState | None:
         """Publish one truthful queue transition and give the slot back.
 
         The Task aggregate, each affected TaskItem and the scheduling row commit
         together, so a reloaded projection can never show a released slot beside
-        a Task that still claims machine work.  The release is refused while the
-        Task still carries an unverified in-flight mutation: a requested pause or
-        cancel keeps its slot until that boundary is proved, and no control can
-        force an in-flight effect to be forgotten.
+        a Task that still claims machine work.  When ``discovery`` names the
+        linked Files preparation, its display row is settled in the same
+        transaction, so an acknowledged pause/cancel can never leave the Task
+        and its discovery disagreeing about the same work.  The release is
+        refused while the Task still carries an unverified in-flight mutation: a
+        requested pause or cancel keeps its slot until that boundary is proved,
+        and no control can force an in-flight effect to be forgotten.
         """
 
         queue_state = TaskQueueState(queue_state)
@@ -18762,6 +19077,8 @@ class SQLiteTaskRepository:
                         task.task_id,
                     ),
                 )
+                if discovery is not None and state.control_request is not None:
+                    self._publish_discovery_control_locked(discovery, state.control_request, now)
                 state = self._scheduled_state_locked(task.task_id)
             except BaseException:
                 self._connection.rollback()
@@ -18929,7 +19246,7 @@ class SQLiteTaskRepository:
                         "the admitted configuration pin changed; this Task's remaining work "
                         "cannot be continued under a different context"
                     )
-                if self._scheduled_capacity_use_locked() >= capacity:
+                if self._shared_capacity_use_locked() >= capacity:
                     self._connection.rollback()
                     raise TaskQueueFull(
                         "the shared Task scheduling capacity is in use by other admitted work"
@@ -19026,14 +19343,15 @@ class SQLiteTaskRepository:
                     raise TaskControlRejected(
                         "a cancelled Task is not re-analyzed; that is a new organizing request"
                     )
-                if self._scheduled_capacity_use_locked() >= capacity:
+                if self._shared_capacity_use_locked() >= capacity:
                     self._connection.rollback()
                     raise TaskQueueFull(
                         "the shared Task scheduling capacity is in use by other admitted work"
                     )
                 cursor = self._connection.execute(
                     "UPDATE media_discoveries SET status=?, version=?, progress_json=?, "
-                    "preview_id=?, error=?, updated_at=? "
+                    "preview_id=?, error=?, updated_at=?, pause_requested=0, "
+                    "claim_worker_id=NULL, claim_token=NULL, claim_expires_at=NULL "
                     "WHERE discovery_id=? AND version=?",
                     (
                         discovery.status.value,
@@ -19082,6 +19400,106 @@ class SQLiteTaskRepository:
                 raise
             self._connection.commit()
         return self.get_media_discovery(discovery.discovery_id)
+
+    def resume_scheduled_task(
+        self,
+        task_id: str,
+        *,
+        expected_version: str | None,
+        capacity: int,
+        now: datetime,
+    ) -> PersistentTask:
+        """Resume one acknowledged-paused Task on the same durable identity.
+
+        A discovered Files Task whose paused machine stage was interrupted is
+        re-queued with its original discovery/projection, re-checking the shared
+        capacity in the same transaction.  A Task that was paused while waiting
+        for a human decision has no machine work to re-queue, so it returns to
+        its waiting state and keeps holding zero slots.  An accepted cancel is
+        never resumed.
+        """
+
+        require_capacity(capacity)
+        if now.tzinfo is None:
+            raise ValueError("Task resume timestamp needs timezone")
+        current = self.get_task(task_id)
+        if current is None:
+            raise LookupError(f"task {task_id!r} was not found")
+        if expected_version is not None and expected_version != current.updated_at.isoformat():
+            raise TaskControlRejected("the Task changed before this resume was submitted")
+        state = self.get_task_scheduling(task_id)
+        if state is None:
+            raise TaskControlRejected("the Task was not admitted by the scheduling kernel")
+        if state.control_request is TaskControl.CANCEL:
+            raise TaskControlRejected("a cancel was already accepted for this Task")
+        if state.queue_state is not TaskQueueState.PAUSED:
+            raise TaskControlRejected("only a paused Task can be resumed")
+        discovery = self.get_media_discovery_for_task(task_id)
+        if (
+            discovery is not None
+            and discovery.status is DiscoveryStatus.PAUSED
+            and not discovery.terminal
+        ):
+            from dataclasses import replace
+
+            if discovery.frozen and discovery.intent_id is not None:
+                target = DiscoveryStatus.ANALYZING
+                stage = TaskMachineStage.ANALYSIS
+            else:
+                target = DiscoveryStatus.QUEUED
+                stage = TaskMachineStage.DISCOVERY
+            updated = replace(
+                discovery,
+                status=target,
+                version=discovery.version + 1,
+                pause_requested=False,
+                updated_at=now,
+                error=None,
+                progress=replace(
+                    discovery.progress,
+                    phase=target.value,
+                    message=(
+                        "resumed by the operator; the resident Worker continues the same scope"
+                    ),
+                ),
+            )
+            self.requeue_scheduled_analysis(
+                task_id,
+                updated,
+                expected_version=discovery.version,
+                capacity=capacity,
+                now=now,
+                stage=stage,
+            )
+            return self.get_task(task_id) or current
+        with self._lock, self._connection:
+            self._connection.execute("BEGIN IMMEDIATE")
+            try:
+                fresh = self._scheduled_state_locked(task_id)
+                if fresh is None or fresh.queue_state is not TaskQueueState.PAUSED:
+                    raise TaskControlRejected("only a paused Task can be resumed")
+                if fresh.control_request is TaskControl.CANCEL:
+                    raise TaskControlRejected("a cancel was already accepted for this Task")
+                self._connection.execute(
+                    "UPDATE tasks SET status=?, updated_at=?, completed_at=NULL, error=NULL, "
+                    "pause_requested=0 WHERE task_id=?",
+                    (PersistentTaskStatus.RUNNING.value, now.isoformat(), task_id),
+                )
+                self._connection.execute(
+                    """UPDATE task_scheduling
+                    SET queue_state=?, machine_stage=NULL, queue_eligible_at=NULL,
+                        claim_generation=claim_generation+1, claim_token=NULL,
+                        claim_worker_id=NULL, claimed_at=NULL, claim_expires_at=NULL,
+                        heartbeat_at=NULL, control_request=NULL, control_requested_at=NULL,
+                        control_acknowledged_at=NULL, updated_at=?
+                    WHERE task_id=?""",
+                    (TaskQueueState.WAITING_HUMAN.value, now.isoformat(), task_id),
+                )
+            except BaseException:
+                self._connection.rollback()
+                raise
+            self._connection.commit()
+        return self.get_task(task_id) or current
 
     def upsert_scheduled_item(
         self,

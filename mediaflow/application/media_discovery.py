@@ -125,6 +125,7 @@ from mediaflow.domain.task_persistence import (
     RunDisplayContext,
 )
 from mediaflow.domain.task_scheduling import (
+    TaskControl,
     TaskControlRejected,
     TaskMachineStage,
     TaskQueueFull,
@@ -3248,10 +3249,21 @@ class MediaDiscoveryService:
         authority is consumed and no automatic continuation is registered.
         """
 
+        return self._requeue_kernel_discovery(discovery, updated, stage=TaskMachineStage.ANALYSIS)
+
+    def _requeue_kernel_discovery(
+        self,
+        discovery: MediaDiscovery,
+        updated: MediaDiscovery,
+        *,
+        stage: TaskMachineStage,
+    ) -> MediaDiscovery:
+        """Atomically re-register the same Task's bounded machine stage."""
+
         requeue = getattr(self._repository, "requeue_scheduled_analysis", None)
         if not callable(requeue):
             raise DiscoveryUnavailable(
-                "the Task scheduling kernel cannot re-register this analysis"
+                "the Task scheduling kernel cannot re-register this machine stage"
             )
         runtime = self._load_runtime(discovery.snapshot_id, discovery.snapshot_digest)
         try:
@@ -3261,6 +3273,7 @@ class MediaDiscoveryService:
                 expected_version=discovery.version,
                 capacity=self._shared_capacity(runtime),
                 now=self._clock(),
+                stage=stage,
             )
         except TaskQueueFull as full:
             raise DiscoveryError(
@@ -3405,6 +3418,15 @@ class MediaDiscoveryService:
                 message="resumed by the operator; the resident Worker continues the same scope",
             ),
         )
+        if self._kernel_task_id(discovery) is not None:
+            # A new Files preparation is scheduled by its own Task, so a resume
+            # must re-register the same Task's bounded walk in the same
+            # transaction that clears the discovery's pause flag.  The shared
+            # capacity is re-checked, so a full queue keeps the pause and the
+            # saved scope instead of registering an automatic continuation.
+            return self._requeue_kernel_discovery(
+                discovery, updated, stage=TaskMachineStage.DISCOVERY
+            )
         # Resume only clears the operator's own pause request: the operator-owned
         # path never touches the claim columns, so a Worker that is still
         # finishing its safe boundary keeps the exact claim it acquired.
@@ -6536,6 +6558,14 @@ class MediaDiscoveryService:
                 status=409,
                 next_action="start a new bounded discovery from Files",
             )
+        if self._kernel_task_id(discovery) is not None:
+            # A new Files preparation is advanced by the Task engine, so its
+            # pause/cancel must land on the same Task control boundary the Task
+            # Center uses.  The discovery display still records the operator's
+            # request, but the durable Task control is what releases the slot.
+            return self._request_kernel_control(
+                discovery, pause=pause, expected_version=expected_version
+            )
         now = self._clock()
         if pause:
             if discovery.pause_requested:
@@ -6584,6 +6614,29 @@ class MediaDiscoveryService:
             ),
         )
         return self._settle_control(cancelled, expected_version=expected_version)
+
+    def _request_kernel_control(
+        self, discovery: MediaDiscovery, *, pause: bool, expected_version: int
+    ) -> MediaDiscovery:
+        """Route one pause/cancel of a kernel-managed discovery to its Task."""
+
+        handler = getattr(self._repository, "request_scheduled_discovery_control", None)
+        if not callable(handler):
+            raise DiscoveryUnavailable("the Task scheduling kernel cannot accept this control")
+        try:
+            return handler(
+                discovery,
+                control=TaskControl.PAUSE if pause else TaskControl.CANCEL,
+                expected_version=expected_version,
+                now=self._clock(),
+            )
+        except TaskControlRejected as rejected:
+            raise DiscoveryError(
+                str(rejected),
+                code="discovery_control_rejected",
+                status=409,
+                next_action="reload the preparation and inspect its current state",
+            ) from rejected
 
     def _require_version(self, discovery_id: str, expected_version: int) -> MediaDiscovery:
         if (

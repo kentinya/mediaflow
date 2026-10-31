@@ -522,6 +522,11 @@ class _DiscoveryFixture(unittest.TestCase):
                                 ApiPermission.READ,
                                 ApiPermission.MANAGE_MANUAL_ORGANIZE,
                                 ApiPermission.EXECUTE_MANUAL_ORGANIZE,
+                                # The production OPERATOR role also carries the
+                                # Task Center control permission; the fixture
+                                # mirrors it so the real pause/cancel route is
+                                # exercised through its authenticated entry.
+                                ApiPermission.CANCEL_JOB,
                                 # RO-2/AC-15: the native four-type recovery this
                                 # journey exercises is the operator's own decision
                                 # surface, so the fixture principal carries exactly
