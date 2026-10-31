@@ -27,10 +27,6 @@ from datetime import UTC, datetime
 from enum import StrEnum
 
 from mediaflow.application.failure_explanation import classify_failure
-from mediaflow.application.scope_continuation import (
-    continuation_obstacle,
-    is_continuable_task_command,
-)
 from mediaflow.application.task_runtime import PersistentTaskCoordinator
 from mediaflow.domain.automation import (
     AutomationCommand,
@@ -52,10 +48,6 @@ from mediaflow.domain.manual_safety import (
 from mediaflow.domain.manual_safety import (
     redact_manual_text,
     redact_manual_value,
-)
-from mediaflow.domain.scope_continuation import (
-    ScopeContinuationOperation,
-    ScopeContinuationReason,
 )
 from mediaflow.domain.security import ApiPermission
 from mediaflow.domain.task_persistence import (
@@ -184,56 +176,6 @@ _REDACTED_EVIDENCE = (
     "endpoint or absolute host path]"
 )
 
-# The reason a continuable Task cannot be continued *yet*.  The durable queued
-# continuation boundary exists for this Task kind (see
-# ``mediaflow.application.scope_continuation``); the control is merely not
-# available in the current durable state, so the projection states that instead
-# of claiming no continuation exists.
-CONTINUATION_STATE_REASON = {
-    "pending": (
-        "the continuation is already queued and owned by the resident Worker; "
-        "submitting again would duplicate the remaining scope"
-    ),
-    "running": (
-        "the Task is still running; request a pause and continue only after the pause is "
-        "acknowledged at a supported item boundary"
-    ),
-}
-# The reason resume is withheld for a Task kind that has no supported durable
-# queued continuation of its exact remaining scope.  Advertising one would
-# fabricate support, so the backend states the truth and names the real surface.
-RESUME_UNAVAILABLE_REASON = (
-    "this Task kind has no durable queued continuation of its exact remaining scope; "
-    "MediaFlow does not advertise Continue where it cannot safely reproduce the "
-    "original admitted scope"
-)
-RESUME_NEXT_ACTION = (
-    "inspect this run's recorded per-item evidence and outcomes, or start a new bounded run "
-    "from 操作与任务; MediaFlow never replays a completed or uncertain effect"
-)
-# The reason a *paused* continuable Task cannot be continued because the live
-# execution authority is gone.  A stored execute flag is not authority, so the
-# operator is routed through the native exact Preview and a fresh explicit
-# intent for only the eligible remaining scope.
-RESUME_AUTHORITY_REASON = (
-    "continuing this remaining scope would mutate media, but the original execution authority "
-    "was one-shot, expired or revoked; a stored execute flag is not authority"
-)
-RESUME_AUTHORITY_NEXT_ACTION = (
-    "open the run's exact Preview, review the remaining scope, and authorize execution again "
-    "from 操作与任务"
-)
-# The reason a paused continuable Task cannot be continued because its immutable
-# configuration pin no longer resolves.
-RESUME_SNAPSHOT_REASON = (
-    "the Task's immutable configuration pin cannot be resolved, so its exact original scope "
-    "cannot be reproduced"
-)
-RESUME_SNAPSHOT_NEXT_ACTION = (
-    "restore the pinned published configuration revision, or start a new bounded run under "
-    "the current Active configuration"
-)
-
 
 class TaskExecutionPath(StrEnum):
     """The durable execution path that owns one Task.
@@ -258,38 +200,6 @@ class TaskExecutionContext:
     path: TaskExecutionPath
     #: Whether the owning workflow stores a cancellation request.
     cancellation_requested: bool = False
-    #: Whether this Task kind has a durable queued continuation authority, so
-    #: a paused Task may be re-queued for the resident Worker (the bounded Files
-    #: Copy/Move transfer Tasks and the continuable operator workflows).
-    resumable: bool = False
-    #: Whether this Task kind owns a durable continuation authority at all,
-    #: independent of its current state.  A bounded transfer keeps that
-    #: authority while it is queued or running; the control is merely not
-    #: available yet, so the projection must say so instead of claiming that no
-    #: continuation exists.
-    durable_continuation: bool = False
-    #: Whether this exact Task kind can continue its remaining admitted scope
-    #: through the shared durable queued continuation boundary.  It is
-    #: independent of the current state: a queued or running continuable Task
-    #: still has that boundary, the control is merely not available yet.
-    continuable: bool = False
-    #: Why a continuable Task cannot be continued in its exact current state,
-    #: as a bounded operator reason with its own next action.  ``None`` means
-    #: the state itself offers no obstacle.
-    continuation_blocked_reason: str | None = None
-    continuation_blocked_next_action: str | None = None
-    #: The machine-readable continuation refusal code behind that reason.  It
-    #: lets the projection publish the *native* recovery entry (an exact Preview
-    #: of the remaining scope) for exactly the refusal that promises it, instead
-    #: of matching on translated operator copy.
-    continuation_blocked_code: str | None = None
-    #: Whether this exact Task's remaining scope can still be reviewed through
-    #: the zero-mutation recovery preparation, judged by the same shared
-    #: continuation boundary.  It is deliberately independent of the queued
-    #: continuation's own refusal: a fully recorded budget leaves the queued
-    #: boundary nothing to hand out while its still-undecided items remain exactly
-    #: what the recovery preparation observes and offers.
-    recovery_available: bool = False
     #: Whether this exact Task is owned by the Task scheduling kernel.  A
     #: kernel-managed manual organizing Task publishes its controls through the
     #: same Task control boundary the Files page uses; the legacy synchronous
@@ -2030,110 +1940,11 @@ def task_lifecycle_document(
         next_action=cancel_next_action,
     )
 
-    # Pause is retired for every media operation.  Resume-from-pause is retired
-    # for the kernel-managed manual work and the ordinary Files transfers and
-    # deletes (they carry ``resumable``/``durable_continuation``), so those
-    # projections advertise cancellation only.  The legacy shared queued
-    # continuation of a *historically* paused Task remains as the old-work
-    # recovery path the Contract preserves; new work can never reach it because
-    # no new pause can be created.  A rejected or stale control performs no
-    # Provider/Storage work and is never replayed automatically.
-    resume: dict[str, object] | None = None
-    if execution.continuable:
-        # The shared durable queued continuation boundary: a paused Task of a
-        # continuable kind admits exactly its remaining admitted scope for
-        # resident-Worker pickup.  Availability and its explanation are one
-        # decision: an advertised control must never also carry a reason, and a
-        # withheld one must always state its bounded obstacle.
-        continuation_available = (
-            permitted
-            and task.status is PersistentTaskStatus.PAUSED
-            and execution.continuation_blocked_reason is None
-        )
-        continuation_reason = (
-            None
-            if continuation_available
-            else (
-                permission_reason
-                or execution.continuation_blocked_reason
-                or (
-                    "the Task already reached a terminal state and has no remaining scope"
-                    if terminal
-                    else "only a durably paused Task has a remaining scope to continue; this "
-                    f"Task is {task.status.value}"
-                )
-            )
-        )
-        resume = _action(
-            action="resume",
-            label="Continue remaining scope",
-            path=f"/api/v1/tasks/{task.task_id}/resume",
-            available=continuation_available,
-            unavailable_reason=continuation_reason,
-            durable_outcome=(
-                "a durable continuation of this Task's exact remaining admitted scope is "
-                "queued for the resident Worker, which preserves the original immutable pin "
-                "and excludes every completed, ignored, waiting or uncertain item"
-            ),
-            side_effects=(
-                "no Storage mutation in this request; the Worker later continues the remaining "
-                "scope through OrganizerExecutor under its own claim and revalidated authority"
-            ),
-            next_action=(
-                execution.continuation_blocked_next_action
-                or "follow the linked continuation run for its independent per-item outcomes"
-            ),
-            # The native recovery entry RO-5 promises whenever Continue is
-            # withheld but the run's remaining scope can still be reviewed: an
-            # exact zero-mutation Preview of that scope under the run's own
-            # historical pin, followed by one fresh explicit execution intent.
-            extra=(
-                {
-                    "preview": {
-                        "available": True,
-                        "reason": None,
-                        "method": "POST",
-                        "path": f"/api/v1/tasks/{task.task_id}/remaining-scope-previews",
-                        "requiresConfirmation": False,
-                        "sideEffects": "none",
-                        "durableOutcome": (
-                            "a durable zero-mutation exact Preview of the remaining eligible "
-                            "scope is stored under the run's original immutable pin; it grants "
-                            "no execution authority"
-                        ),
-                        "nextAction": (
-                            "review the exact Preview, then make one fresh explicit execution "
-                            "intent for only the eligible remaining scope"
-                        ),
-                    }
-                }
-                if execution.recovery_available
-                and ApiPermission.MANAGE_MANUAL_ORGANIZE in permissions
-                else {}
-            ),
-        )
-    elif (
-        not execution.kernel_managed
-        and not execution.resumable
-        and not execution.durable_continuation
-    ):
-        # A Task kind with no durable queued continuation states that honestly
-        # instead of advertising a control it cannot honour.
-        resume = _action(
-            action="resume",
-            label="Resume Task",
-            path=f"/api/v1/tasks/{task.task_id}/resume",
-            available=False,
-            unavailable_reason=permission_reason or RESUME_UNAVAILABLE_REASON,
-            durable_outcome=(
-                "not offered: no durable queued continuation of this exact paused scope exists"
-            ),
-            side_effects="none",
-            next_action=RESUME_NEXT_ACTION,
-        )
+    # Pause and resume-from-pause are retired for every media operation.  The
+    # accepted cancellation above is the only cooperative lifecycle control; a
+    # four-type problem is continued through its own decision/analysis/summary
+    # journey on the same Task, not through this control projection.
     actions: list[dict[str, object]] = [cancel]
-    if resume is not None:
-        actions.append(resume)
     return {
         "objectType": "task",
         "objectId": task.task_id,
@@ -2249,87 +2060,11 @@ class TaskLifecycleService:
 
     def execution_context(self, task: PersistentTask) -> TaskExecutionContext:
         if task.command == MANUAL_ORGANIZE_TASK_COMMAND:
-            if self.is_kernel_managed(task.task_id):
-                return TaskExecutionContext(
-                    TaskExecutionPath.SYNCHRONOUS_MANUAL_ORGANIZE,
-                    kernel_managed=True,
-                    resumable=task.status is PersistentTaskStatus.PAUSED,
-                )
-            return TaskExecutionContext(TaskExecutionPath.SYNCHRONOUS_MANUAL_ORGANIZE)
-        if is_files_worker_task_command(task.command):
             return TaskExecutionContext(
-                TaskExecutionPath.OPERATOR_WORKFLOW,
-                resumable=task.status is PersistentTaskStatus.PAUSED,
-                durable_continuation=True,
-            )
-        if is_continuable_task_command(task.command):
-            # The shared durable queued continuation boundary.  Whether it is
-            # *available* also depends on the exact paused state, the immutable
-            # pin and the applicable execution authority, which this projection
-            # resolves from the same durable evidence the admission revalidates.
-            # One decision yields the operator copy *and* the machine-readable
-            # refusal code, so the advertised recovery entry can never disagree
-            # with the refusal it accompanies.
-            code = continuation_obstacle(
-                self._repository, task, self._snapshot_validator, self._mutation_authority
-            )[0]
-            reason, next_action = self.continuation_obstacle(task)
-            # The zero-mutation recovery preparation is its own operation over the
-            # same durable evidence, so it is advertised from its own eligibility
-            # instead of inheriting the queued boundary's refusal.  A refused
-            # queued continuation with a still-reviewable remaining scope keeps
-            # its native preview entry; a queued continuation that is really
-            # available needs none.
-            recovery_reason = continuation_obstacle(
-                self._repository,
-                task,
-                self._snapshot_validator,
-                self._mutation_authority,
-                operation=ScopeContinuationOperation.RECOVERY_PREPARATION,
-            )[0]
-            return TaskExecutionContext(
-                TaskExecutionPath.OPERATOR_WORKFLOW,
-                durable_continuation=True,
-                continuable=True,
-                continuation_blocked_reason=reason,
-                continuation_blocked_next_action=next_action,
-                continuation_blocked_code=code.value if code is not None else None,
-                recovery_available=code is not None and recovery_reason is None,
+                TaskExecutionPath.SYNCHRONOUS_MANUAL_ORGANIZE,
+                kernel_managed=self.is_kernel_managed(task.task_id),
             )
         return TaskExecutionContext(TaskExecutionPath.OPERATOR_WORKFLOW)
-
-    def continuation_obstacle(self, task: PersistentTask) -> tuple[str | None, str | None]:
-        """Why a continuable Task cannot be continued now, and its next action.
-
-        This delegates to the exact same decision the admission boundary and the
-        resident Worker make (``scope_continuation.continuation_obstacle``), so
-        the advertised control, the POST and the Worker can never disagree about
-        whether the remaining scope may really be continued.  The projection
-        reads only durable evidence: the exact Task state, the immutable pin and
-        the existence of a live reusable execution authority for a Task that
-        would mutate media.  A stored ``execute_authorized`` flag is never
-        treated as authority.
-        """
-
-        reason, message, next_action = continuation_obstacle(
-            self._repository, task, self._snapshot_validator, self._mutation_authority
-        )
-        if reason is None:
-            return None, None
-        if reason is ScopeContinuationReason.AUTHORITY_REQUIRED:
-            return RESUME_AUTHORITY_REASON, RESUME_AUTHORITY_NEXT_ACTION
-        if reason is ScopeContinuationReason.SNAPSHOT_UNAVAILABLE:
-            return message, next_action
-        # A state-only obstacle keeps the projection's own state-aware copy.
-        state_reason = CONTINUATION_STATE_REASON.get(task.status.value)
-        if state_reason is not None:
-            return state_reason, None
-        if task.status in TASK_TERMINAL_STATUSES:
-            return (
-                "the Task already reached a terminal state and has no remaining scope",
-                "inspect the recorded per-item outcomes, or start a new bounded run",
-            )
-        return message, next_action
 
     def require_version(self, task: PersistentTask, expected_version: str | None) -> None:
         """Reject a control submitted against a state that is no longer current."""
@@ -2429,46 +2164,6 @@ class TaskLifecycleService:
 
         reader = getattr(self._repository, "get_task_scheduling", None)
         return callable(reader) and reader(task_id) is not None
-
-    def resume(
-        self,
-        task_id: str,
-        *,
-        expected_version: str | None,
-        capacity: int,
-    ) -> PersistentTask:
-        """Resume one acknowledged-paused kernel Task on its original identity."""
-
-        current = self.require(task_id)
-        if expected_version is not None and expected_version != current.updated_at.isoformat():
-            raise self._stale_conflict(current.updated_at.isoformat())
-        handler = getattr(self._repository, "resume_scheduled_task", None)
-        if not callable(handler):
-            raise OperationsLifecycleConflict(
-                "resume_unavailable",
-                "the Task scheduling kernel cannot resume this Task",
-                durable_state=f"the Task remains {current.status.value}",
-                next_action="refresh the Task and retry once the resident worker is available",
-                current_version=current.updated_at.isoformat(),
-            )
-        try:
-            return handler(
-                task_id,
-                expected_version=expected_version,
-                capacity=capacity,
-                now=datetime.now(UTC),
-            )
-        except TaskControlRejected as rejected:
-            fresh = self.require(task_id)
-            if expected_version is not None and expected_version != fresh.updated_at.isoformat():
-                raise self._stale_conflict(fresh.updated_at.isoformat()) from rejected
-            raise OperationsLifecycleConflict(
-                "resume_unavailable",
-                str(rejected),
-                durable_state=f"the Task remains {fresh.status.value}",
-                next_action="reload the Task and inspect its current state",
-                current_version=fresh.updated_at.isoformat(),
-            ) from rejected
 
     def _kernel_control(
         self, task_id: str, control: TaskControl, expected_version: str | None

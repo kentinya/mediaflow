@@ -29,6 +29,7 @@ from datetime import datetime
 from enum import StrEnum
 from typing import Protocol
 
+from mediaflow.domain.manual_execution import ManualExecution, ManualExecutionItem
 from mediaflow.domain.media_evidence import PipelineEvidence
 from mediaflow.domain.task_persistence import (
     PersistentResultRecord,
@@ -670,6 +671,8 @@ class TaskSchedulingRepository(Protocol):
         stage: TaskMachineStage | None,
         expected_control_revision: int | None = None,
         discovery: object | None = None,
+        manual_execution: ManualExecution | None = None,
+        manual_execution_items: tuple[ManualExecutionItem, ...] = (),
     ) -> TaskSchedulingState | None:
         """Publish one queue transition (human-wait/pause/settle) atomically.
 

@@ -378,15 +378,12 @@ class OperationsWorkspaceTests(unittest.TestCase):
         self.assertTrue(lifecycle["terminal"])
         self.assertFalse(any(item["available"] for item in lifecycle["actions"]))
 
-    def test_resume_withheld_reason_names_the_real_durable_obstacle(self) -> None:
-        """A continuable Task with no resolvable pin is refused truthfully.
+    def test_retired_resume_is_refused_without_new_queued_work(self) -> None:
+        """A paused legacy Task keeps its history; resume stays retired.
 
-        This API is constructed without a configuration-snapshot validator, so
-        the exact pinned revision of a paused Task cannot be proven resolvable.
-        The projection must therefore withhold Continue with the *real* bounded
-        obstacle and the POST must refuse atomically with the same reason,
-        leaving the Task paused with zero new work queued.  It must never fall
-        back to advertising an operator-CLI continuation.
+        The API is constructed without a configuration-snapshot validator, but
+        the retired control must answer before any obstacle resolution.  The POST
+        is one bounded 409 refusal with no queued Job and no Task mutation.
         """
 
         self.repository.create_task(
@@ -396,11 +393,14 @@ class OperationsWorkspaceTests(unittest.TestCase):
             self.api, "GET", "/api/v1/tasks/task-paused", token="operator-token"
         )
         self.assertEqual(status, 200)
-        resume = next(item for item in detail["lifecycle"]["actions"] if item["action"] == "resume")
-        self.assertFalse(resume["available"])
-        self.assertIn("immutable configuration pin cannot be resolved", resume["unavailableReason"])
-        self.assertNotIn("tasks resume", resume["nextAction"])
-        self.assertNotIn("CLI", resume["nextAction"])
+        self.assertNotIn(
+            "resume",
+            {item["action"] for item in detail["lifecycle"]["actions"]},
+        )
+        self.assertEqual(
+            {"cancel"},
+            {item["action"] for item in detail["lifecycle"]["actions"]},
+        )
 
         jobs_before = self.repository.list_jobs(limit=100)
         task = self.repository.get_task("task-paused")
@@ -411,9 +411,9 @@ class OperationsWorkspaceTests(unittest.TestCase):
             body=control_body(task.updated_at.isoformat()),
         )
         self.assertEqual(status, 409)
-        self.assertEqual(body["error"]["details"]["reason"], "snapshot_unavailable")
+        self.assertEqual(body["error"]["code"], "pause_retired")
         self.assertEqual(body["error"]["details"]["sideEffects"], "none")
-        self.assertEqual(self.repository.get_task("task-paused").status.value, "paused")
+        self.assertEqual(self.repository.get_task("task-paused"), task)
         self.assertEqual(self.repository.list_jobs(limit=100), jobs_before)
         self.assertEqual(
             [item.task_id for item in self.repository.list_tasks(limit=100)], ["task-paused"]

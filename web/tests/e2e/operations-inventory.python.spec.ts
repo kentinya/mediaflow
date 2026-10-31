@@ -2001,33 +2001,25 @@ test("ordinary Files navigation opens the exact linked run through auth and rest
 });
 
 /**
- * Task 42.4 (Slice 42 RO-5) — the real native paused-scope continuation journey.
+ * Task 47.2 (M10) — Pause/resume-from-pause retirement on the real Python stack.
  *
- * Every case here runs against the same real-Python harness as the journeys
- * above, so the browser drives the packaged Python stack: the paused Task is
- * created by the production `PersistentTaskCoordinator`, the Pause and Continue
- * clicks are the *rendered* native controls of the selected unified run, the
- * continuation is admitted by the real `MediaFlowApi` and executed by the real
- * resident-Worker handler (`_run_queued_workflow`), and the linked results are
- * re-read from durable SQLite rows after a real restart.
- *
- * Harness `__harness__/*` routes coordinate *when* the Worker runs; they never
- * replace production admission, the real claim/lease fence, the real
- * continuation scope logic or the real authority decision.
+ * The paused fixture is historical durable data created by the production
+ * coordinator.  The browser must render no Pause/Continue control for it, and
+ * the existing resume route must answer with one bounded, no-effect refusal.
+ * No Job, continuation row, Storage mutation or browser replay is produced.
+ * Remaining-scope preparation remains its own separate API surface.
  */
-
-/** The supported Task command of the paused remaining-scope fixture. */
-const CONTINUATION_COMMAND = "organize";
 
 /** The paused organize fixture's already-recorded and remaining sources. */
 const CONTINUATION_RECORDED_SOURCE = "C/Continuation/Six.2006.mkv";
 const CONTINUATION_REMAINING_SOURCE = "C/Continuation/Five.2005.mkv";
 
-test("a paused run continues only its remaining scope through the real Worker", async ({
+test("a paused run's retired resume control is refused with no new work", async ({
   page,
   request,
 }) => {
-  // Seed the genuine paused scope through the production coordinator.
+  // Seed the genuine paused scope through the production coordinator.  It is
+  // historical data now: no product entry can create or continue a pause.
   const seeded = await (
     await request.post(`${BASE}/__harness__/seed-continuation`)
   ).json();
@@ -2037,833 +2029,74 @@ test("a paused run continues only its remaining scope through the real Worker", 
 
   await connect(page);
   await openInventory(page);
-  // The paused fixture is one more durable run in the same population, but the
-  // harness database is shared by the sequential tests above, so the exact
-  // total is not asserted here: this journey addresses its own run by identity.
   await expect(page.getByRole("table")).toBeVisible();
-  await expect(page.getByRole("row").filter({ hasText: "已暂停" })).toHaveCount(
-    1,
-  );
-
-  // Select exactly the paused fixture run by its own identity.
   const pausedRow = page.getByRole("row").filter({ hasText: "已暂停" });
   await expect(pausedRow).toHaveCount(1);
   await pausedRow.getByRole("button").first().click();
   const detail = page.getByRole("region", { name: "运行详情" });
   await expect(detail).toBeVisible();
-
-  // The native control panel is the backend's own projection for this run.
   const controls = detail.getByRole("region", { name: "运行控制" });
   await expect(controls).toBeVisible();
-  await expect(controls).toContainText("已暂停");
 
-  // Continue is advertised for this exact paused scope, and the operator clicks
-  // the real rendered control — never a direct API call.
-  const continueButton = controls.getByRole("button", {
-    name: "继续剩余范围",
-  });
-  await expect(continueButton).toBeEnabled();
-  const admitted = page.waitForResponse(
-    (response) =>
-      response.request().method() === "POST" &&
-      new URL(response.url()).pathname ===
-        `/api/v1/tasks/${sourceTaskId}/resume`,
+  // Neither Pause nor Continue is a rendered product action any more; the
+  // historical paused row stays readable without those controls.
+  await expect(
+    controls.getByRole("button", { name: "继续剩余范围" }),
+  ).toHaveCount(0);
+  await expect(controls.getByRole("button", { name: "暂停" })).toHaveCount(0);
+
+  const projectionResponse = await request.get(
+    `${BASE}/api/v1/tasks/${sourceTaskId}`,
+    { headers: { Authorization: `Bearer ${ADMIN_TOKEN}` } },
   );
-  await continueButton.click();
-  const admission = await admitted;
-  // The admission itself performs zero Storage work and answers 202.
-  expect(admission.status()).toBe(202);
-  const admissionBody = await admission.json();
-  expect(admissionBody.sideEffects).toBe("none");
-  expect(admissionBody.retrySafe).toBe(false);
-  expect(admissionBody.continuation.status).toBe("queued");
-  // The operator/API projection is bounded and redacted: it publishes the
-  // durable identifiers but never the internal scope path, the pin or the actor.
-  expect(admissionBody.continuation.sourceTaskId).toBe(sourceTaskId);
-  expect(admissionBody.continuation.command).toBe(CONTINUATION_COMMAND);
-  expect(admissionBody.continuation.itemLimit).toBe(2);
-  expect(admissionBody.continuation.boundary).toBe(
-    "paused_remaining_admitted_scope",
+  expect(projectionResponse.ok()).toBeTruthy();
+  const projection = await projectionResponse.json();
+  const actionNames = projection.lifecycle.actions.map(
+    (action: { action: string }) => action.action,
   );
-  expect(admissionBody.continuation.sideEffects).toBe("none");
-  expect(admissionBody.continuation.scope_path).toBeUndefined();
-  expect(admissionBody.continuation.scopePath).toBeUndefined();
-  const continuationJobId = admissionBody.jobId as string;
-  expect(continuationJobId).toBeTruthy();
+  expect(actionNames).not.toContain("resume");
+  expect(actionNames).not.toContain("pause");
 
-  // The accepted control reports the backend's own durable outcome.
-  await expect(controls).toContainText("控制已受理");
+  // The real route is still reachable as a bounded retirement refusal.  It
+  // records no pause/resume intent, queues no Job and mutates no Storage.
+  const refused = await request.post(
+    `${BASE}/api/v1/tasks/${sourceTaskId}/resume`,
+    {
+      data: { expectedUpdatedAt: projection.lifecycle.version },
+      headers: { Authorization: `Bearer ${ADMIN_TOKEN}` },
+    },
+  );
+  expect(refused.status()).toBe(409);
+  const refusal = await refused.json();
+  expect(refusal.error.code).toBe("pause_retired");
+  expect(refusal.error.details.sideEffects).toBe("none");
 
-  // Now the REAL resident-Worker handler claims and runs the continuation.
-  const worker = await (
-    await request.post(`${BASE}/__harness__/run-continuation-worker`)
-  ).json();
-  expect(worker.ran).toBe(true);
-  expect(worker.jobId).toBe(continuationJobId);
-  expect(worker.continuationStatus).toBe("completed");
-  const continuedTaskId = worker.newTaskId as string;
-  expect(continuedTaskId).toBeTruthy();
-
-  // The durable proof: the continuation processed exactly the one remaining
-  // source, never the already-recorded one, and the original Task keeps its own
-  // recorded item and its paused state.
   const state = await (
     await request.get(`${BASE}/__harness__/continuation-state`)
   ).json();
   expect(state.sourceStatus).toBe("paused");
   expect(state.sourceItemPaths).toEqual([CONTINUATION_RECORDED_SOURCE]);
-  const continued = state.linkedTasks.find(
-    (item: { taskId: string }) => item.taskId === continuedTaskId,
-  );
-  expect(continued).toBeTruthy();
-  expect(continued.status).toBe("completed");
-  expect(continued.itemPaths).toEqual([CONTINUATION_REMAINING_SOURCE]);
-  expect(continued.itemPaths).not.toContain(CONTINUATION_RECORDED_SOURCE);
-  expect(state.continuations).toHaveLength(1);
-  expect(state.continuations[0].new_task_id).toBe(continuedTaskId);
+  expect(state.continuations).toHaveLength(0);
+  expect(
+    state.linkedTasks.some((item: { itemPaths: readonly string[] }) =>
+      item.itemPaths.includes(CONTINUATION_REMAINING_SOURCE),
+    ),
+  ).toBe(false);
 
-  // The linked continuation is independently inspectable in the browser after a
-  // real restart of the runtime database, and the original run is unchanged.
+  // A real runtime restart reads back the same historical paused run and the
+  // same zero-continuation evidence; nothing was replayed by the refusal.
   const restarted = await request.post(`${BASE}/__harness__/restart`);
   expect(restarted.ok()).toBeTruthy();
   await page.getByRole("button", { name: "刷新" }).first().click();
   await expect(page.getByRole("row").filter({ hasText: "已暂停" })).toHaveCount(
     1,
   );
-  // Other completed previews may already exist. Follow this source run's
-  // durable continuation link and inspect the exact admitted child instead of
-  // counting every completed preview in the shared inventory.
-  await detail.getByRole("button", { name: "打开链接的继续运行" }).click();
-  await expect(page).toHaveURL(
-    (url) => url.searchParams.get("run") === continuedTaskId,
-  );
-  await expect(detail).toContainText("已完成");
   const afterRestart = await (
     await request.get(`${BASE}/__harness__/continuation-state`)
   ).json();
   expect(afterRestart.sourceStatus).toBe("paused");
   expect(afterRestart.sourceItemPaths).toEqual([CONTINUATION_RECORDED_SOURCE]);
-  expect(
-    afterRestart.linkedTasks.find(
-      (item: { taskId: string }) => item.taskId === continuedTaskId,
-    ).itemPaths,
-  ).toEqual([CONTINUATION_REMAINING_SOURCE]);
-  // No continuation was duplicated by the restart.
-  expect(afterRestart.continuations).toHaveLength(1);
-});
-
-test("a mutation-authorized paused run without live authority is refused natively", async ({
-  page,
-  request,
-}) => {
-  mkdirSync(TASK45_RECOVERY_EVIDENCE, { recursive: true });
-  // A paused Task that was admitted as a mutation but owns no live reusable
-  // authority. Its `execute_authorized` boolean is NOT authority, so the
-  // backend must refuse Continue and name the native exact-Preview journey.
-  const created = await (
-    await request.post(`${BASE}/__harness__/seed-authority-refusal`)
-  ).json();
-  const api = recordApiCalls(page);
-  const taskId = created.taskId as string;
-  expect(taskId).toBeTruthy();
-  expect(created.scope).toBe("Authority");
-  expect(created.taskSnapshotId).not.toBe(created.activeSnapshotId);
-  expect(created.remainingSources).toEqual([
-    "Seven.2007.mkv",
-    "Eight.2008.mkv",
-  ]);
-  const authorityBefore = await (
-    await request.get(`${BASE}/__harness__/authority-state?taskId=${taskId}`)
-  ).json();
-  expect(authorityBefore).toMatchObject({
-    available: true,
-    taskSnapshotId: created.taskSnapshotId,
-    activeSnapshotId: created.activeSnapshotId,
-    sourceFiles: { "Seven.2007.mkv": true, "Eight.2008.mkv": true },
-    destinationFiles: [],
-  });
-
-  // The native recovery entry is bound to the permission that would really
-  // admit it, so this journey connects the principal that holds it.
-  await connect(page, ADMIN_TOKEN);
-  await page.setViewportSize({ width: 1536, height: 1024 });
-  await openInventory(page);
-  const row = page.getByRole("row").filter({ hasText: "Authority" });
-  await expect(row).toHaveCount(1);
-  await row.getByRole("button").first().click();
-  const detail = page.getByRole("region", { name: "运行详情" });
-  await expect(detail).toBeVisible();
-  const controls = detail.getByRole("region", { name: "运行控制" });
-  await expect(controls).toBeVisible();
-
-  // Continue is withheld with the real obstacle and the native next action, and
-  // the operator is never routed to the CLI.
-  await expect(
-    controls.getByRole("button", { name: "继续剩余范围" }),
-  ).toHaveCount(0);
-  const withheld = controls.getByRole("list", { name: "不可用的运行控制" });
-  await expect(withheld).toContainText("继续剩余范围");
-  await expect(withheld).toContainText("stored execute flag is not authority");
-  await expect(controls).toContainText("继续不可用的下一步");
-  await expect(controls).toContainText("exact Preview");
-  await expect(controls).not.toContainText("mediaflow tasks");
-
-  // The stored execute flag cannot resume the paused run on its own. The
-  // direct control is refused atomically before the native Preview path is
-  // entered.
-  const projectionResponse = await request.get(
-    `${BASE}/api/v1/tasks/${taskId}`,
-    { headers: { Authorization: `Bearer ${ADMIN_TOKEN}` } },
-  );
-  expect(projectionResponse.ok()).toBeTruthy();
-  const projection = await projectionResponse.json();
-  const refused = await request.post(`${BASE}/api/v1/tasks/${taskId}/resume`, {
-    data: { expectedUpdatedAt: projection.lifecycle.version },
-    headers: { Authorization: `Bearer ${ADMIN_TOKEN}` },
-  });
-  expect(refused.status()).toBe(409);
-  const refusal = await refused.json();
-  expect(refusal.error.details.reason).toBe("authority_required");
-  expect(refusal.error.details.sideEffects).toBe("none");
-  expect(refusal.error.details.nextAction).toContain("exact Preview");
-  expect(refusal.error.details.nextAction).not.toContain("mediaflow tasks");
-
-  // The refusal also publishes the *native* recovery entry RO-3/RO-5 promise,
-  // so the operator is never left with copy and no surface.  Driving it admits a
-  // real zero-mutation exact remaining-scope Preview whose summary is reviewed
-  // and confirmed in this same panel; no standalone Preview is required.
-  const summaryButton = controls.getByRole("button", {
-    name: "在当前界面生成剩余范围摘要",
-  });
-  await expect(summaryButton).toBeVisible();
-  await summaryButton.click();
-  // The recovery admission is durable: the resident Worker proves the
-  // configured stability interval, freezes the remaining sources and links the
-  // exact zero-mutation Preview.  The browser only polls the same durable
-  // discovery state; it never re-posts the admission.
-  for (let step = 0; step < 20; step += 1) {
-    const advanced = await request.post(
-      `${BASE}/__harness__/run-discovery-worker`,
-    );
-    const body = (await advanced.json()) as {
-      readonly advanced: boolean;
-      readonly previewId?: string | null;
-    };
-    if (body.advanced && body.previewId != null) break;
-  }
-  const summary = detail.getByRole("region", { name: "新计划摘要" });
-  await expect(summary).toBeVisible({ timeout: 30_000 });
-  // The reviewed scope is exactly the run's own remaining sources: nothing
-  // outside the run's admitted scope is ever reviewed.
-  await expect(summary).toContainText("Seven.2007.mkv");
-  await expect(summary).toContainText("Eight.2008.mkv");
-  await expect(summary).not.toContainText("One.2001.mkv");
-  await summary.scrollIntoViewIfNeeded();
-  await page.screenshot({
-    path: `${TASK45_RECOVERY_EVIDENCE}/paused-authority-exact-summary-1536x1024.png`,
-    fullPage: false,
-  });
-  // The summary grants no authority: the operator must still explicitly
-  // confirm the ready subset here.
-  await expect(
-    summary.getByRole("button", { name: /确认继续整理剩余 \d+ 项/ }),
-  ).toBeVisible();
-  await expect(page.locator("body")).not.toContainText("mediaflow tasks");
-
-  // The Preview remained pinned to A after B became Active. The summary is
-  // still zero-mutation; only the explicit confirmation below admits work.
-  expect(
-    await (
-      await request.get(`${BASE}/__harness__/authority-state?taskId=${taskId}`)
-    ).json(),
-  ).toMatchObject({
-    taskSnapshotId: created.taskSnapshotId,
-    activeSnapshotId: created.activeSnapshotId,
-    sourceFiles: { "Seven.2007.mkv": true, "Eight.2008.mkv": true },
-    destinationFiles: [],
-  });
-
-  // The API commits the exact reviewed subset, then the browser loses only the
-  // response. It must expose an unknown state and reconcile this admission by
-  // its exact Preview/selection identity; no automatic replay is allowed.
-  let droppedConfirmationResponse = false;
-  let committedAdmissionStatus: number | null = null;
-  await page.route(
-    /\/api\/v1\/operations\/organize\/previews\/[^/]+\/execute$/,
-    async (route) => {
-      if (droppedConfirmationResponse) {
-        await route.continue();
-        return;
-      }
-      droppedConfirmationResponse = true;
-      const admitted = await route.fetch();
-      committedAdmissionStatus = admitted.status();
-      // Model a proxy losing the successful upstream response after commit:
-      // the browser sees an unavailable response while the backend has the
-      // exact durable admission for reconciliation.
-      await route.fulfill({
-        status: 502,
-        contentType: "application/json",
-        body: JSON.stringify({ error: { code: "upstream_timeout" } }),
-      });
-    },
-  );
-  const executeButton = summary.getByRole("button", {
-    name: "确认继续整理剩余 2 项",
-  });
-  await executeButton.focus();
-  await expect(executeButton).toBeFocused();
-  await page.keyboard.press("Enter");
-  const runDetail = page.getByRole("region", { name: "运行详情" });
-  await expect(runDetail).toContainText(
-    "确认响应未送达，暂时无法判断是否已受理",
-    { timeout: 5_000 },
-  );
-  await expect(
-    runDetail.getByRole("button", { name: "核对本次确认的持久状态" }),
-  ).toBeVisible();
-  await runDetail.scrollIntoViewIfNeeded();
-  await page.screenshot({
-    path: `${TASK45_RECOVERY_EVIDENCE}/paused-authority-unknown-confirmation-1536x1024.png`,
-    fullPage: false,
-  });
-  expect(
-    api.filter(
-      (entry) =>
-        entry.method === "POST" &&
-        /\/api\/v1\/operations\/organize\/previews\/[^/]+\/execute$/.test(
-          entry.path,
-        ),
-    ),
-  ).toHaveLength(1);
-  expect(committedAdmissionStatus).toBe(202);
-  expect(
-    await (
-      await request.get(`${BASE}/__harness__/authority-state?taskId=${taskId}`)
-    ).json(),
-  ).toMatchObject({
-    sourceFiles: { "Seven.2007.mkv": true, "Eight.2008.mkv": true },
-    destinationFiles: [],
-  });
-
-  const reconcileButton = runDetail.getByRole("button", {
-    name: "核对本次确认的持久状态",
-  });
-  await reconcileButton.focus();
-  await expect(reconcileButton).toBeFocused();
-  await page.keyboard.press("Enter");
-  await expect(runDetail).toContainText(
-    "已读回本次确认的持久状态：该精确子集已经受理",
-  );
-
-  // Reopen the Python runtime over the same SQLite file, then reconnect at the
-  // selected paused run. The durable overview restores the admitted execution
-  // link and never replays the lost confirmation.
-  const restart = await request.post(`${BASE}/__harness__/restart`);
-  expect(restart.ok()).toBeTruthy();
-  await page.reload();
-  await expect(page.getByLabel("API token")).toBeVisible();
-  await page.getByLabel("API token").fill(ADMIN_TOKEN);
-  await page.getByRole("button", { name: "Connect" }).click();
-  await expect(page).toHaveURL(new RegExp(`run=${taskId}`));
-  const restoredDetail = page.getByRole("region", { name: "运行详情" });
-  await expect(restoredDetail).toBeVisible();
-  await expect(
-    restoredDetail.getByRole("button", { name: "打开链接的继续运行" }),
-  ).toBeVisible();
-  expect(
-    api.filter(
-      (entry) =>
-        entry.method === "POST" &&
-        /\/api\/v1\/operations\/organize\/previews\/[^/]+\/execute$/.test(
-          entry.path,
-        ),
-    ),
-  ).toHaveLength(1);
-  expect(
-    await (
-      await request.get(`${BASE}/__harness__/authority-state?taskId=${taskId}`)
-    ).json(),
-  ).toMatchObject({
-    taskSnapshotId: created.taskSnapshotId,
-    activeSnapshotId: created.activeSnapshotId,
-    sourceFiles: { "Seven.2007.mkv": true, "Eight.2008.mkv": true },
-    destinationFiles: [],
-  });
-
-  await restoredDetail
-    .getByRole("button", { name: "打开链接的继续运行" })
-    .click();
-  const workerRun = await request.post(`${BASE}/__harness__/run-manual-worker`);
-  expect(workerRun.ok()).toBeTruthy();
-  const execution = await workerRun.json();
-  expect(execution).toMatchObject({
-    completed: true,
-    status: "completed",
-    itemCount: 2,
-  });
-  const authorityAfter = await (
-    await request.get(`${BASE}/__harness__/authority-state?taskId=${taskId}`)
-  ).json();
-  expect(authorityAfter).toMatchObject({
-    taskSnapshotId: created.taskSnapshotId,
-    activeSnapshotId: created.activeSnapshotId,
-    sourceFiles: { "Seven.2007.mkv": false, "Eight.2008.mkv": false },
-  });
-  expect(authorityAfter.destinationFiles).toHaveLength(2);
-  const executionState = await (
-    await request.get(
-      `${BASE}/__harness__/task-result-state?taskId=${execution.taskId}`,
-    )
-  ).json();
-  expect(executionState.taskStatus).toBe("completed");
-  expect(executionState.results).toHaveLength(2);
-  const executionResults = executionState.results.map(
-    (result: { sourcePath: string; status: string }) => ({
-      sourcePath: result.sourcePath,
-      status: result.status,
-    }),
-  );
-  expect(
-    executionResults.sort(
-      (left: { sourcePath: string }, right: { sourcePath: string }) =>
-        left.sourcePath.localeCompare(right.sourcePath),
-    ),
-  ).toEqual([
-    { sourcePath: "Authority/Eight.2008.mkv", status: "SUCCESS" },
-    { sourcePath: "Authority/Seven.2007.mkv", status: "SUCCESS" },
-  ]);
-
-  // Once both exact remaining items have durable outcomes, a second Continue
-  // is refused as empty scope rather than queuing duplicate work.
-  const completedProjectionResponse = await request.get(
-    `${BASE}/api/v1/tasks/${taskId}`,
-    { headers: { Authorization: `Bearer ${ADMIN_TOKEN}` } },
-  );
-  expect(completedProjectionResponse.ok()).toBeTruthy();
-  const completedProjection = await completedProjectionResponse.json();
-  const noDuplicate = await request.post(
-    `${BASE}/api/v1/tasks/${taskId}/resume`,
-    {
-      data: { expectedUpdatedAt: completedProjection.lifecycle.version },
-      headers: { Authorization: `Bearer ${ADMIN_TOKEN}` },
-    },
-  );
-  expect(noDuplicate.status()).toBe(409);
-  const noDuplicateOutcome = await noDuplicate.json();
-  expect(noDuplicateOutcome.error.details.reason).toBe("no_remaining_scope");
-  expect(noDuplicateOutcome.error.details.sideEffects).toBe("none");
-});
-
-test("a fully recorded budget still recovers its one undecided item natively", async ({
-  page,
-  request,
-}) => {
-  mkdirSync(TASK45_RECOVERY_EVIDENCE, { recursive: true });
-  // A real paused organize run whose whole admitted budget (item_limit=2) is
-  // already recorded: `Kept` is successful and decided, `Left` is recorded but
-  // still `pending`.  A third eligible file was written afterwards, so it may
-  // never borrow the still-undecided unit.
-  const created = await (
-    await request.post(`${BASE}/__harness__/seed-full-budget-recovery`)
-  ).json();
-  const taskId = created.taskId as string;
-  expect(taskId).toBeTruthy();
-  expect(created.scope).toBe("FullBudget");
-  expect(created.itemLimit).toBe(2);
-  expect(created.undecidedSource).toBe("FullBudget/FullBudgetLeft.2005.mkv");
-  expect(created.newSource).toBe("FullBudget/FullBudgetNew.2020.mkv");
-
-  const before = await (
-    await request.get(`${BASE}/__harness__/authority-state?taskId=${taskId}`)
-  ).json();
-  expect(before.sourceTaskStatus).toBe("paused");
-
-  await connect(page, ADMIN_TOKEN);
-  await page.setViewportSize({ width: 1536, height: 1024 });
-  await openInventory(page);
-  const row = page.getByRole("row").filter({ hasText: "FullBudget" });
-  await expect(row).toHaveCount(1);
-  await row.getByRole("button").first().click();
-  const detail = page.getByRole("region", { name: "运行详情" });
-  await expect(detail).toBeVisible();
-  const controls = detail.getByRole("region", { name: "运行控制" });
-  await expect(controls).toBeVisible();
-
-  // Continue stays withheld with the real obstacle (no unrecorded discovery
-  // budget), and the native review of the still-undecided item is offered.
-  await expect(
-    controls.getByRole("button", { name: "继续剩余范围" }),
-  ).toHaveCount(0);
-  await expect(controls).toContainText("继续剩余范围");
-  await expect(controls).toContainText("继续不可用的下一步");
-  const summaryButton = controls.getByRole("button", {
-    name: "在当前界面生成剩余范围摘要",
-  });
-  await expect(summaryButton).toBeVisible();
-  await summaryButton.click();
-
-  // The recovery admission is durable: the resident Worker proves the
-  // configured stability interval, freezes the remaining source and links the
-  // exact zero-mutation Preview.  The browser only polls durable state.
-  for (let step = 0; step < 20; step += 1) {
-    const advanced = await request.post(
-      `${BASE}/__harness__/run-discovery-worker`,
-    );
-    const body = (await advanced.json()) as {
-      readonly advanced: boolean;
-      readonly previewId?: string | null;
-    };
-    if (body.advanced && body.previewId != null) break;
-  }
-  const summary = detail.getByRole("region", { name: "新计划摘要" });
-  await expect(summary).toBeVisible({ timeout: 30_000 });
-  // Exactly the recorded-but-undecided item is reviewed.  The decided sibling
-  // is never re-offered and the later newcomer never borrows its unit.
-  await expect(summary).toContainText("FullBudgetLeft.2005.mkv");
-  await expect(summary).not.toContainText("FullBudgetKept.2006.mkv");
-  await expect(summary).not.toContainText("FullBudgetNew.2020.mkv");
-  await expect(
-    summary.getByRole("button", { name: /确认继续整理剩余 1 项/ }),
-  ).toBeVisible();
-  await summary.scrollIntoViewIfNeeded();
-  await page.screenshot({
-    path: `${TASK45_RECOVERY_EVIDENCE}/full-budget-undecided-summary-1536x1024.png`,
-    fullPage: false,
-  });
-  // Still zero media mutation: the review grants no execution authority.
-  expect(
-    await (
-      await request.get(`${BASE}/__harness__/authority-state?taskId=${taskId}`)
-    ).json(),
-  ).toMatchObject({ destinationFiles: [] });
-  await expect(page.locator("body")).not.toContainText("mediaflow tasks");
-
-  // The confirmed recovery really executes the one undecided item through the
-  // resident Worker under the fixture's COPY+Rename policy.
-  await summary.getByRole("button", { name: /确认继续整理剩余 1 项/ }).click();
-  // The confirmation is an async POST that then navigates to the linked
-  // execution, so the admitted work is claimed by polling the real Worker until
-  // it can claim something.  Nothing here re-posts the confirmation.
-  let execution: { completed?: boolean; status?: string; itemCount?: number } =
-    {};
-  for (let step = 0; step < 20; step += 1) {
-    const workerRun = await request.post(
-      `${BASE}/__harness__/run-manual-worker`,
-    );
-    expect(workerRun.ok()).toBeTruthy();
-    const body = await workerRun.json();
-    if (body.completed === true || body.status !== undefined) {
-      execution = body;
-      break;
-    }
-    await new Promise((resolve) => setTimeout(resolve, 250));
-  }
-  expect(execution).toMatchObject({
-    completed: true,
-    status: "completed",
-    itemCount: 1,
-  });
-  const afterExecution = await (
-    await request.get(`${BASE}/__harness__/authority-state?taskId=${taskId}`)
-  ).json();
-  // COPY keeps every source file in place, so exactly one destination copy is
-  // the real proof that the source ran exactly once.
-  expect(afterExecution.sourceFiles).toEqual({
-    "FullBudgetKept.2006.mkv": true,
-    "FullBudgetLeft.2005.mkv": true,
-    "FullBudgetNew.2020.mkv": true,
-  });
-  expect(afterExecution.destinationFiles).toHaveLength(1);
-  const firstCopies = afterExecution.destinationFiles as readonly string[];
-
-  // The completed recovery is terminal for its source.  A reopened runtime must
-  // neither advertise nor admit that same source again: the later attempt
-  // recorded its own Task/Item/Result under its own item id, so without a
-  // source-exact decision this second request would prepare and execute the
-  // same file a second time and produce `FullBudgetLeft (2005) (1).mkv`.
-  const restart = await request.post(`${BASE}/__harness__/restart`);
-  expect(restart.ok()).toBeTruthy();
-  const reopenedProjection = await request.get(
-    `${BASE}/api/v1/tasks/${taskId}`,
-    {
-      headers: { Authorization: `Bearer ${ADMIN_TOKEN}` },
-    },
-  );
-  expect(reopenedProjection.ok()).toBeTruthy();
-  const reopenedBody = await reopenedProjection.json();
-  const reopenedResume = reopenedBody.lifecycle.actions.find(
-    (action: { action: string }) => action.action === "resume",
-  );
-  expect(reopenedResume.available).toBe(false);
-  expect(reopenedResume.preview).toBeUndefined();
-  const secondRecovery = await request.post(
-    `${BASE}/api/v1/tasks/${taskId}/remaining-scope-previews`,
-    { headers: { Authorization: `Bearer ${ADMIN_TOKEN}` } },
-  );
-  expect(secondRecovery.status()).toBe(409);
-  const secondRecoveryBody = await secondRecovery.json();
-  expect(secondRecoveryBody.error.code).toBe("no_remaining_scope");
-  expect(secondRecoveryBody.error.details.sideEffects).toBe("none");
-  const afterRefusal = await (
-    await request.get(`${BASE}/__harness__/authority-state?taskId=${taskId}`)
-  ).json();
-  expect(afterRefusal.destinationFiles).toEqual(firstCopies);
-});
-
-test("an already-admitted recovery preparation never replays a completed source", async ({
-  page,
-  request,
-}) => {
-  mkdirSync(TASK45_RECOVERY_EVIDENCE, { recursive: true });
-  const created = await (
-    await request.post(`${BASE}/__harness__/seed-full-budget-recovery`)
-  ).json();
-  const taskId = created.taskId as string;
-  expect(taskId).toBeTruthy();
-  expect(created.undecidedSource).toBe("FullBudget/FullBudgetLeft.2005.mkv");
-  // The destination root is shared with every other FullBudget fixture in the
-  // same harness run, so the proof is a *delta*: exactly one new copy for this
-  // execution and none for the already-admitted preparation.
-  const before = await (
-    await request.get(`${BASE}/__harness__/authority-state?taskId=${taskId}`)
-  ).json();
-  const copiesBefore = before.destinationFiles as readonly string[];
-
-  await connect(page, ADMIN_TOKEN);
-  await page.setViewportSize({ width: 1536, height: 1024 });
-  await openInventory(page);
-  // Deep-link to this exact run so the journey is independent of how many
-  // other FullBudget fixtures an earlier test in the same run left behind.
-  await page.goto(`${BASE}/ui-v2/operations?run=${taskId}`);
-  await reconnectAtCurrentRoute(page, ADMIN_TOKEN);
-  await expect(page).toHaveURL(new RegExp(`run=${taskId}`));
-  const detail = page.getByRole("region", { name: "运行详情" });
-  await expect(detail).toBeVisible();
-  const controls = detail.getByRole("region", { name: "运行控制" });
-  await expect(controls).toBeVisible();
-
-  // The operator asks for a plan summary and the resident Worker really
-  // publishes it for the one undecided source.
-  await controls
-    .getByRole("button", { name: "在当前界面生成剩余范围摘要" })
-    .click();
-  let summaryPrepared = false;
-  for (let step = 0; step < 20; step += 1) {
-    const advanced = await request.post(
-      `${BASE}/__harness__/run-discovery-worker`,
-    );
-    const body = (await advanced.json()) as {
-      readonly advanced: boolean;
-      readonly previewId?: string | null;
-    };
-    if (body.advanced && body.previewId != null) {
-      summaryPrepared = true;
-      break;
-    }
-  }
-  expect(summaryPrepared).toBe(true);
-  const summary = detail.getByRole("region", { name: "新计划摘要" });
-  await expect(summary).toBeVisible({ timeout: 30_000 });
-  await expect(summary).toContainText("FullBudgetLeft.2005.mkv");
-
-  // A second, legitimate request is admitted while the source is still
-  // undecided, and it is deliberately *not* driven yet.  This is the exact
-  // sequential shape that used to publish and execute the same source twice.
-  const secondAdmission = await request.post(
-    `${BASE}/api/v1/tasks/${taskId}/remaining-scope-previews`,
-    { headers: { Authorization: `Bearer ${ADMIN_TOKEN}` } },
-  );
-  expect(secondAdmission.status()).toBe(202);
-  const secondBody = await secondAdmission.json();
-  expect(secondBody.recoverySourceTaskId).toBe(taskId);
-
-  // The first summary is explicitly confirmed through the real UI and really
-  // executes under the fixture's COPY+Rename policy.
-  await summary.getByRole("button", { name: /确认继续整理剩余 1 项/ }).click();
-  let executed = false;
-  for (let step = 0; step < 20; step += 1) {
-    const workerRun = await request.post(
-      `${BASE}/__harness__/run-manual-worker`,
-    );
-    expect(workerRun.ok()).toBeTruthy();
-    const body = await workerRun.json();
-    if (body.completed === true) {
-      executed = true;
-      break;
-    }
-    await new Promise((resolve) => setTimeout(resolve, 250));
-  }
-  expect(executed).toBe(true);
-  const afterFirst = await (
-    await request.get(`${BASE}/__harness__/authority-state?taskId=${taskId}`)
-  ).json();
-  const firstCopies = afterFirst.destinationFiles as readonly string[];
-  expect(firstCopies).toHaveLength(copiesBefore.length + 1);
-
-  // Driving the earlier-admitted preparation now must not publish a plan
-  // summary at all: its only admitted source has a decided outcome.
-  const driven = await request.post(
-    `${BASE}/__harness__/run-discovery-worker?discoveryId=${secondBody.discoveryId}`,
-  );
-  const drivenBody = (await driven.json()) as {
-    readonly status?: string;
-    readonly previewId?: string | null;
-    readonly sourceCount?: number;
-  };
-  expect(drivenBody.previewId ?? null).toBeNull();
-  expect(drivenBody.sourceCount ?? 0).toBe(0);
-  const afterSecond = await (
-    await request.get(`${BASE}/__harness__/authority-state?taskId=${taskId}`)
-  ).json();
-  // Exactly one destination copy remains: the same source was not replayed.
-  expect(afterSecond.destinationFiles).toEqual(firstCopies);
-  expect(afterSecond.sourceFiles).toEqual({
-    "FullBudgetKept.2006.mkv": true,
-    "FullBudgetLeft.2005.mkv": true,
-    "FullBudgetNew.2020.mkv": true,
-  });
-  await page.screenshot({
-    path: `${TASK45_RECOVERY_EVIDENCE}/admitted-preparation-terminal-1536x1024.png`,
-    fullPage: false,
-  });
-});
-
-test("a frozen mixed recovery preparation never republishes a decided sibling", async ({
-  page,
-  request,
-}) => {
-  mkdirSync(TASK45_RECOVERY_EVIDENCE, { recursive: true });
-  // A real paused organize run whose whole budget records two still-undecided
-  // sources.  Summary A publishes both; preparation B is admitted and driven to
-  // its frozen stage; A then really completes only `Left`, leaving `Right`
-  // undecided so the chain stays eligible.  B must publish only `Right`.
-  const created = await (
-    await request.post(`${BASE}/__harness__/seed-mixed-scope-recovery`)
-  ).json();
-  const taskId = created.taskId as string;
-  expect(taskId).toBeTruthy();
-  expect(created.scope).toBe("MixedScope");
-  expect(created.leftSource).toBe("MixedScope/MixedLeft.2005.mkv");
-  expect(created.rightSource).toBe("MixedScope/MixedRight.2006.mkv");
-
-  await connect(page, ADMIN_TOKEN);
-  await page.setViewportSize({ width: 1536, height: 1024 });
-  await openInventory(page);
-  await page.goto(`${BASE}/ui-v2/operations?run=${taskId}`);
-  await reconnectAtCurrentRoute(page, ADMIN_TOKEN);
-  const detail = page.getByRole("region", { name: "运行详情" });
-  await expect(detail).toBeVisible();
-  const controls = detail.getByRole("region", { name: "运行控制" });
-  await expect(controls).toBeVisible();
-
-  // Summary A: the operator asks for a plan summary and the Worker really
-  // publishes both undecided sources.
-  await controls
-    .getByRole("button", { name: "在当前界面生成剩余范围摘要" })
-    .click();
-  let firstPrepared = false;
-  for (let step = 0; step < 20; step += 1) {
-    const advanced = await request.post(
-      `${BASE}/__harness__/run-discovery-worker`,
-    );
-    const body = (await advanced.json()) as {
-      readonly advanced: boolean;
-      readonly previewId?: string | null;
-    };
-    if (body.advanced && body.previewId != null) {
-      firstPrepared = true;
-      break;
-    }
-  }
-  expect(firstPrepared).toBe(true);
-  const firstSummary = detail.getByRole("region", { name: "新计划摘要" });
-  await expect(firstSummary).toBeVisible({ timeout: 30_000 });
-  await expect(firstSummary).toContainText("MixedLeft.2005.mkv");
-  await expect(firstSummary).toContainText("MixedRight.2006.mkv");
-
-  // Preparation B is admitted while both sources are still undecided, then
-  // driven exactly to its frozen stage (sources recorded, no summary yet).
-  const secondAdmission = await request.post(
-    `${BASE}/api/v1/tasks/${taskId}/remaining-scope-previews`,
-    { headers: { Authorization: `Bearer ${ADMIN_TOKEN}` } },
-  );
-  expect(secondAdmission.status()).toBe(202);
-  const secondBody = await secondAdmission.json();
-  const frozen = await request.post(
-    `${BASE}/__harness__/run-discovery-worker?discoveryId=${secondBody.discoveryId}`,
-  );
-  const frozenBody = (await frozen.json()) as {
-    readonly frozen?: boolean;
-    readonly previewId?: string | null;
-    readonly sourceCount?: number;
-  };
-  expect(frozenBody.frozen).toBe(true);
-  expect(frozenBody.previewId ?? null).toBeNull();
-  expect(frozenBody.sourceCount ?? 0).toBe(2);
-
-  // Summary A is confirmed for exactly `Left` and really copies it.
-  const before = await (
-    await request.get(`${BASE}/__harness__/authority-state?taskId=${taskId}`)
-  ).json();
-  const copiesBefore = before.destinationFiles as readonly string[];
-  // Select only `Left` for confirmation; `Right` stays unconfirmed.
-  await firstSummary.getByLabel("选择 MixedRight.2006.mkv").uncheck();
-  await expect(
-    firstSummary.getByLabel("选择 MixedLeft.2005.mkv"),
-  ).toBeChecked();
-  const confirmButton = firstSummary.getByRole("button", {
-    name: /确认继续整理剩余 1 项/,
-  });
-  await expect(confirmButton).toBeVisible();
-  await confirmButton.click();
-  let executed = false;
-  for (let step = 0; step < 20; step += 1) {
-    const workerRun = await request.post(
-      `${BASE}/__harness__/run-manual-worker`,
-    );
-    expect(workerRun.ok()).toBeTruthy();
-    const body = await workerRun.json();
-    if (body.completed === true) {
-      executed = true;
-      break;
-    }
-    await new Promise((resolve) => setTimeout(resolve, 250));
-  }
-  expect(executed).toBe(true);
-  const afterFirst = await (
-    await request.get(`${BASE}/__harness__/authority-state?taskId=${taskId}`)
-  ).json();
-  const firstCopies = afterFirst.destinationFiles as readonly string[];
-  expect(firstCopies).toHaveLength(copiesBefore.length + 1);
-
-  // Driving B now must publish only the still-undecided `Right`; the completed
-  // `Left` is never re-offered from B's frozen manifest.
-  const driven = await request.post(
-    `${BASE}/__harness__/run-discovery-worker?discoveryId=${secondBody.discoveryId}`,
-  );
-  const drivenBody = (await driven.json()) as {
-    readonly previewId?: string | null;
-    readonly sourceCount?: number;
-  };
-  expect(drivenBody.previewId ?? null).not.toBeNull();
-  expect(drivenBody.sourceCount ?? 0).toBe(1);
-  const afterSecond = await (
-    await request.get(`${BASE}/__harness__/authority-state?taskId=${taskId}`)
-  ).json();
-  // No new copy of `Left` was produced by B's publication.
-  expect(afterSecond.destinationFiles).toEqual(firstCopies);
-  expect(afterSecond.sourceFiles).toEqual({
-    "MixedLeft.2005.mkv": true,
-    "MixedRight.2006.mkv": true,
-  });
-  await page.goto(`${BASE}/ui-v2/operations?run=${taskId}`);
-  await reconnectAtCurrentRoute(page, ADMIN_TOKEN);
-  await expect(detail).toBeVisible();
-  await page.screenshot({
-    path: `${TASK45_RECOVERY_EVIDENCE}/mixed-scope-frozen-1536x1024.png`,
-    fullPage: false,
-  });
+  expect(afterRestart.continuations).toHaveLength(0);
 });
 
 test("a paused run with a missing configuration pin cannot create a remaining-scope Preview", async ({
@@ -2901,15 +2134,11 @@ test("a paused run with a missing configuration pin cannot create a remaining-sc
   await expect(
     controls.getByRole("button", { name: "继续剩余范围" }),
   ).toHaveCount(0);
-  const withheld = controls.getByRole("list", { name: "不可用的运行控制" });
-  await expect(withheld).toContainText(
-    "immutable configuration pin cannot be resolved",
-  );
-  await expect(controls).toContainText(
-    "restore the pinned published configuration revision",
-  );
   await expect(
     controls.getByRole("button", { name: "在当前界面生成剩余范围摘要" }),
+  ).toHaveCount(0);
+  await expect(
+    controls.getByRole("list", { name: "不可用的运行控制" }),
   ).toHaveCount(0);
   // The UI does not offer an exact Preview when it cannot reconstruct the
   // original immutable scope. A direct API probe still proves zero effects.

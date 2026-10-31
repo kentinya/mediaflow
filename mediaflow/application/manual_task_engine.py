@@ -27,6 +27,7 @@ from mediaflow.domain.task_persistence import (
 )
 from mediaflow.domain.task_scheduling import (
     TaskClaimFenceLost,
+    TaskControl,
     TaskControlRejected,
     TaskMachineStage,
 )
@@ -109,16 +110,7 @@ class ManualTaskEngineWorker:
             if state is None:
                 return None
             if state.control_request is not None:
-                if state.mutation_in_flight:
-                    # The safe boundary has not arrived: keep the slot and the
-                    # uncertain effect.  A later acknowledgement is the only exit.
-                    return self._task(claim.task_id)
-                self._scheduling.acknowledge_control(
-                    claim,
-                    discovery=self._linked_discovery(claim.task_id),
-                    now=self._clock(),
-                )
-                return self._task(claim.task_id)
+                return self._settle_pending_control(claim)
             if state.mutation_in_flight:
                 # Never advance new work beside an unproved mutation.
                 return self._task(claim.task_id)
@@ -292,17 +284,32 @@ class ManualTaskEngineWorker:
         )
         if claimed is None and execution.claim_token != self._claim_token(claim):
             return self._yield_until(claim, task, self._clock(), TaskMachineStage.EXECUTION)
-        finished = self._execution.run_admitted(
-            execution.execution_id,
-            worker_id=self._worker_id,
-            claim_token=self._claim_token(claim),
-            heartbeat=lambda: self._heartbeat(claim),
-            lease_seconds=self._lease_seconds,
-            task_context=(self._scheduling, claim),
-        )
+        try:
+            finished = self._execution.run_admitted(
+                execution.execution_id,
+                worker_id=self._worker_id,
+                claim_token=self._claim_token(claim),
+                heartbeat=lambda: self._heartbeat(claim),
+                lease_seconds=self._lease_seconds,
+                task_context=(self._scheduling, claim),
+            )
+        except TaskControlRejected:
+            state = self._scheduling.state(claim.task_id)
+            if state is not None and state.control_request is not None:
+                # The next item was refused because an operator control arrived
+                # at the exact item boundary.  Settle that accepted control
+                # instead of converting it into a technical failure.
+                return self._settle_pending_control(claim)
+            raise
         return self._finish_execution(claim, finished)
 
     def _finish_execution(self, claim, execution: ManualExecution) -> PersistentTask:
+        state = self._scheduling.state(claim.task_id)
+        if state is not None and state.control_request is not None:
+            # A cancel accepted before the terminal publication is the
+            # operator's final intent.  Completed item results and attachment
+            # effects stay recorded; only the unfinished tail is cancelled.
+            return self._settle_pending_control(claim)
         task = self._task(claim.task_id)
         now = self._clock()
         if execution.status in _TERMINAL_EXECUTION_STATUSES:
@@ -332,6 +339,48 @@ class ManualTaskEngineWorker:
         if machine:
             return self._yield_until(claim, updated, now, TaskMachineStage.EXECUTION)
         self._scheduling.defer_to_human(claim, task=updated, items=(), now=now)
+        return self._task(claim.task_id)
+
+    def _settle_pending_control(self, claim) -> PersistentTask:
+        """Settle one accepted control at the owner's safe boundary.
+
+        A cancel needs the linked manual execution to stop at its own item
+        boundary first: finished items keep their Result/effects, the never
+        started tail becomes cancelled with effect certainty ``none``, and the
+        execution/Task/slot settle in one claim-fenced transaction.  While an
+        effect is still unproved the claim, slot and mutation marker stay put;
+        the accepted cancel is never cleared or replayed.
+        """
+
+        state = self._scheduling.state(claim.task_id)
+        if state is None or state.control_request is None:
+            return self._task(claim.task_id)
+        if state.mutation_in_flight:
+            return self._task(claim.task_id)
+        if state.control_request is not TaskControl.CANCEL:
+            self._scheduling.acknowledge_control(
+                claim,
+                discovery=self._linked_discovery(claim.task_id),
+                now=self._clock(),
+            )
+            return self._task(claim.task_id)
+        execution = self._latest_execution(claim.task_id)
+        settlement = None
+        if execution is not None:
+            settlement = self._execution.cancellation_settlement(
+                execution.execution_id, now=self._clock()
+            )
+            if settlement is None:
+                # An item is still inside an executor call or carries an
+                # unproved effect.  Keep the slot and the marker for inspection.
+                return self._task(claim.task_id)
+        self._scheduling.acknowledge_control(
+            claim,
+            discovery=self._linked_discovery(claim.task_id),
+            execution=settlement.execution if settlement is not None else None,
+            execution_items=settlement.items if settlement is not None else (),
+            now=self._clock(),
+        )
         return self._task(claim.task_id)
 
     # -- Failure / helpers ---------------------------------------------------

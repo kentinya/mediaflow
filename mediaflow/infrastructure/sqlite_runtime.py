@@ -18956,6 +18956,8 @@ class SQLiteTaskRepository:
         stage: TaskMachineStage | None,
         expected_control_revision: int | None = None,
         discovery: MediaDiscovery | None = None,
+        manual_execution: ManualExecution | None = None,
+        manual_execution_items: tuple[ManualExecutionItem, ...] = (),
     ) -> TaskSchedulingState | None:
         """Publish one truthful queue transition and give the slot back.
 
@@ -18995,6 +18997,20 @@ class SQLiteTaskRepository:
             if item.task_id != task.task_id:
                 raise TaskSchedulingError(
                     "a released TaskItem must belong to the Task being released"
+                )
+        if manual_execution is not None:
+            if not isinstance(manual_execution, ManualExecution):
+                raise ValueError("the released manual execution projection is invalid")
+            if manual_execution.task_id != task.task_id:
+                raise TaskSchedulingError(
+                    "a released manual execution must belong to the Task being released"
+                )
+        for item in manual_execution_items:
+            if not isinstance(item, ManualExecutionItem):
+                raise ValueError("a released manual execution item projection is invalid")
+            if manual_execution is None or item.execution_id != manual_execution.execution_id:
+                raise TaskSchedulingError(
+                    "released manual execution items must belong to the released execution"
                 )
         now = fence.now if fence is not None else task.updated_at
         if now.tzinfo is None:
@@ -19054,6 +19070,55 @@ class SQLiteTaskRepository:
                     )
                     bound = self._bind_item_to_current_occurrence(item)
                     self._connection.execute(_TASK_ITEM_UPSERT, self._item_values(bound))
+                if manual_execution is not None:
+                    if state.control_request is not TaskControl.CANCEL:
+                        raise TaskControlRejected(
+                            "a manual execution cancellation may only settle an accepted cancel"
+                        )
+                    cursor = self._connection.execute(
+                        "UPDATE manual_executions SET status=?, next_action=?, error=?, "
+                        "updated_at=?, completed_at=? WHERE execution_id=?",
+                        (
+                            manual_execution.status.value,
+                            manual_execution.next_action,
+                            manual_execution.error,
+                            manual_execution.updated_at.isoformat(),
+                            (
+                                manual_execution.completed_at.isoformat()
+                                if manual_execution.completed_at
+                                else None
+                            ),
+                            manual_execution.execution_id,
+                        ),
+                    )
+                    if cursor.rowcount != 1:
+                        raise LookupError(
+                            f"manual execution {manual_execution.execution_id!r} was not found"
+                        )
+                    for item in manual_execution_items:
+                        cursor = self._connection.execute(
+                            "UPDATE manual_execution_items SET status=?, stage=?, result_id=?, "
+                            "effect_certainty=?, completed_operations=?, uncertain_effects=?, "
+                            "error=?, next_action=?, updated_at=? "
+                            "WHERE execution_item_id=? AND execution_id=?",
+                            (
+                                item.status.value,
+                                item.stage,
+                                item.result_id,
+                                item.effect_certainty,
+                                json.dumps(item.completed_operations, ensure_ascii=False),
+                                json.dumps(item.uncertain_effects, ensure_ascii=False),
+                                item.error,
+                                item.next_action,
+                                item.updated_at.isoformat(),
+                                item.execution_item_id,
+                                manual_execution.execution_id,
+                            ),
+                        )
+                        if cursor.rowcount != 1:
+                            raise LookupError(
+                                f"manual execution item {item.execution_item_id!r} was not found"
+                            )
                 # Retire exactly this round's short-lived execution locks in the
                 # same transaction that gives the claim back.  A new owner can
                 # only acquire its own generation after this commit, so a late

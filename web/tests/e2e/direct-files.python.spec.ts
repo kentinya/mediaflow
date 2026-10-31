@@ -486,9 +486,14 @@ async function crossStorageMoveThroughNativePage(
   expect(gatedStart.ok()).toBe(true);
   expect(await gatedStart.json()).toMatchObject({ started: true });
   await expect(progress.getByText(/传输正在执行/)).toBeVisible();
-  const pause = progress.getByRole("button", { name: "请求暂停" });
-  await expect(pause).toBeVisible();
-  await pause.click();
+  // Pause and resume-from-pause are retired for ordinary Copy/Move, so the
+  // progress dialog offers no such action while the real Worker is running.
+  await expect(progress.getByRole("button", { name: "请求暂停" })).toHaveCount(
+    0,
+  );
+  await expect(progress.getByRole("button", { name: "继续传输" })).toHaveCount(
+    0,
+  );
   const released = await page.request.post(
     "/__harness__/release-gated-files-worker",
   );
@@ -496,15 +501,8 @@ async function crossStorageMoveThroughNativePage(
   expect(await released.json()).toMatchObject({
     released: true,
     ran: true,
-    status: "paused",
+    status: "completed",
   });
-  await expect(progress.getByText(/传输已在安全边界暂停/)).toBeVisible();
-  await progress.getByRole("button", { name: "继续传输" }).click();
-  await expect(progress.getByText(/传输已确认并排队等待执行/)).toBeVisible();
-
-  const worker = await page.request.post("/__harness__/run-files-worker");
-  expect(worker.ok()).toBe(true);
-  expect(await worker.json()).toMatchObject({ ran: true, status: "completed" });
   await expect(progress.getByText(/传输完成 2 项/)).toBeVisible();
   await expect(progress.getByText(/已复制并校验目标，来源已删除/)).toHaveCount(
     2,
@@ -546,7 +544,7 @@ test("ResourceLibrary Files durably deletes a selected batch including a directo
   await batchDeleteThroughNativePage(page, "resource");
 });
 
-test("ResourceLibrary Files moves across Storage without fingerprints and resumes after pause", async ({
+test("ResourceLibrary Files moves across Storage without fingerprints", async ({
   page,
 }, testInfo) => {
   test.setTimeout(60_000);
@@ -575,7 +573,7 @@ test("MediaLibrary Files durably deletes a selected batch including a directory"
   await batchDeleteThroughNativePage(page, "media");
 });
 
-test("MediaLibrary Files moves across Storage without fingerprints and resumes after pause", async ({
+test("MediaLibrary Files moves across Storage without fingerprints", async ({
   page,
 }, testInfo) => {
   test.setTimeout(60_000);
@@ -1358,14 +1356,15 @@ test("MediaLibrary Files reaches every item of a large directory Delete", async 
 });
 
 /**
- * A paused folder Move keeps its recorded known effects locally.
+ * A cancelled folder Move keeps its recorded known effects locally.
  *
- * The harness gates the real Storage move so the transfer is paused at the
- * shared cooperative boundary after three children already moved.  The local
- * status read must name those moved children — never one opaque directory with
- * an aggregate "no change" — and a safe continuation must move only the rest.
+ * The harness gates the real Storage move so the transfer reaches the shared
+ * cooperative boundary after three children already moved.  The operator
+ * cancels instead of pausing, and the local status read must name those moved
+ * children — never one opaque directory with an aggregate "no change".  The
+ * retired resume route must not replay the remaining child.
  */
-test("ResourceLibrary Files keeps a paused folder Move's known effects locally", async ({
+test("ResourceLibrary Files keeps a cancelled folder Move's known effects locally", async ({
   page,
 }, testInfo) => {
   test.setTimeout(180_000);
@@ -1390,34 +1389,66 @@ test("ResourceLibrary Files keeps a paused folder Move's known effects locally",
     { data: { mode: "move" } },
   );
   expect(gated.ok()).toBe(true);
-  await expect(
-    progress.getByRole("button", { name: "请求暂停" }),
-  ).toBeVisible();
-  await progress.getByRole("button", { name: "请求暂停" }).click();
+  // Pause/Continue are retired for ordinary File operations; cancellation is
+  // the remaining cooperative control at this safe boundary.
+  await expect(progress.getByRole("button", { name: "请求暂停" })).toHaveCount(
+    0,
+  );
+  await expect(progress.getByRole("button", { name: "继续传输" })).toHaveCount(
+    0,
+  );
+  // The real cancel route records the operator's stop intent while the Worker
+  // is gated.  Pause/Continue are not offered at all; cancellation remains the
+  // cooperative control that preserves already-recorded effects.
+  const runningOperations = await page.request.get(
+    "/api/v1/resource-libraries/source/file-operations",
+    { headers: { Authorization: `Bearer ${ADMIN_TOKEN}` } },
+  );
+  const runningDocument = (await runningOperations.json()) as {
+    items: { taskId: string; command: string; status: string }[];
+  };
+  const running = runningDocument.items.find(
+    (entry) => entry.command === "files_transfer" && entry.status === "running",
+  );
+  expect(running).toBeTruthy();
+  const runningDetail = await page.request.get(
+    `/api/v1/resource-libraries/source/files/operations/${running?.taskId}`,
+    { headers: { Authorization: `Bearer ${ADMIN_TOKEN}` } },
+  );
+  const runningDetailDocument = (await runningDetail.json()) as {
+    version: string;
+  };
+  const cancelledResponse = await page.request.post(
+    `/api/v1/tasks/${running?.taskId}/cancel`,
+    {
+      headers: { Authorization: `Bearer ${ADMIN_TOKEN}` },
+      data: { expectedUpdatedAt: runningDetailDocument.version },
+    },
+  );
+  expect(cancelledResponse.status()).toBe(200);
   const released = await page.request.post(
     "/__harness__/release-gated-files-worker",
   );
   expect(released.ok()).toBe(true);
   expect(await released.json()).toMatchObject({
     released: true,
-    status: "paused",
+    status: "cancelled",
   });
-  await expect(progress.getByText(/传输已在安全边界暂停/)).toBeVisible();
+  await expect(progress.getByText(/已取消/)).toBeVisible();
   const pausedState = await page.request.get("/__harness__/files-state");
   const pausedDocument = (await pausedState.json()) as Record<string, unknown>;
   const moved = pausedDocument["resourcePausedMoveMoved"] as string[];
   expect(moved.length).toBe(3);
-  // A paused transfer is not terminal, so its dialog offers background
-  // tracking rather than a plain close.
-  await progress.getByRole("button", { name: "后台跟踪", exact: true }).click();
+  // The cancelled transfer is terminal and keeps its own durable record.
+  await progress.getByRole("button", { name: "关闭", exact: true }).click();
 
   // The local header entry — not the transfer dialog — must show the moved
   // children of the paused item.
   await page.getByRole("button", { name: "当前页面操作状态" }).click();
   const status = page.getByRole("dialog", { name: /当前页面操作状态/ });
   await expect(status).toBeVisible();
-  // An unfinished transfer has no terminal Result yet, so its durable family
-  // label identifies it: this is the paused Move of this journey.
+  // The cancelled transfer is identified by its durable command family and
+  // exact source/destination evidence.
   await status
     .getByRole("button", { name: /操作 复制\/移动/ })
     .first()
@@ -1425,7 +1456,7 @@ test("ResourceLibrary Files keeps a paused folder Move's known effects locally",
   const selected = status.getByLabel("所选操作状态");
   await expect(selected).toBeVisible();
   // The aggregate certainty names the partial known effect: it is not "no
-  // change" even though the item is still paused.
+  // change" even though the remaining child was never executed.
   const certaintyFact = selected
     .getByText("已记录影响")
     .locator("xpath=following-sibling::dd[1]");
@@ -1460,7 +1491,8 @@ test("ResourceLibrary Files keeps a paused folder Move's known effects locally",
   });
   await status.getByRole("button", { name: "关闭", exact: true }).click();
 
-  // A safe continuation moves only the remaining children.
+  // The retired resume route is a bounded no-effect refusal even for the
+  // cancelled transfer; the remaining child is never replayed.
   const operations = await page.request.get(
     "/api/v1/resource-libraries/source/file-operations",
     { headers: { Authorization: `Bearer ${ADMIN_TOKEN}` } },
@@ -1468,25 +1500,27 @@ test("ResourceLibrary Files keeps a paused folder Move's known effects locally",
   const operationsDocument = (await operations.json()) as {
     items: { taskId: string; command: string; status: string }[];
   };
-  // An unfinished transfer has no terminal Result yet, so it is identified by
-  // its durable command family and paused status.
-  const paused = operationsDocument.items.find(
-    (entry) => entry.command === "files_transfer" && entry.status === "paused",
+  const cancelled = operationsDocument.items.find(
+    (entry) =>
+      entry.command === "files_transfer" && entry.status === "cancelled",
   );
-  expect(paused).toBeTruthy();
+  expect(cancelled).toBeTruthy();
   const detail = await page.request.get(
-    `/api/v1/resource-libraries/source/files/operations/${paused?.taskId}`,
+    `/api/v1/resource-libraries/source/files/operations/${cancelled?.taskId}`,
     { headers: { Authorization: `Bearer ${ADMIN_TOKEN}` } },
   );
   const detailDocument = (await detail.json()) as { version: string };
-  const resumed = await page.request.post(
-    `/api/v1/tasks/${paused?.taskId}/resume`,
+  const refused = await page.request.post(
+    `/api/v1/tasks/${cancelled?.taskId}/resume`,
     {
       headers: { Authorization: `Bearer ${ADMIN_TOKEN}` },
       data: { expectedUpdatedAt: detailDocument.version },
     },
   );
-  expect(resumed.status()).toBe(202);
+  expect(refused.status()).toBe(409);
+  const refusal = await refused.json();
+  expect(refusal.error.code).toBe("pause_retired");
+  expect(refusal.error.details.sideEffects).toBe("none");
   const worker = await page.request.post("/__harness__/run-files-worker");
   expect(worker.ok()).toBe(true);
   const finalState = await page.request.get("/__harness__/files-state");
@@ -1494,8 +1528,8 @@ test("ResourceLibrary Files keeps a paused folder Move's known effects locally",
     resourcePausedMoveMoved: string[];
     resourcePausedMoveRemaining: string[];
   };
-  expect(finalDocument.resourcePausedMoveMoved).toHaveLength(6);
-  expect(finalDocument.resourcePausedMoveRemaining).toHaveLength(0);
+  expect(finalDocument.resourcePausedMoveMoved).toHaveLength(3);
+  expect(finalDocument.resourcePausedMoveRemaining).toHaveLength(3);
 });
 
 /**

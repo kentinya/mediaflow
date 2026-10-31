@@ -1580,8 +1580,9 @@ class MediaLibraryTransferTests(unittest.TestCase):
             )
             task_id = admitted["taskId"]
 
-            # The Operations lifecycle treats a media transfer Task as a
-            # resumable operator-workflow object, exactly like a resource one.
+            # The Operations lifecycle treats a media transfer Task as an
+            # ordinary operator-workflow object, but Pause/Continue are retired
+            # for every media operation.
             from mediaflow.application.operations_lifecycle import (
                 TaskExecutionPath,
                 TaskLifecycleService,
@@ -1592,60 +1593,33 @@ class MediaLibraryTransferTests(unittest.TestCase):
             self.assertEqual(task.command, MEDIA_TRANSFER_COMMAND)
             context = service.execution_context(task)
             self.assertIs(context.path, TaskExecutionPath.OPERATOR_WORKFLOW)
-
-            # Pause it durably, then resume through the media transfer route.
-            # A pause is only meaningful on running work, so the Task is first
-            # moved to its running state exactly as the Worker would.
-            runtime.update_task(
-                replace(
-                    runtime.get_task(task_id),
-                    status=PersistentTaskStatus.RUNNING,
-                    updated_at=datetime.now(UTC),
-                )
-            )
-            requested = service.pause(task_id, expected_version=None)
-            # Pausing is cooperative: the durable request is recorded now and
-            # the running work reaches PAUSED at its own safe item boundary.
-            self.assertIs(requested.status, PersistentTaskStatus.RUNNING)
-            self.assertTrue(requested.pause_requested)
-            # The Worker observes the request at a safe boundary and publishes
-            # the paused state on both its Task and its transfer row.
-            runtime.update_task(
-                replace(
-                    runtime.get_task(task_id),
-                    status=PersistentTaskStatus.PAUSED,
-                    pause_requested=True,
-                    updated_at=datetime.now(UTC),
-                )
-            )
-            runtime._connection.execute(
-                "UPDATE files_transfers SET status=? WHERE transfer_id=?",
-                (FilesTransferStatus.PAUSED.value, task_id),
-            )
-            runtime._connection.commit()
-            self.assertTrue(service.execution_context(runtime.get_task(task_id)).resumable)
-
-            # Resume-from-pause is retired even for the paused media transfer:
-            # the real route refuses it with no effect and the paused rows stay
-            # exactly as they were.
-            status, body = request(
-                api,
-                f"/api/v1/tasks/{task_id}/resume",
-                method="POST",
-                body={"expectedUpdatedAt": runtime.get_task(task_id).updated_at.isoformat()},
-                token="admin-token",
-            )
-            self.assertEqual(status, 409)
-            self.assertEqual(body["error"]["code"], "pause_retired")
-            self.assertEqual(body["error"]["details"]["sideEffects"], "none")
-            paused_task = runtime.get_task(task_id)
-            self.assertIs(paused_task.status, PersistentTaskStatus.PAUSED)
             projection = media.transfer_projection(task_id)
             self.assertEqual(
-                {action["action"] for action in projection["actions"]},
                 {"cancel"},
+                {action["action"] for action in projection["actions"]},
             )
-            # No effect was replayed or removed by the refused control.
+
+            # Both retired routes answer with one bounded no-effect refusal; no
+            # pause request, queued continuation or Storage mutation is made.
+            for retired in ("pause", "resume"):
+                status, body = request(
+                    api,
+                    f"/api/v1/tasks/{task_id}/{retired}",
+                    method="POST",
+                    body={"expectedUpdatedAt": runtime.get_task(task_id).updated_at.isoformat()},
+                    token="admin-token",
+                )
+                self.assertEqual(status, 409, body)
+                self.assertEqual(body["error"]["code"], "pause_retired")
+                self.assertEqual(body["error"]["details"]["sideEffects"], "none")
+                self.assertEqual(body["error"]["details"]["action"], retired)
+            current = runtime.get_task(task_id)
+            self.assertIs(current.status, PersistentTaskStatus.PENDING)
+            self.assertFalse(current.pause_requested)
+            transfer = runtime.get_files_transfer_for_task(task_id)
+            self.assertIsNotNone(transfer)
+            self.assertIsNot(transfer.status, FilesTransferStatus.PAUSED)
+            # No effect was replayed or removed by the refused controls.
             self.assertFalse((root / "target" / "Movies" / "Dst" / "a.mkv").exists())
             self.assertTrue((root / "target" / "Movies" / "a.mkv").exists())
             # A read-only principal is refused before the retired control is
@@ -1654,17 +1628,17 @@ class MediaLibraryTransferTests(unittest.TestCase):
                 api,
                 f"/api/v1/tasks/{task_id}/resume",
                 method="POST",
-                body={"expectedUpdatedAt": paused_task.updated_at.isoformat()},
+                body={"expectedUpdatedAt": current.updated_at.isoformat()},
                 token="viewer-token",
             )
             self.assertEqual(denied_status, 403)
 
-            # Cancellation remains the safe stop control for the paused work.
+            # Cancellation remains the safe stop control for the unfinished work.
             cancel_status, cancelled = request(
                 api,
                 f"/api/v1/tasks/{task_id}/cancel",
                 method="POST",
-                body={"expectedUpdatedAt": paused_task.updated_at.isoformat()},
+                body={"expectedUpdatedAt": current.updated_at.isoformat()},
                 token="admin-token",
             )
             self.assertEqual(cancel_status, 200, cancelled)

@@ -378,17 +378,17 @@ class ScopeContinuationTests(unittest.TestCase):
         ):
             self.assertFalse(is_continuable_task_command(command), command)
 
-    def test_projection_advertises_continue_for_a_pausable_async_path(self) -> None:
+    def test_projection_retires_continue_and_advertises_cancellation_only(self) -> None:
         api, _active = self._activate()
         task = self._api_paused_task()
         status, detail = request(api, f"/api/v1/tasks/{task.task_id}", token="operator-token")
         self.assertEqual(status, 200)
-        resume = next(item for item in detail["lifecycle"]["actions"] if item["action"] == "resume")
-        self.assertTrue(resume["available"], resume["unavailableReason"])
-        self.assertIn("remaining admitted scope", resume["durableOutcome"])
-        self.assertEqual(resume["sideEffects"].split(";")[0], "no Storage mutation in this request")
+        actions = {item["action"]: item for item in detail["lifecycle"]["actions"]}
+        self.assertEqual({"cancel"}, set(actions))
+        self.assertTrue(actions["cancel"]["available"])
+        self.assertNotIn("resume", json.dumps(detail["lifecycle"]))
 
-    def test_projection_withholds_continue_with_a_real_reason_per_state(self) -> None:
+    def test_projection_never_advertises_retired_resume_for_any_state(self) -> None:
         api, _active = self._activate()
         running = PersistentTask(
             "task-running",
@@ -417,27 +417,20 @@ class ScopeContinuationTests(unittest.TestCase):
         self.repository.create_task(done)
         self._api_paused_task(task_id="task-legacy", snapshot_id=None, snapshot_digest=None)
 
-        for task_id, expected in (
-            ("task-running", "still running"),
-            ("task-done", "terminal state"),
-            ("task-legacy", "immutable configuration pin"),
-        ):
+        for task_id in ("task-running", "task-done", "task-legacy"):
             status, detail = request(api, f"/api/v1/tasks/{task_id}", token="operator-token")
             self.assertEqual(status, 200)
-            resume = next(
-                item for item in detail["lifecycle"]["actions"] if item["action"] == "resume"
-            )
-            self.assertFalse(resume["available"], task_id)
-            self.assertIn(expected, resume["unavailableReason"], task_id)
-            self.assertIsNotNone(resume["nextAction"])
+            actions = {item["action"] for item in detail["lifecycle"]["actions"]}
+            self.assertNotIn("resume", actions, task_id)
+            self.assertNotIn("pause", actions, task_id)
+            self.assertLessEqual(actions, {"cancel"}, task_id)
 
     def test_every_projection_action_is_available_or_explained(self) -> None:
         """The Web contract: no action may be both withheld and unexplained.
 
         The V2 normalizer rejects an action that is unavailable without a reason,
-        so the backend must always state the bounded obstacle.  A non-paused
-        continuable Task is the exact case that would otherwise produce a
-        withheld-but-unexplained Continue.
+        so the backend must always state the bounded obstacle for its only
+        remaining lifecycle action.
         """
 
         api, _active = self._activate()
@@ -491,7 +484,7 @@ class ScopeContinuationTests(unittest.TestCase):
             self.assertNotIn("CLI", text)
 
     def test_manual_scan_and_synchronous_manual_organize_keep_their_own_truth(self) -> None:
-        """The excluded kinds explain their real reason instead of a fake one."""
+        """The excluded kinds keep their real path without a retired control."""
 
         api, _active = self._activate()
         manual = PersistentTask(
@@ -509,73 +502,40 @@ class ScopeContinuationTests(unittest.TestCase):
         status, detail = request(api, "/api/v1/tasks/task-manual", token="operator-token")
         self.assertEqual(status, 200)
         self.assertEqual(detail["lifecycle"]["executionPath"], "synchronous_manual_organize")
-        resume = next(item for item in detail["lifecycle"]["actions"] if item["action"] == "resume")
-        self.assertFalse(resume["available"])
-        self.assertIn("no durable queued continuation", resume["unavailableReason"])
+        self.assertEqual(
+            {"cancel"},
+            {item["action"] for item in detail["lifecycle"]["actions"]},
+        )
 
-    # -- admission ------------------------------------------------------
-
-    def test_admission_queues_one_bounded_continuation_and_no_storage_work(self) -> None:
-        api, active = self._activate()
+    def test_resume_is_retired_with_no_queued_work_or_storage_effect(self) -> None:
+        api, _active = self._activate()
         task = self._api_paused_task(scope_path="Media", item_limit=10)
         self._item(task.task_id, "item-a", "Media/a.mkv", TaskItemStatus.SUCCESS)
         self._result(task.task_id, "item-a")
+        before = self.repository.get_task(task.task_id)
 
         status, body = request(
             api,
             f"/api/v1/tasks/{task.task_id}/resume",
             method="POST",
-            body={
-                "expectedUpdatedAt": self.repository.get_task(task.task_id).updated_at.isoformat()
-            },
+            body={"expectedUpdatedAt": before.updated_at.isoformat()},
             token="operator-token",
         )
-        self.assertEqual(status, 202, body)
-        self.assertEqual(body["action"], "resume")
-        self.assertEqual(body["sideEffects"], "none")
-        self.assertFalse(body["retrySafe"])
-        continuation = body["continuation"]
-        # The operator/API projection is bounded and redacted: it publishes the
-        # durable identifiers the Web needs and never the internal scope path,
-        # the configuration pin identity or the actor.
-        self.assertEqual(continuation["status"], "queued")
-        self.assertEqual(continuation["sourceTaskId"], task.task_id)
-        self.assertEqual(continuation["command"], "organize")
-        self.assertEqual(continuation["itemLimit"], 10)
-        self.assertEqual(continuation["boundary"], "paused_remaining_admitted_scope")
-        self.assertEqual(continuation["sideEffects"], "none")
-        self.assertNotIn("scope_path", continuation)
-        self.assertNotIn("scopePath", continuation)
-        self.assertNotIn("actor", continuation)
-        self.assertNotIn("configuration_snapshot_id", continuation)
-        self.assertNotIn("configuration_snapshot_digest", continuation)
-        self.assertNotIn(str(self.root), json.dumps(body))
-
-        job = self.repository.get_job(body["jobId"])
-        self.assertIsNotNone(job)
-        assert job is not None
-        self.assertIs(job.command, AutomationCommand.SCOPE_CONTINUATION)
-        self.assertIs(job.status, AutomationJobStatus.PENDING)
-        self.assertFalse(job.execute_authorized)
-        self.assertEqual(job.configuration_snapshot_id, active.revision_id)
-        # The source Task keeps its exact paused state and its history.
-        self.assertIs(self.repository.get_task(task.task_id).status, PersistentTaskStatus.PAUSED)
+        self.assertEqual(409, status, body)
+        self.assertEqual(body["error"]["code"], "pause_retired")
+        self.assertEqual(body["error"]["details"]["action"], "resume")
+        self.assertEqual(body["error"]["details"]["sideEffects"], "none")
+        self.assertIn("unchanged", body["error"]["details"]["durableState"])
+        self.assertEqual(self.repository.get_task(task.task_id), before)
+        self.assertEqual(self.repository.list_jobs(limit=100), ())
+        self.assertIsNone(self.repository.get_scope_continuation_for_source_task(task.task_id))
         self.assertEqual(
             [item.item_id for item in self.repository.list_items(task.task_id)], ["item-a"]
         )
-        # The durable row still carries the exact internal pin the Worker needs.
-        stored = self.repository.get_scope_continuation_for_job(body["jobId"])
-        self.assertEqual(stored.configuration_snapshot_id, active.revision_id)
-        self.assertEqual(stored.scope_path, "Media")
+        self.assertEqual(len(self.repository.list_results(task.task_id)), 1)
 
-    def test_admission_response_never_publishes_an_absolute_scope_path(self) -> None:
-        """RO-7: the control response stays behind the redaction boundary.
-
-        A legally admitted scoped run can carry an absolute host path in its
-        durable ``scope_path``.  The accepted control must never echo it: the
-        Worker keeps the full internal row and the operator reads a bounded
-        projection instead.
-        """
+    def test_retired_resume_response_never_publishes_an_absolute_scope_path(self) -> None:
+        """The bounded retirement response never echoes durable internal scope."""
 
         api, _active = self._activate()
         absolute = str(self.root / "source" / "Media")
@@ -587,45 +547,34 @@ class ScopeContinuationTests(unittest.TestCase):
             body=None,
             token="operator-token",
         )
-        self.assertEqual(status, 202, body)
+        self.assertEqual(409, status, body)
         payload = json.dumps(body)
         self.assertNotIn(absolute, payload)
         self.assertNotIn(str(self.root), payload)
-        self.assertNotIn("scope_path", body["continuation"])
-        # The internal row keeps the exact original scope the Worker needs.
-        stored = self.repository.get_scope_continuation_for_job(body["jobId"])
-        self.assertEqual(stored.scope_path, absolute)
+        self.assertEqual(body["error"]["code"], "pause_retired")
+        self.assertEqual(self.repository.list_jobs(limit=100), ())
+        self.assertIsNone(self.repository.get_scope_continuation_for_source_task(task.task_id))
 
-    def test_duplicate_admission_never_queues_the_remaining_scope_twice(self) -> None:
+    def test_repeated_retired_resume_never_queues_remaining_scope(self) -> None:
         api, _active = self._activate()
         task = self._api_paused_task(scope_path="Media")
-        first = request(
-            api,
-            f"/api/v1/tasks/{task.task_id}/resume",
-            method="POST",
-            body=None,
-            token="operator-token",
-        )
-        self.assertEqual(first[0], 202)
-        jobs_after_first = len(self.repository.list_jobs(limit=100))
+        for _ in range(2):
+            status, body = request(
+                api,
+                f"/api/v1/tasks/{task.task_id}/resume",
+                method="POST",
+                body=None,
+                token="operator-token",
+            )
+            self.assertEqual(409, status, body)
+            self.assertEqual(body["error"]["code"], "pause_retired")
+        self.assertEqual(self.repository.list_jobs(limit=100), ())
+        self.assertIsNone(self.repository.get_scope_continuation_for_source_task(task.task_id))
 
-        second_status, second = request(
-            api,
-            f"/api/v1/tasks/{task.task_id}/resume",
-            method="POST",
-            body=None,
-            token="operator-token",
-        )
-        self.assertEqual(second_status, 409, second)
-        self.assertEqual(second["error"]["details"]["reason"], "continuation_exists")
-        self.assertEqual(second["error"]["details"]["sideEffects"], "none")
-        self.assertEqual(len(self.repository.list_jobs(limit=100)), jobs_after_first)
-
-    def test_stale_version_is_refused_atomically(self) -> None:
+    def test_stale_version_keeps_the_retired_resume_refusal(self) -> None:
         api, _active = self._activate()
         task = self._api_paused_task(scope_path="Media")
         stale = self.repository.get_task(task.task_id).updated_at.isoformat()
-        # A later durable transition makes the version the operator read stale.
         self.repository.update_task(
             replace(
                 self.repository.get_task(task.task_id),
@@ -639,12 +588,12 @@ class ScopeContinuationTests(unittest.TestCase):
             body={"expectedUpdatedAt": stale},
             token="operator-token",
         )
-        self.assertEqual(status, 409, body)
-        self.assertEqual(body["error"]["details"]["reason"], "stale_task_state")
-        self.assertTrue(body["error"]["details"]["retrySafe"])
+        self.assertEqual(409, status, body)
+        self.assertEqual(body["error"]["code"], "pause_retired")
+        self.assertEqual(body["error"]["details"]["sideEffects"], "none")
         self.assertIsNone(self.repository.get_scope_continuation_for_source_task(task.task_id))
 
-    def test_non_paused_task_is_refused_with_zero_new_work(self) -> None:
+    def test_non_paused_task_keeps_the_retired_resume_refusal(self) -> None:
         api, _active = self._activate()
         task = PersistentTask(
             "task-running",
@@ -666,11 +615,11 @@ class ScopeContinuationTests(unittest.TestCase):
             token="operator-token",
         )
         self.assertEqual(status, 409, body)
-        self.assertEqual(body["error"]["details"]["reason"], "task_not_paused")
+        self.assertEqual(body["error"]["code"], "pause_retired")
         self.assertEqual(self.repository.list_jobs(limit=100), ())
         self.assertEqual(self.repository.list_tasks(limit=100), (task,))
 
-    def test_unresolvable_pin_is_refused_with_the_native_recovery_path(self) -> None:
+    def test_unresolvable_pin_keeps_the_retired_resume_refusal(self) -> None:
         api, _active = self._activate()
         task = self._api_paused_task(
             scope_path="Media", snapshot_id="snap-gone", snapshot_digest="d"
@@ -683,19 +632,12 @@ class ScopeContinuationTests(unittest.TestCase):
             token="operator-token",
         )
         self.assertEqual(status, 409, body)
-        self.assertEqual(body["error"]["details"]["reason"], "snapshot_unavailable")
+        self.assertEqual(body["error"]["code"], "pause_retired")
         self.assertEqual(body["error"]["details"]["sideEffects"], "none")
-        self.assertNotIn("mediaflow tasks", body["error"]["details"]["nextAction"])
         self.assertEqual(self.repository.list_jobs(limit=100), ())
 
     def test_stored_execute_flag_is_never_authority(self) -> None:
-        """A consumed/revoked authority must route through native Preview.
-
-        The Task was admitted as a mutation, but no live reusable authority
-        exists for it in this runtime.  The admission must refuse rather than
-        silently continue under a persisted boolean, and it must name the exact
-        Preview/explicit-intent journey as the next action.
-        """
+        """A stored mutation flag never becomes a retired resume control."""
 
         api, _active = self._activate()
         task = self._api_paused_task(scope_path="Media", execute_authorized=True)
@@ -707,95 +649,118 @@ class ScopeContinuationTests(unittest.TestCase):
             token="operator-token",
         )
         self.assertEqual(status, 409, body)
-        self.assertEqual(body["error"]["details"]["reason"], "authority_required")
-        self.assertIn("stored execute flag is not authority", body["error"]["message"])
-        self.assertIn("exact Preview", body["error"]["details"]["nextAction"])
-        self.assertNotIn("mediaflow tasks", body["error"]["details"]["nextAction"])
+        self.assertEqual(body["error"]["code"], "pause_retired")
+        self.assertEqual(body["error"]["details"]["sideEffects"], "none")
         self.assertEqual(self.repository.list_jobs(limit=100), ())
         # No definition-bound occurrence exists for this Task, so the shared
         # live-authority checker refuses: a stored boolean is not authority.
         self.assertFalse(definition_occurrence_authority(self.repository, (), None)(task))
-
-        # The recovery entry belongs to a principal that may really admit it, so
-        # the projection is read with the manage permission in hand.
         read_status, detail = request(api, f"/api/v1/tasks/{task.task_id}", token="admin-token")
         self.assertEqual(read_status, 200)
-        resume = next(item for item in detail["lifecycle"]["actions"] if item["action"] == "resume")
-        self.assertFalse(resume["available"])
-        self.assertIn("stored execute flag is not authority", resume["unavailableReason"])
-        self.assertIn("exact Preview", resume["nextAction"])
-        # The native recovery entry is published with the refusal, so the Web
-        # renders a real control instead of an instruction with no surface.
-        recovery = resume.get("preview")
-        self.assertTrue(recovery["available"])
-        self.assertEqual(recovery["method"], "POST")
-        self.assertEqual(recovery["path"], f"/api/v1/tasks/{task.task_id}/remaining-scope-previews")
-        self.assertEqual(recovery["sideEffects"], "none")
-        self.assertIn("grants no execution authority", recovery["durableOutcome"])
+        self.assertNotIn(
+            "resume",
+            {item["action"] for item in detail["lifecycle"]["actions"]},
+        )
 
-    def test_the_native_preview_action_is_only_published_for_the_authority_refusal(self) -> None:
-        """A withheld Continue explains itself, and only that refusal links Preview.
+    def test_remaining_scope_recovery_is_not_advertised_through_the_retired_resume(self) -> None:
+        """The retired resume projection never publishes a preview control.
 
-        The Web contract rejects an available control that also carries a
-        reason, so the projection must stay exactly one decision: the native
-        Preview entry belongs to the authority refusal alone, never to an
-        unrelated obstacle such as an unresolvable pin.
+        The direct zero-mutation remaining-scope preparation keeps its own
+        existing API, but it is not re-attached to a retired Continue action.
         """
 
         api, _active = self._activate()
-        for scope, snapshot, digest, expected_code, expects_preview in (
-            ("Media", None, None, "snapshot_unavailable", False),
-            ("Media", "snap-gone", "digest-gone", "snapshot_unavailable", False),
+        for scope, snapshot, digest, expected_status in (
+            ("Media", None, None, 409),
+            ("Media", "snap-gone", "digest-gone", 409),
         ):
             task = self._api_paused_task(
-                task_id=f"task-{expected_code}-{digest}",
+                task_id=f"task-{expected_status}-{digest}",
                 scope_path=scope,
                 snapshot_id=snapshot,
                 snapshot_digest=digest,
             )
             status, detail = request(api, f"/api/v1/tasks/{task.task_id}", token="admin-token")
             self.assertEqual(status, 200)
-            resume = next(
-                item for item in detail["lifecycle"]["actions"] if item["action"] == "resume"
+            actions = {item["action"]: item for item in detail["lifecycle"]["actions"]}
+            self.assertNotIn("resume", actions)
+            self.assertEqual({"cancel"}, set(actions))
+            recovery_status, recovery = request(
+                api,
+                f"/api/v1/tasks/{task.task_id}/remaining-scope-previews",
+                method="POST",
+                body=None,
+                token="admin-token",
             )
-            self.assertFalse(resume["available"])
-            self.assertIsNotNone(resume["unavailableReason"])
-            self.assertEqual("organize" in resume, expects_preview)
+            self.assertEqual(expected_status, recovery_status, recovery)
+            self.assertEqual(recovery["error"]["code"], "snapshot_unavailable")
+            self.assertEqual(recovery["error"]["details"]["sideEffects"], "none")
 
+        (self.root / "source" / "Media").mkdir(parents=True, exist_ok=True)
+        (self.root / "source" / "Media" / "left.mkv").write_bytes(b"left")
         refused = self._api_paused_task(
-            task_id="task-authority", scope_path="Media", execute_authorized=True
+            task_id="task-authority",
+            scope_path="Media",
+            item_limit=1,
+            execute_authorized=True,
         )
+        self._item(refused.task_id, "left-item", "Media/left.mkv", TaskItemStatus.PENDING)
         status, detail = request(api, f"/api/v1/tasks/{refused.task_id}", token="admin-token")
         self.assertEqual(status, 200)
-        resume = next(item for item in detail["lifecycle"]["actions"] if item["action"] == "resume")
-        self.assertFalse(resume["available"])
-        pass
+        self.assertNotIn(
+            "resume",
+            {item["action"] for item in detail["lifecycle"]["actions"]},
+        )
+        recovery_status, recovery = request(
+            api,
+            f"/api/v1/tasks/{refused.task_id}/remaining-scope-previews",
+            method="POST",
+            body=None,
+            token="admin-token",
+        )
+        self.assertEqual(202, recovery_status, recovery)
+        self.assertEqual(recovery["sideEffects"], "none")
 
-    def test_a_reader_without_the_manage_permission_gets_no_preview_control(self) -> None:
-        """The recovery control is bound to the permission that would admit it."""
+    def test_a_reader_without_the_manage_permission_gets_no_recovery_control(self) -> None:
+        """The direct recovery admission stays bound to its own permission."""
 
         api, _active = self._activate()
-        task = self._api_paused_task(scope_path="Media", execute_authorized=True)
+        (self.root / "source" / "Media").mkdir(parents=True, exist_ok=True)
+        (self.root / "source" / "Media" / "left.mkv").write_bytes(b"left")
+        task = self._api_paused_task(scope_path="Media", item_limit=1, execute_authorized=True)
+        self._item(task.task_id, "left-item", "Media/left.mkv", TaskItemStatus.PENDING)
         status, detail = request(api, f"/api/v1/tasks/{task.task_id}", token="viewer-token")
         self.assertEqual(status, 200)
-        resume = next(item for item in detail["lifecycle"]["actions"] if item["action"] == "resume")
-        self.assertFalse(resume["available"])
-        self.assertNotIn("organize", resume)
-        # A principal that may manage manual work but not control the Task still
-        # receives the recovery entry, because that is what it may really do.
-        status, detail = request(api, f"/api/v1/tasks/{task.task_id}", token="admin-token")
-        self.assertEqual(status, 200)
-        resume = next(item for item in detail["lifecycle"]["actions"] if item["action"] == "resume")
-        pass
+        self.assertNotIn(
+            "resume",
+            {item["action"] for item in detail["lifecycle"]["actions"]},
+        )
+        refused_status, refused = request(
+            api,
+            f"/api/v1/tasks/{task.task_id}/remaining-scope-previews",
+            method="POST",
+            body=None,
+            token="viewer-token",
+        )
+        self.assertEqual(403, refused_status, refused)
+        admitted_status, admitted = request(
+            api,
+            f"/api/v1/tasks/{task.task_id}/remaining-scope-previews",
+            method="POST",
+            body=None,
+            token="admin-token",
+        )
+        self.assertEqual(202, admitted_status, admitted)
 
-    def test_read_only_principal_cannot_continue(self) -> None:
+    def test_read_only_principal_cannot_use_the_retired_resume_route(self) -> None:
         api, _active = self._activate()
         task = self._api_paused_task(scope_path="Media")
         status, detail = request(api, f"/api/v1/tasks/{task.task_id}", token="viewer-token")
         self.assertEqual(status, 200)
-        resume = next(item for item in detail["lifecycle"]["actions"] if item["action"] == "resume")
-        self.assertFalse(resume["available"])
-        self.assertIn("cancel_job permission", resume["unavailableReason"])
+        self.assertNotIn(
+            "resume",
+            {item["action"] for item in detail["lifecycle"]["actions"]},
+        )
 
         post_status, body = request(
             api,
@@ -807,7 +772,7 @@ class ScopeContinuationTests(unittest.TestCase):
         self.assertEqual(post_status, 403, body)
         self.assertEqual(self.repository.list_jobs(limit=100), ())
 
-    def test_unknown_task_control_is_a_bounded_not_found(self) -> None:
+    def test_unknown_task_control_is_a_bounded_retirement_refusal(self) -> None:
         api, _active = self._activate()
         status, body = request(
             api,
@@ -816,8 +781,9 @@ class ScopeContinuationTests(unittest.TestCase):
             body=None,
             token="operator-token",
         )
-        self.assertEqual(status, 404, body)
-        self.assertEqual(body["error"]["code"], "not_found")
+        self.assertEqual(status, 409, body)
+        self.assertEqual(body["error"]["code"], "pause_retired")
+        self.assertEqual(body["error"]["details"]["sideEffects"], "none")
         self.assertEqual(self.repository.list_jobs(limit=100), ())
 
     def test_control_requires_no_query_and_sends_one_command(self) -> None:
@@ -1036,7 +1002,7 @@ class ScopeContinuationTests(unittest.TestCase):
 
     # -- history and compatibility --------------------------------------
 
-    def test_original_history_and_pin_survive_the_continuation(self) -> None:
+    def test_original_history_and_pin_survive_the_retired_control(self) -> None:
         api, _active = self._activate()
         task = self._api_paused_task(scope_path="Media", item_limit=4)
         self._item(task.task_id, "kept", "Media/kept.mkv", TaskItemStatus.SUCCESS)
@@ -1050,9 +1016,12 @@ class ScopeContinuationTests(unittest.TestCase):
             body=None,
             token="operator-token",
         )
-        self.assertEqual(status, 202, body)
+        self.assertEqual(status, 409, body)
+        self.assertEqual(body["error"]["code"], "pause_retired")
+        self.assertEqual(body["error"]["details"]["sideEffects"], "none")
 
         original_after = self.repository.get_task(task.task_id)
+        self.assertEqual(original_after, original_before)
         self.assertEqual(original_after.configuration_snapshot_id, self.active.revision_id)
         self.assertEqual(original_after.configuration_snapshot_digest, self.active.digest)
         self.assertEqual(original_after.item_limit, 4)
@@ -1063,10 +1032,7 @@ class ScopeContinuationTests(unittest.TestCase):
             [item.item_id for item in self.repository.list_items(task.task_id)], ["kept"]
         )
         self.assertEqual(len(self.repository.list_results(task.task_id)), 1)
-        self.assertEqual(
-            self.repository.get_scope_continuation_for_source_task(task.task_id).status,
-            ScopeContinuationStatus.QUEUED,
-        )
+        self.assertIsNone(self.repository.get_scope_continuation_for_source_task(task.task_id))
 
     def test_continuation_attempts_stay_independently_inspectable(self) -> None:
         task = self._paused_task(scope_path="Media")
@@ -1399,14 +1365,8 @@ class ScopeContinuationTests(unittest.TestCase):
         self.repository.create_task(child)
         return child
 
-    def test_a_finished_continuation_chain_has_no_remaining_scope(self) -> None:
-        """B P1-1: a completed continuation must never be admitted again.
-
-        The original paused Task stays ``paused`` after its remaining scope was
-        continued and finished.  Its item budget is exhausted across the chain,
-        so a second Continue must be refused with zero queued work instead of
-        re-processing the same file.
-        """
+    def test_a_finished_continuation_chain_has_no_new_queued_work(self) -> None:
+        """Historical continuation evidence stays readable after retirement."""
 
         api, _active = self._activate()
         task = self._api_paused_task(scope_path="Media", item_limit=2)
@@ -1416,7 +1376,6 @@ class ScopeContinuationTests(unittest.TestCase):
         submission = self._admit(self._service(), task)
         self.repository.mark_scope_continuation_running(submission.job.job_id)
         self.repository.bind_scope_continuation_task(submission.job.job_id, child.task_id)
-        # The continuation discovered and succeeded on the one remaining source.
         self._item(child.task_id, "child-item", "Media/Six.2006.mkv", TaskItemStatus.SUCCESS)
         self._result(child.task_id, "child-item")
         self.repository.complete_scope_continuation(
@@ -1426,7 +1385,6 @@ class ScopeContinuationTests(unittest.TestCase):
             replace(child, status=PersistentTaskStatus.COMPLETED, updated_at=NOW)
         )
 
-        # The whole chain's recorded items now exhaust the original budget.
         remaining, recorded, remaining_limit = remaining_scope(self.repository, task)
         self.assertEqual(remaining_limit, 0)
         self.assertEqual(remaining, ())
@@ -1448,18 +1406,12 @@ class ScopeContinuationTests(unittest.TestCase):
             token="operator-token",
         )
         self.assertEqual(status, 409, body)
-        self.assertEqual(body["error"]["details"]["reason"], "no_remaining_scope")
-        self.assertEqual(body["error"]["details"]["sideEffects"], "none")
+        self.assertEqual(body["error"]["code"], "pause_retired")
         self.assertEqual(len(self.repository.list_jobs(limit=100)), jobs_before)
         self.assertEqual(len(self.repository.list_scope_continuations(task.task_id)), 1)
 
-    def test_a_still_paused_descendant_owns_the_remaining_scope(self) -> None:
-        """A continuation that paused again owns its own remaining scope.
-
-        Continuing the original run would queue the same remaining work twice,
-        so the original must be refused and the operator routed to the linked
-        continuation run.
-        """
+    def test_a_still_paused_descendant_keeps_historical_chain_evidence(self) -> None:
+        """Historical ownership evidence is read-only; resume stays retired."""
 
         api, _active = self._activate()
         task = self._api_paused_task(scope_path="Media", item_limit=5)
@@ -1477,7 +1429,6 @@ class ScopeContinuationTests(unittest.TestCase):
             error="the continuation paused again before completing its remaining scope",
         )
 
-        # The chain owner is the paused descendant, not the original run.
         from mediaflow.application.scope_continuation import chain_owner
 
         self.assertEqual(chain_owner(self.repository, task).task_id, child.task_id)
@@ -1493,12 +1444,11 @@ class ScopeContinuationTests(unittest.TestCase):
             token="operator-token",
         )
         self.assertEqual(status, 409, body)
-        self.assertEqual(body["error"]["details"]["reason"], "continuation_owned_elsewhere")
-        # The descendant itself still has a real remaining scope to continue.
+        self.assertEqual(body["error"]["code"], "pause_retired")
         self.assertIsNone(continuation_obstacle(self.repository, child, lambda *_: None)[0])
 
-    def test_projection_advertises_the_linked_continuation_of_a_finished_run(self) -> None:
-        """A real admitted organize run exposes its completed Worker continuation."""
+    def test_projection_reads_historical_continuation_without_resuming_it(self) -> None:
+        """A historical linked continuation stays readable after retirement."""
 
         from scripts import operations_inventory_harness as h
 
@@ -1510,72 +1460,17 @@ class ScopeContinuationTests(unittest.TestCase):
         seeded = h.seed_continuation_journey(state)
         source_task_id = seeded["taskId"]
         original = repository.get_task(source_task_id)
-        self.assertTrue(original.execute_authorized)
-        status, admission = request(
+        # The retired product entry cannot create a continuation any more.
+        refused_status, refused = request(
             state.api,
             f"/api/v1/tasks/{source_task_id}/resume",
             method="POST",
             token=h.HARNESS_TOKEN,
         )
-        self.assertEqual(status, 202, admission)
-        self.assertEqual(admission["sideEffects"], "none")
-        self.assertEqual(admission["continuation"]["status"], "queued")
-        worker = h.run_continuation_worker_once(state)
-        self.assertTrue(worker["ran"], worker)
-        self.assertEqual(worker["jobId"], admission["jobId"])
-        self.assertEqual(worker["continuationStatus"], "completed")
-        child_id = worker["newTaskId"]
-        child = repository.get_task(child_id)
-        self.assertEqual(child.status, PersistentTaskStatus.COMPLETED)
-        self.assertEqual(child.scope_path, original.scope_path)
-        self.assertEqual(child.item_limit, original.item_limit)
-        self.assertEqual(child.configuration_snapshot_id, original.configuration_snapshot_id)
-        self.assertEqual(
-            child.configuration_snapshot_digest, original.configuration_snapshot_digest
-        )
-        self.assertEqual(
-            [item.source_path for item in repository.list_items(child_id)],
-            [seeded["remainingSource"]],
-        )
-        self.assertEqual(
-            [item.source_path for item in repository.list_items(source_task_id)],
-            [seeded["recordedSource"]],
-        )
+        self.assertEqual(409, refused_status, refused)
+        self.assertEqual(refused["error"]["code"], "pause_retired")
+        self.assertEqual(repository.list_scope_continuations(source_task_id), ())
         self.assertEqual(repository.get_task(source_task_id), original)
-
-        for reopened in (False, True):
-            with self.subTest(reopened=reopened):
-                if reopened:
-                    state.restart()
-                status, overview = request(
-                    state.api,
-                    f"/api/v1/operations/runs/{source_task_id}",
-                    token=h.HARNESS_TOKEN,
-                )
-                self.assertEqual(status, 200, overview)
-                continuation = overview["continuation"]
-                self.assertEqual(
-                    continuation["continuationId"],
-                    admission["continuation"]["continuationId"],
-                )
-                self.assertEqual(continuation["status"], "completed")
-                self.assertEqual(continuation["newTaskId"], child_id)
-                self.assertEqual(continuation["jobId"], admission["jobId"])
-                self.assertEqual(continuation["attemptCount"], 1)
-                self.assertEqual(continuation["sideEffects"], "none")
-                linked_status, linked = request(
-                    state.api,
-                    f"/api/v1/operations/runs/{child_id}",
-                    token=h.HARNESS_TOKEN,
-                )
-                self.assertEqual(linked_status, 200, linked)
-                self.assertEqual(linked["task_id"], child_id)
-                self.assertEqual(linked["status"], "completed")
-                # The bounded projection never publishes the internal scope or pin.
-                payload = json.dumps(overview)
-                self.assertNotIn("Five.2005", payload)
-                self.assertNotIn("scope_path", payload)
-                self.assertNotIn(str(self.root), payload)
 
 
 class ScopeContinuationAuthorityWiringTests(unittest.TestCase):
@@ -2767,27 +2662,20 @@ class ScopeContinuationWorkerJourneyTests(unittest.TestCase):
         api = self._api(config)
         read_status, detail = request(api, f"/api/v1/tasks/{task.task_id}", token="admin-token")
         self.assertEqual(read_status, 200, detail)
-        resume = next(item for item in detail["lifecycle"]["actions"] if item["action"] == "resume")
-        # Ordinary Continue stays refused (no live reusable authority), and the
-        # native recovery entry is advertised for exactly that refusal.
-        self.assertFalse(resume["available"])
-        self.assertEqual(True, True)
-        self.assertEqual(
-            resume.get("preview", {}).get("path", ""),
-            f"/api/v1/tasks/{task.task_id}/remaining-scope-previews",
-        )
-
+        # Resume-from-pause is retired, so neither the Task detail nor the
+        # Operations overview advertises a Continue/recovery control.
+        for document in (detail,):
+            self.assertNotIn(
+                "resume",
+                {item["action"] for item in document["lifecycle"]["actions"]},
+            )
         overview_status, overview = request(
             api, f"/api/v1/operations/runs/{task.task_id}", token="admin-token"
         )
         self.assertEqual(overview_status, 200, overview)
-        overview_resume = next(
-            item for item in overview["lifecycle"]["actions"] if item["action"] == "resume"
-        )
-        self.assertFalse(overview_resume["available"])
-        self.assertEqual(
-            overview_resume.get("preview", {}).get("path", ""),
-            f"/api/v1/tasks/{task.task_id}/remaining-scope-previews",
+        self.assertNotIn(
+            "resume",
+            {item["action"] for item in overview["lifecycle"]["actions"]},
         )
 
         status, admission = request(
@@ -2874,12 +2762,12 @@ class ScopeContinuationWorkerJourneyTests(unittest.TestCase):
             self.assertTrue((self.root / "Incoming" / "Sub" / name).exists(), name)
         self.assertFalse(list((self.root / "Target").rglob("*.mkv")))
 
-    def test_a_fully_recorded_budget_keeps_the_queued_continue_refusal(self) -> None:
-        """The recovery entry does not weaken the queued continuation boundary.
+    def test_a_fully_recorded_budget_keeps_the_retired_resume_refusal(self) -> None:
+        """The recovery entry does not reopen the retired resume boundary.
 
-        The same full-budget run has no unrecorded discovery budget, so
-        `POST /resume` must keep refusing with `no_remaining_scope` and queue
-        nothing; only the separate zero-mutation review remains available.
+        The same full-budget run still answers `POST /resume` with the bounded
+        retirement refusal and queues nothing; only the separate zero-mutation
+        review remains available.
         """
 
         api_config, active = self._activate(scope="Incoming")
@@ -2897,11 +2785,11 @@ class ScopeContinuationWorkerJourneyTests(unittest.TestCase):
             token="admin-token",
         )
         self.assertEqual(status, 409, body)
-        self.assertEqual(body["error"]["details"]["reason"], "no_remaining_scope")
+        self.assertEqual(body["error"]["code"], "pause_retired")
         self.assertEqual(body["error"]["details"]["sideEffects"], "none")
         self.assertEqual(len(self.repository.list_jobs(limit=100)), jobs_before)
         self.assertIsNone(self.repository.get_scope_continuation_for_source_task(task.task_id))
-        # The recovery preparation is the only remaining surface, and it is a
+        # The direct recovery preparation is the only remaining surface, and it is a
         # review: no execution authority is granted and no media changed.
         preview_status, admission = request(
             api,
@@ -2939,9 +2827,10 @@ class ScopeContinuationWorkerJourneyTests(unittest.TestCase):
 
         read_status, detail = request(api, f"/api/v1/tasks/{task.task_id}", token="admin-token")
         self.assertEqual(read_status, 200, detail)
-        resume = next(item for item in detail["lifecycle"]["actions"] if item["action"] == "resume")
-        self.assertFalse(resume["available"])
-        self.assertNotIn("organize", resume)
+        self.assertNotIn(
+            "resume",
+            {item["action"] for item in detail["lifecycle"]["actions"]},
+        )
 
         status, document = request(
             api,
@@ -3100,11 +2989,10 @@ class ScopeContinuationWorkerJourneyTests(unittest.TestCase):
         # with the ordinary bounded code and creates no work at all.
         status, detail = request(api, f"/api/v1/tasks/{task.task_id}", token="admin-token")
         self.assertEqual(status, 200, detail)
-        resume = next(
-            value for value in detail["lifecycle"]["actions"] if value["action"] == "resume"
+        self.assertNotIn(
+            "resume",
+            {value["action"] for value in detail["lifecycle"]["actions"]},
         )
-        self.assertFalse(resume["available"])
-        self.assertNotIn("organize", resume)
         previews_before = self.repository.list_manual_previews_by_scope(
             "resource_library", "source"
         )

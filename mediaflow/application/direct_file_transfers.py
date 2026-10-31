@@ -5006,8 +5006,8 @@ def _projection_next_action(task: PersistentTask, transfer_status: str, terminal
         return "the transfer is running; its per-item progress appears here"
     if task.status is PersistentTaskStatus.PAUSED:
         return (
-            "the transfer is paused at a safe boundary; resume continues from the "
-            "recorded checkpoints"
+            "this is a historically paused transfer; resume-from-pause is retired, so "
+            "inspect its recorded item effects and start a fresh bounded operation if needed"
         )
     if task.status is PersistentTaskStatus.CANCELLED:
         return (

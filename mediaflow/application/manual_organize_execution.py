@@ -146,6 +146,20 @@ class _AuthorityPreflight:
     allow_source_cleanup: bool
 
 
+@dataclass(frozen=True)
+class ManualExecutionCancellation:
+    """The exact durable projection of one accepted cancellation.
+
+    ``items`` contains only the execution items whose status changes.  A
+    completed/successful sibling is deliberately left out so the same Task and
+    its recorded Result/attachment effects stay history; the caller publishes
+    these rows together with the Task's cancelled settlement.
+    """
+
+    execution: ManualExecution
+    items: tuple[ManualExecutionItem, ...]
+
+
 class ManualOrganizeExecutionService:
     """Authorize, admit and execute only the current exact Preview scope."""
 
@@ -1286,6 +1300,81 @@ class ManualOrganizeExecutionService:
         )
 
     run_claimed_execution = run_admitted
+
+    def cancellation_settlement(
+        self, execution_id: str, *, now: datetime | None = None
+    ) -> ManualExecutionCancellation | None:
+        """Project the safe cancellation of an execution that is not running.
+
+        This is a zero-mutation projection, not an execution boundary.  It is
+        only offered once no item is still inside an OrganizerExecutor call and
+        no unproved effect exists; an item that already recorded its own result
+        is preserved exactly, and every item that was never started becomes a
+        cancelled sibling with effect certainty ``none``.  ``None`` means the
+        current effect is not yet certain, so the caller keeps the Task claim,
+        its slot and its mutation marker for inspection instead of fabricating
+        a cancelled outcome.
+        """
+
+        current = now or self._clock()
+        if current.tzinfo is None:
+            raise ValueError("manual execution cancellation timestamp needs timezone")
+        execution = self.get(execution_id)
+        if execution.status in _TERMINAL_EXECUTION_STATUSES:
+            return ManualExecutionCancellation(execution, ())
+        changed: list[ManualExecutionItem] = []
+        for item in execution.items:
+            if item.status in _TERMINAL_ITEM_STATUSES:
+                # A recorded success/skip/failure/partial sibling is history and
+                # is never rewritten by the operator's cancellation.
+                continue
+            if item.status is not ManualExecutionItemStatus.ADMITTED:
+                return None
+            if item.effect_certainty in {
+                ExecutionEffectCertainty.ATTEMPTED_UNVERIFIED.value,
+                ExecutionEffectCertainty.UNKNOWN.value,
+            } and (item.result_id is not None or item.completed_operations):
+                return None
+            changed.append(
+                replace(
+                    item,
+                    status=ManualExecutionItemStatus.CANCELLED,
+                    stage="cancelled",
+                    result_id=None,
+                    effect_certainty=ExecutionEffectCertainty.NONE.value,
+                    completed_operations=(),
+                    uncertain_effects=(),
+                    error="task cancelled",
+                    next_action=(
+                        "this item was not executed; the accepted cancellation stops the "
+                        "remaining work at its safe boundary"
+                    ),
+                    updated_at=current,
+                )
+            )
+        cancelled = replace(
+            execution,
+            items=tuple(
+                next(
+                    (
+                        value
+                        for value in changed
+                        if value.execution_item_id == item.execution_item_id
+                    ),
+                    item,
+                )
+                for item in execution.items
+            ),
+            status=ManualExecutionStatus.CANCELLED,
+            next_action=(
+                "cancelled at the operator's safe boundary; completed item results are "
+                "preserved and unfinished siblings were not executed"
+            ),
+            error="task cancelled",
+            updated_at=current,
+            completed_at=current,
+        )
+        return ManualExecutionCancellation(cancelled, tuple(changed))
 
     def list_for_preview(self, preview_id: str, *, limit: int = 100) -> tuple[ManualExecution, ...]:
         """Durable executions of one reviewed Preview, newest first (bounded)."""

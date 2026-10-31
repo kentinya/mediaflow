@@ -71,7 +71,6 @@ from mediaflow.application.operations_lifecycle import (
     TaskLifecycleService,
     bounded_failure_document,
     bounded_identity_path,
-    is_files_worker_task_command,
     job_lifecycle_document,
     job_operator_document,
     manual_action_matrix_operator_document,
@@ -198,7 +197,6 @@ from mediaflow.domain.recovery_continuation import (
     RecoveryContinuationError,
     RecoveryContinuationReason,
 )
-from mediaflow.domain.scope_continuation import ScopeContinuationError
 from mediaflow.domain.security import ApiPermission, ResolvedApiPrincipal, SecurityAuditRecord
 from mediaflow.domain.system_settings import (
     SystemSettingsEdit,
@@ -7615,89 +7613,24 @@ class MediaFlowApi:
             and parts[4] in {"cancel", "pause", "resume"}
             and method == "POST"
         ):
-            # Cooperative Task lifecycle control.  Pause is retired for every
-            # media operation, and resume-from-pause is retired for the
-            # kernel-managed manual work and the ordinary Files transfers and
-            # deletes.  The legacy queued continuation of a historically paused
-            # Task remains as the old-work recovery path the Contract preserves;
-            # it cannot be reached by new work because no new pause can be
-            # created.  A rejected or stale control performs no Provider/Storage
-            # work and is never replayed automatically.
+            # Cooperative Task lifecycle control.  Pause and resume-from-pause
+            # were retired for every media operation, including organizing and
+            # the ordinary Files transfers/deletes.  Their routes stay reachable
+            # so an old Web client, bookmark or script receives one bounded,
+            # truthful refusal with zero effect instead of a hidden back door.
+            # Cancellation keeps its cooperative safe boundary; a four-type
+            # problem continues through its own decision journey.
             self._require(principal, ApiPermission.CANCEL_JOB)
             self._require_empty_query(environ, f"Task {parts[4]}")
             action = parts[4]
             expected_version = self._control_version(environ, f"Task {parts[4]} control")
+            if action in {"pause", "resume"}:
+                return self._retired_pause_control(start_response, action)
             service = TaskLifecycleService(
                 self._repository,
                 snapshot_validator=self._scope_continuations._snapshot_validator,
                 mutation_authority=binding.scope_continuation_authority,
             )
-            if action == "pause":
-                return self._retired_pause_control(start_response, action)
-            if action == "resume":
-                task = service.require(parts[3])
-                service.require_version(task, expected_version)
-                if service.is_kernel_managed(task.task_id) or is_files_worker_task_command(
-                    task.command
-                ):
-                    # The retired controls refuse the kernel-managed manual work
-                    # and the ordinary Files transfers/deletes with one bounded
-                    # no-effect answer.
-                    return self._retired_pause_control(start_response, action)
-                # The legacy shared durable queued continuation of one exact
-                # paused Task's remaining admitted scope.  The request performs
-                # zero Storage work: it revalidates the exact durable state, the
-                # live pin and the applicable execution authority, then queues a
-                # bounded continuation Job for the resident Worker.
-                try:
-                    submission = self._scope_continuations.submit(
-                        task.task_id,
-                        expected_version=expected_version,
-                        actor=principal.principal_id,
-                        maximum_active_jobs=binding.maximum_active_jobs,
-                        mutation_authority=binding.scope_continuation_authority,
-                    )
-                except ScopeContinuationError as error:
-                    raise OperationsLifecycleConflict(
-                        error.reason.value,
-                        str(error),
-                        durable_state=error.durable_state,
-                        next_action=error.next_action,
-                        retry_safe=error.retry_safe,
-                        current_version=error.current_version,
-                    ) from error
-                current = service.require(task.task_id)
-                lifecycle = self._task_lifecycle(
-                    service,
-                    current,
-                    principal,
-                    results=service.results(current.task_id),
-                )
-                return self._response(
-                    start_response,
-                    202,
-                    {
-                        "action": action,
-                        "taskId": current.task_id,
-                        "task": task_operator_document(current),
-                        "lifecycle": lifecycle,
-                        "continuation": scope_continuation_operator_document(
-                            submission.continuation
-                        ),
-                        "jobId": submission.job.job_id,
-                        "durableOutcome": next(
-                            (
-                                item["durableOutcome"]
-                                for item in lifecycle["actions"]
-                                if item["action"] == action
-                            ),
-                            None,
-                        ),
-                        "sideEffects": "none",
-                        "retrySafe": False,
-                        "nextAction": submission.continuation.next_action(),
-                    },
-                )
             task = self._cancel_task(service, parts[3], expected_version, binding)
             lifecycle = self._task_lifecycle(
                 service, task, principal, results=service.results(task.task_id)

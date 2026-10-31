@@ -289,35 +289,30 @@ test("the media transfer journey works at a supported narrow viewport", async ({
   ).toBeVisible();
 });
 
-test("a paused media transfer continues once from its own MediaLibrary progress dialog", async ({
+test("a paused media transfer's retired resume is refused with no replay", async ({
   page,
 }) => {
-  // Slice 38 RO-6/RO-7 + Slice46 RO-3: a paused bounded transfer is durable
-  // ordinary work owned by its MediaLibrary.  The continuation is reachable from
-  // that library's own progress dialog, is submitted exactly once, and is
-  // reported as applied rather than as an unapplied control.
+  // Slice 38 RO-6/RO-7 + Task47.2 M10: the fixture is genuine historical paused
+  // work, but Pause/Continue are retired for every media operation.  The dialog
+  // must expose no Continue action and the existing route must answer with one
+  // bounded, no-effect refusal without replaying the remaining work.
   const taskId = await admitPausedMediaTransfer(page);
   const dialog = page.getByRole("dialog", { name: "复制进度" });
   await expect(dialog.getByText(/传输已在安全边界暂停/)).toBeVisible();
+  await expect(dialog.getByRole("button", { name: "继续传输" })).toHaveCount(0);
+  await expect(dialog.getByRole("button", { name: "请求暂停" })).toHaveCount(0);
 
-  const resumeRequests: string[] = [];
-  page.on("request", (request) => {
-    if (request.method() === "POST" && request.url().includes("/resume")) {
-      resumeRequests.push(request.url());
-    }
+  const refused = await page.request.post(`/api/v1/tasks/${taskId}/resume`, {
+    headers: { Authorization: `Bearer ${VIEWER_TOKEN}` },
+    data: {},
   });
-  await dialog.getByRole("button", { name: "继续传输" }).click();
+  expect(refused.status()).toBe(409);
+  const refusal = await refused.json();
+  expect(refusal.error.code).toBe("pause_retired");
+  expect(refusal.error.details.sideEffects).toBe("none");
 
-  // The accepted continuation is reported truthfully: the durable projection is
-  // re-read as queued work, and the control was applied exactly once.
-  await expect(
-    dialog.getByText(/传输已确认并排队等待执行|等待可用 Worker/),
-  ).toBeVisible();
-  await expect(dialog.getByText(/继续传输未被执行/)).toHaveCount(0);
-  expect(resumeRequests).toHaveLength(1);
-  expect(resumeRequests[0]).toContain(`/api/v1/tasks/${taskId}/resume`);
   const [transfer] = await durableMediaTransfers(page);
-  expect(transfer.status).toBe("QUEUED");
+  expect(transfer.status).toBe("PAUSED");
 });
 
 test("a paused transfer's retired administrative deep link reaches its own library without replaying it", async ({

@@ -3429,14 +3429,6 @@ function organizeDiscoveryDocument(discovery) {
         sideEffects: "none",
         refusal: limited ? "discovery_budget_limited" : null,
       },
-      pause: {
-        available: !completed && discovery.status !== "paused",
-        method: "POST",
-        path: `/api/v1/operations/organize/discoveries/${ORGANIZE_DISCOVERY_ID}/pause`,
-        requiresVersion: true,
-        sideEffects: "none",
-        refusal: null,
-      },
       prepare: {
         available:
           autoPrepare &&
@@ -3448,14 +3440,6 @@ function organizeDiscoveryDocument(discovery) {
           "the resident Worker re-runs the complete zero-mutation analysis under the same pinned configuration and links a new exact Preview",
         method: "POST",
         path: `/api/v1/operations/organize/discoveries/${ORGANIZE_DISCOVERY_ID}/analyze`,
-        requiresVersion: true,
-        sideEffects: "none",
-        refusal: null,
-      },
-      resume: {
-        available: discovery.status === "paused",
-        method: "POST",
-        path: `/api/v1/operations/organize/discoveries/${ORGANIZE_DISCOVERY_ID}/resume`,
         requiresVersion: true,
         sideEffects: "none",
         refusal: null,
@@ -9243,6 +9227,22 @@ const server = createServer(async (req, res) => {
     }
     const state = resourceLibraryState(session);
     const action = discoveryControlMatch[2];
+    if (action === "pause" || action === "resume") {
+      sendJson(res, 409, {
+        error: {
+          code: "pause_retired",
+          message:
+            "pause and resume-from-pause were retired for every media operation",
+          details: {
+            action,
+            durableState: "unchanged; no pause or resume request was recorded",
+            sideEffects: "none",
+            retrySafe: false,
+          },
+        },
+      });
+      return;
+    }
     if (
       !state.discovery ||
       state.discovery.discoveryId !==
@@ -9271,9 +9271,7 @@ const server = createServer(async (req, res) => {
       return;
     }
     state.discovery.version += 1;
-    if (action === "pause") state.discovery.status = "paused";
     if (action === "cancel") state.discovery.status = "cancelled";
-    if (action === "resume") state.discovery.status = "running";
     if (action === "analyze") {
       // A re-analysis clears the earlier linked plan summary and links the
       // ordinary exact Preview under the same pinned configuration.  No
@@ -9790,30 +9788,20 @@ const server = createServer(async (req, res) => {
       status: terminal ? transfer.status : transfer.status,
       terminal,
       version: transfer.version,
-      actions: terminal
-        ? [
-            { action: "pause", available: false },
-            { action: "cancel", available: false },
-            { action: "resume", available: false },
-          ]
-        : [
-            {
-              action: "pause",
-              available: transfer.status === "RUNNING",
-              path: `/api/v1/tasks/${transfer.taskId}/pause`,
-            },
-            {
-              action: "cancel",
-              available: true,
-              path: `/api/v1/tasks/${transfer.taskId}/cancel`,
-            },
-            { action: "resume", available: false },
-          ],
+      actions: [
+        {
+          action: "cancel",
+          available: !terminal,
+          ...(terminal
+            ? { reason: "the transfer already reached a terminal state" }
+            : { path: `/api/v1/tasks/${transfer.taskId}/cancel` }),
+        },
+      ],
       sideEffects: transfer.status === "QUEUED" ? "none" : "storage_mutations",
       retrySafe: false,
       nextAction: terminal
         ? "refresh the source and destination directories to see the current state"
-        : "the transfer progress appears here; pause or cancel only when offered",
+        : "the transfer progress appears here; cancel is the only cooperative control",
     });
     return;
   }
@@ -11328,35 +11316,15 @@ const server = createServer(async (req, res) => {
       status: transfer.status,
       terminal,
       version: transfer.version,
-      actions: terminal
-        ? [
-            { action: "pause", available: false },
-            { action: "cancel", available: false },
-            { action: "resume", available: false },
-          ]
-        : [
-            {
-              action: "pause",
-              available: transfer.status === "RUNNING",
-              path: `/api/v1/tasks/${transfer.taskId}/pause`,
-            },
-            {
-              action: "cancel",
-              available: true,
-              path: `/api/v1/tasks/${transfer.taskId}/cancel`,
-            },
-            transfer.status === "PAUSED"
-              ? {
-                  action: "resume",
-                  available: true,
-                  path: `/api/v1/tasks/${transfer.taskId}/resume`,
-                }
-              : {
-                  action: "resume",
-                  available: false,
-                  reason: "the transfer is queued or running",
-                },
-          ],
+      actions: [
+        {
+          action: "cancel",
+          available: !terminal,
+          ...(terminal
+            ? { reason: "the transfer already reached a terminal state" }
+            : { path: `/api/v1/tasks/${transfer.taskId}/cancel` }),
+        },
+      ],
       sideEffects: transfer.status === "QUEUED" ? "none" : "storage_mutations",
       retrySafe: false,
       nextAction: terminal
@@ -12893,33 +12861,6 @@ const server = createServer(async (req, res) => {
       : "the connected API principal does not hold the cancel_job permission required for this control";
     const terminal = TERMINAL_TASK_STATUSES.has(task.status);
     const cancellable = CANCELLABLE_TASK_STATUSES.has(task.status);
-    // A bounded Copy/Move transfer is the one Task kind with a durable queued
-    // continuation authority, so a paused transfer really does advertise resume
-    // (Slice 38 RO-6); every other paused Task keeps the truthful CLI handoff.
-    const resumable =
-      (task.command === "files_transfer" ||
-        task.command === "media_files_transfer") &&
-      task.status === "paused";
-    // The shared durable queued continuation boundary: a paused scan/preview/
-    // organize Task really does admit its remaining admitted scope for
-    // resident-Worker pickup (Slice 42 RO-5). A mutation-authorized Task whose
-    // live authority is gone is refused with the native exact-Preview recovery
-    // entry, exactly as the real backend projects it.
-    const continuable =
-      CONTINUABLE_TASK_COMMANDS.has(task.command) && task.status === "paused";
-    const authorityRequired =
-      continuable &&
-      task.execute_authorized === true &&
-      task.live_authority !== true;
-    // The native recovery entry is judged by the recovery preparation's own
-    // eligibility, exactly as the real backend projects it: a withheld
-    // Continue advertises the zero-mutation review whenever the run's remaining
-    // scope can still be reviewed (a full recorded budget does not close it),
-    // and never when the run really has nothing left to recover.
-    const recoveryAvailable =
-      continuable &&
-      task.has_remaining_scope !== false &&
-      task.recovery_blocked_reason === undefined;
     const uncertain = results.some(
       (result) => result.effect_certainty === "attempted_unverified",
     );
@@ -12929,13 +12870,6 @@ const server = createServer(async (req, res) => {
     let cancelReason = permissionReason;
     if (cancelReason === null && !cancellable) {
       cancelReason = `a ${task.status} Task cannot be cancelled`;
-    }
-    let pauseReason = permissionReason;
-    if (pauseReason === null && task.pause_requested) {
-      pauseReason =
-        "a durable pause request is already stored and is acknowledged at the next supported item boundary";
-    } else if (pauseReason === null && task.status !== "running") {
-      pauseReason = `only a running Task accepts a pause request; this Task is ${task.status}`;
     }
     return {
       objectType: "task",
@@ -12977,67 +12911,6 @@ const server = createServer(async (req, res) => {
             nextAction:
               "refresh the Task to read the durable cancelled state and the independent item outcomes",
           },
-        ),
-        taskAction(
-          "pause",
-          "Request pause",
-          permitted && task.status === "running" && !task.pause_requested,
-          pauseReason,
-        ),
-        taskAction(
-          "resume",
-          "Resume Task",
-          permitted && (resumable || (continuable && !authorityRequired)),
-          permissionReason ??
-            (resumable
-              ? null
-              : continuable
-                ? authorityRequired
-                  ? "the stored execute flag is not authority: the original execution authority was consumed, expired or revoked, so continuing would mutate media without a live reusable authority; review the exact Preview of the remaining scope and authorize execution again"
-                  : null
-                : "only a durably paused Task of a continuable kind has a remaining scope to continue"),
-          resumable
-            ? {
-                durableOutcome:
-                  "the transfer is re-queued for the resident Worker; it continues only from each item's recorded known-safe checkpoint and never replays completed or uncertain mutations",
-                sideEffects:
-                  "no Storage mutation in this request; the Worker later continues the remaining transfer through OrganizerExecutor",
-                nextAction:
-                  "resume re-queues the transfer; follow its progress in the Files workspace or Operations",
-              }
-            : continuable
-              ? {
-                  durableOutcome:
-                    "a durable continuation of this Task's exact remaining admitted scope is queued for the resident Worker, which preserves the original immutable pin and excludes every completed, ignored, waiting or uncertain item",
-                  sideEffects:
-                    "no Storage mutation in this request; the Worker later continues the remaining scope through OrganizerExecutor under its own claim and revalidated authority",
-                  nextAction: authorityRequired
-                    ? "open the run's exact Preview, review the remaining scope, and authorize execution again from 操作与任务"
-                    : "follow the linked continuation run for its independent per-item outcomes",
-                  ...(recoveryAvailable && !(permitted && !authorityRequired)
-                    ? {
-                        preview: {
-                          available: true,
-                          reason: null,
-                          method: "POST",
-                          path: `/api/v1/tasks/${task.task_id}/remaining-scope-previews`,
-                          requiresConfirmation: false,
-                          sideEffects: "none",
-                          durableOutcome:
-                            "a durable zero-mutation exact Preview of the remaining eligible scope is stored under the run's original immutable pin; it grants no execution authority",
-                          nextAction:
-                            "review the exact Preview, then make one fresh explicit execution intent for only the eligible remaining scope",
-                        },
-                      }
-                    : {}),
-                }
-              : {
-                  durableOutcome:
-                    "not offered: no durable queued continuation of this exact paused scope exists",
-                  sideEffects: "none",
-                  nextAction:
-                    "review the Task's recorded per-item outcomes; only a paused continuable Task has a remaining scope",
-                },
         ),
       ],
     };
@@ -13367,9 +13240,25 @@ const server = createServer(async (req, res) => {
     if (!operationsGuard(res)) {
       return;
     }
-    const action = taskControlMatch[2];
     if (!operationsPrincipal.permitted) {
       sendJson(res, 403, { error: { code: "forbidden" } });
+      return;
+    }
+    const action = taskControlMatch[2];
+    if (action === "pause" || action === "resume") {
+      sendJson(res, 409, {
+        error: {
+          code: "pause_retired",
+          message:
+            "pause and resume-from-pause were retired for every media operation",
+          details: {
+            action,
+            durableState: "unchanged; no pause or resume request was recorded",
+            sideEffects: "none",
+            retrySafe: false,
+          },
+        },
+      });
       return;
     }
     const taskId = decodeURIComponent(taskControlMatch[1]);

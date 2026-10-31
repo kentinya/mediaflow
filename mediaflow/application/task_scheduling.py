@@ -30,6 +30,7 @@ from dataclasses import replace
 from datetime import UTC, datetime
 from uuid import NAMESPACE_URL, uuid4, uuid5
 
+from mediaflow.domain.manual_execution import ManualExecution, ManualExecutionItem
 from mediaflow.domain.media_evidence import PipelineEvidence
 from mediaflow.domain.task_persistence import (
     FileOperationLockRepository,
@@ -320,6 +321,8 @@ class TaskSchedulingService:
         claim: ScheduledTaskClaim,
         *,
         discovery=None,
+        execution: ManualExecution | None = None,
+        execution_items: tuple[ManualExecutionItem, ...] = (),
         now: datetime | None = None,
     ) -> TaskSchedulingState:
         """Acknowledge the accepted pause/cancel at the owner's safe boundary.
@@ -329,7 +332,9 @@ class TaskSchedulingService:
         this call fail closed instead of settling a request the owner never saw.
         The Task aggregate and its affected items commit with the released slot,
         so the durable record can never show a released slot beside work that
-        still claims to be running.
+        still claims to be running.  A linked manual execution's cancellation
+        projection is published in that same transaction, so its remaining
+        items can never stay ``running`` beside a settled Task.
         """
 
         current = self._now(now)
@@ -344,6 +349,8 @@ class TaskSchedulingService:
             current,
             fence=claim.fence(current),
             discovery=discovery,
+            execution=execution,
+            execution_items=execution_items,
         )
 
     def defer_to_human(
@@ -692,6 +699,8 @@ class TaskSchedulingService:
         *,
         fence: TaskClaimFence | None,
         discovery=None,
+        execution: ManualExecution | None = None,
+        execution_items: tuple[ManualExecutionItem, ...] = (),
     ) -> TaskSchedulingState:
         control = state.control_request
         if control is None:
@@ -749,6 +758,8 @@ class TaskSchedulingService:
             stage=None,
             expected_control_revision=state.control_revision,
             discovery=discovery,
+            manual_execution=execution,
+            manual_execution_items=execution_items,
         )
         if released is None:
             raise TaskClaimFenceLost(f"task {task.task_id!r} is no longer owned by this Worker")
