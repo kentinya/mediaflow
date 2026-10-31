@@ -2099,7 +2099,7 @@ test("a paused run's retired resume control is refused with no new work", async 
   expect(afterRestart.continuations).toHaveLength(0);
 });
 
-test("a paused run with a missing configuration pin cannot create a remaining-scope Preview", async ({
+test("the retired remaining-scope entry rejects without inspecting a historical pin", async ({
   page,
   request,
 }) => {
@@ -2140,19 +2140,16 @@ test("a paused run with a missing configuration pin cannot create a remaining-sc
   await expect(
     controls.getByRole("list", { name: "不可用的运行控制" }),
   ).toHaveCount(0);
-  // The UI does not offer an exact Preview when it cannot reconstruct the
-  // original immutable scope. A direct API probe still proves zero effects.
+  // Retirement wins before any old scope/pin restoration. This route cannot
+  // create a Preview, authorization or continuation under any historical pin.
   const refusedPreview = await request.post(
     `${BASE}/api/v1/tasks/${taskId}/remaining-scope-previews`,
     { headers: { Authorization: `Bearer ${ADMIN_TOKEN}` } },
   );
   expect(refusedPreview.status()).toBe(409);
   const refusal = await refusedPreview.json();
-  expect(refusal.error.code).toBe("snapshot_unavailable");
+  expect(refusal.error.code).toBe("scope_continuation_retired");
   expect(refusal.error.details.sideEffects).toBe("none");
-  expect(refusal.error.details.nextAction).toContain(
-    "restore the pinned published configuration revision",
-  );
   await expect(detail.getByRole("region", { name: "新计划摘要" })).toHaveCount(
     0,
   );

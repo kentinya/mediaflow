@@ -15879,6 +15879,56 @@ class SQLiteTaskRepository:
                 if cursor.rowcount != 1:
                     current = self._load_media_discovery_locked(discovery.discovery_id)
                     self._raise_discovery_write_conflict(current, discovery, claim_token)
+                if discovery.organize_task_id is not None:
+                    scheduling = self._scheduled_state_locked(discovery.organize_task_id)
+                    if scheduling is not None:
+                        if (
+                            scheduling.claim_token != claim_token
+                            or not scheduling.claim_live_at(discovery.updated_at)
+                            or scheduling.queue_state is not TaskQueueState.CLAIMED
+                        ):
+                            raise TaskClaimFenceLost("the analyzed Task claim is no longer live")
+                        # Ready files need durable items too. Otherwise confirming
+                        # one subset makes the Task appear complete and strands
+                        # every unselected source which needed no business review.
+                        for value in values:
+                            source = value.source
+                            existing = self._connection.execute(
+                                "SELECT 1 FROM task_items WHERE task_id=? AND storage_id=? "
+                                "AND source_path=?",
+                                (discovery.organize_task_id, source.storage_id, source.path),
+                            ).fetchone()
+                            if existing is not None:
+                                continue  # Preserve reviews, attempts and settled siblings.
+                            occurrence = source.occurrence_id or source.fingerprint or ""
+                            item_id = str(
+                                uuid5(
+                                    NAMESPACE_URL,
+                                    f"{discovery.organize_task_id}:{source.storage_id}:"
+                                    f"{source.path}:{occurrence}",
+                                )
+                            )
+                            ready = value.status is ManualPreviewItemStatus.PREVIEWED
+                            item = PersistentTaskItem(
+                                item_id,
+                                discovery.organize_task_id,
+                                source.storage_id,
+                                source.resource_library_id,
+                                source.path,
+                                f"{source.storage_id}:{source.path}",
+                                TaskItemStatus.WAITING_CONFIRM if ready else TaskItemStatus.FAILED,
+                                "waiting_confirm" if ready else "analysis_failed",
+                                0,
+                                discovery.updated_at,
+                                discovery.updated_at,
+                                error=None if ready else value.error,
+                                source_occurrence_id=source.occurrence_id,
+                                source_fingerprint=source.fingerprint,
+                                source_fingerprint_state=source.occurrence_state,
+                                source_observed_at=source.observed_at,
+                            )
+                            self._connection.execute(_TASK_ITEM_INSERT, self._item_values(item))
+                        self._refresh_task_item_counts_locked(discovery.organize_task_id)
                 self._connection.commit()
             except BaseException:
                 self._connection.rollback()

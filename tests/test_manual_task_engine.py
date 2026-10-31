@@ -1496,6 +1496,49 @@ class ManualTaskDiscoveryTests(_DiscoveryFixture):
             self.assertFalse((self.source_root / "Movies/One.2001.mkv").exists())
             self.assertFalse((self.source_root / "Movies/Two.2002.mkv").exists())
 
+    def test_ready_sources_remain_on_the_task_after_subset_execution(self) -> None:
+        """Files needing no decision still own items before any confirmation."""
+        provider = self._two_file_recognition_journey()
+        with self.journey(provider=provider, task_scheduling=True, attachments=True) as value:
+            status, admitted = self._admit(value, ["Movies/One.2001.mkv", "Movies/Two.2002.mkv"])
+            self.assertEqual(202, status, admitted)
+            task_id = admitted["organizeTaskId"]
+            discovery = self._drive(value, task_id)
+            items = value.repository.list_items(task_id)
+            self.assertEqual(2, len(items))
+            self.assertTrue(all(item.status is TaskItemStatus.WAITING_CONFIRM for item in items))
+            self.assertEqual([], value.source.mutations)
+            self.assertEqual([], value.target.mutations)
+            status, preview = self.request(
+                value, f"/api/v1/operations/organize/previews/{discovery.preview_id}"
+            )
+            self.assertEqual(200, status, preview)
+            first = next(
+                item["itemId"]
+                for item in preview["items"]
+                if item["source"]["path"] == "Movies/One.2001.mkv"
+            )
+            task = self._execute(value, task_id, preview, [first])
+            self.assertIs(task.status, PersistentTaskStatus.RUNNING)
+            self.assertEqual((2, 1, 0), (task.total_items, task.completed_items, task.failed_items))
+            self.assertIs(
+                value.repository.get_task_scheduling(task_id).queue_state,
+                TaskQueueState.WAITING_HUMAN,
+            )
+            first_result = value.repository.list_results(task_id)[0]
+            self.assertTrue((self.source_root / "Movies/Two.2002.mkv").exists())
+            remaining = self._analyze(value, task_id, discovery)
+            self.assertEqual(1, len(remaining["items"]))
+            task = self._execute(value, task_id, remaining, [remaining["items"][0]["itemId"]])
+            self.assertIs(task.status, PersistentTaskStatus.COMPLETED)
+            self.assertEqual((2, 2, 0), (task.total_items, task.completed_items, task.failed_items))
+            self.assertIn(first_result, value.repository.list_results(task_id))
+            self.assertEqual(2, len(value.repository.list_results(task_id)))
+            self.assertEqual((), value.repository.list_jobs(limit=10))
+            with SQLiteTaskRepository(self.database) as reopened:
+                self.assertEqual(2, reopened.get_task(task_id).completed_items)
+                self.assertEqual(2, len(reopened.list_results(task_id)))
+
     def test_native_summary_is_confirmable_on_the_same_task_from_the_center(self) -> None:
         """The Task Center reads and confirms the Task's own linked summary.
 

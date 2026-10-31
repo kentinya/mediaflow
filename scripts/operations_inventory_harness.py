@@ -1798,6 +1798,44 @@ def register_manual_worker(state: AppState) -> dict[str, object]:
     return {"registered": True}
 
 
+def _run_manual_task_once(state: AppState):
+    """Advance new Files work with the resident's production Task engine.
+
+    Legacy runners deliberately exclude these rows. Reuse the API's real
+    services and registered Worker identity, including the kernel claim/fence;
+    no fixture row or durable stage is manufactured here.
+    """
+    from mediaflow.application.manual_task_engine import ManualTaskEngineWorker
+    from mediaflow.application.task_scheduling import TaskSchedulingService
+
+    register_manual_worker(state)
+    return ManualTaskEngineWorker(
+        state.repository,
+        TaskSchedulingService(
+            state.repository,
+            capacity=state.managed.runtime.automation_maximum_active_jobs,
+            locks=state.repository,
+        ),
+        state.api._media_discovery,
+        state.api._manual_execution,
+        worker_id="harness-manual-worker",
+    ).run_next()
+
+
+def _run_discovery_step(state: AppState):
+    from mediaflow.application.media_discovery_worker import MediaDiscoveryWorker
+
+    advanced = MediaDiscoveryWorker(
+        state.api._media_discovery,
+        worker_id="harness-discovery-worker",
+        notice=lambda _line: None,
+    ).run_next()
+    if advanced is not None:
+        return advanced
+    task = _run_manual_task_once(state)
+    return state.repository.get_media_discovery_for_task(task.task_id) if task else None
+
+
 def run_discovery_worker_once(state: AppState) -> dict[str, object]:
     """Advance one admitted preparation through the real bounded-discovery Worker.
 
@@ -1807,16 +1845,11 @@ def run_discovery_worker_once(state: AppState) -> dict[str, object]:
     journey can observe the real durable stages.
     """
 
-    from mediaflow.application.media_discovery_worker import MediaDiscoveryWorker
-
     service = getattr(state.api, "_media_discovery", None)
     if service is None:
         return {"advanced": False, "reason": "no media discovery service"}
     with state._manual_lock:
-        worker = MediaDiscoveryWorker(
-            service, worker_id="harness-discovery-worker", notice=lambda _line: None
-        )
-        advanced = worker.run_next()
+        advanced = _run_discovery_step(state)
         if advanced is None:
             return {"advanced": False, "reason": "no admitted discovery"}
         durable = state.repository.get_media_discovery(advanced.discovery_id)
@@ -1842,17 +1875,12 @@ def run_discovery_worker_for(state: AppState, *, discovery_id: str) -> dict[str,
     and never fabricates a stage.
     """
 
-    from mediaflow.application.media_discovery_worker import MediaDiscoveryWorker
-
     service = getattr(state.api, "_media_discovery", None)
     if service is None:
         return {"advanced": False, "reason": "no media discovery service"}
     with state._manual_lock:
-        worker = MediaDiscoveryWorker(
-            service, worker_id="harness-discovery-worker", notice=lambda _line: None
-        )
         for _ in range(16):
-            advanced = worker.run_next()
+            advanced = _run_discovery_step(state)
             if advanced is None:
                 break
             if advanced.discovery_id == discovery_id:
@@ -1894,6 +1922,28 @@ def run_manual_worker_once(state: AppState) -> dict[str, object]:
                 worker_id="harness-manual-worker",
                 notice=lambda _line: None,
             ).run_next()
+            if completed is None:
+                before = {
+                    value.execution_id: value
+                    for task in state.repository.list_tasks(limit=1000, command="manual_organize")
+                    if state.repository.get_task_scheduling(task.task_id) is not None
+                    for value in state.repository.list_manual_executions_for_task(task.task_id)
+                }
+                task = _run_manual_task_once(state)
+                if task is not None:
+                    # A Task can stay running for an unselected sibling while
+                    # this exact execution has completed. Report the execution,
+                    # and never report a previous subset as newly processed.
+                    completed = next(
+                        (
+                            value
+                            for value in state.repository.list_manual_executions_for_task(
+                                task.task_id
+                            )
+                            if value != before.get(value.execution_id)
+                        ),
+                        None,
+                    )
         finally:
             manual_execution._executor = actual_executor
         if completed is None:
