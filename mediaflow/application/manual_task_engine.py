@@ -13,6 +13,7 @@ from __future__ import annotations
 import secrets
 import sys
 from collections.abc import Callable
+from dataclasses import replace
 from datetime import UTC, datetime
 
 from mediaflow.domain.manual_execution import (
@@ -25,6 +26,7 @@ from mediaflow.domain.task_persistence import (
     PersistentTask,
     PersistentTaskStatus,
     TaskItemStatus,
+    task_item_counts,
 )
 from mediaflow.domain.task_scheduling import (
     TaskClaimFenceLost,
@@ -220,6 +222,7 @@ class ManualTaskEngineWorker:
         if discovery.status is DiscoveryStatus.CANCELLED:
             updated_task = self._task_for_discovery(task, discovery, now)
             items = self._terminal_items(task.task_id, TaskItemStatus.CANCELLED, now)
+            updated_task = self._with_counts(updated_task, overrides=items)
             try:
                 self._scheduling.publish_task(claim, updated_task, now=now)
                 self._scheduling.settle(claim, task=updated_task, items=items, now=now)
@@ -229,6 +232,7 @@ class ManualTaskEngineWorker:
         if discovery.status is DiscoveryStatus.FAILED:
             updated_task = self._task_for_discovery(task, discovery, now)
             items = self._terminal_items(task.task_id, TaskItemStatus.FAILED, now)
+            updated_task = self._with_counts(updated_task, overrides=items)
             self._scheduling.settle(claim, task=updated_task, items=items, now=now)
             return self._task(claim.task_id)
         # A completed/partial walk may still have a linked exact plan summary
@@ -250,21 +254,26 @@ class ManualTaskEngineWorker:
         items = self._repository.list_items(task.task_id)
         processing = tuple(value for value in items if value.status is TaskItemStatus.PROCESSING)
         if processing:
-            return self._yield_until(claim, updated_task, now, TaskMachineStage.ANALYSIS)
-        waiting = tuple(value for value in items if value.status is TaskItemStatus.PENDING)
-        for item in waiting:
-            self._scheduling.record_item(
-                claim,
-                self._replace_item(item, TaskItemStatus.WAITING_CONFIRM, "waiting_confirm", now),
-                now=now,
+            return self._yield_until(
+                claim, self._with_counts(updated_task), now, TaskMachineStage.ANALYSIS
             )
+        waiting = tuple(
+            self._replace_item(item, TaskItemStatus.WAITING_CONFIRM, "waiting_confirm", now)
+            for item in items
+            if item.status is TaskItemStatus.PENDING
+        )
+        # The published aggregate describes the whole admitted work, so the
+        # Task's own file count never collapses to the last subset that was
+        # analysed or confirmed.
+        updated_task = self._with_counts(updated_task, overrides=waiting)
+        self._scheduling.publish_task(claim, updated_task, now=now)
+        for item in waiting:
+            self._scheduling.record_item(claim, item, now=now)
         self._scheduling.defer_to_human(claim, task=updated_task, items=(), now=now)
         return self._task(claim.task_id)
 
     @staticmethod
     def _replace_item(item, status: TaskItemStatus, stage: str, now: datetime):
-        from dataclasses import replace
-
         return replace(item, status=status, stage=stage, updated_at=now, error=None)
 
     # -- Execution -----------------------------------------------------------
@@ -336,29 +345,30 @@ class ManualTaskEngineWorker:
                 # source were done; the operator decides and continues on this
                 # same Task.  A still-processing sibling is genuine machine work
                 # and keeps the slot through the ordinary path below.
-                updated = self._with_status(
-                    task, PersistentTaskStatus.RUNNING, now, execution.error
+                waiting = tuple(
+                    self._replace_item(item, TaskItemStatus.WAITING_CONFIRM, "waiting_confirm", now)
+                    for item in outstanding
+                    if item.status is TaskItemStatus.PENDING
+                )
+                updated = self._with_counts(
+                    self._with_status(task, PersistentTaskStatus.RUNNING, now, execution.error),
+                    overrides=waiting,
                 )
                 self._scheduling.publish_task(claim, updated, now=now)
-                for item in outstanding:
-                    if item.status is TaskItemStatus.PENDING:
-                        self._scheduling.record_item(
-                            claim,
-                            self._replace_item(
-                                item, TaskItemStatus.WAITING_CONFIRM, "waiting_confirm", now
-                            ),
-                            now=now,
-                        )
+                for item in waiting:
+                    self._scheduling.record_item(claim, item, now=now)
                 self._scheduling.defer_to_human(claim, task=updated, items=(), now=now)
                 return self._task(claim.task_id)
-            updated = self._with_status(task, status, now, execution.error)
+            updated = self._with_counts(self._with_status(task, status, now, execution.error))
             self._scheduling.settle(claim, task=updated, items=items, now=now)
             return self._task(claim.task_id)
-        updated = self._with_status(
-            task,
-            PersistentTaskStatus.RUNNING,
-            now,
-            execution.error,
+        updated = self._with_counts(
+            self._with_status(
+                task,
+                PersistentTaskStatus.RUNNING,
+                now,
+                execution.error,
+            )
         )
         self._scheduling.publish_task(claim, updated, now=now)
         items = self._repository.list_items(task.task_id)
@@ -427,6 +437,7 @@ class ManualTaskEngineWorker:
         now = self._clock()
         updated = self._with_status(task, PersistentTaskStatus.FAILED, now, error)
         items = self._terminal_items(task.task_id, TaskItemStatus.FAILED, now)
+        updated = self._with_counts(updated, overrides=items)
         self._scheduling.settle(claim, task=updated, items=items, now=now)
         return self._task(claim.task_id)
 
@@ -438,6 +449,7 @@ class ManualTaskEngineWorker:
         message = self._bounded_error(error)
         updated = self._with_status(task, PersistentTaskStatus.FAILED, now, message)
         items = self._terminal_items(task.task_id, TaskItemStatus.FAILED, now, message)
+        updated = self._with_counts(updated, overrides=items)
         try:
             self._scheduling.settle(claim, task=updated, items=items, now=now)
         except TaskControlRejected:
@@ -456,6 +468,7 @@ class ManualTaskEngineWorker:
             message = self._bounded_error(error)
             updated = self._with_status(task, PersistentTaskStatus.FAILED, now, message)
             items = self._terminal_items(task.task_id, TaskItemStatus.FAILED, now, message)
+            updated = self._with_counts(updated, overrides=items)
             self._scheduling.settle(claim, task=updated, items=items, now=now)
         except Exception:
             return
@@ -549,6 +562,26 @@ class ManualTaskEngineWorker:
         }.get(discovery.status, PersistentTaskStatus.RUNNING)
         return self._with_status(task, status, now, discovery.error)
 
+    def _with_counts(self, task: PersistentTask, *, overrides=()) -> PersistentTask:
+        """Publish the whole admitted work's totals with this pass applied.
+
+        The durable TaskItem population is the Task's own file list: one concrete
+        source per row.  A later confirmed subset can never shrink those totals to
+        its own selection, and a retained/ignored/failed sibling stays counted
+        exactly as it was recorded.
+        """
+
+        values = {item.item_id: item for item in self._repository.list_items(task.task_id)}
+        for item in overrides:
+            values[item.item_id] = item
+        total_items, completed_items, failed_items = task_item_counts(values.values())
+        return replace(
+            task,
+            total_items=total_items,
+            completed_items=completed_items,
+            failed_items=failed_items,
+        )
+
     @staticmethod
     def _with_status(
         task: PersistentTask,
@@ -556,8 +589,6 @@ class ManualTaskEngineWorker:
         now: datetime,
         error: str | None,
     ) -> PersistentTask:
-        from dataclasses import replace
-
         terminal = status in {
             PersistentTaskStatus.COMPLETED,
             PersistentTaskStatus.PARTIAL_SUCCESS,
@@ -581,8 +612,6 @@ class ManualTaskEngineWorker:
         now: datetime,
         error: str | None = None,
     ):
-        from dataclasses import replace
-
         values = []
         for item in self._repository.list_items(task_id):
             if item.status not in {TaskItemStatus.PENDING, TaskItemStatus.PROCESSING}:

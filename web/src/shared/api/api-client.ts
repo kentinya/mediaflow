@@ -2049,6 +2049,12 @@ export interface RecoveryCommandAck {
   readonly identity: string;
   readonly sideEffects: "none";
   readonly nextAction: string;
+  /**
+   * True when the continuation runs on the same admitted Task (its own linked
+   * analysis) instead of a legacy recovery Job.  The identity is then that
+   * analysis' durable preparation, never a Job or child Task.
+   */
+  readonly nativeAnalysis: boolean;
 }
 
 function normalizeRecoveryCommandAck(payload: unknown): RecoveryCommandAck {
@@ -2056,11 +2062,22 @@ function normalizeRecoveryCommandAck(payload: unknown): RecoveryCommandAck {
   if (source["sideEffects"] !== "none") {
     throw new Error("recovery command side effects did not match the contract");
   }
+  // A Task-engine continuation names the same Task's linked Files preparation
+  // as its durable identity.  It never publishes a Job or a child Task, so the
+  // caller must not be given a fabricated continuation identity.
+  const nativeAnalysis = source["nativeAnalysis"];
+  const nativeIdentity =
+    typeof nativeAnalysis === "object" &&
+    nativeAnalysis !== null &&
+    !Array.isArray(nativeAnalysis)
+      ? (nativeAnalysis as Record<string, unknown>)["discoveryId"]
+      : undefined;
   const identity =
     source["continuation_id"] ??
     source["continuationId"] ??
     source["requestId"] ??
-    source["batch_id"];
+    source["batch_id"] ??
+    nativeIdentity;
   return {
     identity: normalizeBoundedText(identity, "recovery identity"),
     sideEffects: "none",
@@ -2068,6 +2085,7 @@ function normalizeRecoveryCommandAck(payload: unknown): RecoveryCommandAck {
       source["next_action"] ?? source["nextAction"],
       "next_action",
     ),
+    nativeAnalysis: nativeIdentity !== undefined,
   };
 }
 

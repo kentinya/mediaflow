@@ -67,6 +67,8 @@ from mediaflow.domain.task_persistence import (
     PersistentTaskStatus,
     RunDisplayContext,
     TaskItemStatus,
+    task_item_counts,
+    task_work_status,
 )
 from mediaflow.domain.task_scheduling import TaskQueueFull
 
@@ -2043,7 +2045,21 @@ class ManualOrganizeExecutionService:
             **self._aggregate_execution(current_items),
             updated_at=terminal_item.updated_at,
         )
-        task = self._task_after_item(task, terminal_task_item, current_items, execution)
+        task = self._task_after_item(
+            task,
+            terminal_task_item,
+            current_items,
+            execution,
+            # A kernel-managed Task's aggregate describes every concrete source
+            # it owns, not only the subset this execution confirmed.  The
+            # terminal row is overlaid because it is published in the same
+            # transaction below.
+            durable_items=(
+                self._durable_task_items(task.task_id, overrides=(terminal_task_item,))
+                if task_context is not None
+                else None
+            ),
+        )
         task_fence = None
         if task_context is not None:
             task_service, task_claim = task_context
@@ -3901,8 +3917,56 @@ class ManualOrganizeExecutionService:
             "completed_at": datetime.now(UTC) if completed else None,
         }
 
-    @staticmethod
-    def _task_after_item(task, task_item, items, execution):
+    def _durable_task_items(self, task_id: str, *, overrides=()):
+        """Every concrete source this Task already owns, with this pass overlaid.
+
+        The repository read is the durable population of the whole Task (one row
+        per concrete source).  ``overrides`` replaces the rows this pass is about
+        to publish, so the aggregate committed in the same transaction already
+        accounts for them without a second write.
+        """
+
+        values = {item.item_id: item for item in self._repository.list_items(task_id)}
+        for item in overrides:
+            values[item.item_id] = item
+        return tuple(values.values())
+
+    def _task_after_item(self, task, task_item, items, execution, *, durable_items=None):
+        """Publish one Task aggregate after this execution's item outcome.
+
+        A Task admitted by the scheduling kernel may own more than one
+        explicitly confirmed execution, so its totals and its status are derived
+        from the *whole* durable source population (``durable_items``) — a later
+        confirmation of another subset can neither shrink the total to that
+        subset nor overwrite an earlier sibling's recorded outcome.  The legacy
+        synchronous path keeps deriving the aggregate from this execution's own
+        items, exactly as it did before.
+        """
+
+        if durable_items is not None:
+            population = tuple(durable_items)
+            status = task_work_status(population)
+            total_items, completed_items, failed_items = task_item_counts(population)
+            return replace(
+                task,
+                status=status,
+                updated_at=task_item.updated_at,
+                completed_at=(
+                    task_item.updated_at
+                    if status
+                    in {
+                        PersistentTaskStatus.COMPLETED,
+                        PersistentTaskStatus.PARTIAL_SUCCESS,
+                        PersistentTaskStatus.FAILED,
+                        PersistentTaskStatus.CANCELLED,
+                    }
+                    else None
+                ),
+                total_items=total_items,
+                completed_items=completed_items,
+                failed_items=failed_items,
+                error=execution.error,
+            )
         terminal = all(
             value.status
             in {

@@ -37,6 +37,12 @@ function outcomeMessage(code: string, status: number): string {
   if (code === "stale_checkpoint" || code === "decision_changed") {
     return "条目已变化。先重新读取当前证据，再决定下一步。";
   }
+  if (code === "capacity_full" || code === "queue_full") {
+    return "共享队列已满：已保存的决定、当前摘要和结果都保留，未登记自动继续。等待其他整理结束或进入人工等待后，在此显式重试。 ";
+  }
+  if (code === "continuation_exists") {
+    return "此条目已有持久化续作。先读取该续作的状态，不要提交第二份。";
+  }
   if (status === 403) return "当前账号没有执行此项审核或恢复操作的权限。";
   if (status === 404)
     return "原条目或关联决策已不可用，请返回运行列表重新打开。";
@@ -211,7 +217,9 @@ export function TaskItemRecoveryPanel({
     );
     if (result.ok) {
       setMessage(
-        "审核已保存，单项分析已进入队列；Storage 尚未修改。等待 Worker 后检查新结果。 ",
+        result.model.nativeAnalysis
+          ? "审核已保存；原 Task 已重新排入零变更分析，Storage 尚未修改。等待 Worker 后在此检查新的条目状态，并在同一 Task 的计划摘要中显式确认就绪子集。 "
+          : "审核已保存，单项分析已进入队列；Storage 尚未修改。等待 Worker 后检查新结果。 ",
       );
       setRepeatLocked(false);
       refreshLinkedReads();

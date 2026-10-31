@@ -548,12 +548,15 @@ class DefinitionScopedExecutionTests(unittest.TestCase):
                 target_guard.mutation_calls, {key: 0 for key in target_guard.mutation_calls}
             )
 
-    def test_paused_definition_relative_scope_continues_in_the_real_worker(self) -> None:
-        """Analysis-only continuations retain scope without entering Task Center.
+    def test_retired_paused_scope_continuation_job_is_refused_without_effects(self) -> None:
+        """A legacy queued paused-scope continuation Job never resumes anything.
 
-        This fixture deliberately withholds execution authority. The real Worker
-        must still preserve two-hop analysis scope, pins and non-replay, while
-        those analysis children remain available only through admin history.
+        Pause/resume and the paused-scope continuation executor were retired for
+        every media operation.  A database upgraded from before that retirement
+        can still carry the Job and its admission record, so the real Worker
+        boundary has to answer it with one bounded, effect-free failure: no Task,
+        Result, authorization or Storage change, and the original paused Task
+        keeps its identity, pin and recorded evidence exactly as they were.
         """
 
         from mediaflow.application.scope_continuation import ScopeContinuationService
@@ -562,22 +565,14 @@ class DefinitionScopedExecutionTests(unittest.TestCase):
         definition = _definition(
             "relative-worker", scope="C", mode=AutomationTaskRunMode.AUTOMATIC_ORGANIZATION, limit=2
         )
-        candidate = MediaCandidate(
-            "tmdb",
-            "alpha",
-            MediaType.MOVIE,
-            "Alpha Movie",
-            year=2024,
-            genres=("Animation",),
-            countries=("JP",),
-        )
-        later_candidate = replace(candidate, provider_id="bravo", title="Bravo Movie", year=2025)
-        provider = SyntheticMetadataProvider((candidate, later_candidate))
+        provider = SyntheticMetadataProvider(())
         with tempfile.TemporaryDirectory() as directory:
             root = Path(directory)
             source = root / "source" / "Media" / "C"
             source.mkdir(parents=True)
+            (source / "Alpha.Movie.2024.mkv").write_bytes(b"alpha")
             configuration = self._configuration(root, definition)
+            before_source = _tree(root / "source")
             with SQLiteTaskRepository(configuration.database_path) as repository:
                 original_job = self._emit(repository, definition)
                 coordinator = PersistentTaskCoordinator(repository, repository)
@@ -602,51 +597,17 @@ class DefinitionScopedExecutionTests(unittest.TestCase):
                 coordinator.request_pause(original.task_id)
                 original = coordinator.acknowledge_pause(original.task_id)
                 self.assertEqual(original.status, PersistentTaskStatus.PAUSED)
-                self.assertEqual(original.scope_path, "Media/C")
-                self.assertEqual(repository.list_items(original.task_id), ())
-                # These files arrive after the paused occurrence was admitted.
-                # The first continuation is paused after one durable Result;
-                # the second must find only the later item in the original
-                # Definition sub-scope.
-                earlier_media = source / "Alpha.Movie.2024.mkv"
-                earlier_media.write_bytes(b"alpha")
-                later_media = source / "Bravo.Movie.2025.mkv"
-                later_media.write_bytes(b"bravo")
-                sibling = source.parent / "D"
-                sibling.mkdir()
-                sibling_media = sibling / "Alpha.Movie.2024.mkv"
-                sibling_media.write_bytes(b"sibling")
-                parent_media = source.parent / "Parent.Movie.2024.mkv"
-                parent_media.write_bytes(b"parent")
-                self.assertEqual(
-                    repository.get_job_for_task(original.task_id).job_id, original_job.job_id
-                )
 
-                continuation_service = ScopeContinuationService(
+                # The pre-retirement admission record a legacy database still
+                # holds: one queued scope-continuation Job, no new Task.
+                submission = ScopeContinuationService(
                     repository, snapshot_validator=lambda *_: None
-                )
-                submission = continuation_service.submit(
+                ).submit(
                     original.task_id,
                     expected_version=original.updated_at.isoformat(),
                     actor="operator",
                     maximum_active_jobs=10,
                 )
-
-                def pause_after_first_result() -> bool:
-                    for candidate_task in repository.list_tasks(limit=100):
-                        if candidate_task.task_id == original.task_id:
-                            continue
-                        if (
-                            repository.get_scope_continuation_for_new_task(candidate_task.task_id)
-                            is not None
-                            and repository.list_results(candidate_task.task_id)
-                            and not candidate_task.pause_requested
-                        ):
-                            PersistentTaskCoordinator(repository, repository).request_pause(
-                                candidate_task.task_id
-                            )
-                    return False
-
                 with (
                     patch("mediaflow.final_cli._configuration", return_value=configuration),
                     patch(
@@ -654,66 +615,7 @@ class DefinitionScopedExecutionTests(unittest.TestCase):
                         return_value=MetadataProviderRegistry((provider,)),
                     ),
                 ):
-                    continued = AutomationWorker(
-                        repository,
-                        lambda job, cancelled: _run_queued_workflow(
-                            job,
-                            None,
-                            lambda: pause_after_first_result() or cancelled(),
-                            repository=repository,
-                        ),
-                    ).run_next()
-
-                self.assertEqual(continued.job_id, submission.job.job_id)
-                continuation_record = repository.get_scope_continuation_for_job(
-                    submission.job.job_id
-                )
-                paused_continuation_task = repository.get_task(continuation_record.new_task_id)
-                self.assertEqual(continued.status, AutomationJobStatus.FAILED)
-                self.assertEqual(continued.task_id, paused_continuation_task.task_id)
-                self.assertEqual(
-                    repository.get_job(submission.job.job_id).task_id,
-                    paused_continuation_task.task_id,
-                )
-                self.assertEqual(paused_continuation_task.status, PersistentTaskStatus.PAUSED)
-                self.assertEqual(len(repository.list_results(paused_continuation_task.task_id)), 1)
-                self.assertEqual(len(repository.list_items(paused_continuation_task.task_id)), 1)
-                self.assertEqual(paused_continuation_task.scope_path, "Media/C")
-                run_page, run_total, run_counts = repository.operations_runs_page(limit=20)
-                self.assertEqual(run_total, 1)
-                self.assertEqual(sum(run_counts.values()), 1)
-                self.assertEqual([run.run_id for run in run_page], [original_job.job_id])
-                self.assertIsNone(repository.operations_run(submission.job.job_id))
-                self.assertIsNone(
-                    repository.resolve_operations_run_link(paused_continuation_task.task_id)
-                )
-                self.assertIsNone(repository.operations_run_with_progress(submission.job.job_id))
-                self.assertEqual(
-                    paused_continuation_task.configuration_snapshot_id,
-                    original.configuration_snapshot_id,
-                )
-                self.assertEqual(
-                    paused_continuation_task.configuration_snapshot_digest,
-                    original.configuration_snapshot_digest,
-                )
-
-                # A second admission starts from the newly paused Task. The
-                # real Worker must follow its persisted parent link to the
-                # original Definition Job and exclude the first Result.
-                second_submission = continuation_service.submit(
-                    paused_continuation_task.task_id,
-                    expected_version=paused_continuation_task.updated_at.isoformat(),
-                    actor="operator",
-                    maximum_active_jobs=10,
-                )
-                with (
-                    patch("mediaflow.final_cli._configuration", return_value=configuration),
-                    patch(
-                        "mediaflow.final_cli.metadata_provider_registry_from_environment",
-                        return_value=MetadataProviderRegistry((provider,)),
-                    ),
-                ):
-                    second = AutomationWorker(
+                    finished = AutomationWorker(
                         repository,
                         lambda job, cancelled: _run_queued_workflow(
                             job,
@@ -723,121 +625,43 @@ class DefinitionScopedExecutionTests(unittest.TestCase):
                         ),
                     ).run_next()
 
-                self.assertEqual(second.job_id, second_submission.job.job_id)
-                second_record = repository.get_scope_continuation_for_job(
-                    second_submission.job.job_id
+                self.assertIsNotNone(finished)
+                self.assertEqual(finished.job_id, submission.job.job_id)
+                self.assertEqual(finished.status, AutomationJobStatus.FAILED)
+                self.assertIsNone(finished.task_id)
+                # The refusal is recorded on the Job itself and starts nothing.
+                self.assertIn("workflow failed", finished.error or "")
+                record = repository.get_scope_continuation_for_job(submission.job.job_id)
+                self.assertIsNone(record.new_task_id)
+                # No second Task, no item, no Result and no execution authority
+                # was created for the retired continuation.
+                self.assertEqual(
+                    [original.task_id], [task.task_id for task in repository.list_tasks()]
+                )
+                self.assertEqual(repository.list_items(original.task_id), ())
+                self.assertEqual(repository.list_results(original.task_id), ())
+                self.assertEqual(
+                    repository.get_task(original.task_id).status, PersistentTaskStatus.PAUSED
                 )
                 self.assertEqual(
-                    second.status,
-                    AutomationJobStatus.COMPLETED,
-                    (
-                        second.error,
-                        second.failure_category,
-                        second.failure_durable_state,
-                        second.failure_next_action,
-                        continuation_record.document(),
-                        second_record.document(),
-                        repository.get_task(second_record.new_task_id).error
-                        if second_record.new_task_id
-                        else None,
-                        [
-                            (item.source_path, item.status.value, item.error)
-                            for item in repository.list_items(second_record.new_task_id)
-                        ]
-                        if second_record.new_task_id
-                        else (),
-                        [
-                            (result.source_path, result.status, result.error)
-                            for result in repository.list_results(second_record.new_task_id)
-                        ]
-                        if second_record.new_task_id
-                        else (),
-                    ),
+                    repository.get_task(original.task_id).configuration_snapshot_digest,
+                    original.configuration_snapshot_digest,
                 )
-                continued_task = repository.get_task(second.task_id)
-                self.assertEqual(continued_task.status, PersistentTaskStatus.COMPLETED)
-                self.assertEqual(continued_task.scope_path, "Media/C")
+            self.assertEqual(_tree(root / "source"), before_source)
+            with SQLiteTaskRepository(configuration.database_path) as restarted:
                 self.assertEqual(
-                    {item.source_path for item in repository.list_items(continued_task.task_id)},
-                    {"Media/C/Bravo.Movie.2025.mkv"},
+                    restarted.get_job(submission.job.job_id).status,
+                    AutomationJobStatus.FAILED,
                 )
                 self.assertEqual(
-                    {
-                        result.source_path
-                        for result in repository.list_results(continued_task.task_id)
-                    },
-                    {"Media/C/Bravo.Movie.2025.mkv"},
+                    [task.task_id for task in restarted.list_tasks()], [original.task_id]
                 )
                 self.assertEqual(
-                    repository.get_scope_continuation_for_job(
-                        second_submission.job.job_id
-                    ).new_task_id,
-                    continued_task.task_id,
-                )
-                self.assertEqual(second.task_id, continued_task.task_id)
-                run_page, run_total, run_counts = repository.operations_runs_page(limit=20)
-                self.assertEqual(run_total, 1)
-                self.assertEqual(sum(run_counts.values()), 1)
-                self.assertEqual([run.run_id for run in run_page], [original_job.job_id])
-                self.assertIsNone(repository.operations_run(second_submission.job.job_id))
-                self.assertIsNone(repository.resolve_operations_run_link(continued_task.task_id))
-                self.assertNotIn(
-                    "Media/D/Alpha.Movie.2024.mkv",
-                    {item.source_path for item in repository.list_items(continued_task.task_id)},
-                )
-                self.assertNotIn(
-                    "Media/Parent.Movie.2024.mkv",
-                    {item.source_path for item in repository.list_items(continued_task.task_id)},
-                )
-                self.assertIn(
-                    "Media/C/Alpha.Movie.2024.mkv",
-                    {
-                        result.source_path
-                        for result in repository.list_results(paused_continuation_task.task_id)
-                    },
-                )
-                self.assertTrue(later_media.exists())
-                self.assertTrue(earlier_media.exists())
-                self.assertTrue(sibling_media.exists())
-                self.assertTrue(parent_media.exists())
-            with SQLiteTaskRepository(configuration.database_path) as restarted_repository:
-                restarted_page, restarted_total, restarted_counts = (
-                    restarted_repository.operations_runs_page(limit=20)
-                )
-                self.assertEqual(restarted_total, 1)
-                self.assertEqual(sum(restarted_counts.values()), 1)
-                self.assertEqual([run.run_id for run in restarted_page], [original_job.job_id])
-                self.assertIsNone(
-                    restarted_repository.resolve_operations_run_link(
-                        paused_continuation_task.task_id
-                    )
+                    restarted.get_task(original.task_id).status, PersistentTaskStatus.PAUSED
                 )
                 self.assertIsNone(
-                    restarted_repository.resolve_operations_run_link(continued_task.task_id)
+                    restarted.get_scope_continuation_for_job(submission.job.job_id).new_task_id
                 )
-                self.assertIsNone(
-                    restarted_repository.operations_run_with_progress(submission.job.job_id)
-                )
-                self.assertEqual(
-                    restarted_repository.get_job(submission.job.job_id).task_id,
-                    paused_continuation_task.task_id,
-                )
-                self.assertEqual(
-                    restarted_repository.get_job(second_submission.job.job_id).task_id,
-                    continued_task.task_id,
-                )
-                self.assertEqual(
-                    restarted_repository.get_task(paused_continuation_task.task_id).status,
-                    PersistentTaskStatus.PAUSED,
-                )
-                self.assertEqual(
-                    restarted_repository.get_task(continued_task.task_id).status,
-                    PersistentTaskStatus.COMPLETED,
-                )
-                self.assertEqual(
-                    len(restarted_repository.list_results(paused_continuation_task.task_id)), 1
-                )
-                self.assertEqual(len(restarted_repository.list_results(continued_task.task_id)), 1)
 
     def test_scope_without_subscope_uses_library_root_and_never_parent(self) -> None:
         definition = _definition("root", scope=None, limit=10)

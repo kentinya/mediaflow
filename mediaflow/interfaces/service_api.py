@@ -56,6 +56,10 @@ from mediaflow.application.manual_organize_preview import ManualOrganizePreviewS
 from mediaflow.application.manual_recovery_continuation import (
     ManualRecoveryContinuationService,
 )
+from mediaflow.application.manual_task_continuation import (
+    ManualTaskContinuationError,
+    ManualTaskContinuationService,
+)
 from mediaflow.application.media_discovery import MediaDiscoveryService
 from mediaflow.application.metadata_correction_continuation import (
     FileMetadataCorrectionContinuationService,
@@ -578,6 +582,15 @@ class MediaFlowApi:
         self._checkpoint_service = ProcessingCheckpointService(
             repository,
             snapshot_validator=snapshot_validator,
+        )
+        # One newly admitted Files manual Task continues its own review instead
+        # of minting a legacy recovery Job: this boundary re-registers that same
+        # Task's zero-mutation analysis through the scheduling kernel.  Work
+        # admitted before the kernel switch keeps its original Job path.
+        self._manual_task_continuation = ManualTaskContinuationService(
+            repository,
+            self._media_discovery,
+            checkpoint_service=self._checkpoint_service,
         )
         self._task_item_recovery = TaskItemRecoveryService(
             repository,
@@ -7309,6 +7322,38 @@ class MediaFlowApi:
             expected = document["expectedCheckpointVersion"]
             if not isinstance(expected, str) or not expected.strip():
                 raise ValueError("expectedCheckpointVersion is required")
+            native = getattr(self, "_manual_task_continuation", None)
+            if native is not None and native.applies(parts[3]):
+                # RO-1/RO-3: this Task is its own scheduling authority, so the
+                # operator's saved decision continues *this* Task's bounded
+                # analysis.  No Job, child Task or execution authority is
+                # created; the same Task keeps its identity, pin and evidence.
+                try:
+                    continuation = native.continue_analysis(
+                        parts[3],
+                        parts[5],
+                        expected_checkpoint_version=expected,
+                        actor=principal.principal_id,
+                    )
+                except ManualTaskContinuationError as error:
+                    return self._error(
+                        start_response,
+                        error.status,
+                        error.code,
+                        str(error),
+                        details={
+                            "nextAction": error.next_action,
+                            "durableState": "rejected_without_mutation",
+                            "sideEffects": "none",
+                            "retrySafe": error.status < 500,
+                            **error.details,
+                        },
+                    )
+                return self._response(
+                    start_response,
+                    202,
+                    {**continuation.document(), "executionMethod": "task_engine"},
+                )
             binding = self._runtime_binding
             submission = self._recovery_continuation.submit(
                 parts[3],
@@ -7533,6 +7578,26 @@ class MediaFlowApi:
                 raise ValueError("task batch recovery items must be a list")
             if "batchId" in document and not isinstance(document["batchId"], str):
                 raise ValueError("task batch recovery identity must be a UUID")
+            native = getattr(self, "_manual_task_continuation", None)
+            if native is not None and native.applies(parts[3]):
+                # A kernel-managed Task re-plans every remaining source of that
+                # same Task at once, so a per-item Job batch does not exist for
+                # it.  Answering with the bounded same-Task action is truthful;
+                # silently minting the legacy Jobs would reintroduce them.
+                error = native.refuse_batch(parts[3])
+                return self._error(
+                    start_response,
+                    error.status,
+                    error.code,
+                    str(error),
+                    details={
+                        "nextAction": error.next_action,
+                        "durableState": "rejected_without_mutation",
+                        "sideEffects": "none",
+                        "retrySafe": True,
+                        **error.details,
+                    },
+                )
             binding = self._runtime_binding
             batch = self._recovery_batch.submit(
                 parts[3],

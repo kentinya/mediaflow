@@ -1895,8 +1895,69 @@ class MediaDiscoveryService:
         return replace(self._budgets, max_primary_sources=primary_bound)
 
     # ------------------------------------------------------------------
-    # Remaining-scope recovery preparation
+    # Admission-request reconciliation fence
     # ------------------------------------------------------------------
+
+    def _assert_reconciliation_binding(
+        self,
+        requested: MediaDiscovery,
+        *,
+        expected_fingerprint: str | None,
+        expected_revision: tuple[str, int, str] | None,
+        definition_id: str,
+    ) -> None:
+        """Refuse a repeated request identity that submits a *different* binding.
+
+        The request identity is the caller's proof of the admission it actually
+        created.  Reusing it with a changed definition fingerprint or a changed
+        observed Active revision is a changed intent wearing another request's
+        identity, so the honest outcome is a bounded refusal rather than
+        returning the original admission as if it matched the new request.
+        """
+
+        origin = requested.definition_origin
+        if origin is None or origin.definition_id != definition_id:
+            raise DiscoveryError(
+                "this admission request identity is already bound to a different Run once",
+                code="admission_request_conflict",
+                status=409,
+                next_action=(
+                    "keep this request identity for its original Run once, or start a new "
+                    "Run once with a new request identity"
+                ),
+                details={"requestIdReuse": True},
+            )
+        if (
+            expected_fingerprint is not None
+            and origin.definition_fingerprint != expected_fingerprint
+        ):
+            raise DiscoveryError(
+                "this admission request identity already proved a different published "
+                "definition, so the changed binding was not admitted",
+                code="definition_stale",
+                status=409,
+                next_action=(
+                    "start a new Run once with a new request identity for the changed definition"
+                ),
+                details={"requestIdReuse": True},
+            )
+        if expected_revision is not None:
+            revision_id, _version, revision_digest = expected_revision
+            if (
+                origin.configuration_revision_id != revision_id
+                or origin.configuration_revision_digest != revision_digest
+            ):
+                raise DiscoveryError(
+                    "this admission request identity already proved a different Active "
+                    "configuration, so the changed binding was not admitted",
+                    code="configuration_stale",
+                    status=409,
+                    next_action=(
+                        "start a new Run once with a new request identity for the current "
+                        "Active configuration"
+                    ),
+                    details={"requestIdReuse": True},
+                )
 
     def _expected_fingerprint(self, value: object) -> str | None:
         """The optional observed definition fingerprint submitted as a fence."""

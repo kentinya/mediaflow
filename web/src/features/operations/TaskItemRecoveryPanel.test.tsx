@@ -184,6 +184,83 @@ describe("TaskItemRecoveryPanel", () => {
     expect(calls.some((call) => call.path.includes("/execute"))).toBe(false);
   });
 
+  it("reports a same-Task continuation without inventing a Job identity", async () => {
+    const user = userEvent.setup();
+    authStore.setToken("task-recovery-test-token");
+    let currentRecovery = recognitionRecovery();
+    const fetchMock = vi.fn(
+      async (
+        input: RequestInfo | URL,
+        init?: RequestInit,
+      ): Promise<Response> => {
+        const url = String(input);
+        const method = init?.method ?? "GET";
+        if (
+          method === "GET" &&
+          url === "/api/v1/tasks/task-1/items/item-1/recovery"
+        ) {
+          return new Response(JSON.stringify(currentRecovery), { status: 200 });
+        }
+        if (
+          method === "POST" &&
+          url === "/api/v1/tasks/task-1/items/item-1/recovery/decision"
+        ) {
+          currentRecovery = recognitionRecovery(true);
+          return new Response(JSON.stringify(currentRecovery), { status: 200 });
+        }
+        if (
+          method === "POST" &&
+          url === "/api/v1/tasks/task-1/items/item-1/recovery/continue"
+        ) {
+          // The Task-engine answer names the same Task's own linked analysis:
+          // no continuation_id, no job_id, no child Task.
+          return new Response(
+            JSON.stringify({
+              taskId: "task-1",
+              itemId: "item-1",
+              nativeAnalysis: {
+                taskId: "task-1",
+                itemId: "item-1",
+                discoveryId: "discovery-1",
+                version: 5,
+                status: "analyzing",
+                previewId: null,
+              },
+              sideEffects: "none",
+              executionMode: "dry_run",
+              nextAction: "review the fresh plan summary of this same Task",
+            }),
+            { status: 202 },
+          );
+        }
+        return new Response(JSON.stringify({ error: { code: "not_found" } }), {
+          status: 404,
+        });
+      },
+    );
+    vi.stubGlobal("fetch", fetchMock);
+
+    renderWithProviders(
+      <TaskItemRecoveryPanel
+        taskId="task-1"
+        itemId="item-1"
+        runId="task-1"
+        active={false}
+      />,
+    );
+
+    const panel = await screen.findByRole("region", { name: "条目审核与恢复" });
+    await user.click(await within(panel).findByLabelText(/Special/));
+    await user.click(
+      within(panel).getByRole("button", { name: "保存决策并继续安全分析" }),
+    );
+
+    expect(
+      await within(panel).findByText(/原 Task 已重新排入零变更分析/),
+    ).toBeVisible();
+    expect(within(panel).queryByText(/未完成/)).toBeNull();
+  });
+
   it("prepares a same-page plan summary and confirms only the exact ready subset", async () => {
     const user = userEvent.setup();
     authStore.setToken("task-recovery-test-token");

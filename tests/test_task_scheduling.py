@@ -1469,6 +1469,7 @@ class TransitionBoundaryTests(unittest.TestCase):
         package = Path(mediaflow_package_path()).parent
         expected = {
             "application/manual_organize_execution.py",
+            "application/manual_task_continuation.py",
             "application/manual_task_engine.py",
             "application/media_discovery.py",
             # Task Center pause/cancel for a kernel-managed Task routes to the

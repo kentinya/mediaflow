@@ -221,6 +221,8 @@ from mediaflow.domain.source_evidence import (
 )
 from mediaflow.domain.source_reviews import FileReviewLink
 from mediaflow.domain.task_persistence import (
+    COMPLETED_ITEM_STATUSES,
+    FAILED_ITEM_STATUSES,
     MEDIA_LIBRARY_TASK_COMMAND_PREFIX,
     SETTLED_ITEM_STATUSES,
     TRANSFER_MUTATION_IN_FLIGHT,
@@ -13213,6 +13215,14 @@ class SQLiteTaskRepository:
                                   ?, ?, ?, ?, ?, ?, ?)""",
                         self._manual_execution_item_values(item),
                     )
+                if adopt_task_id is not None and scheduling is not None:
+                    # One admitted organizing Task may own several explicitly
+                    # confirmed subsets.  Its published totals therefore describe
+                    # the whole durable source population just written — never
+                    # only this execution's selected slice — so a later
+                    # confirmation cannot shrink the Task's own file count or
+                    # reset an earlier sibling's recorded outcome.
+                    self._refresh_task_item_counts_locked(adopt_task_id)
                 consumed = self._connection.execute(
                     "UPDATE manual_execution_authorizations SET status=?, consumed_at=?, "
                     "execution_id=? WHERE authorization_id=? AND status=?",
@@ -18961,6 +18971,38 @@ class SQLiteTaskRepository:
             pause_requested=False,
         )
 
+    def _refresh_task_item_counts_locked(self, task_id: str) -> None:
+        """Re-derive one kernel Task's totals from its durable concrete sources.
+
+        A Task may own several explicitly confirmed subsets, so its published
+        aggregate is the whole TaskItem population rather than the execution that
+        happens to be confirming right now.  A cancelled/failed/partial/ignored
+        source keeps its own honest outcome and is never counted as completed.
+        """
+
+        completed = tuple(sorted(value.value for value in COMPLETED_ITEM_STATUSES))
+        failed = tuple(sorted(value.value for value in FAILED_ITEM_STATUSES))
+        completed_marks = ", ".join("?" for _ in completed)
+        failed_marks = ", ".join("?" for _ in failed)
+        row = self._connection.execute(
+            "SELECT COUNT(*) AS total_items, "
+            f"COALESCE(SUM(CASE WHEN status IN ({completed_marks}) THEN 1 ELSE 0 END), 0) "
+            "AS completed_items, "
+            f"COALESCE(SUM(CASE WHEN status IN ({failed_marks}) THEN 1 ELSE 0 END), 0) "
+            "AS failed_items "
+            "FROM task_items WHERE task_id=?",
+            (*completed, *failed, task_id),
+        ).fetchone()
+        self._connection.execute(
+            "UPDATE tasks SET total_items=?, completed_items=?, failed_items=? WHERE task_id=?",
+            (
+                int(row["total_items"] or 0),
+                int(row["completed_items"] or 0),
+                int(row["failed_items"] or 0),
+                task_id,
+            ),
+        )
+
     def _persist_discovery_control_display(
         self,
         discovery: MediaDiscovery,
@@ -19003,17 +19045,34 @@ class SQLiteTaskRepository:
                 ),
             )
         else:
+            # Cancelling the Task cancels *this* bounded preparation, whatever
+            # stage it reached.  An analysis that already produced its exact
+            # summary is no exception: the work it belonged to is final, so the
+            # admission must not keep presenting itself as a live, confirmable
+            # summary — or keep owning the concrete source against a later,
+            # deliberate organizing request.  Known findings, the counters and
+            # the linked plan rows are preserved exactly as recorded; only the
+            # operator-visible stage and the cancellation fact change.
             self._connection.execute(
                 "UPDATE media_discoveries SET status=?, version=version+1, "
                 "cancel_requested=1, claim_worker_id=NULL, claim_token=NULL, "
-                "claim_expires_at=NULL, updated_at=? "
-                "WHERE discovery_id=? AND status NOT IN (?, ?)",
+                "claim_expires_at=NULL, updated_at=?, "
+                "progress_json = CASE WHEN json_valid(progress_json) THEN json_set("
+                "progress_json, '$.phase', ?, '$.message', ?) ELSE progress_json END "
+                "WHERE discovery_id=? AND status NOT IN (?, ?, ?)",
                 (
                     DiscoveryStatus.CANCELLED.value,
                     now.isoformat(),
+                    "cancelled",
+                    (
+                        "this organizing work was cancelled by the operator; its known "
+                        "findings and summary are preserved as history and no further "
+                        "analysis or execution is admitted for it"
+                    ),
                     discovery.discovery_id,
-                    DiscoveryStatus.COMPLETED.value,
-                    DiscoveryStatus.PARTIAL_SUCCESS.value,
+                    DiscoveryStatus.FAILED.value,
+                    DiscoveryStatus.CANCELLED.value,
+                    DiscoveryStatus.PAUSED.value,
                 ),
             )
 

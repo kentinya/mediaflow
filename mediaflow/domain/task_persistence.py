@@ -233,6 +233,60 @@ SETTLED_ITEM_STATUSES = frozenset(
     }
 )
 
+#: The item outcomes that count as a completed source of one organizing Task.
+#: A dry run and a skipped result finished their own admitted step, exactly like
+#: a success; a failed/partial/cancelled/ignored source is not "completed".
+COMPLETED_ITEM_STATUSES = frozenset(
+    {TaskItemStatus.DRY_RUN, TaskItemStatus.SUCCESS, TaskItemStatus.SKIPPED}
+)
+
+#: The item outcomes that count as a failed/partial source of one Task.
+FAILED_ITEM_STATUSES = frozenset({TaskItemStatus.PARTIAL, TaskItemStatus.FAILED})
+
+
+def task_item_counts(items) -> tuple[int, int, int]:
+    """``(total, completed, failed)`` over one Task's durable concrete sources.
+
+    Slice 47 lets one admitted organizing Task own more than one explicitly
+    confirmed execution.  The Task's own totals therefore describe the *whole*
+    work — every concrete source it has a durable TaskItem for — and a later
+    confirmation of another subset can neither shrink the total to that subset
+    nor reset an earlier sibling's recorded outcome.  Attempts, attachments and
+    Results are deliberately not counted here: one source is one file.
+    """
+
+    values = tuple(items)
+    completed = sum(item.status in COMPLETED_ITEM_STATUSES for item in values)
+    failed = sum(item.status in FAILED_ITEM_STATUSES for item in values)
+    return (len(values), completed, failed)
+
+
+def task_work_status(items) -> PersistentTaskStatus:
+    """The aggregate status one Task's whole durable source population implies.
+
+    Any source that has not recorded its own settled outcome still owes work, so
+    the Task is ``running``; a partly finished Task never advertises completion.
+    Once every source is settled the Task sums those independent outcomes, so a
+    later successful execution cannot erase an earlier failure and a deliberate
+    cancellation/ignored sibling cannot be presented as success.
+    """
+
+    values = tuple(items)
+    if not values:
+        return PersistentTaskStatus.RUNNING
+    if any(item.status not in SETTLED_ITEM_STATUSES for item in values):
+        return PersistentTaskStatus.RUNNING
+    _total, _completed, failed = task_item_counts(values)
+    if failed == len(values):
+        return PersistentTaskStatus.FAILED
+    if failed or any(item.status is TaskItemStatus.IGNORED for item in values):
+        return PersistentTaskStatus.PARTIAL_SUCCESS
+    if all(item.status is TaskItemStatus.CANCELLED for item in values):
+        return PersistentTaskStatus.CANCELLED
+    if any(item.status is TaskItemStatus.CANCELLED for item in values):
+        return PersistentTaskStatus.PARTIAL_SUCCESS
+    return PersistentTaskStatus.COMPLETED
+
 
 #: Hard bounds on one admission's recorded display evidence.  The row is
 #: display-only, so it must stay small, secret-free and cheap to search.
