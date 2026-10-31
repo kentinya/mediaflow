@@ -1,4 +1,4 @@
-"""schema 53 → 55 on genuine base-revision databases, and failure atomicity.
+"""schema 53 → 56 on genuine base-revision databases, and failure atomicity.
 
 The base side of every database in this module is created by the *Task Base
 revision itself* (extracted with ``git archive``), never by a shortcut that
@@ -25,7 +25,9 @@ from pathlib import Path
 from unittest.mock import patch
 
 from mediaflow.application.task_runtime import PersistentTaskCoordinator
+from mediaflow.application.task_scheduling import TaskSchedulingService
 from mediaflow.domain.task_persistence import PersistentTaskStatus, TaskItemStatus
+from mediaflow.domain.task_scheduling import TaskTrigger
 from mediaflow.infrastructure import sqlite_runtime
 from mediaflow.infrastructure.sqlite_runtime import SCHEMA_VERSION, SQLiteTaskRepository
 
@@ -348,7 +350,7 @@ class TaskSchedulingMigrationTests(unittest.TestCase):
         database = self.base_database()
         with SQLiteTaskRepository(database) as repository:
             self.assertEqual(repository.schema_version, SCHEMA_VERSION)
-            self.assertEqual(SCHEMA_VERSION, 55)
+            self.assertEqual(SCHEMA_VERSION, 56)
             self.assert_base_facts_intact(repository)
             self.assert_never_admitted(repository, database)
             with sqlite3.connect(database) as connection:
@@ -490,6 +492,47 @@ class TaskSchedulingMigrationTests(unittest.TestCase):
                 ).fetchone()[0],
                 SCHEMA_VERSION + 1,
             )
+
+
+class SchedulingContinuationActorMigrationTests(unittest.TestCase):
+    """Schema 56 adds only the operator-continuation actor to scheduling rows."""
+
+    def test_schema55_scheduling_row_gains_the_column_without_rewriting_facts(self) -> None:
+        with tempfile.TemporaryDirectory() as directory:
+            database = Path(directory) / "runtime.sqlite3"
+            now = datetime(2026, 10, 1, 8, 0, tzinfo=UTC)
+            with SQLiteTaskRepository(database) as repository:
+                service = TaskSchedulingService(repository, capacity=2)
+                admission = service.admit(
+                    "organize",
+                    execute_authorized=True,
+                    trigger=TaskTrigger.SCHEDULE,
+                    principal="automation-scheduler",
+                    request_id="before-schema56",
+                    now=now,
+                )
+            with sqlite3.connect(database) as connection:
+                # Recreate the exact pre-56 physical shape: the scheduling facts
+                # existed, the continuation actor did not.
+                connection.execute("ALTER TABLE task_scheduling DROP COLUMN continuation_actor")
+                connection.execute(
+                    "UPDATE schema_version SET version=? WHERE component='runtime'", (55,)
+                )
+                connection.commit()
+            with SQLiteTaskRepository(database) as upgraded:
+                self.assertEqual(upgraded.schema_version, SCHEMA_VERSION)
+                state = upgraded.get_task_scheduling(admission.task.task_id)
+                self.assertIsNotNone(state)
+                self.assertEqual("automation-scheduler", state.admission_principal)
+                self.assertEqual("before-schema56", state.admission_request_id)
+                self.assertIsNone(state.continuation_actor)
+                task = upgraded.get_task(admission.task.task_id)
+                self.assertTrue(task.execute_authorized)
+            # The additive migration is idempotent and keeps the same row.
+            with SQLiteTaskRepository(database) as reopened:
+                state = reopened.get_task_scheduling(admission.task.task_id)
+                self.assertEqual("automation-scheduler", state.admission_principal)
+                self.assertIsNone(state.continuation_actor)
 
 
 class ManualExecutionTaskScopeMigrationTests(unittest.TestCase):

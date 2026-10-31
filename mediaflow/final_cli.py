@@ -471,6 +471,7 @@ def final_main(
         arguments.command = arguments.batch_command
         arguments.path = None
     runtime_lease: RuntimeDatabaseLease | None = None
+    direct_organize_worker_id: str | None = None
     try:
         if arguments.command == "api" and arguments.api_command == "token":
             if not 32 <= arguments.token_bytes <= 128:
@@ -1245,7 +1246,7 @@ def final_main(
                         path=arguments.path,
                         limit=arguments.limit,
                     )
-                    claim, _direct_worker_id = _drive_direct_organize_claim(
+                    claim, direct_organize_worker_id = _drive_direct_organize_claim(
                         repository, scheduling, task
                     )
                     kernel_context = (scheduling, claim)
@@ -1476,6 +1477,15 @@ def final_main(
         stderr.write(f"mediaflow error: {error}\n")
         return 2
     finally:
+        if direct_organize_worker_id is not None:
+            # The synchronous CLI only borrowed a transient Worker identity to
+            # own its claimed Task.  Settle it with the run so no live temporary
+            # Worker record survives a success or a bounded failure.
+            try:
+                with SQLiteTaskRepository(configuration.database_path) as cleanup_repository:
+                    cleanup_repository.stop_worker(direct_organize_worker_id, datetime.now(UTC))
+            except Exception:  # noqa: BLE001 - cleanup never masks the run's real result
+                pass
         if runtime_lease is not None:
             runtime_lease.close()
 
@@ -2797,17 +2807,64 @@ def _drive_direct_organize_claim(repository, scheduling, task, *, lease_seconds=
         SCHEMA_VERSION,
         datetime.now(UTC),
     )
-    claim = scheduling.claim_next(
-        worker_id=worker_id,
-        now=datetime.now(UTC),
-        lease_seconds=lease_seconds,
-    )
-    if claim is None or claim.task_id != task.task_id:
-        raise TaskWorkerRejected(
-            "the admitted organize Task is not claimable in this run; inspect its queue state"
+    try:
+        claim = scheduling.claim(
+            task.task_id,
+            worker_id=worker_id,
+            now=datetime.now(UTC),
+            lease_seconds=lease_seconds,
         )
-    claim = scheduling.begin_work(claim, now=datetime.now(UTC))
+    except BaseException:
+        _stop_direct_organize_worker(repository, worker_id)
+        raise
+    if claim is None:
+        _stop_direct_organize_worker(repository, worker_id)
+        state = scheduling.state(task.task_id)
+        owner = getattr(state, "claim_worker_id", None)
+        if isinstance(owner, str) and owner and owner != worker_id:
+            raise TaskWorkerRejected(
+                f"the admitted organize Task {task.task_id} is already owned by Worker "
+                f"{owner!r}; this process did not take or duplicate that work — inspect the "
+                "Task's shared execution and result instead"
+            )
+        raise TaskWorkerRejected(
+            f"the admitted organize Task {task.task_id} is not claimable in this run; "
+            "inspect its queue state and pinned configuration"
+        )
+    try:
+        claim = scheduling.begin_work(claim, now=datetime.now(UTC))
+    except BaseException:
+        # The claim is ours but the running boundary could not be published
+        # (for example an already accepted control).  Settle that existing
+        # control, or hand the claim back without changing operator intent;
+        # never leave an owner that never runs.
+        try:
+            state = scheduling.state(task.task_id)
+            if state is not None and state.control_request is not None:
+                scheduling.acknowledge_control(claim, now=datetime.now(UTC))
+            else:
+                from mediaflow.domain.task_scheduling import TaskMachineStage
+
+                scheduling.yield_claim(
+                    claim,
+                    task=claim.task,
+                    stage=TaskMachineStage.DISCOVERY,
+                    now=datetime.now(UTC),
+                )
+        except Exception:  # noqa: BLE001 - preserve the original failure
+            pass
+        _stop_direct_organize_worker(repository, worker_id)
+        raise
     return claim, worker_id
+
+
+def _stop_direct_organize_worker(repository, worker_id: str) -> None:
+    """Best-effort cleanup of the CLI's transient Worker registration."""
+
+    try:
+        repository.stop_worker(worker_id, datetime.now(UTC))
+    except Exception:  # noqa: BLE001 - cleanup never masks the run's real result
+        pass
 
 
 def _settle_direct_organize(repository, scheduling, claim, task):
@@ -4145,12 +4202,30 @@ def _run_worker(
             # Select a pending pin before registering; the repository still claims
             # only the exact registered pin, and the handler validates publication,
             # digest, schema and current execution authority before any effect.
+            # A Task-admitted run owns its pin, so an older queued Task is just as
+            # legitimate as a legacy Job and must not be hidden behind today's
+            # (possibly unhealthy) Active revision.
+            from mediaflow.domain.task_scheduling import TaskQueueState
+
             with repository._lock:
                 row = repository._connection.execute(
                     "SELECT configuration_snapshot_id, configuration_snapshot_digest "
                     "FROM automation_jobs WHERE status='pending' "
                     "ORDER BY created_at, job_id LIMIT 1"
                 ).fetchone()
+                if row is None:
+                    row = repository._connection.execute(
+                        "SELECT tasks.configuration_snapshot_id, "
+                        "tasks.configuration_snapshot_digest "
+                        "FROM task_scheduling JOIN tasks "
+                        "ON tasks.task_id=task_scheduling.task_id "
+                        "WHERE task_scheduling.queue_state IN (?, ?) "
+                        "AND tasks.status='pending' "
+                        "ORDER BY COALESCE(task_scheduling.queue_eligible_at, "
+                        "task_scheduling.created_at), task_scheduling.created_at, "
+                        "task_scheduling.task_id LIMIT 1",
+                        (TaskQueueState.QUEUED.value, TaskQueueState.CLAIMED.value),
+                    ).fetchone()
             if row is not None:
                 return row["configuration_snapshot_id"], row["configuration_snapshot_digest"]
             try:

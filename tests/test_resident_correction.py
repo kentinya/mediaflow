@@ -112,11 +112,12 @@ class ResidentCorrectionTests(ResidentDeploymentFixture):
                 waiting = repo.get_resident_service_wait_state(row.service, row.instance_id)
                 self.assertEqual(waiting.waiting_reason, "unconfigured")
 
-    def submit_authorized_organize_job(self, *, limit: int = 1) -> str:
-        """Admit one supported Organize Job through the one-shot authority.
+    def submit_authorized_organize_task(self, *, limit: int = 1) -> str:
+        """Admit one supported Organize Task through the one-shot authority.
 
-        The retired plain ``jobs submit`` DryRun command no longer exists, so a
-        real Worker pin journey must start from a Job the supported
+        The retired plain ``jobs submit`` DryRun command no longer exists, and
+        Task47.3 admits supported organizing execution as a Task rather than a
+        Job.  A real Worker pin journey therefore starts from the Task the
         execution-authorization boundary admitted.
         """
 
@@ -136,8 +137,8 @@ class ResidentCorrectionTests(ResidentDeploymentFixture):
                 configuration_snapshot_digest=active.digest if active else None,
             )
             issued = service.issue(ttl_seconds=600, max_items=limit, actor="tester")
-            job = service.submit_organize(issued.token, limit=limit)
-            return job.job_id
+            submission = service.submit_organize(issued.token, limit=limit)
+            return submission.task.task_id
 
     def test_live_worker_consumes_later_and_old_published_preview_pins(self):
         # The source is empty: the real Preview consumer constructs but never
@@ -176,25 +177,25 @@ class ResidentCorrectionTests(ResidentDeploymentFixture):
         revision_a = self.publish_successor(configure)
         process.send_signal(signal.SIGSTOP)
         try:
-            self.submit_authorized_organize_job()
+            self.submit_authorized_organize_task()
             self.publish_successor(
                 lambda document: document["resourceLibraries"][0].update(name="B")
             )
-            self.submit_authorized_organize_job()
+            self.submit_authorized_organize_task()
             with SQLiteTaskRepository(self.database, read_only=True) as repo:
-                self.assertEqual([job.status.value for job in repo.list_jobs()], ["pending"] * 2)
+                self.assertEqual([task.status.value for task in repo.list_tasks()], ["pending"] * 2)
         finally:
             process.send_signal(signal.SIGCONT)
 
         def completed():
             self.assertIsNone(process.poll())
             with SQLiteTaskRepository(self.database, read_only=True) as repo:
-                jobs = repo.list_jobs()
-                return len(jobs) == 2 and all(job.status.value == "completed" for job in jobs)
+                tasks = repo.list_tasks()
+                return len(tasks) == 2 and all(task.status.value == "completed" for task in tasks)
 
         self.wait_for(completed)
         with SQLiteTaskRepository(self.database, read_only=True) as repo:
-            pins = {job.configuration_snapshot_id for job in repo.list_jobs()}
+            pins = {task.configuration_snapshot_id for task in repo.list_tasks()}
             self.assertIn(revision_a, pins)
             self.assertEqual(len(pins), 2)
 

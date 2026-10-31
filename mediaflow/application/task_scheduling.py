@@ -277,6 +277,35 @@ class TaskSchedulingService:
             lease_seconds=self._lease(lease_seconds),
         )
 
+    def claim(
+        self,
+        task_id: str,
+        *,
+        worker_id: str,
+        claim_token: str | None = None,
+        now: datetime | None = None,
+        lease_seconds: float | None = None,
+    ) -> ScheduledTaskClaim | None:
+        """Take one explicitly named eligible Task, never an unrelated one.
+
+        The direct CLI admits its own Task and then drives it synchronously; a
+        global ``claim_next`` could lease older queued work first, reject it by
+        identity and leave both Tasks stranded.  This claim applies exactly the
+        same Worker eligibility, pin, lease and ownership transaction to the
+        caller's own Task, so concurrent Workers still cannot both own it.
+        """
+
+        current = self._now(now)
+        if not isinstance(task_id, str) or not task_id.strip():
+            raise ValueError("a named Task claim requires the Task identity")
+        return self._repository.claim_scheduled_task(
+            task_id.strip(),
+            current,
+            worker_id=worker_id,
+            claim_token=claim_token or secrets.token_urlsafe(32),
+            lease_seconds=self._lease(lease_seconds),
+        )
+
     def heartbeat(
         self,
         claim: ScheduledTaskClaim,
@@ -512,6 +541,7 @@ class TaskSchedulingService:
         expected_control_revision: int | None = None,
         stage: TaskMachineStage | None = None,
         eligible_at: datetime | None = None,
+        continuation_actor: str | None = None,
         now: datetime | None = None,
     ) -> TaskSchedulingState:
         """Re-admit this Task's remaining machine work after a human boundary.
@@ -533,6 +563,7 @@ class TaskSchedulingService:
             now=self._now(now),
             stage=stage,
             queue_eligible_at=eligible_at,
+            continuation_actor=continuation_actor,
         )
 
     # -- Fenced publication --------------------------------------------------

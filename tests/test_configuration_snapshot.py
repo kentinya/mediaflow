@@ -218,13 +218,13 @@ def request_raw(api, path, *, method="GET", token="admin-token"):
 
 
 def submit_organize_job(api, *, limit=None):
-    """Admit one real Organize Job and read it back through the supported API.
+    """Admit one real Organize Task and read it back through the supported API.
 
-    The retired DryRun Job command no longer exists.  The supported snapshot-pin
-    journey starts from an Organize Job admitted by the execution-authorization
-    boundary, so this helper writes exactly that durable Job under the API's
-    current configuration pin and then reads the same Job back through the
-    ordinary ``GET /api/v1/jobs/{id}`` projection.
+    The retired DryRun Job command no longer exists, and Task47.3 moved supported
+    remote organizing admission to a durable Task.  This helper consumes a
+    one-shot authorization into exactly that Task under the API's current
+    configuration pin, then reads the same Task back through the ordinary
+    ``GET /api/v1/tasks/{id}`` projection.
 
     A runtime whose Active snapshot is unavailable is fail-closed here exactly
     like the retired submission boundary was: nothing is admitted and the
@@ -256,12 +256,12 @@ def submit_organize_job(api, *, limit=None):
             configuration_snapshot_id=binding.snapshot_id,
             configuration_snapshot_digest=binding.snapshot_digest,
         )
-        job = service.submit_organize(issued.token, limit=1 if limit is None else limit)
+        submission = service.submit_organize(issued.token, limit=1 if limit is None else limit)
     except Exception as error:
         if type(error).__name__ != "AutomationQueueFull":
             raise
         return 409, {"error": {"code": "queue_full"}}
-    return request(api, f"/api/v1/jobs/{job.job_id}")
+    return request(api, f"/api/v1/tasks/{submission.task.task_id}")
 
 
 def activate_document(service, document, *, actor="tester"):
@@ -480,8 +480,14 @@ class ManagedConfigurationSnapshotTests(unittest.TestCase):
                         for item in accepted
                     )
                 )
+                from mediaflow.application.task_scheduling import TaskSchedulingService
+                from mediaflow.domain.task_scheduling import TaskControl
+
+                scheduling = TaskSchedulingService(task_repository, capacity=2)
                 for _, item in accepted:
-                    task_repository.request_job_cancellation(item["job_id"], datetime.now(UTC))
+                    scheduling.request_control(
+                        item["task_id"], TaskControl.CANCEL, now=datetime.now(UTC)
+                    )
 
                 restricted = json.loads(json.dumps(expanded))
                 restricted["historyPath"] = str(root / "restricted.jsonl")
@@ -567,9 +573,12 @@ class ManagedConfigurationSnapshotTests(unittest.TestCase):
                     headers={"HTTP_X_MEDIAFLOW_EXECUTION_TOKEN": issued.token},
                 )
                 self.assertEqual(accepted[0], 202, accepted[1])
-                self.assertTrue(accepted[1]["execute_authorized"])
-                self.assertEqual(accepted[1]["configuration_snapshot_id"], current.revision_id)
-                self.assertEqual(accepted[1]["configuration_snapshot_digest"], current.digest)
+                self.assertTrue(accepted[1]["executeAuthorized"])
+                self.assertEqual("task_engine", accepted[1]["executionMethod"])
+                admitted = task_repository.get_task(accepted[1]["taskId"])
+                self.assertIsNotNone(admitted)
+                self.assertEqual(admitted.configuration_snapshot_id, current.revision_id)
+                self.assertEqual(admitted.configuration_snapshot_digest, current.digest)
 
     def test_concurrent_activation_and_submission_never_mix_pin_and_admission(self) -> None:
         with tempfile.TemporaryDirectory() as directory:
@@ -2004,7 +2013,7 @@ class ManagedConfigurationSnapshotTests(unittest.TestCase):
                 )
                 self.assertEqual(server.active_result[0], 200, server.active_result[1])
                 self.assertEqual(server.job_result[0], 200, server.job_result[1])
-                job_id = server.job_result[1]["job_id"]
+                task_id = server.job_result[1]["task_id"]
                 active_id = server.active_result[1]["revisionId"]
                 active_digest = server.active_result[1]["digest"]
 
@@ -2017,14 +2026,9 @@ class ManagedConfigurationSnapshotTests(unittest.TestCase):
                 self.assertEqual(worker_status, 0, worker_error.getvalue())
 
             with SQLiteTaskRepository(runtime) as repository:
-                job = repository.get_job(job_id)
-                self.assertIsNotNone(job)
-                self.assertEqual(job.status.value, "completed")
-                self.assertEqual(job.configuration_snapshot_id, active_id)
-                self.assertEqual(job.configuration_snapshot_digest, active_digest)
-                self.assertIsNotNone(job.task_id)
-                task = repository.get_task(job.task_id)
+                task = repository.get_task(task_id)
                 self.assertIsNotNone(task)
+                self.assertEqual(task.status.value, "completed")
                 self.assertEqual(task.configuration_snapshot_id, active_id)
                 self.assertEqual(task.configuration_snapshot_digest, active_digest)
                 results = repository.list_results(task.task_id)
@@ -2521,13 +2525,10 @@ class ManagedConfigurationSnapshotTests(unittest.TestCase):
                     raise AssertionError(
                         (worker_status, worker_output.getvalue(), worker_error.getvalue())
                     )
-                job_id = self.first_job["job_id"]
-                status, self.job_detail = request(self.app, f"/api/v1/jobs/{job_id}")
-                if status != 200:
-                    raise AssertionError((status, self.job_detail))
+                task_id = self.first_job["task_id"]
                 status, self.task_detail = request(
                     self.app,
-                    f"/api/v1/tasks/{self.job_detail['task_id']}",
+                    f"/api/v1/tasks/{task_id}",
                     query="itemLimit=100&resultLimit=100",
                 )
                 if status != 200:
@@ -2623,12 +2624,14 @@ class ManagedConfigurationSnapshotTests(unittest.TestCase):
                     ["Later Active Only"],
                 )
 
-                self.assertEqual(server.job_detail["status"], "completed")
-                self.assertEqual(server.job_detail["configuration_snapshot_id"], first_id)
-                self.assertEqual(server.job_detail["configuration_snapshot_digest"], first_digest)
-                self.assertTrue(server.job_detail["execute_authorized"])
+                with SQLiteTaskRepository(runtime) as repository:
+                    stored_task = repository.get_task(server.task_detail["task_id"])
+                self.assertIsNotNone(stored_task)
+                self.assertEqual(stored_task.status.value, "completed")
+                self.assertEqual(stored_task.configuration_snapshot_id, first_id)
+                self.assertEqual(stored_task.configuration_snapshot_digest, first_digest)
+                self.assertTrue(stored_task.execute_authorized)
                 self.assertEqual(server.task_detail["configuration_snapshot_id"], first_id)
-                self.assertEqual(server.task_detail["configuration_snapshot_digest"], first_digest)
                 self.assertTrue(server.task_detail["execute_authorized"])
                 self.assertEqual(len(server.task_detail["items"]), 1)
                 self.assertEqual(
@@ -2651,7 +2654,7 @@ class ManagedConfigurationSnapshotTests(unittest.TestCase):
                 self.assertEqual(result["classification_policy_id"], "A")
                 self.assertEqual(result["destination_path"], first_destination)
                 self.assertNotEqual(result["destination_path"], second_destination)
-                self.assertEqual(result["task_id"], server.job_detail["task_id"])
+                self.assertEqual(result["task_id"], stored_task.task_id)
                 self.assertEqual(
                     result["item_id"],
                     server.task_detail["items"][0]["item_id"],
@@ -2711,7 +2714,8 @@ class ManagedConfigurationSnapshotTests(unittest.TestCase):
                     configuration_snapshot_digest=first.digest,
                 )
                 issued = authorization.issue(ttl_seconds=60, max_items=10, actor="tester")
-                old_job = authorization.submit_organize(issued.token, limit=10)
+                old_submission = authorization.submit_organize(issued.token, limit=10)
+                old_task_id = old_submission.task.task_id
                 second_document = json.loads(json.dumps(document))
                 second_document["historyPath"] = str(root / "second-history.jsonl")
                 second_draft = service.import_draft(second_document, actor="tester")
@@ -2749,12 +2753,9 @@ class ManagedConfigurationSnapshotTests(unittest.TestCase):
                 )
             self.assertEqual(status, 0, error.getvalue())
             with SQLiteTaskRepository(runtime) as repository:
-                completed_job = repository.get_job(old_job.job_id)
-                self.assertIsNotNone(completed_job)
-                self.assertEqual(completed_job.status.value, "completed")
-                self.assertIsNotNone(completed_job.task_id)
-                task = repository.get_task(completed_job.task_id)
+                task = repository.get_task(old_task_id)
                 self.assertIsNotNone(task)
+                self.assertEqual(task.status.value, "completed")
                 self.assertEqual(task.configuration_snapshot_id, first.revision_id)
                 self.assertEqual(task.configuration_snapshot_digest, first.digest)
 

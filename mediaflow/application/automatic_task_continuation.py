@@ -31,7 +31,10 @@ from uuid import uuid4
 
 from mediaflow.application.recovery_decisions import collect_resolved_continuation_decisions
 from mediaflow.domain.manual_organize import ManualSourceIdentity
-from mediaflow.domain.manual_organize_preview import ManualPreviewItemStatus
+from mediaflow.domain.manual_organize_preview import (
+    ManualPreviewItemStatus,
+    manual_preview_plan_problem,
+)
 from mediaflow.domain.manual_recovery import (
     ManualRecoveryPreparation,
     ManualRecoveryPreparationStatus,
@@ -198,6 +201,28 @@ class AutomaticTaskContinuationService:
                 now=now,
             )
             return
+        problem = manual_preview_plan_problem(preview_item.plan)
+        if problem is not None:
+            # The shared analysis published a genuine business decision on this
+            # same Task and item (Recognition/Metadata/Metadata-correction/
+            # Classification/Conflict).  That is not a technical failure: keep
+            # the durable waiting state, re-read the item and re-project the
+            # exact state under this live claim fence so the operator can
+            # resolve it through the existing four-type flow.  Zero effects.
+            current = self._repository.get_item(started.item_id)
+            if current is not None and current.status in {
+                TaskItemStatus.WAITING_RECOGNITION,
+                TaskItemStatus.WAITING_METADATA,
+                TaskItemStatus.WAITING_METADATA_CORRECTION,
+                TaskItemStatus.WAITING_CLASSIFICATION,
+                TaskItemStatus.WAITING_CONFIRM,
+            }:
+                scheduling.record_item(
+                    claim,
+                    replace(current, updated_at=now),
+                    now=now,
+                )
+                return
         self._publish_failed(
             scheduling,
             claim,
@@ -302,6 +327,12 @@ class AutomaticTaskContinuationService:
             actor=actor,
             review_decisions=decisions,
             skip_current_snapshot_check=True,
+            # A re-analysis that reaches a *different* native four-type problem
+            # (for example a Recognition decision now failing Classification)
+            # publishes that finding on this same Task instead of becoming a
+            # technical failure.  The projector reuses the TaskItem this pass
+            # already started for the same verified source.
+            problem_task_id=task.task_id,
         )
         preview_item = next(
             (value for value in preview.items if value.item_id == intent_item.item_id),
@@ -501,7 +532,15 @@ class AutomaticTaskContinuationService:
             return object()
 
     def _task_actor(self, task_id: str) -> str:
-        """The durable admission principal of this Task, or a bounded label."""
+        """The operator who requested this continuation, or the admission principal.
+
+        A saved decision is continued by an authenticated operator.  That actor
+        — not the Scheduler/Run once principal that originally admitted the
+        Task — owns the analysis intent, its plan summary and the explicit
+        confirmation, exactly like a Files preparation.  The original
+        scheduling provenance remains ``admission_principal`` on the same row,
+        so the two identities are never conflated or overwritten.
+        """
 
         state = None
         reader = getattr(self._repository, "get_task_scheduling", None)
@@ -510,9 +549,12 @@ class AutomaticTaskContinuationService:
                 state = reader(task_id)
             except Exception:  # noqa: BLE001 - an unreadable row keeps the label
                 state = None
-        principal = getattr(state, "admission_principal", None)
-        if isinstance(principal, str) and principal.strip():
-            return principal.strip()[:200]
+        for value in (
+            getattr(state, "continuation_actor", None),
+            getattr(state, "admission_principal", None),
+        ):
+            if isinstance(value, str) and value.strip():
+                return value.strip()[:200]
         return "automatic-task"
 
 

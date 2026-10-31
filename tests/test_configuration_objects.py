@@ -154,12 +154,12 @@ def example_document() -> dict:
 
 
 def admit_organize_job(api, *, limit: int = 1):
-    """Admit one supported Organize Job under the one-shot authority boundary.
+    """Admit one supported Organize Task under the one-shot authority boundary.
 
-    The retired DryRun Job command no longer exists, so a snapshot-pin assertion
-    must read a Job the supported admission actually created.  The helper issues
-    a one-shot authorization, submits through that boundary and returns
-    ``(job_id, job_document)`` read back through the ordinary API projection.
+    The retired DryRun Job command no longer exists, and organizing execution
+    admission is a Task (Task47.3).  The helper issues a one-shot authorization,
+    submits through that boundary and returns ``(task_id, task_document)`` read
+    back through the ordinary API projection.
     """
     from mediaflow.application.execution_authorization import ExecutionAuthorizationService
 
@@ -173,10 +173,11 @@ def admit_organize_job(api, *, limit: int = 1):
         configuration_snapshot_digest=binding.snapshot_digest,
     )
     issued = service.issue(ttl_seconds=60, max_items=limit, actor="tester")
-    job = service.submit_organize(issued.token, limit=limit)
-    status, document = request(api, f"/api/v1/jobs/{job.job_id}")
+    submission = service.submit_organize(issued.token, limit=limit)
+    task_id = submission.task.task_id
+    status, document = request(api, f"/api/v1/tasks/{task_id}")
     assert status == 200, (status, document)
-    return job.job_id, document
+    return task_id, document
 
 
 def request(

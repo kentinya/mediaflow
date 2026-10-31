@@ -564,6 +564,76 @@ class CapacityTransitionTests(SchedulingKernelTestCase):
         self.assertTrue(readmitted.execute_authorized)
         self.assertEqual(len(self.repository.list_results(readmitted.task_id)), 1)
 
+    def test_named_claim_takes_only_the_explicit_task(self) -> None:
+        """A synchronous caller never leases an unrelated older queued Task."""
+
+        service = self.service(capacity=2)
+        older = _admit(service, request_id="older")
+        own = _admit(service, request_id="own")
+        older_claim = self.claimed(service)
+        self.assertEqual(older.task.task_id, older_claim.task_id)
+        self.repository.register_worker(
+            "cli-worker",
+            "cli worker",
+            5.0,
+            ("organize",),
+            None,
+            None,
+            SCHEMA_VERSION,
+            NOW,
+        )
+        self.repository.register_worker(
+            "other-worker",
+            "other worker",
+            5.0,
+            ("organize",),
+            None,
+            None,
+            SCHEMA_VERSION,
+            NOW,
+        )
+
+        # The named claim takes the caller's own Task even though the older
+        # Task is still owned and would sort first in a global claim.
+        own_claim = service.claim(
+            own.task.task_id, worker_id="cli-worker", now=NOW + timedelta(seconds=1)
+        )
+        self.assertIsNotNone(own_claim)
+        self.assertEqual(own.task.task_id, own_claim.task_id)
+        self.assertEqual("cli-worker", own_claim.worker_id)
+
+        # The same named Task cannot be taken by a second live owner, and the
+        # older Task is still exactly where its first owner left it.
+        self.assertIsNone(
+            service.claim(
+                own.task.task_id, worker_id="other-worker", now=NOW + timedelta(seconds=2)
+            )
+        )
+        older_state = self.repository.get_task_scheduling(older.task.task_id)
+        self.assertIs(older_state.queue_state, TaskQueueState.CLAIMED)
+        self.assertEqual(older_claim.worker_id, older_state.claim_worker_id)
+
+    def test_requeue_records_the_claiming_operator_separately(self) -> None:
+        service = self.service(capacity=1)
+        admission = _admit(service, principal="automation-scheduler")
+        claim = self.claimed(service)
+        service.request_control(claim.task_id, TaskControl.PAUSE, now=NOW + timedelta(seconds=1))
+        service.acknowledge_control(claim, now=NOW + timedelta(seconds=2))
+        requeued = service.requeue(
+            admission.task.task_id,
+            expected_snapshot_id="snapshot-1",
+            expected_snapshot_digest="digest-1",
+            continuation_actor="operator-2",
+            now=NOW + timedelta(seconds=3),
+        )
+        self.assertEqual("operator-2", requeued.continuation_actor)
+        self.assertEqual("automation-scheduler", requeued.admission_principal)
+        # Reopening the database reads the same two separate identities.
+        with SQLiteTaskRepository(self.database) as reopened:
+            state = reopened.get_task_scheduling(admission.task.task_id)
+            self.assertEqual("operator-2", state.continuation_actor)
+            self.assertEqual("automation-scheduler", state.admission_principal)
+
     def test_requeue_verifies_the_original_pin_and_observed_revision(self) -> None:
         service = self.service()
         admission = _admit(service)

@@ -35,7 +35,12 @@ from mediaflow.application.manual_organize import ManualOrganizeIntentService
 from mediaflow.application.manual_organize_preview import ManualOrganizePreviewService
 from mediaflow.application.media_discovery import MediaDiscoveryService
 from mediaflow.domain.media_discovery import DiscoveryBudgets
-from mediaflow.domain.security import ApiPermission, ResolvedApiPrincipal
+from mediaflow.domain.security import (
+    ROLE_PERMISSIONS,
+    ApiPermission,
+    ApiRole,
+    ResolvedApiPrincipal,
+)
 from mediaflow.domain.storage import StorageError, StorageErrorCode
 from mediaflow.infrastructure.local_storage import LocalStorage
 from mediaflow.infrastructure.sqlite_configuration_management import SQLiteConfigurationRepository
@@ -43,6 +48,7 @@ from mediaflow.infrastructure.sqlite_runtime import SQLiteTaskRepository
 from mediaflow.interfaces.service_api import MediaFlowApi
 
 ADMIN_TOKEN = "automation-run-once-admin"
+OPERATOR_TOKEN = "automation-run-once-operator"
 VIEWER_TOKEN = "automation-run-once-viewer"
 
 
@@ -337,6 +343,9 @@ class RunOnceApiTests(unittest.TestCase):
                 None,
                 principals=(
                     ResolvedApiPrincipal("admin", ADMIN_TOKEN, frozenset(ApiPermission)),
+                    ResolvedApiPrincipal(
+                        "operator", OPERATOR_TOKEN, ROLE_PERMISSIONS[ApiRole.OPERATOR]
+                    ),
                     ResolvedApiPrincipal("viewer", VIEWER_TOKEN, frozenset({ApiPermission.READ})),
                 ),
                 configuration_service=managed,
@@ -519,6 +528,9 @@ class RunOnceApiTests(unittest.TestCase):
         )
         if raw is None:
             raise RuntimeError("pinned definition is unavailable")
+        # A due occurrence is a scheduled run; only an explicit Run once carries
+        # the Run once origin and its authenticated admission principal.
+        run_once = state.admission_trigger.value == "run_once"
         return AutomationJob(
             task.task_id,
             AutomationCommand.ORGANIZE,
@@ -536,8 +548,10 @@ class RunOnceApiTests(unittest.TestCase):
             run_mode=raw.mode,
             resource_library_id=raw.resource_library_id,
             source_scope=raw.source_scope,
-            execution_origin=AutomationJobOrigin.RUN_ONCE,
-            execution_principal=state.admission_principal,
+            execution_origin=(
+                AutomationJobOrigin.RUN_ONCE if run_once else AutomationJobOrigin.SCHEDULED
+            ),
+            execution_principal=state.admission_principal if run_once else None,
             admission_request_id=state.admission_request_id,
         )
 
@@ -1190,6 +1204,10 @@ class RunOnceApiTests(unittest.TestCase):
             preparation = detail["manualRecoveryPreparation"]
             self.assertIsNotNone(preparation, detail)
             self.assertEqual("prepared", preparation["status"])
+            # The summary belongs to the authenticated operator who continued
+            # the analysis, not to the Run once admission principal.  A foreign
+            # operator cannot confirm another operator's exact selection.
+            self.assertEqual("admin", preparation["actor"])
             self.assertTrue(detail["manualRecoveryAvailable"])
             self.assertTrue(detail["manualRecoveryAnalysisReady"])
 
@@ -1201,6 +1219,18 @@ class RunOnceApiTests(unittest.TestCase):
                 entry["itemId"] for entry in preview["items"] if entry["status"] == "previewed"
             ]
             self.assertEqual(1, len(ready), preview)
+
+            status, refused = self.request(
+                value,
+                "POST",
+                f"/api/v1/manual-recovery-preparations/{preparation['preparation_id']}/confirm",
+                {"itemIds": ready, "confirmation": True},
+                token=OPERATOR_TOKEN,
+            )
+            self.assertEqual(403, status, refused)
+            self.assertEqual("preparation_actor_mismatch", refused["error"]["code"])
+            self.assertEqual([], value.source.mutations)
+            self.assertEqual([], value.target.mutations)
 
             status, confirmed = self.request(
                 value,
@@ -1299,6 +1329,357 @@ class RunOnceApiTests(unittest.TestCase):
             self.assertIsNotNone(confirmed_summary, detail)
             self.assertEqual("confirmed", confirmed_summary["status"])
             self.assertEqual(confirmed["executionId"], confirmed_summary["execution_id"])
+
+    def _run_manual_execution_worker(self, value, *, prefix: str):
+        """The real resident Worker branch that executes a confirmed exact subset."""
+
+        from mediaflow.application.manual_organize_execution import (
+            ManualOrganizeExecutionService,
+        )
+        from mediaflow.application.manual_organize_preview import ManualOrganizePreviewService
+        from mediaflow.application.manual_task_engine import ManualTaskEngineWorker
+        from mediaflow.application.metadata import MetadataProviderRegistry
+        from mediaflow.application.strategy_test import SyntheticMetadataProvider
+        from mediaflow.application.task_scheduling import TaskSchedulingService
+        from mediaflow.domain.metadata import MediaCandidate, MediaType
+        from mediaflow.infrastructure.sqlite_runtime import SCHEMA_VERSION
+
+        scheduling = TaskSchedulingService(value.repository, capacity=100)
+        provider_registry = MetadataProviderRegistry(
+            (
+                SyntheticMetadataProvider(
+                    (
+                        MediaCandidate("tmdb", "1", MediaType.MOVIE, "One", year=2001),
+                        MediaCandidate("tmdb", "2", MediaType.MOVIE, "Two", year=2002),
+                    )
+                ),
+            )
+        )
+        previews = ManualOrganizePreviewService(
+            value.repository,
+            value.intents,
+            configuration=value.runtime,
+            storages={"source": value.source, "target": value.target},
+            providers=provider_registry,
+            clock=value.clock,
+        )
+        execution_service = ManualOrganizeExecutionService(
+            value.repository,
+            previews,
+            value.intents,
+            configuration=value.runtime,
+            storages={"source": value.source, "target": value.target},
+            clock=value.clock,
+        )
+        worker_id = f"{prefix}-{len(value.repository.list_tasks())}"
+        value.repository.register_worker(
+            worker_id,
+            worker_id,
+            5.0,
+            ("organize",),
+            None,
+            None,
+            SCHEMA_VERSION,
+            value.clock.now,
+        )
+        return ManualTaskEngineWorker(
+            value.repository,
+            scheduling,
+            None,
+            execution_service,
+            worker_id=worker_id,
+            clock=value.clock,
+        )
+
+    def test_scheduled_decision_summary_belongs_to_the_continuing_operator(self):
+        """A real Scheduler due Task keeps the operator's own recovery authority.
+
+        The due Task is admitted by the Scheduler principal, but its saved
+        decision is continued by an authenticated operator.  The fresh summary
+        must belong to that operator (not ``automation-scheduler``), a different
+        permitted operator cannot confirm it, and the original operator's
+        explicit confirmation executes the allowed subset on the same Task.
+        """
+
+        from mediaflow.application.automation import IntervalScheduler
+        from mediaflow.application.task_scheduling import TaskSchedulingService
+        from mediaflow.domain.automation import (
+            AutomationTaskDefinition,
+            SchedulerConfigurationSnapshot,
+        )
+
+        self.media("Movies/One.2001.mkv")
+        self.change_document = lambda document: document.update({"recognitionRules": []})
+        with self.journey(definitions=self._kernel_definition_document()) as value:
+            active = value.managed.active()
+            definition = AutomationTaskDefinition.from_document(
+                active.document["automationTaskDefinitions"][0]
+            )
+            scheduling = TaskSchedulingService(value.repository, capacity=10)
+            version = getattr(value.runtime, "configuration_snapshot_version", active.version)
+            snapshot = SchedulerConfigurationSnapshot(
+                active.revision_id,
+                active.digest,
+                (),
+                100,
+                (definition,),
+                version,
+                ("library",),
+                ("library",),
+            )
+            emitted = IntervalScheduler(
+                value.repository,
+                (),
+                configuration_snapshot_resolver=lambda: snapshot,
+                scheduling_service=scheduling,
+            ).tick(value.clock.now)
+            self.assertEqual(1, len(emitted))
+            task_id = emitted[0].task_id
+            self.assertEqual((), value.repository.list_jobs(limit=10))
+            state = value.repository.get_task_scheduling(task_id)
+            self.assertEqual("automation-scheduler", state.admission_principal)
+            self.assertEqual("schedule", state.admission_trigger.value)
+
+            result = self.execute(value)
+            self.assertIsNotNone(result)
+            (item,) = value.repository.list_items(task_id)
+            self.assertEqual("waiting_recognition", item.status.value)
+            self.assertEqual([], value.source.mutations)
+            self.assertEqual([], value.target.mutations)
+
+            status, detail = self.request(
+                value, "GET", f"/api/v1/tasks/{task_id}/items/{item.item_id}/recovery"
+            )
+            self.assertEqual(200, status, detail)
+            status, decided = self.request(
+                value,
+                "POST",
+                f"/api/v1/tasks/{task_id}/items/{item.item_id}/recovery/decision",
+                {
+                    "kind": "recognition",
+                    "expectedCheckpointVersion": detail["checkpoint"]["checkpoint_version"],
+                    "recognitionTypeId": "A",
+                },
+            )
+            self.assertEqual(200, status, decided)
+            status, continued = self.request(
+                value,
+                "POST",
+                f"/api/v1/tasks/{task_id}/items/{item.item_id}/recovery/continue",
+                {"expectedCheckpointVersion": decided["checkpoint"]["checkpoint_version"]},
+            )
+            self.assertEqual(202, status, continued)
+            self.assertEqual(task_id, continued["nativeAnalysis"]["taskId"])
+            # The authenticated operator is durably recorded for this re-entry;
+            # the Scheduler principal remains the Task's original provenance.
+            state = value.repository.get_task_scheduling(task_id)
+            self.assertEqual("admin", state.continuation_actor)
+            self.assertEqual("automation-scheduler", state.admission_principal)
+
+            self.assertIsNotNone(self.execute(value))
+            (item,) = value.repository.list_items(task_id)
+            self.assertEqual("waiting_confirm", item.status.value, item)
+            self.assertEqual([], value.source.mutations)
+            self.assertEqual([], value.target.mutations)
+
+            status, detail = self.request(
+                value, "GET", f"/api/v1/tasks/{task_id}/items/{item.item_id}/recovery"
+            )
+            self.assertEqual(200, status, detail)
+            preparation = detail["manualRecoveryPreparation"]
+            self.assertIsNotNone(preparation, detail)
+            self.assertEqual("prepared", preparation["status"])
+            self.assertEqual("admin", preparation["actor"])
+            # A refresh/reopen reads the same durable summary and actor.
+            status, refreshed = self.request(
+                value, "GET", f"/api/v1/tasks/{task_id}/items/{item.item_id}/recovery"
+            )
+            self.assertEqual(200, status, refreshed)
+            self.assertEqual(
+                preparation["preparation_id"],
+                refreshed["manualRecoveryPreparation"]["preparation_id"],
+            )
+
+            status, preview = self.request(
+                value, "GET", f"/api/v1/manual-previews/{preparation['preview_id']}"
+            )
+            self.assertEqual(200, status, preview)
+            ready = [
+                entry["itemId"] for entry in preview["items"] if entry["status"] == "previewed"
+            ]
+            self.assertEqual(1, len(ready), preview)
+            status, refused = self.request(
+                value,
+                "POST",
+                f"/api/v1/manual-recovery-preparations/{preparation['preparation_id']}/confirm",
+                {"itemIds": ready, "confirmation": True},
+                token=OPERATOR_TOKEN,
+            )
+            self.assertEqual(403, status, refused)
+            self.assertEqual("preparation_actor_mismatch", refused["error"]["code"])
+            self.assertEqual([], value.source.mutations)
+            self.assertEqual([], value.target.mutations)
+
+            status, confirmed = self.request(
+                value,
+                "POST",
+                f"/api/v1/manual-recovery-preparations/{preparation['preparation_id']}/confirm",
+                {"itemIds": ready, "confirmation": True},
+            )
+            self.assertEqual(202, status, confirmed)
+            self.assertEqual(task_id, confirmed["taskId"])
+            self.assertEqual((), value.repository.list_jobs(limit=10))
+
+            settled = self._run_manual_execution_worker(
+                value, prefix="scheduled-recovery"
+            ).run_next()
+            self.assertIsNotNone(settled)
+            self.assertEqual(task_id, settled.task_id)
+            self.assertEqual("completed", settled.status.value, settled.error)
+            self.assertFalse((self.source_root / "Movies/One.2001.mkv").exists())
+            organized = list((self.target_root / "Organized" / "Movies").rglob("*.mkv"))
+            self.assertEqual(1, len(organized), organized)
+            results = value.repository.list_results(task_id)
+            self.assertEqual(1, len(results), results)
+            self.assertEqual("SUCCESS", results[0].status)
+            self.assertEqual((), value.repository.list_jobs(limit=10))
+
+    def test_recognition_decision_reaching_classification_stays_a_business_problem(self):
+        """A fresh four-type finding during recovery stays on the same Task.
+
+        Recognition A is saved on a Run once Task; the zero-mutation re-analysis
+        then finds that the pinned ClassificationPolicy selects no MediaLibrary.
+        That is a Classification decision, not a technical failure: the item and
+        Task wait for that decision, the Classification list shows it, and the
+        operator can continue through summary and explicit execution.
+        """
+
+        self.media("One.2001.mkv")
+
+        def no_matching_destination(document):
+            document["recognitionRules"] = []
+            document["classificationPolicies"][0]["rules"] = [
+                {
+                    "id": "tv-only",
+                    "priority": 1,
+                    "conditions": {"mediaType": ["tv"]},
+                    "result": {"mediaLibraryId": "movies", "path": ["TV"]},
+                }
+            ]
+
+        self.change_document = no_matching_destination
+        with self.journey() as value:
+            status, admitted = self.admit(value)
+            self.assertEqual(202, status, admitted)
+            task_id = admitted["taskId"]
+            self.assertEqual((), value.repository.list_items(task_id))
+            self.assertIsNotNone(self.execute(value))
+            (item,) = value.repository.list_items(task_id)
+            self.assertEqual("waiting_recognition", item.status.value)
+
+            status, detail = self.request(
+                value, "GET", f"/api/v1/tasks/{task_id}/items/{item.item_id}/recovery"
+            )
+            self.assertEqual(200, status, detail)
+            status, decided = self.request(
+                value,
+                "POST",
+                f"/api/v1/tasks/{task_id}/items/{item.item_id}/recovery/decision",
+                {
+                    "kind": "recognition",
+                    "expectedCheckpointVersion": detail["checkpoint"]["checkpoint_version"],
+                    "recognitionTypeId": "A",
+                },
+            )
+            self.assertEqual(200, status, decided)
+            status, continued = self.request(
+                value,
+                "POST",
+                f"/api/v1/tasks/{task_id}/items/{item.item_id}/recovery/continue",
+                {"expectedCheckpointVersion": decided["checkpoint"]["checkpoint_version"]},
+            )
+            self.assertEqual(202, status, continued)
+            self.assertIsNotNone(self.execute(value))
+
+            (item,) = value.repository.list_items(task_id)
+            self.assertEqual("waiting_classification", item.status.value, item)
+            self.assertEqual("waiting_classification", item.stage)
+            task = value.repository.get_task(task_id)
+            self.assertEqual("running", task.status.value, task)
+            state = value.repository.get_task_scheduling(task_id)
+            self.assertEqual("waiting_human", state.queue_state.value)
+            self.assertEqual(0, value.repository.count_scheduled_capacity_use())
+            status, listing = self.request(
+                value, "GET", "/api/v1/operations/runs?view=classification"
+            )
+            self.assertEqual(200, status, listing)
+            self.assertEqual(1, listing["total"], listing)
+            self.assertEqual([], value.source.mutations)
+            self.assertEqual([], value.target.mutations)
+            self.assertEqual((), value.repository.list_jobs(limit=10))
+
+            status, detail = self.request(
+                value, "GET", f"/api/v1/tasks/{task_id}/items/{item.item_id}/recovery"
+            )
+            self.assertEqual(200, status, detail)
+            self.assertEqual("business_problem", detail["recoveryKind"])
+            choices = detail["decision"]["choices"]
+            self.assertEqual(["tv-only"], [choice["rule_id"] for choice in choices])
+            status, decided = self.request(
+                value,
+                "POST",
+                f"/api/v1/tasks/{task_id}/items/{item.item_id}/recovery/decision",
+                {
+                    "kind": "classification",
+                    "expectedCheckpointVersion": detail["checkpoint"]["checkpoint_version"],
+                    "choiceRank": choices[0]["rank"],
+                },
+            )
+            self.assertEqual(200, status, decided)
+            status, continued = self.request(
+                value,
+                "POST",
+                f"/api/v1/tasks/{task_id}/items/{item.item_id}/recovery/continue",
+                {"expectedCheckpointVersion": decided["checkpoint"]["checkpoint_version"]},
+            )
+            self.assertEqual(202, status, continued)
+            self.assertIsNotNone(self.execute(value))
+            (item,) = value.repository.list_items(task_id)
+            self.assertEqual("waiting_confirm", item.status.value, item)
+            self.assertEqual([], value.source.mutations)
+            self.assertEqual([], value.target.mutations)
+
+            status, detail = self.request(
+                value, "GET", f"/api/v1/tasks/{task_id}/items/{item.item_id}/recovery"
+            )
+            self.assertEqual(200, status, detail)
+            preparation = detail["manualRecoveryPreparation"]
+            self.assertEqual("admin", preparation["actor"])
+            status, preview = self.request(
+                value, "GET", f"/api/v1/manual-previews/{preparation['preview_id']}"
+            )
+            self.assertEqual(200, status, preview)
+            ready = [
+                entry["itemId"] for entry in preview["items"] if entry["status"] == "previewed"
+            ]
+            self.assertEqual(1, len(ready), preview)
+            status, confirmed = self.request(
+                value,
+                "POST",
+                f"/api/v1/manual-recovery-preparations/{preparation['preparation_id']}/confirm",
+                {"itemIds": ready, "confirmation": True},
+            )
+            self.assertEqual(202, status, confirmed)
+            settled = self._run_manual_execution_worker(
+                value, prefix="classification-recovery"
+            ).run_next()
+            self.assertIsNotNone(settled)
+            self.assertEqual(task_id, settled.task_id)
+            self.assertEqual("completed", settled.status.value, settled.error)
+            self.assertFalse((self.source_root / "One.2001.mkv").exists())
+            organized = list(self.target_root.rglob("*.mkv"))
+            self.assertEqual(1, len(organized), organized)
+            self.assertEqual((), value.repository.list_jobs(limit=10))
 
     def test_cancel_pending_run_once_settles_its_admitted_task(self):
         with self.journey() as value:

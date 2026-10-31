@@ -378,7 +378,14 @@ from mediaflow.infrastructure.task_source_schema import ensure_task_occurrence_c
 # rewrites no identity, status, plan or authorization; it is idempotent and
 # leaves a database that never had the constraint untouched.  No Job row, pin
 # or historical fact is deleted or re-labelled.
-SCHEMA_VERSION = 55
+# Schema 56 adds the additive ``task_scheduling.continuation_actor`` column:
+# after an operator saves a four-type decision, that authenticated actor is the
+# one who requested the same Task's zero-mutation re-analysis, so its plan
+# summary belongs to that operator rather than to the Scheduler principal that
+# originally admitted the Task.  The original ``admission_principal`` and every
+# other scheduling fact stay untouched; a legacy row simply has no recorded
+# continuation actor and is never backfilled or re-labelled.
+SCHEMA_VERSION = 56
 
 #: The conservative owner generation written to ``file_locks`` rows that predate
 #: schema 38.  It is a fixed, non-guessable-looking sentinel rather than NULL so
@@ -512,6 +519,7 @@ _TASK_SCHEDULING_COLUMNS = (
     "mutation_action",
     "created_at",
     "updated_at",
+    "continuation_actor",
 )
 
 _TASK_SCHEDULING_CREATE = """
@@ -538,6 +546,7 @@ _TASK_SCHEDULING_CREATE = """
         mutation_action TEXT,
         created_at TEXT NOT NULL,
         updated_at TEXT NOT NULL,
+        continuation_actor TEXT,
         FOREIGN KEY(task_id) REFERENCES tasks(task_id)
     )
 """
@@ -4884,6 +4893,24 @@ class SQLiteTaskRepository:
                 ).fetchone()
                 now = datetime.now(UTC)
                 if existing is None:
+                    # A kernel-admitted TaskItem is identified by its Task and
+                    # concrete source path (``begin_item``), while this projector
+                    # also serves the Files path whose item identity includes the
+                    # verified occurrence.  Reuse the existing row when it is
+                    # provably bound to the exact analyzed source/version; a
+                    # replaced or unverifiable version is never re-pointed at
+                    # this row (the insert below then fails closed).
+                    candidate = self._connection.execute(
+                        "SELECT * FROM task_items WHERE task_id=? AND storage_id=? "
+                        "AND source_path=?",
+                        (task_id, source.storage_id, storage_path),
+                    ).fetchone()
+                    if candidate is not None and self._item_matches_analyzed_source(
+                        candidate, source
+                    ):
+                        existing = candidate
+                        item_id = candidate["item_id"]
+                if existing is None:
                     item = PersistentTaskItem(
                         item_id,
                         task_id,
@@ -5017,6 +5044,35 @@ class SQLiteTaskRepository:
             )
             raise error
         return item_id
+
+    @staticmethod
+    def _item_matches_analyzed_source(row: sqlite3.Row, source) -> bool:
+        """Whether one existing TaskItem row is the exact analyzed source version.
+
+        The comparison is deliberately conservative: a recorded occurrence or
+        fingerprint must be identical to the analyzed one.  A row without that
+        evidence can only be reused when the analysis has no such evidence
+        either, so a same-path replacement never inherits the previous version's
+        review, and a known version is never silently replaced.
+        """
+
+        stored_occurrence = (
+            row["source_occurrence_id"] if "source_occurrence_id" in row.keys() else None
+        )
+        stored_fingerprint = (
+            row["source_fingerprint"] if "source_fingerprint" in row.keys() else None
+        )
+        occurrence = getattr(source, "occurrence_id", None)
+        fingerprint = getattr(source, "fingerprint", None)
+        if stored_occurrence and occurrence and stored_occurrence != occurrence:
+            return False
+        if stored_fingerprint and fingerprint and stored_fingerprint != fingerprint:
+            return False
+        if stored_occurrence and not occurrence:
+            return False
+        if stored_fingerprint and not fingerprint:
+            return False
+        return True
 
     def _pending_problem_row(self, problem: str, item_id: str) -> object | None:
         """The one unresolved problem row already published for this TaskItem.
@@ -19290,6 +19346,77 @@ class SQLiteTaskRepository:
             self._connection.commit()
         return ScheduledTaskClaim(self._task(task_row), state)
 
+    def claim_scheduled_task(
+        self,
+        task_id: str,
+        now: datetime,
+        *,
+        worker_id: str,
+        claim_token: str,
+        lease_seconds: float,
+    ) -> ScheduledTaskClaim | None:
+        """Lease one explicitly named eligible Task inside its own transaction.
+
+        A caller that already owns a durable Task identity must not take an
+        unrelated queued Task just because it sorts first.  The Worker
+        eligibility, admitted pin, queue eligibility, expired-claim takeover and
+        ownership generation are the exact same rules as the global claim, but
+        the candidate set is the named Task only.  A live claim held by another
+        Worker, a running/settled Task, a missing pin match or an in-flight
+        mutation all answer ``None``; nothing is stolen or reset.
+        """
+
+        bounded_text(task_id, "claim Task identity", maximum=200)
+        self._require_claim_values(worker_id, claim_token, lease_seconds)
+        if now.tzinfo is None:
+            raise ValueError("Task claim timestamp needs timezone")
+        expires_at = now + timedelta(seconds=float(lease_seconds))
+        with self._lock, self._connection:
+            self._connection.execute("BEGIN IMMEDIATE")
+            try:
+                worker = self._scheduled_worker_locked(worker_id, now)
+                row = self._claimable_scheduled_task_locked(worker, now, task_id=task_id)
+                if row is None:
+                    self._connection.rollback()
+                    return None
+                cursor = self._connection.execute(
+                    """UPDATE task_scheduling
+                    SET queue_state=?, claim_generation=claim_generation+1, claim_token=?,
+                        claim_worker_id=?, claimed_at=?, claim_expires_at=?, heartbeat_at=?,
+                        updated_at=?
+                    WHERE task_id=? AND claim_generation=?
+                        AND queue_state IN (?, ?) AND mutation_state IS NULL""",
+                    (
+                        TaskQueueState.CLAIMED.value,
+                        claim_token,
+                        worker_id,
+                        now.isoformat(),
+                        expires_at.isoformat(),
+                        now.isoformat(),
+                        now.isoformat(),
+                        row["task_id"],
+                        int(row["claim_generation"]),
+                        TaskQueueState.QUEUED.value,
+                        TaskQueueState.CLAIMED.value,
+                    ),
+                )
+                if cursor.rowcount != 1:
+                    self._connection.rollback()
+                    return None
+                state = self._scheduled_state_locked(row["task_id"])
+                task_row = self._connection.execute(
+                    "SELECT * FROM tasks WHERE task_id=?", (row["task_id"],)
+                ).fetchone()
+                if state is None or task_row is None:
+                    raise TaskSchedulingError(
+                        "the claimed Task disappeared inside its own claim transaction"
+                    )
+            except BaseException:
+                self._connection.rollback()
+                raise
+            self._connection.commit()
+        return ScheduledTaskClaim(self._task(task_row), state)
+
     def heartbeat_scheduled_claim(
         self, fence: TaskClaimFence, *, lease_seconds: float
     ) -> TaskSchedulingState | None:
@@ -20058,6 +20185,7 @@ class SQLiteTaskRepository:
         now: datetime,
         stage: TaskMachineStage | None = None,
         queue_eligible_at: datetime | None = None,
+        continuation_actor: str | None = None,
     ) -> TaskSchedulingState:
         """Re-admit human-waiting or safely paused work of the same Task.
 
@@ -20068,7 +20196,9 @@ class SQLiteTaskRepository:
         consumed authority stay exactly as they were and no automatic
         continuation is registered.  The claim generation advances, so a frame
         from the previous claim can never publish again, and neither the
-        authority nor the pin is refreshed.
+        authority nor the pin is refreshed.  ``continuation_actor``, when given,
+        records the authenticated operator who requested this exact re-entry
+        without changing the Task's original admission principal.
         """
 
         require_capacity(capacity)
@@ -20080,6 +20210,10 @@ class SQLiteTaskRepository:
             raise ValueError("Task queue eligibility instant needs timezone")
         if stage is not None:
             stage = TaskMachineStage(stage)
+        if continuation_actor is not None:
+            continuation_actor = bounded_text(
+                continuation_actor, "Task continuation actor", maximum=128
+            )
         with self._lock, self._connection:
             self._connection.execute("BEGIN IMMEDIATE")
             try:
@@ -20150,12 +20284,13 @@ class SQLiteTaskRepository:
                         claim_generation=claim_generation+1, claim_token=NULL,
                         claim_worker_id=NULL, claimed_at=NULL, claim_expires_at=NULL,
                         heartbeat_at=NULL, control_request=NULL, control_requested_at=NULL,
-                        control_acknowledged_at=NULL, updated_at=?
+                        control_acknowledged_at=NULL, continuation_actor=?, updated_at=?
                     WHERE task_id=?""",
                     (
                         TaskQueueState.QUEUED.value,
                         stage.value if stage is not None else None,
                         queue_eligible_at.isoformat() if queue_eligible_at else None,
+                        continuation_actor,
                         now.isoformat(),
                         task_id,
                     ),
@@ -20735,7 +20870,7 @@ class SQLiteTaskRepository:
         return worker
 
     def _claimable_scheduled_task_locked(
-        self, worker: ProcessingWorker, now: datetime
+        self, worker: ProcessingWorker, now: datetime, *, task_id: str | None = None
     ) -> sqlite3.Row | None:
         placeholders = ", ".join("?" for _ in worker.supported_commands)
         parameters: list[object] = [now.isoformat(), now.isoformat()]
@@ -20748,6 +20883,10 @@ class SQLiteTaskRepository:
             parameters.extend(
                 [worker.configuration_snapshot_id, worker.configuration_snapshot_digest]
             )
+        task_predicate = ""
+        if task_id is not None:
+            task_predicate = " AND task_scheduling.task_id=?"
+            parameters.append(task_id)
         return self._connection.execute(
             f"""SELECT task_scheduling.task_id, task_scheduling.claim_generation
             FROM task_scheduling JOIN tasks ON tasks.task_id=task_scheduling.task_id
@@ -20761,6 +20900,7 @@ class SQLiteTaskRepository:
                 AND task_scheduling.mutation_state IS NULL
                 AND tasks.command IN ({placeholders})
                 {pin_predicate}
+                {task_predicate}
             ORDER BY COALESCE(task_scheduling.queue_eligible_at, task_scheduling.created_at),
                 task_scheduling.created_at, task_scheduling.task_id
             LIMIT 1""",
@@ -21035,6 +21175,9 @@ class SQLiteTaskRepository:
             mutation_state=row["mutation_state"],
             mutation_item_id=row["mutation_item_id"],
             mutation_action=row["mutation_action"],
+            continuation_actor=(
+                row["continuation_actor"] if "continuation_actor" in row.keys() else None
+            ),
             created_at=datetime.fromisoformat(row["created_at"]),
             updated_at=datetime.fromisoformat(row["updated_at"]),
         )
@@ -21066,6 +21209,7 @@ class SQLiteTaskRepository:
             state.mutation_action,
             state.created_at.isoformat(),
             state.updated_at.isoformat(),
+            state.continuation_actor,
         )
 
     def _reject_scheduling_managed_task(self, task_id: str, operation: str) -> None:
@@ -22470,7 +22614,7 @@ class SQLiteTaskRepository:
         )
 
     def _migrate_task_scheduling_locked(self) -> None:
-        """Schema 54: the Task-owned scheduling facts, and only those.
+        """Schema 54/56: the Task-owned scheduling facts, and only those.
 
         The queue/claim/control/mutation boundary of one organizing work belongs
         to that Task, so it is one 1:1 row keyed by the same ``task_id``: no
@@ -22498,6 +22642,14 @@ class SQLiteTaskRepository:
             row["name"]
             for row in self._connection.execute("PRAGMA table_info(task_scheduling)").fetchall()
         }
+        if "continuation_actor" not in present:
+            # Schema 56: additive only.  A row admitted before this fact existed
+            # keeps its original admission principal and reads as "no recorded
+            # continuation actor"; nothing is backfilled or re-labelled.
+            self._connection.execute(
+                "ALTER TABLE task_scheduling ADD COLUMN continuation_actor TEXT"
+            )
+            present.add("continuation_actor")
         missing = set(_TASK_SCHEDULING_COLUMNS) - present
         if missing:
             raise ValueError(

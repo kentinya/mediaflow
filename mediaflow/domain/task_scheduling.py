@@ -427,6 +427,14 @@ class TaskSchedulingState:
     mutation_state: str | None = None
     mutation_item_id: str | None = None
     mutation_action: str | None = None
+    #: The authenticated operator who most recently re-entered this Task's
+    #: zero-mutation analysis.  The original scheduling principal stays in
+    #: ``admission_principal``; this field keeps the continuation's own actor so
+    #: its plan summary belongs to the operator who requested it, not to the
+    #: Scheduler that originally admitted the Task.  ``None`` means no
+    #: operator-triggered re-entry has been recorded (or it belongs to a legacy
+    #: row written before this fact existed).
+    continuation_actor: str | None = None
 
     def __post_init__(self) -> None:
         object.__setattr__(self, "queue_state", TaskQueueState(self.queue_state))
@@ -445,6 +453,12 @@ class TaskSchedulingState:
             not self.mutation_item_id or not self.mutation_action
         ):
             raise ValueError("an in-flight Task mutation must name its item and action")
+        if self.continuation_actor is not None:
+            bounded_text(
+                self.continuation_actor,
+                "Task continuation actor",
+                maximum=MAX_TASK_PRINCIPAL_LENGTH,
+            )
 
     @property
     def holds_capacity(self) -> bool:
@@ -642,6 +656,24 @@ class TaskSchedulingRepository(Protocol):
         claim_token: str,
         lease_seconds: float,
     ) -> ScheduledTaskClaim | None: ...
+
+    def claim_scheduled_task(
+        self,
+        task_id: str,
+        now: datetime,
+        *,
+        worker_id: str,
+        claim_token: str,
+        lease_seconds: float,
+    ) -> ScheduledTaskClaim | None:
+        """Lease one explicitly named eligible Task, or answer ``None``.
+
+        A synchronous caller that already owns a durable Task identity (the
+        direct CLI) must never take an unrelated older Task merely because it is
+        first in the shared queue.  Selection and ownership run in one
+        transaction against the named Task only.
+        """
+        ...
 
     def heartbeat_scheduled_claim(
         self,

@@ -390,8 +390,8 @@ class DestinationPrecheckActivationTests(unittest.TestCase):
                     configuration_service=managed,
                     bootstrap_document=document,
                 )
-                job_id, created = admit_organize_job(api)
-                stored = runtime_repository.get_job(job_id)
+                task_id, created = admit_organize_job(api)
+                stored = runtime_repository.get_task(task_id)
                 self.assertIsNotNone(stored)
                 self.assertEqual(stored.configuration_snapshot_id, activated.revision_id)
                 self.assertEqual(stored.configuration_snapshot_digest, activated.digest)
@@ -920,7 +920,7 @@ class DestinationPrecheckActivationTests(unittest.TestCase):
                 # Runtime schema 43 adds durable scope continuations; schema
                 # 44 links exact-Preview recovery to the paused source Task and
                 # schema 54 adds the Task-owned scheduling facts.
-                self.assertEqual(RUNTIME_SCHEMA_VERSION, 55)
+                self.assertEqual(RUNTIME_SCHEMA_VERSION, 56)
 
     def test_api_blocked_and_satisfied_use_existing_contract(self) -> None:
         with tempfile.TemporaryDirectory() as directory:

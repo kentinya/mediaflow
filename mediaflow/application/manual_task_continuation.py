@@ -324,6 +324,10 @@ class ManualTaskContinuationService:
                 expected_snapshot_id=task.configuration_snapshot_id,
                 expected_snapshot_digest=task.configuration_snapshot_digest,
                 stage=TaskMachineStage.ANALYSIS,
+                # The operator who requested this re-entry owns its plan
+                # summary; the original Scheduler/Run once admission principal
+                # stays the Task's separate scheduling provenance.
+                continuation_actor=actor,
             )
         except TaskQueueFull as error:
             raise ManualTaskContinuationError(

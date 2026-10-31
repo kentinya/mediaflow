@@ -436,20 +436,26 @@ class BusyStepPinPreservationTests(ResidentAdoptionFixture):
                 configuration_snapshot_digest=active.digest if active else None,
             )
             issued = service.issue(ttl_seconds=600, max_items=1, actor="tester")
-            job = service.submit_organize(issued.token, limit=1)
-            admitted_pin = (job.configuration_snapshot_id, job.configuration_snapshot_digest)
+            submission = service.submit_organize(issued.token, limit=1)
+            task_id = submission.task.task_id
+            admitted_pin = (
+                submission.task.configuration_snapshot_id,
+                submission.task.configuration_snapshot_digest,
+            )
 
-        # Publish a new engine cadence while that Job is admitted but not yet
+        # Publish a new engine cadence while that Task is admitted but not yet
         # claimed.  Publication must not rewrite its pin or its authority.
         self.publish_engine(worker_poll=0.4)
         with SQLiteTaskRepository(self.database, read_only=True) as repository:
+            task = repository.get_task(task_id)
             jobs = repository.list_jobs()
-        self.assertEqual(len(jobs), 1)
+        self.assertEqual(jobs, ())
+        self.assertIsNotNone(task)
         self.assertEqual(
-            (jobs[0].configuration_snapshot_id, jobs[0].configuration_snapshot_digest),
+            (task.configuration_snapshot_id, task.configuration_snapshot_digest),
             admitted_pin,
         )
-        self.assertEqual(jobs[0].status.value, "pending")
+        self.assertEqual(task.status.value, "pending")
         # The new publication is a *new* Active, so the admitted pin now refers
         # to an older (but still intact) snapshot rather than being silently
         # repinned to today's configuration.

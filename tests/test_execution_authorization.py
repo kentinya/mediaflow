@@ -391,6 +391,29 @@ class ExecutionAuthorizationTests(unittest.TestCase):
                     ),
                 )
             )
+            # A real older queued Run once already holds the shared queue.  The
+            # direct CLI must claim its *own* newly admitted Task atomically, not
+            # take the oldest Task and then reject its identity.
+            from mediaflow.application.task_scheduling import (
+                TaskSchedulingService,
+                build_scheduled_task_admission,
+            )
+            from mediaflow.domain.task_scheduling import TaskTrigger
+
+            with SQLiteTaskRepository(root / "runtime.sqlite3") as repository:
+                scheduling = TaskSchedulingService(repository, capacity=100)
+                older_task, older_state = build_scheduled_task_admission(
+                    "organize",
+                    execute_authorized=True,
+                    trigger=TaskTrigger.RUN_ONCE,
+                    principal="automation-scheduler",
+                    request_id="pre-existing-run-once",
+                    now=datetime.now(UTC),
+                )
+                repository.admit_scheduled_task(
+                    older_task, older_state, capacity=scheduling.capacity
+                )
+
             output, errors = io.StringIO(), io.StringIO()
             with patch(
                 "mediaflow.final_cli.metadata_provider_registry_from_environment",
@@ -409,8 +432,8 @@ class ExecutionAuthorizationTests(unittest.TestCase):
             with SQLiteTaskRepository(root / "runtime.sqlite3") as repository:
                 self.assertEqual((), repository.list_jobs())
                 tasks = repository.list_tasks()
-                self.assertEqual(1, len(tasks), tasks)
-                task = tasks[0]
+                self.assertEqual(2, len(tasks), tasks)
+                task = next(value for value in tasks if value.task_id != older_task.task_id)
                 self.assertEqual("organize", task.command)
                 self.assertTrue(task.execute_authorized)
                 self.assertEqual("completed", task.status.value)
@@ -421,6 +444,75 @@ class ExecutionAuthorizationTests(unittest.TestCase):
                 (item,) = repository.list_items(task.task_id)
                 self.assertEqual("success", item.status.value)
                 self.assertEqual(1, len(repository.list_results(task.task_id)))
+
+                # The older Run once is untouched: still queued, never claimed by
+                # the CLI, no fabricated processing or result, and no second
+                # owner left behind in the shared queue.
+                older = repository.get_task(older_task.task_id)
+                self.assertEqual("pending", older.status.value)
+                older_queue = repository.get_task_scheduling(older_task.task_id)
+                self.assertEqual("queued", older_queue.queue_state.value)
+                self.assertIsNone(older_queue.claim_token)
+                self.assertIsNone(older_queue.claim_worker_id)
+                self.assertEqual((), repository.list_items(older_task.task_id))
+                self.assertEqual((), repository.list_results(older_task.task_id))
+                # The transient CLI Worker identity was stopped with the run.
+                workers = repository.list_workers()
+                self.assertTrue(workers, workers)
+                self.assertTrue(
+                    all(worker.status.value == "stopped" for worker in workers), workers
+                )
+
+    def test_direct_cli_never_steals_a_task_already_owned_by_a_resident_worker(self) -> None:
+        from mediaflow.application.task_scheduling import (
+            TaskSchedulingService,
+            build_scheduled_task_admission,
+        )
+        from mediaflow.domain.task_scheduling import TaskTrigger, TaskWorkerRejected
+        from mediaflow.final_cli import _drive_direct_organize_claim
+
+        with tempfile.TemporaryDirectory() as directory:
+            with SQLiteTaskRepository(Path(directory, "runtime.sqlite3")) as repository:
+                now = datetime.now(UTC)
+                scheduling = TaskSchedulingService(repository, capacity=2)
+                task, state = build_scheduled_task_admission(
+                    "organize",
+                    execute_authorized=True,
+                    trigger=TaskTrigger.MANUAL,
+                    principal="cli",
+                    now=now,
+                )
+                repository.admit_scheduled_task(task, state, capacity=scheduling.capacity)
+                repository.register_worker(
+                    "resident-worker",
+                    "resident",
+                    5.0,
+                    ("organize",),
+                    None,
+                    None,
+                    SCHEMA_VERSION,
+                    now,
+                )
+                owned = scheduling.claim(
+                    task.task_id,
+                    worker_id="resident-worker",
+                    now=now + timedelta(seconds=1),
+                    lease_seconds=900,
+                )
+                self.assertIsNotNone(owned)
+                with self.assertRaisesRegex(TaskWorkerRejected, "already owned"):
+                    _drive_direct_organize_claim(repository, scheduling, task)
+                # This process took nothing and left no live temporary Worker.
+                current = repository.get_task_scheduling(task.task_id)
+                self.assertEqual("resident-worker", current.claim_worker_id)
+                self.assertEqual(owned.claim_token, current.claim_token)
+                temporary = [
+                    worker
+                    for worker in repository.list_workers()
+                    if worker.worker_id.startswith("direct-organize-")
+                ]
+                self.assertTrue(temporary, temporary)
+                self.assertTrue(all(worker.status.value == "stopped" for worker in temporary))
 
     def test_cli_organize_without_execute_keeps_analysis_only_shape(self) -> None:
         document = json.loads(Path("config/strategy.example.json").read_text(encoding="utf-8"))

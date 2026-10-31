@@ -689,7 +689,7 @@ class ManagedDestinationPreviewJourneyTests(unittest.TestCase):
                 # Runtime schema 43 adds durable scope continuations; schema
                 # 44 links exact-Preview recovery to the paused source Task and
                 # schema 54 adds the Task-owned scheduling facts.
-                self.assertEqual(RUNTIME_SCHEMA_VERSION, 55)
+                self.assertEqual(RUNTIME_SCHEMA_VERSION, 56)
 
 
 if __name__ == "__main__":
