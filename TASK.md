@@ -477,3 +477,60 @@ ID恒等、不恢复暂停、不新增第五类恢复或新的执行/恢复系�
 | RO-5 | Task Center出现原生摘要，但确认/旧链接/剩余项原位继续仍未完整 |
 
 Task47.2保持FIX REQUIRED，Slice47仍ACTIVE，未达到交A关闭条件；原Base与历史全部保留。
+
+## Developer Completion Report — P1 fix round
+
+Checkpoint: `89090b078780d6b9a0ad9a1a48b37ae8eeb15be4`(Base `c942c4b4` 不变),
+Status READY FOR B REVIEW。T4/升级/发布与 PASS 判定仍由 B 负责,本报告不宣称 STOP。
+
+**变更行为(B 三项 FIX REQUIRED)**
+
+1. **P1-1 原生确认绑定被审阅的不可变 Preview。**
+   `native_preparation_id(discovery_id, preview_id)` 现在同时编码 discovery 与确认页面实际
+   审阅的 `preview_id`(`native:<discovery>:<preview>`);新增 `native_preparation_ref` 解析。
+   `native_preparation_summary` 按该身份回读;`confirm_native_preparation` 在创建/消费任何授权
+   前校验 `discovery.preview_id == reviewed_preview_id`,不等即 `preparation_stale` 有界拒绝
+   (零授权消费、零 Storage 变更、不执行新计划)。重新分析后的新摘要不会再复用旧确认资格;
+   旧页面响应未知时按同一 `preparation_id` 精确回读该次确认的执行。
+2. **P1-2 准入复用原 TaskItem 身份。**
+   `admit_manual_execution` 在 adopted(kernel 管理)Task 上按
+   `(task_id, storage_id, source_path)` UNIQUE 键查得该源的既有 TaskItem,并把执行项绑定到
+   同一 `item_id`(新增 `_reusable_task_item_id_locked`);不再删除后换新 ID。原页面
+   `/tasks/{task}/items/{old}/recovery` 在准入后、执行后、重开后均 200,原决定/历史保留并
+   指向准确 execution。若该身份已被别的 execution 占用则拒绝复用,避免重复执行行。
+3. **P1-3 逐项作用域 + 真实待确认效果确定性。**
+   `_native_admitted_execution_for_item` 只按耐久 `(task_id, task_item_id)` 关联包含该源的
+   execution,未选 sibling 不再借用首部 execution,保持自己的 `prepared`/`stale` 摘要与
+   `execution_id=None`/`selected_item_ids=[]`。`processing_checkpoint` 对无 Result 的持久
+   人工等待态(`waiting_confirm`/`waiting_*`)给出真实 `none`(不再误报 `unknown`),并为
+   `waiting_confirm` 提供零变更的安全再分析动作;真正已派发未证明的 `pending`/`processing`
+   仍保持 `unknown`/不可重放。`native_preparation_summary` 对被后续确认 sibling 弄旧的
+   共享 Preview 报 `stale`,页面据此走「继续此条目的安全分析」再分析路径,而不是提供一个
+   必被拒绝的确认按钮。
+
+**受影响测试(实际命令与结果,cwd 仓库根)**
+
+| 命令 | 结果 |
+|---|---|
+| `.venv/bin/python -m unittest tests.test_manual_task_engine tests.test_task_scheduling tests.test_task_scheduling_fencing tests.test_task_scheduling_migration` | 91 tests OK(含 3 个新回归:旧页确认被拒且零授权/零变更、原 item 链接准入后/执行后/重开均 200 且 ID 不变、未选 sibling 保持自身 prepared/stale 并在同 Task 再分析后独立确认 2/2) |
+| `.venv/bin/python -m unittest tests.test_media_discovery tests.test_manual_organize_intent tests.test_manual_organize_preview tests.test_manual_organize_execution tests.test_task_center_recovery_lineage tests.test_recovery_continuation tests.test_processing_checkpoint` | 305 tests OK |
+| `.venv/bin/python -m unittest tests.test_automation_admission tests.test_automation_job_fencing tests.test_automation_definition_occurrence tests.test_v2_automation_run_once tests.test_processing_worker_readiness tests.test_automation_settings_resident tests.test_direct_file_transfers tests.test_media_library_transfers` | 230 tests OK |
+| `.venv/bin/python -m unittest tests.test_operations_task_center tests.test_operations_run_detail tests.test_operations_run_inventory tests.test_processing_checkpoint tests.test_recovery_batch tests.test_task_pause_resume tests.test_scope_continuation tests.test_preview_retirement tests.test_confirmation_api tests.test_conflict_resolution tests.test_task_persistence` | 304 tests OK |
+| web: `npm run test -- run` OrganizeRouter/OrganizeDiscoveryPage/OrganizeCreationPage/TaskItemRecoveryPanel/OperationsInventory/LibraryFileOperationsDialog | 6 files, 101 tests OK;`typecheck`/`lint`/`format:check` 全部 exit 0 |
+| `.venv/bin/ruff format --check mediaflow tests scripts` / `.venv/bin/ruff check mediaflow tests scripts` / `.venv/bin/python -m compileall -q` / `python3 scripts/check_governance.py` / `git diff --check` | 全部通过 |
+| 额外自检(非 Developer 义务):`.venv/bin/python -m unittest discover -s tests` | 2974 tests OK(skipped=7);B 仍以官方 T4 门禁为准 |
+
+B 三项复现脚本在修正后的真实结果:`native-stale-confirm-repro` 旧/新 `preparation_id` 不同、
+旧页确认 409 `preparation_stale`、零变更零执行;`native-old-link-repro` 原 item 在准入后与
+执行后均 200 confirmed 并指向同一 execution;`native-subset-readback` 未选第二部
+`preparationStatus=prepared`/`linkedExecution=null`,continue 不再 409 而是重新分析,随后
+独立确认并产出第二个 Result。未运行 B 的全量 Python/Web/E2E/截图/wheel/容器/53→55 升级门禁。
+
+**剩余风险与已知限制(交 B 判定,非本地 PASS)**
+
+- 复用 TaskItem 身份的前提是同一 intent 源不会二次执行(`list_manual_execution_item_ids_for_intent`
+  已保证已准入源不再进入新准备);若该前提将来放宽,`manual_execution_items.task_item_id`
+  的唯一约束会要求用新身份版本化,目前实现会拒绝复用并回落到旧删行路径。
+- 新增的 `waiting_confirm` 再分析动作对所有原生待确认业务问题可见(与确认按钮并存);
+  它是零变更的显式动作,但需要 B 在真实页面上确认这不会与摘要确认混淆。
+- 未验证新真实 Web/截图/wheel/容器/升级;未复跑 53/54→55 迁移。
