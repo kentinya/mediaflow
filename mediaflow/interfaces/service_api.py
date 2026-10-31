@@ -7600,12 +7600,29 @@ class MediaFlowApi:
             and parts[4] == "remaining-scope-previews"
             and method == "POST"
         ):
-            # The native exact-Preview recovery path for a paused run whose
-            # Continue cannot retain live execution authority (RO-5).  It is a
-            # Task-scoped sibling of the resume control, so the advertised
-            # next action and the real admission can never disagree.
-            return self._operations_run_remaining_scope_preview(
-                parts[3], environ, start_response, principal
+            # Paused-scope remaining-scope preparation and its queued
+            # continuation executor were retired together with pause/resume.
+            # The route stays reachable so an old Web client, bookmark or script
+            # reaches one bounded, truthful refusal instead of a silent 404.  No
+            # discovery, intent, Preview, authorization, Job, Task or Storage
+            # change is made and no compatible executor is ever started.
+            self._require(principal, ApiPermission.MANAGE_MANUAL_ORGANIZE)
+            self._require_empty_query(environ, "remaining-scope Preview")
+            return self._error(
+                start_response,
+                409,
+                "scope_continuation_retired",
+                "remaining-scope continuation of a paused run was retired",
+                details={
+                    "durableState": "unchanged; no preparation, Job or Task was created",
+                    "sideEffects": "none",
+                    "retrySafe": False,
+                    "nextAction": (
+                        "start a fresh Files organizing request; a reviewed recognition/"
+                        "metadata/classification/conflict item continues through its own "
+                        "decision journey"
+                    ),
+                },
             )
         if (
             len(parts) == 5
@@ -13963,127 +13980,6 @@ class MediaFlowApi:
         if not candidates:
             return None
         return max(candidates, key=lambda candidate: candidate[0])[1]
-
-    def _remaining_scope_obstacle(self):
-        """The shared continuation obstacle the recovery admission reuses.
-
-        The recovery entry is offered for exactly the refusal the real recovery
-        admission boundary would return, so it delegates to that boundary's own
-        decision instead of re-deriving the pin, chain ownership or remaining
-        scope here.  The decision is asked for the *recovery preparation*
-        operation: a fully recorded budget with one still-undecided item has no
-        unrecorded discovery budget to hand to the queued Worker, but it does
-        have exactly that undecided item to observe and review, so the recovery
-        entry must not inherit the queued-continuation budget/authority refusal
-        when deciding whether a review is possible at all.
-        """
-
-        service = self._scope_continuations
-
-        def obstacle(task):
-            reason, message, next_action = service.recovery_obstacle(task)
-            return (reason.value if reason is not None else None), message, next_action
-
-        return obstacle
-
-    def _operations_run_remaining_scope_preview(
-        self, task_id: str, environ: dict, start_response: Callable, principal: ResolvedApiPrincipal
-    ):
-        """Admit one durable remaining-scope recovery preparation for a paused run.
-
-        This is the recovery path RO-5 promises when Continue cannot retain live
-        execution authority.  It admits a zero-mutation bounded observation of
-        the run's *durable* remaining scope under the run's own immutable
-        historical pin, runs the complete analysis chain in the resident Worker
-        once the configured stability interval is proven, and grants no
-        execution authority: the operator still has to make one fresh explicit
-        execution intent through the ordinary Execute action.
-        """
-
-        self._require(principal, ApiPermission.MANAGE_MANUAL_ORGANIZE)
-        service = getattr(self, "_media_discovery", None)
-        if service is None or not callable(getattr(service, "admit_recovery_preparation", None)):
-            return self._error(
-                start_response,
-                503,
-                "service_unavailable",
-                "the remaining-scope recovery service is unavailable",
-                details={
-                    "durableState": "no_preparation_created",
-                    "sideEffects": "none",
-                    "retrySafe": True,
-                    "nextAction": (
-                        "restore a valid Active runtime and the bounded discovery Worker, "
-                        "then retry"
-                    ),
-                },
-            )
-        self._require_empty_query(environ, "remaining-scope Preview")
-        # An empty body is the normal submission; when a body is supplied it may
-        # carry only the optimistic version the operator read, exactly like the
-        # sibling resume control.
-        raw_length = str(environ.get("CONTENT_LENGTH", "")).strip()
-        if raw_length and raw_length != "0":
-            document = self._document(environ)
-            if set(document).difference({"expectedVersion"}):
-                raise ValueError("remaining-scope Preview accepts only the paused Task identity")
-            expected_version = document.get("expectedVersion")
-            if expected_version is not None and (
-                not isinstance(expected_version, str)
-                or not expected_version.strip()
-                or len(expected_version) > 128
-            ):
-                raise ValueError("remaining-scope Preview expectedVersion is invalid")
-            current = repository.get_task(task_id) if (repository := self._repository) else None
-            if (
-                expected_version is not None
-                and current is not None
-                and expected_version != current.updated_at.isoformat()
-            ):
-                return self._error(
-                    start_response,
-                    409,
-                    "lifecycle_conflict",
-                    "the paused run changed since it was read; no Preview was created",
-                    details={
-                        "reason": "stale_task_state",
-                        "durableState": "the run keeps its current durable state",
-                        "sideEffects": "none",
-                        "retrySafe": True,
-                        "currentVersion": current.updated_at.isoformat(),
-                        "nextAction": "refresh the run and request a fresh plan summary again",
-                    },
-                )
-        repository = self._repository
-        task = repository.get_task(task_id) if repository is not None else None
-        if task is None:
-            return self._error(
-                start_response,
-                404,
-                "not_found",
-                "the paused run was not found",
-                details={
-                    "reason": "task_not_found",
-                    "sideEffects": "none",
-                    "retrySafe": False,
-                    "nextAction": "refresh the run inventory and select the exact run again",
-                },
-            )
-        try:
-            discovery = self._media_discovery.admit_recovery_preparation(
-                task_id,
-                actor=principal.principal_id,
-                obstacle=self._remaining_scope_obstacle(),
-            )
-        except DiscoveryError as error:
-            return self._discovery_step_error(start_response, error)
-        except ManualPreviewError as error:
-            return self._manual_step_error(start_response, error)
-        return self._response(
-            start_response,
-            202,
-            self._discovery_document(discovery, principal, self._runtime_binding),
-        )
 
     def _operations_run_lifecycle(self, overview, principal) -> dict[str, object] | None:
         """Backend-computed controls for one selected run, or ``None``."""

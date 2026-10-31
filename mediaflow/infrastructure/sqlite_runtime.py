@@ -366,7 +366,15 @@ from mediaflow.infrastructure.task_source_schema import ensure_task_occurrence_c
 # TaskItem, Result, pin, authorization or Job row is rewritten, re-labelled or
 # made executable by the upgrade.  The schema marker is advanced only after the
 # table and its indexes are verifiably present.
-SCHEMA_VERSION = 54
+# Schema 55 removes the legacy single-column ``UNIQUE(task_id)`` from
+# ``manual_executions``: Slice 47's organizing Task owns the whole manual work
+# and the operator confirms independent ready subsets of that one Task over
+# time, so the durable scope of an execution is its own authorization, not the
+# Task.  The rebuild preserves every row and every child row byte-for-byte and
+# rewrites no identity, status, plan or authorization; it is idempotent and
+# leaves a database that never had the constraint untouched.  No Job row, pin
+# or historical fact is deleted or re-labelled.
+SCHEMA_VERSION = 55
 
 #: The conservative owner generation written to ``file_locks`` rows that predate
 #: schema 38.  It is a fixed, non-guessable-looking sentinel rather than NULL so
@@ -444,6 +452,31 @@ _TASK_ITEM_UPSERT = (
             excluded.source_storage_path, task_items.source_storage_path
         )"""
 )
+
+# The durable problem row and human-waiting state of each native organizing
+# problem, used by the Files-admitted Task's own per-item projection.  A
+# repeated analysis of the same verified occurrence reuses the one unresolved
+# row instead of creating a second one (the review tables key on ``item_id``).
+_PROBLEM_WAITING_STATES = {
+    "recognition": (TaskItemStatus.WAITING_RECOGNITION, "waiting_recognition"),
+    "metadata": (TaskItemStatus.WAITING_METADATA, "waiting_metadata"),
+    "metadata_correction": (
+        TaskItemStatus.WAITING_METADATA_CORRECTION,
+        "waiting_metadata_correction",
+    ),
+    "classification": (TaskItemStatus.WAITING_CLASSIFICATION, "waiting_classification"),
+    "conflict": (TaskItemStatus.WAITING_CONFIRM, "waiting_confirm"),
+}
+_PROBLEM_REVIEW_TABLES = {
+    "recognition": ("recognition_reviews", RecognitionReviewStatus.PENDING.value),
+    "metadata": ("metadata_reviews", MetadataReviewStatus.PENDING.value),
+    "metadata_correction": ("metadata_corrections", MetadataCorrectionStatus.PENDING.value),
+    "classification": (
+        "classification_reviews",
+        ClassificationReviewStatus.PENDING.value,
+    ),
+    "conflict": ("conflict_confirmations", ConfirmationStatus.PENDING.value),
+}
 
 # The canonical named column order of one ``task_scheduling`` row.  The
 # scheduling facts of a Task are additive and live in their own 1:1 table keyed
@@ -4778,6 +4811,24 @@ class SQLiteTaskRepository:
             return None
         if item.status in SETTLED_ITEM_STATUSES:
             return item_id
+        waiting_status, waiting_stage = _PROBLEM_WAITING_STATES[problem]
+        # A repeated analysis of the same verified occurrence converges on the
+        # one TaskItem identity and must reuse the one legitimate unresolved
+        # problem row already published for it.  The operator's own pending
+        # decision choice and human-waiting state stay exactly as they are; a
+        # second durable review row (or an analysis transition that no create
+        # could complete) is never produced.  A problem that genuinely changed
+        # is a different problem/occurrence and never reaches this branch.
+        if self._pending_problem_row(problem, item_id) is not None:
+            if item.status is not waiting_status:
+                self._project_waiting_item(item, waiting_status, waiting_stage)
+            return item_id
+        # The review services own their own atomic item+review write and require
+        # the item to be in the analysis state, so this run publishes that exact
+        # state first.  The item was admitted by this same analysis under this
+        # Task, so the transition is the shared pipeline's own boundary and never
+        # reopens a settled item.  If the create then fails, the item is restored
+        # to a truthful failed state instead of a durable, unusable processing row.
         if item.status is not TaskItemStatus.PROCESSING:
             item = replace(
                 item,
@@ -4791,45 +4842,108 @@ class SQLiteTaskRepository:
             # unfenced writer, which now refuses a kernel-managed Task.
             with self._lock, self._connection:
                 self._connection.execute(_TASK_ITEM_UPSERT, self._item_values(item))
-        if problem == "recognition":
-            from mediaflow.application.recognition_review import RecognitionReviewService
+        try:
+            if problem == "recognition":
+                from mediaflow.application.recognition_review import RecognitionReviewService
 
-            RecognitionReviewService(self, tuple(recognition_types)).create(
-                item, strategy.recognition
-            )
-        elif problem == "metadata":
-            from mediaflow.application.metadata_review import MetadataReviewService
+                RecognitionReviewService(self, tuple(recognition_types)).create(
+                    item, strategy.recognition
+                )
+            elif problem == "metadata":
+                from mediaflow.application.metadata_review import MetadataReviewService
 
-            MetadataReviewService(self).create(
-                item, strategy.metadata, type_policy.metadata_policy_id
-            )
-        elif problem == "metadata_correction":
-            from mediaflow.application.metadata_correction import MetadataCorrectionService
+                MetadataReviewService(self).create(
+                    item, strategy.metadata, type_policy.metadata_policy_id
+                )
+            elif problem == "metadata_correction":
+                from mediaflow.application.metadata_correction import MetadataCorrectionService
 
-            if metadata_policy is None:
-                raise ValueError("the pinned MetadataPolicy is unavailable")
-            MetadataCorrectionService(self, (metadata_policy,)).create(
-                item, strategy.metadata, metadata_policy, strategy.parsed
-            )
-        elif problem == "classification":
-            from mediaflow.application.classification_review import ClassificationReviewService
+                if metadata_policy is None:
+                    raise ValueError("the pinned MetadataPolicy is unavailable")
+                MetadataCorrectionService(self, (metadata_policy,)).create(
+                    item, strategy.metadata, metadata_policy, strategy.parsed
+                )
+            elif problem == "classification":
+                from mediaflow.application.classification_review import (
+                    ClassificationReviewService,
+                )
 
-            if classification_policy is None:
-                raise ValueError("the pinned ClassificationPolicy is unavailable")
-            ClassificationReviewService(self).create(
-                item, strategy.classification, classification_policy, strategy.metadata.identity
-            )
-        elif problem == "conflict":
-            from mediaflow.application.conflict_resolution import ConfirmationService
+                if classification_policy is None:
+                    raise ValueError("the pinned ClassificationPolicy is unavailable")
+                ClassificationReviewService(self).create(
+                    item, strategy.classification, classification_policy, strategy.metadata.identity
+                )
+            elif problem == "conflict":
+                from mediaflow.application.conflict_resolution import ConfirmationService
 
-            ConfirmationService(self).create(
-                task_id=task_id,
-                item_id=item_id,
-                plan=plan,
-                policy=type_policy.organize_policy,
-                item=item,
+                waiting = replace(
+                    item,
+                    status=TaskItemStatus.WAITING_CONFIRM,
+                    stage="waiting_confirm",
+                    updated_at=datetime.now(UTC),
+                    plan_id=plan.plan_id,
+                    destination_storage_id=plan.target_storage_id,
+                    destination_path=(
+                        plan.destination_location.path if plan.destination_location else plan.target
+                    ),
+                    error=None,
+                )
+                ConfirmationService(self).create(
+                    task_id=task_id,
+                    item_id=item_id,
+                    plan=plan,
+                    policy=type_policy.organize_policy,
+                    item=waiting,
+                )
+        except BaseException as error:
+            # Never leave an item durably stuck in an analysis transition that no
+            # review can complete.  The item becomes a truthful failed finding and
+            # the caller reports a bounded failure instead of a confirmable summary.
+            self._project_waiting_item(
+                item,
+                TaskItemStatus.FAILED,
+                "organizing_problem_unavailable",
+                error="the organizing problem could not be published for this analysis",
             )
+            raise error
         return item_id
+
+    def _pending_problem_row(self, problem: str, item_id: str) -> object | None:
+        """The one unresolved problem row already published for this TaskItem.
+
+        Reads the exact same durable review/confirmation table the live
+        projection writes, so a repeated analysis of the same verified
+        occurrence can never create a second row (or trip the item_id unique
+        constraint) and never needs the legacy Job/continuation path.
+        """
+
+        table, pending = _PROBLEM_REVIEW_TABLES[problem]
+        with self._lock:
+            row = self._connection.execute(
+                f"SELECT 1 FROM {table} WHERE item_id=? AND status=? LIMIT 1",
+                (item_id, pending),
+            ).fetchone()
+        return row
+
+    def _project_waiting_item(
+        self,
+        item: PersistentTaskItem,
+        status: TaskItemStatus,
+        stage: str,
+        *,
+        error: str | None = None,
+    ) -> None:
+        """Publish one coherent waiting/failed state for an item under its Task."""
+
+        projected = replace(
+            item,
+            status=status,
+            stage=stage,
+            updated_at=datetime.now(UTC),
+            error=error,
+        )
+        with self._lock, self._connection:
+            self._connection.execute(_TASK_ITEM_UPSERT, self._item_values(projected))
 
     def create_recognition_review(self, review, choices, item) -> None:
         with self._lock, self._connection:
@@ -20618,7 +20732,7 @@ class SQLiteTaskRepository:
                 CREATE TABLE IF NOT EXISTS manual_executions (
                     execution_id TEXT PRIMARY KEY, preview_id TEXT NOT NULL,
                     intent_id TEXT NOT NULL, authorization_id TEXT NOT NULL UNIQUE,
-                    task_id TEXT NOT NULL UNIQUE, actor TEXT NOT NULL,
+                    task_id TEXT NOT NULL, actor TEXT NOT NULL,
                     intent_version INTEGER NOT NULL, configuration_snapshot_id TEXT NOT NULL,
                     configuration_snapshot_digest TEXT NOT NULL,
                     selected_item_ids_json TEXT NOT NULL, unselected_item_ids_json TEXT NOT NULL,
@@ -21560,7 +21674,89 @@ class SQLiteTaskRepository:
                     "ALTER TABLE file_locks ADD COLUMN owner_token TEXT NOT NULL "
                     f"DEFAULT '{LEGACY_LOCK_OWNER_TOKEN}'"
                 )
+            self._migrate_manual_execution_task_scope_locked()
             self._migrate_task_scheduling_locked()
+
+    def _migrate_manual_execution_task_scope_locked(self) -> None:
+        """Schema 55: one organizing Task may host more than one confirmed subset.
+
+        The legacy ``manual_executions.task_id`` UNIQUE assumed one execution per
+        organizing Task.  Slice 47's Task owns the whole manual work, and the
+        operator confirms independent ready subsets of that one Task over time,
+        so the durable scope of an execution is its own one-shot authorization,
+        never the Task.  Removing that single column constraint needs a table
+        rebuild (SQLite cannot drop an inline UNIQUE); the rebuild preserves
+        every column, row and child row byte-for-byte and rewrites no identity,
+        status, plan or authorization.  It is idempotent, so a database created
+        fresh without the constraint (or already migrated) is left untouched;
+        a failure before the fresh table is renamed leaves the previous schema
+        and every row usable by the previous code.
+        """
+
+        unique_on_task = False
+        for index in self._connection.execute("PRAGMA index_list(manual_executions)").fetchall():
+            if not index["unique"]:
+                continue
+            columns = [
+                row["name"]
+                for row in self._connection.execute(
+                    f"PRAGMA index_info({index['name']})"
+                ).fetchall()
+            ]
+            if columns == ["task_id"]:
+                unique_on_task = True
+                break
+        if not unique_on_task:
+            return
+        self._connection.execute(
+            """
+            CREATE TABLE manual_executions_migrate55 (
+                execution_id TEXT PRIMARY KEY, preview_id TEXT NOT NULL,
+                intent_id TEXT NOT NULL, authorization_id TEXT NOT NULL UNIQUE,
+                task_id TEXT NOT NULL, actor TEXT NOT NULL,
+                intent_version INTEGER NOT NULL, configuration_snapshot_id TEXT NOT NULL,
+                configuration_snapshot_digest TEXT NOT NULL,
+                selected_item_ids_json TEXT NOT NULL, unselected_item_ids_json TEXT NOT NULL,
+                status TEXT NOT NULL, next_action TEXT NOT NULL, error TEXT,
+                allow_overwrite INTEGER NOT NULL DEFAULT 0,
+                allow_source_cleanup INTEGER NOT NULL DEFAULT 0,
+                created_at TEXT NOT NULL, updated_at TEXT NOT NULL, completed_at TEXT,
+                worker_id TEXT, claim_token TEXT, claimed_at TEXT,
+                claim_expires_at TEXT, attempts INTEGER NOT NULL DEFAULT 0,
+                FOREIGN KEY(preview_id) REFERENCES manual_previews(preview_id),
+                FOREIGN KEY(intent_id) REFERENCES manual_intents(intent_id),
+                FOREIGN KEY(authorization_id)
+                    REFERENCES manual_execution_authorizations(authorization_id),
+                FOREIGN KEY(task_id) REFERENCES tasks(task_id)
+            )
+            """
+        )
+        self._connection.execute(
+            """
+            INSERT INTO manual_executions_migrate55 (
+                execution_id, preview_id, intent_id, authorization_id, task_id, actor,
+                intent_version, configuration_snapshot_id, configuration_snapshot_digest,
+                selected_item_ids_json, unselected_item_ids_json, status, next_action,
+                error, allow_overwrite, allow_source_cleanup, created_at, updated_at,
+                completed_at, worker_id, claim_token, claimed_at, claim_expires_at, attempts
+            )
+            SELECT
+                execution_id, preview_id, intent_id, authorization_id, task_id, actor,
+                intent_version, configuration_snapshot_id, configuration_snapshot_digest,
+                selected_item_ids_json, unselected_item_ids_json, status, next_action,
+                error, allow_overwrite, allow_source_cleanup, created_at, updated_at,
+                completed_at, worker_id, claim_token, claimed_at, claim_expires_at, attempts
+            FROM manual_executions
+            """
+        )
+        self._connection.execute("DROP TABLE manual_executions")
+        self._connection.execute(
+            "ALTER TABLE manual_executions_migrate55 RENAME TO manual_executions"
+        )
+        self._connection.execute(
+            "CREATE INDEX IF NOT EXISTS manual_executions_preview_created "
+            "ON manual_executions(preview_id, created_at, execution_id)"
+        )
 
     def _migrate_task_scheduling_locked(self) -> None:
         """Schema 54: the Task-owned scheduling facts, and only those.

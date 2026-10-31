@@ -1,4 +1,4 @@
-"""schema 53 → 54 on genuine base-revision databases, and failure atomicity.
+"""schema 53 → 55 on genuine base-revision databases, and failure atomicity.
 
 The base side of every database in this module is created by the *Task Base
 revision itself* (extracted with ``git archive``), never by a shortcut that
@@ -348,7 +348,7 @@ class TaskSchedulingMigrationTests(unittest.TestCase):
         database = self.base_database()
         with SQLiteTaskRepository(database) as repository:
             self.assertEqual(repository.schema_version, SCHEMA_VERSION)
-            self.assertEqual(SCHEMA_VERSION, 54)
+            self.assertEqual(SCHEMA_VERSION, 55)
             self.assert_base_facts_intact(repository)
             self.assert_never_admitted(repository, database)
             with sqlite3.connect(database) as connection:
@@ -489,6 +489,93 @@ class TaskSchedulingMigrationTests(unittest.TestCase):
                     "SELECT version FROM schema_version WHERE component='runtime'"
                 ).fetchone()[0],
                 SCHEMA_VERSION + 1,
+            )
+
+
+class ManualExecutionTaskScopeMigrationTests(unittest.TestCase):
+    """Schema 55 rebuilds only the legacy one-execution-per-Task constraint."""
+
+    def setUp(self) -> None:
+        self._directory = tempfile.TemporaryDirectory()
+        self.addCleanup(self._directory.cleanup)
+        self.database = Path(self._directory.name) / "runtime.sqlite3"
+
+    def _legacy_database(self) -> None:
+        with sqlite3.connect(self.database) as connection:
+            connection.executescript(
+                """
+                CREATE TABLE schema_version (
+                    component TEXT PRIMARY KEY, version INTEGER NOT NULL
+                );
+                INSERT INTO schema_version VALUES ('runtime', 54);
+                CREATE TABLE manual_executions (
+                    execution_id TEXT PRIMARY KEY, preview_id TEXT NOT NULL,
+                    intent_id TEXT NOT NULL, authorization_id TEXT NOT NULL UNIQUE,
+                    task_id TEXT NOT NULL UNIQUE, actor TEXT NOT NULL,
+                    intent_version INTEGER NOT NULL, configuration_snapshot_id TEXT NOT NULL,
+                    configuration_snapshot_digest TEXT NOT NULL,
+                    selected_item_ids_json TEXT NOT NULL, unselected_item_ids_json TEXT NOT NULL,
+                    status TEXT NOT NULL, next_action TEXT NOT NULL, error TEXT,
+                    allow_overwrite INTEGER NOT NULL DEFAULT 0,
+                    allow_source_cleanup INTEGER NOT NULL DEFAULT 0,
+                    created_at TEXT NOT NULL, updated_at TEXT NOT NULL, completed_at TEXT,
+                    worker_id TEXT, claim_token TEXT, claimed_at TEXT,
+                    claim_expires_at TEXT, attempts INTEGER NOT NULL DEFAULT 0
+                );
+                INSERT INTO manual_executions (
+                    execution_id, preview_id, intent_id, authorization_id, task_id, actor,
+                    intent_version, configuration_snapshot_id, configuration_snapshot_digest,
+                    selected_item_ids_json, unselected_item_ids_json, status, next_action,
+                    created_at, updated_at
+                ) VALUES (
+                    'exec-legacy', 'preview-legacy', 'intent-legacy', 'auth-legacy',
+                    'task-legacy', 'operator', 1, 'snap', 'digest', '[]', '[]',
+                    'completed', 'none', '2026-01-01T00:00:00+00:00', '2026-01-01T00:00:00+00:00'
+                );
+                """
+            )
+
+    def test_the_constraint_is_removed_and_the_row_is_preserved(self) -> None:
+        self._legacy_database()
+        with SQLiteTaskRepository(self.database) as repository:
+            self.assertEqual(repository.schema_version, SCHEMA_VERSION)
+        with sqlite3.connect(self.database) as connection:
+            self.assertEqual(
+                connection.execute(
+                    "SELECT execution_id, task_id FROM manual_executions"
+                ).fetchall(),
+                [("exec-legacy", "task-legacy")],
+            )
+            # A second execution for the same Task is now legal.
+            connection.execute(
+                "INSERT INTO manual_executions ("
+                "execution_id, preview_id, intent_id, authorization_id, task_id, actor, "
+                "intent_version, configuration_snapshot_id, configuration_snapshot_digest, "
+                "selected_item_ids_json, unselected_item_ids_json, status, next_action, "
+                "created_at, updated_at) VALUES ("
+                "'exec-second', 'preview-second', 'intent-second', 'auth-second', "
+                "'task-legacy', 'operator', 2, 'snap2', 'digest2', '[]', '[]', "
+                "'completed', 'none', '2026-01-01T00:00:00+00:00', '2026-01-01T00:00:00+00:00')"
+            )
+            connection.commit()
+            count = connection.execute(
+                "SELECT COUNT(*) FROM manual_executions WHERE task_id='task-legacy'"
+            ).fetchone()[0]
+            self.assertEqual(count, 2)
+        # Idempotent: a second open must not rebuild or lose the preserved rows.
+        with SQLiteTaskRepository(self.database) as repository:
+            self.assertEqual(repository.schema_version, SCHEMA_VERSION)
+        with sqlite3.connect(self.database) as connection:
+            unique_on_task = [
+                index[1]
+                for index in connection.execute("PRAGMA index_list(manual_executions)")
+                if index[2]
+                and [row[2] for row in connection.execute(f"PRAGMA index_info({index[1]})")]
+                == ["task_id"]
+            ]
+            self.assertEqual(unique_on_task, [])
+            self.assertEqual(
+                connection.execute("SELECT COUNT(*) FROM manual_executions").fetchone()[0], 2
             )
 
 

@@ -318,6 +318,197 @@ class ManualTaskDiscoveryTests(_DiscoveryFixture):
             )
             self.assertFalse((self.source_root / "Movies/One.2001.mkv").exists())
 
+    def _two_file_recognition_journey(self):
+        for name in ("One.2001.mkv", "Two.2002.mkv"):
+            self.media(f"Movies/{name}")
+        provider = SyntheticMetadataProvider(
+            tuple(
+                MediaCandidate(
+                    "tmdb",
+                    str(201 + index),
+                    MediaType.MOVIE,
+                    title,
+                    year=2001 + index,
+                    genres=("Animation",),
+                    countries=("JP",),
+                )
+                for index, title in enumerate(("One", "Two"))
+            )
+        )
+        return provider
+
+    def _decide_recognition(self, value, task_id, item, recognition_type_id="A"):
+        status, checkpoint = self.request(value, f"/api/v1/tasks/{task_id}/items/{item.item_id}")
+        self.assertEqual(200, status, checkpoint)
+        status, decision = self.request(
+            value,
+            f"/api/v1/tasks/{task_id}/items/{item.item_id}/recovery/decision",
+            "POST",
+            {
+                "kind": "recognition",
+                "expectedCheckpointVersion": checkpoint["checkpoint_version"],
+                "recognitionTypeId": recognition_type_id,
+            },
+        )
+        self.assertEqual(200, status, decision)
+
+    def _execute(self, value, task_id, preview, item_ids, *, steps=8):
+        status, admitted = self.request(
+            value,
+            f"/api/v1/operations/organize/previews/{preview['previewId']}/execute",
+            "POST",
+            {
+                "confirmation": True,
+                "itemIds": list(item_ids),
+                "expectedIntentVersion": preview["intentVersion"],
+                "allowOverwrite": False,
+                "allowSourceCleanup": False,
+            },
+        )
+        self.assertIn(status, (200, 202), admitted)
+        for _ in range(steps):
+            value.task_engine.run_next()
+            task = value.repository.get_task(task_id)
+            if task.status in {
+                PersistentTaskStatus.COMPLETED,
+                PersistentTaskStatus.PARTIAL_SUCCESS,
+                PersistentTaskStatus.FAILED,
+                PersistentTaskStatus.CANCELLED,
+            }:
+                break
+        return value.repository.get_task(task_id)
+
+    def test_partial_recognition_decision_keeps_the_undecided_sibling_actionable(self) -> None:
+        """Only the decided subset is confirmed; the undecided sibling stays open.
+
+        The operator picks two files whose RecognitionType is unresolved, decides
+        only the first, and reruns the analysis.  The ready subset must be
+        confirmable while the still-undecided sibling keeps its own pending review
+        and waiting item on the same Task.  After the first Result is persisted the
+        second source is decided, analyzed and continued on the same Task without
+        replaying the first.
+        """
+
+        provider = self._two_file_recognition_journey()
+        with self.journey(provider=provider, task_scheduling=True) as value:
+            status, admitted = self._admit(value, ["Movies/One.2001.mkv", "Movies/Two.2002.mkv"])
+            self.assertEqual(202, status, admitted)
+            task_id = admitted["organizeTaskId"]
+            discovery = self._drive(value, task_id)
+            self.assertIs(
+                value.repository.get_task_scheduling(task_id).queue_state,
+                TaskQueueState.WAITING_HUMAN,
+            )
+            items = {item.source_path: item for item in value.repository.list_items(task_id)}
+            self.assertEqual(2, len(items))
+            first = items["Movies/One.2001.mkv"]
+            second = items["Movies/Two.2002.mkv"]
+            self.assertIs(first.status, TaskItemStatus.WAITING_RECOGNITION)
+            self.assertIs(second.status, TaskItemStatus.WAITING_RECOGNITION)
+
+            self._decide_recognition(value, task_id, first)
+
+            current = value.repository.get_media_discovery(discovery.discovery_id)
+            status, accepted = self.request(
+                value,
+                f"/api/v1/operations/organize/discoveries/{discovery.discovery_id}/analyze",
+                "POST",
+                {"expectedVersion": current.version},
+            )
+            self.assertEqual(200, status, accepted)
+            discovery = self._drive(value, task_id)
+            state = value.repository.get_task_scheduling(task_id)
+            self.assertIs(state.queue_state, TaskQueueState.WAITING_HUMAN, state)
+            self.assertFalse(state.holds_capacity)
+            self.assertEqual(0, value.repository.count_scheduled_capacity_use())
+            self.assertEqual([], value.source.mutations)
+            self.assertEqual([], value.target.mutations)
+
+            # The undecided sibling is never turned into a stuck processing item; it
+            # keeps its own pending review and remains actionable on the same Task.
+            items = {item.source_path: item for item in value.repository.list_items(task_id)}
+            self.assertIs(items["Movies/Two.2002.mkv"].status, TaskItemStatus.WAITING_RECOGNITION)
+            pending = value.repository.get_recognition_review_for_item(second.item_id)
+            self.assertIsNotNone(pending)
+            self.assertEqual("pending", pending.status.value)
+
+            status, preview = self.request(
+                value,
+                f"/api/v1/operations/organize/previews/{discovery.preview_id}",
+            )
+            self.assertEqual(200, status, preview)
+            ready = [item["itemId"] for item in preview["items"] if item["status"] == "previewed"]
+            self.assertEqual(1, len(ready), preview)
+
+            # Confirm and execute only the ready first source.
+            first_execution = self._execute(value, task_id, preview, ready)
+            self.assertIs(
+                first_execution.status, PersistentTaskStatus.RUNNING, first_execution.error
+            )
+            self.assertIs(
+                value.repository.get_task_scheduling(task_id).queue_state,
+                TaskQueueState.WAITING_HUMAN,
+            )
+            self.assertEqual(0, value.repository.count_scheduled_capacity_use())
+            items = {item.source_path: item for item in value.repository.list_items(task_id)}
+            self.assertIs(items["Movies/One.2001.mkv"].status, TaskItemStatus.SUCCESS)
+            self.assertIs(items["Movies/Two.2002.mkv"].status, TaskItemStatus.WAITING_RECOGNITION)
+            self.assertEqual(1, len(value.repository.list_results(task_id)))
+            self.assertFalse((self.source_root / "Movies/One.2001.mkv").exists())
+            # The top-level Task never loses the outstanding sibling, so it is not
+            # settled merely because one confirmed subset finished.
+            first_result = value.repository.list_results(task_id)[0]
+
+            # Decide the second source and continue it on the same Task.
+            self._decide_recognition(value, task_id, second)
+            current = value.repository.get_media_discovery(discovery.discovery_id)
+            status, accepted = self.request(
+                value,
+                f"/api/v1/operations/organize/discoveries/{discovery.discovery_id}/analyze",
+                "POST",
+                {"expectedVersion": current.version},
+            )
+            self.assertEqual(200, status, accepted)
+            discovery = self._drive(value, task_id)
+            self.assertIs(
+                value.repository.get_task_scheduling(task_id).queue_state,
+                TaskQueueState.WAITING_HUMAN,
+            )
+            self.assertEqual(0, value.repository.count_scheduled_capacity_use())
+            status, preview = self.request(
+                value,
+                f"/api/v1/operations/organize/previews/{discovery.preview_id}",
+            )
+            self.assertEqual(200, status, preview)
+            second_ready = [
+                item["itemId"] for item in preview["items"] if item["status"] == "previewed"
+            ]
+            self.assertEqual(1, len(second_ready), preview)
+            self.assertNotEqual(set(ready), set(second_ready))
+
+            final = self._execute(value, task_id, preview, second_ready)
+            self.assertIs(final.status, PersistentTaskStatus.COMPLETED, final.error)
+            self.assertIs(
+                value.repository.get_task_scheduling(task_id).queue_state,
+                TaskQueueState.SETTLED,
+            )
+            self.assertEqual(0, value.repository.count_scheduled_capacity_use())
+            results = value.repository.list_results(task_id)
+            self.assertEqual(2, len(results), results)
+            # The first source's Result is neither replayed nor overwritten.
+            self.assertIn(first_result.result_id, {value.result_id for value in results})
+            self.assertFalse((self.source_root / "Movies/One.2001.mkv").exists())
+            self.assertFalse((self.source_root / "Movies/Two.2002.mkv").exists())
+
+            with SQLiteTaskRepository(self.database) as reopened:
+                reopened_task = reopened.get_task(task_id)
+                self.assertEqual(reopened_task.task_id, task_id)
+                self.assertIs(reopened_task.status, PersistentTaskStatus.COMPLETED)
+                self.assertEqual(2, len(reopened.list_results(task_id)))
+                self.assertIs(
+                    reopened.get_task_scheduling(task_id).queue_state, TaskQueueState.SETTLED
+                )
+
     def test_cancel_during_first_execution_settles_the_task_and_execution(self) -> None:
         """A real two-file run observes cancellation at the next item boundary.
 

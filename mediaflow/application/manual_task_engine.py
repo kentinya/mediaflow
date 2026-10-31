@@ -21,6 +21,7 @@ from mediaflow.domain.manual_execution import (
 )
 from mediaflow.domain.media_discovery import DiscoveryStatus, MediaDiscovery
 from mediaflow.domain.task_persistence import (
+    SETTLED_ITEM_STATUSES,
     PersistentTask,
     PersistentTaskStatus,
     TaskItemStatus,
@@ -319,8 +320,38 @@ class ManualTaskEngineWorker:
                 ManualExecutionStatus.FAILED: PersistentTaskStatus.FAILED,
                 ManualExecutionStatus.CANCELLED: PersistentTaskStatus.CANCELLED,
             }[execution.status]
-            updated = self._with_status(task, status, now, execution.error)
             items = self._repository.list_items(task.task_id)
+            outstanding = tuple(
+                value for value in items if value.status not in SETTLED_ITEM_STATUSES
+            )
+            if (
+                outstanding
+                and status in {PersistentTaskStatus.COMPLETED, PersistentTaskStatus.PARTIAL_SUCCESS}
+                and all(value.status is not TaskItemStatus.PROCESSING for value in outstanding)
+            ):
+                # One explicitly confirmed subset finished while other sources of
+                # this same Task still wait for their own decision/confirmation.
+                # The Task keeps its identity and those items, releases the slot
+                # and returns to human waiting instead of settling as if every
+                # source were done; the operator decides and continues on this
+                # same Task.  A still-processing sibling is genuine machine work
+                # and keeps the slot through the ordinary path below.
+                updated = self._with_status(
+                    task, PersistentTaskStatus.RUNNING, now, execution.error
+                )
+                self._scheduling.publish_task(claim, updated, now=now)
+                for item in outstanding:
+                    if item.status is TaskItemStatus.PENDING:
+                        self._scheduling.record_item(
+                            claim,
+                            self._replace_item(
+                                item, TaskItemStatus.WAITING_CONFIRM, "waiting_confirm", now
+                            ),
+                            now=now,
+                        )
+                self._scheduling.defer_to_human(claim, task=updated, items=(), now=now)
+                return self._task(claim.task_id)
+            updated = self._with_status(task, status, now, execution.error)
             self._scheduling.settle(claim, task=updated, items=items, now=now)
             return self._task(claim.task_id)
         updated = self._with_status(
@@ -471,7 +502,21 @@ class ManualTaskEngineWorker:
         return claim.claim_token
 
     def _latest_execution(self, task_id: str) -> ManualExecution | None:
+        """The execution the engine must advance, preferring the live one.
+
+        Slice 47 lets one admitted organizing Task own more than one explicitly
+        confirmed subset execution.  The legacy read returns them in
+        ``updated_at``/``execution_id`` order, which is not an order of
+        authority: under a fixed clock the tie-break is a random identity.  A
+        still-unfinished execution is the only one the engine may advance, so
+        it always wins; the newest terminal row is returned only when no live
+        execution remains (for example a cancel settling a finished Task).
+        """
+
         values = self._repository.list_manual_executions_for_task(task_id)
+        for value in values:
+            if value.status not in _TERMINAL_EXECUTION_STATUSES:
+                return value
         return values[0] if values else None
 
     def _task(self, task_id: str) -> PersistentTask:
