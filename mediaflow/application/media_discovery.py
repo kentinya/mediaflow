@@ -4600,6 +4600,10 @@ class MediaDiscoveryService:
                 # four-type problems.  The ordinary Preview path passes nothing, so
                 # only a Files-admitted run publishes native reviews here.
                 problem_task_id=discovery.organize_task_id,
+                # RO-3: a decision the operator saved on this admitted Task's own
+                # item is consumed by its next analysis, so the four-type problem
+                # is planned instead of re-published on the same Task.
+                review_decisions=self._native_review_decisions(discovery),
                 source_scope="resource_library" if discovery.recovery_source_task_id else None,
                 source_scope_id=(
                     discovery.resource_library_id if discovery.recovery_source_task_id else None
@@ -4848,6 +4852,101 @@ class MediaDiscoveryService:
             return reader(*arguments)
         except Exception:  # noqa: BLE001 - one bounded read, never a media fault
             return None
+
+    def _native_review_decisions(self, discovery: MediaDiscovery):
+        """Resolved four-type decisions this admitted Task already owns.
+
+        The same manual Task is the single durable subject for its own
+        re-analysis, so a decision the operator saved on one of its items must be
+        consumed by the next analysis of that exact source instead of
+        re-publishing the same problem (which the review tables, keyed on
+        ``item_id``, could never store twice).  Only RESOLVED records reach the
+        Preview and each is rebound to the pinned policy there; every read is
+        bounded and never contacts a Provider.
+        """
+
+        task_id = discovery.organize_task_id
+        reader = getattr(self._repository, "list_items", None)
+        if task_id is None or not callable(reader):
+            return None
+        try:
+            items = tuple(reader(task_id))
+        except Exception:  # noqa: BLE001 - an unreadable Task holds no decisions
+            return None
+        if not items:
+            return None
+        from mediaflow.application.recovery_decisions import ResolvedContinuationDecisions
+        from mediaflow.domain.classification_review import ClassificationReviewStatus
+        from mediaflow.domain.metadata_correction import MetadataCorrectionStatus
+        from mediaflow.domain.metadata_review import MetadataReviewStatus
+        from mediaflow.domain.recognition_review import RecognitionReviewStatus
+        from mediaflow.domain.task_persistence import ConfirmationStatus
+
+        keys = {(item.storage_id, item.source_path) for item in items}
+        confirmations: dict[tuple[str, str], object] = {}
+        metadata_reviews: dict[tuple[str, str], object] = {}
+        metadata_corrections: dict[tuple[str, str], object] = {}
+        classification_reviews: dict[tuple[str, str], object] = {}
+        recognition_reviews: dict[tuple[str, str], object] = {}
+        for item in items:
+            key = (item.storage_id, item.source_path)
+            review = self._safe_call("get_recognition_review_for_item", item.item_id)
+            if (
+                review is not None
+                and review.status is RecognitionReviewStatus.RESOLVED
+                and review.selected_recognition_type
+            ):
+                recognition_reviews[key] = review
+            review = self._safe_call("get_metadata_review_for_item", item.item_id)
+            if (
+                review is not None
+                and review.status is MetadataReviewStatus.RESOLVED
+                and review.selected_provider
+                and review.selected_provider_id
+                and review.selected_media_type
+            ):
+                metadata_reviews[key] = review
+            review = self._safe_call("get_metadata_correction_for_item", item.item_id)
+            if (
+                review is not None
+                and review.status is MetadataCorrectionStatus.RESOLVED
+                and review.corrected_media_type
+            ):
+                metadata_corrections[key] = review
+            review = self._safe_call("get_classification_review_for_item", item.item_id)
+            if (
+                review is not None
+                and review.status is ClassificationReviewStatus.RESOLVED
+                and review.selected_rule_id
+                and review.selected_media_library_id
+                and review.selected_relative_path
+            ):
+                classification_reviews[key] = review
+        lister = getattr(self._repository, "list_confirmations", None)
+        if callable(lister):
+            try:
+                resolved = tuple(lister(status=ConfirmationStatus.RESOLVED))
+            except TypeError:
+                resolved = tuple(lister(status=ConfirmationStatus.RESOLVED.value))
+            for confirmation in resolved:
+                key = (confirmation.source_storage_id, confirmation.source_path)
+                if key in keys:
+                    confirmations[key] = confirmation
+        if not (
+            confirmations
+            or metadata_reviews
+            or metadata_corrections
+            or classification_reviews
+            or recognition_reviews
+        ):
+            return None
+        return ResolvedContinuationDecisions(
+            confirmations=confirmations,
+            metadata_reviews=metadata_reviews,
+            metadata_corrections=metadata_corrections,
+            classification_reviews=classification_reviews,
+            recognition_reviews=recognition_reviews,
+        )
 
     def _remaining_intent_item_ids(self, intent) -> tuple[str, ...]:
         """The intent items a fresh preparation analysis may still review.

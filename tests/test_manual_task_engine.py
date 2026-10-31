@@ -509,6 +509,94 @@ class ManualTaskDiscoveryTests(_DiscoveryFixture):
                     reopened.get_task_scheduling(task_id).queue_state, TaskQueueState.SETTLED
                 )
 
+    def test_metadata_decision_continues_in_the_same_task(self) -> None:
+        """A resolved Metadata candidate is consumed by the Task's next analysis.
+
+        A repeated analysis of the same admitted Task must apply the operator's
+        saved Metadata decision instead of re-publishing the same metadata
+        problem (which the review table, keyed on the item, could never store
+        twice).  The item reaches its own confirmable summary on the same Task.
+        """
+
+        self.media("Movies/One.2001.mkv")
+        provider = SyntheticMetadataProvider(
+            (
+                MediaCandidate(
+                    "tmdb", "201", MediaType.MOVIE, "One", year=2001, genres=("Animation",)
+                ),
+                MediaCandidate(
+                    "tmdb", "202", MediaType.MOVIE, "One", year=2001, genres=("Animation",)
+                ),
+            )
+        )
+        with self.journey(provider=provider, task_scheduling=True) as value:
+            status, admitted = self._admit(value, ["Movies/One.2001.mkv"])
+            self.assertEqual(202, status, admitted)
+            task_id = admitted["organizeTaskId"]
+            discovery = self._drive(value, task_id)
+            item = value.repository.list_items(task_id)[0]
+            self._decide_recognition(value, task_id, item)
+
+            current = value.repository.get_media_discovery(discovery.discovery_id)
+            status, accepted = self.request(
+                value,
+                f"/api/v1/operations/organize/discoveries/{discovery.discovery_id}/analyze",
+                "POST",
+                {"expectedVersion": current.version},
+            )
+            self.assertEqual(200, status, accepted)
+            discovery = self._drive(value, task_id)
+            item = value.repository.list_items(task_id)[0]
+            self.assertIs(item.status, TaskItemStatus.WAITING_METADATA)
+            self.assertIs(
+                value.repository.get_task_scheduling(task_id).queue_state,
+                TaskQueueState.WAITING_HUMAN,
+            )
+
+            status, checkpoint = self.request(
+                value, f"/api/v1/tasks/{task_id}/items/{item.item_id}"
+            )
+            self.assertEqual(200, status, checkpoint)
+            status, decision = self.request(
+                value,
+                f"/api/v1/tasks/{task_id}/items/{item.item_id}/recovery/decision",
+                "POST",
+                {
+                    "kind": "metadata",
+                    "expectedCheckpointVersion": checkpoint["checkpoint_version"],
+                    "candidateRank": 1,
+                },
+            )
+            self.assertEqual(200, status, decision)
+
+            current = value.repository.get_media_discovery(discovery.discovery_id)
+            status, accepted = self.request(
+                value,
+                f"/api/v1/operations/organize/discoveries/{discovery.discovery_id}/analyze",
+                "POST",
+                {"expectedVersion": current.version},
+            )
+            self.assertEqual(200, status, accepted)
+            discovery = self._drive(value, task_id)
+            state = value.repository.get_task_scheduling(task_id)
+            self.assertIs(state.queue_state, TaskQueueState.WAITING_HUMAN, state)
+            self.assertEqual(0, value.repository.count_scheduled_capacity_use())
+            item = value.repository.list_items(task_id)[0]
+            self.assertIs(item.status, TaskItemStatus.WAITING_CONFIRM)
+
+            status, preview = self.request(
+                value, f"/api/v1/operations/organize/previews/{discovery.preview_id}"
+            )
+            self.assertEqual(200, status, preview)
+            ready = [
+                value["itemId"] for value in preview["items"] if value["status"] == "previewed"
+            ]
+            self.assertEqual(1, len(ready), preview)
+            final = self._execute(value, task_id, preview, ready)
+            self.assertIs(final.status, PersistentTaskStatus.COMPLETED, final.error)
+            self.assertEqual(1, len(value.repository.list_results(task_id)))
+            self.assertFalse((self.source_root / "Movies/One.2001.mkv").exists())
+
     def test_cancel_during_first_execution_settles_the_task_and_execution(self) -> None:
         """A real two-file run observes cancellation at the next item boundary.
 
