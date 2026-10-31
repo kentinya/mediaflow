@@ -1,6 +1,6 @@
-# Task 47.2 — Files 手动整理完整接入 Task 引擎
+# Task 47.2 — Files 手动整理接入 Task 引擎与操作暂停退役
 
-Authority: committed [SLICE.md](SLICE.md)（读取于本 Task Base）；
+Authority: committed [SLICE.md](SLICE.md) at `c1e616113f87420d6f7411c3e6287ce81c1f5331`；
 [Development Workflow](docs/development-workflow.md) 管理生命周期与测试分工；
 [B experience](docs/agent-experience/task-planner-reviewer.md) /
 [Developer experience](docs/agent-experience/developer-implementation-role.md)。
@@ -23,10 +23,11 @@ Authorization: PLAN ONLY — 2026-10-31; USER-AUTHORIZED IMPLEMENTATION — 2026
 贯通有界发现/稳定性观察、分析、初始摘要确认、OrganizerExecutor、逐项 Result、协作控制和
 现有四类问题处理后的安全续作。全程保持一个顶层 organizing Task，不再为该工作产生 Job 或
 恢复子 organizing Task。已有 intent/discovery/preview/authorization/execution/checkpoint 记录
-保留证据职责，不再为新工作独立排队或领取。
+保留证据职责，不再为新工作独立排队或领取。另按用户明确改约，退役整理及普通文件操作的
+暂停/从暂停继续，保留安全取消和四类问题处理后的继续整理。
 
 这是 RO-1、RO-2 的**手动生产入口**、RO-3 的**新手动工作**与 RO-5 对应 Files/Task Center
-旅程的完整纵向交付；不是三触发统一或 Job 退休完成。保持 `V2-TASK-001/002/003/005/006` 的
+旅程的完整纵向交付；不是三触发统一或 Job 退休完成。保持 `V2-TASK-001/002/003/005/006/007` 的
 适用部分，`V2-OPS-014–017`、`V2-FILES-007`、`REQ-TASK-002/005/006/007/009/010`、
 `REQ-RECOVERY-006`、适用 `REQ-RESULT-*`、`REQ-SAFE-*` 和部署 readiness 不变量。
 
@@ -35,6 +36,20 @@ Authorization: PLAN ONLY — 2026-10-31; USER-AUTHORIZED IMPLEMENTATION — 2026
 遇到识别、元数据候选/补正、分类、冲突，沿用现有页面保存决定、分析、摘要与显式继续，仍回到
 原 Task。刷新/认证续接/重启按精确 request/Task 读回；失败保留原因、已知效果、安全性与下一步。
 技术失败和 uncertain 保持既有只读/检查边界，附件告警不重放主文件。
+
+## User scope change — all-operation Pause retirement
+
+用户于2026-10-31明确取消整理暂停功能；A范围变更已提交于上述 Contract checkpoint，再由 B
+调整同一 Task。Task ID/Base 与此前真实实施历史不变，High/T4 不变。此前 A 范围权限用于这次
+合同动作，B角色继续负责Task；未实施代码、未做A最终审查或宣告PASS。
+
+本 Task 增加整理及普通文件操作 Pause / resume-from-pause 的完整退役：手动、定时、Run once、
+Copy/Move等操作及既有Web/API/CLI控制入口均不再提供该能力；这仅改控制，不切换自动入口引擎。
+保留取消；取消后不提供“继续本次执行”。保留未取消工作四类问题处理后的显式继续、摘要确认、
+人工/稳定性等待和安全栅栏。普通文件 Copy/Move 等也取消暂停/从暂停继续，其取消和效果保护保留。
+用户确认当前没有已暂停的整理任务：不开发专项暂停任务迁移、恢复或兼容执行，不新增这类
+历史场景作为必过门禁。通用历史读取仍保留，不删记录、不自动重放或清除效果保护。旧暂停缺陷记录在Git，
+本次按用户改约取消其修复义务，不把“移除要求”记成“原缺陷已修好”。
 
 ## Actual-code gap
 
@@ -73,19 +88,19 @@ Authorization: PLAN ONLY — 2026-10-31; USER-AUTHORIZED IMPLEMENTATION — 2026
    claim、精确源版本、计划/权限/能力/冲突与授权范围，派发变更前耐久记录边界；派发后未可靠
    落结果保持 uncertain，不因到期/重启/无 Result 自动重放。分析与读操作零 Storage mutation。
 
-4. **接入人工等待、确认和协作控制。** 全部人工等待/安全暂停释放名额，混合机器工作与尚未
+4. **接入人工等待、确认和协作控制。** 全部人工等待且无机器工作时释放名额，混合机器工作与尚未
    确认的 in-flight 控制保留名额。确认/继续在一个事务内检查摘要/版本/pin/可执行 subset、容量，
    消费既有精确单次授权并重新登记原 Task 机器工作；失败保留选择/摘要/原状态且不消费权限。
    准入事实与后来确认事实须可区分；若旧 execute_authorized 字段需要改变，只能由显式合法
    授权事务完成，不放宽通用机器发布 guard，也不把一个布尔值当作全部 mutation 权限。
-   Save 决定不入队；安全分析按原交互动作入队且零变更。暂停/取消有请求和安全确认，不中断调用。
+   Save 决定不入队；安全分析按原交互动作入队且零变更。取消有请求和安全确认，不中断调用；没有整理暂停/从暂停继续的入口。
 
-5. **四类恢复与支持的暂停续作回到原 Task。** 复用现有 decision/checkpoint/source validation、
+5. **四类恢复与现有安全续作回到原 Task。** 复用现有 decision/checkpoint/source validation、
    analysis/summary/selected confirmation 服务及表单，把新手动工作的机器阶段交给同一引擎。
    新的分析/执行证据可以有独立 ID，但不是另一个顶层 organizing Task/Job 或领取队列。
    可复用或版本化 item ID；后者保存明确耐久历史关系、旧链接与正确文件数。原成功/ignored/
    skipped/partial/uncertain siblings 独立保留；不新造技术恢复、附件重放或任意历史 Reprocess。
-   不能因容量不足登记将来自动继续，也不能清掉已接受 CANCEL。旧工作保留原合法恢复路径。
+   不能因容量不足登记将来自动继续，也不能清掉已接受 CANCEL。旧工作保留本次退役范围之外的合法恢复路径；不新增历史暂停整理的专用恢复路径。
 
 6. **保证分期共存安全。** 定时/Run once/既有已准入工作本轮仍走原路径，不双写或自动改绑。
    共享容量配置的实际 admission 检查须在事务内覆盖新 Task 与仍受旧队列限制的工作，并按明确
@@ -98,11 +113,18 @@ Authorization: PLAN ONLY — 2026-10-31; USER-AUTHORIZED IMPLEMENTATION — 2026
    Attention。只做所需 DTO/查询/链接/既有页面改接，不新增 picker/全局监控或 UI 重设计。
    旧 Task/Job/历史子 Task 链仍按原证据可读；普通两库文件操作不进入 organizing population。
    如必须增加持久字段/索引，采用连续版本的 additive、失败原子迁移并验证53/54升级/重开，
-   不删除 Job 数据或改旧授权事实。只记录本轮确实完成的分期架构事实，不修改 A 的 TARGET/范围。
+   不删除 Job 数据或改旧授权事实。只记录本轮确实完成的分期架构事实，遵循已提交的新 TARGET。
+
+8. **退役所有操作的暂停能力。** 删除整理 Files/Task Center/相关详情、普通两库操作弹窗和
+   CLI/API的Pause/从暂停继续动作、可用性投影及专用活跃分支。共享Task控制路由按真实
+   command/kind拒绝已退役命令，提供有界无效果答复；不能只隐藏按钮留后门。保留取消及
+   识别/元数据/分类/冲突处理后的“继续整理”。不开发用户确认不存在的暂停整理任务迁移/恢复
+   或兼容执行；必要通用历史读取不受影响，不清表或自动改状态。执行中的取消在当前调用结果
+   可靠后停止未执行项；已成功项保持成功，不将正常取消当技术失败；uncertain仍不可重放。
 
 ## Acceptance Criteria
 
-以下 M1–M9 的“同一 Task”与新引擎要求，仅适用于本轮接入后首次准入的新 Files 手动工作及其
+以下 M1–M10 的“同一 Task”与新引擎要求，仅适用于本轮接入后首次准入的新 Files 手动工作及其
 后续处理。历史 Task/Job/子 Task 不合并、不重新编号，按原耐久关系验证可读与合法操作兼容。
 TaskItem、分析、计划、授权、执行和 attempt 的内部 ID 不要求恒等；验收依据是同一顶层工作、
 精确源版本/pin 的耐久关联、历史保留、准确文件数与不重复执行。
@@ -120,10 +142,11 @@ TaskItem、分析、计划、授权、执行和 attempt 的内部 ID 不要求�
   同一混合批次每文件独立，历史 attempts/Result/附件效果不覆盖，旧 item 深链可读、文件数不膨胀；
   技术失败无第五入口，主文件已成功但附件告警不重放主文件。
 - [ ] M5：真实双连接/Worker竞争只有一个有效 owner；旧 claim 的发布、变更前检查与锁清理无效。
-  暂停/取消在安全边界结算；请求期间名额不提前释放，CANCEL 不被继续覆盖；源占用跨等待保留。
+  取消在安全边界结算；请求期间名额不提前释放，CANCEL 不被继续覆盖；已成功 sibling 保持成功，
+  尚未执行项按取消语义结算而非标成技术失败；源/效果保护跨等待与取消安全边界保留。
 - [ ] M6：新手动与旧 scheduled/Run once 竞争最后名额不超额、不重复计 linked work；全人工等待
   为零、混合机器工作为一。满时新请求无孤儿，确认/分析/继续不消费授权且原选择/结果不丢；
-  释放后必须显式重试，不自动续作。普通 transfer 保持原容量/行为，不被整理计数误纳入。
+  释放后必须显式重试，不自动续作。普通 transfer 保持原容量及本次暂停退役之外的行为，不被整理计数误纳入。
 - [ ] M7：只有现有支持的控制/恢复边界、有耐久证据证明剩余阶段安全，且重新通过源/pin/权限/
   claim 检查时，才可续原 Task。分别验证派发前的安全剩余工作和派发后尚无耐久结果证明的中断；
   后者保留 uncertain 与已知效果，超时/重启/租约失效/缺 Result 本身均不能成为重放理由。
@@ -135,6 +158,11 @@ TaskItem、分析、计划、授权、执行和 attempt 的内部 ID 不要求�
 - [ ] M9：新建/54重开及必要的53/54升级、迁移故障回滚、源码外 wheel 和容器真实 resident Worker
   完成同一手动旅程。B 完成适用 T4 门禁；未运行/不可用不记 PASS。不要求本 Task 删除旧 Job。
 
+- [ ] M10：整理及普通文件操作（包括Copy/Move）的Web/API/CLI不再提供Pause/从暂停继续；
+  旧请求通过真实入口被有界拒绝且无变更。安全取消仍完整，四类问题处理后的显式继续仍在
+  原Task完成。用户已确认无现存暂停整理任务，不以暂停任务迁移/恢复/兼容执行作为验收项；
+  原有通用历史读取、结果、权限与非重放保障不丢失。
+
 ## Required Tests
 
 以下是实施后的要求，本次规划没有运行或宣称产品验收；测试所有数据使用临时根/SQLite/fake
@@ -144,7 +172,7 @@ Worker seams；新增用例须从已存在的真实入口触发，不能猜造�
 ### Developer — affected tests
 
 1. 新增计划模块 `tests/test_manual_task_engine.py`、`tests/test_manual_task_recovery.py`（可按最终
-   实现合并到既有模块，交接给出等价精确命令），覆盖 M1–M7 的真实服务/SQLite/Executor 链、
+   实现合并到既有模块，交接给出等价精确命令），覆盖 M1–M7/M10 的真实服务/SQLite/Executor 链、
    独立连接竞争、控制/授权事务故障及关闭重开，不只 mock 调度或比较 ID。
 
    ```sh
@@ -165,7 +193,7 @@ Worker seams；新增用例须从已存在的真实入口触发，不能猜造�
 
    ```sh
    cd web
-   npm run test -- run src/features/operations/OrganizeRouter.test.tsx src/features/operations/OrganizeDiscoveryPage.test.tsx src/features/operations/OrganizeCreationPage.test.tsx src/features/operations/TaskItemRecoveryPanel.test.tsx src/features/operations/OperationsInventory.test.tsx
+   npm run test -- run src/features/operations/OrganizeRouter.test.tsx src/features/operations/OrganizeDiscoveryPage.test.tsx src/features/operations/OrganizeCreationPage.test.tsx src/features/operations/TaskItemRecoveryPanel.test.tsx src/features/operations/OperationsInventory.test.tsx src/features/library/LibraryFileOperationsDialog.test.tsx
    npm run typecheck
    npm run lint
    npm run format:check
@@ -176,7 +204,7 @@ Worker seams；新增用例须从已存在的真实入口触发，不能猜造�
 
 ### B — acceptance and full regression
 
-- 独立审完整 Task Base..candidate，先重现 M3/M5/M6/M7；核对真实 admission、resident assembly、
+- 独立审完整 Task Base..candidate，先重现 M3/M5/M6/M7/M10；核对真实 admission、resident assembly、
   变更前授权/claim、所有逐项 writer，以及新旧 runner 排除，不用报告或命中字符串代替链路。
 - 执行 [共享 T4 全量门禁](docs/development-workflow.md#shared-full-regression-commands)。
   本 Task 改共享 writer/调度/授权/容量与真实 mutation，需完整 Python/Web/static/examples/
@@ -195,6 +223,11 @@ Worker seams；新增用例须从已存在的真实入口触发，不能猜造�
   新工作的内部 item/attempt ID 变化以耐久关系与效果验证，不追加 ID 必须相等的断言。中断测试
   限于 M7 的两类现有可触发边界；既验证可证明安全时能继续，也验证效果不确定时不能重放，
   不枚举理论上无法从现有入口触发的崩溃组合。自动流程测试保留原执行路径和历史关系断言。
+  M10新增真实入口对照：整理及普通操作pause/resume均被拒绝且无变更，页面/弹窗无相应
+  动作，四类继续不被误删。按用户改约将旧暂停正向测试更新为退役拒绝，同时保留原RBAC/
+  版本/效果/非重放断言；不因没有现存暂停整理而增加专项历史迁移/恢复门禁。取消补两文件
+  “第一部执行中点击取消”的实际场景，验证当前调用不中断、首项真实结果保留、余项不执行，
+  不被失败兜底或后续继续覆盖；普通两库Copy/Move取消也保留已知效果与安全边界。
   对桌面1536与窄屏380/390的摘要、四类输入、结果/错误/返回实际截图作可见性检查。自动化组
   只证明本轮必要共存兼容，不作为 automatic 入口已改接的证据。
 - 新候选真实 wheel 源码外安装后经 Task API/Worker 跑手动链，核对 site-packages、结果重开及
@@ -210,6 +243,9 @@ Worker seams；新增用例须从已存在的真实入口触发，不能猜造�
   脚本/维护租约，不新造验收平台，不把脚本 SKIP/exit0 冒充有效门禁。
 
 ## Non-goals
+
+- 不开发暂停整理任务的专项迁移、恢复或兼容执行系统；用户已确认不存在这类现存任务。
+  普通操作只移除暂停能力，保留取消/进度/结果等行为，不扩张为普通文件管理重设计。
 
 - 本轮不切换 Scheduler due、saved-definition Run once 或独立 API/CLI organizing 的执行引擎；
   只改它们与手动新路径共存所必需的计数、排除/保护及兼容消费者。
@@ -233,155 +269,33 @@ RO-5 原界面兼容已验而 Task 化全表面未交付。因此继续规划本
 
 ## Developer Completion Report
 
-- Checkpoint: `HEAD` of the handoff commit on `main`; Task Base
-  `c942c4b4b9d3abf105341e8163c1be2d95d9a671`; Status READY FOR B REVIEW.
-- Changed behavior: newly admitted Files manual work (direct/folder/mixed) now creates its
-  organizing Task *with* its kernel `task_scheduling` row atomically, and the resident Worker
-  advances that same Task through bounded discovery → zero-mutation analysis → human waiting,
-  and — after the operator's exact confirmation — through the confirmed execution. The
-  confirmation re-registers the same Task's machine work inside the admission transaction
-  after re-checking shared capacity; the legacy discovery/manual-execution claim queries
-  explicitly exclude kernel-managed rows so one work is never double-claimed. A saved four-type
-  decision re-enters analysis on the same Task via one atomic `requeue_scheduled_analysis`.
-- Key files: `application/manual_task_engine.py` (new resident engine), `application/media_discovery.py`
-  (kernel admission + atomic analysis re-entry), `infrastructure/sqlite_runtime.py`
-  (`create_files_organize_work` scheduling, `claim_media_discovery`, `claim_manual_execution`,
-  `requeue_scheduled_analysis`, `yield_scheduled_claim`, kernel-fenced
-  `complete_manual_execution_item`), `application/manual_organize_execution.py` (Task-fenced
-  execution via `begin_existing_item`/`begin_mutation`/claim-fenced completion),
-  `domain`/`application` `task_scheduling` (yield/begin-existing seam), `application/automation.py`
-  + `final_cli.py` (resident wiring).
-- Affected tests (actual): `.venv/bin/python -m unittest discover -s tests` → 3004 tests,
-  7 skipped, OK. New `tests/test_manual_task_engine.py` covers admission/dedup, discovery→
-  analysis→human-waiting, and four-type decision→reanalysis→confirmed execution→`completed` on
-  one Task with zero Storage mutation until the confirmed execution. Focused sets
-  (`test_task_scheduling*`, `test_media_discovery`, `test_manual_organize_*`,
-  `test_scope_continuation`, `test_recovery_continuation`, `test_processing_checkpoint`,
-  `test_automation_*`, `test_direct_file_transfers`, `test_media_library_transfers`) pass.
-  `ruff format --check .`, `ruff check .`, `compileall mediaflow tests scripts`,
-  `scripts/check_governance.py`, `git diff --check` pass.
-- Delivered this round: M1, M2 and the M3/M4 core (exact summary/selected confirmation, Save has
-  no effect, four-type decision continues the same Task, capacity re-checked atomically on
-  re-entry/confirmation). `tests/test_task_scheduling.TransitionBoundaryTests` now asserts exactly
-  the named production consumers wire the kernel instead of "no consumer".
-- Remaining Task work / not claimed: M5 full Task-level cooperative pause/cancel/acknowledge on the
-  new path; M6 unified cross-entrance capacity (new Task slots and legacy Job slots are still
-  counted separately, so simultaneous last-slot competition is not yet bounded); M7 explicit
-  restart/claim-loss continuation boundaries; M8 Task Center/Web/API result-loop re-wiring; and M9
-  wheel/Docker/upgrade proofs are NOT delivered. No Web/API projection or UI file changed. Only
-  additive schema 54 is used; no migration/schema change. No self-PASS, no Slice closure, no next
-  Task planned.
-- Known risks: the kernel Worker registration pin comes from a pending legacy Job when one exists,
-  so a manual Task pinned to a different snapshot can be temporarily unclaimable until that Job
-  clears; this is the same coexistence gap as M6 and is disclosed, not hidden.
+最近产品候选为 `09fc12e8df4c5e5ce10532b626fee2d5a8e39b51`，旧交接与独立审查完整保留在
+`8cf89cab693a241df0dc01dacfabd254d58c4438:TASK.md`。整理及普通操作暂停退役尚未实施。
+Developer 按新Contract修订同一Task，交接准确checkpoint、新增/变更/直接受影响测试及剩余风险；
+取消/四类恢复/容量/源版本/uncertain保护与完整手动旅程仍须完成。全量和发布验收由B负责。
 
 ## B Review Result
 
 ```text
-Reviewed Base: c942c4b4b9d3abf105341e8163c1be2d95d9a671
-Reviewed Head: 09fc12e8df4c5e5ce10532b626fee2d5a8e39b51
-Decision: FIX REQUIRED — 2 execution-stage control blockers (M5/M7/M8)
-Previous concrete pause/capacity reproductions: corrected; not a complete M5/M6 or Task PASS
+Task Base: c942c4b4b9d3abf105341e8163c1be2d95d9a671 (unchanged)
+Last reviewed product Head: 09fc12e8df4c5e5ce10532b626fee2d5a8e39b51
+Scope amendment: c1e616113f87420d6f7411c3e6287ce81c1f5331
+Decision: FIX REQUIRED — implement the amended Task; no product PASS claimed
+Next: SAME TASK; all-operation Pause/resume retirement plus remaining original delivery
 Slice Required Outcomes / Surfaces all satisfied: NO
-Next: SAME TASK FIX LOOP — preserve Task47.2 ID/Base/Goal/Scope
-Evidence: .git/validation-evidence/b-task47.2-09fc12e8/
 ```
 
-B 复核完整 Base..Head 的17文件，结合前轮全范围审查重查全部接线及本轮10文件控制/容量修复，
-没有仅根据 commit 标题或新增测试通过放行。开始 main/Reviewed Head，无 tracked edits，既有
-untracked OS/log/参考图/压缩包原样保留、不暂存；B 未改产品/测试，无角色例外。
-旧 Developer 报告尚未同步新提交，本轮按实际代码和行为判断；不因报告陈旧拒绝已证实的修复。
+用户还明确普通操作也不需要暂停，且当前没有已暂停整理；不开发专项暂停任务兼容系统。
+用户更改要求后，前轮两个“整理暂停应能正确继续”的P1不再作为当前修复验收项；它们在旧合同下
+的真实复现与FIX结论保留在Git及 `.git/validation-evidence/b-task47.2-09fc12e8/`，不是已修复。
+当前验收转为M10整理及普通操作暂停完整退役，M5仍要求安全取消；不能通过隐藏按钮、放宽权限、清空
+历史或删除所有控制测试完成。76项前候选定向结果只代表旧候选，不作为新实现验收。
 
-### 上轮具体阻塞复核
+本轮只修改用户授权的范围/需求/旅程/架构文档和本Task，不改产品代码、测试或数据库，不运行
+产品全量，不声明代码已删除暂停。开始于 `main / 8cf89cab693a241df0dc01dacfabd254d58c4438`，
+无tracked edits，既有untracked原样保留。先A范围checkpoint，再B调整Task；角色例外已披露，
+不进行A Final Review。文档/链接/治理/空白检查通过后本地提交，无push或历史改写。
 
-- 同一真实 Files discoveries/pause API + 三次 engine pass：discovery=paused，Task=paused，
-  queue=paused、占用0名额且不可领取；原“暂停发现但 Task 仍排队”的复现已纠正。
-- 配置上限100、现有 Job service 填满100项后，Files 新整理返回409，新 Task slots=0；
-  原101项复现已纠正。代码中两边 admission/确认/重入队已改用共同容量判定；新增反向满队列、
-  明确 Job→Task 去重及满时精确重复用例通过。这不替代尚未跑的全入口竞争/部署验收。
-
-### P1-1 — 执行中接受暂停后，把未执行 sibling 标成失败（M5/M7/M8）
-
-**真实用户触发：** Files 选择 `One.2001.mkv` 与 `Two.2002.mkv`，沿现有识别决定/分析/摘要
-确认 API 准入两项执行。在第一个真实 Executor 调用返回、其结果尚未发布的现有安全检查边界，
-通过现有 `POST /api/v1/tasks/{id}/pause` 提交当前 expectedUpdatedAt，返回200。该时点代表
-用户在第一部正在整理时点击暂停；不新增路由，不伪造 claim 或篡改数据库。
-
-**实际结果：** 第一部完成并有1条成功 Result，第二部未执行；Worker 返回并再调用3次后，
-Task=failed、queue=settled、control=pause、mutation_in_flight=false，第二部却为failed，
-没有第二部执行 Result。应保留第一部成功，在当前效果证据可靠后暂停剩余安全工作，而不是
-把正常暂停变成整理失败。此链使用真实临时 Local Storage，成功的第一部不能再执行。
-
-**原因与同 Task 修复指导：**
-
-1. `ManualOrganizeExecutionService._run_worker_items()` 在下一项 `begin_existing_item()`
-   遇到已接受的 Task 控制时抛 `TaskControlRejected`；`ManualTaskEngineWorker.run_next()`
-   将其当普通异常交 `_record_failure()`，后者将 pending sibling 标Failed并结算Task。
-   应在现有逐项安全边界识别已接受控制，停止后续 item，以正常控制确认结束本次 owner。
-2. 只有 in-flight 效果被可靠发布后才确认/释放名额；未确定效果保持 marker/占用与不可重放。
-   不在 Storage 调用中途解锁，也不把所有异常都当暂停吞掉。
-3. 协调 Task/调度资格、manual execution、逐项状态与必要 discovery 显示，保留已成功 Result/
-   history/授权消费/源占用；剩余项保持可合法继续的状态。取消也按现有合法语义检查，不能借
-   正常 terminal/failure 分支覆盖已接受 CANCEL。
-4. 补上述两文件真实API回归：执行期间请求暂停、首项成功、余项未执行且非失败、Task安全暂停、
-   显式继续后只完成余项；含结果落库失败/uncertain 对照及关闭重开，拒绝重放首项。
-
-### P1-2 — 已确认执行暂停后，继续被误当成人工等待，工作不再运行（M5/M7/M8）
-
-**真实用户触发：** 同样从 Files 完成两文件分析和精确确认，执行已 admitted、尚未被 Worker
-领取时，在 Task 控制入口点暂停，再从现有 resume API 显式继续。暂停返回200、Task/queue
-确实为paused；resume返回202。
-
-**实际结果：** 再运行3轮 engine，Task=running、queue=waiting_human、不占名额；两项仍paused，
-已有 manual execution 仍admitted，Result=0。用户已确认并点击继续，却没有可领取的执行工作。
-这是安全且未开始的实际执行边界，不是要求任意崩溃自动恢复。
-
-**原因与同 Task 修复指导：**
-
-1. `resume_scheduled_task()` 仅根据 discovery 是否paused 决定重入队，否则一律转为
-   WAITING_HUMAN。确认执行时 discovery 已完成，因此遗漏真正待执行的 manual execution。
-2. 以该 Task 耐久的机器阶段、已确认 execution/逐项计划、效果/控制证据判断剩余工作；存在
-   合法尚未执行项时，在容量事务内恢复其可执行资格并重入队**原 Task**，不能重新建 execution
-   扩权/消费旧授权，不能要求用户重新确认已合法准入的原计划来掩盖丢失阶段。
-3. 真正暂停于人工决策等待的工作仍返回原等待状态、0名额；不要把所有暂停都改成执行。
-   pin/源版本/权限/容量正常重查；满时保留暂停和原授权消费/计划，无自动续作；CANCEL不可恢复。
-4. 补“确认后未领取→暂停→继续→原执行完成”、上述 P1-1 的“已成功一项→暂停→只续余项”，
-   以及原人工等待/发现阶段正向对照；验证两项逐项结果/历史/计数、精确request与重启后状态。
-
-### 同一 Task 的其余交付与验证分工
-
-M4完整四类与混合项恢复、M7其余受支持安全边界、M8完整真实Web结果闭环仍按原计划核对；
-本轮76项定向通过不等于这些结果全部完成。范围仍只约束新手动工作；不合并历史Task、不强求
-内部item ID相等、不切换自动入口、不新增恢复类型或所有崩溃点无缝恢复要求。
-
-Developer 修复两项并完成原 Scope 后，仅运行新增/变更/直接受影响测试，给出准确 checkpoint/
-结果及剩余限制，再交 B。B 负责原计划全量、浏览器/截图、真实wheel/容器/升级门禁；本轮确认
-产品阻塞后提前 FIX，没有把缺少全量证据当作 Developer 产品缺陷，也没有豁免剩余门禁。
-
-### B 实际验证
-
-| 检查 | 实际结果 |
-|---|---|
-| `tests.test_manual_task_engine test_task_scheduling test_task_scheduling_fencing test_task_scheduling_migration` | 76 tests，OK；runner4.271s /进程4.460s；`focused.json/log` |
-| 上轮两条原样入口复现 | 发现暂停占用0；旧100满时新整理409；`previous-repro.py/log` |
-| 本轮执行阶段两条独立复现 | P1-1暂停后Task/余项失败；P1-2 resume202后admitted执行留在人工等待；各约0.13s，脚本/日志见 evidence |
-| 完整范围 manifest/空白、治理/文档检查 | PASS；未改 A-owned 文件、产品或测试 |
-| 完整 T4/浏览器/视觉/源码外wheel/容器升级安全 | 产品阻塞后未继续运行，待修正候选由B完成；不记PASS |
-
-入口复现全部为合成临时SQLite/Local Storage/fake Metadata，未接触用户媒体、运行库或私有配置。
-首次执行中探针误把字符串 source 当对象读取，在结果发布前发生探针错误；原日志单独保留为
-`execution-control-setup-error.log`，纠正后上述两条独立运行，不将探针错误当产品缺陷。
-SQLite ResourceWarnings 保留，未加 retry/skip 或放宽超时。复核始于 `2026-10-31 00:33:32 UTC`；
-测试/探测与检查的保守累计上界15秒，低于本轮总时长50%，计时与范围见 `review.json`。
-
-### Slice 全结果重评
-
-| Required Outcome | 结论 |
-|---|---|
-| RO-1 Task 调度/执行 | 内核通过；发现阶段控制/共存容量原复现修正，执行阶段暂停/继续仍阻塞 |
-| RO-2 三触发共用引擎 | 手动部分已接入；due/Run once/独立 API-CLI 仍后续，未完成 |
-| RO-3 同工作四类恢复 | 局部正向通过；全部四类/历史/效果边界仍未完成验收 |
-| RO-4 数据保留与 Job 退出 | schema54/Job仍保留，历史转换与删除尚未实施；非本Task新增要求 |
-| RO-5 操作与管理旅程 | 新手动执行控制尚未闭环，其余最终表面仍待后续 |
-
-Task47.2 保持 FIX REQUIRED、同 Task 修复；Slice47 仍 ACTIVE，不改 Roadmap/Progress，不规划下一 Task。
+全部Slice结果重评：RO-1/2生产接入仍部分完成；RO-3完整四类同Task恢复仍待验；RO-4历史Job
+迁移删除未完成；RO-5完整表面与新增暂停退役尚未交付。Slice仍ACTIVE，Task47.2仍FIX REQUIRED，
+保持原Base，不因取消暂停义务而关闭Task/Slice，也不规划下一Task。
