@@ -1896,7 +1896,11 @@ class ManualOrganizePreviewService:
             truncated = True
         plan = AttachmentPlanner().plan(plan, attachments, target_storage)
         plan = self._resolve_conflicts(
-            plan, type_policy, target_storage, decision=bound.confirmation
+            plan,
+            type_policy,
+            target_storage,
+            decision=bound.confirmation,
+            problem_task_id=problem_task_id,
         )
         plan_document = self._plan_document(
             strategy, plan, item, type_policy, source_storage, target_storage
@@ -2489,7 +2493,9 @@ class ManualOrganizePreviewService:
             "deterministic": True,
         }
 
-    def _resolve_conflicts(self, plan, type_policy, target_storage, *, decision=None):
+    def _resolve_conflicts(
+        self, plan, type_policy, target_storage, *, decision=None, problem_task_id=None
+    ):
         """Apply only an existing configured/recorded decision; never mutate Storage."""
 
         if not plan.conflicts:
@@ -2516,6 +2522,17 @@ class ManualOrganizePreviewService:
             confirmations = tuple(method(limit=1000))
         for confirmation in confirmations:
             if getattr(confirmation, "plan_id", None) != plan.plan_id:
+                continue
+            # ``plan_id`` is deterministic across Tasks (same source/target), so
+            # it alone cannot prove a resolved conflict belongs to the current
+            # work.  When the analysis runs for one admitted organizing Task,
+            # only that Task's own confirmation may be consumed; a delivered
+            # decision of a different (for example cancelled) Task never leaks
+            # into this one merely because the paths collide.
+            if (
+                problem_task_id is not None
+                and getattr(confirmation, "task_id", None) != problem_task_id
+            ):
                 continue
             replacement = self._apply_conflict_confirmation(
                 plan, type_policy, target_storage, confirmation

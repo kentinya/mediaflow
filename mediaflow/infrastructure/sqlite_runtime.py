@@ -8776,6 +8776,73 @@ class SQLiteTaskRepository:
         )
 
     @classmethod
+    def _native_current_decision_kind_sql(cls, item_alias: str) -> str:
+        """The newest saved four-type decision on one kernel-managed item.
+
+        A Task-engine-admitted Files item keeps its own identity across the
+        whole manual journey (unlike the legacy child-Task recovery chain), so
+        the decision that still owes its on-page summary/confirmation is
+        exactly the newest RESOLVED review/confirmation on that same item.  The
+        comparison uses each record's own durable decision instant, so after a
+        Recognition decision is consumed and a later Metadata problem appears,
+        only the newest (Metadata) type is reported as owed.  A chain with no
+        saved business decision at all yields ``NULL`` and can therefore never
+        be published as a five-type problem.
+        """
+
+        return f"""(SELECT newest.kind FROM (
+            SELECT kind, occurred_at FROM (
+                SELECT 'recognition' AS kind,
+                       COALESCE(decided_at, updated_at) AS occurred_at
+                FROM recognition_reviews
+                WHERE status = 'resolved' AND item_id = {item_alias}.item_id
+                UNION ALL
+                SELECT 'metadata', COALESCE(decided_at, updated_at)
+                FROM metadata_reviews
+                WHERE status = 'resolved' AND item_id = {item_alias}.item_id
+                UNION ALL
+                SELECT 'metadata', COALESCE(decided_at, updated_at)
+                FROM metadata_corrections
+                WHERE status = 'resolved' AND item_id = {item_alias}.item_id
+                UNION ALL
+                SELECT 'classification', COALESCE(decided_at, updated_at)
+                FROM classification_reviews
+                WHERE status = 'resolved' AND item_id = {item_alias}.item_id
+                UNION ALL
+                SELECT 'conflict', updated_at
+                FROM conflict_confirmations
+                WHERE status = 'resolved' AND item_id = {item_alias}.item_id
+            )
+            ORDER BY occurred_at DESC, kind DESC
+            LIMIT 1
+        ) newest)"""
+
+    @classmethod
+    def _native_pending_confirmation_sql(cls, item_alias: str, problem_type: str) -> str:
+        """A kernel-managed Task item whose saved four-type decision awaits its
+        on-page summary/confirmation.
+
+        The Task engine re-runs the complete zero-mutation analysis after a
+        saved decision and parks the exact source at ``waiting_confirm`` once a
+        usable plan is ready.  That state is the same required human step the
+        legacy chain publishes, but it deliberately creates no Job or child
+        recovery Task; the durable link to the Task's own Files preparation
+        (``media_discoveries.organize_task_id`` with a linked Preview) is the
+        exact evidence that this summary belongs to this Task and is not a
+        plain initial confirmation.  A settled sibling, a different Task or a
+        source without its own saved decision therefore never matches.
+        """
+
+        return (
+            f"({item_alias}.status = 'waiting_confirm' "
+            "AND EXISTS (SELECT 1 FROM media_discoveries native_ready "
+            f"WHERE native_ready.organize_task_id = {item_alias}.task_id "
+            "AND native_ready.preview_id IS NOT NULL) "
+            f"AND {cls._native_current_decision_kind_sql(item_alias)} "
+            f"= {_sql_string(problem_type)})"
+        )
+
+    @classmethod
     def _problem_item_predicate(cls, problem_type: str) -> tuple[str, tuple[object, ...]]:
         """The exact durable predicate of one *business* recovery problem type.
 
@@ -8811,6 +8878,7 @@ class SQLiteTaskRepository:
         # the predicates also accept "this item is the newest child of one exact
         # saved-decision chain whose follow-up is not confirmed yet".
         inherited = cls._inherited_recovery_responsibility_sql("i", problem_type)
+        native = cls._native_pending_confirmation_sql("i", problem_type)
         if problem_type == "recognition":
             return (
                 "("
@@ -8824,6 +8892,7 @@ class SQLiteTaskRepository:
                 "WHERE open_recognition.item_id = i.item_id"
                 " AND open_recognition.status = 'pending'))"
                 f" OR ({inherited})"
+                f" OR ({native})"
                 ")",
                 (),
             )
@@ -8847,6 +8916,7 @@ class SQLiteTaskRepository:
                 "WHERE open_correction.item_id = i.item_id"
                 " AND open_correction.status = 'pending'))"
                 f" OR ({inherited})"
+                f" OR ({native})"
                 ")",
                 (),
             )
@@ -8864,6 +8934,7 @@ class SQLiteTaskRepository:
                 "WHERE open_classification.item_id = i.item_id"
                 " AND open_classification.status = 'pending'))"
                 f" OR ({inherited})"
+                f" OR ({native})"
                 ")",
                 (),
             )
@@ -8880,6 +8951,7 @@ class SQLiteTaskRepository:
                 "WHERE open_conflict.item_id = i.item_id"
                 " AND open_conflict.status = 'pending'))"
                 f" OR ({inherited})"
+                f" OR ({native})"
                 ")",
                 (),
             )
@@ -21335,6 +21407,13 @@ class SQLiteTaskRepository:
                 self._connection.execute(
                     "ALTER TABLE media_discoveries ADD COLUMN organize_task_id TEXT"
                 )
+            # The Task Center reads one Task's own linked preparation (the exact
+            # Files discovery that carries its ready Preview) on every per-item
+            # four-type decision, so the lookup is an indexed one.
+            self._connection.execute(
+                "CREATE INDEX IF NOT EXISTS media_discoveries_organize_task "
+                "ON media_discoveries(organize_task_id, created_at, discovery_id)"
+            )
             if "storage_scope_json" not in discovery_columns:
                 # Additive schema 52: the exact confined Storage-relative path of
                 # each admitted scope entry.  A prior-schema discovery keeps an

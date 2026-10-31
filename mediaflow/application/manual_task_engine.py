@@ -27,6 +27,7 @@ from mediaflow.domain.task_persistence import (
     PersistentTaskStatus,
     TaskItemStatus,
     task_item_counts,
+    task_work_status,
 )
 from mediaflow.domain.task_scheduling import (
     TaskClaimFenceLost,
@@ -323,28 +324,25 @@ class ManualTaskEngineWorker:
         task = self._task(claim.task_id)
         now = self._clock()
         if execution.status in _TERMINAL_EXECUTION_STATUSES:
-            status = {
-                ManualExecutionStatus.COMPLETED: PersistentTaskStatus.COMPLETED,
-                ManualExecutionStatus.PARTIAL_SUCCESS: PersistentTaskStatus.PARTIAL_SUCCESS,
-                ManualExecutionStatus.FAILED: PersistentTaskStatus.FAILED,
-                ManualExecutionStatus.CANCELLED: PersistentTaskStatus.CANCELLED,
-            }[execution.status]
             items = self._repository.list_items(task.task_id)
             outstanding = tuple(
                 value for value in items if value.status not in SETTLED_ITEM_STATUSES
             )
             if (
                 outstanding
-                and status in {PersistentTaskStatus.COMPLETED, PersistentTaskStatus.PARTIAL_SUCCESS}
+                and execution.status is not ManualExecutionStatus.CANCELLED
                 and all(value.status is not TaskItemStatus.PROCESSING for value in outstanding)
             ):
-                # One explicitly confirmed subset finished while other sources of
-                # this same Task still wait for their own decision/confirmation.
-                # The Task keeps its identity and those items, releases the slot
-                # and returns to human waiting instead of settling as if every
-                # source were done; the operator decides and continues on this
-                # same Task.  A still-processing sibling is genuine machine work
-                # and keeps the slot through the ordinary path below.
+                # One explicitly confirmed subset finished (or its own source
+                # failed) while other sources of this same Task still wait for
+                # their own decision/confirmation.  The Task keeps its identity
+                # and those items, releases the slot and returns to human
+                # waiting instead of settling as if every source were done; the
+                # operator decides and continues on this same Task.  The
+                # current execution's own failed Result stays recorded, so a
+                # later successful sibling can never erase or mask it.  A
+                # still-processing sibling is genuine machine work and keeps the
+                # slot through the ordinary path below.
                 waiting = tuple(
                     self._replace_item(item, TaskItemStatus.WAITING_CONFIRM, "waiting_confirm", now)
                     for item in outstanding
@@ -359,6 +357,24 @@ class ManualTaskEngineWorker:
                     self._scheduling.record_item(claim, item, now=now)
                 self._scheduling.defer_to_human(claim, task=updated, items=(), now=now)
                 return self._task(claim.task_id)
+            if outstanding and execution.status is not ManualExecutionStatus.CANCELLED:
+                # A still-processing sibling is genuine machine work: keep the
+                # claim and let the ordinary pass finish it instead of settling
+                # the whole Task under a terminal outcome it does not own.
+                updated = self._with_counts(
+                    self._with_status(task, PersistentTaskStatus.RUNNING, now, execution.error)
+                )
+                self._scheduling.publish_task(claim, updated, now=now)
+                return self._yield_until(claim, updated, now, TaskMachineStage.EXECUTION)
+            # Every concrete source is settled, so the Task aggregate is the
+            # independent sum of those outcomes: a later successful execution
+            # can never erase an earlier failed/partial sibling.  A genuine
+            # execution cancellation still settles as the operator's cancel.
+            status = (
+                PersistentTaskStatus.CANCELLED
+                if execution.status is ManualExecutionStatus.CANCELLED
+                else task_work_status(items)
+            )
             updated = self._with_counts(self._with_status(task, status, now, execution.error))
             self._scheduling.settle(claim, task=updated, items=items, now=now)
             return self._task(claim.task_id)

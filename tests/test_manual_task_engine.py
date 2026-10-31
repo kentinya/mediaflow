@@ -20,7 +20,11 @@ from mediaflow.domain.manual_execution import (
 from mediaflow.domain.media_discovery import DiscoveryStatus
 from mediaflow.domain.metadata import MediaCandidate, MediaType
 from mediaflow.domain.organizer import ExecutionEffectCertainty, ExecutionStatus
-from mediaflow.domain.task_persistence import PersistentTaskStatus, TaskItemStatus
+from mediaflow.domain.task_persistence import (
+    ConfirmationStatus,
+    PersistentTaskStatus,
+    TaskItemStatus,
+)
 from mediaflow.domain.task_scheduling import TaskQueueState
 from mediaflow.infrastructure.sqlite_runtime import SQLiteTaskRepository
 from tests.test_media_discovery import _DiscoveryFixture
@@ -352,6 +356,41 @@ class ManualTaskDiscoveryTests(_DiscoveryFixture):
             },
         )
         self.assertEqual(200, status, decision)
+        return decision["checkpoint"]["checkpoint_version"]
+
+    def _resolve_conflict(self, value, task_id, item, strategy="rename"):
+        status, checkpoint = self.request(value, f"/api/v1/tasks/{task_id}/items/{item.item_id}")
+        self.assertEqual(200, status, checkpoint)
+        status, decision = self.request(
+            value,
+            f"/api/v1/tasks/{task_id}/items/{item.item_id}/recovery/decision",
+            "POST",
+            {
+                "kind": "conflict",
+                "expectedCheckpointVersion": checkpoint["checkpoint_version"],
+                "strategy": strategy,
+            },
+        )
+        self.assertEqual(200, status, decision)
+        return decision["checkpoint"]["checkpoint_version"]
+
+    def _analyze(self, value, task_id, discovery):
+        """Re-run the task's own bounded analysis and read the fresh summary."""
+
+        current = value.repository.get_media_discovery(discovery.discovery_id)
+        status, accepted = self.request(
+            value,
+            f"/api/v1/operations/organize/discoveries/{discovery.discovery_id}/analyze",
+            "POST",
+            {"expectedVersion": current.version},
+        )
+        self.assertEqual(200, status, accepted)
+        fresh = self._drive(value, task_id)
+        status, preview = self.request(
+            value, f"/api/v1/operations/organize/previews/{fresh.preview_id}"
+        )
+        self.assertEqual(200, status, preview)
+        return preview
 
     def _execute(self, value, task_id, preview, item_ids, *, steps=8):
         status, admitted = self.request(
@@ -1272,6 +1311,399 @@ class ManualTaskDiscoveryTests(_DiscoveryFixture):
                 self.assertTrue(
                     reopened.get_media_discovery(discovery.discovery_id).cancel_requested
                 )
+
+    def test_new_task_reopens_its_own_conflict_not_a_cancelled_tasks_decision(self) -> None:
+        """A new request never borrows another Task's resolved conflict decision.
+
+        The first Task resolves a real target collision to Rename and is then
+        cancelled without executing.  A deliberate new request for the same
+        unchanged source must publish *its own* pending conflict -- not silently
+        apply the old Task's rename because the deterministic plan/source/path
+        happens to match -- and its own decision then plans and executes on that
+        same Task.
+        """
+
+        self.media("Movies/One.2001.mkv")
+        provider = SyntheticMetadataProvider(
+            (
+                MediaCandidate(
+                    "tmdb",
+                    "201",
+                    MediaType.MOVIE,
+                    "One",
+                    year=2001,
+                    genres=("Animation",),
+                    countries=("JP",),
+                ),
+            )
+        )
+        with self.journey(provider=provider, task_scheduling=True) as value:
+            status, admitted = self._admit(value, ["Movies/One.2001.mkv"])
+            self.assertEqual(202, status, admitted)
+            first = admitted["organizeTaskId"]
+            discovery = self._drive(value, first)
+            first_item = value.repository.list_items(first)[0]
+            self._decide_recognition(value, first, first_item)
+            preview = self._analyze(value, first, discovery)
+            # Create a real destination collision for the already planned target.
+            destination = (
+                self.target_root / preview["items"][0]["plan"]["destination"]["storageRelativePath"]
+            )
+            destination.parent.mkdir(parents=True, exist_ok=True)
+            destination.write_bytes(b"existing target")
+            preview = self._analyze(value, first, discovery)
+            self.assertEqual(["stale"], [item["status"] for item in preview["items"]], preview)
+            self._resolve_conflict(value, first, first_item)
+
+            task = value.repository.get_task(first)
+            status, cancelled = self.request(
+                value,
+                f"/api/v1/tasks/{first}/cancel",
+                "POST",
+                {"expectedUpdatedAt": task.updated_at.isoformat()},
+            )
+            self.assertEqual(200, status, cancelled)
+            self.assertEqual(0, len(value.repository.list_results(first)))
+            self.assertEqual([], value.source.mutations)
+
+            # A deliberate new request for the same unchanged source.
+            status, second = self._admit(
+                value,
+                ["Movies/One.2001.mkv"],
+                request_id="22222222-2222-4222-8222-222222222222",
+            )
+            self.assertEqual(202, status, second)
+            second_task = second["organizeTaskId"]
+            self.assertNotEqual(first, second_task)
+            second_discovery = self._drive(value, second_task)
+            second_item = value.repository.list_items(second_task)[0]
+            self._decide_recognition(value, second_task, second_item)
+            preview = self._analyze(value, second_task, second_discovery)
+
+            # The old Task's resolved Rename is not borrowed: this Task has its
+            # own pending conflict and the plan is not silently renamed.
+            confirmations = tuple(
+                confirmation
+                for confirmation in value.repository.list_confirmations()
+                if confirmation.task_id == second_task
+            )
+            self.assertEqual(1, len(confirmations), confirmations)
+            self.assertIs(confirmations[0].status, ConfirmationStatus.PENDING)
+            self.assertEqual(["stale"], [item["status"] for item in preview["items"]], preview)
+            self.assertNotIn("(1)", preview["items"][0]["plan"]["destination"]["filename"])
+            self.assertEqual([], value.source.mutations)
+            self.assertEqual([], value.target.mutations)
+
+            # This Task's own decision is honored on that same Task.
+            self._resolve_conflict(value, second_task, second_item)
+            preview = self._analyze(value, second_task, second_discovery)
+            ready = [item["itemId"] for item in preview["items"] if item["status"] == "previewed"]
+            self.assertEqual(1, len(ready), preview)
+            self.assertIn("(1)", preview["items"][0]["plan"]["destination"]["filename"])
+            final = self._execute(value, second_task, preview, ready)
+            self.assertIs(final.status, PersistentTaskStatus.COMPLETED, final.error)
+            self.assertEqual(1, len(value.repository.list_results(second_task)))
+            self.assertEqual((), value.repository.list_jobs(limit=10))
+
+    def test_failed_subset_keeps_the_undecided_sibling_actionable_on_the_same_task(self) -> None:
+        """One failed source never settles the other sources of the same Task.
+
+        Two files are confirmed one at a time.  The first source disappears
+        before the Worker runs, so its own Result is failed and no Storage
+        mutation is attempted.  The untouched second source must still save its
+        decision, continue its analysis and produce its own Result on the same
+        Task; the final aggregate honestly shows the failed and the completed
+        sibling instead of letting the later success erase the earlier failure.
+        """
+
+        provider = self._two_file_recognition_journey()
+        with self.journey(provider=provider, task_scheduling=True) as value:
+            status, admitted = self._admit(value, ["Movies/One.2001.mkv", "Movies/Two.2002.mkv"])
+            self.assertEqual(202, status, admitted)
+            task_id = admitted["organizeTaskId"]
+            discovery = self._drive(value, task_id)
+            items = {item.source_path: item for item in value.repository.list_items(task_id)}
+            first = items["Movies/One.2001.mkv"]
+            second = items["Movies/Two.2002.mkv"]
+            self._decide_recognition(value, task_id, first)
+            preview = self._analyze(value, task_id, discovery)
+            ready = [item["itemId"] for item in preview["items"] if item["status"] == "previewed"]
+            self.assertEqual(1, len(ready), preview)
+            status, admitted_execution = self.request(
+                value,
+                f"/api/v1/operations/organize/previews/{preview['previewId']}/execute",
+                "POST",
+                {
+                    "confirmation": True,
+                    "itemIds": ready,
+                    "expectedIntentVersion": preview["intentVersion"],
+                    "allowOverwrite": False,
+                    "allowSourceCleanup": False,
+                },
+            )
+            self.assertIn(status, (200, 202), admitted_execution)
+            # A normal external event after admission, before the Worker runs.
+            (self.source_root / "Movies/One.2001.mkv").unlink()
+            for _ in range(4):
+                value.task_engine.run_next()
+
+            task = value.repository.get_task(task_id)
+            state = value.repository.get_task_scheduling(task_id)
+            self.assertIs(task.status, PersistentTaskStatus.RUNNING, task.error)
+            self.assertIs(state.queue_state, TaskQueueState.WAITING_HUMAN)
+            self.assertEqual(0, value.repository.count_scheduled_capacity_use())
+            items = {item.source_path: item for item in value.repository.list_items(task_id)}
+            self.assertIs(items["Movies/One.2001.mkv"].status, TaskItemStatus.FAILED)
+            self.assertIs(items["Movies/Two.2002.mkv"].status, TaskItemStatus.WAITING_RECOGNITION)
+            self.assertEqual(1, len(value.repository.list_results(task_id)))
+            self.assertTrue((self.source_root / "Movies/Two.2002.mkv").exists())
+            self.assertEqual([], value.source.mutations)
+            self.assertEqual([], value.target.mutations)
+
+            # The untouched second sibling saves its own decision and continues
+            # its safe analysis on this same Task.
+            self._decide_recognition(value, task_id, second)
+            checkpoint = self.request(value, f"/api/v1/tasks/{task_id}/items/{second.item_id}")[1]
+            status, accepted = self._continue_from_task_center(
+                value, task_id, second.item_id, checkpoint["checkpoint_version"]
+            )
+            self.assertEqual(202, status, accepted)
+            self.assertEqual(task_id, accepted["taskId"])
+            self.assertEqual((), value.repository.list_jobs(limit=10))
+            fresh = self._drive(value, task_id)
+            self.assertIs(
+                value.repository.get_task_scheduling(task_id).queue_state,
+                TaskQueueState.WAITING_HUMAN,
+            )
+            status, preview = self.request(
+                value, f"/api/v1/operations/organize/previews/{fresh.preview_id}"
+            )
+            self.assertEqual(200, status, preview)
+            second_ready = [
+                item["itemId"] for item in preview["items"] if item["status"] == "previewed"
+            ]
+            self.assertEqual(1, len(second_ready), preview)
+            final = self._execute(value, task_id, preview, second_ready)
+            # The completed second sibling cannot overwrite the recorded first
+            # failure: the Task aggregates both independent outcomes.
+            self.assertIs(final.status, PersistentTaskStatus.PARTIAL_SUCCESS, final.error)
+            self.assertEqual(
+                (2, 1, 1),
+                (final.total_items, final.completed_items, final.failed_items),
+            )
+            results = value.repository.list_results(task_id)
+            self.assertEqual(2, len(results), results)
+            self.assertFalse((self.source_root / "Movies/One.2001.mkv").exists())
+            self.assertFalse((self.source_root / "Movies/Two.2002.mkv").exists())
+
+    def test_native_summary_is_confirmable_on_the_same_task_from_the_center(self) -> None:
+        """The Task Center reads and confirms the Task's own linked summary.
+
+        After a saved four-type decision and its safe re-analysis, the exact
+        Files preparation the Task already owns is published as a
+        ``business_problem`` summary -- not technical history.  The operator
+        confirms a ready subset through the existing execution service and the
+        same Task produces its own Result; a reload reads the same durable
+        summary back without minting a Job or a second preparation.
+        """
+
+        self.media("Movies/One.2001.mkv")
+        provider = SyntheticMetadataProvider(
+            (
+                MediaCandidate(
+                    "tmdb",
+                    "201",
+                    MediaType.MOVIE,
+                    "One",
+                    year=2001,
+                    genres=("Animation",),
+                    countries=("JP",),
+                ),
+            )
+        )
+        with self.journey(provider=provider, task_scheduling=True) as value:
+            status, admitted = self._admit(value, ["Movies/One.2001.mkv"])
+            self.assertEqual(202, status, admitted)
+            task_id = admitted["organizeTaskId"]
+            discovery = self._drive(value, task_id)
+            item = value.repository.list_items(task_id)[0]
+            saved = self._decide_recognition(value, task_id, item)
+            status, accepted = self._continue_from_task_center(value, task_id, item.item_id, saved)
+            self.assertEqual(202, status, accepted)
+            discovery = self._drive(value, task_id)
+
+            status, detail = self.request(
+                value, f"/api/v1/tasks/{task_id}/items/{item.item_id}/recovery"
+            )
+            self.assertEqual(200, status, detail)
+            self.assertEqual("business_problem", detail["recoveryKind"])
+            self.assertTrue(detail["manualRecoveryAvailable"])
+            self.assertTrue(detail["manualRecoveryAnalysisReady"])
+            preparation = detail["manualRecoveryPreparation"]
+            self.assertIsNotNone(preparation)
+            self.assertEqual("prepared", preparation["status"])
+            self.assertEqual(discovery.preview_id, preparation["preview_id"])
+            self.assertEqual("native:" + discovery.discovery_id, preparation["preparation_id"])
+
+            # Preparing the summary is a bounded re-read of that same record.
+            status, prepared = self.request(
+                value,
+                f"/api/v1/tasks/{task_id}/items/{item.item_id}/recovery/prepare-summary",
+                "POST",
+                {"expectedCheckpointVersion": detail["checkpoint"]["checkpoint_version"]},
+            )
+            self.assertEqual(201, status, prepared)
+            self.assertEqual(preparation["preparation_id"], prepared["preparation_id"])
+            self.assertFalse(prepared["hasExecutionAuthority"])
+            self.assertEqual([], value.source.mutations)
+            self.assertEqual([], value.target.mutations)
+
+            status, preview = self.request(
+                value, f"/api/v1/operations/organize/previews/{preparation['preview_id']}"
+            )
+            self.assertEqual(200, status, preview)
+            ready = [
+                entry["itemId"] for entry in preview["items"] if entry["status"] == "previewed"
+            ]
+            self.assertEqual(1, len(ready), preview)
+            status, confirmed = self.request(
+                value,
+                f"/api/v1/manual-recovery-preparations/{preparation['preparation_id']}/confirm",
+                "POST",
+                {
+                    "itemIds": ready,
+                    "confirmation": True,
+                    "allowOverwrite": False,
+                    "allowSourceCleanup": False,
+                },
+            )
+            self.assertEqual(202, status, confirmed)
+            self.assertEqual(task_id, confirmed["taskId"])
+            self.assertEqual([], value.source.mutations)
+            self.assertEqual((), value.repository.list_jobs(limit=10))
+
+            for _ in range(8):
+                value.task_engine.run_next()
+            final = value.repository.get_task(task_id)
+            self.assertIs(final.status, PersistentTaskStatus.COMPLETED, final.error)
+            self.assertIs(
+                value.repository.get_task_scheduling(task_id).queue_state,
+                TaskQueueState.SETTLED,
+            )
+            self.assertEqual(1, len(value.repository.list_results(task_id)))
+            self.assertEqual((), value.repository.list_jobs(limit=10))
+            self.assertFalse((self.source_root / "Movies/One.2001.mkv").exists())
+
+            # A reload reads the same confirmed step back, read-only.  The
+            # execution admission replaces the analysis wrapper with the exact
+            # execution item of the same source, so the current item is read.
+            current_item = value.repository.list_items(task_id)[0]
+            status, reread = self.request(
+                value, f"/api/v1/tasks/{task_id}/items/{current_item.item_id}/recovery"
+            )
+            self.assertEqual(200, status, reread)
+            self.assertEqual("confirmed", reread["manualRecoveryPreparation"]["status"])
+            self.assertEqual(
+                confirmed["executionId"],
+                reread["manualRecoveryPreparation"]["execution_id"],
+            )
+            with SQLiteTaskRepository(self.database) as reopened:
+                self.assertIs(reopened.get_task(task_id).status, PersistentTaskStatus.COMPLETED)
+
+    def test_native_metadata_candidate_confirms_on_the_same_task(self) -> None:
+        """A Metadata-candidate decision also reaches a confirmable native summary.
+
+        After the Recognition decision, the analysis publishes the Metadata
+        candidate problem on the same Task.  Once that candidate is saved and
+        re-analyzed, the exact linked summary is published as a
+        ``business_problem`` and confirmed through the existing execution
+        service on that same Task.
+        """
+
+        self.media("Movies/One.2001.mkv")
+        provider = SyntheticMetadataProvider(
+            (
+                MediaCandidate(
+                    "tmdb", "201", MediaType.MOVIE, "One", year=2001, genres=("Animation",)
+                ),
+                MediaCandidate(
+                    "tmdb", "202", MediaType.MOVIE, "One", year=2001, genres=("Animation",)
+                ),
+            )
+        )
+        with self.journey(provider=provider, task_scheduling=True) as value:
+            status, admitted = self._admit(value, ["Movies/One.2001.mkv"])
+            self.assertEqual(202, status, admitted)
+            task_id = admitted["organizeTaskId"]
+            self._drive(value, task_id)
+            item = value.repository.list_items(task_id)[0]
+            saved = self._decide_recognition(value, task_id, item)
+            status, accepted = self._continue_from_task_center(value, task_id, item.item_id, saved)
+            self.assertEqual(202, status, accepted)
+            self._drive(value, task_id)
+            item = value.repository.list_items(task_id)[0]
+            self.assertIs(item.status, TaskItemStatus.WAITING_METADATA)
+
+            status, checkpoint = self.request(
+                value, f"/api/v1/tasks/{task_id}/items/{item.item_id}"
+            )
+            self.assertEqual(200, status, checkpoint)
+            status, decision = self.request(
+                value,
+                f"/api/v1/tasks/{task_id}/items/{item.item_id}/recovery/decision",
+                "POST",
+                {
+                    "kind": "metadata",
+                    "expectedCheckpointVersion": checkpoint["checkpoint_version"],
+                    "candidateRank": 1,
+                },
+            )
+            self.assertEqual(200, status, decision)
+            status, accepted = self._continue_from_task_center(
+                value, task_id, item.item_id, decision["checkpoint"]["checkpoint_version"]
+            )
+            self.assertEqual(202, status, accepted)
+            self._drive(value, task_id)
+            item = value.repository.list_items(task_id)[0]
+            self.assertIs(item.status, TaskItemStatus.WAITING_CONFIRM)
+
+            status, detail = self.request(
+                value, f"/api/v1/tasks/{task_id}/items/{item.item_id}/recovery"
+            )
+            self.assertEqual(200, status, detail)
+            self.assertEqual("business_problem", detail["recoveryKind"])
+            preparation = detail["manualRecoveryPreparation"]
+            self.assertIsNotNone(preparation)
+            self.assertEqual("prepared", preparation["status"])
+
+            status, preview = self.request(
+                value, f"/api/v1/operations/organize/previews/{preparation['preview_id']}"
+            )
+            self.assertEqual(200, status, preview)
+            ready = [
+                entry["itemId"] for entry in preview["items"] if entry["status"] == "previewed"
+            ]
+            self.assertEqual(1, len(ready), preview)
+            status, confirmed = self.request(
+                value,
+                f"/api/v1/manual-recovery-preparations/{preparation['preparation_id']}/confirm",
+                "POST",
+                {
+                    "itemIds": ready,
+                    "confirmation": True,
+                    "allowOverwrite": False,
+                    "allowSourceCleanup": False,
+                },
+            )
+            self.assertEqual(202, status, confirmed)
+            self.assertEqual(task_id, confirmed["taskId"])
+            for _ in range(8):
+                value.task_engine.run_next()
+            final = value.repository.get_task(task_id)
+            self.assertIs(final.status, PersistentTaskStatus.COMPLETED, final.error)
+            self.assertEqual(1, len(value.repository.list_results(task_id)))
+            self.assertEqual((), value.repository.list_jobs(limit=10))
+            self.assertFalse((self.source_root / "Movies/One.2001.mkv").exists())
 
 
 if __name__ == "__main__":

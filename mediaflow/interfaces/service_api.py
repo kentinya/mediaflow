@@ -54,7 +54,9 @@ from mediaflow.application.manual_organize import ManualOrganizeIntentService
 from mediaflow.application.manual_organize_execution import ManualOrganizeExecutionService
 from mediaflow.application.manual_organize_preview import ManualOrganizePreviewService
 from mediaflow.application.manual_recovery_continuation import (
+    ManualRecoveryContinuationError,
     ManualRecoveryContinuationService,
+    native_preparation_discovery_id,
 )
 from mediaflow.application.manual_task_continuation import (
     ManualTaskContinuationError,
@@ -7460,6 +7462,43 @@ class MediaFlowApi:
             expected = document["expectedCheckpointVersion"]
             if not isinstance(expected, str) or not expected.strip():
                 raise ValueError("expectedCheckpointVersion is required")
+            if self._manual_recovery.native_preparation_summary(parts[3], parts[5]) is not None:
+                # The kernel-managed Task's own linked Files preparation already
+                # *is* the durable zero-mutation summary.  Re-publishing it is a
+                # read: no second preparation, authority or mutation is made.
+                try:
+                    native = self._manual_recovery.prepare_native_summary(
+                        parts[3],
+                        parts[5],
+                        expected_checkpoint_version=expected,
+                        actor=principal.principal_id,
+                    )
+                except ManualRecoveryContinuationError as error:
+                    return self._error(
+                        start_response,
+                        error.status,
+                        error.code,
+                        str(error),
+                        details={
+                            "nextAction": error.next_action,
+                            "durableState": "rejected_without_mutation",
+                            "sideEffects": "none",
+                            "retrySafe": error.status < 500,
+                            **error.details,
+                        },
+                    )
+                return self._response(
+                    start_response,
+                    201,
+                    redact_manual_value(
+                        {
+                            **native,
+                            "hasExecutionAuthority": False,
+                            "sideEffects": "none",
+                            "executionMode": "not_authorized_yet",
+                        }
+                    ),
+                )
             preparation = self._manual_recovery.prepare_summary(
                 parts[3],
                 parts[5],
@@ -7508,15 +7547,47 @@ class MediaFlowApi:
             item_ids = document["itemIds"]
             if not isinstance(item_ids, list) or not item_ids:
                 raise ValueError("manual recovery plan summary confirmation requires itemIds")
-            execution = self._manual_recovery.confirm_prepared(
-                parts[3],
-                item_ids=item_ids,
-                actor=principal.principal_id,
-                permission=ApiPermission.EXECUTE_MANUAL_ORGANIZE.value,
-                confirmation=True,
-                allow_overwrite=bool(document.get("allowOverwrite", False)),
-                allow_source_cleanup=bool(document.get("allowSourceCleanup", False)),
-            )
+            if native_preparation_discovery_id(parts[3]) is not None:
+                # A kernel-managed Task's own linked Files preparation is the
+                # durable summary.  Its confirmation reuses the existing Files
+                # Preview/execution admission, which re-registers the same Task;
+                # no legacy preparation, Job or child Task exists or is minted.
+                try:
+                    execution = self._manual_recovery.confirm_native_preparation(
+                        parts[3],
+                        item_ids=item_ids,
+                        actor=principal.principal_id,
+                        permission=ApiPermission.EXECUTE_MANUAL_ORGANIZE.value,
+                        confirmation=True,
+                        allow_overwrite=bool(document.get("allowOverwrite", False)),
+                        allow_source_cleanup=bool(document.get("allowSourceCleanup", False)),
+                    )
+                except ManualRecoveryContinuationError as error:
+                    return self._error(
+                        start_response,
+                        error.status,
+                        error.code,
+                        str(error),
+                        details={
+                            "nextAction": error.next_action,
+                            "sideEffects": "none",
+                            **{
+                                "durableState": "rejected_without_mutation",
+                                "retrySafe": error.status < 500,
+                                **error.details,
+                            },
+                        },
+                    )
+            else:
+                execution = self._manual_recovery.confirm_prepared(
+                    parts[3],
+                    item_ids=item_ids,
+                    actor=principal.principal_id,
+                    permission=ApiPermission.EXECUTE_MANUAL_ORGANIZE.value,
+                    confirmation=True,
+                    allow_overwrite=bool(document.get("allowOverwrite", False)),
+                    allow_source_cleanup=bool(document.get("allowSourceCleanup", False)),
+                )
             return self._response(
                 start_response,
                 202,

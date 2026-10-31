@@ -495,6 +495,7 @@ export function TaskItemRecoveryPanel({
     model?.recoveryKind === "recovery_lineage";
   const canPreparePreview =
     owesRecoveryAction &&
+    activePreparation === null &&
     model?.manualRecoveryAvailable === true &&
     model.manualRecoveryAnalysisReady &&
     confirmedPreparation === null &&

@@ -46,6 +46,29 @@ from mediaflow.domain.metadata import EpisodeIdentity, MediaIdentity, MediaType
 from mediaflow.domain.recovery_continuation import RecoveryContinuationStatus
 from mediaflow.domain.task_persistence import TaskItemStatus
 
+#: Prefix that marks a *synthetic* same-page summary of a kernel-managed Task's
+#: own linked Files preparation.  It is not a persisted
+#: ``manual_recovery_preparations`` row: the durable summary already exists as
+#: the Task's linked bounded discovery plus its exact Preview, so the Task
+#: Center reads and confirms that same record instead of minting a second
+#: preparation or a legacy recovery chain.
+NATIVE_PREPARATION_PREFIX = "native:"
+
+
+def native_preparation_id(discovery_id: str) -> str:
+    """The stable, operator-readable identity of one native Task summary."""
+
+    return NATIVE_PREPARATION_PREFIX + discovery_id
+
+
+def native_preparation_discovery_id(preparation_id: str) -> str | None:
+    """The discovery a native summary confirmation names, or ``None``."""
+
+    if isinstance(preparation_id, str) and preparation_id.startswith(NATIVE_PREPARATION_PREFIX):
+        value = preparation_id[len(NATIVE_PREPARATION_PREFIX) :]
+        return value or None
+    return None
+
 
 class ManualRecoveryContinuationError(ManualExecutionError):
     """Bounded error for the manual recovery continuation authority."""
@@ -861,6 +884,247 @@ class ManualRecoveryContinuationService:
             now=self._clock(),
         )
 
+    def native_preparation_summary(
+        self, source_task_id: str, source_item_id: str
+    ) -> dict[str, object] | None:
+        """The kernel-managed Task's own linked Files preparation as a summary.
+
+        A Task admitted by the unified engine has already produced the exact
+        zero-mutation plan summary as its linked bounded discovery and Preview.
+        The Task Center therefore reads *that* durable record; it never mints a
+        second preparation, Job or child Task.  The method is read-only and
+        returns ``None`` for a Task that does not own a linked preparation, for
+        an item that already settled with no admitted execution, or for a
+        different principal's/ Task's item.
+        """
+
+        finder = getattr(self._repository, "get_media_discovery_for_task", None)
+        if not callable(finder):
+            return None
+        discovery = finder(source_task_id)
+        if (
+            discovery is None
+            or discovery.organize_task_id != source_task_id
+            or not discovery.preview_id
+        ):
+            return None
+        item = self._repository.get_item(source_item_id)
+        if item is None or item.task_id != source_task_id:
+            return None
+        getter = getattr(self._repository, "get_manual_preview", None)
+        preview = getter(discovery.preview_id) if callable(getter) else None
+        if preview is None:
+            return None
+        execution = self._native_admitted_execution(discovery.preview_id)
+        if execution is None:
+            # The summary is only the operator's confirmable boundary once the
+            # complete analysis parked this exact source at ``waiting_confirm``
+            # *and* that source really carries its own saved four-type decision.
+            # A plain initial confirmation, a source still waiting on another
+            # problem, or settled history is therefore never published as a
+            # recovery summary.
+            if item.status is not TaskItemStatus.WAITING_CONFIRM:
+                return None
+            problem_reader = getattr(self._repository, "has_current_four_type_problem", None)
+            if not callable(problem_reader) or not problem_reader(source_item_id):
+                return None
+        try:
+            checkpoint = self._checkpoint_service.get(source_item_id, task_id=source_task_id)
+        except LookupError:
+            return None
+        input_fingerprint = ""
+        for value in preview.items:
+            if value.item_id == item.item_id or not input_fingerprint:
+                input_fingerprint = value.input_fingerprint or input_fingerprint
+        confirmed = execution is not None
+        return {
+            "preparation_id": native_preparation_id(discovery.discovery_id),
+            "source_task_id": source_task_id,
+            "source_item_id": source_item_id,
+            "analysis_continuation_id": "",
+            "analysis_task_id": source_task_id,
+            "analysis_result_id": "",
+            "intent_id": preview.intent_id,
+            "preview_id": discovery.preview_id,
+            "intent_version": preview.intent_version,
+            "checkpoint_version": checkpoint.checkpoint_version,
+            "input_fingerprint": input_fingerprint,
+            "configuration_snapshot_id": discovery.snapshot_id,
+            "configuration_snapshot_digest": discovery.snapshot_digest,
+            "actor": discovery.actor,
+            "status": (
+                ManualRecoveryPreparationStatus.CONFIRMED.value
+                if confirmed
+                else ManualRecoveryPreparationStatus.PREPARED.value
+            ),
+            "authorization_id": None,
+            "execution_id": execution.execution_id if execution is not None else None,
+            "selected_item_ids": (
+                list(execution.selected_item_ids) if execution is not None else []
+            ),
+            "allow_overwrite": execution.allow_overwrite if execution is not None else False,
+            "allow_source_cleanup": (
+                execution.allow_source_cleanup if execution is not None else False
+            ),
+            "created_at": discovery.created_at.isoformat(),
+            "updated_at": discovery.updated_at.isoformat(),
+            "hasExecutionAuthority": False,
+            "next_action": (
+                "inspect the linked execution and its independent Task/TaskItem/Result evidence"
+                if confirmed
+                else (
+                    "review the current plan summary, select the ready subset and "
+                    "explicitly confirm the exact Organize action"
+                )
+            ),
+            "previewPath": "/api/v1/manual-previews/" + discovery.preview_id,
+            "executionPath": (
+                "/api/v1/manual-executions/" + execution.execution_id
+                if execution is not None
+                else None
+            ),
+        }
+
+    def _native_admitted_execution(self, preview_id: str):
+        reader = getattr(self._repository, "list_manual_executions_for_preview", None)
+        if not callable(reader):
+            return None
+        try:
+            values = tuple(reader(preview_id, limit=100))
+        except Exception:
+            return None
+        return values[0] if values else None
+
+    def confirm_native_preparation(
+        self,
+        preparation_id: str,
+        *,
+        item_ids,
+        actor: str,
+        permission: str = MANUAL_EXECUTION_PERMISSION,
+        confirmation: bool = False,
+        allow_overwrite: bool = False,
+        allow_source_cleanup: bool = False,
+    ) -> ManualExecution:
+        """Confirm the exact ready subset of a native Task's linked summary.
+
+        This reuses the existing Files Preview/execution admission unchanged:
+        the exact selected ready subset, its pinned configuration, capacity and
+        one-shot authority are validated by the production execution service,
+        and the resulting execution re-registers the *same* Task through the
+        scheduling kernel.  It mints no Job, child Task or second preparation.
+        """
+
+        discovery_id = native_preparation_discovery_id(preparation_id)
+        if discovery_id is None:
+            raise ManualRecoveryContinuationError(
+                "the recovery plan summary is not a native Task summary",
+                code="preparation_not_found",
+                status=404,
+            )
+        actor = self._actor(actor)
+        if permission != MANUAL_EXECUTION_PERMISSION:
+            raise ManualRecoveryContinuationError(
+                "continued manual execution permission is invalid",
+                code="invalid_permission",
+                status=403,
+            )
+        if confirmation is not True:
+            raise ManualRecoveryContinuationError(
+                "continued manual execution requires confirmation=true",
+                code="confirmation_required",
+            )
+        getter = getattr(self._repository, "get_media_discovery", None)
+        discovery = getter(discovery_id) if callable(getter) else None
+        if discovery is None or not discovery.organize_task_id or not discovery.preview_id:
+            raise ManualRecoveryContinuationError(
+                "the linked preparation for this summary is unavailable",
+                code="preparation_stale",
+                next_action="reload the organizing work and inspect its current state",
+            )
+        if discovery.actor != actor:
+            raise ManualRecoveryContinuationError(
+                "the linked preparation belongs to another operator",
+                code="preparation_actor_mismatch",
+                status=403,
+                next_action=(
+                    "open your own organizing work, or ask the admitting operator to confirm"
+                ),
+            )
+        preview_getter = getattr(self._repository, "get_manual_preview", None)
+        preview = preview_getter(discovery.preview_id) if callable(preview_getter) else None
+        if preview is None:
+            raise ManualRecoveryContinuationError(
+                "the linked plan summary is unavailable",
+                code="preparation_stale",
+                next_action="reload the organizing work and inspect its current state",
+            )
+        try:
+            return self._execution.begin_web_execution(
+                discovery.preview_id,
+                list(item_ids),
+                expected_intent_version=preview.intent_version,
+                actor=actor,
+                permission=permission,
+                confirmation=True,
+                allow_overwrite=bool(allow_overwrite),
+                allow_source_cleanup=bool(allow_source_cleanup),
+            )
+        except ManualExecutionError:
+            raise
+        except Exception as error:
+            raise ManualRecoveryContinuationError(
+                "the confirmation was not admitted",
+                code="confirmation_rejected",
+                next_action=("reload the current plan summary and confirm its ready subset again"),
+            ) from error
+
+    def prepare_native_summary(
+        self,
+        source_task_id: str,
+        source_item_id: str,
+        *,
+        expected_checkpoint_version: str,
+        actor: str,
+    ) -> dict[str, object]:
+        """Return the kernel-managed Task's existing linked summary.
+
+        The native summary already exists as the Task's linked discovery and
+        Preview, so "preparing" it is a bounded read that verifies the current
+        checkpoint version.  It creates no new durable row, no authority and no
+        mutation.
+        """
+
+        actor = self._actor(actor)
+        summary = self.native_preparation_summary(source_task_id, source_item_id)
+        if summary is None:
+            raise ManualRecoveryContinuationError(
+                "this Task has no linked plan summary to prepare",
+                code="preparation_not_found",
+                status=404,
+            )
+        try:
+            checkpoint = self._checkpoint_service.get(source_item_id, task_id=source_task_id)
+        except LookupError:
+            raise ManualRecoveryContinuationError(
+                "TaskItem was not found",
+                code="not_found",
+                status=404,
+            ) from None
+        if expected_checkpoint_version != checkpoint.checkpoint_version:
+            raise ManualRecoveryContinuationError(
+                "the item changed after the summary was opened",
+                code="stale_checkpoint",
+                details={"currentCheckpointVersion": checkpoint.checkpoint_version},
+            )
+        if summary["status"] != ManualRecoveryPreparationStatus.PREPARED.value:
+            raise ManualRecoveryContinuationError(
+                "the linked summary has already been confirmed",
+                code="preparation_superseded",
+                next_action=summary.get("next_action"),
+            )
+        return summary
+
     def discovery_for_source_item(
         self, source_task_id: str, source_item_id: str
     ) -> dict[str, object] | None:
@@ -898,6 +1162,9 @@ class ManualRecoveryContinuationService:
             source_task_id, source_item_id
         )
         if preparation is None:
+            native = self.native_preparation_summary(source_task_id, source_item_id)
+            if native is not None:
+                return native
             return None
         value = preparation.document()
         value["hasExecutionAuthority"] = False
@@ -988,6 +1255,8 @@ class ManualRecoveryContinuationService:
     def supports_source_item(self, source_task_id: str, source_item_id: str) -> bool:
         """Whether this exact item belongs to one persisted manual execution."""
 
+        if self.native_preparation_summary(source_task_id, source_item_id) is not None:
+            return True
         if self._definition_source_job(source_task_id, source_item_id) is not None:
             return True
         executions = self._repository.list_manual_executions_for_task_item(
@@ -1003,6 +1272,9 @@ class ManualRecoveryContinuationService:
     def analysis_summary_available(self, source_task_id: str, source_item_id: str) -> bool:
         """Whether the original item has a completed linked single-item DryRun."""
 
+        native = self.native_preparation_summary(source_task_id, source_item_id)
+        if native is not None:
+            return native.get("status") == ManualRecoveryPreparationStatus.PREPARED.value
         try:
             checkpoint = self._checkpoint_service.get(source_item_id, task_id=source_task_id)
             if (

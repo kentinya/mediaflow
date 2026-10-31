@@ -470,6 +470,13 @@ describe("TaskItemRecoveryPanel", () => {
         name: /确认继续整理 1 项/,
       }),
     ).toBeVisible();
+    // A durable summary already exists, so the prepare affordance is not shown
+    // a second time beside it.
+    expect(
+      within(panel).queryByRole("button", {
+        name: "生成计划摘要并在此确认",
+      }),
+    ).toBeNull();
     expect(
       calls.some(
         (call) =>

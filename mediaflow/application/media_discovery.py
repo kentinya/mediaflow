@@ -4944,6 +4944,7 @@ class MediaDiscoveryService:
         from mediaflow.domain.task_persistence import ConfirmationStatus
 
         keys = {(item.storage_id, item.source_path) for item in items}
+        item_ids = {item.item_id for item in items}
         confirmations: dict[tuple[str, str], object] = {}
         metadata_reviews: dict[tuple[str, str], object] = {}
         metadata_corrections: dict[tuple[str, str], object] = {}
@@ -4990,6 +4991,14 @@ class MediaDiscoveryService:
             except TypeError:
                 resolved = tuple(lister(status=ConfirmationStatus.RESOLVED.value))
             for confirmation in resolved:
+                # A conflict decision belongs to one exact Task and item.  A new
+                # request for the same unchanged source is deliberately a new
+                # Task, so a RESOLVED confirmation of a different (for example
+                # cancelled) Task must never be re-applied merely because the
+                # Storage path matches.  Only this Task's own item decisions are
+                # consumed; different Tasks cannot inherit each other's choices.
+                if confirmation.task_id != task_id or confirmation.item_id not in item_ids:
+                    continue
                 key = (confirmation.source_storage_id, confirmation.source_path)
                 if key in keys:
                     confirmations[key] = confirmation

@@ -1158,6 +1158,7 @@ class Schema44To45DiscoveryUpgradeTests(unittest.TestCase):
                 # corrections would have looked.
                 connection.execute("DROP INDEX IF EXISTS media_discoveries_admission")
                 connection.execute("DROP INDEX IF EXISTS media_discoveries_request")
+                connection.execute("DROP INDEX IF EXISTS media_discoveries_organize_task")
                 connection.execute("ALTER TABLE media_discoveries DROP COLUMN next_observation_at")
                 connection.execute("ALTER TABLE media_discoveries DROP COLUMN admission_signature")
                 connection.execute("ALTER TABLE media_discoveries DROP COLUMN admission_request_id")
@@ -1202,6 +1203,7 @@ class Schema44To45DiscoveryUpgradeTests(unittest.TestCase):
                 }
                 self.assertIn("media_discoveries_admission", indexes)
                 self.assertIn("media_discoveries_request", indexes)
+                self.assertIn("media_discoveries_organize_task", indexes)
                 # A prior-schema admission stays readable and is simply not
                 # reconcilable by client request identity: the honest unknown
                 # outcome stands instead of a guessed navigation.
