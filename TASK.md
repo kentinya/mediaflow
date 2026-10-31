@@ -12,7 +12,7 @@ Recheck intervening commits without silently repinning the Task Base.
 Task ID: 47.3
 Task Type: SLICE
 Parent Slice: 47
-Status: FIX REQUIRED
+Status: READY FOR B REVIEW
 Task Base: dfcfebbdb9c879b38806e29c7b41c9192aeca83e
 Difficulty: High
 Test Level: T4
@@ -261,130 +261,120 @@ git diff --check
 - 不恢复 Pause/resume、Scan/Preview/FileIndex，不扩展 Provider/Storage/并行策略或改进程监督。
 - 不修改 A-owned Slice/Roadmap/Progress 或既往验收事实，不实现/规划后续 Task。
 
-## Developer Completion Report
+## Developer Completion Report — Round 2
 
-**Status: PARTIAL — Scheduler due entrance is migrated; Run once and API/CLI submission are NOT yet
-migrated to Task-only admission.** Handed off for B review as a coherent checkpoint. This is not a
-self-approved PASS and does not close Task47.3 or Slice47.
+**Status: READY FOR B REVIEW.** This is a same-Task correction checkpoint, not a self-approved
+PASS. It does not close Task47.3 or Slice47. The Round 1 report is retained through Git history; the
+current facts are in this section.
 
 ### Candidate identity
 
 - Repository `/Users/songzhidong/mediaflow`, branch `main`.
-- Task Base `dfcfebbdb9c879b38806e29c7b41c9192aeca83e`; candidate implementation
-  `2ae1b1bf48be179d447a21aa421817931299ccb4` (this report's follow-up doc commit records it; the
-  code/tests checkpoint is that SHA). Base was not repinned; intervening `TASK.md`/`SLICE.md` doc
-  commits were not silently included in scope.
-- Pre-existing untracked OS logs, `15`, reference PNGs and the imagegen ZIP were left untouched and
-  unstaged. No push, deployment or self-approval performed.
+- Task Base `dfcfebbdb9c879b38806e29c7b41c9192aeca83e` (not repinned).
+- Code/test checkpoint `b1859472c3070f9ccc2d8b7c65aecdd96357dc85`; this report is the following
+  documentation commit.
+- Pre-existing untracked OS/log/reference/archive files were preserved and not staged. No push,
+  deployment or self-approval was performed.
 
-### What is implemented
+### Corrections implemented
 
-1. **Scheduler due → one kernel Task, no Job (RO-1/RO-2, both entrances).**
-   - `infrastructure/sqlite_runtime.py`: new `admit_due_schedule_task` (legacy interval/Cron) and
-     `admit_due_automation_definition_task` (managed definitions). Each commits the queued Task, its
-     `task_scheduling` slot, the schedule/due advance and the audit/occurrence row in one
-     `BEGIN IMMEDIATE` transaction, re-checking the shared capacity. Full capacity or a concurrent
-     tick writes nothing and leaves the due state unchanged; no `automation_jobs` row is written.
-   - `application/automation.py`: `IntervalScheduler` accepts an optional `TaskSchedulingService`
-     (production always passes one). When wired, organizing legacy schedules and managed definition
-     due occurrences admit through the new repository methods; only non-organizing legacy commands
-     keep the original Job path. The returned object is an in-memory dispatch record for
-     rendering/notification only.
-   - `application/task_scheduling.py`: extracted `build_scheduled_task_admission` so admission,
-     the kernel service and the Scheduler commit the identical validated shape.
-2. **Task engine consumes automatic Tasks (RO-1/RO-2 Worker).**
-   - `application/manual_task_engine.py`: `_is_automatic` detects `TaskTrigger.SCHEDULE`/`RUN_ONCE`
-     and `_run_automatic`/`_settle_automatic` run an injected `automatic_runner`, then publish the
-     honest aggregate under the claim fence: a four-type waiting item returns the slot to human
-     waiting, a processing sibling keeps the slot, an unproved mutation keeps its claim and marker,
-     and a genuine failure settles FAILED without replay.
-3. **Definition pipeline runs on the kernel Task (RO-2/RO-3 reuse).**
-   - `application/task_runtime.py`: new `KernelTaskCoordinator` routes `MediaOrganizerService`'s
-     item start, item/Result/evidence outcome and aggregate finish through the live claim fence while
-     reusing the existing cross-Task source-ownership check. `PersistentTaskCoordinator` exposes
-     `completed_item` so both coordinators publish the identical durable shape.
-   - `application/automation_definition_execution.py`: `run(..., task_context=..., clock=...)` adopts
-     the already-admitted Task (no second Task) and publishes under the claim; generic failure
-     writers are skipped for a kernel-managed Task; the existing unattended grant/publication and
-     schedule-continuity checks are unchanged.
-   - `final_cli.py`: `_automatic_task_runner` reconstructs the exact definition intent from the
-     Task's admitted pin and durable `operations_run_display` origin and runs the *same*
-     `DefinitionScopedExecutionService` the legacy Job handoff uses; the resident Worker wires it and
-     the Scheduler passes its `TaskSchedulingService`.
-   - `sqlite_runtime.py`: added read-only `get_run_display_context`.
+1. **P0 — automatic effects now stay inside one live claim.**
+   - `ManualTaskEngineWorker._run_automatic()` passes the resident keepalive into the runner and
+     stops on `AutomationClaimLost`/`TaskClaimFenceLost` instead of converting it into a retryable
+     failure; `_settle_automatic()` renews before publishing the aggregate.
+   - `KernelTaskCoordinator` renews the Task/Worker before every item start, item/Result
+     publication and effect boundary. `MediaOrganizerService` records
+     `TaskSchedulingService.begin_mutation()` immediately before the shared `OrganizerExecutor`.
+   - `DefinitionScopedExecutionService` wraps real Provider and Storage adapters so a long call
+     renews ownership before and after it; a lost owner stops before the next call.
+   - The claim heartbeat can refresh the *same* claim generation after its lease elapsed, but only
+     while that exact token/generation still owns the row. A successor claim always mints a new
+     generation/token, so this cannot revive a taken-over owner or race a takeover.
+   - New real-pipeline tests: a Provider that advances the fixture clock past one whole lease still
+     reaches the effect with `mutation_in_flight=True` and a verified Result; a simulated successor
+     claim before dispatch leaves zero effects/results; an interrupted write leaves
+     `mutation_in_flight=True`, an `attempted_unverified` Result and no replay on a second pass.
+2. **P1 — legacy interval/Cron occurrences are executable.**
+   - `IntervalScheduler._admit_schedule_task()` records the admission-written display origin
+     `legacy-schedule` (schedule identity as the display name) for the Task.
+   - The production `_automatic_task_runner()` branches on that origin and runs
+     `DefinitionScopedExecutionService.run_legacy_schedule()`, which reuses the same
+     `MediaOrganizerService`, `OrganizerExecutor`, retry, ownership and claim-fenced publication
+     pipeline; a legacy occurrence has no saved definition, so its admitted scope is every
+     configured ResourceLibrary.
+   - New test drives a real interval schedule and a timezone-aware Cron schedule through
+     `IntervalScheduler` → kernel Task → production runner → real empty scope; both Tasks complete
+     with zero Jobs and readback of their schedule identity.
+3. **Run once is now Task-only admission.**
+   - `AutomationRunOnceService.admit_execution()` uses the shared
+     `build_scheduled_task_admission()` + `admit_scheduled_task()` boundary with
+     `TaskTrigger.RUN_ONCE`, the principal-scoped request id, the pinned snapshot, the definition
+     origin display and `min(definition.itemLimit,100)`. No `automation_jobs` row is written.
+   - The exact principal/request repeat returns the existing Task; the same identity with a
+     different definition is refused. Disabled definitions still run once without enabling or
+     advancing due state.
+   - `find_execution()`, `get()`, `list()` and definition history read the Task + scheduling +
+     admission display, while old Job-backed Run once history keeps its own read path. The shared
+     Operations run row now derives its definition identity from the admission-written origin for
+     a Task-only run.
+4. **CLI task identity is structural.** `final_main()` accepts an optional task observer;
+   `_run_queued_workflow()` receives the Task id directly instead of parsing `Task ID:` from
+   rendered text. User-facing CLI output is unchanged.
 
-### Actual affected-test commands and results
+### Actual validation
 
 ```sh
-# full Python suite (real runtime/temp roots/fakes; database ResourceWarnings observed)
+# final full Python suite on the candidate (real temporary roots/fakes)
 .venv/bin/python -m unittest discover -s tests -p 'test_*.py'
-# Ran 2997 tests in 370.7s — OK (skipped=7)
+# Ran 3001 tests in 367.917s — OK (skipped=7)
 
-# B-listed Developer affected groups (run together; includes the new module)
-.venv/bin/python -m unittest \
-  tests.test_automation_admission tests.test_automation_definition_occurrence \
-  tests.test_automation_execution_intent tests.test_v2_automation_run_once \
-  tests.test_automation_definition_execution tests.test_automation_run_once \
-  tests.test_execution_authorization tests.test_automation_api \
-  tests.test_task_scheduling tests.test_task_scheduling_fencing \
-  tests.test_manual_task_engine tests.test_processing_worker_readiness \
-  tests.test_automation_job_fencing tests.test_automation_task_admission
-# Ran 300 tests in 21.2s — OK
+# focused final checks of the changed Run once/readback and preview-retirement paths
+.venv/bin/python -m unittest tests.test_v2_automation_run_once tests.test_preview_retirement
+# Ran 45 tests — OK
 
-# new end-to-end proof: Scheduler -> kernel Task -> real definition pipeline
-.venv/bin/python -m unittest \
-  tests.test_v2_automation_run_once.RunOnceApiTests.test_scheduled_definition_runs_as_one_kernel_task_without_a_job \
-  tests.test_v2_automation_run_once.RunOnceApiTests.test_scheduled_definition_organizes_a_ready_file_on_one_task
-# Ran 2 tests — OK
+.venv/bin/python -m unittest tests.test_execution_authorization
+# Ran 11 tests — OK
 
-.venv/bin/ruff format --check <changed files>   # all formatted
-.venv/bin/ruff check <changed files>            # All checks passed!
-git diff --check                                 # clean
-python3 scripts/check_governance.py              # governance check: PASS
+.venv/bin/python -m unittest tests.test_automation_task_admission
+# Ran 8 tests — OK
+
+.venv/bin/ruff check mediaflow tests          # All checks passed
+.venv/bin/ruff format --check mediaflow tests # 341 files already formatted
+python3 scripts/check_governance.py           # governance check: PASS
+git diff --check                              # clean
 ```
 
-New coverage in `tests/test_automation_task_admission.py`: due admission creates one Task and no
-Job; concurrent ticks admit once; full capacity leaves the occurrence due without a Task; disabled
-definition emits nothing; engine runs the runner and settles COMPLETED/FAILED; a waiting item returns
-the slot to human; `KernelTaskCoordinator` commits item+Result under the claim fence. Two real
-pipeline tests in `tests/test_v2_automation_run_once.py` prove Scheduler due → kernel Task → real
-zero-mutation empty scope and a real ready-file organize, both with zero `automation_jobs` rows.
+The B-listed affected groups were also run during the round; their failures were limited to
+expected assertions that a Run once admission no longer writes a Job, the new structured Task
+observer, and the named kernel-consumer allowlist. Those tests were updated to assert the real
+Task-only identity, not weakened, and the final full suite above passes.
 
-### Changed behavior (summary)
+### Remaining Task work / risks (NOT complete)
 
-A managed definition due occurrence and a legacy organizing schedule now create exactly one durable
-Task with a `task_scheduling` row before business readiness, and no `automation_jobs` row. The Task is
-advanced by the resident Task engine through the existing definition pipeline under the claim fence.
-
-### Known risks and remaining Task work (NOT done — do not accept as complete)
-
-1. **Run once is NOT migrated.** `AutomationRunOnceService.admit_execution` still atomically creates
-a Task **and** a Job via `admit_automation_run_once_job`; the Run once API readback still treats the
-Job as the durable run. This violates AC-1/AC-4 for the Run once entrance and must be migrated
-(kernel Task + `operations_run_display` origin + `request_id` reconciliation) in a follow-up round.
-2. **CLI/API organizing submission is NOT migrated.** `organize --execute`, `batch organize
---execute`, `jobs submit organize`, the remote `POST /api/v1/jobs` organize branch and
-`_run_queued_workflow`'s `Task ID:` text extraction are unchanged. Item 4 and the entry-disposition
-table are not satisfied.
-3. **Readback is NOT updated for Job-less automatic Tasks.** Automation inventory/latest/metrics/
-records, Task Center views and Dashboard still derive from `automation_jobs`; the managed-definition
-occurrence's `linked_task_id`/outcome is not projected for a Job-less emission (its durable link is
-the `job_id`/Task-id column). Item 7 is not satisfied.
-4. **Four-type waiting on the real automatic pipeline is only engine-tested.** The real
-review-service creation path (`wait_for_recognition`/`metadata`/`classification`/`confirmation`)
-under a kernel-managed Task is not covered end-to-end; only the engine's defer-to-human settlement
-is. This is a genuine acceptance gap.
-5. **Legacy Job fallback retained.** `IntervalScheduler` still keeps its original Job emission when
-no `TaskSchedulingService` is wired (adapter/test-only); production always wires the kernel. The
-transitional fallback should be removed once Run once/CLI migrate.
+1. **Direct CLI and remote API organizing submissions are still not migrated.** `organize
+   --execute`, `batch organize --execute`, and the remote `POST /api/v1/jobs` organize branch still
+   use their existing non-kernel path/Job ticket. Analysis-only CLI/preparation semantics were left
+   unchanged. The existing-entry table is therefore not fully satisfied.
+2. **Four-type automatic continuations are still not proven end-to-end.** Recognition/metadata/
+   classification/confirmation waiting is created by the real automatic pipeline and shown in Task
+   Center, but the decision → analysis → exact summary → explicit continuation journeys have not
+   been exercised on an automatic kernel Task through their real API routes. Same-Task lineage,
+   original records and completed/uncertain sibling non-replay for those four journeys remain a
+   genuine acceptance gap.
+3. **Other Job-less readback surfaces are only partially moved.** Operations records/runs and the
+   Run once history now resolve the Task-only admission, but every Automation inventory/latest/
+   metric/dashboard/readiness consumer has not been independently re-audited for a Job-less Task.
+   Historical Job rows, readers and relations are preserved.
+4. **Legacy Job fallback retained.** `IntervalScheduler` still keeps its original Job emission when
+   no Task kernel is wired (adapter/test-only); production always wires the kernel. The remaining
+   RO-4 historical Job migration/removal is out of this Task.
 
 ### Scope statement
 
-No commit/push/deploy beyond this handoff checkpoint; no database schema change; no user database or
-media read; no A-owned Slice/Roadmap/Progress edit. B owns full T4 acceptance and the independent
-review; this report is not a PASS.
+No schema change, no user database/media access, no A-owned Slice/Roadmap/Progress edit, no commit
+beyond this checkpoint chain, no push/deploy. B owns full T4 acceptance and independent review.
 
-## B Review Result
+## B Review Result (Round 1 — historical)
 
 ```text
 Reviewed: dfcfebbdb9c879b38806e29c7b41c9192aeca83e..485eaa133aa750b86ea74a4cd84a37ca4bc65507
