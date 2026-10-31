@@ -80,10 +80,13 @@ not claimed by this Task.
    核对、disabled 可运行一次、`min(definition itemLimit,100)` 和完整遍历预算，不推进 due。
    命令自身提供一次运行意图，不增加初始二次确认/独立 grant。旧 analysis-only preparation
    只保留原语义，读取或切换引擎不能自动执行它。
-4. **接通真实 API/CLI/Worker。** 新整理提交不再写 Job；直接 CLI（含不带 `--execute` 的
-   分析）、remote token organizing、现有后台提交等实际支持的入口调用同一 application
-   行为，返回结构化 Task 身份，不能用 CLI 输出提取 Task ID。保留每个入口原有 authority、
-   scoped limits、返回/退出与安全重复语义，分析不变成执行授权。旧 Job 命令/路由若需在本
+4. **接通真实 API/CLI/Worker。** 新整理执行提交不再写 Job；直接 CLI 的执行请求、remote
+   token organizing、现有后台执行提交等实际支持的入口调用同一 Task application 行为。
+   application 调用者直接取得结构化 Task 身份，不再从 CLI 打印文字提取 Task ID；这不要求
+   把面向用户的 CLI 文本输出改成 JSON，也不取消原有退出/返回语义。不带 `--execute` 的
+   CLI 分析及既有 analysis-only preparation 只复用分析管线并保留原分析记录，不因共享能力
+   进入 organizing 执行队列/Task Center 人口或取得执行权。保留各入口原有 authority、
+   scoped limits 和安全重复语义。旧 Job 命令/路由若需在本
    Task 提前切换或拒绝新提交，必须给出可用 Task 等价入口及明确返回，不能悄悄失去功能。
    泛化现有 Task Worker 的 trigger context，消费 admitted pin，保留 Task/discovery 和父 Worker
    长调用心跳、当前 claim fence。不要让 manual Worker 抢到自动 Task 后按“缺少手动关联”失败。
@@ -101,6 +104,7 @@ not claimed by this Task.
    不依赖 Job row 才能显示/控制，队列容量/实际 resident adoption 说的就是 Task 语义。
    保留不可变旧 JSON/digest/parser 和 overrides。必要时可做最小、版本化、失败原子且可
    reopen 的 schema55 增量存储变更，但不得借此开始全部历史 Job 转换/删除或新建竞争生命周期。
+   只改为显示/控制新 Task 所必需的关联和查询，不重做这些页面、全套设置或已有恢复流程。
 
 ### Transitional boundary
 
@@ -109,12 +113,38 @@ Job。既存历史/旧 queued Jobs 及其安全处理、原关联和已有共享
 兼容执行器、不双写、不让新提交回落旧队列、不把旧工作静默重置/丢弃。全面迁移旧历史和
 删除原有 Job reader/dispatcher/schema/surfaces 属于剩余 RO-4/RO-5；不能据此给 Slice PASS。
 
+### Existing-entry coverage and disposition
+
+以下清单来自当前 CLI parser/dispatch 和 API route，不代表新增产品入口。按真实输入及现有
+合法条件逐项核对；不能只验收 Automation 主按钮，也不能把解析到的命令一律视为可执行。
+对每项说明实际处置、权限/授权、返回身份和读回，并给出对应受影响测试；新提交的整理执行
+走 Task，旧历史的兼容边界保持上述限制。不为清单里的每个命令另建 Task 或实现一套新流程。
+
+| 当前实际入口 | 本 Task 的处置/必须保留的区别 |
+|---|---|
+| Files 手动整理及其既有确认链 | 复用已接好的 Task 路径，回归摘要/选择确认、精确请求核对；不重做交互。 |
+| `scheduler tick` / `scheduler run` → `IntervalScheduler` 的 interval/Cron 及 managed definition due | 新整理原子受理一个 Task，保持时区、occurrence/due 和权限约束；不能只切换其中一个分支。 |
+| `POST /api/v1/operations/automation/task-definitions/{id}/run-once` 及该功能已有 GET/list/detail | 新运行直接进入 Task，查询仍找到原运行；disabled、一次运行意图、上限及不推进 due 保持。 |
+| `organize --execute`、`batch organize --execute` | 统一到 Task 整理执行，保留路径/全资源库两种实际源范围、limit 和显式执行意图。 |
+| 不带 `--execute` 的 `organize` / `batch organize`，以及现有 `jobs submit organize` | 逐项保留原有非执行授权/分析或合法拒绝语义，不能因命令含 organize 而获得执行权；分析只复用管线并保留证据，不新增 Job 或整理执行队列项。 |
+| `POST /api/v1/jobs` 的 remote organize 提交分支 | 新整理改用 Task；remote enablement、当前权限、`execute=true`、执行票据和 limit 全部保留。若替换旧提交路由，须在同一 Task 提供并测试同等受限的 Task 入口与明确指引，不留新 Job 后门。 |
+| `tasks retry-request` / `tasks retry-failed` | 核对既有允许动作、源/结果/授权证据；新 Task 的合法四类续作必须回到同一 Task。不能仅凭 retry 字样归为四类业务恢复，不能据此增加技术失败/uncertain 的重放能力；历史工作不借此批量迁移。 |
+| `POST /api/v1/tasks/{id}/cancel`、已有 item recovery 的 decision/prepare-summary/authorize-organize/continue 和 `POST /api/v1/tasks/{id}/recovery/continue-batch` | 新自动 Task 能通过原生控制/四类流程处理；保存/分析无修改效果，执行仍要合法明确继续，不能另建 Job 或顶层 Task。保留 backend-offered 动作边界，不能恢复 Pause/resume。 |
+| `jobs cancel` / `jobs requeue`、`POST /api/v1/jobs/{id}/cancel` / `requeue-stale` | 过渡期只处理其原有合法历史对象，不把新 Task 转回旧队列；尤其 API stale requeue 现有限定于 File correction continuation，不扩大为任意整理重试。新 Task 使用 Task 控制；若缺少完成原支持能力的等价入口，只补最小必要入口并验证权限和非重放。 |
+| 原有 Task/Job list/show/GET、Automation records、Dashboard、logs/export/readiness | 新 Task 不依赖 Job row 才能读回；原 Job 标识仅按可证明关系展示历史，保留当前只读能力。不把查看当作提交、重试或授权。 |
+
 ## Acceptance Criteria
 
-- [ ] **单一新工作：** 从上述真实入口受理后，业务规则尚未就绪也只有一个 durable Task；
-  新工作及四类续作不新增 `automation_jobs` 行/顶层 Task，也不另排竞争队列。manual 的
-  精确摘要确认、CLI analysis-only、remote ticket、due 和 Run once 权限区别保持。
-  analysis-only preparation 不进入 organizing 执行人口/Attention，也不因接入共享逻辑获得执行权。
+- [ ] **单一新工作：** 首次成功受理新的整理执行工作时，业务规则尚未就绪也要创建且只创建
+  一个 durable Task；精确重复请求返回原 Task，其后四类恢复/续作不得另建顶层 Task。
+  新整理工作及其四类续作不新增 `automation_jobs` 行，也不另排竞争队列。manual 的精确
+  摘要确认、remote ticket、due 和 Run once 权限区别保持。CLI analysis-only/preparation
+  保留原分析记录与零修改语义，不混入 organizing 执行队列/Task Center 人口或取得执行权；
+  此项不禁止系统受理其他有明确意图、通过源所有权/非重放检查的独立新工作。
+- [ ] **真实入口完整：** 对上表逐项核对现有合法/非法输入、权限、实际处置、Task 身份/
+  历史读回及必要的失败/重复行为；不能只接主按钮而遗留可受理新 Job 的旧提交分支。
+  若换入口，保留原支持能力和同等权限/安全限制并给出可用指引；已退役或原本不合法的
+  命令不为满足“入口覆盖”而恢复成可执行路径。不要求全组合/所有理论崩溃点穷举。
 - [ ] **原子到期与重复核对：** 并发 Scheduler ticks/进程重启，一发生点只受理一次、due
   只推进一次；注入提交失败不留半条关系。满队列拒绝新手动/Run once/due 时无孤儿/授权
   消耗，due occurrence/state 不变；已受理的精确重复仍返回原 Task，冲突请求不能混入。
@@ -133,12 +163,15 @@ Job。既存历史/旧 queued Jobs 及其安全处理、原关联和已有共享
   owner 的 heartbeat/item/result/aggregate/control 被 fence；取消保留成功 sibling。
   支持边界的 mutation 前中断只能凭 durable proof 安全续作；dispatch 后缺结果必须
   uncertain/只读检查，timeout/lease/restart 不自动重放，也不恢复已消费授权。
-- [ ] **同 Task 恢复与原记录：** 四种问题分别完成决定→分析→摘要→明确继续，保留每个
-  源/version/pin 和原 ID/history/link，source/item/count/link 不失真。后续成功不改变
-  原 Automation outcome、真实时间/效果、记录过滤/分页，也不再创建原执行记录。
+- [ ] **同 Task 恢复与原记录：** 四种问题分别完成决定→分析→摘要→明确继续，顶层 Task
+  身份不变，每个文件的 source/version/pin、决定、attempt 和结果可追溯。内部 TaskItem
+  ID 可以复用或版本化；若创建后继 ID，须保留原 ID/历史及明确的持久关系，不能重复源所有权、
+  丢失旧链接、扩大范围/权限或重复执行。按实际文件核对数量/结果，不强制内部 item ID 相等。
+  后续成功不改变原 Automation outcome、真实时间/效果、记录过滤/分页，也不再创建原执行记录。
 - [ ] **用户读回：** Automation/Task Center/Dashboard/API/CLI/health/log-export 对新 Task
   一致，pre-start failure 和 unknown admission 有真实证据；刷新/重连/重启不重复提交。
-  Web 桌面/窄屏可读且无多余初始确认；读取无 Provider/Storage effects。原 ordinary-file
+  Web 桌面/窄屏可读：due 不增加每次运行确认，Run once 不增加第二次初始确认，Files
+  初始摘要确认和四类恢复的明确继续仍保留；读取无 Provider/Storage effects。原 ordinary-file
   local work、通知、Files summary 和已退役 Pause/resume 不回归。
 - [ ] **过渡数据完整：** fresh/reopen/必要增量升级保留原 Jobs、关系、pins、消耗/audit/logs
   和结果；升级失败原权威/schema marker 不变。旧 queued/history 不丢、不虚构合并/权限。
@@ -174,7 +207,8 @@ git diff --check
 
 每组覆盖准入/到期唯一、disabled Run once、票据不升级权限、Worker fence/容量、手动和
 旧 Job 共存回归；新增真实 CLI submission/control 和 API/readback 断言放在直接受影响
-测试模块，交接时列准确命令。变更 schema 时额外跑 `tests.test_task_scheduling_migration`；
+测试模块，依照入口处置表核对实际执行、只分析和合法拒绝，不将所有入口强行变成执行成功；
+交接时列准确命令。变更 schema 时额外跑 `tests.test_task_scheduling_migration`；
 变更 resident adoption 时额外跑 `tests.test_automation_settings_resident`。对修改的 Python
 文件执行 `.venv/bin/ruff format --check <changed-files>` 和 `.venv/bin/ruff check <changed-files>`。
 
@@ -188,7 +222,9 @@ git diff --check
 
 1. 独立审查完整 `Task Base..candidate`（包括测试/harness/doc 与 source/package 的新旧
    调用者），逐项核对上述结果，确认不是改名/换断言后继续走 Jobs。先复现关键阻塞，
-   修复保持同一 Task。新测试的细分断言不能取代用户实际链路。
+   修复保持同一 Task。按入口处置表检查实际 parser/route/dispatch 和相应测试，包含现有
+   batch/重试/控制入口，防止遗漏旧分支；不探测虚构接口，不将其升级成额外产品范围。
+   新测试的细分断言不能取代用户实际链路。
 2. 在临时 SQLite/Storage、fake/local Provider 上从真实 Scheduler、Run once API/Web、
    direct CLI、remote ticket submission 与 resident Worker 运行；核对数据库 Task、
    occurrence/due、授权消费、原 execution record、结果/附件及源/目标的实际变化。覆盖
@@ -213,7 +249,7 @@ git diff --check
    full gate 已覆盖的 focused case 不机械重跑。证据按 workflow 留在稳定 ignored
    `.git/validation-evidence/<candidate>/<run>/`，记录 SHA/命令/cwd/结果/耗时/未完成项。
 5. PASS 后重评 Slice47 全部 RO-1–5 和 AC-1–19；RO-4/剩余 RO-5 尚未完成就说明缺口，
-   不替 A 关闭 Slice，不在本草案预先展开更多 Task。
+   不替 A 关闭 Slice，不在本 Task 预先展开更多 Task。
 
 ## Non-goals
 
