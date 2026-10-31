@@ -9,7 +9,7 @@ Authority: committed [SLICE.md](SLICE.md) at `c1e616113f87420d6f7411c3e6287ce81c
 Task ID: 47.2
 Task Type: SLICE
 Parent Slice: 47
-Status: FIX REQUIRED
+Status: READY FOR B REVIEW
 Task Base: c942c4b4b9d3abf105341e8163c1be2d95d9a671
 Difficulty: High
 Test Level: T4
@@ -53,30 +53,21 @@ Copy/Move等操作及既有Web/API/CLI控制入口均不再提供该能力；这
 
 ## Actual-code gap — current candidate
 
-当前审查候选为 `a7db756e963aef4592187d4a36e0c835d1da6858`；产品提交`8f66d1cc`，
-后继仅改报告。Task Base、High/T4及schema55不变。
+本轮修正checkpoint为`2f682703ce899dee691eedfc910742b2a729c809`；Task Base、High/T4与schema55不变。
+B对前候选`8f67b3a2`的独立审查确认上轮三项已修；完整浏览器验收暴露旧Worker测试接线和
+暂停退役断言未更新。用户明确“你自己改一下得了”，授权本代理转Developer直接修同一Task。
+接入真实Task engine后进一步复现：两部均无需人工决定时，ready来源没有TaskItem，首部执行后
+Task提前完成，使未选第二部修正/再分析失败。本checkpoint同时修正该实际用户断链。
 
-- 前轮三项局部修正已复核：原Task现在回读business_problem及prepared摘要；跨Task旧Rename
-  不再套用，新任务有独立pending conflict；失败子集不再终结另一文件的合法处理。
-- 新native摘要ID只绑定discovery，确认又读取其最新preview：旧页面确认可执行重新分析后的
-  另一份计划。真实两页面场景已在临时Storage执行到新版未审阅的目标，阻塞M3精确意图。
-- 普通精确确认会删除原分析TaskItem，原处理链接在Worker运行前即404；新ID能读不等于旧
-  深链/原历史已保留。M4已明确允许内部ID变化且要求旧链接可读，无需另行确认“ID恒等”。
-- 两部均ready只确认第一部后，第二部也被native摘要投影为confirmed并关联第一部execution；
-  第二部仍waiting_confirm/真实文件存在/无Result，继续却409 uncertain_effects，原位处理断链。
-- 三项详见B Review，均在原Task范围。自动入口切引擎、Job迁移/删除仍为后续；完整原生/T4/
-  升级发布验收由B承担，不以新增Developer全套测试或用户额外授权代替产品修正。
+现有harness路由复用真实Task claim/fence与原服务，新/旧工作仍各自由原合法runner推进；
+不新增验收平台。分析摘要、每个具体来源的TaskItem和文件计数同一事务发布，保持原历史、
+单次授权、完成/uncertain不重放。受影响测试已通过，当前状态是开发交接，不是独立B PASS。
 
-## Next implementation order
+## Next action
 
-1. 按P1-1把native摘要的确认与精确回读绑定到用户实际审阅的不可变preview/计划、所选scope和
-   影响范围；旧页面不得在后台改绑新计划执行。复用现有计划/授权记录，不造第二套准备系统。
-2. 按P1-2保留原TaskItem历史与旧链接：可以复用ID，也可以版本化并建立明确耐久关系，但不能
-   删除旧行后仅要求页面改用当前ID。补原页面确认成功/未知响应后的精确回读。
-3. 按P1-3分别表达本次已确认子集和仍待确认的来源；每个文件只关联真正包含自己的execution，
-   未选项在原Task继续，保留真实unknown保护、完成项不重放和准确统计。
-4. Developer交上述真实入口新增/变更/直接受影响结果与限制；B再独立审完整Base..Head并完成
-   M1–M10、真实Web与T4/升级/发布门禁。不先规划47.3，不恢复暂停。
+独立B审查完整`c942c4b4..2f682703`及报告后继，核验M1–M10，完成剩余适用T4/真实Web/升级/
+发布门禁并重评全部Slice结果。本代理本轮已实施修正，不自审PASS；不先规划47.3、不恢复
+暂停、不切自动入口引擎、不扩张为工具重构。修正与直接受影响结果见末尾Completion Report。
 
 ## Implementation Scope
 
@@ -276,261 +267,112 @@ Task47.1 的 T1–T10 已 PASS；本次对全部 Slice 结果重评：RO-1 内�
 RO-5 原界面兼容已验而 Task 化全表面未交付。因此继续规划本 Task，Slice 不满足交 A 关闭条件。
 本 Task 通过后必须再次核对全部 RO，不预先宣称自动触发、历史迁移或 Job 退役完成。
 
-## Developer Completion Report
+## B Review Result — pre-fix checkpoint
 
-Checkpoint: `8f66d1cc243746bbbc849842ee5ddbc63760f673`(Base `c942c4b4` 不变),
-Status READY FOR B REVIEW。完整 T4/升级/发布与 PASS 判定仍由 B 负责,本报告不宣称 STOP。
+Reviewed Head: `8f67b3a23586287d65d85194b5b5d95409ecf993`；产品checkpoint
+`89090b078780d6b9a0ad9a1a48b37ae8eeb15be4`，二者差异只有TASK报告；完整Task Base..Head为63文件。
+Decision: **FIX REQUIRED (修正前候选)**。未发现新增P0；上轮三项产品阻塞的B复现均通过。
 
-**变更行为(3 项 B Review 阻塞)**
-
-1. **P1-1 原生摘要/确认接入 Task Center(Business problem, 非 technical history)。**
-   `mediaflow/infrastructure/sqlite_runtime.py` 新增共享谓词
-   `_native_current_decision_kind_sql`/`_native_pending_confirmation_sql`:一个
-   kernel 管理的 TaskItem 处于 `waiting_confirm`、其 Task 有已链接的
-   `media_discoveries.organize_task_id`+`preview_id`、且该 item 自身有最新
-   RESOLVED 四类决定时,归入对应四类 `business_problem`(不再落入 technical
-   history);新增 additive 索引 `media_discoveries_organize_task`,旧库开库即补,
-   无版本跳变。`mediaflow/application/manual_recovery_continuation.py` 新增
-   `native_preparation_summary`/`confirm_native_preparation`/`prepare_native_summary`:
-   直接投影 Task 自己那条已有 Files discovery/Preview 为可回读摘要,并用**既有**
-   `ManualOrganizeExecutionService.begin_web_execution`(同一 Files execute 服务)
-   在**同一 Task** 上确认 ready subset、重新登记执行;不新建 Job、子 Task、第二套
-   preparation 或兼容 executor,确认前零变更、不消费执行授权。`service_api.py` 在
-   `GET .../recovery`、`POST .../recovery/decision`、`POST .../recovery/prepare-summary`、
-   `POST /manual-recovery-preparations/{id}/confirm` 按 `native:` 前缀分流;错 principal
-   以 403 拒绝;满容量/陈旧摘要/陈旧 checkpoint 均有界拒绝且保留决定/摘要/结果。
-   Web `TaskItemRecoveryPanel` 在已有持久摘要时不再重复显示“生成计划摘要”按钮。
-2. **P1-2 决定消费限定本 Task/来源。**
-   `_native_review_decisions` 只消费 `confirmation.task_id == 当前Task` 且
-   `item_id` 属于当前 Task 的 RESOLVED conflict 决定;`ManualOrganizePreviewService._resolve_conflicts`
-   的 plan_id 兜底(plan_id 由 source/target 确定性生成,跨 Task 会碰撞)在
-   `problem_task_id` 存在时也只接受同一 Task 的 confirmation。不同 Task/新请求不再
-   因路径相同继承已取消旧 Task 的 Rename;本 Task 自己的合法决定仍正常消费。
-3. **P1-3 逐项独立结算 + 整项聚合。**
-   `ManualTaskEngineWorker._finish_execution`:任一 terminal execution(含 FAILED)只
-   要在途 sibling 非 PROCESSING 即保留为人工等待(零名额)而非终结整项;仍有
-   PROCESSING sibling 则保名额继续;全部来源 settled 时用
-   `task_work_status(全部 TaskItem)` 汇总,后续成功不再抹掉先前 failed/partial;
-   CANCEL 语义保持原样。
-
-**受影响测试(实际命令与结果,cwd 仓库根)**
-
-| 命令 | 结果 |
+| 上轮问题 | B实际回读 |
 |---|---|
-| `.venv/bin/python -m unittest tests.test_manual_task_engine tests.test_task_scheduling tests.test_task_scheduling_fencing tests.test_task_scheduling_migration` | 88 tests OK(含 4 个新回归:新 Task 独立冲突、失败子集保留 sibling、native 摘要确认、Metadata 候选 native 确认;均在真实 API/SQLite/Local Storage/Executor 链上) |
-| `.venv/bin/python -m unittest tests.test_media_discovery tests.test_manual_organize_intent tests.test_manual_organize_preview tests.test_manual_organize_execution tests.test_task_center_recovery_lineage tests.test_recovery_continuation tests.test_processing_checkpoint` | 305 tests OK |
-| `.venv/bin/python -m unittest tests.test_automation_admission tests.test_automation_job_fencing tests.test_automation_definition_occurrence tests.test_v2_automation_run_once tests.test_processing_worker_readiness tests.test_automation_settings_resident tests.test_direct_file_transfers tests.test_media_library_transfers` | 230 tests OK |
-| `tests.test_operations_task_center tests.test_operations_run_detail tests.test_operations_run_inventory tests.test_operations_workspace tests.test_recovery_batch tests.test_task_pause_resume tests.test_scope_continuation tests.test_operator_ui tests.test_operator_observability tests.test_restart_fault_boundary tests.test_automation_run_once tests.test_automation_definition_execution tests.test_automation_unattended_grant tests.test_automation_workspace_read_model` | 424 tests OK |
-| `tests.test_task_persistence tests.test_task_retry tests.test_task_scope tests.test_processing_recovery_admission tests.test_organize_preparation tests.test_v2_automation_operations tests.test_v2_manual_organize tests.test_manual_operations tests.test_manual_operations_contract tests.test_manual_ignore tests.test_manual_ignore_batch tests.test_direct_file_operations tests.test_batch_cli` | 251 tests OK |
-| 补充:`tests.test_conflict_resolution tests.test_manual_organize_preview tests.test_recovery_continuation tests.test_task_center_recovery_lineage` | 118 tests OK |
-| 迁移/索引:`tests.test_task_persistence`(新增断言 `media_discoveries_organize_task` 开库后存在);`tests.test_migration_rehearsal tests.test_sqlite_backup tests.test_sqlite_restore tests.test_runtime_lease tests.test_runtime_files_browser` | 28 + 25 tests OK |
-| `web: npm run test -- run ...OrganizeRouter/OrganizeDiscoveryPage/OrganizeCreationPage/TaskItemRecoveryPanel/OperationsInventory/LibraryFileOperationsDialog` | 6 files, 101 tests OK |
-| `web: npm run typecheck` / `npm run lint` / `npm run format:check` | 全部 exit 0 |
-| `.venv/bin/ruff format --check mediaflow tests scripts` / `.venv/bin/ruff check mediaflow tests scripts` / `.venv/bin/python -m compileall -q` / `python3 scripts/check_governance.py` / `git diff --check` | 全部通过 |
+| 旧页面确认被重新分析后的计划替代 | 新旧preparationId不同；旧页409 preparation_stale，无授权消费/执行/变更 |
+| 确认后原item深链404 | 原链接在准入前、准入后、执行后持续200，指向本条目的真实execution/Result |
+| 未选第二部借用首部execution且无法继续 | 第二部保留自身stale摘要、execution=null、selected=[]；原Task安全分析202 |
 
-B 的三项复现脚本在该候选上的真实结果:cancel 旧 Task 后新 Task **不再**自动沿用 Rename,
-而是生成自己的 `pending` 冲突;第一部来源执行前消失后整项仍 `running`/`waiting_human`、
-第二部 `recovery/continue` 返回 202;同 Task 分析后 `GET .../recovery` 返回
-`recoveryKind=business_problem`、`manualRecoveryAvailable/AnalysisReady=true`、
-`manualRecoveryPreparation.status=prepared`、`manualRecoveryLink=null`、零 Job、零变更。
+### 本轮修正前阻塞与指导
 
-SQLite ResourceWarning 与历史相同,未新增 skip/retry/超时放宽,未访问用户运行库、媒体或私有配置。
-未运行 B 的全量 Python/Web/E2E/截图/wheel/容器/53→55 升级门禁。
+1. **P1 — 真实浏览器验收仍接旧Worker。** `operations-inventory.python.spec.ts`完整44项，
+   38通过、6失败。其中第12/13/14/16/35项的新Files工作只能由Task领取，既有
+   `run_discovery_worker_once/for`与`run_manual_worker_once`却只调用旧runner；正常页面停在
+   queued，尚未到达响应丢失/第二部修正等实质断言。让这些既有helper复用resident组装的
+   `ManualTaskEngineWorker`和既有应用服务，保持真实领取/发布、历史runner与原行为断言；
+   不新增路由/假状态、不恢复旧runner领取新工作、不放宽timeout/重试。
+2. **同一验收配套 — 暂停退役旧期望。** 第18项调用remaining-scope-previews实际409
+   `scope_continuation_retired`，仍期待`snapshot_unavailable`及恢复旧pin。按用户合同更新为
+   退役拒绝；保留无变更、无新摘要/继续和历史可读，不创建专项暂停迁移/恢复门禁。
 
-**剩余风险与已知限制(交 B 判定,非本地 PASS)**
+上述指导由用户随后授权本代理直接实施。开发时接通Task engine后的首次完整浏览器为
+43通过/1失败：首部执行后第二部修改得到`analysis_rejected`。真实根因是ready且从未进入
+四类审核的来源未建TaskItem；不是测试等待问题。该原M1/M4/M8交付缺口保持同Task修正。
 
-- 确认执行时既有 Files 执行准入会把分析包装 TaskItem 替换为同源执行 TaskItem(不同
-  item_id,既有 `admit_manual_execution` 行为);按当前 item id 仍可回读同一确认执行
-  (`manualRecoveryPreparation.status=confirmed`+execution_id),但旧 item id 本身
-  404。B 若把“旧 item 深链恒等可读”视为 P1-1/M4 必过,需要另行确认范围(本次未改
-  既有“一源一 item”的准入设计)。
-- `prepare_native_summary` 的 `actor` 仅用于校验,无副作用;native confirm 按 discovery
-  actor 做 principal 隔离。
-- 未验证新真实 Web/截图/wheel/容器/升级;未复跑 53/54→55 迁移。
+### 修正前候选的独立证据（不能冒充新checkpoint全量验收）
 
-## B Review Result
+统一原始证据目录：`.git/validation-evidence/b-task47.2-8f67b3a2/`，保留命令/cwd/耗时JSON、
+日志、失败trace和桌面/窄屏截图。全部临时SQLite/Local Storage/合成Metadata，未访问用户媒体、
+运行库或私有配置；无数据库改状态式探测。原有未跟踪文件全部保留，未纳入提交。
 
-```text
-Reviewed Base: c942c4b4b9d3abf105341e8163c1be2d95d9a671
-Reviewed Head: a7db756e963aef4592187d4a36e0c835d1da6858
-Product checkpoint: 8f66d1cc243746bbbc849842ee5ddbc63760f673
-Contract: c1e616113f87420d6f7411c3e6287ce81c1f5331
-Decision: FIX REQUIRED — mutable native confirmation; old item readback lost; unselected sibling shown confirmed
-Slice Required Outcomes / Surfaces all satisfied: NO
-Next: SAME TASK FIX LOOP; preserve Task47.2 ID/Base/Goal and amended scope
-Evidence: .git/validation-evidence/b-task47.2-a7db756e/
-```
-
-B独立核对完整Base..Head的62文件manifest，承接前轮生产接线/容量/取消/退役等审查，检查
-本轮native准备/确认/回读、决定收集、聚合、SQL四类归属和测试删改。8f66d1cc..a7db756e仅
-TASK报告，执行输入不变；本轮验证均在Reviewed Head。main起点无tracked edits，既有OS/log/
-图片/ZIP等untracked原样保留、不暂存；只更新TASK，无产品/测试/A-owned合同编辑、push、
-历史改写或子代理。没有猜造路由、修改DB/claim或读取用户运行库/媒体/私有配置。
-
-**对已知限制的范围核对：** 原Scope 5、M4及V2-TASK-003明确：内部TaskItem ID可以复用或
-版本化，但须保留耐久历史关系、旧链接与准确文件数。要求旧item深链可读不等于要求ID恒等。
-Developer报告的“旧item ID 404”因此是原交付未完成，不需要用户再次授权或A改约；可以选择
-合适的兼容读取/保留关系实现，不要求另造恢复系统或合并历史Task。
-
-### P1-1 — 旧页面的确认被绑定到新计划，实际执行了用户未审阅的目标（M3/M8）
-
-**实际用户操作与结果：** 在同一新Files Task处理同名冲突，选择Rename，原Task Center
-读到prepared摘要A，目标为`One (2001) (1).mkv`。该页面保持打开；另一个文件到达此目标，
-用户在另一页面对同Task显式重新分析，得到摘要B，目标为`One (2001) (2).mkv`。
-两份preview ID不同，但`preparation_id=native:<discovery_id>`相同，selected item IDs也相同。
-旧页面按A的准备ID/选择提交现有confirm接口，返回202；Task Worker真实执行了B，将来源
-移动到`(2).mkv`。原`(1).mkv`仍为外部已有内容。本轮只在合成临时Storage执行，未改用户媒体。
-
-**原因与开发指导：**
-
-1. `native_preparation_id()`只编码discovery；`confirm_native_preparation()`从该discovery
-   当前preview重读计划，再把当前intent_version交给begin_web_execution。确认并未携带/证明
-   用户实际审阅的那份preview/计划。底层执行服务虽精确验证B，也不能证明用户审阅并确认过B。
-2. 确认对象必须耐久绑定不可变preview/精确计划、所选文件、源版本/pin与影响scope；可以用
-   已有不可变计划身份构造native引用或让请求显式携带被审阅身份，再按现有乐观并发机制检查。
-   不能仅以discovery、当前intent版本或“最新计划”替代被审阅计划，也不需新建Job/Task或
-   第二套preparation表。重读同一摘要身份稳定，重新分析后的新摘要不能复用旧确认资格。
-3. 原计划已被替代、来源/摘要变化时，旧确认必须在创建/消费授权和执行准入前有界拒绝，保留
-   原选择、摘要与结果，指引审阅新摘要后重新明确确认。不能静默切换目标、宽松接受或自动重试。
-   原确认已受理而响应未知时，精确回读那次提交及执行，不能借同一discovery误认其他执行。
-4. 新增上述真实两页面回归：旧A确认拒绝、零新执行/零媒体效果/不消费权限；用户明确审阅B再
-   确认才准入并执行。保留正确当前摘要、权限/源/容量拒绝和未知响应对照，沿实际Web client/
-   API字段验证，不只直接调用begin_web_execution或仅断言current preview可执行。
-
-### P1-2 — 普通确认后原条目链接立即404，原页面无法按原身份回读（M4/M8）
-
-**独立正常流程复现：** 新Files单影片→原生决定/continue→当前prepared摘要→不做任何计划
-变化，直接精确确认，返回202。随后原`/tasks/{task}/items/{old_item}/recovery`在Worker
-运行前即404，执行完成后仍404；当前新item ID的同接口200/confirmed且有1条Result。
-这里读取的是TaskItem处理/历史链接，不是要求已过时的preview继续具有执行资格。
-
-**原因与开发指导：**
-
-1. `admit_manual_execution()`对同Task/source直接DELETE掉旧analysis TaskItem，再写另一个
-   执行item；没有保留旧ID的耐久可读关系。`TaskItemRecoveryPanel`确认后及未知响应reconcile
-   仍按原taskId/itemId回读，因此仅改用新ID的测试不能证明当前页面/旧深链闭环。
-2. 采用复用原item身份，或保留历史/建立明确的同Task、同具体源版本/pin的后继关系与有界
-   只读解析，使旧链接仍能读原决定、历史与这次准入/执行/Result。实现可选择ID变化；禁止仅按
-   路径/时间猜映射或删除旧review/attempt来消除404，不扩大为合并任意历史Task。
-3. 原已确认摘要不重新变成可执行。确认响应丢失后，从原上下文应精确读出已受理的执行及选择，
-   供用户跟踪而非重发；成功项不重放，数据/权限/源/unknown保护保留。关联身份、统计与结果
-   必须按同一耐久来源去重，不因保留历史版本增加文件数。
-4. 扩展普通当前摘要确认回归：确认前的旧item URL在准入后、执行后、重开后均可读，保留原
-   决定/历史并指向准确执行；模拟未知确认响应仍能从原页面核对。保留新ID存在的实现自由，
-   不把“换成list_items()[0]再GET”当作旧链接通过，也不开发第二套恢复系统。
-
-### P1-3 — 只确认第一部，未选择的第二部也显示“已确认”且没有后续入口（M4/M8）
-
-**真实入口与结果：** 新Files Task两部影片均保存决定并分析为ready；在Task Center现有
-native confirm中只选择第一部，Worker成功生成第一部Result。第二部仍waiting_confirm、
-来源存在且没有Result，但其recovery回读`manualRecoveryPreparation.status=confirmed`，
-execution_id和selected_item_ids均属于第一部。checkpoint仅investigate，页面因此展示已确认
-步骤而非第二部的待确认摘要；尝试原生continue返回409 uncertain_effects。
-
-**原因与开发指导：**
-
-1. `native_preparation_summary()`只按preview查任一execution，发现后便对当前任意item
-   返回confirmed；`_native_admitted_execution()`取列表第一条，没有校验该execution确实
-   包含当前来源/当前确认subset。阶段转换为waiting_confirm后，通用checkpoint无该文件Result
-   的fallback又把它视作unknown，原生continue被效果保护拒绝。未知效果guard本身应保留。
-2. 分开表达整份计划、当次确认子集及每个来源自己的状态/执行关系。已确认的第一部只关联
-   自己的准入/Result；未选第二部仍有原位合法的待确认摘要或按现有鲜度规则分析后的确认路径，
-   不借用其他文件的execution、不把整份计划一次确认当作全部文件已确认。
-3. 若durable selected scope/逐项执行证据能证明某来源从未准入/派发，应按该精确证据维护
-   真实待确认状态；不得只凭缺Result清除unknown或改全Task的效果确定性。真正已派发、partial/
-   unknown来源仍只读检查和不重放。新的选择仍需精确确认、权限/源/计划/pin与容量检查。
-4. 补两部均ready→仅确认第一部→第二部仍可在原Task Center确认→两部独立Result的回归，
-   核对每个条目的prep/execution/selected scope/效果和未知响应回读，首部不重放、计数2/2且
-   重开一致；保留真实unknown/取消对照。不要靠用户去Files绕过、强制一次全选或新增通用Retry。
-
-### B实际验证与限制
-
-| 验证 | 当前候选实际结果 |
+| 验证 | 实际结果 |
 |---|---|
-| engine、调度/栅栏/迁移、Operations workspace、Task pause/CLI、media library transfers | 144 tests OK，runner8.232s/外层8.431s；`focused.json/log` |
-| TaskItemRecoveryPanel直接影响单测 | 1 file / 8 tests OK，Vitest1.52s/外层2.103s；`web-focused.json/log` |
-| 前轮原生摘要缺失/跨Task Rename/失败子集三场景 | API定向复核修正；对应3个既有repro脚本/log。不把局部修正当作M1–M10全部通过 |
-| 精确摘要替换后的旧确认 | 旧A请求202却执行B真实MOVE；`native-stale-confirm-repro.py/log`，0.165s；未发生覆盖已有文件的效果 |
-| 普通确认后旧链接 | 不改变计划的正常链，原item在准入前200、准入后/执行后404，当前新item200/confirmed；`native-old-link-repro.py/log`，0.141s |
-| 两部均ready的所选子集回读 | 未选第二部被标confirmed并借用首部execution，continue409；`native-subset-readback-repro.py/log`，0.139s |
-| 本次8个Python文件ruff format/check、完整Base..Head空白 | PASS；`static.json`，manifest62文件 |
-| 完整Python/Web/E2E/新截图/wheel/容器/真实53/54→55升级与失败原子 | 已确认产品阻塞，按workflow提前FIX；修正候选由B完成，不记PASS、不要求Developer补全套 |
+| Python完整unittest discover | 2974 tests OK，skipped=7；354.687s，`python-full.json/log` |
+| Web typecheck/lint/format/build | 全通过；`web-full.json` |
+| Web完整单测 | 88文件/1320项通过；`web-unit.log` |
+| Web常规E2E | 253 passed；120.719s，`web-e2e.log` |
+| operations-inventory真实Python E2E | 38 passed/6 failed；97.172s，`inventory.log`、`failed-browser-results/` |
+| 实际新Task页面四类链 | Files→识别→Metadata候选→分类→冲突Rename→摘要→明确确认→同Task已完成Result；1536/380截图已查看，原目标保留 |
+| wheel构建/安装smoke | 通过；SHA256 `0ac7cf770ea6dc16a5c21034f231bbedf723419d1b30acc1f9f18938d2dd9656` |
+| 源码外已安装wheel原生API/Task Worker | site-packages导入，7个真实链/重开/取消/不确定保护用例通过；`installed-native.log` |
+| 真实Task Base54→55及Slice Base53→55 | 两组schema rehearsal通过，保留及失败原子证据见日志 |
+| Docker54→55升级/注入失败/恢复/API-Web持久性 | 使用Colima共享隔离临时目录后通过；初次默认tmp挂载失败保留，未记产品失败 |
+| Docker发布安全 | 通过；`docker-security.log`，候选image `sha256:8bff6a05c054212f1ffb9c5922d35b848d10c25d913d47dcf9d3416a680f5fe8` |
+| Docker empty-baseline | 4服务无媒体挂载健康/就绪；后续浏览器仍等待Task Center旧management/readiness区域而超时，未通过。未在Base复现，不声称Base失败，也不恢复已移走的旧Task Center区域 |
+| ruff/compile/pip/examples/禁用依赖检查/空白 | 通过，无FFprobe/FFmpeg匹配；`quality.json`、`manifest.txt` |
 
-治理/链接/工作区复核见`review.json`。SQLite ResourceWarnings、CLI退役命令拒绝与Web jsdom
-scrollTo提示保留，无skip/retry/timeout放宽。所有探测均从既有正常API及文件变化入口开始，
-用临时SQLite/Local Storage/合成Metadata，不改DB/claim；未访问用户媒体/运行库/私有配置。
-开始`2026-10-31 06:10:53 UTC`；测试/探测/检查保守总上界30秒，低于本轮总用时50%。
-尚未跑新的真实浏览器截图，未据API定向通过虚报完整Web验收；完整T4仍由B承担。
+B在确认上述门禁阻塞后未继续启动剩余TaskCenter visual/direct-files/automation浏览器组及
+Docker restart。新版checkpoint改变了可执行输入；以上全量/制品/部署证据仅归属修正前候选。
+独立B须对新版完成适用门禁；Docker empty-baseline旧页面假设先按当前已验收旅程核实，
+不因验收脚本假设给本Task增加服务状态页面功能。ResourceWarnings与本地浏览器探针选择器
+错误保留；临时页面探针的错误由正确入口/选择器回读核实，未包装成产品缺陷。
 
-### 后续交接与Slice全结果重评
+### 全部Slice结果重评（尚未关闭）
 
-同一Task修正三项并核对M1–M10。精确确认、旧链接和所选逐项结果均是原交付；不要求内部
-ID恒等、不恢复暂停、不新增第五类恢复或新的执行/恢复系统。Developer交新增/变更/直接
-受影响结果后由B验收；未跑全套不是Developer缺陷，不先规划47.3。
-
-| Slice outcome | 当前结论 |
+| Outcome | 当前边界与结论 |
 |---|---|
-| RO-1 | 手动生产链与原生摘要已接入，精确确认/所选逐项回读和历史关系仍阻塞 |
-| RO-2 | 自动due/Run once/独立API-CLI引擎切换仍后续，未完成 |
-| RO-3 | 原三项已有修正；native确认与独立文件状态/历史闭环未完成 |
-| RO-4 | schema55分批支持保留，完整升级与Job迁移/删除仍后续，不扩大本Task |
-| RO-5 | Task Center出现原生摘要，但确认/旧链接/剩余项原位继续仍未完整 |
+| RO-1 | 手动调度/同Task执行已接；本轮补齐直接ready来源的TaskItem/独立计数，修正候选待独立验收 |
+| RO-2 | 手动生产链已接；due/Run once/独立API-CLI切引擎仍后续，不算已完成 |
+| RO-3 | 现有四类链复用，精确确认/原链接/逐项作用域修正已有证据；新候选仍须完成适用验收 |
+| RO-4 | schema55加法与53/54升级演练已验证；完整Job迁移/删除仍后续，未完成 |
+| RO-5 | 真实新Task页面四类→摘要→Result已走通；本Task/全部入口最终验收仍待B/A |
 
-Task47.2保持FIX REQUIRED，Slice47仍ACTIVE，未达到交A关闭条件；原Base与历史全部保留。
+Slice47保持ACTIVE，不宣告Slice PASS/CLOSED，也不以可选工具整理追加Task。
 
-## Developer Completion Report — P1 fix round
+## Developer Completion Report — user-authorized direct fix
 
-Checkpoint: `89090b078780d6b9a0ad9a1a48b37ae8eeb15be4`(Base `c942c4b4` 不变),
-Status READY FOR B REVIEW。T4/升级/发布与 PASS 判定仍由 B 负责,本报告不宣称 STOP。
+Checkpoint: `2f682703ce899dee691eedfc910742b2a729c809`。
+Status: **READY FOR B REVIEW**。用户授权后本代理由B转为Developer实施，本段不是独立B复审。
 
-**变更行为(B 三项 FIX REQUIRED)**
+**交付行为**
 
-1. **P1-1 原生确认绑定被审阅的不可变 Preview。**
-   `native_preparation_id(discovery_id, preview_id)` 现在同时编码 discovery 与确认页面实际
-   审阅的 `preview_id`(`native:<discovery>:<preview>`);新增 `native_preparation_ref` 解析。
-   `native_preparation_summary` 按该身份回读;`confirm_native_preparation` 在创建/消费任何授权
-   前校验 `discovery.preview_id == reviewed_preview_id`,不等即 `preparation_stale` 有界拒绝
-   (零授权消费、零 Storage 变更、不执行新计划)。重新分析后的新摘要不会再复用旧确认资格;
-   旧页面响应未知时按同一 `preparation_id` 精确回读该次确认的执行。
-2. **P1-2 准入复用原 TaskItem 身份。**
-   `admit_manual_execution` 在 adopted(kernel 管理)Task 上按
-   `(task_id, storage_id, source_path)` UNIQUE 键查得该源的既有 TaskItem,并把执行项绑定到
-   同一 `item_id`(新增 `_reusable_task_item_id_locked`);不再删除后换新 ID。原页面
-   `/tasks/{task}/items/{old}/recovery` 在准入后、执行后、重开后均 200,原决定/历史保留并
-   指向准确 execution。若该身份已被别的 execution 占用则拒绝复用,避免重复执行行。
-3. **P1-3 逐项作用域 + 真实待确认效果确定性。**
-   `_native_admitted_execution_for_item` 只按耐久 `(task_id, task_item_id)` 关联包含该源的
-   execution,未选 sibling 不再借用首部 execution,保持自己的 `prepared`/`stale` 摘要与
-   `execution_id=None`/`selected_item_ids=[]`。`processing_checkpoint` 对无 Result 的持久
-   人工等待态(`waiting_confirm`/`waiting_*`)给出真实 `none`(不再误报 `unknown`),并为
-   `waiting_confirm` 提供零变更的安全再分析动作;真正已派发未证明的 `pending`/`processing`
-   仍保持 `unknown`/不可重放。`native_preparation_summary` 对被后续确认 sibling 弄旧的
-   共享 Preview 报 `stale`,页面据此走「继续此条目的安全分析」再分析路径,而不是提供一个
-   必被拒绝的确认按钮。
+- 分析完成的原子plan/discovery发布事务内，为尚无TaskItem的具体来源创建耐久条目；ready项
+  等待明确确认，技术失败保留失败事实。检查同一Task的live claim/token，再一并更新文件计数；
+  任一步失败整体回滚。已有审核/尝试/效果/已完成兄弟项不覆盖，未新增表或恢复系统。
+- 两部直接ready的影片先整理一部后，Task保持2项/完成1项并等待人工；第二部仍属于原Task，
+  可以修改RecognitionType、再分析并单独确认；最终2/2、两个独立Result，首部不重放。
+- 既有浏览器helper保留旧runner并接真实Task engine；按精确Task/execution关系及前后耐久
+  execution记录回读本次推进结果，不凭时间/文件名猜关联、不报告上一子集为新执行。
+- remaining-scope接口的旧pin恢复断言改为退役拒绝，保留409/零效果/无摘要/历史对照。
 
-**受影响测试(实际命令与结果,cwd 仓库根)**
+**修改与直接受影响测试（当前checkpoint实际结果）**
 
-| 命令 | 结果 |
+| 命令（仓库根，Web命令在web/） | 结果 |
 |---|---|
-| `.venv/bin/python -m unittest tests.test_manual_task_engine tests.test_task_scheduling tests.test_task_scheduling_fencing tests.test_task_scheduling_migration` | 91 tests OK(含 3 个新回归:旧页确认被拒且零授权/零变更、原 item 链接准入后/执行后/重开均 200 且 ID 不变、未选 sibling 保持自身 prepared/stale 并在同 Task 再分析后独立确认 2/2) |
-| `.venv/bin/python -m unittest tests.test_media_discovery tests.test_manual_organize_intent tests.test_manual_organize_preview tests.test_manual_organize_execution tests.test_task_center_recovery_lineage tests.test_recovery_continuation tests.test_processing_checkpoint` | 305 tests OK |
-| `.venv/bin/python -m unittest tests.test_automation_admission tests.test_automation_job_fencing tests.test_automation_definition_occurrence tests.test_v2_automation_run_once tests.test_processing_worker_readiness tests.test_automation_settings_resident tests.test_direct_file_transfers tests.test_media_library_transfers` | 230 tests OK |
-| `.venv/bin/python -m unittest tests.test_operations_task_center tests.test_operations_run_detail tests.test_operations_run_inventory tests.test_processing_checkpoint tests.test_recovery_batch tests.test_task_pause_resume tests.test_scope_continuation tests.test_preview_retirement tests.test_confirmation_api tests.test_conflict_resolution tests.test_task_persistence` | 304 tests OK |
-| web: `npm run test -- run` OrganizeRouter/OrganizeDiscoveryPage/OrganizeCreationPage/TaskItemRecoveryPanel/OperationsInventory/LibraryFileOperationsDialog | 6 files, 101 tests OK;`typecheck`/`lint`/`format:check` 全部 exit 0 |
-| `.venv/bin/ruff format --check mediaflow tests scripts` / `.venv/bin/ruff check mediaflow tests scripts` / `.venv/bin/python -m compileall -q` / `python3 scripts/check_governance.py` / `git diff --check` | 全部通过 |
-| 额外自检(非 Developer 义务):`.venv/bin/python -m unittest discover -s tests` | 2974 tests OK(skipped=7);B 仍以官方 T4 门禁为准 |
+| `.venv/bin/python -m unittest tests.test_manual_task_engine tests.test_task_scheduling tests.test_task_scheduling_fencing tests.test_task_scheduling_migration tests.test_media_discovery tests.test_manual_organize_preview tests.test_manual_organize_execution tests.test_processing_checkpoint` | 310 tests OK，32.551s；`ready-affected-python.log` |
+| `.venv/bin/python -m unittest tests.test_task_center_recovery_lineage tests.test_scope_continuation` | 59 tests OK，7.146s；`adapter-python-final.log` |
+| `npm run test:e2e -- --config=playwright.python.config.ts --workers=1 tests/e2e/operations-inventory.python.spec.ts` | 44 passed，1.3m；`inventory-final-fix.log`；原6项及真实首部完成后第二部修正均通过 |
+| 修改3个Python文件ruff format/check、compileall；修改Web spec的Prettier、`git diff --check` | 通过；无timeout/retry/skip放宽 |
 
-B 三项复现脚本在修正后的真实结果:`native-stale-confirm-repro` 旧/新 `preparation_id` 不同、
-旧页确认 409 `preparation_stale`、零变更零执行;`native-old-link-repro` 原 item 在准入后与
-执行后均 200 confirmed 并指向同一 execution;`native-subset-readback` 未选第二部
-`preparationStatus=prepared`/`linkedExecution=null`,continue 不再 409 而是重新分析,随后
-独立确认并产出第二个 Result。未运行 B 的全量 Python/Web/E2E/截图/wheel/容器/53→55 升级门禁。
+新增自动回归从既有Files API准入两部无需人工决定的来源，覆盖首次等待零变更、首部确认后
+2/1计数/等待态、剩余项同Task再分析/确认、2/2独立Result、首部结果保留、无Job、重开一致。
+为定位修正前原因，在当前依赖中只加载`8f67b3a2`原publish方法运行该新例，复现`2 != 0`；
+这是精确旧方法对照，不冒称整个旧版本全量回归（`ready-subset-before-fix.log`）。
 
-**剩余风险与已知限制(交 B 判定,非本地 PASS)**
+本轮自`2026-10-31 07:06:27 UTC`开始；截至`07:38:37 UTC`已用约1930秒。测试并行墙钟
+区间合并约901秒（复用日志的起止区间连中间空档也保守计入），另计零碎检查保守不超过
+940秒，低于本轮50%；`timing.json`保留测量口径。未为凑比例等待或重复已通过测试。
 
-- 复用 TaskItem 身份的前提是同一 intent 源不会二次执行(`list_manual_execution_item_ids_for_intent`
-  已保证已准入源不再进入新准备);若该前提将来放宽,`manual_execution_items.task_item_id`
-  的唯一约束会要求用新身份版本化,目前实现会拒绝复用并回落到旧删行路径。
-- 新增的 `waiting_confirm` 再分析动作对所有原生待确认业务问题可见(与确认按钮并存);
-  它是零变更的显式动作,但需要 B 在真实页面上确认这不会与摘要确认混淆。
-- 未验证新真实 Web/截图/wheel/容器/升级;未复跑 53/54→55 迁移。
+**交接限制**
+
+- schema55未变；本轮只修改当前Task内4个执行/测试文件与TASK报告，未改A-owned合同/路线图。
+- 本checkpoint未重跑完整Python/Web/新wheel/Docker及其余真实浏览器组；独立B负责，旧制品
+  hash与旧2974项全量不能作为新checkpoint PASS。新回归总测试数相应增加。
+- 已关闭本代理启动的两个临时原生页面服务器并清理其fixture；浏览器harness随测试正常退出。
+- 根Task保持READY FOR B REVIEW，不自审PASS、不规划下一Task、不关闭Slice。
