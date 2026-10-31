@@ -441,6 +441,126 @@ Prior review evidence/decision is retained at `ec3b9f83:TASK.md`; this section s
    atomic authority/capacity/repeat reconciliation. Historical Job handling remains transitional;
    full historical migration/removal is not being added to Task47.3.
 
+### Developer guidance — complete the three corrections in this Task
+
+本指导基于 `405d27576719b44fb283be1e6ff71e6f20e10811` 的代码和上述 B 复现，细化已有
+scope 4/6/7，不改变 Task Base、验收或 High/T4。开始修改时将状态置为 IN PROGRESS。
+建议按“恢复链路 → 读回 → 剩余提交入口”实施，在同一候选中完成连接；三项不能自行移到
+下一 Task。函数名是复用线索，不是文件白名单。不要借此提前实施 RO-4 全量历史迁移。
+
+#### 1. 自动任务的决定、分析、摘要和明确执行接起来
+
+用户结果：Run once/due 中某文件进入四类问题 → 在任务中心保存决定 → 继续分析 → 查看
+精确摘要 → 明确确认允许的文件 → 原 Task 更新结果；刷新后仍能找到该进度和原历史。
+
+1. 先把已复现的 Recognition 链加入 `tests/test_v2_automation_run_once.py`：真实 API
+   Run once、真实 Worker 产生问题，GET item，POST 现有 `recovery/decision`，再取最新
+   checkpoint，POST `recovery/continue`。当前最后一步为 409；修复后应受理同 Task 分析。
+   复用 `tests/test_manual_task_engine.py` 的后续摘要/确认链，继续断言真实文件和 Result。
+2. 从 `ManualTaskContinuationService.applies/continue_analysis/_linked_discovery` 入手。
+   目前“有 scheduling row”选中了自动 Task，而后面又强制有 Files discovery。保留有效的
+   checkpoint、权限、pin、源版本和不确定效果检查；把“可继续分析的工作上下文”从
+   Files 专属前置条件中分离出来。Files 使用原 discovery；自动任务使用受理时的来源和
+   已有 TaskItem/checkpoint/决定/固定配置。复用既有分析和准备记录能力，建立真实的持久
+   关联，不伪造用户曾在 Files 提交，也不让用户重新选择来源。
+3. 接通 `ManualTaskEngineWorker` 的后续消费以及 `ManualRecoveryContinuationService`
+   的 summary/authorization/confirmation 路径。特别检查 `prepare_native_summary` 和
+   `native_preparation_summary` 的 Files 关联假设；只改 continue 的返回码仍无法完成链路。
+   初次自动运行可以按原意图执行；**业务恢复分析必须零修改**。不能仅凭 trigger 为
+   SCHEDULE/RUN_ONCE 就重新调用初次 `run(... execute=True)`，重扫整个定义或自动执行。
+   继续分析只处理该 Task 允许的剩余文件；摘要后的执行复用既有明确确认和同 Task 准入。
+4. 在数据库原子边界处理排队/重复/取消/容量和适用授权消费。满队列保留决定、摘要、结果
+   与人等状态；重复继续不多排工作。Worker 的 Task/父 Worker 心跳、item/result fence 和
+   修改标记沿用已修复路径。成功/忽略/不确定项不重放；source/version/pin 与历史 attempt
+   可追溯。随后补齐 Metadata（含既有候选/更正）、Classification、Conflict 的完整链，
+   覆盖混合成功 sibling、源变化、过期 checkpoint、拒绝权限和队满；不另起恢复引擎。
+
+完成判据：四类均能从真实入口走到明确执行或真实的新阻塞；同一个顶层 Task、无新 Job，
+保存/分析零效果，确认只执行允许子集。旧 Files 恢复和初始确认不回归。
+
+#### 2. 统一定时 occurrence、定义详情和运行结果读回
+
+用户结果：定时任务处理一个文件后，定义详情显示对应 Task 和真实文件结果；返回的可用
+详情动作可打开它。执行记录、latest 和指标各自遵守原语义，后续恢复不改写原执行事实。
+
+1. 以“真实 due → Worker 完成一个文件 → GET definition occurrences → 跟随返回动作”
+   建回归。保留 B 的反例：当前 records 已显示成功，而 occurrence 仍为 taskId=null、
+   文件数 0，链接指向不存在的 Job。增加一次真实失败/人工等待，避免只修成功显示。
+2. 同时核对 SQLite 的 `list_automation_definition_occurrences`、
+   `list_latest_automation_definition_occurrences` 与 occurrence decoder。
+   新发生点的旧命名关联列保存的是受理 Task id，旧发生点仍可能通过 Job 关联 Task；
+   使用可证明的受理/配置/来源关系分别解码，不把所有旧 job_id 直接当 Task id，
+   不按时间、名称或当前 Active 猜关系。必要的最小关联存储变更须版本化、失败原子并可 reopen。
+3. 接到 `AutomationDefinitionOccurrenceService` 的 latest/outcome/per-item 投影，再到
+   `MediaFlowApi._automation_occurrence_operator_document`。新 Task 返回可用 Task 详情
+   动作，不能继续公布不存在的 Job 动作。保留真实旧 Job 历史读取，未知关系明确不可用。
+   `emitted` 可以保留其发生点受理语义，但界面必须另有正确的执行状态/结果，不能单纯
+   把 occurrence 字符串改成 completed 来掩盖缺失关联或虚构成功。
+4. 顺着实际调用检查 Automation inventory/latest/metrics/records、Task Center、Dashboard、
+   logs/export/readiness/settings 的受影响读回。只改受影响关系/语义，不重做页面。
+   原执行结果和实际时间与后续恢复状态分开；不直接拿可变 Task 当前聚合覆盖原记录。
+   覆盖新旧数据混合、分页/计数/过滤、刷新/reopen、恢复前后原记录不变，读取零副作用。
+
+完成判据：新发生点真实关联 Task，文件数/结果和允许动作正确；跟随 advertised link
+返回正确对象；旧历史不丢，定义/记录/Task 视图按各自语义一致，无重复原运行。
+
+#### 3. 完成直接 CLI、batch 和 remote API 的 Task 准入
+
+用户结果：原有合法命令/请求继续可用，整理执行共用容量、Worker、固定配置和结果；
+非执行分析仍只分析，拒绝路径不增加工作或权限。
+
+1. 按本 Task 的 Existing-entry 表核对真实 parser/route/dispatch 和调用者，列清
+   每项“执行 / 只分析 / 合法拒绝 / 旧历史只读”的最终处置。`final_cli.py` 的 batch 会先
+   归一为 organize/path=None；复用这个实际分支，不能只改带 path 的 organize。
+   `jobs submit organize`、retry-request/retry-failed 等按原有合法语义核对，不顺便开放
+   执行或技术失败重放，也不为已退役命令恢复能力。
+2. 将 `final_main` 中直接 execute 的 generic coordinator 入口接到共享 Task application
+   准入/引擎，传递路径或全库范围、limit、trigger/principal、固定配置和明确执行意图。
+   保留同步 CLI 当前的结果/退出语义：需要等待或驱动执行时使用同一 Task 引擎，不能
+   排队就报告整理成功，不能保留 CLI 专用平行执行器。已有 `_task_observer` 只负责结构化
+   身份交付，不等于完成调度整合。无 `--execute` 的分析保留记录和零修改，不进执行队列。
+3. 将 `ExecutionAuthorizationService.submit_organize` 及 repository 的票据消费事务改为
+   原子提交 Task/队列/必要来源和审计关系；复用既有 shared-capacity 与票据校验。
+   API 现有 remote enablement、REMOTE_EXECUTE、execute=true、header ticket、limit 和
+   固定配置检查全部保留。队满/无效/过期/已撤销/越界票据不产生孤儿或消费授权；重复请求
+   按原支持的安全核对语义处理，不能把一次性票据重新变为执行权。
+4. 调整 `POST /api/v1/jobs` organize 分支的响应/调用者，返回明确 Task 身份和可用读回。
+   若提前替换这个旧提交入口，在同一 Task 提供权限和能力等价的 Task 入口及清晰指引，
+   并完成消费者切换；不能只删除/拒绝接口而丢失原能力，也不能为兼容响应再写一个 Job。
+   四类续作回到指导 1 的同 Task 路径。保留已有历史 queued Jobs 的安全过渡，不双写新工作。
+
+完成判据：入口表无遗漏的新整理 Job 后门；CLI 单路径和全库 batch、remote 合法请求都
+进入共同 Task 调度，能读回真实结果。权限/票据/队满/重复/只分析/取消和未知响应不扩大效果。
+
+#### 本轮 Developer 受影响测试与交接
+
+在上述现有模块中加入或扩展真实链路测试；先跑新用例和已知失败，再按实际改动执行相关组。
+下面是受影响测试分组，不是全仓库回归；无需对未修改、未受影响的组机械重跑。
+
+```sh
+# 1: automatic recovery + retained Files recovery/claims
+.venv/bin/python -m unittest tests.test_v2_automation_run_once tests.test_manual_task_engine \
+  tests.test_recovery_continuation tests.test_task_scheduling_fencing
+# 2: occurrence/history/read model and Task Center population
+.venv/bin/python -m unittest tests.test_automation_definition_occurrence \
+  tests.test_automation_workspace_read_model tests.test_operations_run_inventory \
+  tests.test_operations_task_center
+# 3: real CLI/API submission, ticket/capacity/atomicity
+.venv/bin/python -m unittest tests.test_batch_cli tests.test_execution_authorization \
+  tests.test_automation_api tests.test_task_scheduling tests.test_automation_task_admission
+```
+
+修改 schema 时增加 `tests.test_task_scheduling_migration`；修改 resident adoption 时增加
+`tests.test_automation_settings_resident`。修改 Web/其 API 投影时，按上文 Developer affected
+计划运行改动页面测试、typecheck/lint/格式/build 和直接受影响原生 browser spec；不能只用
+mock 组件证明真实链接/恢复成功。修改的 Python 文件跑 ruff format/check，最后跑 governance
+和 `git diff --check`。本轮累计测试耗时仍须低于总用时 50%；不靠空等凑比例。
+
+交接提供同一候选 SHA，按三项列出真实完成结果/受影响命令及结果/剩余阻塞与原因；任何
+尚未完成的必要入口或链路要明确写出，不能自行缩小范围后称 Task 完成。已有上轮修复保持
+回归。B 继续负责本 Task 原 T4 full/native/package gates 和最终独立审查，Developer 无需
+重复全 Python/Web/E2E/发布矩阵；本指导也不将这些 B 门禁转交 Developer。
+
 ### Actual validation and pending gates
 
 Local ignored evidence:
