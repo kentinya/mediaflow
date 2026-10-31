@@ -53,28 +53,32 @@ Copy/Move等操作及既有Web/API/CLI控制入口均不再提供该能力；这
 
 ## Actual-code gap — current candidate
 
-当前产品候选为 `acaed9fa485bca7543e0f6fea57487b7e8831303`，Task Base不变。
+当前产品候选为 `4659536c2f3f230b0d7ef271c1b375048e259216`，Task Base不变，实际schema为55。
 
-- Files原子Task/discovery/scheduling准入、resident engine和共存容量修复已接入；不重复开发内核。
-- 上轮执行中CANCEL滞留已修正：真实两文件链中第一项结果保留，未开始项取消，原Task和execution
-  结算cancelled，名额释放。unknown保持marker/占用/不重放的定向用例也通过。
-- Task的pause/resume路由已统一退役，旧resume→Job提交及生命周期resume投影已删；但暂停专用
-  remaining-scope preparation接口与旧Worker scope-continuation执行dispatch仍在，M10未完成。
-- 新手动混合批次中，只补正第一项再分析，会将另一项现有识别待办改成processing并滞留。
-  摘要已有1项ready，确认却409；剩余项Save也409，持续占容量，阻塞M3/M4/M6/M8。
-- 完整四类同Task恢复、混合项历史/结果和真实Web闭环仍需按M1–M10交付/验收；不能用全部
-  文件一次补齐的单个正向用例替代独立项处理。due/Run once引擎切换及Job迁移删除仍为后续。
+- 上轮两项局部修正已确认：重复分析复用未解决review，部分补正可确认就绪子集，随后第二项
+  可经Files discovery分析/摘要在原Task完成；暂停专用remaining-scope接口改为无效果拒绝，
+  `_run_scope_continuation`及其Worker执行接线已退役。不重复开发这些已完成部分。
+- schema55移除manual_executions.task_id唯一约束以支持同Task分批执行；保留历史关系、授权
+  唯一性与旧Job。定向迁移模块通过，但不等于完整真实53/54升级/发布验收。
+- Task Center原有保存→继续分析仍调用legacy recovery/continue并创建recovery-continuation Job，
+  原Task仍WAITING_HUMAN，未接入同Task引擎。底层Files analyze能走通不能代替真实Web入口。
+- 两文件分两次执行均成功且有2条Result，但Task和Run接口仍total_items=1、completed_items=1；
+  当前execution的selected数量覆盖了顶层Task聚合，未完成原M4/M8准确文件数要求。
+- 等待决定/确认时从Task Center取消，Task/items已cancelled且零名额/零效果，但discovery仍为
+  completed且cancel_requested=false；新requestId重发同一文件被旧admission拒绝。
+- 以上三项详见B Review。原M1–M10仍须整体验收；due/Run once/独立API-CLI引擎切换及Job
+  迁移删除为后续，未把它们扩大到本Task。完整T4仍由B承担，不因Developer报告未同步加阻塞。
 
 ## Next implementation order
 
-1. 按B Review P1-1修正重复分析的逐项问题发布：已有未解决待办保持可操作的人工等待，
-   使“只补正一部→分析→确认就绪子集”走通；接着验证成功项不重放、剩余项仍可在原Task继续。
-2. 按P1-2收完暂停专用remaining-scope preparation和Worker执行接线；保留通用历史读取、
-   四类问题继续与取消，不新增暂停任务迁移/兼容系统，不因本项删除所有旧Job。
-3. 对照M1–M10补齐真实手动旅程与直接受影响回归，保留本轮已修正的取消/unknown/容量保护。
-   不为未证实的问题做额外重构，不为全部理论中断点新增恢复承诺。
-4. Developer仅运行新增/变更/直接受影响测试与静态检查，报告准确checkpoint/实际结果/限制，
-   交接READY FOR B REVIEW；B在修正候选上独立审完整Base..Head并完成剩余T4验收。
+1. 按P1-1接通现有Task Center四类保存后的实际continue/摘要入口到原Task调度与同一引擎，
+   保留Save零变更/不入队、分析零变更、摘要与显式确认，不新建Job或顶层恢复Task。
+2. 按P1-2修正整个Task的聚合发布，分别保留execution子集统计与Task全来源/结果；新准入和
+   逐项结果都不能把顶层计数重置为当次selected数量。
+3. 按P1-3收齐取消后的关联准入/源占用，安全取消且无未确定效果的旧工作不能阻塞合法新请求；
+   不清除unknown保护、不把新请求当作恢复已取消工作，不删记录。
+4. Developer补这三条现有入口回归，运行新增/变更/直接受影响测试和静态检查，交准确checkpoint、
+   实际结果/限制；B再独立审完整Base..Head，完成真实Web与其余T4/升级/发布验收。
 
 ## Implementation Scope
 
@@ -241,11 +245,11 @@ Worker seams；新增用例须从已存在的真实入口触发，不能猜造�
   artifact hash。运行 Docker security/fresh/restart 与实际 Task Base 升级/失败恢复：
 
    ```sh
-   .venv/bin/python scripts/schema_upgrade_rehearsal.py --base-sha c942c4b4b9d3abf105341e8163c1be2d95d9a671 --expect-schema 54 --expect-candidate-schema <actual-version>
+   .venv/bin/python scripts/schema_upgrade_rehearsal.py --base-sha c942c4b4b9d3abf105341e8163c1be2d95d9a671 --expect-schema 54 --expect-candidate-schema 55
    .venv/bin/python scripts/docker_upgrade_recovery_smoke_test.py --base-sha c942c4b4b9d3abf105341e8163c1be2d95d9a671 --base-schema 54
    ```
 
-  `<actual-version>` 仅由实际实现决定，交接替换为确切数字。若 schema 改变，另验证真实 Slice
+  当前候选schema55；若后续实现再次改变，以真实版本更新命令。另验证真实 Slice
   Base53→candidate 的保留与失败原子链。Docker 使用 Colima 可共享的临时目录；复用已有隔离
   脚本/维护租约，不新造验收平台，不把脚本 SKIP/exit0 冒充有效门禁。
 
@@ -276,113 +280,132 @@ RO-5 原界面兼容已验而 Task 化全表面未交付。因此继续规划本
 
 ## Developer Completion Report
 
-本轮用户通知开发完成，实际产品提交为 `acaed9fa485bca7543e0f6fea57487b7e8831303`。
-本提交增加执行中取消的协调结算和两项真实执行/unknown回归，并删除旧resume提交与生命周期
-投影。尚无同步的Developer测试报告；B依据实际代码与入口审查，不据报告缺失新增产品阻塞，
-也不代填Developer未提供的结果。修正后交准确checkpoint、受影响测试实际结果与剩余限制；
-完整T4与发布证据仍由B负责。前轮交接/审查保留在Git。
+用户通知开发完成，本轮产品候选为 `4659536c2f3f230b0d7ef271c1b375048e259216`，包含
+`da6d9630`的review复用、分批执行/schema55与暂停专用退役，以及`4659536c`的已保存四类
+决定消费。Developer报告未同步不是产品阻塞；B依据真实入口/代码审查，不代填未提供的测试
+结果。修正后Developer仅交新增/变更/直接受影响结果与限制，完整T4和发布证据仍由B负责。
 
 ## B Review Result
 
 ```text
 Reviewed Base: c942c4b4b9d3abf105341e8163c1be2d95d9a671
-Reviewed Head: acaed9fa485bca7543e0f6fea57487b7e8831303
+Reviewed Head: 4659536c2f3f230b0d7ef271c1b375048e259216
 Contract: c1e616113f87420d6f7411c3e6287ce81c1f5331
-Decision: FIX REQUIRED — mixed-item analysis stalls; dedicated paused-scope execution remains
+Decision: FIX REQUIRED — native continuation still queues Job; aggregate counts wrong; cancelled admission retains source
 Slice Required Outcomes / Surfaces all satisfied: NO
 Next: SAME TASK FIX LOOP; preserve Task47.2 ID/Base/Goal and amended scope
-Evidence: .git/validation-evidence/b-task47.2-acaed9fa/
+Evidence: .git/validation-evidence/b-task47.2-4659536c/
 ```
 
-B按完整Base..Head的47文件manifest复核：承接既有生产接线/容量审查，检查本次取消事务、
-manual execution/engine/claim发布、暂停控制及测试/浏览器删改；没有将局部通过等同全部交付。
-本轮只更新TASK，不改产品/测试/A-owned合同。开始main/Reviewed Head，无tracked edits；
-既有OS/log/图片/压缩包等untracked保留、不暂存。没有push、历史改写或子代理。
+独立核对完整Base..Head的54文件manifest：承接前轮生产接线/容量/取消审查，检查本次引擎、
+逐项问题发布、四类决定消费、schema55 rebuild、暂停退役接线及测试删改，并沿Web实际client
+追到API/应用调度，没有只审最后一笔提交或以局部正向测试替代完整交付。
+本轮只更新TASK；main/Reviewed Head起点无tracked edits，既有OS/log/图片/ZIP等untracked
+原样保留、不暂存。无产品/测试/A-owned合同编辑、push、历史改写或子代理。
 
-### P1-1 — 只补正部分文件后，分析卡住，就绪文件和剩余待办都不能继续（M3/M4/M6/M8）
+### P1-1 — Task Center保存决定后的继续仍创建旧Job（M1/M4/M8）
 
-**用户场景：** Files选两部影片，系统都提示选择识别类型。用户先给第一部选好类型，点击分析，
-想先整理第一部，稍后再补第二部。这是已有的就绪子集确认与逐项处理，不要求一次解决所有文件。
+**用户场景与复现：** Files新提交一部影片，Task Center为该条目选择识别类型并保存。
+`TaskItemRecoveryPanel.saveDecision()`看到retry后实际调用 `continueTaskItemAnalysis()`，即
+`POST /api/v1/tasks/{task}/items/{item}/recovery/continue`。B从真实Files准入开始，使用已配置
+operator角色，保存决定后按此相同接口提交当前checkpoint：返回202、`job_id`非空，数据库
+新增1个pending recovery-continuation Job；原Task仍WAITING_HUMAN，Task Worker再运行4轮
+不进入该分析。零Storage变更。这不是虚构路由，也不是旧Task或历史暂停场景。
 
-**真实入口和结果：** 用现有Files admission、TaskItem recovery/decision、discovery/analyze及
-preview/execute接口，真实临时SQLite、Local Storage与合成Metadata，未篡改DB/claim或构造路由。
-摘要回读第一部previewed、第二部blocked；但TaskItem第二部变为processing/analysis。
-第一次驱动12轮后再驱动12轮，queue仍queued/analysis且占1名额；确认第一部返回409
-`task_not_waiting`。再尝试第二部原有识别决定返回409 `decision_rejected`，再次分析也409。
-无Storage变更、无Result，刷新/重复Worker不能使该链前进。复现脚本与原始日志在Evidence目录。
+**原因和开发指导：**
 
-**原因与开发指导：**
+1. 当前 `service_api.py` 仍无条件调用 `RecoveryContinuationService.submit()`，该服务仍提交
+   旧Job续作；新增 `_native_review_decisions()`仅使Files analyze消费决定，未改Web实际入口。
+2. 新手动kernel-managed工作沿现有continue应用入口重新登记原Task的安全分析，复用已经
+   实现的四类决定、discovery分析、摘要/所选确认和引擎；不再创建独立Job/恢复顶层Task。
+   旧工作维持本轮退役以外的原合法路径，不接管/合并它们。不能通过隐藏四类处理按钮解决。
+3. 保留Save仅保存决定；独立continue分析按原Task、源版本/pin、checkpoint、CANCEL、unknown
+   与共享容量检查准入。满时保留原决定/摘要/结果且不消费授权/不登记将来自动继续；成功后
+   仅做零变更分析，摘要仍需现有精确显式确认。返回DTO/client normalizer和查询投影如需适配，
+   应真实表达原Task的进度/摘要，不伪造job_id满足旧响应类型。
+4. 沿原Task Center页面走完四类（含Metadata候选/补正）保存→分析→原位摘要→确认→Result。
+   核对现有单项/批量继续消费者，不另造恢复系统；内部证据ID可变但耐久关系/历史不丢。
+   Developer在现有集成fixtures补同一真实continue接口回归，断言无新Job/子Task、原Task推进、
+   零变更分析和逐项结果；不能只直接调用Files analyze代替Web使用的入口。B修正后验真实浏览器。
 
-1. `SQLiteTaskRepository.publish_task_item_problem()` 对既有待办先独立提交PROCESSING，随后
-   `RecognitionReviewService.create()`按同一item生成相同review ID、再次INSERT已有review，
-   触发review唯一约束；`ManualOrganizePreviewService._publish_problem()`吞掉异常后仍发布摘要。
-   engine `_wait_for_human()`将遗留PROCESSING视为机器工作反复入队，无法进入WAITING_HUMAN。
-   不要通过放宽execute的WAITING_HUMAN校验、取消owner栅栏或删除review历史绕过问题。
-2. 在现有逐项问题发布边界正确处理重复分析：同一源版本/同一未解决问题复用合法现有review，
-   保留人工等待及其可用决定；若问题确实变化，按现有证据/版本规则建立准确关系。问题证据、
-   waiting item与分析发布须一致，不先耐久留一个无法完成的processing过渡；失败应有界可见，
-   不能吞错后展示一个实际上无法确认的就绪摘要。保留成功/ignored/skipped/partial/uncertain，
-   不重开已结束项、不重置已保存决定或给内部item ID增加恒等要求。
-3. 本场景分析完成后，没有实际机器工作时原Task进入人工等待、释放名额；第一部可按摘要显式
-   确认执行，第二部待办仍可操作。只执行本次已确认子集，不迫使用户先解决所有文件。
-4. 接着走完原M4：第一部Result持久化后，第二部保存决定→分析→新摘要→显式继续仍回同Task，
-   第一部不重放、不覆盖Result/attempt/附件效果；顶层Task不能仅因某个subset执行结束就丢掉
-   剩余待办，文件数按真实来源而非本次selected数量。这里是修复后的原验收路径，未将尚未跑到
-   的后续阶段宣称为第二个已复现缺陷；取消与unknown保护继续有效。
-5. 在已有 `tests/test_manual_task_engine.py` 增加上述真实两文件回归：首次两个待办→只补一项→
-   分析后ready1/blocked1、人工等待/零名额→执行第一项→补第二项→在原Task完成，检查真实
-   效果、独立历史、文件数及重开回读。四类中存在相同重复发布模式的部分一并按现有入口核对，
-   不另造恢复系统。Developer跑该失败场景、新增/改动和直接受影响模块；真实Web由B按原M8验收。
+### P1-2 — 分批执行覆盖顶层Task计数，两部成功仍显示一部（M4/M8）
 
-### P1-2 — 暂停控制已拒绝，但暂停专用剩余范围准备/执行接线未退役（M10 / AC-19）
+**真实结果：** 从现有两文件混合批次开始，第一部决定→分析→确认→执行，第二部保留待办，
+然后补正并执行第二部。原Task、2个来源/TaskItem和2条Result均保留。但首批后Task/Run接口
+`total_items=1, completed_items=1`；两部全部完成后仍为1/1。Run同一响应的progress却为
+`known_total=2, confirmed_success=2, results_total=2`，与顶层字段矛盾。当前Web运行详情
+直接显示run.totalItems/completedItems，故不是仅测试内部对象的计数差异。
 
-上轮指出的 `/tasks/{id}/resume`→submit Job与生命周期resume投影已删除，确认该局部修正。
-但 `service_api.py` 仍注册 `POST /api/v1/tasks/{id}/remaining-scope-previews`，继续调用
-`_operations_run_remaining_scope_preview()`→`admit_recovery_preparation()`；函数和eligibility
-明确只为paused source Task恢复剩余范围。`final_cli._run_queued_workflow()`仍分派
-`AutomationCommand.SCOPE_CONTINUATION`→`_run_scope_continuation()`执行旧暂停续作。
-当前变更还保留其“separate zero-mutation review remains available”正向断言。
-这是专用活跃接线的静态合同核对，不声称用户有历史paused工作，也未新增/制造历史paused场景
-进行探测。它不是四类识别/元数据/分类/冲突处理后的继续；仅去掉resume按钮仍未完成明确退役。
+**原因和开发指导：**
 
-**开发指导：**
+1. `admit_manual_execution()`采用原Task时以len(selected execution items)重置总数/完成数；
+   `ManualOrganizeExecutionService._task_after_item()`再次按本execution.items覆盖Task聚合。
+   `_finish_execution()`虽保留剩余待办，却沿用该局部计数；schema55支持多次execution后仍
+   保留了一次执行等于整个Task的旧假设。
+2. execution保持自己的所选/完成/失败统计；kernel Task的总数/完成/失败/当前状态则根据整项
+   工作的耐久具体来源及各自结果汇总，在同一owner/授权/取消边界发布。首次确认、后续确认、
+   逐项结果和最终结算都不能覆盖成当次selected数量或归零已成功siblings。
+3. 不以Result条数直接当文件数（attempt/附件可能多条），也不要求内部item ID恒等。保持已有
+   真实来源/版本关系，成功/跳过/忽略/失败/partial/unknown/待办各自语义，当前状态和原attempt
+   结果分开。Task/Run/API/Web/导出所表达的同一工作统计须一致，不靠前端显示补丁掩盖错误。
+4. 扩展已新增两文件分批回归：首批后总数2、完成1、待办1；次批后总数2、完成2、两条独立
+   Result、原结果不变，Task/Run接口与重开一致；保留失败/非成功与重复分析的直接影响对照。
 
-1. 退役上述暂停专用remaining-scope准备请求与活跃执行dispatch，使旧请求有界拒绝且无
-   discovery/intent/preview/authorization/Job/Task或Storage变更；不让遗留命令启动兼容executor。
-   清理仅支撑这条暂停产品路径的接线/投影/测试，检查Web API client与现有Worker接线的直接依赖。
-2. 保留历史scope-continuation关系/Task/Result/原pin的通用只读回读；复用代码中的通用源验证、
-   历史去重、权限/效果保护和四类问题分析不能按scope/resume名称批量删除。不迁移/重标旧记录，
-   不删除Job数据库/全部Job系统，不恢复或新增暂停整理兼容执行。
-3. 从已有正常整理入口核对暂停相关动作不再发布；现有旧专用请求明确无效果拒绝。用现有
-   ordinary Copy/Move及四类继续用例核对直接影响。无需构造暂停记录证明能恢复，也不把历史
-   暂停迁移/续作当必过门禁。保留本轮真实取消与unknown回归。
+### P1-3 — 等待时取消后，原文件仍被旧准入占用，不能重新整理（M5/M7/M8/M10）
 
-### B实际验证与限制
+**真实入口与结果：** Files新提交一部影片，Worker完成分析进入人工等待；从现有
+`POST /api/v1/tasks/{id}/cancel`带当前expectedUpdatedAt取消，返回200。再运行4轮Task
+Worker后Task=cancelled、item=cancelled、queue=settled、零名额、零Result/零Storage效果；
+但关联discovery仍completed、cancel_requested=false。用户用新的requestId重新发起同一
+未改动文件，得到409 `source_already_organizing`，被指回已经取消的旧工作。
+这验证的是明确的新意图，不是继续已取消Task或自动重放。
 
-| 验证 | 本轮实际结果 |
+**原因和开发指导：**
+
+1. Task Center取消通过 `request_scheduled_task_control()`将discovery传入release，但
+   `_publish_discovery_control_locked()`的取消UPDATE排除了COMPLETED/PARTIAL_SUCCESS。
+   分析completed仅表示摘要就绪，顶层工作仍未确认；`_discovery_source_owners_locked()`仍把
+   此类未执行准入当owner，形成Task已终结、发现准入仍占源的矛盾。
+2. 在现有安全取消结算内统一Task/items、关联准入的当前可执行资格/取消事实及源占用判定。
+   对已安全取消且无未确定效果的来源，新意图应能经过正常权限/版本/占用检查重新准入；
+   不再让只读分析的completed阻止该协调。不删发现/计划/决定/结果，不伪造历史执行结果，
+   不恢复旧Task或清掉CANCEL。允许实现采用一致的取消投影或权威资格查询，无需新恢复系统。
+3. 保留in-flight当前调用、partial/unknown/已有效果的非重放与源保护；不能按Task终态无条件
+   放行任何来源。Task Center和Files两个现有取消入口遵循同一应用语义/owner栅栏。
+4. 新增上述人工等待→Task Center取消→新requestId重发→新Task合法准入的真实API回归，
+   验原Task保持cancelled、原请求仍回原工作、无自动重放/效果；另保留在途/unknown取消对照。
+   跨重开保持相同结果，不以增加“再次取消发现”或手动清内部记录作为普通用户操作。
+
+### 已确认进展、B验证和限制
+
+| 验证 | 当前候选实际结果 |
 |---|---|
-| manual engine、调度/栅栏/迁移、Operations workspace、Task pause/CLI、scope continuation、media library transfers | 234 tests，OK；runner14.595s，外层14.794s；`focused.json/log` |
-| 上轮执行中取消复现 | CANCEL200；首项success/1条Result，余项cancelled，Task/execution cancelled、queue settled、零名额；`previous-cancel-repro.py/log`，0.142s |
-| 新混合批次真实API复现 | ready1/blocked1；未解决item遗留processing、反复queued且占名额，确认/后续Save/分析均409，零效果；`mixed-selection-repro.py/log`，最终运行0.152s |
-| 完整范围manifest、治理、空白与文档 | PASS；见`review.json`；不据旧状态/报告缺失增加阻塞 |
-| 完整Python/Web/E2E/截图/wheel/容器/升级安全 | 产品阻塞后未继续，按workflow提前FIX；待修正候选由B完成，无豁免，不转交Developer全套门禁 |
+| manual engine、迁移、scope continuation模块 | 65 tests OK，runner4.573s；`focused.json/log` |
+| 调度/栅栏、Operations workspace、Task pause/CLI、media library transfers | 119 tests OK，runner4.917s；`affected.json/log`；与上组无重叠，共184项 |
+| 原混合识别卡住回归、分批完成/重开、Metadata候选同Task、取消/unknown | 在当前定向模块通过；计数与真实continue仍按上述复现阻塞 |
+| Classification/Conflict决定→Files分析→确认→Result | 真实临时SQLite/Local Storage/合成Provider接口链通过，无新Job；`four-type-probe.py/log`；不声称Task Center入口已通过 |
+| 原暂停专用准备接口/Worker | 请求退役及已删除执行接线的定向检查通过；不恢复历史暂停门禁 |
+| P1-1/P1-2/P1-3现有入口复现 | `native-continue-repro.py/log`、`four-type-probe.py/log`、`cancel-source-ownership-repro.py/log`；均只用既有API，不改DB/claim或猜造入口 |
+| 本次变更15个Python文件ruff format/check，完整Base..Head空白 | PASS，见`static.json`；manifest54文件 |
+| 完整Python/Web/E2E/截图/wheel/容器/真实53/54→55升级与失败原子 | 产品阻塞后未继续，按workflow提前FIX；待修正候选由B完成，不记PASS、不交Developer跑全套 |
 
-SQLite ResourceWarnings及CLI退役命令预期argparse输出保留。没有改测试断言/skip/retry/timeout；
-定向旧测试通过不等于暂停专用系统应保留。所有运行使用既有合成fixtures/临时SQLite/Local Storage，
-未读用户运行库、媒体或私有配置。开始`2026-10-31 02:57:37 UTC`；测试/探测/检查保守总上界
-30秒，低于本轮总用时50%，准确命令和计时见Evidence；未跑全量不记PASS。
+SQLite ResourceWarnings和CLI退役命令的预期argparse输出保留。没有增加retry/skip/timeout或
+改产品/测试；未访问用户运行库、媒体和私有配置。本轮开始`2026-10-31 04:05:36 UTC`，
+测试/探测/检查保守总上界30秒，小于总用时50%；命令、结果和计时见Evidence/review.json。
+辅助跨Task冲突探测在合法新请求被源占用拒绝处停止，未将未达到的跨Task决定继承当作已复现
+问题；本报告P1-3另以无需冲突决定的最简正常取消场景确认。完整T4仍待B验收。
 
 ### 后续交接与Slice全结果重评
 
-同一Task修正两项并核对M1–M10。完整四类、混合批次历史和真实Web闭环仍是原交付，
-没有因取消暂停而免除；也不扩大为任意历史恢复。Developer交受影响结果后由B验收，不先规划47.3。
+同一Task完成上述三项并核对M1–M10；它们均是原Task交付，不新增范围或恢复暂停义务。
+Developer只跑新增/变更/直接受影响测试后交接；B负责剩余原生/全量/升级/发布门禁，不先规划47.3。
 
 | Slice outcome | 当前结论 |
 |---|---|
-| RO-1 | 手动生产链部分接入、容量/执行取消已有修正；混合批次分析仍阻塞 |
+| RO-1 | 手动生产链部分接入；Task Center继续仍新建Job，取消关联与聚合未完整 |
 | RO-2 | 自动due/Run once/独立API-CLI引擎切换仍后续，未完成 |
-| RO-3 | 完整四类同Task尚未完成，当前混合项真实链阻塞 |
-| RO-4 | schema54/旧Job仍保留，历史转换与Job删除尚未做，不扩大本Task范围 |
-| RO-5 | pause/resume控制/投影已有修正，暂停专用剩余范围路径尚存，完整界面闭环待验收 |
+| RO-3 | Files底层四类决定消费已有进展，真实Task Center入口未完成同Task闭环 |
+| RO-4 | schema55支持分批，真实完整升级/Job迁移删除仍未完成，不扩大本Task范围 |
+| RO-5 | 暂停专用产品接线已有修正；Task Center续作/统计/取消后的新意图仍有缺口 |
 
-Task47.2保持FIX REQUIRED，Slice47仍ACTIVE；不恢复暂停，不宣告Task/Slice通过。
+Task47.2保持FIX REQUIRED；Slice47仍ACTIVE，未达到交A关闭条件。
