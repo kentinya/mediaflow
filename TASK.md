@@ -9,7 +9,7 @@ Authority: committed [SLICE.md](SLICE.md) at `c1e616113f87420d6f7411c3e6287ce81c
 Task ID: 47.2
 Task Type: SLICE
 Parent Slice: 47
-Status: READY FOR B REVIEW
+Status: FIX REQUIRED
 Task Base: c942c4b4b9d3abf105341e8163c1be2d95d9a671
 Difficulty: High
 Test Level: T4
@@ -53,21 +53,24 @@ Copy/Move等操作及既有Web/API/CLI控制入口均不再提供该能力；这
 
 ## Actual-code gap — current candidate
 
-本轮修正checkpoint为`2f682703ce899dee691eedfc910742b2a729c809`；Task Base、High/T4与schema55不变。
-B对前候选`8f67b3a2`的独立审查确认上轮三项已修；完整浏览器验收暴露旧Worker测试接线和
-暂停退役断言未更新。用户明确“你自己改一下得了”，授权本代理转Developer直接修同一Task。
-接入真实Task engine后进一步复现：两部均无需人工决定时，ready来源没有TaskItem，首部执行后
-Task提前完成，使未选第二部修正/再分析失败。本checkpoint同时修正该实际用户断链。
+本轮冻结候选`c9a72ce5ed69d4d2da49789c1c5cb42013e6a9f8`，产品checkpoint
+`2f682703ce899dee691eedfc910742b2a729c809`；两者只差TASK报告，完整Task Base..Head为64文件。
+Task Base、High/T4与schema55不变。用户授权独立B复核本代理代开发者实施的最后修正；
+当前结论FIX REQUIRED，不是实施者自审，也不改Slice边界。
 
-现有harness路由复用真实Task claim/fence与原服务，新/旧工作仍各自由原合法runner推进；
-不新增验收平台。分析摘要、每个具体来源的TaskItem和文件计数同一事务发布，保持原历史、
-单次授权、完成/uncertain不重放。受影响测试已通过，当前状态是开发交接，不是独立B PASS。
+上轮直接ready来源的TaskItem漏建、浏览器旧Worker接线、暂停退役断言已有修正和开发验证。
+本轮独立B从既有正常入口确认两个剩余阻塞：被忽略的文件会重新进入摘要并被执行；全部
+条目已忽略或技术失败后，原Task却一直running/waiting_human，无法正确结束。详见B Review。
 
-## Next action
+## Next implementation order
 
-独立B审查完整`c942c4b4..2f682703`及报告后继，核验M1–M10，完成剩余适用T4/真实Web/升级/
-发布门禁并重评全部Slice结果。本代理本轮已实施修正，不自审PASS；不先规划47.3、不恢复
-暂停、不切自动入口引擎、不扩张为工具重构。修正与直接受影响结果见末尾Completion Report。
+1. 按P1-1修同一Task的剩余来源资格：已ignored项不再进分析/可执行摘要，确认事务也不允许
+   把它覆盖回待执行/成功；保留正常未选文件的合法分析/确认、精确源版本与既有历史。
+2. 按P1-2复用现有聚合/安全结算：分析全部失败、最后一项被忽略时，原Task按实际条目终态
+   结束。还有合法待确认/待决定/机器工作或不确定效果时不提前结束、不提前释放保护。
+3. Developer在同一Task交已知失败复现、修改与直接受影响测试和实际风险；不要求Developer
+   重跑全套。独立B复审完整Base..新Head，再完成适用M1–M10和T4/发布门禁。
+   不新增通用恢复、暂停或第二套系统，不先规划47.3，不做验收平台重构。
 
 ## Implementation Scope
 
@@ -267,73 +270,117 @@ Task47.1 的 T1–T10 已 PASS；本次对全部 Slice 结果重评：RO-1 内�
 RO-5 原界面兼容已验而 Task 化全表面未交付。因此继续规划本 Task，Slice 不满足交 A 关闭条件。
 本 Task 通过后必须再次核对全部 RO，不预先宣称自动触发、历史迁移或 Job 退役完成。
 
-## B Review Result — pre-fix checkpoint
+## B Review Result — independent review
 
-Reviewed Head: `8f67b3a23586287d65d85194b5b5d95409ecf993`；产品checkpoint
-`89090b078780d6b9a0ad9a1a48b37ae8eeb15be4`，二者差异只有TASK报告；完整Task Base..Head为63文件。
-Decision: **FIX REQUIRED (修正前候选)**。未发现新增P0；上轮三项产品阻塞的B复现均通过。
+Reviewed Task Base: `c942c4b4b9d3abf105341e8163c1be2d95d9a671`。
+Reviewed Head: `c9a72ce5ed69d4d2da49789c1c5cb42013e6a9f8`，产品`2f682703ce899dee691eedfc910742b2a729c809`。
+范围：完整Base..Head，64文件。Decision: **FIX REQUIRED**，两项P1，未宣告Task/Slice PASS。
 
-| 上轮问题 | B实际回读 |
+用户本轮选择“1”明确授权独立B审查。`/root/independent_task47_2_review`负责独立代码审查、
+关键复现及判定；本代理仍为B，汇总验收/写TASK，上轮代开发者实施的修正不由本代理自批。
+治理通过；main仅有原来的OS/log/图片/zip等未跟踪文件，未访问用户媒体/运行库/私有配置。
+
+### P1-1 — 已忽略的文件重新进入同一Task并被实际整理
+
+**用户操作与实际结果：** Files选One和Two；One的Metadata候选有歧义，用户在任务中心
+点“忽略”。之后回到同一准备工作点重新分析（Provider后来返回唯一匹配），新摘要却把One
+和Two都标previewed并默认纳入确认。确认后One真实MOVE，原item从ignored变success，Task
+显示Completed2/2。不是新整理请求，也不是只显示错了状态；源One已不存在、产生两个Result。
+
+**定位：** `media_discovery.py:_remaining_intent_item_ids`只排除已在execution准入过的intent
+item，遗漏尚未执行就被ignored的TaskItem；`admit_manual_execution`/原item复用路径又把
+ignored覆盖成执行项。仅保留Task ID或item ID不能证明逐项状态被保留。阻塞M3/M4/M7/M8。
+
+**开发指导与验收：**
+
+1. 从现有耐久Task/来源版本/pin及审核状态确定本工作合法剩余范围，分析/ready摘要排除已
+   ignored来源；沿用现有关系，不加第二套映射或恢复系统。不要只隐藏行/取消默认勾选。
+2. 现有精确确认/准入事务再次检查真实来源资格，不得因复用TaskItem或重新规划而覆盖ignored
+   历史、重开已决定文件或消费不合格scope。保留可证明安全的既有合法继续，不把所有历史
+   失败一律变成永久锁；取消/成功/uncertain和源/权限/pin保护不能弱化。
+3. 回归沿上述真实入口覆盖Provider正常新返回的情形：Two可继续产生自己的Result；One保持
+   ignored、源仍在、无新增执行效果/Result，审核审计、原链接和准确文件数跨重开保留。
+   刷新/更新摘要不能使忽略变失效，也不能把混合结果显示成全部成功。显式另开新工作的合法
+   意图仍按原源占用/权限规则处理，不追加“这个路径永久不可整理”的断言。
+
+证据：`independent/ignored-source-repro.py/log`，0.146s；真实API ignore200、重新调用Provider4次、
+ready集合包含One、确认202和实际MOVE/Result。只更换synthetic Provider的正常返回，未改DB/claim。
+
+### P1-2 — 所有文件已结束，Task仍永久显示运行中/等待人工
+
+**两个正常操作例子：**
+
+- 只整理一部影片，识别有问题；用户点“忽略”。文件已ignored，Task仍running/waiting_human。
+- 正常Files提交一部已识别影片，Metadata Provider查询超时。文件为failed/analysis_failed，
+  计数1/0/1；Task仍running/waiting_human，既无人工决定也没有可执行摘要。
+
+两例再调用真实engine五次仍没有机器工作，API运行投影200且一直未结束；零Storage变更、
+占用名额为0。不能让用户靠再次忽略、取消、通用Retry或等下一Worker来完成这个已结束工作。
+
+**定位：** `manual_task_engine.py:_wait_for_human`把分析结束后的所有项一律发布为RUNNING并
+`defer_to_human`，没有处理全部settled；`sqlite_runtime.py:_admit_ignore_locked`更新了条目/
+审核/审计，却没有在最后一项忽略后安全结算原Task。waiting_human本来就不会被Worker领取。
+阻塞M1/M4/M8，以及失败/忽略完成语义；不是“需要新增恢复功能”。
+
+**开发指导与验收：**
+
+1. 完整发现/分析结束后，区分真正待人工的文件和已经settled的条目；全部结束时复用
+   `task_work_status`、既有claim/fence及Task安全结算，按真实失败/混合结果结束，保留各自
+   原因、时间、Result/效果，不强行标全部成功、不新造一套终态规则。
+2. 最后一项ignore被接受后也要在既有事务/安全边界完成Task聚合与结算，不仅改前端文案，
+   也不为结算而排新Job/子Task。仍有待决定/待确认文件、queued/claimed工作、in-flight调用
+   或未证明的效果时，保留相应等待/名额/效果保护，不能靠“当前这一个已结束”提前结整批。
+3. 回归上述单文件全忽略、全技术失败，并核对API/Task Center结束视图、计数/解释、无忙循环、
+   重开一致与零变更；加直接相关混合对照，另一文件仍可正常继续、成功兄弟Result不改写。
+   技术失败仍只读，不增第五恢复类型；真正人工等待不能被误判为结束。
+
+证据：`independent/settled-analysis-repro.py/log`，0.162s；使用真实Files/ignore/API、生产Task引擎
+和临时Local Storage；Provider超时是既有失败边界，没有伪造数据库状态。
+
+### 本轮门禁与限制
+
+证据根：`.git/validation-evidence/b-task47.2-c9a72ce5/`。独立审查报告见`independent/`；
+所有命令/真实输出、停止记录、manifest和计时原始数据保留，不以旧候选制品替代当前验收。
+
+| 验证 | 当前候选实际结果 |
 |---|---|
-| 旧页面确认被重新分析后的计划替代 | 新旧preparationId不同；旧页409 preparation_stale，无授权消费/执行/变更 |
-| 确认后原item深链404 | 原链接在准入前、准入后、执行后持续200，指向本条目的真实execution/Result |
-| 未选第二部借用首部execution且无法继续 | 第二部保留自身stale摘要、execution=null、selected=[]；原Task安全分析202 |
+| 完整Base..Head manifest/空白、治理、ruff format/check、compile、pip、两份示例、禁用依赖检查 | 通过；64文件，rg exit1无FFmpeg/FFprobe；`quality.json` |
+| Web typecheck/lint/format/build | 通过；`web.json` |
+| Web完整单测 | 88文件/1320项通过；`web-unit.log`，101.004s |
+| 独立B真实入口关键复现 | 上述两个P1均确认；两个脚本共约0.307s，无DB状态伪造 |
+| 完整Python unittest discover | 确认P1后主动SIGINT，165.652s/exit -2，未完成，不记PASS或产品测试失败 |
+| 常规Web E2E | 主动停止：93 passed/1 interrupted/159 did not run，41.935s/exit130；中断trace不是新增产品断言失败 |
+| 四组真实浏览器、当前wheel/源码外消费者、53/54升级、Docker fresh/restart/security | 因确认P1未启动；修正候选由独立B完成适用门禁，不转为Developer全套义务 |
 
-### 本轮修正前阻塞与指导
+上轮369项受影响Python和44项真实浏览器是开发交接结果，不能代替完整Task验收。前候选的
+2974项全量/旧wheel和Docker也不能充当当前PASS。未放宽timeout/retry/skip；ResourceWarnings
+与主动中断保留。测试并行墙钟约166秒，计短探测/静态检查保守少于180秒；截至本轮计时417秒
+已低于50%，详见`timing.json`。发现实际P1即停止昂贵门禁，没有为比例重复测试或等待。
 
-1. **P1 — 真实浏览器验收仍接旧Worker。** `operations-inventory.python.spec.ts`完整44项，
-   38通过、6失败。其中第12/13/14/16/35项的新Files工作只能由Task领取，既有
-   `run_discovery_worker_once/for`与`run_manual_worker_once`却只调用旧runner；正常页面停在
-   queued，尚未到达响应丢失/第二部修正等实质断言。让这些既有helper复用resident组装的
-   `ManualTaskEngineWorker`和既有应用服务，保持真实领取/发布、历史runner与原行为断言；
-   不新增路由/假状态、不恢复旧runner领取新工作、不放宽timeout/重试。
-2. **同一验收配套 — 暂停退役旧期望。** 第18项调用remaining-scope-previews实际409
-   `scope_continuation_retired`，仍期待`snapshot_unavailable`及恢复旧pin。按用户合同更新为
-   退役拒绝；保留无变更、无新摘要/继续和历史可读，不创建专项暂停迁移/恢复门禁。
+### M1–M10与全部Slice结果重评
 
-上述指导由用户随后授权本代理直接实施。开发时接通Task engine后的首次完整浏览器为
-43通过/1失败：首部执行后第二部修改得到`analysis_rejected`。真实根因是ready且从未进入
-四类审核的来源未建TaskItem；不是测试等待问题。该原M1/M4/M8交付缺口保持同Task修正。
-
-### 修正前候选的独立证据（不能冒充新checkpoint全量验收）
-
-统一原始证据目录：`.git/validation-evidence/b-task47.2-8f67b3a2/`，保留命令/cwd/耗时JSON、
-日志、失败trace和桌面/窄屏截图。全部临时SQLite/Local Storage/合成Metadata，未访问用户媒体、
-运行库或私有配置；无数据库改状态式探测。原有未跟踪文件全部保留，未纳入提交。
-
-| 验证 | 实际结果 |
+| Task验收 | 当前结论 |
 |---|---|
-| Python完整unittest discover | 2974 tests OK，skipped=7；354.687s，`python-full.json/log` |
-| Web typecheck/lint/format/build | 全通过；`web-full.json` |
-| Web完整单测 | 88文件/1320项通过；`web-unit.log` |
-| Web常规E2E | 253 passed；120.719s，`web-e2e.log` |
-| operations-inventory真实Python E2E | 38 passed/6 failed；97.172s，`inventory.log`、`failed-browser-results/` |
-| 实际新Task页面四类链 | Files→识别→Metadata候选→分类→冲突Rename→摘要→明确确认→同Task已完成Result；1536/380截图已查看，原目标保留 |
-| wheel构建/安装smoke | 通过；SHA256 `0ac7cf770ea6dc16a5c21034f231bbedf723419d1b30acc1f9f18938d2dd9656` |
-| 源码外已安装wheel原生API/Task Worker | site-packages导入，7个真实链/重开/取消/不确定保护用例通过；`installed-native.log` |
-| 真实Task Base54→55及Slice Base53→55 | 两组schema rehearsal通过，保留及失败原子证据见日志 |
-| Docker54→55升级/注入失败/恢复/API-Web持久性 | 使用Colima共享隔离临时目录后通过；初次默认tmp挂载失败保留，未记产品失败 |
-| Docker发布安全 | 通过；`docker-security.log`，候选image `sha256:8bff6a05c054212f1ffb9c5922d35b848d10c25d913d47dcf9d3416a680f5fe8` |
-| Docker empty-baseline | 4服务无媒体挂载健康/就绪；后续浏览器仍等待Task Center旧management/readiness区域而超时，未通过。未在Base复现，不声称Base失败，也不恢复已移走的旧Task Center区域 |
-| ruff/compile/pip/examples/禁用依赖检查/空白 | 通过，无FFprobe/FFmpeg匹配；`quality.json`、`manifest.txt` |
+| M1 | 新工作同Task/无Job的链仍在；全部条目结束却不结算被P1-2阻塞 |
+| M2 | 有界/稳定性/附件原要求不变；本轮无新阻塞，完整当前原生门禁未完成 |
+| M3 | 精确确认不能重新纳入同Task已ignored来源，P1-1未满足 |
+| M4 | 已忽略历史/独立结果和真实完成语义被两项P1阻塞；其余四类证明不能替代此缺口 |
+| M5 | claim/取消/未知保护保持原验收要求；本轮未完成全量，未记PASS |
+| M6 | 现有共享容量/原子准入边界不变；未完成当前共存门禁，不记PASS |
+| M7 | ignored兄弟项不能被同一工作重新执行，P1-1未满足；不扩大为所有崩溃点恢复 |
+| M8 | 忽略后又执行、已结束仍显示进行中影响实际页面结果，两项P1阻塞 |
+| M9 | 当前打包/部署/完整回归未完成；修正后独立B验收 |
+| M10 | Pause退役与四类继续边界不变，未新增暂停迁移/恢复义务 |
 
-B在确认上述门禁阻塞后未继续启动剩余TaskCenter visual/direct-files/automation浏览器组及
-Docker restart。新版checkpoint改变了可执行输入；以上全量/制品/部署证据仅归属修正前候选。
-独立B须对新版完成适用门禁；Docker empty-baseline旧页面假设先按当前已验收旅程核实，
-不因验收脚本假设给本Task增加服务状态页面功能。ResourceWarnings与本地浏览器探针选择器
-错误保留；临时页面探针的错误由正确入口/选择器回读核实，未包装成产品缺陷。
-
-### 全部Slice结果重评（尚未关闭）
-
-| Outcome | 当前边界与结论 |
+| Slice outcome | 当前结论 |
 |---|---|
-| RO-1 | 手动调度/同Task执行已接；本轮补齐直接ready来源的TaskItem/独立计数，修正候选待独立验收 |
-| RO-2 | 手动生产链已接；due/Run once/独立API-CLI切引擎仍后续，不算已完成 |
-| RO-3 | 现有四类链复用，精确确认/原链接/逐项作用域修正已有证据；新候选仍须完成适用验收 |
-| RO-4 | schema55加法与53/54升级演练已验证；完整Job迁移/删除仍后续，未完成 |
-| RO-5 | 真实新Task页面四类→摘要→Result已走通；本Task/全部入口最终验收仍待B/A |
+| RO-1 | 手动生产链已接，但逐项决定/任务终态仍有实际缺口，未完整交付 |
+| RO-2 | due/Run once/独立API-CLI引擎切换仍后续；本Task不承担这些切换 |
+| RO-3 | 复用现有四类流程，但忽略保留/安全剩余scope/完成语义仍受两项P1阻塞 |
+| RO-4 | schema55加法在既有范围，Job历史迁移/删除仍后续；本轮未补记旧证据为新PASS |
+| RO-5 | Task Center/Files真实忽略与结束结果未闭环；Task/Slice不满足关闭条件 |
 
-Slice47保持ACTIVE，不宣告Slice PASS/CLOSED，也不以可选工具整理追加Task。
+同Task按上述两项修正；Slice47仍ACTIVE，不先规划下一Task，不修改A-owned合同/路线图/进度。
 
 ## Developer Completion Report — user-authorized direct fix
 
@@ -375,4 +422,4 @@ Status: **READY FOR B REVIEW**。用户授权后本代理由B转为Developer实�
 - 本checkpoint未重跑完整Python/Web/新wheel/Docker及其余真实浏览器组；独立B负责，旧制品
   hash与旧2974项全量不能作为新checkpoint PASS。新回归总测试数相应增加。
 - 已关闭本代理启动的两个临时原生页面服务器并清理其fixture；浏览器harness随测试正常退出。
-- 根Task保持READY FOR B REVIEW，不自审PASS、不规划下一Task、不关闭Slice。
+- 本次开发交接当时为READY FOR B REVIEW；当前独立B判定见上文，不自审PASS、不规划下一Task、不关闭Slice。
