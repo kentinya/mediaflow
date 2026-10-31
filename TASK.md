@@ -12,7 +12,7 @@ Recheck intervening commits without silently repinning the Task Base.
 Task ID: 47.3
 Task Type: SLICE
 Parent Slice: 47
-Status: READY FOR B REVIEW
+Status: FIX REQUIRED
 Task Base: dfcfebbdb9c879b38806e29c7b41c9192aeca83e
 Difficulty: High
 Test Level: T4
@@ -374,101 +374,107 @@ Task-only identity, not weakened, and the final full suite above passes.
 No schema change, no user database/media access, no A-owned Slice/Roadmap/Progress edit, no commit
 beyond this checkpoint chain, no push/deploy. B owns full T4 acceptance and independent review.
 
-## B Review Result (Round 1 — historical)
+## B Review Result
 
 ```text
-Reviewed: dfcfebbdb9c879b38806e29c7b41c9192aeca83e..485eaa133aa750b86ea74a4cd84a37ca4bc65507
-Implementation checkpoint: 2ae1b1bf48be179d447a21aa421817931299ccb4
+Reviewed: dfcfebbdb9c879b38806e29c7b41c9192aeca83e..e7b3fcb837727fd23e71b4293c74502496ba86ac
+Implementation checkpoint: b1859472c3070f9ccc2d8b7c65aecdd96357dc85
 Decision: FIX REQUIRED
 Slice Required Outcomes / Surfaces all satisfied: NO
 Next: SAME TASK FIX LOOP
 ```
 
-B independently inspected the full 11-file Base..Head diff, including all production changes,
-new/changed tests and Task planning/handoff. `2ae1b1bf..485eaa13` changes only the report in
-`TASK.md`; executable inputs are identical. Branch `main`; review started with no tracked edits.
-Pre-existing untracked OS/reference/log/archive files remain untouched and unstaged. Governance
-preflight passed. A-owned Slice/Roadmap/Progress are unchanged; their older Task47.2 next-action
-text is stale navigation, not a change to this committed Contract or Task47.3's immutable Base.
+B checked the complete 16-file Base..Head change and the intervening correction against the original
+Task/committed Contract. `b1859472..e7b3fcb8` changes only `TASK.md`. Review started on `main` with
+no tracked edits; original untracked OS/log/reference/archive files remain untouched and unstaged.
+Governance passed. Original Task Base, Goal, High/T4 level and test ownership remain unchanged.
+Prior review evidence/decision is retained at `ec3b9f83:TASK.md`; this section states current results.
 
-### Task blockers and corrections
+### Verified corrections
 
-1. **P0 — 自动执行缺少有效 Task 租约/修改边界保护。**
-   `ManualTaskEngineWorker._run_automatic()` invokes its runner without the keepalive used by the
-   Files discovery/analysis path. `DefinitionScopedExecutionService` supplies only live scheduled
-   authority to Executor; the new kernel coordinator fences later publication, but does not establish
-   `begin_mutation` or recheck the Task claim at each unperformed effect boundary.
-   Existing real Scheduler → Task Worker → definition pipeline, with a local fake Provider advancing
-   the fixture clock by 301 seconds during its real search call, reached target CreateDirectory
-   **after the 300-second lease expired**, with `mutation_in_flight=False`. The target was written
-   and the source deleted, but fenced completion could not commit: Task remained running/claimed,
-   its item processing, with zero Results. This is an execution-safety defect, not merely missing UI.
-   **Fix:** renew the Task and resident Worker through long discovery/Provider/Storage stages using
-   existing keepalive facilities; stop unperformed effects on lost ownership. Integrate the existing
-   claim-fenced durable mutation boundary with the shared Executor and its primary/attachment/cleanup
-   calls, retaining current live permission checks. Clear the marker only with verified durable
-   outcome; interrupted dispatch without proof stays uncertain/non-replayable. Do not add another
-   executor/recovery system. Add real automatic-path tests for long calls, claim loss before dispatch
-   and interruption after dispatch/before durable outcome. Preserve completed siblings and capacity.
-2. **P1 — 旧式 interval/Cron 新 Task 无法被生产 Worker 执行。**
-   `_admit_schedule_task()` saves the Task/schedule audit but no managed-definition origin.
-   Production `_automatic_task_runner()` requires `origin_definition_id` and rejects it before
-   resolving its pipeline. Reproduction through existing `IntervalSchedule` → `IntervalScheduler.tick`
-   → Task Worker with the actual production runner admits one Task/no Job, then settles FAILED;
-   its display origin is absent. Cron shares this dispatch branch; this round reproduced interval.
-   **Fix:** persist and consume the exact existing legacy schedule intent/pin/scope through the same
-   Task engine, preserving the entry's supported authority/analysis semantics. Do not invent a managed
-   definition, parse CLI output or fall back to a new Job. Cover interval and timezone-aware Cron
-   through the production composition and actual file/result readback, not admission alone.
-3. **P1 — Task47.3 的其余必要入口和读回尚未交付。**
-   Run once still calls `admit_automation_run_once_job()` and writes Task+Job; direct/API/CLI
-   submissions and `_run_queued_workflow()`'s printed `Task ID:` extraction remain. Job-less
-   Automation record/latest/metric queries and affected operator readback are not completed.
-   These are explicit unmet Goal/scope/acceptance, not new scope or a new Task.
-   **Fix:** finish scope 1–7 and the existing-entry disposition table in this same Task. Preserve
-   analysis-only and denied-command semantics, remote ticket/permission/limit checks, atomic exact
-   request/capacity/authority reconciliation, and the historical Job transition boundary. Complete
-   the necessary Task-based readback/controls while freezing original Automation outcomes/times.
-4. **Required acceptance is incomplete.** Recognition-no-match was independently observed reaching
-   `waiting_recognition` / `waiting_human`, zero capacity and zero effects; it is **not** a defect.
-   Initial waiting alone does not establish all four automatic decision → analysis → summary →
-   explicit continuation journeys, same-Task lineage, original records, current authority and
-   completed/uncertain sibling non-replay. Implement/prove the missing Task acceptance using existing
-   API/Web/Worker routes and affected tests. B will run the assigned T4/native/package gates on the
-   coherent corrected candidate. Missing B full-suite evidence is not Developer implementation work.
+- The earlier slow-Provider reproduction now reaches effects with a renewed claim and durable
+  mutation marker, then commits the verified Result. Lost-generation and interrupted-dispatch
+  tests also pass, with no replay of unproved effects. This resolves the previous concrete P0
+  reproduction within this focused validation; it is not full T4 safety acceptance.
+- Interval and timezone-aware Cron production-runner empty-scope tests pass. B additionally ran
+  legacy interval → production runner → real file organization: COMPLETED, one Result, zero Jobs.
+- B ran API Run once and managed Scheduler due → actual production `_automatic_task_runner` →
+  shared definition pipeline with temporary Local Storage/fake Provider. Each moved one source,
+  completed one Task/Result and wrote zero Jobs. Records GET returned that completed Task once.
+  CLI Task identity is now passed structurally; the previous printed-text extraction is gone.
 
-### Actual validation and limits
+### Remaining Task blockers and actionable corrections
 
-Evidence (local, ignored, not remotely published):
-`.git/validation-evidence/485eaa133aa750b86ea74a4cd84a37ca4bc65507/b-review-20261031/`.
+1. **P1 — 自动任务保存业务决定后无法继续分析。**
+   Existing Run once API → real pipeline with no matching Recognition rule → Task Center item
+   GET → existing `recovery/decision` selecting A succeeds (200, no effects). Reading its new
+   checkpoint and POSTing the offered `recovery/continue` returns **409 `no_linked_preparation`**:
+   “this Task has no linked Files preparation to re-analyze”. The decision is saved but the
+   operator cannot reach analysis/summary/explicit execution. One Task/no Jobs/zero effects remain.
+   `ManualTaskContinuationService.applies()` selects every kernel Task, but `continue_analysis()`
+   requires a Files discovery; new automatic Tasks have none.
+   **Fix:** generalize the existing same-Task continuation/analysis/summary behavior to the admitted
+   automatic source/pin/checkpoint/decisions. Preserve immutable file lineage, saved choices and
+   capacity/authority checks; do not require a new Files submission, new top-level Task or Job.
+   Complete the four actual decision → analysis → summary → explicit continuation journeys with
+   source/version/pin, independent sibling results and completed/uncertain non-replay. Add the
+   failing Recognition API sequence to affected tests; waiting-only assertions are insufficient.
+2. **P1 — 定时任务详情历史仍丢失已完成 Task 的关联和结果。**
+   After B's real due Task completed and moved its file, the existing definition `/occurrences`
+   GET returned `taskId=null`, `outcome=emitted`, totalItems=0 and no successes. Its advertised
+   available detail action pointed to `/api/v1/operations/jobs/<the Task id>`; following exactly
+   that returned link produced **404**. The separate records GET did correctly show completion.
+   `list_automation_definition_occurrences()`/latest still derive `linked_task_id` solely through
+   `automation_jobs`, although the new admission writes a Task id into the occurrence link.
+   **Fix:** use the proved Task admission relationship in occurrence/latest/definition projections,
+   per-item results and advertised navigation, while retaining historical Job-backed reads. Check
+   affected inventory/latest/metrics/Dashboard/readiness consumers as scope 7 requires. Preserve
+   original execution facts after recovery; no read may create work or guess identity from names.
+3. **P1 — 直接 CLI / remote API 整理仍绕过共同 Task 调度。**
+   `organize --execute` / batch still create a generic `PersistentTaskCoordinator` Task and execute
+   outside the kernel. `ExecutionAuthorizationService.submit_organize()` still consumes the remote
+   ticket into a new Job. These are acknowledged unfinished scope-4/entry-table outcomes, not new
+   product scope. The observer fix removes text parsing but does not migrate these submissions.
+   **Fix:** finish the original existing-entry disposition table in this Task using shared Task
+   admission/Worker/structured identity. Preserve direct versus whole-library scope, limits,
+   analysis-only/denied-command semantics, remote enablement/current permission/ticket checks and
+   atomic authority/capacity/repeat reconciliation. Historical Job handling remains transitional;
+   full historical migration/removal is not being added to Task47.3.
 
-- `focused.log`: `.venv/bin/python -m unittest tests.test_automation_task_admission
-  tests.test_v2_automation_run_once.RunOnceApiTests.test_scheduled_definition_runs_as_one_kernel_task_without_a_job
-  tests.test_v2_automation_run_once.RunOnceApiTests.test_scheduled_definition_organizes_a_ready_file_on_one_task`
-  — **10 passed**, 0.782 seconds (1.03 seconds wall).
-- `probe.py` / `probe.log`: temporary-root/native Scheduler/Task Worker/production-pipeline probes,
-  using the existing ready-file test fixture, actual Local Storage and fake Provider; no user data
-  or network Provider. Recognition waiting is correct. The inherited ready-success assertion is
-  expected to fail after deliberately removing recognition rules; this is diagnostic output, not
-  a reported regression. The slow-Provider probe reproduces blocker 1, and the actual production
-  runner reproduces blocker 2. Script wall time 0.70 seconds. No production source/test changed.
-- `python3 scripts/check_governance.py` — PASS before review; review-doc checks recorded with this
-  checkpoint. Developer's 2997-test/7-skip full run is retained as its report, not recast as B acceptance.
-- Full Python/Web/E2E/wheel/Docker/native visual acceptance remains **pending**. Proven blockers
-  permit early FIX REQUIRED under workflow §6; no expensive full gate was run or waived this round.
-  Cumulative tests take only a few seconds, below 50% of this review turn; no idle time is used to
-  manufacture the ratio.
+### Actual validation and pending gates
+
+Local ignored evidence:
+`.git/validation-evidence/e7b3fcb837727fd23e71b4293c74502496ba86ac/b-review-20261031/`.
+
+- `focused.log`: root `.venv/bin/python -m unittest tests.test_automation_task_admission
+  tests.test_v2_automation_run_once tests.test_task_scheduling_fencing
+  tests.test_execution_authorization tests.test_preview_retirement` — **89 tests passed**,
+  6.922 seconds / 7.20 seconds wall, database ResourceWarnings disclosed; no test assertion changed
+  by B. This includes slow Provider, lost claim, interrupted dispatch and interval/Cron cases.
+- `native_probe.py`/`.log`: three real file journeys described above, with actual production runner;
+  only configuration/service factories use existing temporary-root/fake-Provider fixtures. Each
+  persisted one completed Result and no Job. The actual occurrence response advertises the broken
+  link; B followed that exact link, not a guessed route. Two runs: 0.63 + 0.54 seconds wall.
+- `recovery_probe.py`/`.log`: existing API Run once → Recognition decision → fresh checkpoint →
+  continue. Decision 200; continue 409; expected-202 assertion fails, reproducing blocker 1.
+  0.32 seconds wall. No user databases/media or network Provider used.
+- `python3 scripts/check_governance.py` — PASS before review; `git diff --check Base..candidate`
+  clean. Review-doc governance/whitespace checks accompany this checkpoint.
+- Cumulative timed tests/probes: **8.69 seconds**, below 50% of this review turn, without idle waits.
+  Developer's full Python result (3001 / 7 skipped) remains its report, not B acceptance. Full T4
+  Python/Web/E2E/native visual/wheel/Docker gates remain **pending**, not waived or passed. Proven
+  blockers permit early FIX REQUIRED under workflow §6. B owns those gates on the corrected coherent
+  candidate; Developer runs the failing/new/affected tests, not B's full regression matrix.
 
 ### Entire Slice outcome reassessment
 
-| Required outcome | Current result |
+| Outcome | Current result |
 |---|---|
-| RO-1 — stable Task, shared scheduling/ownership | Incomplete: Files foundation and due admission exist; automatic claim/effect safety and the other new admissions remain blocked. |
-| RO-2 — all triggers share the engine | Incomplete: definition ready/empty path works in focused tests; legacy schedule dispatch fails, Run once/API/CLI remain split. |
-| RO-3 — four-type recovery inside the same work | Incomplete: Files foundation and automatic recognition waiting exist; all automatic same-Task continuations/original outcomes are not established. |
-| RO-4 — safe Job migration/removal | Not delivered; deliberately outside Task47.3's full migration scope. Existing Job schema/dispatch remain. |
-| RO-5 — complete operator/admin journeys | Incomplete: Job-less records/metrics/latest and affected readback/controls remain unfinished; Pause retirement is retained, not reopened. |
+| RO-1 — stable Task and scheduling ownership | Partly implemented: Files/due/Run once now admit Tasks; API/CLI unification and automatic continuation remain incomplete. |
+| RO-2 — one engine across entrances | Partly implemented: real due/Run once/legacy execution succeeds; direct/remote submission is not unified. |
+| RO-3 — four-type same-work recovery | Incomplete: automatic Recognition Save succeeds but Continue is blocked by a Files-only prerequisite; remaining automatic full journeys need delivery/proof. |
+| RO-4 — safe Job history migration/removal | Not delivered and outside this Task's complete-migration scope; not a new Task47.3 blocker. |
+| RO-5 — operator/admin journeys | Incomplete: records/Run once readback improved, but occurrence history/results/navigation are broken and remaining consumers need reconciliation. |
 
-Task47.2's prior PASS is not erased. No new Task is planned; this Task remains High/T4 with its
-original Base, Goal, scope, acceptance and test ownership. Slice47 stays ACTIVE; no Closure Packet,
-A Final Review or Slice PASS/CLOSED is claimed.
+Keep fixes in Task47.3; no new Task is planned. Task47.2's prior PASS and A-owned Slice/Roadmap/
+Progress are unchanged. Slice47 remains ACTIVE; no Closure Packet or A Final Review/closure claimed.
