@@ -9503,10 +9503,14 @@ class SQLiteTaskRepository:
             command = None
             task_id = str(task_id_value) if task_id_value else None
         schedule_id = row["schedule_id"]
-        definition_id = row["definition_id"]
         origin_definition_id = (
             str(row["origin_definition_id"]) if row["origin_definition_id"] else None
         )
+        # A Job-backed occurrence carries the definition on the Job itself; a
+        # Task-admitted Run once (and a follow-up that inherits its origin)
+        # carries the exact admission-written origin instead.  This is read-only
+        # evidence, never a lookup against today's Active configuration.
+        definition_id = row["definition_id"] or origin_definition_id
         if row["derived_trigger"] == "manual":
             trigger = OperationsRunTrigger.MANUAL
         elif definition_id or schedule_id:
@@ -19017,6 +19021,61 @@ class SQLiteTaskRepository:
             self._connection.commit()
         return ScheduledTaskAdmission(task, state, False)
 
+    def find_scheduled_admission(
+        self, *, principal: str, request_id: str
+    ) -> tuple[PersistentTask, TaskSchedulingState] | None:
+        """The durable Task admitted by one exact principal/request identity."""
+
+        with self._lock:
+            return self._scheduled_admission_locked(principal, request_id)
+
+    def list_run_once_task_admissions(
+        self,
+        *,
+        principal_id: str | None = None,
+        definition_id: str | None = None,
+        limit: int = 50,
+    ) -> tuple[tuple[PersistentTask, TaskSchedulingState], ...]:
+        """Definition-bound Run once admissions whose durable identity is a Task.
+
+        Only the admission-written origin is used; a historical Job-backed Run
+        once keeps its own read path.  No display value is inferred from today's
+        Active configuration.
+        """
+
+        if isinstance(limit, bool) or not isinstance(limit, int) or not 1 <= limit <= 100:
+            raise ValueError("Run once list limit must be between 1 and 100")
+        query = (
+            "SELECT s.task_id FROM task_scheduling s "
+            "JOIN operations_run_display d ON d.task_id = s.task_id "
+            "WHERE s.admission_trigger=? AND d.origin_definition_id IS NOT NULL "
+            + ("AND s.admission_principal=? " if principal_id is not None else "")
+            + ("AND d.origin_definition_id=? " if definition_id is not None else "")
+            + "ORDER BY s.created_at DESC, s.task_id DESC LIMIT ?"
+        )
+        parameters = (
+            (TaskTrigger.RUN_ONCE.value,)
+            + ((principal_id,) if principal_id is not None else ())
+            + ((definition_id,) if definition_id is not None else ())
+            + (limit,)
+        )
+        with self._lock:
+            rows = self._connection.execute(query, parameters).fetchall()
+        values = []
+        for row in rows:
+            task = self._task_by_id(row["task_id"])
+            state = self.get_task_scheduling(row["task_id"])
+            if task is not None and state is not None:
+                values.append((task, state))
+        return tuple(values)
+
+    def _task_by_id(self, task_id: str) -> PersistentTask | None:
+        with self._lock:
+            row = self._connection.execute(
+                "SELECT * FROM tasks WHERE task_id=?", (task_id,)
+            ).fetchone()
+        return self._task(row) if row else None
+
     def get_task_scheduling(self, task_id: str) -> TaskSchedulingState | None:
         with self._lock:
             return self._scheduled_state_locked(task_id)
@@ -19103,11 +19162,15 @@ class SQLiteTaskRepository:
     ) -> TaskSchedulingState | None:
         """Extend exactly this Worker's live claim generation.
 
-        The heartbeat names the Worker, the token *and* the generation, and it
-        is refused once the lease elapsed, so an owner that already lost the
-        Task cannot keep a claim alive.  It never touches ``control_revision``
-        or ``control_request``: a normal heartbeat can never make a legitimate
-        pause/cancel look stale.
+        The heartbeat names the Worker, the token *and* the generation.  A
+        successor claim always mints a new generation/token, so refreshing the
+        same generation after its lease elapsed cannot revive a lost owner and
+        cannot race a takeover: the takeover transaction either committed first
+        (and this update matches nothing) or sees the renewed expiry and waits.
+        This keeps one genuinely long Provider/Storage call from being treated
+        as a dead owner while nobody else has taken the work.  It never touches
+        ``control_revision`` or ``control_request``: a normal heartbeat can
+        never make a legitimate pause/cancel look stale.
         """
 
         if not isinstance(fence, TaskClaimFence):
@@ -19118,8 +19181,7 @@ class SQLiteTaskRepository:
                 """UPDATE task_scheduling
                 SET claim_expires_at=?, heartbeat_at=?, updated_at=?
                 WHERE task_id=? AND claim_token=? AND claim_worker_id=?
-                    AND claim_generation=? AND queue_state=?
-                    AND (claim_expires_at IS NULL OR claim_expires_at > ?)""",
+                    AND claim_generation=? AND queue_state=?""",
                 (
                     expires_at.isoformat(),
                     fence.now.isoformat(),
@@ -19129,7 +19191,6 @@ class SQLiteTaskRepository:
                     fence.worker_id,
                     fence.generation,
                     TaskQueueState.CLAIMED.value,
-                    fence.now.isoformat(),
                 ),
             )
             if cursor.rowcount != 1:

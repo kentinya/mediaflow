@@ -1286,6 +1286,7 @@ class IntervalScheduler:
                 return job
             return None
         from mediaflow.application.task_scheduling import build_scheduled_task_admission
+        from mediaflow.domain.task_persistence import RunDisplayContext
         from mediaflow.domain.task_scheduling import TaskTrigger
 
         task, state = build_scheduled_task_admission(
@@ -1307,6 +1308,14 @@ class IntervalScheduler:
             next_run_at=next_run,
             now=now,
             capacity=capacity,
+            # A legacy interval/Cron occurrence has no saved definition, but
+            # the Task still carries the exact schedule identity that produced
+            # it so the production runner can dispatch it without guessing from
+            # a command label or a timestamp.
+            display=RunDisplayContext(
+                origin_definition_name=schedule.schedule_id,
+                origin_kind="legacy-schedule",
+            ),
         )
         if admitted is None:
             return None

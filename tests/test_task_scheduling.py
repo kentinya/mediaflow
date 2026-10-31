@@ -1469,6 +1469,9 @@ class TransitionBoundaryTests(unittest.TestCase):
         package = Path(mediaflow_package_path()).parent
         expected = {
             "application/automation.py",
+            # Task47.3: definition Run once admits through the shared kernel
+            # Task/slot/request identity instead of a Job.
+            "application/automation_run_once.py",
             "application/automation_definition_execution.py",
             "application/manual_organize_execution.py",
             "application/manual_task_continuation.py",

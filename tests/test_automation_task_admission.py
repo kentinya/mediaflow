@@ -188,7 +188,7 @@ class AutomaticEngineTests(unittest.TestCase):
         admission = self._admit(scheduling)
         seen: list[str] = []
 
-        def runner(task, claim, clock=None):
+        def runner(task, claim, clock=None, heartbeat=None):
             seen.append(task.task_id)
 
         worker = self._worker(scheduling, runner)
@@ -208,7 +208,7 @@ class AutomaticEngineTests(unittest.TestCase):
         scheduling = TaskSchedulingService(self.repository, capacity=5)
         admission = self._admit(scheduling)
 
-        def runner(task, claim, clock=None):
+        def runner(task, claim, clock=None, heartbeat=None):
             raise RuntimeError("provider unavailable")
 
         worker = self._worker(scheduling, runner)
@@ -223,7 +223,7 @@ class AutomaticEngineTests(unittest.TestCase):
         scheduling = TaskSchedulingService(self.repository, capacity=5)
         admission = self._admit(scheduling)
 
-        def runner(task, claim, clock=None):
+        def runner(task, claim, clock=None, heartbeat=None):
             item = scheduling.begin_item(
                 claim,
                 storage_id="local",

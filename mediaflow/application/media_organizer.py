@@ -628,6 +628,20 @@ class MediaOrganizerService:
                     self._record(item, tracked_item, persist_evidence=False)
                 return item
             plan = replacement
+            if execute and tracked_item is not None and self._task_coordinator is not None:
+                # A kernel-managed Task records the durable effect boundary
+                # immediately before the shared Executor starts.  An interrupted
+                # dispatch then stays non-replayable until this same owner
+                # publishes the item's verified outcome; the generic manual
+                # coordinator has no such boundary and keeps its behavior.
+                begin_mutation = getattr(self._task_coordinator, "begin_mutation", None)
+                if callable(begin_mutation):
+                    begin_mutation(
+                        tracked_item,
+                        plan.operation.value
+                        if hasattr(plan.operation, "value")
+                        else str(plan.operation),
+                    )
             execution = self._executor.execute(
                 plan,
                 self._storages,

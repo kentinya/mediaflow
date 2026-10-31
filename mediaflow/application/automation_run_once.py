@@ -95,17 +95,15 @@ class AutomationRunOnceService:
         expected_revision_version=None,
         expected_revision_digest=None,
     ):
-        """One explicit command atomically admits a pinned Job and queued Task."""
+        """One explicit command atomically admits one pinned kernel Task."""
         import posixpath
-        from uuid import uuid4
 
-        from mediaflow.domain.automation import (
-            AutomationCommand,
-            AutomationJob,
-            AutomationJobOrigin,
-            AutomationJobStatus,
+        from mediaflow.domain.task_persistence import RunDisplayContext
+        from mediaflow.domain.task_scheduling import (
+            TaskAdmissionConflict,
+            TaskQueueFull,
+            TaskTrigger,
         )
-        from mediaflow.domain.task_persistence import PersistentTask, PersistentTaskStatus
 
         if self._repository is None or self._managed is None:
             raise AutomationRunOnceError("Run once admission is unavailable", status=503)
@@ -183,13 +181,14 @@ class AutomationRunOnceService:
             raise AutomationRunOnceError("the saved source library is unavailable", status=409)
         now = self._clock()
         limit = min(definition.item_limit, 100)
-        task = PersistentTask(
-            str(uuid4()),
+        from mediaflow.application.task_scheduling import build_scheduled_task_admission
+
+        task, state = build_scheduled_task_admission(
             "organize",
-            PersistentTaskStatus.PENDING,
-            True,
-            now,
-            now,
+            execute_authorized=True,
+            trigger=TaskTrigger.RUN_ONCE,
+            principal=actor,
+            request_id=admission_request_id,
             scope_path=posixpath.join(
                 resource.get("storagePath", resource.get("rootPath", "")),
                 definition.source_scope or "",
@@ -197,42 +196,139 @@ class AutomationRunOnceService:
             item_limit=limit,
             configuration_snapshot_id=active.revision_id,
             configuration_snapshot_digest=active.digest,
-        )
-        job = AutomationJob(
-            str(uuid4()),
-            AutomationCommand.ORGANIZE,
-            AutomationJobStatus.PENDING,
-            now,
-            now,
-            limit=limit,
-            task_id=task.task_id,
-            execute_authorized=True,
-            configuration_snapshot_id=active.revision_id,
-            configuration_snapshot_digest=active.digest,
-            configuration_snapshot_version=active.version,
-            definition_id=definition.definition_id,
-            definition_fingerprint=definition.definition_fingerprint,
-            definition_version=active.version,
-            run_mode=definition.mode,
-            resource_library_id=definition.resource_library_id,
-            source_scope=definition.source_scope,
-            execution_origin=AutomationJobOrigin.RUN_ONCE,
-            execution_principal=actor,
-            admission_request_id=admission_request_id,
+            require_configuration_snapshot=True,
+            now=now,
         )
         capacity = active.document.get("automation", {}).get("maximumActiveJobs", 100)
-        admitted = self._repository.admit_automation_run_once_job(
-            job, capacity, task=task, definition_name=definition.name
-        )
-        if admitted is None:
-            raise AutomationRunOnceError(
-                "the processing queue is full; no work was admitted", code="queue_full", status=409
+        try:
+            admitted = self._repository.admit_scheduled_task(
+                task,
+                state,
+                capacity=capacity,
+                display=RunDisplayContext(
+                    source_scope=definition.source_scope,
+                    origin_definition_id=definition.definition_id,
+                    origin_definition_name=definition.name,
+                    origin_kind="definition-run-once",
+                ),
             )
-        return admitted
+        except TaskQueueFull as error:
+            raise AutomationRunOnceError(
+                "the processing queue is full; no work was admitted",
+                code="queue_full",
+                status=409,
+            ) from error
+        except TaskAdmissionConflict as error:
+            raise AutomationRunOnceError(
+                "the request identity already admitted different work",
+                code="definition_changed",
+                status=409,
+            ) from error
+        if getattr(admitted, "reused", False):
+            existing = self._repository.get_run_display_context(admitted.task.task_id)
+            if existing is None or existing.origin_definition_id != definition.definition_id:
+                raise AutomationRunOnceError(
+                    "the request identity already admitted work for another definition",
+                    code="definition_changed",
+                    status=409,
+                )
+        return self._execution_view(admitted.task, admitted.state)
+
+    def _execution_view(self, task, state):
+        """A durable read view of one Task-admitted Run once.
+
+        The Task is the identity; this bounded view keeps the existing operator
+        projection while never writing, reviving or guessing a Job row.
+        """
+
+        from mediaflow.domain.automation import (
+            AutomationCommand,
+            AutomationJob,
+            AutomationJobOrigin,
+            AutomationJobStatus,
+        )
+
+        display = None
+        reader = getattr(self._repository, "get_run_display_context", None)
+        if callable(reader):
+            display = reader(task.task_id)
+        definition_id = (
+            display.origin_definition_id
+            if display is not None and display.origin_definition_id
+            else None
+        )
+        if not definition_id:
+            raise AutomationRunOnceError(
+                "the admitted Task has no durable definition origin", status=503
+            )
+        status = {
+            "pending": AutomationJobStatus.PENDING,
+            "running": AutomationJobStatus.RUNNING,
+            "paused": AutomationJobStatus.RUNNING,
+            "completed": AutomationJobStatus.COMPLETED,
+            "partial_success": AutomationJobStatus.COMPLETED,
+            "failed": AutomationJobStatus.FAILED,
+            "cancelled": AutomationJobStatus.CANCELLED,
+        }.get(task.status.value, AutomationJobStatus.PENDING)
+        run_mode = AutomationTaskRunMode.AUTOMATIC_ORGANIZATION
+        resource_library_id = None
+        definition_version = None
+        source_scope = display.source_scope if display is not None else None
+        try:
+            revision = self._managed.require(task.configuration_snapshot_id)
+            raw = next(
+                (
+                    value
+                    for value in revision.document.get("automationTaskDefinitions", [])
+                    if value.get("id") == definition_id
+                ),
+                None,
+            )
+            if raw is not None:
+                pinned = AutomationTaskDefinition.from_document(raw)
+                run_mode = pinned.mode
+                resource_library_id = pinned.resource_library_id
+                source_scope = pinned.source_scope
+                definition_version = revision.version
+        except Exception:
+            # A removed/unreadable historical revision never erases the durable
+            # Task identity; the projection keeps the admission-written origin.
+            pass
+        return AutomationJob(
+            task.task_id,
+            AutomationCommand.ORGANIZE,
+            status,
+            task.created_at,
+            task.updated_at,
+            limit=task.item_limit,
+            started_at=task.started_at,
+            completed_at=task.completed_at,
+            task_id=task.task_id,
+            error=task.error,
+            execute_authorized=True,
+            configuration_snapshot_id=task.configuration_snapshot_id,
+            configuration_snapshot_digest=task.configuration_snapshot_digest,
+            definition_id=definition_id,
+            definition_version=definition_version,
+            run_mode=run_mode,
+            resource_library_id=resource_library_id,
+            source_scope=source_scope,
+            configuration_snapshot_version=definition_version,
+            execution_origin=AutomationJobOrigin.RUN_ONCE,
+            execution_principal=state.admission_principal,
+            admission_request_id=state.admission_request_id,
+        )
 
     def find_execution(self, actor, request_id):
         if self._repository is None:
             return None
+        finder = getattr(self._repository, "find_scheduled_admission", None)
+        if callable(finder):
+            admission = finder(principal=actor, request_id=request_id)
+            if admission is not None:
+                task, state = admission
+                if state.admission_trigger.value == "run_once":
+                    return self._execution_view(task, state)
         return self._repository.find_automation_run_once_job(
             principal_id=actor, admission_request_id=request_id
         )
@@ -353,6 +449,14 @@ class AutomationRunOnceService:
 
     def get(self, discovery_id: str) -> MediaDiscovery:
         if self._repository is not None:
+            reader = getattr(self._repository, "get_task", None)
+            scheduling_reader = getattr(self._repository, "get_task_scheduling", None)
+            if callable(reader) and callable(scheduling_reader):
+                task = reader(discovery_id)
+                if task is not None:
+                    state = scheduling_reader(task.task_id)
+                    if state is not None and state.admission_trigger.value == "run_once":
+                        return self._execution_view(task, state)
             job = self._repository.get_job(discovery_id)
             if job is not None and job.run_once:
                 return job
@@ -365,7 +469,31 @@ class AutomationRunOnceService:
             if self._repository
             else ()
         )
-        return (*jobs, *legacy)[:limit]
+        tasks = ()
+        task_reader = (
+            getattr(self._repository, "list_run_once_task_admissions", None)
+            if self._repository
+            else None
+        )
+        if callable(task_reader):
+            tasks = tuple(
+                self._execution_view(task, state)
+                for task, state in task_reader(principal_id=actor, limit=limit)
+            )
+        return (*tasks, *jobs, *legacy)[:limit]
+
+    def list_task_executions(self, definition_id: str, *, limit: int = 50) -> tuple:
+        """Task-admitted Run once views for one definition's history."""
+
+        if self._repository is None:
+            return ()
+        reader = getattr(self._repository, "list_run_once_task_admissions", None)
+        if not callable(reader):
+            return ()
+        return tuple(
+            self._execution_view(task, state)
+            for task, state in reader(definition_id=definition_id, limit=limit)
+        )
 
     def document(self, discovery: MediaDiscovery) -> dict[str, object]:
         """The bounded Run-once projection of one definition-bound discovery."""

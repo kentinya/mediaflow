@@ -236,6 +236,7 @@ class ExecutionAuthorizationTests(unittest.TestCase):
 
                 def fake_main(args, **kwargs):
                     calls.append(args)
+                    kwargs["_task_observer"]("task-execute")
                     kwargs["stdout"].write("Task ID: task-execute\n")
                     return 0
 

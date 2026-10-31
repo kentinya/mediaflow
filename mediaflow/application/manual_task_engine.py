@@ -16,6 +16,7 @@ from collections.abc import Callable
 from dataclasses import replace
 from datetime import UTC, datetime
 
+from mediaflow.domain.automation import AutomationClaimLost
 from mediaflow.domain.manual_execution import (
     ManualExecution,
     ManualExecutionStatus,
@@ -481,8 +482,13 @@ class ManualTaskEngineWorker:
             )
             task = claim.task
         try:
-            self._automatic_runner(task, claim, self._clock)
-        except TaskClaimFenceLost:
+            self._automatic_runner(
+                task,
+                claim,
+                self._clock,
+                heartbeat=lambda: self._heartbeat(claim),
+            )
+        except (TaskClaimFenceLost, AutomationClaimLost):
             return None
         except Exception as error:  # noqa: BLE001 - a Worker must never crash the loop
             state = self._scheduling.state(claim.task_id)
@@ -507,6 +513,10 @@ class ManualTaskEngineWorker:
         siblings remain their own durable outcomes.
         """
 
+        # The runner's last real call may have been long; renew this exact
+        # ownership before publishing the aggregate or reading the control.
+        if not self._heartbeat(claim):
+            return self._task(claim.task_id)
         state = self._scheduling.state(claim.task_id)
         if state is not None and state.mutation_in_flight:
             return self._task(claim.task_id)

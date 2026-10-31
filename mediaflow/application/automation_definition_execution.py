@@ -67,7 +67,13 @@ class DefinitionScopedExecutionService:
         self._logger = logger
 
     def run(
-        self, job, cancellation_check: Callable[[], bool], *, task_context=None, clock=None
+        self,
+        job,
+        cancellation_check: Callable[[], bool],
+        *,
+        task_context=None,
+        clock=None,
+        heartbeat: Callable[[], bool] | None = None,
     ) -> str:
         """Consume a claimed definition intent and return its durable Task id.
 
@@ -180,7 +186,9 @@ class DefinitionScopedExecutionService:
                 configuration_snapshot_digest=job.configuration_snapshot_digest,
                 require_configuration_snapshot=True,
             )
-        coordinator = self._coordinator((kernel_scheduling, kernel_claim), clock=clock)
+        coordinator = self._coordinator(
+            (kernel_scheduling, kernel_claim), clock=clock, heartbeat=heartbeat
+        )
         try:
             self._run_scan_and_plan(
                 coordinator,
@@ -192,6 +200,7 @@ class DefinitionScopedExecutionService:
                 execute=True,
                 definition=definition,
                 job=job,
+                heartbeat=heartbeat,
             )
         except AutomationCancelled:
             self._cancel_task_if_running(coordinator, task.task_id)
@@ -466,12 +475,18 @@ class DefinitionScopedExecutionService:
         execute: bool = False,
         definition=None,
         job=None,
+        heartbeat: Callable[[], bool] | None = None,
     ) -> None:
         if self._provider_factory is None or self._strategy_factory is None:
             raise RuntimeError("definition-scoped analysis factories are unavailable")
         if self._history_factory is None:
             raise RuntimeError("definition-scoped history factory is unavailable")
         storages = self._storage_factory(external=dict(source_storages))
+        if heartbeat is not None:
+            # A long Storage listing/stat is ordinary work, not a dead owner.
+            # Every adapter call renews the Task and Worker before it starts and
+            # after it returns; a real loss of ownership stops the next call.
+            storages = {key: _HeartbeatStorage(value, heartbeat) for key, value in storages.items()}
         if resource.storage_id not in storages:
             raise RuntimeError("definition-scoped source Storage is unavailable")
         provider_ids = tuple(
@@ -482,6 +497,8 @@ class DefinitionScopedExecutionService:
             )
         ) or ("tmdb",)
         providers = self._provider_factory(provider_ids)
+        if heartbeat is not None:
+            providers = _HeartbeatProviderRegistry(providers, heartbeat)
         strategy = self._strategy_factory(
             self._configuration.strategy,
             providers,
@@ -597,7 +614,97 @@ class DefinitionScopedExecutionService:
         except Exception:  # noqa: BLE001 - an unreadable kernel row fails closed
             return True
 
-    def _coordinator(self, task_context, *, clock=None):
+    def run_legacy_schedule(
+        self,
+        task,
+        scheduling,
+        claim,
+        *,
+        cancellation_check: Callable[[], bool],
+        clock=None,
+        heartbeat: Callable[[], bool] | None = None,
+    ) -> str:
+        """Advance one already-admitted legacy interval/Cron occurrence.
+
+        The occurrence is the Task itself.  This reuses the same production
+        ``MediaOrganizerService``/``OrganizerExecutor`` pipeline and the same
+        claim-fenced publication coordinator as a definition occurrence; the
+        only difference is that a legacy schedule has no saved definition, so
+        its admitted scope is every configured ResourceLibrary.
+        """
+
+        if getattr(claim, "task_id", None) != getattr(task, "task_id", None):
+            raise ValueError("legacy schedule Task claim identity does not match")
+        if not task.execute_authorized:
+            raise RuntimeError("legacy schedule Task lacks persisted execute authorization")
+        if self._provider_factory is None or self._strategy_factory is None:
+            raise RuntimeError("legacy schedule analysis factories are unavailable")
+        if self._history_factory is None:
+            raise RuntimeError("legacy schedule history factory is unavailable")
+        storages = self._storage_factory(external={})
+        if heartbeat is not None:
+            storages = {key: _HeartbeatStorage(value, heartbeat) for key, value in storages.items()}
+        provider_ids = tuple(
+            dict.fromkeys(
+                policy.provider_id
+                for policy in getattr(self._configuration.strategy, "metadata_policies", ())
+                if getattr(policy, "enabled", True) and getattr(policy, "provider_id", None)
+            )
+        ) or ("tmdb",)
+        providers = self._provider_factory(provider_ids)
+        if heartbeat is not None:
+            providers = _HeartbeatProviderRegistry(providers, heartbeat)
+        strategy = self._strategy_factory(
+            self._configuration.strategy,
+            providers,
+            storages=storages,
+        )
+        coordinator = KernelTaskCoordinator(
+            self._repository,
+            self._repository,
+            scheduling,
+            claim,
+            clock=clock,
+            heartbeat=heartbeat,
+        )
+
+        def workflow_stop() -> bool:
+            return bool(
+                cancellation_check()
+                or coordinator.pause_requested(task.task_id)
+                or coordinator.cancellation_observed(task.task_id)
+            )
+
+        service = MediaOrganizerService(
+            strategy,
+            StorageScanner(storages, logger=self._logger),
+            storages,
+            {item.library_id: item for item in getattr(self._configuration, "media_libraries", ())},
+            self._configuration.strategy.recognition_type_policies,
+            self._history_factory(self._configuration.history_path),
+            executor=OrganizerExecutor(self._logger),
+            source_display_roots=dict(getattr(self._configuration, "resource_display_roots", ())),
+            logger=self._logger,
+            task_coordinator=coordinator,
+            task_id=task.task_id,
+            retry_policy=self._configuration.workflow_retry_policy,
+            retry_cancellation_check=workflow_stop,
+            secret_free_errors=True,
+            persist_failure_explanations=True,
+            enforce_source_ownership=True,
+        )
+        summary = service.process_all_libraries(
+            self._configuration.resource_libraries,
+            execute=True,
+            limit=task.item_limit,
+            cancellation_check=workflow_stop,
+        )
+        if cancellation_check():
+            raise AutomationCancelled(task.task_id)
+        coordinator.finish(task.task_id, summary)
+        return task.task_id
+
+    def _coordinator(self, task_context, *, clock=None, heartbeat=None):
         """The publication coordinator for this run.
 
         A kernel ``(scheduling, claim)`` context routes every machine write
@@ -607,7 +714,12 @@ class DefinitionScopedExecutionService:
 
         if task_context and task_context[1] is not None:
             return KernelTaskCoordinator(
-                self._repository, self._repository, task_context[0], task_context[1], clock=clock
+                self._repository,
+                self._repository,
+                task_context[0],
+                task_context[1],
+                clock=clock,
+                heartbeat=heartbeat,
             )
         return PersistentTaskCoordinator(self._repository, self._repository)
 
@@ -653,6 +765,72 @@ def _relative_scope(library_root: str, scope_root: str) -> str | None:
     if scope_root == base:
         return None
     return scope_root.removeprefix(base + "/")
+
+
+def _heartbeat_call(heartbeat: Callable[[], bool]) -> None:
+    """Fail closed before the next call when the Task ownership was lost."""
+
+    try:
+        kept = bool(heartbeat())
+    except Exception:
+        kept = False
+    if not kept:
+        raise AutomationClaimLost("the Task claim was lost during a long automatic call")
+
+
+class _HeartbeatProviderRegistry:
+    """Renew Task ownership around every real Provider boundary call."""
+
+    def __init__(self, registry, heartbeat: Callable[[], bool]) -> None:
+        self._registry = registry
+        self._heartbeat = heartbeat
+
+    def resolve(self, provider_id: str):
+        return _HeartbeatProvider(self._registry.resolve(provider_id), self._heartbeat)
+
+
+class _HeartbeatProvider:
+    def __init__(self, value, heartbeat: Callable[[], bool]) -> None:
+        self._value = value
+        self._heartbeat = heartbeat
+
+    @property
+    def provider_id(self):
+        return self._value.provider_id
+
+    def __getattr__(self, name: str):
+        value = getattr(self._value, name)
+        if not callable(value):
+            return value
+
+        def call(*args, **kwargs):
+            _heartbeat_call(self._heartbeat)
+            result = value(*args, **kwargs)
+            _heartbeat_call(self._heartbeat)
+            return result
+
+        return call
+
+
+class _HeartbeatStorage:
+    """Renew Task ownership around every real Storage adapter call."""
+
+    def __init__(self, value, heartbeat: Callable[[], bool]) -> None:
+        self._value = value
+        self._heartbeat = heartbeat
+
+    def __getattr__(self, name: str):
+        value = getattr(self._value, name)
+        if not callable(value):
+            return value
+
+        def call(*args, **kwargs):
+            _heartbeat_call(self._heartbeat)
+            result = value(*args, **kwargs)
+            _heartbeat_call(self._heartbeat)
+            return result
+
+        return call
 
 
 __all__ = ["DefinitionScopedExecutionService"]

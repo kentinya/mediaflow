@@ -249,7 +249,8 @@ class RetainedRunOncePlanTests(unittest.TestCase):
             self.assertEqual(admitted["taskId"], reread["taskId"])
 
             # A repeated command with the same identity replays no admission
-            # and creates no second Job/Task or media effect.
+            # and creates no second durable work identity or media effect.  The
+            # Task is the only durable identity; no automation_jobs row exists.
             status, duplicate = _request(
                 api,
                 path,
@@ -258,7 +259,7 @@ class RetainedRunOncePlanTests(unittest.TestCase):
             )
             self.assertEqual(202, status, duplicate)
             self.assertEqual(admitted["jobId"], duplicate["jobId"])
-            self.assertEqual(1, len(value.repository.list_jobs()))
+            self.assertEqual(0, len(value.repository.list_jobs()))
             self.assertEqual(1, len(value.repository.list_tasks()))
             self.assertEqual([], value.source.mutations)
             self.assertEqual([], value.target.mutations)
@@ -268,12 +269,17 @@ class RetainedRunOncePlanTests(unittest.TestCase):
             with SQLiteTaskRepository(database) as reopened:
                 persisted = reopened.get_task(admitted["taskId"])
                 self.assertEqual("pending", persisted.status.value)
-                persisted_job = reopened.find_automation_run_once_job(
-                    principal_id="admin", admission_request_id=request_id
+                persisted_admission = reopened.find_scheduled_admission(
+                    principal="admin", request_id=request_id
                 )
-                self.assertIsNotNone(persisted_job)
-                self.assertEqual(admitted["jobId"], persisted_job.job_id)
-                self.assertEqual(admitted["taskId"], persisted_job.task_id)
+                self.assertIsNotNone(persisted_admission)
+                persisted_task, persisted_state = persisted_admission
+                self.assertEqual(admitted["taskId"], persisted_task.task_id)
+                self.assertEqual("run_once", persisted_state.admission_trigger.value)
+                self.assertEqual(
+                    admitted["definitionId"],
+                    reopened.get_run_display_context(persisted_task.task_id).origin_definition_id,
+                )
 
     def test_retained_old_analysis_plan_stays_readable_from_its_own_record(self):
         from tests.test_v2_automation_operations import AutomationOperatorJourneyTests

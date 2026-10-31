@@ -1123,11 +1123,16 @@ class KernelTaskCoordinator(PersistentTaskCoordinator):
     continues from.
     """
 
-    def __init__(self, repository, locks, scheduling, claim, clock=None) -> None:
+    def __init__(self, repository, locks, scheduling, claim, clock=None, heartbeat=None) -> None:
         super().__init__(repository, locks)
         self._scheduling = scheduling
         self._claim = claim
         self._clock = clock or (lambda: datetime.now(UTC))
+        # The resident Task owner's own keepalive.  It renews both the exact
+        # Task claim and the parent Worker registration, so a long Provider or
+        # Storage call never lets another Worker take the same Task while this
+        # one is still legitimately advancing it.
+        self._heartbeat = heartbeat
 
     @property
     def scheduling(self):
@@ -1136,6 +1141,22 @@ class KernelTaskCoordinator(PersistentTaskCoordinator):
     @property
     def claim(self):
         return self._claim
+
+    def _keepalive(self) -> None:
+        """Renew this Task's live ownership or stop before the next effect."""
+
+        if self._heartbeat is None:
+            return
+        try:
+            kept = bool(self._heartbeat())
+        except Exception:
+            kept = False
+        if not kept:
+            from mediaflow.domain.automation import AutomationClaimLost
+
+            raise AutomationClaimLost(
+                f"task {self._claim.task_id!r} is no longer owned by this Worker"
+            )
 
     def begin_item(
         self,
@@ -1164,6 +1185,7 @@ class KernelTaskCoordinator(PersistentTaskCoordinator):
         never a competing owner.
         """
 
+        self._keepalive()
         if enforce_source_ownership and source_storage_path is not None:
             finder = getattr(self.repository, "find_owned_source_work", None)
             if callable(finder):
@@ -1208,6 +1230,7 @@ class KernelTaskCoordinator(PersistentTaskCoordinator):
         non-replayable mutation boundary.
         """
 
+        self._keepalive()
         now = self._clock()
         completed = self.completed_item(item, result, analysis_only=analysis_only, now=now)
         result_record = self._result(completed, result, now)
@@ -1217,6 +1240,22 @@ class KernelTaskCoordinator(PersistentTaskCoordinator):
             result=result_record,
             evidence=result.evidence,
             now=now,
+        )
+
+    def begin_mutation(self, item: PersistentTaskItem, action: str) -> None:
+        """Record the durable effect boundary immediately before Storage work.
+
+        The marker is claim-fenced and written once per item attempt.  From
+        here an interrupted dispatch can never be replayed; only this owner's
+        verified item Result can clear it.
+        """
+
+        self._keepalive()
+        self._scheduling.begin_mutation(
+            self._claim,
+            item,
+            action,
+            now=self._clock(),
         )
 
     def record_evidence(self, evidence: PipelineEvidence) -> None:

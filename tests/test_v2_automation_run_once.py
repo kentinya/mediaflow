@@ -145,6 +145,23 @@ class _RecordingStorage:
         return self._storage.soft_link(source, target)
 
 
+def _task_run_view(task, captured):
+    """Bounded view of one Task-admitted execution for the existing assertions."""
+
+    evidence = captured.get("evidence")
+    return SimpleNamespace(
+        task_id=task.task_id,
+        status=task.status,
+        error=task.error,
+        failure_category=evidence.category if evidence is not None else None,
+        failure_durable_state=evidence.durable_state if evidence is not None else None,
+        failure_side_effects=evidence.side_effects if evidence is not None else None,
+        failure_retry_safe=evidence.retry_safe if evidence is not None else None,
+        failure_next_action=evidence.next_action if evidence is not None else None,
+        cancelled=bool(captured.get("cancelled")),
+    )
+
+
 class RunOnceApiTests(unittest.TestCase):
     def setUp(self) -> None:
         self.directory = tempfile.TemporaryDirectory()
@@ -463,18 +480,84 @@ class RunOnceApiTests(unittest.TestCase):
         document["items"].sort(key=lambda item: item["historyContext"]["definitionId"])
         return document
 
-    def execute(self, value):
-        from mediaflow.application.automation import AutomationWorker
+    def _run_once_service(self, value, provider_factory):
         from mediaflow.application.automation_definition_execution import (
             DefinitionScopedExecutionService,
         )
-        from mediaflow.application.metadata import MetadataProviderRegistry
-        from mediaflow.application.strategy_test import (
-            SyntheticMetadataProvider,
-            strategy_runner_from_configuration,
-        )
-        from mediaflow.domain.metadata import MediaCandidate, MediaType
+        from mediaflow.application.strategy_test import strategy_runner_from_configuration
         from mediaflow.infrastructure.json_history import JsonLinesOperationHistoryRepository
+
+        return DefinitionScopedExecutionService(
+            value.repository,
+            value.runtime,
+            storage_factory=lambda **kwargs: {"source": value.source, "target": value.target},
+            provider_factory=provider_factory,
+            strategy_factory=strategy_runner_from_configuration,
+            history_factory=JsonLinesOperationHistoryRepository,
+            unattended_grant_service=value.api._unattended_grants,
+        )
+
+    @staticmethod
+    def _run_once_job(value, task, state):
+        from mediaflow.domain.automation import (
+            AutomationCommand,
+            AutomationJob,
+            AutomationJobOrigin,
+            AutomationJobStatus,
+        )
+
+        display = value.repository.get_run_display_context(task.task_id)
+        raw = next(
+            (
+                item
+                for item in value.runtime.automation_task_definitions
+                if item.definition_id == display.origin_definition_id
+            ),
+            None,
+        )
+        if raw is None:
+            raise RuntimeError("pinned definition is unavailable")
+        return AutomationJob(
+            task.task_id,
+            AutomationCommand.ORGANIZE,
+            AutomationJobStatus.PENDING,
+            task.created_at,
+            task.updated_at,
+            limit=task.item_limit,
+            task_id=task.task_id,
+            execute_authorized=True,
+            configuration_snapshot_id=task.configuration_snapshot_id,
+            configuration_snapshot_digest=task.configuration_snapshot_digest,
+            definition_id=raw.definition_id,
+            definition_fingerprint=raw.definition_fingerprint,
+            definition_version=1,
+            run_mode=raw.mode,
+            resource_library_id=raw.resource_library_id,
+            source_scope=raw.source_scope,
+            execution_origin=AutomationJobOrigin.RUN_ONCE,
+            execution_principal=state.admission_principal,
+            admission_request_id=state.admission_request_id,
+        )
+
+    def execute(self, value):
+        """Run the next admitted Run once through its real durable identity.
+
+        A Task-admitted run is advanced by the resident Task engine with the
+        same definition-scoped service a Worker uses; a historical Job-backed
+        run keeps its legacy consumer.
+        """
+
+        from mediaflow.application.automation import (
+            AutomationCancelled,
+            AutomationWorker,
+            AutomationWorkflowFailed,
+        )
+        from mediaflow.application.manual_task_engine import ManualTaskEngineWorker
+        from mediaflow.application.metadata import MetadataProviderRegistry
+        from mediaflow.application.strategy_test import SyntheticMetadataProvider
+        from mediaflow.application.task_scheduling import TaskSchedulingService
+        from mediaflow.domain.metadata import MediaCandidate, MediaType
+        from mediaflow.infrastructure.sqlite_runtime import SCHEMA_VERSION
 
         provider = SyntheticMetadataProvider(
             (
@@ -482,16 +565,56 @@ class RunOnceApiTests(unittest.TestCase):
                 MediaCandidate("tmdb", "2", MediaType.MOVIE, "Two", year=2002),
             )
         )
-        service = DefinitionScopedExecutionService(
-            value.repository,
-            value.runtime,
-            storage_factory=lambda **kwargs: {"source": value.source, "target": value.target},
-            provider_factory=lambda ids: MetadataProviderRegistry((provider,)),
-            strategy_factory=strategy_runner_from_configuration,
-            history_factory=JsonLinesOperationHistoryRepository,
-            unattended_grant_service=value.api._unattended_grants,
+        service = self._run_once_service(value, lambda ids: MetadataProviderRegistry((provider,)))
+        legacy = AutomationWorker(value.repository, service.run).run_next()
+        if legacy is not None:
+            return legacy
+
+        scheduling = TaskSchedulingService(value.repository, capacity=100)
+        worker_id = f"run-once-test-{len(value.repository.list_tasks())}"
+        value.repository.register_worker(
+            worker_id,
+            worker_id,
+            5.0,
+            ("organize",),
+            None,
+            None,
+            SCHEMA_VERSION,
+            value.clock.now,
         )
-        return AutomationWorker(value.repository, service.run).run_next()
+        captured = {}
+
+        def runner(task, claim, clock=None, heartbeat=None):
+            state = scheduling.state(task.task_id)
+            job = self._run_once_job(value, task, state)
+            try:
+                service.run(
+                    job,
+                    lambda: False,
+                    task_context=(scheduling, claim),
+                    clock=clock,
+                    heartbeat=heartbeat,
+                )
+            except AutomationWorkflowFailed as error:
+                captured["evidence"] = error.evidence
+                raise
+            except AutomationCancelled:
+                captured["cancelled"] = True
+                raise
+
+        worker = ManualTaskEngineWorker(
+            value.repository,
+            scheduling,
+            None,
+            None,
+            worker_id=worker_id,
+            clock=value.clock,
+            automatic_runner=runner,
+        )
+        task = worker.run_next()
+        if task is None:
+            return None
+        return _task_run_view(task, captured)
 
     def test_scheduled_prestart_failure_is_a_complete_read_only_record(self):
         # A healthy empty scope completes as real no-work, while a missing
@@ -631,7 +754,7 @@ class RunOnceApiTests(unittest.TestCase):
             self.assertEqual((), value.repository.list_unattended_execution_grants())
             self.assertEqual((), value.discovery.list())
             self.assertEqual(1, len(value.repository.list_tasks()))
-            self.assertEqual(1, len(value.repository.list_jobs()))
+            self.assertEqual(0, len(value.repository.list_jobs()))
             status, runs = self.request(
                 value, "GET", "/api/v1/operations/runs?view=all&trigger=manual"
             )
@@ -738,7 +861,7 @@ class RunOnceApiTests(unittest.TestCase):
         with self.journey() as value:
             self.admit(value)
             result = self.execute(value)
-            self.assertEqual("completed", result.status.value)
+            self.assertEqual("running", result.status.value)
             items = value.repository.list_items(result.task_id)
             self.assertEqual(1, len(items))
             self.assertIn(
@@ -862,9 +985,9 @@ class RunOnceApiTests(unittest.TestCase):
             with ThreadPoolExecutor(max_workers=2) as pool:
                 responses = list(pool.map(lambda _: self.admit(value), range(2)))
             self.assertTrue(all(status == 202 for status, body in responses), responses)
-            self.assertEqual(responses[0][1]["jobId"], responses[1][1]["jobId"])
+            self.assertEqual(responses[0][1]["taskId"], responses[1][1]["taskId"])
             self.assertEqual(1, len(value.repository.list_tasks()))
-            self.assertEqual(1, len(value.repository.list_jobs()))
+            self.assertEqual(0, len(value.repository.list_jobs()))
             status, listing = self.request(
                 value, "GET", "/api/v1/operations/automation/run-once", token=VIEWER_TOKEN
             )
@@ -877,7 +1000,9 @@ class RunOnceApiTests(unittest.TestCase):
         )
         with self.journey() as value:
             with patch.object(
-                value.repository, "_insert_job", side_effect=RuntimeError("write failed")
+                value.repository,
+                "_insert_run_display_locked",
+                side_effect=RuntimeError("write failed"),
             ):
                 status, _ = self.admit(value)
                 self.assertEqual(500, status)
@@ -888,7 +1013,7 @@ class RunOnceApiTests(unittest.TestCase):
             status, _ = self.admit(value, "second")
             self.assertEqual(409, status)
             self.assertEqual(1, len(value.repository.list_tasks()))
-            self.assertEqual(1, len(value.repository.list_jobs()))
+            self.assertEqual(0, len(value.repository.list_jobs()))
 
     def test_recognition_and_classification_block_inside_real_task_and_center(self):
         # Each case uses a fresh fixture database, not a manually invented Task.
@@ -929,17 +1054,20 @@ class RunOnceApiTests(unittest.TestCase):
             self.assertEqual(1, page["total"])
             self.assertEqual([], value.source.mutations)
 
-    def test_cancel_pending_job_also_settles_its_precreated_task(self):
+    def test_cancel_pending_run_once_settles_its_admitted_task(self):
         with self.journey() as value:
             status, body = self.admit(value)
             self.assertEqual(202, status, body)
-            (job,) = value.repository.list_jobs()
-            cancelled = value.repository.request_job_cancellation(job.job_id, datetime.now(UTC))
-            self.assertEqual("cancelled", cancelled.status.value)
-            task = value.repository.get_task(job.task_id)
+            task_id = body["taskId"]
+            self.assertEqual((), value.repository.list_jobs())
+            status, response = self.request(
+                value, "POST", f"/api/v1/tasks/{task_id}/cancel", token=ADMIN_TOKEN
+            )
+            self.assertEqual(200, status, response)
+            task = value.repository.get_task(task_id)
             self.assertEqual("cancelled", task.status.value)
             self.assertIsNotNone(task.completed_at)
-            self.assertIn("admitted Task", cancelled.failure_durable_state)
+            self.assertEqual("cancelled", response["task"]["status"])
             self.assertEqual([], value.source.mutations)
 
     def test_complete_walk_budget_and_unsafe_entries_fail_before_effects(self):
@@ -995,18 +1123,45 @@ class RunOnceApiTests(unittest.TestCase):
             self.assertEqual([], value.target.mutations)
 
     def test_previously_started_run_once_is_not_scanned_or_replayed(self):
-        from mediaflow.application.task_runtime import PersistentTaskCoordinator
+        from mediaflow.application.automation import AutomationWorkflowFailed
+        from mediaflow.application.metadata import MetadataProviderRegistry
+        from mediaflow.application.strategy_test import SyntheticMetadataProvider
+        from mediaflow.application.task_scheduling import TaskSchedulingService
+        from mediaflow.infrastructure.sqlite_runtime import SCHEMA_VERSION
 
         self.media("One.2001.mkv")
         with self.journey() as value:
-            self.admit(value)
-            (job,) = value.repository.list_jobs()
-            PersistentTaskCoordinator(value.repository, value.repository).begin_queued(job.task_id)
-            result = self.execute(value)
-            self.assertEqual("run_once_already_started", result.failure_category)
-            self.assertFalse(result.failure_retry_safe)
-            self.assertEqual("unknown", result.failure_side_effects)
-            self.assertEqual((), value.repository.list_items(job.task_id))
+            status, body = self.admit(value)
+            self.assertEqual(202, status, body)
+            task_id = body["taskId"]
+            scheduling = TaskSchedulingService(value.repository, capacity=100)
+            value.repository.register_worker(
+                "previous-owner",
+                "previous owner",
+                5.0,
+                ("organize",),
+                None,
+                None,
+                SCHEMA_VERSION,
+                value.clock.now,
+            )
+            claim = scheduling.claim_next(worker_id="previous-owner", now=value.clock.now)
+            scheduling.begin_work(claim, now=value.clock.now)
+            provider = SyntheticMetadataProvider(())
+            service = self._run_once_service(
+                value, lambda ids: MetadataProviderRegistry((provider,))
+            )
+            task = value.repository.get_task(task_id)
+            state = scheduling.state(task_id)
+            job = self._run_once_job(value, task, state)
+            # The Task already entered its running boundary under an earlier
+            # owner.  A fresh execution must not re-enter its scope.
+            with self.assertRaises(AutomationWorkflowFailed) as raised:
+                service.run(job, lambda: False, clock=value.clock)
+            self.assertEqual("run_once_already_started", raised.exception.evidence.category)
+            self.assertFalse(raised.exception.evidence.retry_safe)
+            self.assertEqual("unknown", raised.exception.evidence.side_effects)
+            self.assertEqual((), value.repository.list_items(task_id))
             self.assertEqual([], value.source.mutations)
             self.assertEqual([], value.target.mutations)
 
@@ -1099,7 +1254,7 @@ class RunOnceApiTests(unittest.TestCase):
                 unattended_grant_service=value.api._unattended_grants,
             )
 
-            def runner(task, claim, clock=None):
+            def runner(task, claim, clock=None, heartbeat=None):
                 job = AutomationJob(
                     task.task_id,
                     AutomationCommand.ORGANIZE,
@@ -1225,7 +1380,7 @@ class RunOnceApiTests(unittest.TestCase):
                 unattended_grant_service=value.api._unattended_grants,
             )
 
-            def runner(task, claim, clock=None):
+            def runner(task, claim, clock=None, heartbeat=None):
                 job = AutomationJob(
                     task.task_id,
                     AutomationCommand.ORGANIZE,
@@ -1264,6 +1419,325 @@ class RunOnceApiTests(unittest.TestCase):
             self.assertTrue(value.target.mutations)
             self.assertEqual((), value.repository.list_jobs(limit=10))
 
+    def _kernel_file_journey(self, value, *, provider):
+        """Build the real Scheduler + definition service for one ready file."""
+
+        from mediaflow.application.automation import IntervalScheduler
+        from mediaflow.application.automation_definition_execution import (
+            DefinitionScopedExecutionService,
+        )
+        from mediaflow.application.metadata import MetadataProviderRegistry
+        from mediaflow.application.strategy_test import strategy_runner_from_configuration
+        from mediaflow.application.task_scheduling import TaskSchedulingService
+        from mediaflow.domain.automation import (
+            AutomationTaskDefinition,
+            SchedulerConfigurationSnapshot,
+        )
+        from mediaflow.infrastructure.json_history import JsonLinesOperationHistoryRepository
+        from mediaflow.infrastructure.sqlite_runtime import SCHEMA_VERSION
+
+        active = value.managed.active()
+        definition = AutomationTaskDefinition.from_document(
+            active.document["automationTaskDefinitions"][0]
+        )
+        scheduling = TaskSchedulingService(value.repository, capacity=10)
+        version = getattr(value.runtime, "configuration_snapshot_version", active.version)
+        snapshot = SchedulerConfigurationSnapshot(
+            active.revision_id,
+            active.digest,
+            (),
+            100,
+            (definition,),
+            version,
+            ("library",),
+            ("library",),
+        )
+        emitted = IntervalScheduler(
+            value.repository,
+            (),
+            configuration_snapshot_resolver=lambda: snapshot,
+            scheduling_service=scheduling,
+        ).tick(value.clock.now)
+        self.assertEqual(1, len(emitted))
+        task_id = emitted[0].task_id
+        self.assertEqual((), value.repository.list_jobs(limit=10))
+        value.repository.register_worker(
+            "auto-worker",
+            "auto worker",
+            5.0,
+            ("organize",),
+            active.revision_id,
+            active.digest,
+            SCHEMA_VERSION,
+            value.clock.now,
+        )
+        service = DefinitionScopedExecutionService(
+            value.repository,
+            value.runtime,
+            storage_factory=lambda **kwargs: {
+                "source": value.source,
+                "target": value.target,
+            },
+            provider_factory=lambda ids: MetadataProviderRegistry((provider,)),
+            strategy_factory=strategy_runner_from_configuration,
+            history_factory=JsonLinesOperationHistoryRepository,
+            unattended_grant_service=value.api._unattended_grants,
+        )
+
+        def runner(task, claim, clock=None, heartbeat=None):
+            from mediaflow.domain.automation import (
+                AutomationCommand,
+                AutomationJob,
+                AutomationJobStatus,
+            )
+
+            job = AutomationJob(
+                task.task_id,
+                AutomationCommand.ORGANIZE,
+                AutomationJobStatus.PENDING,
+                value.clock.now,
+                value.clock.now,
+                limit=task.item_limit,
+                task_id=task.task_id,
+                definition_id=definition.definition_id,
+                definition_fingerprint=definition.definition_fingerprint,
+                definition_version=version,
+                run_mode=definition.mode,
+                resource_library_id=definition.resource_library_id,
+                source_scope=definition.source_scope,
+                configuration_snapshot_id=task.configuration_snapshot_id,
+                configuration_snapshot_digest=task.configuration_snapshot_digest,
+                configuration_snapshot_version=version,
+            )
+            service.run(
+                job,
+                lambda: False,
+                task_context=(scheduling, claim),
+                clock=clock,
+                heartbeat=heartbeat,
+            )
+
+        from mediaflow.application.manual_task_engine import ManualTaskEngineWorker
+
+        worker = ManualTaskEngineWorker(
+            value.repository,
+            scheduling,
+            None,
+            None,
+            worker_id="auto-worker",
+            clock=value.clock,
+            automatic_runner=runner,
+        )
+        return task_id, worker
+
+    @staticmethod
+    def _kernel_definition_document(scope: str = "Movies") -> list[dict]:
+        return [
+            {
+                "id": "nightly-kernel",
+                "name": "Nightly kernel",
+                "resourceLibraryId": "library",
+                "mode": "automatic-organization",
+                "intervalSeconds": 3600,
+                "itemLimit": 10,
+                "enabled": True,
+                "sourceScope": scope,
+            }
+        ]
+
+    def test_slow_provider_keeps_claim_and_commits_a_verified_effect(self) -> None:
+        from mediaflow.application.strategy_test import SyntheticMetadataProvider
+        from mediaflow.domain.metadata import MediaCandidate, MediaType
+        from mediaflow.domain.task_persistence import TaskItemStatus
+
+        self.media("Movies/One.2001.mkv")
+        with self.journey(definitions=self._kernel_definition_document()) as value:
+            provider = SyntheticMetadataProvider(
+                (MediaCandidate("tmdb", "1", MediaType.MOVIE, "One", year=2001),)
+            )
+            task_id, worker = self._kernel_file_journey(value, provider=provider)
+            observed = []
+            original_search = SyntheticMetadataProvider.search_movie
+            original_mkdir = value.target.create_directory
+
+            def search(self, *args, **kwargs):
+                # The real Provider call takes longer than one whole lease.  The
+                # owner must renew across it rather than dispatch a mutation
+                # under an already-expired claim.
+                value.clock.advance(301)
+                return original_search(self, *args, **kwargs)
+
+            def mkdir(path):
+                state = value.repository.get_task_scheduling(task_id)
+                observed.append(
+                    (
+                        state.mutation_in_flight,
+                        state.claim_expires_at,
+                        value.clock.now,
+                    )
+                )
+                return original_mkdir(path)
+
+            with (
+                patch.object(SyntheticMetadataProvider, "search_movie", search),
+                patch.object(value.target, "create_directory", mkdir),
+            ):
+                worker.run_next()
+
+            task = value.repository.get_task(task_id)
+            self.assertEqual("completed", task.status.value)
+            self.assertEqual(1, task.completed_items)
+            self.assertFalse((self.source_root / "Movies" / "One.2001.mkv").exists())
+            self.assertTrue(value.target.mutations)
+            self.assertEqual(1, len(observed))
+            in_flight, expires_at, now = observed[0]
+            self.assertTrue(in_flight)
+            self.assertGreater(expires_at, now)
+            self.assertEqual(1, len(value.repository.list_results(task_id)))
+            self.assertIs(
+                value.repository.list_items(task_id)[0].status,
+                TaskItemStatus.SUCCESS,
+            )
+
+    def test_lost_claim_before_dispatch_stops_every_effect(self) -> None:
+        from mediaflow.application.strategy_test import SyntheticMetadataProvider
+        from mediaflow.domain.metadata import MediaCandidate, MediaType
+
+        self.media("Movies/One.2001.mkv")
+        with self.journey(definitions=self._kernel_definition_document()) as value:
+            provider = SyntheticMetadataProvider(
+                (MediaCandidate("tmdb", "1", MediaType.MOVIE, "One", year=2001),)
+            )
+            task_id, worker = self._kernel_file_journey(value, provider=provider)
+            original_search = SyntheticMetadataProvider.search_movie
+
+            def search(self, *args, **kwargs):
+                # Fault injection at the real repository boundary: a successor
+                # owns the Task generation before the long call returns.
+                with value.repository._lock:
+                    value.repository._connection.execute(
+                        "UPDATE task_scheduling SET claim_token='successor', "
+                        "claim_generation=claim_generation+1 WHERE task_id=?",
+                        (task_id,),
+                    )
+                    value.repository._connection.commit()
+                return original_search(self, *args, **kwargs)
+
+            with patch.object(SyntheticMetadataProvider, "search_movie", search):
+                worker.run_next()
+
+            self.assertEqual([], value.target.mutations)
+            self.assertEqual([], value.source.mutations)
+            self.assertEqual((), value.repository.list_results(task_id))
+            task = value.repository.get_task(task_id)
+            self.assertEqual("running", task.status.value)
+            self.assertTrue((self.source_root / "Movies" / "One.2001.mkv").exists())
+
+    def test_interrupted_dispatch_keeps_the_nonreplayable_marker(self) -> None:
+        from mediaflow.application.strategy_test import SyntheticMetadataProvider
+        from mediaflow.domain.metadata import MediaCandidate, MediaType
+        from mediaflow.domain.storage import StorageError, StorageErrorCode
+
+        self.media("Movies/One.2001.mkv")
+        with self.journey(definitions=self._kernel_definition_document()) as value:
+            provider = SyntheticMetadataProvider(
+                (MediaCandidate("tmdb", "1", MediaType.MOVIE, "One", year=2001),)
+            )
+            task_id, worker = self._kernel_file_journey(value, provider=provider)
+
+            def interrupted_write(path, data, *, overwrite=False):
+                value.target.mutations.append(("write", path))
+                raise StorageError(
+                    StorageErrorCode.IO_ERROR, "write", path, "simulated interrupted dispatch"
+                )
+
+            with patch.object(value.target, "write", interrupted_write):
+                worker.run_next()
+
+            task = value.repository.get_task(task_id)
+            state = value.repository.get_task_scheduling(task_id)
+            self.assertEqual("running", task.status.value)
+            self.assertTrue(state.mutation_in_flight)
+            (result,) = value.repository.list_results(task_id)
+            self.assertEqual("attempted_unverified", result.effect_certainty)
+            self.assertIn("mutation_outcome", result.uncertain_effects)
+            self.assertTrue((self.source_root / "Movies" / "One.2001.mkv").exists())
+            effects_before = tuple(value.target.mutations)
+            # A second claim/pass cannot replay the unproved effect.
+            self.assertIsNone(worker.run_next())
+            self.assertEqual(effects_before, tuple(value.target.mutations))
+            self.assertTrue(value.repository.get_task_scheduling(task_id).mutation_in_flight)
+
+    def test_legacy_interval_and_cron_schedules_run_as_kernel_tasks(self) -> None:
+        from mediaflow.application.automation import IntervalScheduler
+        from mediaflow.application.manual_task_engine import ManualTaskEngineWorker
+        from mediaflow.application.task_scheduling import TaskSchedulingService
+        from mediaflow.domain.automation import (
+            AutomationCommand,
+            CronSchedule,
+            IntervalSchedule,
+        )
+        from mediaflow.final_cli import _automatic_task_runner
+        from mediaflow.infrastructure.sqlite_runtime import SCHEMA_VERSION
+
+        (self.source_root / "Empty").mkdir()
+        with self.journey(definitions=[]) as value:
+            scheduling = TaskSchedulingService(value.repository, capacity=10)
+            scheduler = IntervalScheduler(
+                value.repository,
+                (
+                    IntervalSchedule("legacy-interval", AutomationCommand.ORGANIZE, 60, 5),
+                    CronSchedule("legacy-cron", AutomationCommand.ORGANIZE, "* * * * *", "UTC", 5),
+                ),
+                scheduling_service=scheduling,
+            )
+            # The first tick initializes both due states and may emit the
+            # interval; one minute later both a legacy interval and a
+            # timezone-aware Cron occurrence are due.
+            emitted = list(scheduler.tick(self.clock.now))
+            self.clock.advance(60)
+            emitted.extend(scheduler.tick(self.clock.now))
+            names = {
+                value.repository.get_run_display_context(item.task_id).origin_definition_name
+                for item in emitted
+            }
+            self.assertEqual({"legacy-interval", "legacy-cron"}, names)
+            self.assertEqual((), value.repository.list_jobs(limit=10))
+            for item in emitted:
+                self.assertEqual(
+                    "legacy-schedule",
+                    value.repository.get_run_display_context(item.task_id).origin_kind,
+                )
+                self.assertIsNotNone(value.repository.get_task_scheduling(item.task_id))
+            value.repository.register_worker(
+                "legacy-worker",
+                "legacy worker",
+                5.0,
+                ("organize",),
+                None,
+                None,
+                SCHEMA_VERSION,
+                self.clock.now,
+            )
+            runner = _automatic_task_runner(value.repository, None, scheduling)
+            worker = ManualTaskEngineWorker(
+                value.repository,
+                scheduling,
+                None,
+                None,
+                worker_id="legacy-worker",
+                clock=self.clock,
+                automatic_runner=runner,
+            )
+            with patch("mediaflow.final_cli._configuration", return_value=value.runtime):
+                for _ in emitted:
+                    worker.run_next()
+            for item in emitted:
+                task = value.repository.get_task(item.task_id)
+                self.assertEqual("completed", task.status.value)
+                self.assertEqual(0, task.total_items)
+            self.assertEqual((), value.repository.list_jobs(limit=10))
+
     def test_repeated_storage_cursor_cannot_be_reported_as_empty_scope(self):
         from mediaflow.domain.storage import StoragePage
 
@@ -1286,17 +1760,17 @@ class RunOnceApiTests(unittest.TestCase):
             self.assertEqual([], value.source.mutations)
             self.assertEqual([], value.target.mutations)
 
-    def test_pending_task_cancellation_is_honored_when_job_is_claimed(self):
+    def test_pending_task_cancellation_is_honored_before_any_claim(self):
         self.media("One.2001.mkv")
         with self.journey() as value:
-            self.admit(value)
-            (job,) = value.repository.list_jobs()
-            cancelled = value.repository.cancel_task_if_current(
-                job.task_id, updated_at=datetime.now(UTC)
+            status, body = self.admit(value)
+            self.assertEqual(202, status, body)
+            task_id = body["taskId"]
+            status, response = self.request(
+                value, "POST", f"/api/v1/tasks/{task_id}/cancel", token=ADMIN_TOKEN
             )
-            self.assertEqual("cancelled", cancelled.status.value)
-            result = self.execute(value)
-            self.assertEqual("cancelled", result.status.value)
-            self.assertEqual("cancelled", value.repository.get_task(job.task_id).status.value)
+            self.assertEqual(200, status, response)
+            self.assertIsNone(self.execute(value))
+            self.assertEqual("cancelled", value.repository.get_task(task_id).status.value)
             self.assertEqual([], value.source.mutations)
             self.assertEqual([], value.target.mutations)

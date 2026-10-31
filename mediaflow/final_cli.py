@@ -141,6 +141,7 @@ def final_main(
     stderr: TextIO,
     cancellation_check: Callable[[], bool] | None = None,
     _resolved_configuration: RuntimeConfiguration | None = None,
+    _task_observer: Callable[[str], None] | None = None,
 ) -> int:
     parser = argparse.ArgumentParser(prog="mediaflow")
     parser.add_argument("--config", help="runtime JSON configuration")
@@ -1236,6 +1237,11 @@ def final_main(
                         configuration.configuration_authority == "MANAGED"
                     ),
                 )
+            if _task_observer is not None:
+                # The durable Task identity is handed to the application caller
+                # structurally.  Rendered CLI text remains the operator output
+                # and is never parsed back into an identity.
+                _task_observer(task.task_id)
 
             def workflow_stop() -> bool:
                 return bool(
@@ -2506,18 +2512,16 @@ def _run_queued_workflow(
     elif job.execute_authorized:
         raise RuntimeError("non-organize job must not carry execute authorization")
     output, errors = io.StringIO(), io.StringIO()
+    observed: list[str] = []
     code = final_main(
         args,
         stdout=output,
         stderr=errors,
         cancellation_check=cancellation_check,
         _resolved_configuration=resolved_configuration,
+        _task_observer=observed.append,
     )
-    task_id = None
-    for line in output.getvalue().splitlines():
-        if line.startswith("Task ID: "):
-            task_id = line.removeprefix("Task ID: ").strip()
-            break
+    task_id = observed[0] if observed else None
     if task_id is not None and _task_was_cancelled(repository, task_id):
         # A durable cooperative Task cancellation accepted by the operator is a
         # Job cancellation too: the Workflow really stopped at a supported item
@@ -2622,7 +2626,7 @@ def _automatic_task_runner(repository, configured_path, scheduling_service):
     written, no CLI text is parsed and no second engine is invoked.
     """
 
-    def run(task, claim, clock=None) -> None:
+    def run(task, claim, clock=None, heartbeat=None) -> None:
         from mediaflow.domain.automation import (
             AutomationCommand,
             AutomationJob,
@@ -2632,6 +2636,30 @@ def _automatic_task_runner(repository, configured_path, scheduling_service):
         from mediaflow.domain.task_scheduling import TaskTrigger
 
         display = repository.get_run_display_context(task.task_id)
+        if display is not None and display.origin_kind == "legacy-schedule":
+            # A legacy interval/Cron occurrence has no saved definition.  It
+            # still runs through the same production pipeline and claim fence;
+            # its admitted scope is every configured ResourceLibrary.
+            configuration = _configuration(
+                configured_path,
+                snapshot_id=task.configuration_snapshot_id,
+                snapshot_digest=task.configuration_snapshot_digest,
+            )
+
+            def legacy_cancelled() -> bool:
+                current = scheduling_service.state(task.task_id)
+                return current is not None and current.control_request is not None
+
+            service = _definition_scoped_service(repository, configuration, configured_path)
+            service.run_legacy_schedule(
+                task,
+                scheduling_service,
+                claim,
+                cancellation_check=legacy_cancelled,
+                clock=clock,
+                heartbeat=heartbeat,
+            )
+            return
         definition_id = display.origin_definition_id if display is not None else None
         if not isinstance(definition_id, str) or not definition_id.strip():
             raise RuntimeError("automatic Task has no durable definition origin")
@@ -2685,7 +2713,13 @@ def _automatic_task_runner(repository, configured_path, scheduling_service):
             return current is not None and current.control_request is not None
 
         service = _definition_scoped_service(repository, configuration, configured_path)
-        service.run(job, task_cancelled, task_context=(scheduling_service, claim), clock=clock)
+        service.run(
+            job,
+            task_cancelled,
+            task_context=(scheduling_service, claim),
+            clock=clock,
+            heartbeat=heartbeat,
+        )
 
     return run
 

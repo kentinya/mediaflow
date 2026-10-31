@@ -17887,6 +17887,9 @@ class MediaFlowApi:
         jobs_reader = getattr(self._repository, "list_automation_run_once_jobs", None)
         if callable(jobs_reader):
             values = (*jobs_reader(definition_id=definition_id, limit=50), *values)
+        task_reader = getattr(service, "list_task_executions", None)
+        if callable(task_reader):
+            values = (*task_reader(definition_id, limit=50), *values)
         items = []
         for value in values:
             document = service.document(value)
