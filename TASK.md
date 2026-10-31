@@ -278,63 +278,75 @@ RO-5 原界面兼容已验而 Task 化全表面未交付。因此继续规划本
 
 ## Developer Completion Report
 
-Checkpoint: `61b30847c0e6d760224e42225574fdf39026d9a0`（Base `c942c4b4` 不变），
-Status READY FOR B REVIEW。完整 T4/升级/发布与 PASS 判定仍由 B 负责，本报告不宣称 STOP。
+Checkpoint: `8f66d1cc243746bbbc849842ee5ddbc63760f673`(Base `c942c4b4` 不变),
+Status READY FOR B REVIEW。完整 T4/升级/发布与 PASS 判定仍由 B 负责,本报告不宣称 STOP。
 
-**变更行为（3 项 B Review 阻塞 + 2 项同候选回归）**
+**变更行为(3 项 B Review 阻塞)**
 
-1. P1-1：`POST /tasks/{task}/items/{item}/recovery/continue` 现在按真实 Task Owner 分流。
-   Task 有 `task_scheduling` 行时，新增 `application/manual_task_continuation.py` 在
-   checkpoint 版本/效果确定性/原 pin 与 kernel Task 身份校验通过后，调用既有
-   `MediaDiscoveryService.request_analysis` 把**同一 Task** 的零变更分析经
-   `requeue_scheduled_analysis` 重新登记；响应为 `nativeAnalysis`（同一 discovery/版本），
-   不含 `job_id`、不建子 Task、不消费执行授权。满容量/取消/不确定效果给出有界 409/503 且
-   保留决定、摘要与结果，不登记自动继续；旧（无 scheduling 行）Task 保持原 Job 路径。
-   旧 Job 批处理入口对 kernel Task 改为无效果拒绝（同 Task 逐项继续），不再静默造 Job。
-   Web `api-client` 的 ack 归一化接受并标记 `nativeAnalysis`，面板据此说明“原 Task 已重新
-   排入零变更分析”，并对 `capacity_full`/`continuation_exists` 给出下一步。
-2. P1-2：新增 `domain/task_persistence.task_item_counts/task_work_status`；
-   `admit_manual_execution` 在 kernel 采纳的同事务内按整项 TaskItem 种群重算
-   total/completed/failed，`_task_after_item`（kernel 路径）、engine 的 analysis/human-
-   wait/finish/terminal settlement 统一按耐久来源发布。分批确认不再把顶层计数重置为当次
-   selected 数量，部分完成不再显示 completed；Task 行、`/tasks`、`/operations/runs` 一致。
-3. P1-3：取消在 claim 安全边界结算时，`_publish_discovery_control_locked` 也把 linked
-   discovery 投影为 `cancelled`/`cancelRequested=true`（保留 counters/findings/preview
-   链接，仅改阶段与取消事实），使“分析已完成但仍在等确认”的准入不再占源；新 requestId 的
-   同文件请求经正常权限/版本/占用检查成为新的 organizing Task，旧 Task 保持 cancelled 与
-   可回读证据。in-flight/uncertain/已迁移来源仍被源保护拒绝（回归断言）。
-4. 同候选回归 A：`da6d9630` 退役暂停专用 remaining-scope 时删除了
-   `_assert_reconciliation_binding` 但保留了调用，Run once 重复 requestId 会 AttributeError
-   崩溃；按原语义恢复该 fence（definition/pin/revision 不一致时 409）。
-5. 同候选回归 B：`test_paused_definition_relative_scope_continues_in_the_real_worker` 仍断言
-   已退役的暂停续作；改写为真实 Worker 对历史 queued scope-continuation Job 的有界拒绝：
-   Job FAILED、无 Task/Item/Result/授权、原暂停 Task 与源树不变、重开一致。
+1. **P1-1 原生摘要/确认接入 Task Center(Business problem, 非 technical history)。**
+   `mediaflow/infrastructure/sqlite_runtime.py` 新增共享谓词
+   `_native_current_decision_kind_sql`/`_native_pending_confirmation_sql`:一个
+   kernel 管理的 TaskItem 处于 `waiting_confirm`、其 Task 有已链接的
+   `media_discoveries.organize_task_id`+`preview_id`、且该 item 自身有最新
+   RESOLVED 四类决定时,归入对应四类 `business_problem`(不再落入 technical
+   history);新增 additive 索引 `media_discoveries_organize_task`,旧库开库即补,
+   无版本跳变。`mediaflow/application/manual_recovery_continuation.py` 新增
+   `native_preparation_summary`/`confirm_native_preparation`/`prepare_native_summary`:
+   直接投影 Task 自己那条已有 Files discovery/Preview 为可回读摘要,并用**既有**
+   `ManualOrganizeExecutionService.begin_web_execution`(同一 Files execute 服务)
+   在**同一 Task** 上确认 ready subset、重新登记执行;不新建 Job、子 Task、第二套
+   preparation 或兼容 executor,确认前零变更、不消费执行授权。`service_api.py` 在
+   `GET .../recovery`、`POST .../recovery/decision`、`POST .../recovery/prepare-summary`、
+   `POST /manual-recovery-preparations/{id}/confirm` 按 `native:` 前缀分流;错 principal
+   以 403 拒绝;满容量/陈旧摘要/陈旧 checkpoint 均有界拒绝且保留决定/摘要/结果。
+   Web `TaskItemRecoveryPanel` 在已有持久摘要时不再重复显示“生成计划摘要”按钮。
+2. **P1-2 决定消费限定本 Task/来源。**
+   `_native_review_decisions` 只消费 `confirmation.task_id == 当前Task` 且
+   `item_id` 属于当前 Task 的 RESOLVED conflict 决定;`ManualOrganizePreviewService._resolve_conflicts`
+   的 plan_id 兜底(plan_id 由 source/target 确定性生成,跨 Task 会碰撞)在
+   `problem_task_id` 存在时也只接受同一 Task 的 confirmation。不同 Task/新请求不再
+   因路径相同继承已取消旧 Task 的 Rename;本 Task 自己的合法决定仍正常消费。
+3. **P1-3 逐项独立结算 + 整项聚合。**
+   `ManualTaskEngineWorker._finish_execution`:任一 terminal execution(含 FAILED)只
+   要在途 sibling 非 PROCESSING 即保留为人工等待(零名额)而非终结整项;仍有
+   PROCESSING sibling 则保名额继续;全部来源 settled 时用
+   `task_work_status(全部 TaskItem)` 汇总,后续成功不再抹掉先前 failed/partial;
+   CANCEL 语义保持原样。
 
-**受影响测试（实际命令与结果，cwd 仓库根）**
+**受影响测试(实际命令与结果,cwd 仓库根)**
 
 | 命令 | 结果 |
 |---|---|
-| `.venv/bin/python -m unittest tests.test_manual_task_engine tests.test_task_scheduling tests.test_task_scheduling_fencing tests.test_task_scheduling_migration` | 84 tests OK（含 4 个新回归：同 Task continue/满容量/取消后新请求/两批计数 + 不确定源保护） |
+| `.venv/bin/python -m unittest tests.test_manual_task_engine tests.test_task_scheduling tests.test_task_scheduling_fencing tests.test_task_scheduling_migration` | 88 tests OK(含 4 个新回归:新 Task 独立冲突、失败子集保留 sibling、native 摘要确认、Metadata 候选 native 确认;均在真实 API/SQLite/Local Storage/Executor 链上) |
 | `.venv/bin/python -m unittest tests.test_media_discovery tests.test_manual_organize_intent tests.test_manual_organize_preview tests.test_manual_organize_execution tests.test_task_center_recovery_lineage tests.test_recovery_continuation tests.test_processing_checkpoint` | 305 tests OK |
 | `.venv/bin/python -m unittest tests.test_automation_admission tests.test_automation_job_fencing tests.test_automation_definition_occurrence tests.test_v2_automation_run_once tests.test_processing_worker_readiness tests.test_automation_settings_resident tests.test_direct_file_transfers tests.test_media_library_transfers` | 230 tests OK |
-| 直接受影响补充：`tests.test_operations_task_center tests.test_operations_run_detail tests.test_operations_run_inventory tests.test_operations_workspace tests.test_recovery_batch tests.test_task_pause_resume tests.test_scope_continuation tests.test_operator_ui tests.test_operator_observability tests.test_restart_fault_boundary tests.test_automation_run_once tests.test_automation_definition_execution tests.test_automation_unattended_grant tests.test_automation_workspace_read_model` | 424 tests OK |
-| 补充：`tests.test_task_persistence tests.test_task_retry tests.test_task_scope tests.test_processing_recovery_admission tests.test_organize_preparation tests.test_v2_automation_operations tests.test_v2_manual_organize tests.test_manual_operations tests.test_manual_operations_contract tests.test_manual_ignore tests.test_manual_ignore_batch tests.test_direct_file_operations tests.test_batch_cli` | 251 tests OK |
-| `web: npm run test -- run …OrganizeRouter/OrganizeDiscoveryPage/OrganizeCreationPage/TaskItemRecoveryPanel/OperationsInventory/LibraryFileOperationsDialog` | 6 files, 101 tests OK |
+| `tests.test_operations_task_center tests.test_operations_run_detail tests.test_operations_run_inventory tests.test_operations_workspace tests.test_recovery_batch tests.test_task_pause_resume tests.test_scope_continuation tests.test_operator_ui tests.test_operator_observability tests.test_restart_fault_boundary tests.test_automation_run_once tests.test_automation_definition_execution tests.test_automation_unattended_grant tests.test_automation_workspace_read_model` | 424 tests OK |
+| `tests.test_task_persistence tests.test_task_retry tests.test_task_scope tests.test_processing_recovery_admission tests.test_organize_preparation tests.test_v2_automation_operations tests.test_v2_manual_organize tests.test_manual_operations tests.test_manual_operations_contract tests.test_manual_ignore tests.test_manual_ignore_batch tests.test_direct_file_operations tests.test_batch_cli` | 251 tests OK |
+| 补充:`tests.test_conflict_resolution tests.test_manual_organize_preview tests.test_recovery_continuation tests.test_task_center_recovery_lineage` | 118 tests OK |
+| 迁移/索引:`tests.test_task_persistence`(新增断言 `media_discoveries_organize_task` 开库后存在);`tests.test_migration_rehearsal tests.test_sqlite_backup tests.test_sqlite_restore tests.test_runtime_lease tests.test_runtime_files_browser` | 28 + 25 tests OK |
+| `web: npm run test -- run ...OrganizeRouter/OrganizeDiscoveryPage/OrganizeCreationPage/TaskItemRecoveryPanel/OperationsInventory/LibraryFileOperationsDialog` | 6 files, 101 tests OK |
 | `web: npm run typecheck` / `npm run lint` / `npm run format:check` | 全部 exit 0 |
-| `.venv/bin/ruff format --check mediaflow tests scripts` / `ruff check` / `compileall -q` / `python3 scripts/check_governance.py` / `git diff --check` | 全部通过 |
+| `.venv/bin/ruff format --check mediaflow tests scripts` / `.venv/bin/ruff check mediaflow tests scripts` / `.venv/bin/python -m compileall -q` / `python3 scripts/check_governance.py` / `git diff --check` | 全部通过 |
 
-SQLite ResourceWarning 与历史相同，未新增 skip/retry/超时放宽，未访问用户运行库、媒体或私有配置。
+B 的三项复现脚本在该候选上的真实结果:cancel 旧 Task 后新 Task **不再**自动沿用 Rename,
+而是生成自己的 `pending` 冲突;第一部来源执行前消失后整项仍 `running`/`waiting_human`、
+第二部 `recovery/continue` 返回 202;同 Task 分析后 `GET .../recovery` 返回
+`recoveryKind=business_problem`、`manualRecoveryAvailable/AnalysisReady=true`、
+`manualRecoveryPreparation.status=prepared`、`manualRecoveryLink=null`、零 Job、零变更。
+
+SQLite ResourceWarning 与历史相同,未新增 skip/retry/超时放宽,未访问用户运行库、媒体或私有配置。
 未运行 B 的全量 Python/Web/E2E/截图/wheel/容器/53→55 升级门禁。
 
-**剩余工作与已知限制（交 B 判定，非本地 PASS）**
+**剩余风险与已知限制(交 B 判定,非本地 PASS)**
 
-- kernel Task 的原位“摘要/确认”仍是同一 Task 的 Files preview（`GET/POST
-  /operations/organize/previews/{id}`）；TaskItem 面板的 `manualRecoveryPreparation`
-  仍来自旧 Job recovery 链，原生继续后不出现“同页摘要”区块。B 若把面板内原位摘要视为
-  M4/M8 必过，需要另行确认范围（本次未新增第二套准备/授权系统）。
-- 已退役暂停作用域的历史 queued `SCOPE_CONTINUATION` Job 由 Worker 以通用失败记录（无
-  `failure_category`），零副作用、零 Task、不可重放；本次未新增类别文案。
-- 未验证新真实 Web/截图/wheel/容器/升级；未复跑 53/54→55 迁移。
+- 确认执行时既有 Files 执行准入会把分析包装 TaskItem 替换为同源执行 TaskItem(不同
+  item_id,既有 `admit_manual_execution` 行为);按当前 item id 仍可回读同一确认执行
+  (`manualRecoveryPreparation.status=confirmed`+execution_id),但旧 item id 本身
+  404。B 若把“旧 item 深链恒等可读”视为 P1-1/M4 必过,需要另行确认范围(本次未改
+  既有“一源一 item”的准入设计)。
+- `prepare_native_summary` 的 `actor` 仅用于校验,无副作用;native confirm 按 discovery
+  actor 做 principal 隔离。
+- 未验证新真实 Web/截图/wheel/容器/升级;未复跑 53/54→55 迁移。
 
 ## B Review Result
 
