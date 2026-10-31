@@ -1379,8 +1379,8 @@ class SQLiteTaskRepository:
     ) -> None:
         """Persist one run's bounded display evidence inside an open transaction.
 
-        Callers already hold the write transaction that admitted the Task, so
-        the display row and the work it describes commit (or fail) together.
+        Callers already hold the write transaction that admitted the Task, so the
+        display row and the work it describes commit (or fail) together.
         """
 
         self._connection.execute(
@@ -1398,6 +1398,30 @@ class SQLiteTaskRepository:
                 display.origin_definition_name,
                 display.origin_kind,
             ),
+        )
+
+    def get_run_display_context(self, task_id: str) -> RunDisplayContext | None:
+        """The bounded display/origin evidence recorded with one admission.
+
+        Read-only: a missing row stays explicitly absent instead of being
+        backfilled or guessed from today's Active configuration.
+        """
+
+        with self._lock:
+            row = self._connection.execute(
+                "SELECT source_scope, target_scope, origin_definition_id, "
+                "origin_definition_name, origin_kind FROM operations_run_display "
+                "WHERE task_id=?",
+                (task_id,),
+            ).fetchone()
+        if row is None:
+            return None
+        return RunDisplayContext(
+            source_scope=row["source_scope"],
+            target_scope=row["target_scope"],
+            origin_definition_id=row["origin_definition_id"],
+            origin_definition_name=row["origin_definition_name"],
+            origin_kind=row["origin_kind"],
         )
 
     def load_dashboard_state(self, *, recent_limit: int) -> DashboardPersistentState:
@@ -11002,6 +11026,181 @@ class SQLiteTaskRepository:
             except Exception:
                 self._connection.rollback()
                 raise
+
+    def admit_due_schedule_task(
+        self,
+        schedule_id: str,
+        task: PersistentTask,
+        scheduling: TaskSchedulingState,
+        *,
+        command: str,
+        occurrence_at: datetime,
+        next_run_at: datetime,
+        now: datetime,
+        capacity: int,
+        display: RunDisplayContext | None = None,
+    ) -> ScheduledTaskAdmission | None:
+        """Atomically admit one due legacy schedule as a kernel Task.
+
+        RO-2/RO-1: the occurrence is the *Task* now, not a Job.  The schedule
+        state advance, its audit row, the Task and its scheduling slot commit in
+        one transaction, so a crash or a full queue leaves the due state
+        unchanged and no orphan Task.  The audit row and the schedule's
+        ``last_job_id`` column carry the substantive Task identity so existing
+        audit readers keep an unambiguous link.
+        """
+
+        require_capacity(capacity)
+        self._require_scheduled_admission_values(task, scheduling)
+        if (next_run_at.tzinfo is None) or (occurrence_at.tzinfo is None) or (now.tzinfo is None):
+            raise ValueError("schedule admission instants need timezone")
+        with self._lock:
+            self._connection.execute("BEGIN IMMEDIATE")
+            try:
+                if self._shared_capacity_use_locked() >= capacity:
+                    self._connection.rollback()
+                    return None
+                cursor = self._connection.execute(
+                    "UPDATE automation_schedules SET next_run_at=?, updated_at=?, last_job_id=? "
+                    "WHERE schedule_id=? AND next_run_at=? AND next_run_at<=?",
+                    (
+                        next_run_at.isoformat(),
+                        now.isoformat(),
+                        task.task_id,
+                        schedule_id,
+                        occurrence_at.isoformat(),
+                        now.isoformat(),
+                    ),
+                )
+                if cursor.rowcount != 1:
+                    self._connection.rollback()
+                    return None
+                self._connection.execute(_TASK_INSERT, self._task_values(task))
+                if display is not None:
+                    self._insert_run_display_locked(task.task_id, display, task.created_at)
+                self._connection.execute(
+                    _TASK_SCHEDULING_INSERT, self._scheduling_values(scheduling)
+                )
+                self._connection.execute(
+                    "INSERT INTO schedule_audit VALUES (?, ?, ?, ?, ?, ?, ?)",
+                    (
+                        f"{schedule_id}:{task.task_id}",
+                        schedule_id,
+                        occurrence_at.isoformat(),
+                        now.isoformat(),
+                        task.task_id,
+                        command,
+                        next_run_at.isoformat(),
+                    ),
+                )
+            except BaseException:
+                self._connection.rollback()
+                raise
+            self._connection.commit()
+        return ScheduledTaskAdmission(task, scheduling, False)
+
+    def admit_due_automation_definition_task(
+        self,
+        definition_id: str,
+        task: PersistentTask,
+        scheduling: TaskSchedulingState,
+        occurrence: AutomationDefinitionOccurrence,
+        *,
+        next_run_at: datetime,
+        now: datetime,
+        capacity: int,
+        display: RunDisplayContext | None = None,
+    ) -> ScheduledTaskAdmission | None:
+        """Atomically admit one due managed definition as a kernel Task.
+
+        The occurrence, its immutable pins, the due advance and the Task/queue
+        slot commit in one transaction.  The shared capacity is re-checked
+        inside it, so a full queue leaves the occurrence due with no Task, no
+        occurrence row and no due advance.  The occurrence keeps the same
+        durable link through its existing ``job_id`` column, now carrying the
+        substantive Task identity; no second Job row is written.
+        """
+
+        require_capacity(capacity)
+        self._require_scheduled_admission_values(task, scheduling)
+        if occurrence.definition_id != definition_id:
+            raise ValueError("automation definition occurrence identity does not match")
+        if occurrence.task_id not in {None, task.task_id}:
+            raise ValueError("automation occurrence Task identity does not match")
+        for label, value in (
+            ("occurrence", occurrence.occurrence_at),
+            ("next run", next_run_at),
+            ("now", now),
+        ):
+            if value.tzinfo is None:
+                raise ValueError(f"automation definition {label} instant needs timezone")
+        with self._lock:
+            self._connection.execute("BEGIN IMMEDIATE")
+            try:
+                if self._shared_capacity_use_locked() >= capacity:
+                    self._connection.rollback()
+                    return None
+                cursor = self._connection.execute(
+                    "UPDATE automation_definition_due_state SET next_run_at=?, updated_at=?, "
+                    "last_occurrence_at=?, last_job_id=?, last_outcome=?, last_reason=NULL, "
+                    "last_next_action=NULL, definition_fingerprint=? "
+                    "WHERE definition_id=? AND next_run_at=? AND "
+                    "julianday(next_run_at)<=julianday(?) AND "
+                    "(definition_fingerprint IS NULL OR definition_fingerprint=?)",
+                    (
+                        next_run_at.isoformat(),
+                        now.isoformat(),
+                        occurrence.occurrence_at.isoformat(),
+                        task.task_id,
+                        occurrence.outcome,
+                        occurrence.definition_fingerprint,
+                        definition_id,
+                        occurrence.occurrence_at.isoformat(),
+                        now.isoformat(),
+                        occurrence.definition_fingerprint,
+                    ),
+                )
+                if cursor.rowcount != 1:
+                    self._connection.rollback()
+                    return None
+                self._connection.execute(_TASK_INSERT, self._task_values(task))
+                if display is not None:
+                    self._insert_run_display_locked(task.task_id, display, task.created_at)
+                self._connection.execute(
+                    _TASK_SCHEDULING_INSERT, self._scheduling_values(scheduling)
+                )
+                self._connection.execute(
+                    "INSERT INTO automation_definition_occurrences "
+                    "(occurrence_id, definition_id, occurrence_at, emitted_at, job_id, "
+                    "definition_fingerprint, definition_version, configuration_revision_id, "
+                    "configuration_revision_version, configuration_revision_digest, run_mode, "
+                    "resource_library_id, source_scope, item_limit, outcome, reason, next_action) "
+                    "VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)",
+                    (
+                        occurrence.occurrence_id,
+                        occurrence.definition_id,
+                        occurrence.occurrence_at.isoformat(),
+                        occurrence.emitted_at.isoformat(),
+                        task.task_id,
+                        occurrence.definition_fingerprint,
+                        occurrence.definition_version,
+                        occurrence.configuration_revision_id,
+                        occurrence.configuration_revision_version,
+                        occurrence.configuration_revision_digest,
+                        occurrence.run_mode.value,
+                        occurrence.resource_library_id,
+                        occurrence.source_scope,
+                        occurrence.item_limit,
+                        occurrence.outcome,
+                        occurrence.reason,
+                        occurrence.next_action,
+                    ),
+                )
+            except BaseException:
+                self._connection.rollback()
+                raise
+            self._connection.commit()
+        return ScheduledTaskAdmission(task, scheduling, False)
 
     def get_latest_automation_definition_occurrence(
         self, definition_id: str

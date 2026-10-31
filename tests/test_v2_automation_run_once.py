@@ -1010,6 +1010,260 @@ class RunOnceApiTests(unittest.TestCase):
             self.assertEqual([], value.source.mutations)
             self.assertEqual([], value.target.mutations)
 
+    def test_scheduled_definition_runs_as_one_kernel_task_without_a_job(self) -> None:
+        from mediaflow.application.automation import IntervalScheduler
+        from mediaflow.application.automation_definition_execution import (
+            DefinitionScopedExecutionService,
+        )
+        from mediaflow.application.manual_task_engine import ManualTaskEngineWorker
+        from mediaflow.application.metadata import MetadataProviderRegistry
+        from mediaflow.application.strategy_test import (
+            SyntheticMetadataProvider,
+            strategy_runner_from_configuration,
+        )
+        from mediaflow.application.task_scheduling import TaskSchedulingService
+        from mediaflow.domain.automation import (
+            AutomationCommand,
+            AutomationJob,
+            AutomationJobStatus,
+            AutomationTaskDefinition,
+            SchedulerConfigurationSnapshot,
+        )
+        from mediaflow.infrastructure.json_history import JsonLinesOperationHistoryRepository
+        from mediaflow.infrastructure.sqlite_runtime import SCHEMA_VERSION
+
+        (self.source_root / "Empty").mkdir()
+        definitions = [
+            {
+                "id": "nightly-kernel",
+                "name": "Nightly kernel",
+                "resourceLibraryId": "library",
+                "mode": "automatic-organization",
+                "intervalSeconds": 3600,
+                "itemLimit": 10,
+                "enabled": True,
+                "sourceScope": "Empty",
+            }
+        ]
+        with self.journey(definitions=definitions) as value:
+            active = value.managed.active()
+            definition = AutomationTaskDefinition.from_document(
+                active.document["automationTaskDefinitions"][0]
+            )
+            scheduling = TaskSchedulingService(value.repository, capacity=10)
+            version = getattr(value.runtime, "configuration_snapshot_version", active.version)
+            snapshot = SchedulerConfigurationSnapshot(
+                active.revision_id,
+                active.digest,
+                (),
+                100,
+                (definition,),
+                version,
+                ("library",),
+                ("library",),
+            )
+            scheduler = IntervalScheduler(
+                value.repository,
+                (),
+                configuration_snapshot_resolver=lambda: snapshot,
+                scheduling_service=scheduling,
+            )
+            emitted = scheduler.tick(value.clock.now)
+            self.assertEqual(1, len(emitted))
+            task_id = emitted[0].task_id
+            # No Job row exists; the durable work identity is the Task.
+            self.assertEqual((), value.repository.list_jobs(limit=10))
+            self.assertIsNotNone(value.repository.get_task_scheduling(task_id))
+
+            value.repository.register_worker(
+                "auto-worker",
+                "auto worker",
+                5.0,
+                ("organize",),
+                active.revision_id,
+                active.digest,
+                SCHEMA_VERSION,
+                value.clock.now,
+            )
+            provider = SyntheticMetadataProvider(())
+            service = DefinitionScopedExecutionService(
+                value.repository,
+                value.runtime,
+                storage_factory=lambda **kwargs: {
+                    "source": value.source,
+                    "target": value.target,
+                },
+                provider_factory=lambda ids: MetadataProviderRegistry((provider,)),
+                strategy_factory=strategy_runner_from_configuration,
+                history_factory=JsonLinesOperationHistoryRepository,
+                unattended_grant_service=value.api._unattended_grants,
+            )
+
+            def runner(task, claim, clock=None):
+                job = AutomationJob(
+                    task.task_id,
+                    AutomationCommand.ORGANIZE,
+                    AutomationJobStatus.PENDING,
+                    value.clock.now,
+                    value.clock.now,
+                    limit=task.item_limit,
+                    task_id=task.task_id,
+                    definition_id=definition.definition_id,
+                    definition_fingerprint=definition.definition_fingerprint,
+                    definition_version=version,
+                    run_mode=definition.mode,
+                    resource_library_id=definition.resource_library_id,
+                    source_scope=definition.source_scope,
+                    configuration_snapshot_id=task.configuration_snapshot_id,
+                    configuration_snapshot_digest=task.configuration_snapshot_digest,
+                    configuration_snapshot_version=version,
+                )
+                service.run(job, lambda: False, task_context=(scheduling, claim), clock=clock)
+
+            worker = ManualTaskEngineWorker(
+                value.repository,
+                scheduling,
+                None,
+                None,
+                worker_id="auto-worker",
+                clock=value.clock,
+                automatic_runner=runner,
+            )
+            worker.run_next()
+
+            task = value.repository.get_task(task_id)
+            self.assertEqual("completed", task.status.value)
+            self.assertEqual((), value.repository.list_jobs(limit=10))
+            self.assertEqual([], value.source.mutations)
+            self.assertEqual([], value.target.mutations)
+
+    def test_scheduled_definition_organizes_a_ready_file_on_one_task(self) -> None:
+        from mediaflow.application.automation import IntervalScheduler
+        from mediaflow.application.automation_definition_execution import (
+            DefinitionScopedExecutionService,
+        )
+        from mediaflow.application.manual_task_engine import ManualTaskEngineWorker
+        from mediaflow.application.metadata import MetadataProviderRegistry
+        from mediaflow.application.strategy_test import (
+            SyntheticMetadataProvider,
+            strategy_runner_from_configuration,
+        )
+        from mediaflow.application.task_scheduling import TaskSchedulingService
+        from mediaflow.domain.automation import (
+            AutomationCommand,
+            AutomationJob,
+            AutomationJobStatus,
+            AutomationTaskDefinition,
+            SchedulerConfigurationSnapshot,
+        )
+        from mediaflow.domain.metadata import MediaCandidate, MediaType
+        from mediaflow.infrastructure.json_history import JsonLinesOperationHistoryRepository
+        from mediaflow.infrastructure.sqlite_runtime import SCHEMA_VERSION
+
+        self.media("Movies/One.2001.mkv")
+        definitions = [
+            {
+                "id": "nightly-file",
+                "name": "Nightly file",
+                "resourceLibraryId": "library",
+                "mode": "automatic-organization",
+                "intervalSeconds": 3600,
+                "itemLimit": 10,
+                "enabled": True,
+                "sourceScope": "Movies",
+            }
+        ]
+        with self.journey(definitions=definitions) as value:
+            active = value.managed.active()
+            definition = AutomationTaskDefinition.from_document(
+                active.document["automationTaskDefinitions"][0]
+            )
+            scheduling = TaskSchedulingService(value.repository, capacity=10)
+            version = getattr(value.runtime, "configuration_snapshot_version", active.version)
+            snapshot = SchedulerConfigurationSnapshot(
+                active.revision_id,
+                active.digest,
+                (),
+                100,
+                (definition,),
+                version,
+                ("library",),
+                ("library",),
+            )
+            emitted = IntervalScheduler(
+                value.repository,
+                (),
+                configuration_snapshot_resolver=lambda: snapshot,
+                scheduling_service=scheduling,
+            ).tick(value.clock.now)
+            self.assertEqual(1, len(emitted))
+            task_id = emitted[0].task_id
+            self.assertEqual((), value.repository.list_jobs(limit=10))
+            value.repository.register_worker(
+                "auto-worker",
+                "auto worker",
+                5.0,
+                ("organize",),
+                active.revision_id,
+                active.digest,
+                SCHEMA_VERSION,
+                value.clock.now,
+            )
+            provider = SyntheticMetadataProvider(
+                (MediaCandidate("tmdb", "1", MediaType.MOVIE, "One", year=2001),)
+            )
+            service = DefinitionScopedExecutionService(
+                value.repository,
+                value.runtime,
+                storage_factory=lambda **kwargs: {
+                    "source": value.source,
+                    "target": value.target,
+                },
+                provider_factory=lambda ids: MetadataProviderRegistry((provider,)),
+                strategy_factory=strategy_runner_from_configuration,
+                history_factory=JsonLinesOperationHistoryRepository,
+                unattended_grant_service=value.api._unattended_grants,
+            )
+
+            def runner(task, claim, clock=None):
+                job = AutomationJob(
+                    task.task_id,
+                    AutomationCommand.ORGANIZE,
+                    AutomationJobStatus.PENDING,
+                    value.clock.now,
+                    value.clock.now,
+                    limit=task.item_limit,
+                    task_id=task.task_id,
+                    definition_id=definition.definition_id,
+                    definition_fingerprint=definition.definition_fingerprint,
+                    definition_version=version,
+                    run_mode=definition.mode,
+                    resource_library_id=definition.resource_library_id,
+                    source_scope=definition.source_scope,
+                    configuration_snapshot_id=task.configuration_snapshot_id,
+                    configuration_snapshot_digest=task.configuration_snapshot_digest,
+                    configuration_snapshot_version=version,
+                )
+                service.run(job, lambda: False, task_context=(scheduling, claim), clock=clock)
+
+            worker = ManualTaskEngineWorker(
+                value.repository,
+                scheduling,
+                None,
+                None,
+                worker_id="auto-worker",
+                clock=value.clock,
+                automatic_runner=runner,
+            )
+            worker.run_next()
+
+            task = value.repository.get_task(task_id)
+            self.assertEqual("completed", task.status.value)
+            self.assertEqual(1, task.completed_items)
+            self.assertFalse((self.source_root / "Movies/One.2001.mkv").exists())
+            self.assertTrue(value.target.mutations)
+            self.assertEqual((), value.repository.list_jobs(limit=10))
+
     def test_repeated_storage_cursor_cannot_be_reported_as_empty_scope(self):
         from mediaflow.domain.storage import StoragePage
 

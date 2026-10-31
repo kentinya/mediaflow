@@ -572,14 +572,21 @@ class PersistentTaskCoordinator:
             item = persisted_item
         return item
 
-    def complete_item(
-        self,
+    @staticmethod
+    def completed_item(
         item: PersistentTaskItem,
         result: MediaOrganizerItemResult,
         *,
         analysis_only: bool = False,
-    ) -> None:
-        now = datetime.now(UTC)
+        now: datetime,
+    ) -> PersistentTaskItem:
+        """The terminal TaskItem one pipeline outcome publishes.
+
+        This is the one place the status/plan/destination/error projection of a
+        completed item is computed, so the ordinary coordinator and the
+        claim-fenced kernel coordinator publish the identical durable shape.
+        """
+
         execution = result.execution
         if execution is None:
             if result.error:
@@ -603,7 +610,7 @@ class PersistentTaskCoordinator:
             if result.error and status not in {TaskItemStatus.PARTIAL, TaskItemStatus.FAILED}:
                 status = TaskItemStatus.FAILED
         plan = result.plan
-        completed = replace(
+        return replace(
             item,
             status=status,
             stage="completed" if not status.retryable else "failed",
@@ -623,6 +630,16 @@ class PersistentTaskCoordinator:
                 or ("; ".join(execution.errors) if execution and execution.errors else None)
             ),
         )
+
+    def complete_item(
+        self,
+        item: PersistentTaskItem,
+        result: MediaOrganizerItemResult,
+        *,
+        analysis_only: bool = False,
+    ) -> None:
+        now = datetime.now(UTC)
+        completed = self.completed_item(item, result, analysis_only=analysis_only, now=now)
         try:
             atomic = getattr(self.repository, "complete_item_with_evidence", None)
             if callable(atomic):
@@ -1085,3 +1102,174 @@ def _effect_evidence(execution) -> tuple[str, tuple[str, ...]]:
     except (AttributeError, ValueError):
         return "unknown", ()
     return certainty.value, tuple(execution.uncertain_effects)
+
+
+class KernelTaskCoordinator(PersistentTaskCoordinator):
+    """Publish one already-admitted automatic organizing Task under its claim.
+
+    Slice 47 RO-1/RO-2 makes the Task scheduling kernel the one owner of the
+    queue, claim and fence for every organizing entrance.  The existing
+    definition-scoped pipeline was written against the generic coordinator, so
+    this adapter keeps its full read/dry-run/waiting behavior but routes the
+    *machine publication* boundaries the kernel guards — the item start, the
+    item/Result/evidence outcome and the aggregate finish — through the live
+    claim fence instead of a generic write.  Every legacy/generic writer is
+    still refused by the repository for a kernel-managed Task.
+
+    Only the methods ``MediaOrganizerService`` actually calls are overridden.
+    ``wait_for_*`` intentionally reuse the base implementation: their review
+    rows and the waiting TaskItem publication are evidence, not a new machine
+    attempt, and the same durable review records the operator's later decision
+    continues from.
+    """
+
+    def __init__(self, repository, locks, scheduling, claim, clock=None) -> None:
+        super().__init__(repository, locks)
+        self._scheduling = scheduling
+        self._claim = claim
+        self._clock = clock or (lambda: datetime.now(UTC))
+
+    @property
+    def scheduling(self):
+        return self._scheduling
+
+    @property
+    def claim(self):
+        return self._claim
+
+    def begin_item(
+        self,
+        task_id: str,
+        storage_id: str,
+        resource_library_id: str,
+        source_path: str,
+        source_display: str,
+        *,
+        transfer_fence: tuple[str, str, datetime] | None = None,
+        adopt_existing: bool = False,
+        source_occurrence_id: str | None = None,
+        source_fingerprint: str | None = None,
+        source_fingerprint_state: str = "unverified",
+        source_observed_at: datetime | None = None,
+        source_storage_path: str | None = None,
+        source_version: object | None = None,
+        ownership_lineage_task_ids: tuple[str, ...] = (),
+        enforce_source_ownership: bool = False,
+    ) -> PersistentTaskItem:
+        """Start one concrete source under the live Task claim.
+
+        The cross-Task source-ownership decision is re-checked here exactly as
+        the manual path does it: a source another unfinished work owns is
+        refused before this TaskItem is started, while this Task's own rows are
+        never a competing owner.
+        """
+
+        if enforce_source_ownership and source_storage_path is not None:
+            finder = getattr(self.repository, "find_owned_source_work", None)
+            if callable(finder):
+                owner = finder(
+                    storage_id=storage_id,
+                    source_path=source_path,
+                    storage_path=source_storage_path,
+                    resource_library_id=resource_library_id,
+                    source_version=source_version,
+                    exclude_task_id=task_id,
+                    exclude_lineage_task_id=(
+                        ownership_lineage_task_ids[0] if ownership_lineage_task_ids else None
+                    ),
+                )
+                if owner is not None:
+                    raise TaskSourceOwnedError(owner)
+        return self._scheduling.begin_item(
+            self._claim,
+            storage_id=storage_id,
+            resource_library_id=resource_library_id,
+            source_path=source_path,
+            source_display=source_display,
+            source_occurrence_id=source_occurrence_id,
+            source_fingerprint=source_fingerprint,
+            source_fingerprint_state=source_fingerprint_state,
+            source_observed_at=source_observed_at,
+            source_storage_path=source_storage_path,
+            now=self._clock(),
+        )
+
+    def complete_item(
+        self,
+        item: PersistentTaskItem,
+        result: MediaOrganizerItemResult,
+        *,
+        analysis_only: bool = False,
+    ) -> None:
+        """Publish the item, Result and evidence under the live claim fence.
+
+        The Result identity is the exact TaskItem attempt, so a later attempt
+        can never replace this outcome and an unproved effect keeps its
+        non-replayable mutation boundary.
+        """
+
+        now = self._clock()
+        completed = self.completed_item(item, result, analysis_only=analysis_only, now=now)
+        result_record = self._result(completed, result, now)
+        self._scheduling.complete_item(
+            self._claim,
+            completed,
+            result=result_record,
+            evidence=result.evidence,
+            now=now,
+        )
+
+    def record_evidence(self, evidence: PipelineEvidence) -> None:
+        """Evidence is published atomically with the item outcome; never alone.
+
+        The kernel guards the generic evidence append, and a standalone evidence
+        row would not be bound to the claim-fenced attempt, so the intermediate
+        preview evidence travels with the publication that owns it instead.
+        """
+
+        return
+
+    def cancel(self, task_id: str) -> PersistentTask:
+        """The accepted Task control owns cancellation; this is a read-only view."""
+
+        return self.require(task_id)
+
+    def pause_requested(self, task_id: str) -> bool:
+        """A pause is the Task's own scheduling control, never a generic flag."""
+
+        from mediaflow.domain.task_scheduling import TaskControl
+
+        state = self._scheduling.state(task_id)
+        return state is not None and state.control_request is TaskControl.PAUSE
+
+    def cancellation_observed(self, task_id: str) -> bool:
+        """Whether the operator accepted a cancel for this Task."""
+
+        from mediaflow.domain.task_scheduling import TaskControl
+
+        state = self._scheduling.state(task_id)
+        if state is not None and state.control_request is TaskControl.CANCEL:
+            return True
+        task = self.repository.get_task(task_id)
+        return task is not None and task.status is PersistentTaskStatus.CANCELLED
+
+    def acknowledge_pause(self, task_id: str) -> PersistentTask:
+        """Pause is retired; the Task engine settles any accepted control."""
+
+        return self.require(task_id)
+
+    def finish(
+        self,
+        task_id: str,
+        batch: MediaOrganizerBatchResult,
+        *,
+        transfer_fence: tuple[str, str, datetime] | None = None,
+    ) -> PersistentTask:
+        """Publish the aggregate progress without settling the shared slot.
+
+        The resident Task engine owns the terminal settlement (including the
+        accepted-control boundary), so this only re-reads the durable Task whose
+        item/Result writes have already committed.
+        """
+
+        return self.require(task_id)

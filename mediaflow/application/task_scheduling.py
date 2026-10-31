@@ -86,6 +86,77 @@ _CANCELLABLE_ITEM_STATUSES = frozenset(
 )
 
 
+def build_scheduled_task_admission(
+    command: str,
+    *,
+    execute_authorized: bool,
+    trigger: TaskTrigger,
+    principal: str,
+    request_id: str | None = None,
+    scope_path: str | None = None,
+    item_limit: int | None = None,
+    configuration_snapshot_id: str | None = None,
+    configuration_snapshot_digest: str | None = None,
+    require_configuration_snapshot: bool = False,
+    stage: TaskMachineStage | None = None,
+    eligible_at: datetime | None = None,
+    now: datetime,
+) -> tuple[PersistentTask, TaskSchedulingState]:
+    """Build the queued Task and its scheduling facts without committing them.
+
+    The Scheduler admits through the same validated shape the kernel uses, but
+    commits the Task together with its occurrence/due/schedule advance inside
+    one repository transaction.  This builder is that shared shape, so the two
+    entrances cannot drift.
+    """
+
+    if eligible_at is not None and eligible_at.tzinfo is None:
+        raise ValueError("Task queue eligibility instant needs timezone")
+    if now.tzinfo is None:
+        raise ValueError("Task admission instant needs timezone")
+    if stage is not None:
+        stage = TaskMachineStage(stage)
+    request = TaskAdmissionRequest(
+        command=command,
+        execute_authorized=execute_authorized,
+        context=TaskAdmissionContext(
+            trigger=trigger,
+            principal=principal,
+            request_id=request_id,
+        ),
+        scope_path=scope_path,
+        item_limit=item_limit,
+        configuration_snapshot_id=configuration_snapshot_id,
+        configuration_snapshot_digest=configuration_snapshot_digest,
+    )
+    if require_configuration_snapshot and request.configuration_snapshot_id is None:
+        raise ValueError("managed Task admission requires a configuration snapshot pin")
+    task = PersistentTask(
+        str(uuid4()),
+        request.command,
+        PersistentTaskStatus.PENDING,
+        request.execute_authorized,
+        now,
+        now,
+        scope_path=request.scope_path,
+        item_limit=request.item_limit,
+        configuration_snapshot_id=request.configuration_snapshot_id,
+        configuration_snapshot_digest=request.configuration_snapshot_digest,
+    )
+    state = TaskSchedulingState(
+        task_id=task.task_id,
+        queue_state=TaskQueueState.QUEUED,
+        admission_trigger=request.context.trigger,
+        admission_principal=request.context.principal,
+        admission_request_id=request.context.request_id,
+        created_at=now,
+        updated_at=now,
+        machine_stage=stage,
+        queue_eligible_at=eligible_at,
+    )
+    return task, state
+
+
 class TaskSchedulingService:
     """Admission, claim, control and fenced publication for organizing Tasks."""
 
@@ -161,47 +232,20 @@ class TaskSchedulingService:
         """
 
         current = self._now(now)
-        if eligible_at is not None and eligible_at.tzinfo is None:
-            raise ValueError("Task queue eligibility instant needs timezone")
-        if stage is not None:
-            stage = TaskMachineStage(stage)
-        request = TaskAdmissionRequest(
-            command=command,
+        task, state = build_scheduled_task_admission(
+            command,
             execute_authorized=execute_authorized,
-            context=TaskAdmissionContext(
-                trigger=trigger,
-                principal=principal,
-                request_id=request_id,
-            ),
+            trigger=trigger,
+            principal=principal,
+            request_id=request_id,
             scope_path=scope_path,
             item_limit=item_limit,
             configuration_snapshot_id=configuration_snapshot_id,
             configuration_snapshot_digest=configuration_snapshot_digest,
-        )
-        if require_configuration_snapshot and request.configuration_snapshot_id is None:
-            raise ValueError("managed Task admission requires a configuration snapshot pin")
-        task = PersistentTask(
-            str(uuid4()),
-            request.command,
-            PersistentTaskStatus.PENDING,
-            request.execute_authorized,
-            current,
-            current,
-            scope_path=request.scope_path,
-            item_limit=request.item_limit,
-            configuration_snapshot_id=request.configuration_snapshot_id,
-            configuration_snapshot_digest=request.configuration_snapshot_digest,
-        )
-        state = TaskSchedulingState(
-            task_id=task.task_id,
-            queue_state=TaskQueueState.QUEUED,
-            admission_trigger=request.context.trigger,
-            admission_principal=request.context.principal,
-            admission_request_id=request.context.request_id,
-            created_at=current,
-            updated_at=current,
-            machine_stage=stage,
-            queue_eligible_at=eligible_at,
+            require_configuration_snapshot=require_configuration_snapshot,
+            stage=stage,
+            eligible_at=eligible_at,
+            now=current,
         )
         return self._repository.admit_scheduled_task(
             task, state, capacity=self._capacity, display=display

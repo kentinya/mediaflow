@@ -1075,6 +1075,8 @@ class IntervalScheduler:
         automation_task_definitions: tuple[AutomationTaskDefinition, ...] = (),
         configuration_snapshot_version: int | None = None,
         execution_authority=None,
+        scheduling_service=None,
+        scheduled_principal: str = "automation-scheduler",
     ) -> None:
         if (configuration_snapshot_id is None) != (configuration_snapshot_digest is None):
             raise ValueError("Job configuration snapshot ID and digest must be provided together")
@@ -1087,6 +1089,16 @@ class IntervalScheduler:
             raise ValueError("maximum active Jobs must be between 1 and 10000")
         self._execution_authority = execution_authority
         self._repository = repository
+        # Slice 47 RO-1/RO-2: a due occurrence is admitted as the Task itself.
+        # When the Task kernel is wired (production), no Job row is written and
+        # the occurrence/schedule advance commits with the Task.  The legacy Job
+        # emission is retained only for adapters that never wired the kernel.
+        self._scheduling = scheduling_service
+        from mediaflow.domain.task_scheduling import bounded_text
+
+        self._scheduled_principal = bounded_text(
+            scheduled_principal, "scheduler admission principal", maximum=128
+        )
         self._schedules = schedules
         self._notifications = notifications
         self._maximum_active_jobs = maximum_active_jobs
@@ -1168,43 +1180,57 @@ class IntervalScheduler:
                 )
             if state.next_run_at > current:
                 continue
-            job = AutomationJob(
-                str(uuid4()),
-                schedule.command,
-                AutomationJobStatus.PENDING,
-                current,
-                current,
-                limit=schedule.limit,
-                schedule_id=schedule.schedule_id,
-                configuration_snapshot_id=snapshot[0] if snapshot else None,
-                configuration_snapshot_digest=snapshot[1] if snapshot else None,
-            )
             next_run = self._next_run(schedule, current, cron)
-            if self._repository.enqueue_due_schedule(
-                schedule.schedule_id,
-                job,
-                state.next_run_at,
-                next_run,
-                current,
-                maximum_active_jobs,
-            ):
-                queued.append(job)
-                if self._notifications:
-                    try:
-                        self._notifications.publish(
-                            NotificationEvent(
-                                f"schedule:{schedule.schedule_id}:{job.job_id}",
-                                NotificationEventType.SCHEDULE_EMITTED,
-                                current,
-                                {
-                                    "command": job.command.value,
-                                    "jobId": job.job_id,
-                                    "scheduleId": schedule.schedule_id,
-                                },
-                            )
+            if self._scheduling is not None:
+                admitted_task = self._admit_schedule_task(
+                    schedule,
+                    state.next_run_at,
+                    next_run,
+                    current,
+                    snapshot,
+                    maximum_active_jobs,
+                )
+                if admitted_task is None:
+                    continue
+                job = admitted_task
+            else:
+                job = AutomationJob(
+                    str(uuid4()),
+                    schedule.command,
+                    AutomationJobStatus.PENDING,
+                    current,
+                    current,
+                    limit=schedule.limit,
+                    schedule_id=schedule.schedule_id,
+                    configuration_snapshot_id=snapshot[0] if snapshot else None,
+                    configuration_snapshot_digest=snapshot[1] if snapshot else None,
+                )
+                if not self._repository.enqueue_due_schedule(
+                    schedule.schedule_id,
+                    job,
+                    state.next_run_at,
+                    next_run,
+                    current,
+                    maximum_active_jobs,
+                ):
+                    continue
+            queued.append(job)
+            if self._notifications:
+                try:
+                    self._notifications.publish(
+                        NotificationEvent(
+                            f"schedule:{schedule.schedule_id}:{job.job_id}",
+                            NotificationEventType.SCHEDULE_EMITTED,
+                            current,
+                            {
+                                "command": job.command.value,
+                                "jobId": job.job_id,
+                                "scheduleId": schedule.schedule_id,
+                            },
                         )
-                    except Exception:
-                        pass
+                    )
+                except Exception:
+                    pass
         if managed_authority:
             queued.extend(
                 self._tick_automation_definitions(
@@ -1219,6 +1245,84 @@ class IntervalScheduler:
                 )
             )
         return tuple(queued)
+
+    def _admit_schedule_task(
+        self,
+        schedule: ScheduleDefinition,
+        occurrence_at: datetime,
+        next_run: datetime,
+        now: datetime,
+        snapshot: tuple[str, str] | None,
+        capacity: int,
+    ) -> AutomationJob | None:
+        """Admit one due legacy schedule as a kernel Task (or its legacy Job).
+
+        An organizing legacy schedule enters the Task kernel: the Task, its
+        scheduling slot, the schedule advance and its audit row commit in one
+        transaction and no Job row is written.  A non-organizing legacy command
+        keeps its original Job path, because this Task owns organizing work
+        only.  The returned value is an in-memory dispatch record for the
+        caller's rendering/notification; it is never persisted.
+        """
+
+        command = schedule.command
+        if not isinstance(command, AutomationCommand):
+            command = AutomationCommand(str(command))
+        if command is not AutomationCommand.ORGANIZE:
+            job = AutomationJob(
+                str(uuid4()),
+                command,
+                AutomationJobStatus.PENDING,
+                now,
+                now,
+                limit=schedule.limit,
+                schedule_id=schedule.schedule_id,
+                configuration_snapshot_id=snapshot[0] if snapshot else None,
+                configuration_snapshot_digest=snapshot[1] if snapshot else None,
+            )
+            if self._repository.enqueue_due_schedule(
+                schedule.schedule_id, job, occurrence_at, next_run, now, capacity
+            ):
+                return job
+            return None
+        from mediaflow.application.task_scheduling import build_scheduled_task_admission
+        from mediaflow.domain.task_scheduling import TaskTrigger
+
+        task, state = build_scheduled_task_admission(
+            command.value,
+            execute_authorized=True,
+            trigger=TaskTrigger.SCHEDULE,
+            principal=self._scheduled_principal,
+            item_limit=schedule.limit,
+            configuration_snapshot_id=snapshot[0] if snapshot else None,
+            configuration_snapshot_digest=snapshot[1] if snapshot else None,
+            now=now,
+        )
+        admitted = self._repository.admit_due_schedule_task(
+            schedule.schedule_id,
+            task,
+            state,
+            command=command.value,
+            occurrence_at=occurrence_at,
+            next_run_at=next_run,
+            now=now,
+            capacity=capacity,
+        )
+        if admitted is None:
+            return None
+        return AutomationJob(
+            admitted.task.task_id,
+            command,
+            AutomationJobStatus.PENDING,
+            now,
+            now,
+            limit=schedule.limit,
+            task_id=admitted.task.task_id,
+            schedule_id=schedule.schedule_id,
+            execute_authorized=True,
+            configuration_snapshot_id=snapshot[0] if snapshot else None,
+            configuration_snapshot_digest=snapshot[1] if snapshot else None,
+        )
 
     def _tick_automation_definitions(
         self,
@@ -1355,50 +1459,124 @@ class IntervalScheduler:
                 definition_fingerprint = _definition_fingerprint(definition)
                 source_scope = _definition_source_scope(definition)
                 item_limit = _definition_limit(definition)
-                job = AutomationJob(
-                    str(uuid4()),
-                    _command_for_definition_mode(mode),
-                    AutomationJobStatus.PENDING,
-                    now,
-                    now,
-                    limit=item_limit,
-                    definition_id=definition_id,
-                    definition_fingerprint=definition_fingerprint,
-                    definition_version=snapshot_version,
-                    occurrence_at=occurrence_at,
-                    run_mode=mode,
-                    resource_library_id=resource_id,
-                    source_scope=source_scope,
-                    configuration_snapshot_id=snapshot[0],
-                    configuration_snapshot_digest=snapshot[1],
-                    configuration_snapshot_version=snapshot_version,
-                )
-                if self._execution_authority is not None:
-                    self._execution_authority.authorize(job, definition)
-                occurrence = AutomationDefinitionOccurrence(
-                    str(uuid4()),
-                    definition_id,
-                    occurrence_at,
-                    now,
-                    job.job_id,
-                    definition_fingerprint,
-                    snapshot_version,
-                    snapshot[0],
-                    snapshot_version,
-                    snapshot[1],
-                    mode,
-                    resource_id,
-                    source_scope,
-                    item_limit,
-                )
-                admitted = self._repository.enqueue_due_automation_definition(
-                    definition_id,
-                    job,
-                    occurrence,
-                    next_run_at,
-                    now,
-                    maximum_active_jobs,
-                )
+                if self._scheduling is not None:
+                    from mediaflow.application.task_scheduling import (
+                        build_scheduled_task_admission,
+                    )
+                    from mediaflow.domain.task_persistence import RunDisplayContext
+                    from mediaflow.domain.task_scheduling import TaskTrigger
+
+                    command = _command_for_definition_mode(mode)
+                    task, scheduling_state = build_scheduled_task_admission(
+                        command.value,
+                        execute_authorized=True,
+                        trigger=TaskTrigger.SCHEDULE,
+                        principal=self._scheduled_principal,
+                        scope_path=source_scope,
+                        item_limit=item_limit,
+                        configuration_snapshot_id=snapshot[0],
+                        configuration_snapshot_digest=snapshot[1],
+                        require_configuration_snapshot=True,
+                        now=now,
+                    )
+                    job = AutomationJob(
+                        task.task_id,
+                        command,
+                        AutomationJobStatus.PENDING,
+                        now,
+                        now,
+                        limit=item_limit,
+                        task_id=task.task_id,
+                        definition_id=definition_id,
+                        definition_fingerprint=definition_fingerprint,
+                        definition_version=snapshot_version,
+                        occurrence_at=occurrence_at,
+                        run_mode=mode,
+                        resource_library_id=resource_id,
+                        source_scope=source_scope,
+                        configuration_snapshot_id=snapshot[0],
+                        configuration_snapshot_digest=snapshot[1],
+                        configuration_snapshot_version=snapshot_version,
+                    )
+                    if self._execution_authority is not None:
+                        self._execution_authority.authorize(job, definition)
+                    occurrence = AutomationDefinitionOccurrence(
+                        str(uuid4()),
+                        definition_id,
+                        occurrence_at,
+                        now,
+                        task.task_id,
+                        definition_fingerprint,
+                        snapshot_version,
+                        snapshot[0],
+                        snapshot_version,
+                        snapshot[1],
+                        mode,
+                        resource_id,
+                        source_scope,
+                        item_limit,
+                        task_id=task.task_id,
+                    )
+                    admitted = self._repository.admit_due_automation_definition_task(
+                        definition_id,
+                        task,
+                        scheduling_state,
+                        occurrence,
+                        next_run_at=next_run_at,
+                        now=now,
+                        capacity=maximum_active_jobs,
+                        display=RunDisplayContext(
+                            source_scope=source_scope,
+                            origin_definition_id=definition_id,
+                            origin_definition_name=getattr(definition, "name", None),
+                            origin_kind="definition-scheduled",
+                        ),
+                    )
+                else:
+                    job = AutomationJob(
+                        str(uuid4()),
+                        _command_for_definition_mode(mode),
+                        AutomationJobStatus.PENDING,
+                        now,
+                        now,
+                        limit=item_limit,
+                        definition_id=definition_id,
+                        definition_fingerprint=definition_fingerprint,
+                        definition_version=snapshot_version,
+                        occurrence_at=occurrence_at,
+                        run_mode=mode,
+                        resource_library_id=resource_id,
+                        source_scope=source_scope,
+                        configuration_snapshot_id=snapshot[0],
+                        configuration_snapshot_digest=snapshot[1],
+                        configuration_snapshot_version=snapshot_version,
+                    )
+                    if self._execution_authority is not None:
+                        self._execution_authority.authorize(job, definition)
+                    occurrence = AutomationDefinitionOccurrence(
+                        str(uuid4()),
+                        definition_id,
+                        occurrence_at,
+                        now,
+                        job.job_id,
+                        definition_fingerprint,
+                        snapshot_version,
+                        snapshot[0],
+                        snapshot_version,
+                        snapshot[1],
+                        mode,
+                        resource_id,
+                        source_scope,
+                        item_limit,
+                    )
+                    admitted = self._repository.enqueue_due_automation_definition(
+                        definition_id,
+                        job,
+                        occurrence,
+                        next_run_at,
+                        now,
+                        maximum_active_jobs,
+                    )
             except Exception:
                 self._record_definition_failure(
                     definition_id,

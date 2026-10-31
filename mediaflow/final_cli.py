@@ -2565,6 +2565,131 @@ class _ConfiguredPermissionAuthority:
         return False
 
 
+def _definition_scoped_service(
+    task_repository,
+    configuration: RuntimeConfiguration,
+    configured_path: str | None,
+) -> DefinitionScopedExecutionService:
+    """Build the one automatic definition pipeline for a Task repository.
+
+    Shared by the legacy Job handoff and the Task-kernel automatic runner so a
+    Scheduler/Run once Task and a legacy queued Job execute through the exact
+    same application engine, authorities and factories.
+    """
+
+    operational_logger = (
+        SQLiteOperationalLogger(
+            task_repository,
+            "workflow",
+            configuration.operational_logging_minimum_level,
+        )
+        if configuration.operational_logging_enabled
+        else None
+    )
+    return DefinitionScopedExecutionService(
+        task_repository,
+        configuration,
+        storage_factory=configuration.create_storages,
+        provider_factory=metadata_provider_registry_from_environment,
+        strategy_factory=strategy_runner_from_configuration,
+        history_factory=JsonLinesOperationHistoryRepository,
+        unattended_grant_service=UnattendedExecutionGrantService(
+            task_repository,
+            permission_authority=_ConfiguredPermissionAuthority(
+                lambda: _configuration(configured_path)
+            ),
+            publication_principal_resolver=lambda job, definition: (
+                _definition_publication_principal(configuration.database_path, job, definition)
+            ),
+            live_intent_checker=lambda job, definition: _schedule_intent_continuity(
+                configuration.database_path, job, definition
+            ),
+            live_definition_resolver=lambda definition_id: _live_automation_definition(
+                configuration.database_path, definition_id
+            ),
+        ),
+        logger=operational_logger,
+    )
+
+
+def _automatic_task_runner(repository, configured_path, scheduling_service):
+    """Build the resident runner for one adopted Scheduler/Run once Task.
+
+    It reconstructs the exact definition intent from the Task's admitted pin and
+    its durable display origin, then runs the *same* definition-scoped pipeline
+    the legacy Job handoff uses — under the Task's live claim fence and with the
+    existing publication/authority continuity checks intact.  No Job row is
+    written, no CLI text is parsed and no second engine is invoked.
+    """
+
+    def run(task, claim, clock=None) -> None:
+        from mediaflow.domain.automation import (
+            AutomationCommand,
+            AutomationJob,
+            AutomationJobOrigin,
+            AutomationJobStatus,
+        )
+        from mediaflow.domain.task_scheduling import TaskTrigger
+
+        display = repository.get_run_display_context(task.task_id)
+        definition_id = display.origin_definition_id if display is not None else None
+        if not isinstance(definition_id, str) or not definition_id.strip():
+            raise RuntimeError("automatic Task has no durable definition origin")
+        configuration = _configuration(
+            configured_path,
+            snapshot_id=task.configuration_snapshot_id,
+            snapshot_digest=task.configuration_snapshot_digest,
+        )
+        definition = next(
+            (
+                value
+                for value in getattr(configuration, "automation_task_definitions", ())
+                if getattr(value, "definition_id", getattr(value, "id", None)) == definition_id
+            ),
+            None,
+        )
+        if definition is None:
+            raise RuntimeError("pinned Automation Task Definition is unavailable")
+        version = getattr(configuration, "configuration_snapshot_version", None)
+        now = datetime.now(UTC)
+        state = scheduling_service.state(task.task_id)
+        trigger = state.admission_trigger if state is not None else None
+        run_once = trigger is TaskTrigger.RUN_ONCE
+        job = AutomationJob(
+            task.task_id,
+            AutomationCommand.ORGANIZE,
+            AutomationJobStatus.PENDING,
+            now,
+            now,
+            limit=task.item_limit,
+            task_id=task.task_id,
+            definition_id=definition_id,
+            definition_fingerprint=definition.definition_fingerprint,
+            definition_version=version,
+            run_mode=definition.mode,
+            resource_library_id=definition.resource_library_id,
+            source_scope=definition.source_scope,
+            configuration_snapshot_id=task.configuration_snapshot_id,
+            configuration_snapshot_digest=task.configuration_snapshot_digest,
+            configuration_snapshot_version=version,
+            execution_origin=(
+                AutomationJobOrigin.RUN_ONCE if run_once else AutomationJobOrigin.SCHEDULED
+            ),
+            execution_principal=(
+                state.admission_principal if run_once and state is not None else None
+            ),
+        )
+
+        def task_cancelled() -> bool:
+            current = scheduling_service.state(task.task_id)
+            return current is not None and current.control_request is not None
+
+        service = _definition_scoped_service(repository, configuration, configured_path)
+        service.run(job, task_cancelled, task_context=(scheduling_service, claim), clock=clock)
+
+    return run
+
+
 def _run_definition_scoped_workflow(
     job,
     configuration: RuntimeConfiguration,
@@ -2579,39 +2704,7 @@ def _run_definition_scoped_workflow(
         task_repository = repository
         if task_repository is None:
             task_repository = stack.enter_context(SQLiteTaskRepository(configuration.database_path))
-        operational_logger = (
-            SQLiteOperationalLogger(
-                task_repository,
-                "workflow",
-                configuration.operational_logging_minimum_level,
-            )
-            if configuration.operational_logging_enabled
-            else None
-        )
-        service = DefinitionScopedExecutionService(
-            task_repository,
-            configuration,
-            storage_factory=configuration.create_storages,
-            provider_factory=metadata_provider_registry_from_environment,
-            strategy_factory=strategy_runner_from_configuration,
-            history_factory=JsonLinesOperationHistoryRepository,
-            unattended_grant_service=UnattendedExecutionGrantService(
-                task_repository,
-                permission_authority=_ConfiguredPermissionAuthority(
-                    lambda: _configuration(configured_path)
-                ),
-                publication_principal_resolver=lambda job, definition: (
-                    _definition_publication_principal(configuration.database_path, job, definition)
-                ),
-                live_intent_checker=lambda job, definition: _schedule_intent_continuity(
-                    configuration.database_path, job, definition
-                ),
-                live_definition_resolver=lambda definition_id: _live_automation_definition(
-                    configuration.database_path, definition_id
-                ),
-            ),
-            logger=operational_logger,
-        )
+        service = _definition_scoped_service(task_repository, configuration, configured_path)
         return service.run(job, cancellation_check)
 
 
@@ -3768,16 +3861,20 @@ def _run_worker(
                     )
                     from mediaflow.application.task_scheduling import TaskSchedulingService
 
+                    scheduling_service = TaskSchedulingService(
+                        repository,
+                        capacity=getattr(configuration, "automation_maximum_active_jobs", 100),
+                        locks=repository,
+                    )
                     manual_task_worker = ManualTaskEngineWorker(
                         repository,
-                        TaskSchedulingService(
-                            repository,
-                            capacity=getattr(configuration, "automation_maximum_active_jobs", 100),
-                            locks=repository,
-                        ),
+                        scheduling_service,
                         media_discovery_worker.service,
                         manual_organize_worker.service,
                         worker_id=worker_service.worker_id,
+                    )
+                    manual_task_worker.set_automatic_runner(
+                        _automatic_task_runner(repository, configured_path, scheduling_service)
                     )
                     worker_service.set_manual_task_worker(manual_task_worker)
                     if arguments.worker_command == "run-next":
@@ -3992,6 +4089,8 @@ def _run_scheduler(
             required behaviour when Active is absent or unusable.
             """
 
+            from mediaflow.application.task_scheduling import TaskSchedulingService
+
             return IntervalScheduler(
                 repository,
                 getattr(resolved, "automation_schedules", ()) if resolved else (),
@@ -4010,6 +4109,15 @@ def _run_scheduler(
                     getattr(resolved, "automation_maximum_active_jobs", maximum_active_jobs)
                     if resolved
                     else maximum_active_jobs
+                ),
+                scheduling_service=TaskSchedulingService(
+                    repository,
+                    capacity=(
+                        getattr(resolved, "automation_maximum_active_jobs", maximum_active_jobs)
+                        if resolved
+                        else maximum_active_jobs
+                    ),
+                    locks=repository,
                 ),
                 configuration_snapshot_id=(
                     getattr(resolved, "configuration_snapshot_id", None) if resolved else None

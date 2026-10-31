@@ -34,9 +34,24 @@ from mediaflow.domain.task_scheduling import (
     TaskControl,
     TaskControlRejected,
     TaskMachineStage,
+    TaskTrigger,
 )
 
 DEFAULT_LEASE_SECONDS = 300.0
+#: TaskItem states that represent work still waiting for the operator's own
+#: four-type decision.  An automatic Task holding only these has no machine work
+#: left, so it gives its shared slot back while keeping its identity, source
+#: ownership, saved decisions and results.
+_WAITING_ITEM_STATUSES = frozenset(
+    {
+        TaskItemStatus.WAITING_CONFIRM,
+        TaskItemStatus.WAITING_RECOGNITION,
+        TaskItemStatus.WAITING_METADATA,
+        TaskItemStatus.WAITING_METADATA_CORRECTION,
+        TaskItemStatus.WAITING_CLASSIFICATION,
+    }
+)
+_AUTOMATIC_TRIGGERS = frozenset({TaskTrigger.SCHEDULE, TaskTrigger.RUN_ONCE})
 _TERMINAL_EXECUTION_STATUSES = frozenset(
     {
         ManualExecutionStatus.COMPLETED,
@@ -69,6 +84,7 @@ class ManualTaskEngineWorker:
         clock: Callable[[], datetime] | None = None,
         worker_id: str | None = None,
         notice: Callable[[str], None] | None = None,
+        automatic_runner: Callable[[PersistentTask, object], None] | None = None,
     ) -> None:
         if (
             isinstance(lease_seconds, bool)
@@ -85,6 +101,11 @@ class ManualTaskEngineWorker:
         self._worker_id = worker_id or f"manual-task-{secrets.token_hex(6)}"
         self._notice = notice or (lambda line: sys.stderr.write(line))
         self._parent_heartbeat: Callable[[], bool] | None = None
+        # The automatic (Scheduler due / Run once) runner.  It is injected by
+        # the production composition so this engine owns only the kernel claim,
+        # control and settlement boundary while the existing definition-scoped
+        # pipeline owns strategy, Provider and Storage.
+        self._automatic_runner = automatic_runner
 
     @property
     def worker_id(self) -> str:
@@ -98,6 +119,11 @@ class ManualTaskEngineWorker:
         if not callable(heartbeat):
             raise ValueError("manual Task engine heartbeat must be callable")
         self._parent_heartbeat = heartbeat
+
+    def set_automatic_runner(self, runner: Callable[[PersistentTask, object], None] | None) -> None:
+        """Attach the definition-scoped automatic runner after construction."""
+
+        self._automatic_runner = runner
 
     def run_next(self) -> PersistentTask | None:
         """Claim and advance at most one kernel-admitted manual Task."""
@@ -126,6 +152,9 @@ class ManualTaskEngineWorker:
             discovery = self._repository.get_media_discovery_for_task(claim.task_id)
             if discovery is not None:
                 return self._run_discovery(claim, discovery)
+
+            if self._is_automatic(claim):
+                return self._run_automatic(claim)
 
             if execution is not None:
                 return self._finish_execution(claim, execution)
@@ -421,6 +450,92 @@ class ManualTaskEngineWorker:
         if machine:
             return self._yield_until(claim, updated, now, TaskMachineStage.EXECUTION)
         self._scheduling.defer_to_human(claim, task=updated, items=(), now=now)
+        return self._task(claim.task_id)
+
+    # -- Automatic (Scheduler due / Run once) --------------------------------
+
+    def _is_automatic(self, claim) -> bool:
+        """Whether this admitted Task is an automatic (non-Files) intent."""
+
+        state = self._scheduling.state(claim.task_id)
+        if state is None:
+            return False
+        return state.admission_trigger in _AUTOMATIC_TRIGGERS
+
+    def _run_automatic(self, claim) -> PersistentTask:
+        """Advance one adopted Scheduler/Run once Task through the shared pipeline.
+
+        The injected runner owns strategy/Provider/Storage and publishes every
+        item and Result under this live claim fence.  This method owns only the
+        claim boundary: the running publication, the cooperative-control
+        settlement, the uncertain-effect stop and the terminal/aggregate
+        decision.  An unproved in-flight mutation keeps its claim and marker.
+        """
+
+        if self._automatic_runner is None:
+            return self._fail_unlinked(claim)
+        task = self._task(claim.task_id)
+        if task.status is PersistentTaskStatus.PENDING:
+            claim = self._scheduling.begin_work(
+                claim, stage=TaskMachineStage.DISCOVERY, now=self._clock()
+            )
+            task = claim.task
+        try:
+            self._automatic_runner(task, claim, self._clock)
+        except TaskClaimFenceLost:
+            return None
+        except Exception as error:  # noqa: BLE001 - a Worker must never crash the loop
+            state = self._scheduling.state(claim.task_id)
+            if state is not None and state.mutation_in_flight:
+                # The effect is unproved: never convert it into a retryable
+                # failure.  Keep the claim and mutation marker for inspection.
+                self._notice(self._bounded_notice(claim.task_id, error))
+                return self._task(claim.task_id)
+            if state is not None and state.control_request is not None:
+                return self._settle_pending_control(claim)
+            self._notice(self._bounded_notice(claim.task_id, error))
+            self._record_failure(claim, error)
+            return self._task(claim.task_id)
+        return self._settle_automatic(claim)
+
+    def _settle_automatic(self, claim) -> PersistentTask:
+        """Publish the honest aggregate of one finished automatic pass.
+
+        Every concrete source is settled independently: a four-type waiting
+        source returns the whole Task to human waiting (zero slots) while a
+        still-processing sibling keeps the slot, and completed/failed/ignored
+        siblings remain their own durable outcomes.
+        """
+
+        state = self._scheduling.state(claim.task_id)
+        if state is not None and state.mutation_in_flight:
+            return self._task(claim.task_id)
+        if state is not None and state.control_request is not None:
+            return self._settle_pending_control(claim)
+        task = self._task(claim.task_id)
+        now = self._clock()
+        items = self._repository.list_items(task.task_id)
+        machine = tuple(
+            value
+            for value in items
+            if value.status in {TaskItemStatus.PENDING, TaskItemStatus.PROCESSING}
+        )
+        if machine:
+            updated = self._with_counts(
+                self._with_status(task, PersistentTaskStatus.RUNNING, now, task.error)
+            )
+            return self._yield_until(claim, updated, now, TaskMachineStage.ANALYSIS)
+        waiting = tuple(value for value in items if value.status in _WAITING_ITEM_STATUSES)
+        if waiting:
+            updated = self._with_counts(
+                self._with_status(task, PersistentTaskStatus.RUNNING, now, task.error)
+            )
+            self._scheduling.publish_task(claim, updated, now=now)
+            self._scheduling.defer_to_human(claim, task=updated, items=(), now=now)
+            return self._task(claim.task_id)
+        status = task_work_status(items) if items else PersistentTaskStatus.COMPLETED
+        updated = self._with_counts(self._with_status(task, status, now, task.error))
+        self._scheduling.settle(claim, task=updated, items=items, now=now)
         return self._task(claim.task_id)
 
     def _settle_pending_control(self, claim) -> PersistentTask:

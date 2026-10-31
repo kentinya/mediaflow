@@ -5,6 +5,7 @@ from __future__ import annotations
 import posixpath
 from collections.abc import Callable, Mapping
 from dataclasses import replace
+from datetime import UTC, datetime
 from typing import Any
 
 from mediaflow.application.automation import (
@@ -16,7 +17,7 @@ from mediaflow.application.automation import (
 from mediaflow.application.media_organizer import IncompleteOrganizingScope, MediaOrganizerService
 from mediaflow.application.organizer import OrganizerExecutor
 from mediaflow.application.scanner import StorageScanner, normalize_resource_root
-from mediaflow.application.task_runtime import PersistentTaskCoordinator
+from mediaflow.application.task_runtime import KernelTaskCoordinator, PersistentTaskCoordinator
 from mediaflow.application.unattended_execution import (
     UnattendedExecutionGrantError,
     UnattendedExecutionGrantService,
@@ -65,13 +66,20 @@ class DefinitionScopedExecutionService:
         self._unattended_grants = unattended_grant_service
         self._logger = logger
 
-    def run(self, job, cancellation_check: Callable[[], bool]) -> str:
-        """Consume a claimed definition Job and return its durable Task id.
+    def run(
+        self, job, cancellation_check: Callable[[], bool], *, task_context=None, clock=None
+    ) -> str:
+        """Consume a claimed definition intent and return its durable Task id.
 
         Only an automatic-organization definition reaches Storage, Provider or
         Task construction.  A recorded pre-amendment mode fails closed *before*
         any adapter or Task exists, so old queued/running work stops safely and
         can never acquire mutation authority or a compatible executor.
+
+        ``task_context`` is the kernel ``(scheduling_service, claim)`` for a Task
+        the Scheduler or Run once already admitted before business readiness.
+        When present it is adopted in place of creating a second Task, and every
+        machine publication is made under that live claim fence.
         """
 
         if job.command not in set(AutomationCommand):
@@ -104,7 +112,7 @@ class DefinitionScopedExecutionService:
             raise self._failure(
                 error.code,
                 "the admitted Task and pin are retained; no media effect was started"
-                if _is_run_once(job) and job.task_id
+                if job.task_id
                 else error.durable_state,
                 error.retry_safe,
                 error.next_action,
@@ -114,18 +122,35 @@ class DefinitionScopedExecutionService:
             raise AutomationCancelled()
 
         source_storages = self._preflight_scope_storage(resource, scope_root)
-        coordinator = PersistentTaskCoordinator(self._repository, self._repository)
+        kernel_scheduling, kernel_claim = task_context or (None, None)
         effective_limit = _effective_item_limit(job, definition)
-        if _is_run_once(job) and job.task_id:
+        if job.task_id:
             task = self._repository.get_task(job.task_id)
             if task is None or task.configuration_snapshot_id != job.configuration_snapshot_id:
-                raise RuntimeError("admitted Run once Task pin is unavailable")
+                raise RuntimeError("admitted automatic Task pin is unavailable")
             if task.status is PersistentTaskStatus.CANCELLED:
                 raise AutomationCancelled(task.task_id)
             if task.status is PersistentTaskStatus.PENDING:
-                task = coordinator.begin_queued(task.task_id)
+                if kernel_claim is not None:
+                    from mediaflow.domain.task_scheduling import TaskMachineStage
+
+                    now = clock() if clock is not None else datetime.now(UTC)
+                    kernel_claim = kernel_scheduling.begin_work(
+                        kernel_claim,
+                        stage=TaskMachineStage.EXECUTION,
+                        now=now,
+                    )
+                    task = kernel_claim.task
+                else:
+                    task = PersistentTaskCoordinator(
+                        self._repository, self._repository
+                    ).begin_queued(task.task_id)
+            elif task.status is PersistentTaskStatus.RUNNING and kernel_claim is not None:
+                # The resident Task engine already published this Task's running
+                # boundary under its live claim before invoking this runner.
+                pass
             else:
-                # A reclaimed Job must never scan a previously entered Task
+                # A reclaimed intent must never scan a previously entered Task
                 # again: COPY successes and uncertain effects may still exist.
                 self._fail_task(
                     task.task_id,
@@ -146,7 +171,7 @@ class DefinitionScopedExecutionService:
                     ),
                 )
         else:
-            task = coordinator.create(
+            task = PersistentTaskCoordinator(self._repository, self._repository).create(
                 job.command.value,
                 execute_authorized=True,
                 scope_path=scope_root,
@@ -155,6 +180,7 @@ class DefinitionScopedExecutionService:
                 configuration_snapshot_digest=job.configuration_snapshot_digest,
                 require_configuration_snapshot=True,
             )
+        coordinator = self._coordinator((kernel_scheduling, kernel_claim), clock=clock)
         try:
             self._run_scan_and_plan(
                 coordinator,
@@ -171,8 +197,8 @@ class DefinitionScopedExecutionService:
             self._cancel_task_if_running(coordinator, task.task_id)
             raise
         except AutomationClaimLost:
-            # The Worker no longer owns the Job.  Do not rewrite Task state
-            # from a stale claimant.
+            # The Worker no longer owns the Task claim.  Do not rewrite Task
+            # state from a stale claimant.
             raise
         except IncompleteOrganizingScope as error:
             self._fail_task(task.task_id, message=str(error))
@@ -542,8 +568,10 @@ class DefinitionScopedExecutionService:
         task = self._repository.get_task(task_id)
         if task is None or task.status is not PersistentTaskStatus.RUNNING:
             return
-        from datetime import UTC, datetime
-
+        if self._kernel_managed(task_id):
+            # A kernel-managed Task is only published FAILED by its resident Task
+            # engine under the live claim fence; a generic writer is refused.
+            return
         self._repository.update_task(
             replace(
                 task,
@@ -553,6 +581,35 @@ class DefinitionScopedExecutionService:
                 error=message,
             )
         )
+
+    def _kernel_managed(self, task_id: str) -> bool:
+        """Whether this Task is published by the scheduling kernel.
+
+        A generic Task writer must never publish a kernel-managed Task; the
+        resident Task engine owns its terminal settlement under the claim fence.
+        """
+
+        reader = getattr(self._repository, "get_task_scheduling", None)
+        if not callable(reader):
+            return False
+        try:
+            return reader(task_id) is not None
+        except Exception:  # noqa: BLE001 - an unreadable kernel row fails closed
+            return True
+
+    def _coordinator(self, task_context, *, clock=None):
+        """The publication coordinator for this run.
+
+        A kernel ``(scheduling, claim)`` context routes every machine write
+        through the live claim fence; otherwise the original generic coordinator
+        keeps the legacy behavior unchanged.
+        """
+
+        if task_context and task_context[1] is not None:
+            return KernelTaskCoordinator(
+                self._repository, self._repository, task_context[0], task_context[1], clock=clock
+            )
+        return PersistentTaskCoordinator(self._repository, self._repository)
 
     @staticmethod
     def _failure(category: str, state: str, retry_safe: bool, next_action: str):

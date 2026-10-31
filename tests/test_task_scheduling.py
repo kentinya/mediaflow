@@ -1468,6 +1468,8 @@ class TransitionBoundaryTests(unittest.TestCase):
 
         package = Path(mediaflow_package_path()).parent
         expected = {
+            "application/automation.py",
+            "application/automation_definition_execution.py",
             "application/manual_organize_execution.py",
             "application/manual_task_continuation.py",
             "application/manual_task_engine.py",
@@ -1476,6 +1478,9 @@ class TransitionBoundaryTests(unittest.TestCase):
             # same Task control boundary the Files page uses instead of the
             # legacy version-checked writer.
             "application/operations_lifecycle.py",
+            # Task47.3: the definition-scoped automatic pipeline adopts a
+            # Scheduler/Run once kernel Task and publishes under its claim.
+            "application/task_runtime.py",
             "final_cli.py",
             "interfaces/service_api.py",
             "domain/task_scheduling.py",
