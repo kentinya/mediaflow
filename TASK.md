@@ -12,7 +12,7 @@ Recheck intervening commits without silently repinning the Task Base.
 Task ID: 47.3
 Task Type: SLICE
 Parent Slice: 47
-Status: IN PROGRESS
+Status: READY FOR B REVIEW
 Task Base: dfcfebbdb9c879b38806e29c7b41c9192aeca83e
 Difficulty: High
 Test Level: T4
@@ -602,7 +602,14 @@ Progress are unchanged. Slice47 remains ACTIVE; no Closure Packet or A Final Rev
 ## Developer Completion Report — Round 3
 
 **Status: READY FOR B REVIEW.** Same-Task correction checkpoint for the three B blockers of
-Round 2; not a self-approved PASS. Candidate identity follows this report.
+Round 2; not a self-approved PASS.
+
+```text
+Task Base: dfcfebbdb9c879b38806e29c7b41c9192aeca83e (not repinned)
+Code/test checkpoint: 1e46e5ba (fix(task47.3): same-Task automatic continuation, ...)
+Report checkpoint: this documentation commit
+Pre-existing untracked files: preserved, unstaged. No push/deploy/self-approval.
+```
 
 ### Corrections implemented
 
