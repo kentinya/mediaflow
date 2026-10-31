@@ -9,7 +9,7 @@ Authority: committed [SLICE.md](SLICE.md) at `c1e616113f87420d6f7411c3e6287ce81c
 Task ID: 47.2
 Task Type: SLICE
 Parent Slice: 47
-Status: READY FOR B REVIEW
+Status: FIX REQUIRED
 Task Base: c942c4b4b9d3abf105341e8163c1be2d95d9a671
 Difficulty: High
 Test Level: T4
@@ -53,22 +53,21 @@ Copy/Move等操作及既有Web/API/CLI控制入口均不再提供该能力；这
 
 ## Actual-code gap — current candidate
 
-本轮冻结候选`c9a72ce5ed69d4d2da49789c1c5cb42013e6a9f8`，产品checkpoint
-`2f682703ce899dee691eedfc910742b2a729c809`；两者只差TASK报告，完整Task Base..Head为64文件。
-Task Base、High/T4与schema55不变。用户授权独立B复核本代理代开发者实施的最后修正；
-当前结论FIX REQUIRED，不是实施者自审，也不改Slice边界。
+本轮B复核冻结候选`82a0739df84a60040dcf896b39c888ac6a0222ca`，完整Task Base..Head为64文件。
+Task Base、High/T4与schema55不变。结论FIX REQUIRED；本轮只审查/验证并更新Task，不实施修复。
 
-上轮直接ready来源的TaskItem漏建、浏览器旧Worker接线、暂停退役断言已有修正和开发验证。
-本轮独立B从既有正常入口确认两个剩余阻塞：被忽略的文件会重新进入摘要并被执行；全部
-条目已忽略或技术失败后，原Task却一直running/waiting_human，无法正确结束。详见B Review。
+上轮两项复现现已得到修正：ignored来源不再进入同一Task的新摘要；初次分析全部技术失败、
+最后一项ignore能够结算。但既有未结束条目在重新分析遇到技术失败时，失败没有同步到原条目，
+仍会留下永久running/waiting_human的Task。这是当前唯一确认的P1，详见B Review。
 
 ## Next implementation order
 
-1. 按P1-1修同一Task的剩余来源资格：已ignored项不再进分析/可执行摘要，确认事务也不允许
-   把它覆盖回待执行/成功；保留正常未选文件的合法分析/确认、精确源版本与既有历史。
-2. 按P1-2复用现有聚合/安全结算：分析全部失败、最后一项被忽略时，原Task按实际条目终态
-   结束。还有合法待确认/待决定/机器工作或不确定效果时不提前结束、不提前释放保护。
-3. Developer在同一Task交已知失败复现、修改与直接受影响测试和实际风险；不要求Developer
+1. 修正现有fenced plan/discovery发布事务：区分已结束历史与本次重新分析的未结束来源，
+   将实际技术失败同步到该来源既有TaskItem，不因“已有item”而跳过；保留ID/精确源版本/pin、
+   已保存决定、审核审计和兄弟历史，不能覆盖成功、ignored、cancelled或uncertain效果。
+2. 复用既有计数、`task_work_status`和安全结算：无合法人工/机器工作时按真实结果结束；仍有
+   待决定/待确认、queued/claimed或in-flight工作时不提前结束，不新增队列或第五恢复入口。
+3. Developer补真实入口ready→重新分析失败及混合兄弟对照，交修改与直接受影响测试/风险；不要求Developer
    重跑全套。独立B复审完整Base..新Head，再完成适用M1–M10和T4/发布门禁。
    不新增通用恢复、暂停或第二套系统，不先规划47.3，不做验收平台重构。
 
@@ -270,117 +269,100 @@ Task47.1 的 T1–T10 已 PASS；本次对全部 Slice 结果重评：RO-1 内�
 RO-5 原界面兼容已验而 Task 化全表面未交付。因此继续规划本 Task，Slice 不满足交 A 关闭条件。
 本 Task 通过后必须再次核对全部 RO，不预先宣称自动触发、历史迁移或 Job 退役完成。
 
-## B Review Result — independent review
+## B Review Result — current candidate
 
 Reviewed Task Base: `c942c4b4b9d3abf105341e8163c1be2d95d9a671`。
-Reviewed Head: `c9a72ce5ed69d4d2da49789c1c5cb42013e6a9f8`，产品`2f682703ce899dee691eedfc910742b2a729c809`。
-范围：完整Base..Head，64文件。Decision: **FIX REQUIRED**，两项P1，未宣告Task/Slice PASS。
+Reviewed Head: `82a0739df84a60040dcf896b39c888ac6a0222ca`。
+范围：完整Base..Head的64文件，含已提交范围改约、生产链、消费者及测试退役/替换。
+Decision: **FIX REQUIRED**，一项确认的P1；未宣告Task/Slice PASS。
 
-用户本轮选择“1”明确授权独立B审查。`/root/independent_task47_2_review`负责独立代码审查、
-关键复现及判定；本代理仍为B，汇总验收/写TASK，上轮代开发者实施的修正不由本代理自批。
-治理通过；main仅有原来的OS/log/图片/zip等未跟踪文件，未访问用户媒体/运行库/私有配置。
+本轮以B执行独立复核，未实施产品修复、未使用子代理。治理通过；main无既有tracked edits，
+原有OS/log/图片/zip等untracked原样保留且不暂存；未访问用户运行库、媒体或私有配置。
+已核对手动Task链、逐项历史/聚合、分析/确认/执行、取消、四类续作、暂停退役、新旧Worker共存
+及API/CLI/Web消费者。大量删测对应用户已取消的暂停恢复旅程，不能视为这些旧旅程修复通过；
+保留退役入口的拒绝/零效果/历史读取验证。当前原生浏览器组的部分四类seed仍走legacy链，
+其44项通过不能单独证明新Task链的全部M4。本轮只报告真实已确认的可达问题。
 
-### P1-1 — 已忽略的文件重新进入同一Task并被实际整理
+### 已验证修正的前两项复现
 
-**用户操作与实际结果：** Files选One和Two；One的Metadata候选有歧义，用户在任务中心
-点“忽略”。之后回到同一准备工作点重新分析（Provider后来返回唯一匹配），新摘要却把One
-和Two都标previewed并默认纳入确认。确认后One真实MOVE，原item从ignored变success，Task
-显示Completed2/2。不是新整理请求，也不是只显示错了状态；源One已不存在、产生两个Result。
+- `ignored-source-repro.py`：同一Task重新分析只含Two；One保持ignored且源仍存在，最终
+  partial_success，只有Two的1个Result、无Job。已忽略文件重新被实际整理的旧复现未再出现。
+- `settled-analysis-repro.py`：最后一项ignore→partial_success/settled；初次分析全技术失败
+  →failed/settled；均零Storage变更。此修正确实有效，但不覆盖下述既有条目的重新分析失败。
 
-**定位：** `media_discovery.py:_remaining_intent_item_ids`只排除已在execution准入过的intent
-item，遗漏尚未执行就被ignored的TaskItem；`admit_manual_execution`/原item复用路径又把
-ignored覆盖成执行项。仅保留Task ID或item ID不能证明逐项状态被保留。阻塞M3/M4/M7/M8。
+### P1 — 重新分析失败未同步原条目，Task仍永久等待
 
-**开发指导与验收：**
+**真实操作：** Files提交一部影片，第一次分析正常，原TaskItem到waiting_confirm。用户通过
+现有“重新分析”入口重算同一工作，此时Metadata Provider超时。新摘要该项为failed，原条目却
+仍是waiting_confirm、无error；Task/API仍running，调度为waiting_human且不占容量，没有问题
+类型和可执行工作。再运行真实Task engine五次仍不改变，零Result、零Storage变更。
+这不是暂停任务、额外恢复类型或猜造入口；只替换synthetic Provider的正常返回/超时，未改DB/claim。
 
-1. 从现有耐久Task/来源版本/pin及审核状态确定本工作合法剩余范围，分析/ready摘要排除已
-   ignored来源；沿用现有关系，不加第二套映射或恢复系统。不要只隐藏行/取消默认勾选。
-2. 现有精确确认/准入事务再次检查真实来源资格，不得因复用TaskItem或重新规划而覆盖ignored
-   历史、重开已决定文件或消费不合格scope。保留可证明安全的既有合法继续，不把所有历史
-   失败一律变成永久锁；取消/成功/uncertain和源/权限/pin保护不能弱化。
-3. 回归沿上述真实入口覆盖Provider正常新返回的情形：Two可继续产生自己的Result；One保持
-   ignored、源仍在、无新增执行效果/Result，审核审计、原链接和准确文件数跨重开保留。
-   刷新/更新摘要不能使忽略变失效，也不能把混合结果显示成全部成功。显式另开新工作的合法
-   意图仍按原源占用/权限规则处理，不追加“这个路径永久不可整理”的断言。
+**根因：** `mediaflow/infrastructure/sqlite_runtime.py:publish_media_discovery_plan_with_plan`
+在本次分析发布事务中按task/storage/path查到任何existing item就无条件continue。保留历史的
+意图连同未结束条目一起跳过了，导致新失败只存在于摘要，原TaskItem仍被当作人工待确认项。
+`manual_task_engine.py:_wait_for_human`的新“全部settled”判断因此无法触发。
 
-证据：`independent/ignored-source-repro.py/log`，0.146s；真实API ignore200、重新调用Provider4次、
-ready集合包含One、确认202和实际MOVE/Result。只更换synthetic Provider的正常返回，未改DB/claim。
+**同Task修正与验收：**
 
-### P1-2 — 所有文件已结束，Task仍永久显示运行中/等待人工
+1. 在既有claim/fence保护的原子发布事务内，区分已settled历史与本次精确来源的未结束条目；
+   将实际技术失败发布到既有条目，保留ID/源版本/pin、决定/审计/attempt和兄弟结果，不笼统
+   重置所有existing项，也不覆盖ignored/success/cancelled/uncertain。
+2. 复用现有计数/聚合/安全结算；最后一个合法未结束来源失败后，Task/API按真实失败结束，
+   failure stage/原因与安全下一步可回读。仍有合法待决定/待确认、queued/claimed或in-flight
+   工作时保留正确等待/名额/效果保护，不新增恢复或调度系统。
+3. 从现有Files/API+生产Task engine增加ready→重新分析超时回归，核对新摘要、原item、Task、
+   API和重开一致、零变更/无Job；增加直接相关混合对照，另一待决定/待确认项不被提前结束，
+   已成功/ignored兄弟保持原结果且不重放。Developer仅跑失败及直接受影响测试，B负责T4。
 
-**两个正常操作例子：**
-
-- 只整理一部影片，识别有问题；用户点“忽略”。文件已ignored，Task仍running/waiting_human。
-- 正常Files提交一部已识别影片，Metadata Provider查询超时。文件为failed/analysis_failed，
-  计数1/0/1；Task仍running/waiting_human，既无人工决定也没有可执行摘要。
-
-两例再调用真实engine五次仍没有机器工作，API运行投影200且一直未结束；零Storage变更、
-占用名额为0。不能让用户靠再次忽略、取消、通用Retry或等下一Worker来完成这个已结束工作。
-
-**定位：** `manual_task_engine.py:_wait_for_human`把分析结束后的所有项一律发布为RUNNING并
-`defer_to_human`，没有处理全部settled；`sqlite_runtime.py:_admit_ignore_locked`更新了条目/
-审核/审计，却没有在最后一项忽略后安全结算原Task。waiting_human本来就不会被Worker领取。
-阻塞M1/M4/M8，以及失败/忽略完成语义；不是“需要新增恢复功能”。
-
-**开发指导与验收：**
-
-1. 完整发现/分析结束后，区分真正待人工的文件和已经settled的条目；全部结束时复用
-   `task_work_status`、既有claim/fence及Task安全结算，按真实失败/混合结果结束，保留各自
-   原因、时间、Result/效果，不强行标全部成功、不新造一套终态规则。
-2. 最后一项ignore被接受后也要在既有事务/安全边界完成Task聚合与结算，不仅改前端文案，
-   也不为结算而排新Job/子Task。仍有待决定/待确认文件、queued/claimed工作、in-flight调用
-   或未证明的效果时，保留相应等待/名额/效果保护，不能靠“当前这一个已结束”提前结整批。
-3. 回归上述单文件全忽略、全技术失败，并核对API/Task Center结束视图、计数/解释、无忙循环、
-   重开一致与零变更；加直接相关混合对照，另一文件仍可正常继续、成功兄弟Result不改写。
-   技术失败仍只读，不增第五恢复类型；真正人工等待不能被误判为结束。
-
-证据：`independent/settled-analysis-repro.py/log`，0.162s；使用真实Files/ignore/API、生产Task引擎
-和临时Local Storage；Provider超时是既有失败边界，没有伪造数据库状态。
+证据：`.git/validation-evidence/b-task47.2-82a0739d/reanalysis-failure-repro.py`及同名`.log`。
+本问题阻塞M1/M4/M8的逐项状态、失败完成与用户结果闭环；其余门禁通过不能替代此交付缺口。
 
 ### 本轮门禁与限制
 
-证据根：`.git/validation-evidence/b-task47.2-c9a72ce5/`。独立审查报告见`independent/`；
-所有命令/真实输出、停止记录、manifest和计时原始数据保留，不以旧候选制品替代当前验收。
+证据根：`.git/validation-evidence/b-task47.2-82a0739d/`，命令/结果清单见`review-summary.md`。
+原始复现及完整测试日志保留在本地忽略存储，不宣称远程可访问。
 
 | 验证 | 当前候选实际结果 |
 |---|---|
-| 完整Base..Head manifest/空白、治理、ruff format/check、compile、pip、两份示例、禁用依赖检查 | 通过；64文件，rg exit1无FFmpeg/FFprobe；`quality.json` |
-| Web typecheck/lint/format/build | 通过；`web.json` |
-| Web完整单测 | 88文件/1320项通过；`web-unit.log`，101.004s |
-| 独立B真实入口关键复现 | 上述两个P1均确认；两个脚本共约0.307s，无DB状态伪造 |
-| 完整Python unittest discover | 确认P1后主动SIGINT，165.652s/exit -2，未完成，不记PASS或产品测试失败 |
-| 常规Web E2E | 主动停止：93 passed/1 interrupted/159 did not run，41.935s/exit130；中断trace不是新增产品断言失败 |
-| 四组真实浏览器、当前wheel/源码外消费者、53/54升级、Docker fresh/restart/security | 因确认P1未启动；修正候选由独立B完成适用门禁，不转为Developer全套义务 |
+| 治理、完整diff/manifest、ruff format/check、compileall、pip check、两份示例配置、diff空白 | 通过；398 Python文件格式检查通过 |
+| Web typecheck/lint/format:check/build | 通过；build有常规大chunk提示 |
+| Web完整单测 | 88文件/1320项通过；`web-unit.log`，103.61s |
+| 真实Python浏览器operations-inventory组 | 44 passed；`browser-inventory.log`，71.50s；上述新/旧链证明范围限制保留 |
+| 前两项真实入口复现 | 当前候选已修正；`ignored-source-repro.log`、`settled-analysis-repro.log` |
+| 本轮重新分析失败复现 | 确认P1，原item不更新、Task不结束；五次空闲Worker推进无效 |
+| 完整Python unittest discover | 确认P1后主动Ctrl-C停止，257.15s/exit130；未完成，无最终计数，不记PASS或产品断言失败 |
+| 常规Web E2E、其余三组原生浏览器/截图QA、当前wheel/源码外消费者、53/54升级、Docker fresh/restart/security | 因已确认P1未执行；修正候选由B补齐适用门禁 |
 
-上轮369项受影响Python和44项真实浏览器是开发交接结果，不能代替完整Task验收。前候选的
-2974项全量/旧wheel和Docker也不能充当当前PASS。未放宽timeout/retry/skip；ResourceWarnings
-与主动中断保留。测试并行墙钟约166秒，计短探测/静态检查保守少于180秒；截至本轮计时417秒
-已低于50%，详见`timing.json`。发现实际P1即停止昂贵门禁，没有为比例重复测试或等待。
+Python中断时的ResourceWarnings/KeyboardInterrupt保留；未放宽timeout/retry/skip。旧候选全量、
+wheel/Docker和Developer受影响测试不能替代当前T4。测试并行墙钟及本轮时间约束记录于证据清单；
+发现P1即停止昂贵测试，后续仅完成代码/文档审查与受影响治理检查。
 
 ### M1–M10与全部Slice结果重评
 
 | Task验收 | 当前结论 |
 |---|---|
-| M1 | 新工作同Task/无Job的链仍在；全部条目结束却不结算被P1-2阻塞 |
-| M2 | 有界/稳定性/附件原要求不变；本轮无新阻塞，完整当前原生门禁未完成 |
-| M3 | 精确确认不能重新纳入同Task已ignored来源，P1-1未满足 |
-| M4 | 已忽略历史/独立结果和真实完成语义被两项P1阻塞；其余四类证明不能替代此缺口 |
-| M5 | claim/取消/未知保护保持原验收要求；本轮未完成全量，未记PASS |
-| M6 | 现有共享容量/原子准入边界不变；未完成当前共存门禁，不记PASS |
-| M7 | ignored兄弟项不能被同一工作重新执行，P1-1未满足；不扩大为所有崩溃点恢复 |
-| M8 | 忽略后又执行、已结束仍显示进行中影响实际页面结果，两项P1阻塞 |
-| M9 | 当前打包/部署/完整回归未完成；修正后独立B验收 |
-| M10 | Pause退役与四类继续边界不变，未新增暂停迁移/恢复义务 |
+| M1 | 新工作同Task/无Job链已接；本次重新分析失败后不能结束，P1阻塞 |
+| M2 | 有界发现/稳定性/附件范围不变；本轮无新增确认阻塞，全部当前原生门禁尚未完成 |
+| M3 | ignored重入旧复现已修正，精确确认/权限/身份约束仍需完整当前T4；不据局部结果宣告通过 |
+| M4 | 重新分析失败与原条目不一致，失败/独立历史闭环被P1阻塞；四类完整新链证明尚未完成 |
+| M5 | claim/取消/未知效果边界已审；当前完整并发/部署门禁未完成，不记PASS |
+| M6 | 新旧共享容量/原子准入仍在本Task；未完成当前全部共存门禁，不记PASS |
+| M7 | ignored兄弟不重放旧复现已修正；其余安全续作要求保持，当前完整门禁未完成 |
+| M8 | 新摘要failed、原Task/API永久running，实际用户结果被P1阻塞 |
+| M9 | 当前完整Python、打包/升级/容器验收未完成；由B在修正候选上完成 |
+| M10 | Pause退役及拒绝入口已有代码/测试；无新增暂停迁移义务，当前全量验收未完成 |
 
 | Slice outcome | 当前结论 |
 |---|---|
-| RO-1 | 手动生产链已接，但逐项决定/任务终态仍有实际缺口，未完整交付 |
-| RO-2 | due/Run once/独立API-CLI引擎切换仍后续；本Task不承担这些切换 |
-| RO-3 | 复用现有四类流程，但忽略保留/安全剩余scope/完成语义仍受两项P1阻塞 |
-| RO-4 | schema55加法在既有范围，Job历史迁移/删除仍后续；本轮未补记旧证据为新PASS |
-| RO-5 | Task Center/Files真实忽略与结束结果未闭环；Task/Slice不满足关闭条件 |
+| RO-1 | 手动生产链已接；既有条目重新分析失败后的终态不实，未完整交付 |
+| RO-2 | 手动链已接；due/Run once/独立API-CLI引擎切换仍为后续工作，本Task不承担切换 |
+| RO-3 | 四类复用/同Task已实现接线；本次逐项失败/完成语义仍有缺口，完整新链验收未完成 |
+| RO-4 | schema55加法在本Task范围；Job历史迁移/删除仍后续，当前升级门禁未完成 |
+| RO-5 | Files/Task Center重新分析失败结果未闭环；其他新表面仍需完整验收 |
 
-同Task按上述两项修正；Slice47仍ACTIVE，不先规划下一Task，不修改A-owned合同/路线图/进度。
+同Task修复这一项P1；Slice47保持ACTIVE，不规划下一Task，不修改A-owned合同/路线图/进度。
+以下Developer报告是历史实施交接，本轮状态与结论以上文为准。
 
 ## Developer Completion Report — user-authorized direct fix
 
