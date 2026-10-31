@@ -238,6 +238,7 @@ from mediaflow.domain.task_persistence import (
     RunDisplayContext,
     TaskItemStatus,
     redact_persistent_result,
+    task_work_status,
 )
 from mediaflow.domain.task_retry import TaskRetryBatchRequest, TaskRetryRequestDecision
 from mediaflow.domain.task_scheduling import (
@@ -589,6 +590,13 @@ _KERNEL_MACHINE_ITEM_STATUSES = frozenset(
         TaskItemStatus.PROCESSING,
     }
 )
+
+#: The durable TaskItem outcomes that name a *finished* source.  A confirmation
+#: admission re-uses the Task's own durable item identity for the same concrete
+#: source, so it must never silently re-open one of these: an ignored/executed/
+#: failed source keeps its honest recorded outcome unless the operator's own
+#: explicit retry first returns it to a pending state.
+_SETTLED_ITEM_STATUS_VALUES = frozenset(value.value for value in SETTLED_ITEM_STATUSES)
 
 #: The only Result certainties that can clear an in-flight mutation boundary:
 #: ``none`` proves no effect happened and ``verified_complete`` proves the
@@ -1821,6 +1829,7 @@ class SQLiteTaskRepository:
                     self._admit_retry_locked(request, row)
                 elif request.action_id == "ignore":
                     self._admit_ignore_locked(request, row)
+                    self._settle_last_ignored_task_locked(request.task_id, request.requested_at)
                 else:
                     raise RecoveryAdmissionError(
                         RecoveryAdmissionReason.ACTION_NOT_PERMITTED,
@@ -2004,6 +2013,58 @@ class SQLiteTaskRepository:
                 request.actor,
                 request.note,
             ),
+        )
+
+    def _settle_last_ignored_task_locked(self, task_id: str, now: datetime) -> None:
+        """Settle one kernel Task whose last outstanding item was just ignored.
+
+        The ignore already recorded the item's honest non-success outcome.  If
+        that leaves the *whole* durable population settled at a no-machine-work
+        boundary, the Task's aggregate is exactly that factual sum and its slot
+        can be released in this same transaction, so the operator is never left
+        with a Running/waiting_human Task that no Worker will ever claim.  A Task
+        that still holds a decision, a confirmation, queued/processing work, a
+        live claim, an accepted control or an unproved in-flight effect is left
+        completely unchanged.
+        """
+
+        state = self._scheduled_state_locked(task_id)
+        if state is None or state.queue_state is not TaskQueueState.WAITING_HUMAN:
+            return
+        if state.claim_token is not None or state.control_request is not None:
+            return
+        if state.mutation_in_flight:
+            return
+        rows = self._connection.execute(
+            "SELECT * FROM task_items WHERE task_id=?", (task_id,)
+        ).fetchall()
+        items = tuple(self._item(row) for row in rows)
+        if not items or any(item.status not in SETTLED_ITEM_STATUSES for item in items):
+            return
+        self._refresh_task_item_counts_locked(task_id)
+        task_row = self._connection.execute(
+            "SELECT * FROM tasks WHERE task_id=?", (task_id,)
+        ).fetchone()
+        if task_row is None:
+            return
+        updated = replace(
+            self._task(task_row),
+            status=task_work_status(items),
+            updated_at=now,
+            completed_at=now,
+            pause_requested=False,
+        )
+        self._require_scheduled_authority_locked(updated)
+        self._connection.execute(
+            _TASK_SCHEDULED_PUBLICATION_UPDATE,
+            self._scheduled_publication_values(updated),
+        )
+        self._connection.execute(
+            """UPDATE task_scheduling
+            SET queue_state=?, machine_stage=NULL, claim_token=NULL, claim_worker_id=NULL,
+                claimed_at=NULL, claim_expires_at=NULL, heartbeat_at=NULL, updated_at=?
+            WHERE task_id=?""",
+            (TaskQueueState.SETTLED.value, now.isoformat(), task_id),
         )
 
     def get_recovery_continuation_for_request(self, request_id: str) -> RecoveryContinuation | None:
@@ -13254,6 +13315,32 @@ class SQLiteTaskRepository:
                 for item in items:
                     task_item = self._manual_task_item(item, execution, now)
                     task_item = self._bind_item_to_current_occurrence(task_item)
+                    existing_item = self._connection.execute(
+                        "SELECT status FROM task_items WHERE task_id=? AND storage_id=? "
+                        "AND source_path=?",
+                        (task_item.task_id, task_item.storage_id, task_item.source_path),
+                    ).fetchone()
+                    if (
+                        existing_item is not None
+                        and existing_item["status"] in _SETTLED_ITEM_STATUS_VALUES
+                    ):
+                        # The confirmed source already recorded its own settled
+                        # outcome on this same Task.  Re-admitting it here would
+                        # overwrite an ignored/executed/failed sibling's honest
+                        # history and effect protection; the whole confirmation
+                        # rolls back instead, leaving the saved selection and the
+                        # original outcome intact.  A source returned to pending
+                        # by its own explicit retry is not settled and proceeds.
+                        raise ManualExecutionError(
+                            "a confirmed source already ended on this Task and is not "
+                            "re-opened by a new confirmation",
+                            code="item_settled",
+                            next_action=(
+                                "reload the summary; the settled source keeps its recorded "
+                                "outcome and is not executed again"
+                            ),
+                            details={"itemId": task_item.item_id},
+                        )
                     if adopt_task_id is not None:
                         # The admitted organizing Task already holds the analysis
                         # TaskItem of this exact concrete source.  The confirmed

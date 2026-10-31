@@ -9,7 +9,7 @@ Authority: committed [SLICE.md](SLICE.md) at `c1e616113f87420d6f7411c3e6287ce81c
 Task ID: 47.2
 Task Type: SLICE
 Parent Slice: 47
-Status: FIX REQUIRED
+Status: READY FOR B REVIEW
 Task Base: c942c4b4b9d3abf105341e8163c1be2d95d9a671
 Difficulty: High
 Test Level: T4
@@ -423,3 +423,54 @@ Status: **READY FOR B REVIEW**。用户授权后本代理由B转为Developer实�
   hash与旧2974项全量不能作为新checkpoint PASS。新回归总测试数相应增加。
 - 已关闭本代理启动的两个临时原生页面服务器并清理其fixture；浏览器harness随测试正常退出。
 - 本次开发交接当时为READY FOR B REVIEW；当前独立B判定见上文，不自审PASS、不规划下一Task、不关闭Slice。
+
+## Developer Fix Report — P1-1/P1-2 second round
+
+Status: **READY FOR B REVIEW**.本段由 Developer实施并交接,不是独立B复审,不自审PASS。
+起点为记录B复审的 `4e7d99d7`;修复checkpoint见本次提交(真实源码身份由 `git log` 给出)。
+Task Base、High/T4、schema55与父Slice边界不变;只修B已确认的两项P1,不新增恢复系统。
+
+**修改行为**
+
+- **P1-1(已忽略来源不再回到同一Task可执行范围)。** 原生(非 recovery)分析在冻结manifest
+  求剩余scope时,除既有执行准入外,再按本Task自身耐久TaskItem的 `(storage_id, source_path)`
+  settled disposition(ignored/success/failed/skipped/cancelled/dry_run)排除已结束来源,仍保留
+  等待决定/等待确认的合法兄弟。确认/准入事务内对同一 `(task_id, storage_id, source_path)`
+  断言未settled:一个stale summary或直接确认不能把已ignored项覆盖回pending/success,整笔
+  确认回滚且保留原选择与结果。诚实修正“无剩余scope”提示,使其同时覆盖“已执行/已忽略/已失败”。
+- **P1-2(全部条目结束后Task正确结算)。** 分析完成时若整个耐久条目集已全部settled且无
+  queued/processing,复用 `task_work_status`/计数/claim settle安全结算(纯技术失败→Failed,
+  纯ignored→保留非成功语义的PartialSuccess),不再永久Running/waiting_human。最后一项ignore
+  在既有 `admit_recovery_request` 事务内、仅当该Task处于WAITING_HUMAN且无claim/control/
+  in-flight effect时,按真实条目聚合结算并释放名额。仍有待决定/待确认/机器工作/in-flight时
+  绝不提前结算;合法性取消、四类继续与源/权限/pin保护不变。
+
+**B两项复现脚本在真实入口下的当前结果**
+
+- `ignored-source-repro.py`:`REANALYZE`只含Two;`FINAL`为 `partial_success`,One保持`ignored`、
+  源仍存在、仅1个Result、0 Job(日志`.git/validation-evidence/dev-task47.2-fix/p1-1-repro.log`)。
+- `settled-analysis-repro.py`:`ALL_IGNORED`→`task=partial_success, queue=settled`;
+  `ALL_TECHNICAL_FAILED`→`task=failed, queue=settled`(日志`p1-2-repro.log`)。
+
+**新增自动回归(真实Files/Task/Executor链)**
+
+`tests/test_manual_task_engine.py`新增4例:ignored来源经Provider正常新返回后不再进重分析summary、
+仍保持ignored/源在/无新Result、兄弟正常完成并跨重开一致;最后一项ignore结算Task(API终态、
+零变更、重复Worker无新增);纯技术失败结算Failed;同类兄弟仍待决定时ignore不得提前结算。
+
+**修改与直接受影响测试(当前工作区实际结果)**
+
+| 命令(仓库根) | 结果 |
+|---|---|
+| `.venv/bin/python -m unittest tests.test_manual_task_engine tests.test_task_scheduling tests.test_task_scheduling_fencing tests.test_task_scheduling_migration tests.test_media_discovery tests.test_manual_organize_intent tests.test_manual_organize_preview tests.test_manual_organize_execution tests.test_task_center_recovery_lineage tests.test_recovery_continuation tests.test_processing_checkpoint` | 401 tests OK,46.286s;`affected-python-1.log` |
+| `.venv/bin/python -m unittest tests.test_automation_admission tests.test_automation_job_fencing tests.test_automation_definition_occurrence tests.test_v2_automation_run_once tests.test_processing_worker_readiness tests.test_automation_settings_resident tests.test_direct_file_transfers tests.test_media_library_transfers` | 230 tests OK,110.997s;`affected-python-2.log` |
+| `.venv/bin/python -m unittest tests.test_manual_ignore{,_batch} tests.test_processing_checkpoint tests.test_scope_continuation tests.test_task_center_recovery_lineage tests.test_recovery_continuation tests.test_manual_operations{,_contract} tests.test_operations_task_center tests.test_processing_recovery_admission tests.test_task_pause_resume tests.test_task_persistence tests.test_task_retry tests.test_task_scope tests.test_v2_manual_organize tests.test_organize_preparation tests.test_preview_retirement tests.test_recovery_batch tests.test_manual_preview tests.test_organizer_rollback` | 307 tests OK,20.502s;`affected-python-3.log` |
+| 4个改动Python文件 `ruff format --check`/`ruff check`、`compileall -q mediaflow tests scripts`、`git diff --check` | 通过;无timeout/retry/skip放宽 |
+
+**交接限制与剩余风险**
+
+- 本轮未跑完整Python/Web/新wheel/Docker/真实浏览器门禁,由独立B在修正候选上执行T4;
+  旧候选日志与全量制品不能作为本checkpoint PASS。
+- 确认/准入事务内的settled断言是纵深保护:经当前单操作员HTTP入口,新summary已不再包含
+  ignored来源,因此该断言未构造产品级不可达场景的单测;主保护由真实入口回归覆盖。
+- 只改本轮Task内3个执行文件、1个测试文件与TASK报告;未改A-owned合同/路线图,未推进Slice关闭。

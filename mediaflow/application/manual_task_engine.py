@@ -258,6 +258,20 @@ class ManualTaskEngineWorker:
             return self._yield_until(
                 claim, self._with_counts(updated_task), now, TaskMachineStage.ANALYSIS
             )
+        if items and all(value.status in SETTLED_ITEM_STATUSES for value in items):
+            # Discovery/analysis finished but every durable source already
+            # recorded its own settled outcome: an operator ignored the only
+            # source, or the only analysis result was a technical failure.  No
+            # decision, confirmation or machine stage remains, so the Task's
+            # honest aggregate is its factual end.  A genuinely waiting item,
+            # a queued/processing sibling, a live claim or an unproved effect
+            # never reaches this branch and keeps its slot and recovery path.
+            settled_status = task_work_status(items)
+            ended = self._with_counts(
+                self._with_status(updated_task, settled_status, now, updated_task.error)
+            )
+            self._scheduling.settle(claim, task=ended, items=items, now=now)
+            return self._task(claim.task_id)
         waiting = tuple(
             self._replace_item(item, TaskItemStatus.WAITING_CONFIRM, "waiting_confirm", now)
             for item in items

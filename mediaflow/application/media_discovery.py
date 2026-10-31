@@ -115,6 +115,7 @@ from mediaflow.domain.storage import (
 )
 from mediaflow.domain.task_persistence import (
     MANUAL_ORGANIZE_TASK_COMMAND,
+    SETTLED_ITEM_STATUSES,
     PersistentTask,
     PersistentTaskStatus,
     RunDisplayContext,
@@ -4608,6 +4609,8 @@ class MediaDiscoveryService:
         remaining = self._remaining_intent_item_ids(intent)
         if discovery.recovery_source_task_id is not None:
             remaining = self._undecided_intent_item_ids(intent, discovery)
+        else:
+            remaining = self._exclude_settled_intent_items(discovery, intent, remaining)
         # RO-2/AC-15: a native decision the operator saved on this Task's own item is
         # the decision for that exact source.  It is applied to the linked intent
         # item through the ordinary optimistic choice save, which records the pinned
@@ -4619,10 +4622,11 @@ class MediaDiscoveryService:
         if remaining and discovery.organize_task_id is not None:
             intent, remaining = self._apply_native_decisions(discovery, intent, remaining)
         if not remaining:
-            # Every item of this preparation has already been admitted to an
-            # execution.  Re-running the analysis would only re-review work the
-            # operator already confirmed, so the preparation settles truthfully
-            # at "nothing left to prepare" instead of re-creating a summary.
+            # Every item of this preparation already recorded its own durable
+            # outcome (admitted to an execution, ignored, or failed).  Re-running
+            # the analysis would only re-review work the operator already decided,
+            # so the preparation settles truthfully at "nothing left to prepare"
+            # instead of re-creating a summary.
             now = self._clock()
             settled = replace(
                 discovery,
@@ -4635,8 +4639,8 @@ class MediaDiscoveryService:
                     discovery.progress,
                     phase="prepared",
                     message=(
-                        "every source of this preparation has already been admitted to an "
-                        "execution; there is no remaining scope to prepare"
+                        "every source of this preparation already has a durable outcome; "
+                        "there is no remaining scope to prepare"
                     ),
                 ),
             )
@@ -5037,6 +5041,47 @@ class MediaDiscoveryService:
             except Exception:  # noqa: BLE001 - a missing reader keeps every item eligible
                 admitted = frozenset()
         return tuple(item.item_id for item in intent.items if item.item_id not in admitted)
+
+    def _exclude_settled_intent_items(
+        self, discovery: MediaDiscovery, intent, remaining: tuple[str, ...]
+    ) -> tuple[str, ...]:
+        """Drop intent items this exact Task already settled.
+
+        The admitted Task's own durable TaskItem is the disposition authority for
+        its re-analysis.  A source the operator ignored, a source already executed
+        and a technical analysis failure already recorded must not be folded back
+        into a fresh summary merely because a later planning pass now succeeds:
+        re-offering it would re-authorize and execute the same source a second time
+        under one work.  A source still waiting for its own recognition/metadata/
+        classification decision or its initial confirmation stays eligible, so a
+        legal sibling keeps proceeding.  A *deliberate new* organizing request is a
+        new Task, which this exact-Task rule never touches.
+        """
+
+        task_id = discovery.organize_task_id
+        if task_id is None or not remaining:
+            return remaining
+        reader = getattr(self._repository, "list_items", None)
+        if not callable(reader):
+            return remaining
+        try:
+            items = tuple(reader(task_id))
+        except Exception:  # noqa: BLE001 - an unreadable Task keeps the prior eligibility
+            return remaining
+        settled = {
+            (item.storage_id, item.source_path)
+            for item in items
+            if item.status in SETTLED_ITEM_STATUSES
+        }
+        if not settled:
+            return remaining
+        eligible = set(remaining)
+        return tuple(
+            item.item_id
+            for item in intent.items
+            if item.item_id in eligible
+            and (item.source.storage_id, item.source.path) not in settled
+        )
 
     def _undecided_intent_item_ids(self, intent, discovery: MediaDiscovery) -> tuple[str, ...]:
         """The intent items a recovery preparation may still publish for review.
