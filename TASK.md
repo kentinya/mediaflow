@@ -51,24 +51,39 @@ Copy/Move等操作及既有Web/API/CLI控制入口均不再提供该能力；这
 历史场景作为必过门禁。通用历史读取仍保留，不删记录、不自动重放或清除效果保护。旧暂停缺陷记录在Git，
 本次按用户改约取消其修复义务，不把“移除要求”记成“原缺陷已修好”。
 
-## Actual-code gap
+## Actual-code gap — current candidate
 
-- `TaskSchedulingService` 已提供准入/领取/心跳/发布/控制，却没有生产消费者，也不执行 pipeline。
-- `MediaDiscoveryService` 的 Files 准入已原子建立 organizing Task 与 discovery；扩展请求、
-  manifest、source reservation 和 admission outcomes 是必须保留的能力，不能改成先创建另一 Task
-  再补关联。`MediaDiscoveryWorker` 目前仍独立领取发现/分析。
-- `ManualOrganizeExecutionService` 重建精确已审核计划并调用 Executor；
-  `ManualOrganizeExecutionWorker.run_next()` 仍领取 `manual_executions`。
-  `SQLiteTaskRepository.admit_manual_execution()` 的旧 adopt 分支直接更新 Task 授权/状态；
-  新内核普通发布拒绝更改准入上下文，不能把旧 UPDATE 或解除 guard 当作集成办法。
-- `PersistentTaskCoordinator` 与现有 checkpoint/result writers 尚未贯穿新 Task claim。
-  只 fence 最后的 Task UPDATE 会遗漏真实 item/Result/evidence/变更前检查。
-- `TaskItemRecoveryService`、`ManualRecoveryContinuationService` 复用四类决策与精确摘要，但旧
-  continuation/analysis 链仍可能借 Job/其他 Task 调度。需要改新手动工作的 dispatch/归属，
-  不能重写四类业务规则，也不能因 Task ID 恒定覆盖旧 attempt/Result。
-- resident assembly 在 `final_cli.py` / `AutomationWorker` 内同时服务 Job、发现、手动执行及普通
-  transfer。旧 Job 的 `_has_job_capacity()` 与内核 `_scheduled_capacity_use_locked()` 分别计数；
-  新入口实际启用后，不能各自通过“最后一个名额”检查，也不能让旧 runner 再领取同一新工作。
+复审时 HEAD 为 `a0dd159ab4690a4ed0a47ec825a6a7d3bf993ecc`；产品代码/测试/前端/脚本与
+`09fc12e8df4c5e5ce10532b626fee2d5a8e39b51` 完全相同，后续仅为合同与Task文档调整。
+
+- **已有实现，不重做：** `ManualTaskEngineWorker` 已接入 resident Worker，Files新准入已经
+  同事务写 Task/discovery/scheduling；旧 discovery/execution claim 排除了新内核工作。
+  发现→分析→人工等待→确认执行及识别决定后再分析有定向正向证据，不能再说“无生产消费者”。
+- **已有修复，不凭此整体PASS：** 发现阶段暂停和旧满队列101项的前轮具体复现已纠正；
+  新旧准入/确认/分析重入队共同使用 `_shared_capacity_use_locked()`。这些是当前代码事实，
+  后续删除暂停时保留共享容量/幂等/源占用保护，不重新发明队列或重做已完成的内核。
+- **尚未实施的当前要求：** CLI仍注册 `tasks pause/resume`，API仍接受Task和discovery的
+  pause/resume，前端任务控制与普通操作弹窗仍有相应动作，测试还要求暂停成功。M10需要
+  同步退役这些入口、投影和专用执行分支，不能只改文档或按钮。
+- **取消仍须贯穿执行：** `ManualOrganizeExecutionService` 逐项执行与 engine 的普通异常兜底
+  不能覆盖已接受CANCEL或将正常取消当技术失败。按原M5从真实执行中的取消验证首项效果、
+  未执行sibling、调度名额/源保护与终态。这里不要求继续修复已被取消的暂停/恢复暂停功能。
+- **完整旅程仍待交付/证明：** 不能用当前识别补正后确认的单个正向链代表M4全部四类、执行后
+  问题与混合项恢复。TaskItemRecovery/ManualRecoveryContinuation及checkpoint/result writer、
+  Task Center/Files实际读取/计数/导出/日志需要按M3–M8核对；只有真实发现的缺口才实施修正。
+- **范围未变的后续工作：** due/Run once的引擎切换及历史Job转换删除仍属于后续Task；本轮只
+  做共存保护和其暂停入口退役。没有新的完整产品候选可供B做T4最终验收。
+
+## Next implementation order
+
+1. 先实施Scope 8/M10：整理和普通操作的Pause/从暂停继续从页面、DTO/API/CLI到专用活跃分支
+   一并退役；取消、四类继续、等待/安全栅栏保留，不增加暂停任务迁移或兼容系统。
+2. 验证并补齐M5取消闭环：从真实两文件执行中点击取消验证正常安全结算；保留已完成项与unknown
+   效果保护，不继续走“修好暂停后可恢复”的旧路线。
+3. 对照M1–M8补齐完整手动Task旅程，重点四类问题→分析→摘要→确认→逐项结果，以及同Task
+   身份/历史/混合项、重开与Web结果。保留已完成实现，不为未证实的问题做额外重构。
+4. Developer运行新增/变更/直接受影响测试与静态检查，更新准确checkpoint/结果/限制，交接
+   READY FOR B REVIEW；此时B再独立审完整Base..Head并执行M9及共享T4门禁。
 
 ## Implementation Scope
 
@@ -124,8 +139,9 @@ Copy/Move等操作及既有Web/API/CLI控制入口均不再提供该能力；这
 
 ## Acceptance Criteria
 
-以下 M1–M10 的“同一 Task”与新引擎要求，仅适用于本轮接入后首次准入的新 Files 手动工作及其
-后续处理。历史 Task/Job/子 Task 不合并、不重新编号，按原耐久关系验证可读与合法操作兼容。
+M1–M9中的“同一Task”与新引擎要求，仅适用于本轮接入后首次准入的新Files手动工作及其后续
+处理；M10的暂停退役另覆盖所有整理及普通文件操作，包括旧路径的当前控制入口。历史Task/Job/
+子Task不合并、不重新编号；读取与退役范围之外的合法行为保持兼容。
 TaskItem、分析、计划、授权、执行和 attempt 的内部 ID 不要求恒等；验收依据是同一顶层工作、
 精确源版本/pin 的耐久关联、历史保留、准确文件数与不重复执行。
 
@@ -171,12 +187,12 @@ Worker seams；新增用例须从已存在的真实入口触发，不能猜造�
 
 ### Developer — affected tests
 
-1. 新增计划模块 `tests/test_manual_task_engine.py`、`tests/test_manual_task_recovery.py`（可按最终
-   实现合并到既有模块，交接给出等价精确命令），覆盖 M1–M7/M10 的真实服务/SQLite/Executor 链、
+1. 扩展已有 `tests/test_manual_task_engine.py` 及直接受影响的既有恢复模块；需要时可新增
+   恢复测试文件，交接列出真实模块命令，不强制创建测试骨架。覆盖M1–M7/M10的服务/SQLite/Executor链、
    独立连接竞争、控制/授权事务故障及关闭重开，不只 mock 调度或比较 ID。
 
    ```sh
-   .venv/bin/python -m unittest tests.test_manual_task_engine tests.test_manual_task_recovery tests.test_task_scheduling tests.test_task_scheduling_fencing tests.test_task_scheduling_migration
+   .venv/bin/python -m unittest tests.test_manual_task_engine tests.test_task_scheduling tests.test_task_scheduling_fencing tests.test_task_scheduling_migration
    .venv/bin/python -m unittest tests.test_media_discovery tests.test_manual_organize_intent tests.test_manual_organize_preview tests.test_manual_organize_execution tests.test_task_center_recovery_lineage tests.test_recovery_continuation tests.test_processing_checkpoint
    ```
 
@@ -299,3 +315,15 @@ Slice Required Outcomes / Surfaces all satisfied: NO
 全部Slice结果重评：RO-1/2生产接入仍部分完成；RO-3完整四类同Task恢复仍待验；RO-4历史Job
 迁移删除未完成；RO-5完整表面与新增暂停退役尚未交付。Slice仍ACTIVE，Task47.2仍FIX REQUIRED，
 保持原Base，不因取消暂停义务而关闭Task/Slice，也不规划下一Task。
+
+
+### Current Task re-review — next action
+
+Reviewed workspace: `main / a0dd159ab4690a4ed0a47ec825a6a7d3bf993ecc`，无tracked edits，既有
+untracked保持原样。治理PASS；`09fc12e8..HEAD` 的产品/测试/Web/脚本/部署输入diff为空，故未
+重新运行旧产品测试或宣称新实现验收。对照当前Contract与任务范围重审后，清理了已过时的
+“尚无生产消费者/容量仍分开计数”描述，并明确M10全操作范围及开发顺序。
+
+结论仍为 **FIX REQUIRED / SAME TASK**。下一步是Developer实施上述顺序并交接，不规划47.3，
+不提前跑昂贵发布门禁，也不把暂停功能已从要求中移除当作代码已退役。RO-1/2生产接入部分
+完成，RO-3四类全旅程待验，RO-4历史Job退出未做，RO-5完整表面及Pause退役未交付；Slice仍ACTIVE。
