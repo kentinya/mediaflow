@@ -53,26 +53,19 @@ Copy/Move等操作及既有Web/API/CLI控制入口均不再提供该能力；这
 
 ## Actual-code gap — current candidate
 
-复审时 HEAD 为 `a0dd159ab4690a4ed0a47ec825a6a7d3bf993ecc`；产品代码/测试/前端/脚本与
-`09fc12e8df4c5e5ce10532b626fee2d5a8e39b51` 完全相同，后续仅为合同与Task文档调整。
+当前产品候选为 `084ad15598a10b8cea12869b931e772f85e6f3b6`，Task Base不变。
 
-- **已有实现，不重做：** `ManualTaskEngineWorker` 已接入 resident Worker，Files新准入已经
-  同事务写 Task/discovery/scheduling；旧 discovery/execution claim 排除了新内核工作。
-  发现→分析→人工等待→确认执行及识别决定后再分析有定向正向证据，不能再说“无生产消费者”。
-- **已有修复，不凭此整体PASS：** 发现阶段暂停和旧满队列101项的前轮具体复现已纠正；
-  新旧准入/确认/分析重入队共同使用 `_shared_capacity_use_locked()`。这些是当前代码事实，
-  后续删除暂停时保留共享容量/幂等/源占用保护，不重新发明队列或重做已完成的内核。
-- **尚未实施的当前要求：** CLI仍注册 `tasks pause/resume`，API仍接受Task和discovery的
-  pause/resume，前端任务控制与普通操作弹窗仍有相应动作，测试还要求暂停成功。M10需要
-  同步退役这些入口、投影和专用执行分支，不能只改文档或按钮。
-- **取消仍须贯穿执行：** `ManualOrganizeExecutionService` 逐项执行与 engine 的普通异常兜底
-  不能覆盖已接受CANCEL或将正常取消当技术失败。按原M5从真实执行中的取消验证首项效果、
-  未执行sibling、调度名额/源保护与终态。这里不要求继续修复已被取消的暂停/恢复暂停功能。
-- **完整旅程仍待交付/证明：** 不能用当前识别补正后确认的单个正向链代表M4全部四类、执行后
-  问题与混合项恢复。TaskItemRecovery/ManualRecoveryContinuation及checkpoint/result writer、
-  Task Center/Files实际读取/计数/导出/日志需要按M3–M8核对；只有真实发现的缺口才实施修正。
-- **范围未变的后续工作：** due/Run once的引擎切换及历史Job转换删除仍属于后续Task；本轮只
-  做共存保护和其暂停入口退役。没有新的完整产品候选可供B做T4最终验收。
+- 已有Files原子Task/discovery/scheduling准入与resident engine，发现/分析/人工等待/确认执行
+  初步链已接入，旧runner排除kernel-managed工作；不重复开发内核或另造队列。
+- 共存容量原101项复现已纠正，保留共同容量判定、幂等与源占用；仍需原计划的完整竞争/部署验收。
+- 本候选删除了CLI pause/resume命令、发现/Run once的按钮/动作及普通传输暂停/继续投影，
+  新手动和普通操作的相应API有退役拒绝；这些局部结果不等于全部M10完成。
+- 执行阶段CANCEL仍未正确安全确认，Task/execution会滞留running/claimed并占名额；真实两文件
+  执行中取消已复现，详见B Review P1-1。
+- 非kernel organizing Task仍保留专用legacy resume投影/提交Job分支，注释误称合同要求保留；
+  这与用户已取消全部暂停且不要求暂停兼容系统的合同不符，详见P1-2。无需构造历史paused任务。
+- M4完整四类同Task恢复/混合项历史和M8完整真实Web结果闭环仍待按合同交付/验收；不要把
+  初始识别补正后的单个正向用例替代全部结果。due/Run once引擎切换及Job迁移删除仍为后续。
 
 ## Next implementation order
 
@@ -285,45 +278,102 @@ RO-5 原界面兼容已验而 Task 化全表面未交付。因此继续规划本
 
 ## Developer Completion Report
 
-最近产品候选为 `09fc12e8df4c5e5ce10532b626fee2d5a8e39b51`，旧交接与独立审查完整保留在
-`8cf89cab693a241df0dc01dacfabd254d58c4438:TASK.md`。整理及普通操作暂停退役尚未实施。
-Developer 按新Contract修订同一Task，交接准确checkpoint、新增/变更/直接受影响测试及剩余风险；
-取消/四类恢复/容量/源版本/uncertain保护与完整手动旅程仍须完成。全量和发布验收由B负责。
+本轮用户通知开发完成，实际产品提交为 `084ad15598a10b8cea12869b931e772f85e6f3b6`。
+该提交包含暂停退役的代码和测试，但尚无更新的Developer测试报告；B按真实代码/入口复核，
+不因报告未同步添加产品阻塞，也不代填未提供的执行结果。前轮报告与审查均保留在Git。
+修正后Developer给出准确checkpoint、受影响测试实际结果与剩余限制；不承担B全套发布门禁。
 
 ## B Review Result
 
 ```text
-Task Base: c942c4b4b9d3abf105341e8163c1be2d95d9a671 (unchanged)
-Last reviewed product Head: 09fc12e8df4c5e5ce10532b626fee2d5a8e39b51
-Scope amendment: c1e616113f87420d6f7411c3e6287ce81c1f5331
-Decision: FIX REQUIRED — implement the amended Task; no product PASS claimed
-Next: SAME TASK; all-operation Pause/resume retirement plus remaining original delivery
+Reviewed Base: c942c4b4b9d3abf105341e8163c1be2d95d9a671
+Reviewed Head: 084ad15598a10b8cea12869b931e772f85e6f3b6
+Contract: c1e616113f87420d6f7411c3e6287ce81c1f5331
+Decision: FIX REQUIRED — execution cancellation does not settle; pause retirement incomplete
 Slice Required Outcomes / Surfaces all satisfied: NO
+Next: SAME TASK FIX LOOP; preserve Task47.2 ID/Base/Goal and amended scope
+Evidence: .git/validation-evidence/b-task47.2-084ad155/
 ```
 
-用户还明确普通操作也不需要暂停，且当前没有已暂停整理；不开发专项暂停任务兼容系统。
-用户更改要求后，前轮两个“整理暂停应能正确继续”的P1不再作为当前修复验收项；它们在旧合同下
-的真实复现与FIX结论保留在Git及 `.git/validation-evidence/b-task47.2-09fc12e8/`，不是已修复。
-当前验收转为M10整理及普通操作暂停完整退役，M5仍要求安全取消；不能通过隐藏按钮、放宽权限、清空
-历史或删除所有控制测试完成。76项前候选定向结果只代表旧候选，不作为新实现验收。
+B核对完整Base..Head的43文件：包含已审的内核生产接线/容量修复、用户范围修订和本次25文件
+退役实现/测试；检查实际API/CLI与投影/dispatch，未只看删除行数或把“移除暂停”当作取消已正确。
+本轮未改产品或测试，无角色例外；开始main/Reviewed Head，无tracked edits，既有untracked文件
+保留不暂存。A-owned合同本轮未改。旧暂停修复义务仍按用户改约撤销，不恢复历史暂停验收要求。
 
-本轮只修改用户授权的范围/需求/旅程/架构文档和本Task，不改产品代码、测试或数据库，不运行
-产品全量，不声明代码已删除暂停。开始于 `main / 8cf89cab693a241df0dc01dacfabd254d58c4438`，
-无tracked edits，既有untracked原样保留。先A范围checkpoint，再B调整Task；角色例外已披露，
-不进行A Final Review。文档/链接/治理/空白检查通过后本地提交，无push或历史改写。
+### P1-1 — 执行中取消已接受，但Task一直运行/占容量（M5/M7/M8）
 
-全部Slice结果重评：RO-1/2生产接入仍部分完成；RO-3完整四类同Task恢复仍待验；RO-4历史Job
-迁移删除未完成；RO-5完整表面与新增暂停退役尚未交付。Slice仍ACTIVE，Task47.2仍FIX REQUIRED，
-保持原Base，不因取消暂停义务而关闭Task/Slice，也不规划下一Task。
+**实际入口与结果：** 从真实Files API提交 `One.2001.mkv` 与 `Two.2002.mkv`，沿现有识别决定、
+分析、精确摘要确认准入执行。第一个真实Executor调用返回、结果尚未发布时，从现有
+`POST /api/v1/tasks/{id}/cancel` 带当前expectedUpdatedAt取消，返回200。该边界模拟用户在第一部
+正在整理时取消，不改claim、不篡改DB、不造路由。第一部成功并有1条Result，第二部未执行；
+Worker返回且再运行3轮后：Task=running，queue=claimed，control=cancel，mutation_in_flight=false，
+capacityHeld=true，manual execution=running，第二部=pending。已没有未确定的当前调用效果，
+却未按接受的取消安全结算，任务和名额滞留。
 
+**原因与开发指导：**
 
-### Current Task re-review — next action
+1. `ManualOrganizeExecutionService._run_worker_items()` 在下一项 `begin_existing_item()`
+   遇到已接受CANCEL后抛TaskControlRejected；engine将其交 `_record_failure()`。该失败分支
+   不能越过取消保护进行terminal settle，又吞掉异常，导致没有路径确认取消。
+2. 在现有逐项执行的安全边界正常观察和确认CANCEL；当前Provider/Storage调用不中断。
+   当前结果可靠落库后，保留已成功item/Result/附件效果，对尚未执行项按取消结算，并将Task、
+   execution、逐项状态和调度资格协调持久化；释放名额与临时执行锁须遵守owner栅栏。
+   不移除CANCEL保护，也不把正常取消改成技术失败来逃离当前状态。
+3. 若当前效果仍未确定，保持marker/占用/检查和非重放；不以取消清除unknown。后续确认/分析/
+   四类继续不能重新打开已取消工作。控制收尾和普通异常处理应区分，真实技术错误仍保留原因。
+4. 在现有 `tests/test_manual_task_engine.py` 补这条两文件API回归，验证首项仅一次真实效果、
+   余项无效果/取消、原Task和execution终结、名额释放、重开仍正确。另补queued/分析期间取消、
+   当前结果写入失败/unknown与旧owner对照，不扩张到所有理论崩溃点。
 
-Reviewed workspace: `main / a0dd159ab4690a4ed0a47ec825a6a7d3bf993ecc`，无tracked edits，既有
-untracked保持原样。治理PASS；`09fc12e8..HEAD` 的产品/测试/Web/脚本/部署输入diff为空，故未
-重新运行旧产品测试或宣称新实现验收。对照当前Contract与任务范围重审后，清理了已过时的
-“尚无生产消费者/容量仍分开计数”描述，并明确M10全操作范围及开发顺序。
+### P1-2 — 仍保留非kernel整理任务的暂停恢复专用dispatch（M10 / AC-19）
 
-结论仍为 **FIX REQUIRED / SAME TASK**。下一步是Developer实施上述顺序并交接，不规划47.3，
-不提前跑昂贵发布门禁，也不把暂停功能已从要求中移除当作代码已退役。RO-1/2生产接入部分
-完成，RO-3四类全旅程待验，RO-4历史Job退出未做，RO-5完整表面及Pause退役未交付；Slice仍ACTIVE。
+这是明确接口退役范围的代码核对结论，不声称用户存在历史paused任务，也没有造此类数据探测。
+用户已经取消整理和普通操作的Pause/resume-from-pause，并明确不需要暂停任务兼容执行系统。
+
+但 `service_api.py` 的 `tasks/{id}/resume` 只对kernel-managed/ordinary Files拒绝，其余类型仍
+调用 `_scope_continuations.submit()` 创建旧暂停剩余范围Job。`task_lifecycle_document()` 的
+`execution.continuable` 分支仍发布resume动作/剩余范围preview；注释误称Contract要求保留旧暂停
+恢复。`test_scope_continuation` 还将原API暂停改成直接coordinator.request_pause，维持该旧正向链。
+此分支不是Recognition/Metadata/Classification/Conflict的决定后继续，不应据旧合同保留。
+
+**开发指导：**
+
+1. 所有整理/普通操作的暂停和从暂停继续请求统一走现有有界无效果退役拒绝；移除遗漏的
+   legacy paused-scope resume执行dispatch和相应控制投影，CLI已删的命令保持退役。
+2. 清理仅为上述暂停继续产品使用的活跃分支/接线/测试。共用的pin/source/权限/checkpoint与
+   四类问题处理/分析/摘要服务继续复用；不要按resume字样批量删掉四类继续或配置Draft恢复。
+   不新增历史暂停迁移/兼容executor，不为迁移历史自动改状态或清数据。
+3. 从真实现有organizing入口形成正常非Paused工作，核对生命周期不再有暂停恢复动作，旧
+   pause/resume请求无状态/队列/授权/Storage变更。无须先造paused记录来证明旧恢复可用。
+   旧暂停正向用例按新合同改为退役拒绝，保留共用权限/历史/效果安全覆盖。
+
+### 已确认的进展与B实际验证
+
+| 验证 | 本轮结果 |
+|---|---|
+| 新手动engine、调度/栅栏/迁移、Operations workspace、Task pause/CLI模块 | 105 tests，OK；runner5.227s；`focused.json/log` |
+| 两文件执行中取消的现有API复现 | 取消200，首项成功，Task/execution仍running且占1名额；`execution-cancel-repro.py/log`，约0.136s |
+| CLI及新手动/普通操作的退役拒绝相关定向用例 | 在上述105项中通过；不能替代全部Web/旧整理投影退役 |
+| 完整范围manifest/治理/空白/文档 | PASS；没有业务/测试编辑、push或历史改写 |
+| 完整Python/Web/E2E/截图/wheel/容器/升级安全 | 产品阻塞确认后未继续，按workflow提前FIX；待修正候选由B完成，无豁免 |
+
+SQLite ResourceWarnings及CLI拒绝旧命令的预期argparse输出均保留。所有运行使用合成临时SQLite/
+Local Storage/fake Metadata，未用用户运行库、媒体或私有配置；没有新增/猜造入口、增加retry/
+skip或放宽timeout。开始于 `2026-10-31 02:11:41 UTC`；测试/探测/检查保守总上界15秒，低于
+本轮总时长50%，范围与计时记录在 `review.json`。旧候选76项结果不作为当前全量验收。
+
+### 后续交接与Slice全结果重评
+
+继续同一Task修正上述两项并核对M1–M10完整交付。原M4全部四类、混合项历史和M8真实Web闭环
+不能由局部正向或按钮消失代替。Developer仅跑新增/变更/直接受影响测试后交接；完整T4与
+原生/发布证据仍由B负责，不把本轮未跑全量当作Developer缺陷，不先规划47.3。
+
+| Slice outcome | 当前结论 |
+|---|---|
+| RO-1 | 手动生产链部分接入，共存容量已有修复；执行取消仍阻塞 |
+| RO-2 | 自动due/Run once/独立API-CLI引擎切换仍后续，未完成 |
+| RO-3 | 完整四类同Task与效果/历史闭环待完整验收，未完成 |
+| RO-4 | schema54/旧Job仍保留，历史转换和Job删除尚未做，非本Task新增范围 |
+| RO-5 | 暂停退役部分完成，legacy resume专用dispatch尚存，取消/完整界面仍未闭环 |
+
+Task47.2保持FIX REQUIRED，Slice47仍ACTIVE；不恢复用户已取消的暂停功能或专项历史兼容要求。
