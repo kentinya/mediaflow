@@ -403,6 +403,7 @@ class _DiscoveryFixture(unittest.TestCase):
         provider=None,
         second_operator: bool = False,
         task_scheduling: bool = False,
+        worker_lease: float | None = None,
     ):
 
         document = self.document(
@@ -473,6 +474,7 @@ class _DiscoveryFixture(unittest.TestCase):
                 clock=self.clock,
                 budgets=budgets or DiscoveryBudgets(),
                 task_scheduling_enabled=task_scheduling,
+                **({"lease_seconds": worker_lease} if worker_lease is not None else {}),
             )
             task_engine = None
             if task_scheduling:
@@ -502,6 +504,7 @@ class _DiscoveryFixture(unittest.TestCase):
                     clock=self.clock,
                     worker_id="task-engine-worker",
                     notice=lambda line: None,
+                    **({"lease_seconds": worker_lease} if worker_lease is not None else {}),
                 )
             if second_operator:
                 with mock.patch.dict(

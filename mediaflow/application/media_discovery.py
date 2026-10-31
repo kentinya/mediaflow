@@ -3100,47 +3100,16 @@ class MediaDiscoveryService:
             def beat() -> bool:  # type: ignore[misc]
                 return heartbeat(discovery_id)
 
-        if beat is None and parent_heartbeat is None:
-            return self.run_claimed(
-                claimed.discovery_id,
-                worker_id=worker_id,
-                claim_token=claim_token,
-                heartbeat=beat,
-            )
-        stopped = threading.Event()
-
-        def keep_alive() -> None:
-            interval = max(0.05, min(5.0, self._lease_seconds / 3.0))
-            while not stopped.wait(interval):
-                try:
-                    if beat is not None:
-                        beat()
-                    if parent_heartbeat is not None:
-                        try:
-                            parent_heartbeat()
-                        except Exception:
-                            pass
-                except Exception:
-                    # A claim-renewal fault stops the keeper; the next in-loop
-                    # boundary heartbeat still reports true ownership honestly.
-                    return
-
-        keeper = threading.Thread(
-            target=keep_alive,
-            name=f"media-discovery-lease-{claimed.discovery_id[:12]}",
-            daemon=True,
+        # ``run_claimed`` owns the lease keeper for the whole invocation, so a
+        # blocked Storage/Provider call cannot outlive the claim or the parent
+        # registration.  The parent signal is liveness evidence only.
+        return self.run_claimed(
+            claimed.discovery_id,
+            worker_id=worker_id,
+            claim_token=claim_token,
+            heartbeat=beat,
+            parent_heartbeat=parent_heartbeat,
         )
-        keeper.start()
-        try:
-            return self.run_claimed(
-                claimed.discovery_id,
-                worker_id=worker_id,
-                claim_token=claim_token,
-                heartbeat=beat,
-            )
-        finally:
-            stopped.set()
-            keeper.join(timeout=1)
 
     def _recovery_eligibility(self, discovery: MediaDiscovery) -> RecoveryPreparationEligibility:
         """The live qualification of one admitted recovery preparation."""
@@ -3271,8 +3240,94 @@ class MediaDiscoveryService:
         worker_id: str,
         claim_token: str,
         heartbeat: Callable[[], bool] | None = None,
+        parent_heartbeat: Callable[[], bool] | None = None,
+        analysis_checkpoint: Callable[[str, int, int, int], None] | None = None,
     ) -> MediaDiscovery:
-        """Advance one claimed discovery until a budget, pause or completion boundary."""
+        """Advance one claimed discovery until a budget, pause or completion boundary.
+
+        A lease keeper renews the discovery claim (``heartbeat``) and the
+        containing Task/Worker liveness (``parent_heartbeat``) for the whole
+        invocation, so a single individually slow Provider or Storage call can
+        never outlive this Worker's own ownership signal.  ``analysis_checkpoint``
+        is forwarded to the shared zero-mutation Preview so a whole batch
+        analysis also renews the containing Task claim at every item and Provider
+        phase boundary, not only while a single call is blocked.
+        """
+
+        keeper = self._start_lease_keeper(discovery_id, heartbeat, parent_heartbeat)
+        try:
+            return self._run_claimed_pass(
+                discovery_id,
+                worker_id=worker_id,
+                claim_token=claim_token,
+                heartbeat=heartbeat,
+                analysis_checkpoint=analysis_checkpoint,
+            )
+        finally:
+            if keeper is not None:
+                keeper.stop()
+
+    def _start_lease_keeper(
+        self,
+        discovery_id: str,
+        heartbeat: Callable[[], bool] | None,
+        parent_heartbeat: Callable[[], bool] | None,
+    ):
+        """Keep one claim and its parent liveness live for the whole invocation.
+
+        The keeper heartbeats at a fraction of the lease interval in its own
+        thread, so a blocked or slow Provider/Storage call cannot let the lease
+        expire while this Worker still owns it.  A renewal fault stops the
+        keeper; the in-loop boundary heartbeat still reports true ownership
+        honestly, and the durable claim fence remains the data-integrity
+        boundary that refuses any stale publication.  Returns ``None`` when the
+        caller supplied no liveness signal at all.
+        """
+
+        if heartbeat is None and parent_heartbeat is None:
+            return None
+        interval = max(0.05, min(5.0, self._lease_seconds / 3.0))
+        stopped = threading.Event()
+
+        def keep_alive() -> None:
+            while not stopped.wait(interval):
+                try:
+                    if heartbeat is not None:
+                        heartbeat()
+                    if parent_heartbeat is not None:
+                        try:
+                            parent_heartbeat()
+                        except Exception:
+                            pass
+                except Exception:
+                    # A claim-renewal fault stops the keeper; the next in-loop
+                    # boundary heartbeat still reports true ownership honestly.
+                    return
+
+        keeper = threading.Thread(
+            target=keep_alive,
+            name=f"media-discovery-lease-{discovery_id[:12]}",
+            daemon=True,
+        )
+        keeper.start()
+
+        class _LeaseKeeper:
+            def stop(self) -> None:
+                stopped.set()
+                keeper.join(timeout=interval + 1.0)
+
+        return _LeaseKeeper()
+
+    def _run_claimed_pass(
+        self,
+        discovery_id: str,
+        *,
+        worker_id: str,
+        claim_token: str,
+        heartbeat: Callable[[], bool] | None = None,
+        analysis_checkpoint: Callable[[str, int, int, int], None] | None = None,
+    ) -> MediaDiscovery:
+        """One bounded claim advance under the caller's live lease keeper."""
 
         discovery = self._read(discovery_id)
         if discovery is None:
@@ -3309,7 +3364,11 @@ class MediaDiscoveryService:
             # zero-mutation Preview authority and links the exact read-only plan
             # summary.  No execution authority is created.
             try:
-                return self._analyze(discovery, claim_token)
+                return self._analyze(
+                    discovery,
+                    claim_token,
+                    analysis_checkpoint=analysis_checkpoint,
+                )
             except (DiscoveryConflict, DiscoveryOwnershipLost) as error:
                 # The analysis is a publication like any other bounded step: an
                 # operator control (pause/cancel/resume) or a successor Worker
@@ -4561,7 +4620,13 @@ class MediaDiscoveryService:
             # not a preparation failure, so re-read the truthful record.
             return self._read(discovery.discovery_id) or frozen
 
-    def _analyze(self, discovery: MediaDiscovery, claim_token: str) -> MediaDiscovery:
+    def _analyze(
+        self,
+        discovery: MediaDiscovery,
+        claim_token: str,
+        *,
+        analysis_checkpoint: Callable[[str, int, int, int], None] | None = None,
+    ) -> MediaDiscovery:
         """Run the complete production analysis for a frozen preparation.
 
         The analysis is the existing zero-mutation Preview authority: it uses
@@ -4674,6 +4739,11 @@ class MediaDiscoveryService:
                     discovery.resource_library_id if discovery.recovery_source_task_id else None
                 ),
                 persist=False,
+                # RO-1/M5: the shared Preview calls this at every discovery,
+                # item and Provider phase boundary, so the containing Task's
+                # owner renews its own claim across a whole batch analysis
+                # instead of silently expiring after the default lease.
+                analysis_checkpoint=analysis_checkpoint,
             )
         except Exception as error:  # noqa: BLE001 - report one bounded failure
             code = getattr(error, "code", None)

@@ -182,7 +182,18 @@ class ManualTaskEngineWorker:
                     current.discovery_id,
                     worker_id=self._worker_id,
                     claim_token=self._claim_token(claim),
-                    heartbeat=lambda: self._heartbeat(claim),
+                    # The linked discovery claim is nested under this Task claim,
+                    # so the same token fences both; a real renewal failure stops
+                    # the walk instead of writing over a successor.
+                    heartbeat=self._discovery_heartbeat(claim, current.discovery_id),
+                    # The containing Task owner renews its own claim and the
+                    # resident Worker's liveness for the whole invocation, so a
+                    # single individually slow Provider call cannot let either
+                    # signal expire.
+                    parent_heartbeat=lambda: self._heartbeat(claim),
+                    # A whole batch analysis renews the Task claim at every item
+                    # and Provider phase boundary, not only around one call.
+                    analysis_checkpoint=lambda *_: self._heartbeat(claim),
                 )
             except Exception as error:
                 # A discovery pass failure is bounded, zero-mutation work.  The
@@ -537,6 +548,30 @@ class ManualTaskEngineWorker:
             return True
         except Exception:
             return False
+
+    def _discovery_heartbeat(self, claim, discovery_id: str) -> Callable[[], bool]:
+        """Renew the exact linked discovery claim under this Task owner.
+
+        The discovery claim carries the same ``claim_token`` as the claiming
+        Task, so it is visibly nested under the Task's ownership.  A repository
+        without the seam degrades to ``True`` (the Task claim fence still
+        protects publication); a real renewal failure returns ``False`` so the
+        walk stops at its next safe boundary instead of writing over a
+        successor's record.
+        """
+
+        renew = getattr(self._repository, "heartbeat_media_discovery_claim", None)
+        if not callable(renew):
+            return lambda: True
+        token = self._claim_token(claim)
+
+        def beat() -> bool:
+            try:
+                return bool(renew(discovery_id, token, self._clock(), self._lease_seconds))
+            except Exception:
+                return False
+
+        return beat
 
     def _claim_token(self, claim) -> str:
         # The discovery/execution lease is nested under this exact Task claim.

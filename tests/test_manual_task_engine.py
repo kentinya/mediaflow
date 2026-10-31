@@ -8,8 +8,11 @@ newly admitted Files work.
 
 from __future__ import annotations
 
+import threading
+import time
 import unittest
 from dataclasses import replace
+from datetime import UTC, datetime
 from unittest import mock
 
 from mediaflow.application.strategy_test import SyntheticMetadataProvider
@@ -82,6 +85,173 @@ class ManualTaskDiscoveryTests(_DiscoveryFixture):
             self.assertEqual([], value.target.mutations)
             # No legacy Job was created for this work.
             self.assertEqual((), value.repository.list_jobs(limit=10))
+
+    def test_long_batch_analysis_keeps_its_task_claim_live_to_the_summary(self) -> None:
+        """A batch whose analysis outlives the default lease still publishes.
+
+        RO-1/M5/M6/M8/M9: production metadata calls can comfortably outlive the
+        default 300s Task lease across a whole batch.  The Task owner must renew
+        its own claim (and keep the linked discovery claim live) at every item
+        and Provider phase boundary, so the exact summary, its per-file items and
+        its freed slot are published on the same Task instead of a permanently
+        claimed, summary-less Task that still occupies a scheduling slot.
+        """
+
+        self._assert_slow_batch_reaches_summary(40, exceeds_lease=True)
+
+    def test_short_batch_analysis_stays_the_same_task_within_the_lease(self) -> None:
+        """The ordinary short batch is the control for the long-batch case."""
+
+        self._assert_slow_batch_reaches_summary(20, exceeds_lease=False)
+
+    def test_one_blocked_provider_call_keeps_the_task_lease_live(self) -> None:
+        """One blocked Provider call must not let the Task lease lapse.
+
+        A single metadata call can block longer than the lease while no phase
+        boundary runs.  The lease keeper must renew the linked discovery claim
+        and the containing Task claim for the whole blocked call, so the exact
+        summary is still linked on the same Task instead of a lapsed,
+        permanently claimed Task.  A real clock with a short lease makes the
+        lapse materially real rather than a fake-time comparison.
+        """
+
+        self.media("Movies/One.2001.mkv")
+        self.clock = lambda: datetime.now(UTC)
+        entered, release = threading.Event(), threading.Event()
+
+        class BlockedProvider(SyntheticMetadataProvider):
+            def search_movie(self, *args, **kwargs):
+                entered.set()
+                if not release.wait(20):
+                    raise AssertionError("the blocked Provider call was never released")
+                return super().search_movie(*args, **kwargs)
+
+        provider = BlockedProvider(
+            (
+                MediaCandidate(
+                    "tmdb",
+                    "201",
+                    MediaType.MOVIE,
+                    "One",
+                    year=2001,
+                    genres=("Animation",),
+                    countries=("JP",),
+                ),
+            )
+        )
+        with self.journey(
+            provider=provider,
+            task_scheduling=True,
+            attachments=True,
+            worker_lease=0.5,
+        ) as value:
+            status, admitted = self._admit(value, ["Movies"])
+            self.assertEqual(202, status, admitted)
+            task_id = admitted["organizeTaskId"]
+            # The first pass walks the discovery and yields for analysis.
+            self.assertIsNotNone(value.task_engine.run_next())
+            # The second pass enters the analysis and blocks inside the Provider.
+            thread = threading.Thread(target=value.task_engine.run_next)
+            thread.start()
+            try:
+                self.assertTrue(entered.wait(20), "the analysis never reached the Provider")
+                # Hold the call open well past the 0.5s Task/discovery lease.
+                time.sleep(1.5)
+            finally:
+                release.set()
+                thread.join(20)
+            self.assertFalse(thread.is_alive())
+            discovery = value.repository.get_media_discovery_for_task(task_id)
+            task = value.repository.get_task(task_id)
+            state = value.repository.get_task_scheduling(task_id)
+            self.assertIsNotNone(discovery.preview_id, discovery.error)
+            self.assertIs(discovery.status, DiscoveryStatus.COMPLETED)
+            self.assertIs(task.status, PersistentTaskStatus.RUNNING)
+            self.assertIs(state.queue_state, TaskQueueState.WAITING_HUMAN)
+            self.assertEqual(0, value.repository.count_scheduled_capacity_use())
+            self.assertEqual(1, len(value.repository.list_items(task_id)))
+            self.assertEqual([], value.source.mutations)
+            self.assertEqual([], value.target.mutations)
+
+    def _assert_slow_batch_reaches_summary(self, count: int, *, exceeds_lease: bool) -> None:
+        """Admit and analyze ``count`` legal movies whose metadata calls are slow.
+
+        One ordinary Provider search advances the fixture clock by ten seconds,
+        so a batch above thirty items takes the whole analysis past the default
+        300s Task lease without any real wall-clock waiting.
+        """
+
+        for index in range(count):
+            self.media(f"Movies/Film{index:02d}.2001.mkv")
+        clock = self.clock
+
+        class SlowProvider(SyntheticMetadataProvider):
+            searches = 0
+
+            def search_movie(self, *args, **kwargs):
+                self.searches += 1
+                clock.advance(10)
+                self._candidates = (
+                    MediaCandidate(
+                        "tmdb",
+                        str(200 + self.searches),
+                        MediaType.MOVIE,
+                        args[0].title_candidate,
+                        year=2001,
+                        genres=("Animation",),
+                        countries=("JP",),
+                    ),
+                )
+                return super().search_movie(*args, **kwargs)
+
+        provider = SlowProvider(
+            (
+                MediaCandidate(
+                    "tmdb",
+                    "201",
+                    MediaType.MOVIE,
+                    "One",
+                    year=2001,
+                    genres=("Animation",),
+                    countries=("JP",),
+                ),
+            )
+        )
+        with self.journey(provider=provider, task_scheduling=True, attachments=True) as value:
+            status, admitted = self._admit(value, ["Movies"])
+            self.assertEqual(202, status, admitted)
+            task_id = admitted["organizeTaskId"]
+            started = clock()
+            discovery = self._drive(value, task_id)
+            elapsed = (clock() - started).total_seconds()
+            # The batch itself genuinely exceeds the default 300s Task lease.
+            if exceeds_lease:
+                self.assertGreater(elapsed, 300.0)
+            else:
+                self.assertLess(elapsed, 300.0)
+            self.assertEqual(count, provider.searches)
+            # The same admitted Task publishes the exact summary with one durable
+            # item per admitted file, then releases its slot to human waiting.
+            task = value.repository.get_task(task_id)
+            state = value.repository.get_task_scheduling(task_id)
+            self.assertIsNotNone(discovery.preview_id)
+            self.assertIs(discovery.status, DiscoveryStatus.COMPLETED)
+            self.assertEqual(discovery.organize_task_id, task_id)
+            self.assertIs(task.status, PersistentTaskStatus.RUNNING)
+            self.assertIs(state.queue_state, TaskQueueState.WAITING_HUMAN)
+            self.assertFalse(state.holds_capacity)
+            self.assertEqual(0, value.repository.count_scheduled_capacity_use())
+            self.assertEqual(count, len(value.repository.list_items(task_id)))
+            self.assertEqual(0, len(value.repository.list_results(task_id)))
+            # Analysis is zero-mutation and creates no legacy Job.
+            self.assertEqual([], value.source.mutations)
+            self.assertEqual([], value.target.mutations)
+            self.assertEqual((), value.repository.list_jobs(limit=10))
+            # The operator readback counts every admitted file exactly once.
+            status, detail = self.request(value, f"/api/v1/operations/runs/{task_id}")
+            self.assertEqual(200, status, detail)
+            self.assertEqual(count, detail["total_items"])
+            self.assertEqual([], detail["problem_types"])
 
     def test_files_pause_and_resume_are_retired_with_no_effect(self) -> None:
         self.media("Movies/One.2001.mkv")

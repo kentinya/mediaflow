@@ -9,7 +9,7 @@ Authority: committed [SLICE.md](SLICE.md) at `c1e616113f87420d6f7411c3e6287ce81c
 Task ID: 47.2
 Task Type: SLICE
 Parent Slice: 47
-Status: FIX REQUIRED
+Status: READY FOR B REVIEW
 Task Base: c942c4b4b9d3abf105341e8163c1be2d95d9a671
 Difficulty: High
 Test Level: T4
@@ -387,14 +387,27 @@ Run once与empty-baseline的旧harness失配与代码/已接受Slice46语义一�
 
 同Task修正这一项P1；Slice47保持ACTIVE，不规划下一Task，不修改A-owned合同/路线图/进度。
 
-## Developer handoff — current reviewed implementation
+## Developer handoff — long-analysis keep-alive fix
 
-Checkpoint: `b72675ef35beffe5d14b3e4b9910abfae618fbdb`。Developer提交时为READY FOR B REVIEW，
-本轮独立B结论以上文为准；此前详细fix-round报告保留在Git，不在当前Task重复流水账。
+Checkpoint: working tree on `main`, parent HEAD `968742cc5afe7fb378153f7d135c4d97d5c2b1c4`
+(Task Base `c942c4b4b9d3abf105341e8163c1be2d95d9a671`)。Developer提交时为READY FOR B REVIEW;
+B复核即完整Base..新Head并承担T4。
 
-本次实现：fenced plan/discovery事务对尚未结束的既有精确来源同步技术失败，保留ID/源版本/pin/
-审核/兄弟历史及settled结果；纯helper区分四类人工问题与技术失败，复用原聚合结算。
-新增3项真实Files/API/engine回归（单项失败结算、成功兄弟不重放、待决定兄弟不提前结束）与
-2项helper分类测试。Developer实际affected组406/230/342 tests均OK，3个B复现脚本和修改文件
-质量检查通过，证据`.git/validation-evidence/dev-task47.2-p1-reanalysis/`。未要求Developer跑全套；
-本轮B的当前候选T4结果、限制和新增P1单独记录于上文。
+本次实现修复B确认的P1:新Task链`_run_discovery`直接调用`run_claimed`,既绕过旧
+`claim_and_run`的lease keeper,共享Preview调用也未传`analysis_checkpoint`,整批分析累计超过
+默认300秒后Task claim不再续租、原子plan发布被过期fence拒绝,Task永久running/claimed并占名额。
+
+- `media_discovery.run_claimed`接管lease keeper(原`claim_and_run`实现),新增`parent_heartbeat`
+  与`analysis_checkpoint`并转交`_analyze`→`PreviewService.create`;`claim_and_run`复用同一keeper。
+- `manual_task_engine._run_discovery`传入linked discovery心跳、Task/父Worker心跳及每个
+  discovery/item/Provider阶段边界续租Task claim的`analysis_checkpoint`;新增`_discovery_heartbeat`。
+- 保持claim token/generation/有效期、取消与原子plan发布栅栏;过期claim仍不可续租,stale owner
+  仍不能发布/写item/执行;未放宽uncertain非重放或精确确认。
+
+新增`tests/test_manual_task_engine.py`三项真实Files/API/生产Task engine回归:40部/累计400秒
+超默认lease仍发布同Task摘要并释放名额、20部短批次对照、0.5秒lease下单次Provider阻塞1.5秒由
+keeper续租后仍发布;`tests/test_media_discovery.py`仅增可选`worker_lease` fixture参数。
+实测affected组253 + 156 + 273 tests均OK,新增3项OK,ruff format/check、compileall、治理、
+`git diff --check`通过;B的400秒复现脚本现达waiting_human/40 items/有preview/零变更,仅在旧
+“永久claimed”断言处按预期失败。证据`.git/validation-evidence/dev-task47.2-long-analysis-keepalive/`。
+未跑全套T4;B维护验收与完整回归。
