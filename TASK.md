@@ -53,30 +53,30 @@ Copy/Move等操作及既有Web/API/CLI控制入口均不再提供该能力；这
 
 ## Actual-code gap — current candidate
 
-当前审查候选为 `7480ba172cada6d8e35980ed25dc06a6a5102ed9`；产品提交为`61b30847`，
+当前审查候选为 `a7db756e963aef4592187d4a36e0c835d1da6858`；产品提交`8f66d1cc`，
 后继仅改报告。Task Base、High/T4及schema55不变。
 
-- 上轮三项局部修正已确认：原Task Center continue返回nativeAnalysis且无Job；两文件分批后
-  Task/Run统计2/2、2条Result；等待时取消同步discovery，未改动来源可用新requestId重新准入。
-- 同Task分析后，Task Center条目仍被投影为technical_history，仅investigate，既无原位摘要
-  也无确认入口；Files中的真实preview已ready。原M4/M8的页面闭环仍未完成，不需另行改约。
-- 新请求分析会按Storage/path从全库RESOLVED confirmations取冲突决定，未限定本Task/来源
-  lineage。已复现取消旧Task后，新Task自动沿用旧Rename、跳过本次冲突决定。
-- 部分文件执行失败时，engine仍按本execution的FAILED结算整个Task，即使另一个文件仍等待
-  识别；该正常来源再补正后继续被409拒绝，违反原逐项独立要求。
-- 以上三项详见B Review。自动入口切引擎、Job迁移/删除仍后续；完整T4/真实Web/升级发布
-  验收由B负责，当前定向通过不代表Task/Slice通过，不要求Developer跑全套。
+- 前轮三项局部修正已复核：原Task现在回读business_problem及prepared摘要；跨Task旧Rename
+  不再套用，新任务有独立pending conflict；失败子集不再终结另一文件的合法处理。
+- 新native摘要ID只绑定discovery，确认又读取其最新preview：旧页面确认可执行重新分析后的
+  另一份计划。真实两页面场景已在临时Storage执行到新版未审阅的目标，阻塞M3精确意图。
+- 普通精确确认会删除原分析TaskItem，原处理链接在Worker运行前即404；新ID能读不等于旧
+  深链/原历史已保留。M4已明确允许内部ID变化且要求旧链接可读，无需另行确认“ID恒等”。
+- 两部均ready只确认第一部后，第二部也被native摘要投影为confirmed并关联第一部execution；
+  第二部仍waiting_confirm/真实文件存在/无Result，继续却409 uncertain_effects，原位处理断链。
+- 三项详见B Review，均在原Task范围。自动入口切引擎、Job迁移/删除仍为后续；完整原生/T4/
+  升级发布验收由B承担，不以新增Developer全套测试或用户额外授权代替产品修正。
 
 ## Next implementation order
 
-1. 按P1-1完成Task Center原Task的分析→原位摘要→所选确认→Result及刷新回读；复用已有
-   Files计划/授权/执行服务，不能靠读底层API或要求用户回Files重新找摘要替代页面交付。
-2. 按P1-2限定决定消费的本Task/来源版本/合法历史关系；保留正确的取消后新请求能力，不再
-   以Storage/path匹配从别的工作借用冲突决定或权限。
-3. 按P1-3把单个execution结果与整项Task的当前调度/聚合分开，失败来源保留失败和证据，
-   未受影响的四类待办仍可在原Task继续；不增加技术失败Web恢复或自动重试。
-4. Developer运行新增/变更/直接受影响的真实入口回归和静态检查后交接。B再独立审完整
-   Base..Head，完成原M1–M10、真实Web与其余T4/升级/发布门禁；不先规划47.3。
+1. 按P1-1把native摘要的确认与精确回读绑定到用户实际审阅的不可变preview/计划、所选scope和
+   影响范围；旧页面不得在后台改绑新计划执行。复用现有计划/授权记录，不造第二套准备系统。
+2. 按P1-2保留原TaskItem历史与旧链接：可以复用ID，也可以版本化并建立明确耐久关系，但不能
+   删除旧行后仅要求页面改用当前ID。补原页面确认成功/未知响应后的精确回读。
+3. 按P1-3分别表达本次已确认子集和仍待确认的来源；每个文件只关联真正包含自己的execution，
+   未选项在原Task继续，保留真实unknown保护、完成项不重放和准确统计。
+4. Developer交上述真实入口新增/变更/直接受影响结果与限制；B再独立审完整Base..Head并完成
+   M1–M10、真实Web与T4/升级/发布门禁。不先规划47.3，不恢复暂停。
 
 ## Implementation Scope
 
@@ -352,131 +352,128 @@ SQLite ResourceWarning 与历史相同,未新增 skip/retry/超时放宽,未访�
 
 ```text
 Reviewed Base: c942c4b4b9d3abf105341e8163c1be2d95d9a671
-Reviewed Head: 7480ba172cada6d8e35980ed25dc06a6a5102ed9
-Product checkpoint: 61b30847c0e6d760224e42225574fdf39026d9a0
+Reviewed Head: a7db756e963aef4592187d4a36e0c835d1da6858
+Product checkpoint: 8f66d1cc243746bbbc849842ee5ddbc63760f673
 Contract: c1e616113f87420d6f7411c3e6287ce81c1f5331
-Decision: FIX REQUIRED — native summary UI missing; foreign conflict decisions reused; failed subset settles outstanding work
+Decision: FIX REQUIRED — mutable native confirmation; old item readback lost; unselected sibling shown confirmed
 Slice Required Outcomes / Surfaces all satisfied: NO
 Next: SAME TASK FIX LOOP; preserve Task47.2 ID/Base/Goal and amended scope
-Evidence: .git/validation-evidence/b-task47.2-7480ba17/
+Evidence: .git/validation-evidence/b-task47.2-a7db756e/
 ```
 
-B独立核对完整Base..Head的60文件manifest，承接此前生产接线/容量/暂停退役等审查，另读本轮
-应用续作服务、聚合/取消发布、Web ack和测试删改。61b30847..7480ba17仅TASK报告，不改变
-执行输入；本轮所有验证在Reviewed Head。main起点无tracked edits；既有OS/log/图片/ZIP等
-untracked原样保留、不暂存。本轮只改TASK，无产品/测试/A-owned合同编辑、push、历史改写或子代理。
+B独立核对完整Base..Head的62文件manifest，承接前轮生产接线/容量/取消/退役等审查，检查
+本轮native准备/确认/回读、决定收集、聚合、SQL四类归属和测试删改。8f66d1cc..a7db756e仅
+TASK报告，执行输入不变；本轮验证均在Reviewed Head。main起点无tracked edits，既有OS/log/
+图片/ZIP等untracked原样保留、不暂存；只更新TASK，无产品/测试/A-owned合同编辑、push、
+历史改写或子代理。没有猜造路由、修改DB/claim或读取用户运行库/媒体/私有配置。
 
-**对Developer已知限制的范围核对：** 原Implementation Scope 7要求“完成现有Web/API结果闭环”，
-M4明确四类决定→分析→摘要→显式继续→Result，M8要求Task Center实际可操作；前轮P1-1第4条
-也已明确原位摘要。Product Experience的Tasks旅程和Task Center integration要求同样的结果。
-因此原Task Center摘要/确认是现有交付，不是新增第二套准备/授权系统或需用户重新确认的范围。
-应复用已有计划/授权服务补齐投影和页面，不取消安全确认，也不恢复暂停。
+**对已知限制的范围核对：** 原Scope 5、M4及V2-TASK-003明确：内部TaskItem ID可以复用或
+版本化，但须保留耐久历史关系、旧链接与准确文件数。要求旧item深链可读不等于要求ID恒等。
+Developer报告的“旧item ID 404”因此是原交付未完成，不需要用户再次授权或A改约；可以选择
+合适的兼容读取/保留关系实现，不要求另造恢复系统或合并历史Task。
 
-### P1-1 — 原Task分析已就绪，Task Center却降为技术历史，没有摘要确认入口（M4/M8）
+### P1-1 — 旧页面的确认被绑定到新计划，实际执行了用户未审阅的目标（M3/M8）
 
-**真实入口与结果：** Files新提交一部影片，在Task Center对应的原生决定接口选择类型并保存，
-沿页面真实使用的recovery/continue返回202/nativeAnalysis，Task Worker推进，零Storage变更、
-无Job。随后真实GET回读：item=waiting_confirm、queue=WAITING_HUMAN；
-`/tasks/{task}/items/{item}/recovery`却返回`recoveryKind=technical_history`、
-`manualRecoveryAvailable=false`、`manualRecoveryAnalysisReady=false`、
-`manualRecoveryPreparation=null`、`manualRecoveryLink=null`，checkpoint仅`investigate`。
-Run详情`continuation=null`，而同一来源的Files preview已200/previewed。
-
-**页面证据与修复指导：**
-
-1. `TaskItemRecoveryPanel`只在business_problem/recovery_lineage且相关准备条件成立时提供
-   摘要操作；当前响应直接进入技术历史只读分支。Run详情的现有摘要也依赖exact_preview
-   continuation，当前为空。本轮据真实API+实际渲染分支确认该断链，未声称已跑新浏览器截图。
-   新测试名为whole journey，但后半直接调用Files preview/execute，未覆盖这里的实际页面。
-2. 让原Task的合法四类后续分析保有对应处理lineage和可回读的当前摘要/执行关系，正确区别
-   普通初始确认、四类处理后待确认、实际技术失败、已确认执行与unknown。不要虚构一个新
-   人工问题来保留状态，也不把所有技术历史重新变成可恢复；单纯决定已保存/分析结束不等于
-   文件已经完成，只有合法后续结果才结束该处理。
-3. 在现有Task Center详情/条目组件接入该原Task已有preview与精确确认服务，支持选择ready
-   subset、影响授权、容量拒绝、未知响应精确回读和已准入后不再重复确认。不得新建Job/顶层
-   恢复Task、造兼容executor、取消确认，或要求用户回Files猜找摘要来完成此页面流程。
-4. 从真实新Files准入进入Task Center，分别覆盖四类（含Metadata候选/补正）保存→分析→
-   当前页面显示摘要→明确确认→原Task Result；刷新/返回/认证续接/重开恢复同一摘要或执行
-   状态。Developer补实际DTO与页面整合的直接影响测试；B修正后跑原生桌面/窄屏浏览器门禁。
-   保留真实技术/unknown只读对照，核对既有单项/批量消费者，不开发第二套恢复系统。
-
-### P1-2 — 新Task借用已取消旧Task的冲突决定（M3/M4，决定/授权隔离）
-
-**真实用户操作：** 目标已有同名影片。第一次整理选择冲突“重命名”，但尚未确认执行便取消。
-然后用新requestId重新整理同一未改动来源，选择识别类型并分析。本次没有做任何冲突决定。
-
-**实际结果：** 第一个Task已cancelled/零Result；第二个Task独立准入，却直接previewed，目标
-自动为`One (2001) (1).mkv`，没有本Task的pending conflict confirmation。数据库唯一相关决定
-仍是旧Task的RESOLVED Rename。全程零Storage变更；不声称已发生错误覆盖或数据丢失。
-与正常首次同名冲突形成对照，当前新工作未按manual冲突策略要求本次独立决定。
+**实际用户操作与结果：** 在同一新Files Task处理同名冲突，选择Rename，原Task Center
+读到prepared摘要A，目标为`One (2001) (1).mkv`。该页面保持打开；另一个文件到达此目标，
+用户在另一页面对同Task显式重新分析，得到摘要B，目标为`One (2001) (2).mkv`。
+两份preview ID不同，但`preparation_id=native:<discovery_id>`相同，selected item IDs也相同。
+旧页面按A的准备ID/选择提交现有confirm接口，返回202；Task Worker真实执行了B，将来源
+移动到`(2).mkv`。原`(1).mkv`仍为外部已有内容。本轮只在合成临时Storage执行，未改用户媒体。
 
 **原因与开发指导：**
 
-1. `_native_review_decisions()`遍历全库RESOLVED confirmations，仅以Storage/path命中当前
-   sources后加入decision map，没有校验confirmation的Task/item归属、来源版本和合法lineage。
-   Planner的`_apply_conflict_confirmation()`再按源/目标路径匹配应用Rename，于是另一个已取消
-   工作的决定被当成本Task的决定。取消后允许新请求本身是正确修复，不应回退源释放来遮住问题。
-2. 复用现有决定收集/绑定能力，只消费本Task这个确切来源版本的决定，或有明确耐久关系证明
-   仍合法的同工作历史。不同Task/新请求/不同principal不能因路径相同继承旧决定；不从全局
-   历史或时间排序推断授权。保留原Task内同来源的合法重新分析及历史读取，不强制内部ID恒等。
-3. 决定和执行权限分开；即便合法消费本Task决定，也须保留当前源/目标/计划/策略/能力、
-   overwrite/cleanup范围与一次授权检查。不要删除旧confirmation或重置审计来修复隔离。
-4. 在现有真实两次准入链补“旧Task选Rename→取消未执行→新request→应重新显示冲突”的
-   回归，再验证新Task自己的合法决定→摘要→明确确认后才执行；同时保留同Task合法决定可
-   消费的正向与不同来源版本/归属的直接影响对照。无需制造历史paused工作或新恢复系统。
+1. `native_preparation_id()`只编码discovery；`confirm_native_preparation()`从该discovery
+   当前preview重读计划，再把当前intent_version交给begin_web_execution。确认并未携带/证明
+   用户实际审阅的那份preview/计划。底层执行服务虽精确验证B，也不能证明用户审阅并确认过B。
+2. 确认对象必须耐久绑定不可变preview/精确计划、所选文件、源版本/pin与影响scope；可以用
+   已有不可变计划身份构造native引用或让请求显式携带被审阅身份，再按现有乐观并发机制检查。
+   不能仅以discovery、当前intent版本或“最新计划”替代被审阅计划，也不需新建Job/Task或
+   第二套preparation表。重读同一摘要身份稳定，重新分析后的新摘要不能复用旧确认资格。
+3. 原计划已被替代、来源/摘要变化时，旧确认必须在创建/消费授权和执行准入前有界拒绝，保留
+   原选择、摘要与结果，指引审阅新摘要后重新明确确认。不能静默切换目标、宽松接受或自动重试。
+   原确认已受理而响应未知时，精确回读那次提交及执行，不能借同一discovery误认其他执行。
+4. 新增上述真实两页面回归：旧A确认拒绝、零新执行/零媒体效果/不消费权限；用户明确审阅B再
+   确认才准入并执行。保留正确当前摘要、权限/源/容量拒绝和未知响应对照，沿实际Web client/
+   API字段验证，不只直接调用begin_web_execution或仅断言current preview可执行。
 
-### P1-3 — 一个已确认子集失败后，未受影响文件的原Task处理被一起终结（M4/M8）
+### P1-2 — 普通确认后原条目链接立即404，原页面无法按原身份回读（M4/M8）
 
-**真实用户操作与结果：** Files选择两部，先补正/确认第一部，第二部保持识别待办。
-确认返回202后、Worker尚未运行时，第一部被外部移走；本轮只在临时fixture模拟这一正常来源
-变化，未改DB/claim。Worker正确将第一部记failed、零Storage效果；但整体Task=failed、
-queue=settled，第二部仍waiting_recognition且真实文件存在。用户保存第二部识别决定成功，
-再通过页面真实recovery/continue提交，409 `analysis_rejected`，提示只能从human-waiting
-重新分析。该正常文件不能在原Task继续，不能把第一部缺失解释为第二部也无需处理。
+**独立正常流程复现：** 新Files单影片→原生决定/continue→当前prepared摘要→不做任何计划
+变化，直接精确确认，返回202。随后原`/tasks/{task}/items/{old_item}/recovery`在Worker
+运行前即404，执行完成后仍404；当前新item ID的同接口200/confirmed且有1条Result。
+这里读取的是TaskItem处理/历史链接，不是要求已过时的preview继续具有执行资格。
 
 **原因与开发指导：**
 
-1. `_task_after_item()`已按整个种群计算当前状态，但engine `_finish_execution()`仍映射
-   当前execution终态为整个Task终态。保留outstanding的分支仅覆盖COMPLETED/PARTIAL_SUCCESS，
-   本execution=FAILED时直接settle，遗留合法待办失去调度资格。
-2. 分开保存当前execution/attempt的真实失败和整个Task仍欠的工作；有未受影响的合法人工
-   待办、初始确认或机器工作时，按原调度模型保留原Task相应资格与准确聚合/计数。人工等待
-   且无机器工作用零名额，不自动执行未确认项，不自动重试缺失来源。最终全来源结算后按独立
-   成败/忽略/跳过/partial/unknown汇总，不能用最后一个execution的成功抹掉先前失败。
-3. 修复的是未受影响的第二部自己的四类流程，不是为第一部新增技术失败Web恢复。保留第一部
-   Result/失败/attempt/原pin，已成功或unknown来源不重放；CANCEL保持最终，不得借此重新打开。
-4. 扩展现有混合批次回归：第一部执行前消失→第一部失败，第二部仍可保存/分析/摘要/明确确认
-   并产生自己的Result，原Task贯穿；第一部不再执行、最终不是全成功、计数/历史/重开准确。
-   另保留首次子集成功、合法取消与unknown对照；不枚举所有理论崩溃点或扩张永久恢复承诺。
+1. `admit_manual_execution()`对同Task/source直接DELETE掉旧analysis TaskItem，再写另一个
+   执行item；没有保留旧ID的耐久可读关系。`TaskItemRecoveryPanel`确认后及未知响应reconcile
+   仍按原taskId/itemId回读，因此仅改用新ID的测试不能证明当前页面/旧深链闭环。
+2. 采用复用原item身份，或保留历史/建立明确的同Task、同具体源版本/pin的后继关系与有界
+   只读解析，使旧链接仍能读原决定、历史与这次准入/执行/Result。实现可选择ID变化；禁止仅按
+   路径/时间猜映射或删除旧review/attempt来消除404，不扩大为合并任意历史Task。
+3. 原已确认摘要不重新变成可执行。确认响应丢失后，从原上下文应精确读出已受理的执行及选择，
+   供用户跟踪而非重发；成功项不重放，数据/权限/源/unknown保护保留。关联身份、统计与结果
+   必须按同一耐久来源去重，不因保留历史版本增加文件数。
+4. 扩展普通当前摘要确认回归：确认前的旧item URL在准入后、执行后、重开后均可读，保留原
+   决定/历史并指向准确执行；模拟未知确认响应仍能从原页面核对。保留新ID存在的实现自由，
+   不把“换成list_items()[0]再GET”当作旧链接通过，也不开发第二套恢复系统。
+
+### P1-3 — 只确认第一部，未选择的第二部也显示“已确认”且没有后续入口（M4/M8）
+
+**真实入口与结果：** 新Files Task两部影片均保存决定并分析为ready；在Task Center现有
+native confirm中只选择第一部，Worker成功生成第一部Result。第二部仍waiting_confirm、
+来源存在且没有Result，但其recovery回读`manualRecoveryPreparation.status=confirmed`，
+execution_id和selected_item_ids均属于第一部。checkpoint仅investigate，页面因此展示已确认
+步骤而非第二部的待确认摘要；尝试原生continue返回409 uncertain_effects。
+
+**原因与开发指导：**
+
+1. `native_preparation_summary()`只按preview查任一execution，发现后便对当前任意item
+   返回confirmed；`_native_admitted_execution()`取列表第一条，没有校验该execution确实
+   包含当前来源/当前确认subset。阶段转换为waiting_confirm后，通用checkpoint无该文件Result
+   的fallback又把它视作unknown，原生continue被效果保护拒绝。未知效果guard本身应保留。
+2. 分开表达整份计划、当次确认子集及每个来源自己的状态/执行关系。已确认的第一部只关联
+   自己的准入/Result；未选第二部仍有原位合法的待确认摘要或按现有鲜度规则分析后的确认路径，
+   不借用其他文件的execution、不把整份计划一次确认当作全部文件已确认。
+3. 若durable selected scope/逐项执行证据能证明某来源从未准入/派发，应按该精确证据维护
+   真实待确认状态；不得只凭缺Result清除unknown或改全Task的效果确定性。真正已派发、partial/
+   unknown来源仍只读检查和不重放。新的选择仍需精确确认、权限/源/计划/pin与容量检查。
+4. 补两部均ready→仅确认第一部→第二部仍可在原Task Center确认→两部独立Result的回归，
+   核对每个条目的prep/execution/selected scope/效果和未知响应回读，首部不重放、计数2/2且
+   重开一致；保留真实unknown/取消对照。不要靠用户去Files绕过、强制一次全选或新增通用Retry。
 
 ### B实际验证与限制
 
-| 验证 | 本轮当前候选结果 |
+| 验证 | 当前候选实际结果 |
 |---|---|
-| engine、调度/栅栏/迁移、Operations workspace、Task pause/CLI、media library transfers | 140 tests OK，runner7.842s/外层8.038s；`focused.json/log` |
-| TaskItemRecoveryPanel直接影响单测 | 1 file / 8 tests OK，Vitest1.55s/外层2.629s；`web-focused.json/log`；不能替代真实后端页面闭环 |
-| 前轮native continue、两批计数、取消后新请求 | 真实API复核通过，原Task继续无Job、1/2→2/2、取消后新准入202；相应repro脚本/log |
-| 原Files四类底层消费 | Recognition分批、Classification/Conflict显式决定→分析→确认→Result继续通过；`four-type-probe.py/log` |
-| 本轮三个阻塞 | `native-continue-repro.py/log`、`cross-task-conflict-repro.py/log`、`failed-subset-repro.py/log`；现有正常入口、真实临时SQLite/Local Storage/合成Metadata，无猜造路由/DB状态 |
-| 本次10个Python变更文件ruff format/check、完整Base..Head空白 | PASS，`static.json`；manifest60文件 |
-| 完整Python/Web/E2E/新截图/wheel/容器/53/54→55升级与失败原子 | 已确认产品阻塞，按workflow提前FIX；修正候选由B完成，无豁免、不把缺全套结果交Developer返工 |
+| engine、调度/栅栏/迁移、Operations workspace、Task pause/CLI、media library transfers | 144 tests OK，runner8.232s/外层8.431s；`focused.json/log` |
+| TaskItemRecoveryPanel直接影响单测 | 1 file / 8 tests OK，Vitest1.52s/外层2.103s；`web-focused.json/log` |
+| 前轮原生摘要缺失/跨Task Rename/失败子集三场景 | API定向复核修正；对应3个既有repro脚本/log。不把局部修正当作M1–M10全部通过 |
+| 精确摘要替换后的旧确认 | 旧A请求202却执行B真实MOVE；`native-stale-confirm-repro.py/log`，0.165s；未发生覆盖已有文件的效果 |
+| 普通确认后旧链接 | 不改变计划的正常链，原item在准入前200、准入后/执行后404，当前新item200/confirmed；`native-old-link-repro.py/log`，0.141s |
+| 两部均ready的所选子集回读 | 未选第二部被标confirmed并借用首部execution，continue409；`native-subset-readback-repro.py/log`，0.139s |
+| 本次8个Python文件ruff format/check、完整Base..Head空白 | PASS；`static.json`，manifest62文件 |
+| 完整Python/Web/E2E/新截图/wheel/容器/真实53/54→55升级与失败原子 | 已确认产品阻塞，按workflow提前FIX；修正候选由B完成，不记PASS、不要求Developer补全套 |
 
-治理/链接/工作区复核见`review.json`。SQLite ResourceWarnings、CLI旧命令拒绝及Web jsdom
-scrollTo提示保留；无skip/retry/timeout放宽。本轮未访问用户运行库、媒体或私有配置。
-开始`2026-10-31 05:22:22 UTC`；测试/探测/检查保守总上界30秒，小于本轮总用时50%。
-旧候选的未跑/通过标签不充当本候选全量验收；Developer报告原样保留，B只记录自身实际运行。
+治理/链接/工作区复核见`review.json`。SQLite ResourceWarnings、CLI退役命令拒绝与Web jsdom
+scrollTo提示保留，无skip/retry/timeout放宽。所有探测均从既有正常API及文件变化入口开始，
+用临时SQLite/Local Storage/合成Metadata，不改DB/claim；未访问用户媒体/运行库/私有配置。
+开始`2026-10-31 06:10:53 UTC`；测试/探测/检查保守总上界30秒，低于本轮总用时50%。
+尚未跑新的真实浏览器截图，未据API定向通过虚报完整Web验收；完整T4仍由B承担。
 
 ### 后续交接与Slice全结果重评
 
-同Task继续修正三项；原位摘要是现有授权，冲突隔离和独立失败处理是原不变量，不另开Task或
-扩张为第五类恢复。Developer交新增/变更/直接受影响结果，B负责剩余原生与全量发布验收。
+同一Task修正三项并核对M1–M10。精确确认、旧链接和所选逐项结果均是原交付；不要求内部
+ID恒等、不恢复暂停、不新增第五类恢复或新的执行/恢复系统。Developer交新增/变更/直接
+受影响结果后由B验收；未跑全套不是Developer缺陷，不先规划47.3。
 
 | Slice outcome | 当前结论 |
 |---|---|
-| RO-1 | 手动准入/分析/分批及native continue已接；失败子集仍错误终结原Task |
+| RO-1 | 手动生产链与原生摘要已接入，精确确认/所选逐项回读和历史关系仍阻塞 |
 | RO-2 | 自动due/Run once/独立API-CLI引擎切换仍后续，未完成 |
-| RO-3 | 同Task原生分析已有进展；原位摘要、决定隔离及混合失败闭环未完成 |
-| RO-4 | schema55分批支持保留；完整升级和Job迁移/删除仍后续，不扩大本Task |
-| RO-5 | 原取消源释放、分批统计已有修正；Task Center实际确认闭环仍阻塞 |
+| RO-3 | 原三项已有修正；native确认与独立文件状态/历史闭环未完成 |
+| RO-4 | schema55分批支持保留，完整升级与Job迁移/删除仍后续，不扩大本Task |
+| RO-5 | Task Center出现原生摘要，但确认/旧链接/剩余项原位继续仍未完整 |
 
-Task47.2保持FIX REQUIRED，Slice47仍ACTIVE，未达到交A关闭条件；不恢复暂停及其兼容执行。
+Task47.2保持FIX REQUIRED，Slice47仍ACTIVE，未达到交A关闭条件；原Base与历史全部保留。
