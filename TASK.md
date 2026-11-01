@@ -12,7 +12,7 @@ Recheck intervening commits without silently repinning the Task Base.
 Task ID: 47.3
 Task Type: SLICE
 Parent Slice: 47
-Status: READY FOR B REVIEW
+Status: FIX REQUIRED
 Task Base: dfcfebbdb9c879b38806e29c7b41c9192aeca83e
 Difficulty: High
 Test Level: T4
@@ -264,32 +264,29 @@ git diff --check
 ## B Review Result
 
 ```text
-Reviewed: dfcfebbdb9c879b38806e29c7b41c9192aeca83e..902c512438442a526e1f13f9046627a4434603e9
-Implementation checkpoint: 5b0095bd8dc1c355b4ae7946d5a2d1d4b9832721
+Reviewed: dfcfebbdb9c879b38806e29c7b41c9192aeca83e..d3da1f178e1f11a36153cbf8f1200be4090f821e
+Implementation checkpoint: b9fc928b99fbaa53af91426ee9e768808765e294
 Decision: FIX REQUIRED
 Slice Required Outcomes / Surfaces all satisfied: NO
 Next: SAME TASK FIX LOOP
 ```
 
-B reassessed the complete 39-file Base..Head change, building on preceding full-range reviews,
-re-reading the shared admission/engine/SQLite/query contracts and inspecting the current six-file
-correction. `5b0095bd..902c5124` changes only `TASK.md`; executable inputs are identical. Review
-started on main at the reviewed Head with no tracked edits. Existing untracked OS/log/reference/
-archive files remain untouched/unstaged. Governance passed; Base/scope/High/T4 remain unchanged.
-Superseded Developer reports/review details remain reachable in Git.
+B reassessed the complete 39-file Base..Head change using preceding full-range review evidence,
+inspected every current three-file correction and its production read consumers, and rechecked the
+Task/Slice original-record contract. `b9fc928b..d3da1f17` changes only `TASK.md`; executable inputs
+are identical. Review started on main at the reviewed Head with no tracked edits. Existing untracked
+OS/log/reference/archive files remain untouched/unstaged. Governance passed; Base/scope/High/T4
+remain unchanged. Superseded reports/review details remain reachable in Git.
 
 ### Verified corrections
 
-- **上轮来源占用 P1 已修复。** B 原并发反例现通过：两个真实 Run once API 受理、两个
-  生产 Task Worker，两个事务外查询均答“空闲”，最后一个 waiting_recognition owner，
-  另一个 failed/settled，拒绝原因为 source_already_organizing，文件修改效果为空。
-  新 repository 边界在同一 BEGIN IMMEDIATE 中核对 live claim、共享 source ownership、
-  scheduled item 的 attempt/history 并写入；真实 SQLite 路径不再靠先读后写判定占用。
-- 62 项新/相关测试通过，覆盖 Files reservation、顺序拒绝、合法同 Task/lineage、失效
-  claim 零写入、settled sibling 不重启，以及原 CLI/remote 续作和旧提交命令拒绝回归。
-- `automatic_task_continuation._continue_item` 的当前合法输入是本 Task 已持久占用且未
-  settled 的决定项，续作不曾释放该 item；本轮的新受理事务会拒绝其竞争者。因此没有
-  将它仍有事务外读取这一代码形状单独列为新阻塞，也不要求为可选统一而重做恢复系统。
+- **恢复确认后原记录消失已修复。** 原 Task 内的 recovery execution 不再被误当成另一
+  顶层 follow-up，记录在确认前、确认后、执行后和 reopen 保持唯一、身份与来源不变；
+  真正的旧独立 follow-up 仍被排除。B 的原探针现在通过可见性断言。
+- **due 的 trigger 修正有效。** 按 admission-written `definition-scheduled` 识别 scheduled，
+  Run once 仍是 manual；真实 due recovery 的新过滤/读回测试通过。
+- **82 项 focused tests 通过。** 包括本次记录/历史读模型、新来源占用竞争、CLI/remote
+  续作等直接相关回归。成功 sibling 未重放；原 Result 的既有时间/身份没有被改写。
 
 ### 已验收的来源占用行为（保留开发指导）
 
@@ -314,90 +311,102 @@ Superseded Developer reports/review details remain reachable in Git.
 
 ### Remaining Task blocker and actionable correction
 
-**P1 — 同 Task 恢复确认后，原自动化运行从执行记录中被排除了。**
+**P1 — 原记录仍把后续恢复成功和结束时间算进首次自动执行，尚未满足原记录保真。**
 
-用户触发：Run once 执行两文件，一项已成功、一项目标冲突 → 任务中心选择 rename →
-继续分析 → 查看摘要并明确确认。B 通过既有 API 和真实应用服务/SQLite/Task Worker
-完成这条路径：确认前 `GET /api/v1/operations/automation/records?limit=20` 返回原运行，
-`total=1`；确认返回 202 后立刻变成 `items=[] / total=0`。随后共享 Worker 真正完成
-剩余文件，原 Task GET 仍为 200/completed，两个 SUCCESS Result 和 admission-written
-`definition-run-once` origin 都还在，但执行记录仍为空。这是查询遗漏，未发生数据库记录
-删除；原成功 sibling 没有被重跑。原反例及输出保留在下面的 evidence。
+真实场景：Run once 首次自动处理 Two 成功、One 目标冲突；Worker 已返回，队列是
+waiting_human、machine items=0。随后操作者完成 rename 决定、分析、明确确认和执行。
+B 将 fixture 的真实应用时钟推进 1 小时再恢复：同一条记录的 `recordOutcome` 最终变成
+“本次成功，已整理 2 个文件”，`executionFinishedAt` 变成恢复结束的 13:00；首次自动处理
+在 12:00 已停止并交给人工。Task 确实最终 completed/两文件成功，原成功文件也未重放，
+但 records-only 结果将这两次阶段的事实合并了。记录可见并不能替代结果/时间保真。
 
-根因：`SQLiteTaskRepository._recovery_follow_up_sql()` 只要发现 recovery preparation
-关联的 `manual_executions.task_id` 就将整个 Task 标记为 follow-up。
-`_ORIGINAL_AUTOMATION_ADMISSION_WHERE` 和 records 的共享过滤随即排除它。
-本 Task 新 confirmation 会把该 manual execution 接回**原 Task**，旧“恢复必定产生另一
-顶层 Task”的判断不再成立。原 origin 没有丢失，不能靠补写当前 Active 或再造一条运行解决。
-该公共谓词还供 metrics/latest 使用，修复时须一并核对；本轮直接复现的结果是 records
-人口由 1 变 0，不把未运行的其他表面检查冒充已复现。
+根因仍在原记录读模型：`_automation_record_query_document()` 取可变 Task 状态和每项最新
+Result，`_run_query_document()` 的记录时间取 Task 的 completed_at；
+`automation_record_display()` 及实际 `AutomationInventory.tsx` 又用这些证据展示
+recordOutcome/计数/起止时间。本次只修正人口和 trigger，没有保存/选择首次自动执行
+结束时的有界事实。新测试断言 records 的 completed/2，因此没有覆盖这项剩余合同义务。
 
-这是原 scope 6/7、原记录验收及 Slice RO-3/RO-5 的交付缺口，不新增产品或历史迁移范围。
-本 Task 中按以下步骤修复：
+### 语义裁决与本轮开发指导
 
-1. **固化现有入口反例。** 扩展实际 Run once 的混合成功/冲突恢复测试，沿既有 decision、
-   continue、summary、confirm 和共享 Worker 路径，在初次运行后、确认前、确认后、执行后
-   及 reopen 读取 Automation records。原 recordId/Task/definition/trigger 一直可见，原
-   运行只计一次，已成功文件不回放；Task Center 的后续处理进度和原执行事实分别断言。
-2. **修正原运行与后续执行的身份判断。** 从 `_recovery_follow_up_sql()` 及它的公共消费者
-   入手，区分“原 Task 内的一次恢复执行”和“确实新建的历史后续 Task”。保留原受理身份，
-   同 Task 的 preparation/execution 关系不能将原运行变成应排除的 follow-up；真正的旧
-   独立后续工作仍不能多算原运行。复用已持久化的精确关系，不按名称、时间、当前 Active
-   猜测，不创建新 Job/顶层 Task 来补回记录，不删除恢复关系掩盖问题。
-3. **保持原始执行事实。** 不能只移除过滤后直接把 Task 的当前状态、最新 Result 或后续
-   completed_at 当作原执行结果。核对首次自动执行实际结束边界可证明的 outcome、真实
-   起止时间、已知效果/计数；后续分析/执行不能改写它们或产生第二条原运行。正常初次运行
-   自身的进展仍可更新，四类恢复的当前进展继续在同 Task 中展示。复用现有证据/存储责任，
-   不引入第二生命周期或通用历史执行系统；如需最小增量存储，遵循原 Task 的版本化、
-   失败原子和 reopen 要求。
-4. **验证共同读回并交接。** 同一 fixture 验证 records 的过滤/计数/分页、metrics 的原
-   运行 cohort 和 definition latest；覆盖 Run once、due 和保留的旧 Job/child recovery
-   关系，确保没有漏计/多计或读取副作用。只扩展受影响的现有测试，并跑新失败/相关回归，
-   列准确命令和结果。全量及 native/package 门禁仍由 B 负责，不转交 Developer。
+依据 committed Slice RO-3/RO-5、Task scope 6/7 与原记录验收，以及 Architecture
+“Original Automation execution outcome/time/effects are retained independently of current handling”
+和 Product Experience “Later recovery cannot change this original result”：同一 Task 的当前
+进展可以变化，原自动执行记录不能被后续人工恢复改写。这不是新的 Slice 范围。
+
+上轮 B 探针比较整个 API `result` 对象，范围过宽，本轮已收窄：不要求所有原始 API 字段
+冻结，也不把中途的 running/1 永久保存。本轮阻塞依据是**实际 Web 消费的 records-only
+`recordOutcome`、原执行时间及其对应过滤事实**仍被恢复结果覆盖。Task Center、handling、
+原始 Task/API 进度按既有各自语义继续更新；metrics/latest 的原受理人口仍只计一次，
+不借此重定义其已有指标语义。
+
+| 时点 | Task Center / 当前工作 | 自动化原执行记录应表达的事实 |
+|---|---|---|
+| 首次自动阶段尚有机器工作/稳定性等待/在途调用 | 显示实际进行中状态 | 可以更新正常初次执行进展，不能提前制造结束 |
+| 首次自动处理已返回并交人工：Two 成功、One 冲突 | 原 Task 保持待冲突处理，来源占用保留 | 固定该阶段“1 个成功、1 个冲突未完成”及真实起止时间；按 records-only 既有规则是未全部完成/失败，不虚构全成功 |
+| 后续分析、确认、恢复执行成功 | 同一 Task 可 completed，实际成功数 2；handling resolved | 仍是原阶段的 1 个成功/1 个未完成及原时间，不改成“本次成功 2 个”，不多算一次原运行 |
+
+在本 Task 按以下顺序修复：
+
+1. **确定并保留首次自动执行结束边界。** 检查初次 automatic runner 与
+   `ManualTaskEngineWorker._settle_automatic()` 的正常结束/完全交人工，以及现有失败/
+   取消安全退出。只在初次阶段实际结束、已知效果可如实记录时冻结有界摘要；机器工作
+   尚未完成或 Storage 效果不确定时按既有证据表达，不能因单个 run_next 返回、超时或
+   缺 Result 就制造“结束/无效果”。后续 continuation 不再次写入原摘要。
+2. **最小存储方向已允许，无需第二生命周期。** 优先复用现有不可变 attempt/Result/
+   pipeline evidence，前提是能准确复原原阶段（包括原冲突/未完成项和真实结束时间）。
+   若现有证据不够，可在现有 Task 持久化职责内增加以原 Task 为身份、只写一次的
+   `initial_execution_summary` 一类有界证据，包含原阶段 outcome、真实起止时间、总数/
+   成功/未完成/不确定计数及必要的原因/效果引用。它不排队、不领取、无独立执行控制，
+   不是新的顶层 Task/Job 或第二执行系统。写入要受当前 claim fence 保护，并与该阶段
+   发布保持事务一致；如需 schema 增量，按原 Task 规则版本化、失败原子、可 reopen。
+   没有可靠原阶段证据的旧历史不能从当前状态/Active 反推成功或伪造旧结束时间。
+3. **限定消费者和原事实。** records-only recordOutcome、实际显示的起止时间、原因/
+   效果和 outcome 过滤/计数/分页读取原阶段证据；Task 当前生命周期/成功数和 handling
+   继续读当前工作。保留本轮同 Task 可见性/due trigger 和旧 child 排除修复。不要靠改
+   文案、隐藏计数、删除恢复关系、把全部 API 字段永久冻结或另造原运行补洞。
+4. **扩展真实测试后交接。** 改进新增两文件 conflict 测试：在首次自动处理结束后固定
+   原 records-only 事实，推进时钟再决定→分析→确认→执行；断言原 recordId/来源/人口/
+   原结果/原时间跨阶段与 reopen 不变，同时原 Task 确实完成两文件且成功 sibling 只执行
+   一次。保留 raw Task/API 进展断言；不要让“原 Result 创建时间没变”代替原记录结果和
+   结束时间验证。覆盖 due、健康空、全成功及直接受影响的失败/取消/升级回归即可，
+   不穷举新恢复路径、不扩展全历史 Job 迁移。Developer 跑新/失败/受影响测试；完整 T4
+   与 native harness 适配仍归 B。
 
 ### Actual validation and pending gates
 
 Local ignored evidence:
-`.git/validation-evidence/902c512438442a526e1f13f9046627a4434603e9/b-review-20261101/`.
+`.git/validation-evidence/d3da1f178e1f11a36153cbf8f1200be4090f821e/b-review-20261101/`.
 
-- Root `.venv/bin/python -m unittest tests.test_task_source_ownership_race
-  tests.test_automation_entrance_recovery tests.test_operator_job_submission
-  tests.test_v2_automation_run_once tests.test_execution_authorization` — **62 passed**,
-  5.902s / 6.17s wall (`focused.log`). Expected failure-path Worker notices remain visible.
-- Previous B `ownership_probe.py` against this candidate — **PASS**, 0.30s wall
-  (`ownership_probe.log`); actual two admissions/production Worker interleaving, one owner.
-- `original_record_probe.py` / `.log` — **FAIL**, 0.46s wall on final detailed reproduction:
-  actual API Run once, mixed two-file conflict recovery and selected confirmation/execution;
-  records total 1→0 while original Task and origin survive. Initial/narrowing runs cost 0.53s and
-  0.46s; failed assertions remain visible. Temporary roots/fake Provider only, no user media/DB.
-- `web/`: `/usr/bin/time -p npm run build` — PASS, 1.18s wall (`web-build.log`), chunk-size
-  warning disclosed. `npm run test:e2e -- --config=playwright.python.automation.config.ts
-  tests/e2e/automation-lifecycle.python.spec.ts tests/e2e/automation-run-once.python.spec.ts
-  --output=<this-evidence>/native-results` — **13 passed / 4 failed**, 18.15s wall
-  (`native-automation.log`, traces/screenshots in `native-results/`). Failures use harness helpers
-  still looking for Jobs/old discoveries: Worker reports advanced=false or state lacks item bound.
-  These are stale test-composition evidence, not an additional claimed product P1. B owns the native
-  gate adaptation/remaining acceptance; do not weaken assertions or hand the whole matrix to Developer.
-- Root `.venv/bin/python -m unittest discover -s tests` — **interrupted/incomplete**, not PASS
-  (`python-full.log`), 156.41s wall. After the product P1 was established, B stopped its own run
-  with SIGINT under workflow §6's early FIX REQUIRED rule; exit 130/KeyboardInterrupt and database
-  ResourceWarnings are retained, no completed test count invented. No retries or assertions removed.
-- Timed testing/build/probes total **183.66s** (including overlapping commands, conservative sum).
-  This is below 50% of the review turn; no idle padding. Governance and full Base..Head whitespace
-  checks pass; current document checks accompany this checkpoint. No production/test/harness edits.
-- Full T4 Python completion, remaining Web/static/E2E/native visual/wheel/Docker gates remain
-  **pending**, not waived or PASS. The proven implementation blocker remains Developer's same-Task
-  correction; broader gate/evidence work remains B-owned.
+- Root `.venv/bin/python -m unittest tests.test_v2_automation_run_once
+  tests.test_automation_workspace_read_model tests.test_task_source_ownership_race
+  tests.test_automation_entrance_recovery` — **82 passed**, 9.457s / 9.73s wall (`focused.log`).
+  Expected failure-path Worker notices remain visible; no B production/test/harness changes.
+- Previous B `original_record_probe.py` against this candidate — original visibility assertion
+  passes; whole-result equality fails, 0.44s wall (`original_record_probe.log`). The broad equality
+  is not this round's acceptance rule; see the narrower semantics above.
+- `initial_pass_record_probe.py` / `.log` — actual Run once API, two-file production pipeline,
+  Task Worker, native decision/analysis/summary/confirm/execution and records API. Initial automatic
+  pass is waiting_human with zero machine items; after a 1-hour fixture-clock advance and recovery,
+  records-only successItems becomes 2 and end time becomes recovery time. **FAIL**, 0.46s wall;
+  prior narrowing run 0.47s. Only temporary Local Storage/fake Provider/runtime fixtures, no user
+  DB/media, no guessed route or unsupported command. Failed assertions remain in evidence.
+- Timed tests/probes total **11.10s**, below 50% of this review turn, no idle padding.
+  Governance preflight and full Base..Head `git diff --check` pass; current document checks
+  accompany this checkpoint. Current implementation/report boundaries and unrelated files checked.
+- Proven P1 permits early FIX REQUIRED under workflow §6. Full T4 Python/Web/E2E/native visual/
+  wheel/Docker gates remain **pending**, not waived/PASS. Previous native harness failures remain
+  B-owned evidence/composition work; they are not extra Developer product blockers and were not
+  rerun or claimed resolved on this changed executable candidate.
 
 ### Entire Slice outcome reassessment
 
 | Outcome | Current result |
 |---|---|
-| RO-1 — stable Task and shared scheduling | Source ownership correction passes the real concurrent probe and focused gates; full acceptance remains pending. |
-| RO-2 — one engine across entrances | Current CLI/remote/due/Run once integration retained; old new-Job submission branch remains refused. Required broader gates not complete. |
-| RO-3 — same-work four-type recovery | Same-Task recovery executes successfully, but its confirmation incorrectly removes the original Automation run from records. |
+| RO-1 — stable Task and shared scheduling | Existing source-ownership/queue foundations retained; focused race tests pass, broader acceptance pending. |
+| RO-2 — one engine across entrances | Current due/Run once/CLI/remote engine integration retained; full gates remain pending. |
+| RO-3 — same-work four-type recovery | Recovery completes in the same Task, but its success still changes the original records-only result/time. |
 | RO-4 — safe historical Job migration/removal | Not delivered and outside this Task's complete-migration scope; not an added blocker. |
-| RO-5 — complete operator/admin journeys | Automation original-run readback fails after recovery confirmation; other required full/native gates remain pending. |
+| RO-5 — complete operator/admin journeys | Original record remains visible and due trigger is fixed; original result/time preservation and required broader gates remain incomplete. |
 
 Continue the same Task47.3 correction. No new Task, Task PASS or Slice closure is claimed;
 Task47.2 PASS and A-owned Slice/Roadmap/Progress remain unchanged. Slice47 remains ACTIVE.
@@ -405,7 +414,7 @@ Task47.2 PASS and A-owned Slice/Roadmap/Progress remain unchanged. Slice47 remai
 ### Developer guidance — complete the three corrections in this Task
 
 以下保留三项原实施指导（最初基于 `405d2757`）；其中旧反例已修部分以上述 Verified
-corrections 为准，本轮必须修复的是上述自动化原运行记录误排除问题。本指导细化已有
+corrections 为准，本轮必须修复的是上述原记录结果/时间未与后续处理区分的问题。本指导细化已有
 scope 4/6/7，不改变 Task Base、验收或 High/T4。开始修改时将状态置为 IN PROGRESS。
 建议按“恢复链路 → 读回 → 剩余提交入口”实施，在同一候选中完成连接；三项不能自行移到
 下一 Task。函数名是复用线索，不是文件白名单。不要借此提前实施 RO-4 全量历史迁移。
@@ -522,123 +531,6 @@ mock 组件证明真实链接/恢复成功。修改的 Python 文件跑 ruff for
 尚未完成的必要入口或链路要明确写出，不能自行缩小范围后称 Task 完成。已有上轮修复保持
 回归。B 继续负责本 Task 原 T4 full/native/package gates 和最终独立审查，Developer 无需
 重复全 Python/Web/E2E/发布矩阵；本指导也不将这些 B 门禁转交 Developer。
-
-## Developer Completion Report — Round 6
-
-**Status: READY FOR B REVIEW.** Same-Task correction checkpoint for the one B blocker of review
-`62ebf673`（同源占用核对与 TaskItem 登记未原子完成）；不是自评 PASS。
-
-```text
-Task Base: dfcfebbdb9c879b38806e29c7b41c9192aeca83e (not repinned)
-Code/test checkpoint: 5b0095bd (fix(task47.3): atomic cross-Task source ownership at the scheduled item start)
-Report checkpoint: this documentation commit
-Pre-existing untracked files: preserved, unstaged. No push/deploy/self-approval.
-```
-
-### Correction implemented（按 B 的四步）
-
-1. **先固化真实反例。** 新增 `tests/test_task_source_ownership_race.py`：复用真实 Run once
-   API fixture（临时 SQLite/Storage、真实 managed revision store），两个合法 Run once
-   受理（两个不同 request → 两个 Task），两个真实 `ManualTaskEngineWorker` +
-   生产 `_automatic_task_runner`，在真实只读占用查询处用 Barrier 确定性交错（该查询是
-   实际调用链经过的依赖边界，非虚构入口）。修复前该测试在 HEAD 上复现 B 的发现：两个
-   `waiting_recognition` item、同一已验证 occurrence、零 Storage 效果。
-2. **合并决定性事务。** 新增 `SQLiteTaskRepository.begin_scheduled_item_with_ownership()`：
-   一个 `BEGIN IMMEDIATE` 事务内依次完成 `_scheduled_claim_locked()`（live claim/fence）、
-   `_find_owned_source_work_locked()`（共享占用，复用既有身份/版本/discovery
-   reservation/合法 lineage 规则，`exclude_task_id`+`exclude_lineage_task_id`）、
-   `_require_scheduled_item_locked()`（scheduled attempt/结果/不确定效果保护）和 item
-   start 写入。返回 `(True, None)` / `(False, owner)` / `(False, None)`；占用拒绝与
-   claim 丢失都零写入，Storage/Provider I/O 仍在事务外。
-   `TaskSchedulingService.begin_item()` 新增 `enforce_source_ownership/source_version/
-   ownership_lineage_task_ids` 参数并路由到该边界；仓库无组合能力时才回退到
-   只读占用检查 + 带 claim 校验的 `upsert_scheduled_item`（不静默当作空闲）。
-   `KernelTaskCoordinator.begin_item()` 保留原只读快拒并转发全部占用证据；占用拒绝仍由
-   `media_organizer` 发布为该 attempt 自己的有界 `source_already_organizing` failed
-   item/Result（owner 身份不外泄）。
-3. **保留 source 与续作语义。** `TaskSourceOwnedError` 移到 `domain/task_scheduling.py`
-   （Task 内核词汇），`task_runtime` re-export 同一类对象，既有 `isinstance` 判断不变。
-   同 Task 自己的行与合法 lineage 永远不是竞争者；Files 的 `claim_task_item_with_ownership`
-   原子边界未动；due/Run once/CLI/remote 全部经同一 `KernelTaskCoordinator →
-   TaskSchedulingService → repository 事务` 边界，无每入口复制。
-4. **失败及受影响回归。** 见下节实际命令与结果。
-
-### 边界说明（供 B 独立核对，非缩小范围）
-
-`automatic_task_continuation._continue_item()` 仍是"先读后写"形状，但它的写是 resume
-本 Task 已存在且未 settled 的 item 行——该行本身已持久拥有该来源；本轮修复后，其他
-Task 的原子受理在该行未 settled 期间必然被拒绝，因此该续作路径无法再造成双 owner
-（其并发对手正是被新原子边界挡住）。本轮未改动该文件与其 `_publish_failed` 语义，避免
-触动 B 已在 Round 4/5 验证的恢复链路；如 B 认定该路径也需直接走组合事务，请在同一
-Task 内指出，Developer 继续修复。
-
-### Actual validation（本轮命令与结果，证据在
-`.git/validation-evidence/5b0095bd8dc1c355b4ae7946d5a2d1d4b9832721/dev-round6/`）
-
-```sh
-.venv/bin/python -m unittest tests.test_task_source_ownership_race \
-  tests.test_task_scheduling tests.test_task_scheduling_fencing \
-  tests.test_task_scheduling_migration tests.test_automation_task_admission \
-  tests.test_manual_task_engine tests.test_task_persistence
-# Ran 148 tests — OK（含 7 条新占用边界测试；11.5s）
-
-.venv/bin/python -m unittest tests.test_v2_automation_run_once \
-  tests.test_automation_definition_execution tests.test_automation_definition_occurrence \
-  tests.test_recovery_continuation tests.test_processing_recovery_admission \
-  tests.test_automation_entrance_recovery tests.test_operator_job_submission
-# Ran 161 tests — OK（29.6s）
-
-.venv/bin/python -m unittest tests.test_automation_admission \
-  tests.test_automation_execution_intent tests.test_automation_run_once \
-  tests.test_execution_authorization tests.test_automation_api tests.test_batch_cli \
-  tests.test_metadata_correction_batch tests.test_direct_file_transfers \
-  tests.test_media_library_direct_commands tests.test_direct_file_operations
-# Ran 301 tests — OK（72.8s）
-
-.venv/bin/python -m unittest tests.test_organize_preparation tests.test_media_discovery \
-  tests.test_processing_worker_readiness tests.test_automation_job_fencing \
-  tests.test_automation_settings_resident tests.test_manual_operations \
-  tests.test_queued_job_execution_boundary tests.test_configuration_snapshot \
-  tests.test_resident_correction tests.test_manual_organize_execution \
-  tests.test_manual_organize_preview tests.test_operations_task_center \
-  tests.test_automation_workspace_read_model tests.test_operations_run_inventory
-# Ran 474 tests — OK（84.2s）
-
-.venv/bin/ruff format --check <5 changed files>   # 5 files already formatted
-.venv/bin/ruff check <5 changed files>            # All checks passed!
-.venv/bin/python -m compileall -q mediaflow tests # OK
-python3 scripts/check_governance.py               # PASS
-git diff --check                                  # clean
-```
-
-B 的原 `ownership_probe.py`（两个真实受理 + 两个生产 Worker + Barrier 交错）在本候选上
-运行通过其断言：两个 pre-check 均观察到来源空闲，随后恰好一个 `waiting_recognition`
-owner、另一个 Task `failed`/`settled` 且其 item 为同一 occurrence 的有界拒绝，Storage
-效果为零（`ownership_probe.fixed.log`）。新增测试断言还包括：拒绝 Result 的
-`retry_category=source_already_organizing`、`effect_certainty=none`、错误文本不含 winner
-Task/item 身份；顺序第二次 Run only 拒绝已占用文件而另一 scope 的空闲文件独立处理；
-Files discovery reservation 挡住自动入口；stale claim 零写入；合法同 Task/lineage 续作
-不自拒；settled sibling 在组合事务内仍拒绝重启动。
-
-本轮计时测试合计约 198s，低于本轮总耗时 50%；无空等凑比例。
-
-### Remaining work / risks（如实陈述，未自评 PASS）
-
-1. `automatic_task_continuation._continue_item` 未改为直接调用组合事务（见上节边界说明），
-   等 B 独立判断是否需要。
-2. Metadata / Metadata-correction / Conflict 的自动续作仍无各自独立 API 端到端测试
-   （Round 4/5 遗留，本轮未扩大）。
-3. direct CLI 在 admit 与 claim 之间崩溃的常驻恢复分支仍无独立测试（Round 4 遗留）。
-4. Inventory/latest/metrics/Dashboard/readiness 的 Job-less 读回仍未逐一独立复核
-   （B 的更广验收）。
-5. 无 schema 变更（延续 schema56）；未修改 Web 投影，故未跑 Web 构建/E2E。
-6. B 仍负责 T4 full Python/Web/E2E/wheel/Docker/native 门禁与独立审查；本轮未运行这些
-   门禁。
-
-### Scope statement
-
-未读写用户数据库/生产媒体；未修改 A-owned Slice/Roadmap/Progress；未 push/部署；预存
-无关未跟踪文件保持未暂存。B 负责本 Task 原 T4 验收与独立审查。
 
 ## Developer Completion Report — Round 7
 
