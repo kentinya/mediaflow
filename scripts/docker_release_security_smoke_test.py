@@ -693,7 +693,7 @@ def assert_rbac_and_no_side_effects(
     canaries,
     token_values,
 ) -> None:
-    """Verify denial/least privilege and zero Job/Task/notification creation."""
+    """Verify denial/least privilege and zero Task/notification creation."""
 
     def get(path: str, token: str | None, *, expected: int) -> bytes:
         status, body = request_bytes(f"{base}{path}", token=token)
@@ -709,26 +709,26 @@ def assert_rbac_and_no_side_effects(
     executor = token_values["executor"]
 
     get("/health", None, expected=200)
-    body = get("/api/v1/jobs", None, expected=401)
-    body = get("/api/v1/jobs", "invalid-canary-token", expected=401)
+    body = get("/api/v1/tasks?limit=100", None, expected=401)
+    body = get("/api/v1/tasks?limit=100", "invalid-canary-token", expected=401)
     assert_no_canaries(body, canaries, "invalid-token error response")
 
-    body = get("/api/v1/jobs", viewer, expected=200)
+    body = get("/api/v1/tasks?limit=100", viewer, expected=200)
     assert json.loads(body)["items"] == []
-    get("/api/v1/jobs", auditor, expected=200)
-    get("/api/v1/jobs", operator, expected=200)
-    get("/api/v1/jobs", executor, expected=200)
-    get("/api/v1/jobs", admin, expected=200)
+    get("/api/v1/tasks?limit=100", auditor, expected=200)
+    get("/api/v1/tasks?limit=100", operator, expected=200)
+    get("/api/v1/tasks?limit=100", executor, expected=200)
+    get("/api/v1/tasks?limit=100", admin, expected=200)
 
     status, body = request_bytes(
-        f"{base}/api/v1/jobs",
+        f"{base}/api/v1/tasks",
         method="POST",
         token=viewer,
         body=json.dumps({"command": "organize", "limit": 1}).encode("utf-8"),
     )
     assert_no_canaries(body, canaries, "viewer denied POST response")
     if status != 403:
-        raise RuntimeError(f"viewer preview returned HTTP {status}, expected 403")
+        raise RuntimeError(f"viewer remote Task submission returned HTTP {status}, expected 403")
 
     status, body = request_bytes(f"{base}/api/v1/security-audit", token=viewer)
     assert_no_canaries(body, canaries, "viewer denied audit response")
@@ -738,17 +738,17 @@ def assert_rbac_and_no_side_effects(
     body = get("/api/v1/security-audit", auditor, expected=200)
     assert_no_canaries(body, canaries, "auditor audit projection")
     status, body = request_bytes(
-        f"{base}/api/v1/jobs",
+        f"{base}/api/v1/tasks",
         method="POST",
         token=auditor,
         body=json.dumps({"command": "organize", "limit": 1}).encode("utf-8"),
     )
     assert_no_canaries(body, canaries, "auditor denied POST response")
     if status != 403:
-        raise RuntimeError(f"auditor preview returned HTTP {status}, expected 403")
+        raise RuntimeError(f"auditor remote Task submission returned HTTP {status}, expected 403")
 
     status, body = request_bytes(
-        f"{base}/api/v1/jobs",
+        f"{base}/api/v1/tasks",
         method="POST",
         token=executor,
         body=json.dumps({"command": "organize", "execute": True, "limit": 1}).encode("utf-8"),
@@ -762,11 +762,10 @@ def assert_rbac_and_no_side_effects(
     for path in (
         "/api/v1/configuration/status",
         "/api/v1/system/status",
-        "/api/v1/jobs/stale",
     ):
         get(path, admin, expected=200)
 
-    for path in ("/api/v1/jobs", "/api/v1/tasks?limit=100", "/api/v1/notifications?limit=100"):
+    for path in ("/api/v1/tasks?limit=100", "/api/v1/notifications?limit=100"):
         body = get(path, admin, expected=200)
         document = json.loads(body)
         items = (
@@ -774,6 +773,13 @@ def assert_rbac_and_no_side_effects(
         )
         if items:
             raise RuntimeError(f"denied/read-only probes created {path} state: {items[:1]}")
+
+    # The retired Job collection is an ordinary bounded not-found: no list,
+    # submission, stale projection or requeue alias may still accept work.
+    for path in ("/api/v1/jobs", "/api/v1/jobs/stale", "/api/v1/operations/jobs"):
+        body = get(path, admin, expected=404)
+        if b"token" in body.lower():
+            raise RuntimeError(f"retired Job route {path} echoed credential-like content")
 
 
 def assert_projection_exports(
@@ -810,13 +816,13 @@ def assert_projection_exports(
 
     cookie_value = canary_by_env(canaries, "MEDIAFLOW_COOKIE_CANARY")
     status, body = request_bytes(
-        f"{base}/api/v1/jobs",
+        f"{base}/api/v1/tasks?limit=100",
         token=admin,
         cookie=cookie_value,
     )
-    assert_no_canaries(body, canaries, "cookie-bearing jobs response")
+    assert_no_canaries(body, canaries, "cookie-bearing Tasks response")
     if status != 200:
-        raise RuntimeError(f"cookie-bearing jobs request returned HTTP {status}")
+        raise RuntimeError(f"cookie-bearing Tasks request returned HTTP {status}")
 
 
 def _request_intent_plan_via_durable_analysis(base: str, admin: str, intent: dict) -> dict:

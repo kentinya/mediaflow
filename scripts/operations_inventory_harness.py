@@ -954,6 +954,9 @@ AUTOMATION_LIFECYCLE_DEFINITION_ID = "harness-automation"
 #: published history.
 AUTOMATION_LIFECYCLE_DRAFT_NAME = "NEVER PUBLISHED browser draft"
 
+#: The exact recorded source of the historical paused continuation fixture.
+CONTINUATION_RECORDED_SOURCE = "C/Continuation/Six.2006.mkv"
+
 #: The managed definition of the inventory's scheduled-trigger fixture and the
 #: exact ResourceLibrary-relative scope it reviews.  The Scheduler emits its
 #: occurrence; no database edit fakes the pinned Job.
@@ -1653,10 +1656,62 @@ def _request_intent_plan_via_durable_analysis(state: AppState, intent: dict, *, 
     return preview
 
 
-def run_worker_once(state: AppState) -> dict:
-    """The independent Job worker is retired; no queued Job is consumed."""
+def seed_queued_remote_task(state: AppState) -> dict:
+    """Admit one fresh remote organizing Task through the supported entry."""
 
-    return {"ran": False, "reason": "legacy queued Job worker retired"}
+    issued = state_authorization_service(state.repository, state.managed).issue(
+        ttl_seconds=300, max_items=1, actor="harness-claim"
+    )
+    status, document = wsgi_request(
+        state.api,
+        "POST",
+        "/api/v1/tasks",
+        token=HARNESS_ADMIN_TOKEN,
+        headers={"X-MediaFlow-Execution-Token": issued.token},
+        body={"command": "organize", "execute": True, "limit": 1},
+    )
+    if status != 202:
+        raise RuntimeError(f"harness: queued remote Task admission failed: {status} {document}")
+    return {"taskId": document["taskId"], "status": document.get("status")}
+
+
+def run_worker_once(state: AppState, *, task_id: str | None = None) -> dict:
+    """Claim and advance one kernel-admitted Task with the production engine.
+
+    The independent Job worker is retired.  This route therefore exercises the
+    real resident Task engine over the fixture's own queued Task: the same
+    claim/fence, automatic pipeline and settlement a deployed Worker uses.  It
+    never fabricates a Job row or a Task stage.
+    """
+
+    pending = [
+        task
+        for task in state.repository.list_tasks(status="pending", limit=100, command="organize")
+        if getattr(state.repository.get_task_scheduling(task.task_id), "queue_state", None)
+        is not None
+        and state.repository.get_task_scheduling(task.task_id).queue_state.value
+        in {"queued", "claimed"}
+    ]
+    if task_id is not None:
+        pending = [task for task in pending if task.task_id == task_id]
+    if not pending:
+        return {"ran": False, "linked": False, "reason": "no queued Task"}
+    # Prefer a Task with a bounded admitted scope: the whole-library remote
+    # admission would otherwise claim every fixture source and prevent the
+    # later Files journeys from selecting one of them.  This is a fixture
+    # selection only; the production claim/engine path is identical.
+    bounded = [value for value in pending if value.scope_path]
+    target = min(bounded or pending, key=lambda value: (value.created_at, value.task_id))
+    advanced = _run_manual_task_once(state, task_id=target.task_id)
+    if advanced is None:
+        return {"ran": False, "linked": False, "taskId": target.task_id}
+    current = state.repository.get_task(target.task_id)
+    return {
+        "ran": True,
+        "linked": True,
+        "taskId": target.task_id,
+        "status": current.status.value if current is not None else None,
+    }
 
 
 def run_manual_organize_once(state: AppState) -> dict[str, str]:
@@ -1825,7 +1880,17 @@ def _run_discovery_step(state: AppState):
     ).run_next()
     if advanced is not None:
         return advanced
-    task = _run_manual_task_once(state)
+    # Settle a discovery Task through the production Task engine only when that
+    # exact link exists.  The generic claim must not consume an unrelated
+    # queued Task merely because this fixture route was called.
+    linked = [
+        item.organize_task_id
+        for item in state.repository.list_media_discoveries(limit=100)
+        if not item.terminal and item.organize_task_id
+    ]
+    if not linked:
+        return None
+    task = _run_manual_task_once(state, task_id=linked[0])
     return state.repository.get_media_discovery_for_task(task.task_id) if task else None
 
 
@@ -2833,7 +2898,21 @@ def run_task_item_recovery_worker_once(
         recovery_item_ids = [item_id]
     if not recovery_item_ids:
         raise RuntimeError("task-item recovery fixture has not been seeded")
-    return {"ran": False, "reason": "legacy queued recovery continuation retired"}
+    advanced_task_ids: list[str] = []
+    for value in recovery_item_ids:
+        item = state.repository.get_item(value)
+        if item is None:
+            continue
+        advanced = _run_manual_task_once(state, task_id=item.task_id)
+        if advanced is not None:
+            advanced_task_ids.append(advanced.task_id)
+    if not advanced_task_ids:
+        return {"ran": False, "reason": "no queued Task for the selected recovery items"}
+    return {
+        "ran": True,
+        "taskId": advanced_task_ids[0],
+        "taskIds": advanced_task_ids,
+    }
 
 
 def seed_task_item_recovery_batch(state: AppState) -> dict[str, object]:
@@ -3930,13 +4009,60 @@ def seed_mixed_scope_recovery(state: AppState) -> dict[str, object]:
     }
 
 
-def run_automation_run_once_worker(state: AppState, *, execution_id: str = "") -> dict[str, object]:
-    """The explicit Run once Task is advanced by the resident Task engine."""
+def run_automation_run_once_worker(
+    state: AppState, *, discovery_id: str, failure_fixture: str = ""
+) -> dict[str, object]:
+    """Advance the explicit Run once Task through the resident Task engine.
 
-    task = state.repository.get_task(execution_id) if execution_id else None
-    if task is None:
-        return {"ran": False, "reason": "Run once Task was not found"}
-    return {"ran": False, "reason": "use the resident Task engine route", "taskId": task.task_id}
+    The named failure fixture injects a bounded pre-effect failure at the real
+    Executor seam; every other sibling executes normally against the temporary
+    roots.  No Job row or second engine exists on this path.
+    """
+
+    task = state.repository.get_task(discovery_id)
+    scheduling = state.repository.get_task_scheduling(discovery_id)
+    if task is not None and scheduling is not None:
+        failed_sources = {
+            "one": ("Two.2002.mkv",),
+            "two": ("Two.2002.mkv", "Three.2003.mkv"),
+            "third": ("Three.2003.mkv",),
+        }.get(failure_fixture)
+        if failed_sources:
+            executor = _failure_for_named_execution_items(failed_sources)
+            with patch(
+                "mediaflow.application.automation_definition_execution.OrganizerExecutor",
+                lambda *_args: executor,
+            ):
+                advanced = _run_manual_task_once(state, task_id=task.task_id)
+        else:
+            advanced = _run_manual_task_once(state, task_id=task.task_id)
+        current = state.repository.get_task(task.task_id)
+        items = state.repository.list_items(task.task_id)
+        return {
+            "advanced": advanced is not None,
+            "taskId": task.task_id,
+            "status": current.status.value if current is not None else None,
+            "failedItemIds": [
+                value.item_id for value in items if value.status.value in {"failed", "partial"}
+            ],
+            "successItemIds": [value.item_id for value in items if value.status.value == "success"],
+        }
+
+    # A Run once URL may still carry its bounded discovery identity: advance
+    # that production discovery Task rather than inventing a Job.
+    service = getattr(state.api, "_media_discovery", None)
+    if service is None or not discovery_id:
+        return {"advanced": False, "reason": "Run once Task was not found"}
+    discovery = state.repository.get_media_discovery(discovery_id)
+    if discovery is None or not discovery.organize_task_id:
+        return {"advanced": False, "reason": "Run once Task was not found"}
+    advanced = _run_manual_task_once(state, task_id=discovery.organize_task_id)
+    current = state.repository.get_task(discovery.organize_task_id)
+    return {
+        "advanced": advanced is not None,
+        "taskId": discovery.organize_task_id,
+        "status": current.status.value if current is not None else None,
+    }
 
 
 def automation_run_once_state(state: AppState, *, discovery_id: str) -> dict[str, object]:
@@ -3962,24 +4088,6 @@ def automation_run_once_state(state: AppState, *, discovery_id: str) -> dict[str
             "items": [
                 {"itemId": item.item_id, "status": item.status.value, "path": item.source_path}
                 for item in items
-            ],
-        }
-
-    job = state.repository.get_job(discovery_id)
-    if job is not None and job.run_once:
-        document = state.api._automation_run_once.document(job)
-        task = state.repository.get_task(job.task_id)
-        items = state.repository.list_items(job.task_id)
-        return {
-            "found": True,
-            **document,
-            "sources": [v.source_path for v in items],
-            "taskStatus": task.status.value,
-            "completedItems": task.completed_items,
-            "failedItems": task.failed_items,
-            "items": [
-                {"itemId": v.item_id, "status": v.status.value, "path": v.source_path}
-                for v in items
             ],
         }
 
@@ -4766,6 +4874,60 @@ def corrupt_automation_published_history(state: AppState) -> dict[str, object]:
     }
 
 
+def seed_continuation_journey(state: AppState) -> dict[str, object]:
+    """Create one historical paused organizing Task for the retirement proof.
+
+    Pause and resume-from-pause are retired, so no product entry produces this
+    row any more.  The browser journey only needs a real durable paused Task
+    with its recorded source to prove that the historical state stays readable
+    and that the retired control is an effect-free refusal.
+    """
+
+    with state._manual_lock:
+        if state.continuation_task_id is not None:
+            source = state.repository.get_task(state.continuation_task_id)
+            return {
+                "taskId": state.continuation_task_id,
+                "status": source.status.value if source is not None else None,
+                "recordedSource": CONTINUATION_RECORDED_SOURCE,
+            }
+        coordinator = PersistentTaskCoordinator(state.repository, state.repository)
+        now = datetime.now(UTC)
+        task = coordinator.create(
+            "organize",
+            execute_authorized=True,
+            scope_path="C/Continuation",
+        )
+        paused = dataclasses.replace(
+            task,
+            status=PersistentTaskStatus.PAUSED,
+            pause_requested=True,
+            updated_at=now,
+        )
+        state.repository.update_task(paused)
+        state.repository.upsert_item(
+            PersistentTaskItem(
+                "continuation-paused-item",
+                task.task_id,
+                "source-storage",
+                "source",
+                CONTINUATION_RECORDED_SOURCE,
+                CONTINUATION_RECORDED_SOURCE.split("/")[-1],
+                TaskItemStatus.PAUSED,
+                "paused",
+                1,
+                now,
+                now,
+            )
+        )
+        state.continuation_task_id = task.task_id
+        return {
+            "taskId": task.task_id,
+            "status": "paused",
+            "recordedSource": CONTINUATION_RECORDED_SOURCE,
+        }
+
+
 def continuation_journey_state(state: AppState) -> dict[str, object]:
     """Report the durable state of the continuation journey (bounded reads only)."""
 
@@ -4773,7 +4935,9 @@ def continuation_journey_state(state: AppState) -> dict[str, object]:
     if source_task_id is None:
         return {"seeded": False}
     source = state.repository.get_task(source_task_id)
-    continuations = state.repository.list_scope_continuations(source_task_id)
+    # The independent scope-continuation product is retired: a historical paused
+    # Task has no continuation relation to report and no Job/linked child work.
+    continuations: list[object] = []
     linked = [
         task for task in state.repository.list_tasks(limit=100) if task.task_id != source_task_id
     ]
@@ -5335,7 +5499,7 @@ def retirement_stability_state(state: AppState, *, change: bool = False):
         )
     counts = {
         table: state.repository._connection.execute(f"SELECT COUNT(*) FROM {table}").fetchone()[0]
-        for table in ("tasks", "automation_jobs", "manual_execution_authorizations")
+        for table in ("tasks", "task_scheduling", "manual_execution_authorizations")
     }
     return {
         "counts": counts,
@@ -5566,8 +5730,12 @@ def application(environ, start_response):
             document = retirement_stability_state(STATE)
         elif path == "/__harness__/retirement-change" and method == "POST":
             document = retirement_stability_state(STATE, change=True)
+        elif path == "/__harness__/seed-queued-task" and method == "POST":
+            document = seed_queued_remote_task(STATE)
         elif path == "/__harness__/run-worker" and method == "POST":
-            document = run_worker_once(STATE)
+            query = urllib.parse.parse_qs(str(environ.get("QUERY_STRING", "")))
+            requested_task = (query.get("taskId") or [None])[0]
+            document = run_worker_once(STATE, task_id=requested_task)
         elif path == "/__harness__/run-manual-organize" and method == "POST":
             document = run_manual_organize_once(STATE)
         elif path == "/__harness__/register-manual-worker" and method == "POST":
@@ -5588,6 +5756,8 @@ def application(environ, start_response):
             document = seed_task_center_problem_journey(STATE)
         elif path == "/__harness__/seed-task-center-problem-page" and method == "POST":
             document = seed_task_center_problem_page(STATE)
+        elif path == "/__harness__/seed-continuation" and method == "POST":
+            document = seed_continuation_journey(STATE)
         elif path == "/__harness__/seed-task-item-recovery" and method == "POST":
             query = urllib.parse.parse_qs(str(environ.get("QUERY_STRING", "")))
             kind = (query.get("kind") or ["recognition"])[0]

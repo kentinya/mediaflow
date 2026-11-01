@@ -876,7 +876,6 @@ class RunOnceApiTests(unittest.TestCase):
             )
             self.assertEqual(404, status)
             self.assertEqual((), value.repository.list_tasks())
-            self.assertEqual((), ())
             self.assertEqual([], value.source.mutations)
 
     def test_automatic_folder_filtering_keeps_images_and_sidecars_out_of_primaries(self):
@@ -918,7 +917,7 @@ class RunOnceApiTests(unittest.TestCase):
             self.assertEqual(200, status)
             self.assertTrue(read["zeroMutation"])
             self.assertNotIn("executionKind", read)
-            self.assertEqual((), ())
+            self.assertEqual((), value.repository.list_tasks())
             self.assertEqual((), value.repository.list_tasks())
 
     def test_real_positive_size_interval_waits_once_and_reobserves(self):
@@ -1042,7 +1041,6 @@ class RunOnceApiTests(unittest.TestCase):
                 status, _ = self.admit(value)
                 self.assertEqual(500, status)
             self.assertEqual((), value.repository.list_tasks())
-            self.assertEqual((), ())
             status, run = self.admit(value)
             self.assertEqual(202, status, run)
             status, _ = self.admit(value, "second")
@@ -1113,7 +1111,7 @@ class RunOnceApiTests(unittest.TestCase):
             state = value.repository.get_task_scheduling(task_id)
             self.assertEqual(state.queue_state.value, "waiting_human")
             self.assertEqual(0, value.repository.count_scheduled_capacity_use())
-            self.assertEqual((), ())
+            self.assertEqual(1, len(value.repository.list_tasks()))
 
             status, detail = self.request(
                 value, "GET", f"/api/v1/tasks/{task_id}/items/{item.item_id}/recovery"
@@ -1146,7 +1144,7 @@ class RunOnceApiTests(unittest.TestCase):
             state = value.repository.get_task_scheduling(task_id)
             self.assertEqual(state.queue_state.value, "queued")
             self.assertEqual(1, value.repository.count_scheduled_capacity_use())
-            self.assertEqual((), ())
+            self.assertEqual(1, len(value.repository.list_tasks()))
             self.assertEqual([], value.source.mutations)
             self.assertEqual([], value.target.mutations)
 
@@ -1216,7 +1214,7 @@ class RunOnceApiTests(unittest.TestCase):
             self.assertEqual(202, status, confirmed)
             self.assertEqual(ready, confirmed["selectedItemIds"], confirmed)
             self.assertEqual(task_id, confirmed["taskId"], confirmed)
-            self.assertEqual((), ())
+            self.assertEqual(1, len(value.repository.list_tasks()))
 
             # The confirmed execution runs on the same Task through the resident
             # engine's manual-execution branch.
@@ -1283,7 +1281,7 @@ class RunOnceApiTests(unittest.TestCase):
             settled = worker.run_next()
             self.assertIsNotNone(settled)
             self.assertEqual("completed", settled.status.value, settled.error)
-            self.assertEqual((), ())
+            self.assertEqual(1, len(value.repository.list_tasks()))
             self.assertFalse((self.source_root / "One.2001.mkv").exists())
             organized = list((self.target_root / "Organized" / "Movies").rglob("*.mkv"))
             self.assertEqual(1, len(organized), organized)
@@ -1436,7 +1434,7 @@ class RunOnceApiTests(unittest.TestCase):
             settled = worker.run_next()
             self.assertIsNotNone(settled)
             self.assertEqual("completed", settled.status.value, settled.error)
-            self.assertEqual((), ())
+            self.assertEqual(1, len(value.repository.list_tasks()))
             self.assertFalse((self.source_root / "One.2001.mkv").exists())
             organized = sorted(
                 str(path.relative_to(self.target_root))
@@ -1959,7 +1957,7 @@ class RunOnceApiTests(unittest.TestCase):
             status, body = self.admit(value)
             self.assertEqual(202, status, body)
             task_id = body["taskId"]
-            self.assertEqual((), ())
+            self.assertIsNotNone(value.repository.get_task(task_id))
             status, response = self.request(
                 value, "POST", f"/api/v1/tasks/{task_id}/cancel", token=ADMIN_TOKEN
             )
@@ -2291,7 +2289,7 @@ class RunOnceApiTests(unittest.TestCase):
         ).tick(value.clock.now)
         self.assertEqual(1, len(emitted))
         task_id = emitted[0].task_id
-        self.assertEqual((), ())
+        self.assertIsNotNone(value.repository.get_task(task_id))
         value.repository.register_worker(
             "auto-worker",
             "auto worker",

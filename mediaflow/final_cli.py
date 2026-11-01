@@ -20,6 +20,8 @@ from uuid import uuid4
 from zoneinfo import ZoneInfo
 
 from mediaflow.application.automation import (
+    AutomationConfigurationUnavailable,
+    AutomationFailureEvidence,
     IntervalScheduler,
     ResidentProcessingWorker,
 )
@@ -42,7 +44,11 @@ from mediaflow.application.manual_organize_worker import ManualOrganizeExecution
 from mediaflow.application.media_organizer import MediaOrganizerBatchResult, MediaOrganizerService
 from mediaflow.application.metadata_correction import MetadataCorrectionService
 from mediaflow.application.metadata_review import MetadataReviewService
-from mediaflow.application.notification import NotificationPublisher, NotificationWorker
+from mediaflow.application.notification import (
+    NotificationPublisher,
+    NotificationWorker,
+    task_terminal_observer,
+)
 from mediaflow.application.organizer import OrganizerExecutor
 from mediaflow.application.processing_checkpoint import ProcessingCheckpointService
 from mediaflow.application.recognition_review import RecognitionReviewService
@@ -933,6 +939,7 @@ def final_main(
         }:
             with ExitStack() as stack:
                 repository = stack.enter_context(SQLiteTaskRepository(configuration.database_path))
+                _attach_task_terminal_notifications(repository, arguments.config)
                 recovery_admission = None
                 if arguments.task_command in {"ignore-item", "ignore-pending"}:
                     configuration_repository = stack.enter_context(
@@ -1128,6 +1135,7 @@ def final_main(
             stdout.write(render_strategy_result(result))
             return 0
         with SQLiteTaskRepository(configuration.database_path) as repository:
+            _attach_task_terminal_notifications(repository, arguments.config)
             operational_logger = (
                 SQLiteOperationalLogger(
                     repository,
@@ -2836,6 +2844,69 @@ def _settle_direct_organize(repository, scheduling, claim, task):
     scheduling.settle(claim, task=settled, items=items, now=now)
 
 
+def _task_configuration_unavailable(
+    error: RuntimeSnapshotUnavailable,
+) -> AutomationConfigurationUnavailable:
+    """Keep a corrupt admitted pin an actionable Task failure.
+
+    The Task engine reports the durable failure; this conversion preserves the
+    bounded category/effect/next-action vocabulary the Automation record and the
+    operator's recovery surface already understand.  No Task, Provider, Storage
+    or media effect is created here.
+    """
+
+    allowed_categories = {
+        "active_missing",
+        "active_unreadable",
+        "digest_corrupt",
+        "job_snapshot_incomplete",
+        "job_snapshot_missing",
+        "runtime_invalid",
+        "schema_unsupported",
+        "snapshot_digest_mismatch",
+        "snapshot_missing",
+        "snapshot_not_published",
+        "snapshot_unreadable",
+        "task_snapshot_incomplete",
+        "task_snapshot_missing",
+    }
+    category = error.reason if error.reason in allowed_categories else "configuration_unavailable"
+    return AutomationConfigurationUnavailable(
+        AutomationFailureEvidence(
+            category,
+            "saved_configuration_unavailable",
+            "none",
+            False,
+            "restore the saved published revision, or explicitly create new work under "
+            "the current Active configuration",
+        )
+    )
+
+
+def _pinned_task_configuration(configured_path: str | None, task):
+    """Resolve one admitted Task's exact pin with actionable failure evidence."""
+
+    try:
+        return _configuration(
+            configured_path,
+            snapshot_id=task.configuration_snapshot_id,
+            snapshot_digest=task.configuration_snapshot_digest,
+        )
+    except RuntimeSnapshotUnavailable as error:
+        raise _task_configuration_unavailable(error) from error
+    except (OSError, ValueError, LookupError) as error:
+        raise AutomationConfigurationUnavailable(
+            AutomationFailureEvidence(
+                "snapshot_unreadable",
+                "saved_configuration_unavailable",
+                "none",
+                False,
+                "restore the saved published revision, or explicitly create new work under "
+                "the current Active configuration",
+            )
+        ) from error
+
+
 def _automatic_task_runner(repository, configured_path, scheduling_service):
     """Build the resident runner for one adopted Scheduler/Run once Task.
 
@@ -2869,11 +2940,7 @@ def _automatic_task_runner(repository, configured_path, scheduling_service):
                 )
             return
         if display is not None and display.origin_kind == "legacy-schedule":
-            configuration = _configuration(
-                configured_path,
-                snapshot_id=task.configuration_snapshot_id,
-                snapshot_digest=task.configuration_snapshot_digest,
-            )
+            configuration = _pinned_task_configuration(configured_path, task)
 
             def legacy_cancelled() -> bool:
                 current = scheduling_service.state(task.task_id)
@@ -2890,11 +2957,7 @@ def _automatic_task_runner(repository, configured_path, scheduling_service):
             )
             return
         if display is not None and display.origin_kind in {"remote-organize", "direct-organize"}:
-            configuration = _configuration(
-                configured_path,
-                snapshot_id=task.configuration_snapshot_id,
-                snapshot_digest=task.configuration_snapshot_digest,
-            )
+            configuration = _pinned_task_configuration(configured_path, task)
 
             def direct_cancelled() -> bool:
                 current = scheduling_service.state(task.task_id)
@@ -2913,11 +2976,7 @@ def _automatic_task_runner(repository, configured_path, scheduling_service):
         definition_id = display.origin_definition_id if display is not None else None
         if not isinstance(definition_id, str) or not definition_id.strip():
             raise RuntimeError("automatic Task has no durable definition origin")
-        configuration = _configuration(
-            configured_path,
-            snapshot_id=task.configuration_snapshot_id,
-            snapshot_digest=task.configuration_snapshot_digest,
-        )
+        configuration = _pinned_task_configuration(configured_path, task)
         definition = next(
             (
                 value
@@ -3211,6 +3270,7 @@ def _run_worker(
     resident_id = worker_snapshot[0] if worker_snapshot is not None else None
 
     with SQLiteTaskRepository(configuration.database_path) as repository:
+        _attach_task_terminal_notifications(repository, configured_path)
 
         def pending_snapshot() -> tuple[str | None, str | None]:
             # Select a pending pin before registering; the repository still claims
@@ -3423,14 +3483,13 @@ def _resident_worker_heartbeat(runtime, instance_id) -> None:
 def _worker_notification_publisher(
     repository, configured_path: str | None
 ) -> NotificationPublisher:
-    """Publish Job outcome deliveries for the current Active webhooks.
+    """Publish settled Task outcomes to the current Active Webhooks.
 
-    The Worker resolves the target set per publication rather than at process
-    start, so a Job that completes after a later publication notifies the
-    Webhooks that are actually configured then.  An unavailable configuration
-    or secret yields no deliveries instead of failing the Job: the durable Job
-    outcome is the authoritative record, and the resident Notification Worker
-    remains responsible for delivery.
+    The target set is resolved per publication rather than at process start, so
+    a Task that settles after a later publication notifies the Webhooks that are
+    actually configured then.  Only the durable outbox write happens here; an
+    unavailable configuration or a missing secret never fails the Task, and the
+    resident Notification Worker remains responsible for signed delivery.
     """
 
     def webhooks():
@@ -3438,6 +3497,21 @@ def _worker_notification_publisher(
         return getattr(resolved, "webhooks", ()) if resolved else ()
 
     return NotificationPublisher(repository, webhooks)
+
+
+def _attach_task_terminal_notifications(repository, configured_path: str | None) -> None:
+    """Publish one terminal Task event at its durable result boundary.
+
+    A Task's terminal outcome is committed by the scheduling kernel, so this
+    post-commit observer is the same place for Worker, direct CLI and API
+    settlements.  A repository without the seam (a focused unit test double)
+    simply publishes nothing.
+    """
+
+    attach = getattr(repository, "add_task_terminal_observer", None)
+    if not callable(attach):
+        return
+    attach(task_terminal_observer(_worker_notification_publisher(repository, configured_path)))
 
 
 def _run_scheduler(

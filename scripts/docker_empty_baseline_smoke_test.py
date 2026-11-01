@@ -728,7 +728,6 @@ def read_durable_counts(stack: Stack) -> dict:
         "from mediaflow.infrastructure.sqlite_runtime import SQLiteTaskRepository;"
         "repository=SQLiteTaskRepository('/data/mediaflow.sqlite3');"
         "print(json.dumps({"
-        "'jobs':len(repository.list_jobs(limit=200)),"
         "'deliveries':len(repository.list_deliveries(limit=200)),"
         "'tasks':len(repository.list_tasks(limit=200))}))"
     )
@@ -916,7 +915,7 @@ def accept_media_free_stack(image: str, receiver: WebhookReceiver, keep: bool) -
         assert_real_web_status(stack)
 
         before = read_durable_counts(stack)
-        if before != {"jobs": 0, "deliveries": 0, "tasks": 0}:
+        if before != {"deliveries": 0, "tasks": 0}:
             raise RuntimeError(f"startup created durable work: {before}")
 
         print("   activating an empty baseline through the real Python-served Web...")
@@ -927,7 +926,7 @@ def accept_media_free_stack(image: str, receiver: WebhookReceiver, keep: bool) -
         if "配置已激活，媒体业务尚未配置" not in (status.get("nextAction") or ""):
             raise RuntimeError(f"empty activation message is wrong: {status.get('nextAction')}")
         after_activation = read_durable_counts(stack)
-        if after_activation != {"jobs": 0, "deliveries": 0, "tasks": 0}:
+        if after_activation != {"deliveries": 0, "tasks": 0}:
             raise RuntimeError(f"empty activation created durable work: {after_activation}")
         print("   empty Active published; no media work, delivery or mutation started")
 
@@ -941,7 +940,7 @@ def accept_media_free_stack(image: str, receiver: WebhookReceiver, keep: bool) -
                     "id": "primary",
                     "url": webhook_url,
                     "secretEnv": "MEDIAFLOW_WEBHOOK_SECRET",
-                    "events": ["schedule.emitted", "job.completed", "job.failed"],
+                    "events": ["schedule.emitted", "task.completed", "task.failed"],
                     "enabled": True,
                 }
             ]
@@ -1022,8 +1021,8 @@ def accept_media_free_stack(image: str, receiver: WebhookReceiver, keep: bool) -
         print("   process identities after: " + json.dumps(final_identities, sort_keys=True))
 
         counts = read_durable_counts(stack)
-        if counts["jobs"] < 1:
-            raise RuntimeError("the eligible schedule emitted no durable Job")
+        if counts["tasks"] < 1:
+            raise RuntimeError("the eligible schedule emitted no durable Task")
         if counts["deliveries"] < 1:
             raise RuntimeError("the eligible schedule produced no durable delivery")
         print(f"   durable work produced without restart: {counts}")
@@ -1044,17 +1043,17 @@ def accept_media_free_stack(image: str, receiver: WebhookReceiver, keep: bool) -
             print(f"   keeping stack {stack.name} for inspection")
 
 
-def wait_job(stack: Stack, admitted: dict) -> None:
-    identifier = admitted.get("job_id") or admitted.get("jobId")
+def wait_task(stack: Stack, admitted: dict) -> None:
+    identifier = admitted["taskId"]
 
     def complete():
-        current = stack.json_api(f"/api/v1/jobs/{identifier}")
+        current = stack.json_api(f"/api/v1/tasks/{identifier}")
         status = current["status"]
         if status in {"failed", "cancelled"}:
             raise RuntimeError(f"admitted {current.get('command')} failed: {current}")
-        return status == "completed"
+        return status in {"completed", "partial_success"}
 
-    wait_until(complete, timeout=120, description="resident Job completion")
+    wait_until(complete, timeout=120, description="resident Task completion")
 
 
 def complete_transfer(
@@ -1227,7 +1226,7 @@ def accept_media_stack(image: str, keep: bool, receiver: WebhookReceiver) -> Non
         # Legacy Scan/Preview job submission is retired.  The current API
         # exposes the real mutation path below only after an explicit one-shot
         # execution authority is issued.
-        print("   retired Scan/Preview job probe omitted; using explicit organize authority")
+        print("   retired Scan/Preview probe omitted; using explicit organize authority")
         if list(stack.target_root.rglob("*.mkv")):
             raise RuntimeError("Scan/Preview mutated the isolated destination")
         issued = run(
@@ -1256,7 +1255,7 @@ def accept_media_stack(image: str, keep: bool, receiver: WebhookReceiver) -> Non
             if line.startswith("Token: ")
         )
         request = urllib.request.Request(
-            stack.base + "/api/v1/jobs",
+            stack.base + "/api/v1/tasks",
             data=json.dumps({"command": "organize", "execute": True, "limit": 1}).encode(),
             headers={
                 "Authorization": "Bearer " + stack.token,
@@ -1267,7 +1266,7 @@ def accept_media_stack(image: str, keep: bool, receiver: WebhookReceiver) -> Non
         )
         with urllib.request.urlopen(request, timeout=10) as response:
             admitted = json.load(response)
-        wait_job(stack, admitted)
+        wait_task(stack, admitted)
         organized = list((stack.target_root / "Movies").rglob("*.mkv"))
         if len(organized) != 1 or organized[0].read_bytes() != source_file.read_bytes():
             raise RuntimeError(

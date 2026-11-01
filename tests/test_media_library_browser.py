@@ -376,7 +376,6 @@ class MediaLibraryApiTests(unittest.TestCase):
                 # All Storage access stays read-only and confined; the provider
                 # adapter raised on any mutation and none of those calls fired.
                 self.assertEqual((), task_repository.list_tasks())
-                self.assertEqual((), ())
                 self.assertEqual(files["sideEffects"], "none")
                 self.assertTrue(files["retrySafe"] if "retrySafe" in files else True)
                 # The MediaLibrary root is joined server-side: the provider only

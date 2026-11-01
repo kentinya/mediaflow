@@ -336,7 +336,6 @@ class FileIndexRetirementTests(unittest.TestCase):
                     )
                     self.assertEqual(0, code)
                 self.assertEqual((), repository.list_tasks())
-                self.assertEqual((), ())
                 self.assertEqual((), repository.list_manual_intents())
                 self.assertEqual((), repository.list_manual_previews("does-not-exist"))
                 self.assertEqual((), repository.list_results("does-not-exist"))

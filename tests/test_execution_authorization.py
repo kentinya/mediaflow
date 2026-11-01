@@ -122,7 +122,7 @@ class ExecutionAuthorizationTests(unittest.TestCase):
                 self.assertIsNotNone(state)
                 self.assertEqual(state.queue_state.value, "queued")
                 self.assertEqual(state.admission_principal, "remote-execution")
-                self.assertEqual((), ())
+                self.assertEqual(1, len(repository.list_tasks()))
                 with self.assertRaisesRegex(ValueError, "consumed"):
                     authorizer.submit_organize(issued.token, limit=1)
                 stored = repository.get_execution_authorization(
@@ -239,7 +239,7 @@ class ExecutionAuthorizationTests(unittest.TestCase):
                 self.assertNotIn(issued.token, json.dumps(result))
                 # The admitted run is one shared Task: no Job row exists and the
                 # queued Task is the only durable identity.
-                self.assertEqual((), ())
+                self.assertEqual(1, len(repository.list_tasks()))
                 self.assertIsNotNone(repository.get_task(result["taskId"]))
 
     def test_api_ticket_admits_one_queued_authorized_task_without_a_job(self) -> None:
@@ -266,7 +266,7 @@ class ExecutionAuthorizationTests(unittest.TestCase):
                 state = repository.get_task_scheduling(task_id)
                 self.assertEqual(state.queue_state.value, "queued")
                 self.assertEqual(state.admission_trigger.value, "manual")
-                self.assertEqual((), ())
+                self.assertEqual(1, len(repository.list_tasks()))
                 # The whole-library scope is the Task's own admitted shape; the
                 # resident engine owns its execution, so nothing ran here.
                 self.assertFalse((root / "target").exists())
@@ -403,7 +403,7 @@ class ExecutionAuthorizationTests(unittest.TestCase):
             organized = list((target_root / "Organized" / "Movies").rglob("*.mkv"))
             self.assertEqual(1, len(organized), organized)
             with SQLiteTaskRepository(root / "runtime.sqlite3") as repository:
-                self.assertEqual((), ())
+                self.assertEqual(2, len(repository.list_tasks()))
                 tasks = repository.list_tasks()
                 self.assertEqual(2, len(tasks), tasks)
                 task = next(value for value in tasks if value.task_id != older_task.task_id)
@@ -585,7 +585,7 @@ class ExecutionAuthorizationTests(unittest.TestCase):
             self.assertTrue(media.exists())
             self.assertEqual([], list((target_root / "Organized").rglob("*.mkv")))
             with SQLiteTaskRepository(root / "runtime.sqlite3") as repository:
-                self.assertEqual((), ())
+                self.assertEqual(1, len(repository.list_tasks()))
                 tasks = repository.list_tasks()
                 self.assertEqual(1, len(tasks), tasks)
                 task = tasks[0]

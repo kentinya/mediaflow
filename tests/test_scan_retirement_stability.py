@@ -47,7 +47,7 @@ class ScanRetirementStabilityTests(_PreparationFixture):
                     # readiness, but a still-waiting walk has produced no item and
                     # no job — nothing can be executed from it.
                     self.assert_waiting_work_only(value)
-                    self.assertEqual((), ())
+                    self.assertEqual(1, len(value.repository.list_tasks()))
                     self.assertEqual([], value.source.mutations)
                     self.assertEqual([], value.target.mutations)
                     self.clock_value += timedelta(seconds=59)

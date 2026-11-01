@@ -441,7 +441,7 @@ before any release claim:
 - The production API/Web is exercised with deployment-owned viewer, auditor,
   operator, executor and admin Bearer principals. Missing/invalid credentials
   are denied, least-privilege RBAC separation holds, and denied/read-only
-  requests create no Job, Task, notification, execution authority or Storage
+  requests create no Task, notification, execution authority or Storage
   mutation.
 - The running API service is probed live for V2 static serving: the entry
   document, the `/ui-v2/dashboard` deep route, every referenced hashed JS/CSS
@@ -467,7 +467,7 @@ configuration, media, credentials, Storage or Providers.
 ```bash
 curl -i http://127.0.0.1:8080/health
 curl -H "Authorization: Bearer $MEDIAFLOW_API_TOKEN" \
-  http://127.0.0.1:8080/api/v1/jobs
+  "http://127.0.0.1:8080/api/v1/tasks?limit=100"
 ```
 
 Open `http://127.0.0.1:8080/ui/` in a browser and enter the API token in the
@@ -480,7 +480,7 @@ docker compose restart api
 docker compose ps
 ```
 
-The named `/data` volume survives service restarts. Jobs, Tasks, configuration
+The named `/data` volume survives service restarts. Tasks, configuration
 revisions, notification rows, audit and operational state remain durable.
 
 `docker compose ps` health state is service-process liveness plus the bounded

@@ -149,8 +149,8 @@ remains available for local development diagnostics.
 |---|---|
 | Recognition/Metadata/Classification review | Resolve only backend-offered type/candidate/rule choices; saving never executes. Continue through the Task's same-page analysis, summary and explicit confirmation. No arbitrary target or Provider DTO injection. |
 | Conflict decision | Persist an allowed decision, re-analyze and separately authorize execution. Successful/uncertain items are never replayed. Retired direct re-recognition/re-match/re-plan/review-retry surfaces stay absent. |
-| Pause/resume/retry | Cooperative boundaries preserve in-flight outcomes and prior scope/pin; a continuation cannot upgrade DryRun or regain consumed authority. CLI mutation continuation needs explicit current execution authority. |
-| Stale Job | Inspect Worker and Storage effects before explicit permitted recovery; stale age is no-update evidence, not proof of death or permission to replay uncertain mutation. |
+| Pause/resume/retry | Organizing and ordinary-file Pause/resume are retired; cancellation stops unperformed work at a safe boundary, and a failed-scope retry keeps its own durable evidence. A continuation cannot upgrade analysis-only work or regain consumed authority. |
+| Stalled Task | Inspect the Worker and Storage effects before explicit permitted recovery; staleness is no-update evidence, not proof of death or permission to replay an uncertain mutation. |
 | Notifications | Signed HTTPS Webhook Outbox; bounded transport/429/5xx retry, other 4xx dead-letter, stable delivery identity for at-least-once deduplication. Recovery is delivery-scoped and never changes media results. |
 | Policy options | Read-only retry is bounded/default-off and excludes mutations. Hash defaults NONE, FAST is prefix evidence, failed/unknown comparison never authorizes overwrite. Attachments and source cleanup are opt-in. Rollback compensates only verified effects of the same failed invocation, never changed targets/reappeared sources/older work. |
 
@@ -169,7 +169,7 @@ For explicitly enabled remote API automation, locally issue a short-lived single
 
 ```bash
 mediaflow execution-authorizations issue --ttl-seconds 300 --max-items 20
-curl -X POST http://127.0.0.1:8787/api/v1/jobs \
+curl -X POST http://127.0.0.1:8787/api/v1/tasks \
   -H "Authorization: Bearer $MEDIAFLOW_API_TOKEN" \
   -H "X-MediaFlow-Execution-Token: <one-time-token>" \
   -H "Content-Type: application/json" \
@@ -178,6 +178,10 @@ curl -X POST http://127.0.0.1:8787/api/v1/jobs \
 
 `api.remoteExecution.enabled` defaults false; configure the principal and TTL ceiling explicitly.
 The raw value is displayed once, only its digest persists, and admission/consumption is atomic.
+The response is `202` with the admitted `taskId` and its `task` read address; the submitted work is
+the ordinary organizing Task shown in the Task center. Only `command:"organize"`, `execute:true`
+and `limit` are accepted — the retired Job collection and its submission/cancel/requeue aliases are
+not available. Use `mediaflow tasks cancel TASK_ID` (or the Task center) for cooperative cancellation.
 The V2 Web journey instead holds exact-plan authority on the server after review and explicit
 confirmation; ordinary users do not issue or transfer tokens. Both retain RBAC, pins, effect scope,
 audit, fencing and OrganizerExecutor-only mutation. See [Architecture](docs/architecture.md#interactive-execution-authorization-current-v1-and-v2).
@@ -197,8 +201,9 @@ all-process stop, destination/sidecar absence and advisory-lease rules in
 
 ## Persistent runtime state
 
-SQLite persists managed configuration, Task/Job/item/results, work evidence, locks, authority,
-notifications and audit. JSONL operation history remains supported. Managed Active overrides JSON
+SQLite persists managed configuration, Task/item/results, work evidence, locks, authority,
+notifications and audit. A Task is the only organizing-work identity: there is no independent Job
+table, Job queue or Job worker. JSONL operation history remains supported. Managed Active overrides JSON
 bootstrap after activation and work pins immutable snapshots. Config validation creates no runtime
 database. FileIndex is removed; live listing reads the existing managed Active and internal cursor
 key without database initialization/migration. Missing initialization provides setup guidance.

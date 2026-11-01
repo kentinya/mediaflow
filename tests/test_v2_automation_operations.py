@@ -406,7 +406,6 @@ class AutomationOperatorJourneyTests(unittest.TestCase):
                 self.assertEqual(detail["definition"]["executionReadiness"]["state"], "enabled")
                 self.assertNotIn("grantEligibility", detail["definition"])
                 self.assertEqual((), value.runtime.list_tasks())
-                self.assertEqual((), ())
                 self.assertEqual([], value.source.mutations)
                 self.assertEqual([], value.target.mutations)
 

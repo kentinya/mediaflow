@@ -432,7 +432,7 @@ class EntranceRecoveryJourneyTests(unittest.TestCase):
             self.assertEqual("direct-organize", display.origin_kind)
             (item,) = value.repository.list_items(task.task_id)
             self.assertEqual("waiting_recognition", item.status.value)
-            self.assertEqual((), ())
+            self.assertEqual(1, len(value.repository.list_tasks()))
             self.assertEqual(0, value.repository.count_scheduled_capacity_use())
             self.assertTrue((value.source_root / "One.2001.mkv").exists())
 
@@ -446,7 +446,7 @@ class EntranceRecoveryJourneyTests(unittest.TestCase):
             self.assertEqual("queued", state.queue_state.value)
             self.assertEqual(1, value.repository.count_scheduled_capacity_use())
             self.assertEqual("admin", state.continuation_actor)
-            self.assertEqual((), ())
+            self.assertEqual(1, len(value.repository.list_tasks()))
             self.assertTrue((value.source_root / "One.2001.mkv").exists())
             self.assertFalse(
                 any((value.target_root / "Organized").rglob("*.mkv")),
@@ -500,7 +500,7 @@ class EntranceRecoveryJourneyTests(unittest.TestCase):
             )
             self.assertEqual(202, status, confirmed)
             self.assertEqual(task.task_id, confirmed["taskId"], confirmed)
-            self.assertEqual((), ())
+            self.assertEqual(1, len(value.repository.list_tasks()))
 
             settled = self._run_resident_worker(value, prefix="cli-execution")
             self.assertIsNotNone(settled)
@@ -514,7 +514,7 @@ class EntranceRecoveryJourneyTests(unittest.TestCase):
             state = value.repository.get_task_scheduling(task.task_id)
             self.assertEqual("settled", state.queue_state.value)
             self.assertEqual(0, value.repository.count_scheduled_capacity_use())
-            self.assertEqual((), ())
+            self.assertEqual(1, len(value.repository.list_tasks()))
 
             # The original execution facts survive the reload; the confirmed
             # summary reads back with its linked execution.
@@ -556,7 +556,7 @@ class EntranceRecoveryJourneyTests(unittest.TestCase):
             self.assertEqual("remote-execution", state.admission_principal)
             display = value.repository.get_run_display_context(task_id)
             self.assertEqual("remote-organize", display.origin_kind)
-            self.assertEqual((), ())
+            self.assertEqual(1, len(value.repository.list_tasks()))
             self.assertEqual(
                 "consumed",
                 value.repository.get_execution_authorization(
@@ -568,7 +568,7 @@ class EntranceRecoveryJourneyTests(unittest.TestCase):
             self.assertIsNotNone(settled)
             (item,) = value.repository.list_items(task_id)
             self.assertEqual("waiting_recognition", item.status.value, item)
-            self.assertEqual((), ())
+            self.assertEqual(1, len(value.repository.list_tasks()))
             self.assertEqual(0, value.repository.count_scheduled_capacity_use())
 
             status, continued, decided, _detail = self._save_recognition_decision_and_continue(
@@ -579,7 +579,7 @@ class EntranceRecoveryJourneyTests(unittest.TestCase):
             state = value.repository.get_task_scheduling(task_id)
             self.assertEqual("queued", state.queue_state.value)
             self.assertEqual("admin", state.continuation_actor)
-            self.assertEqual((), ())
+            self.assertEqual(1, len(value.repository.list_tasks()))
 
             settled = self._run_resident_worker(value, prefix="remote-continuation")
             self.assertIsNotNone(settled)
@@ -596,14 +596,14 @@ class EntranceRecoveryJourneyTests(unittest.TestCase):
                 headers={"HTTP_X_MEDIAFLOW_EXECUTION_TOKEN": "one-time-entrance-ticket"},
             )
             self.assertEqual(400, status, refused)
-            self.assertEqual((), ())
+            self.assertEqual(1, len(value.repository.list_tasks()))
 
             status, confirmed, preparation, ready = self._confirm_ready_subset(
                 value, task_id, item.item_id
             )
             self.assertEqual(202, status, confirmed)
             self.assertEqual(task_id, confirmed["taskId"], confirmed)
-            self.assertEqual((), ())
+            self.assertEqual(1, len(value.repository.list_tasks()))
 
             settled = self._run_resident_worker(value, prefix="remote-execution")
             self.assertIsNotNone(settled)
@@ -617,7 +617,7 @@ class EntranceRecoveryJourneyTests(unittest.TestCase):
             state = value.repository.get_task_scheduling(task_id)
             self.assertEqual("settled", state.queue_state.value)
             self.assertEqual(0, value.repository.count_scheduled_capacity_use())
-            self.assertEqual((), ())
+            self.assertEqual(1, len(value.repository.list_tasks()))
 
     def test_retry_failed_execute_shares_the_kernel_queue_and_capacity(self):
         """The CLI failure retry enters the shared queue; a full queue refuses it.
@@ -815,7 +815,7 @@ class EntranceRecoveryJourneyTests(unittest.TestCase):
             self.assertEqual(1, len(original_results), original_results)
             self.assertEqual("failed", original_results[0].status)
             self.assertEqual(0, value.repository.count_scheduled_capacity_use())
-            self.assertEqual((), ())
+            self.assertEqual(3, len(value.repository.list_tasks()))
 
     def test_retry_failed_execute_refuses_the_original_unverified_mutation(self):
         """A retry never re-executes a file whose last mutation is unverified.

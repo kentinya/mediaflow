@@ -5,7 +5,7 @@ import json
 import secrets
 import sqlite3
 import threading
-from collections.abc import Iterable, Mapping
+from collections.abc import Callable, Iterable, Mapping
 from dataclasses import dataclass, replace
 from datetime import UTC, datetime, timedelta
 from pathlib import Path
@@ -1184,8 +1184,20 @@ class SQLiteTaskRepository:
             "mf_run_search_text", 1, _run_search_identity, deterministic=True
         )
         self._lock = threading.RLock()
+        # Post-commit observers for one Task's terminal persistence boundary.
+        # They publish the already-supported Webhook events from the settled
+        # Task fact; they never write the media result, so a notification fault
+        # cannot change what happened or make it replayable.
+        self._task_terminal_observers: list[Callable[[object], None]] = []
         if not read_only:
             self._initialize()
+
+    def add_task_terminal_observer(self, observer: Callable[[object], None]) -> None:
+        """Register one post-commit observer of a settled organizing Task."""
+
+        if not callable(observer):
+            raise ValueError("a Task terminal observer must be callable")
+        self._task_terminal_observers.append(observer)
 
     @property
     def schema_version(self) -> int:
@@ -17987,7 +17999,30 @@ class SQLiteTaskRepository:
                 self._connection.rollback()
                 raise
             self._connection.commit()
+        if queue_state is TaskQueueState.SETTLED:
+            self._publish_settled_task(task.task_id)
         return state
+
+    def _publish_settled_task(self, task_id: str) -> None:
+        """Offer one settled Task outcome to its post-commit observers.
+
+        The terminal row is already committed when this runs, so an observer can
+        neither abort nor roll back the media/Task result.  Every observer is
+        isolated: one publisher fault must not stop the others, and none may
+        turn a durable terminal outcome into a retryable failure.
+        """
+
+        observers = tuple(self._task_terminal_observers)
+        if not observers:
+            return
+        task = self.get_task(task_id)
+        if task is None:
+            return
+        for observer in observers:
+            try:
+                observer(task)
+            except Exception:
+                continue
 
     def _record_initial_execution_locked(
         self,

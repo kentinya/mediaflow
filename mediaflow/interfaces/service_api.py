@@ -64,6 +64,10 @@ from mediaflow.application.manual_task_continuation import (
 )
 from mediaflow.application.media_discovery import MediaDiscoveryService
 from mediaflow.application.metadata_review import MetadataReviewService
+from mediaflow.application.notification import (
+    NotificationPublisher,
+    task_terminal_observer,
+)
 from mediaflow.application.notification_delivery import (
     DELIVERY_LEASE_DEFAULT_SECONDS,
     NotificationDeliveryService,
@@ -401,6 +405,7 @@ class MediaFlowApi:
             raise ValueError("stale Job age must be between 60 and 604800 seconds")
         self._storage_adapters = dict(storage_adapters or {})
         self._configuration_service = configuration_service
+        self._attach_task_terminal_notifications()
         # A cursor minted by one API/CLI process must be verifiable by a later
         # one, so the shared runtime browser and the setup storage picker use
         # the same persisted internal key when no explicit secret is injected
@@ -8049,6 +8054,51 @@ class MediaFlowApi:
     def _require(principal: ResolvedApiPrincipal, permission: ApiPermission) -> None:
         if permission not in principal.permissions:
             raise ApiPermissionDenied(f"principal lacks {permission.value} permission")
+
+    def _active_webhook_definitions(self):
+        """The current Active Webhook definitions, or none when unavailable.
+
+        Publication only needs the target definitions; delivery resolves the
+        secret per claim.  Any configuration fault yields no deliveries rather
+        than changing the Task outcome that has already been committed.
+        """
+
+        service = self._configuration_service
+        if service is None:
+            return ()
+        try:
+            active = service.active()
+            if active is None:
+                return ()
+            service.verify_integrity(active)
+            return tuple(service._load_for_runtime(active.document).webhooks)
+        except Exception:
+            return ()
+
+    def _attach_task_terminal_notifications(self) -> None:
+        """Publish settled Task outcomes from this API's own admissions.
+
+        Remote submission only admits work, but the Task Center can settle a
+        queued Task's cancellation at its own safe boundary.  That terminal row
+        is the same persistence boundary the Worker uses, so the same bounded
+        event is written to the outbox here instead of being lost.
+        """
+
+        if self._configuration_service is None:
+            return
+        try:
+            attach = getattr(self._repository, "add_task_terminal_observer", None)
+        except Exception:
+            # A focused read-only repository double must never be asked to
+            # mutate just because the API is constructed over it.
+            return
+        if not callable(attach):
+            return
+        attach(
+            task_terminal_observer(
+                NotificationPublisher(self._repository, self._active_webhook_definitions)
+            )
+        )
 
     def _notification_recovery_targets(self):
         service = self._configuration_service

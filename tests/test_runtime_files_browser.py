@@ -302,7 +302,6 @@ class RuntimeFilesBrowserApiTests(unittest.TestCase):
                 status, _ = _request(api, "/api/v1/file-index")
                 self.assertEqual(status, 404)
                 self.assertEqual(task_repository.list_tasks(), ())
-                self.assertEqual((), ())
 
                 draft_document = json.loads(json.dumps(document))
                 draft_document["storages"][0]["rootPath"] = str(second)

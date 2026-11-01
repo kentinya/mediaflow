@@ -68,7 +68,6 @@ class ExecutionIntentTests(unittest.TestCase):
     def test_checked_enable_supplies_scoped_principal_without_grants_or_immediate_work(self):
         active, definition = self.enable()
         f = self.fixture
-        self.assertEqual((), ())
         self.assertEqual((), f.runtime.list_tasks())
         self.assertEqual((), f.runtime.list_unattended_execution_grants())
         (job,) = self.scheduler(active, definition).tick(datetime.now(UTC))
@@ -119,7 +118,6 @@ class ExecutionIntentTests(unittest.TestCase):
             self.publish(document, actor="viewer")
         self.assertEqual(403, error.exception.status)
         self.assertEqual(active.revision_id, f.managed.active().revision_id)
-        self.assertEqual((), ())
 
     def test_unrelated_publication_retains_exact_intent_without_reauthorizing_scope(self):
         active, definition = self.enable()
@@ -165,7 +163,6 @@ class ExecutionIntentTests(unittest.TestCase):
             {**body, "object": {**candidate, "name": "Other"}},
         )
         self.assertEqual("unknown", changed["state"])
-        self.assertEqual((), ())
 
     def test_committed_create_reconciles_from_its_candidate_identity(self):
         f = self.fixture
@@ -192,7 +189,6 @@ class ExecutionIntentTests(unittest.TestCase):
         )
         self.assertEqual(candidate["name"], result["publication"]["definition"]["name"])
         self.assertEqual("configuration_only", result["publication"]["sideEffects"])
-        self.assertEqual((), ())
         self.assertEqual((), f.runtime.list_tasks())
 
         # Every proof is retained: another principal, a different candidate and
@@ -234,7 +230,6 @@ class ExecutionIntentTests(unittest.TestCase):
         )
         self.assertEqual(200, status, unpublished)
         self.assertEqual("unknown", unpublished["state"])
-        self.assertEqual((), ())
         self.assertEqual((), f.runtime.list_tasks())
 
     def test_local_publication_uses_local_identity_instead_of_actor_text(self):

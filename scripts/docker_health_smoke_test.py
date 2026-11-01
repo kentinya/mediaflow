@@ -223,10 +223,10 @@ def health_smoke(project: str, image: str, keep: bool) -> None:
             base = f"http://127.0.0.1:{api_port}"
             wait_for_api(base, token)
 
-            status, jobs = json_request(base, "/api/v1/jobs", token)
-            if status != 200 or jobs.get("items"):
+            status, tasks = json_request(base, "/api/v1/tasks?limit=100", token)
+            if status != 200 or tasks.get("items"):
                 raise RuntimeError(
-                    "service startup created durable Jobs; startup must be side-effect free"
+                    "service startup created durable Tasks; startup must be side-effect free"
                 )
 
             worker_identity = service_records(command, environment)["worker"].get("ID")
@@ -281,9 +281,9 @@ def health_smoke(project: str, image: str, keep: bool) -> None:
             source_root.chmod(0o755)
             wait_for_service_health(command, environment, "api", expected="healthy")
 
-            status, jobs = json_request(base, "/api/v1/jobs", token)
-            if status != 200 or jobs.get("items"):
-                raise RuntimeError("health/readiness activity created durable Jobs")
+            status, tasks = json_request(base, "/api/v1/tasks?limit=100", token)
+            if status != 200 or tasks.get("items"):
+                raise RuntimeError("health/readiness activity created durable Tasks")
             logs = run([*command, "logs", "--no-color", "--tail", "500"], environment=environment)
             if token in logs.stdout or token in logs.stderr:
                 raise RuntimeError("service logs contain the deployment API token")

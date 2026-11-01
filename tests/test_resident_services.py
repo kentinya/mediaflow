@@ -218,13 +218,13 @@ class ManagementOnlyStartupTests(ResidentDeploymentFixture):
 
         self.publish_first_draft(self.empty_baseline())
         with SQLiteTaskRepository(self.database) as repository:
-            self.assertEqual((), ())
+            self.assertEqual((), repository.list_tasks())
             self.assertEqual(repository.list_deliveries(limit=50), ())
             self.assertEqual(repository.list_tasks(limit=50), ())
         # Scheduler/Notification services remain no-ops against an empty Active.
         self.assertEqual(self.cli("scheduler", "tick")[0], 0)
         with SQLiteTaskRepository(self.database) as repository:
-            self.assertEqual((), ())
+            self.assertEqual((), repository.list_tasks())
             self.assertEqual(repository.list_deliveries(limit=50), ())
 
 
@@ -478,8 +478,8 @@ class ConfigurationAdoptionTests(ResidentDeploymentFixture):
 
         code, out, err = self.cli("scheduler", "tick")
         self.assertEqual(code, 0, msg=err)
-        with SQLiteTaskRepository(self.database):
-            self.assertEqual((), ())
+        with SQLiteTaskRepository(self.database) as repository:
+            self.assertEqual((), repository.list_tasks())
 
     def test_worker_publishes_no_delivery_without_a_configured_webhook(self) -> None:
         self.publish_first_draft(self.empty_baseline())

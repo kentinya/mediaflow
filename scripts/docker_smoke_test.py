@@ -126,10 +126,10 @@ def wait_for_api(base: str, token: str) -> None:
     wait_until(ready, description="production API health endpoint")
 
     def authenticated() -> bool:
-        status, _ = http_request(f"{base}/api/v1/jobs", token=token)
+        status, _ = http_request(f"{base}/api/v1/tasks?limit=100", token=token)
         return status == 200
 
-    wait_until(authenticated, description="authenticated API jobs endpoint")
+    wait_until(authenticated, description="authenticated API Tasks endpoint")
 
 
 def prepare_files(root: Path, token: str) -> tuple[Path, Path, Path, Path]:
@@ -260,42 +260,36 @@ def smoke(project: str, image: str, keep: bool) -> None:
             status, body = http_request(f"{base}/ui/")
             if status != 200 or b"MediaFlow Operator" not in body:
                 raise RuntimeError("authenticated Operator Web shell was not reachable")
-            status, jobs = http_request(f"{base}/api/v1/jobs", token=token)
+            status, tasks = http_request(f"{base}/api/v1/tasks?limit=100", token=token)
             if status != 200:
-                raise RuntimeError(f"authenticated API jobs list returned HTTP {status}")
-            jobs_document = json.loads(jobs)
-            if jobs_document.get("items"):
+                raise RuntimeError(f"authenticated API Tasks list returned HTTP {status}")
+            tasks_document = json.loads(tasks)
+            if tasks_document.get("items"):
                 raise RuntimeError(
-                    "service startup created durable Jobs; startup must be side-effect free"
+                    "service startup created durable Tasks; startup must be side-effect free"
                 )
 
-            status, submitted = http_request(
-                f"{base}/api/v1/jobs",
-                method="POST",
-                token=token,
-                body=json.dumps({"command": "organize", "limit": 1}).encode("utf-8"),
-            )
-            if status != 202:
-                raise RuntimeError(f"job submission returned HTTP {status}: {submitted.decode()}")
-            job = json.loads(submitted)
-            job_id = job["job_id"]
+            # The independent Job collection is retired: an old client URL is an
+            # ordinary bounded not-found and creates no work.
+            status, retired = http_request(f"{base}/api/v1/jobs", token=token)
+            if status != 404:
+                raise RuntimeError(f"retired Job collection returned HTTP {status}, expected 404")
 
             print("Restarting the API service...")
             run([*compose, *project_flag, "restart", "api"], environment=environment)
             wait_for_api(base, token)
             status, durable = http_request(
-                f"{base}/api/v1/jobs/{job_id}",
+                f"{base}/api/v1/tasks?limit=100",
                 token=token,
             )
             if status != 200:
                 raise RuntimeError(
-                    f"durable job {job_id} was not visible after API restart (HTTP {status})"
+                    f"durable Task collection was not visible after API restart (HTTP {status})"
                 )
-            durable_job = json.loads(durable)
-            if durable_job.get("job_id") != job_id:
-                raise RuntimeError("durable job identity changed after API restart")
+            if json.loads(durable).get("items") != tasks_document.get("items"):
+                raise RuntimeError("API restart changed the durable Task collection")
 
-            status, logs = http_request(f"{base}/api/v1/jobs", token=token)
+            status, logs = http_request(f"{base}/api/v1/tasks?limit=100", token=token)
             if status != 200 or token.encode() in logs:
                 raise RuntimeError("API projection leaked the bearer token")
             identity = run(

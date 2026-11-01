@@ -937,7 +937,7 @@ class ManagementSetupTests(unittest.TestCase):
                         response["error"]["details"]["durableState"],
                         "no_workflow_work_created",
                     )
-        self.assertEqual((), ())
+        self.assertEqual((), self.task_repository.list_tasks())
         self.assertEqual(self.task_repository.list_tasks(), ())
 
     def test_concurrent_first_draft_creation_has_one_winner(self) -> None:

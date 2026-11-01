@@ -29,7 +29,11 @@ class ReleaseSecurityPolicyTests(unittest.TestCase):
         self.assertNotEqual(first_nonempty_line, "", "TASK.md must declare a lifecycle state")
         self.assertIn("docs/development-workflow.md", task)
         self.assertIn("### Developer — affected tests", task)
-        self.assertIn("### B — acceptance and full regression", task)
+        self.assertTrue(
+            "### B — independent acceptance / full regression" in task
+            or "### B — acceptance and full regression" in task,
+            "the active Task must document B's acceptance/full-regression ownership",
+        )
 
     def test_dockerignore_covers_private_state_and_dockerfile_copies_only_runtime(self) -> None:
         dockerignore = (ROOT / ".dockerignore").read_text(encoding="utf-8")

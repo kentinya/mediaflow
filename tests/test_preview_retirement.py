@@ -189,7 +189,7 @@ class RetiredPreviewApiTests(unittest.TestCase):
             "/api/v1/operations/previews",
             body={"scopeKind": "resource_library"},
         )
-        self.assertEqual((), ())
+        self.assertEqual((), self.repository.list_tasks())
         self.assertEqual((), self.repository.list_tasks())
 
     def test_fresh_schema_has_no_independent_preview_tables(self):
@@ -296,7 +296,6 @@ class RetainedRunOncePlanTests(unittest.TestCase):
             self.assertEqual(
                 preview_id, value.repository.get_latest_manual_preview(preview.intent_id).preview_id
             )
-            self.assertEqual((), ())
             self.assertEqual((), value.repository.list_tasks())
             self.assertEqual([], value.source.mutations)
             self.assertEqual([], value.target.mutations)

@@ -1,14 +1,14 @@
 #!/usr/bin/env python3
-"""Isolated Docker Compose restart/fault acceptance for Task 29.4.
+"""Isolated Docker Compose restart/fault acceptance for the Task kernel.
 
 The script builds the exact image, starts an isolated four-service stack on
 temporary ``/data`` and media mounts, activates a managed runtime containing one
 enabled automatic-organization definition, proves the Scheduler emits one
-durable definition-bound Job across restart, lets the Worker produce Task
-and Result evidence, and then injects bounded durable fault fixtures through the installed
-package repository inside the container.  It restarts API, Worker, Scheduler and
-Notification Worker and verifies durable identities, Worker fencing,
-uncertain-mutation refusal and notification at-least-once behavior.
+durable definition-bound Task across restart, lets the Worker produce Task and
+Result evidence, and then injects bounded durable fault fixtures through the
+installed package repository inside the container.  It restarts API, Worker,
+Scheduler and Notification Worker and verifies durable Task identities, Worker
+fencing, uncertain-mutation refusal and notification at-least-once behavior.
 
 It never reads production paths, credentials, Storage or Providers, and never
 uses a remote Storage/Provider service.
@@ -253,13 +253,17 @@ def prepare_definition_intent(base: str, token: str, identity: dict[str, object]
     return {"definitionId": DEFINITION_ID, "active": active_identity(base, token)}
 
 
-def scheduled_jobs(base: str, token: str) -> list[dict]:
-    status, document = json_request(base, "/api/v1/jobs?limit=100", token)
+def scheduled_tasks(base: str, token: str) -> list[dict]:
+    """The definition's own occurrence Task, read through the Task API."""
+
+    occurrence = definition_projection(base, token).get("lastOccurrence") or {}
+    task_id = occurrence.get("taskId")
+    if not task_id:
+        return []
+    status, task = json_request(base, f"/api/v1/tasks/{urllib.parse.quote(str(task_id))}", token)
     if status != 200:
-        raise RuntimeError(f"Job list returned HTTP {status}: {document}")
-    return [
-        item for item in document.get("items", []) if item.get("definition_id") == DEFINITION_ID
-    ]
+        raise RuntimeError(f"definition-bound Task read returned HTTP {status}: {task}")
+    return [task]
 
 
 def collection_ids(base: str, token: str, path: str) -> list[dict]:
@@ -269,7 +273,7 @@ def collection_ids(base: str, token: str, path: str) -> list[dict]:
     return list(document.get("items") or [])
 
 
-def wait_scheduled_jobs(
+def wait_scheduled_tasks(
     base: str,
     token: str,
     *,
@@ -277,27 +281,28 @@ def wait_scheduled_jobs(
     timeout: float = 120.0,
 ) -> list[dict]:
     def reached() -> bool:
-        return len(scheduled_jobs(base, token)) == expected
+        return len(scheduled_tasks(base, token)) == expected
 
-    wait_until(reached, timeout=timeout, description=f"{expected} definition-bound Jobs")
-    return scheduled_jobs(base, token)
+    wait_until(reached, timeout=timeout, description=f"{expected} definition-bound Tasks")
+    return scheduled_tasks(base, token)
 
 
-def wait_job_linked_task(base: str, token: str, job_id: str) -> dict:
+def wait_task_terminal(base: str, token: str, task_id: str) -> dict:
     def reached() -> bool:
         _, document = json_request(
             base,
-            f"/api/v1/jobs/{urllib.parse.quote(job_id)}",
+            f"/api/v1/tasks/{urllib.parse.quote(task_id)}",
             token,
         )
         return document.get("status") in {
             "completed",
+            "partial_success",
             "failed",
             "cancelled",
         }
 
-    wait_until(reached, timeout=180.0, description=f"Job {job_id} terminal evidence")
-    _, document = json_request(base, f"/api/v1/jobs/{urllib.parse.quote(job_id)}", token)
+    wait_until(reached, timeout=180.0, description=f"Task {task_id} terminal evidence")
+    _, document = json_request(base, f"/api/v1/tasks/{urllib.parse.quote(task_id)}", token)
     return document
 
 
@@ -533,7 +538,7 @@ with (
 """
 
 
-def seed_fence_code(job_id: str) -> str:
+def seed_fence_code(task_id: str) -> str:
     """Simulate two Worker processes separated by a durable restart boundary."""
 
     return """
@@ -541,13 +546,10 @@ import json
 from dataclasses import replace
 from datetime import UTC, datetime, timedelta
 
-from mediaflow.domain.automation import (
-    AutomationClaimLost,
-    AutomationCommand,
-    AutomationJob,
-    AutomationJobStatus,
-)
+from mediaflow.application.task_scheduling import TaskSchedulingService
 from mediaflow.domain.logging import LogLevel, OperationalLogRecord
+from mediaflow.domain.task_persistence import PersistentTaskStatus
+from mediaflow.domain.task_scheduling import TaskClaimFenceLost, TaskMachineStage
 from mediaflow.infrastructure.sqlite_configuration_management import (
     SQLiteConfigurationRepository,
 )
@@ -556,7 +558,7 @@ from mediaflow.infrastructure.sqlite_runtime import SCHEMA_VERSION, SQLiteTaskRe
 DATABASE = "/data/mediaflow.sqlite3"
 NOW = datetime.now(UTC)
 OLD = NOW - timedelta(hours=3)
-JOB_ID = __JOB_ID__
+TASK_ID = __TASK_ID__
 
 with (
     SQLiteTaskRepository(DATABASE) as first_process,
@@ -567,9 +569,9 @@ with (
         raise RuntimeError("no Active managed revision is present")
     snapshot_id = active.revision_id
     snapshot_digest = active.digest
-    existing = first_process.get_job(JOB_ID)
-    if existing is None:
-        raise RuntimeError(f"pending Job {JOB_ID} is missing")
+    service = TaskSchedulingService(first_process, capacity=100, locks=first_process)
+    if first_process.get_task(TASK_ID) is None:
+        raise RuntimeError(f"pending Task {TASK_ID} is missing")
     first_process.register_worker(
         "fault-worker-a",
         "fault worker a",
@@ -580,10 +582,15 @@ with (
         SCHEMA_VERSION,
         OLD,
     )
-    stale_claim = first_process.claim_next_job(OLD, worker_id="fault-worker-a")
+    stale_claim = service.claim(
+        TASK_ID,
+        worker_id="fault-worker-a",
+        claim_token="fault-worker-a-token",
+        now=OLD,
+        lease_seconds=60,
+    )
     if stale_claim is None:
-        raise RuntimeError("fault worker A could not claim the pending Job")
-    stale_claim = replace(stale_claim, claim_token=stale_claim.claim_token)
+        raise RuntimeError("fault worker A could not claim the pending Task")
 
 with (
     SQLiteTaskRepository(DATABASE) as second_process,
@@ -592,11 +599,7 @@ with (
     active = configuration.get_active_revision()
     snapshot_id = active.revision_id
     snapshot_digest = active.digest
-    requeued = second_process.requeue_stale_job(
-        JOB_ID,
-        NOW - timedelta(hours=2),
-        NOW,
-    )
+    service = TaskSchedulingService(second_process, capacity=100, locks=second_process)
     second_process.register_worker(
         "fault-worker-b",
         "fault worker b",
@@ -607,34 +610,37 @@ with (
         SCHEMA_VERSION,
         NOW,
     )
-    current_claim = second_process.claim_next_job(NOW, worker_id="fault-worker-b")
-    if current_claim is None:
-        raise RuntimeError("fault worker B could not claim the requeued Job")
-    committed = second_process.complete_claimed_job(
-        replace(
-            current_claim,
-            status=AutomationJobStatus.COMPLETED,
-            updated_at=NOW,
-            completed_at=NOW,
-            task_id="fault-worker-b-task",
-        )
+    current_claim = service.claim(
+        TASK_ID,
+        worker_id="fault-worker-b",
+        claim_token="fault-worker-b-token",
+        now=NOW,
+        lease_seconds=300,
     )
-    if not committed:
-        raise RuntimeError("fault worker B terminal commit failed")
+    if current_claim is None:
+        raise RuntimeError("fault worker B could not take over the expired Task claim")
+    service.begin_work(current_claim, stage=TaskMachineStage.DISCOVERY, now=NOW)
+    task = second_process.get_task(TASK_ID)
+    settled = replace(
+        task,
+        status=PersistentTaskStatus.COMPLETED,
+        updated_at=NOW,
+        started_at=task.started_at or NOW,
+        completed_at=NOW,
+        error=None,
+    )
+    service.settle(current_claim, task=settled, now=NOW)
     heartbeat_rejected = False
     try:
-        second_process.heartbeat_job(JOB_ID, stale_claim.claim_token, NOW)
-    except AutomationClaimLost:
+        service.heartbeat(stale_claim, now=NOW)
+    except TaskClaimFenceLost:
         heartbeat_rejected = True
-    stale_committed = second_process.complete_claimed_job(
-        replace(
-            stale_claim,
-            status=AutomationJobStatus.COMPLETED,
-            updated_at=NOW,
-            completed_at=NOW,
-            task_id="fault-worker-a-task",
-        )
-    )
+    stale_committed = False
+    try:
+        service.settle(stale_claim, task=settled, now=NOW)
+        stale_committed = True
+    except TaskClaimFenceLost:
+        pass
     second_process.append_operational_log(
         OperationalLogRecord(
             "fault-fence-log",
@@ -642,20 +648,22 @@ with (
             LogLevel.WARN,
             "worker",
             "stale Worker heartbeat and terminal commit were rejected",
-            job_id=JOB_ID,
+            task_id=TASK_ID,
             status="running",
         )
     )
+    state = second_process.get_task_scheduling(TASK_ID)
     print(
         json.dumps(
             {
                 "heartbeatRejected": heartbeat_rejected,
-                "staleCommitted": bool(stale_committed),
-                "owner": second_process.get_job(JOB_ID).worker_id,
+                "staleCommitted": stale_committed,
+                "state": state.queue_state.value,
+                "status": second_process.get_task(TASK_ID).status.value,
             }
         )
     )
-""".replace("__JOB_ID__", json.dumps(job_id))
+""".replace("__TASK_ID__", json.dumps(task_id))
 
 
 def restart_fault_smoke(project: str, image: str, keep: bool) -> None:
@@ -751,34 +759,35 @@ def restart_fault_smoke(project: str, image: str, keep: bool) -> None:
                 raise RuntimeError("checked enable mutated source/destination media")
             run([*command, "stop", "worker"], environment=environment)
 
-            print("Starting the Scheduler and waiting for one definition-bound Job...")
+            print("Starting the Scheduler and waiting for one definition-bound Task...")
             run([*command, "start", "scheduler"], environment=environment)
             wait_services_healthy(command, environment, services={"api", "scheduler"})
-            first_occurrence = wait_scheduled_jobs(base, token, expected=1)
+            first_occurrence = wait_scheduled_tasks(base, token, expected=1)
 
             print("Restarting the Scheduler around the same due slot...")
             run([*command, "restart", "scheduler"], environment=environment)
             wait_services_healthy(command, environment, services={"api", "scheduler"})
-            wait_scheduled_jobs(base, token, expected=1)
-            second_occurrence = scheduled_jobs(base, token)
-            if [item["job_id"] for item in second_occurrence] != [
-                item["job_id"] for item in first_occurrence
+            wait_scheduled_tasks(base, token, expected=1)
+            second_occurrence = scheduled_tasks(base, token)
+            if [item["task_id"] for item in second_occurrence] != [
+                item["task_id"] for item in first_occurrence
             ]:
-                raise RuntimeError("Scheduler restart changed the scheduled Job identity")
+                raise RuntimeError("Scheduler restart changed the scheduled Task identity")
 
             print("Starting the Worker and waiting for definition-bound Task evidence...")
             run([*command, "start", "worker"], environment=environment)
             wait_services_healthy(command, environment, services={"api", "scheduler", "worker"})
             wait_worker_ready(base, token)
-            scheduled_job = wait_job_linked_task(
+            scheduled_task = wait_task_terminal(
                 base,
                 token,
-                first_occurrence[0]["job_id"],
+                first_occurrence[0]["task_id"],
             )
-            scheduled_task_id = scheduled_job.get("task_id")
-            if scheduled_job.get("status") != "completed" or not scheduled_task_id:
+            scheduled_task_id = scheduled_task.get("task_id")
+            if scheduled_task.get("status") != "completed" or not scheduled_task_id:
                 raise RuntimeError(
-                    f"definition-bound Job did not produce durable Task evidence: {scheduled_job}"
+                    "definition-bound Task did not complete with durable evidence: "
+                    f"{scheduled_task}"
                 )
             outputs = list(target_root.rglob("*.mkv"))
             if (
@@ -788,19 +797,15 @@ def restart_fault_smoke(project: str, image: str, keep: bool) -> None:
             ):
                 raise RuntimeError("scheduled COPY did not preserve exact source/destination bytes")
             occurrence = definition_projection(base, token).get("lastOccurrence") or {}
-            if (
-                not occurrence.get("occurrenceId")
-                or occurrence.get("jobId") != scheduled_job["job_id"]
-                or occurrence.get("taskId") != scheduled_task_id
-            ):
-                raise RuntimeError(f"scheduled occurrence lost its Job/Task linkage: {occurrence}")
+            if not occurrence.get("occurrenceId") or occurrence.get("taskId") != scheduled_task_id:
+                raise RuntimeError(f"scheduled occurrence lost its Task linkage: {occurrence}")
 
             print("Stopping Worker and Notification Worker before fault fixtures...")
             run([*command, "stop", "worker", "notification-worker"], environment=environment)
             wait_for_api(base, token)
 
             # Use the supported, explicitly authorized remote Organize entry.
-            # The stopped Worker cannot execute this fencing-only Job.
+            # The stopped Worker cannot execute this fencing-only Task.
             issued = run(
                 [
                     *command,
@@ -827,7 +832,7 @@ def restart_fault_smoke(project: str, image: str, keep: bool) -> None:
                 if line.startswith("Token: ")
             )
             request = urllib.request.Request(
-                f"{base}/api/v1/jobs",
+                f"{base}/api/v1/tasks",
                 data=json.dumps({"command": "organize", "execute": True, "limit": 1}).encode(),
                 headers={
                     "Authorization": f"Bearer {token}",
@@ -838,9 +843,9 @@ def restart_fault_smoke(project: str, image: str, keep: bool) -> None:
             )
             with urllib.request.urlopen(request, timeout=10) as response:
                 if response.status != 202:
-                    raise RuntimeError(f"fault Job submission returned HTTP {response.status}")
+                    raise RuntimeError(f"fault Task submission returned HTTP {response.status}")
                 submitted = json.load(response)
-            fence_job_id = submitted["job_id"]
+            fence_task_id = submitted["taskId"]
 
             print("Seeding durable notification/uncertain/audit/log evidence...")
             seed_output = exec_python(command, environment, seed_state_code())
@@ -849,18 +854,17 @@ def restart_fault_smoke(project: str, image: str, keep: bool) -> None:
                 raise RuntimeError("durable fault fixture returned an unexpected Task")
 
             print("Injecting a stale Worker owner race across repository restart...")
-            fence_output = exec_python(command, environment, seed_fence_code(fence_job_id))
+            fence_output = exec_python(command, environment, seed_fence_code(fence_task_id))
             fence_summary = json.loads(fence_output.strip().splitlines()[-1])
             if not fence_summary["heartbeatRejected"] or fence_summary["staleCommitted"]:
                 raise RuntimeError(f"stale Worker fencing fixture failed: {fence_summary}")
-            if fence_summary["owner"] != "fault-worker-b":
-                raise RuntimeError(f"newer Worker owner was not preserved: {fence_summary}")
+            if fence_summary["state"] != "settled" or fence_summary["status"] != "completed":
+                raise RuntimeError(f"newer Task owner was not preserved: {fence_summary}")
 
             baseline = {
                 "active": identity,
-                "jobs": collection_ids(base, token, "/api/v1/jobs?limit=100"),
                 "tasks": collection_ids(base, token, "/api/v1/tasks?limit=100"),
-                "scheduledJobs": second_occurrence,
+                "scheduledTasks": second_occurrence,
                 "scheduledTaskId": scheduled_task_id,
                 "occurrence": occurrence,
                 "intentEvidence": intent_evidence,
@@ -880,35 +884,35 @@ def restart_fault_smoke(project: str, image: str, keep: bool) -> None:
             print("Restarting the API service...")
             run([*command, "restart", "api"], environment=environment)
             wait_for_api(base, token)
-            after_api = collection_ids(base, token, "/api/v1/jobs?limit=100")
-            if [item["job_id"] for item in after_api] != [
-                item["job_id"] for item in baseline["jobs"]
+            after_api = collection_ids(base, token, "/api/v1/tasks?limit=100")
+            if [item["task_id"] for item in after_api] != [
+                item["task_id"] for item in baseline["tasks"]
             ]:
-                raise RuntimeError("API restart changed durable Job identities")
+                raise RuntimeError("API restart changed durable Task identities")
 
             print("Restarting the Worker service...")
             run([*command, "start", "worker"], environment=environment)
             wait_services_healthy(command, environment, services={"api", "scheduler", "worker"})
             wait_worker_ready(base, token)
-            _, fence_job = json_request(
+            _, fence_task = json_request(
                 base,
-                f"/api/v1/jobs/{urllib.parse.quote(fence_job_id)}",
+                f"/api/v1/tasks/{urllib.parse.quote(fence_task_id)}",
                 token,
             )
-            if fence_job.get("status") != "completed":
-                raise RuntimeError(f"fenced Job is not terminal after Worker restart: {fence_job}")
+            if fence_task.get("status") != "completed":
+                raise RuntimeError(
+                    f"fenced Task is not terminal after Worker restart: {fence_task}"
+                )
 
             print("Restarting the Scheduler service...")
             run([*command, "restart", "scheduler"], environment=environment)
             wait_services_healthy(command, environment, services={"api", "scheduler", "worker"})
-            wait_scheduled_jobs(base, token, expected=1)
-            final_occurrence = scheduled_jobs(base, token)
-            if [item["job_id"] for item in final_occurrence] != [
-                item["job_id"] for item in baseline["scheduledJobs"]
+            wait_scheduled_tasks(base, token, expected=1)
+            final_occurrence = scheduled_tasks(base, token)
+            if [item["task_id"] for item in final_occurrence] != [
+                item["task_id"] for item in baseline["scheduledTasks"]
             ]:
-                raise RuntimeError("Scheduler restart changed the scheduled Job identity")
-            if final_occurrence[0].get("task_id") != scheduled_task_id:
-                raise RuntimeError("Scheduler restart changed the definition-bound Task link")
+                raise RuntimeError("Scheduler restart changed the scheduled Task identity")
             final_task_ids = {
                 item.get("task_id")
                 for item in collection_ids(base, token, "/api/v1/tasks?limit=100")
@@ -1019,19 +1023,16 @@ def restart_fault_smoke(project: str, image: str, keep: bool) -> None:
                     raise RuntimeError(f"Operator Web lacks durable recovery view {marker!r}")
 
             before_reads = {
-                "jobs": len(collection_ids(base, token, "/api/v1/jobs?limit=100")),
                 "tasks": len(collection_ids(base, token, "/api/v1/tasks?limit=100")),
                 "notifications": len(
                     collection_ids(base, token, "/api/v1/notifications?limit=100")
                 ),
             }
             for _ in range(2):
-                collection_ids(base, token, "/api/v1/jobs?limit=100")
                 collection_ids(base, token, "/api/v1/tasks?limit=100")
                 collection_ids(base, token, "/api/v1/notifications?limit=100")
                 collection_ids(base, token, "/api/v1/logs?limit=100")
             after_reads = {
-                "jobs": len(collection_ids(base, token, "/api/v1/jobs?limit=100")),
                 "tasks": len(collection_ids(base, token, "/api/v1/tasks?limit=100")),
                 "notifications": len(
                     collection_ids(base, token, "/api/v1/notifications?limit=100")

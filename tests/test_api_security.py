@@ -272,7 +272,7 @@ class ApiSecurityTests(unittest.TestCase):
                 self.assertTrue(admitted["executeAuthorized"])
                 self.assertEqual("task_engine", admitted["executionMethod"])
                 self.assertTrue(repository.get_task(admitted["taskId"]).execute_authorized)
-                self.assertEqual((), ())
+                self.assertEqual(1, len(repository.list_tasks()))
 
     def test_audit_success_denial_redaction_order_limit_and_source_sanitizing(self) -> None:
         with tempfile.TemporaryDirectory() as directory:
@@ -314,7 +314,7 @@ class ApiSecurityTests(unittest.TestCase):
                         document={"command": "organize", "limit": 1},
                     )
                 self.assertEqual(status, 500)
-                self.assertEqual((), ())
+                self.assertEqual((), repository.list_tasks())
                 self.assertNotIn("secret", json.dumps(response))
                 # The raw exception chain is never written to any stream: the
                 # operator-facing error and the audit row carry the bounded,

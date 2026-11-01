@@ -18,10 +18,69 @@ from mediaflow.domain.notification import (
     WebhookRequest,
     WebhookTransport,
 )
+from mediaflow.domain.task_persistence import PersistentTask, PersistentTaskStatus
+
+#: The Task statuses that are the end of one organizing work, mapped onto the
+#: already-supported Webhook event literals.  A partial success finished with
+#: mixed per-item outcomes, so it publishes the completion event and carries its
+#: exact ``partial_success`` status in the payload instead of inventing a fourth
+#: event type or pretending every sibling succeeded.
+TASK_TERMINAL_EVENT_TYPES: dict[PersistentTaskStatus, NotificationEventType] = {
+    PersistentTaskStatus.COMPLETED: NotificationEventType.TASK_COMPLETED,
+    PersistentTaskStatus.PARTIAL_SUCCESS: NotificationEventType.TASK_COMPLETED,
+    PersistentTaskStatus.FAILED: NotificationEventType.TASK_FAILED,
+    PersistentTaskStatus.CANCELLED: NotificationEventType.TASK_CANCELLED,
+}
 
 
 class WebhookTransportError(RuntimeError):
     pass
+
+
+def terminal_task_notification(task: PersistentTask) -> NotificationEvent | None:
+    """The one terminal event for a settled Task, or ``None`` while non-terminal.
+
+    The identity is derived from the Task and its final status, so a repeated
+    publication (a refreshed projection, a second Worker pass or a restart
+    after the terminal commit) converges on the same outbox row instead of
+    sending the same original outcome twice.  The payload is the bounded Task
+    fact only: no pin, token, claim, authorization or Storage detail.
+    """
+
+    event_type = TASK_TERMINAL_EVENT_TYPES.get(task.status)
+    if event_type is None:
+        return None
+    return NotificationEvent(
+        f"task:{task.task_id}:{task.status.value}",
+        event_type,
+        task.completed_at or task.updated_at,
+        {
+            "taskId": task.task_id,
+            "status": task.status.value,
+            "command": task.command,
+        },
+    )
+
+
+def task_terminal_observer(publisher: NotificationPublisher) -> Callable[[PersistentTask], None]:
+    """Build the post-commit observer that publishes one settled Task.
+
+    Notification publication is evidence beside the durable Task result, never
+    a second execution path: an unavailable configuration, a disabled Webhook
+    or a publisher fault is swallowed here so the media effect and the Task's
+    recorded outcome can never be changed or replayed by notification trouble.
+    """
+
+    def observe(task: PersistentTask) -> None:
+        event = terminal_task_notification(task)
+        if event is None:
+            return
+        try:
+            publisher.publish(event)
+        except Exception:
+            return
+
+    return observe
 
 
 def webhook_signature(secret: str, timestamp: str, body: bytes) -> str:

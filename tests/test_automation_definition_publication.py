@@ -511,7 +511,6 @@ class AutomationPublicationTests(unittest.TestCase):
         self.assertNotEqual(before.revision_id, published.revision_id)
         self.assertEqual(self.ids(), [])
         self.assertEqual((), self.runtime.list_tasks())
-        self.assertEqual((), ())
 
     def test_concurrent_save_wins_and_removal_preserves_authority(self) -> None:
         """A legitimate concurrent focused Save between revocation and publication
@@ -676,7 +675,6 @@ class AutomationPublicationTests(unittest.TestCase):
         self.assertEqual(self.ids(), [])
         # Any retained grant row is historical and cannot revive removed work.
         self.assertEqual((), self.runtime.list_tasks())
-        self.assertEqual((), ())
 
     def test_missing_definition_reads_and_commands_report_not_found(self) -> None:
         before = self.managed.active()

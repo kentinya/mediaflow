@@ -13,9 +13,13 @@ from pathlib import Path
 from threading import Barrier, Thread
 from unittest.mock import patch
 
+import tests.test_v2_automation_run_once as automation_run_once_fixture
 from mediaflow.application.automation import IntervalScheduler
+from mediaflow.application.metadata import MetadataProviderRegistry
 from mediaflow.application.notification import NotificationPublisher, NotificationWorker
+from mediaflow.application.strategy_test import SyntheticMetadataProvider
 from mediaflow.domain.automation import IntervalSchedule
+from mediaflow.domain.metadata import MediaCandidate, MediaType, ProviderCapabilities
 from mediaflow.domain.notification import (
     NotificationDeliveryStatus,
     NotificationEvent,
@@ -26,6 +30,8 @@ from mediaflow.final_cli import final_main
 from mediaflow.infrastructure.runtime_configuration import load_runtime_configuration
 from mediaflow.infrastructure.sqlite_runtime import SQLiteTaskRepository
 from mediaflow.interfaces.service_api import MediaFlowApi
+from tests.test_execution_authorization import request as remote_request
+from tests.test_execution_authorization import service as authorization_service
 
 NOW = datetime(2026, 8, 22, 12, 0, tzinfo=UTC)
 
@@ -62,7 +68,7 @@ def publish(repository, definition=None):
         "event-1",
         NotificationEventType.TASK_COMPLETED,
         NOW,
-        {"title": "千与千寻", "jobId": "job-1"},
+        {"title": "千与千寻", "taskId": "task-1"},
     )
     return NotificationPublisher(repository, (definition or webhook(),)).publish(event)
 
@@ -312,37 +318,224 @@ class NotificationTests(unittest.TestCase):
             self.assertNotIn("secret", output.getvalue())
             self.assertIn("updated=", output.getvalue())
 
-    def test_terminal_job_and_schedule_events_enter_outbox(self) -> None:
-        definitions = (
-            webhook(
-                events=(
-                    NotificationEventType.TASK_COMPLETED,
-                    NotificationEventType.SCHEDULE_EMITTED,
-                )
-            ),
-        )
+    def test_scheduler_emission_enters_outbox_for_the_admitted_task(self) -> None:
+        """A real due occurrence publishes its schedule event for one Task."""
+
+        definitions = (webhook(events=(NotificationEventType.SCHEDULE_EMITTED,)),)
         with tempfile.TemporaryDirectory() as directory:
             with SQLiteTaskRepository(Path(directory, "runtime.sqlite3")) as repository:
-                publisher = NotificationPublisher(repository, definitions)
-                publisher.publish(
-                    NotificationEvent(
-                        "task:task-1:completed",
-                        NotificationEventType.TASK_COMPLETED,
-                        NOW,
-                        {"taskId": "task-1", "status": "completed"},
-                    )
-                )
                 schedule = IntervalSchedule("hourly", "organize", 3600)
+                publisher = NotificationPublisher(repository, definitions)
+                (task,) = IntervalScheduler(repository, (schedule,), publisher).tick(NOW)
+                (delivery,) = repository.list_deliveries()
+                self.assertEqual(delivery.event_type, NotificationEventType.SCHEDULE_EMITTED)
                 self.assertEqual(
-                    len(IntervalScheduler(repository, (schedule,), publisher).tick(NOW)), 1
-                )
-                self.assertEqual(
-                    {item.event_type for item in repository.list_deliveries()},
+                    json.loads(delivery.body)["data"],
                     {
-                        NotificationEventType.TASK_COMPLETED,
-                        NotificationEventType.SCHEDULE_EMITTED,
+                        "command": "organize",
+                        "scheduleId": "hourly",
+                        "taskId": task.task_id,
                     },
                 )
+                self.assertIsNotNone(
+                    repository.get_task_scheduling(task.task_id),
+                    "the schedule event must name the one admitted organizing Task",
+                )
+
+
+class TerminalTaskNotificationTests(unittest.TestCase):
+    """The supported organizer journey ends in the durable notification outbox.
+
+    Each case starts at a real entrance (remote ``POST /api/v1/tasks`` or the
+    Scheduler), advances the durable Task through the production CLI Worker or
+    the supported control command, and reads the real outbox.  No test calls the
+    publisher to fake the terminal publication.
+    """
+
+    WEBHOOK_EVENTS = ["job.completed", "job.failed", "job.cancelled"]
+
+    def setUp(self) -> None:
+        self.fixture = automation_run_once_fixture.RunOnceApiTests()
+        self.fixture.setUp()
+        self.addCleanup(self.fixture.doCleanups)
+        self.fixture.media("Movies/One.2001.mkv")
+        self.document = self.fixture.document(definitions=[])
+        self.document["api"]["remoteExecution"] = {"enabled": True}
+        self.document["notifications"] = {
+            "webhooks": [
+                {
+                    "id": "terminal-events",
+                    "url": "https://example.invalid/mediaflow/events",
+                    "secretEnv": "MEDIAFLOW_TERMINAL_WEBHOOK_SECRET",
+                    "events": list(self.WEBHOOK_EVENTS),
+                    "enabled": True,
+                }
+            ]
+        }
+        self.config = self.fixture.root / "config.json"
+        self.config.write_text(json.dumps(self.document), encoding="utf-8")
+        self.database = self.fixture.root / "runtime.sqlite3"
+        self.source = self.fixture.source_root / "Movies/One.2001.mkv"
+        self.target_root = self.fixture.target_root
+        # The configured subscription must be a real, loadable Webhook document
+        # so this test cannot pass against a fixture the product would reject.
+        loaded = load_runtime_configuration(copy.deepcopy(self.document))
+        self.assertEqual([item.webhook_id for item in loaded.webhooks], ["terminal-events"])
+        self.assertTrue(loaded.webhooks[0].enabled)
+
+    def registry(self, provider=None):
+        provider = provider or SyntheticMetadataProvider(
+            (MediaCandidate("tmdb", "1", MediaType.MOVIE, "One", year=2001),)
+        )
+        return MetadataProviderRegistry((provider,))
+
+    def submit_remote(self):
+        with SQLiteTaskRepository(self.database) as repository:
+            issued = authorization_service(repository, clock=lambda: datetime.now(UTC)).issue(
+                ttl_seconds=60, max_items=1
+            )
+            api = MediaFlowApi(repository, "api-secret", remote_execution_enabled=True)
+            status, submitted = remote_request(
+                api,
+                {"command": "organize", "execute": True, "limit": 1},
+                execution_token=issued.token,
+            )
+        self.assertEqual(202, status, submitted)
+        self.assertEqual("task_engine", submitted["executionMethod"], submitted)
+        return submitted["taskId"]
+
+    def run_worker(self, provider=None):
+        output, errors = io.StringIO(), io.StringIO()
+        with patch(
+            "mediaflow.final_cli.metadata_provider_registry_from_environment",
+            return_value=self.registry(provider),
+        ):
+            code = final_main(
+                ["--config", str(self.config), "worker", "run-next"],
+                stdout=output,
+                stderr=errors,
+            )
+        return code, output.getvalue(), errors.getvalue()
+
+    def deliveries(self):
+        with SQLiteTaskRepository(self.database) as repository:
+            return repository.list_deliveries()
+
+    def test_remote_completion_publishes_one_task_event_without_second_effect(self) -> None:
+        task_id = self.submit_remote()
+        code, output, errors = self.run_worker()
+        self.assertEqual(0, code, errors)
+        self.assertIn(task_id, output)
+        self.assertIn("completed", output)
+
+        with SQLiteTaskRepository(self.database) as repository:
+            task = repository.get_task(task_id)
+            results = repository.list_results(task_id)
+            items = repository.list_items(task_id)
+        self.assertEqual("completed", task.status.value, task.error)
+        self.assertEqual(1, len(results), results)
+        self.assertEqual(["success"], [item.status.value for item in items])
+        self.assertFalse(self.source.exists(), "the completed organize moved its source")
+        organized = list((self.target_root / "Organized/Movies").rglob("*.mkv"))
+        self.assertEqual(1, len(organized), organized)
+
+        (delivery,) = self.deliveries()
+        payload = json.loads(delivery.body)
+        self.assertEqual(NotificationEventType.TASK_COMPLETED, delivery.event_type)
+        self.assertEqual("terminal-events", delivery.webhook_id)
+        self.assertEqual(
+            payload["data"],
+            {"taskId": task_id, "status": "completed", "command": "organize"},
+        )
+        self.assertEqual(payload["eventId"], f"task:{task_id}:completed")
+        self.assertNotIn("secret", delivery.body.lower())
+
+        # A second Worker pass finds no pending work: the original result is not
+        # replayed, and the same original event is not written twice.
+        code, output, errors = self.run_worker()
+        self.assertEqual(0, code, errors)
+        self.assertIn("No pending work", output)
+        with SQLiteTaskRepository(self.database) as repository:
+            self.assertEqual(1, len(repository.list_results(task_id)))
+            self.assertEqual(1, len(repository.list_items(task_id)))
+        self.assertEqual(1, len(self.deliveries()))
+        self.assertEqual(1, len(list((self.target_root / "Organized/Movies").rglob("*.mkv"))))
+        self.assertFalse(self.source.exists())
+
+        # Same-version reopen keeps the Task outcome and its one outbox row.
+        with SQLiteTaskRepository(self.database) as reopened:
+            self.assertEqual("completed", reopened.get_task(task_id).status.value)
+            self.assertEqual(1, len(reopened.list_deliveries()))
+
+    def test_remote_failure_publishes_task_failed_without_media_effect(self) -> None:
+        class _UnavailableProvider:
+            provider_id = "tmdb"
+            capabilities = ProviderCapabilities(True)
+
+            def search_movie(self, *_args, **_kwargs):
+                raise RuntimeError("synthetic Provider outage")
+
+            def get_movie(self, *_args, **_kwargs):
+                raise RuntimeError("synthetic Provider outage")
+
+        task_id = self.submit_remote()
+        code, output, errors = self.run_worker(_UnavailableProvider())
+        self.assertEqual(1, code, errors)
+        self.assertIn("failed", output)
+
+        with SQLiteTaskRepository(self.database) as repository:
+            task = repository.get_task(task_id)
+            items = repository.list_items(task_id)
+            results = repository.list_results(task_id)
+        self.assertEqual("failed", task.status.value)
+        self.assertEqual(["failed"], [item.status.value for item in items])
+        self.assertEqual(1, len(results))
+        self.assertTrue(self.source.exists(), "a failed Provider lookup must not move the source")
+        self.assertFalse(list((self.target_root / "Organized").rglob("*.mkv")))
+
+        (delivery,) = self.deliveries()
+        self.assertEqual(NotificationEventType.TASK_FAILED, delivery.event_type)
+        self.assertEqual(
+            json.loads(delivery.body)["data"],
+            {"taskId": task_id, "status": "failed", "command": "organize"},
+        )
+
+    def test_cancelled_queued_task_publishes_one_cancelled_event(self) -> None:
+        task_id = self.submit_remote()
+        output, errors = io.StringIO(), io.StringIO()
+        code = final_main(
+            ["--config", str(self.config), "tasks", "cancel", task_id],
+            stdout=output,
+            stderr=errors,
+        )
+        self.assertEqual(0, code, errors.getvalue())
+        self.assertIn("cancelled", output.getvalue())
+
+        with SQLiteTaskRepository(self.database) as repository:
+            task = repository.get_task(task_id)
+            state = repository.get_task_scheduling(task_id)
+        self.assertEqual("cancelled", task.status.value)
+        self.assertEqual("settled", state.queue_state.value)
+        self.assertTrue(self.source.exists(), "a queued cancel must not touch the source")
+
+        (delivery,) = self.deliveries()
+        self.assertEqual(NotificationEventType.TASK_CANCELLED, delivery.event_type)
+        self.assertEqual(
+            json.loads(delivery.body)["data"],
+            {"taskId": task_id, "status": "cancelled", "command": "organize"},
+        )
+
+        # The idempotent repeat is the same durable intent, not a second run or
+        # a second outbox row.
+        code = final_main(
+            ["--config", str(self.config), "tasks", "cancel", task_id],
+            stdout=io.StringIO(),
+            stderr=io.StringIO(),
+        )
+        self.assertEqual(0, code)
+        self.assertEqual(1, len(self.deliveries()))
+        with SQLiteTaskRepository(self.database) as repository:
+            self.assertEqual("cancelled", repository.get_task(task_id).status.value)
 
 
 if __name__ == "__main__":

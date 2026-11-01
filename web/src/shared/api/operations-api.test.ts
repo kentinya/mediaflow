@@ -146,7 +146,7 @@ describe("mutateLifecycle", () => {
     const fetchMock = stubFetch(async () => {
       throw new Error("network down: Bearer super-secret");
     });
-    await mutateLifecycle("operator-token", {
+    const result = await mutateLifecycle("operator-token", {
       objectType: "task",
       objectId: "task-1",
       action: "cancel",
