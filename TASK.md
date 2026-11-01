@@ -5,14 +5,15 @@ readback; [Development Workflow](docs/development-workflow.md) governs planning,
 The user confirmed on 2026-10-31 that B should establish the next active Task, not retain a
 planning-only draft. Task47.3 remains the same formal Task within committed ACTIVE Slice47;
 the current implementation has been handed off and B owns the remaining independent acceptance.
-The upgrade-only FIX REQUIRED below has been withdrawn under the user clarification. No delegation, push or deployment is authorized.
+The previous upgrade-only finding remains withdrawn. The current B review identifies one new-task
+CLI retry scheduling gap below. No delegation, push or deployment is authorized.
 Recheck intervening commits without silently repinning the Task Base.
 
 ```text
 Task ID: 47.3
 Task Type: SLICE
 Parent Slice: 47
-Status: READY FOR B REVIEW
+Status: FIX REQUIRED
 Task Base: dfcfebbdb9c879b38806e29c7b41c9192aeca83e
 Difficulty: High
 Test Level: T4
@@ -275,33 +276,109 @@ git diff --check
 ## B Review Result
 
 ```text
-Reviewed candidate: dfcfebbdb9c879b38806e29c7b41c9192aeca83e..c4e24211368a5c1bea1d1b8a86801318009e558d
+Reviewed candidate: dfcfebbdb9c879b38806e29c7b41c9192aeca83e..c139e0419a86a6a0d5fa0912e9dce2783071f9eb
 Implementation checkpoint: 75a12d344a3dfd560cbdcf917e2480246974d2fc
-Previous FIX REQUIRED: WITHDRAWN — excluded old-task upgrade scenario
-Current acceptance: PENDING B GATES; no Task PASS issued
-Next: B CONTINUES ACCEPTANCE; no Developer fix requested for the withdrawn finding
+Decision: FIX REQUIRED — one P1, existing CLI retry-failed bypasses shared Task scheduling
+Previous upgrade finding: WITHDRAWN; old tasks / cross-version upgrades remain excluded
+Next: Developer fixes this entrance in Task47.3; B reviews the corrected candidate
 ```
 
-### Scope correction
+完整 Task Base..Head 的 43 个变更文件已独立审查。此前已修的同 Task 四类续作、原执行
+记录冻结和原子来源占用未发现新的阻塞；T4 回归结果见下。当前只剩以下真实入口问题，
+不是要求恢复旧任务、升级兼容或增加新的技术故障恢复产品。
 
-用户重申没有旧任务、不考虑升级。B 上轮把 schema56 已交人工 Task 的升级反例列为
-阻塞，范围判断错误，现撤回该 P1 及其四步返工要求；Developer 无需为该项再修改代码。
-该探针虽有实际输出，但其部署前提不在本轮范围，不能作为新任务交付的阻塞。
-上一评审与详细探针留在 Git/既有 ignored evidence，不删除失败日志或改称该探针通过。
+### P1 — 失败项重试仍能绕过统一队列直接修改文件
 
-当前产品候选未变化，后续 `c4e24211..0741e814` 只有 Task 文档；本轮只修正规划/评审
-范围，不重新要求实现，也不以撤回一项阻塞代替 T4 验收。Task 恢复 READY FOR B REVIEW。
+**用户会怎样遇到：** 本版本新建的 `organize <file> --execute` Task 在文件修改前失败，
+文件仍在来源。管理员修好故障后使用现有命令
+`tasks retry-failed <task-id> --execute`。若此时其他新整理 Task 已占满配置容量，普通
+`organize --execute` 会提示队列已满，但失败项重试仍直接移动文件并返回成功。
+因此容量限制和统一 claim/fence 对这个实际可执行入口失效。
 
-### Verified new-task corrections
+**真实复现（fresh 临时数据库、假 Provider、临时 LocalStorage）：**
 
-- 新任务首次自动处理结束时冻结 Task-owned 有界摘要，原 records-only 结果保持
-  failed/1 个成功/1 个等待人工；1 小时后恢复成功，原结果及 12:00 的原结束时间不变，
-  当前 Task 如实 completed/2、handling resolved。B 的新任务主反例已通过。
-- 上轮在同一产品候选运行的 **54 项 focused tests 通过**，包括真实 Run once/due 恢复、
-  原摘要读回、新来源占用竞争、CLI/remote 续作；原成功 sibling 未重放。
-  fresh 初始化与同版本 reopen 的结果继续适用；既有升级用例不构成本轮新增要求。
-- 原记录可见性、due trigger、同 Task 恢复及源所有权修复保留。摘要为 1:1 Task 证据，
-  无独立队列/claim/控制；新任务的原记录冻结方向已通过当前关键复核。
+1. 使用 `tests/test_automation_entrance_recovery.py::entrance_journey` 的真实 managed
+   配置/运行时/API/CLI 组合，仅配置合法电影识别规则、`maximumActiveJobs=1` 和来源显示根。
+2. 真实 CLI `organize <临时来源>/One (2001) [tmdbid-1].mkv --execute --limit 5`；
+   在实际 `OrganizerExecutor.execute` 依赖边界注入一次明确无效果的失败。原 Task 和 item
+   均为 failed、来源文件存在、共享容量占用为 0。没有伪造 Task、Result 或调度记录。
+3. 通过现有票据服务和 `POST /api/v1/jobs` 受理另一份合法 remote organize Task，
+   返回 202 / `executionMethod=task_engine`；该 Task queued，共享容量为 1。
+4. 对照调用普通 CLI organize，返回 exit 2，明确说明 shared organizing queue is full，
+   没有创建新工作或移动文件。
+5. 执行原 Task 的 `tasks retry-failed <id> --execute`，却返回 exit 0 / Moved 1；
+   来源文件消失，目标文件真实存在。新建 `retry-failed:<id>` Task 已 completed，
+   `get_task_scheduling(new_id)` 为 None；另一 Task 仍 queued，容量读回仍为 1。
+
+`cli_retry_capacity_probe.py` / `cli-retry-capacity.log` 保留完整入口、对照、文件效果和断言；
+最终断言按预期失败（0.48s），不能记作通过。最初缺少可执行 item 的 fixture 探索及
+探针自身语法错误保留在日志，不作为产品反例；最终使用正常的单文件 CLI 路径。
+
+**原因与位置：** `mediaflow/final_cli.py:1219–1243` 的 `tasks` 分支仍使用通用
+`PersistentTaskCoordinator.create()`，之后直接 `process_file()`，不设置 `kernel_context`。
+相邻普通 organize 分支已经使用 `_admit_direct_organize_task()`、命名 claim 和
+`KernelTaskCoordinator`。这是接入统一引擎时遗漏的既有入口，不是新需求。
+该重试分支在 Task Base 前已存在；本 Task 的 `1e46e5ba`（2026-11-01 00:25 +08:00）
+只接入了旁边的 organize 分支，当前候选仍保留此缺口，不声称旧重试代码是该提交新写的。
+对应当前 Task 的“真实入口完整”“共享容量/Worker”及 Slice RO-1/RO-2、AC-2/3/4。
+
+### Developer guidance — 修复这个入口，保持现有授权边界
+
+1. 在现有 `tests/test_automation_entrance_recovery.py` / `tests/test_batch_cli.py` 中加入
+   上述本版新任务复现，保留满队列普通 organize 对照。故障注入在真实 Executor 边界，
+   明确原失败无效果；不得伪造调度状态，不能使用旧任务/升级作为前提。
+2. 让该入口可合法执行的整理工作复用现有 Task scheduling admission、共享容量、命名
+   claim、心跳及 item/result/aggregate fence，再进入现有管线和 OrganizerExecutor。
+   不另建重试队列/执行器，不通过先建普通 Task 再补 scheduling 绕过原子性。保持原 pin、
+   来源版本、现有重试资格、显式 `--execute` 和原 execute-authorized 检查。不要把技术
+   retry 简单冒充四类业务 continuation；四类合法续作仍回原 Task，不能新增 Web 通用重试。
+3. 满队列必须在新执行工作创建、旧锁/占用释放或执行权消耗之前明确拒绝。拒绝后原失败
+   证据/来源/结果不变，无孤儿 Task/Job，无 Storage 修改，无后台自动重试。容量释放后，
+   仍由用户明确重试，通过正常来源/效果/授权核对后在共享引擎执行。
+4. 回归合法成功、满队列、未获原执行授权、无 `--execute` 零修改，以及已有成功 sibling
+   不重放。按原有可执行资格保留安全边界：本项不授权重放 partial/uncertain 或结果不明
+   的操作，不扩展技术/附件恢复，不刷新已消费权限，不做旧任务迁移。空失败集合不能为
+   证明接入成功而伪造可执行工作。
+5. Developer 只运行新/修改及直接受影响的 CLI、入口、Task scheduling/source ownership
+   回归和 changed-file lint，提交实际 checkpoint/results/risks。B 保留 full T4 门禁责任，
+   修复仍在本 Task，不另规划 Task 或提前关闭 Slice。
+
+### B 实际验收结果
+
+证据目录：
+`.git/validation-evidence/47aa9f9ee78253a088bb2bf065a8631876957d65/b-acceptance-20261101/`。
+产品代码输入为 `75a12d34`，B 验收适配提交为 `fc911bf3`、`c139e041`；这两个提交只调整
+测试/harness，没有修改生产行为或 A-owned 文档。
+
+| 门禁 | 实际结果 |
+|---|---|
+| Python full regression | 首次完整运行 3025 项，7 个版本 56 断言失败、1 个旧 API 响应字段错误；B 对齐当前 57/Task 响应后，完整四组 918+554+709+844=3025 项 OK，7 skipped，无遗漏文件。最终分组最慢 206.33s，并行运行。 |
+| Python quality / examples | Ruff format/check、compileall、pip check、两个 example 配置验证、禁用依赖搜索均通过；example 仅在隔离副本改数据库路径，不使用用户数据库。 |
+| Web full | typecheck/lint/format/build 通过；88 files / 1320 unit tests、253 E2E 全通过。构建仅有既有 chunk-size 提示。 |
+| Native Automation | Run once 17、workspace 8、settings resident 12，全部通过；原始 failed/1 记录/结束时间不随恢复成功改写，当前 Task 如实更新，成功 sibling 不重放。 |
+| Native Task Center | 八视图/分页/问题定位/重连和创建摘要确认共 2 项通过；已人工查看桌面、窄屏和各视图截图，布局和动作可用。 |
+| 新任务 Metadata correction | 真实 Run once→保存标题修正→同 Task 分析→摘要→明确确认→真实文件整理通过；Save/analysis 零修改，未新建 Job/顶层 Task。 |
+| Wheel | build + source-external installed CLI/API smoke 通过；wheel SHA256 `78f110c4f989abf9f803a55d7f2b25dd455095b05c87abe7def34121ba1ea3bc`。 |
+| Docker | 使用候选镜像完成 fresh/security/nonroot/RBAC/静态资源/managed Active/同版本 Worker 重启及真实新 Task 执行，全部通过；image `sha256:968319b1b4bbd1da57ac78bff8f581c804f71b4eddaca5406049c330aee5a95e`。 |
+| 新任务 CLI retry-failed | **FAIL — 唯一 P1**；真实满队列仍移动 1 个文件，新 Task 无 scheduling，见上述复现。 |
+| Governance / diff | governance PASS、完整范围 diff whitespace clean；预存未跟踪文件保持原状。 |
+
+7 个 skips 是既有 real SMB/S3/OpenList 及 Local/SMB/OpenList/S3 endurance 专用环境缺失；
+不声称跑过外部生产服务或耐久矩阵。现有相关升级测试保留且随全量运行通过，但不是本轮
+新增升级义务；用户排除的旧任务探针保持撤回。wheel/container 之后只有 B 测试输入变化，
+生产代码/资源一致，明确复用其结果。
+
+B 自行修正的验收输入不转成 Developer 产品阻塞：原生 Run once harness 原来还消费 Job/
+child Task；现已驱动实际 Task Worker/同 Task 记录。旧安全测试改读真实新 Task 响应；
+七个版本预期改为 57，没有增加升级实现。workspace/settings 同时运行会竞争同一共享
+Active fixture，分开 fresh harness 执行后通过；Docker 首次失败源于 Colima 不可见的
+macOS 临时挂载目录，改用仓库内隔离临时目录后通过。首次失败/中断日志均保留，未删断言、
+加重试或调整超时掩盖失败。全量 Python、Web、原生、打包和关键探针均使用临时数据。
+
+本轮从 2026-11-01 14:30:31 +08:00 开始；所有带计时日志的测试实际占用墙钟按重叠区间
+去重约 13 分钟（并行命令累计约 25 分钟，二者明确区分）。测试占本轮总墙钟不足 50%，
+其余用于完整 diff/入口/合同核对、fixture 修正、截图审查及验收指导，没有空等凑比例。
+精确结束时间和重叠区间统计保存在证据目录 `acceptance-manifest.json`。
 
 ### 已验收的来源占用行为（保留开发指导）
 
@@ -324,39 +401,26 @@ Next: B CONTINUES ACCEPTANCE; no Developer fix requested for the withdrawn findi
 验收至少用上述两个 Task 的实际 item/Result 和用户读回证明：A 只有一个未完成 owner，
 另一份是无修改的拒绝记录；等待人工时 owner 不变；B 不被整批连带阻塞。沿用现有结果/恢复模型，不新增等待队列或占用管理界面。
 
-### Actual evidence and remaining B acceptance
-
-Matching product-candidate evidence:
-`.git/validation-evidence/c4e24211368a5c1bea1d1b8a86801318009e558d/b-review-20261101/`.
-
-- `focused.log` — 54 tests passed, 7.500s / 7.77s wall on the unchanged product candidate.
-- `initial_pass_record_probe.log` — new-task original-record recovery probe PASS, 0.46s wall.
-- The previous `upgraded_waiting_probe.log` failure remains recorded but is **out of scope and
-  non-blocking** under the explicit user boundary; its fix/test plan has been withdrawn.
-- This scope-correction checkpoint changes only TASK.md; governance and whitespace checks pass.
-  No production/test/harness/A-owned files changed; unrelated untracked files remain unstaged.
-- Full T4 Python/Web/E2E/native visual/wheel/Docker fresh/restart/security acceptance remains
-  B-owned and pending; no PASS is claimed. Cross-version upgrades/old-task migration are excluded.
-  Earlier native harness composition failures remain B's gate work, not Developer product blockers.
-
 ### Entire Slice outcome reassessment under the user boundary
 
 | Outcome | Current result |
 |---|---|
-| RO-1 — stable Task and shared scheduling | New-task foundations and focused source/claim regressions pass; full acceptance pending. |
-| RO-2 — one engine across entrances | Due/Run once/CLI/remote foundations retained; broader assigned acceptance pending. |
-| RO-3 — same-work four-type recovery | New-task main recovery/original-record proof passes; old-task upgrade finding withdrawn. |
-| RO-4 — historical migration / Job removal | Old-task migration/upgrade is excluded by the user; independent Job structure removal is not claimed delivered by this Task. |
-| RO-5 — complete operator/admin journeys | New-task original records pass critical proof; broader native/readback/full gates remain pending. |
+| RO-1 — stable Task / shared scheduling | 主路径、容量/来源/并发回归通过；CLI retry-failed 绕过队列，未完成。 |
+| RO-2 — one engine across entrances | due/Run once/direct/remote 及续作通过；现有 retry-failed 仍走通用非 kernel 执行路径，未完成。 |
+| RO-3 — same-work four-type recovery | 新任务四类、原执行记录与独立 sibling 回归通过；不要求旧任务升级。 |
+| RO-4 — Job removal | 旧任务迁移/升级按用户指令排除；独立 Job schema/model/dispatcher 的完整移除仍不由本 Task 声称完成。 |
+| RO-5 — operator/admin journeys | Web/native/records/readiness/packaging 回归通过；CLI 管理入口仍受上述 P1 阻塞。 |
 
-No next Task or Slice closure is planned/claimed. B continues acceptance of the current new-task
-candidate. Task47.2 PASS and A-owned Slice/Roadmap/Progress remain unchanged.
+相关回归覆盖 AC-1/5–8/12–17/19 的本 Task 适用新任务场景；不代替整个 Slice 的逐项
+结论。AC-2/3/4/15 因该实际入口缺口不能完整通过。AC-9/10 和旧版本升级证明已排除；AC-11 全量 Job 移除未交付；AC-18 的
+B 证据已提供但 Task/Slice 未 PASS，仍需修复与最终独立 A 审查。没有新 Task、Slice closure
+或 A-owned 状态修改，Task47.2 PASS 保持不变。
 
 ### Developer guidance — complete the three corrections in this Task
 
-以下保留原三项实施指导供新任务验收回归参照；已修部分以上述 Verified 为准。
+以下保留原三项实施指导供新任务验收回归参照；已修部分以上述验收结果为准。
 其中任何旧任务/升级/历史兼容条款均受本轮用户边界覆盖，不再产生返工义务。
-当前无须因上轮升级反例进入 IN PROGRESS；B 负责继续验收，未新增 Developer 修复任务。
+上轮升级反例仍无需修复；本次 IN PROGRESS 仅修复上方已证明的新任务 CLI retry-failed 缺口。
 
 #### 1. 自动任务的决定、分析、摘要和明确执行接起来
 
