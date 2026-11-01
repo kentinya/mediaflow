@@ -1798,7 +1798,7 @@ def register_manual_worker(state: AppState) -> dict[str, object]:
     return {"registered": True}
 
 
-def _run_manual_task_once(state: AppState):
+def _run_manual_task_once(state: AppState, *, task_id: str | None = None):
     """Advance new Files work with the resident's production Task engine.
 
     Legacy runners deliberately exclude these rows. Reuse the API's real
@@ -1807,19 +1807,52 @@ def _run_manual_task_once(state: AppState):
     """
     from mediaflow.application.manual_task_engine import ManualTaskEngineWorker
     from mediaflow.application.task_scheduling import TaskSchedulingService
+    from mediaflow.final_cli import _automatic_task_runner
 
     register_manual_worker(state)
-    return ManualTaskEngineWorker(
+    if task_id is not None:
+        task = state.repository.get_task(task_id)
+        state.repository.register_worker(
+            "harness-manual-worker",
+            "Harness Task Worker",
+            10.0,
+            ("organize", "manual_organize", "media_discovery"),
+            task.configuration_snapshot_id,
+            task.configuration_snapshot_digest,
+            SCHEMA_VERSION,
+            datetime.now(UTC),
+        )
+    scheduling = TaskSchedulingService(
         state.repository,
-        TaskSchedulingService(
-            state.repository,
-            capacity=state.managed.runtime.automation_maximum_active_jobs,
-            locks=state.repository,
-        ),
+        capacity=state.managed.runtime.automation_maximum_active_jobs,
+        locks=state.repository,
+    )
+    worker = ManualTaskEngineWorker(
+        state.repository,
+        scheduling,
         state.api._media_discovery,
         state.api._manual_execution,
         worker_id="harness-manual-worker",
-    ).run_next()
+        automatic_runner=_automatic_task_runner(
+            state.repository, str(state.managed.config_path), scheduling
+        ),
+    )
+    # A named harness command selects through the production named-Task claim;
+    # the real Worker still owns routing, fencing, execution and settlement.
+    claim = scheduling.claim_next
+    if task_id is not None:
+
+        def claim(**kwargs):
+            return scheduling.claim(task_id, **kwargs)
+
+    with (
+        patch.object(scheduling, "claim_next", claim),
+        patch(
+            "mediaflow.final_cli.metadata_provider_registry_from_environment",
+            lambda _ids: state.managed.metadata_registry,
+        ),
+    ):
+        return worker.run_next()
 
 
 def _run_discovery_step(state: AppState):
@@ -1925,11 +1958,14 @@ def run_manual_worker_once(state: AppState) -> dict[str, object]:
             if completed is None:
                 before = {
                     value.execution_id: value
-                    for task in state.repository.list_tasks(limit=1000, command="manual_organize")
+                    for task in state.repository.list_tasks(limit=1000)
                     if state.repository.get_task_scheduling(task.task_id) is not None
                     for value in state.repository.list_manual_executions_for_task(task.task_id)
                 }
-                task = _run_manual_task_once(state)
+                pending_task_id = next(
+                    (v.task_id for v in before.values() if v.status.value == "admitted"), None
+                )
+                task = _run_manual_task_once(state, task_id=pending_task_id)
                 if task is not None:
                     # A Task can stay running for an unselected sibling while
                     # this exact execution has completed. Report the execution,
@@ -2796,6 +2832,18 @@ def run_task_item_recovery_worker_once(
     state: AppState, *, item_id: str | None = None
 ) -> dict[str, object]:
     """Run the real resident queued-workflow handler for the recovery Job."""
+
+    if item_id is not None:
+        item = state.repository.get_item(item_id)
+        if item is not None and state.repository.get_task_scheduling(item.task_id) is not None:
+            advanced = _run_manual_task_once(state, task_id=item.task_id)
+            current = state.repository.get_item(item_id)
+            return {
+                "ran": advanced is not None,
+                "taskId": item.task_id,
+                "analysisCompleted": current.status.value == "waiting_confirm",
+                "itemStatus": current.status.value,
+            }
 
     recovery_item_ids = [
         str(value)
@@ -4242,6 +4290,30 @@ def run_automation_run_once_worker(
     Executor seam; other siblings execute normally against temporary roots.
     """
 
+    task = state.repository.get_task(discovery_id)
+    scheduling = state.repository.get_task_scheduling(discovery_id)
+    if task is not None and scheduling is not None:
+        failed_sources = {
+            "one": ("Two.2002.mkv",),
+            "two": ("Two.2002.mkv", "Three.2003.mkv"),
+            "third": ("Three.2003.mkv",),
+        }.get(failure_fixture)
+        if failed_sources:
+            executor = _failure_for_named_execution_items(failed_sources)
+            with patch(
+                "mediaflow.application.automation_definition_execution.OrganizerExecutor",
+                lambda *_args: executor,
+            ):
+                advanced = _run_manual_task_once(state, task_id=task.task_id)
+        else:
+            advanced = _run_manual_task_once(state, task_id=task.task_id)
+        current = state.repository.get_task(task.task_id)
+        return {
+            "advanced": advanced is not None,
+            "taskId": task.task_id,
+            "status": current.status.value,
+        }
+
     job = state.repository.get_job(discovery_id)
     if job is not None and job.run_once:
         from mediaflow.final_cli import _run_queued_workflow
@@ -4346,6 +4418,25 @@ def automation_run_once_state(state: AppState, *, discovery_id: str) -> dict[str
     Bounded reads only: the exact frozen source paths and the durable origin.
     No Storage, Provider or work is touched.
     """
+
+    task = state.repository.get_task(discovery_id)
+    scheduling = state.repository.get_task_scheduling(discovery_id)
+    if task is not None and scheduling is not None:
+        document = state.api._automation_run_once.document(
+            state.api._automation_run_once.get(discovery_id)
+        )
+        items = state.repository.list_items(task.task_id)
+        return {
+            "found": True,
+            **document,
+            "discoveryId": task.task_id,
+            "sources": [item.source_path for item in items],
+            "primarySourceCount": len(items),
+            "items": [
+                {"itemId": item.item_id, "status": item.status.value, "path": item.source_path}
+                for item in items
+            ],
+        }
 
     job = state.repository.get_job(discovery_id)
     if job is not None and job.run_once:
@@ -4797,7 +4888,11 @@ def automation_record_evidence(
     page uses, through the real repository, and never mutates anything.
     """
 
-    arguments: dict[str, object] = {"limit": 100, "automation_admissions": True}
+    arguments: dict[str, object] = {
+        "limit": 100,
+        "automation_admissions": True,
+        "record_evidence": True,
+    }
     if definition_id:
         arguments["definition_id"] = definition_id
     try:
@@ -4837,6 +4932,16 @@ def automation_record_evidence(
                 document["handling"] = handling.get(record.task_id)
                 evidence = state.repository.automation_record_failure_evidence((record.task_id,))
                 document["failureEvidence"] = evidence.get(record.task_id)
+                from mediaflow.application.automation_record_display import (
+                    automation_record_display,
+                )
+
+                document["recordOutcome"] = automation_record_display(
+                    record, evidence.get(record.task_id)
+                )
+                original = record.automation_record_evidence or {}
+                document["recordStartedAt"] = original.get("record_started_at")
+                document["recordFinishedAt"] = original.get("record_finished_at")
     return document
 
 

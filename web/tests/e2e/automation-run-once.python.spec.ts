@@ -251,7 +251,7 @@ for (const technicalSibling of [false, true]) {
     );
     expect(await worker.json()).toMatchObject({
       advanced: true,
-      status: "completed",
+      status: "running",
     });
     const state = await (
       await page.request.get(
@@ -273,8 +273,10 @@ for (const technicalSibling of [false, true]) {
         )
       ).json();
     const initial = await evidence();
-    expect(initial.record.status).toBe("partial_success");
-    expect(initial.record.successItems).toBe(1);
+    expect(initial.record.status).toBe("running");
+    expect(initial.recordOutcome.status).toBe("failed");
+    expect(initial.recordOutcome.successItems).toBe(1);
+    expect(initial.recordFinishedAt).toBeTruthy();
     expect(initial.handling.affectedItems).toBe(technicalSibling ? 2 : 1);
     expect(initial.handling.resolvedItems).toBe(0);
     const before = await (
@@ -308,7 +310,8 @@ for (const technicalSibling of [false, true]) {
     const analyzedBody = await analyzed.json();
     expect(analyzedBody, JSON.stringify(analyzedBody)).toMatchObject({
       ran: true,
-      continuationStatus: "completed",
+      taskId: state.taskId,
+      analysisCompleted: true,
     });
     const afterAnalysis = await evidence();
     expect(afterAnalysis.population).toEqual(initial.population);
@@ -317,19 +320,6 @@ for (const technicalSibling of [false, true]) {
     expect(afterAnalysis.handling.state).not.toBe("resolved");
     await page.request.post("/__harness__/register-manual-worker");
     await recovery.getByRole("button", { name: "刷新" }).click();
-    const prepared = page.waitForResponse(
-      (response) =>
-        response.request().method() === "POST" &&
-        response.url().endsWith("/recovery/prepare-summary"),
-    );
-    await recovery
-      .getByRole("button", { name: "生成计划摘要并在此确认" })
-      .click();
-    const preparedResponse = await prepared;
-    expect(
-      preparedResponse.status(),
-      JSON.stringify(await preparedResponse.json()),
-    ).toBe(201);
     const summary = page.getByRole("region", { name: "新计划摘要" });
     await expect(summary).toBeVisible();
     const confirmed = page.waitForResponse(
@@ -362,11 +352,18 @@ for (const technicalSibling of [false, true]) {
     const final = await evidence();
     expect(final.population).toEqual(initial.population);
     expect(final.total).toBe(initial.total);
-    expect(final.record.successItems).toBe(1);
+    expect(final.record.successItems).toBe(2);
+    expect(final.recordOutcome).toEqual(initial.recordOutcome);
+    expect(final.recordStartedAt).toBe(initial.recordStartedAt);
+    expect(final.recordFinishedAt).toBe(initial.recordFinishedAt);
     expect(final.handling.affectedItems).toBe(technicalSibling ? 2 : 1);
     expect(final.handling.resolvedItems).toBe(1);
+    // One Task now retains the independent failed sibling, so the overall
+    // linked work remains unresolved even though this selected execution won.
+    expect(final.handling.latestExecutionStatus).toBe("completed");
+    expect(final.handling.unresolvedItems).toBe(technicalSibling ? 1 : 0);
     expect(final.handling.state).toBe(
-      technicalSibling ? "investigation" : "resolved",
+      technicalSibling ? "recovery_failed" : "resolved",
     );
     if (technicalSibling) {
       expect(final.record.status).toBe("partial_success");
