@@ -12,7 +12,7 @@ Recheck intervening commits without silently repinning the Task Base.
 Task ID: 47.3
 Task Type: SLICE
 Parent Slice: 47
-Status: IN PROGRESS
+Status: READY FOR B REVIEW
 Task Base: dfcfebbdb9c879b38806e29c7b41c9192aeca83e
 Difficulty: High
 Test Level: T4
@@ -633,6 +633,129 @@ Files discovery reservation 挡住自动入口；stale claim 零写入；合法�
    （B 的更广验收）。
 5. 无 schema 变更（延续 schema56）；未修改 Web 投影，故未跑 Web 构建/E2E。
 6. B 仍负责 T4 full Python/Web/E2E/wheel/Docker/native 门禁与独立审查；本轮未运行这些
+   门禁。
+
+### Scope statement
+
+未读写用户数据库/生产媒体；未修改 A-owned Slice/Roadmap/Progress；未 push/部署；预存
+无关未跟踪文件保持未暂存。B 负责本 Task 原 T4 验收与独立审查。
+
+## Developer Completion Report — Round 7
+
+**Status: READY FOR B REVIEW.** Same-Task correction checkpoint for the one B blocker of review
+`902c5124`（同 Task 恢复确认后，原自动化运行从执行记录中被排除）；不是自评 PASS。
+
+```text
+Task Base: dfcfebbdb9c879b38806e29c7b41c9192aeca83e (not repinned)
+Code/test checkpoint: b9fc928b (fix(task47.3): same-Task recovery keeps the original Automation record)
+Report checkpoint: this documentation commit
+Pre-existing untracked files: preserved, unstaged. No push/deploy/self-approval.
+```
+
+### Correction implemented（按 B 的四步）
+
+1. **固化现有入口反例。** 新增 `tests.test_v2_automation_run_once.
+   test_conflict_recovery_keeps_the_original_automation_record`：真实 Run once 受理两文件，
+   预置真实目标冲突，共享 Worker 首次执行后 One 停在 `waiting_confirm`、Two 成功；沿既有
+   decision → continue → 同 Task 零修改分析 → summary → confirm → 共享
+   `ManualTaskEngineWorker` 路径完成恢复。修复前该测试在确认后立即复现 B 的发现
+   （records `total` 1→0）；修复后全程断言：初次运行后、分析后、确认后、恢复执行后、
+   reopen 后 records 均恰好一条原运行，`recordId`/task/origin(`definition-run-once`/
+   nightly)/trigger 不变，`statusCounts` 合计为 1；成功 sibling 不回放（Two 的 delete
+   mutation 恰一次、目标仅一份）；首次执行的 Result `created_at` 不被改写；
+   `executionStartedAt` 四次读取一致且等于首次执行真实开始；metrics
+   （`automation_run_metrics` 显式窗口）`currentAdmitted/currentTerminal/currentCompleted`
+   均为 1，`automation_latest_admitted_runs` 的 nightly latest 仍是原运行。
+2. **修正身份判断。** `SQLiteTaskRepository._recovery_follow_up_sql()` 的 manual-execution
+   分支现在只在"执行被准入为与恢复 `source_task_id` **不同**的 Task"时证明 follow-up
+   lineage（旧模型确认新建顶层 Task 的历史形态）；`source_task_id` 等于执行自身 Task 的
+   同 Task 恢复执行是原运行自己的延续，不再把原运行排除。三个 continuation 分支未动；
+   既有 `test_recovery_follow_up_task_is_not_an_original_admission` /
+   `test_follow_up_exclusion_survives_reopen_and_keeps_latest_original`（旧形态 execution
+   task ≠ source task）继续通过，旧独立后续工作仍不多算原运行。该修复同样覆盖 Files
+   同 Task 恢复确认在 Job 关联原运行上的同一排除形状。
+3. **保持原始执行事实。** 未新增/删除任何执行记录或恢复关系；记录的
+   `executionStartedAt` 一直是首次执行真实开始且全程不变，`executionFinishedAt` 只在
+   Task 真实结算后出现；首次执行对 Two 的 Result（含原 `created_at`）原样保留；
+   `recovered_completion=False`（同 Task 自身完成，非"恢复成功"投影）；恢复进度继续由
+   `handling`（unhandled→handling→resolved，`resolvedItems=1`）与 Task Center 单独呈现。
+4. **验证共同读回。** 同一 fixture 覆盖 records 过滤/计数（含 `trigger=scheduled` /
+   `trigger=manual` 选择器）、metrics cohort、definition latest；due 场景扩展进既有
+   `test_scheduled_decision_summary_belongs_to_the_continuing_operator`：恢复完成后 due
+   运行仍是唯一原记录、trigger 如实为 `scheduled`、handling resolved。
+
+### 边界说明（供 B 独立核对，非缩小范围）
+
+- **due kernel Task 的 trigger 读回修正。** 验证 due 覆盖时发现：本 Task 新引入的
+  kernel due 受理（`origin_kind='definition-scheduled'`，无 Job row）在 records 中
+  trigger 被派生为 `manual`——该 SQL 分支写于本 Task 之前（彼时 `origin_definition_id`
+  只来自 Run once）。`derived_trigger` 现按已持久化的 `origin_kind` 精确增加一个
+  `definition-scheduled → scheduled` 分支；Run once 仍为 `manual`，legacy/未知不变。
+  这属于原 scope 7"新工作读回不依赖 Job row"的最小必要修正，无 schema 变更。
+- **B 探针第二条断言的字面差异（需 B 裁决）。** B 的 `original_record_probe.py` 在本候选上
+  第一断言（原记录可见）已通过，但 `before['result']==after['result']` 仍失败：恢复完成后
+  记录如实显示 `completed/已整理 2 个条目`（确认前为 `running/1`）。本实现按
+  "正常初次运行自身的进展仍可更新"采用现有活跃读模型：同一运行=同一 Task，同 Task 恢复
+  是该运行自身进展，`record_outcome`/`derived_status` 全库一致地派生自 Task 真实状态；
+  若把已完成运行永久冻结为 `running/1` 则是虚假展示，且需引入第二生命周期/历史执行系统
+  （原 Task 明令禁止）。原执行事实以可证明方式保留：首次执行 Result 原时戳、真实
+  started_at、`handling` 单独呈现恢复。如 B 认定记录必须冻结初次执行边界结果，请在同一
+  Task 内明确该读模型语义与所需最小存储，Developer 继续修复。
+
+### Actual validation（本轮命令与结果，证据在
+`.git/validation-evidence/b9fc928b99fbaa53af91426ee9e768808765e294/dev-round7/`）
+
+```sh
+.venv/bin/python -m unittest tests.test_automation_admission \
+  tests.test_automation_definition_occurrence tests.test_automation_execution_intent \
+  tests.test_v2_automation_run_once tests.test_automation_definition_execution \
+  tests.test_automation_run_once tests.test_execution_authorization tests.test_automation_api
+# Ran 178 tests — OK（11.9s）
+
+.venv/bin/python -m unittest tests.test_task_scheduling tests.test_task_scheduling_fencing \
+  tests.test_manual_task_engine tests.test_processing_worker_readiness \
+  tests.test_automation_job_fencing
+# Ran 127 tests — OK（9.7s）
+
+.venv/bin/python -m unittest tests.test_automation_workspace_read_model \
+  tests.test_operations_run_inventory tests.test_operations_run_detail \
+  tests.test_task_center_recovery_lineage tests.test_v2_automation_operations
+# Ran 145 tests — OK（22.9s，trigger 修正后在已提交候选上复跑）
+
+.venv/bin/python -m unittest tests.test_v2_automation_operations \
+  tests.test_automation_entrance_recovery tests.test_operator_job_submission \
+  tests.test_task_source_ownership_race tests.test_recovery_continuation \
+  tests.test_operations_task_center
+# Ran 133 tests — OK（33.7s）
+
+.venv/bin/python -m unittest tests.test_task_scheduling_migration \
+  tests.test_automation_settings_resident
+# Ran 33 tests — OK（45.5s；无 schema/resident 变更，条件性确认）
+
+.venv/bin/python -m unittest tests.test_v2_automation_run_once
+# Ran 34 tests — OK（4.7s）
+
+.venv/bin/ruff format --check / ruff check <两个修改文件>   # 全部通过
+.venv/bin/python -m compileall -q mediaflow tests           # OK
+python3 scripts/check_governance.py                          # PASS
+git diff --check                                             # clean
+```
+
+B 的 `original_record_probe.py` 在本候选上的结果见
+`original_record_probe.after-fix.log`：第一断言通过（记录可见、身份不变），第二断言的
+字面差异见上节边界说明。本轮计时测试合计约 146s，低于本轮总耗时 50%；无空等凑比例，
+未删断言、未加重试、未改超时。
+
+### Remaining work / risks（如实陈述，未自评 PASS）
+
+1. B 探针第二条断言的语义裁决（见边界说明）——若 B 要求冻结初次执行边界结果，需其明确
+   读模型语义后再修。
+2. Metadata / Metadata-correction 的自动续作仍无各自独立 API 端到端测试（Round 4/5
+   遗留，本轮未扩大）；本轮反例覆盖 conflict 类型。
+3. 无 schema 变更（延续现有版本）；未修改 Web 投影/harness，故未跑 Web 构建/E2E；
+   B 的 native Automation spec 中 4 个旧断言失败仍由 B 适配（上轮已披露的旧测试组合
+   证据，非本轮引入）。
+4. B 仍负责 T4 full Python/Web/E2E/wheel/Docker/native 门禁与独立审查；本轮未运行这些
    门禁。
 
 ### Scope statement
