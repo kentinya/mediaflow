@@ -27,31 +27,11 @@ from mediaflow.domain.task_persistence import (
     TaskItemStatus,
     require_retryable_task_command,
 )
+from mediaflow.domain.task_scheduling import TaskSourceOwnedError
 
 
 class TaskLockError(RuntimeError):
     pass
-
-
-class TaskSourceOwnedError(RuntimeError):
-    """One concrete source still belongs to another unfinished organizing work.
-
-    A short-lived execution lease is *not* unfinished-work ownership: a queued,
-    paused or decision-pending Files admission holds no ``file_locks`` row, so an
-    execution lock alone can never prove a source is free.  This boundary refuses
-    the second attempt with the durable owner it found, before any Provider call
-    or mutation, and publishes that refusal as the item's own failed outcome.
-    """
-
-    def __init__(self, owner: dict[str, object] | None = None) -> None:
-        super().__init__(
-            "source already organizing: this file still belongs to an unfinished "
-            "organizing work, so this run did not take it over"
-        )
-        # The authorized existing-work reference, already bounded by the
-        # repository: it names the owning work only when this principal is
-        # allowed to read it and is otherwise just the fact of ownership.
-        self.owner = dict(owner or {})
 
 
 class TaskPauseRequested(RuntimeError):
@@ -1182,7 +1162,10 @@ class KernelTaskCoordinator(PersistentTaskCoordinator):
         The cross-Task source-ownership decision is re-checked here exactly as
         the manual path does it: a source another unfinished work owns is
         refused before this TaskItem is started, while this Task's own rows are
-        never a competing owner.
+        never a competing owner.  The read below is only the fast refusal; the
+        decisive check runs inside the scheduling service's one repository
+        transaction together with the claim fence and the item write, so two
+        Workers that both observe the source free can never both register it.
         """
 
         self._keepalive()
@@ -1213,6 +1196,9 @@ class KernelTaskCoordinator(PersistentTaskCoordinator):
             source_fingerprint_state=source_fingerprint_state,
             source_observed_at=source_observed_at,
             source_storage_path=source_storage_path,
+            source_version=source_version,
+            ownership_lineage_task_ids=ownership_lineage_task_ids,
+            enforce_source_ownership=enforce_source_ownership,
             now=self._clock(),
         )
 

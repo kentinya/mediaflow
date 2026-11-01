@@ -159,6 +159,30 @@ class TaskControlRejected(TaskSchedulingError):
     """A control/requeue request is not valid for the Task's durable state."""
 
 
+class TaskSourceOwnedError(TaskSchedulingError):
+    """One concrete source still belongs to another unfinished organizing work.
+
+    A short-lived execution lease is *not* unfinished-work ownership: a queued,
+    paused or decision-pending Files admission holds no ``file_locks`` row, so an
+    execution lock alone can never prove a source is free.  This boundary refuses
+    the second attempt with the durable owner it found, before any Provider call
+    or mutation, and publishes that refusal as the item's own failed outcome.
+    The refusing boundary is the same transaction that starts the item, so two
+    concurrent Workers can never both observe the source free and then each
+    register it.
+    """
+
+    def __init__(self, owner: dict[str, object] | None = None) -> None:
+        super().__init__(
+            "source already organizing: this file still belongs to an unfinished "
+            "organizing work, so this run did not take it over"
+        )
+        # The authorized existing-work reference, already bounded by the
+        # repository: it names the owning work only when this principal is
+        # allowed to read it and is otherwise just the fact of ownership.
+        self.owner = dict(owner or {})
+
+
 class TaskWorkerRejected(TaskSchedulingError):
     """The claiming Worker is not eligible to take scheduled Task work."""
 

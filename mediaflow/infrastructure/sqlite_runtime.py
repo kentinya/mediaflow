@@ -20546,6 +20546,68 @@ class SQLiteTaskRepository:
             self._connection.commit()
         return True
 
+    def begin_scheduled_item_with_ownership(
+        self,
+        fence: TaskClaimFence,
+        item: PersistentTaskItem,
+        *,
+        source_version: SourceVersionEvidence | None = None,
+        exclude_lineage_task_id: str | None = None,
+        stage: TaskItemPublication = TaskItemPublication.START,
+    ) -> tuple[bool, dict[str, object] | None]:
+        """Start one scheduled TaskItem only while its source is still free.
+
+        Task47.3: the kernel-managed item start previously re-checked cross-Task
+        source ownership *before* the claim-fenced write, so two concurrent
+        Workers of two legitimate admissions could both pass that read and then
+        each register the same verified source as their own unfinished work.
+        This is the deciding boundary instead: one ``BEGIN IMMEDIATE``
+        transaction resolves the live claim, the shared source ownership and
+        this attempt's item write together, reusing exactly the identity,
+        version, discovery-reservation and legal-lineage rules of
+        ``claim_task_item_with_ownership`` plus the scheduled attempt/outcome
+        protections of ``_require_scheduled_item_locked``.
+
+        Returns ``(True, None)`` after the item row is committed, ``(False,
+        owner)`` when another unfinished work owns the source (nothing written)
+        and ``(False, None)`` when this Worker no longer owns the claim (nothing
+        written).  No Storage/Provider call happens inside the transaction, so a
+        slow provider can never hold the write lock.
+        """
+
+        if not isinstance(fence, TaskClaimFence):
+            raise ValueError("Task claim fence is required")
+        if item.source_storage_path is None:
+            raise ValueError("Task item source Storage identity is required")
+        stage = TaskItemPublication(stage)
+        with self._lock, self._connection:
+            self._connection.execute("BEGIN IMMEDIATE")
+            try:
+                if not self._scheduled_claim_locked(fence):
+                    self._connection.rollback()
+                    return False, None
+                owner = self._find_owned_source_work_locked(
+                    storage_id=item.storage_id,
+                    source_path=item.source_path,
+                    storage_path=item.source_storage_path,
+                    resource_library_id=item.resource_library_id,
+                    source_fingerprint=item.source_fingerprint,
+                    source_version=source_version,
+                    exclude_task_id=item.task_id,
+                    exclude_lineage_task_id=exclude_lineage_task_id,
+                )
+                if owner is not None:
+                    self._connection.rollback()
+                    return False, owner
+                self._require_scheduled_item_locked(fence.task_id, item, stage=stage)
+                bound = self._bind_item_to_current_occurrence(item)
+                self._connection.execute(_TASK_ITEM_UPSERT, self._item_values(bound))
+            except BaseException:
+                self._connection.rollback()
+                raise
+            self._connection.commit()
+        return True, None
+
     def begin_scheduled_mutation(self, fence: TaskClaimFence, *, item_id: str, action: str) -> bool:
         """Record the durable boundary immediately before one Storage mutation.
 

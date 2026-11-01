@@ -32,6 +32,7 @@ from uuid import NAMESPACE_URL, uuid4, uuid5
 
 from mediaflow.domain.manual_execution import ManualExecution, ManualExecutionItem
 from mediaflow.domain.media_evidence import PipelineEvidence
+from mediaflow.domain.source_evidence import SourceVersionEvidence
 from mediaflow.domain.task_persistence import (
     FileOperationLockRepository,
     PersistentResultRecord,
@@ -55,6 +56,7 @@ from mediaflow.domain.task_scheduling import (
     TaskQueueState,
     TaskSchedulingRepository,
     TaskSchedulingState,
+    TaskSourceOwnedError,
     TaskTrigger,
     require_capacity,
     require_lease_seconds,
@@ -581,6 +583,9 @@ class TaskSchedulingService:
         source_fingerprint_state: str = "unverified",
         source_observed_at: datetime | None = None,
         source_storage_path: str | None = None,
+        source_version: SourceVersionEvidence | None = None,
+        ownership_lineage_task_ids: tuple[str, ...] = (),
+        enforce_source_ownership: bool = False,
         now: datetime | None = None,
     ) -> PersistentTaskItem:
         """Start one concrete source of this claimed Task.
@@ -595,6 +600,11 @@ class TaskSchedulingService:
         item keeps its known occurrence/fingerprint, ResourceLibrary/Storage
         path and first observation: a different known version is refused rather
         than becoming the work's new source.
+
+        With ``enforce_source_ownership`` the cross-Task ownership decision and
+        this item's start are one repository transaction: a source another
+        unfinished work owns is refused with nothing written, while this Task's
+        own rows and its legal lineage are never a competing owner.
         """
 
         current = self._now(now)
@@ -631,11 +641,77 @@ class TaskSchedulingService:
             # continuation, while a direct writer that names another version
             # is refused there.
             started = resume_item_source_binding(previous, started)
-        if not self._repository.upsert_scheduled_item(
-            claim.fence(current), started, stage=TaskItemPublication.START
+        fence = claim.fence(current)
+        if enforce_source_ownership and source_storage_path is not None:
+            self._begin_item_with_ownership(
+                fence,
+                started,
+                source_version=source_version,
+                ownership_lineage_task_ids=ownership_lineage_task_ids,
+            )
+        elif not self._repository.upsert_scheduled_item(
+            fence,
+            started,
+            stage=TaskItemPublication.START,
         ):
             raise TaskClaimFenceLost(f"task {claim.task_id!r} is no longer owned by this Worker")
         return self._repository.get_item(item_id) or started
+
+    def _begin_item_with_ownership(
+        self,
+        fence: TaskClaimFence,
+        item: PersistentTaskItem,
+        *,
+        source_version: SourceVersionEvidence | None,
+        ownership_lineage_task_ids: tuple[str, ...],
+    ) -> None:
+        """The decisive ownership boundary for one scheduled item start.
+
+        The production repository answers the claim fence, the shared source
+        ownership and the item write inside one transaction.  A repository that
+        cannot make that combined decision is never treated as if the source
+        were free: it falls back to the read-only ownership answer plus the
+        claim-fenced write, which keeps every existing protection except the
+        cross-Worker atomicity only the production boundary provides.
+        """
+
+        boundary = getattr(self._repository, "begin_scheduled_item_with_ownership", None)
+        if callable(boundary):
+            written, owner = boundary(
+                fence,
+                item,
+                stage=TaskItemPublication.START,
+                source_version=source_version,
+                exclude_lineage_task_id=(
+                    ownership_lineage_task_ids[0] if ownership_lineage_task_ids else None
+                ),
+            )
+            if written:
+                return
+            if owner is not None:
+                raise TaskSourceOwnedError(owner)
+            raise TaskClaimFenceLost(f"task {item.task_id!r} is no longer owned by this Worker")
+        finder = getattr(self._repository, "find_owned_source_work", None)
+        if callable(finder):
+            owner = finder(
+                storage_id=item.storage_id,
+                source_path=item.source_path,
+                storage_path=item.source_storage_path,
+                resource_library_id=item.resource_library_id,
+                source_version=source_version,
+                exclude_task_id=item.task_id,
+                exclude_lineage_task_id=(
+                    ownership_lineage_task_ids[0] if ownership_lineage_task_ids else None
+                ),
+            )
+            if owner is not None:
+                raise TaskSourceOwnedError(owner)
+        if not self._repository.upsert_scheduled_item(
+            fence,
+            item,
+            stage=TaskItemPublication.START,
+        ):
+            raise TaskClaimFenceLost(f"task {item.task_id!r} is no longer owned by this Worker")
 
     def begin_existing_item(
         self,
