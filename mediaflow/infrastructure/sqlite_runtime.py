@@ -6638,7 +6638,13 @@ class SQLiteTaskRepository:
         - a same-page recovery execution is the confirmed execution of one
           ``manual_recovery_preparations`` summary and/or the consumed
           ``manual_recovery_links`` anchor, and both tables persist the exact
-          ``manual_executions.task_id`` they admitted.
+          ``manual_executions.task_id`` they admitted.  That execution is a
+          *follow-up* only when it was admitted as a different Task than the
+          recovery's own ``source_task_id`` — the historical shape where the
+          confirmation minted a new top-level Task.  The same-Task recovery of
+          this Task (the admitted execution runs *as* the unfinished source
+          Task under the same pin and actor) is that original run's own
+          continued work, so it never excludes the run it belongs to.
 
         A follow-up may legitimately inherit its source's definition origin, so
         this lineage — not the presence or absence of an origin — is what keeps
@@ -6662,9 +6668,11 @@ class SQLiteTaskRepository:
             "OR EXISTS (SELECT 1 FROM manual_executions followup_execution "
             f"WHERE followup_execution.task_id = {task_identity} "
             "AND (EXISTS (SELECT 1 FROM manual_recovery_preparations followup_preparation "
-            "WHERE followup_preparation.execution_id = followup_execution.execution_id) "
+            "WHERE followup_preparation.execution_id = followup_execution.execution_id "
+            "AND followup_preparation.source_task_id <> followup_execution.task_id) "
             "OR EXISTS (SELECT 1 FROM manual_recovery_links followup_link "
-            "WHERE followup_link.execution_id = followup_execution.execution_id))))"
+            "WHERE followup_link.execution_id = followup_execution.execution_id "
+            "AND followup_link.source_task_id <> followup_execution.task_id))))"
         )
 
     def _run_query_document(self) -> str:
@@ -7041,6 +7049,11 @@ class SQLiteTaskRepository:
                        ) THEN 'manual'
                        WHEN runs.schedule_id IS NOT NULL
                             OR runs.definition_id IS NOT NULL THEN 'scheduled'
+                       -- A kernel-admitted due occurrence carries no Job row;
+                       -- its admission-written origin kind is the durable
+                       -- scheduled evidence.  A definition Run once keeps its
+                       -- own deliberate manual trigger.
+                       WHEN display.origin_kind = 'definition-scheduled' THEN 'scheduled'
                        WHEN display.origin_definition_id IS NOT NULL THEN 'manual'
                        WHEN runs.run_kind = 'job' THEN 'automation'
                        ELSE 'manual'

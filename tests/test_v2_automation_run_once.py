@@ -1330,6 +1330,197 @@ class RunOnceApiTests(unittest.TestCase):
             self.assertEqual("confirmed", confirmed_summary["status"])
             self.assertEqual(confirmed["executionId"], confirmed_summary["execution_id"])
 
+    def test_conflict_recovery_keeps_the_original_automation_record(self):
+        """Task47.3: same-Task recovery keeps the one original Automation run.
+
+        A real Run once admits one Task for two files; the shared Worker
+        organizes Two and parks One at a real target conflict.  The operator
+        saves the rename decision, the same Task re-analyzes, the fresh summary
+        is confirmed and the resident engine completes the remaining file on
+        the same Task.  The Automation records page must keep showing that ONE
+        original admitted run at every stage — before the decision, after the
+        analysis, immediately after the confirmation, after the recovery
+        execution and after a reopen — with its admission-written identity
+        unchanged, counted exactly once, the already-successful sibling never
+        replayed, and the first execution's own durable facts still provable.
+        """
+
+        self.media("One.2001.mkv")
+        self.media("Two.2002.mkv")
+        conflict_target = (
+            self.target_root
+            / "Organized/Movies/Movies/其他电影/One (2001) [tmdbid-1]/One (2001).mkv"
+        )
+        conflict_target.parent.mkdir(parents=True, exist_ok=True)
+        conflict_target.write_bytes(b"old-target")
+        records_route = "/api/v1/operations/automation/records?limit=20"
+
+        with self.journey() as value:
+            status, admitted = self.admit(value)
+            self.assertEqual(202, status, admitted)
+            task_id = admitted["taskId"]
+            self.execute(value)
+            items = {item.source_path: item for item in value.repository.list_items(task_id)}
+            self.assertEqual("waiting_confirm", items["One.2001.mkv"].status.value)
+            self.assertEqual("success", items["Two.2002.mkv"].status.value)
+            two_result = next(
+                result
+                for result in value.repository.list_results(task_id)
+                if result.item_id == items["Two.2002.mkv"].item_id
+            )
+
+            def original_record(label):
+                status, page = self.request(value, "GET", records_route)
+                self.assertEqual(200, status, page)
+                self.assertEqual(1, page["total"], (label, page["items"]))
+                self.assertEqual(1, sum(page["statusCounts"].values()), label)
+                (record,) = page["items"]
+                self.assertEqual(task_id, record["task_id"], label)
+                return record
+
+            before = original_record("before recovery")
+            self.assertEqual("definition-run-once", before["origin"]["kind"])
+            self.assertEqual("nightly", before["origin"]["definitionId"])
+            self.assertEqual("manual", before["trigger"])
+            started_at = before["executionStartedAt"]
+            self.assertIsNotNone(started_at)
+            self.assertIsNone(before["executionFinishedAt"])
+
+            route = f"/api/v1/tasks/{task_id}/items/{items['One.2001.mkv'].item_id}/recovery"
+            status, detail = self.request(value, "GET", route)
+            self.assertEqual(200, status, detail)
+            status, decided = self.request(
+                value,
+                "POST",
+                route + "/decision",
+                {
+                    "kind": "conflict",
+                    "expectedCheckpointVersion": detail["checkpoint"]["checkpoint_version"],
+                    "strategy": "rename",
+                },
+            )
+            self.assertEqual(200, status, decided)
+            status, continued = self.request(
+                value,
+                "POST",
+                route + "/continue",
+                {"expectedCheckpointVersion": decided["checkpoint"]["checkpoint_version"]},
+            )
+            self.assertEqual(202, status, continued)
+            self.execute(value)
+            analyzed = original_record("after analysis")
+            self.assertEqual(started_at, analyzed["executionStartedAt"])
+
+            status, detail = self.request(value, "GET", route)
+            self.assertEqual(200, status, detail)
+            preparation = detail["manualRecoveryPreparation"]
+            self.assertIsNotNone(preparation, detail)
+            status, preview = self.request(
+                value, "GET", f"/api/v1/manual-previews/{preparation['preview_id']}"
+            )
+            self.assertEqual(200, status, preview)
+            ready = [
+                entry["itemId"] for entry in preview["items"] if entry["status"] == "previewed"
+            ]
+            self.assertEqual(1, len(ready), preview)
+            status, confirmed = self.request(
+                value,
+                "POST",
+                f"/api/v1/manual-recovery-preparations/{preparation['preparation_id']}/confirm",
+                {"itemIds": ready, "confirmation": True},
+            )
+            self.assertEqual(202, status, confirmed)
+            self.assertEqual(task_id, confirmed["taskId"], confirmed)
+
+            # The exact P1 counterexample: the same-Task confirmation must not
+            # exclude the original admitted run from its own records page.
+            after_confirm = original_record("immediately after confirm")
+            self.assertEqual(started_at, after_confirm["executionStartedAt"])
+
+            worker = self._run_manual_execution_worker(value, prefix="conflict-recovery")
+            settled = worker.run_next()
+            self.assertIsNotNone(settled)
+            self.assertEqual("completed", settled.status.value, settled.error)
+            self.assertEqual((), value.repository.list_jobs())
+            self.assertFalse((self.source_root / "One.2001.mkv").exists())
+            organized = sorted(
+                str(path.relative_to(self.target_root))
+                for path in (self.target_root / "Organized" / "Movies").rglob("*.mkv")
+            )
+            self.assertEqual(
+                [
+                    "Organized/Movies/Movies/其他电影/One (2001) [tmdbid-1]/One (2001) (1).mkv",
+                    "Organized/Movies/Movies/其他电影/One (2001) [tmdbid-1]/One (2001).mkv",
+                    "Organized/Movies/Movies/其他电影/Two (2002) [tmdbid-2]/Two (2002).mkv",
+                ],
+                organized,
+            )
+            # The successful sibling was never replayed: exactly one delete of
+            # Two and one target copy exist.
+            self.assertEqual(
+                1,
+                len(
+                    [item for item in value.source.mutations if item == ("delete", "Two.2002.mkv")]
+                ),
+                value.source.mutations,
+            )
+            results = value.repository.list_results(task_id)
+            self.assertEqual(2, len(results), results)
+            self.assertEqual(
+                two_result.created_at,
+                next(
+                    result.created_at
+                    for result in results
+                    if result.item_id == items["Two.2002.mkv"].item_id
+                ),
+                "the first execution's own result fact was rewritten",
+            )
+
+            after = original_record("after recovery")
+            self.assertEqual(before["recordId"], after["recordId"])
+            self.assertEqual(before["origin"], after["origin"])
+            self.assertEqual(before["trigger"], after["trigger"])
+            self.assertEqual(
+                before["historyContext"]["definitionId"],
+                after["historyContext"]["definitionId"],
+            )
+            # The run's own real window: the first execution's start and the
+            # actual settlement, never a fabricated or backfilled time.
+            self.assertEqual(started_at, after["executionStartedAt"])
+            self.assertIsNotNone(after["executionFinishedAt"])
+            self.assertEqual("completed", after["result"]["status"])
+            self.assertTrue(after["result"]["organized"])
+            self.assertEqual(2, after["result"]["successItems"])
+            self.assertFalse(after["recovered_completion"])
+            # The recovery progress is reported separately from the outcome.
+            self.assertEqual("resolved", after["handling"]["state"], after["handling"])
+            self.assertEqual(1, after["handling"]["resolvedItems"], after["handling"])
+
+            # The original run is counted exactly once in the metric cohorts
+            # around the fixture's own clock, and stays the definition's latest
+            # original admitted run after the same-Task recovery.
+            metrics = value.repository.automation_run_metrics(
+                current_start=value.clock.now - timedelta(days=1),
+                current_end=value.clock.now + timedelta(days=1),
+                previous_start=value.clock.now - timedelta(days=2),
+                previous_end=value.clock.now - timedelta(days=1),
+            )
+            self.assertEqual(1, metrics["currentAdmitted"], metrics)
+            self.assertEqual(1, metrics["currentTerminal"], metrics)
+            self.assertEqual(1, metrics["currentCompleted"], metrics)
+            latest = value.repository.automation_latest_admitted_runs()
+            self.assertEqual(["nightly"], list(latest), latest)
+            self.assertEqual(task_id, latest["nightly"]["runId"])
+            self.assertEqual(task_id, latest["nightly"]["taskId"])
+
+        with SQLiteTaskRepository(str(self.root / "runtime.sqlite3")) as reopened:
+            window = reopened.operations_runs_window(
+                limit=20, automation_admissions=True, record_evidence=True
+            )
+            self.assertEqual(1, window.total, [item.task_id for item in window.page])
+            self.assertEqual(1, sum(window.status_counts.values()))
+            self.assertEqual(task_id, window.page[0].task_id)
+
     def _run_manual_execution_worker(self, value, *, prefix: str):
         """The real resident Worker branch that executes a confirmed exact subset."""
 
@@ -1543,6 +1734,36 @@ class RunOnceApiTests(unittest.TestCase):
             self.assertEqual(1, len(results), results)
             self.assertEqual("SUCCESS", results[0].status)
             self.assertEqual((), value.repository.list_jobs(limit=10))
+
+            # The due run stays the one original Automation record after its
+            # same-Task recovery completed it: same identity, scheduled
+            # trigger, real outcome, and the recovery reported separately.
+            status, page = self.request(
+                value, "GET", "/api/v1/operations/automation/records?limit=20"
+            )
+            self.assertEqual(200, status, page)
+            self.assertEqual(1, page["total"], page["items"])
+            (record,) = page["items"]
+            self.assertEqual(task_id, record["task_id"])
+            self.assertEqual("scheduled", record["trigger"], record)
+            self.assertEqual("definition-scheduled", record["origin"]["kind"], record)
+            self.assertEqual("completed", record["result"]["status"], record)
+            self.assertTrue(record["result"]["organized"], record)
+            self.assertEqual("resolved", record["handling"]["state"], record["handling"])
+            status, filtered = self.request(
+                value,
+                "GET",
+                "/api/v1/operations/automation/records?limit=20&trigger=scheduled",
+            )
+            self.assertEqual(200, status, filtered)
+            self.assertEqual(1, filtered["total"], filtered["items"])
+            status, manual_only = self.request(
+                value,
+                "GET",
+                "/api/v1/operations/automation/records?limit=20&trigger=manual",
+            )
+            self.assertEqual(200, status, manual_only)
+            self.assertEqual(0, manual_only["total"], manual_only["items"])
 
     def test_recognition_decision_reaching_classification_stays_a_business_problem(self):
         """A fresh four-type finding during recovery stays on the same Task.
