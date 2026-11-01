@@ -1,241 +1,84 @@
+"""The retired ``tasks retry-request`` CLI entrance stays retired with zero effects.
+
+The user-confirmed CLI simplification keeps ``tasks retry-failed`` as the one
+CLI retry entrance (default zero-mutation re-analysis, explicit ``--execute``
+for a kernel-admitted execution) and retires the separate ``retry-request``
+booking step.  The old command must fail at argument parsing like any
+unrecognized command: no database, no Storage, no Provider, no recovery
+request, no pending rewrite and no execution.
+"""
+
 from __future__ import annotations
 
 import io
 import json
 import sqlite3
 import tempfile
-import threading
 import unittest
-from dataclasses import replace
+from contextlib import redirect_stderr, redirect_stdout
 from pathlib import Path
 from unittest.mock import patch
 
-from mediaflow.application.configuration_snapshot import ManagedConfigurationService
-from mediaflow.application.task_retry import TaskRetryRequestService
-from mediaflow.application.task_runtime import PersistentTaskCoordinator
-from mediaflow.domain.task_persistence import PersistentResultRecord, TaskItemStatus
 from mediaflow.final_cli import final_main
 from mediaflow.infrastructure.runtime_configuration import RuntimeConfiguration
-from mediaflow.infrastructure.sqlite_configuration_management import SQLiteConfigurationRepository
-from mediaflow.infrastructure.sqlite_runtime import SCHEMA_VERSION, SQLiteTaskRepository
-
-SNAPSHOT_ID = "test-recovery-revision"
-SNAPSHOT_DIGEST = "a" * 64
 
 
-class TaskRetryTests(unittest.TestCase):
-    def _failed(
-        self,
-        repository,
-        number=1,
-        task=None,
-        *,
-        snapshot_id: str | None = SNAPSHOT_ID,
-        snapshot_digest: str | None = SNAPSHOT_DIGEST,
-    ):
-        coordinator = PersistentTaskCoordinator(repository, repository)
-        if task is None:
-            task = coordinator.create(
-                "organize",
-                execute_authorized=False,
-                configuration_snapshot_id=snapshot_id,
-                configuration_snapshot_digest=snapshot_digest,
-            )
-        item = coordinator.begin_item(
-            task.task_id, "source", "movies", f"Bad-{number}.mkv", f"Bad-{number}.mkv"
-        )
-        failed = replace(
-            item,
-            status=TaskItemStatus.FAILED,
-            stage="failed",
-            error="original failure",
-        )
-        repository.upsert_item(failed)
-        repository.append_result(
-            PersistentResultRecord(
-                f"result-{failed.item_id}",
-                task.task_id,
-                failed.item_id,
-                failed.storage_id,
-                failed.source_path,
-                None,
-                None,
-                None,
-                None,
-                None,
-                None,
-                None,
-                None,
-                None,
-                None,
-                TaskItemStatus.FAILED.value,
-                failed.updated_at,
-                error=failed.error,
-                effect_certainty="none",
-            )
-        )
-        return coordinator, task, failed
+class TaskRetryRequestRetirementTests(unittest.TestCase):
+    def test_help_no_longer_lists_retry_request(self) -> None:
+        output, error = io.StringIO(), io.StringIO()
+        with redirect_stdout(output), redirect_stderr(error):
+            with self.assertRaises(SystemExit):
+                final_main(["tasks", "--help"], stdout=output, stderr=error)
+        self.assertIn("retry-failed", output.getvalue())
+        self.assertIn("ignore-pending", output.getvalue())
+        self.assertNotIn("retry-request", output.getvalue())
+        self.assertNotIn("retry-request", error.getvalue())
 
-    @staticmethod
-    def _activate_document(database: Path, document: dict) -> object:
-        with SQLiteConfigurationRepository(database) as repository:
-            service = ManagedConfigurationService(repository)
-            draft = service.import_draft(document, actor="tester")
-            validated = service.validate(draft.revision_id, actor="tester")
-            return service.activate(
-                validated.revision_id,
-                expected_version=validated.version,
-                actor="tester",
-            )
-
-    def test_batch_retry_requests_oldest_first_failed_items(self) -> None:
-        with tempfile.TemporaryDirectory() as directory:
-            with SQLiteTaskRepository(Path(directory, "runtime.sqlite3")) as repository:
-                coordinator = PersistentTaskCoordinator(repository, repository)
-                task = coordinator.create("organize", execute_authorized=False)
-                first = self._failed(repository, number=1, task=task)
-                second = self._failed(repository, number=2, task=task)
-                third = self._failed(repository, number=3, task=task)
-                decisions = TaskRetryRequestService(repository).request(
-                    actor=" operator ",
-                    note=" retry ",
-                    limit=2,
-                )
-                self.assertEqual(
-                    [decision.item_id for decision in decisions],
-                    [
-                        first[2].item_id,
-                        second[2].item_id,
-                    ],
-                )
-                for decision in decisions:
-                    stored = repository.get_item(decision.item_id)
-                    self.assertEqual(stored.status, TaskItemStatus.PENDING)
-                    self.assertEqual(stored.stage, "task_retry_requested")
-                    audit = repository.list_task_retry_audit(decision.item_id)[0]
-                    self.assertEqual(audit.actor, "operator")
-                    self.assertEqual(audit.note, "retry")
-                self.assertEqual(
-                    repository.get_item(third[2].item_id).status, TaskItemStatus.FAILED
-                )
-                retryable = coordinator.retryable_items(task.task_id, failed_only=False)
-                self.assertEqual(
-                    {item.item_id for item in retryable},
-                    {
-                        first[2].item_id,
-                        second[2].item_id,
-                        third[2].item_id,
-                    },
-                )
-                self.assertEqual(repository.schema_version, SCHEMA_VERSION)
-
-    def test_task_filter_invalid_limits_actor_and_empty_are_rejected(self) -> None:
-        with tempfile.TemporaryDirectory() as directory:
-            with SQLiteTaskRepository(Path(directory, "runtime.sqlite3")) as repository:
-                _, task, _ = self._failed(repository)
-                service = TaskRetryRequestService(repository)
-                with self.assertRaisesRegex(ValueError, "actor"):
-                    service.request(actor="   ")
-                for limit in (0, -1, 101, True):
-                    with self.subTest(limit=limit):
-                        with self.assertRaisesRegex(ValueError, "limit"):
-                            service.request(actor="operator", limit=limit)
-                with self.assertRaisesRegex(ValueError, "no failed"):
-                    service.request(actor="operator", task_id="missing")
-
-    def test_any_invalid_member_rolls_back_whole_batch(self) -> None:
-        with tempfile.TemporaryDirectory() as directory:
-            database = Path(directory, "runtime.sqlite3")
-            with SQLiteTaskRepository(database) as repository:
-                _, task, first_item = self._failed(repository, number=1)
-                _, _, second_item = self._failed(repository, number=2, task=task)
-            connection = sqlite3.connect(database)
-            connection.execute(
-                """CREATE TRIGGER reject_task_retry BEFORE INSERT ON task_retry_audit
-                BEGIN SELECT RAISE(ABORT, 'injected'); END"""
-            )
-            connection.commit()
-            connection.close()
-            with SQLiteTaskRepository(database) as repository:
-                service = TaskRetryRequestService(repository)
-                with self.assertRaises(sqlite3.IntegrityError):
-                    service.request(actor="operator", limit=2)
-                self.assertEqual(
-                    repository.get_item(first_item.item_id).status, TaskItemStatus.FAILED
-                )
-                self.assertEqual(
-                    repository.get_item(second_item.item_id).status, TaskItemStatus.FAILED
-                )
-                self.assertEqual(repository.list_task_retry_audit(first_item.item_id), ())
-                self.assertEqual(repository.list_task_retry_audit(second_item.item_id), ())
-
-    def test_concurrent_batch_retry_commits_once(self) -> None:
-        with tempfile.TemporaryDirectory() as directory:
-            database = Path(directory, "runtime.sqlite3")
-            with SQLiteTaskRepository(database) as repository:
-                _, task, first_item = self._failed(repository, number=1)
-                _, _, second_item = self._failed(repository, number=2, task=task)
-            barrier = threading.Barrier(2)
-            outcomes = []
-
-            def request(actor):
-                try:
-                    with SQLiteTaskRepository(database) as repository:
-                        barrier.wait()
-                        TaskRetryRequestService(repository).request(actor=actor, limit=2)
-                    outcomes.append("ok")
-                except (ValueError, sqlite3.OperationalError):
-                    outcomes.append("rejected")
-
-            threads = [threading.Thread(target=request, args=(actor,)) for actor in ("one", "two")]
-            for thread in threads:
-                thread.start()
-            for thread in threads:
-                thread.join()
-            self.assertEqual(sorted(outcomes), ["ok", "rejected"])
-            with SQLiteTaskRepository(database) as repository:
-                self.assertEqual(len(repository.list_task_retry_audit(first_item.item_id)), 1)
-                self.assertEqual(len(repository.list_task_retry_audit(second_item.item_id)), 1)
-
-    def test_cli_retry_request_constructs_no_storage_or_provider(self) -> None:
+    def test_retired_command_fails_at_parsing_with_zero_effects(self) -> None:
         with tempfile.TemporaryDirectory() as directory:
             root = Path(directory)
-            database = root / "runtime.sqlite3"
-            document = json.loads(Path("config/strategy.example.json").read_text(encoding="utf-8"))
-            document["persistence"]["databasePath"] = str(database)
+            # A configuration document that would fail any real runtime load:
+            # reaching it at all would mean the parser did not stop first.
             config_path = root / "strategy.json"
-            config_path.write_text(json.dumps(document), encoding="utf-8")
-            active = self._activate_document(database, document)
-            with SQLiteTaskRepository(database) as repository:
-                _, task, _ = self._failed(
-                    repository,
-                    snapshot_id=active.revision_id,
-                    snapshot_digest=active.digest,
-                )
+            config_path.write_text(json.dumps({"version": 1}), encoding="utf-8")
+            database = root / "runtime.sqlite3"
             output, error = io.StringIO(), io.StringIO()
-            with patch.object(
-                RuntimeConfiguration,
-                "create_storages",
-                side_effect=AssertionError("task retry request constructed Storage"),
+            with (
+                redirect_stderr(error),
+                patch.object(
+                    RuntimeConfiguration,
+                    "create_storages",
+                    side_effect=AssertionError("retired retry-request constructed Storage"),
+                ),
             ):
-                code = final_main(
-                    [
-                        "--config",
-                        str(config_path),
-                        "tasks",
-                        "retry-request",
-                        "--actor",
-                        "operator",
-                        "--limit",
-                        "1",
-                    ],
-                    stdout=output,
-                    stderr=error,
-                )
-            self.assertEqual(code, 0, error.getvalue())
-            self.assertIn("BATCH TASK RETRY REQUEST", output.getvalue())
-            self.assertIn("Requested: 1", output.getvalue())
-            self.assertIn("Media mutation: 0", output.getvalue())
+                with self.assertRaises(SystemExit) as exited:
+                    final_main(
+                        [
+                            "--config",
+                            str(config_path),
+                            "tasks",
+                            "retry-request",
+                            "--actor",
+                            "operator",
+                            "--limit",
+                            "1",
+                        ],
+                        stdout=output,
+                        stderr=error,
+                    )
+            self.assertEqual(2, exited.exception.code)
+            self.assertIn("invalid choice", error.getvalue())
+            self.assertEqual("", output.getvalue())
+            # Parsing stopped before any runtime construction: no database was
+            # created, so no Task, item, request, audit or queue row exists.
+            self.assertFalse(database.exists())
+            if database.exists():  # pragma: no cover - defensive only
+                with sqlite3.connect(database) as connection:
+                    self.assertEqual(
+                        (),
+                        connection.execute("SELECT * FROM task_retry_audit").fetchall(),
+                    )
+                    self.assertEqual((), connection.execute("SELECT * FROM tasks").fetchall())
 
 
 if __name__ == "__main__":

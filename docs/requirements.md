@@ -3429,11 +3429,14 @@ Target Preview
 当前实现：已完成批量忽略（`tasks ignore-pending`）、批量设置 RecognitionType
 （Recognition resolve-pending）、批量 Metadata 修正（Metadata resolve-pending）与批量
 Metadata 候选选择（Metadata review resolve-pending）四项有界闭环；旧的 Recognition
-retry-pending 入口已退役。批量 Dry Run/整理仍留后续，FAILED/PARTIAL TaskItem 的
-`tasks retry-request` 仍通过显式 tasks resume 执行。
+retry-pending 入口已退役。批量 Dry Run/整理仍留后续；FAILED/PARTIAL TaskItem 的 CLI
+重试只保留 `tasks retry-failed`（默认零修改重新分析，显式 `--execute` 才执行并共用
+共享整理队列），旧的 `tasks retry-request` 登记步骤已按用户决策退役，旧输入为普通
+参数错误且零效果。
 
-当前实现：新增 tasks retry-request，可对有界 FAILED/PARTIAL TaskItem 批量
-原子回到 PENDING；真正的重试仍通过显式 tasks resume 执行。批量 Dry Run/整理仍留后续。
+当前实现：批量重试入口收敛为 `tasks retry-failed`，不再需要先登记请求或后续
+`tasks resume`；四类业务恢复继续走原 Task 的既有决定/分析/摘要/明确继续流程。
+批量 Dry Run/整理仍留后续。
 
 ### **策略测试工具**
 

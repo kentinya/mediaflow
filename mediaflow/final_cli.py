@@ -66,7 +66,6 @@ from mediaflow.application.scope_continuation import (
 )
 from mediaflow.application.storage_browser import StorageBrowserError
 from mediaflow.application.strategy_test import strategy_runner_from_configuration
-from mediaflow.application.task_retry import TaskRetryRequestService
 from mediaflow.application.task_runtime import KernelTaskCoordinator, PersistentTaskCoordinator
 from mediaflow.application.unattended_execution import UnattendedExecutionGrantService
 from mediaflow.cli import render_strategy_result
@@ -200,15 +199,12 @@ def final_main(
     task_ignore_pending.add_argument("--note")
     task_ignore_pending.add_argument("--limit", type=int, default=100)
     task_ignore_pending.add_argument("--task-id")
-    task_retry_request = task_commands.add_parser("retry-request")
-    task_retry_request.add_argument("--actor", required=True)
-    task_retry_request.add_argument("--note")
-    task_retry_request.add_argument("--limit", type=int, default=100)
-    task_retry_request.add_argument("--task-id")
     # ``pause`` and ``resume`` were retired for every media operation and are
     # deliberately absent from the command surface: invoking one is an
-    # unrecognized-command error with zero effect.  ``retry-failed`` keeps its
-    # own reviewed-recovery path and does not resume a pause.
+    # unrecognized-command error with zero effect.  The separate
+    # ``retry-request`` booking step was retired the same way: ``retry-failed``
+    # is the one CLI retry entrance and does not resume a pause or require a
+    # prior request record.
     for name in ("retry-failed",):
         task_retry = task_commands.add_parser(name)
         task_retry.add_argument("task_id")
@@ -968,12 +964,11 @@ def final_main(
             "show-item",
             "ignore-item",
             "ignore-pending",
-            "retry-request",
         }:
             with ExitStack() as stack:
                 repository = stack.enter_context(SQLiteTaskRepository(configuration.database_path))
                 recovery_admission = None
-                if arguments.task_command in {"ignore-item", "ignore-pending", "retry-request"}:
+                if arguments.task_command in {"ignore-item", "ignore-pending"}:
                     configuration_repository = stack.enter_context(
                         SQLiteConfigurationRepository(configuration.database_path)
                     )
@@ -1010,16 +1005,6 @@ def final_main(
                         task_id=arguments.task_id,
                     )
                     stdout.write(render_manual_ignore_batch(decisions))
-                elif arguments.task_command == "retry-request":
-                    decisions = TaskRetryRequestService(
-                        repository, recovery_admission=recovery_admission
-                    ).request(
-                        actor=arguments.actor,
-                        note=arguments.note,
-                        limit=arguments.limit,
-                        task_id=arguments.task_id,
-                    )
-                    stdout.write(render_task_retry_request(decisions))
                 else:
                     decision = ManualIgnoreService(
                         repository, recovery_admission=recovery_admission
@@ -1228,19 +1213,61 @@ def final_main(
                     original.task_id,
                     failed_only=arguments.task_command == "retry-failed",
                 )
-                repository.reclaim_task_locks(original.task_id)
                 execute = bool(arguments.execute and original.execute_authorized)
-                task = coordinator.create(
-                    f"{arguments.task_command}:{original.task_id}",
-                    execute_authorized=execute,
-                    scope_path=original.scope_path,
-                    item_limit=original.item_limit,
-                    configuration_snapshot_id=original.configuration_snapshot_id,
-                    configuration_snapshot_digest=original.configuration_snapshot_digest,
-                    require_configuration_snapshot=(
-                        configuration.configuration_authority == "MANAGED"
-                    ),
-                )
+                if execute and retry_items:
+                    # RO-2: a retried CLI execution is the same shared Task work
+                    # every other entrance runs.  The kernel admits it — shared
+                    # capacity, the original work's pin and atomic scheduling
+                    # included — BEFORE this run releases the original work's
+                    # source locks or touches any file.  A full queue refuses
+                    # here and leaves the original failure evidence, its locks
+                    # and every file exactly as they were.
+                    #
+                    # An empty retryable set keeps its historical zero-work
+                    # answer below: it is not admitted as kernel work and
+                    # consumes no shared slot, so no empty run can stand in for
+                    # a proved execution.
+                    task, scheduling = _admit_cli_retry_task(
+                        repository,
+                        configuration,
+                        original,
+                        command=arguments.task_command,
+                    )
+                    repository.reclaim_task_locks(original.task_id)
+                    claim, direct_organize_worker_id = _drive_direct_organize_claim(
+                        repository,
+                        scheduling,
+                        task,
+                        commands=(task.command,),
+                    )
+                    kernel_context = (scheduling, claim)
+                    coordinator = KernelTaskCoordinator(
+                        repository,
+                        repository,
+                        scheduling,
+                        claim,
+                        heartbeat=lambda: (
+                            scheduling.heartbeat(
+                                claim,
+                                now=datetime.now(UTC),
+                                lease_seconds=900.0,
+                            )
+                            is not None
+                        ),
+                    )
+                else:
+                    repository.reclaim_task_locks(original.task_id)
+                    task = coordinator.create(
+                        f"{arguments.task_command}:{original.task_id}",
+                        execute_authorized=execute,
+                        scope_path=original.scope_path,
+                        item_limit=original.item_limit,
+                        configuration_snapshot_id=original.configuration_snapshot_id,
+                        configuration_snapshot_digest=original.configuration_snapshot_digest,
+                        require_configuration_snapshot=(
+                            configuration.configuration_authority == "MANAGED"
+                        ),
+                    )
             else:
                 execute = arguments.command == "organize" and arguments.execute
                 kernel_context = None
@@ -1908,24 +1935,6 @@ def render_manual_ignore_batch(decisions) -> str:
         f"{item.decision_id} | {item.review_kind.value} | {item.task_id} | "
         f"{item.item_id} | {item.review_id} | {item.actor}"
         for item in decisions
-    )
-    lines.extend(("", f"Total: {len(decisions)}", ""))
-    return "\n".join(lines)
-
-
-def render_task_retry_request(decisions) -> str:
-    lines = [
-        "",
-        "BATCH TASK RETRY REQUEST",
-        "",
-        f"Requested: {len(decisions)}",
-        "Media mutation: 0",
-        "",
-        "DECISIONS",
-        "",
-    ]
-    lines.extend(
-        f"{item.decision_id} | {item.task_id} | {item.item_id} | {item.actor}" for item in decisions
     )
     lines.extend(("", f"Total: {len(decisions)}", ""))
     return "\n".join(lines)
@@ -2794,7 +2803,64 @@ def _admit_direct_organize_task(repository, configuration, *, path, limit):
     return task, scheduling
 
 
-def _drive_direct_organize_claim(repository, scheduling, task, *, lease_seconds=900.0):
+def _admit_cli_retry_task(repository, configuration, original, *, command):
+    """Admit one CLI failure retry execution through the shared Task kernel.
+
+    The retry is a *new* organizing execution of the original work's remaining
+    failed scope, so it enters the same scheduling kernel every other entrance
+    uses: one atomic, capacity-checked admission carrying the original work's
+    own pin, scope and bound.  A full shared queue refuses before any Task row,
+    source-lock release or file effect, so the caller keeps the original
+    failure evidence and can retry explicitly when capacity is available.  The
+    persisted command identity still names the exact predecessor Task, so the
+    Task Center journey relation is unchanged.
+    """
+
+    from mediaflow.application.task_scheduling import (
+        TaskSchedulingService,
+        build_scheduled_task_admission,
+    )
+    from mediaflow.domain.task_persistence import RunDisplayContext
+    from mediaflow.domain.task_scheduling import TaskQueueFull, TaskTrigger
+
+    scheduling = TaskSchedulingService(
+        repository,
+        capacity=getattr(configuration, "automation_maximum_active_jobs", 100),
+        locks=repository,
+    )
+    task, state = build_scheduled_task_admission(
+        f"{command}:{original.task_id}",
+        execute_authorized=True,
+        trigger=TaskTrigger.MANUAL,
+        principal="cli",
+        scope_path=original.scope_path,
+        item_limit=original.item_limit,
+        configuration_snapshot_id=original.configuration_snapshot_id,
+        configuration_snapshot_digest=original.configuration_snapshot_digest,
+        require_configuration_snapshot=(configuration.configuration_authority == "MANAGED"),
+        now=datetime.now(UTC),
+    )
+    display = RunDisplayContext(
+        source_scope=original.scope_path,
+        origin_kind="cli-retry-failed",
+    )
+    try:
+        admitted = repository.admit_scheduled_task(
+            task,
+            state,
+            capacity=scheduling.capacity,
+            display=display,
+        )
+    except TaskQueueFull as error:
+        raise ValueError("the shared organizing queue is full; no retry run was started") from error
+    if admitted.duplicate:
+        task, state = admitted.task, admitted.state
+    return task, scheduling
+
+
+def _drive_direct_organize_claim(
+    repository, scheduling, task, *, lease_seconds=900.0, commands=("organize",)
+):
     """Claim the admitted direct organize Task for this process' own execution.
 
     The claim is the same kernel boundary a resident Worker holds, so the
@@ -2812,7 +2878,7 @@ def _drive_direct_organize_claim(repository, scheduling, task, *, lease_seconds=
         worker_id,
         worker_id,
         lease_seconds,
-        ("organize",),
+        commands,
         None,
         None,
         SCHEMA_VERSION,
