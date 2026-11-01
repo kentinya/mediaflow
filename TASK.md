@@ -664,3 +664,68 @@ Developer 修正只跑新/修改的 resident 及直接受影响 engine/入口测
 
 结论：保持 Task47.4 / FIX REQUIRED，同 Base 修正，不拆新 Task。A-owned Slice/
 Roadmap/Progress 不变，不声明 Slice PASS / CLOSED。
+
+## Developer Fix Report — resident Worker bootstrap and V2 run identity consumers
+
+```text
+Status: READY FOR B REVIEW
+Task Base: 383d8834787674675183f4b251d9dfd26a5dc511
+Source candidate: a32f38947602a5140c4f7064404dd269cee097e3
+```
+
+### 本轮修复
+
+- **P0 常驻 Worker 首次注册**：`ResidentProcessingWorker` 新增 `registered` 与
+  `ensure_registration()`，把原先散在 `run_next()` 里的 snapshot resolver /
+  supported-command 校验与注册收成一个持久边界；`run_next()` 与 `run()` 共用该边界。
+  `final_cli._run_worker.step()` 在首次心跳前先走同一注册边界，注册成功后才执行正常
+  心跳与领取。没有使用恒真心跳、隐藏 health 错误、改超时或跳过 pin/command 校验。
+  注册后的心跳丢失、停用、schema/pin 失配、claim/fence、取消与不确定效果路径保持原样。
+- **真实入口回归**：`tests/test_automation_settings_resident.py` 新增
+  `ResidentWorkerBootstrapTests`。用真实 `worker run` 子进程从无 Active 的全新临时部署
+  启动，先证明 processing Worker 实际注册（`processing_workers` 含 `organize`）；
+  再发布首个 Active、通过真实 remote ticket 受理一个 Task，观察同一进程领取并 settle；
+  最后停止并以同版本命令重启，确认已完成 Task、原 `completed_at`、零结果与唯一 Task
+  均不重放。以修改前代码运行该用例，25.6s 后失败于
+  `the resident Worker never registered its processing consumer`，与 B 的 P0 复现一致。
+- **五项 V2 测试消费者切换到真实能力**（`web/tests/e2e/`、`web/tests/fake-server.mjs`）：
+  - Automation occurrence 链接断言改为真实 Task 身份 `automation-task-e2e-001`，并断言
+    没有读取 `/api/v1/operations/jobs`。
+  - 关闭的旧 Job 集合标题改为页面实际的“旧列表已并入任务中心”。
+  - 受支持的 Task 深链打开该 Task 自身（`run=task-001`），不再借用旧 Job 身份。
+  - 旧 `/operations/jobs/<id>` 改为既定的“该旧记录已不可用”有界只读状态，零非 GET。
+  - Dashboard 记录的 Task 失败打开 `run=task-004`；pre-Task Job 运行身份按普通
+    not-found 边界展示，不伪造进度、导出或被重放。
+  - fake server 对受支持 Task 身份返回 Task 自身；对无 Task 的旧 Job admission detail
+    返回普通 404，不再构造旧 Job 进度。
+
+### 实际验证（Developer 受影响范围）
+
+| 命令 / cwd | 实际结果 |
+|---|---|
+| `.venv/bin/python -m unittest discover -s tests -q` | **2504 tests, OK, 7 skipped**（295.1s） |
+| `.venv/bin/python -m unittest tests.test_automation_settings_resident tests.test_resident_services tests.test_resident_correction tests.test_processing_worker_readiness -q` | **71 tests, OK**（51.8s） |
+| `.venv/bin/python -m unittest tests.test_task_scheduling tests.test_task_scheduling_fencing tests.test_manual_task_engine tests.test_automation_entrance_recovery -q` | **101 tests, OK**（8.6s） |
+| `tests.test_automation_settings_resident.ResidentWorkerBootstrapTests` 修复后 / 修改前代码 | **6.7s OK** / **25.6s FAIL**（注册缺失，复现 P0） |
+| `npm run test:e2e`（`web/`，Node fake） | **253 passed**（2.0m） |
+| `npm run test:e2e -- tests/e2e/automation.spec.ts tests/e2e/operations.spec.ts tests/e2e/task-center-layout.spec.ts` | **49 passed**（20.7s） |
+| `npm run typecheck` / `lint` / `format:check` / `build`（`web/`） | 全部通过；281 modules，151ms |
+| `npm run test -- run src/entities/operations/run.test.ts src/features/operations/OperationsInventory.test.tsx` | **63 passed**（2.95s） |
+| `.venv/bin/ruff format --check` / `ruff check` / `compileall` / `check_governance.py` / `git diff --check` | 全部通过；governance PASS |
+
+本轮测试墙钟约 9 分钟（含全量 Python 4m55s、全量 fake E2E 2m02s、定向组、Web 检查与
+修改前代码复现）；本轮开发总用时约 50 分钟，测试占比约 18%，低于 30%。未删断言、
+放宽超时、增加自动 retry 或隐藏失败。
+
+### 未完成 / 风险（交 B）
+
+- B 仍须在完整 Task Base..candidate 上执行 T4、原生 Python/视觉、clean installed wheel、
+  Docker fresh/restart/security 矩阵并重评 Slice RO-1–5 / AC-1–19；Developer 不自评 PASS。
+  本轮未执行 Docker/wheel/原生 Python E2E。
+- 新增常驻回归使用空 ResourceLibrary 的零条目 Task，避免在子进程中访问外部 Provider；
+  它直接证明真实首次注册、领取、settle、重启不重放，文件执行效果由现有 Task/Organizer
+  受影响回归承担。未用该用例替代完整媒体执行验收。
+- fake server 仍保留其他已接受用例使用的旧 Job 运行夹具，但受支持 Task 深链现在返回
+  Task 自身，旧 Job-only detail 已按 not-found 关闭；这是浏览器 fake 的历史夹具，不是
+  生产 schema 或兼容执行器。
+- 旧任务/跨版本升级继续按用户明确排除；未接触用户数据库、媒体、Provider 或外部端点。
