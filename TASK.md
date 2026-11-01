@@ -15,7 +15,7 @@ B 不改 A-owned Slice/Roadmap/Progress，不自行宣告 Slice PASS / CLOSED。
 Task ID: 47.4
 Task Type: SLICE
 Parent Slice: 47
-Status: FIX REQUIRED
+Status: READY FOR B REVIEW
 Task Base: 383d8834787674675183f4b251d9dfd26a5dc511
 Difficulty: High
 Test Level: T4
@@ -303,49 +303,79 @@ Task Center/通知；删除共享配置/安全/证据；恢复 Pause/resume/retr
 ```text
 Status: READY FOR B REVIEW
 Task Base: 383d8834787674675183f4b251d9dfd26a5dc511
-Candidate: c1c2190882fbf320d263215cfa60d810f1a16c95 (implementation checkpoint; this handoff commit follows)
+Candidate: 4dd55b87c59807e2816313e8c26121bae8e85651 (implementation checkpoint; this handoff commit follows)
 ```
 
 ### 变化摘要
 
-- 生产源码移除 `AutomationJob`/Job repository/service/worker、`automation_jobs` 表/索引/FK、
-  Job API/CLI/Web 集合与恢复 Job 回落；统一为 Task scheduling/claim/fence/control。
-- Scheduler due、Run once、remote organize、direct CLI、Files/batch/retry 均只 admit/consume Task；
-  remote 等价入口为 `POST /api/v1/tasks`，CLI 增加 `tasks cancel`，保留原权限语义。
-- 定义 due/occurrence 改为 Task 身份；execution authorization 消费绑定 `consumed_task_id`；
-  operational logs、Automation records、Task Center、Dashboard、V2 Web 不再依赖 Job。
-- fresh schema 升到 58，仅接受本版本 fresh/reopen；旧 Job schema 显式失败关闭（用户已排除升级）。
-- Job 专属 legacy tests 已按退役行为改写/移除；前端 Job entity/routes/字段退出；harness 的
-  选定原生旅程改走 Task engine。保留共享 pipelines、四类恢复、pins、authority、attachments、
-  non-replay 和普通文件/通知 runner。
+- **终态通知（P1 #1）**：`SQLiteTaskRepository.release_scheduled_claim()` 在 SETTLED 提交后调用
+  已注册的终态观察者；`NotificationPublisher` 以 `task:<taskId>:<status>` 为确定性事件身份写入
+  outbox，覆盖 completed / partial_success / failed / cancelled。观察者在提交后运行、异常被隔离，
+  不改变媒体结果；重复 settle/重启/再次读取不会重复写同一原始事件。Worker、直接 CLI、CLI
+  `tasks cancel` 和 API 即时取消均接入同一持久化边界。
+- **坏 pin 的可操作失败**：`_automatic_task_runner` 通过 `_pinned_task_configuration` 将
+  `RuntimeSnapshotUnavailable` 转成既有 `AutomationConfigurationUnavailable` 证据
+  （category / durable state / side effects / retry-safe / next action），不再退化为通用异常。
+- **保留能力证明（P1 #2）**：
+  - 恢复并适配 `tests/test_configuration_snapshot.py`（44 项，含 OLD 45 项中 1 项纯 Job legacy
+    被等价 Task 用例替代）、`tests/test_automation_settings_resident.py`（24 项；移除 1 项用户
+    明确排除的 schema-49 升级用例）。
+  - 恢复 `tests/test_operations_task_center.py`（24 项 Task Center 视图/计数/游标/Attention）、
+    `tests/test_automation_definition_occurrence.py`（13 项 occurrence/due）、
+    `tests/test_operations_run_detail_log_isolation.py`（6 项 scoped log 隔离）与
+    `tests/test_operations_run_detail_plan_evidence.py`（10 项 plan evidence/redaction）。
+  - 全部 66 处 `assertEqual((), ())` 恒真断言替换为真实 Task / capacity / result 断言。
+  - 恢复配置发布失败回滚、并发发布/受理 pin、有效 resident adoption、Task Center 分页与
+    原记录、scoped log/plan redaction、准入 pin/容量/授权等仍适用的断言。
+- **消费者与文档（P1 #3）**：README、`docs/deployment.md` 的 remote/cancel 说明改为
+  `POST /api/v1/tasks` / `tasks cancel`；Docker health/fresh/security/restart/empty-baseline
+  smoke 改读 Task API、Task 承载、旧 `/api/v1/jobs*` 断言 bounded 404；`operations-inventory`
+  harness 的 `run-worker`、`run-automation-run-once-worker`、recovery worker、discovery fallback
+  改为真实 Task engine/claim，删除 Worker "retired" stub；原生 spec 的旧 legacy-continuation /
+  paused-Job 子任务期望删除或改 bounded refusal，保留当前四类/八视图旅程。
+- **测试产物修复**：`web/src/shared/api/operations-api.test.ts` 缺失的 `const result` 修复；
+  `tests/test_release_security.py` 接受 TASK.md 当前 B 标题。
 
 ### 实际验证（Developer 受影响范围）
 
 | 命令 / cwd | 实际结果 |
 |---|---|
-| `.venv/bin/python -m unittest discover -s tests -q` (`/Users/songzhidong/mediaflow`) | 2379 tests, OK, 7 skipped |
-| `.venv/bin/ruff format --check .` / `.venv/bin/ruff check .` | 369 files formatted；All checks passed |
-| `.venv/bin/python -m compileall -q mediaflow tests scripts` | exit 0 |
-| `python3 scripts/check_governance.py` | governance check: PASS |
-| `.venv/bin/mediaflow --config config/strategy.example.json config validate` / phase13.2 example | 两者均通过 |
-| `rg -n -i 'ffprobe\|ffmpeg' mediaflow pyproject.toml` | 无匹配 |
-| `git diff --check` | 无输出 |
-| Web `npm run typecheck` / `lint` / `format:check` / `test -- run` / `build` | 全部通过；1259 unit tests passed |
-| E2E: `automation-lifecycle` + `automation-run-once` (python.automation config) | 17 passed |
-| E2E: `automation-workspace` (python config) | 8 passed |
-| E2E: `automation-settings` + `operations-task-center-visual` | 15 passed |
-| `.venv/bin/python -m pip wheel . --no-deps` + `scripts/wheel_smoke_test.py <wheel>` | wheel 构建成功；smoke exit 0，fresh schema 58，无 migration |
-| `docker build -t mediaflow:task47.4 .` | exit 0 |
+| `.venv/bin/python -m unittest discover -s tests -q` (`/Users/songzhidong/mediaflow`) | **2503 tests, OK, 7 skipped**（337.1s） |
+| `.venv/bin/python -m unittest tests.test_notifications -q` | 15 tests, OK（0.6s；含 remote→worker completed / failed / cancel 与去重/重启/无二次媒体效果） |
+| `.venv/bin/python -m unittest tests.test_configuration_snapshot -q` | 44 tests, OK |
+| `.venv/bin/python -m unittest tests.test_automation_settings_resident -q` | 24 tests, OK |
+| `.venv/bin/python -m unittest tests.test_operations_task_center -q` | 24 tests, OK |
+| `.venv/bin/python -m unittest tests.test_automation_definition_occurrence tests.test_operations_run_detail_log_isolation tests.test_operations_run_detail_plan_evidence -q` | 29 tests, OK |
+| `.venv/bin/ruff format --check .` / `.venv/bin/ruff check .` | 345 files formatted；All checks passed |
+| `.venv/bin/python -m compileall -q mediaflow tests scripts` / `python3 scripts/check_governance.py` / `git diff --check` | 全部通过；governance PASS |
+| `config/strategy.example.json` / `mediaflow.phase13.2.example.json` `config validate` | 两者通过 |
+| fresh SQLite inspect | schema 58；无 `%job%` 表；`notification_deliveries`/`task_scheduling` 存在 |
+| Web `npm run typecheck` / `lint` / `format:check` / `test -- run` / `build` | 全部通过；1259 unit tests（87 files） |
+| E2E `operations-inventory.python.spec.ts`（python config） | 35 passed |
+| E2E `automation-lifecycle` + `automation-run-once`（python.automation config） | 17 passed |
+| E2E `automation-workspace` / `automation-settings` / `operations-task-center-visual` | 8 / 12 / 2 passed |
+| `py_compile` 全部受影响 Docker smoke 脚本 + harness | 通过（未在本机执行 Docker 真机矩阵） |
+
+实际测试墙钟约 20 分钟（含两次全量 Python 回归、Web unit/build 与 6 组原生 E2E）；本轮
+开发总时长约 1 小时 50 分钟，测试占比约 18%，低于 30%。最近一次全量 Python 为 337s。
 
 ### 未完成 / 风险（交 B 处置）
 
-- Docker release-security smoke 在本机因 Docker Desktop 不共享临时 bind 路径
-  `/var/folders/.../media/incoming` 启动失败，属环境挂载限制；镜像 build 已通过。
-- `operations-inventory.python.spec.ts` 仍含旧 Job/paused-scope/recovery-batch 旅程，整文件本次
-  未全绿；本次授权的原生路径 spec 已通过。B 全量 T4 时需将这些旧 spec 与退役边界重新对齐。
-- 旧 schema 升级/旧数据迁移按用户明确排除，没有实现；schema 58 对旧 Job 库显式失败关闭。
+- `test_operations_run_detail.py`、`test_operations_run_inventory.py`、
+  `test_automation_workspace_read_model.py` 的 Base fixture 仍以 `AutomationJob` 行构造
+  “Job→Task 链接/预启动 Job”场景，未整体恢复；相同保留能力的 Task-only 覆盖已由
+  `test_operations_task_center`、`test_operations_run_detail_log_isolation`、
+  `test_operations_run_detail_plan_evidence`、`test_configuration_snapshot` 与通过的
+  `operations-inventory` 原生旅程承担，但 Automation records/metrics/latest 的逐项 Base
+  断言仍需 B 在完整 T4 中核对。
+- `operations-inventory` spec 删除了 6 项 legacy manual-intent recovery 与 2 项 Job batch /
+  attachment recovery 子任务；它们依赖已退役的 Job continuation，当前四类同 Task 旅程由
+  `automation-run-once` 的 conflict/technical sibling 用例覆盖。
+- Docker smoke 只做语法/断言核对，未在本机执行；release-security/fresh/restart/empty-baseline
+  的真实容器矩阵仍归 B。
+- 旧 schema 升级/旧数据迁移按用户明确排除未实现；schema 58 对旧 Job 库失败关闭。
 - B 仍须在完整 Base..candidate 上执行 T4、原生/视觉、clean wheel/Docker fresh/restart/security
-  验收并重评 Slice RO-1–5 / AC-1–19；Developer 不自评 PASS。
+  并重评 Slice RO-1–5 / AC-1–19；Developer 不自评 PASS。
 
 ## B Review Result
 
