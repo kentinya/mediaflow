@@ -12,7 +12,7 @@ Recheck intervening commits without silently repinning the Task Base.
 Task ID: 47.3
 Task Type: SLICE
 Parent Slice: 47
-Status: IN PROGRESS
+Status: READY FOR B REVIEW
 Task Base: dfcfebbdb9c879b38806e29c7b41c9192aeca83e
 Difficulty: High
 Test Level: T4
@@ -642,3 +642,120 @@ mock 组件证明真实链接/恢复成功。修改的 Python 文件跑 ruff for
 尚未完成的必要入口或链路要明确写出，不能自行缩小范围后称 Task 完成。已有上轮修复保持
 回归。B 继续负责本 Task 原 T4 full/native/package gates 和最终独立审查，Developer 无需
 重复全 Python/Web/E2E/发布矩阵；本指导也不将这些 B 门禁转交 Developer。
+
+## Developer Completion Report — Round 6
+
+**Status: READY FOR B REVIEW.** Same-Task correction checkpoint for the one B blocker of review
+`62ebf673`（同源占用核对与 TaskItem 登记未原子完成）；不是自评 PASS。
+
+```text
+Task Base: dfcfebbdb9c879b38806e29c7b41c9192aeca83e (not repinned)
+Code/test checkpoint: 5b0095bd (fix(task47.3): atomic cross-Task source ownership at the scheduled item start)
+Report checkpoint: this documentation commit
+Pre-existing untracked files: preserved, unstaged. No push/deploy/self-approval.
+```
+
+### Correction implemented（按 B 的四步）
+
+1. **先固化真实反例。** 新增 `tests/test_task_source_ownership_race.py`：复用真实 Run once
+   API fixture（临时 SQLite/Storage、真实 managed revision store），两个合法 Run once
+   受理（两个不同 request → 两个 Task），两个真实 `ManualTaskEngineWorker` +
+   生产 `_automatic_task_runner`，在真实只读占用查询处用 Barrier 确定性交错（该查询是
+   实际调用链经过的依赖边界，非虚构入口）。修复前该测试在 HEAD 上复现 B 的发现：两个
+   `waiting_recognition` item、同一已验证 occurrence、零 Storage 效果。
+2. **合并决定性事务。** 新增 `SQLiteTaskRepository.begin_scheduled_item_with_ownership()`：
+   一个 `BEGIN IMMEDIATE` 事务内依次完成 `_scheduled_claim_locked()`（live claim/fence）、
+   `_find_owned_source_work_locked()`（共享占用，复用既有身份/版本/discovery
+   reservation/合法 lineage 规则，`exclude_task_id`+`exclude_lineage_task_id`）、
+   `_require_scheduled_item_locked()`（scheduled attempt/结果/不确定效果保护）和 item
+   start 写入。返回 `(True, None)` / `(False, owner)` / `(False, None)`；占用拒绝与
+   claim 丢失都零写入，Storage/Provider I/O 仍在事务外。
+   `TaskSchedulingService.begin_item()` 新增 `enforce_source_ownership/source_version/
+   ownership_lineage_task_ids` 参数并路由到该边界；仓库无组合能力时才回退到
+   只读占用检查 + 带 claim 校验的 `upsert_scheduled_item`（不静默当作空闲）。
+   `KernelTaskCoordinator.begin_item()` 保留原只读快拒并转发全部占用证据；占用拒绝仍由
+   `media_organizer` 发布为该 attempt 自己的有界 `source_already_organizing` failed
+   item/Result（owner 身份不外泄）。
+3. **保留 source 与续作语义。** `TaskSourceOwnedError` 移到 `domain/task_scheduling.py`
+   （Task 内核词汇），`task_runtime` re-export 同一类对象，既有 `isinstance` 判断不变。
+   同 Task 自己的行与合法 lineage 永远不是竞争者；Files 的 `claim_task_item_with_ownership`
+   原子边界未动；due/Run once/CLI/remote 全部经同一 `KernelTaskCoordinator →
+   TaskSchedulingService → repository 事务` 边界，无每入口复制。
+4. **失败及受影响回归。** 见下节实际命令与结果。
+
+### 边界说明（供 B 独立核对，非缩小范围）
+
+`automatic_task_continuation._continue_item()` 仍是"先读后写"形状，但它的写是 resume
+本 Task 已存在且未 settled 的 item 行——该行本身已持久拥有该来源；本轮修复后，其他
+Task 的原子受理在该行未 settled 期间必然被拒绝，因此该续作路径无法再造成双 owner
+（其并发对手正是被新原子边界挡住）。本轮未改动该文件与其 `_publish_failed` 语义，避免
+触动 B 已在 Round 4/5 验证的恢复链路；如 B 认定该路径也需直接走组合事务，请在同一
+Task 内指出，Developer 继续修复。
+
+### Actual validation（本轮命令与结果，证据在
+`.git/validation-evidence/5b0095bd8dc1c355b4ae7946d5a2d1d4b9832721/dev-round6/`）
+
+```sh
+.venv/bin/python -m unittest tests.test_task_source_ownership_race \
+  tests.test_task_scheduling tests.test_task_scheduling_fencing \
+  tests.test_task_scheduling_migration tests.test_automation_task_admission \
+  tests.test_manual_task_engine tests.test_task_persistence
+# Ran 148 tests — OK（含 7 条新占用边界测试；11.5s）
+
+.venv/bin/python -m unittest tests.test_v2_automation_run_once \
+  tests.test_automation_definition_execution tests.test_automation_definition_occurrence \
+  tests.test_recovery_continuation tests.test_processing_recovery_admission \
+  tests.test_automation_entrance_recovery tests.test_operator_job_submission
+# Ran 161 tests — OK（29.6s）
+
+.venv/bin/python -m unittest tests.test_automation_admission \
+  tests.test_automation_execution_intent tests.test_automation_run_once \
+  tests.test_execution_authorization tests.test_automation_api tests.test_batch_cli \
+  tests.test_metadata_correction_batch tests.test_direct_file_transfers \
+  tests.test_media_library_direct_commands tests.test_direct_file_operations
+# Ran 301 tests — OK（72.8s）
+
+.venv/bin/python -m unittest tests.test_organize_preparation tests.test_media_discovery \
+  tests.test_processing_worker_readiness tests.test_automation_job_fencing \
+  tests.test_automation_settings_resident tests.test_manual_operations \
+  tests.test_queued_job_execution_boundary tests.test_configuration_snapshot \
+  tests.test_resident_correction tests.test_manual_organize_execution \
+  tests.test_manual_organize_preview tests.test_operations_task_center \
+  tests.test_automation_workspace_read_model tests.test_operations_run_inventory
+# Ran 474 tests — OK（84.2s）
+
+.venv/bin/ruff format --check <5 changed files>   # 5 files already formatted
+.venv/bin/ruff check <5 changed files>            # All checks passed!
+.venv/bin/python -m compileall -q mediaflow tests # OK
+python3 scripts/check_governance.py               # PASS
+git diff --check                                  # clean
+```
+
+B 的原 `ownership_probe.py`（两个真实受理 + 两个生产 Worker + Barrier 交错）在本候选上
+运行通过其断言：两个 pre-check 均观察到来源空闲，随后恰好一个 `waiting_recognition`
+owner、另一个 Task `failed`/`settled` 且其 item 为同一 occurrence 的有界拒绝，Storage
+效果为零（`ownership_probe.fixed.log`）。新增测试断言还包括：拒绝 Result 的
+`retry_category=source_already_organizing`、`effect_certainty=none`、错误文本不含 winner
+Task/item 身份；顺序第二次 Run only 拒绝已占用文件而另一 scope 的空闲文件独立处理；
+Files discovery reservation 挡住自动入口；stale claim 零写入；合法同 Task/lineage 续作
+不自拒；settled sibling 在组合事务内仍拒绝重启动。
+
+本轮计时测试合计约 198s，低于本轮总耗时 50%；无空等凑比例。
+
+### Remaining work / risks（如实陈述，未自评 PASS）
+
+1. `automatic_task_continuation._continue_item` 未改为直接调用组合事务（见上节边界说明），
+   等 B 独立判断是否需要。
+2. Metadata / Metadata-correction / Conflict 的自动续作仍无各自独立 API 端到端测试
+   （Round 4/5 遗留，本轮未扩大）。
+3. direct CLI 在 admit 与 claim 之间崩溃的常驻恢复分支仍无独立测试（Round 4 遗留）。
+4. Inventory/latest/metrics/Dashboard/readiness 的 Job-less 读回仍未逐一独立复核
+   （B 的更广验收）。
+5. 无 schema 变更（延续 schema56）；未修改 Web 投影，故未跑 Web 构建/E2E。
+6. B 仍负责 T4 full Python/Web/E2E/wheel/Docker/native 门禁与独立审查；本轮未运行这些
+   门禁。
+
+### Scope statement
+
+未读写用户数据库/生产媒体；未修改 A-owned Slice/Roadmap/Progress；未 push/部署；预存
+无关未跟踪文件保持未暂存。B 负责本 Task 原 T4 验收与独立审查。
