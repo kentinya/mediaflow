@@ -1,424 +1,253 @@
 # NO ACTIVE IMPLEMENTATION TASK
 
-Task47.4 已由 B 独立审查 **PASS**，完整范围为
-`383d8834787674675183f4b251d9dfd26a5dc511..dd3f1c25126cd574d8df293d0163131bc6cb9ad6`。
-下一步：**SLICE READY FOR A REVIEW**，由 A 终审整个 Slice；不授权继续开发或新 Task。
-下方保留已完成 Task 的范围、开发指导和当前审查/交接包；详细轮次历史在 Git。
+用户本轮只要求“合入当前 Slice，并规划 Task”。以下 Task47.5 为 **PLANNED 草案**，
+不授权实施、派生代理、push、部署或 Slice 关闭。后续明确授权开发时原地激活，并核对
+中间变更；不静默重定 Task Base。用户已选择：“运行一次”和定时一样排除历史
+failed / partial，保留一键执行，不新增初始确认。
 
-## 已完成 Task 47.4 — 独立 Job 系统退出与 Task 管理闭环
+Task47.4 已由 B 审查 PASS，原范围
+`383d8834787674675183f4b251d9dfd26a5dc511..dd3f1c25126cd574d8df293d0163131bc6cb9ad6`；
+完整审查/原五项结果 Closure Packet 保留于
+`980ce42a977b5bc20cf8426dbaf5a232f46cf22b:TASK.md`。本次新增 RO-6 后 Slice47 继续
+ACTIVE，先前的 SLICE READY FOR A REVIEW 不覆盖新结果；没有 A Final Review 或关闭。
 
-Task47.3 已由 B 验收 PASS；记录在 `383d8834787674675183f4b251d9dfd26a5dc511:TASK.md`，
-接受候选为 `a0f09afefac2a85a70aca43c4cfbe1e36e04f1de`，原 Base 不变。
-用户本轮明确授权按此草案实施并交 B 审查；本文件原地激活该 Task，不重定 Base，
-不派生代理、不 push、不部署、不宣告 Slice PASS / CLOSED。
+# Task 47.5 — 自动排除历史失败、手动提醒后新整理与 CLI 失败重试退出
 
-Authority: committed [SLICE.md](SLICE.md), RO-1/2/4/5、AC-4/11/12–18；
-[Development Workflow](docs/development-workflow.md) 是生命周期、测试和收尾依据。
-用户已明确**没有旧任务、不考虑升级**，此指令覆盖引用合同中的旧任务迁移、跨版本
-升级/历史兼容要求；保留本版本 fresh、新任务和同版本 reopen/restart 的安全义务。
-B 不改 A-owned Slice/Roadmap/Progress，不自行宣告 Slice PASS / CLOSED。
-
-用户补充边界（2026-11-02）：**V1 已不受支持**。本 Task 只以当前 V2 用户旅程、
-仍被 V2 消费的共享 API/CLI/运行时和安全能力验收；V1 独有页面/行为不作为门禁或返工
-要求。下文旧 V1 保留措辞依此收窄；不要求恢复旧产品或旧 Job 兼容。
+Authority: committed [SLICE.md](SLICE.md) 的 2026-11-02 修订、RO-6 / AC-20–25；
+[Development Workflow](docs/development-workflow.md) 管生命周期、测试和收尾。
+[Requirements](docs/requirements.md)、[V2 Requirements](docs/v2-requirements.md) 的
+`V2-TASK-008–010` 管本次规则；保留 `V2-TASK-001–007`、`V2-OPS-014–017`、
+`V2-AUTO-010/011`、UX-002/003/004/006、REQ-SCAN-006、REQ-RECOVERY-006/009、
+REQ-RESULT-* 与 REQ-SAFE-* 中未被明确修订的身份、授权、历史及安全义务。
 
 ```text
-Task ID: 47.4
+Task ID: 47.5
 Task Type: SLICE
 Parent Slice: 47
-Status: PASS
-Task Base: 383d8834787674675183f4b251d9dfd26a5dc511
+Status: PLANNED
+Task Base: 75ddff55f8d5b2b1206c81804bfb5cbe9ed279a1
 Difficulty: High
 Test Level: T4
 Planner / Reviewer: B
-Implementation authorization: COMPLETED — NO FURTHER IMPLEMENTATION TASK
+Implementation authorization: NOT GIVEN — PLANNING DRAFT ONLY
 ```
 
-## Preflight / accepted baseline
+## Preflight / workspace / role
 
-仓库 `/Users/songzhidong/mediaflow`，branch `main`，规划起点为上述完整 Base；governance
-preflight PASS，workspace/Git 可写。无预存 tracked 修改；预存 OS/log/参考图片、`15`、
-`output/database-reference-2026-11-01/`、`output/organize-flow-2026-11-01.html` 与 imagegen
-ZIP 保留且不暂存。不读用户数据库、
-媒体或秘密配置。本轮由 Developer 按用户授权实施生产、测试与前端；A-owned Slice/Roadmap/Progress 不变。
-
-Task47.3 已接受：新 Files/due/Run once/direct CLI/batch/remote organizing 共享 Task
-admission/claim/fence/管线；四类恢复留在原 Task；原 Automation 结果/时间冻结；正常
-安全失败可由 retry-failed 明确重试，效果不明的文件被拒绝且保留原占用/证据。
-retry-request、Pause/resume、Scan/Preview/FileIndex 均不恢复。
+- Repository `/Users/songzhidong/mediaflow`，branch `main`；本轮开始 HEAD
+  `980ce42a977b5bc20cf8426dbaf5a232f46cf22b`，无预存 tracked 修改。预存未跟踪的 OS/log、
+  `15`、参考图片及 `output/database-reference-2026-11-01/`、imagegen ZIP、
+  `output/organize-flow-2026-11-01.html` 原样保留、未暂存。
+- 同一 root agent 先履行 A 范围职责，提交 `75ddff55`，再履行 B 规划职责；公开此角色
+  组合，但没有实施、自审 Task、A 终审或派生代理。提交后 governance PASS；工作区/Git 可写。
+- Task Base 固定为已提交范围修订的完整 SHA。Slice 原 Base
+  `5144ab1fc2344b06194969cc2c496835729664c0` 不变；Task47.4 接受事实不变。
+- 不访问用户数据库、媒体或私密配置。用户“不考虑旧任务/跨版本升级、V1 不受支持”
+  继续有效；fresh 新数据与同版本 reopen/restart 安全仍必须完成。
 
 ## Goal / complete journey
 
-完成 Slice47 尚未交付的独立 Job model/schema/queue/API/CLI/Web 退出。部署到空目录后，
-用户从 Files、Automation、受限 remote API 或 CLI 发起整理，只看到同一整理 Task 的
-排队、进度、原记录、文件结果和允许操作；管理者通过 Task 查看/取消，四类恢复按既有
-决定→分析→摘要→明确继续执行。系统、设置、通知、日志和导出不再依靠 Job 行。
+同一个失败或部分失败的来源文件：以后定时/运行一次不自动处理；用户在资源库 Files
+明确选中整理时，可以看到上次失败/已知部分效果/未知效果的明显提醒，按原摘要确认
+后执行一次新的正常整理。只用现有 Task 引擎、计划、冲突策略和确认，不再找独立 CLI
+失败重试，不建立远端核验或附件恢复系统。
 
-成功：所有新整理由现有 Task engine 负责；数据库及可安装产物没有独立 Job 存储/Worker/
-执行入口，现有合法能力由 Task 或原有分析/准备能力完成。失败：RBAC/票据/队满/源变更/
-配置不可用/未知效果仍说明阶段、保留状态、已知效果和具体下一步；读取或修正不自动执行。
-不要求用户管理内部 claim/token/revision，也不要求先登记 pending。旧 Job 输入使用正常
-参数错误/not-found 边界，不能自动变成新的整理或执行授权。
+- **入口：** Files 直接文件、文件夹、混合选择；已发布定义 due/Run once；保留正常
+  CLI organize/batch 与受限 remote organizing 的既有权限/来源边界。
+- **可见状态：** 自动排除有逐项原因/计数；手动原准备/摘要中有服务端生成的历史提醒，
+  包含上次结果、原来源/目标、完成步骤和未知效果。未知不是“系统已核验”。
+- **动作：** 用户核对实际文件效果后，仍使用原“确认整理 N 项”选中确认；无需新的
+  核查页、例行 checkbox、token 或技术恢复按钮。已有目录、目标和复制残留走正常策略。
+- **成功：** 新 Task 使用新请求准入时当前 Active 的不可变 pin 和当前已核对来源；
+  只记录自己的真实效果，原 Task/Result/pin/原 Automation 时间与结果不改写。
+- **失败/恢复：** 已知仍排队/执行的工作继续阻止并发；仅历史 partial/unknown 标记
+  不构成永久手动拒绝。源/计划/历史发生变化、拒权、队满、响应丢失等按现有精确
+  读回/重新分析/确认处理；旧在途远端调用的实际终止不由用户确认或系统提示证明。
 
-## Actual-code gap / dependency map
+## Actual-code gap / affected seams
 
-以下均来自 Base 真实代码；是依赖地图，不是逐文件拆 Task 或实施清单上限。
+下列来自 Task Base 实际代码，是实现地图，不是要求逐文件拆 Task 或全面重构。
 
-| 真实位置 | 当前残留与本 Task 的结果 |
+| 位置 | 当前缺口 / 本 Task 调整方向 |
 |---|---|
-| `domain/automation.py`、`application/automation.py` | 仍有 AutomationJob/Status/Repository、AutomationJobService/AutomationWorker。只删 Job 专属对象/队列，保留 Definition/Schedule/Occurrence、到期规则及共享异常/能力。 |
-| `final_cli.py::_run_worker/_run_queued_workflow` | resident 仍组合旧 Job Worker，保留 Job→CLI dispatch；应由现有 Task consumer 承担合法工作，普通文件/通知 resident 继续可用。 |
-| `metadata_correction_continuation.py`、`recovery_continuation.py`、`recovery_batch.py`、`scope_continuation.py` | 有实际创建 AutomationJob 的恢复分支、job_id 关系或已退役 pause scope 专属代码；不能只删主提交而留下恢复 Job writer。共享决定/请求/摘要/审计仍保留。 |
-| `sqlite_runtime.py`（schema57） | automation_jobs 和索引仍存在，共享容量仍加 legacy Job count；schedule/occurrence、票据/audit、continuation/batch、logs 等仍有 Job 列/FK。部分 last_job_id/consumed_job_id 已实际装 Task ID，应切换为真正 Task 关系，不能换个 Job 表名。 |
-| `service_api.py` | `/api/v1/jobs` 及 operations alias 仍提供 list/detail/stale/submit/cancel/requeue；remote organize 虽创建 Task，公开入口仍叫 jobs。Task cancel 实际仍校验 CANCEL_JOB 权限，不能删枚举后顺便丢掉鉴权。 |
-| `web/src/entities/operations/job.ts`、`api-client.ts`、`LegacyTaskRoutes.tsx`、Dashboard/navigation | 仍有 Job model/query/归属查找/链接，run/detail/recovery 文档也含 Job 分支；需要让受支持的当前页面只消费 Task。 |
-| `interfaces/operator_ui.py`、logging / authorization / notification | V1 页仍有 Job 导航/提交/陈旧队列按钮，日志和消费记录仍带 Job identity；只改依赖部分，保留同等管理、审计、通知能力，不做 V1 整体改版。 |
-
-适用要求：V2-TASK-001–003/005–007、V2-OPS-014–017、V2-AUTO-010/011，REQ-TASK/
-SCHED/API/RESULT/SAFE/DEPLOY 的适用条款；完整旅程见 Product Experience 的 TARGET、
-Manual organize、Tasks/results/recovery、Scheduled/Automation、Operations administration。
-Architecture 的 TARGET task identity/engine/query/removal 为本 Task 技术边界；旧 CURRENT
-和旧 requirements 不能要求恢复被用户排除的升级或退役产品。
-
-## Entry disposition / API contract
-
-| 已有入口 | 本 Task 处置 |
-|---|---|
-| Files、Scheduler interval/Cron/managed due、Run once、organize/batch、retry-failed | 保留 Task47.3 已验行为及身份/权限/范围差异；继续 Task engine，零新 Job。 |
-| `POST /api/v1/jobs` remote organize | 由 **`POST /api/v1/tasks`** 等价替代：只接受原已支持的 `{command:"organize", execute:true, limit:N}` 和原 HTTP execution-token header；REMOTE_EXECUTE、remote enabled、单次票据、TTL/limit、当前权限、容量/消费原子性全部保留。返回 202、taskId 与可读回 Task 地址，不接受泛化任意 command 或新增 destructive 参数。此 POST 是待实施替代入口，不能当作 Base 已存在入口去探测。 |
-| GET Task/run/Automation/log/export/readiness | 继续使用现有入口，只读且 Task-authoritative；有界列表/计数/游标、原运行结果/时间、当前处理状态不丢、不重复。 |
-| Task cancel API / CLI `jobs cancel` | 复用现有 `POST /api/v1/tasks/{id}/cancel` 和 TaskLifecycleService；补最小 **`tasks cancel <task-id>`** CLI 等价入口，命令内部读取版本后走相同后端核对。保留安全取消与旧角色的实际权限，不把原 CANCEL_JOB 保护直接删除；当前权限/前端能力改为准确 Task 含义，角色不扩权。 |
-| item metadata-correction-continuation / recovery continue / batch | 核对真实来源与允许动作，支持的新整理四类继续回原 Task kernel；Metadata 别名若保留就验证原 review/version 后复用同一行为。已被 kernel 明确拒绝的 batch 不能为去 Job 而恢复。支持的管理分析能力仍零修改，不借机变成通用整理重试。 |
-| Job stale/requeue 与 scope-continuation | 删除 Job 专属状态/命令/路由/dispatch；原限定的安全分析由既有 Task 允许动作完成。stale/timeout 不成为重新执行许可，不新增通用 requeue-stale、Pause/resume 或技术故障恢复。 |
-| `jobs` CLI 整组、`/api/v1/jobs[/...]`、`/api/v1/operations/jobs[/...]` | 从 parser/help/route/dispatcher 删除，普通认证/参数错误或 not-found，零受理/授权消耗/Provider/Storage 效果。不保留 hidden executor/alias 或自动转成 Task；同步实际调用者与文档。 |
-| Web/V1 Job collection/detail/导航/按钮 | 移除其 model/query/注册及实际调用；已有 Task/Automation/Files 入口继续完整。旧 Job URL 普通有界不可用即可，不新建历史映射或兼容页面，不凭旧 ID/名称/时间猜 Task。 |
+| `domain/task_scheduling.py::TaskTrigger` / persisted display/admission context | 有 MANUAL/SCHEDULE/RUN_ONCE；origin 是服务端证据，不是浏览器可传的豁免。增加最小来源相关筛选语义，不能让 display 字符串授予执行权。 |
+| `application/media_organizer.py::process_file/process_library`、`manual_task_engine.py`、`automation_definition_execution.py` | 共用引擎已存在，但没有统一“历史 failed/partial → 自动排除、手动提醒”的逐文件决定。目录 Task 建立时还没有完整文件清单，检查必须落到具体来源且先于该文件 Provider/执行。 |
+| `sqlite_runtime.py::find_owned_source_work/_find_owned_source_work_locked`、`domain/task_persistence.py::SETTLED_ITEM_STATUSES` | 当前 FAILED 被当作已结束，PARTIAL 未被纳入；跨 Task 来源查询主要按状态，没有统一关联历史效果。不能只把 PARTIAL 加集合或只隐藏页面拒绝。 |
+| `sqlite_runtime.py::list_results_for_source` / TaskItem、discovery source evidence | 现有来源结果查询是路径 + 最近有界结果，单独复用无法覆盖跨库真实路径/版本和较老的匹配失败。需在准确历史总体上筛选，再限制对用户显示的信息。 |
+| `media_discovery.py::_refuse_owned_sources/_owned_source_work` / atomic source reservation | Files 直接/展开/准备发布都做占用核对；要共享新判断，手动 partial/unknown 的旧占用不能在后续 finalize/confirm 又被当作永久 veto。 |
+| `manual_organize_execution.py`、`task_runtime.py`、`task_scheduling.py` / SQLite admission、mutation marker、file_locks | 同步处理新手动意图、已知活动所有者、历史不确定证据和精确逐文件锁交接。保留同 Task 的旧项非重放与四类安全继续，不重写旧 Result 或用 task-wide 解锁释放兄弟项。 |
+| `manual_organize_preview.py`、`interfaces/service_api.py`、`web/src/entities/operations/preview.ts/organize.ts`、`OrganizePlanConfirmation.tsx` | 现有计划摘要/typed boundary 可复用；补服务端历史提醒及摘要一致性，Files 准备和确认前都可发现，不另建页面。 |
+| `final_cli.py`、`task_runtime.py::execution_retry_items` 与引用方 | 删除 retry-failed parser/help、原 pin bootstrap 分支、专属受理/renderer/helper；共享源码先核对真实调用再删。保持正常 organize/analysis、Task cancel、四类 continue/ignore/audit。 |
 
 ## Implementation Scope
 
-1. **沿真实调用者确定替代，再删 Job writer。** 从上表及已有 schema/日志/票据/通知
-   引用完成生产调用核对，逐项说明“转 Task / 复用只读分析准备 / 退役拒绝”。复用
-   TaskSchedulingService、ManualTaskEngineWorker、现有 automatic/manual 管线与
-   OrganizerExecutor；清掉所有 new Job admission、claim/heartbeat/control、Job→CLI
-   bridge 和恢复回落。Task/TaskItem/Result/必要 attempt/摘要是证据，不能新增另一套
-   带独立 queue/claim/lifecycle 的“run”表替代 Job。
-2. **打通等价 remote / cancel 及恢复。** 按上述明确接口更换 API/client/CLI；remote
-   票据准入仍事务内绑定 Task 与消费/audit，队满/非法重复无半条关系。取消是请求→安全
-   边界确认，不能中断在途 Storage 或抹掉成功。可执行/分析-only 身份和 Task Center
-   人口保持；只分析失败的管理能力不因为去 Job 获得执行权，不另造技术恢复 UI。
-   四类继续保留原 Task/source/version/pin/decision/attempt/result 和精确确认，不新建
-   顶层 Task；独立合法 retry-failed 保留已验安全检查与结果关系。
-3. **形成 fresh Job-free 布局与真实 Task 关系。** 移除 automation_jobs/table/index/FK、
-   Job repository/model 与冗余 Job-only 列，将 occurrence/due、消费/audit、logs、
-   continuation/batch 的仍需关系绑定真实 Task/TaskItem/Result。只有证据作用的
-   continuation/preparation 可以保留，不能继续拥有竞争队列或再 mint Job/child work。
-   共享容量只数 distinct admitted Tasks，schema marker 与实际结构一致，初始化失败原子。
-   不设计旧 schema→新 schema 迁移，不运行数据清理/drop 用户库、不补旧 pending。
-   只验证空目录 fresh 和本版本产生数据后的 reopen/restart；不兼容布局沿既有版本检查
-   失败关闭，不能为了跑旧测试重建 Job 或自动清数据库。
-4. **消除查询、设置、通知和 Web 的 Job 依赖。** 改正 SQL joins/unions、run lifecycle、
-   Dashboard、八视图/Attention、Automation records/metrics/latest、readiness/settings
-   resident、日志/export/audit，使读取无需 Job 表也完整。原阶段 outcome/实际时间冻结
-   不变，四类恢复成功不改写原记录。适配 V2 及必要 V1 调用者、URL/model/normalizer；
-   仅移除 Job 专属表面，不重做页面。通知用 Task 事实保持原触发/去重和独立投递，不
-   依赖已删 Job，也不双发同一业务结果或改变投递重试的作用范围。
-5. **保留共享协议，删除专属实现。** Automation definitions/schedules/occurrence、
-   Storage/Provider、普通文件/通知 runner、已发表 immutable snapshot/JSON/digest
-   不能随 Job 模块整文件误删。现有 maximumActiveJobs/staleJobAgeSeconds 等配置如需
-   保持支持，可作为有界解析别名映射 Task 语义；不得改写历史快照或要求用户手工改内部
-   pin。必要的旧配置/通知事件字面值不等于 Job 系统，可在保持已支持协议所必需时保留
-   有界映射，但须写明用途，不能留 Job identity/store/writer 或双队列。不要机械要求
-   全仓库连文档历史中的 `job` 字符都为零。
-6. **同步受影响测试、产物和使用说明。** Job-only 测试改为退役拒绝或等价 Task 行为，
-   shared recovery/pins/authority/notification/storage 断言保留；不用伪造 legacy Job
-   fixture 证明本轮新能力。更新 approved examples、API/CLI/config/deployment 的受影响
-   说明和 harness/smoke consumers。新结果做必要设计事实说明；全部 CURRENT/TARGET
-   最终对齐与 Slice/Roadmap/Progress 关闭仍交 A，不在此 Task 提前宣告。
+1. **确定一个共享逐来源历史判断。**
+   - 复用现有 TaskItem/Result/checkpoint/discovery source evidence 与 repository port，按
+     Storage ID + canonical Storage-relative path + 可比较来源版本找正式整理的
+     `failed/partial` 历史。失败/部分失败指文件项，不是整个 Task aggregate；无 Result
+     但有真实持久失败项的情况不能漏。exclude 当前新分析/尝试自身，不能自我拦截。
+   - 使用同语义大小、修改时间、可用 Provider validator 等已有版本证据。跨库绑定不可
+     直接比较 library-scoped digest；同名不同真实路径不混淆。真正替换的新版本不被
+     永久路径黑名单拦住；缺失/不可比较版本按历史可能适用处理，不伪造“新文件”。
+   - 匹配完整历史总体后再做有界展示。更近的成功或其他结果不能掩盖仍适用的较早失败；
+     历史读取失败给出有界拒绝/重读，不能当作无历史。浏览、Rules 测试、独立仅分析、
+     未准入来源拒绝及本次“历史排除”不制造新的正式失败历史。无全局目录/新队列。
 
-## Developer guidance — 具体文件、实施顺序和收口
+2. **按后端来源接入准入与执行前复核。**
 
-### 先明确要交付什么
+   | 来源 | 历史 failed/partial 的行为 |
+   |---|---|
+   | Scheduler interval/Cron/managed due | 同一版本逐项排除，包含零效果失败；不消耗该文件执行权，不查询其 Provider，不修改 Storage。 |
+   | definition Run once | 用户已选择同定时排除；保持 disabled 可运行、原范围/上限、原一键执行及不推进 due。 |
+   | Files 显式文件/文件夹/混合新整理 | 不因该历史排除；生成提醒并到达现有精确计划/选择确认。 |
+   | 明确 CLI organize/batch | 保留手动显式意图；输出逐项历史提醒，默认只分析，--execute 才执行合法新计划。 |
+   | 原 Task 四类继续 | 保持原 pin、决定→分析→摘要→明确确认；不是新的自动发现，不套“历史失败永不继续”。 |
+   | 无逐文件选择的 remote discovery | 保留原 remote 权限/票据/范围契约；不能信任输入 origin/skipHistory 等字段取得 Files 人工接管豁免。历史 partial/unknown 不走未展示提醒的静默放行旁路。 |
 
-一句话：**拆掉还在使用的 Job 系统，把挂在它上面的能力接到现有 Task；用户照常提交、
-查看、取消和处理问题。** Task47.3 已把新整理接入 Task，不能再写一套 Task 引擎。
+   - Files 直选、目录展开、definition pipeline 在同一具体来源判断上收敛，不只在页面或
+     Task 创建时检查。准入与确认使用事务内新鲜历史/占用检查；Storage I/O 不放事务里。
+   - 现有完整遍历、min(itemLimit,100)、深度/页数预算、过滤、附件与真实稳定性不变。
+     排除不能把未完整遍历变成“前 N 个可以执行”，也不能污染主文件/附件身份。
+   - 自动排除保留来源/原因/数量和实际 Task 结果。全排除是“因历史失败无本次可执行项”，
+     不伪称新整理成功、健康空目录、扫描错误或新增四类待办；自由兄弟项正常处理。
 
-范围大是因为模型、SQL、Worker 和页面相互引用，不按层拆成多个 Task。范围只到 Job
-退出所必需的改动：不重写全库、整个 Worker、整个 API 或页面；remote Task POST 和
-CLI Task cancel 是原能力的等价承接，不扩展成任意命令提交/通用任务控制平台。
-没有旧任务，不做升级、数据搬迁或兼容执行层。本节为已完成 Task 的开发指导，不扩展授权范围。
+3. **打通手动提醒 → 真正新整理，不只做展示。**
+   - 后端投影旧 Task/item/Result 的有界历史、原目标、已完成步骤、效果确定性，进入既有
+     preparation/summary typed 数据。对适用历史显示如“该文件上次整理部分失败，目标
+     可能已有文件，请核对后确认整理”；unknown 明确表示远端效果可能未确认。
+   - 普通提醒不用 raw exception/secret；跨 principal 历史用于后端判断但遵守授权脱敏，
+     不泄漏不可读任务身份/私有目标。页面显示或刷新只读，不自动搜索 Provider。
+   - 提醒绑定当前 exact source/pin/plan/selected subset 和服务端历史依据，作为现有摘要
+     一部分。确认时历史或计划更新就重读/分析并展示当前摘要，不执行未审阅的变化；
+     不新增独立确认产品、例行 checkbox、客户端自报“安全”或 token 粘贴。
+   - 已知活动工作保持互斥；纯历史 partial/unknown、旧已停止阶段遗留的 claim/marker 不得
+     让新手动整理永久停在不可执行。必要的旧应用所有者收束/fence、逐来源/目标锁交接、
+     容量结算和新确认在现有 kernel/repository 中完成，原子地保留兄弟项及旧未知证据。
+     不以效果未知“变成 none”或删除原结果来放行；不只检查来源就遗漏旧目标/附件锁。
+   - 新请求获得自己的当前 pin/计划/单次授权；旧项不重启、不补发旧步骤、不续发已消费
+     权限。即使允许用户核对后新整理，也不能允许已失效应用 owner 再启动后续文件调用。
+     既已发出的远端调用不能被数据库 fence 撤销；此限制明显提示，但本 Task 不实现自动
+     结束探测、线程接管/远程取消。用户明确核对后的新请求是此处的窄范围授权调整。
+   - 已建合法目录复用；目标与复制残留走现有 Skip/Rename/许可 Overwrite/Manual 和
+     Hash/capability/cleanup 规则，不自动删残留或强制覆盖。主文件成功附件失败仍人工
+     按现有指导处理；不生成附件专用重试。
 
-### 文件地图：改哪些部分，不是整文件删除
+4. **删除独立 CLI retry-failed，保持共享行为。**
+   - 从 parser/help/dispatch、专属 snapshot bootstrap、_admit_cli_retry_task、专属输出与
+     无其他消费者的 helper 中退出。普通 argparse 拒绝旧命令，零新 Task/请求登记/
+     Provider/Storage/执行权消费；无 alias、隐藏分支或自动转换成 organize。
+   - 核对并保留四类继续、ignore、cancel、只读 Task/result/export、正常 organize/batch
+     和仅分析。source/wheel/container 的实际入口一致，更新当前 V2 管理文档与测试消费者。
+     旧测试中用于 retry-failed 的效果保护改由真实新整理/旧项非重放断言覆盖，不能仅删测试。
 
-下表 Python 路径统一相对于 `mediaflow/`；同一单元格内省略前缀的文件与前一文件同目录。
-主要文件已有实际引用；“按引用联动”只在改动确实影响该消费者时修改，不为凑文件清单
-扩大范围。最终以真实调用者闭环为准。
-
-| 类别 | 主要文件 | 具体处理 |
-|---|---|---|
-| Job 模型与存储 | `domain/automation.py`、`domain/operations_run.py`、`infrastructure/sqlite_runtime.py` | 删除独立 Job 对象/状态/port/表/索引/FK/union；保留 Definition/Schedule/Occurrence、Task/TaskItem/Result 和必须的证据表。已有 Task ID 装在 Job 列中的关系改成准确 Task 字段，不能改名保留第二个队列。 |
-| 准入与 Worker/CLI | `application/automation.py`、`final_cli.py` | 删除 AutomationJobService/AutomationWorker 和 `_run_queued_workflow` Job→CLI 分发；现有 Task consumer 接管受支持工作；移除 jobs 命令组、补 tasks cancel，普通文件与通知 runner 保留。 |
-| 自动化执行/读回 | `application/automation_run_once.py`、`automation_definition_execution.py`、`automation_definition_occurrence.py`、`unattended_execution.py` | 替换 Job 专属类型/查询/来源判断，保持 due/Run once 的权限差异、definition/pin 和原记录。不重做调度算法、业务管线或启用/运行一次交互。 |
-| 恢复调用链 | `application/metadata_correction_continuation.py`、`recovery_continuation.py`、`recovery_batch.py`、`scope_continuation.py`；对应 `domain/metadata_correction.py`、`recovery_continuation.py`、`recovery_batch.py`、`scope_continuation.py` | 删除 Job producer/consumer/link 和已退役 scope 恢复专属实现；共享决定、checkpoint、摘要、审计继续留用。正常四类继续回同一 Task，不因旧代码叫 continuation 就恢复旧能力。 |
-| API 与授权 | `interfaces/service_api.py`、`domain/security.py`、`application/execution_authorization.py`、`domain/execution_authorization.py` | 按入口合同换 remote POST、删除 Job API；票据消费/audit 直接绑定 Task；Task 取消权限与前端能力同步改名/映射，保持旧角色实际权限和后端检查。 |
-| 前端数据与请求 | `web/src/entities/operations/job.ts`、`run.ts`、`run-detail.ts`、`run-once.ts`、`task-item-recovery.ts`；`web/src/shared/api/api-client.ts` | 删除 Job entity/query/normalizer 分支；运行、恢复、原记录读取真正 Task 文档，不能为旧 normalizer 继续拼一个 Job。对应单测按实际用户结果更新。 |
-| 前端/V1 入口 | `web/src/features/operations/LegacyTaskRoutes.tsx`、`job-query.ts`、`web/src/features/dashboard/DashboardView.tsx`、`web/src/routes/router.tsx`、`web/src/shared/navigation/destination-model.ts`、`interfaces/operator_ui.py` | 去掉 Job 路由/导航/按钮/请求；旧 Job 输入普通不可用，现有 Task/Files/Automation 路径完整。只改相关控件与调用，不改整页布局或整个 V1。 |
-| 按引用联动的共享部分 | `application/operations_lifecycle.py`、`processing_checkpoint.py`、`manual_recovery_continuation.py`、`domain/logging.py`、`infrastructure/operational_logging.py`；通知/设置和运行模型消费者 | 清理确有的 Job 投影/关联/日志参数；保留安全检查、独立投递、原阶段事实与 resident adoption。没受影响的通知/设置/Task kernel 不重写。 |
-
-**容易漏掉的现成例子：** `AutomationRunOnceService._execution_view()` 现在即使拿到的是
-新 Task，仍会 `return AutomationJob(...)` 来适配读模型。因此“没有新增 Job 行”还不够；
-必须连这种包装一起退出。改完用真实 Run once 的提交/查询/刷新/同版本重启证明返回的
-Task、definition、来源、状态和原结果仍准确，不能只替换类名或删掉字段断言。
-
-### 建议实施顺序
-
-1. **先固定对外合同和安全回归。** 使用上方 Entry disposition 中已指定的 remote
-   POST、Task cancel、Job 退役处置；先补真实合法/拒绝用例，明确原权限、scope/limit、
-   票据/容量原子边界。复用 Task47.3 的安全重试、来源占用、原记录和四类继续用例。
-   不为实现去探测未授权的新路由/通用命令，也不另造依赖管理工具或测试平台。
-2. **接生产者和消费者，清掉恢复回落。** 逐一改 Scheduler/Run once/remote/CLI/
-   四类继续及管理分析的实际调用。使用已有 Task admission/consumer/pipeline；来源、
-   固定配置、决定、attempt/result、claim 和效果证据仍属于原工作。临时适配只可用于
-   同一改动中的调用切换，交付时不能残留 AutomationJob 包装或可调用的 Job 分发。
-3. **把读侧和用户入口接好。** 改 API DTO、SQL 查询、normalizer、页面/V1 和审计/
-   日志/通知消费者，保证不再读 Job 表也能显示、取消、查原记录和导出。原始运行结果与
-   当前处理状态分开，成功后不改写原失败/时间；技术失败不进入新的第五类 Web 恢复。
-   字段缺失不能伪造成功、把未知计数当 0 或悄悄省略不确定文件。
-4. **再完成底层删除和 fresh 布局。** 删除不再需要的 Job model/port/service/DDL/
-   索引/FK/专属关系；核对所有模块 import、SQL、新表写入和产物，而不只删 Web 按钮。
-   保留共享定义/计划/摘要/证据；无独立 queue/claim 的读回结构可用，独立执行对象不能
-   换名留下。只做空库初始化和本版本新数据 reopen，不编写旧任务升级/清库路径。
-5. **沿用户旅程完成验证并交一个完整 checkpoint。** 用 fresh fixture 实际完成
-   remote 提交→Worker→结果→查询、queued/running 取消、due/Run once、四类继续；再核对
-   Job CLI/API 的实际拒绝、页面不发 Job 请求、fresh SQL 无 Job 依赖。边界失败保留
-   原 Task/票据/来源/效果，不拿“队列已接入”代替文件执行与安全检查。实施中可以有
-   正常检查点，最终交付必须连贯；不按这五步另建 Task 或自评 Slice 完成。
-
-### 验证和交接怎么做
-
-- Developer 先跑新增/修改及直接受影响测试，具体命令沿用下方 Required Tests；旧 Job
-  专属测试转为退役拒绝/Task 等价能力，共享安全断言保留。失败项不靠删断言、改超时或
-  自动 retry 变绿。不要求 Developer 重跑 B 的完整 Python/Web/E2E/发布矩阵。
-- 交接简要列出：删除了哪些 Job producer/consumer/schema；remote/cancel/恢复/读回
-  如何承接；保留的旧配置/事件字面值及理由；实际测试命令/结果/风险。不是要求编写
-  额外治理报告。B 复核完整 Base..Head、所有 Slice 结果，并负责适用 T4/原生/打包门禁。
-- 无旧任务/不考虑升级仍有效；不能把外部服务缺失、历史兼容探针或过程文档当成新产品
-  返工理由。真正未完成的必要入口/安全/数据关系要如实写出，不缩小验收后称完成。
+5. **完成真实路径与可审查交接。**
+   - 用临时 SQLite/LocalStorage 和 fake/local Provider 构造三类真实失败：目录成功后
+     写入失败；目标父目录已存在时写入失败（failed + unknown）；COPY 已完成但 Move
+     删源失败。通过 Files 当前 V2 API/Worker 实际重新整理到结果，保留旧证据。
+   - 相同来源走 due/Run once 真实过滤，自由兄弟项实际完成；过页历史、版本变化、并发
+     手动重复确认、已知活动所有者、reopen/restart、拒权/队满/响应丢失都覆盖。
+   - 只提交本 Task 必要改动，READY FOR B REVIEW，附实际受影响测试及限制；不开发后续
+     Task、不关闭 Slice。B 完整验收后重新评估六项 RO/AC-1–25，再交 A。
 
 ## Acceptance Criteria
 
-- [x] fresh SQLite 无 automation_jobs、Job 专属 index/FK、独立 Job id/queue/claim 表；
-  仍需 occurrence/消费/审计/log/恢复关系是准确 Task 身份。新任务写入后 integrity/
-  foreign_key_check、同版本 reopen/restart 保留关系、pins、原摘要、授权消费及不确定效果。
-- [x] 源码、clean wheel、容器无 AutomationJob/JobRepository/JobService/JobWorker 或
-  专属 Job→CLI dispatch；没有改名的第二工作生命周期，无 callable Job writer。仅为
-  支持配置/外部协议保留的字面值有明确说明与测试，不依赖 Job 存储。
-- [x] 真实 remote Task POST 完成授权→原子受理→Worker→独立文件效果→读回；无权限/
-  remote disabled/缺 execute/票据失效或重复/越界/队满/坏 pin 均零扩大权限，拒绝不
-  消耗票据或留孤儿；旧 jobs POST/alias 不再能受理。
-- [x] CLI Task cancel 与现有 API 一致：queued、运行中/在途、重复/陈旧版本、终端
-  状态均遵守现有允许动作，成功 sibling 保留，未确认在途工作不提前释放容量/源占用。
-  viewer 不因权限改名获得取消/执行权；CLI 无需用户搬运版本/claim。
-- [x] Job CLI/API/Web 专属入口实际退出，旧输入普通有界拒绝且零业务效果；页面没有
-  仍发 jobs 请求的按钮/导航。Task 有效链接、details、records、logs/export 不依赖 Job；
-  旧 ID 不被猜成新 Task。Retired Scan/Preview/FileIndex/Pause/resume/retry-request 不恢复。
-- [x] Files/due/disabled Run once/direct CLI/batch/retry-failed 的入口差异、原子幂等、
-  filtering/attachments/完整遍历/limits/真实稳定性保持；只分析仍零修改且不混入整理人口。
-- [x] 四类分别完成同 Task 决定→分析→精确摘要→明确确认，成功/忽略/不确定 siblings
-  独立，混合批次允许/拒绝逐项可读。没有旧恢复 Job 回落、重放已完成/不确定效果或刷新
-  已消费授权；Task47.3 的安全重试和原子来源占用反例继续通过。
-- [x] eight-view Task Center/Attention、Automation definitions/records/metrics/latest、
-  Files 本地普通操作、Dashboard、API/CLI/health/readiness/settings 的 count/filter/
-  cursor/刷新/重连语义准确；原运行结果/实际时间不随恢复改写，一次原运行只计一次。
-- [x] 通知/outbox、授权/audit/log/JSON 以 Task 事实工作，零 secrets，投递失败不改媒体
-  结果；普通文件 runner、resident 无 Active/缺依赖/重启/override/adoption 继续真实。
-- [x] Developer 交受影响证据；B 在完整 Base..Head 上完成适用 T4、原生/视觉、clean
-  installed wheel/Docker fresh/restart/security 验收并重评所有 Slice 结果，才可 Task PASS。
-  旧任务/跨版本升级不作为本 Task 门禁，不对用户库做试验。
+- [ ] **AC-T1 / Slice AC-20：** due 和 Run once 对同版本 failed/partial 独立排除；零效果
+  失败也排除，自由兄弟项真实完成，完整范围/稳定性与排除记录/计数一致，全排除不假成功。
+- [ ] **AC-T2 / AC-21：** Files 直选、目录及混合选择都允许历史失败项进入新整理；真实
+  部分目录、复制残留、failed+unknown/partial+unknown 均先显示清楚提醒，再经原摘要
+  选中确认执行正常计划。没有额外核查页/例行 checkbox，也不只做到“可以打开摘要”。
+- [ ] **AC-T3 / AC-22：** 真实 canonical Storage/path/版本匹配不受最近32/100条历史截断；
+  覆盖跨库绑定、同名异路径、新版本、未知版本、混合 Task、无 Result 持久失败和非整理
+  仅分析。读取失败不放行；新 Task 自己的分析失败不伪装成先前外部历史。
+- [ ] **AC-T4 / AC-23：** 有效活动所有者仍阻止并发；手动旧历史接管/确认、锁和容量
+  原子核对，旧 app owner 后续写/调用拒绝，兄弟项不被解锁。旧未知证据仍未知，且既有
+  标记不会使已确认新手动工作永久无法执行。没有把 Web 确认说成远端已停止证明。
+- [ ] **AC-T5：** 新整理用新 pin，原 Task/item/Result/原 pin/原 Automation 结果和时间
+  不变；正常 Conflict/Hash/覆盖/清理、C→A identity、附件、RBAC/脱敏及四类同 Task
+  继续不退化。旧项/成功兄弟不被这次新请求作为恢复范围自动重放。
+- [ ] **AC-T6 / AC-24：** source/help/installed wheel/image 无 retry-failed 或替代别名；
+  旧命令在解析处拒绝且零效果；正常 CLI 分析/execute 和其他 Task 管理/四类继续保留。
+  remote 不能伪造 origin 取得未展示提示的 manual 例外。
+- [ ] **AC-T7 / AC-25：** 真实 V2 浏览器桌面/窄屏，使用生产 build + real API/SQLite/
+  Worker，证明提示→选中确认→实际效果、定时/运行一次排除、原历史不改写；重连/过期
+  摘要/队满/拒权的状态与可操作下一步真实。B 完成适用 T4/原生/安装/容器/重启门禁。
 
 ## Required Tests
 
-遵守 workflow 的测试分工。所有成功、非法输入、冲突、失败、重要边界来自已有入口或
-本 Task 明确授权的替代入口；不探测猜出的路由或不支持的状态组合。每轮测试墙钟少于
-本轮总用时 50%，记录耗时，优先关键复现，不能靠空等、删断言/放宽超时/加重试凑结果。
+依 [workflow §6](docs/development-workflow.md#6-test-levels)。以下命令为实施后的计划，
+**本轮没有运行这些产品测试或声称通过**。新模块名是本 Task 的预期测试文件。
 
 ### Developer — affected tests
 
-先在实际修改模块扩展新 route/取消/Job-free fresh/恢复/查询测试，再按改动运行现有组；
-命令按 Base 现有文件列出，若移除或改名 Job 专属测试，同一次交接给出准确替代命令及
-保留的行为断言。不是要求 Developer 跑全仓库/全 Web/发布矩阵。
+根目录：
 
-```sh
-.venv/bin/python -m unittest tests.test_automation_entrance_recovery \
-  tests.test_execution_authorization tests.test_api_security \
-  tests.test_operator_job_submission tests.test_operator_job_cancellation \
-  tests.test_queued_job_execution_boundary
-
-.venv/bin/python -m unittest tests.test_task_persistence \
-  tests.test_task_scheduling tests.test_task_scheduling_fencing \
-  tests.test_manual_task_engine tests.test_processing_recovery_admission \
-  tests.test_recovery_continuation tests.test_recovery_batch tests.test_resident_correction
-
-.venv/bin/python -m unittest tests.test_automation_definition_occurrence \
-  tests.test_automation_workspace_read_model tests.test_operations_run_inventory \
-  tests.test_operations_run_detail tests.test_operations_task_center \
-  tests.test_processing_worker_readiness
+```bash
+.venv/bin/python -m unittest tests.test_organize_source_history tests.test_organize_preparation tests.test_manual_task_engine tests.test_manual_organize_execution tests.test_task_scheduling tests.test_task_scheduling_fencing tests.test_task_retry tests.test_automation_entrance_recovery
+.venv/bin/ruff check <本Task新增或修改的Python文件>
+.venv/bin/ruff format --check <本Task新增或修改的Python文件>
+.venv/bin/python scripts/check_governance.py
+git diff --check
 ```
 
-改到对应分支时追加 `tests.test_notifications`、`tests.test_operational_logging`、
-`tests.test_automation_settings_resident`、`tests.test_v2_automation_run_once`；只跑新/修改/
-直接受影响组合。Python changed-file Ruff format/check、compileall、governance 和
-`git diff --check` 必做。Web cwd `web/`：对修改文件跑 Prettier、相关 unit/normalizer/
-API/router tests、typecheck/lint/build；只跑直接受影响原生 spec。fixtures 用临时根/
-SQLite/fakes，不用用户生产 SMB/OpenList/S3/TMDB。
+`tests/test_organize_source_history.py` 为本 Task 新的临时 DB/Storage 成功、无效输入、
+冲突、故障及边界测试；其余是直接受影响的真实准入、手动执行、claim/fence、CLI 与
+自动入口。复制/删除实际故障从 Executor/Storage 注入，不能全用手填状态或假前端。
+明确验证未知状态原来存在的跨新 Task 放行缺口，不因删除 CLI 而失去安全证据。
 
-### B — independent acceptance / full regression
+`web/`：
 
-- 审完整 Task Base..candidate，重查所有实际 new Job writer/恢复/查询/控制/产物引用，
-  完整入口表逐项有处置。负向搜索只是辅助，不能代替真实入口和文件效果/数据库证据。
-- fresh 同库运行 Scheduler/due/Run once/Files/CLI/new remote 和 worker，验证真实 Task/
-  item/result/occurrence/票据消费/log/outbox、并发/队满/取消/claim loss/源变更及 uncertain。
-  从实际四类决定/确认和管理分析入口证明删除 Job 后仍闭环，不新增第五类恢复。
-- 执行 [workflow shared full T4 gates](docs/development-workflow.md#shared-full-regression-commands)：
-  full Python/static/examples/禁依赖、全 Web/unit/E2E、clean installed wheel 及 Docker
-  fresh/restart/security。源码变更后的实际产物重建；不复用残留 build 缓存中的已删模块。
-- build 后在隔离 fresh Python harness 运行现有原生：
+```bash
+npm run test -- run src/entities/operations/organize.test.ts src/entities/operations/preview.test.ts src/features/operations/OrganizePlanConfirmation.test.tsx
+npm run typecheck
+npm run build
+npm run test:e2e -- --config=playwright.python.config.ts tests/e2e/organize-source-history.python.spec.ts
+```
 
-  ```sh
-  npm run test:e2e -- --config=playwright.python.automation.config.ts \
-    tests/e2e/automation-lifecycle.python.spec.ts tests/e2e/automation-run-once.python.spec.ts
-  npm run test:e2e -- --config=playwright.python.config.ts \
-    tests/e2e/automation-workspace.python.spec.ts
-  npm run test:e2e -- --config=playwright.python.config.ts \
-    tests/e2e/automation-settings.python.spec.ts
-  npm run test:e2e -- --config=playwright.python.config.ts \
-    tests/e2e/operations-task-center-visual.python.spec.ts
+新增 `OrganizePlanConfirmation.test.tsx` 与 `organize-source-history.python.spec.ts`，
+使用现有生产摘要和真实 Python harness，覆盖提示对正确来源可见、unknown 文案、无
+额外 chore、选择确认绑定/拒绝重读、真实文件效果及自动排除。补足实际受影响的 unit/
+原生测试，不把全部 Web/Python/E2E 交给 Developer。若只复用旧测试模块，交接说明
+等价覆盖位置并保留相同有意义断言，不要求为命名再造一套 harness。
+
+### B — acceptance and full regression
+
+- 独立审查整个 Task Base..candidate；实际复现 AC-T1–7，重点对比 due/Run once 与
+  Files 对同一来源的不同结果、旧 partial/unknown app-owner 的交接和历史完整性。
+- 执行 [shared full gates](docs/development-workflow.md#shared-full-regression-commands)
+  的适用 T4 Python/Web/full E2E/static/examples/wheel/installed/Docker/security 门禁，
+  不复用改动前的 T4 PASS 代替本 Task 新执行输入。对未变输入的证据复用按 workflow。
+- 在生产 build 上执行以下原生旅程（`web/`，每组独立产物目录/顺序运行，避免 harness
+  与报告互相覆盖）：
+
+  ```bash
+  npm run test:e2e -- --config=playwright.python.config.ts tests/e2e/organize-source-history.python.spec.ts
+  npm run test:e2e -- --config=playwright.python.config.ts tests/e2e/automation-lifecycle.python.spec.ts tests/e2e/automation-run-once.python.spec.ts
+  npm run test:e2e -- --config=playwright.python.config.ts tests/e2e/operations-task-center-visual.python.spec.ts
   ```
 
-  workspace/settings 分开 harness，避免共享 Active 污染。增加受影响 Dashboard/V2 和
-  remote/cancel/Job-absence 的真实验证，复用已有 harness。人工查看桌面/窄屏，确保
-  原记录/摘要/确认/下一步仍可用；不为收尾另建过程平台。
-- 核对 fresh SQL layout/clean source/wheel/image 的 Job 专属对象退出；新数据同版本
-  reopen/restart、备份验证/失败原子、RBAC、不可变 pins 和非重放必须保留。无旧 schema
-  升级/旧任务迁移测试义务，失败不自动删除已有数据。证据放稳定 ignored 目录/CI，披露
-  skips/未完成项；Task PASS 后重新判断 Slice RO-1–5 / AC-1–19，不替 A 自审或关闭。
+- 人工检查实际桌面与窄屏截图/交互：失败项提醒明显、长路径有界、可见旧目标/未知效果，
+  普通确认可达，不新增 Failure Recovery、核查页或 Routine checkbox；读/刷新零效果。
+- clean wheel/source-external CLI 验证 retry-failed 普通参数拒绝与正常 organize；隔离
+  Docker 验证 fresh、同版本 Worker/Scheduler restart、源历史排除/手动新整理、权限、
+  原结果/未知证据及旧 owner fencing。只用临时媒体与 fake/local Provider；不读用户库。
+- 无旧任务、跨版本升级或 V1 产品门禁；不要求真实远程复制终止/取消能力或完整外部
+  endurance 环境。既有外部环境 skip 和任何 unavailable 门禁如实记录；不放宽断言。
+- PASS 后对扩大后的整个 Slice RO-1–6/AC-1–25 重评并提交新的 Closure Packet，旧
+  Task47.4 packet 是基线而非新增行为的接受证明；不得代 A 终审或关闭。
 
 ## Non-goals
 
-旧任务/旧 Job/旧 pending 的迁移、跨版本升级、旧历史恢复/ID 映射或兼容 executor；
-更换 Storage/Provider、分布式队列/并行策略/进程监督、全 schema/仓库重构、全 V1 改版；
-新增通用技术故障/附件重试/自动 uncertain replay/补偿/rollback；重新设计 Files/Automation/
-Task Center/通知；删除共享配置/安全/证据；恢复 Pause/resume/retry-request 或已退役产品。
-不清用户库/媒体，不改 A-owned Slice/Roadmap/Progress 或 Task47.3 的接受事实。
+远程操作完成探测/操作 ID 查询/取消、SMB 线程管理重构、Storage/Provider 新能力、
+“系统核验安全后解锁”新产品；附件专用恢复、自动删残留、历史步骤恢复/全局 reprocess、
+跨 Task 批量恢复/通用回滚；额外历史清理/全局 FileIndex/并行引擎；把所有历史状态都
+扩成自动排除、改变 Run once 初次一键意图；旧 Task/跨版本升级/V1 支持；更改权限、
+源边界、稳定性/完整遍历或静默覆盖/删除；恢复 Pause/resume/retry-request/Job。
 
-## B Review Result — PASS
+## Developer Completion Report
 
-```text
-Task: 47.4
-Decision: PASS
-Task Base: 383d8834787674675183f4b251d9dfd26a5dc511
-Reviewed Head: dd3f1c25126cd574d8df293d0163131bc6cb9ad6
-Latest executable checkpoint: a32f38947602a5140c4f7064404dd269cee097e3
-Branch: main
-Blocking findings: NONE
-Next action: SLICE READY FOR A REVIEW — no further implementation Task
-```
+待明确实施授权并完成后填写：完整 checkpoint、READY FOR B REVIEW、实际受影响测试、
+剩余问题/限制。当前仅 PLANNED 草案，无实施、产品测试或已交付声明。
 
-本轮独立审查完整 Task Base..Head 的 170 文件变更，并逐项复核前序审查结果。
-最新修正只涉及首次 Worker 注册与 V2 测试消费者；`a32f3894..dd3f1c25` 仅改
-`TASK.md`，没有隐藏的执行输入变化。本轮所有下列门禁均重新执行，不借用 Developer
-的 PASS 标签。此前失败、修复原因及完整 Developer 报告保留在
-`935c60a27332df18be90fee4663fef88e9d3691c:TASK.md` 与本次候选的 Git 历史中。
+## B Review Result
 
-### 用户旅程与前序阻塞的最终处置
-
-- **部署后自动整理已完成。** 用户启动四服务，在 V2 Files 选择文件、查看精确摘要并
-  明确确认，常驻 Worker 注册、领取并完成整理，Task 和文件结果可读回。
-  Docker fresh/security 实际走完这条链。另一个隔离容器旅程通过已启用定义等到
-  Scheduler 发出一个 Task，Worker 完成 COPY，并逐字节验证源文件及唯一目标文件。
-  Scheduler 重启不多建 Task，Worker 重启不重复执行。
-- **首次注册修复有效且未绕过安全边界。** `ensure_registration()` 复用原有配置 pin、
-  command 校验与真实注册；心跳丢失仍阻止继续处理。真实 `worker run` 测试覆盖无
-  Active 启动、随后发布首个 Active、原进程消费、同版本重启不重放。
-  B 还复验上轮原始复现：processing Worker 从 0 变成 1，claimGeneration 从 0 变成 1。
-  故意移除 Provider 凭据时，Task 明确失败并 settle、源文件保留，而非永久 queued；
-  这项反例不被误称为媒体成功，成功效果由上述离线 Provider 容器旅程证明。
-- **通知闭环已完成。** Task 完成产生真实 outbox；通知定义、列表、详情和刷新接受
-  `task.*` 事件及带冒号的实际 eventId。投递恢复只处理投递，不重做媒体。原生测试
-  同时覆盖定义编辑与实际产生的投递，前两轮通知阻塞不再存在。
-- **四类恢复仍在同一 Task。** Recognition、Metadata 候选/修正、Classification、冲突
-  从决定进入分析、精确摘要和明确确认；覆盖重命名及策略允许的覆盖确认。成功及
-  不确定 sibling 不重放，原 Automation 失败结果与时间不因后续处理改写。
-- **五项 V2 测试消费者已对齐。** Automation occurrence、Dashboard 和合法 Task
-  深链打开实际 Task；退役 Job 输入保持有界只读不可用。全量 253 项 E2E 通过，
-  没有要求恢复 Job、旧任务映射或 V1 功能。本轮各 Playwright 组使用独立输出目录，
-  未重现上轮由 B 共用产物目录造成的 trace 删除问题。
-
-### 实际验证与证据
-
-证据根：`.git/validation-evidence/dd3f1c25126cd574d8df293d0163131bc6cb9ad6/b-task47.4/`。
-这是本地 ignored 证据，未宣称可远程访问。`commands.json` 保存每条精确命令、cwd、
-起止时间与退出码；`acceptance-manifest.json` 保存范围、日志/产物 digest、跳过项和耗时。
-`run_acceptance.py` 仅是该目录内的命令编排，不是新增产品或治理工具。
-
-| 验证 | 本轮实际结果 / 原始日志 |
-|---|---|
-| 完整 Python | 全部 144 个 `test_*.py` 模块分为四组无重漏执行；698 + 700 + 560 + 546 = **2504 tests，OK，7 skipped**；`python-full-{0..3}.log`。含真实 resident 启动回归、容量/并发/控制/源占用/固定配置/未知效果安全反例。 |
-| Python / examples | Ruff format/check、compileall、pip check、两份示例 config validate、governance 和完整范围 whitespace 通过；生产目录及 pyproject 无 FFmpeg/FFprobe。 |
-| Web 质量 / 全量单测 | typecheck、lint、format:check、build 通过；**87 files / 1264 tests passed**；`web-*.log`。 |
-| 全量 fake E2E | **253 passed**；`web-e2e.log`，独立 `fake-output/`，没有删断言、加 retry 或放宽超时。 |
-| 真实 Python 原生 | inventory **43**、Automation lifecycle/Run once **17**、workspace **8**、settings **12**、visual **2**，合计 **82 passed**；`native-*.log`。每组使用隔离 harness，读取正式 build 产物。 |
-| 视觉审查 | 17 张 PNG 保留在 `native-screenshots/`；人工检查八视图、Attention、问题文件、读失败及桌面/窄屏摘要。层级、日期控件、表格滚动、逐类型入口和明确确认可用；不把脚本退出码等同于人工图评。 |
-| clean installed wheel | 从 `git archive dd3f1c25` 构建 `mediaflow-2.0.0.dev0-py3-none-any.whl`，source-external 安装/CLI/API/fresh/备份及实际读取消费者通过；`wheel-build.log` / `wheel-smoke.log`。SHA-256 `393029a0b4c1fb9b1a180c873e456be6c87feb6c1b25fa8c96f684d7619528d0`。 |
-| Docker fresh / security | **PASS**；clean committed context、无缓存构建，四服务健康、V2 手动整理完成，non-root/挂载/RBAC/拒绝零效果/日志与 SQLite 秘密扫描通过；`docker-security.log`。image `sha256:a363e90ad932ff4b311993505e6533344d950463fa21a46e86c03eb372a25fb0`。 |
-| Docker 同版本 restart / faults | **PASS**；调度幂等、实际 COPY、API/Worker/Scheduler/Notification Worker 分别重启、结果/审计/配置保留、旧 owner 拒写及 uncertain 非重放；`docker-restart.log`。image `sha256:4a29eb492681e4d9c075628eb03f2899efa9c766ea9f801405f75e6790b6fc04`。脚本已清理自己的容器。 |
-| 上轮独立复现 | `resident-bootstrap.log`，2.142s；实际 remote admission → `worker run`，观察到真实注册/领取及缺凭据安全失败。第一次调用遗漏 `PYTHONPATH=.` 的 import 错误保留为 `resident-bootstrap-import-error.log`；补正确调用后通过，属于 B 命令问题。 |
-
-7 项 skip 分别是未提供专用环境的 real SMB/S3/OpenList 与 Local/SMB/OpenList/S3
-耐久 profile；没有使用用户媒体或真实端点。本 Task 未修改这些适配器，不将其标为
-已完成真实远端验收，也不把既有可选外部环境变成本次新增门禁。单元/集成使用临时根、
-fake/本地 Provider；日志中的 ResourceWarning / jsdom scrollTo 提示未导致断言失败。
-既有 release-security 脚本附带执行了 V1 静态探针，但 V1 独有功能不参与本次阻塞判断。
-
-本轮只修改 B-owned `TASK.md`；没有生产/测试修改，无预存 tracked 修改，未跟踪的
-OS/log/图片/归档文件保持原样且未暂存。未访问用户数据库/媒体/私密配置，未 push、
-部署用户服务、改历史或改 A-owned Slice/Roadmap/Progress。
-
-测试时间按重叠区间合并：自动命令 219.211s，另计人工图评整段上界 79.120s，
-并为初末治理/whitespace 等短检查预留 5s，总测试上界 303.331s。记录时本轮
-总用时 656.3s，测试占比上界 46.2%，低于 50%；没有用空等补时，
-其余为完整代码/合同审查、逐结果复核及交接。精确区间见 manifest。
-
-### Entire Slice reassessment / Closure Packet for A
-
-```text
-Slice: 47 — Unified Task scheduling and organizing execution
-Slice Base: 5144ab1fc2344b06194969cc2c496835729664c0
-Implementation Head: dd3f1c25126cd574d8df293d0163131bc6cb9ad6
-Required Outcomes and Surfaces: COMPLETE under the explicit user amendments
-Tasks completed: 47.1–47.3 accepted baseline; 47.4 PASS in this review
-Decision: SLICE READY FOR A REVIEW
-```
-
-| Slice 结果 | 重评与证据 |
-|---|---|
-| RO-1 — 同一 Task 调度/执行 | 完成。唯一 Task 身份、共享容量、人等不占机器槽、重新进入原子准入、并发 claim/control/fence 与 uncertain 保护由全量 Python 和实际 resident/容器证明。 |
-| RO-2 — 全入口共用引擎 | 完成。Files、due、disabled Run once、remote、CLI/batch/retry-failed 进入既有引擎，保留入口意图/limits/filtering/附件/完整遍历/稳定性；无 Job queue 或 CLI 输出桥。 |
-| RO-3 — 同 Task 四类恢复 | 完成。真实浏览器决定→分析→摘要→明确继续，Python 覆盖原 pin、逐文件独立历史/源身份、队满保留及成功/未知效果不重放，容器补足同版本重启/故障证据。 |
-| RO-4 — 数据与 Job 退出 | 完成适用范围。fresh schema58 无独立 Job 系统，Task/Result/authority/audit/occurrence/log/outbox 同版本 reopen/restart 保留；源码、wheel 与容器消费者通过。旧任务与跨版本迁移按用户明确指令排除，不能将其写成已经验证。 |
-| RO-5 — 用户及管理闭环 | 完成。Task Center 八视图/Attention、Files 本地操作、Automation 定义/原记录/设置、Dashboard、通知、日志/导出、API/CLI/健康状态均有当前集成与原生证据，正式常驻执行已恢复。 |
-
-| AC | 本轮重评 |
-|---|---|
-| AC-1–3 | 满足：受理、容量、并发领取、控制、安全释放、Task readiness。 |
-| AC-4–6 | 满足：统一管线、各入口意图、过滤/附件/完整性/稳定性。 |
-| AC-7–8 | 满足：四类同 Task 闭环、来源/固定配置/结果历史、重启/旧 owner/不确定效果非重放。 |
-| AC-9–10 | 旧任务及跨版本升级义务被用户排除；fresh/同版本 reopen/restart、失败时保留原权威与不确定效果的适用安全义务满足。 |
-| AC-11–12 | 满足：Job 退出、可安装产物、配置/固定快照及 resident cadence/override/adoption。 |
-| AC-13–16 | 满足：八视图、原运行记录、Files/Dashboard/API/CLI/日志/通知、权限、C→A identity 与非重放。 |
-| AC-17–18 | B 的适用 native/视觉/wheel/Docker/full T4 已完成；旧版本升级、V1 产品功能不纳入。A 的独立整个 Slice Base..Head 终审仍待进行，B 不代签 PASS / CLOSED。 |
-| AC-19 | 满足：整理及普通文件 Pause/resume 退出，安全取消和四类继续保留。 |
-
-**无下一开发 Task。** 全部用户授权结果已满足，按停止规则交 A。A 终审使用上述完整
-Slice Base..Implementation Head；通过后由 A 对齐 CURRENT/TARGET、requirements/
-journey/architecture、Roadmap/Progress 与根 Task 状态，并明确用户已排除旧任务升级及
-V1 支持。当前这些 A-owned 指针仍陈旧，不伪称已经完成文档关闭或 Slice CLOSED。
-没有新增功能延期或 P0/P1。仅保留上述可选真实远端/耐久环境未运行的事实。
+尚未提交实施候选，未审查、未验收。范围规划不是 Task PASS，也不是 Slice Final Review。

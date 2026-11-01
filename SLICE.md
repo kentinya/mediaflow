@@ -11,7 +11,7 @@ Working Branch: main
 Development Authorization: USER-REQUESTED REFACTOR; A SCOPE AUTHORITY — 2026-10-30
 Risk: High
 Final Test Level: T4
-Next Action: B PLANS TASK47.5 AGAINST THE 2026-11-02 SOURCE-HISTORY AMENDMENT
+Next Action: TASK47.5 PLANNED — AWAITS EXPLICIT IMPLEMENTATION AUTHORIZATION
 ```
 
 ## Authority and accepted baseline
