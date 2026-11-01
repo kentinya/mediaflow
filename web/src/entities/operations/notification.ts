@@ -32,12 +32,28 @@ import {
 } from "./action-transport";
 
 export const NOTIFICATION_EVENT_TYPES = [
-  "job.completed",
-  "job.failed",
-  "job.cancelled",
+  "task.completed",
+  "task.failed",
+  "task.cancelled",
   "schedule.emitted",
 ] as const;
 export type NotificationEventType = (typeof NOTIFICATION_EVENT_TYPES)[number];
+
+/**
+ * Already-supported configuration documents may still spell the Task events
+ * with their historical ``job.*`` names. The Python contract parses those
+ * literals into the same Task event (and every response it emits uses the
+ * canonical ``task.*`` name), so the browser accepts exactly those aliases and
+ * displays/saves the canonical Task identity. Unknown strings still fail
+ * closed; this is a bounded compatibility map, not an open event catalog.
+ */
+export const LEGACY_NOTIFICATION_EVENT_ALIASES: Readonly<
+  Record<string, NotificationEventType>
+> = {
+  "job.completed": "task.completed",
+  "job.failed": "task.failed",
+  "job.cancelled": "task.cancelled",
+};
 
 export const NOTIFICATION_DELIVERY_STATUSES = [
   "pending",
@@ -377,19 +393,24 @@ function optionalRecord(
   return readRecord(value, field);
 }
 
-function enumList<T extends string>(
+function eventType(value: unknown, field: string): NotificationEventType {
+  const canonical =
+    typeof value === "string"
+      ? (LEGACY_NOTIFICATION_EVENT_ALIASES[value] ?? value)
+      : value;
+  return enumOrFail(canonical, field, NOTIFICATION_EVENT_TYPES);
+}
+
+function eventList(
   source: Record<string, unknown>,
   field: string,
-  allowed: readonly T[],
   maximum: number,
-): T[] {
+): NotificationEventType[] {
   const raw = source[field];
   if (!Array.isArray(raw) || raw.length > maximum) {
     return fail(field);
   }
-  return raw.map((item, index) =>
-    enumOrFail(item, `${field}[${index}]`, allowed),
-  );
+  return raw.map((item, index) => eventType(item, `${field}[${index}]`));
 }
 
 export function normalizeNotificationAction(
@@ -559,9 +580,7 @@ export function normalizeWebhookDefinitionDocument(
     id: uriSafeSegment(source, "id", 64),
     url: text(source, "url", 2048),
     secretEnv: text(source, "secretEnv", 128),
-    events: rawEvents.map((item, index) =>
-      enumOrFail(item, `${field}.events[${index}]`, NOTIFICATION_EVENT_TYPES),
-    ),
+    events: eventList(source, "events", 64),
     enabled: flag(source, "enabled"),
     timeoutSeconds: positiveBoundedNumber(
       source,
@@ -718,12 +737,7 @@ export function normalizeNotificationDefinitionsPage(
     total: count(source, "total"),
     truncated: flag(source, "truncated"),
     draftState,
-    supportedEvents: enumList(
-      source,
-      "supportedEvents",
-      NOTIFICATION_EVENT_TYPES,
-      16,
-    ),
+    supportedEvents: eventList(source, "supportedEvents", 16),
     actions: {
       create: normalizeNotificationAction(
         actions["create"],
@@ -812,12 +826,7 @@ export function normalizeNotificationDraftDocument(
     activeConfiguration,
     webhook: activeWebhook,
     draft,
-    supportedEvents: enumList(
-      source,
-      "supportedEvents",
-      NOTIFICATION_EVENT_TYPES,
-      16,
-    ),
+    supportedEvents: eventList(source, "supportedEvents", 16),
     actions: {
       createDraft: normalizeNotificationAction(
         actions["createDraft"],
@@ -1118,11 +1127,7 @@ function normalizeDeliveryIdentity(
     deliveryId: uriSafeSegment(source, "deliveryId", 64),
     webhookId: uriSafeSegment(source, "webhookId", 64),
     eventId: uriSafeSegment(source, "eventId", 128),
-    eventType: enumOrFail(
-      source["eventType"],
-      `${field}.eventType`,
-      NOTIFICATION_EVENT_TYPES,
-    ),
+    eventType: eventType(source["eventType"], `${field}.eventType`),
     status: enumOrFail(
       source["status"],
       `${field}.status`,

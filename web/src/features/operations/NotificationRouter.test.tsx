@@ -93,7 +93,7 @@ function webhookDocument(
     id: WEBHOOK_ID,
     url: "https://example.invalid/hooks/mediaflow",
     secretEnv: "MEDIAFLOW_WEBHOOK_SECRET",
-    events: ["job.completed", "job.failed"],
+    events: ["task.completed", "task.failed"],
     enabled: true,
     timeoutSeconds: 10,
     maxAttempts: 5,
@@ -246,9 +246,9 @@ function listPayload(
     truncated: false,
     draftState: draftState(),
     supportedEvents: [
-      "job.completed",
-      "job.failed",
-      "job.cancelled",
+      "task.completed",
+      "task.failed",
+      "task.cancelled",
       "schedule.emitted",
     ],
     actions: {
@@ -295,9 +295,9 @@ function draftDocumentPayload(
       webhook: webhookDocument(),
     },
     supportedEvents: [
-      "job.completed",
-      "job.failed",
-      "job.cancelled",
+      "task.completed",
+      "task.failed",
+      "task.cancelled",
       "schedule.emitted",
     ],
     actions: {
@@ -354,7 +354,7 @@ function deliveryListItem(
     deliveryId: "delivery-1",
     webhookId: WEBHOOK_ID,
     eventId: "event-1",
-    eventType: "job.completed",
+    eventType: "task.completed",
     status: "dead-letter",
     attempts: 3,
     nextAttemptAt: "2026-09-12T00:05:00+00:00",
@@ -787,7 +787,7 @@ describe("NotificationNewPage create journey", () => {
       screen.getByLabelText("Secret environment reference"),
       "MEDIAFLOW_WEBHOOK_SECRET",
     );
-    await userEvent.click(screen.getByLabelText("Event job.completed"));
+    await userEvent.click(screen.getByLabelText("Event task.completed"));
     const create = screen.getByRole("button", {
       name: "Create definition in Draft",
     });
@@ -815,7 +815,7 @@ describe("NotificationNewPage create journey", () => {
         id: "created-webhook",
         url: "https://example.invalid/hooks/created",
         secretEnv: "MEDIAFLOW_WEBHOOK_SECRET",
-        events: ["job.completed"],
+        events: ["task.completed"],
         enabled: true,
         timeoutSeconds: 10,
         maxAttempts: 5,
@@ -1020,7 +1020,7 @@ describe("Notification definition mutation binding", () => {
       screen.getByLabelText("Secret environment reference"),
       "MEDIAFLOW_WEBHOOK_SECRET",
     );
-    await userEvent.click(screen.getByLabelText("Event job.completed"));
+    await userEvent.click(screen.getByLabelText("Event task.completed"));
     await userEvent.click(
       screen.getByRole("button", { name: "Create definition in Draft" }),
     );

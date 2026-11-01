@@ -4933,7 +4933,7 @@ function webhookDocument(state, token, overrides = {}) {
     id,
     url: "https://example.invalid/hooks/mediaflow",
     secretEnv: "MEDIAFLOW_WEBHOOK_SECRET",
-    events: ["job.completed", "job.failed"],
+    events: ["task.completed", "task.failed"],
     enabled: true,
     timeoutSeconds: 10,
     maxAttempts: 5,
@@ -5171,9 +5171,9 @@ function notificationListDocument(state, token) {
           validationErrors: [],
         },
     supportedEvents: [
-      "job.completed",
-      "job.failed",
-      "job.cancelled",
+      "task.completed",
+      "task.failed",
+      "task.cancelled",
       "schedule.emitted",
     ],
     actions: {
@@ -5250,9 +5250,9 @@ function notificationDraftDocument(state, token) {
         }
       : null,
     supportedEvents: [
-      "job.completed",
-      "job.failed",
-      "job.cancelled",
+      "task.completed",
+      "task.failed",
+      "task.cancelled",
       "schedule.emitted",
     ],
     actions: notificationDraftActions(state, token),
@@ -5265,7 +5265,7 @@ function notificationDeliveryItem(state, deliveryId) {
     deliveryId,
     webhookId: NOTIFICATION_WEBHOOK_ID,
     eventId: `event-${deliveryId}`,
-    eventType: "job.completed",
+    eventType: "task.completed",
     status: requeued ? "pending" : "dead-letter",
     attempts: requeued ? 0 : 3,
     nextAttemptAt: MANUAL_RECORDED_AT,
@@ -16458,7 +16458,7 @@ const server = createServer(async (req, res) => {
         webhook: {
           id: "another-webhook",
           url: "https://example.invalid/hooks/other",
-          events: ["job.completed"],
+          events: ["task.completed"],
           enabled: true,
           secretEnv: "MEDIAFLOW_WEBHOOK_SECRET",
         },
@@ -16487,7 +16487,7 @@ const server = createServer(async (req, res) => {
       webhook: {
         id: NOTIFICATION_WEBHOOK_ID,
         url: "https://example.invalid/hooks/mediaflow",
-        events: ["job.completed", "job.failed"],
+        events: ["task.completed", "task.failed"],
         enabled: true,
         secretEnv: "MEDIAFLOW_WEBHOOK_SECRET",
       },

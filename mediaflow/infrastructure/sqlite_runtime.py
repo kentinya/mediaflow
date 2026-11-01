@@ -7583,9 +7583,60 @@ class SQLiteTaskRepository:
                     OR EXISTS (SELECT 1 FROM manual_recovery_links lineage_link
                                WHERE lineage_link.status = 'authorized'
                                  AND lineage_link.source_item_id = lineage_item.item_id)
+                    OR EXISTS (
+                        SELECT 1 FROM manual_execution_items lineage_execution_item
+                        JOIN manual_executions lineage_execution
+                          ON lineage_execution.execution_id =
+                             lineage_execution_item.execution_id
+                        JOIN media_discoveries lineage_discovery
+                          ON lineage_discovery.organize_task_id = lineage_item.task_id
+                        WHERE lineage_execution_item.task_id = lineage_item.task_id
+                          AND lineage_execution_item.task_item_id = lineage_item.item_id
+                          AND lineage_discovery.preview_id IS NOT NULL
+                          AND lineage_execution.preview_id <>
+                              lineage_discovery.preview_id
+                    )
                   )
                 LIMIT 1""",
                 (item_id,),
+            ).fetchone()
+        return row is not None
+
+    def has_resolved_four_type_decision(self, item_id: str) -> bool:
+        """Whether this waiting item already carries its four-type decision.
+
+        A saved decision moves a source back into analysis and leaves the
+        original review/confirmation ``resolved``.  When that same Task's fresh
+        analysis once again parks the source at ``waiting_confirm``, the durable
+        decision is the evidence that its current plan summary is the operator's
+        recovery boundary, not an unreviewed initial confirmation.
+        """
+
+        if not isinstance(item_id, str) or not item_id.strip():
+            return False
+        with self._lock:
+            row = self._connection.execute(
+                """SELECT 1 FROM task_items decided_item
+                WHERE decided_item.item_id = ? AND decided_item.status = ?
+                  AND (
+                    EXISTS (SELECT 1 FROM recognition_reviews decision
+                            WHERE decision.item_id = decided_item.item_id
+                              AND decision.status = 'resolved')
+                    OR EXISTS (SELECT 1 FROM metadata_reviews decision
+                               WHERE decision.item_id = decided_item.item_id
+                                 AND decision.status = 'resolved')
+                    OR EXISTS (SELECT 1 FROM metadata_corrections decision
+                               WHERE decision.item_id = decided_item.item_id
+                                 AND decision.status = 'resolved')
+                    OR EXISTS (SELECT 1 FROM classification_reviews decision
+                               WHERE decision.item_id = decided_item.item_id
+                                 AND decision.status = 'resolved')
+                    OR EXISTS (SELECT 1 FROM conflict_confirmations decision
+                               WHERE decision.item_id = decided_item.item_id
+                                 AND decision.status = 'resolved')
+                  )
+                LIMIT 1""",
+                (item_id, TaskItemStatus.WAITING_CONFIRM.value),
             ).fetchone()
         return row is not None
 

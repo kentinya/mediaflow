@@ -3,6 +3,7 @@ import {
   expect,
   test,
   type APIRequestContext,
+  type Locator,
   type Page,
 } from "@playwright/test";
 
@@ -89,6 +90,248 @@ async function openInventory(page: Page): Promise<void> {
     page.getByRole("heading", { name: "任务中心", exact: true }),
   ).toBeVisible();
   await expect(page.getByRole("table")).toBeVisible();
+}
+
+type NativeRecoveryKind =
+  | "recognition"
+  | "metadata"
+  | "metadata_correction"
+  | "classification"
+  | "conflict"
+  | "conflict_overwrite";
+
+type NativeRecoverySeed = {
+  readonly runId: string;
+  readonly taskId: string;
+  readonly itemId: string;
+  readonly sourcePath: string;
+  readonly providerId: string;
+  readonly targetPath: string;
+};
+
+async function seedNativeRecovery(
+  request: APIRequestContext,
+  kind: NativeRecoveryKind,
+): Promise<NativeRecoverySeed> {
+  const response = await request.post(
+    `${BASE}/__harness__/seed-task-item-recovery?kind=${kind}`,
+  );
+  expect(response.ok()).toBeTruthy();
+  return (await response.json()) as NativeRecoverySeed;
+}
+
+async function openNativeRecovery(
+  page: Page,
+  seeded: NativeRecoverySeed,
+): Promise<void> {
+  await connect(page, ADMIN_TOKEN);
+  await openInventory(page);
+  const view = seeded.sourcePath.startsWith("Classification")
+    ? "分类恢复"
+    : seeded.sourcePath.startsWith("Conflict")
+      ? "冲突处理"
+      : seeded.sourcePath.startsWith("Recovery")
+        ? "识别恢复"
+        : "元数据恢复";
+  await page.getByRole("button", { name: view, exact: true }).click();
+  const sourceRun = page
+    .getByRole("row")
+    .filter({ hasText: seeded.sourcePath });
+  await expect(sourceRun).toHaveCount(1);
+  await sourceRun.getByRole("button", { name: "查看问题文件" }).click();
+  const problemFiles = page.getByRole("region", { name: /问题文件/ });
+  const sourceItem = problemFiles
+    .getByRole("listitem")
+    .filter({ hasText: seeded.sourcePath });
+  await expect(sourceItem).toHaveCount(1);
+  await sourceItem.getByRole("button").click();
+  const recovery = page
+    .getByRole("region", { name: "运行详情" })
+    .getByRole("region", { name: "条目审核与恢复" });
+  await expect(recovery).toBeVisible();
+}
+
+async function chooseNativeRecoveryDecision(
+  page: Page,
+  recovery: Locator,
+  seeded: NativeRecoverySeed,
+  kind: NativeRecoveryKind,
+): Promise<void> {
+  if (kind === "metadata_correction") {
+    const searchResponse = page.waitForResponse(
+      (response) =>
+        response.request().method() === "POST" &&
+        new URL(response.url()).pathname ===
+          `/api/v1/tasks/${seeded.taskId}/items/${seeded.itemId}/recovery/metadata-search`,
+    );
+    await recovery
+      .getByRole("button", { name: "显式搜索 Metadata Provider" })
+      .click();
+    expect((await searchResponse).status()).toBe(200);
+    await recovery
+      .getByRole("radio", { name: new RegExp(`${seeded.providerId}$`) })
+      .check();
+  } else if (kind === "metadata") {
+    await recovery
+      .getByRole("radio", { name: new RegExp(`${seeded.providerId}$`) })
+      .check();
+  } else if (kind === "classification") {
+    await recovery.getByRole("radio").first().check();
+  } else if (kind === "conflict") {
+    await recovery
+      .getByRole("radio", { name: "重命名目标(保留现有文件)" })
+      .check();
+  } else if (kind === "conflict_overwrite") {
+    await recovery
+      .getByRole("radio", { name: "替换现有目标(高风险，需要再次确认)" })
+      .check();
+    await recovery
+      .getByRole("checkbox", {
+        name: "我明确选择覆盖此冲突目标；本次仍只保存决定并重新分析",
+      })
+      .check();
+  } else {
+    await recovery.getByRole("radio", { name: /Special/ }).check();
+  }
+
+  const decisionResponse = page.waitForResponse(
+    (response) =>
+      response.request().method() === "POST" &&
+      new URL(response.url()).pathname ===
+        `/api/v1/tasks/${seeded.taskId}/items/${seeded.itemId}/recovery/decision`,
+  );
+  const continuationResponse = page.waitForResponse(
+    (response) =>
+      response.request().method() === "POST" &&
+      new URL(response.url()).pathname ===
+        `/api/v1/tasks/${seeded.taskId}/items/${seeded.itemId}/recovery/continue`,
+  );
+  await recovery
+    .getByRole("button", { name: "保存决策并继续安全分析" })
+    .click();
+  expect((await decisionResponse).status()).toBe(200);
+  expect((await continuationResponse).status()).toBe(202);
+}
+
+async function finishNativeRecovery(
+  page: Page,
+  request: APIRequestContext,
+  recovery: Locator,
+  seeded: NativeRecoverySeed,
+  kind: NativeRecoveryKind,
+): Promise<void> {
+  const analysis = await (
+    await request.post(
+      `${BASE}/__harness__/run-task-item-recovery-worker?itemId=${seeded.itemId}`,
+    )
+  ).json();
+  expect(analysis).toMatchObject({ ran: true, analysisCompleted: true });
+  let state = await (
+    await request.get(
+      `${BASE}/__harness__/task-item-recovery-state?itemId=${seeded.itemId}`,
+    )
+  ).json();
+  expect(state).toMatchObject({ taskId: seeded.taskId, sourceExists: true });
+  const providerCallsAfterAnalysis = state.providerCalls;
+  if (seeded.targetPath) {
+    expect(state.conflictTargetPreserved).toBe(true);
+  }
+  await request.post(`${BASE}/__harness__/register-manual-worker`);
+  await recovery.getByRole("button", { name: "刷新" }).click();
+  const prepare = recovery.getByRole("button", {
+    name: "生成计划摘要并在此确认",
+  });
+  if ((await prepare.count()) > 0) {
+    await prepare.click();
+  }
+  const summary = page.getByRole("region", { name: "新计划摘要" });
+  await expect(summary).toBeVisible();
+  await expect(summary).toContainText(seeded.sourcePath);
+  state = await (
+    await request.get(
+      `${BASE}/__harness__/task-item-recovery-state?itemId=${seeded.itemId}`,
+    )
+  ).json();
+  expect(state.sourceExists).toBe(true);
+  expect(state.providerCalls).toBe(providerCallsAfterAnalysis);
+  if (seeded.targetPath) {
+    expect(state.conflictTargetPreserved).toBe(true);
+  }
+
+  const confirm = summary.getByRole("button", { name: /确认继续整理 1 项/ });
+  if (kind === "conflict_overwrite") {
+    await expect(confirm).toBeDisabled();
+    await summary
+      .getByRole("checkbox", {
+        name: "我确认允许按此精确摘要替换现有目标文件",
+      })
+      .check();
+    await expect(confirm).toBeEnabled();
+  }
+  const confirmResponse = page.waitForResponse(
+    (response) =>
+      response.request().method() === "POST" &&
+      /\/api\/v1\/manual-recovery-preparations\/[^/]+\/confirm$/.test(
+        new URL(response.url()).pathname,
+      ),
+  );
+  await confirm.click();
+  const confirmed = await confirmResponse;
+  expect(confirmed.status()).toBe(202);
+  const confirmation = (await confirmed.json()) as {
+    readonly taskId: string;
+    readonly executionId: string;
+  };
+  expect(confirmation.taskId).toBe(seeded.taskId);
+  await expect(page).toHaveURL(
+    new RegExp(`/operations/organize/execution/${confirmation.executionId}`),
+  );
+  const worker = await (
+    await request.post(`${BASE}/__harness__/run-manual-worker`)
+  ).json();
+  expect(worker).toMatchObject({ completed: true });
+  state = await (
+    await request.get(
+      `${BASE}/__harness__/task-item-recovery-state?itemId=${seeded.itemId}`,
+    )
+  ).json();
+  expect(state.taskId).toBe(seeded.taskId);
+  expect(state.sourceExists).toBe(false);
+  expect(state.sourceResultHistory.length).toBeGreaterThan(0);
+  expect(state.sourceResultHistory.at(-1).status).toBe("SUCCESS");
+  if (kind === "conflict") {
+    expect(state.conflictTargetPreserved).toBe(true);
+  }
+  if (kind === "conflict_overwrite") {
+    expect(state.conflictTargetPreserved).toBe(false);
+  }
+}
+
+async function runNativeRecoveryJourney(
+  page: Page,
+  request: APIRequestContext,
+  kind: NativeRecoveryKind,
+  heading: RegExp,
+): Promise<NativeRecoverySeed> {
+  const seeded = await seedNativeRecovery(request, kind);
+  await openNativeRecovery(page, seeded);
+  const recovery = page
+    .getByRole("region", { name: "运行详情" })
+    .getByRole("region", { name: "条目审核与恢复" });
+  await expect(recovery.getByRole("heading", { name: heading })).toBeVisible();
+  const metadataSearches: string[] = [];
+  page.on("request", (requestValue) => {
+    const url = new URL(requestValue.url());
+    if (url.pathname.endsWith("/recovery/metadata-search")) {
+      metadataSearches.push(url.pathname);
+    }
+  });
+  await chooseNativeRecoveryDecision(page, recovery, seeded, kind);
+  await finishNativeRecovery(page, request, recovery, seeded, kind);
+  if (kind === "metadata_correction") {
+    expect(metadataSearches).toHaveLength(1);
+  }
+  return seeded;
 }
 
 /**
@@ -3037,4 +3280,145 @@ test("a real Worker claim advances a queued Task without changing the total", as
   // block, so no readiness text appears even with a registered Worker.
   await expect(page.getByText(/Worker 就绪/)).toHaveCount(0);
   await expect(page.getByText(/常驻服务状态/)).toHaveCount(0);
+});
+
+test("native recognition recovery keeps the same Task through summary and effect", async ({
+  page,
+  request,
+}) => {
+  await runNativeRecoveryJourney(
+    page,
+    request,
+    "recognition",
+    /待处理的识别决策/,
+  );
+});
+
+test("native Metadata candidate recovery keeps the same Task through summary and effect", async ({
+  page,
+  request,
+}) => {
+  await runNativeRecoveryJourney(
+    page,
+    request,
+    "metadata",
+    /待处理的元数据决策/,
+  );
+});
+
+test("native Metadata correction searches explicitly before the same-Task summary", async ({
+  page,
+  request,
+}) => {
+  await runNativeRecoveryJourney(
+    page,
+    request,
+    "metadata_correction",
+    /待处理的元数据修正决策/,
+  );
+});
+
+test("native Classification recovery keeps the same Task through summary and effect", async ({
+  page,
+  request,
+}) => {
+  await runNativeRecoveryJourney(
+    page,
+    request,
+    "classification",
+    /待处理的分类决策/,
+  );
+});
+
+test("native conflict recovery renames while preserving the existing target", async ({
+  page,
+  request,
+}) => {
+  await runNativeRecoveryJourney(
+    page,
+    request,
+    "conflict",
+    /待处理的目标冲突决策/,
+  );
+});
+
+test("policy-permitted overwrite still needs exact same-page destructive consent", async ({
+  page,
+  request,
+}) => {
+  await runNativeRecoveryJourney(
+    page,
+    request,
+    "conflict_overwrite",
+    /待处理的目标冲突决策/,
+  );
+});
+
+test("the Notifications page reads the real Task event contract end to end", async ({
+  page,
+}) => {
+  // B47.4-01: the production Notification page must accept the real Python
+  // response. The existing example configuration still spells the already
+  // supported Task events with their historical job.* literals; the API
+  // advertises task.* and the page must render both the catalog and the
+  // definition by their canonical Task meaning.
+  const api = recordApiCalls(page);
+  await connect(page, ADMIN_TOKEN);
+  const definitionsRead = page.waitForResponse(
+    (response) =>
+      response.request().method() === "GET" &&
+      new URL(response.url()).pathname ===
+        "/api/v1/operations/notifications/webhooks",
+  );
+  await page.getByRole("link", { name: "Notifications", exact: true }).click();
+  await expect(page).toHaveURL(/\/ui-v2\/operations\/notifications$/);
+  const response = await definitionsRead;
+  expect(response.status()).toBe(200);
+  const document = (await response.json()) as {
+    readonly supportedEvents: readonly string[];
+  };
+  expect(document.supportedEvents).toEqual([
+    "task.completed",
+    "task.failed",
+    "task.cancelled",
+    "schedule.emitted",
+  ]);
+  await expect(
+    page.getByRole("heading", { name: "Notifications", exact: true }),
+  ).toBeVisible();
+  await expect(
+    page.getByText("Notification definitions unavailable"),
+  ).toHaveCount(0);
+  await expect(page.getByText("operations-webhook").first()).toBeVisible();
+  // The old persisted job.* literal is presented as its canonical Task event.
+  await expect(
+    page.getByText(/events: task\.completed, task\.failed, task\.cancelled/),
+  ).toBeVisible();
+
+  // The real Draft boundary is reachable and the resolved editor advertises
+  // the Task event names, so an operator can select and save them.
+  const draftRead = page.waitForResponse(
+    (response) =>
+      response.request().method() === "POST" &&
+      response.url().endsWith("/successor"),
+  );
+  await page.getByRole("button", { name: "Start successor Draft" }).click();
+  expect((await draftRead).status()).toBe(201);
+  await page.getByRole("link", { name: "Open definition" }).first().click();
+  await expect(
+    page.getByRole("heading", { name: "Webhook operations-webhook" }),
+  ).toBeVisible();
+  const draftDocumentRead = page.waitForResponse(
+    (response) =>
+      response.request().method() === "GET" &&
+      new URL(response.url()).pathname ===
+        "/api/v1/operations/notifications/webhooks/operations-webhook/draft",
+  );
+  await page.getByRole("link", { name: "Open Draft editor" }).click();
+  expect((await draftDocumentRead).status()).toBe(200);
+  await expect(page.getByLabel("Event task.completed")).toBeVisible();
+  await expect(page.getByLabel("Event job.completed")).toHaveCount(0);
+  expect(api.filter((entry) => entry.path.startsWith("/api/v1/jobs"))).toEqual(
+    [],
+  );
 });

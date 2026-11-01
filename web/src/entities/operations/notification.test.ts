@@ -44,7 +44,7 @@ function webhookDocumentPayload(
     id,
     url: "https://example.invalid/hooks/mediaflow",
     secretEnv: "MEDIAFLOW_WEBHOOK_SECRET",
-    events: ["job.completed"],
+    events: ["task.completed"],
     enabled: true,
     timeoutSeconds: 10,
     maxAttempts: 5,
@@ -224,7 +224,7 @@ describe("webhook definition", () => {
   it("normalizes the bounded document and exact action transports", () => {
     const model = normalizeWebhookDefinition(definitionPayload("ops"));
     expect(model.document.id).toBe("ops");
-    expect(model.document.events).toEqual(["job.completed"]);
+    expect(model.document.events).toEqual(["task.completed"]);
     expect(model.definitionState).toBe("active");
     expect(model.actions.activate.requiresConfirmation).toBe(true);
     expect(model.actions.detail.path).toBe(
@@ -232,11 +232,24 @@ describe("webhook definition", () => {
     );
   });
 
+  it("maps already-supported job event literals to the canonical Task event", () => {
+    const model = normalizeWebhookDefinition(
+      definitionPayload("ops", {
+        events: ["job.completed", "job.failed", "task.cancelled"],
+      }),
+    );
+    expect(model.document.events).toEqual([
+      "task.completed",
+      "task.failed",
+      "task.cancelled",
+    ]);
+  });
+
   it("fails closed when an unknown event value appears", () => {
     expect(() =>
       normalizeWebhookDefinition(
         definitionPayload("ops", {
-          events: ["job.completed", "media.imported"],
+          events: ["task.completed", "media.imported"],
         }),
       ),
     ).toThrow(NotificationNormalizationError);
@@ -296,7 +309,7 @@ describe("notification definitions page", () => {
         validatedAt: null,
         validationErrors: [],
       },
-      supportedEvents: ["job.completed", "job.failed"],
+      supportedEvents: ["task.completed", "task.failed"],
       actions: {
         create: {
           available: false,
@@ -326,7 +339,7 @@ describe("notification definitions page", () => {
   it("normalizes the whole page", () => {
     const page = normalizeNotificationDefinitionsPage(pagePayload());
     expect(page.items).toHaveLength(1);
-    expect(page.supportedEvents).toEqual(["job.completed", "job.failed"]);
+    expect(page.supportedEvents).toEqual(["task.completed", "task.failed"]);
     expect(page.actions.create.available).toBe(false);
     expect(page.actions.create.reason).toContain("successor Draft");
   });
@@ -340,10 +353,17 @@ describe("notification definitions page", () => {
     ).toThrow(NotificationNormalizationError);
   });
 
+  it("maps a legacy advertised catalog to canonical Task events", () => {
+    const page = normalizeNotificationDefinitionsPage(
+      pagePayload({ supportedEvents: ["job.completed", "task.failed"] }),
+    );
+    expect(page.supportedEvents).toEqual(["task.completed", "task.failed"]);
+  });
+
   it("fails closed on an unsupported event in the advertised catalog", () => {
     expect(() =>
       normalizeNotificationDefinitionsPage(
-        pagePayload({ supportedEvents: ["job.completed", "smtp.sent"] }),
+        pagePayload({ supportedEvents: ["task.completed", "smtp.sent"] }),
       ),
     ).toThrow(NotificationNormalizationError);
   });
@@ -453,7 +473,7 @@ describe("notification delivery detail", () => {
       deliveryId: "delivery-1",
       webhookId: "ops",
       eventId: "event-1",
-      eventType: "job.completed",
+      eventType: "task.completed",
       status: "dead-letter",
       attempts: 3,
       createdAt: "2026-09-12T00:00:00+00:00",

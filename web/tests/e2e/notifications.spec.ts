@@ -212,7 +212,7 @@ test("an authorized operator creates a Webhook definition inside the open Draft"
   await page
     .getByLabel("Secret environment reference")
     .fill("MEDIAFLOW_WEBHOOK_SECRET");
-  await page.getByLabel("Event job.completed").check();
+  await page.getByLabel("Event task.completed").check();
   await page
     .getByRole("button", { name: "Create definition in Draft" })
     .click();
@@ -318,7 +318,7 @@ test("a wrong-object success document never renders as a completed mutation", as
   await page
     .getByLabel("Secret environment reference")
     .fill("MEDIAFLOW_WEBHOOK_SECRET");
-  await page.getByLabel("Event job.completed").check();
+  await page.getByLabel("Event task.completed").check();
   await page
     .getByRole("button", { name: "Create definition in Draft" })
     .click();

@@ -688,6 +688,17 @@ class ManagedConfigurationService:
 
         for revision in self.open_draft_revisions():
             section_items = revision.document.get(section)
+            if (
+                section == "webhooks"
+                and not isinstance(section_items, list)
+                and isinstance(revision.document.get("notifications"), dict)
+            ):
+                # Already-supported configuration documents keep the legacy
+                # nested ``notifications.webhooks`` spelling.  A successor Draft
+                # copied from such an Active document must still resolve its
+                # Webhook definitions for the ordinary edit/test/activation
+                # journey; the canonical root section remains preferred.
+                section_items = revision.document["notifications"].get("webhooks")
             if isinstance(section_items, list) and any(
                 isinstance(item, dict) and item.get("id") == object_id for item in section_items
             ):

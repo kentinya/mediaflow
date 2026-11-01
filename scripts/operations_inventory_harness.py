@@ -92,6 +92,7 @@ from datetime import UTC, datetime, timedelta
 from datetime import time as datetime_time
 from pathlib import Path
 from unittest.mock import patch
+from uuid import uuid4
 from wsgiref.simple_server import WSGIRequestHandler, WSGIServer, make_server
 
 REPO_ROOT = Path(__file__).resolve().parents[1]
@@ -1633,11 +1634,8 @@ def _request_intent_plan_via_durable_analysis(state: AppState, intent: dict, *, 
     if not discovery_id or analysis_run.get("phase") != "analyzing":
         raise RuntimeError(f"{label} analysis did not enter its durable stage: {analysis}")
     preview_id = None
-    for index in range(8):
-        claimed = state.api._media_discovery.claim_and_run(
-            worker_id=f"{label}-analysis-{index}",
-            claim_token=f"{label}-analysis-{index}",
-        )
+    for _index in range(16):
+        claimed = _run_discovery_step(state)
         if claimed is None:
             raise RuntimeError(f"{label} analysis was not claimable")
         if claimed.terminal or claimed.preview_id is not None:
@@ -2378,14 +2376,76 @@ def seed_batch_summary_recovery(state: AppState) -> dict[str, object]:
         return dict(state.recovery_batch_summary_run)
 
 
-def seed_task_item_recovery_journey(state: AppState, kind: str = "recognition") -> dict[str, str]:
-    """Create a real linked Manual TaskItem at a native recovery decision.
+def _fixture_defer_task_to_human(state: AppState, task_id: str) -> None:
+    """Expose one review-ready kernel Task as human-waiting (fixture seam).
 
-    The Manual intent, exact Preview, execution admission, Worker claim and
-    failure Result all use the product services. The failure executor is a
-    deterministic test seam that fails before Storage is touched; a subsequent
-    real RecognitionReviewService row provides the legal waiting state the
-    browser resolves through the product API.
+    The Task, scheduling row, pin, results and source ownership all come from
+    the production Files producer.  This only publishes the state the Task
+    engine's own claim-fenced ``defer_to_human`` publishes once a staged
+    four-type review/confirmation is the only remaining human work.
+    """
+
+    now = datetime.now(UTC).isoformat()
+    with state.repository._lock, state.repository._connection:
+        state.repository._connection.execute(
+            """UPDATE task_scheduling
+            SET queue_state=?, machine_stage=NULL, claim_generation=claim_generation+1,
+                claim_token=NULL, claim_worker_id=NULL, claimed_at=NULL,
+                claim_expires_at=NULL, heartbeat_at=NULL, control_request=NULL,
+                control_requested_at=NULL, control_acknowledged_at=NULL, updated_at=?
+            WHERE task_id=?""",
+            ("waiting_human", now, task_id),
+        )
+        state.repository._connection.execute(
+            "UPDATE tasks SET status=?, completed_at=NULL, error=NULL, updated_at=? "
+            "WHERE task_id=?",
+            ("running", now, task_id),
+        )
+
+
+def _fixture_set_item_state(
+    state: AppState,
+    item: PersistentTaskItem,
+    status: TaskItemStatus,
+    stage: str,
+) -> PersistentTaskItem:
+    """Prepare one deterministic review fixture on a kernel-managed TaskItem.
+
+    The Task itself, its scheduling row, discovery, Preview and execution all
+    come from the production Files/Task engine.  Only this transition into the
+    review-owned state is a fixture seam: the real four-type services below then
+    own the review, decision and analysis rows through their normal atomic
+    repository writes.
+    """
+
+    now = datetime.now(UTC)
+    with state.repository._lock, state.repository._connection:
+        cursor = state.repository._connection.execute(
+            "UPDATE task_items SET status=?, stage=?, updated_at=?, error=NULL "
+            "WHERE item_id=? AND task_id=?",
+            (status.value, stage, now.isoformat(), item.item_id, item.task_id),
+        )
+    if cursor.rowcount != 1:
+        raise RuntimeError("recovery fixture item could not enter its review state")
+    updated = state.repository.get_item(item.item_id)
+    if updated is None:
+        raise RuntimeError("recovery fixture item disappeared")
+    return updated
+
+
+def _fixture_set_item_processing(state: AppState, item: PersistentTaskItem) -> PersistentTaskItem:
+    return _fixture_set_item_state(state, item, TaskItemStatus.PROCESSING, "metadata")
+
+
+def seed_task_item_recovery_journey(state: AppState, kind: str = "recognition") -> dict[str, str]:
+    """Create one real four-type blocker on a current Files-admitted Task.
+
+    The Files discovery, its kernel-managed Task, the intent, the zero-mutation
+    analysis and the Preview all use the production entries. The fixture then
+    stages the exact review/confirmation row the operator resolves through the
+    ordinary Task Center API. No legacy Job, child Task or pre-kernel manual
+    Task is minted, so every decision/re-analysis/summary/confirmation below
+    continues this same Task through the resident engine.
     """
 
     supported = {
@@ -2395,25 +2455,12 @@ def seed_task_item_recovery_journey(state: AppState, kind: str = "recognition") 
         "classification",
         "conflict",
         "conflict_overwrite",
-        "technical",
-        "technical_success",
-        "attachment",
     }
     if kind not in supported:
         raise ValueError("unsupported recovery fixture kind")
     with state._manual_lock:
         if kind in state.recovery_runs:
             return dict(state.recovery_runs[kind])
-        if kind == "attachment":
-            # Earlier sequential browser cases intentionally leave admitted work.
-            # Settle only never-started fixture executions without running media effects.
-            for task in state.repository.list_tasks(limit=1000, command="manual_organize"):
-                for pending in state.repository.list_manual_executions_for_task(task.task_id):
-                    if pending.status.value == "admitted":
-                        state.api._manual_execution.fail_unstarted_execution(
-                            pending.execution_id,
-                            RuntimeError("prior browser fixture settled before next case"),
-                        )
         active = state.managed.active
         titles = {
             "recognition": "Recovery",
@@ -2422,9 +2469,6 @@ def seed_task_item_recovery_journey(state: AppState, kind: str = "recognition") 
             "classification": "ClassificationRecovery",
             "conflict": "ConflictRecovery",
             "conflict_overwrite": "ConflictOverwriteRecovery",
-            "technical": "TechnicalRecovery",
-            "technical_success": "TechnicalRecoveryChain",
-            "attachment": "AttachmentRecovery",
         }
         years = {
             "recognition": 2005,
@@ -2433,9 +2477,6 @@ def seed_task_item_recovery_journey(state: AppState, kind: str = "recognition") 
             "classification": 2017,
             "conflict": 2018,
             "conflict_overwrite": 2020,
-            "technical": 2019,
-            "technical_success": 2021,
-            "attachment": 2022,
         }
         organize_policy_id = "overwrite-fixture" if kind == "conflict_overwrite" else "A"
         recognition_type_id = "overwrite-fixture" if kind == "conflict_overwrite" else "C"
@@ -2449,14 +2490,9 @@ def seed_task_item_recovery_journey(state: AppState, kind: str = "recognition") 
             "classification": "217",
             "conflict": "218",
             "conflict_overwrite": "220",
-            "technical": "219",
-            "technical_success": "221",
-            "attachment": "222",
         }[kind]
         source_file = state.managed.root / "source" / filename
         source_file.write_bytes(b"synthetic recovery media; no real codec parsing")
-        if kind == "attachment":
-            source_file.with_suffix(".en.srt").write_bytes(b"subtitle")
         scan = StorageScanner(
             state.managed.runtime.create_storages(),
             clock=lambda: datetime.now(UTC) + timedelta(hours=2),
@@ -2488,174 +2524,105 @@ def seed_task_item_recovery_journey(state: AppState, kind: str = "recognition") 
             configuration_snapshot_digest=active.digest,
             runtime_schema_version=SCHEMA_VERSION,
         )
-        status, intent = wsgi_request(
+        status, admitted = wsgi_request(
             state.api,
             "POST",
-            "/api/v1/resource-libraries/source/files/organize",
-            body={"paths": [filename]},
-            token=HARNESS_ADMIN_TOKEN,
-        )
-        if status != 201:
-            raise RuntimeError(f"recovery Manual Organize intent failed: {status}")
-        item = intent["items"][0]
-        status, intent = wsgi_request(
-            state.api,
-            "POST",
-            f"/api/v1/operations/organize/intents/{intent['intentId']}"
-            f"/items/{item['itemId']}/choice",
-            body={
-                "expectedVersion": intent["version"],
-                "expectedItemVersion": item["version"],
-                "recognitionTypeId": recognition_type_id,
-                "namingPolicyId": "A",
-                "classificationPolicyId": "A",
-                "organizePolicyId": organize_policy_id,
-            },
-            token=HARNESS_ADMIN_TOKEN,
-        )
-        if status != 200:
-            raise RuntimeError(f"recovery Manual Organize choice failed: {status}")
-        preview = _request_intent_plan_via_durable_analysis(
-            state, intent, label="harness-recovery-manual"
-        )
-        status, execution = wsgi_request(
-            state.api,
-            "POST",
-            f"/api/v1/operations/organize/previews/{preview['previewId']}/execute",
-            body={
-                "confirmation": True,
-                "itemIds": [value["itemId"] for value in preview["items"]],
-                "expectedIntentVersion": intent["version"],
-            },
+            "/api/v1/resource-libraries/source/files/discoveries",
+            body={"paths": [filename], "autoPrepare": True},
             token=HARNESS_ADMIN_TOKEN,
         )
         if status != 202:
-            raise RuntimeError(f"recovery Manual Organize admission failed: {status}")
-
-        manual_execution = state.api._manual_execution
-        actual_executor = manual_execution._executor
-        manual_execution._executor = _PreMutationFailureExecutor()
-        try:
-            completed = ManualOrganizeExecutionWorker(
-                manual_execution,
-                worker_id="harness-recovery-manual-worker",
-                notice=lambda _line: None,
-            ).run_next()
-        finally:
-            manual_execution._executor = actual_executor
-        if completed is None or completed.status.value != "failed":
-            raise RuntimeError("recovery fixture did not produce the expected safe failure")
-
-        durable = state.repository.get_manual_execution(execution["executionId"])
-        if durable is None or len(durable.items) != 1:
-            raise RuntimeError("recovery fixture lost the exact manual execution item")
-        manual_item = durable.items[0]
-        if kind == "attachment":
-            attachment_target = (
-                state.managed.root
-                / "destination"
-                / manual_item.plan["executionPlan"]["attachments"][0]["destination"]["path"]
-            )
-            attachment_target.parent.mkdir(parents=True, exist_ok=True)
-            attachment_target.write_bytes(b"preserve existing subtitle")
-        current = state.repository.get_item(manual_item.task_item_id)
-        if current is None or current.status is not TaskItemStatus.FAILED:
-            raise RuntimeError("recovery fixture item did not persist its failed outcome")
-        processing = dataclasses.replace(
-            current, status=TaskItemStatus.PROCESSING, stage="metadata"
+            raise RuntimeError(f"recovery Files discovery admission failed: {status}")
+        discovery_id = str(admitted.get("discoveryId") or "")
+        if not discovery_id:
+            raise RuntimeError("recovery Files discovery admission lost its identity")
+        for _index in range(24):
+            linked = state.repository.get_media_discovery(discovery_id)
+            if linked is not None and linked.intent_id is not None:
+                if linked.preview_id is not None or linked.terminal:
+                    break
+            advanced = _run_discovery_step(state)
+            if advanced is None:
+                break
+        status, discovery_document = wsgi_request(
+            state.api,
+            "GET",
+            f"/api/v1/operations/organize/discoveries/{discovery_id}",
+            token=HARNESS_ADMIN_TOKEN,
         )
-        state.repository.upsert_item(processing)
-        if kind != "recognition":
-            prior_recognition = RecognitionReviewService(
-                state.repository,
-                state.managed.runtime.strategy.recognition_types,
-            ).create(
-                processing,
-                RecognitionResult(status=RecognitionStatus.UNRECOGNIZED),
+        if status != 200 or not discovery_document.get("intentId"):
+            raise RuntimeError(
+                f"recovery Files discovery did not link its intent: {status} {discovery_document}"
             )
-            RecognitionReviewService(
-                state.repository,
-                state.managed.runtime.strategy.recognition_types,
-            ).resolve(prior_recognition.review_id, recognition_type_id, actor="harness")
-            processing = state.repository.get_item(manual_item.task_item_id)
-            if processing is None:
-                raise RuntimeError("recovery fixture lost its resolved Recognition TaskItem")
-            processing = dataclasses.replace(
-                processing, status=TaskItemStatus.PROCESSING, stage="metadata"
-            )
-        state.repository.upsert_item(processing)
-        review_id = None
+        task_id = str(discovery_document.get("organizeTaskId") or "")
+        intent_id = discovery_document["intentId"]
+        status, intent = wsgi_request(
+            state.api,
+            "GET",
+            f"/api/v1/operations/organize/intents/{intent_id}",
+            token=HARNESS_ADMIN_TOKEN,
+        )
+        if status != 200:
+            raise RuntimeError(f"recovery Manual Organize intent read failed: {status}")
+        matching = [
+            value for value in state.repository.list_items(task_id) if value.source_path == filename
+        ]
+        if len(matching) != 1:
+            raise RuntimeError("recovery fixture did not keep exactly one TaskItem")
+        current = matching[0]
+        recognition_service = RecognitionReviewService(
+            state.repository,
+            state.managed.runtime.strategy.recognition_types,
+        )
+        preview: dict | None = None
+        target_path = ""
+        review_id = ""
         if kind == "recognition":
-            review = RecognitionReviewService(
-                state.repository,
-                state.managed.runtime.strategy.recognition_types,
-            ).create(
-                processing,
-                RecognitionResult(status=RecognitionStatus.UNRECOGNIZED),
+            existing_review = state.repository.get_recognition_review_for_item(current.item_id)
+            if existing_review is None or existing_review.status.value != "pending":
+                processing = _fixture_set_item_processing(state, current)
+                existing_review = recognition_service.create(
+                    processing,
+                    RecognitionResult(status=RecognitionStatus.UNRECOGNIZED),
+                )
+            current = _fixture_set_item_state(
+                state,
+                state.repository.get_item(current.item_id) or current,
+                TaskItemStatus.WAITING_RECOGNITION,
+                "waiting_recognition",
             )
-            review_id = review.review_id
-        elif kind in {"metadata", "attachment"}:
-            candidate = MediaCandidate(
-                "tmdb",
-                provider_id,
-                MediaType.MOVIE,
-                title,
-                year=year,
-                genres=("Animation",),
-                countries=("JP",),
+            review_id = existing_review.review_id
+        else:
+            item = intent["items"][0]
+            status, intent = wsgi_request(
+                state.api,
+                "POST",
+                f"/api/v1/operations/organize/intents/{intent['intentId']}"
+                f"/items/{item['itemId']}/choice",
+                body={
+                    "expectedVersion": intent["version"],
+                    "expectedItemVersion": item["version"],
+                    "recognitionTypeId": recognition_type_id,
+                    "namingPolicyId": "A",
+                    "classificationPolicyId": "A",
+                    "organizePolicyId": organize_policy_id,
+                },
+                token=HARNESS_ADMIN_TOKEN,
             )
-            identification = MetadataIdentificationResult(
-                MetadataIdentificationStatus.NEED_CONFIRM,
-                RecognitionType("C", "Special"),
-                match=CandidateMatchResult(
-                    CandidateMatchStatus.NEED_CONFIRM,
-                    candidate,
-                    72,
-                    (CandidateScore(candidate, 72, (ScoreComponent("title", 72, "title match"),)),),
-                ),
-                query=title,
+            if status != 200:
+                raise RuntimeError(f"recovery Manual Organize choice failed: {status}")
+            preview = _request_intent_plan_via_durable_analysis(
+                state, intent, label="harness-recovery-manual"
             )
-            policy = next(
-                value
-                for value in state.managed.runtime.strategy.metadata_policies
-                if value.policy_id == "C" and value.enabled
-            )
-            review = MetadataReviewService(state.repository).create(
-                processing, identification, policy.policy_id
-            )
-            review_id = review.review_id
-        elif kind == "metadata_correction":
-            policy = next(
-                value
-                for value in state.managed.runtime.strategy.metadata_policies
-                if value.policy_id == "C" and value.enabled
-            )
-            review = MetadataCorrectionService(state.repository, (policy,)).create(
-                processing,
-                MetadataIdentificationResult(
-                    MetadataIdentificationStatus.NOT_FOUND,
-                    RecognitionType("C", "Special"),
-                    query=title,
-                ),
-                policy,
-                ParseResult(title, year=year, original_filename=filename),
-            )
-            review_id = review.review_id
-        elif kind == "classification":
-            policy = next(
-                value
-                for value in state.managed.runtime.strategy.classification_policies
-                if value.policy_id == "A" and value.enabled
-            )
-            review = ClassificationReviewService(state.repository).create(
-                processing,
-                ClassificationResult(
-                    policy_id=policy.policy_id,
-                    recognition_type_id="C",
-                    status=ClassificationStatus.UNCLASSIFIED,
-                ),
-                policy,
-                MediaIdentity(
+            current = state.repository.get_item(current.item_id) or current
+            existing_review = state.repository.get_recognition_review_for_item(current.item_id)
+            if existing_review is not None and existing_review.status.value == "pending":
+                recognition_service.resolve(
+                    existing_review.review_id, recognition_type_id, actor="harness"
+                )
+            processing = _fixture_set_item_processing(state, current)
+            if kind == "metadata":
+                candidate = MediaCandidate(
                     "tmdb",
                     provider_id,
                     MediaType.MOVIE,
@@ -2663,188 +2630,143 @@ def seed_task_item_recovery_journey(state: AppState, kind: str = "recognition") 
                     year=year,
                     genres=("Animation",),
                     countries=("JP",),
-                    recognition_type_id="C",
-                ),
-            )
-            review_id = review.review_id
-        elif kind in {"conflict", "conflict_overwrite"}:
-            target_path = str(manual_item.plan["executionPlan"]["targetPath"])
-            destination = state.managed.root / "destination" / target_path
-            destination.parent.mkdir(parents=True, exist_ok=True)
-            destination.write_bytes(b"existing destination must be preserved")
-            policy = next(
-                value
-                for value in state.managed.runtime.strategy.organize_policies
-                if value.policy_id == organize_policy_id
-            )
-            plan = OrganizePlan(
-                source_storage_id="source-storage",
-                target_storage_id="media-target",
-                source=filename,
-                target=target_path,
-                recognition_type_id="C",
-                naming_policy_id="A",
-                classification_policy_id="A",
-                organize_policy_id=policy.policy_id,
-                conflicts=(
-                    Conflict(
-                        ConflictType.DESTINATION_EXISTS,
-                        filename,
-                        target_path,
-                        "destination already exists",
-                    ),
-                ),
-                status=PlanStatus.CONFLICT,
-                plan_id=str(manual_item.plan["planId"]),
-                source_location=StorageLocation("source-storage", filename),
-                destination_location=StorageLocation("media-target", target_path),
-            )
-            waiting = dataclasses.replace(
-                processing,
-                status=TaskItemStatus.WAITING_CONFIRM,
-                stage="waiting_confirm",
-            )
-            confirmation = ConfirmationService(state.repository).create(
-                task_id=durable.task_id,
-                item_id=manual_item.task_item_id,
-                plan=plan,
-                policy=policy,
-                item=waiting,
-            )
-            review_id = confirmation.confirmation_id
-        else:
-            failure = FailureExplanation(
-                category="technical_dependency_unavailable",
-                message=(
-                    "a temporary dependency stopped the previous attempt before Storage mutation"
-                ),
-                durable_state="failed",
-                side_effects="none",
-                retry_safe=True,
-                next_action=(
-                    "repair the dependency, then continue this item through a fresh pinned DryRun"
-                ),
-            )
-            failed = dataclasses.replace(
-                current,
-                status=TaskItemStatus.FAILED,
-                stage="failed",
-                error=failure.encode(),
-            )
-            state.repository.upsert_item(failed)
-            # Preserve a successful and effect-unknown sibling in the same
-            # mixed task while the operator repairs only this item.
-            coordinator = PersistentTaskCoordinator(state.repository, state.repository)
-            latest_task = state.repository.get_task(durable.task_id)
-            if latest_task is None:
-                raise RuntimeError("technical recovery fixture lost its Task")
-            state.repository.update_task(
-                dataclasses.replace(
-                    latest_task,
-                    status=PersistentTaskStatus.RUNNING,
-                    completed_at=None,
-                    updated_at=datetime.now(UTC),
                 )
-            )
-            success = coordinator.begin_item(
-                durable.task_id,
-                "source-storage",
-                "source",
-                "TechnicalRecoverySuccess.2019.mkv",
-                "TechnicalRecoverySuccess.2019.mkv",
-            )
-            success = dataclasses.replace(success, status=TaskItemStatus.SUCCESS, stage="completed")
-            state.repository.upsert_item(success)
-            state.repository.release(success.storage_id, success.source_path, success.task_id)
-            unknown = coordinator.begin_item(
-                durable.task_id,
-                "source-storage",
-                "source",
-                "TechnicalRecoveryUnknown.2019.mkv",
-                "TechnicalRecoveryUnknown.2019.mkv",
-            )
-            unknown_failure = FailureExplanation(
-                category="execution_outcome_unknown",
-                message="the sibling's prior effect could not be verified",
-                durable_state="inspection_required",
-                side_effects="unknown",
-                retry_safe=False,
-                next_action="inspect this sibling's effect evidence before taking another action",
-            )
-            unknown = dataclasses.replace(
-                unknown,
-                status=TaskItemStatus.FAILED,
-                stage="execution_outcome_unknown",
-                error=unknown_failure.encode(),
-            )
-            state.repository.upsert_item(unknown)
-            state.repository.release(unknown.storage_id, unknown.source_path, unknown.task_id)
-            now = datetime.now(UTC)
-            state.repository.append_result(
-                PersistentResultRecord(
-                    result_id=f"{unknown.item_id}-unknown-result",
-                    task_id=durable.task_id,
-                    item_id=unknown.item_id,
-                    source_storage_id=unknown.storage_id,
-                    source_path=unknown.source_path,
-                    destination_storage_id="media-target",
-                    destination_path="Movies/TechnicalRecoveryUnknown.mkv",
-                    recognition_type="C",
-                    provider="tmdb",
-                    provider_id="9001",
-                    metadata_policy_id="C",
+                identification = MetadataIdentificationResult(
+                    MetadataIdentificationStatus.NEED_CONFIRM,
+                    RecognitionType("C", "Special"),
+                    match=CandidateMatchResult(
+                        CandidateMatchStatus.NEED_CONFIRM,
+                        candidate,
+                        72,
+                        (
+                            CandidateScore(
+                                candidate, 72, (ScoreComponent("title", 72, "title match"),)
+                            ),
+                        ),
+                    ),
+                    query=title,
+                )
+                policy = next(
+                    value
+                    for value in state.managed.runtime.strategy.metadata_policies
+                    if value.policy_id == "C" and value.enabled
+                )
+                review = MetadataReviewService(state.repository).create(
+                    processing, identification, policy.policy_id
+                )
+                review_id = review.review_id
+            elif kind == "metadata_correction":
+                policy = next(
+                    value
+                    for value in state.managed.runtime.strategy.metadata_policies
+                    if value.policy_id == "C" and value.enabled
+                )
+                review = MetadataCorrectionService(state.repository, (policy,)).create(
+                    processing,
+                    MetadataIdentificationResult(
+                        MetadataIdentificationStatus.NOT_FOUND,
+                        RecognitionType("C", "Special"),
+                        query=title,
+                    ),
+                    policy,
+                    ParseResult(title, year=year, original_filename=filename),
+                )
+                review_id = review.review_id
+            elif kind == "classification":
+                policy = next(
+                    value
+                    for value in state.managed.runtime.strategy.classification_policies
+                    if value.policy_id == "A" and value.enabled
+                )
+                review = ClassificationReviewService(state.repository).create(
+                    processing,
+                    ClassificationResult(
+                        policy_id=policy.policy_id,
+                        recognition_type_id="C",
+                        status=ClassificationStatus.UNCLASSIFIED,
+                    ),
+                    policy,
+                    MediaIdentity(
+                        "tmdb",
+                        provider_id,
+                        MediaType.MOVIE,
+                        title,
+                        year=year,
+                        genres=("Animation",),
+                        countries=("JP",),
+                        recognition_type_id="C",
+                    ),
+                )
+                review_id = review.review_id
+            elif kind in {"conflict", "conflict_overwrite"}:
+                plan_document = (preview or {}).get("items", [{}])[0].get("plan") or {}
+                destination = plan_document.get("destination") or {}
+                target_path = str(
+                    destination.get("storageRelativePath")
+                    or destination.get("relativePath")
+                    or destination.get("path")
+                    or ""
+                )
+                if not target_path:
+                    raise RuntimeError("recovery conflict fixture has no prepared target path")
+                destination_file = state.managed.root / "destination" / target_path
+                destination_file.parent.mkdir(parents=True, exist_ok=True)
+                destination_file.write_bytes(b"existing destination must be preserved")
+                policy = next(
+                    value
+                    for value in state.managed.runtime.strategy.organize_policies
+                    if value.policy_id == organize_policy_id
+                )
+                plan = OrganizePlan(
+                    source_storage_id="source-storage",
+                    target_storage_id="media-target",
+                    source=filename,
+                    target=target_path,
+                    recognition_type_id="C",
                     naming_policy_id="A",
                     classification_policy_id="A",
-                    organize_policy_id="A",
-                    operation="MOVE",
-                    status="FAILED",
-                    created_at=now,
-                    title="Technical recovery unknown sibling",
-                    completed_operations=("MOVE",),
-                    effect_certainty="attempted_unverified",
-                    uncertain_effects=("mutation_outcome",),
-                    error=unknown_failure.encode(),
+                    organize_policy_id=policy.policy_id,
+                    conflicts=(
+                        Conflict(
+                            ConflictType.DESTINATION_EXISTS,
+                            filename,
+                            target_path,
+                            "destination already exists",
+                        ),
+                    ),
+                    status=PlanStatus.CONFLICT,
+                    plan_id=str(uuid4()),
+                    source_location=StorageLocation("source-storage", filename),
+                    destination_location=StorageLocation("media-target", target_path),
                 )
-            )
-            state.repository.update_task(
-                dataclasses.replace(
-                    state.repository.get_task(durable.task_id),
-                    status=PersistentTaskStatus.PARTIAL_SUCCESS,
-                    total_items=3,
-                    completed_items=1,
-                    failed_items=2,
-                    updated_at=now,
-                    completed_at=now,
+                waiting = dataclasses.replace(
+                    processing,
+                    status=TaskItemStatus.WAITING_CONFIRM,
+                    stage="waiting_confirm",
                 )
-            )
-            # Introduce an ambiguous new Metadata blocker only after the
-            # original manual plan has safely failed and the recovery Worker
-            # is later admitted, so setup cannot consume or bias its intent.
-            alternate = MediaCandidate(
-                "tmdb",
-                "930" if kind == "technical_success" else "929",
-                MediaType.MOVIE,
-                title,
-                year=year,
-                genres=("Animation",),
-                countries=("JP",),
-            )
-            provider._candidates = tuple(provider._candidates) + (alternate,)
+                confirmation = ConfirmationService(state.repository).create(
+                    task_id=task_id,
+                    item_id=current.item_id,
+                    plan=plan,
+                    policy=policy,
+                    item=waiting,
+                )
+                review_id = confirmation.confirmation_id
+        _fixture_defer_task_to_human(state, task_id)
+        current = state.repository.get_item(current.item_id) or current
         run = {
-            "runId": durable.task_id,
-            "taskId": durable.task_id,
-            "itemId": manual_item.task_item_id,
-            "previewId": preview["previewId"],
-            "executionId": durable.execution_id,
-            "reviewId": review_id or "",
+            "runId": task_id,
+            "taskId": task_id,
+            "itemId": current.item_id,
+            "previewId": (preview or {}).get("previewId")
+            or discovery_document.get("previewId")
+            or "",
+            "executionId": "",
+            "reviewId": review_id,
             "sourcePath": filename,
             "kind": kind,
             "providerId": provider_id,
-            "targetPath": (
-                str(manual_item.plan["executionPlan"]["targetPath"])
-                if kind in {"conflict", "conflict_overwrite"}
-                else ""
-            ),
+            "targetPath": target_path,
         }
         if source_file.read_bytes() != b"synthetic recovery media; no real codec parsing":
             raise RuntimeError("zero-mutation recovery fixture changed the source")

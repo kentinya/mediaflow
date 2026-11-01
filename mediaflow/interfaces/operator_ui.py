@@ -722,7 +722,7 @@ APP_JS = b"""(() => {
         ['itemLimit', 'Item limit', 'number']],
       webhooks: [['id', 'ID'], ['url', 'HTTPS endpoint URL'],
         ['secretEnv', 'Secret environment variable name'],
-        ['events', 'Events (comma separated; job.completed, job.failed, job.cancelled, schedule.emitted)'],
+        ['events', 'Events (comma separated; task.completed, task.failed, task.cancelled, schedule.emitted)'],
         ['timeoutSeconds', 'Timeout (seconds)', 'number'],
         ['maxAttempts', 'Max attempts', 'number'],
         ['baseRetrySeconds', 'Base retry (seconds)', 'number'],

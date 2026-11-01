@@ -941,7 +941,22 @@ class ManualRecoveryContinuationService:
         if not callable(preview_getter):
             return None
         execution = self._native_admitted_execution_for_item(source_task_id, source_item_id)
-        preview_id = execution.preview_id if execution is not None else discovery.preview_id
+        # The current discovery Preview is the product of the latest completed
+        # analysis.  A source whose admitted execution reviewed an older Preview
+        # has since been re-analyzed on this same Task, so that execution is
+        # history rather than the confirmation identity of the new summary.
+        recovery_execution = None
+        if execution is not None and execution.preview_id != discovery.preview_id:
+            recovery_execution = execution
+            execution = None
+        preview_id = (
+            execution.preview_id
+            if execution is not None
+            else (
+                discovery.preview_id
+                or (recovery_execution.preview_id if recovery_execution is not None else None)
+            )
+        )
         if not preview_id:
             return None
         preview = preview_getter(preview_id)
@@ -950,14 +965,18 @@ class ManualRecoveryContinuationService:
         if execution is None:
             # The summary is only the operator's confirmable boundary once the
             # complete analysis parked this exact source at ``waiting_confirm``
-            # *and* that source really carries its own saved four-type decision.
-            # A plain initial confirmation, a source still waiting on another
-            # problem, or settled history is therefore never published as a
-            # recovery summary.
+            # *and* the source either really carries its own saved four-type
+            # decision or this same Task re-analyzed it after an already admitted
+            # execution.  A plain initial confirmation, a source still waiting on
+            # another problem, or settled history is therefore never published as
+            # a recovery summary.
             if item.status is not TaskItemStatus.WAITING_CONFIRM:
                 return None
             problem_reader = getattr(self._repository, "has_current_four_type_problem", None)
-            if not callable(problem_reader) or not problem_reader(source_item_id):
+            has_problem = callable(problem_reader) and problem_reader(source_item_id)
+            decision_reader = getattr(self._repository, "has_resolved_four_type_decision", None)
+            has_decision = callable(decision_reader) and decision_reader(source_item_id)
+            if not has_problem and not has_decision and recovery_execution is None:
                 return None
         document = self._native_summary_document(discovery, item, preview, execution=execution)
         if (

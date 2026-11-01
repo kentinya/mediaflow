@@ -60,6 +60,9 @@ def item_recovery_kind(repository, item_id: str, *, has_blocker: bool = False) -
     lineage_reader = getattr(repository, "has_persisted_recovery_lineage", None)
     if callable(lineage_reader) and lineage_reader(item_id):
         return "recovery_lineage"
+    decision_reader = getattr(repository, "has_resolved_four_type_decision", None)
+    if callable(decision_reader) and decision_reader(item_id):
+        return "recovery_lineage"
     return "technical_history"
 
 
