@@ -3431,6 +3431,14 @@ def _run_worker(
                     manual_task_worker.set_worker_heartbeat(heartbeat)
 
                     def step(loop: ResidentLoop) -> int:
+                        # A fresh consumer owns no registration row yet, so a
+                        # heartbeat can only fail before the first lawful
+                        # registration.  Register through the same snapshot
+                        # resolver/supported-command boundary first; otherwise a
+                        # newly started Worker would wait forever and never
+                        # reach the consumer that claims admitted work.
+                        if not worker_service.registered:
+                            worker_service.ensure_registration()
                         if not worker_service.heartbeat():
                             raise RuntimeError("worker registration unavailable")
                         worked = worker_service.run_next() is not None

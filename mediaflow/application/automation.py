@@ -520,6 +520,12 @@ class ResidentProcessingWorker:
     def label(self) -> str:
         return self._label
 
+    @property
+    def registered(self) -> bool:
+        """Whether this consumer currently owns a durable registration row."""
+
+        return self._registered
+
     def register(self, now: datetime | None = None):
         current = now or datetime.now(UTC)
         worker = self._repository.register_worker(
@@ -547,7 +553,17 @@ class ResidentProcessingWorker:
         if callable(binder):
             binder(self.heartbeat)
 
-    def run_next(self):
+    def ensure_registration(self, now: datetime | None = None):
+        """Register through the exact snapshot/supported-command boundary.
+
+        The resident loop needs a registration row before it can prove a
+        heartbeat, while the first lawful registration itself lives on the same
+        snapshot resolver and command validation ``run_next`` uses.  Keeping
+        that order in one place means a freshly started Worker registers even
+        when there is no pending work, and later repins only through the same
+        admitted-Task boundary.
+        """
+
         if self._configuration_snapshot_resolver is not None:
             snapshot_id, digest = self._configuration_snapshot_resolver()
             if (snapshot_id, digest) != (
@@ -558,7 +574,11 @@ class ResidentProcessingWorker:
                 self._configuration_snapshot_digest = digest
                 self._registered = False
         if not self._registered:
-            self.register()
+            self.register(now)
+        return self
+
+    def run_next(self):
+        self.ensure_registration()
         for runner in (
             self._manual_task_worker,
             self._media_discovery_worker,
@@ -584,7 +604,7 @@ class ResidentProcessingWorker:
     ) -> int:
         if poll_seconds <= 0:
             raise ValueError("worker poll interval must be positive")
-        self.register()
+        self.ensure_registration()
         processed = 0
         try:
             while not stop_requested():

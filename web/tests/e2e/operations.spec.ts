@@ -49,9 +49,6 @@ const COMPLETED_ROW = new RegExp(
 const COMPLETED_ENDED_ROW = new RegExp(
   `整理.*已完成.*${escapeRegExp(localRunTime("2026-08-22T12:06:00+00:00"))}`,
 );
-const AUTOMATED_ROW = new RegExp(
-  `整理.*自动化.*${escapeRegExp(localRunTime("2026-08-22T12:15:00+00:00"))}`,
-);
 
 async function connect(page: Page, token: string = VIEWER_TOKEN) {
   await page.goto("/ui-v2/");
@@ -89,7 +86,7 @@ async function openClosedJobCollection(page: Page, token = VIEWER_TOKEN) {
     await page.getByRole("button", { name: "Connect" }).click();
   }
   await expect(
-    page.getByRole("heading", { name: "Job 列表已并入任务中心" }),
+    page.getByRole("heading", { name: "旧列表已并入任务中心" }),
   ).toBeVisible();
 }
 
@@ -246,18 +243,17 @@ test("the closed Job collection never reads a second mixed population", async ({
   ).toHaveAttribute("href", "/ui-v2/operations");
 });
 
-test("an organizing legacy deep link resolves to the exact center run", async ({
+test("an organizing legacy deep link resolves to the exact Task run", async ({
   page,
 }) => {
   await connect(page);
   const requested: string[] = [];
   page.on("request", (request) => requested.push(request.url()));
   await openLegacyIdentity(page, "tasks", "task-001");
-  // The supported identity opens the same run the center lists, inside the
-  // center (its anchor is the admitted Job through the persisted Job→Task link,
-  // so the run identity stays stable before and after that linkage), with no
-  // second collection read and no command replay.
-  await expect(page).toHaveURL(/\/ui-v2\/operations\?run=job-001/);
+  // The supported Task identity opens that exact Task inside the center. The
+  // retired Job admission is never used as the run identity, and reading the
+  // legacy link submits no command and reads no second collection.
+  await expect(page).toHaveURL(/\/ui-v2\/operations\?run=task-001/);
   await expect(page.getByRole("region", { name: "运行详情" })).toBeVisible();
   expect(
     requested.filter(
@@ -338,24 +334,29 @@ test("the operations read and the rendered page stay free of a hostile historica
   ).toBe(false);
 });
 
-test("a pre-Task Job deep link resolves to the same center run with admission truth", async ({
+test("a retired Job deep link stays a bounded read-only unavailable state", async ({
   page,
 }) => {
+  const mutating: string[] = [];
+  page.on("request", (request) => {
+    if (request.method() !== "GET") mutating.push(request.url());
+  });
   await connect(page);
-  // A pre-Task admission is real center work: the closed legacy link opens the
-  // exact run the center lists, with the same durable admission/Worker facts.
+  // Pre-Task Job admissions are retired: the old identity is never resolved
+  // into a new Task, a guessed context or a replayable command.
   await openLegacyIdentity(page, "jobs", "job-005");
-  await expect(page).toHaveURL(/\/ui-v2\/operations\?run=job-005/);
-  const detail = page.getByRole("region", { name: "运行详情" });
-  await expect(detail).toBeVisible();
-  await expect(detail.getByText(/整理/).first()).toBeVisible();
-  // A missing identity is a bounded read-only state, never a guessed context.
-  await openLegacyIdentity(page, "jobs", "does-not-exist");
+  await expect(page).toHaveURL(/\/ui-v2\/operations\/jobs\/job-005$/);
   await expect(
-    page.getByRole("heading", { name: "正在确认该 Job 的归属" }),
+    page.getByRole("heading", { name: "该旧记录已不可用" }),
   ).toBeVisible();
   await expect(page.getByText(/没有提交任何命令/)).toBeVisible();
   await expect(page.getByRole("link", { name: "打开任务中心" })).toBeVisible();
+  // The same bounded answer applies to an unknown old identity.
+  await openLegacyIdentity(page, "jobs", "does-not-exist");
+  await expect(
+    page.getByRole("heading", { name: "该旧记录已不可用" }),
+  ).toBeVisible();
+  expect(mutating).toEqual([]);
 });
 
 test("a terminal run exposes no control and no request is sent", async ({
@@ -419,15 +420,15 @@ test("Dashboard counts and recent failures link to exact Operations state", asyn
 
   await page.getByRole("link", { name: "Overview" }).click();
   await expect(page).toHaveURL(/\/ui-v2\/dashboard$/);
-  // A recorded failure resolves to the exact center run through the closed
-  // legacy link; it never becomes a second mixed list.
+  // A recorded Task failure resolves to that exact Task inside the center; it
+  // never becomes a second mixed list or an old Job identity.
   await expect(
     page.getByRole("link", { name: "Open this Task in the Task Center" }),
   ).toBeVisible();
   await page
-    .getByRole("link", { name: "Open this Job in the Task Center" })
+    .getByRole("link", { name: "Open this Task in the Task Center" })
     .click();
-  await expect(page).toHaveURL(/\/ui-v2\/operations\?run=job-005$/);
+  await expect(page).toHaveURL(/\/ui-v2\/operations\?run=task-004$/);
   await expect(page.getByRole("region", { name: "运行详情" })).toBeVisible();
 });
 
@@ -844,35 +845,28 @@ test("the native action downloads the eligible linked Task's result package", as
   await expect(detail.getByText(/已导出 \d+ 条结果/)).toBeVisible();
 });
 
-test("a pre-Task admission states queue truth and refuses an empty download", async ({
+test("a retired pre-Task Job run identity stays bounded unavailable", async ({
   page,
 }) => {
   const methods: string[] = [];
   page.on("request", (request) => {
     methods.push(`${request.method()} ${request.url()}`);
   });
-  await connect(page);
-  await openOperations(page);
-  const inventoryTable = page.getByRole("table", { name: "运行清单" });
-  await inventoryTable
-    .getByRole("row", { name: AUTOMATED_ROW })
-    .getByRole("button")
-    .first()
-    .click();
+  await openCenterRun(page, "job-002");
   const detail = page.getByRole("region", { name: "运行详情" });
   await expect(detail).toBeVisible();
-
-  // No Task yet: progress and items are explicitly unavailable, never a
-  // fabricated zero.
-  await expect(detail.getByText("进度证据不可用")).toBeVisible();
-  const items = detail.getByRole("region", { name: "主条目" });
-  await expect(items.getByText("此运行暂无条目证据")).toBeVisible();
-
-  // Export is disabled with its reason, so a failed export can never become
-  // an empty successful download.
-  const exportButton = detail.getByRole("button", { name: "导出结果 JSON" });
-  await expect(exportButton).toBeDisabled();
-  await expect(detail.getByText(/暂无可导出的结果包/)).toBeVisible();
+  // A pre-Task Job has no Task identity and is retired. Its old identity gets
+  // the ordinary bounded not-found answer, never fabricated progress, an empty
+  // successful export or a hidden replay.
+  await expect(
+    detail.getByRole("heading", { name: "Record not found" }),
+  ).toBeVisible();
+  await expect(
+    detail.getByText("Return to the Operations list."),
+  ).toBeVisible();
+  await expect(
+    detail.getByRole("button", { name: "导出结果 JSON" }),
+  ).toHaveCount(0);
 
   // Every detail read is a GET: reading admits no work.
   const mutating = methods.filter(
@@ -880,4 +874,5 @@ test("a pre-Task admission states queue truth and refuses an empty download", as
       entry.includes("/api/v1/operations/runs/") && !entry.startsWith("GET "),
   );
   expect(mutating).toEqual([]);
+  expect(methods.some((entry) => entry.includes("/api/v1/jobs"))).toBe(false);
 });

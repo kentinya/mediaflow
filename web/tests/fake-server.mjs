@@ -12158,11 +12158,22 @@ const server = createServer(async (req, res) => {
     if (exact !== undefined) {
       return exact;
     }
-    return (
-      runs.find(
-        (item) => item.task_id !== null && item.task_id === identifier,
-      ) ?? null
+    const linked = runs.find(
+      (item) => item.task_id !== null && item.task_id === identifier,
     );
+    if (linked === undefined) {
+      return null;
+    }
+    // A supported Task identity opens the exact Task itself, never the retired
+    // Job admission that happened to admit it. The list row keeps its own
+    // durable anchor, but the Task's own detail/lifecycle must not be replaced
+    // by a Job identity.
+    return {
+      ...linked,
+      run_kind: "task",
+      run_id: linked.task_id,
+      job_id: null,
+    };
   }
 
   /**
@@ -14000,7 +14011,10 @@ const server = createServer(async (req, res) => {
     // persisted Job→Task link, so deep-opening either side of the linkage
     // reaches the same stable overview with its durable progress.
     const run = resolveRunByIdentifier(runId);
-    if (!run) {
+    if (!run || (run.task_id === null && run.job_id !== null)) {
+      // A pre-Task Job admission has no Task identity and is retired. Serving
+      // it as a Task run would fabricate progress, so the old identity gets an
+      // ordinary bounded not-found instead of a Job-shaped detail.
       sendJson(res, 404, { error: { code: "not_found" } });
       return;
     }

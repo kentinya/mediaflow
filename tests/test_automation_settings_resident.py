@@ -383,6 +383,131 @@ class WorkerCadenceAdoptionTests(ResidentAdoptionFixture):
         self.wait_for(both_reported, message="both Worker instances never reported adoption")
 
 
+class ResidentWorkerBootstrapTests(ResidentAdoptionFixture):
+    """A real ``worker run`` registers before claiming and then consumes work.
+
+    The reviewed failure was ordering, not capacity: the resident loop asked for
+    a heartbeat before the consumer had ever registered, so it reported a
+    waiting state forever and every admitted Task stayed queued.  These cases
+    exercise the real process command from an empty deployment, then publish
+    the first Active and let that same process claim the admitted work.
+    """
+
+    def publish_worker_journey(self):
+        import json
+        from pathlib import Path
+
+        source = self.root / "source"
+        target = self.root / "target"
+        source.mkdir()
+        target.mkdir()
+        document = json.loads(Path("config/strategy.example.json").read_text(encoding="utf-8"))
+        document["persistence"] = {"databasePath": self.database}
+        document["historyPath"] = str(self.root / "history.jsonl")
+        document["storages"][0]["rootPath"] = str(source)
+        document["storages"][1]["rootPath"] = str(target)
+        document["resourceLibraries"][0]["storagePath"] = ""
+        document["resourceLibraries"][0]["displayRootPath"] = str(source)
+        document["api"] = json.loads(json.dumps(self.document["api"]))
+        document["api"]["remoteExecution"] = {
+            "enabled": True,
+            "maximumTtlSeconds": 900,
+        }
+        document["automation"]["workerPollSeconds"] = 0.2
+        document["automation"]["schedulerPollSeconds"] = 0.2
+        self.publish_first_draft(document)
+        return source, target
+
+    def processing_workers(self):
+        with SQLiteTaskRepository(self.database, read_only=True) as repository:
+            return tuple(repository.list_workers())
+
+    def wait_processing_registration(self, minimum: int = 1):
+        def registered():
+            workers = self.processing_workers()
+            return len(workers) >= minimum and any(
+                "organize" in worker.supported_commands
+                for worker in workers
+                if worker.status.value == "live"
+            )
+
+        self.wait_for(
+            registered,
+            message="the resident Worker never registered its processing consumer",
+        )
+
+    def test_worker_run_registers_then_consumes_an_admitted_task_without_replay(self):
+        import os
+        from unittest.mock import patch
+
+        from mediaflow.application.execution_authorization import (
+            ExecutionAuthorizationService,
+        )
+
+        credential = patch.dict(os.environ, {"TMDB_ACCESS_TOKEN": "resident-fake-provider"})
+        credential.start()
+        self.addCleanup(credential.stop)
+
+        # The fresh deployment has no Active at all.  The real resident command
+        # must still register the processing consumer it will later use.
+        first = self.start("worker")
+        self.wait_processing_registration()
+
+        source, _target = self.publish_worker_journey()
+        with SQLiteConfigurationRepository(self.database) as configuration_repository:
+            active = configuration_repository.get_active_revision()
+        self.assertIsNotNone(active)
+
+        with SQLiteTaskRepository(self.database) as repository:
+            service = ExecutionAuthorizationService(
+                repository,
+                maximum_ttl_seconds=3600,
+                maximum_active_jobs=100,
+                configuration_snapshot_id=active.revision_id,
+                configuration_snapshot_digest=active.digest,
+            )
+            issued = service.issue(ttl_seconds=600, max_items=1, actor="tester")
+            task_id = service.submit_organize(issued.token, limit=1).task.task_id
+
+        def completed():
+            with SQLiteTaskRepository(self.database, read_only=True) as repository:
+                task = repository.get_task(task_id)
+                return task is not None and task.status.value == "completed"
+
+        self.wait_for(
+            completed,
+            message="the resident Worker never consumed the admitted Task",
+        )
+        with SQLiteTaskRepository(self.database, read_only=True) as repository:
+            task = repository.get_task(task_id)
+            scheduling = repository.get_task_scheduling(task_id)
+            results = repository.list_results(task_id)
+        self.assertEqual(task.total_items, 0)
+        self.assertEqual(results, ())
+        self.assertGreaterEqual(scheduling.claim_generation, 1)
+        self.assertEqual(scheduling.queue_state.value, "settled")
+        self.assertEqual(list(source.iterdir()), [])
+        terminal_at = task.completed_at
+        self.assertIsNotNone(terminal_at)
+
+        # A restart of the same resident command must not replay the settled
+        # Task or write a second result.
+        first.terminate()
+        self.assertEqual(first.wait(timeout=25), 0)
+        self.start("worker")
+        self.wait_processing_registration(minimum=2)
+        time.sleep(0.6)
+        with SQLiteTaskRepository(self.database, read_only=True) as repository:
+            replayed = repository.get_task(task_id)
+            results_after = repository.list_results(task_id)
+            tasks = repository.list_tasks()
+        self.assertEqual([item.task_id for item in tasks], [task_id])
+        self.assertEqual(replayed.status.value, "completed")
+        self.assertEqual(replayed.completed_at, terminal_at)
+        self.assertEqual(results_after, ())
+        self.assertEqual(replayed.total_items, 0)
+
+
 class BusyStepPinPreservationTests(ResidentAdoptionFixture):
     """A settings publication never repins or replays admitted work."""
 
