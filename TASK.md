@@ -15,7 +15,7 @@ B 不改 A-owned Slice/Roadmap/Progress，不自行宣告 Slice PASS / CLOSED。
 Task ID: 47.4
 Task Type: SLICE
 Parent Slice: 47
-Status: FIX REQUIRED
+Status: READY FOR B REVIEW
 Task Base: 383d8834787674675183f4b251d9dfd26a5dc511
 Difficulty: High
 Test Level: T4
@@ -492,3 +492,70 @@ clean wheel/Docker 矩阵留 B；不要为解决契约失配进行全仓库重�
 
 结论：保持 Task47.4 / FIX REQUIRED，修正以上实际故障和必要原生覆盖后再交 B。
 不拆新 Task，不修改 A-owned Slice/Roadmap/Progress，不宣称 Slice READY FOR A REVIEW / CLOSED。
+
+## Developer Fix Report — notification contract and native recovery coverage
+
+```text
+Status: READY FOR B REVIEW
+Task Base: 383d8834787674675183f4b251d9dfd26a5dc511
+Source candidate: bebf7a3a9217b7f06fb14649d6197ac1c9e0366b
+```
+
+### 本轮修复
+
+- **P1 通知 Web 合同**：`web/src/entities/operations/notification.ts` 的规范事件改为
+  `task.completed/task.failed/task.cancelled/schedule.emitted`；已有的 `job.*` 配置字面值
+  经有界别名映射为同一 Task 事件后再显示/保存，未知值仍 fail-closed。定义、草稿、投递
+  normalizer 与 fixtures/E2E 同步为 Task wire，旧 sample 配置仍可读。
+- **旧嵌套配置的真实草稿解析**：`ManagedConfigurationService.latest_open_draft_containing`
+  在 `webhooks` 根段缺失时读取已支持的 `notifications.webhooks` 旧拼写，使示例配置的
+  successor Draft 可正常进入定义详情/编辑器；规范根段仍优先。
+- **真实 Notifications 页面旅程**：新增原生 Python harness 测试，从侧栏打开通知页、
+  读取真实 `GET /api/v1/operations/notifications/webhooks`、核对 `task.*` catalog 与
+  `operations-webhook` 定义，再启动 successor Draft 并在真实 Draft 编辑器确认 Task
+  事件选项；页面不再显示 contract unavailable。
+- **同 Task 四类恢复闭环**：修正 Files 发现 Task 的原恢复摘要识别。当前 Preview 与旧
+  已准入 execution 的 Preview 不同时，旧 execution 视为历史；保存决定后的新分析在
+  `waiting_confirm` 时可暴露当前摘要。新增 resolved four-type decision 持久判定，使
+  Task Center 仍把该条目归入 recovery lineage，而不是 technical history。确认仍走同一
+  Task 的既有 Files Preview/execution admission。
+- **原生恢复覆盖**：harness 的 recovery fixture 改为真实 `POST /files/discoveries`
+  （autoPrepare）创建 Files Task、discovery、intent、analysis 和 Preview，再在当前
+  Task 上登记四类 review/confirmation；不再构造旧 Job/legacy manual Task。
+  `operations-inventory.python.spec.ts` 新增识别、Metadata 候选、Metadata 修正、
+  分类、冲突重命名、冲突 overwrite 六个真实浏览器旅程，覆盖决定→分析→摘要→显式
+  确认→同一 Task 文件效果、Metadata 显式搜索次数、成功 sibling/原结果保留、冲突目标
+  保留与 overwrite 拒绝/同意。
+- **测试资产同步**：fake notification server、NotificationRouter/notification 单测改为
+  Task 事件；保留 `job.*` 别名回归；V1 通知事件说明改为 Task 名称。
+
+### 实际验证（Developer 受影响范围）
+
+| 命令 / cwd | 实际结果 |
+|---|---|
+| `npm run test:e2e -- --config=playwright.python.config.ts tests/e2e/operations-inventory.python.spec.ts` (`web/`) | **42 passed，1.1m**；含真实通知页与六个恢复旅程。 |
+| `npm run test:e2e -- --config=playwright.python.automation.config.ts tests/e2e/automation-run-once.python.spec.ts --grep "preserves a successful sibling"` | **2 passed，3.6s**。 |
+| `npm run test:e2e -- tests/e2e/notifications.spec.ts` | **12 passed，6.6s**。 |
+| `.venv/bin/python -m unittest tests.test_notifications tests.test_v2_notification_operations tests.test_webhook_management tests.test_notification_delivery_management tests.test_configuration_snapshot -q` | **102 tests OK，6.1s**。 |
+| `.venv/bin/python -m unittest tests.test_processing_recovery_admission tests.test_automation_entrance_recovery tests.test_manual_task_engine tests.test_operations_task_center -q` | **76 tests OK，9.0s**。 |
+| `.venv/bin/python -m unittest tests.test_v2_automation_run_once tests.test_operations_run_detail_log_isolation tests.test_operations_run_detail_plan_evidence -q` | **49 tests OK，5.5s**。 |
+| `.venv/bin/python -m unittest tests.test_automation_settings_resident tests.test_v2_notification_operations tests.test_notifications -q` | **64 tests OK，45.3s**（ResourceWarnings 保留）。 |
+| `npm run typecheck` / `lint` / `format:check` / `build` (`web/`) | 全部通过；构建 281 modules、149ms。 |
+| `npm run test -- run src/entities/operations/notification.test.ts src/features/operations/NotificationRouter.test.tsx` | **83 passed，3.3s**。 |
+| `.venv/bin/ruff format --check .` / `ruff check .` / `compileall` / `check_governance.py` / `git diff --check` | 全部通过；375 files formatted；governance PASS。 |
+
+本轮测试墙钟约 6 分钟（含失败复现与重跑）；本轮开发总时长约 1 小时 15 分钟，测试占比
+约 8%，低于 30%。失败复现保留实际命令与错误，未删断言、放宽超时或增加自动 retry。
+
+### 未完成 / 风险（交 B）
+
+- 全量 Python/Web/E2E、clean installed wheel、Docker fresh/restart/security、原生视觉矩阵
+  仍归 B；本轮未执行，不宣称 T4 通过。
+- recovery fixture 的 review/confirmation 行和 Task/item 等待态由 harness 测试 seam 直接
+  登记，Task/discovery/Preview/决策/分析/摘要/确认/执行均走生产入口；该 seam 仅用于
+  确定性构造四类阻塞，不是产品入口。
+- harness 的 recovery fixture 不再提供 technical/attachment 旧 seed；技术失败只读历史由
+  `automation-workspace` 的真实 Run once 旅程覆盖，附件自动重试按 Task 非目标不恢复。
+- 旧任务/跨版本升级仍按用户明确排除；没有运行用户库、媒体或外部 Provider/Storage。
+- B 须在完整 Base..candidate 上重跑通知/恢复原生旅程及 T4/包装/容器门禁，并重评 Slice
+  RO-1–5 / AC-1–19；Developer 不自评 PASS。
