@@ -5,8 +5,8 @@ readback; [Development Workflow](docs/development-workflow.md) governs planning,
 The user confirmed on 2026-10-31 that B should establish the next active Task, not retain a
 planning-only draft. Task47.3 remains the same formal Task within committed ACTIVE Slice47;
 the current implementation has been handed off and B owns the remaining independent acceptance.
-The previous upgrade-only finding remains withdrawn. The current B review identifies one new-task
-CLI retry scheduling gap below. No delegation, push or deployment is authorized.
+The previous upgrade-only finding remains withdrawn. The current B review accepts CLI retry-request
+retirement and shared-capacity integration, but identifies an uncertain-effect replay gap below. No delegation, push or deployment is authorized.
 Recheck intervening commits without silently repinning the Task Base.
 
 ```text
@@ -38,9 +38,9 @@ High/T4 和新任务安全义务不变。A-owned Slice/Roadmap/Progress 本次�
 入口处置；不需要为已退役 resume 补一条继续命令，也不保留仅把 failed 改为 pending
 却无法由 CLI 完成处理的准备步骤。`ignore-item` / `ignore-pending` 不在本次删除范围。
 
-本轮 B 仅更新 Task 的实施范围/验收/开发指导，尚未修改生产代码或宣称命令已删除。
-Task 保持 FIX REQUIRED、原 Base 和 High/T4；Developer 同时完成下面的命令删除及
-已有 retry-failed 共享调度 P1。没有旧任务/升级，不增加 pending 迁移、兼容别名或恢复层。
+该指令在 `0f1a9ae7` 由 B 规划，在 Developer 候选 `a28268d8` 实现；本轮 B 已验证
+命令删除及共享容量修复通过。Task 仍因下方不确定效果重放问题保持 FIX REQUIRED，
+原 Base 和 High/T4 不变。没有旧任务/升级，不增加 pending 迁移、兼容别名或恢复层。
 四类业务恢复内部的请求、决定、checkpoint、审计和同 Task 分析/确认仍须保留。
 
 ## Preflight and actual-code gap
@@ -293,139 +293,126 @@ git diff --check
 ## B Review Result
 
 ```text
-Reviewed candidate: dfcfebbdb9c879b38806e29c7b41c9192aeca83e..c139e0419a86a6a0d5fa0912e9dce2783071f9eb
-Implementation checkpoint: 75a12d344a3dfd560cbdcf917e2480246974d2fc
-Decision: FIX REQUIRED — one P1, existing CLI retry-failed bypasses shared Task scheduling
+Reviewed candidate: dfcfebbdb9c879b38806e29c7b41c9192aeca83e..a28268d8d61e3f2515b6fd669d88cedbe92c37c4
+Latest implementation checkpoint: a28268d8d61e3f2515b6fd669d88cedbe92c37c4
+Decision: FIX REQUIRED — one P1, retry-failed replays an original unverified mutation
+Verified corrections: retry-request removed; retry-failed shares capacity/claim/fence
 Previous upgrade finding: WITHDRAWN; old tasks / cross-version upgrades remain excluded
-Next: Developer fixes retry-failed scheduling and removes retry-request as user directed; B reviews the corrected candidate
+Next: Developer closes original-item effect eligibility before retry execution; same Task47.3
 ```
 
-完整 Task Base..Head 的 43 个变更文件已独立审查。此前已修的同 Task 四类续作、原执行
-记录冻结和原子来源占用未发现新的阻塞；T4 回归结果见下。当前只剩以下真实入口问题，
-不是要求恢复旧任务、升级兼容或增加新的技术故障恢复产品。用户随后新增的 CLI 命令
-删除要求尚待实现，见本 Task 的 User-confirmed CLI simplification 及下方开发指导。
+B 对完整 Task Base..Head 的 46 个变更文件核对范围及既有结论，独立审查本次 5 文件
+增量。Task Base 未重定；新 checkpoint 未改 A-owned Slice/Roadmap/Progress，未引入新
+入口或升级任务。上轮全量结果不替代本轮有执行输入变化的回归；当前阻塞只有下面已从
+真实 CLI/Storage 依赖边界证明的安全缺口，不因旧任务或开发过程文档状态要求返工。
 
-### P1 — 失败项重试仍能绕过统一队列直接修改文件
+### 已通过的交付结果
 
-**用户会怎样遇到：** 本版本新建的 `organize <file> --execute` Task 在文件修改前失败，
-文件仍在来源。管理员修好故障后使用现有命令
-`tasks retry-failed <task-id> --execute`。若此时其他新整理 Task 已占满配置容量，普通
-`organize --execute` 会提示队列已满，但失败项重试仍直接移动文件并返回成功。
-因此容量限制和统一 claim/fence 对这个实际可执行入口失效。
+- **retry-request 已删除：** parser/help/dispatch、专属 renderer/import 和
+  `application/task_retry.py` 封装移除；真实旧输入为 argparse exit 2，解析阶段停止，
+  不建立数据库或产生请求/队列/Provider/Storage 效果。当前 requirements 中过时的
+  retry-request→resume 指引已同步。四类继续链共用的内部阶段/请求/审计仍保留。
+- **原容量 P1 已修复：** fresh 新 Task 在修改前失败后，另一合法 remote Task 占满
+  capacity=1；普通 organize 和 retry-failed --execute 都 exit 2，原失败项/来源不变，
+  无孤儿重试 Task。通过现有 API 取消排队工作释放容量后，明确重试成功，经共享
+  Task admission/命名 claim/KernelTaskCoordinator，原 pin/scope/limit 保留，零新 Job。
+- 默认 retry-failed 重新分析零修改；混合批次只重试失败文件，成功 sibling 的文件和
+  原 Result 不重放。Run once/due、四类继续、原记录冻结和原子来源占用继续通过回归。
 
-**真实复现（fresh 临时数据库、假 Provider、临时 LocalStorage）：**
+### P1 — 原文件的效果不明，仍被 retry-failed 当作可执行项重新写入
 
-1. 使用 `tests/test_automation_entrance_recovery.py::entrance_journey` 的真实 managed
-   配置/运行时/API/CLI 组合，仅配置合法电影识别规则、`maximumActiveJobs=1` 和来源显示根。
-2. 真实 CLI `organize <临时来源>/One (2001) [tmdbid-1].mkv --execute --limit 5`；
-   在实际 `OrganizerExecutor.execute` 依赖边界注入一次明确无效果的失败。原 Task 和 item
-   均为 failed、来源文件存在、共享容量占用为 0。没有伪造 Task、Result 或调度记录。
-3. 通过现有票据服务和 `POST /api/v1/jobs` 受理另一份合法 remote organize Task，
-   返回 202 / `executionMethod=task_engine`；该 Task queued，共享容量为 1。
-4. 对照调用普通 CLI organize，返回 exit 2，明确说明 shared organizing queue is full，
-   没有创建新工作或移动文件。
-5. 执行原 Task 的 `tasks retry-failed <id> --execute`，却返回 exit 0 / Moved 1；
-   来源文件消失，目标文件真实存在。新建 `retry-failed:<id>` Task 已 completed，
-   `get_task_scheduling(new_id)` 为 None；另一 Task 仍 queued，容量读回仍为 1。
+**用户怎样遇到：** 用户配置 COPY 整理。目标存储的写入调用超时，程序无法确认该次
+复制是否完成，因此原 Task 保留“不确定效果、禁止重放”。连接恢复后，用户运行现有
+`tasks retry-failed <原 Task> --execute`；该命令仍创建新 Task 并再次复制同一文件。
+新 Task 自己有合法 claim，不能替代对原文件“上一次效果是否明确”的核对。
 
-`cli_retry_capacity_probe.py` / `cli-retry-capacity.log` 保留完整入口、对照、文件效果和断言；
-最终断言按预期失败（0.48s），不能记作通过。最初缺少可执行 item 的 fixture 探索及
-探针自身语法错误保留在日志，不作为产品反例；最终使用正常的单文件 CLI 路径。
+**实际复现：** 证据目录
+`.git/validation-evidence/a28268d8d61e3f2515b6fd669d88cedbe92c37c4/b-review-20261101/`，
+脚本 `uncertain_retry_probe.py`，日志 `uncertain-retry-final.log`（断言 FAIL，0.39s）。
 
-**原因与位置：** `mediaflow/final_cli.py:1219–1243` 的 `tasks` 分支仍使用通用
-`PersistentTaskCoordinator.create()`，之后直接 `process_file()`，不设置 `kernel_context`。
-相邻普通 organize 分支已经使用 `_admit_direct_organize_task()`、命名 claim 和
-`KernelTaskCoordinator`。这是接入统一引擎时遗漏的既有入口，不是新需求。
-该重试分支在 Task Base 前已存在；本 Task 的 `1e46e5ba`（2026-11-01 00:25 +08:00）
-只接入了旁边的 organize 分支，当前候选仍保留此缺口，不声称旧重试代码是该提交新写的。
-对应当前 Task 的“真实入口完整”“共享容量/Worker”及 Slice RO-1/RO-2、AC-2/3/4。
+1. 复用 `tests/test_automation_entrance_recovery.py::entrance_journey` 的真实 managed
+   配置/API/runtime/CLI，合法电影规则，既有 OrganizePolicy 选择 COPY，临时来源及目标
+   LocalStorage，假 Provider。没有写数据库行来制造状态，没有旧任务/版本升级。
+2. 从真实 `organize <source>/One.2001.mkv --execute --limit 5` 进入生产管线和
+   OrganizerExecutor，只在实际 `LocalStorage.write` 调用边界注入丢失响应的超时。
+   原 CLI exit 2，明确提示“仍有未验证的在途修改，保留容量和不确定效果”。
+3. durable 原 Result 为 `partial / attempted_unverified / mutation_outcome`；
+   原 item 为 partial，Task running，scheduling claimed，`mutation_in_flight=True`。
+   来源文件仍存在；这些状态均由生产路径自然持久化，未伪造成功/未验证证据。
+4. 恢复正常 Storage.write，再真实调用原 Task 的 retry-failed --execute。实际返回
+   exit 0，新 kernel Task completed；记录到一次目标 Storage.write，目标文件真实出现。
+   原 Task 此时仍 claimed 且 `mutation_in_flight=True`，其不确定效果没有被证明或解除。
 
-### Developer guidance — 修复这个入口，保持现有授权边界
+第一次探测日志 `uncertain-retry.log` 同样失败；第二次只补充原 scheduling 在重试前后
+均保留不确定边界的读回。两次都属于本版新任务的真实已支持 COPY/CLI 路径。
+故障注入不声称使用真实远程服务；断言验证的是程序在缺少可靠写入结果时必须禁止重放，
+不能用测试替身内部知道实际未写入来代替应用可见的 durable proof。
 
-1. 在现有 `tests/test_automation_entrance_recovery.py` / `tests/test_batch_cli.py` 中加入
-   上述本版新任务复现，保留满队列普通 organize 对照。故障注入在真实 Executor 边界，
-   明确原失败无效果；不得伪造调度状态，不能使用旧任务/升级作为前提。
-2. 让该入口可合法执行的整理工作复用现有 Task scheduling admission、共享容量、命名
-   claim、心跳及 item/result/aggregate fence，再进入现有管线和 OrganizerExecutor。
-   不另建重试队列/执行器，不通过先建普通 Task 再补 scheduling 绕过原子性。保持原 pin、
-   来源版本、现有重试资格、显式 `--execute` 和原 execute-authorized 检查。不要把技术
-   retry 简单冒充四类业务 continuation；四类合法续作仍回原 Task，不能新增 Web 通用重试。
-3. 满队列必须在新执行工作创建、旧锁/占用释放或执行权消耗之前明确拒绝。拒绝后原失败
-   证据/来源/结果不变，无孤儿 Task/Job，无 Storage 修改，无后台自动重试。容量释放后，
-   仍由用户明确重试，通过正常来源/效果/授权核对后在共享引擎执行。
-4. 回归合法成功、满队列、未获原执行授权、无 `--execute` 零修改，以及已有成功 sibling
-   不重放。按原有可执行资格保留安全边界：本项不授权重放 partial/uncertain 或结果不明
-   的操作，不扩展技术/附件恢复，不刷新已消费权限，不做旧任务迁移。空失败集合不能为
-   证明接入成功而伪造可执行工作。
-5. Developer 只运行新/修改及直接受影响的 CLI、入口、Task scheduling/source ownership
-   回归和 changed-file lint，提交实际 checkpoint/results/risks。B 保留 full T4 门禁责任，
-   修复仍在本 Task，不另规划 Task 或提前关闭 Slice。
+**根因和位置：** `PersistentTaskCoordinator.retryable_items()`
+（`mediaflow/application/task_runtime.py:990`）只按 failed/partial 及已有成功结果筛选，
+未核对原 Result 的效果证据；`final_cli.py:1204–1250` 随后受理新 Task、清理原锁。
+处理文件时 `ownership_lineage_task_ids=(original.task_id,)` 又将原工作排除在来源占用
+检查外；这是合法安全续作可使用的关系，不能单独成为不确定效果重放的许可。
+新 kernel 只保护新 Task 的 claim/result，原 Task 的 mutation fence 未参与执行资格核对。
+该候选确实修好了队列 P1；本缺口在既有状态筛选上延续，并在 `a28268d8`
+（2026-11-01 16:13 +08:00）的新 kernel 重试分支中仍可触发，不声称这些旧筛选代码
+全部由本次提交引入。对应原 Task 的“生命周期与非重放”、原返工指导第 4 项及
+Slice AC-8/16，属于当前同一 Task 的安全边界。
 
-### Developer guidance — 删除独立 retry-request CLI，保留共享恢复证据
+### Developer guidance — 只补齐保留重试入口的原效果准入
 
-用户结果：修好临时技术故障后，CLI 重试只提供 `tasks retry-failed <task-id>`，默认
-重新分析、显式加 `--execute` 才允许整理。用户无需先登记 pending；业务四类决定继续走
-原 Task 的既有流程。保留命令必须同时完成上方共享调度 P1，不能以删除另一条命令代替。
+1. 在现有 `tests/test_automation_entrance_recovery.py` 加上述真实 COPY/CLI 回归。
+   第一轮必须真正经过 Executor→Storage.write，并由实际结果持久化 partial、
+   attempted_unverified 和原 mutation marker；不能伪造一个 failed/partial 行代替。
+   第二轮明确重试必须拒绝该文件，不调用 Provider/Storage mutation、不创建该文件的
+   可执行新 Task、不释放原锁/占用或清除 mutation marker，原记录保持不确定。
+2. 在新 retry Task admission/原锁释放之前，按每个候选文件原 checkpoint、Result、
+   primary/attachment 已完成及不确定效果核对原执行资格。复用现有 checkpoint/recovery
+   的效果判定；failed/partial 状态、来源仍存在、配置有效、显式 --execute 都不是
+   “上次没生效”的证明。unknown/attempted_unverified、uncertain_effects、原在途
+   mutation 及已完成 primary 不能因为新建 Task 或 lineage 排除而被绕过。
+   关键准入与随后取用需保持一致，不能检查一次后在竞争中替换证据或解除原占用。
+3. 保留合法的无修改失败重试、原 pin/scope/limit、原执行授权、默认分析零修改、共享
+   容量/命名 claim/fence，以及成功 sibling 不重放。partial 不能一概当作整个文件可
+   从头执行；已有效果只给原有允许的检查/处理，不新增技术/附件重试或自动补偿流程。
+   对拒绝项明确说明“上次文件修改结果不明，需要先核查”，不要只输出 Retry failed。
+   无执行资格的项不能靠排一个新 Task 变成可执行；批次按原有独立结果边界处理。
+4. 不恢复 retry-request CLI，不要求用户先登记 pending，不做旧请求迁移、跨版本升级、
+   新 Web 技术恢复或另一套执行器。共享内部 request/checkpoint/审计可继续复用，
+   但请求记录不等于文件修改授权；默认重新分析也不得改写原不确定效果为已解决。
+5. Developer 运行新反例和本次直接受影响的 entrance/recovery、claim/source ownership
+   测试及 changed-file 静态检查，交接实际候选和结果；完整 T4 仍由 B 负责。已有命令
+   删除及容量修复用例必须保持，修复仍在 Task47.3，不另建 Task 或自行关闭 Slice。
 
-1. 在 `mediaflow/final_cli.py` 删除 retry-request parser/参数、只读管理分发集合中的
-   名称、该分支的 `TaskRetryRequestService.request()` 调用及专属 renderer/import。
-   不留隐藏分支、别名、兼容入口，不把旧输入转成 retry-failed，也不再要求 actor/登记
-   请求作为 retry-failed 的前置步骤。`ignore-item` / `ignore-pending` 的 admission 保持。
-2. 基于实际引用清理专属代码：`application/task_retry.py::TaskRetryRequestService`
-   当前生产消费者只有该 CLI；删除入口后若无生产调用者，清理这份专属封装及只为它
-   服务的测试。不要按 retry 字符串删除共享代码：`RecoveryAdmissionService`、
-   `task_retry_requested` 内部阶段、`domain/task_retry.py` 的共享审计类型、repository
-   审计/请求以及四类继续链仍有实际调用者。无需为这次命令删除改 schema、搬旧 pending
-   或实现升级兼容；不以清理为由扩大到整个恢复系统。
-3. 同步当前 CLI 使用说明及适用文档中“retry-request 后 tasks resume”的过时指引。
-   `docs/requirements.md` 当前批量操作说明含该指引，按本次用户决策说明 CLI 只保留
-   retry-failed；不改 Git 历史或 `docs/history/` 的历史事实，不修改 A-owned
-   Slice/Roadmap/Progress，不重新规划别的 Task。
-4. 用真实 `final_main` / 已安装入口验证 help 和旧输入：旧命令为普通参数错误，解析即
-   停止，不建立数据库/Storage/Provider、不产生恢复请求、pending 改写或执行。仅检查
-   help 文本不算完整删除证明。给 retry-failed 加对照，验证无需 retry-request 即可独立
-   完成合法重新分析/显式执行；保留满队列拒绝、无授权拒绝、成功 sibling 不重放。
-5. Developer 跑新/修改和直接受影响的入口、批量 CLI、recovery admission/continuation、
-   manual Task engine 测试及 changed-file 静态检查；现有 `tests/test_task_retry.py`
-   中专属 CLI 成功用例替换为退役拒绝用例，共享恢复测试保留。B 复核真实入口/Task
-   Base..新 Head 并负责所需 T4 门禁。不得删掉共享安全断言来使删除命令后的测试通过。
+### B 本轮实际验证与复用
 
-### B 实际验收结果
-
-证据目录：
-`.git/validation-evidence/47aa9f9ee78253a088bb2bf065a8631876957d65/b-acceptance-20261101/`。
-产品代码输入为 `75a12d34`，B 验收适配提交为 `fc911bf3`、`c139e041`；这两个提交只调整
-测试/harness，没有修改生产行为或 A-owned 文档。
-
-| 门禁 | 实际结果 |
+| 验证 | 当前候选实际结果 |
 |---|---|
-| Python full regression | 首次完整运行 3025 项，7 个版本 56 断言失败、1 个旧 API 响应字段错误；B 对齐当前 57/Task 响应后，完整四组 918+554+709+844=3025 项 OK，7 skipped，无遗漏文件。最终分组最慢 206.33s，并行运行。 |
-| Python quality / examples | Ruff format/check、compileall、pip check、两个 example 配置验证、禁用依赖搜索均通过；example 仅在隔离副本改数据库路径，不使用用户数据库。 |
-| Web full | typecheck/lint/format/build 通过；88 files / 1320 unit tests、253 E2E 全通过。构建仅有既有 chunk-size 提示。 |
-| Native Automation | Run once 17、workspace 8、settings resident 12，全部通过；原始 failed/1 记录/结束时间不随恢复成功改写，当前 Task 如实更新，成功 sibling 不重放。 |
-| Native Task Center | 八视图/分页/问题定位/重连和创建摘要确认共 2 项通过；已人工查看桌面、窄屏和各视图截图，布局和动作可用。 |
-| 新任务 Metadata correction | 真实 Run once→保存标题修正→同 Task 分析→摘要→明确确认→真实文件整理通过；Save/analysis 零修改，未新建 Job/顶层 Task。 |
-| Wheel | build + source-external installed CLI/API smoke 通过；wheel SHA256 `78f110c4f989abf9f803a55d7f2b25dd455095b05c87abe7def34121ba1ea3bc`。 |
-| Docker | 使用候选镜像完成 fresh/security/nonroot/RBAC/静态资源/managed Active/同版本 Worker 重启及真实新 Task 执行，全部通过；image `sha256:968319b1b4bbd1da57ac78bff8f581c804f71b4eddaca5406049c330aee5a95e`。 |
-| 新任务 CLI retry-failed | **FAIL — 唯一 P1**；真实满队列仍移动 1 个文件，新 Task 无 scheduling，见上述复现。 |
-| Governance / diff | governance PASS、完整范围 diff whitespace clean；预存未跟踪文件保持原状。 |
+| CLI retirement / entrance focused | 8 tests PASS，0.91s；包含真实删除输入、队满拒绝→释放后执行、零修改分析和成功 sibling 不重放。 |
+| Full Python | 921+554+709+841=3025 tests，OK，7 个既有外部服务/endurance 环境 skips；完整覆盖 167 个 test 文件，无删断言/加重试。四个独立进程并行，最慢 220.62s。 |
+| Python static | Ruff format/check、compileall、pip check、governance 和完整 Base..Head whitespace 均通过。 |
+| Native Run once | 当前候选 production Python/harness/内置资产真实浏览器路径 5 tests PASS，20.94s。 |
+| Clean installed wheel | 从精确 committed candidate 的隔离 git archive 构建，通过 source-external installed CLI/API/配置/备份/fresh smoke；6.76s，已核对 final_cli 字节与源一致且被删专属模块不在 wheel。 |
+| Docker | 新 clean committed image fresh/security/nonroot/RBAC/managed Active/Worker 同版本 restart/真实新 Task smoke PASS，104.33s；image `sha256:5fbe8ed6495c9e67ac699dbfc7fd6f7bbeb349b12135f50ede83fd44fba7f88d`。 |
+| 原效果不确定的 CLI 重试 | **FAIL — 当前唯一 P1**；原未验证 marker 保留时，新 Task 仍再次 Storage.write。 |
 
-7 个 skips 是既有 real SMB/S3/OpenList 及 Local/SMB/OpenList/S3 endurance 专用环境缺失；
-不声称跑过外部生产服务或耐久矩阵。现有相关升级测试保留且随全量运行通过，但不是本轮
-新增升级义务；用户排除的旧任务探针保持撤回。wheel/container 之后只有 B 测试输入变化，
-生产代码/资源一致，明确复用其结果。
+Clean wheel SHA256：`8c9e2aa1a2afae0664ee006bd4d64624eaa3c1ad312a86b044648fa095d966d9`。
+最初工作区 pip wheel 使用本地旧 build 缓存，wheel 仍含已删的 task_retry.py；B 拒绝复用
+这份产物，改用精确 candidate 的干净归档重建并重新跑 installed smoke，通过且旧模块确实
+不存在。这是 B 的打包输入修正，不作为 Developer 产品缺陷，不清理用户现有 build 目录。
+旧产物/日志仍保留，未将缓存产物的成功冒充干净产物通过。
 
-B 自行修正的验收输入不转成 Developer 产品阻塞：原生 Run once harness 原来还消费 Job/
-child Task；现已驱动实际 Task Worker/同 Task 记录。旧安全测试改读真实新 Task 响应；
-七个版本预期改为 57，没有增加升级实现。workspace/settings 同时运行会竞争同一共享
-Active fixture，分开 fresh harness 执行后通过；Docker 首次失败源于 Colima 不可见的
-macOS 临时挂载目录，改用仓库内隔离临时目录后通过。首次失败/中断日志均保留，未删断言、
-加重试或调整超时掩盖失败。全量 Python、Web、原生、打包和关键探针均使用临时数据。
+Web 源码/测试/harness/config/依赖及静态资产输入与已验候选 c139e041 一致，已用 diff
+核对；上轮 Web 1320 unit / 253 fake E2E、typecheck/lint/format/build 结果可复用。
+其他上轮原生 workspace/settings/视觉结果保留为前序证据，本轮仅声称上表实际新运行；
+不声称修改后的 Python 所有原生用例重新跑过。已有产品 P1 足以 FIX REQUIRED，剩余
+候选验收由 B 在修正后按输入变化完成，不把缺少全量报告交回 Developer。
+旧任务/升级探针仍撤回，7 个专用环境 skips 不宣称真实外部服务验收。
 
-本轮从 2026-11-01 14:30:31 +08:00 开始；所有带计时日志的测试实际占用墙钟按重叠区间
-去重约 13 分钟（并行命令累计约 25 分钟，二者明确区分）。测试占本轮总墙钟不足 50%，
-其余用于完整 diff/入口/合同核对、fixture 修正、截图审查及验收指导，没有空等凑比例。
-精确结束时间和重叠区间统计保存在证据目录 `acceptance-manifest.json`。
+本轮从 2026-11-01 16:16:12 +08:00 开始；测试时间按实际重叠墙钟区间去重，并同时披露
+命令耗时之和；完整范围核对、反例/根因审查、产物核对和返工指导另计。精确时间和日志
+摘要保存在本轮 ignored evidence 的 `acceptance-manifest.json`。测试实际占墙钟约
+45.6%（含少量静态检查保守余量仍低于 50%），不靠空等凑比例。
 
 ### 已验收的来源占用行为（保留开发指导）
 
@@ -452,23 +439,22 @@ macOS 临时挂载目录，改用仓库内隔离临时目录后通过。首次�
 
 | Outcome | Current result |
 |---|---|
-| RO-1 — stable Task / shared scheduling | 主路径、容量/来源/并发回归通过；CLI retry-failed 绕过队列，未完成。 |
-| RO-2 — one engine across entrances | due/Run once/direct/remote 及续作通过；现有 retry-failed 仍走通用非 kernel 执行路径，未完成。 |
-| RO-3 — same-work four-type recovery | 新任务四类、原执行记录与独立 sibling 回归通过；不要求旧任务升级。 |
-| RO-4 — Job removal | 旧任务迁移/升级按用户指令排除；独立 Job schema/model/dispatcher 的完整移除仍不由本 Task 声称完成。 |
-| RO-5 — operator/admin journeys | Web/native/records/readiness/packaging 回归通过；CLI 管理入口仍受上述 P1 阻塞。 |
+| RO-1 — stable Task / shared scheduling | 原 CLI 队列绕过已修，容量/claim/fence 相关回归通过；对原文件效果的资格检查仍缺失。 |
+| RO-2 — one engine across entrances | due/Run once/direct/remote/合法 retry 执行接入共享 kernel；本次不再以队列缺口阻塞。 |
+| RO-3 — same-work four-type recovery | 四类继续/原记录/独立 sibling 回归保留；不确定效果经另一个 CLI 新 Task 被重放，AC-8/16 未满足。 |
+| RO-4 — Job removal | 旧任务迁移/跨版本升级排除；完整独立 Job model/schema/dispatcher 移除仍未由本 Task 交付。 |
+| RO-5 — operator/admin journeys | retry-request 已退出 CLI，默认分析及合法失败项处理可用；不确定效果场景的真实管理入口仍不安全。 |
 
-相关回归覆盖 AC-1/5–8/12–17/19 的本 Task 适用新任务场景；不代替整个 Slice 的逐项
-结论。AC-2/3/4/15 因该实际入口缺口不能完整通过。AC-9/10 和旧版本升级证明已排除；AC-11 全量 Job 移除未交付；AC-18 的
-B 证据已提供但 Task/Slice 未 PASS，仍需修复与最终独立 A 审查。没有新 Task、Slice closure
-或 A-owned 状态修改，Task47.2 PASS 保持不变。
+本 Task 仍 FIX REQUIRED，当前只要求修复上述真实新任务非重放问题。没有新 Task、Slice
+closure 或 A-owned 状态修改；Task47.2 PASS 保持不变。不能用本 Task 局部修复宣称
+Slice AC-11/18 或所有 RO 已完成，也不重新引入用户排除的 AC-9/10 升级义务。
 
 ### Developer guidance — complete the three corrections in this Task
 
 以下保留原三项实施指导供新任务验收回归参照；已修部分以上述验收结果为准。
 其中任何旧任务/升级/历史兼容条款均受本轮用户边界覆盖，不再产生返工义务。
-上轮升级反例仍无需修复；本次 IN PROGRESS 修复上方 retry-failed 缺口，并按用户指令删除
-独立 retry-request CLI，已修的三项行为继续保留。
+上轮升级反例仍无需修复；独立 retry-request CLI 删除及容量修复已验收。本次 IN PROGRESS
+仅补齐上方保留 retry-failed 入口的原效果资格核对，已修的三项行为继续保留。
 
 #### 1. 自动任务的决定、分析、摘要和明确执行接起来
 
