@@ -12,7 +12,7 @@ Recheck intervening commits without silently repinning the Task Base.
 Task ID: 47.3
 Task Type: SLICE
 Parent Slice: 47
-Status: FIX REQUIRED
+Status: READY FOR B REVIEW
 Task Base: dfcfebbdb9c879b38806e29c7b41c9192aeca83e
 Difficulty: High
 Test Level: T4
@@ -649,6 +649,120 @@ B 的 `original_record_probe.py` 在本候选上的结果见
    证据，非本轮引入）。
 4. B 仍负责 T4 full Python/Web/E2E/wheel/Docker/native 门禁与独立审查；本轮未运行这些
    门禁。
+
+### Scope statement
+
+未读写用户数据库/生产媒体；未修改 A-owned Slice/Roadmap/Progress；未 push/部署；预存
+无关未跟踪文件保持未暂存。B 负责本 Task 原 T4 验收与独立审查。
+
+## Developer Completion Report — Round 8
+
+**Status: READY FOR B REVIEW.** 同 Task 修复本轮唯一 P1 阻塞（原记录仍把后续恢复成功和
+结束时间算进首次自动执行）；不是自评 PASS。
+
+```text
+Task Base: dfcfebbdb9c879b38806e29c7b41c9192aeca83e (not repinned)
+Code/test checkpoint: 75a12d34 (fix(task47.3): freeze the first automatic stage's original record facts)
+Report checkpoint: this documentation commit
+Pre-existing untracked files: preserved, unstaged. No push/deploy/self-approval.
+```
+
+### Correction implemented（按 B 的语义裁决四步）
+
+1. **确定并冻结首次自动执行结束边界。** `ManualTaskEngineWorker` 只在初次 automatic
+   阶段真实结束的边界冻结：`_settle_automatic` 完全交人工（`waiting_human`）与终端
+   结算（published terminal status）、`_run_automatic` 的失败安全退出（`failed`）、
+   自动 Task 的取消结算（`cancelled`，以"无 manual execution 且无 Files discovery"
+   判定自动路径；Files 取消保持原读语义）。机器工作未完成（yield/稳定性等待）、
+   在途未证实 mutation（`release_scheduled_claim` 本身拒绝）、从未开始的取消
+   （`started_at` 为空）都不冻结，不因单个 run_next 返回/超时/缺 Result 伪造结束。
+   后续 continuation/再结算受写一次保护，永不改写原摘要。
+2. **最小存储方向，无第二生命周期。** schema 57 新增 additive `task_initial_executions`
+   （1:1 键 = 原 Task `task_id`；无独立身份/队列/claim/执行控制），在
+   `release_scheduled_claim` 的同一 claim-fenced 事务内、item 发布之后写入：
+   原阶段 stage_status、真实 started/finished、总数/成功/未完成/不确定/跳过/取消/
+   附件失败/不可核对/等待人工计数。逐项证据表达式抽取为
+   `_TASK_ITEM_STAGE_EVIDENCE_SELECT`，冻结写入与 records 读模型共用同一词汇，
+   并用与读模型相同的"最新 Result"窗口选取。迁移 additive、幂等、marker 最后推进、
+   可 reopen；不回填、不改写任何既有行。
+3. **限定消费者与原事实。** records-only `record_outcome`、`original_status`、各项
+   计数与 `outcome=` 过滤在冻结行存在时读冻结证据（`waiting_human → failed` 按
+   records-only 既有规则映射，其余 stage_status 直接映射）；记录展示的
+   `executionStartedAt/FinishedAt` 优先取冻结窗口（API 文档层覆盖，SQL 列名不冲突）。
+   Task Center、Task 聚合、`result` 信封、handling、metrics/latest 继续读当前工作；
+   Round 7 的同 Task 可见性、due trigger 与旧 child 排除修复全部保留。展示层为
+   冻结交人工阶段新增如实的失败原因/下一步（"有 N 个文件等待人工决定"/"在任务中心
+   保存决定并明确继续处理该工作"），不隐藏计数、不删恢复关系、不冻结全部 API 字段。
+4. **扩展真实测试后交接。** 冲突反例测试现在：首次自动处理结束后立即固定原
+   records-only 事实（failed/1 成功/1 等待 + 真实起止），推进 fixture 时钟 1 小时，
+   再走决定→分析→确认→执行；断言 recordId/来源/trigger/原结果/原时间跨分析、确认、
+   恢复执行与 reopen 不变，`outcome=failed` 命中且 `outcome=completed` 为空，同时
+   原 Task 确实 completed/2、成功 sibling 只执行一次、metrics/latest 仍只计一次原运行。
+   due 场景同样先冻结再推进时钟后断言不变；健康空（noWork）、全成功、不可读失败
+   各自断言冻结证据；schema 57 迁移新增 56→57 升级（空表、零回填、事实不变、
+   幂等、integrity/foreign key 检查）与 fresh/upgrade 同布局两测试。
+
+### Actual validation（本轮命令与结果，候选 75a12d34）
+
+```sh
+.venv/bin/python -m unittest tests.test_automation_admission \
+  tests.test_automation_definition_occurrence tests.test_automation_execution_intent \
+  tests.test_v2_automation_run_once tests.test_automation_definition_execution \
+  tests.test_automation_run_once tests.test_execution_authorization tests.test_automation_api
+# Ran 178 tests — OK（14.0s）
+
+.venv/bin/python -m unittest tests.test_task_scheduling tests.test_task_scheduling_fencing \
+  tests.test_manual_task_engine tests.test_processing_worker_readiness \
+  tests.test_automation_job_fencing
+# Ran 127 tests — OK（9.7s；含 ProcessingWorkerService 默认 schema 版本 56→57 同步）
+
+.venv/bin/python -m unittest tests.test_automation_workspace_read_model \
+  tests.test_operations_run_inventory tests.test_operations_task_center \
+  tests.test_task_center_recovery_lineage tests.test_v2_automation_operations
+# Ran 144 tests — OK（26.7s）
+
+.venv/bin/python -m unittest tests.test_automation_entrance_recovery \
+  tests.test_operator_job_submission tests.test_task_source_ownership_race \
+  tests.test_recovery_continuation tests.test_batch_cli
+# Ran 83 tests — OK（23.2s）
+
+.venv/bin/python -m unittest tests.test_task_scheduling_migration   # Ran 10 — OK（2.0s）
+.venv/bin/python -m unittest tests.test_automation_settings_resident # Ran 25 — OK（43.4s）
+.venv/bin/python -m unittest tests.test_operations_run_detail        # Ran 34 — OK（2.9s）
+.venv/bin/python -m unittest tests.test_automation_task_admission    # Ran 8  — OK（0.4s）
+
+.venv/bin/ruff format --check / ruff check <8 个修改文件>  # 全部通过
+.venv/bin/python -m compileall -q mediaflow tests          # OK
+python3 scripts/check_governance.py                        # PASS
+git diff --check                                           # clean
+```
+
+计时测试合计约 176s，低于本轮总耗时 50%；无空等凑比例，未删断言、未加重试、未改超时。
+未修改 Web 投影/harness（API 文档字段形状不变），故未跑 Web 构建/E2E。
+
+### 边界说明（供 B 独立核对）
+
+- **冻结只覆盖 kernel 自动路径。** legacy Job→Task 历史行无冻结证据，records 读模型
+  对其保持既有当前事实语义（不反推、不伪造旧结束时间）；Files 手动 Task 不在
+  Automation records 人口，其初始摘要确认/取消不冻结。排队中（未 claim）即被取消的
+  自动 Task 无已执行阶段，保持既有取消读语义。
+- **`result` 信封与 statusCounts 仍为当前语义。** 按 B 的收窄（"不要求所有原始 API
+  字段冻结"），`result.status/successItems`、`statusCounts`、metrics/latest 继续
+  反映当前 Task；冻结对象是 records-only `recordOutcome`、展示起止时间与 outcome
+  过滤事实。
+- **B 的 native Automation spec 适配提示。** 若现有原生 spec 在恢复完成后断言
+  records 页"本次成功，已整理 2 个文件"一类文案，按本轮语义应改为断言原阶段事实
+  （failed/1 成功/等待人工决定 + 原时间）与 handling resolved 并存；这是 B 的
+  harness/验收工作，Developer 未改任何 spec。
+
+### Remaining work / risks（如实陈述，未自评 PASS）
+
+1. Metadata / Metadata-correction 的自动续作仍无各自独立 API 端到端测试（Round 4/5
+   遗留，本轮未扩大）；本轮反例覆盖 conflict 与 due-recognition 两类。
+2. 自动 Task 执行中途取消的冻结行为由实现覆盖（`_settle_pending_control` 自动判定），
+   但无专门端到端断言；现有取消回归（排队中取消等）全部通过。
+3. B 仍负责本 Task 原 T4 full Python/Web/E2E/wheel/Docker/native 门禁与独立审查；
+   本轮未运行这些门禁，之前披露的 native harness 旧失败仍归 B 适配。
 
 ### Scope statement
 
