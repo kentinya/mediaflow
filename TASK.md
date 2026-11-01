@@ -12,7 +12,7 @@ Recheck intervening commits without silently repinning the Task Base.
 Task ID: 47.3
 Task Type: SLICE
 Parent Slice: 47
-Status: READY FOR B REVIEW
+Status: FIX REQUIRED
 Task Base: dfcfebbdb9c879b38806e29c7b41c9192aeca83e
 Difficulty: High
 Test Level: T4
@@ -261,248 +261,221 @@ git diff --check
 - 不恢复 Pause/resume、Scan/Preview/FileIndex，不扩展 Provider/Storage/并行策略或改进程监督。
 - 不修改 A-owned Slice/Roadmap/Progress 或既往验收事实，不实现/规划后续 Task。
 
-## Developer Completion Report — Round 3
+## Developer Completion Report — Round 4
 
 **Status: READY FOR B REVIEW.** Same-Task correction checkpoint for the three B blockers of
-Round 2; not a self-approved PASS.
+Round 3; not a self-approved PASS.
 
 ```text
 Task Base: dfcfebbdb9c879b38806e29c7b41c9192aeca83e (not repinned)
-Code/test checkpoint: 1e46e5ba (fix(task47.3): same-Task automatic continuation, ...)
+Code/test checkpoint: b93f6b04 (fix(task47.3): continuation actor, business blockers and named CLI claims)
 Report checkpoint: this documentation commit
 Pre-existing untracked files: preserved, unstaged. No push/deploy/self-approval.
 ```
 
 ### Corrections implemented
 
-1. **P1 — 自动任务的决定、分析、摘要和明确执行已接通（同一 Task，无新 Job）。**
-   - `application/manual_task_continuation.py`: 自动分支——无 Files discovery 的 kernel
-     automatic Task 在既有全部校验（checkpoint 版本、不确定效果、permitted action、活跃
-     continuation、pin 一致）之后，通过 `TaskSchedulingService.requeue()` 原子地把同一 Task
-     重新排入 ANALYSIS 阶段；满队列返回有界 409（`queue_full`，决定/结果/人等状态不变），
-     已排队时的重复 continue 返回有界 409，不多排工作。
-   - 新 `application/automatic_task_continuation.py`: Worker 续作通道。仅对 PENDING 且
-     stage 为 `*_resolved` 的本 Task 条目做零变更重分析：先 claim-fenced `begin_item`
-     （含跨 Task 源所有权检查），再经既有 intent/Preview 分析机器（受理 pin +
-     `collect_resolved_continuation_decisions` 应用已保存决定）生成计划摘要，条目发布为
-     `waiting_confirm`/`continuation_planned` 并写入真实的 `manual_recovery_preparations`
-     行。源失效、决策不完整、Preview 被阻、异常分别发布为有界 effect-free FAILED 条目；
-     成功/忽略/不确定 sibling 与仍等待决策的 sibling 一律跳过，不重放。
-   - 摘要/确认：`native_preparation_summary` 扩展自动 Task 分支（读真实 preparation 行，
-     PREPARED/CONFIRMED/STALE 语义与 Files 一致）；`confirm_prepared` 复用既有
-     `begin_web_execution` 一次性授权；`_adopted_organize_task` 增加以 preparation 行的
-     (intent_id, actor, pin, 未完成 Task, WAITING_CONFIRM item) 为证明的同 Task 采纳；
-     `admit_manual_execution` 的采纳分支把 summary 版本栅栏移到条目重写之前，并保留被采纳
-     Task 的既有 display 身份（不覆盖定义 origin）。确认后 Task 由 SQL 采纳事务原子重排入
-     EXECUTION，Worker 经既有 `_run_execution`/`run_admitted` 在 claim fence 下执行允许子集。
-   - Task Center 判定：`_native_pending_confirmation_sql` 接受自动 Task 的
-     manual_recovery_preparations 关联，四类问题在 保存决定→分析→摘要→确认 全程保持
-     business_problem，不被折叠为技术历史。
-   - Web：`normalizeRecoveryCommandAck` 接受自动续作文档（nativeAnalysis 存在即原生续作，
-     identity 回退到 taskId），UI 文案分支（“原 Task 已重新排入零变更分析”）保持不变。
-
-2. **P1 — 定时 occurrence/定义详情/运行结果读回接上真实 Task 关联。**
-   - `list_automation_definition_occurrences` / `list_latest_automation_definition_occurrences`
-     的关联解码改为可证明关系：有 `automation_jobs` 行的旧发生点仍经 Job 解码（含
-     failure_category）；无 Job 行且 `tasks` 表存在该 id 的新发生点，把旧命名 `job_id`
-     列内容解码为受理 Task id；两者都不是则保持 NULL，不按时间/名称/Active 猜测。
-   - `_automation_occurrence_operator_document` 不再为 Task-only 发生点公布指向
-     `/api/v1/operations/jobs/{taskId}` 的动作（该链接此前 404）；Task 动作照常公布。
-   - latest/outcome summary（per-item 计数、attention、`lastTaskId`）经同一解码自然恢复；
-     `AutomationDefinitionOccurrenceService` 投影无需改动即读到真实 Task 与条目状态。
-
-3. **P1 — 直接 CLI 与 remote API 整理统一到共同 Task 调度。**
-   - `final_main` 的 `organize --execute`（含 batch 归一后的 path=None）改为共享 kernel
-     准入（`build_scheduled_task_admission` + `admit_scheduled_task`，display
-     origin=`direct-organize`，principal=`cli`，受理 pin/limit/scope），随后以受控临时
-     Worker 注册、claim、`begin_work`，用 `KernelTaskCoordinator` 在 claim fence 下驱动
-     同一生产管线并按既有聚合规则 settle（等待项→defer_to_human，终局→settle）。CLI
-     输出文本与退出码语义保持；claim 900s lease + 心跳续约；取消经既有 control 边界。
-     无 `--execute` 的分析保持原 generic coordinator 路径与零修改语义，不进执行队列。
-   - `run_direct_organize`（`automation_definition_execution.py`）为常驻 Worker 消费该类
-     Task 的恢复分支：无 scope→全库，目录→所在 ResourceLibrary，文件→该源，复用
-     `run_legacy_schedule` 同一管线/围栏/结果发布。
-   - remote：`ExecutionAuthorizationService.submit_organize` 与 repository 新
-     `consume_execution_authorization_task` 事务改为原子消费票据并受理 Task（共享容量
-     检查、`consumed_job_id`/audit 携带 Task id），不写 Job；满队列保持既有
-     `AutomationQueueFull` 传输语义。`POST /api/v1/jobs` organize 分支返回 202 + 明确
-     Task 身份（`taskId`/`task` 读回路径/`executionMethod`）；remote enablement、
-     REMOTE_EXECUTE、`execute=true`、header ticket、limit 检查全部保留。
-   - Worker 路由：`ManualTaskEngineWorker._is_automatic` 按 durable 形态（无 discovery/
-     无执行/有 scheduling row）路由到共享 runner，不再按 trigger 标签拒绝。
+1. **P1 — scheduled recovery summary now belongs to the continuing operator.**
+   - Runtime schema 56 adds the additive, versioned `task_scheduling.continuation_actor` column
+     (fresh/reopen and schema55→56 upgrade; legacy rows read as “no recorded continuation actor”
+     and are not backfilled). Admission provenance stays in `admission_principal`.
+   - `ManualTaskContinuationService._continue_automatic_analysis()` writes the authenticated
+     `actor` in the same kernel `requeue()` transaction. `AutomaticTaskContinuationService` binds
+     the re-analysis intent, Preview, persisted preparation and confirmation summary to that actor;
+     the Scheduler/Run once principal remains separate provenance.
+   - New scheduled API journey: real `IntervalScheduler` due → real Worker Recognition problem →
+     admin decision/continue → zero-mutation re-analysis → `waiting_confirm` + preparation with
+     `actor="admin"` while `admission_principal="automation-scheduler"` → different permitted
+     operator refused 403 `preparation_actor_mismatch` → admin confirm 202 → same Task execution,
+     one Result, real file move. Run once test now also asserts actor ownership and foreign refusal.
+2. **P1 — a new four-type finding during recovery stays a business problem, not a technical failure.**
+   - The continuation Preview is given `problem_task_id=this Task`, so the shared analysis publishes
+     Recognition/Metadata/Metadata-correction/Classification/Conflict through the existing native
+     problem projector. A non-PREVIEWED plan with `manual_preview_plan_problem(...)` is no longer
+     converted to FAILED/`technical_history`; the waiting item is re-read and re-projected under the
+     live claim fence, preserving prior decisions/history.
+   - `publish_task_item_problem` now reuses the TaskItem already started for the exact same verified
+     source/version (kernel path identity vs occurrence identity) instead of creating a competitive
+     row; a known different occurrence/fingerprint is still refused rather than re-pointed.
+   - New Run once API journey: no recognition rule + TV-only Classification rule → Recognition
+     decision A → re-analysis now parks `waiting_classification` on the same Task with
+     `business_problem`/Classification list total 1 and zero Storage effects → classification
+     choice → continue → summary/preparation → explicit confirm → same-Task execution to the chosen
+     destination, one Result, no Job.
+3. **P1 — direct CLI claims only its own admitted Task.**
+   - Added atomic named `TaskSchedulingService.claim(task_id, ...)` / repository
+     `claim_scheduled_task(...)`: same Worker eligibility, pin, lease and ownership generation, but
+     the candidate set is the CLI's own Task. `_drive_direct_organize_claim()` no longer calls global
+     `claim_next()` and then rejects a different Task.
+   - If the CLI's Task is already owned by another live Worker, it takes nothing, returns a bounded
+     failure naming that owner/Task, and stops its transient Worker registration. Success and
+     failure paths clean up the temporary Worker; a `begin_work` failure settles an existing control
+     or yields the claim without inventing a cancel.
+   - Resident Worker pin bootstrap now also selects a queued/claimed Task pin (not only legacy
+     `automation_jobs`), so an older admitted Task remains consumable under its own pin instead of
+     being hidden behind today's possibly unhealthy Active revision.
+   - Real CLI test now first admits an older queued Run once, runs `organize --execute --limit 5`:
+     CLI completes its own Task with a real file move, the older Task stays queued/unclaimed with no
+     item/Result, both Tasks keep distinct ownership and all transient Workers are stopped. A direct
+     concurrent-owner test proves a named claim is refused without stealing and leaves the resident
+     claim/token untouched.
+   - Remote submission tests that still expected a Job identity were adapted to the supported Task
+     entry (Task pin/readback); no new Job was written to satisfy them.
 
 ### Actual validation（本轮命令与结果）
 
 ```sh
-# 本轮新增/修改的端到端与受影响组
-.venv/bin/python -m unittest tests.test_v2_automation_run_once tests.test_manual_task_engine
-# Ran 63 tests — OK（含新增 test_recognition_decision_continures... 全链路）
+.venv/bin/python -m unittest tests.test_v2_automation_run_once tests.test_execution_authorization
+# Ran 47 tests — OK（含新增 scheduled/classification/CLI queue 全链路）
 
-.venv/bin/python -m unittest tests.test_task_scheduling tests.test_task_scheduling_fencing \
-  tests.test_automation_task_admission tests.test_execution_authorization
-# Ran 84 tests — OK
+.venv/bin/python -m unittest tests.test_task_scheduling tests.test_task_scheduling_migration   tests.test_processing_worker_readiness
+# Ran 67 tests — OK（含 schema55→56、named claim、continuation actor、worker readiness）
 
-.venv/bin/python -m unittest tests.test_recovery_continuation tests.test_automation_definition_occurrence \
-  tests.test_operations_run_inventory tests.test_operations_task_center
-# Ran 159 tests — OK
+.venv/bin/python -m unittest tests.test_configuration_snapshot tests.test_resident_correction
+# Ran 49 tests — OK（remote Task pin/worker/pending-pin journeys）
 
-.venv/bin/python -m unittest tests.test_batch_cli tests.test_automation_api \
-  tests.test_automation_definition_execution tests.test_automation_run_once \
-  tests.test_automation_admission tests.test_automation_definition_occurrence
-# Ran 116 tests — OK
+.venv/bin/python -m unittest tests.test_automation_admission   tests.test_automation_definition_occurrence tests.test_automation_execution_intent   tests.test_automation_definition_execution tests.test_automation_run_once tests.test_automation_api
+# Ran 130 tests — OK
 
-.venv/bin/python -m unittest tests.test_automation_workspace_read_model \
-  tests.test_automation_definition_execution tests.test_automation_run_once \
-  tests.test_automation_task_admission tests.test_automation_execution_intent
-# Ran 128 tests — OK
+.venv/bin/python -m unittest tests.test_manual_task_engine tests.test_processing_worker_readiness   tests.test_automation_job_fencing tests.test_recovery_continuation tests.test_batch_cli
+# Ran 130 tests — OK
 
-.venv/bin/python -m unittest tests.test_manual_operations tests.test_manual_organize_execution \
-  tests.test_manual_organize_preview tests.test_processing_worker_readiness \
-  tests.test_automation_job_fencing
-# Ran 99 tests — OK
+.venv/bin/python -m unittest tests.test_automation_workspace_read_model tests.test_manual_operations   tests.test_manual_organize_execution tests.test_manual_organize_preview   tests.test_automation_settings_resident
+# Ran 131 tests — OK
 
-.venv/bin/ruff check mediaflow tests/test_automation_admission.py \
-  tests/test_v2_automation_run_once.py tests/test_execution_authorization.py
-# All checks passed!
-.venv/bin/python -m compileall -q mediaflow tests   # OK
-git diff --check                                     # clean
+.venv/bin/python -m unittest tests.test_operations_run_inventory tests.test_operations_task_center   tests.test_task_persistence
+# Ran 104 tests — OK
+
+.venv/bin/python -m unittest tests.test_configuration_classification   tests.test_configuration_destination tests.test_configuration_destination_activation   tests.test_configuration_destination_precheck tests.test_configuration_organize   tests.test_library_file_operation_history
+# Ran 77 tests — OK
+
+.venv/bin/ruff format --check <changed Python files>   # 181 files already formatted
+.venv/bin/ruff check <changed Python files>            # All checks passed!
+.venv/bin/python -m compileall -q mediaflow tests     # OK
+python3 scripts/check_governance.py                   # PASS
+git diff --check                                       # clean
 ```
-
-新增关键链路测试 `test_recognition_decision_continues_analysis_summary_and_execution_on_one_task`
-真实驱动：API Run once → 真实 Worker 产生 Recognition 问题 → decision → continue(202) →
-重复 continue(409) → 续作通道零变更分析 → `waiting_confirm` + preparation → GET recovery/
-preview → confirm(202, 同 Task 采纳) → Worker 执行 → COMPLETED + 1 SUCCESS Result + 文件
-真实移动 + 全程 0 Job、分析期 0 Storage 变更。CLI 两条新测试分别证明 execute 入口为 kernel
-Task 且文件真实移动，analysis-only 入口无 scheduling 行、零执行。
 
 ### Remaining work / risks（如实陈述，未自评 PASS）
 
-1. **Metadata/Metadata-correction/Classification/Conflict 四类的自动续作链未各自写端到端
-   测试。** 共用同一通道与决定装载（`collect_resolved_continuation_decisions`），Recognition
-   已端到端验证；其余三类的真实 API 序列测试是本轮未完成的必要覆盖，请 B 在验收中复现或
-   退回补齐。
-2. **读回面只改了 occurrence/definition/records 已验证部分。** inventory/latest/metrics/
-   Dashboard/readiness 的 Job-less 读回未逐一独立复核（上一轮遗留风险延续）。
-3. **direct CLI 崩溃窗口：** admit 与 claim 之间崩溃时 Task 保持 QUEUED，由常驻 Worker 经
-   `run_direct_organize` 恢复（含文件/目录/全库三种范围）；该恢复分支未写独立测试。
-4. **历史 Job 兼容边界保持过渡态**：`IntervalScheduler` 无 kernel 时的 Job 回退、旧 queued
-   Jobs 的只读/取消能力、RO-4 全量迁移/删除均不在本 Task。
+1. Metadata / Metadata-correction / Conflict 的自动续作全链路仍未各自写独立 API 端到端测试；
+   Recognition→Classification 的新阻塞路径已验证，其余类型共用同一 projector/等待状态通道。
+2. `direct CLI` 在 admit 与 claim 之间崩溃时仍由常驻 Worker 经 `run_direct_organize` 恢复；
+   该恢复分支没有新增独立测试。
+3. Inventory/latest/metrics/Dashboard/readiness 的 Job-less 读回仍未逐一独立复核（上轮遗留风险）。
+4. 若 CLI 自己的 Task 已被常驻 Worker 持有，CLI 返回有界 exit 2 并提示读取该 Task，不会等待其
+   完成；这是无重复执行的保守语义，但同步 CLI 输出不会呈现该次结果。
+5. 历史 Job 兼容边界与 RO-4 全量迁移/删除保持过渡态；Web 投影未改，故未跑 Web 构建/E2E。
+6. B 仍负责 T4 full Python/Web/E2E/wheel/Docker/native 门禁与独立审查；本轮未运行这些门禁。
 
 ### Scope statement
 
-无 schema 版本变更（复用既有 schema55 列语义）；未读写用户数据库/生产媒体；未修改
-A-owned Slice/Roadmap/Progress；未 push/部署；预存无关未跟踪文件保持未暂存。B 负责 T4
-full/native/package 门禁与独立审查。
+Runtime schema 从 55 增量到 56（仅新增 `task_scheduling.continuation_actor`，失败原子、可 reopen，
+历史行不重写）；未读写用户数据库/生产媒体；未修改 A-owned Slice/Roadmap/Progress；未 push/部署；
+预存无关未跟踪文件保持未暂存。B 负责本 Task 原 T4 验收与独立审查。
 
 ## B Review Result
 
 ```text
-Reviewed: dfcfebbdb9c879b38806e29c7b41c9192aeca83e..38e68643cdcd10e9a969b30c505d3ade623ec33a
-Implementation checkpoint: 1e46e5baa0ea1dc1d3400ef42bf80d80b8a954cb
+Reviewed: dfcfebbdb9c879b38806e29c7b41c9192aeca83e..23b8ff716f588e3376e93e7c83b3d94865ca9a00
+Implementation checkpoint: b93f6b04c9e900dc4eb9b88fda15947b8bb73aac
 Decision: FIX REQUIRED
 Slice Required Outcomes / Surfaces all satisfied: NO
 Next: SAME TASK FIX LOOP
 ```
 
-B reviewed the complete 23-file Base..Head change, including the new continuation adapter, CLI,
-remote authorization, SQLite, Web decoder and changed tests, and checked the new correction against
-prior review findings. `1e46e5ba..38e68643` changes only `TASK.md`. Branch main; no initial tracked
-edits. Pre-existing untracked OS/log/reference/archive files were preserved and remain unstaged.
-Governance preflight passed. Original Task Base/Goal/scope and High/T4 remain unchanged. Older
-reports/decisions remain in Git at `405d2757` / `cbf80518`; only the latest handoff is retained here.
+B checked the complete 35-file Base..Head change and the correction against the original Task's
+existing-entry table and acceptance. `b93f6b04..23b8ff71` changes only `TASK.md`; executable inputs
+are identical. Review started on main with no tracked edits; all pre-existing untracked OS/log/
+reference/archive files remain untouched and unstaged. Governance passed. Task Base, scope and
+High/T4 are unchanged. Prior handoff/review details remain in Git at `eeea5dda` / `23b8ff71`.
 
 ### Verified corrections
 
-- Run once → Recognition decision → same-Task analysis → summary → explicit confirmation → actual
-  execution succeeds in the new full-journey test. The original `no_linked_preparation` refusal is
-  resolved for that scenario; analysis remains zero-mutation and no Job is created.
-- B repeated production-runner Run once/due/legacy file execution: all completed one Task/Result,
-  with real source movement and zero Jobs. For the completed due Task, occurrence now resolves the
-  correct Task, and its returned Task action opens successfully (200); no nonexistent Job action is
-  advertised. This resolves the prior concrete occurrence-link blocker.
-- New direct CLI ready-file and analysis-only tests pass. Remote API now admits a queued Task with
-  atomic ticket consumption and no Job. These checks confirm admission improvements, not acceptance
-  of every required entry/recovery/capacity/readback outcome.
+- All three previous concrete blockers pass their changed native tests: scheduled continuation
+  summary/confirm binds the authenticated operator, a genuine new Classification problem remains
+  actionable and can finish its own recovery, and direct CLI claims its own Task without stealing
+  older work. Foreign-actor refusal, named-owner refusal and transient Worker cleanup also pass.
+- B repeated the prior actual API probes on this candidate: scheduled summary actor is admin,
+  admission provenance remains automation-scheduler, explicit confirm returns 202; Recognition →
+  Classification re-analysis leaves waiting_classification / business_problem and list total 1,
+  with zero effects. With a prior API-admitted Run once, CLI no longer claims that older Task.
+- Focused migration/claim/fence tests pass, including schema55→56 additive continuation_actor and
+  preserved original admission facts. These are focused corrections, not full T4 acceptance.
 
-### Task blockers and corrections
+### Remaining Task blockers and corrections
 
-1. **P1 — 定时自动任务的恢复摘要归属错误，用户无法确认执行。**
-   Real Scheduler due → Recognition waiting → admin saves type A → continue (202) → analysis
-   produces a ready summary. Reading that summary succeeds, but its actor is `automation-scheduler`.
-   Admin confirms the offered ready subset through the existing preparation confirm API and receives
-   **403 `preparation_actor_mismatch`**. No effects occurred. `_continue_automatic_analysis` receives
-   the authenticated actor but does not persist/pass it to the Worker; continuation `_task_actor()`
-   instead takes the original admission principal. Run once tests use admin for both roles and miss
-   this normal scheduled journey.
-   **Fix:** carry the real continuation initiator and applicable authority through existing durable
-   Task/attempt/preparation relations; bind intent/summary/confirmation to that authenticated context.
-   Keep original scheduling provenance separate. Do not remove actor/current-permission checks or
-   impersonate the scheduler. Cover scheduled and Run once full API journeys, another permitted
-   operator, foreign-actor refusal, refresh/reopen, same Task and explicit selected execution.
-2. **P1 — 恢复分析发现新的四类业务问题时，被错误终结为技术失败。**
-   Existing Run once with no recognition rule and a valid TV-only Classification rule → save
-   Recognition A for a movie → continue → real analysis reaches “ClassificationPolicy did not select
-   a MediaLibrary”. The item and Task become **FAILED**, recovery is **technical_history**, and the
-   existing Classification list has total **0**. No effects occurred. The operator cannot resolve
-   the actual destination ambiguity through the promised Classification flow.
-   `AutomaticTaskContinuationService._continue_item()` treats every non-PREVIEWED preview as failed
-   instead of publishing its structured business blocker through existing four-type services.
-   **Fix:** route actual Recognition/Metadata/Classification/Conflict findings into their native
-   review/checkpoint state on the same source/Task; retain old decisions/history and accurate counts.
-   Distinguish real transport/technical failure from a new business decision using existing structured
-   results, not exception text. Continue through the next decision, zero-mutation analysis, summary
-   and explicit execution; completed/uncertain siblings stay untouched. Add the failing Recognition
-   → Classification transition and complete the other required automatic four-type journeys.
-3. **P1 — CLI 在共享队列已有工作时领取了别人的 Task，随后报错并遗留领取。**
-   B first admitted a normal Run once through its actual API, without running its Worker, then invoked
-   real `organize --execute --limit 5` on the same fixture runtime. CLI returned **exit 2** (“Task is
-   not claimable in this run”). Its own newly admitted Task stayed pending/queued; the older Run once
-   stayed pending/**claimed by direct-organize-…**, with no processing and no file effects.
-   `_drive_direct_organize_claim()` calls global `claim_next()` and only afterwards compares Task id;
-   when another task is first, it raises without handing that claim back or running it.
-   **Fix:** obtain ownership of the intended admitted Task atomically, or wait/read the same Task's
-   shared execution if a resident owner already has it. Do not claim unrelated work and then reject
-   its id, reset another Task, mint a duplicate or leave abandoned claims/temporary Worker records.
-   Preserve global capacity/fences and synchronous CLI success/failure semantics. Cover a real
-   pre-existing queued Run once/due plus direct CLI and batch, concurrent resident claim and failure
-   cleanup; assert both Tasks' correct ownership, eventual results and no duplicate effects.
+1. **P1 — CLI 整理的业务恢复仍被触发来源限制拒绝。**
+   B ran real `organize --execute --limit 5` with a valid configuration containing no matching
+   Recognition rule. It creates one kernel Task (trigger=manual) and a waiting_recognition item.
+   Existing item/recovery GET and Recognition decision selecting A succeed. POSTing the offered
+   continue action with the fresh checkpoint still returns **409 `no_linked_preparation`**, pointing
+   to a Files preparation that this direct CLI Task never had. No Job or Storage effect occurred.
+   `_continue_automatic_analysis()` accepts only SCHEDULE/RUN_ONCE, whereas the new direct/remote
+   organize admissions use MANUAL; the Worker router already accepts their durable shape.
+   **Fix:** make continuation select the same proved organizing work context as the shared engine:
+   Files retains its actual discovery; direct/remote organizing uses its own admitted scope, origin,
+   pin, source/checkpoint and authenticated continuation actor. Do not merely grant all MANUAL Tasks
+   a continuation or require a new Files submission/top-level Task/Job. Keep RBAC, capacity, exact
+   version/source, zero-mutation analysis, summary and explicit selected execution checks. Add CLI
+   → saved decision → full same-Task summary/confirm/execution coverage; also cover the existing
+   remote-ticket entrance with its actual API/Worker and authority semantics. Preserve prior due/
+   Run once/Files recovery and successful/uncertain siblings.
+2. **P1 — 原提交命令仍可受理新的整理 Job。**
+   B invoked the existing parser/dispatch entry `jobs submit organize --limit 1`: exit **0**, one
+   new `automation_jobs` row (`organize`, pending, execute_authorized=false), zero Tasks and zero
+   effects. `final_main` still calls `AutomationJobService.submit()` in that live submit branch.
+   This is new work, not retained old history. The original entry table explicitly requires this
+   non-execute entrance to preserve analysis/legal-refusal semantics without a new Job or organizing
+   execution queue entry. It does not authorize execution merely because the command says organize.
+   **Fix:** complete that existing entry's disposition: route supported analysis through the shared
+   zero-mutation analysis behavior with readable evidence, or give its legitimate bounded refusal/
+   usable equivalent command. Do not convert a non-authorizing command to execution, keep a new Job
+   path for response compatibility, restore Preview/Scan products, or remove supported capability
+   without its Task/analysis equivalent. Preserve historical Job list/show/cancel semantics within
+   this Task's transition boundary. Add real CLI assertions for no new Job/execute queue/effects,
+   valid/invalid limits and advertised guidance; keep the supported execute and remote paths covered.
+
+These are original scope-4/entry-completeness acceptance gaps. They do not reopen an accepted Slice
+or add historical Job migration/removal to this Task. The previous three P1s are not being retained
+as unfixed blockers; their corrections are explicitly recognized above.
 
 ### Actual validation and pending gates
 
 Local ignored evidence:
-`.git/validation-evidence/38e68643cdcd10e9a969b30c505d3ade623ec33a/b-review-20261101/`.
+`.git/validation-evidence/23b8ff716f588e3376e93e7c83b3d94865ca9a00/b-review-20261101/`.
 
 - Root `.venv/bin/python -m unittest tests.test_v2_automation_run_once
-  tests.test_execution_authorization tests.test_task_scheduling_fencing` — **69 tests passed**,
-  6.227 seconds / 6.50 seconds wall (`focused.log`). Database ResourceWarnings remain disclosed.
-- `probes.py`/`.log` — existing Run once API then real CLI against the same temporary runtime
-  reproduces blocker 3; existing Run once/decision/continue/Worker with a valid unmatched destination
-  reproduces blocker 2. Uses the existing test fixtures, real SQLite/Local Storage, fake Provider;
-  no guessed routes or user data. 0.43 seconds wall.
-- `scheduled_recovery_probe.py`/`.log` — real Scheduler due, initial pipeline, existing decision,
-  analysis, preview and confirm routes reproduce blocker 1 (403). 0.34 seconds wall.
-- `native_readback.py`/`.log` — current production runner with temporary fixture configuration and
-  local service factories: three successful actual file runs, no Jobs; follows the occurrence's
-  advertised Task link, asserts 200/correct identity/no Job action. 0.59 seconds wall.
-- Total timed tests/probes **7.86 seconds**, below 50% of this review turn; no idle waits to manufacture
-  the ratio. `python3 scripts/check_governance.py` PASS; `git diff --check Base..candidate` clean.
-  Review-document checks accompany this checkpoint. Production/test/Web source is unchanged by B.
-- Full T4 Python/Web/E2E/native visual/wheel/Docker gates remain **pending**. Proven P1 blockers
-  permit early FIX REQUIRED under workflow §6; no gate is waived or reported PASS. Developer fixes
-  and runs new/failing/affected tests; B retains full regression/native/package ownership.
+  tests.test_execution_authorization tests.test_task_scheduling tests.test_task_scheduling_fencing
+  tests.test_task_scheduling_migration` — **120 tests passed**, 13.272s / 13.56s wall (`focused.log`).
+  Database ResourceWarnings disclosed; no B changes to production/test/Web source or assertions.
+- `entry_probes.py`/`.log`: actual CLI organize → existing Task Center recovery API sequence
+  reproduces blocker 1; actual jobs submit command reproduces blocker 2. 0.52s wall. These use the
+  existing temporary managed-config/SQLite/Local Storage fixtures and fake Provider, no user media,
+  no guessed routes and no unsupported command construction.
+- `previous_probes.log`: old CLI-backlog and Recognition→Classification probes against this source,
+  0.43s wall. The older Task remains queued/unclaimed; new classification remains a business problem.
+- `scheduled_probe.log`: old scheduled API recovery probe against this source, 0.27s wall;
+  preparation actor=admin, original admission principal unchanged, confirm=202, zero analysis effects.
+- Timed tests/probes total **14.78s**, below 50% of this turn, no idle waits. Governance preflight
+  PASS; full Base..Head `git diff --check` clean. Current report checks accompany this checkpoint.
+- Full T4 Python/Web/E2E/native visual/wheel/Docker gates remain **pending**, neither waived nor
+  reported PASS. Proven P1 blockers permit early FIX REQUIRED under workflow §6. Missing broader
+  readback or full-run evidence stays B's acceptance work; Developer runs new/failing/affected tests
+  after fixing the actual implementation gaps, not B's full regression matrix.
 
 ### Entire Slice outcome reassessment
 
 | Outcome | Current result |
 |---|---|
-| RO-1 — stable Task and shared scheduling | Improved admissions; incomplete because CLI claims unrelated queued work and automatic continuation still has required gaps. |
-| RO-2 — all triggers share the engine | Due/Run once/legacy and direct/remote admission are connected; shared-queue CLI behavior remains blocked. |
-| RO-3 — same-work four-type recovery | Run once happy Recognition chain works; scheduled confirmation and transition to a new business blocker fail. |
-| RO-4 — safe historical Job migration/removal | Not delivered; complete historical migration remains outside Task47.3, not an added blocker here. |
-| RO-5 — complete operator/admin journeys | Occurrence links/results improved; required recovery journeys remain blocked, broader readback acceptance is pending. |
+| RO-1 — stable Task and shared scheduling | Due/Run once/direct/remote foundations improved; direct CLI continuation and the old new-Job submission branch remain incomplete. |
+| RO-2 — one engine across entrances | Named CLI ownership now works; original entry table still has an unmigrated submission branch. |
+| RO-3 — same-work four-type recovery | Scheduled/Run once Recognition and Classification journeys improved; direct/remote admission context is still excluded from the common continuation. |
+| RO-4 — safe historical Job migration/removal | Not delivered and outside this Task's complete-migration scope; not an added blocker. |
+| RO-5 — complete operator/admin journeys | Prior occurrence links and recovery defects improved; remaining entry/recovery gaps and assigned broader acceptance prevent completion. |
 
-Keep fixes in Task47.3. No new Task, Closure Packet or Slice acceptance is planned/claimed. Slice47
-remains ACTIVE; original Task47.2 PASS and A-owned Slice/Roadmap/Progress are unchanged.
+Continue the same Task47.3 fix loop; no new Task or Slice closure is planned/claimed. Task47.2 PASS
+and A-owned Slice/Roadmap/Progress remain unchanged. Slice47 remains ACTIVE.
 
 ### Developer guidance — complete the three corrections in this Task
 
@@ -624,117 +597,3 @@ mock 组件证明真实链接/恢复成功。修改的 Python 文件跑 ruff for
 尚未完成的必要入口或链路要明确写出，不能自行缩小范围后称 Task 完成。已有上轮修复保持
 回归。B 继续负责本 Task 原 T4 full/native/package gates 和最终独立审查，Developer 无需
 重复全 Python/Web/E2E/发布矩阵；本指导也不将这些 B 门禁转交 Developer。
-
-
-## Developer Completion Report — Round 4
-
-**Status: READY FOR B REVIEW.** Same-Task correction checkpoint for the three B blockers of
-Round 3; not a self-approved PASS.
-
-```text
-Task Base: dfcfebbdb9c879b38806e29c7b41c9192aeca83e (not repinned)
-Code/test checkpoint: b93f6b04 (fix(task47.3): continuation actor, business blockers and named CLI claims)
-Report checkpoint: this documentation commit
-Pre-existing untracked files: preserved, unstaged. No push/deploy/self-approval.
-```
-
-### Corrections implemented
-
-1. **P1 — scheduled recovery summary now belongs to the continuing operator.**
-   - Runtime schema 56 adds the additive, versioned `task_scheduling.continuation_actor` column
-     (fresh/reopen and schema55→56 upgrade; legacy rows read as “no recorded continuation actor”
-     and are not backfilled). Admission provenance stays in `admission_principal`.
-   - `ManualTaskContinuationService._continue_automatic_analysis()` writes the authenticated
-     `actor` in the same kernel `requeue()` transaction. `AutomaticTaskContinuationService` binds
-     the re-analysis intent, Preview, persisted preparation and confirmation summary to that actor;
-     the Scheduler/Run once principal remains separate provenance.
-   - New scheduled API journey: real `IntervalScheduler` due → real Worker Recognition problem →
-     admin decision/continue → zero-mutation re-analysis → `waiting_confirm` + preparation with
-     `actor="admin"` while `admission_principal="automation-scheduler"` → different permitted
-     operator refused 403 `preparation_actor_mismatch` → admin confirm 202 → same Task execution,
-     one Result, real file move. Run once test now also asserts actor ownership and foreign refusal.
-2. **P1 — a new four-type finding during recovery stays a business problem, not a technical failure.**
-   - The continuation Preview is given `problem_task_id=this Task`, so the shared analysis publishes
-     Recognition/Metadata/Metadata-correction/Classification/Conflict through the existing native
-     problem projector. A non-PREVIEWED plan with `manual_preview_plan_problem(...)` is no longer
-     converted to FAILED/`technical_history`; the waiting item is re-read and re-projected under the
-     live claim fence, preserving prior decisions/history.
-   - `publish_task_item_problem` now reuses the TaskItem already started for the exact same verified
-     source/version (kernel path identity vs occurrence identity) instead of creating a competitive
-     row; a known different occurrence/fingerprint is still refused rather than re-pointed.
-   - New Run once API journey: no recognition rule + TV-only Classification rule → Recognition
-     decision A → re-analysis now parks `waiting_classification` on the same Task with
-     `business_problem`/Classification list total 1 and zero Storage effects → classification
-     choice → continue → summary/preparation → explicit confirm → same-Task execution to the chosen
-     destination, one Result, no Job.
-3. **P1 — direct CLI claims only its own admitted Task.**
-   - Added atomic named `TaskSchedulingService.claim(task_id, ...)` / repository
-     `claim_scheduled_task(...)`: same Worker eligibility, pin, lease and ownership generation, but
-     the candidate set is the CLI's own Task. `_drive_direct_organize_claim()` no longer calls global
-     `claim_next()` and then rejects a different Task.
-   - If the CLI's Task is already owned by another live Worker, it takes nothing, returns a bounded
-     failure naming that owner/Task, and stops its transient Worker registration. Success and
-     failure paths clean up the temporary Worker; a `begin_work` failure settles an existing control
-     or yields the claim without inventing a cancel.
-   - Resident Worker pin bootstrap now also selects a queued/claimed Task pin (not only legacy
-     `automation_jobs`), so an older admitted Task remains consumable under its own pin instead of
-     being hidden behind today's possibly unhealthy Active revision.
-   - Real CLI test now first admits an older queued Run once, runs `organize --execute --limit 5`:
-     CLI completes its own Task with a real file move, the older Task stays queued/unclaimed with no
-     item/Result, both Tasks keep distinct ownership and all transient Workers are stopped. A direct
-     concurrent-owner test proves a named claim is refused without stealing and leaves the resident
-     claim/token untouched.
-   - Remote submission tests that still expected a Job identity were adapted to the supported Task
-     entry (Task pin/readback); no new Job was written to satisfy them.
-
-### Actual validation（本轮命令与结果）
-
-```sh
-.venv/bin/python -m unittest tests.test_v2_automation_run_once tests.test_execution_authorization
-# Ran 47 tests — OK（含新增 scheduled/classification/CLI queue 全链路）
-
-.venv/bin/python -m unittest tests.test_task_scheduling tests.test_task_scheduling_migration   tests.test_processing_worker_readiness
-# Ran 67 tests — OK（含 schema55→56、named claim、continuation actor、worker readiness）
-
-.venv/bin/python -m unittest tests.test_configuration_snapshot tests.test_resident_correction
-# Ran 49 tests — OK（remote Task pin/worker/pending-pin journeys）
-
-.venv/bin/python -m unittest tests.test_automation_admission   tests.test_automation_definition_occurrence tests.test_automation_execution_intent   tests.test_automation_definition_execution tests.test_automation_run_once tests.test_automation_api
-# Ran 130 tests — OK
-
-.venv/bin/python -m unittest tests.test_manual_task_engine tests.test_processing_worker_readiness   tests.test_automation_job_fencing tests.test_recovery_continuation tests.test_batch_cli
-# Ran 130 tests — OK
-
-.venv/bin/python -m unittest tests.test_automation_workspace_read_model tests.test_manual_operations   tests.test_manual_organize_execution tests.test_manual_organize_preview   tests.test_automation_settings_resident
-# Ran 131 tests — OK
-
-.venv/bin/python -m unittest tests.test_operations_run_inventory tests.test_operations_task_center   tests.test_task_persistence
-# Ran 104 tests — OK
-
-.venv/bin/python -m unittest tests.test_configuration_classification   tests.test_configuration_destination tests.test_configuration_destination_activation   tests.test_configuration_destination_precheck tests.test_configuration_organize   tests.test_library_file_operation_history
-# Ran 77 tests — OK
-
-.venv/bin/ruff format --check <changed Python files>   # 181 files already formatted
-.venv/bin/ruff check <changed Python files>            # All checks passed!
-.venv/bin/python -m compileall -q mediaflow tests     # OK
-python3 scripts/check_governance.py                   # PASS
-git diff --check                                       # clean
-```
-
-### Remaining work / risks（如实陈述，未自评 PASS）
-
-1. Metadata / Metadata-correction / Conflict 的自动续作全链路仍未各自写独立 API 端到端测试；
-   Recognition→Classification 的新阻塞路径已验证，其余类型共用同一 projector/等待状态通道。
-2. `direct CLI` 在 admit 与 claim 之间崩溃时仍由常驻 Worker 经 `run_direct_organize` 恢复；
-   该恢复分支没有新增独立测试。
-3. Inventory/latest/metrics/Dashboard/readiness 的 Job-less 读回仍未逐一独立复核（上轮遗留风险）。
-4. 若 CLI 自己的 Task 已被常驻 Worker 持有，CLI 返回有界 exit 2 并提示读取该 Task，不会等待其
-   完成；这是无重复执行的保守语义，但同步 CLI 输出不会呈现该次结果。
-5. 历史 Job 兼容边界与 RO-4 全量迁移/删除保持过渡态；Web 投影未改，故未跑 Web 构建/E2E。
-6. B 仍负责 T4 full Python/Web/E2E/wheel/Docker/native 门禁与独立审查；本轮未运行这些门禁。
-
-### Scope statement
-
-Runtime schema 从 55 增量到 56（仅新增 `task_scheduling.continuation_actor`，失败原子、可 reopen，
-历史行不重写）；未读写用户数据库/生产媒体；未修改 A-owned Slice/Roadmap/Progress；未 push/部署；
-预存无关未跟踪文件保持未暂存。B 负责本 Task 原 T4 验收与独立审查。
