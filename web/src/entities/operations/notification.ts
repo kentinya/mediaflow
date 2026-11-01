@@ -74,6 +74,19 @@ export const NOTIFICATION_OPEN_DRAFT_STATUSES = ["draft", "validated"] as const;
  */
 export const NOTIFICATION_URI_SAFE_SEGMENT = /^[A-Za-z0-9][A-Za-z0-9._-]*$/;
 
+/**
+ * A delivery's event identity is a *fact about the originating event*, never a
+ * route segment: the producers write structured identities joined by colons
+ * (``task:<taskId>:<status>``, ``schedule:<scheduleId>:task:<taskId>`` and
+ * ``automation-definition:<definitionId>:task:<taskId>``). The exact value is
+ * displayed and related, so the bounded rule keeps the colon separator while
+ * still rejecting whitespace, path separators, percent-encoding and other
+ * non-identity text. This deliberately does not loosen the route-bound
+ * ``deliveryId``/``webhookId`` segments or the closed event-type catalog.
+ */
+export const NOTIFICATION_EVENT_ID =
+  /^[A-Za-z0-9][A-Za-z0-9._-]*(?::[A-Za-z0-9._-]+)*$/;
+
 function uriSafeSegment(
   source: Record<string, unknown>,
   field: string,
@@ -81,6 +94,18 @@ function uriSafeSegment(
 ): string {
   const value = text(source, field, maxLength);
   if (!NOTIFICATION_URI_SAFE_SEGMENT.test(value)) {
+    return fail(field);
+  }
+  return value;
+}
+
+function eventIdentity(
+  source: Record<string, unknown>,
+  field: string,
+  maxLength: number,
+): string {
+  const value = text(source, field, maxLength);
+  if (!NOTIFICATION_EVENT_ID.test(value)) {
     return fail(field);
   }
   return value;
@@ -1126,7 +1151,7 @@ function normalizeDeliveryIdentity(
   return {
     deliveryId: uriSafeSegment(source, "deliveryId", 64),
     webhookId: uriSafeSegment(source, "webhookId", 64),
-    eventId: uriSafeSegment(source, "eventId", 128),
+    eventId: eventIdentity(source, "eventId", 128),
     eventType: eventType(source["eventType"], `${field}.eventType`),
     status: enumOrFail(
       source["status"],

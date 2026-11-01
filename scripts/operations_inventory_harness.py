@@ -580,6 +580,16 @@ def build_managed_fixture(
     # pending pre-Task Job, while admission still requires its own issued
     # token (see ``seed``).
     document["api"]["remoteExecution"] = {"enabled": True, "maximumTtlSeconds": 900}
+    # The delivery journey needs the outbox row a settled Task really writes.
+    # The fixture publishes its Webhook as enabled through the ordinary checked
+    # draft/activate path, exactly like any other configured definition, so the
+    # Task kernel's post-commit publication is the only producer.  This harness
+    # runs no Notification Worker and sends no external HTTP, so the durable row
+    # stays honestly pending.  The subscribed events keep the example's
+    # already-supported historical ``job.*`` spelling: the Python configuration
+    # parses those literals into their canonical Task event, which is what the
+    # settled Task publishes.
+    document["notifications"]["webhooks"][0]["enabled"] = True
     # One managed definition whose scope is exactly the fixture's scheduled
     # review scope.  The harness Scheduler tick emits its one real due
     # occurrence at seed time, which is where the definition-pinned pending Job

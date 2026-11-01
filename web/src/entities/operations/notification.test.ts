@@ -3,6 +3,7 @@ import {
   normalizeNotificationAction,
   normalizeNotificationActiveConfiguration,
   normalizeNotificationDefinitionsPage,
+  normalizeNotificationDeliveriesPage,
   normalizeNotificationDeliveryDetail,
   normalizeNotificationDraftState,
   normalizeNotificationActivation,
@@ -697,10 +698,96 @@ describe("notification delivery detail", () => {
     ).toThrow(NotificationNormalizationError);
   });
 
-  it("fails closed on an unsafe event identity", () => {
-    expect(() =>
+  it("keeps the real producer event identity verbatim", () => {
+    // The producers write a structured event identity, not an opaque token:
+    // ``task:<taskId>:<status>``, ``schedule:<scheduleId>:task:<taskId>`` and
+    // ``automation-definition:<definitionId>:task:<taskId>``. The colons are
+    // part of the durable fact, so the detail must render the exact value.
+    const taskEventId = "task:3f2b6c1e-7a4d-4c8e-9b1f-5d6a7c8e9f00:completed";
+    expect(
       normalizeNotificationDeliveryDetail(
-        deliveryPayload({ eventId: "event|1" }),
+        deliveryPayload({ eventId: taskEventId }),
+      ).delivery.eventId,
+    ).toBe(taskEventId);
+    const scheduleEventId =
+      "schedule:8d9e0f1a-2b3c-4d5e-6f70-8192a3b4c5d6:task:3f2b6c1e-7a4d-4c8e-9b1f-5d6a7c8e9f00";
+    expect(
+      normalizeNotificationDeliveryDetail(
+        deliveryPayload({ eventId: scheduleEventId }),
+      ).delivery.eventId,
+    ).toBe(scheduleEventId);
+  });
+
+  it("fails closed on an unsafe event identity", () => {
+    for (const eventId of [
+      "event|1",
+      "event 1",
+      "../event",
+      "/event",
+      "event#1",
+      "event%3A1",
+      ":event",
+      "event:",
+      "event::1",
+      "event:1:",
+      "",
+      `${"a".repeat(129)}`,
+    ]) {
+      expect(() =>
+        normalizeNotificationDeliveryDetail(deliveryPayload({ eventId })),
+      ).toThrow(NotificationNormalizationError);
+    }
+  });
+});
+
+describe("notification deliveries page", () => {
+  function deliveriesPayload(
+    eventIds: readonly string[],
+  ): Record<string, unknown> {
+    return {
+      limit: 25,
+      status: null,
+      next_cursor: null,
+      previous_cursor: null,
+      items: eventIds.map((eventId, index) => ({
+        deliveryId: `delivery-${index}`,
+        webhookId: "ops",
+        eventId,
+        eventType: "task.completed",
+        status: "pending",
+        attempts: 0,
+        nextAttemptAt: "2026-09-12T00:00:00+00:00",
+        createdAt: "2026-09-12T00:00:00+00:00",
+        updatedAt: "2026-09-12T00:00:00+00:00",
+        deliveredAt: null,
+        failureCategory: null,
+        responseStatus: null,
+      })),
+    };
+  }
+
+  it("reads the real producer event identities without rewriting them", () => {
+    // Exactly the identity the Worker/API outbox writes at a settled Task, so
+    // the deliveries list can never reject the production document.
+    const eventIds = [
+      "task:3f2b6c1e-7a4d-4c8e-9b1f-5d6a7c8e9f00:completed",
+      "task:3f2b6c1e-7a4d-4c8e-9b1f-5d6a7c8e9f00:failed",
+      "task:3f2b6c1e-7a4d-4c8e-9b1f-5d6a7c8e9f00:cancelled",
+      "schedule:8d9e0f1a-2b3c-4d5e-6f70-8192a3b4c5d6:task:3f2b6c1e-7a4d-4c8e-9b1f-5d6a7c8e9f00",
+    ];
+    const page = normalizeNotificationDeliveriesPage(
+      deliveriesPayload(eventIds),
+    );
+    expect(page.items.map((item) => item.eventId)).toEqual(eventIds);
+  });
+
+  it("fails closed on one unsafe event identity in the page", () => {
+    expect(() =>
+      normalizeNotificationDeliveriesPage(
+        deliveriesPayload([
+          "task:3f2b6c1e-7a4d-4c8e-9b1f-5d6a7c8e9f00:completed",
+          "task:3f2b6c1e-7a4d-4c8e-9b1f-5d6a7c8e9f00:completed path",
+        ]),
       ),
     ).toThrow(NotificationNormalizationError);
   });

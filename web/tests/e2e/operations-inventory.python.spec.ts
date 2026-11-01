@@ -3422,3 +3422,126 @@ test("the Notifications page reads the real Task event contract end to end", asy
     [],
   );
 });
+
+test("a settled Task publishes one outbox delivery the delivery pages read", async ({
+  page,
+  request,
+}) => {
+  // B47.4-01: the producer writes a structured event identity
+  // (`task:<taskId>:<status>`), so the delivery list/detail must accept the
+  // real value instead of only a colon-free token. This journey runs the real
+  // resident Task engine over the remaining definition-pinned Task: its
+  // terminal commit is the durable boundary that publishes the outbox row.
+  const api = recordApiCalls(page);
+  const worker = await request.post(`${BASE}/__harness__/run-worker`);
+  expect(worker.ok()).toBeTruthy();
+  const settled = (await worker.json()) as {
+    readonly ran: boolean;
+    readonly taskId: string;
+    readonly status: string;
+  };
+  expect(settled.ran).toBe(true);
+  expect(settled.status).toBe("completed");
+  const eventId = `task:${settled.taskId}:completed`;
+
+  const readDeliveries = async () => {
+    const response = await request.get(
+      `${BASE}/api/v1/notifications?limit=100`,
+      { headers: { Authorization: `Bearer ${ADMIN_TOKEN}` } },
+    );
+    expect(response.ok()).toBeTruthy();
+    return (await response.json()) as {
+      readonly items: readonly {
+        readonly deliveryId: string;
+        readonly webhookId: string;
+        readonly eventId: string;
+        readonly eventType: string;
+        readonly status: string;
+      }[];
+    };
+  };
+  const published = (await readDeliveries()).items.filter(
+    (item) => item.eventId === eventId,
+  );
+  expect(published).toHaveLength(1);
+  const delivery = published[0];
+  expect(delivery).toMatchObject({
+    webhookId: "operations-webhook",
+    eventType: "task.completed",
+    status: "pending",
+  });
+  const taskBefore = (await (
+    await request.get(`${BASE}/api/v1/tasks/${settled.taskId}`, {
+      headers: { Authorization: `Bearer ${ADMIN_TOKEN}` },
+    })
+  ).json()) as {
+    readonly status: string;
+    readonly completed_at: string | null;
+  };
+  expect(taskBefore.status).toBe("completed");
+
+  await connect(page, ADMIN_TOKEN);
+  await page.getByRole("link", { name: "Notifications", exact: true }).click();
+  const listRead = page.waitForResponse(
+    (response) =>
+      response.request().method() === "GET" &&
+      new URL(response.url()).pathname === "/api/v1/notifications",
+  );
+  await page.getByRole("link", { name: "Open deliveries" }).click();
+  expect((await listRead).status()).toBe(200);
+  await expect(page).toHaveURL(
+    /\/ui-v2\/operations\/notifications\/deliveries$/,
+  );
+  await expect(
+    page.getByRole("heading", { name: "Notification deliveries" }),
+  ).toBeVisible();
+  await expect(
+    page.getByText("Notification deliveries unavailable"),
+  ).toHaveCount(0);
+  // The freshly settled Task is the newest outbox row, so its exact delivery
+  // is the first link and opens the exact durable identity.
+  await page.getByRole("link", { name: "Open delivery" }).first().click();
+  await expect(page).toHaveURL(
+    new RegExp(
+      `/ui-v2/operations/notifications/deliveries/${delivery.deliveryId}$`,
+    ),
+  );
+  await expect(
+    page.getByRole("heading", { name: `Delivery ${delivery.deliveryId}` }),
+  ).toBeVisible();
+  await expect(
+    page.getByText(`task.completed (${eventId})`, { exact: true }),
+  ).toBeVisible();
+  await expect(
+    page.locator("dl").getByText("pending", { exact: true }),
+  ).toBeVisible();
+
+  // Reading/refreshing this delivery is side-effect free: the outbox keeps its
+  // one row for the original outcome and the settled Task is never re-run.
+  const detailRead = page.waitForResponse(
+    (response) =>
+      response.request().method() === "GET" &&
+      new URL(response.url()).pathname ===
+        `/api/v1/operations/notifications/deliveries/${delivery.deliveryId}`,
+  );
+  await page.getByRole("button", { name: "Refresh" }).first().click();
+  expect((await detailRead).status()).toBe(200);
+  expect(
+    (await readDeliveries()).items.filter((item) => item.eventId === eventId),
+  ).toHaveLength(1);
+  const taskAfter = (await (
+    await request.get(`${BASE}/api/v1/tasks/${settled.taskId}`, {
+      headers: { Authorization: `Bearer ${ADMIN_TOKEN}` },
+    })
+  ).json()) as {
+    readonly status: string;
+    readonly completed_at: string | null;
+    readonly items: readonly unknown[];
+  };
+  expect(taskAfter.status).toBe("completed");
+  expect(taskAfter.completed_at).toBe(taskBefore.completed_at);
+  expect(taskAfter.items).toHaveLength(0);
+  expect(api.filter((entry) => entry.path.startsWith("/api/v1/jobs"))).toEqual(
+    [],
+  );
+});
