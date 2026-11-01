@@ -11,6 +11,10 @@ Authority: committed [SLICE.md](SLICE.md), RO-1/2/4/5、AC-4/11/12–18；
 升级/历史兼容要求；保留本版本 fresh、新任务和同版本 reopen/restart 的安全义务。
 B 不改 A-owned Slice/Roadmap/Progress，不自行宣告 Slice PASS / CLOSED。
 
+用户补充边界（2026-11-02）：**V1 已不受支持**。本 Task 只以当前 V2 用户旅程、
+仍被 V2 消费的共享 API/CLI/运行时和安全能力验收；V1 独有页面/行为不作为门禁或返工
+要求。下文旧 V1 保留措辞依此收窄；不要求恢复旧产品或旧 Job 兼容。
+
 ```text
 Task ID: 47.4
 Task Type: SLICE
@@ -282,7 +286,7 @@ SQLite/fakes，不用用户生产 SMB/OpenList/S3/TMDB。
     tests/e2e/operations-task-center-visual.python.spec.ts
   ```
 
-  workspace/settings 分开 harness，避免共享 Active 污染。增加受影响 Dashboard/V1 和
+  workspace/settings 分开 harness，避免共享 Active 污染。增加受影响 Dashboard/V2 和
   remote/cancel/Job-absence 的真实验证，复用已有 harness。人工查看桌面/窄屏，确保
   原记录/摘要/确认/下一步仍可用；不为收尾另建过程平台。
 - 核对 fresh SQL layout/clean source/wheel/image 的 Job 专属对象退出；新数据同版本
@@ -444,119 +448,6 @@ Source candidate: bebf7a3a9217b7f06fb14649d6197ac1c9e0366b
 - B 须在完整 Base..candidate 上重跑通知/恢复原生旅程及 T4/包装/容器门禁，并重评 Slice
   RO-1–5 / AC-1–19；Developer 不自评 PASS。
 
-## B Review Result
-
-```text
-Reviewed: 383d8834787674675183f4b251d9dfd26a5dc511..715e18a42ce8baa772a13f271be73deb381e0a24
-Correction implementation: bebf7a3a9217b7f06fb14649d6197ac1c9e0366b
-Decision: FIX REQUIRED
-Task blockers: real Task-generated delivery is rejected by the Notification Web identity parser
-Previous round: Notification definitions page and six native recovery journeys VERIFIED FIXED
-Slice Required Outcomes / Surfaces all satisfied: NO
-Next: SAME TASK FIX LOOP — keep Task ID/Base/Goal and user exclusions
-```
-
-B 起点：main / 上述候选；governance PASS、工作区/Git 可写，无 tracked 修改，预存
-未跟踪文件完整保留。已核对完整原始 Base..candidate 的当前变更范围及本轮 13 文件
-修正、通知/恢复真实调用链；handoff commit 仅改 Task，执行输入为 bebf7a3。
-前轮 B 决定留在 `f89402e0be0327e151959d43c3f250ef4e89ec02:TASK.md`，不重定 Base。
-本轮没有修改生产或测试源码，没有声明 A Final Review 或 Slice 完成。
-
-### 已复验通过的修复
-
-- 本候选新 build 后，真实 Python/API/SQLite 浏览器验收 **7 tests PASS**：识别、
-  Metadata 候选、Metadata 显式修正搜索、分类、冲突 Rename、冲突 Overwrite 的同 Task
-  决定→分析→摘要→明确确认→真实文件结果，以及 Notifications 定义页/真实 Draft 入口。
-  上轮两个具体阻塞已解除，不继续要求旧 Job/子 Task 的退役预期。
-- notification/webhook/delivery/configuration snapshot **102 tests / OK**，覆盖当前
-  Task 终态通知与后端读回、配置和权限边界；不把 Python 或 fake Web 通过算作整个
-  Notifications 用户旅程已完成。
-- 正式 remote Task POST + CLI `worker run-next` 在 fresh 临时 LocalStorage/SQLite
-  完成一次整理、保存一个 Result，并自动生成一条 `task.completed` 通知，已再次观察。
-  没有手工构造 delivery，也没有发送外部 HTTP 或访问用户库/媒体。
-
-### 唯一已确认的本轮阻塞 / Developer 指导
-
-**P1 — 有了真实通知后，“通知 → 投递记录”仍无法打开。**
-
-实际用户旅程：“启用整理完成通知 → 提交整理 → Worker 完成 → 打开通知投递列表 →
-查看投递详情/状态或处理发送失败”。本轮前半段成功，但投递列表显示
-**Notification deliveries unavailable / The Operations response could not be understood
-as the expected contract.** 刷新仍读同一条合法记录，无法恢复。
-
-B 从已有 remote API/正式 Worker 生成通知，随后用同一个 fresh 数据库的正式
-MediaFlowApi + 新构建生产资产打开已注册页面
-`/ui-v2/operations/notifications/deliveries`。真实 `GET /api/v1/notifications` 返回 200，
-一条 pending delivery，`eventType=task.completed`，实际 `eventId` 是
-`task:<Task UUID>:completed`。浏览器仍将整个列表拒绝。截图已人工查看。
-
-**精确修法：**
-
-1. 修正 `web/src/entities/operations/notification.ts::normalizeDeliveryIdentity` 的
-   `eventId: uriSafeSegment(...)`。这个字段是显示/关联事件事实，生产者合法使用冒号；
-   现有 `NOTIFICATION_URI_SAFE_SEGMENT` 只接受字母数字和 `._-`，把正常事件编号拒绝了。
-   为 eventId 使用符合实际生产协议的有界校验，保留完整原值和合理长度/非法输入限制。
-   `deliveryId` / `webhookId` 等实际路由段继续严格校验；事件类型仍只允许明确 catalog/
-   有界 alias。不要把所有身份字段一起放宽、允许任意事件名，或替换冒号改写持久化身份。
-2. 对齐共用该 identity parser 的 list/detail，以及当前 Task/正常 Scheduler 生成的
-   实际事件编号。保留 notification delivery 的去重身份、独立投递/重试/租约与 secret/
-   body 隐藏；不能为显示页面而新增 Job、修改媒体或重放已完成整理。
-3. 补充真实 eventId 的 normalizer list/detail 回归，扩展现有真实 Notifications 原生
-   用例：从真实 Task/Worker 自动生成 outbox，打开有记录的投递列表和精确详情，验证
-   读取/刷新不创建第二条 delivery 或再次整理。不要只验证空列表、静态配置页或使用
-   无冒号 fake eventId 来代替生产数据。复用当前 harness/服务，保持现有允许的投递失败
-   恢复与 RBAC 断言，不建立新测试平台。
-
-本项仍是 Task47.4 授权的通知保留闭环，不是新功能或新 Task。B 已确认前半段修复，
-不因该问题否定已通过的六个恢复旅程；完整 T4 尚未运行也不是交给 Developer 的产品返工。
-
-### 实际验证和剩余门禁
-
-本地 ignored 证据根：
-`.git/validation-evidence/715e18a42ce8baa772a13f271be73deb381e0a24/b-task47.4/`。
-
-| 命令 / 事实 | 实际结果 |
-|---|---|
-| Web `npm run build` | exit 0；当前源码新资产，日志 `web-build.log`。 |
-| Web `npm run test:e2e -- --config=playwright.python.config.ts tests/e2e/operations-inventory.python.spec.ts --grep 'native recognition recovery\|native Metadata\|native Classification\|native conflict recovery\|policy-permitted overwrite\|Notifications page reads'`（实际 grep 参数为无转义管道的一个 shell 引号字符串） | **7 passed / 7.3s**；真实 Python harness；`native-fixes.log` 留原始完整命令。 |
-| `.venv/bin/python -m unittest tests.test_notifications tests.test_v2_notification_operations tests.test_webhook_management tests.test_notification_delivery_management tests.test_configuration_snapshot -q` | **102 tests / 6.501s / OK**；有原数据库 ResourceWarnings；`notification-python.log`。 |
-| 正式 remote/Worker → 真实 delivery API/生产页面 | 整理 completed、1 Result、自动生成 1 delivery，API 200；实际投递列表 **FAIL**。`delivery_server.py` / `delivery_page.mjs`、`delivery-page.log`、`delivery-page-observed.json`、`delivery-page.png`。server 已停止、临时媒体已清理。 |
-| governance / 完整范围 whitespace / workspace | `python3 scripts/check_governance.py` 与 `git diff --check 383d883..715e18a4` 通过；预存文件未纳入提交。 |
-| full Python/Web/E2E、完整 native/visual、clean installed wheel、Docker fresh/restart/security | 依 workflow §6，在真实产品阻塞后提前 FIX REQUIRED，本轮未跑；修正后仍由 B 完成。无旧任务/跨版本升级义务，不要求 Developer 代跑完整矩阵。 |
-
-Python/native 命令耗时之和约 14s（实际有重叠）；连同构建、harness 准备、浏览器复现/
-视觉及相关检查保守不超过 40s，本轮明确计时复核至少 150s，占比低于 27%。未空等凑
-比例、放宽断言或增加自动重试。证据为本机文件，不声称远端可达。
-
-Developer 仅需跑本次 notification normalizer/API/Router affected tests、相关 Python
-notification 组、typecheck/lint/build、扩展后的真实通知原生用例；若只改 notification
-解析，不要求机械重跑已过且输入未变的六类恢复。changed-file checks/governance/
-whitespace 后交完整源码 checkpoint，B 承担剩余验收。
-
-### Entire Slice reassessment — 全部结果和 AC
-
-| 结果 | 当前判断 |
-|---|---|
-| RO-1 — 一个 Task / 统一调度 | 新 Task 实际受理/执行与自动通知可完成；完整当前候选并发/容量/fence/control/restart T4 仍待验。 |
-| RO-2 — 共用引擎 | 正式 remote/Worker 及原生 Files/恢复链复用既有 Task engine，未恢复 Job 或引入第二引擎；全入口矩阵待验。 |
-| RO-3 — 同 Task 四类恢复 | 上轮三类原生缺口已补并独立验过，含冲突 Rename/Overwrite；整体非重放/中断/独立兄弟结果最终全量门禁待验。 |
-| RO-4 — Job 退出 | 主体退出保持、fresh Task/Result/outbox 已实际使用；clean wheel/container 和同版本重启/失败原子全证据待验。用户排除旧任务/跨版本升级。 |
-| RO-5 — 用户/管理闭环 | 配置通知页已修复；有真实通知时投递列表仍失败，因此管理闭环未完成。其他表面/发布消费者全门禁待验。 |
-
-| AC | 当前判断 |
-|---|---|
-| AC-1–3 | remote 和原生受理/执行部分通过；全并发、容量、claim/control 待修正后完整验收。 |
-| AC-4–6 | 统一引擎/真实文件效果已观察；全入口授权差异/filtering/附件/完整范围/真实稳定性矩阵待验。 |
-| AC-7–8 | 六个真实浏览器恢复旅程已验；完整 restart/uncertain/non-replay 门禁仍待验。 |
-| AC-9–10 | 旧任务/跨版本升级排除；fresh/同版本 reopen/restart、failure atomicity/uncertain 义务保留。 |
-| AC-11–12 | Job-free 主体保持；package/container、完整 pin/settings/resident adoption 证据待验。 |
-| AC-13–16 | 恢复/通知后端/配置定向通过；投递 Web 的必要表面阻塞，其余八视图/原记录/权限/导出全门禁待验。 |
-| AC-17–18 | 本轮部分 native 通过，但真实投递页失败、全 T4/产物矩阵未完成，不满足交 A 条件。 |
-| AC-19 | 不恢复 Pause/resume/旧 Job 恢复，安全取消和四类继续边界保留。 |
-
-保持同一 Task47.4 / FIX REQUIRED。A-owned Slice/Roadmap/Progress 不变；不宣布
-Slice READY FOR A REVIEW / PASS / CLOSED。
-
 ## Developer Fix Report — real delivery event identity
 
 ```text
@@ -627,3 +518,149 @@ Source candidate: 8db3ce45c1e589e9b8b9e48aa71d355061f1d1b3
 - 旧任务/跨版本升级仍按用户明确排除；未接触用户库、媒体、Provider 或外部端点。
 - B 须在完整 Base..candidate 上重跑通知原生旅程及 T4/包装/容器门禁，并重评 Slice
   RO-1–5 / AC-1–19；Developer 不自评 PASS。
+
+## B Review Result
+
+```text
+Reviewed: 383d8834787674675183f4b251d9dfd26a5dc511..b55ce74c4a1145e2218e11dd23de8c82777e3e99
+Latest implementation: 8db3ce45c1e589e9b8b9e48aa71d355061f1d1b3
+Decision: FIX REQUIRED
+Task blockers: resident Worker cannot perform first registration; five V2 E2E expectations still use retired Job behavior
+Previous notification/recovery findings: VERIFIED FIXED
+Slice Required Outcomes / Surfaces all satisfied: NO
+Next: SAME TASK FIX LOOP — preserve Task ID/Base/Goal and user exclusions
+```
+
+B 起点 main / 上述候选，governance PASS、workspace/Git 可写；无 tracked 修改，预存
+未跟踪文件原样保留。独立核对完整 Base..candidate 的 168 文件变更及前序修正，未改
+生产或测试源码。handoff 只改 Task；最新执行输入为 8db3ce4。旧审查/Developer 证据
+留在 Git。本轮开始适用用户“V1 不受支持”边界；共享路径 `/api/v1/*` 仍按实际 V2
+消费者验证，未把 V1 独有界面当作返工项。旧任务/跨版本升级继续排除。
+
+### 已验证的交付
+
+- 真实 Task 自动产生通知，V2 通知配置、投递列表、精确详情、刷新和事件身份都通过；
+  不再保留上轮 eventType/eventId 两个阻塞。六个同 Task 四类恢复及 Overwrite 明确
+  同意旅程也已通过；不重新要求退役 Job/子 Task/暂停流程。
+- 全 Python **2503 tests / OK / 7 skipped**，144 个 test 模块按四组完整覆盖；共享
+  容量、claim/fence、权限/固定配置、原运行记录、真实稳定性、附件、来源占用和
+  uncertain 非重放等在当前完整回归中通过。skips 为现有 real remote/endurance 环境。
+- Web **87 files / 1264 unit tests PASS**，typecheck/lint/format/build 通过。
+- 当前生产资产 + 真实 Python/API/SQLite 的原生组 **43 + 17 + 8 + 12 + 2 = 82 PASS**：
+  inventory/四类/通知、Automation lifecycle/Run once、workspace/records、settings
+  adoption、Task Center/摘要/确认。桌面与窄屏截图已人工查看并保留。
+- clean HEAD archive 构建 wheel，源树外安装/CLI/API/fresh/配置/backup/read consumers
+  smoke PASS；Ruff、compileall、pip check、examples 和完整范围 whitespace 通过。
+
+上述原生 harness 会明确调用单次 Worker；它们的成功不能证明常驻 `worker run`
+启动链可用。正式容器和下述独立进程复现揭示了这一差异。
+
+### 阻塞及 Developer 指导
+
+**1. P0 — 常驻 Worker 从首次启动起无法注册，已受理工作永远留在队列。**
+
+用户旅程：“启动正式四服务 → 在 V2 Files/Automation 提交整理 → Worker 自动推进 →
+查看逐项结果”。实际 API/Scheduler/notification-worker healthy，Worker 进程存活，
+但 health 一直是 **resident worker is not transfer-ready (no_worker)**，容器 fresh
+验收等待 150s 仍失败，无法进入自动消费。媒体没有被误动，但整理/普通文件 Worker
+用户旅程整体中断，符合 workflow 的 whole-journey outage。
+
+B 另从已有 remote Task POST 受理一个 fresh Task，启动真正的
+`mediaflow --config <临时配置> worker run --poll-seconds 0.1`，跨多个真实轮询观察：
+`processAlive=true, residentWorkers=1, processingWorkers=0, taskStatus=pending,
+queueState=queued, claimGeneration=0, resultCount=0, sourceExists=true`。
+该进程使用临时 LocalStorage/SQLite，子进程移除了 Provider 凭据，无外部请求；随后已
+正常终止并清理。并非凭空构造的不可达状态，也不是 V1 页面问题。
+
+**精确修法：**
+
+1. 修正 `mediaflow/final_cli.py::_run_worker` 的 `step()`：目前无条件先调用
+   `worker_service.heartbeat()`；新的 ResidentProcessingWorker 初始尚未注册，心跳
+   返回 false，于是进入 waiting，后面的 `run_next()` 永远不可达；而真正注册就在
+   `ResidentProcessingWorker.run_next()` 内。让首次合法注册按现有 snapshot resolver/
+   supported-command 边界先完成，再执行正常心跳/领取（或恢复首次未注册时可到达
+   既有注册边界的正确顺序）。不要用恒真心跳、只隐藏 health 错误或改超时绕过。
+2. 保持注册后的心跳丢失/停用/schema/pin 拒绝、claim generation/source ownership、
+   取消边界及 uncertain 非重放。注册本身不能创建媒体工作、换固定配置或补发权限。
+   无 Active 时消费者仍要如实注册并等待；后来发布/重启后同样能合法消费。
+3. 在现有 resident 测试中增加真正 `worker run` 的首次启动/消费回归：不仅检查
+   resident_services/adoption（当前这些检查会通过），还检查 processing_workers 的
+   实际命令注册与可领取工作，证明已受理 Task 被推进且既有结果不重放。复用现有
+   临时库/本地假 Provider/原有进程 fixture，不创建新 Worker 或新测试平台。
+   正常 `worker run-next` 已通过，不可拿它替代常驻入口。
+
+**2. 现有 V2 全量 E2E 的五项 Job 预期尚未同步。**
+
+原始全量为 245 passed / 8 failed；其中 3 项纯 artifact ENOENT 已由 B 处置如下，
+剩下五项是明确的当前测试/fixture 对接缺口，均来自现有 V2 spec：
+
+- `automation.spec.ts:453`：当前链接实际为 Task ID，断言仍要求 automation-job ID。
+- `operations.spec.ts:234`：关闭旧集合的标题断言仍固定旧 Job 文案。
+- `operations.spec.ts:341`：仍要求旧 Job deep link 自动解析成旧 pre-Task 身份。
+- `operations.spec.ts:403`：Dashboard 仍查找已删除的 Open this Job 链接。
+- `operations.spec.ts:847`：仍构造“尚无 Task 的 Job”并要求其旧进度文案。
+
+**修法：** 依 Task 的 Entry disposition，将支持的 Automation/Dashboard/current run
+断言改为实际 Task 身份，保留正确链接、只读和不重复工作的检查；旧 Job/旧身份输入改
+为既定有界不可用，不恢复映射、Job collection/历史兼容或旧执行器。标题纯改名不作为
+产品缺陷；这里要求完成已授权的实际测试消费者切换，使全量不再要求已退役行为。
+无需新功能，也无需 V1 验收。
+
+### 本轮验证事实 / 证据
+
+证据根（本机 ignored，不声称远端可达）：
+`.git/validation-evidence/b55ce74c4a1145e2218e11dd23de8c82777e3e99/b-task47.4/`。
+`acceptance-manifest.json` 记录候选、命令/日志 hash、测试区间及覆盖；完整 Python
+模块与命令清单在 `python-full-manifest.json`。
+
+| 验收 | 真实结果 / 日志 |
+|---|---|
+| Full Python | 698/700/559/546 = 2503，7 skips，均 OK；四组 131.299/136.095/116.439/43.981s，执行并行；`python-full-0..3.log`。无漏模块，未将分组变为只挑 affected。 |
+| Python quality/examples | Ruff format/check、compileall、pip check、governance、两份 approved example validate、禁 FFprobe/FFmpeg 无匹配（预期 exit 1）、Base..Head whitespace 均通过。 |
+| Full Web | typecheck/lint/Prettier/build PASS；87 files、1264 unit PASS（118.62s）；`web-full.log` 留完整 pipeline。full fake E2E 245 PASS / 8 FAIL（3.4m），五项待按上表同步，三项 artifact 问题另见下段。未声称全量 E2E PASS。 |
+| Real native/visual | inventory 43（1.2m）、Automation 17（22.4s）、workspace 8（9.7s）、settings 12（11.5s）、visual 2（9.7s）全通过；`native-*.log` 与 17 张 `native-screenshots/`；另有先跑的 notification critical 2 PASS。 |
+| Clean wheel | clean committed archive 构建、installed source-external smoke exit 0；`wheel-build.log` / `wheel-smoke.log`。wheel SHA256 `94de9c73a838c6fdc25ec0f40e1c3f45852f5194c55b26526dde2322d3c1542c`。 |
+| Docker fresh/security | 使用可共享的本仓库 ignored TMPDIR，clean committed context/image build 完成；四服务中 Worker no_worker/unhealthy，fresh 等待超时，**FAIL**；`docker-security.log`。镜像 `sha256:e9291a58628c84375a1ed7524e2785ffcef05f2600bc4adead1e63e3b1607dc5`；脚本已清理自己的容器。不是上轮临时 bind 路径问题。 |
+| 独立常驻复现 | `repro_resident_bootstrap.py` + `resident-bootstrap.log`，1.740s；真实受理→常驻 run 后没有 processing Worker/claim/Result，注册断言 FAIL。 |
+| 未执行/未完成 | Docker 后续运行期安全/同版本 restart 门禁被启动故障阻塞；不继续跑昂贵重复矩阵，不要求旧任务/跨版本升级，不以 V1 页面兼容作为门禁。 |
+
+**B 自身 artifact 干扰的处置：** 本轮同时跑 fake/native Playwright 使用了同一个
+默认 `web/test-results`，造成 fractional integer、MediaLibrary hierarchy、stale
+notification recovery 三项在 browserContext.close 时 trace 文件 ENOENT。该责任归 B，
+未派回 Developer。保留原失败，三个原用例在独立 `--output <证据根>/artifact-isolation`
+下均通过（2.6s），无 timeout/断言变化或自动 retry；不能把这三项计作产品缺陷。
+后续 B 浏览器组使用独立输出或顺序运行。五项真实旧预期失败未被掩盖。
+
+测试墙钟按重叠区间合并，不把并行命令相加：日志 birth/mtime、Python manifest 与
+full Web last-run 时刻给出保守上界 **379.362s**，另加相关检查 15s 余量。其余时间
+用于完整范围、真实入口、根因、fixture/错误归属、产物/视觉和 Slice 结果审查及报告。
+本轮记录时总用时 881.9s，含余量的测试上界 394.362s，占比 44.7%，低于 50%。
+没有空等凑比例，也未省略失败或删断言。
+
+Developer 修正只跑新/修改的 resident 及直接受影响 engine/入口测试，改到的 V2 E2E
+用例和静态检查，交 coherent checkpoint。B 负责重新验收 Docker fresh/安全/restart、
+当前全量与必要复用；不把 B 的完整矩阵转交 Developer。
+
+### Entire Slice reassessment — 全部结果和 AC
+
+| 结果 | 本轮判断 |
+|---|---|
+| RO-1 — 同一 Task / 统一调度 | 全 Python 的原子容量/claim/fence 等通过，但正式常驻无法首次注册，整体未满足。 |
+| RO-2 — 一个引擎 | 单次入口、四类同 Task/native 已验；正式 resident 无法进入消费，实际自动推进闭环未完成。 |
+| RO-3 — 同 Task 四类恢复 | 六个真实浏览器旅程及 Python/Run once/原结果独立通过；常驻 Worker 修正后仍需证明普通部署可推进，不新建恢复类型。 |
+| RO-4 — Job 退出 | fresh 主体、源码和 clean wheel 已核对；image build 已完成；同版本 restart/容器运行证明受启动故障阻塞。旧任务/跨版本迁移排除。 |
+| RO-5 — 用户与管理闭环 | 通知/详情、八视图、Automation/records/settings/native 和当前配置证明改善；常驻队列不动是实际部署阻塞，五项 V2 测试消费者仍待同步。 |
+
+| AC | 本轮判断 |
+|---|---|
+| AC-1–3 | 受理/共享容量/claim/control 的 Python/full 回归通过；实际 resident readiness/启动消费不通过。 |
+| AC-4–6 | 统一引擎/入口差异/filtering/附件/完整范围/稳定性在 Python/native 通过，正式常驻消费链不通过。 |
+| AC-7–8 | 四类原生、独立结果/固定配置/不确定效果反例通过；容器同版本 restart 剩余门禁待修复后完成。 |
+| AC-9–10 | 用户排除旧任务/跨版本升级；fresh/同版本 restart、failure atomicity/uncertain 义务保留。 |
+| AC-11–12 | Job schema/对象退出、source-external wheel 与 pin/settings 回归通过；resident 真正执行健康和容器最终证明尚未满足。 |
+| AC-13–16 | 八视图/原记录/日志/通知/权限/导出等当前 Python/native 通过；五项 fake E2E 测试消费者仍未对齐，不因此恢复 Job 或 V1。 |
+| AC-17–18 | native/wheel 通过，Docker fresh FAIL、full fake E2E 未全绿；未达到 SLICE READY FOR A REVIEW，不做 A Final Review。 |
+| AC-19 | Pause/resume 退出、合法取消与四类继续覆盖通过；修复不得恢复旧控制执行器。 |
+
+结论：保持 Task47.4 / FIX REQUIRED，同 Base 修正，不拆新 Task。A-owned Slice/
+Roadmap/Progress 不变，不声明 Slice PASS / CLOSED。
