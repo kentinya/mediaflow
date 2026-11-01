@@ -29,7 +29,8 @@ Implementation authorization: NOT GIVEN — PLANNING DRAFT ONLY
 
 仓库 `/Users/songzhidong/mediaflow`，branch `main`，规划起点为上述完整 Base；governance
 preflight PASS，workspace/Git 可写。无预存 tracked 修改；预存 OS/log/参考图片、`15`、
-`output/database-reference-2026-11-01/` 与 imagegen ZIP 保留且不暂存。不读用户数据库、
+`output/database-reference-2026-11-01/`、`output/organize-flow-2026-11-01.html` 与 imagegen
+ZIP 保留且不暂存。不读用户数据库、
 媒体或秘密配置。本轮只改此草案，不改生产、测试、schema 或 A-owned 文件。
 
 Task47.3 已接受：新 Files/due/Run once/direct CLI/batch/remote organizing 共享 Task
@@ -83,7 +84,7 @@ Architecture 的 TARGET task identity/engine/query/removal 为本 Task 技术边
 | `jobs` CLI 整组、`/api/v1/jobs[/...]`、`/api/v1/operations/jobs[/...]` | 从 parser/help/route/dispatcher 删除，普通认证/参数错误或 not-found，零受理/授权消耗/Provider/Storage 效果。不保留 hidden executor/alias 或自动转成 Task；同步实际调用者与文档。 |
 | Web/V1 Job collection/detail/导航/按钮 | 移除其 model/query/注册及实际调用；已有 Task/Automation/Files 入口继续完整。旧 Job URL 普通有界不可用即可，不新建历史映射或兼容页面，不凭旧 ID/名称/时间猜 Task。 |
 
-## Implementation Scope — ordered guidance
+## Implementation Scope
 
 1. **沿真实调用者确定替代，再删 Job writer。** 从上表及已有 schema/日志/票据/通知
    引用完成生产调用核对，逐项说明“转 Task / 复用只读分析准备 / 退役拒绝”。复用
@@ -123,6 +124,75 @@ Architecture 的 TARGET task identity/engine/query/removal 为本 Task 技术边
    fixture 证明本轮新能力。更新 approved examples、API/CLI/config/deployment 的受影响
    说明和 harness/smoke consumers。新结果做必要设计事实说明；全部 CURRENT/TARGET
    最终对齐与 Slice/Roadmap/Progress 关闭仍交 A，不在此 Task 提前宣告。
+
+## Developer guidance — 具体文件、实施顺序和收口
+
+### 先明确要交付什么
+
+一句话：**拆掉还在使用的 Job 系统，把挂在它上面的能力接到现有 Task；用户照常提交、
+查看、取消和处理问题。** Task47.3 已把新整理接入 Task，不能再写一套 Task 引擎。
+
+范围大是因为模型、SQL、Worker 和页面相互引用，不按层拆成多个 Task。范围只到 Job
+退出所必需的改动：不重写全库、整个 Worker、整个 API 或页面；remote Task POST 和
+CLI Task cancel 是原能力的等价承接，不扩展成任意命令提交/通用任务控制平台。
+没有旧任务，不做升级、数据搬迁或兼容执行层。本节不改变草案状态或授权开始实施。
+
+### 文件地图：改哪些部分，不是整文件删除
+
+下表 Python 路径统一相对于 `mediaflow/`；同一单元格内省略前缀的文件与前一文件同目录。
+主要文件已有实际引用；“按引用联动”只在改动确实影响该消费者时修改，不为凑文件清单
+扩大范围。最终以真实调用者闭环为准。
+
+| 类别 | 主要文件 | 具体处理 |
+|---|---|---|
+| Job 模型与存储 | `domain/automation.py`、`domain/operations_run.py`、`infrastructure/sqlite_runtime.py` | 删除独立 Job 对象/状态/port/表/索引/FK/union；保留 Definition/Schedule/Occurrence、Task/TaskItem/Result 和必须的证据表。已有 Task ID 装在 Job 列中的关系改成准确 Task 字段，不能改名保留第二个队列。 |
+| 准入与 Worker/CLI | `application/automation.py`、`final_cli.py` | 删除 AutomationJobService/AutomationWorker 和 `_run_queued_workflow` Job→CLI 分发；现有 Task consumer 接管受支持工作；移除 jobs 命令组、补 tasks cancel，普通文件与通知 runner 保留。 |
+| 自动化执行/读回 | `application/automation_run_once.py`、`automation_definition_execution.py`、`automation_definition_occurrence.py`、`unattended_execution.py` | 替换 Job 专属类型/查询/来源判断，保持 due/Run once 的权限差异、definition/pin 和原记录。不重做调度算法、业务管线或启用/运行一次交互。 |
+| 恢复调用链 | `application/metadata_correction_continuation.py`、`recovery_continuation.py`、`recovery_batch.py`、`scope_continuation.py`；对应 `domain/metadata_correction.py`、`recovery_continuation.py`、`recovery_batch.py`、`scope_continuation.py` | 删除 Job producer/consumer/link 和已退役 scope 恢复专属实现；共享决定、checkpoint、摘要、审计继续留用。正常四类继续回同一 Task，不因旧代码叫 continuation 就恢复旧能力。 |
+| API 与授权 | `interfaces/service_api.py`、`domain/security.py`、`application/execution_authorization.py`、`domain/execution_authorization.py` | 按入口合同换 remote POST、删除 Job API；票据消费/audit 直接绑定 Task；Task 取消权限与前端能力同步改名/映射，保持旧角色实际权限和后端检查。 |
+| 前端数据与请求 | `web/src/entities/operations/job.ts`、`run.ts`、`run-detail.ts`、`run-once.ts`、`task-item-recovery.ts`；`web/src/shared/api/api-client.ts` | 删除 Job entity/query/normalizer 分支；运行、恢复、原记录读取真正 Task 文档，不能为旧 normalizer 继续拼一个 Job。对应单测按实际用户结果更新。 |
+| 前端/V1 入口 | `web/src/features/operations/LegacyTaskRoutes.tsx`、`job-query.ts`、`web/src/features/dashboard/DashboardView.tsx`、`web/src/routes/router.tsx`、`web/src/shared/navigation/destination-model.ts`、`interfaces/operator_ui.py` | 去掉 Job 路由/导航/按钮/请求；旧 Job 输入普通不可用，现有 Task/Files/Automation 路径完整。只改相关控件与调用，不改整页布局或整个 V1。 |
+| 按引用联动的共享部分 | `application/operations_lifecycle.py`、`processing_checkpoint.py`、`manual_recovery_continuation.py`、`domain/logging.py`、`infrastructure/operational_logging.py`；通知/设置和运行模型消费者 | 清理确有的 Job 投影/关联/日志参数；保留安全检查、独立投递、原阶段事实与 resident adoption。没受影响的通知/设置/Task kernel 不重写。 |
+
+**容易漏掉的现成例子：** `AutomationRunOnceService._execution_view()` 现在即使拿到的是
+新 Task，仍会 `return AutomationJob(...)` 来适配读模型。因此“没有新增 Job 行”还不够；
+必须连这种包装一起退出。改完用真实 Run once 的提交/查询/刷新/同版本重启证明返回的
+Task、definition、来源、状态和原结果仍准确，不能只替换类名或删掉字段断言。
+
+### 建议实施顺序
+
+1. **先固定对外合同和安全回归。** 使用上方 Entry disposition 中已指定的 remote
+   POST、Task cancel、Job 退役处置；先补真实合法/拒绝用例，明确原权限、scope/limit、
+   票据/容量原子边界。复用 Task47.3 的安全重试、来源占用、原记录和四类继续用例。
+   不为实现去探测未授权的新路由/通用命令，也不另造依赖管理工具或测试平台。
+2. **接生产者和消费者，清掉恢复回落。** 逐一改 Scheduler/Run once/remote/CLI/
+   四类继续及管理分析的实际调用。使用已有 Task admission/consumer/pipeline；来源、
+   固定配置、决定、attempt/result、claim 和效果证据仍属于原工作。临时适配只可用于
+   同一改动中的调用切换，交付时不能残留 AutomationJob 包装或可调用的 Job 分发。
+3. **把读侧和用户入口接好。** 改 API DTO、SQL 查询、normalizer、页面/V1 和审计/
+   日志/通知消费者，保证不再读 Job 表也能显示、取消、查原记录和导出。原始运行结果与
+   当前处理状态分开，成功后不改写原失败/时间；技术失败不进入新的第五类 Web 恢复。
+   字段缺失不能伪造成功、把未知计数当 0 或悄悄省略不确定文件。
+4. **再完成底层删除和 fresh 布局。** 删除不再需要的 Job model/port/service/DDL/
+   索引/FK/专属关系；核对所有模块 import、SQL、新表写入和产物，而不只删 Web 按钮。
+   保留共享定义/计划/摘要/证据；无独立 queue/claim 的读回结构可用，独立执行对象不能
+   换名留下。只做空库初始化和本版本新数据 reopen，不编写旧任务升级/清库路径。
+5. **沿用户旅程完成验证并交一个完整 checkpoint。** 用 fresh fixture 实际完成
+   remote 提交→Worker→结果→查询、queued/running 取消、due/Run once、四类继续；再核对
+   Job CLI/API 的实际拒绝、页面不发 Job 请求、fresh SQL 无 Job 依赖。边界失败保留
+   原 Task/票据/来源/效果，不拿“队列已接入”代替文件执行与安全检查。实施中可以有
+   正常检查点，最终交付必须连贯；不按这五步另建 Task 或自评 Slice 完成。
+
+### 验证和交接怎么做
+
+- Developer 先跑新增/修改及直接受影响测试，具体命令沿用下方 Required Tests；旧 Job
+  专属测试转为退役拒绝/Task 等价能力，共享安全断言保留。失败项不靠删断言、改超时或
+  自动 retry 变绿。不要求 Developer 重跑 B 的完整 Python/Web/E2E/发布矩阵。
+- 交接简要列出：删除了哪些 Job producer/consumer/schema；remote/cancel/恢复/读回
+  如何承接；保留的旧配置/事件字面值及理由；实际测试命令/结果/风险。不是要求编写
+  额外治理报告。B 复核完整 Base..Head、所有 Slice 结果，并负责适用 T4/原生/打包门禁。
+- 无旧任务/不考虑升级仍有效；不能把外部服务缺失、历史兼容探针或过程文档当成新产品
+  返工理由。真正未完成的必要入口/安全/数据关系要如实写出，不缩小验收后称完成。
 
 ## Acceptance Criteria
 
