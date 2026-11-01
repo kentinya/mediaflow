@@ -303,7 +303,7 @@ Task Center/通知；删除共享配置/安全/证据；恢复 Pause/resume/retr
 ```text
 Status: READY FOR B REVIEW
 Task Base: 383d8834787674675183f4b251d9dfd26a5dc511
-Candidate: 待本轮唯一开发 checkpoint 提交后回填
+Candidate: c1c2190882fbf320d263215cfa60d810f1a16c95 (implementation checkpoint; this handoff commit follows)
 ```
 
 ### 变化摘要
