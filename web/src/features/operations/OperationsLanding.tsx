@@ -27,7 +27,6 @@ import {
   fetchOrganizeDiscovery,
   fetchOrganizePreviewDetail,
   mutateLifecycle,
-  submitRemainingScopePreview,
   type LifecycleMutationResult,
   type RunOverviewRead,
 } from "../../shared/api/api-client";
@@ -288,12 +287,12 @@ function commandLabelOf(run: RunSummary): string {
 }
 
 function detailLinkOf(run: RunSummary): string | null {
-  // Slice46 RO-4 / B46.4-04: the retired `/operations/tasks|jobs` deep links are
+  // Slice46 RO-4 / B46.4-04: the retired task/job collection deep links are
   // closed, so the "more detailed evidence" action points at the same exact run
   // *inside* the center, where its own detail tabs already live.  An identity
   // the center did not list never gets a link (the row simply has no native
   // detail), and no second mixed collection is involved.
-  if (run.taskId !== null || run.jobId !== null) {
+  if (run.taskId !== null) {
     return `/operations?run=${encodeURIComponent(run.runId)}`;
   }
   return null;
@@ -1197,7 +1196,7 @@ function RunTable({
 /**
  * The explicitly selected run overview. It renders only bounded durable
  * facts; unknown or missing evidence is stated as such, and deeper evidence
- * stays on the exact existing Task/Job detail routes. The query itself is
+ * stays on the exact existing Task detail route. The query itself is
  * owned by the landing, so the header refresh, the shared bounded polling
  * policy and the selection lifecycle all reach this panel.
  *
@@ -1245,9 +1244,7 @@ function RunDetailPanel({
   // so this page follows the exact discovery until its Preview is linked.  It
   // is never re-posted: the same discovery identity is polled, so a refresh,
   // reconnect or restart resumes the same work instead of starting another.
-  const [remainingDiscoveryId, setRemainingDiscoveryId] = useState<
-    string | null
-  >(null);
+  const [remainingDiscoveryId] = useState<string | null>(null);
   const [remainingSelection, setRemainingSelection] = useState<
     readonly string[] | null
   >(null);
@@ -1324,7 +1321,7 @@ function RunDetailPanel({
   const lifecycleMutation = useMutation({
     mutationFn: (request: {
       readonly action: LifecycleAction;
-      readonly objectType: "task" | "job";
+      readonly objectType: "task";
       readonly objectId: string;
       readonly expectedVersion: string;
     }) =>
@@ -1374,30 +1371,6 @@ function RunDetailPanel({
       })
       .finally(() => setReconciling(false));
   };
-
-  // The native exact-Preview recovery of a withheld Continue (RO-5). It is a
-  // zero-mutation admission: the exact remaining-scope plan summary is then
-  // reviewed and confirmed inside this panel (RO-3/AC-6). Nothing is executed
-  // by this admission.
-  const remainingScopePreview = useMutation({
-    mutationFn: (request: { readonly taskId: string }) =>
-      submitRemainingScopePreview(token, { taskId: request.taskId }),
-    retry: false,
-    onSuccess: (result) => {
-      if (!result.ok) {
-        setControlResult(result);
-        if (isUnknownLifecycleOutcome(result)) {
-          setLocked(true);
-        }
-        return;
-      }
-      setRemainingSelection(null);
-      setRemainingOverwrite(false);
-      setRemainingCleanup(false);
-      setRemainingMessage(null);
-      setRemainingDiscoveryId(result.model.discoveryId);
-    },
-  });
 
   // The bounded read of the exact admitted preparation.  It polls only while
   // the preparation is still active and settles once it links its Preview or
@@ -1718,12 +1691,6 @@ function RunDetailPanel({
                       objectType: run.lifecycle?.objectType ?? "task",
                       objectId: run.lifecycle?.objectId ?? run.runId,
                       expectedVersion,
-                    })
-                  }
-                  previewPending={remainingScopePreview.isPending}
-                  onPreview={() =>
-                    remainingScopePreview.mutate({
-                      taskId: run.lifecycle?.objectId ?? run.runId,
                     })
                   }
                 />

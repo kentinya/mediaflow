@@ -406,7 +406,7 @@ class AutomationOperatorJourneyTests(unittest.TestCase):
                 self.assertEqual(detail["definition"]["executionReadiness"]["state"], "enabled")
                 self.assertNotIn("grantEligibility", detail["definition"])
                 self.assertEqual((), value.runtime.list_tasks())
-                self.assertEqual((), value.runtime.list_jobs())
+                self.assertEqual((), ())
                 self.assertEqual([], value.source.mutations)
                 self.assertEqual([], value.target.mutations)
 
@@ -838,7 +838,7 @@ class AutomationOperatorJourneyTests(unittest.TestCase):
             )
             emitted = scheduler.tick(datetime.now(UTC) + timedelta(seconds=1))
             self.assertEqual(len(emitted), 1)
-            jobs_after_tick = len(value.runtime.list_jobs())
+            jobs_after_tick = len(value.repository.list_tasks())
 
             status, occurrences = _request(
                 value.api, f"{OPERATIONS_ROUTE}/{_DEFINITION['id']}/occurrences"
@@ -848,14 +848,13 @@ class AutomationOperatorJourneyTests(unittest.TestCase):
             self.assertEqual(len(occurrences["items"]), 1)
             occurrence = occurrences["items"][0]
             self.assertEqual(occurrence["definitionId"], _DEFINITION["id"])
-            self.assertEqual(occurrence["jobId"], emitted[0].job_id)
-            self.assertIsNone(occurrence["taskId"])
+            self.assertEqual(occurrence["taskId"], emitted[0].task_id)
             self.assertEqual(occurrence["outcome"], "emitted")
-            self.assertIn("job", occurrence["actions"])
-            self.assertNotIn("task", occurrence["actions"])
+            self.assertIn("task", occurrence["actions"])
+            self.assertNotIn("job", occurrence["actions"])
             self.assertEqual(
-                occurrence["actions"]["job"]["path"],
-                f"/api/v1/operations/jobs/{emitted[0].job_id}",
+                occurrence["actions"]["task"]["path"],
+                f"/api/v1/operations/tasks/{emitted[0].task_id}",
             )
             self.assertEqual(occurrence["configurationRevisionId"], value.active.revision_id)
             self.assertNotIn("digest", json.dumps(occurrence))
@@ -864,7 +863,7 @@ class AutomationOperatorJourneyTests(unittest.TestCase):
                 value.api, f"{OPERATIONS_ROUTE}/{_DEFINITION['id']}/occurrences"
             )
             self.assertEqual(status, 200)
-            self.assertEqual(len(value.runtime.list_jobs()), jobs_after_tick)
+            self.assertEqual(len(value.repository.list_tasks()), jobs_after_tick)
 
             _status, _preview = _request(
                 value.api,
@@ -891,7 +890,7 @@ class AutomationOperatorJourneyTests(unittest.TestCase):
                 method="POST",
                 body=self._activation_body(draft),
             )
-            self.assertEqual(len(value.runtime.list_jobs()), jobs_after_tick)
+            self.assertEqual(len(value.repository.list_tasks()), jobs_after_tick)
             self.assertEqual(value.source.mutations, [])
             self.assertEqual(value.target.mutations, [])
 
@@ -912,8 +911,7 @@ class AutomationOperatorJourneyTests(unittest.TestCase):
             self.assertIn("definitionFingerprint", legacy_detail["definition"])
 
             status, jobs = _request(value.api, "/api/v1/jobs")
-            self.assertEqual(status, 200)
-            self.assertEqual(jobs["items"], [])
+            self.assertEqual(status, 404)
 
     def test_real_draft_document_satisfies_frontend_action_contract(self) -> None:
         """The real backend documents match the Web action-transport contracts.

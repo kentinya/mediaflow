@@ -355,45 +355,6 @@ class AutomationTaskDefinition:
 parse_automation_task_definition = AutomationTaskDefinition.from_document
 
 
-class AutomationJobStatus(StrEnum):
-    PENDING = "pending"
-    RUNNING = "running"
-    COMPLETED = "completed"
-    FAILED = "failed"
-    CANCELLED = "cancelled"
-
-
-class AutomationJobOrigin(StrEnum):
-    """The exact intent that admitted one definition-pinned Job.
-
-    ``SCHEDULED`` is a normal due occurrence of an Enabled definition and
-    keeps the reusable scheduled authority.  ``RUN_ONCE`` is one explicit
-    operator command for the saved scope; it is admitted directly and never
-    enables the schedule, advances due state or needs a second confirmation.
-    """
-
-    SCHEDULED = "scheduled"
-    RUN_ONCE = "run-once"
-
-    @classmethod
-    def parse(cls, value: object) -> AutomationJobOrigin:
-        if value is None:
-            return cls.SCHEDULED
-        if isinstance(value, cls):
-            return value
-        if not isinstance(value, str) or not value.strip():
-            raise ValueError("automation job execution origin is invalid")
-        aliases = {
-            "scheduled": cls.SCHEDULED,
-            "run-once": cls.RUN_ONCE,
-            "run_once": cls.RUN_ONCE,
-        }
-        try:
-            return aliases[value.strip().lower()]
-        except KeyError as error:
-            raise ValueError("automation job execution origin is invalid") from error
-
-
 class AutomationQueueFull(RuntimeError):
     pass
 
@@ -596,7 +557,7 @@ class AutomationDefinitionDueState:
     next_run_at: datetime
     updated_at: datetime
     last_occurrence_at: datetime | None = None
-    last_job_id: str | None = None
+    last_task_id: str | None = None
     last_outcome: str | None = None
     last_reason: str | None = None
     last_next_action: str | None = None
@@ -618,7 +579,7 @@ class AutomationDefinitionDueState:
             if value is not None and (not isinstance(value, datetime) or value.tzinfo is None):
                 raise ValueError(f"automation definition due-state {label} must include a timezone")
         for label, value, maximum in (
-            ("last Job ID", self.last_job_id, 128),
+            ("last Task ID", self.last_task_id, 128),
             ("last outcome", self.last_outcome, 64),
             ("last reason", self.last_reason, 256),
             ("last next action", self.last_next_action, 512),
@@ -639,7 +600,7 @@ class AutomationDefinitionOccurrence:
     definition_id: str
     occurrence_at: datetime
     emitted_at: datetime
-    job_id: str
+    task_id: str
     definition_fingerprint: str
     definition_version: int
     configuration_revision_id: str
@@ -652,18 +613,15 @@ class AutomationDefinitionOccurrence:
     outcome: str = "emitted"
     reason: str | None = None
     next_action: str | None = None
-    # The occurrence keeps its stable Job identity as the durable link.  The
-    # Worker fills these read-back fields from the linked Job after Task
-    # creation/terminal completion; keeping them optional preserves older
-    # occurrence rows and scheduler emission semantics.
-    task_id: str | None = None
+    # The occurrence keeps the exact Task identity it admitted as the durable
+    # link; the Worker updates outcome/reason on that same Task.
     failure_category: str | None = None
 
     def __post_init__(self) -> None:
         for label, value, maximum in (
             ("occurrence ID", self.occurrence_id, 192),
             ("definition ID", self.definition_id, 128),
-            ("Job ID", self.job_id, 128),
+            ("Task ID", self.task_id, 128),
             ("configuration revision ID", self.configuration_revision_id, 128),
             ("ResourceLibrary ID", self.resource_library_id, 128),
         ):
@@ -724,7 +682,6 @@ class AutomationDefinitionOccurrence:
             "definitionId": self.definition_id,
             "occurrenceAt": self.occurrence_at.isoformat(),
             "emittedAt": self.emitted_at.isoformat(),
-            "jobId": self.job_id,
             "definitionFingerprint": self.definition_fingerprint,
             "definitionVersion": self.definition_version,
             "configurationRevisionId": self.configuration_revision_id,
@@ -757,104 +714,6 @@ def _is_sha256(value: object) -> bool:
         and len(value) == 64
         and all(character in "0123456789abcdef" for character in value)
     )
-
-
-@dataclass(frozen=True)
-class AutomationJob:
-    job_id: str
-    command: AutomationCommand
-    status: AutomationJobStatus
-    created_at: datetime
-    updated_at: datetime
-    limit: int | None = None
-    started_at: datetime | None = None
-    completed_at: datetime | None = None
-    task_id: str | None = None
-    error: str | None = None
-    cancellation_requested: bool = False
-    schedule_id: str | None = None
-    execute_authorized: bool = False
-    claim_token: str | None = None
-    worker_id: str | None = None
-    configuration_snapshot_id: str | None = None
-    configuration_snapshot_digest: str | None = None
-    failure_category: str | None = None
-    failure_durable_state: str | None = None
-    failure_side_effects: str | None = None
-    failure_retry_safe: bool | None = None
-    failure_next_action: str | None = None
-    # These fields are populated only for managed Automation Task Definition
-    # occurrences.  Legacy jobs deliberately remain unpinned.
-    definition_id: str | None = None
-    definition_fingerprint: str | None = None
-    definition_version: int | None = None
-    occurrence_at: datetime | None = None
-    run_mode: AutomationTaskRunMode | None = None
-    resource_library_id: str | None = None
-    source_scope: str | None = None
-    configuration_snapshot_version: int | None = None
-    # Additive intent evidence for the two definition-pinned execution
-    # entrances.  A normal due occurrence keeps the default scheduled origin;
-    # an explicit Run once records its own exact command identity, the current
-    # principal and (when supplied) the client request id used for lost-response
-    # reconciliation.  None of these values grants anything by itself.
-    execution_origin: AutomationJobOrigin = AutomationJobOrigin.SCHEDULED
-    execution_principal: str | None = None
-    admission_request_id: str | None = None
-
-    def __post_init__(self) -> None:
-        if not isinstance(self.execution_origin, AutomationJobOrigin):
-            object.__setattr__(
-                self, "execution_origin", AutomationJobOrigin.parse(self.execution_origin)
-            )
-        for label, value, maximum in (
-            ("execution principal", self.execution_principal, 200),
-            ("admission request id", self.admission_request_id, 200),
-        ):
-            if value is not None and (
-                not isinstance(value, str)
-                or not value.strip()
-                or len(value) > maximum
-                or "\x00" in value
-            ):
-                raise ValueError(f"automation job {label} is invalid")
-        if self.execution_origin is AutomationJobOrigin.RUN_ONCE:
-            if not self.definition_id or not self.execution_principal:
-                raise ValueError(
-                    "a Run once automation job requires its definition and explicit principal"
-                )
-
-    @property
-    def run_once(self) -> bool:
-        return self.execution_origin is AutomationJobOrigin.RUN_ONCE
-
-    @property
-    def automation_definition_id(self) -> str | None:
-        return self.definition_id
-
-    @property
-    def automation_definition_fingerprint(self) -> str | None:
-        return self.definition_fingerprint
-
-    @property
-    def automation_definition_version(self) -> int | None:
-        return self.definition_version
-
-    @property
-    def definition_pinned(self) -> bool:
-        return self.definition_id is not None
-
-    @property
-    def configuration_revision_id(self) -> str | None:
-        return self.configuration_snapshot_id
-
-    @property
-    def configuration_revision_digest(self) -> str | None:
-        return self.configuration_snapshot_digest
-
-    @property
-    def configuration_revision_version(self) -> int | None:
-        return self.configuration_snapshot_version
 
 
 @dataclass(frozen=True)
@@ -947,7 +806,7 @@ class ScheduleState:
     schedule_id: str
     next_run_at: datetime
     updated_at: datetime
-    last_job_id: str | None = None
+    last_task_id: str | None = None
 
 
 @dataclass(frozen=True)
@@ -956,105 +815,31 @@ class ScheduleAuditRecord:
     schedule_id: str
     occurrence_at: datetime
     emitted_at: datetime
-    job_id: str
+    task_id: str
     command: AutomationCommand
     next_run_at: datetime
 
 
-class AutomationJobControlConflict(ValueError):
-    """One bounded refusal of a Job lifecycle control.
+class AutomationSchedulerRepository(Protocol):
+    """Durable schedule/occurrence facts around Tasks, never a second queue."""
 
-    The refusal is raised by the atomic compare-and-set transition itself, so a
-    concurrent or repeated control can never be admitted twice and the message
-    never carries a raw adapter or protocol value.
-    """
-
-    def __init__(
-        self,
-        code: str,
-        message: str,
-        *,
-        durable_state: str,
-        next_action: str,
-        retry_safe: bool = False,
-        current_version: str | None = None,
-    ) -> None:
-        super().__init__(message)
-        self.code = code
-        self.message = message
-        self.durable_state = durable_state
-        self.next_action = next_action
-        self.retry_safe = retry_safe
-        self.current_version = current_version
-
-    def document(self) -> dict[str, object]:
-        return {
-            "reason": self.code,
-            "durableState": self.durable_state,
-            "sideEffects": "none",
-            "retrySafe": self.retry_safe,
-            "nextAction": self.next_action,
-            **({"currentVersion": self.current_version} if self.current_version else {}),
-        }
-
-
-def job_control_version(job: AutomationJob) -> str:
-    """The durable Job state version one lifecycle control binds to.
-
-    A claimed running Job advances ``updated_at`` as Worker liveness evidence,
-    which is not a state transition.  Such a Job therefore binds the immutable
-    claim time it was admitted at, so a heartbeat can never invalidate a
-    deliberate operator control while every real transition still can.
-    """
-
-    if job.status is AutomationJobStatus.RUNNING and job.claim_token and job.started_at:
-        return job.started_at.isoformat()
-    return job.updated_at.isoformat()
-
-
-class AutomationJobRepository(Protocol):
-    def create_job(self, job: AutomationJob) -> None: ...
-    def admit_job(self, job: AutomationJob, maximum_active_jobs: int) -> bool: ...
-    def get_job(self, job_id: str) -> AutomationJob | None: ...
-    def list_jobs(
-        self,
-        *,
-        limit: int | None = None,
-        after: tuple[datetime, str] | None = None,
-        before: tuple[datetime, str] | None = None,
-        status: str | None = None,
-        command: str | None = None,
-    ) -> tuple[AutomationJob, ...]: ...
-    def claim_next_job(
-        self,
-        now: datetime,
-        *,
-        worker_id: str | None = None,
-    ) -> AutomationJob | None: ...
-    def update_job(self, job: AutomationJob) -> None: ...
-    def request_job_cancellation(
-        self, job_id: str, now: datetime, *, expected_version: str | None = None
-    ) -> AutomationJob: ...
-    def job_cancellation_requested(self, job_id: str) -> bool: ...
-    def heartbeat_job(self, job_id: str, claim_token: str, now: datetime) -> bool: ...
-    def complete_claimed_job(self, job: AutomationJob) -> bool: ...
-    def list_stale_running_jobs(
-        self, before: datetime, *, limit: int = 100
-    ) -> tuple[AutomationJob, ...]: ...
-    def requeue_stale_job(self, job_id: str, before: datetime, now: datetime) -> AutomationJob: ...
     def get_schedule_state(self, schedule_id: str) -> ScheduleState | None: ...
     def initialize_schedule_state(
         self, schedule_id: str, next_run_at: datetime, now: datetime
     ) -> ScheduleState: ...
-    def enqueue_due_schedule(
+    def admit_due_schedule_task(
         self,
         schedule_id: str,
-        job: AutomationJob,
+        task: object,
+        state: object,
+        *,
+        command: str,
         occurrence_at: datetime,
         next_run_at: datetime,
         now: datetime,
-        maximum_active_jobs: int,
-    ) -> bool: ...
+        capacity: int,
+        display: object | None = None,
+    ) -> object | None: ...
     def list_schedule_states(self) -> tuple[ScheduleState, ...]: ...
     def list_schedule_audit(
         self,
@@ -1093,15 +878,17 @@ class AutomationJobRepository(Protocol):
         now: datetime,
         expected_next_run_at: datetime | None = None,
     ) -> AutomationDefinitionDueState | None: ...
-    def enqueue_due_automation_definition(
+    def admit_due_automation_definition_task(
         self,
         definition_id: str,
-        job: AutomationJob,
+        task: object,
+        state: object,
         occurrence: AutomationDefinitionOccurrence,
         next_run_at: datetime,
         now: datetime,
-        maximum_active_jobs: int,
-    ) -> bool: ...
+        capacity: int,
+        display: object | None = None,
+    ) -> object | None: ...
     def get_latest_automation_definition_occurrence(
         self, definition_id: str
     ) -> AutomationDefinitionOccurrence | None: ...

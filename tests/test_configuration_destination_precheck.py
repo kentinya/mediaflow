@@ -110,7 +110,6 @@ class ManagedDestinationPrecheckTests(unittest.TestCase):
                 "recognition_reviews",
                 "metadata_reviews",
                 "classification_reviews",
-                "automation_jobs",
                 "execution_authorizations",
             ):
                 with self.subTest(table=table):
@@ -2020,7 +2019,7 @@ class ManagedDestinationPrecheckTests(unittest.TestCase):
                 # Runtime schema 43 adds durable scope continuations; schema
                 # 44 links exact-Preview recovery to the paused source Task and
                 # schema 54 adds the Task-owned scheduling facts.
-                self.assertEqual(RUNTIME_SCHEMA_VERSION, 57)
+                self.assertEqual(RUNTIME_SCHEMA_VERSION, 58)
 
 
 if __name__ == "__main__":

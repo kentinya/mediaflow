@@ -5,7 +5,6 @@ from datetime import datetime
 from enum import StrEnum
 from typing import Protocol
 
-from mediaflow.domain.automation import AutomationJob
 from mediaflow.domain.task_persistence import PersistentTaskItem
 
 
@@ -95,7 +94,6 @@ class MetadataCorrectionContinuation:
     created_at: datetime
     updated_at: datetime
     actor: str
-    job_id: str
     new_task_id: str | None = None
     new_result_id: str | None = None
     started_at: datetime | None = None
@@ -131,41 +129,6 @@ class MetadataCorrectionRepository(Protocol):
     def get_metadata_correction_continuation_for_review(
         self, review_id: str
     ) -> MetadataCorrectionContinuation | None: ...
-    def get_metadata_correction_continuation_for_job(
-        self, job_id: str
-    ) -> MetadataCorrectionContinuation | None: ...
-    def admit_metadata_correction_continuation(
-        self,
-        job: AutomationJob,
-        continuation: MetadataCorrectionContinuation,
-        *,
-        maximum_active_jobs: int,
-    ) -> tuple[MetadataCorrectionContinuation, bool]: ...
-    def mark_metadata_correction_continuation_running(
-        self, job_id: str, now: datetime | None = None
-    ) -> MetadataCorrectionContinuation: ...
-    def bind_metadata_correction_continuation_task(
-        self, job_id: str, task_id: str
-    ) -> MetadataCorrectionContinuation: ...
-    def complete_metadata_correction_continuation(
-        self,
-        job_id: str,
-        *,
-        new_task_id: str | None = None,
-        new_result_id: str | None = None,
-        success: bool,
-        error: str | None = None,
-        recovery: str | None = None,
-        now: datetime | None = None,
-    ) -> MetadataCorrectionContinuation: ...
-    def fail_queued_metadata_correction_continuation(
-        self,
-        job_id: str,
-        *,
-        error: str,
-        recovery: str,
-        now: datetime | None = None,
-    ) -> MetadataCorrectionContinuation: ...
-    def cancel_metadata_correction_continuation(
-        self, job_id: str, *, now: datetime | None = None
-    ) -> MetadataCorrectionContinuation: ...
+    def list_metadata_correction_continuations(
+        self, *, limit: int = 100
+    ) -> tuple[MetadataCorrectionContinuation, ...]: ...

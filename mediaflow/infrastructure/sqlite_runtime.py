@@ -12,21 +12,14 @@ from pathlib import Path
 from uuid import NAMESPACE_URL, UUID, uuid4, uuid5
 
 from mediaflow.domain.automation import (
-    AutomationClaimLost,
     AutomationCommand,
     AutomationDefinitionDueState,
     AutomationDefinitionOccurrence,
-    AutomationJob,
-    AutomationJobControlConflict,
-    AutomationJobOrigin,
-    AutomationJobStatus,
-    AutomationQueueFull,
     AutomationTaskRunMode,
     ProcessingWorker,
     ScheduleAuditRecord,
     ScheduleState,
     WorkerStatus,
-    job_control_version,
     validate_worker_commands,
     validate_worker_id,
     validate_worker_label,
@@ -42,7 +35,6 @@ from mediaflow.domain.classification_review import (
     ClassificationReviewStatus,
 )
 from mediaflow.domain.dashboard import (
-    DashboardJobCounts,
     DashboardPersistentState,
     DashboardTaskCounts,
     RecentOperationalFailure,
@@ -129,8 +121,6 @@ from mediaflow.domain.media_evidence import (
 )
 from mediaflow.domain.metadata_correction import (
     MetadataCorrectionBatchResolveRequest,
-    MetadataCorrectionContinuation,
-    MetadataCorrectionContinuationStatus,
     MetadataCorrectionDecisionAudit,
     MetadataCorrectionReview,
     MetadataCorrectionStatus,
@@ -151,8 +141,6 @@ from mediaflow.domain.notification import (
 from mediaflow.domain.operations_run import (
     COMMAND_LABELS,
     DISCOVERY_COMMAND_LABEL,
-    ORGANIZING_JOB_LINEAGE_RELATIONS,
-    ORGANIZING_JOB_SEED_COMMAND_FAMILIES,
     ORGANIZING_RETRY_TASK_FAMILIES,
     ORGANIZING_TASK_LINEAGE_RELATIONS,
     ORGANIZING_TASK_SEED_TASK_FAMILIES,
@@ -196,8 +184,6 @@ from mediaflow.domain.recovery_batch import (
 )
 from mediaflow.domain.recovery_continuation import (
     RecoveryContinuation,
-    RecoveryContinuationError,
-    RecoveryContinuationReason,
     RecoveryContinuationStatus,
 )
 from mediaflow.domain.resident_services import (
@@ -206,13 +192,6 @@ from mediaflow.domain.resident_services import (
     ResidentServiceWaitState,
     validate_resident_service_name,
     validate_resident_waiting_reason,
-)
-from mediaflow.domain.scope_continuation import (
-    ScopeContinuation,
-    ScopeContinuationError,
-    ScopeContinuationReason,
-    ScopeContinuationStatus,
-    ScopeRecoveryLink,
 )
 from mediaflow.domain.security import SecurityAuditRecord
 from mediaflow.domain.source_evidence import (
@@ -302,8 +281,7 @@ from mediaflow.infrastructure.task_source_schema import ensure_task_occurrence_c
 # Schema 39 binds notification deliveries to their original target digest;
 # legacy deliveries retain unknown authority and cannot be claimed automatically.
 # Schema 40 adds the read-supporting indexes of the unified Operations run
-# inventory: the explicit ``automation_jobs.task_id`` linkage index and the
-# Task status/created ordering index.  It is purely additive — no column, row,
+# inventory.  It is purely additive — no column, row,
 # pin, link or authority value is rewritten — and the inventory itself stays a
 # read projection with no new execution authority.
 # Schema 41 adds the additive ``operations_run_display`` table: a shared
@@ -398,7 +376,7 @@ from mediaflow.infrastructure.task_source_schema import ensure_task_occurrence_c
 # stage never reached such a boundary has no row, and the migration backfills
 # nothing: no existing Task, TaskItem, Result, pin, authorization or Job row is
 # rewritten, re-labelled or made executable by the upgrade.
-SCHEMA_VERSION = 57
+SCHEMA_VERSION = 58
 
 #: The conservative owner generation written to ``file_locks`` rows that predate
 #: schema 38.  It is a fixed, non-guessable-looking sentinel rather than NULL so
@@ -1528,7 +1506,6 @@ class SQLiteTaskRepository:
             raise ValueError("dashboard recent limit must be between 1 and 50")
         with self._lock:
             task_counts = self._status_counts("tasks", "status")
-            job_counts = self._status_counts("automation_jobs", "status")
             pending_confirmations = self._count_where("conflict_confirmations", "status", "pending")
             pending_metadata_reviews = self._count_where("metadata_reviews", "status", "pending")
             pending_classification_reviews = self._count_where(
@@ -1546,14 +1523,6 @@ class SQLiteTaskRepository:
                 failed=task_counts.get("failed", 0),
                 cancelled=task_counts.get("cancelled", 0),
                 paused=task_counts.get("paused", 0),
-            ),
-            jobs=DashboardJobCounts(
-                total=sum(job_counts.values()),
-                pending=job_counts.get("pending", 0),
-                running=job_counts.get("running", 0),
-                completed=job_counts.get("completed", 0),
-                failed=job_counts.get("failed", 0),
-                cancelled=job_counts.get("cancelled", 0),
             ),
             pending_confirmations=pending_confirmations,
             pending_metadata_reviews=pending_metadata_reviews,
@@ -1580,9 +1549,6 @@ class SQLiteTaskRepository:
             SELECT 'task' AS kind, task_id AS identifier, status, updated_at AS occurred_at,
                    'task_failed' AS category
             FROM tasks WHERE status IN ('failed', 'partial_success')
-            UNION ALL
-            SELECT 'job', job_id, status, updated_at, 'job_failed'
-            FROM automation_jobs WHERE status='failed'
             UNION ALL
             SELECT 'notification', delivery_id, status, updated_at, 'delivery_failed'
             FROM notification_deliveries WHERE status='dead-letter'
@@ -2198,13 +2164,6 @@ class SQLiteTaskRepository:
             ).fetchone()
         return self._recovery_continuation(row) if row else None
 
-    def get_recovery_continuation_for_job(self, job_id: str) -> RecoveryContinuation | None:
-        with self._lock:
-            row = self._connection.execute(
-                "SELECT * FROM recovery_continuations WHERE job_id=?", (job_id,)
-            ).fetchone()
-        return self._recovery_continuation(row) if row else None
-
     def list_recovery_continuations(
         self, item_id: str, *, limit: int = 32
     ) -> tuple[RecoveryContinuation, ...]:
@@ -2614,8 +2573,8 @@ class SQLiteTaskRepository:
                         """INSERT INTO recovery_batch_items
                         (batch_item_id, batch_id, source_task_id, source_item_id,
                          checkpoint_version, status, created_at, updated_at, request_id,
-                         continuation_id, job_id, reason, error, next_action)
-                        VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)""",
+                         continuation_id, reason, error, next_action)
+                        VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)""",
                         self._recovery_batch_item_values(item),
                     )
                 self._connection.commit()
@@ -2627,14 +2586,13 @@ class SQLiteTaskRepository:
         with self._lock, self._connection:
             cursor = self._connection.execute(
                 """UPDATE recovery_batch_items SET status=?, updated_at=?, request_id=?,
-                continuation_id=?, job_id=?, reason=?, error=?, next_action=?
+                continuation_id=?, reason=?, error=?, next_action=?
                 WHERE batch_item_id=?""",
                 (
                     item.status.value,
                     item.updated_at.isoformat(),
                     item.request_id,
                     item.continuation_id,
-                    item.job_id,
                     item.reason,
                     item.error,
                     item.next_action,
@@ -2704,721 +2662,6 @@ class SQLiteTaskRepository:
                 (source_task_id, limit),
             ).fetchall()
         return tuple(self.get_recovery_batch(row["batch_id"]) for row in rows)
-
-    def admit_recovery_continuation(
-        self,
-        job: AutomationJob,
-        continuation: RecoveryContinuation,
-        *,
-        maximum_active_jobs: int,
-        checkpoint_projector=None,
-        batch_item_id: str | None = None,
-    ) -> tuple[RecoveryContinuation, bool]:
-        """Atomically record one continuation and its Job for an active request.
-
-        The caller supplies the immutable checkpoint version it presented.  The
-        repository re-projects the same bounded context while holding an
-        IMMEDIATE transaction, so a concurrent review/result/request cannot be
-        silently overwritten.  The parent request stays active until the
-        continuation reaches a terminal state.
-        """
-
-        if (
-            isinstance(maximum_active_jobs, bool)
-            or not isinstance(maximum_active_jobs, int)
-            or not 1 <= maximum_active_jobs <= 10_000
-        ):
-            raise ValueError("maximum active Jobs must be between 1 and 10000")
-        if (
-            job.command is not AutomationCommand.RECOVERY_CONTINUATION
-            or job.status is not AutomationJobStatus.PENDING
-            or job.limit != 1
-            or job.execute_authorized
-            or job.task_id is not None
-            or job.schedule_id is not None
-            or job.claim_token is not None
-            or job.cancellation_requested
-            or not job.configuration_snapshot_id
-            or not job.configuration_snapshot_digest
-        ):
-            raise ValueError("recovery continuation Job identity is invalid")
-        if (
-            continuation.status is not RecoveryContinuationStatus.QUEUED
-            or continuation.job_id != job.job_id
-            or continuation.configuration_snapshot_id != job.configuration_snapshot_id
-            or continuation.configuration_snapshot_digest != job.configuration_snapshot_digest
-            or continuation.new_task_id is not None
-            or continuation.new_result_id is not None
-            or continuation.started_at is not None
-            or continuation.completed_at is not None
-            or continuation.error is not None
-            or continuation.recovery is not None
-        ):
-            raise ValueError("recovery continuation identity is invalid")
-        with self._lock:
-            self._connection.execute("BEGIN IMMEDIATE")
-            try:
-                request = self._connection.execute(
-                    """SELECT r.*, i.task_id AS item_task_id, i.status AS item_status,
-                    i.stage AS item_stage,
-                    t.configuration_snapshot_id AS task_snapshot_id,
-                    t.configuration_snapshot_digest AS task_snapshot_digest
-                    FROM recovery_requests r
-                    JOIN task_items i ON i.item_id=r.item_id
-                    JOIN tasks t ON t.task_id=r.task_id
-                    WHERE r.request_id=?""",
-                    (continuation.request_id,),
-                ).fetchone()
-                if request is None:
-                    raise ValueError("recovery request was not found")
-                if request["status"] != RecoveryRequestStatus.PENDING.value:
-                    raise ValueError("recovery request is no longer active")
-                if (
-                    request["task_id"] != continuation.source_task_id
-                    or request["item_id"] != continuation.source_item_id
-                    or request["item_task_id"] != continuation.source_task_id
-                ):
-                    raise ValueError("recovery continuation request identity is stale")
-                if (
-                    request["configuration_snapshot_id"] != continuation.configuration_snapshot_id
-                    or request["configuration_snapshot_digest"]
-                    != continuation.configuration_snapshot_digest
-                    or request["task_snapshot_id"] != continuation.configuration_snapshot_id
-                    or request["task_snapshot_digest"] != continuation.configuration_snapshot_digest
-                ):
-                    raise ValueError("recovery continuation snapshot pin is stale")
-                if request["item_status"] != TaskItemStatus.PENDING.value:
-                    raise ValueError("recovery continuation source item is no longer pending")
-                existing = self._connection.execute(
-                    """SELECT * FROM recovery_continuations
-                    WHERE request_id=? AND status IN (?, ?)
-                    ORDER BY created_at DESC, continuation_id DESC LIMIT 1""",
-                    (
-                        continuation.request_id,
-                        RecoveryContinuationStatus.QUEUED.value,
-                        RecoveryContinuationStatus.RUNNING.value,
-                    ),
-                ).fetchone()
-                if existing is not None:
-                    self._connection.commit()
-                    return self._recovery_continuation(existing), False
-                context = self._get_processing_checkpoint_context_locked(
-                    continuation.source_item_id, result_limit=32, audit_limit=200
-                )
-                if checkpoint_projector is None:
-                    from mediaflow.application.processing_checkpoint import (
-                        ProcessingCheckpointService,
-                    )
-
-                    current = ProcessingCheckpointService(self)._project(context)
-                else:
-                    current = checkpoint_projector(context)
-                if current.checkpoint_version != continuation.checkpoint_version:
-                    self._connection.rollback()
-                    raise RecoveryContinuationError(
-                        RecoveryContinuationReason.STALE_CHECKPOINT,
-                        "checkpoint version is stale; refresh before continuing recovery",
-                        current_checkpoint_version=current.checkpoint_version,
-                    )
-                if not self._has_job_capacity(maximum_active_jobs):
-                    self._connection.rollback()
-                    raise AutomationQueueFull(
-                        f"automation queue reached configured active Job limit "
-                        f"{maximum_active_jobs}"
-                    )
-                self._insert_job(job)
-                self._connection.execute(
-                    """INSERT INTO recovery_continuations
-                    (continuation_id, request_id, source_task_id, source_item_id,
-                     checkpoint_version, configuration_snapshot_id,
-                     configuration_snapshot_digest, boundary, status, created_at,
-                     updated_at, actor, job_id, new_task_id, new_result_id, started_at,
-                     completed_at, error, recovery, authority_statement)
-                    VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)""",
-                    self._recovery_continuation_values(continuation),
-                )
-                if batch_item_id is not None:
-                    cursor = self._connection.execute(
-                        """UPDATE recovery_batch_items
-                        SET status=?, updated_at=?, request_id=?, continuation_id=?,
-                            job_id=?, reason=NULL, error=NULL, next_action=?
-                        WHERE batch_item_id=? AND batch_id IN
-                            (SELECT batch_id FROM recovery_batches
-                             WHERE source_task_id=?) AND status=?""",
-                        (
-                            RecoveryBatchItemStatus.QUEUED.value,
-                            datetime.now(UTC).isoformat(),
-                            continuation.request_id,
-                            continuation.continuation_id,
-                            continuation.job_id,
-                            continuation.next_action(),
-                            batch_item_id,
-                            continuation.source_task_id,
-                            RecoveryBatchItemStatus.SELECTED.value,
-                        ),
-                    )
-                    if cursor.rowcount != 1:
-                        raise ValueError("recovery batch child linkage is unavailable")
-                self._connection.commit()
-                return continuation, True
-            except Exception:
-                self._connection.rollback()
-                raise
-
-    def mark_recovery_continuation_running(
-        self, job_id: str, now: datetime | None = None
-    ) -> RecoveryContinuation:
-        timestamp = now or datetime.now(UTC)
-        with self._lock, self._connection:
-            cursor = self._connection.execute(
-                """UPDATE recovery_continuations
-                SET status=?, updated_at=?, started_at=COALESCE(started_at, ?)
-                WHERE job_id=? AND status=?""",
-                (
-                    RecoveryContinuationStatus.RUNNING.value,
-                    timestamp.isoformat(),
-                    timestamp.isoformat(),
-                    job_id,
-                    RecoveryContinuationStatus.QUEUED.value,
-                ),
-            )
-            if cursor.rowcount != 1:
-                raise ValueError("recovery continuation is not queued")
-        return self.require_recovery_continuation_by_job(job_id)
-
-    def bind_recovery_continuation_task(self, job_id: str, task_id: str) -> RecoveryContinuation:
-        if not isinstance(task_id, str) or not task_id:
-            raise ValueError("continuation Task ID is required")
-        with self._lock, self._connection:
-            task = self._connection.execute(
-                "SELECT task_id FROM tasks WHERE task_id=?", (task_id,)
-            ).fetchone()
-            if task is None:
-                raise LookupError(f"continuation Task {task_id!r} was not found")
-            cursor = self._connection.execute(
-                """UPDATE recovery_continuations
-                SET updated_at=?, new_task_id=?
-                WHERE job_id=? AND status=? AND new_task_id IS NULL""",
-                (
-                    datetime.now(UTC).isoformat(),
-                    task_id,
-                    job_id,
-                    RecoveryContinuationStatus.RUNNING.value,
-                ),
-            )
-            if cursor.rowcount != 1:
-                continuation = self.get_recovery_continuation_for_job(job_id)
-                if continuation is None:
-                    raise LookupError(f"recovery continuation for Job {job_id!r} was not found")
-                raise ValueError("recovery continuation Task is already bound")
-        return self.require_recovery_continuation_by_job(job_id)
-
-    def complete_recovery_continuation(
-        self,
-        job_id: str,
-        *,
-        new_task_id: str | None = None,
-        new_result_id: str | None = None,
-        success: bool,
-        error: str | None = None,
-        recovery: str | None = None,
-        now: datetime | None = None,
-    ) -> RecoveryContinuation:
-        timestamp = now or datetime.now(UTC)
-        status = (
-            RecoveryContinuationStatus.COMPLETED if success else RecoveryContinuationStatus.FAILED
-        )
-        request_status = (
-            RecoveryRequestStatus.COMPLETED if success else RecoveryRequestStatus.FAILED
-        )
-        with self._lock, self._connection:
-            self._connection.execute("BEGIN IMMEDIATE")
-            try:
-                cursor = self._connection.execute(
-                    """UPDATE recovery_continuations
-                    SET status=?, updated_at=?, new_task_id=?, new_result_id=?,
-                        completed_at=?, error=?, recovery=?
-                    WHERE job_id=? AND status=?""",
-                    (
-                        status.value,
-                        timestamp.isoformat(),
-                        new_task_id,
-                        new_result_id,
-                        timestamp.isoformat(),
-                        error,
-                        recovery,
-                        job_id,
-                        RecoveryContinuationStatus.RUNNING.value,
-                    ),
-                )
-                if cursor.rowcount != 1:
-                    self._connection.rollback()
-                    raise ValueError("recovery continuation is not running")
-                row = self._connection.execute(
-                    "SELECT request_id FROM recovery_continuations WHERE job_id=?",
-                    (job_id,),
-                ).fetchone()
-                if row is not None:
-                    self._resolve_recovery_request_locked(
-                        row["request_id"], request_status, timestamp
-                    )
-                self._connection.commit()
-            except Exception:
-                self._connection.rollback()
-                raise
-        return self.require_recovery_continuation_by_job(job_id)
-
-    def fail_queued_recovery_continuation(
-        self,
-        job_id: str,
-        *,
-        error: str,
-        recovery: str,
-        now: datetime | None = None,
-    ) -> RecoveryContinuation:
-        timestamp = now or datetime.now(UTC)
-        with self._lock, self._connection:
-            self._connection.execute("BEGIN IMMEDIATE")
-            try:
-                cursor = self._connection.execute(
-                    """UPDATE recovery_continuations
-                    SET status=?, updated_at=?, completed_at=?, error=?, recovery=?
-                    WHERE job_id=? AND status=?""",
-                    (
-                        RecoveryContinuationStatus.FAILED.value,
-                        timestamp.isoformat(),
-                        timestamp.isoformat(),
-                        error,
-                        recovery,
-                        job_id,
-                        RecoveryContinuationStatus.QUEUED.value,
-                    ),
-                )
-                if cursor.rowcount != 1:
-                    self._connection.rollback()
-                    raise ValueError("recovery continuation is not queued")
-                row = self._connection.execute(
-                    "SELECT request_id FROM recovery_continuations WHERE job_id=?",
-                    (job_id,),
-                ).fetchone()
-                if row is not None:
-                    self._resolve_recovery_request_locked(
-                        row["request_id"], RecoveryRequestStatus.FAILED, timestamp
-                    )
-                self._connection.commit()
-            except Exception:
-                self._connection.rollback()
-                raise
-        return self.require_recovery_continuation_by_job(job_id)
-
-    def cancel_recovery_continuation(
-        self, job_id: str, *, now: datetime | None = None
-    ) -> RecoveryContinuation:
-        timestamp = now or datetime.now(UTC)
-        with self._lock, self._connection:
-            self._connection.execute("BEGIN IMMEDIATE")
-            try:
-                cursor = self._connection.execute(
-                    """UPDATE recovery_continuations
-                    SET status=?, updated_at=?, completed_at=?, error=?, recovery=?
-                    WHERE job_id=? AND status IN (?, ?)""",
-                    (
-                        RecoveryContinuationStatus.CANCELLED.value,
-                        timestamp.isoformat(),
-                        timestamp.isoformat(),
-                        "recovery continuation Job was cancelled before completion",
-                        "refresh the Task item checkpoint and explicitly continue again",
-                        job_id,
-                        RecoveryContinuationStatus.QUEUED.value,
-                        RecoveryContinuationStatus.RUNNING.value,
-                    ),
-                )
-                if cursor.rowcount != 1:
-                    continuation = self.get_recovery_continuation_for_job(job_id)
-                    if continuation is None:
-                        raise LookupError(f"recovery continuation for Job {job_id!r} was not found")
-                    if continuation.status is RecoveryContinuationStatus.CANCELLED:
-                        return continuation
-                    self._connection.rollback()
-                    raise ValueError("recovery continuation is not cancellable")
-                row = self._connection.execute(
-                    "SELECT request_id FROM recovery_continuations WHERE job_id=?",
-                    (job_id,),
-                ).fetchone()
-                if row is not None:
-                    self._resolve_recovery_request_locked(
-                        row["request_id"], RecoveryRequestStatus.CANCELLED, timestamp
-                    )
-                self._connection.commit()
-            except Exception:
-                self._connection.rollback()
-                raise
-        return self.require_recovery_continuation_by_job(job_id)
-
-    def require_recovery_continuation_by_job(self, job_id: str) -> RecoveryContinuation:
-        continuation = self.get_recovery_continuation_for_job(job_id)
-        if continuation is None:
-            raise LookupError(f"recovery continuation for Job {job_id!r} was not found")
-        return continuation
-
-    # -- Durable queued continuation of one paused Task's remaining scope ----
-
-    def get_scope_continuation_for_job(self, job_id: str) -> ScopeContinuation | None:
-        with self._lock:
-            row = self._connection.execute(
-                "SELECT * FROM scope_continuations WHERE job_id=?", (job_id,)
-            ).fetchone()
-        return self._scope_continuation(row) if row else None
-
-    def get_scope_continuation_for_source_task(self, task_id: str) -> ScopeContinuation | None:
-        """The newest continuation of one source Task, active or historical."""
-
-        with self._lock:
-            row = self._connection.execute(
-                "SELECT * FROM scope_continuations WHERE source_task_id=? "
-                "ORDER BY created_at DESC, continuation_id DESC LIMIT 1",
-                (task_id,),
-            ).fetchone()
-        return self._scope_continuation(row) if row else None
-
-    def get_scope_continuation_for_new_task(self, task_id: str) -> ScopeContinuation | None:
-        """The continuation that produced one Task, or ``None``.
-
-        This is the explicit durable child→parent link the continuation-chain
-        walk follows; it is never inferred from a filename, label or creation
-        time.
-        """
-
-        with self._lock:
-            row = self._connection.execute(
-                "SELECT * FROM scope_continuations WHERE new_task_id=? "
-                "ORDER BY created_at DESC, continuation_id DESC LIMIT 1",
-                (task_id,),
-            ).fetchone()
-        return self._scope_continuation(row) if row else None
-
-    def list_scope_continuations(
-        self, task_id: str, *, limit: int = 32
-    ) -> tuple[ScopeContinuation, ...]:
-        if isinstance(limit, bool) or not isinstance(limit, int) or not 1 <= limit <= 100:
-            raise ValueError("scope continuation limit must be between 1 and 100")
-        with self._lock:
-            rows = self._connection.execute(
-                "SELECT * FROM scope_continuations WHERE source_task_id=? "
-                "ORDER BY created_at DESC, continuation_id DESC LIMIT ?",
-                (task_id, limit),
-            ).fetchall()
-        return tuple(self._scope_continuation(row) for row in rows)
-
-    def list_scope_recovery_links(
-        self, task_id: str, *, limit: int = 32
-    ) -> tuple[ScopeRecoveryLink, ...]:
-        """Read exact-Preview recovery history linked to one source Task."""
-
-        if isinstance(limit, bool) or not isinstance(limit, int) or not 1 <= limit <= 100:
-            raise ValueError("scope recovery limit must be between 1 and 100")
-        with self._lock:
-            rows = self._connection.execute(
-                """SELECT p.preview_id, p.recovery_source_task_id, p.status AS preview_status,
-                    p.created_at, (SELECT COUNT(*) FROM manual_preview_items i
-                                   WHERE i.preview_id=p.preview_id) AS item_count,
-                    e.execution_id, e.task_id AS new_task_id,
-                    e.status AS execution_status, e.completed_at
-                FROM manual_previews p
-                LEFT JOIN manual_executions e ON e.preview_id=p.preview_id
-                WHERE p.recovery_source_task_id=?
-                ORDER BY p.created_at DESC, p.preview_id DESC, e.created_at DESC,
-                         e.execution_id DESC LIMIT ?""",
-                (task_id, limit),
-            ).fetchall()
-        return tuple(self._scope_recovery_link(row) for row in rows)
-
-    def get_scope_recovery_for_new_task(self, task_id: str) -> ScopeRecoveryLink | None:
-        """The exact-Preview recovery that admitted one ManualExecution Task."""
-
-        with self._lock:
-            row = self._connection.execute(
-                """SELECT p.preview_id, p.recovery_source_task_id, p.status AS preview_status,
-                    p.created_at, (SELECT COUNT(*) FROM manual_preview_items i
-                                   WHERE i.preview_id=p.preview_id) AS item_count,
-                    e.execution_id, e.task_id AS new_task_id,
-                    e.status AS execution_status, e.completed_at
-                FROM manual_executions e
-                JOIN manual_previews p ON p.preview_id=e.preview_id
-                WHERE e.task_id=? AND p.recovery_source_task_id IS NOT NULL
-                ORDER BY e.created_at DESC, e.execution_id DESC LIMIT 1""",
-                (task_id,),
-            ).fetchone()
-        return self._scope_recovery_link(row) if row else None
-
-    @staticmethod
-    def _scope_recovery_link(row: sqlite3.Row) -> ScopeRecoveryLink:
-        return ScopeRecoveryLink(
-            source_task_id=row["recovery_source_task_id"],
-            preview_id=row["preview_id"],
-            preview_status=row["preview_status"],
-            created_at=datetime.fromisoformat(row["created_at"]),
-            item_count=int(row["item_count"]),
-            execution_id=row["execution_id"],
-            new_task_id=row["new_task_id"],
-            execution_status=row["execution_status"],
-            completed_at=(
-                datetime.fromisoformat(row["completed_at"]) if row["completed_at"] else None
-            ),
-        )
-
-    def admit_scope_continuation(
-        self,
-        job: AutomationJob,
-        continuation: ScopeContinuation,
-        *,
-        maximum_active_jobs: int,
-    ) -> tuple[ScopeContinuation, bool]:
-        """Atomically record one continuation and its queued Job.
-
-        The source Task is re-read while holding an IMMEDIATE transaction, so a
-        concurrent pause acknowledgement, cancellation, reopen or second
-        continuation can never be silently overwritten: the admitted row is
-        valid only for the exact paused state the operator read.  A duplicate
-        admission of an already-active continuation returns that row with
-        ``created=False`` instead of queueing the remaining work twice.
-        """
-
-        if (
-            isinstance(maximum_active_jobs, bool)
-            or not isinstance(maximum_active_jobs, int)
-            or not 1 <= maximum_active_jobs <= 10_000
-        ):
-            raise ValueError("maximum active Jobs must be between 1 and 10000")
-        if (
-            job.command is not AutomationCommand.SCOPE_CONTINUATION
-            or job.status is not AutomationJobStatus.PENDING
-            or job.execute_authorized
-            or job.task_id is not None
-            or job.schedule_id is not None
-            or job.claim_token is not None
-            or job.cancellation_requested
-            or job.definition_id is not None
-            or not job.configuration_snapshot_id
-            or not job.configuration_snapshot_digest
-        ):
-            raise ValueError("scope continuation Job identity is invalid")
-        if (
-            continuation.status is not ScopeContinuationStatus.QUEUED
-            or continuation.job_id != job.job_id
-            or continuation.configuration_snapshot_id != job.configuration_snapshot_id
-            or continuation.configuration_snapshot_digest != job.configuration_snapshot_digest
-            or continuation.new_task_id is not None
-            or continuation.started_at is not None
-            or continuation.completed_at is not None
-            or continuation.error is not None
-            or continuation.recovery is not None
-            or continuation.item_limit != job.limit
-        ):
-            raise ValueError("scope continuation identity is invalid")
-        with self._lock:
-            self._connection.execute("BEGIN IMMEDIATE")
-            try:
-                task = self._connection.execute(
-                    "SELECT * FROM tasks WHERE task_id=?",
-                    (continuation.source_task_id,),
-                ).fetchone()
-                if task is None:
-                    raise ScopeContinuationError(
-                        ScopeContinuationReason.TASK_NOT_FOUND,
-                        "the paused Task was not found",
-                        next_action=(
-                            "refresh the run inventory and select the exact paused run again"
-                        ),
-                    )
-                if task["status"] != PersistentTaskStatus.PAUSED.value:
-                    raise ScopeContinuationError(
-                        ScopeContinuationReason.TASK_NOT_PAUSED,
-                        f"only a paused Task has a remaining scope to continue; this Task is "
-                        f"{task['status']}",
-                        durable_state=f"the Task remains {task['status']}",
-                        next_action=(
-                            "refresh the Task and continue it only while it is durably paused"
-                        ),
-                    )
-                if (
-                    task["command"] != continuation.command
-                    or task["scope_path"] != continuation.scope_path
-                    or task["item_limit"] != continuation.item_limit
-                    or task["configuration_snapshot_id"] != continuation.configuration_snapshot_id
-                    or task["configuration_snapshot_digest"]
-                    != continuation.configuration_snapshot_digest
-                ):
-                    raise ScopeContinuationError(
-                        ScopeContinuationReason.STALE_TASK_STATE,
-                        "the Task's durable scope or configuration pin changed after it was read",
-                        next_action=(
-                            "refresh the Task, review its current durable scope, and continue "
-                            "again deliberately"
-                        ),
-                        retry_safe=True,
-                    )
-                existing = self._connection.execute(
-                    "SELECT * FROM scope_continuations WHERE source_task_id=? AND status IN (?, ?) "
-                    "ORDER BY created_at DESC, continuation_id DESC LIMIT 1",
-                    (
-                        continuation.source_task_id,
-                        ScopeContinuationStatus.QUEUED.value,
-                        ScopeContinuationStatus.RUNNING.value,
-                    ),
-                ).fetchone()
-                if existing is not None:
-                    self._connection.commit()
-                    return self._scope_continuation(existing), False
-                if not self._has_job_capacity(maximum_active_jobs):
-                    self._connection.rollback()
-                    raise AutomationQueueFull(
-                        f"automation queue reached configured active Job limit "
-                        f"{maximum_active_jobs}"
-                    )
-                self._insert_job(job)
-                self._connection.execute(
-                    "INSERT INTO scope_continuations "
-                    "(continuation_id, source_task_id, command, scope_path, item_limit, "
-                    "configuration_snapshot_id, configuration_snapshot_digest, boundary, "
-                    "status, created_at, updated_at, actor, job_id, new_task_id, started_at, "
-                    "completed_at, error, recovery, authority_statement) "
-                    "VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)",
-                    self._scope_continuation_values(continuation),
-                )
-                self._connection.commit()
-                return continuation, True
-            except Exception:
-                self._connection.rollback()
-                raise
-
-    def mark_scope_continuation_running(self, job_id: str) -> ScopeContinuation:
-        timestamp = datetime.now(UTC)
-        with self._lock, self._connection:
-            cursor = self._connection.execute(
-                "UPDATE scope_continuations SET status=?, updated_at=?, "
-                "started_at=COALESCE(started_at, ?) WHERE job_id=? AND status=?",
-                (
-                    ScopeContinuationStatus.RUNNING.value,
-                    timestamp.isoformat(),
-                    timestamp.isoformat(),
-                    job_id,
-                    ScopeContinuationStatus.QUEUED.value,
-                ),
-            )
-            if cursor.rowcount != 1:
-                raise ValueError("scope continuation is not queued")
-        return self.require_scope_continuation_by_job(job_id)
-
-    def bind_scope_continuation_task(self, job_id: str, task_id: str) -> ScopeContinuation:
-        """Link the continuation to the new Task it produced, exactly once."""
-
-        if not isinstance(task_id, str) or not task_id:
-            raise ValueError("continuation Task ID is required")
-        with self._lock, self._connection:
-            task = self._connection.execute(
-                "SELECT task_id FROM tasks WHERE task_id=?", (task_id,)
-            ).fetchone()
-            if task is None:
-                raise LookupError(f"continuation Task {task_id!r} was not found")
-            cursor = self._connection.execute(
-                "UPDATE scope_continuations SET updated_at=?, new_task_id=? "
-                "WHERE job_id=? AND status=? AND new_task_id IS NULL",
-                (
-                    datetime.now(UTC).isoformat(),
-                    task_id,
-                    job_id,
-                    ScopeContinuationStatus.RUNNING.value,
-                ),
-            )
-            if cursor.rowcount != 1:
-                continuation = self.get_scope_continuation_for_job(job_id)
-                if continuation is None:
-                    raise LookupError(f"scope continuation for Job {job_id!r} was not found")
-                raise ValueError("scope continuation Task is already bound")
-        return self.require_scope_continuation_by_job(job_id)
-
-    def complete_scope_continuation(
-        self,
-        job_id: str,
-        *,
-        new_task_id: str | None = None,
-        success: bool,
-        error: str | None = None,
-        recovery: str | None = None,
-    ) -> ScopeContinuation:
-        timestamp = datetime.now(UTC)
-        status = ScopeContinuationStatus.COMPLETED if success else ScopeContinuationStatus.FAILED
-        with self._lock, self._connection:
-            cursor = self._connection.execute(
-                "UPDATE scope_continuations SET status=?, updated_at=?, "
-                "new_task_id=COALESCE(?, new_task_id), completed_at=?, error=?, recovery=? "
-                "WHERE job_id=? AND status=?",
-                (
-                    status.value,
-                    timestamp.isoformat(),
-                    new_task_id,
-                    timestamp.isoformat(),
-                    error,
-                    recovery,
-                    job_id,
-                    ScopeContinuationStatus.RUNNING.value,
-                ),
-            )
-            if cursor.rowcount != 1:
-                raise ValueError("scope continuation is not running")
-        return self.require_scope_continuation_by_job(job_id)
-
-    def fail_queued_scope_continuation(
-        self, job_id: str, *, error: str, recovery: str | None = None
-    ) -> ScopeContinuation:
-        """Close a continuation that failed before its Task ever ran."""
-
-        timestamp = datetime.now(UTC)
-        with self._lock, self._connection:
-            cursor = self._connection.execute(
-                "UPDATE scope_continuations SET status=?, updated_at=?, completed_at=?, "
-                "error=?, recovery=? WHERE job_id=? AND status=?",
-                (
-                    ScopeContinuationStatus.FAILED.value,
-                    timestamp.isoformat(),
-                    timestamp.isoformat(),
-                    error,
-                    recovery,
-                    job_id,
-                    ScopeContinuationStatus.QUEUED.value,
-                ),
-            )
-            if cursor.rowcount != 1:
-                raise ValueError("scope continuation is not queued")
-        return self.require_scope_continuation_by_job(job_id)
-
-    def cancel_scope_continuation(self, job_id: str) -> ScopeContinuation:
-        timestamp = datetime.now(UTC)
-        with self._lock, self._connection:
-            cursor = self._connection.execute(
-                "UPDATE scope_continuations SET status=?, updated_at=?, completed_at=? "
-                "WHERE job_id=? AND status IN (?, ?)",
-                (
-                    ScopeContinuationStatus.CANCELLED.value,
-                    timestamp.isoformat(),
-                    timestamp.isoformat(),
-                    job_id,
-                    ScopeContinuationStatus.QUEUED.value,
-                    ScopeContinuationStatus.RUNNING.value,
-                ),
-            )
-            if cursor.rowcount != 1:
-                continuation = self.get_scope_continuation_for_job(job_id)
-                if continuation is None:
-                    raise LookupError(f"scope continuation for Job {job_id!r} was not found")
-        return self.require_scope_continuation_by_job(job_id)
-
-    def require_scope_continuation_by_job(self, job_id: str) -> ScopeContinuation:
-        continuation = self.get_scope_continuation_for_job(job_id)
-        if continuation is None:
-            raise LookupError(f"scope continuation for Job {job_id!r} was not found")
-        return continuation
 
     def _resolve_recovery_request_locked(
         self,
@@ -4451,472 +3694,6 @@ class SQLiteTaskRepository:
             )
             if cursor.rowcount != 1:
                 raise ValueError("metadata correction TaskItem is not processing")
-
-    def get_metadata_correction(self, review_id):
-        with self._lock:
-            row = self._connection.execute(
-                "SELECT * FROM metadata_corrections WHERE review_id=?", (review_id,)
-            ).fetchone()
-        return self._metadata_correction(row) if row else None
-
-    def get_metadata_correction_for_item(self, item_id):
-        with self._lock:
-            row = self._connection.execute(
-                "SELECT * FROM metadata_corrections WHERE item_id=?", (item_id,)
-            ).fetchone()
-        return self._metadata_correction(row) if row else None
-
-    def list_metadata_corrections(self, *, limit=100):
-        if not 1 <= limit <= 1000:
-            raise ValueError("metadata correction limit must be between 1 and 1000")
-        with self._lock:
-            rows = self._connection.execute(
-                """SELECT * FROM metadata_corrections
-                ORDER BY created_at DESC, review_id DESC LIMIT ?""",
-                (limit,),
-            ).fetchall()
-        return tuple(self._metadata_correction(row) for row in rows)
-
-    def list_pending_metadata_corrections(self, *, limit=100, task_id=None):
-        if not 1 <= limit <= 1000:
-            raise ValueError("metadata correction limit must be between 1 and 1000")
-        query = """
-            SELECT c.* FROM metadata_corrections c
-            JOIN task_items i ON i.item_id = c.item_id
-            WHERE c.status = ? AND i.status = ?
-        """
-        parameters: tuple[object, ...] = (
-            MetadataCorrectionStatus.PENDING.value,
-            TaskItemStatus.WAITING_METADATA_CORRECTION.value,
-        )
-        if task_id is not None:
-            query += " AND c.task_id = ?"
-            parameters += (task_id,)
-        query += " ORDER BY c.created_at, c.review_id LIMIT ?"
-        parameters += (limit,)
-        with self._lock:
-            rows = self._connection.execute(query, parameters).fetchall()
-        return tuple(self._metadata_correction(row) for row in rows)
-
-    def resolve_metadata_correction(self, review, audit, item) -> None:
-        with self._lock, self._connection:
-            cursor = self._connection.execute(
-                """UPDATE metadata_corrections SET status=?, updated_at=?, corrected_query=?,
-                corrected_year=?, corrected_media_type=?, direct_provider_id=?,
-                decided_at=?, actor=?
-                WHERE review_id=? AND status=?""",
-                (
-                    review.status.value,
-                    review.updated_at.isoformat(),
-                    review.corrected_query,
-                    review.corrected_year,
-                    review.corrected_media_type,
-                    review.direct_provider_id,
-                    review.decided_at.isoformat(),
-                    review.actor,
-                    review.review_id,
-                    MetadataCorrectionStatus.PENDING.value,
-                ),
-            )
-            if cursor.rowcount != 1:
-                raise ValueError("metadata correction is not pending")
-            cursor = self._connection.execute(
-                """UPDATE task_items SET status=?, stage=?, updated_at=?, error=NULL
-                WHERE item_id=? AND status=?""",
-                (
-                    item.status.value,
-                    item.stage,
-                    item.updated_at.isoformat(),
-                    item.item_id,
-                    TaskItemStatus.WAITING_METADATA_CORRECTION.value,
-                ),
-            )
-            if cursor.rowcount != 1:
-                raise ValueError("TaskItem is not waiting for metadata correction")
-            self._connection.execute(
-                """INSERT INTO metadata_correction_decision_audit
-                VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)""",
-                (
-                    audit.audit_id,
-                    audit.review_id,
-                    audit.corrected_query,
-                    audit.corrected_year,
-                    audit.corrected_media_type,
-                    audit.direct_provider_id,
-                    audit.decided_at.isoformat(),
-                    audit.actor,
-                    audit.note,
-                ),
-            )
-
-    def resolve_metadata_corrections_batch(
-        self, requests: tuple[MetadataCorrectionBatchResolveRequest, ...]
-    ) -> None:
-        if not requests:
-            raise ValueError("metadata correction resolve batch must not be empty")
-        with self._lock, self._connection:
-            for request in requests:
-                review = request.review
-                audit = request.audit
-                item = request.item
-                cursor = self._connection.execute(
-                    """UPDATE metadata_corrections SET status=?, updated_at=?, corrected_query=?,
-                    corrected_year=?, corrected_media_type=?, direct_provider_id=?,
-                    decided_at=?, actor=?
-                    WHERE review_id=? AND item_id=? AND status=?""",
-                    (
-                        review.status.value,
-                        review.updated_at.isoformat(),
-                        review.corrected_query,
-                        review.corrected_year,
-                        review.corrected_media_type,
-                        review.direct_provider_id,
-                        review.decided_at.isoformat(),
-                        review.actor,
-                        review.review_id,
-                        review.item_id,
-                        MetadataCorrectionStatus.PENDING.value,
-                    ),
-                )
-                if cursor.rowcount != 1:
-                    raise ValueError("metadata correction is not pending")
-                cursor = self._connection.execute(
-                    """UPDATE task_items SET status=?, stage=?, updated_at=?, error=NULL
-                    WHERE item_id=? AND task_id=? AND status=?""",
-                    (
-                        item.status.value,
-                        item.stage,
-                        item.updated_at.isoformat(),
-                        item.item_id,
-                        item.task_id,
-                        TaskItemStatus.WAITING_METADATA_CORRECTION.value,
-                    ),
-                )
-                if cursor.rowcount != 1:
-                    raise ValueError("TaskItem is not waiting for metadata correction")
-                self._connection.execute(
-                    """INSERT INTO metadata_correction_decision_audit
-                    VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)""",
-                    (
-                        audit.audit_id,
-                        audit.review_id,
-                        audit.corrected_query,
-                        audit.corrected_year,
-                        audit.corrected_media_type,
-                        audit.direct_provider_id,
-                        audit.decided_at.isoformat(),
-                        audit.actor,
-                        audit.note,
-                    ),
-                )
-
-    def list_metadata_correction_audit(self, review_id):
-        with self._lock:
-            rows = self._connection.execute(
-                """SELECT * FROM metadata_correction_decision_audit WHERE review_id=?
-                ORDER BY decided_at, audit_id""",
-                (review_id,),
-            ).fetchall()
-        return tuple(
-            MetadataCorrectionDecisionAudit(
-                row["audit_id"],
-                row["review_id"],
-                row["corrected_query"],
-                row["corrected_year"],
-                row["corrected_media_type"],
-                row["direct_provider_id"],
-                datetime.fromisoformat(row["decided_at"]),
-                row["actor"],
-                row["note"],
-            )
-            for row in rows
-        )
-
-    def get_metadata_correction_continuation_for_review(
-        self, review_id: str
-    ) -> MetadataCorrectionContinuation | None:
-        with self._lock:
-            row = self._connection.execute(
-                """SELECT * FROM metadata_correction_continuations WHERE review_id=?
-                ORDER BY created_at DESC, continuation_id DESC LIMIT 1""",
-                (review_id,),
-            ).fetchone()
-        return self._metadata_correction_continuation(row) if row else None
-
-    def get_metadata_correction_continuation_for_job(
-        self, job_id: str
-    ) -> MetadataCorrectionContinuation | None:
-        with self._lock:
-            row = self._connection.execute(
-                "SELECT * FROM metadata_correction_continuations WHERE job_id=?", (job_id,)
-            ).fetchone()
-        return self._metadata_correction_continuation(row) if row else None
-
-    def admit_metadata_correction_continuation(
-        self,
-        job: AutomationJob,
-        continuation: MetadataCorrectionContinuation,
-        *,
-        maximum_active_jobs: int,
-    ) -> tuple[MetadataCorrectionContinuation, bool]:
-        if (
-            isinstance(maximum_active_jobs, bool)
-            or not isinstance(maximum_active_jobs, int)
-            or not 1 <= maximum_active_jobs <= 10_000
-        ):
-            raise ValueError("maximum active Jobs must be between 1 and 10000")
-        if (
-            job.command is not AutomationCommand.FILE_METADATA_CORRECTION
-            or job.status is not AutomationJobStatus.PENDING
-            or job.limit != 1
-            or job.execute_authorized
-            or job.task_id is not None
-            or job.schedule_id is not None
-            or job.claim_token is not None
-            or job.cancellation_requested
-            or not job.configuration_snapshot_id
-            or not job.configuration_snapshot_digest
-        ):
-            raise ValueError("metadata correction continuation Job identity is invalid")
-        if (
-            continuation.status is not MetadataCorrectionContinuationStatus.QUEUED
-            or continuation.job_id != job.job_id
-            or continuation.configuration_snapshot_id != job.configuration_snapshot_id
-            or continuation.configuration_snapshot_digest != job.configuration_snapshot_digest
-            or continuation.new_task_id is not None
-            or continuation.new_result_id is not None
-            or continuation.started_at is not None
-            or continuation.completed_at is not None
-            or continuation.error is not None
-            or continuation.recovery is not None
-        ):
-            raise ValueError("metadata correction continuation identity is invalid")
-        with self._lock:
-            self._connection.execute("BEGIN IMMEDIATE")
-            try:
-                source = self._connection.execute(
-                    """SELECT m.status AS review_status,
-                    m.source_storage_id AS review_storage_id,
-                    m.source_path AS review_source_path,
-                    i.task_id AS item_task_id, i.storage_id AS item_storage_id,
-                    i.source_path AS item_source_path, i.status AS item_status,
-                    t.configuration_snapshot_id, t.configuration_snapshot_digest
-                    FROM metadata_corrections m
-                    JOIN task_items i ON i.item_id=m.item_id
-                    JOIN tasks t ON t.task_id=m.task_id
-                    WHERE m.review_id=? AND m.task_id=? AND m.item_id=?""",
-                    (
-                        continuation.review_id,
-                        continuation.source_task_id,
-                        continuation.source_item_id,
-                    ),
-                ).fetchone()
-                if (
-                    source is None
-                    or source["review_status"] != MetadataCorrectionStatus.RESOLVED.value
-                    or source["item_task_id"] != continuation.source_task_id
-                    or source["item_status"] != TaskItemStatus.PENDING.value
-                    or source["configuration_snapshot_id"] != continuation.configuration_snapshot_id
-                    or source["configuration_snapshot_digest"]
-                    != continuation.configuration_snapshot_digest
-                    or source["review_storage_id"] != source["item_storage_id"]
-                    or source["review_source_path"] != source["item_source_path"]
-                ):
-                    raise ValueError(
-                        "metadata correction continuation source linkage or eligibility changed"
-                    )
-                row = self._connection.execute(
-                    """SELECT * FROM metadata_correction_continuations
-                   WHERE review_id=? AND status IN (?, ?)
-                   ORDER BY created_at DESC, continuation_id DESC LIMIT 1""",
-                    (
-                        continuation.review_id,
-                        MetadataCorrectionContinuationStatus.QUEUED.value,
-                        MetadataCorrectionContinuationStatus.RUNNING.value,
-                    ),
-                ).fetchone()
-                if row is not None:
-                    self._connection.commit()
-                    return self._metadata_correction_continuation(row), False
-                if not self._has_job_capacity(maximum_active_jobs):
-                    self._connection.rollback()
-                    raise AutomationQueueFull(
-                        f"automation queue reached configured active Job limit "
-                        f"{maximum_active_jobs}"
-                    )
-                self._insert_job(job)
-                self._connection.execute(
-                    """INSERT INTO metadata_correction_continuations
-                    (continuation_id, file_id, review_id, source_task_id, source_item_id,
-                     configuration_snapshot_id, configuration_snapshot_digest,
-                     correction_version, status, created_at, updated_at, actor, job_id,
-                     new_task_id, new_result_id, started_at, completed_at, error, recovery)
-                    VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)""",
-                    self._metadata_correction_continuation_values(continuation),
-                )
-                self._connection.commit()
-                return continuation, True
-            except Exception:
-                self._connection.rollback()
-                raise
-
-    def mark_metadata_correction_continuation_running(
-        self, job_id: str, now: datetime | None = None
-    ) -> MetadataCorrectionContinuation:
-        timestamp = now or datetime.now(UTC)
-        with self._lock, self._connection:
-            cursor = self._connection.execute(
-                """UPDATE metadata_correction_continuations
-                SET status=?, updated_at=?, started_at=COALESCE(started_at, ?)
-                WHERE job_id=? AND status=?""",
-                (
-                    MetadataCorrectionContinuationStatus.RUNNING.value,
-                    timestamp.isoformat(),
-                    timestamp.isoformat(),
-                    job_id,
-                    MetadataCorrectionContinuationStatus.QUEUED.value,
-                ),
-            )
-            if cursor.rowcount != 1:
-                raise ValueError("metadata correction continuation is not queued")
-        return self.require_metadata_correction_continuation_by_job(job_id)
-
-    def bind_metadata_correction_continuation_task(
-        self, job_id: str, task_id: str
-    ) -> MetadataCorrectionContinuation:
-        if not isinstance(task_id, str) or not task_id:
-            raise ValueError("continuation Task ID is required")
-        with self._lock, self._connection:
-            task = self._connection.execute(
-                "SELECT task_id FROM tasks WHERE task_id=?", (task_id,)
-            ).fetchone()
-            if task is None:
-                raise LookupError(f"continuation Task {task_id!r} was not found")
-            cursor = self._connection.execute(
-                """UPDATE metadata_correction_continuations
-                SET updated_at=?, new_task_id=?
-                WHERE job_id=? AND status=? AND new_task_id IS NULL""",
-                (
-                    datetime.now(UTC).isoformat(),
-                    task_id,
-                    job_id,
-                    MetadataCorrectionContinuationStatus.RUNNING.value,
-                ),
-            )
-            if cursor.rowcount != 1:
-                continuation = self.get_metadata_correction_continuation_for_job(job_id)
-                if continuation is None:
-                    raise LookupError(
-                        f"metadata correction continuation for Job {job_id!r} was not found"
-                    )
-                raise ValueError("metadata correction continuation Task is already bound")
-        return self.require_metadata_correction_continuation_by_job(job_id)
-
-    def complete_metadata_correction_continuation(
-        self,
-        job_id: str,
-        *,
-        new_task_id: str | None = None,
-        new_result_id: str | None = None,
-        success: bool,
-        error: str | None = None,
-        recovery: str | None = None,
-        now: datetime | None = None,
-    ) -> MetadataCorrectionContinuation:
-        timestamp = now or datetime.now(UTC)
-        status = (
-            MetadataCorrectionContinuationStatus.COMPLETED
-            if success
-            else MetadataCorrectionContinuationStatus.FAILED
-        )
-        with self._lock, self._connection:
-            cursor = self._connection.execute(
-                """UPDATE metadata_correction_continuations
-                SET status=?, updated_at=?, new_task_id=?, new_result_id=?, completed_at=?,
-                    error=?, recovery=?
-                WHERE job_id=? AND status=?""",
-                (
-                    status.value,
-                    timestamp.isoformat(),
-                    new_task_id,
-                    new_result_id,
-                    timestamp.isoformat(),
-                    error,
-                    recovery,
-                    job_id,
-                    MetadataCorrectionContinuationStatus.RUNNING.value,
-                ),
-            )
-            if cursor.rowcount != 1:
-                raise ValueError("metadata correction continuation is not running")
-        return self.require_metadata_correction_continuation_by_job(job_id)
-
-    def fail_queued_metadata_correction_continuation(
-        self,
-        job_id: str,
-        *,
-        error: str,
-        recovery: str,
-        now: datetime | None = None,
-    ) -> MetadataCorrectionContinuation:
-        timestamp = now or datetime.now(UTC)
-        with self._lock, self._connection:
-            cursor = self._connection.execute(
-                """UPDATE metadata_correction_continuations
-                SET status=?, updated_at=?, completed_at=?, error=?, recovery=?
-                WHERE job_id=? AND status=?""",
-                (
-                    MetadataCorrectionContinuationStatus.FAILED.value,
-                    timestamp.isoformat(),
-                    timestamp.isoformat(),
-                    error,
-                    recovery,
-                    job_id,
-                    MetadataCorrectionContinuationStatus.QUEUED.value,
-                ),
-            )
-            if cursor.rowcount != 1:
-                raise ValueError("metadata correction continuation is not queued")
-        return self.require_metadata_correction_continuation_by_job(job_id)
-
-    def cancel_metadata_correction_continuation(
-        self, job_id: str, *, now: datetime | None = None
-    ) -> MetadataCorrectionContinuation:
-        timestamp = now or datetime.now(UTC)
-        with self._lock, self._connection:
-            cursor = self._connection.execute(
-                """UPDATE metadata_correction_continuations
-                SET status=?, updated_at=?, completed_at=?, error=?, recovery=?
-                WHERE job_id=? AND status IN (?, ?)""",
-                (
-                    MetadataCorrectionContinuationStatus.CANCELLED.value,
-                    timestamp.isoformat(),
-                    timestamp.isoformat(),
-                    "continuation Job was cancelled before completion",
-                    "refresh the File detail and explicitly continue this correction again",
-                    job_id,
-                    MetadataCorrectionContinuationStatus.QUEUED.value,
-                    MetadataCorrectionContinuationStatus.RUNNING.value,
-                ),
-            )
-            if cursor.rowcount != 1:
-                continuation = self.get_metadata_correction_continuation_for_job(job_id)
-                if continuation is None:
-                    raise LookupError(
-                        f"metadata correction continuation for Job {job_id!r} was not found"
-                    )
-                if continuation.status is MetadataCorrectionContinuationStatus.CANCELLED:
-                    return continuation
-                raise ValueError("metadata correction continuation is not cancellable")
-        return self.require_metadata_correction_continuation_by_job(job_id)
-
-    def require_metadata_correction_continuation_by_job(
-        self, job_id: str
-    ) -> MetadataCorrectionContinuation:
-        continuation = self.get_metadata_correction_continuation_for_job(job_id)
-        if continuation is None:
-            raise LookupError(f"metadata correction continuation for Job {job_id!r} was not found")
-        return continuation
 
     def publish_task_item_problem(
         self,
@@ -6051,6 +4828,186 @@ class SQLiteTaskRepository:
             for row in rows
         )
 
+    def get_metadata_correction(self, review_id):
+        with self._lock:
+            row = self._connection.execute(
+                "SELECT * FROM metadata_corrections WHERE review_id=?", (review_id,)
+            ).fetchone()
+        return self._metadata_correction(row) if row else None
+
+    def get_metadata_correction_for_item(self, item_id):
+        with self._lock:
+            row = self._connection.execute(
+                "SELECT * FROM metadata_corrections WHERE item_id=?", (item_id,)
+            ).fetchone()
+        return self._metadata_correction(row) if row else None
+
+    def list_metadata_corrections(self, *, limit=100):
+        if not 1 <= limit <= 1000:
+            raise ValueError("metadata correction limit must be between 1 and 1000")
+        with self._lock:
+            rows = self._connection.execute(
+                """SELECT * FROM metadata_corrections
+                ORDER BY created_at DESC, review_id DESC LIMIT ?""",
+                (limit,),
+            ).fetchall()
+        return tuple(self._metadata_correction(row) for row in rows)
+
+    def list_pending_metadata_corrections(self, *, limit=100, task_id=None):
+        if not 1 <= limit <= 1000:
+            raise ValueError("metadata correction limit must be between 1 and 1000")
+        query = """
+            SELECT c.* FROM metadata_corrections c
+            JOIN task_items i ON i.item_id = c.item_id
+            WHERE c.status = ? AND i.status = ?
+        """
+        parameters: tuple[object, ...] = (
+            MetadataCorrectionStatus.PENDING.value,
+            TaskItemStatus.WAITING_METADATA_CORRECTION.value,
+        )
+        if task_id is not None:
+            query += " AND c.task_id = ?"
+            parameters += (task_id,)
+        query += " ORDER BY c.created_at, c.review_id LIMIT ?"
+        parameters += (limit,)
+        with self._lock:
+            rows = self._connection.execute(query, parameters).fetchall()
+        return tuple(self._metadata_correction(row) for row in rows)
+
+    def resolve_metadata_correction(self, review, audit, item) -> None:
+        with self._lock, self._connection:
+            cursor = self._connection.execute(
+                """UPDATE metadata_corrections SET status=?, updated_at=?, corrected_query=?,
+                corrected_year=?, corrected_media_type=?, direct_provider_id=?,
+                decided_at=?, actor=?
+                WHERE review_id=? AND status=?""",
+                (
+                    review.status.value,
+                    review.updated_at.isoformat(),
+                    review.corrected_query,
+                    review.corrected_year,
+                    review.corrected_media_type,
+                    review.direct_provider_id,
+                    review.decided_at.isoformat(),
+                    review.actor,
+                    review.review_id,
+                    MetadataCorrectionStatus.PENDING.value,
+                ),
+            )
+            if cursor.rowcount != 1:
+                raise ValueError("metadata correction is not pending")
+            cursor = self._connection.execute(
+                """UPDATE task_items SET status=?, stage=?, updated_at=?, error=NULL
+                WHERE item_id=? AND status=?""",
+                (
+                    item.status.value,
+                    item.stage,
+                    item.updated_at.isoformat(),
+                    item.item_id,
+                    TaskItemStatus.WAITING_METADATA_CORRECTION.value,
+                ),
+            )
+            if cursor.rowcount != 1:
+                raise ValueError("TaskItem is not waiting for metadata correction")
+            self._connection.execute(
+                """INSERT INTO metadata_correction_decision_audit
+                VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)""",
+                (
+                    audit.audit_id,
+                    audit.review_id,
+                    audit.corrected_query,
+                    audit.corrected_year,
+                    audit.corrected_media_type,
+                    audit.direct_provider_id,
+                    audit.decided_at.isoformat(),
+                    audit.actor,
+                    audit.note,
+                ),
+            )
+
+    def resolve_metadata_corrections_batch(
+        self, requests: tuple[MetadataCorrectionBatchResolveRequest, ...]
+    ) -> None:
+        if not requests:
+            raise ValueError("metadata correction resolve batch must not be empty")
+        with self._lock, self._connection:
+            for request in requests:
+                review = request.review
+                audit = request.audit
+                item = request.item
+                cursor = self._connection.execute(
+                    """UPDATE metadata_corrections SET status=?, updated_at=?, corrected_query=?,
+                    corrected_year=?, corrected_media_type=?, direct_provider_id=?,
+                    decided_at=?, actor=?
+                    WHERE review_id=? AND item_id=? AND status=?""",
+                    (
+                        review.status.value,
+                        review.updated_at.isoformat(),
+                        review.corrected_query,
+                        review.corrected_year,
+                        review.corrected_media_type,
+                        review.direct_provider_id,
+                        review.decided_at.isoformat(),
+                        review.actor,
+                        review.review_id,
+                        review.item_id,
+                        MetadataCorrectionStatus.PENDING.value,
+                    ),
+                )
+                if cursor.rowcount != 1:
+                    raise ValueError("metadata correction is not pending")
+                cursor = self._connection.execute(
+                    """UPDATE task_items SET status=?, stage=?, updated_at=?, error=NULL
+                    WHERE item_id=? AND task_id=? AND status=?""",
+                    (
+                        item.status.value,
+                        item.stage,
+                        item.updated_at.isoformat(),
+                        item.item_id,
+                        item.task_id,
+                        TaskItemStatus.WAITING_METADATA_CORRECTION.value,
+                    ),
+                )
+                if cursor.rowcount != 1:
+                    raise ValueError("TaskItem is not waiting for metadata correction")
+                self._connection.execute(
+                    """INSERT INTO metadata_correction_decision_audit
+                    VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)""",
+                    (
+                        audit.audit_id,
+                        audit.review_id,
+                        audit.corrected_query,
+                        audit.corrected_year,
+                        audit.corrected_media_type,
+                        audit.direct_provider_id,
+                        audit.decided_at.isoformat(),
+                        audit.actor,
+                        audit.note,
+                    ),
+                )
+
+    def list_metadata_correction_audit(self, review_id):
+        with self._lock:
+            rows = self._connection.execute(
+                """SELECT * FROM metadata_correction_decision_audit WHERE review_id=?
+                ORDER BY decided_at, audit_id""",
+                (review_id,),
+            ).fetchall()
+        return tuple(
+            MetadataCorrectionDecisionAudit(
+                row["audit_id"],
+                row["review_id"],
+                row["corrected_query"],
+                row["corrected_year"],
+                row["corrected_media_type"],
+                row["direct_provider_id"],
+                datetime.fromisoformat(row["decided_at"]),
+                row["actor"],
+                row["note"],
+            )
+            for row in rows
+        )
+
     def get_confirmation(self, confirmation_id: str) -> ConflictConfirmation | None:
         with self._lock:
             row = self._connection.execute(
@@ -6152,218 +5109,10 @@ class SQLiteTaskRepository:
             for row in rows
         )
 
-    def create_job(self, job: AutomationJob) -> None:
-        with self._lock, self._connection:
-            self._insert_job(job)
+    def _has_task_capacity(self, maximum_active_tasks: int) -> bool:
+        """Whether one more distinct organizing Task may hold a shared slot."""
 
-    def admit_job(self, job: AutomationJob, maximum_active_jobs: int) -> bool:
-        with self._lock:
-            self._connection.execute("BEGIN IMMEDIATE")
-            try:
-                if not self._has_job_capacity(maximum_active_jobs):
-                    self._connection.rollback()
-                    return False
-                self._insert_job(job)
-                self._connection.commit()
-                return True
-            except Exception:
-                self._connection.rollback()
-                raise
-
-    def _has_job_capacity(self, maximum_active_jobs: int) -> bool:
-        # One shared admission capacity bounds every still-queued entrance during
-        # the phased coexistence: the legacy automation_jobs queue and the new
-        # Task kernel's queued/claimed Tasks draw from the same configured
-        # maximum.  A Job whose Task was later admitted to the kernel is counted
-        # once (through its scheduling row), never twice.
-        return self._shared_capacity_use_locked() < maximum_active_jobs
-
-    def _shared_capacity_use_locked(self) -> int:
-        """Distinct admissions currently occupying the one shared capacity.
-
-        The new Task kernel's queued/claimed work and the legacy Job queue are
-        the two entrances sharing the configured maximum.  A Job that names a
-        Task with a ``task_scheduling`` row is the *same* admission and is not
-        counted a second time.
-        """
-
-        return self._scheduled_capacity_use_locked() + self._legacy_job_capacity_use_locked()
-
-    def _legacy_job_capacity_use_locked(self) -> int:
-        row = self._connection.execute(
-            "SELECT COUNT(*) AS count FROM automation_jobs "
-            "WHERE status IN (?, ?) "
-            "AND (task_id IS NULL OR task_id NOT IN "
-            "(SELECT task_id FROM task_scheduling))",
-            (AutomationJobStatus.PENDING.value, AutomationJobStatus.RUNNING.value),
-        ).fetchone()
-        return int(row["count"]) if row is not None else 0
-
-    def get_job(self, job_id: str) -> AutomationJob | None:
-        with self._lock:
-            row = self._connection.execute(
-                "SELECT * FROM automation_jobs WHERE job_id=?", (job_id,)
-            ).fetchone()
-        return self._job(row) if row else None
-
-    def get_job_for_task(self, task_id: str) -> AutomationJob | None:
-        """The Job that admitted one Task, through the persisted exact link.
-
-        Only the explicit ``automation_jobs.task_id`` column is used — never a
-        creation-time proximity or a label — so a continuation can read the
-        original admission evidence (a definition pin, for example) of exactly
-        the Task it continues.
-        """
-
-        with self._lock:
-            row = self._connection.execute(
-                "SELECT * FROM automation_jobs WHERE task_id=? LIMIT 1", (task_id,)
-            ).fetchone()
-        return self._job(row) if row else None
-
-    def find_automation_run_once_job(
-        self, *, principal_id: str, admission_request_id: str
-    ) -> AutomationJob | None:
-        """One exact explicit Run once command by its principal-scoped request id."""
-
-        with self._lock:
-            row = self._connection.execute(
-                "SELECT * FROM automation_jobs WHERE execution_origin=? "
-                "AND execution_principal=? AND admission_request_id=? LIMIT 1",
-                (
-                    AutomationJobOrigin.RUN_ONCE.value,
-                    principal_id,
-                    admission_request_id,
-                ),
-            ).fetchone()
-        return self._job(row) if row else None
-
-    def admit_automation_run_once_job(
-        self,
-        job: AutomationJob,
-        maximum_active_jobs: int,
-        *,
-        task: PersistentTask | None = None,
-        definition_name: str | None = None,
-    ) -> AutomationJob | None:
-        """Atomically admit one Run once job or return its existing request twin.
-
-        The unique principal/request identity is the lost-response fence: a
-        concurrent or repeated command for the same exact request converges on
-        the already durable Job instead of admitting a second execution.  The
-        active capacity is checked in the same transaction as insertion.
-        """
-
-        if job.execution_origin is not AutomationJobOrigin.RUN_ONCE:
-            raise ValueError("only a Run once job can be admitted through this boundary")
-        with self._lock:
-            self._connection.execute("BEGIN IMMEDIATE")
-            try:
-                if job.admission_request_id:
-                    row = self._connection.execute(
-                        "SELECT * FROM automation_jobs WHERE execution_origin=? "
-                        "AND execution_principal=? AND admission_request_id=? LIMIT 1",
-                        (
-                            AutomationJobOrigin.RUN_ONCE.value,
-                            job.execution_principal,
-                            job.admission_request_id,
-                        ),
-                    ).fetchone()
-                    if row is not None:
-                        self._connection.commit()
-                        return self._job(row)
-                if not self._has_job_capacity(maximum_active_jobs):
-                    self._connection.rollback()
-                    return None
-                if task is not None:
-                    if task.task_id != job.task_id:
-                        raise ValueError("Run once Task identity does not match Job")
-                    self._connection.execute(
-                        "INSERT INTO tasks VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, "
-                        "?, ?, ?, ?)",
-                        self._task_values(task),
-                    )
-                    self._insert_run_display_locked(
-                        task.task_id,
-                        RunDisplayContext(
-                            source_scope=job.source_scope,
-                            origin_definition_id=job.definition_id,
-                            origin_definition_name=definition_name,
-                            origin_kind="definition-run-once",
-                        ),
-                        task.created_at,
-                    )
-                self._insert_job(job)
-                self._connection.commit()
-                return job
-            except Exception:
-                self._connection.rollback()
-                raise
-
-    def list_automation_run_once_jobs(
-        self, *, principal_id: str | None = None, definition_id: str | None = None, limit: int = 50
-    ) -> tuple[AutomationJob, ...]:
-        if isinstance(limit, bool) or not isinstance(limit, int) or not 1 <= limit <= 100:
-            raise ValueError("Run once list limit must be between 1 and 100")
-        query = (
-            "SELECT * FROM automation_jobs WHERE execution_origin=? "
-            + ("AND execution_principal=? " if principal_id is not None else "")
-            + ("AND definition_id=? " if definition_id is not None else "")
-            + "ORDER BY created_at DESC, job_id DESC LIMIT ?"
-        )
-        parameters = (
-            (AutomationJobOrigin.RUN_ONCE.value,)
-            + ((principal_id,) if principal_id is not None else ())
-            + ((definition_id,) if definition_id is not None else ())
-            + (limit,)
-        )
-        with self._lock:
-            rows = self._connection.execute(query, parameters).fetchall()
-        return tuple(self._job(row) for row in rows)
-
-    def list_jobs(
-        self,
-        *,
-        limit: int | None = None,
-        after: tuple[datetime, str] | None = None,
-        before: tuple[datetime, str] | None = None,
-        status: str | None = None,
-        command: str | None = None,
-    ) -> tuple[AutomationJob, ...]:
-        if after is not None and before is not None:
-            raise ValueError("after and before are mutually exclusive")
-        query = "SELECT * FROM automation_jobs"
-        parameters: tuple[object, ...] = ()
-        clauses: list[str] = []
-        if status is not None:
-            clauses.append("status = ?")
-            parameters += (status,)
-        if command is not None:
-            clauses.append("command = ?")
-            parameters += (command,)
-        reverse = before is not None
-        if after is not None:
-            timestamp = after[0].isoformat()
-            clauses.append("(created_at < ? OR (created_at = ? AND job_id < ?))")
-            parameters += (timestamp, timestamp, after[1])
-        elif before is not None:
-            timestamp = before[0].isoformat()
-            clauses.append("(created_at > ? OR (created_at = ? AND job_id > ?))")
-            parameters += (timestamp, timestamp, before[1])
-        if clauses:
-            query += " WHERE " + " AND ".join(clauses)
-        query += (
-            " ORDER BY created_at ASC, job_id ASC"
-            if reverse
-            else " ORDER BY created_at DESC, job_id DESC"
-        )
-        if limit is not None:
-            query += " LIMIT ?"
-            parameters += (limit,)
-        with self._lock:
-            rows = self._connection.execute(query, parameters).fetchall()
-        values = tuple(self._job(row) for row in rows)
-        return tuple(reversed(values)) if reverse else values
+        return self._scheduled_capacity_use_locked() < maximum_active_tasks
 
     # -- Unified Operations run inventory (Slice 42 RO-1/RO-2) ------------
 
@@ -6375,10 +5124,7 @@ class SQLiteTaskRepository:
     #: definition origin is excluded by its own persisted lineage, which the
     #: run document projects as ``is_recovery_follow_up``.
     _ORIGINAL_AUTOMATION_ADMISSION_WHERE = (
-        "WHERE is_recovery_follow_up = 0 AND "
-        "((run_kind = 'job' AND (schedule_id IS NOT NULL "
-        "OR definition_id IS NOT NULL)) "
-        "OR (run_kind = 'task' AND origin_definition_id IS NOT NULL))"
+        "WHERE is_recovery_follow_up = 0 AND run_kind = 'task' AND origin_definition_id IS NOT NULL"
     )
 
     _RUN_QUERY_SELECT = """
@@ -6398,24 +5144,13 @@ class SQLiteTaskRepository:
             UNION
             {organizing_retry_union}
         )
-        SELECT 'job' AS run_kind, jobs.job_id AS anchor_id, jobs.created_at AS sort_at,
-               jobs.task_id AS linked_task_id, NULL AS transfer_task_id,
-               jobs.schedule_id, jobs.definition_id, jobs.source_scope,
-               jobs.resource_library_id, jobs.worker_id, jobs.status AS job_status
-        FROM automation_jobs jobs
-        WHERE {organizing_job_membership}
-        UNION ALL
         SELECT 'task' AS run_kind, tasks.task_id AS anchor_id, tasks.created_at AS sort_at,
                NULL AS linked_task_id, NULL AS transfer_task_id,
                NULL AS schedule_id, NULL AS definition_id,
                tasks.scope_path AS source_scope, NULL AS resource_library_id,
-               NULL AS worker_id, NULL AS job_status
+               NULL AS worker_id, tasks.status AS anchor_status
         FROM tasks tasks
         JOIN organizing_tasks admitted ON admitted.task_id = tasks.task_id
-        WHERE NOT EXISTS (
-            SELECT 1 FROM automation_jobs linked_jobs
-            WHERE linked_jobs.task_id = tasks.task_id
-        )
         UNION ALL
         SELECT 'discovery' AS run_kind,
                media_discoveries.discovery_id AS anchor_id,
@@ -6424,17 +5159,15 @@ class SQLiteTaskRepository:
                NULL AS transfer_task_id,
                NULL AS schedule_id, NULL AS definition_id,
                NULL AS source_scope, media_discoveries.resource_library_id,
-               media_discoveries.claim_worker_id, media_discoveries.status AS job_status
+               media_discoveries.claim_worker_id, media_discoveries.status AS anchor_status
         FROM media_discoveries media_discoveries
-        -- RO-2: an admission that admitted its own durable organizing Task is
+        -- A discovery that admitted its own durable organizing Task is
         -- represented by that Task row.  Emitting both would count and list the
-        -- same operator work twice, so the discovery branch covers only the
-        -- admissions that keep their original preparation-only lineage (a
-        -- definition Run once, a remaining-scope recovery preparation and any
-        -- pre-change record).  RO-4: such a preparation is Task Center work
-        -- only when it carries a durable definition origin (a definition-bound
-        -- Run once); a plain analysis/preview preparation is not organizing
-        -- work and never leaks into a center list or count.
+        -- same operator work twice, so this branch covers only preparations
+        -- that keep their original preparation-only lineage.  A preparation is
+        -- Task Center work only when it carries a durable definition origin
+        -- (a definition-bound Run once); a plain analysis/preview preparation
+        -- is not organizing work and never leaks into a center list or count.
         WHERE media_discoveries.organize_task_id IS NULL
         AND ({organizing_discovery_membership})
     """
@@ -6504,7 +5237,6 @@ class SQLiteTaskRepository:
             return ", ".join(_sql_string(value) for value in values)
 
         media_prefix = _sql_string(MEDIA_LIBRARY_TASK_COMMAND_PREFIX)
-        job_family = cls._command_family_sql("jobs.command")
         task_family = cls._command_family_sql("tasks.command")
         # Every persisted relation that proves one Task continues another Task
         # of the same admitted organizing journey.  The recursive seed and the
@@ -6539,32 +5271,6 @@ class SQLiteTaskRepository:
             "(media_discoveries.definition_origin_json IS NOT NULL"
             " AND media_discoveries.definition_origin_json <> '')"
         )
-        # Every continuation producer writes its Job and its relation row in
-        # the same admission transaction.  Joining the relation to the shared
-        # recursive Task population is therefore a persisted-admission proof:
-        # a recovery/metadata/scope continuation of a non-organizing Task can
-        # never join the center by its command name or by the Job it created.
-        job_seed_placeholders = ", ".join(
-            _sql_string(value) for value in ORGANIZING_JOB_SEED_COMMAND_FAMILIES
-        )
-        job_lineage_branches = "\n              OR ".join(
-            f"""({job_family} = {_sql_string(family)}
-               AND EXISTS (
-                   SELECT 1
-                   FROM organizing_tasks job_lineage_source
-                   JOIN {table} job_lineage_relation
-                     ON job_lineage_relation.source_task_id = job_lineage_source.task_id
-                   WHERE job_lineage_relation.job_id = jobs.job_id
-               ))"""
-            for family, table in ORGANIZING_JOB_LINEAGE_RELATIONS
-        )
-        job_membership = (
-            "(\n              "
-            f"{job_family} IN ({job_seed_placeholders})"
-            "\n              OR "
-            f"{job_lineage_branches}"
-            "\n            )"
-        )
         return {
             "media_library_prefix": media_prefix,
             # A Files admission or a confirmed execution intent keeps its own
@@ -6577,7 +5283,6 @@ class SQLiteTaskRepository:
             "organizing_task_successor_unions": successor_unions,
             "organizing_retry_union": retry_union,
             "organizing_discovery_membership": discovery_origin,
-            "organizing_job_membership": job_membership,
         }
 
     @classmethod
@@ -6677,12 +5382,11 @@ class SQLiteTaskRepository:
             clauses.append("sort_at <= ?")
             parameters.append(created_before.isoformat())
         if definition_id is not None:
-            # The admission-written definition identity: the scheduled
-            # occurrence's own Job column plus the durable manual-origin
-            # display evidence.  A legacy or unrelated run carries neither
-            # and is therefore never claimed by this selector.
-            clauses.append("(definition_id = ? OR origin_definition_id = ?)")
-            parameters.extend((definition_id, definition_id))
+            # The admission-written definition identity on the Task's durable
+            # display evidence.  An unrelated run carries no origin and is
+            # therefore never claimed by this selector.
+            clauses.append("origin_definition_id = ?")
+            parameters.append(definition_id)
         if trigger is not None:
             clauses.append("derived_trigger = ?")
             parameters.append(trigger)
@@ -6706,9 +5410,7 @@ class SQLiteTaskRepository:
             # The same rule therefore applies to every consumer below.
             clauses.append(
                 "is_recovery_follow_up = 0 AND "
-                "((run_kind = 'job' AND (schedule_id IS NOT NULL "
-                "OR definition_id IS NOT NULL)) "
-                "OR (run_kind = 'task' AND origin_definition_id IS NOT NULL))"
+                "run_kind = 'task' AND origin_definition_id IS NOT NULL"
             )
         return clauses, parameters
 
@@ -6745,8 +5447,6 @@ class SQLiteTaskRepository:
         return (
             "(EXISTS (SELECT 1 FROM recovery_continuations followup_recovery "
             f"WHERE followup_recovery.new_task_id = {task_identity}) "
-            "OR EXISTS (SELECT 1 FROM scope_continuations followup_scope "
-            f"WHERE followup_scope.new_task_id = {task_identity}) "
             "OR EXISTS (SELECT 1 FROM metadata_correction_continuations "
             f"followup_correction WHERE followup_correction.new_task_id = {task_identity}) "
             # The two same-page branches start from the indexed
@@ -6766,13 +5466,10 @@ class SQLiteTaskRepository:
     def _run_query_document(self) -> str:
         """One derived, deduplicated run population as a subquery.
 
-        The join is the explicit persisted ``automation_jobs.task_id`` only:
-        a Task with any linked Job disappears from the standalone branch and
-        appears once through its admission, so a Job acquiring a Task never
-        changes the run's identity, count or anchor ID.  Job-derived display
-        evidence (scope, worker, schedule/definition, trigger) survives the
-        linkage through the same row.  ``derived_status`` is computed from the
-        exact evidence columns with the same precedence as
+        The population is the Task itself plus its admission-written display
+        evidence, so a Task keeps one stable identity, count and anchor ID.
+        ``derived_status`` is computed from the exact evidence columns with the
+        same precedence as
         :func:`mediaflow.domain.operations_run.derive_run_status`, so the
         page and the status partitions share one read basis.
 
@@ -6834,15 +5531,7 @@ class SQLiteTaskRepository:
         # shared administrative Automation recovery boundary still needs the
         # exact durable repair facts to publish its own explicit handoff.  The
         # predicate therefore stays *outside* the Attention union.
-        run_level_repair = (
-            "runs.run_kind = 'job' "
-            "AND runs.linked_task_id IS NULL "
-            "AND runs.job_status = 'failed' "
-            "AND runs.anchor_failure_category IS NOT NULL "
-            "AND runs.anchor_failure_category <> '' "
-            "AND runs.anchor_failure_next_action IS NOT NULL "
-            "AND runs.anchor_failure_next_action <> ''"
-        )
+        run_level_repair = "0"
         # Why a run is in attention, when it is: its current four-type problem
         # set.  A run with no current business problem publishes no reason, so
         # no page can render a generic repair/retry invitation.
@@ -6961,8 +5650,7 @@ class SQLiteTaskRepository:
                    -- its limit, which is not a containment bound, so it stays
                    -- explicitly unavailable instead of being misread as
                    -- truncation.  Nothing is backfilled from today's Active.
-                   CASE WHEN runs.run_kind = 'job' THEN runs.anchor_job_limit
-                        ELSE NULL END AS admitted_item_bound,
+                   NULL AS admitted_item_bound,
                    CASE WHEN task_status.task_id IS NULL OR task_status.total_items IS NULL
                         THEN NULL
                         -- The declared admission total must bound the WHOLE
@@ -7099,7 +5787,7 @@ class SQLiteTaskRepository:
                        -- A bounded discovery carries no Task yet; its own
                        -- durable status is the honest aggregate evidence.
                        WHEN runs.run_kind = 'discovery' THEN
-                           CASE runs.job_status
+                           CASE runs.anchor_status
                                WHEN 'queued' THEN 'pending'
                                WHEN 'running' THEN 'running'
                                WHEN 'waiting_stability' THEN 'waiting'
@@ -7109,13 +5797,13 @@ class SQLiteTaskRepository:
                                WHEN 'failed' THEN 'failed'
                                ELSE 'cancelled'
                            END
-                       WHEN runs.job_status = 'pending' THEN 'pending'
-                       WHEN runs.job_status = 'running' THEN 'running'
+                       WHEN runs.anchor_status = 'pending' THEN 'pending'
+                       WHEN runs.anchor_status = 'running' THEN 'running'
                        WHEN task_status.status IN (
                            'completed', 'partial_success', 'failed', 'cancelled'
                        ) THEN task_status.status
-                       WHEN runs.job_status IN ('completed', 'failed', 'cancelled') THEN
-                           runs.job_status
+                       WHEN runs.anchor_status IN ('completed', 'failed', 'cancelled') THEN
+                           runs.anchor_status
                        ELSE 'unknown'
                    END AS derived_status,
                    -- Whether the run is only finished because a proven recovery
@@ -7130,20 +5818,10 @@ class SQLiteTaskRepository:
                    -- trigger selector and the published row value can never
                    -- disagree about what admitted a run.
                    CASE
-                       WHEN runs.run_kind = 'job' AND EXISTS (
-                           SELECT 1 FROM automation_jobs origin_job
-                           WHERE origin_job.job_id = runs.anchor_id
-                           AND origin_job.execution_origin = 'run-once'
-                       ) THEN 'manual'
+                       WHEN display.origin_kind = 'definition-scheduled' THEN 'scheduled'
                        WHEN runs.schedule_id IS NOT NULL
                             OR runs.definition_id IS NOT NULL THEN 'scheduled'
-                       -- A kernel-admitted due occurrence carries no Job row;
-                       -- its admission-written origin kind is the durable
-                       -- scheduled evidence.  A definition Run once keeps its
-                       -- own deliberate manual trigger.
-                       WHEN display.origin_kind = 'definition-scheduled' THEN 'scheduled'
                        WHEN display.origin_definition_id IS NOT NULL THEN 'manual'
-                       WHEN runs.run_kind = 'job' THEN 'automation'
                        ELSE 'manual'
                    END AS derived_trigger,
                    -- The current, real operator-attention facet (RO-1).  It is
@@ -7158,10 +5836,8 @@ class SQLiteTaskRepository:
                    -- rows only.  That keeps the unrestricted Operations
                    -- inventory from paying for it on ordinary Files/CLI work.
                    CASE
-                       WHEN ((runs.run_kind = 'job' AND (runs.schedule_id IS NOT NULL
-                               OR runs.definition_id IS NOT NULL))
-                           OR (runs.run_kind = 'task'
-                               AND display.origin_definition_id IS NOT NULL))
+                       WHEN runs.run_kind = 'task'
+                            AND display.origin_definition_id IS NOT NULL
                        THEN CASE WHEN {recovery_follow_up_sql} THEN 1 ELSE 0 END
                        ELSE 0
                    END AS is_recovery_follow_up,
@@ -7195,18 +5871,16 @@ class SQLiteTaskRepository:
                    {problem_file_sql["classification"]} AS problem_classification_files,
                    {problem_file_sql["conflict"]} AS problem_conflict_files
             FROM (
-                SELECT job_rows.*,
-                       jobs.command AS anchor_command,
-                       jobs.updated_at AS job_updated_at,
-                       jobs.started_at AS job_started_at,
-                       jobs.completed_at AS job_completed_at,
-                       jobs.limit_value AS anchor_job_limit,
-                       jobs.failure_category AS anchor_failure_category,
-                       jobs.failure_durable_state AS anchor_failure_durable_state,
-                       jobs.failure_next_action AS anchor_failure_next_action
-                FROM ({self._run_query_population_select()}) job_rows
-                LEFT JOIN automation_jobs jobs ON jobs.job_id = job_rows.anchor_id
-                       AND job_rows.run_kind = 'job'
+                SELECT run_rows.*,
+                       NULL AS anchor_command,
+                       NULL AS job_updated_at,
+                       NULL AS job_started_at,
+                       NULL AS job_completed_at,
+                       NULL AS anchor_job_limit,
+                       NULL AS anchor_failure_category,
+                       NULL AS anchor_failure_durable_state,
+                       NULL AS anchor_failure_next_action
+                FROM ({self._run_query_population_select()}) run_rows
             ) runs
             LEFT JOIN tasks task_status ON task_status.task_id = COALESCE(
                 runs.linked_task_id, runs.transfer_task_id, runs.anchor_id
@@ -7344,11 +6018,8 @@ class SQLiteTaskRepository:
                          ELSE CASE WHEN linked_task_status = 'paused' THEN 'paused'
                               WHEN linked_task_status = 'pending' THEN 'pending'
                               WHEN linked_task_status = 'running' THEN 'running'
-                              WHEN job_status IN ('pending', 'running') THEN job_status
                               WHEN linked_task_status IN ('completed', 'partial_success', 'failed',
                                                           'cancelled') THEN linked_task_status
-                              WHEN job_status IN ('completed', 'failed', 'cancelled')
-                              THEN job_status
                               ELSE 'unknown' END
                     END AS original_status
                 FROM ({document}) population LEFT JOIN evidence e
@@ -7983,11 +6654,6 @@ class SQLiteTaskRepository:
                         FROM recovery_continuations c
                         JOIN sources s ON s.source_task_id = c.source_task_id
                         UNION ALL
-                        SELECT 'scope', c.source_task_id, c.status, c.started_at,
-                               c.completed_at, c.new_task_id, NULL, NULL
-                        FROM scope_continuations c
-                        JOIN sources s ON s.source_task_id = c.source_task_id
-                        UNION ALL
                         SELECT 'metadata-correction', c.source_task_id, c.status,
                                c.started_at, c.completed_at, c.new_task_id, NULL, NULL
                         FROM metadata_correction_continuations c
@@ -8367,12 +7033,10 @@ class SQLiteTaskRepository:
     def resolve_operations_run_link(self, identifier: object) -> str | None:
         """Resolve one durable identifier to the run anchor that owns it.
 
-        Accepts a run anchor (Job ID or standalone Task ID) or the Task ID of
-        a Job-linked Task and returns the exact anchor ID of that run.  The
-        only fallback is the persisted ``automation_jobs.task_id`` link —
-        never a filename, label or creation-time proximity — so a supported
-        detail link keeps resolving to the same stable run identity before
-        and after Job→Task linkage.  ``None`` means no run owns it.
+        Accepts a run anchor Task ID and returns the exact anchor ID of that
+        run.  The population is the shared Task read document — never a
+        filename, label or creation-time proximity — so a supported detail link
+        resolves to the same stable run identity.  ``None`` means no run owns it.
         """
 
         if not isinstance(identifier, str) or not identifier.strip() or len(identifier) > 128:
@@ -8383,26 +7047,7 @@ class SQLiteTaskRepository:
                 f"SELECT anchor_id FROM ({document}) WHERE anchor_id = ? LIMIT 1",
                 (identifier,),
             ).fetchone()
-            if row is not None:
-                return str(row["anchor_id"])
-            row = self._connection.execute(
-                "SELECT job_id FROM automation_jobs WHERE task_id = ? LIMIT 1",
-                (identifier,),
-            ).fetchone()
-            if row is not None:
-                # The persisted Job→Task link only resolves when that exact Job
-                # is in the same Task Center population the lists read.  A
-                # command-family match alone would resolve an analysis-only
-                # continuation Job of a non-organizing Task, so the shared
-                # population document is the authority here too.
-                linked = self._connection.execute(
-                    "SELECT 1 FROM (" + document + ") WHERE run_kind = 'job' "
-                    "AND anchor_id = ? LIMIT 1",
-                    (str(row["job_id"]),),
-                ).fetchone()
-                if linked is None:
-                    return None
-        return str(row["job_id"]) if row is not None else None
+        return str(row["anchor_id"]) if row is not None else None
 
     def is_task_center_run(self, run_id: object) -> bool:
         """Whether one durable identifier resolves to Task Center organizing work.
@@ -9335,9 +7980,9 @@ class SQLiteTaskRepository:
             "AND (EXISTS (SELECT 1 FROM manual_execution_items source_execution_item "
             f"WHERE source_execution_item.task_id = {item_alias}.task_id "
             f"AND source_execution_item.task_item_id = {item_alias}.item_id) "
-            "OR EXISTS (SELECT 1 FROM automation_jobs source_definition_job "
-            f"WHERE source_definition_job.task_id = {item_alias}.task_id "
-            "AND source_definition_job.definition_id IS NOT NULL)) "
+            "OR EXISTS (SELECT 1 FROM operations_run_display source_definition_run "
+            f"WHERE source_definition_run.task_id = {item_alias}.task_id "
+            "AND source_definition_run.origin_definition_id IS NOT NULL)) "
             f"AND {chain_settled} "
             f"AND COALESCE({confirmed}, '') <> 'confirmed'"
         )
@@ -9380,7 +8025,6 @@ class SQLiteTaskRepository:
     def operations_run_records_window(
         self,
         task_id: str | None,
-        job_id: str | None,
         *,
         kind: str | None = None,
         limit: int = 20,
@@ -9390,7 +8034,7 @@ class SQLiteTaskRepository:
         """One operation-record page plus kind totals from one read snapshot.
 
         The stream unions durable item results, captured pipeline evidence,
-        exactly-linked operational logs (``task_id``/``job_id`` columns) and
+        exactly-linked operational logs (``task_id`` column) and
         control/recovery audit rows (``task_id`` links) — never a text
         inference — ordered by ``(occurred_at, record_id)`` with the kind
         prefixed into the record ID so mixed-kind paging stays deterministic.
@@ -9404,7 +8048,7 @@ class SQLiteTaskRepository:
             raise ValueError("after and before are mutually exclusive")
         if kind is not None and kind not in RUN_RECORD_KINDS:
             raise ValueError("run record kind filter is invalid")
-        if task_id is None and job_id is None:
+        if task_id is None:
             return OperationsRunRecordWindow(
                 page=(),
                 matching_total=0,
@@ -9412,7 +8056,7 @@ class SQLiteTaskRepository:
                 has_next=False,
                 has_previous=False,
             )
-        union, union_parameters = self._run_records_union(task_id, job_id)
+        union, union_parameters = self._run_records_union(task_id)
         filter_clauses: list[str] = []
         filter_parameters: list[object] = []
         if kind is not None:
@@ -9488,7 +8132,7 @@ class SQLiteTaskRepository:
 
     @staticmethod
     def _run_records_union(
-        task_id: str | None, job_id: str | None
+        task_id: str | None,
     ) -> tuple[str, tuple[object, ...]]:
         """The exactly-linked record stream as one UNION ALL subquery.
 
@@ -9516,17 +8160,7 @@ class SQLiteTaskRepository:
                 "FROM pipeline_evidence WHERE task_id = ? AND captured_at IS NOT NULL"
             )
             parameters.append(task_id)
-        if task_id is not None and job_id is not None:
-            branches.append(
-                "SELECT 'log' AS kind, 'log:' || log_id AS record_id, "
-                "occurred_at AS occurred_at, NULL AS item_id, "
-                "event AS action, status AS state, component AS actor, "
-                "level AS ref, plan_id AS link "
-                "FROM operational_logs WHERE (task_id = ? OR job_id = ?) "
-                "AND occurred_at IS NOT NULL"
-            )
-            parameters.extend((task_id, job_id))
-        elif task_id is not None:
+        if task_id is not None:
             branches.append(
                 "SELECT 'log' AS kind, 'log:' || log_id AS record_id, "
                 "occurred_at AS occurred_at, NULL AS item_id, "
@@ -9535,15 +8169,6 @@ class SQLiteTaskRepository:
                 "FROM operational_logs WHERE task_id = ? AND occurred_at IS NOT NULL"
             )
             parameters.append(task_id)
-        elif job_id is not None:
-            branches.append(
-                "SELECT 'log' AS kind, 'log:' || log_id AS record_id, "
-                "occurred_at AS occurred_at, NULL AS item_id, "
-                "event AS action, status AS state, component AS actor, "
-                "level AS ref, plan_id AS link "
-                "FROM operational_logs WHERE job_id = ? AND occurred_at IS NOT NULL"
-            )
-            parameters.append(job_id)
         if task_id is not None:
             simple_audits = (
                 ("task_retry_audit", "decision_id", "decided_at", "task_retry"),
@@ -9669,7 +8294,6 @@ class SQLiteTaskRepository:
             if run_kind == "task"
             else (str(task_id_value) if task_id_value else None)
         )
-        job_id = anchor_id if run_kind == "job" else None
         derived_status = OperationsRunStatus(row["derived_status"])
         command = row["effective_command"] or row["anchor_command"]
         if run_kind == "discovery":
@@ -9695,8 +8319,6 @@ class SQLiteTaskRepository:
             # durable admission origin is a definition, but it was not emitted
             # by the Scheduler and it never advances or consumes due state.
             trigger = OperationsRunTrigger.MANUAL
-        elif job_id is not None:
-            trigger = OperationsRunTrigger.AUTOMATION
         else:
             trigger = OperationsRunTrigger.MANUAL
         library_value = row["library_kind"]
@@ -9745,7 +8367,6 @@ class SQLiteTaskRepository:
             trigger=trigger,
             created_at=created_at,
             updated_at=updated_at,
-            job_id=job_id,
             task_id=task_id,
             schedule_id=str(schedule_id) if schedule_id else None,
             definition_id=str(definition_id) if definition_id else None,
@@ -9831,603 +8452,6 @@ class SQLiteTaskRepository:
                 else None
             ),
         )
-
-    def claim_next_job(
-        self,
-        now: datetime,
-        *,
-        worker_id: str | None = None,
-    ) -> AutomationJob | None:
-        claim_token = secrets.token_urlsafe(32)
-        with self._lock, self._connection:
-            worker = None
-            if worker_id is not None:
-                worker_row = self._connection.execute(
-                    "SELECT * FROM processing_workers WHERE worker_id=?", (worker_id,)
-                ).fetchone()
-                if worker_row is None or worker_row["status"] == WorkerStatus.STOPPED.value:
-                    raise AutomationClaimLost(
-                        f"worker {worker_id!r} is not registered or is stopped"
-                    )
-                worker = self._processing_worker(worker_row)
-                if worker.runtime_schema_version != SCHEMA_VERSION:
-                    raise AutomationClaimLost(
-                        f"worker {worker_id!r} is bound to unsupported runtime schema "
-                        f"{worker.runtime_schema_version}; expected {SCHEMA_VERSION}"
-                    )
-                threshold = worker_stale_threshold_seconds(worker.heartbeat_interval_seconds)
-                if (now - worker.last_heartbeat_at).total_seconds() > threshold:
-                    raise AutomationClaimLost(
-                        f"worker {worker_id!r} has a stale heartbeat; restart the resident worker"
-                    )
-            # Claim selection: a registered Worker with an explicit snapshot may only
-            # claim a Job whose snapshot matches exactly (AC5).  No unconditional command
-            # exception and no global snapshot bypass are permitted.
-            #
-            # The single bounded per-Job continuation exception: a Job that is bound
-            # to a different snapshot but has a queued record in
-            # recovery_continuations, metadata_correction_continuations or
-            # scope_continuations is an already-pinned continuation.  The
-            # continuation table is the explicit per-Job condition; the Worker still
-            # enforces lease/schema and the continuation handler loads and validates
-            # its own pinned snapshot.
-            _RECOVERY_QUEUED = RecoveryContinuationStatus.QUEUED.value
-            _METADATA_CORRECTION_QUEUED = MetadataCorrectionContinuationStatus.QUEUED.value
-            _SCOPE_QUEUED = ScopeContinuationStatus.QUEUED.value
-            if worker is None:
-                row = self._connection.execute(
-                    "SELECT job_id FROM automation_jobs WHERE status=? "
-                    "ORDER BY created_at, job_id LIMIT 1",
-                    (AutomationJobStatus.PENDING.value,),
-                ).fetchone()
-            elif worker.configuration_snapshot_id is None:
-                row = self._connection.execute(
-                    "SELECT job_id FROM automation_jobs WHERE status=? AND "
-                    "(configuration_snapshot_id IS NULL "
-                    "OR job_id IN (SELECT job_id FROM recovery_continuations "
-                    "              WHERE status=?) "
-                    "OR job_id IN (SELECT job_id FROM metadata_correction_continuations "
-                    "              WHERE status=?) "
-                    "OR job_id IN (SELECT job_id FROM scope_continuations "
-                    "              WHERE status=?)) "
-                    "ORDER BY created_at, job_id LIMIT 1",
-                    (
-                        AutomationJobStatus.PENDING.value,
-                        _RECOVERY_QUEUED,
-                        _METADATA_CORRECTION_QUEUED,
-                        _SCOPE_QUEUED,
-                    ),
-                ).fetchone()
-            else:
-                row = self._connection.execute(
-                    "SELECT job_id FROM automation_jobs WHERE status=? AND "
-                    "((configuration_snapshot_id=? AND configuration_snapshot_digest=?) "
-                    "OR job_id IN (SELECT job_id FROM recovery_continuations "
-                    "              WHERE status=?) "
-                    "OR job_id IN (SELECT job_id FROM metadata_correction_continuations "
-                    "              WHERE status=?) "
-                    "OR job_id IN (SELECT job_id FROM scope_continuations "
-                    "              WHERE status=?)) "
-                    "ORDER BY created_at, job_id LIMIT 1",
-                    (
-                        AutomationJobStatus.PENDING.value,
-                        worker.configuration_snapshot_id,
-                        worker.configuration_snapshot_digest,
-                        _RECOVERY_QUEUED,
-                        _METADATA_CORRECTION_QUEUED,
-                        _SCOPE_QUEUED,
-                    ),
-                ).fetchone()
-            if row is None:
-                return None
-            cursor = self._connection.execute(
-                "UPDATE automation_jobs SET status=?, updated_at=?, started_at=?, "
-                "claim_token=?, worker_id=? "
-                "WHERE job_id=? AND status=?",
-                (
-                    AutomationJobStatus.RUNNING.value,
-                    now.isoformat(),
-                    now.isoformat(),
-                    claim_token,
-                    worker_id,
-                    row["job_id"],
-                    AutomationJobStatus.PENDING.value,
-                ),
-            )
-            if cursor.rowcount != 1:
-                return None
-            claimed = self._connection.execute(
-                "SELECT * FROM automation_jobs WHERE job_id=?", (row["job_id"],)
-            ).fetchone()
-        return self._job(claimed)
-
-    def update_job(self, job: AutomationJob) -> None:
-        with self._lock, self._connection:
-            cursor = self._connection.execute(
-                "UPDATE automation_jobs SET command=?, status=?, created_at=?, updated_at=?, "
-                "limit_value=?, started_at=?, completed_at=?, task_id=?, error=?, "
-                "cancellation_requested=?, schedule_id=?, execute_authorized=?, claim_token=?, "
-                "worker_id=?, "
-                "configuration_snapshot_id=?, configuration_snapshot_digest=?, "
-                "failure_category=?, failure_durable_state=?, failure_side_effects=?, "
-                "failure_retry_safe=?, failure_next_action=?, definition_id=?, "
-                "definition_fingerprint=?, definition_version=?, occurrence_at=?, run_mode=?, "
-                "resource_library_id=?, source_scope=?, configuration_snapshot_version=?, "
-                "execution_origin=?, execution_principal=?, admission_request_id=? "
-                "WHERE job_id=?",
-                (*self._job_values(job)[1:], job.job_id),
-            )
-            if cursor.rowcount != 1:
-                raise LookupError(f"automation job {job.job_id!r} was not found")
-
-    def request_job_cancellation(
-        self, job_id: str, now: datetime, *, expected_version: str | None = None
-    ) -> AutomationJob:
-        with self._lock, self._connection:
-            existing_row = self._connection.execute(
-                "SELECT command, status FROM automation_jobs WHERE job_id=?", (job_id,)
-            ).fetchone()
-            if existing_row is None:
-                raise LookupError(f"automation job {job_id!r} was not found")
-            statement = (
-                "UPDATE automation_jobs SET status=CASE WHEN status=? THEN ? ELSE status END, "
-                "cancellation_requested=1, updated_at=?, "
-                "completed_at=CASE WHEN status=? THEN ? ELSE completed_at END "
-                "WHERE job_id=? AND status IN (?, ?) AND cancellation_requested=0"
-            )
-            parameters: list[object] = [
-                AutomationJobStatus.PENDING.value,
-                AutomationJobStatus.CANCELLED.value,
-                now.isoformat(),
-                AutomationJobStatus.PENDING.value,
-                now.isoformat(),
-                job_id,
-                AutomationJobStatus.PENDING.value,
-                AutomationJobStatus.RUNNING.value,
-            ]
-            if expected_version is not None:
-                # A claimed Job advances updated_at as Worker liveness evidence,
-                # which is not a state transition, so its control version is the
-                # immutable claim time (see ``job_control_version``).  Either
-                # form is bound together with status and the request flag in
-                # this single atomic transition.
-                statement += " AND (updated_at=? OR (claim_token IS NOT NULL AND started_at=?))"
-                parameters.extend((expected_version, expected_version))
-            cursor = self._connection.execute(statement, tuple(parameters))
-            if cursor.rowcount != 1:
-                raise self._job_cancellation_conflict_locked(job_id, expected_version)
-            if existing_row["command"] == AutomationCommand.FILE_METADATA_CORRECTION.value:
-                self._connection.execute(
-                    """UPDATE metadata_correction_continuations
-                    SET status=?, updated_at=?, completed_at=?, error=?, recovery=?
-                    WHERE job_id=? AND status IN (?, ?) AND
-                          (status=? OR new_task_id IS NULL)""",
-                    (
-                        MetadataCorrectionContinuationStatus.CANCELLED.value,
-                        now.isoformat(),
-                        now.isoformat(),
-                        "continuation Job was cancelled before completion",
-                        "refresh the File detail and explicitly continue this correction again",
-                        job_id,
-                        MetadataCorrectionContinuationStatus.QUEUED.value,
-                        MetadataCorrectionContinuationStatus.RUNNING.value,
-                        MetadataCorrectionContinuationStatus.QUEUED.value,
-                    ),
-                )
-            elif existing_row["command"] == AutomationCommand.RECOVERY_CONTINUATION.value:
-                # A pending Job is terminally cancelled here, so its queued
-                # continuation cannot remain active after the Worker loses it.
-                cursor = self._connection.execute(
-                    """UPDATE recovery_continuations
-                    SET status=?, updated_at=?, completed_at=?, error=?, recovery=?
-                    WHERE job_id=? AND status=?""",
-                    (
-                        RecoveryContinuationStatus.CANCELLED.value,
-                        now.isoformat(),
-                        now.isoformat(),
-                        "recovery continuation Job was cancelled before completion",
-                        "refresh the Task item checkpoint and explicitly continue again",
-                        job_id,
-                        RecoveryContinuationStatus.QUEUED.value,
-                    ),
-                )
-                if cursor.rowcount == 1:
-                    row = self._connection.execute(
-                        "SELECT request_id FROM recovery_continuations WHERE job_id=?",
-                        (job_id,),
-                    ).fetchone()
-                    if row is not None:
-                        self._resolve_recovery_request_locked(
-                            row["request_id"], RecoveryRequestStatus.CANCELLED, now
-                        )
-            row = self._connection.execute(
-                "SELECT * FROM automation_jobs WHERE job_id=?", (job_id,)
-            ).fetchone()
-            cancelled = self._job(row)
-            if cancelled.status is AutomationJobStatus.CANCELLED and cancelled.definition_id:
-                # A pending managed occurrence has no Worker completion path.  Persist the
-                # same bounded cancellation evidence here so its occurrence is not left
-                # permanently in the emitted state when no Task was created.
-                self._connection.execute(
-                    "UPDATE automation_jobs SET error=?, failure_category=?, "
-                    "failure_durable_state=?, failure_side_effects=?, failure_retry_safe=?, "
-                    "failure_next_action=? WHERE job_id=?",
-                    (
-                        "workflow cancelled",
-                        "workflow_cancelled",
-                        (
-                            "the admitted Task was cancelled before work; no media effect occurred"
-                            if cancelled.run_once
-                            else "no Task was created and no media effect occurred"
-                        ),
-                        "none",
-                        1,
-                        (
-                            "inspect the cancelled Task; explicitly start a new Run once if wanted"
-                            if cancelled.run_once
-                            else "inspect the Automation definition and leave it enabled "
-                            "for the next scheduled occurrence"
-                        ),
-                        job_id,
-                    ),
-                )
-                row = self._connection.execute(
-                    "SELECT * FROM automation_jobs WHERE job_id=?", (job_id,)
-                ).fetchone()
-                cancelled = self._job(row)
-                if cancelled.run_once and cancelled.task_id:
-                    self._connection.execute(
-                        "UPDATE tasks SET status=?, updated_at=?, completed_at=? "
-                        "WHERE task_id=? AND status=?",
-                        (
-                            PersistentTaskStatus.CANCELLED.value,
-                            now.isoformat(),
-                            now.isoformat(),
-                            cancelled.task_id,
-                            PersistentTaskStatus.PENDING.value,
-                        ),
-                    )
-                self._finalize_automation_definition_occurrence_locked(cancelled)
-        return cancelled
-
-    def job_cancellation_requested(self, job_id: str) -> bool:
-        with self._lock:
-            row = self._connection.execute(
-                "SELECT cancellation_requested FROM automation_jobs WHERE job_id=?", (job_id,)
-            ).fetchone()
-        return bool(row and row["cancellation_requested"])
-
-    def _job_cancellation_conflict_locked(
-        self, job_id: str, expected_version: str | None
-    ) -> AutomationJobControlConflict:
-        """Classify a refused Job cancellation from the durable row alone."""
-
-        row = self._connection.execute(
-            "SELECT * FROM automation_jobs WHERE job_id=?", (job_id,)
-        ).fetchone()
-        if row is None:
-            raise LookupError(f"automation job {job_id!r} was not found")
-        current = self._job(row)
-        version = job_control_version(current)
-        if expected_version is not None and expected_version != version:
-            return AutomationJobControlConflict(
-                "stale_job_state",
-                "the Job changed after the submitted state was read",
-                durable_state="the submitted Job admission state is no longer the durable state",
-                next_action=(
-                    "reload the Job, review its current state, and submit again deliberately"
-                ),
-                retry_safe=True,
-                current_version=version,
-            )
-        if current.cancellation_requested:
-            return AutomationJobControlConflict(
-                "already_requested",
-                "cancellation is already durably requested for this Job",
-                durable_state=(
-                    "the Job reaches cancelled at its own cooperative boundary; "
-                    "the stored request is not replaced or repeated"
-                ),
-                next_action=(
-                    "reload the Job and read its durable cancellation state instead of "
-                    "submitting the same request again"
-                ),
-                current_version=version,
-            )
-        if current.status not in {AutomationJobStatus.PENDING, AutomationJobStatus.RUNNING}:
-            return AutomationJobControlConflict(
-                "cancel_unavailable",
-                f"a {current.status.value} Job cannot be cancelled",
-                durable_state=f"the Job remains {current.status.value}",
-                next_action="refresh the Job; a terminal Job keeps its recorded outcome",
-                current_version=version,
-            )
-        return AutomationJobControlConflict(
-            "stale_job_state",
-            "the Job changed after the submitted state was read",
-            durable_state="the submitted Job admission state is no longer the durable state",
-            next_action=("reload the Job, review its current state, and submit again deliberately"),
-            retry_safe=True,
-            current_version=version,
-        )
-
-    def heartbeat_job(self, job_id: str, claim_token: str, now: datetime) -> bool:
-        if not claim_token:
-            raise AutomationClaimLost("automation Job claim ownership was lost")
-        with self._lock, self._connection:
-            cursor = self._connection.execute(
-                "UPDATE automation_jobs SET updated_at=? WHERE job_id=? AND status=? "
-                "AND claim_token=?",
-                (
-                    now.isoformat(),
-                    job_id,
-                    AutomationJobStatus.RUNNING.value,
-                    claim_token,
-                ),
-            )
-            if cursor.rowcount != 1:
-                raise AutomationClaimLost("automation Job claim ownership was lost")
-            row = self._connection.execute(
-                "SELECT cancellation_requested FROM automation_jobs WHERE job_id=?",
-                (job_id,),
-            ).fetchone()
-        return bool(row["cancellation_requested"])
-
-    def complete_claimed_job(self, job: AutomationJob) -> bool:
-        if not job.claim_token:
-            raise AutomationClaimLost("automation Job claim ownership was lost")
-        with self._lock, self._connection:
-            # An accepted cooperative cancellation is a durable operator decision:
-            # the terminal commit of a claimed Job must never overwrite it.  The
-            # transition is one database-atomic statement: the same UPDATE folds
-            # the row's *current* cancellation flag into the terminal outcome, so
-            # a completion or failure that races a cancellation accepted by any
-            # other connection or process becomes the same cancelled outcome the
-            # Worker's own cancellation boundary publishes (the linked Task keeps
-            # its own truthful per-item state).  A Python SELECT before the
-            # UPDATE would not establish writer serialization across separate
-            # connections, so no such read happens here: the CASE expressions
-            # below are evaluated against the stored row inside the statement
-            # itself, and the claim fencing is unchanged.
-            cursor = self._connection.execute(
-                "UPDATE automation_jobs SET command=?, "
-                "status=CASE WHEN cancellation_requested=1 THEN ? ELSE ? END, "
-                "created_at=?, updated_at=?, limit_value=?, started_at=?, completed_at=?, "
-                "task_id=?, error=CASE WHEN cancellation_requested=1 THEN ? ELSE ? END, "
-                "cancellation_requested=CASE WHEN cancellation_requested=1 THEN 1 ELSE ? END, "
-                "schedule_id=?, execute_authorized=?, claim_token=NULL, worker_id=?, "
-                "configuration_snapshot_id=?, configuration_snapshot_digest=?, "
-                "failure_category=?, failure_durable_state=?, failure_side_effects=?, "
-                "failure_retry_safe=?, failure_next_action=?, definition_id=?, "
-                "definition_fingerprint=?, definition_version=?, occurrence_at=?, run_mode=?, "
-                "resource_library_id=?, source_scope=?, configuration_snapshot_version=?, "
-                "execution_origin=?, execution_principal=?, admission_request_id=? "
-                "WHERE job_id=? AND status=? AND claim_token=? AND worker_id IS ?",
-                (
-                    self._job_values(job)[1],
-                    AutomationJobStatus.CANCELLED.value,
-                    job.status.value,
-                    *self._job_values(job)[3:9],
-                    job.error or "workflow cancelled",
-                    job.error,
-                    int(job.cancellation_requested),
-                    *self._job_values(job)[11:13],
-                    job.worker_id,
-                    *self._job_values(job)[15:],
-                    job.job_id,
-                    AutomationJobStatus.RUNNING.value,
-                    job.claim_token,
-                    job.worker_id,
-                ),
-            )
-            if cursor.rowcount == 1:
-                # The occurrence projection must follow the outcome the database
-                # really committed, so it is read back from the same transaction
-                # instead of assuming the submitted terminal status.
-                row = self._connection.execute(
-                    "SELECT * FROM automation_jobs WHERE job_id=?", (job.job_id,)
-                ).fetchone()
-                if row is not None:
-                    self._finalize_automation_definition_occurrence_locked(self._job(row))
-        return cursor.rowcount == 1
-        return cursor.rowcount == 1
-
-    def _finalize_automation_definition_occurrence_locked(self, job: AutomationJob) -> None:
-        """Publish one claimed Job's terminal outcome with its occurrence.
-
-        The Job update and this projection run inside the same SQLite
-        transaction.  The occurrence keeps ``job_id`` as its durable identity;
-        the linked Task id and failure category are read through a bounded join
-        so older occurrence rows need no destructive migration.
-        """
-
-        if not job.definition_id:
-            return
-        task_status = None
-        task_error = None
-        if job.task_id:
-            task = self._connection.execute(
-                "SELECT status, error FROM tasks WHERE task_id=?", (job.task_id,)
-            ).fetchone()
-            if task is not None:
-                task_status = task["status"]
-                task_error = task["error"]
-        if job.status is AutomationJobStatus.CANCELLED:
-            outcome = "cancelled"
-            reason = (
-                job.failure_durable_state
-                or "workflow cancellation was requested; durable work state is preserved"
-            )
-            next_action = (
-                job.failure_next_action
-                or "inspect the Automation definition before the next scheduled occurrence"
-            )
-        elif job.status is AutomationJobStatus.FAILED:
-            blocked_categories = {
-                "active_missing",
-                "active_unreadable",
-                "configuration_unavailable",
-                "definition_disabled",
-                "definition_fingerprint_mismatch",
-                "definition_invalid",
-                "definition_missing",
-                "definition_pin_mismatch",
-                "definition_version_mismatch",
-                "digest_corrupt",
-                "job_snapshot_incomplete",
-                "job_snapshot_missing",
-                "resource_library_disabled",
-                "resource_library_missing",
-                "runtime_invalid",
-                "scope_outside_resource_library",
-                "scope_root_invalid",
-                "scope_root_missing",
-                "scope_root_not_directory",
-                "scope_root_unavailable",
-                "schema_unsupported",
-                "snapshot_digest_mismatch",
-                "snapshot_missing",
-                "snapshot_not_published",
-                "snapshot_unreadable",
-                # A recorded pre-amendment mode is a knowable, pre-work refusal
-                # exactly like an invalid or mismatched definition: the
-                # occurrence is blocked rather than reported as a runtime
-                # failure, and no Task or Storage effect ever existed.
-                "unsupported_definition_mode",
-                "unattended_execution_authority_missing",
-                "automation_execution_authority_unavailable",
-                "automation_execution_principal_missing",
-                "automation_execution_principal_unavailable",
-                "automation_execution_state_unavailable",
-                "scheduled_intent_stopped",
-                "definition_disabled",
-                "definition_removed",
-                "unattended_execution_grant_revoked",
-                "unattended_execution_grant_definition_mismatch",
-                "unattended_execution_grant_resource_mismatch",
-                "unattended_execution_grant_scope_mismatch",
-                "unattended_execution_grant_mode_mismatch",
-                "unattended_execution_grant_limit_exceeded",
-                "unattended_execution_grant_definition_changed",
-                "unattended_execution_grant_snapshot_mismatch",
-            }
-            outcome = "blocked" if job.failure_category in blocked_categories else "failed"
-            reason = (
-                job.failure_durable_state
-                or task_error
-                or job.error
-                or "definition-scoped workflow failed before completion"
-            )[:256]
-            next_action = (
-                job.failure_next_action
-                or "inspect the linked Job and Task evidence, repair the stated condition, "
-                "then retry"
-            )[:512]
-        else:
-            outcome = {
-                "completed": "completed",
-                "partial_success": "partial_success",
-                "failed": "failed",
-                "cancelled": "cancelled",
-            }.get(task_status, "completed")
-            reason = task_error[:256] if isinstance(task_error, str) and task_error else None
-            next_action = (
-                "inspect the linked Task and per-item Results" if outcome != "completed" else None
-            )
-        self._connection.execute(
-            "UPDATE automation_definition_occurrences SET outcome=?, reason=?, next_action=? "
-            "WHERE job_id=?",
-            (outcome, reason, next_action, job.job_id),
-        )
-        self._connection.execute(
-            "UPDATE automation_definition_due_state SET last_outcome=?, last_reason=?, "
-            "last_next_action=?, updated_at=? WHERE definition_id=? AND last_job_id=?",
-            (
-                outcome,
-                reason,
-                next_action,
-                (job.completed_at or job.updated_at).isoformat(),
-                job.definition_id,
-                job.job_id,
-            ),
-        )
-
-    def list_stale_running_jobs(
-        self, before: datetime, *, limit: int = 100
-    ) -> tuple[AutomationJob, ...]:
-        if isinstance(limit, bool) or not isinstance(limit, int) or limit < 1 or limit > 100:
-            raise ValueError("stale job limit must be between 1 and 100")
-        with self._lock:
-            rows = self._connection.execute(
-                "SELECT * FROM automation_jobs WHERE status=? AND updated_at<? "
-                "ORDER BY updated_at, job_id LIMIT ?",
-                (AutomationJobStatus.RUNNING.value, before.isoformat(), limit),
-            ).fetchall()
-        return tuple(self._job(row) for row in rows)
-
-    def requeue_stale_job(self, job_id: str, before: datetime, now: datetime) -> AutomationJob:
-        with self._lock, self._connection:
-            existing_row = self._connection.execute(
-                "SELECT command FROM automation_jobs WHERE job_id=?", (job_id,)
-            ).fetchone()
-            if existing_row is None:
-                raise LookupError(f"automation job {job_id!r} was not found")
-            cursor = self._connection.execute(
-                "UPDATE automation_jobs SET status=?, updated_at=?, started_at=NULL, "
-                "completed_at=NULL, task_id=NULL, error='explicitly requeued stale job', "
-                "cancellation_requested=0, claim_token=NULL, worker_id=NULL, "
-                "failure_category=NULL, "
-                "failure_durable_state=NULL, failure_side_effects=NULL, "
-                "failure_retry_safe=NULL, failure_next_action=NULL "
-                "WHERE job_id=? AND status=? AND updated_at<?",
-                (
-                    AutomationJobStatus.PENDING.value,
-                    now.isoformat(),
-                    job_id,
-                    AutomationJobStatus.RUNNING.value,
-                    before.isoformat(),
-                ),
-            )
-            if cursor.rowcount != 1:
-                raise ValueError("automation job is not stale and running")
-            if existing_row["command"] == AutomationCommand.FILE_METADATA_CORRECTION.value:
-                continuation = self._connection.execute(
-                    """SELECT new_task_id FROM metadata_correction_continuations
-                    WHERE job_id=? AND status=?""",
-                    (job_id, MetadataCorrectionContinuationStatus.RUNNING.value),
-                ).fetchone()
-                if continuation is not None and continuation["new_task_id"] is None:
-                    self._connection.execute(
-                        """UPDATE metadata_correction_continuations
-                        SET status=?, updated_at=?, started_at=NULL, completed_at=NULL,
-                            error=NULL, recovery=NULL
-                        WHERE job_id=? AND status=?""",
-                        (
-                            MetadataCorrectionContinuationStatus.QUEUED.value,
-                            now.isoformat(),
-                            job_id,
-                            MetadataCorrectionContinuationStatus.RUNNING.value,
-                        ),
-                    )
-                elif continuation is not None:
-                    self._connection.execute(
-                        """UPDATE metadata_correction_continuations
-                        SET status=?, updated_at=?, completed_at=?, error=?, recovery=?
-                        WHERE job_id=? AND status=?""",
-                        (
-                            MetadataCorrectionContinuationStatus.FAILED.value,
-                            now.isoformat(),
-                            now.isoformat(),
-                            "stale continuation already has a linked Task",
-                            "inspect the linked Task/Result before retrying this correction",
-                            job_id,
-                            MetadataCorrectionContinuationStatus.RUNNING.value,
-                        ),
-                    )
-            row = self._connection.execute(
-                "SELECT * FROM automation_jobs WHERE job_id=?", (job_id,)
-            ).fetchone()
-        return self._job(row)
 
     def register_worker(
         self,
@@ -10849,57 +8873,6 @@ class SQLiteTaskRepository:
             ).fetchone()
         return self._schedule_state(row)
 
-    def enqueue_due_schedule(
-        self,
-        schedule_id: str,
-        job: AutomationJob,
-        occurrence_at: datetime,
-        next_run_at: datetime,
-        now: datetime,
-        maximum_active_jobs: int,
-    ) -> bool:
-        with self._lock:
-            self._connection.execute("BEGIN IMMEDIATE")
-            try:
-                if not self._has_job_capacity(maximum_active_jobs):
-                    self._connection.rollback()
-                    return False
-                cursor = self._connection.execute(
-                    "UPDATE automation_schedules SET next_run_at=?, updated_at=?, last_job_id=? "
-                    "WHERE schedule_id=? AND next_run_at=? AND next_run_at<=?",
-                    (
-                        next_run_at.isoformat(),
-                        now.isoformat(),
-                        job.job_id,
-                        schedule_id,
-                        occurrence_at.isoformat(),
-                        now.isoformat(),
-                    ),
-                )
-                if cursor.rowcount != 1:
-                    self._connection.rollback()
-                    return False
-                self._insert_job(job)
-                self._connection.execute(
-                    "INSERT INTO schedule_audit VALUES (?, ?, ?, ?, ?, ?, ?)",
-                    (
-                        f"{schedule_id}:{job.job_id}",
-                        schedule_id,
-                        occurrence_at.isoformat(),
-                        now.isoformat(),
-                        job.job_id,
-                        job.command.value
-                        if isinstance(job.command, AutomationCommand)
-                        else str(job.command),
-                        next_run_at.isoformat(),
-                    ),
-                )
-                self._connection.commit()
-                return True
-            except Exception:
-                self._connection.rollback()
-                raise
-
     def list_schedule_states(self) -> tuple[ScheduleState, ...]:
         with self._lock:
             rows = self._connection.execute(
@@ -10952,7 +8925,7 @@ class SQLiteTaskRepository:
                 row["schedule_id"],
                 datetime.fromisoformat(row["occurrence_at"]),
                 datetime.fromisoformat(row["emitted_at"]),
-                row["job_id"],
+                row["task_id"],
                 next((c for c in AutomationCommand if c.value == row["command"]), row["command"]),
                 datetime.fromisoformat(row["next_run_at"]),
             )
@@ -11111,104 +9084,6 @@ class SQLiteTaskRepository:
             ).fetchone()
         return self._automation_definition_due_state(row) if row else None
 
-    def active_automation_job_count(self) -> int:
-        with self._lock:
-            row = self._connection.execute(
-                "SELECT COUNT(*) AS count FROM automation_jobs WHERE status IN (?, ?)",
-                (AutomationJobStatus.PENDING.value, AutomationJobStatus.RUNNING.value),
-            ).fetchone()
-        return int(row["count"])
-
-    def enqueue_due_automation_definition(
-        self,
-        definition_id: str,
-        job: AutomationJob,
-        occurrence: AutomationDefinitionOccurrence,
-        next_run_at: datetime,
-        now: datetime,
-        maximum_active_jobs: int,
-    ) -> bool:
-        """Atomically publish one managed occurrence and advance its due state."""
-
-        if occurrence.definition_id != definition_id or job.definition_id != definition_id:
-            raise ValueError("automation definition occurrence identity does not match the Job")
-        if job.occurrence_at != occurrence.occurrence_at:
-            raise ValueError("automation definition occurrence time does not match the Job")
-        if (
-            job.definition_fingerprint != occurrence.definition_fingerprint
-            or job.definition_version != occurrence.definition_version
-            or job.configuration_snapshot_id != occurrence.configuration_revision_id
-            or job.configuration_snapshot_version != occurrence.configuration_revision_version
-            or job.configuration_snapshot_digest != occurrence.configuration_revision_digest
-            or job.run_mode != occurrence.run_mode
-            or job.resource_library_id != occurrence.resource_library_id
-            or job.source_scope != occurrence.source_scope
-            or job.limit != occurrence.item_limit
-        ):
-            raise ValueError("automation occurrence pins do not match the Job")
-        with self._lock:
-            self._connection.execute("BEGIN IMMEDIATE")
-            try:
-                if not self._has_job_capacity(maximum_active_jobs):
-                    self._connection.rollback()
-                    return False
-                cursor = self._connection.execute(
-                    "UPDATE automation_definition_due_state SET next_run_at=?, updated_at=?, "
-                    "last_occurrence_at=?, last_job_id=?, last_outcome=?, last_reason=NULL, "
-                    "last_next_action=NULL, definition_fingerprint=? "
-                    "WHERE definition_id=? AND next_run_at=? AND "
-                    "julianday(next_run_at)<=julianday(?) AND "
-                    "(definition_fingerprint IS NULL OR definition_fingerprint=?)",
-                    (
-                        next_run_at.isoformat(),
-                        now.isoformat(),
-                        occurrence.occurrence_at.isoformat(),
-                        job.job_id,
-                        occurrence.outcome,
-                        occurrence.definition_fingerprint,
-                        definition_id,
-                        occurrence.occurrence_at.isoformat(),
-                        now.isoformat(),
-                        occurrence.definition_fingerprint,
-                    ),
-                )
-                if cursor.rowcount != 1:
-                    self._connection.rollback()
-                    return False
-                self._insert_job(job)
-                self._connection.execute(
-                    "INSERT INTO automation_definition_occurrences "
-                    "(occurrence_id, definition_id, occurrence_at, emitted_at, job_id, "
-                    "definition_fingerprint, definition_version, configuration_revision_id, "
-                    "configuration_revision_version, configuration_revision_digest, run_mode, "
-                    "resource_library_id, source_scope, item_limit, outcome, reason, next_action) "
-                    "VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)",
-                    (
-                        occurrence.occurrence_id,
-                        occurrence.definition_id,
-                        occurrence.occurrence_at.isoformat(),
-                        occurrence.emitted_at.isoformat(),
-                        occurrence.job_id,
-                        occurrence.definition_fingerprint,
-                        occurrence.definition_version,
-                        occurrence.configuration_revision_id,
-                        occurrence.configuration_revision_version,
-                        occurrence.configuration_revision_digest,
-                        occurrence.run_mode.value,
-                        occurrence.resource_library_id,
-                        occurrence.source_scope,
-                        occurrence.item_limit,
-                        occurrence.outcome,
-                        occurrence.reason,
-                        occurrence.next_action,
-                    ),
-                )
-                self._connection.commit()
-                return True
-            except Exception:
-                self._connection.rollback()
-                raise
-
     def admit_due_schedule_task(
         self,
         schedule_id: str,
@@ -11228,7 +9103,7 @@ class SQLiteTaskRepository:
         state advance, its audit row, the Task and its scheduling slot commit in
         one transaction, so a crash or a full queue leaves the due state
         unchanged and no orphan Task.  The audit row and the schedule's
-        ``last_job_id`` column carry the substantive Task identity so existing
+        ``last_task_id`` column carry the substantive Task identity so existing
         audit readers keep an unambiguous link.
         """
 
@@ -11239,11 +9114,11 @@ class SQLiteTaskRepository:
         with self._lock:
             self._connection.execute("BEGIN IMMEDIATE")
             try:
-                if self._shared_capacity_use_locked() >= capacity:
+                if self._scheduled_capacity_use_locked() >= capacity:
                     self._connection.rollback()
                     return None
                 cursor = self._connection.execute(
-                    "UPDATE automation_schedules SET next_run_at=?, updated_at=?, last_job_id=? "
+                    "UPDATE automation_schedules SET next_run_at=?, updated_at=?, last_task_id=? "
                     "WHERE schedule_id=? AND next_run_at=? AND next_run_at<=?",
                     (
                         next_run_at.isoformat(),
@@ -11299,15 +9174,15 @@ class SQLiteTaskRepository:
         slot commit in one transaction.  The shared capacity is re-checked
         inside it, so a full queue leaves the occurrence due with no Task, no
         occurrence row and no due advance.  The occurrence keeps the same
-        durable link through its existing ``job_id`` column, now carrying the
-        substantive Task identity; no second Job row is written.
+        durable link through its ``task_id`` column, carrying the exact Task
+        identity; no second Job row is written.
         """
 
         require_capacity(capacity)
         self._require_scheduled_admission_values(task, scheduling)
         if occurrence.definition_id != definition_id:
             raise ValueError("automation definition occurrence identity does not match")
-        if occurrence.task_id not in {None, task.task_id}:
+        if occurrence.task_id != task.task_id:
             raise ValueError("automation occurrence Task identity does not match")
         for label, value in (
             ("occurrence", occurrence.occurrence_at),
@@ -11319,12 +9194,12 @@ class SQLiteTaskRepository:
         with self._lock:
             self._connection.execute("BEGIN IMMEDIATE")
             try:
-                if self._shared_capacity_use_locked() >= capacity:
+                if self._scheduled_capacity_use_locked() >= capacity:
                     self._connection.rollback()
                     return None
                 cursor = self._connection.execute(
                     "UPDATE automation_definition_due_state SET next_run_at=?, updated_at=?, "
-                    "last_occurrence_at=?, last_job_id=?, last_outcome=?, last_reason=NULL, "
+                    "last_occurrence_at=?, last_task_id=?, last_outcome=?, last_reason=NULL, "
                     "last_next_action=NULL, definition_fingerprint=? "
                     "WHERE definition_id=? AND next_run_at=? AND "
                     "julianday(next_run_at)<=julianday(?) AND "
@@ -11353,7 +9228,7 @@ class SQLiteTaskRepository:
                 )
                 self._connection.execute(
                     "INSERT INTO automation_definition_occurrences "
-                    "(occurrence_id, definition_id, occurrence_at, emitted_at, job_id, "
+                    "(occurrence_id, definition_id, occurrence_at, emitted_at, task_id, "
                     "definition_fingerprint, definition_version, configuration_revision_id, "
                     "configuration_revision_version, configuration_revision_digest, run_mode, "
                     "resource_library_id, source_scope, item_limit, outcome, reason, next_action) "
@@ -11407,14 +9282,9 @@ class SQLiteTaskRepository:
         if after is not None and before is not None:
             raise ValueError("after and before are mutually exclusive")
         query = (
-            "SELECT occurrence.*, "
-            "CASE WHEN jobs.job_id IS NOT NULL THEN jobs.task_id "
-            "WHEN EXISTS (SELECT 1 FROM tasks link_task "
-            "WHERE link_task.task_id = occurrence.job_id) THEN occurrence.job_id "
-            "ELSE NULL END AS linked_task_id, "
-            "jobs.failure_category AS linked_failure_category "
+            "SELECT occurrence.*, occurrence.task_id AS linked_task_id, "
+            "NULL AS linked_failure_category "
             "FROM automation_definition_occurrences occurrence "
-            "LEFT JOIN automation_jobs jobs ON jobs.job_id=occurrence.job_id "
             "WHERE occurrence.definition_id=?"
         )
         parameters: list[object] = [definition_id]
@@ -11454,14 +9324,9 @@ class SQLiteTaskRepository:
             return ()
         placeholders = ", ".join("?" for _ in values)
         query = (
-            "SELECT occurrence.*, "
-            "CASE WHEN jobs.job_id IS NOT NULL THEN jobs.task_id "
-            "WHEN EXISTS (SELECT 1 FROM tasks link_task "
-            "WHERE link_task.task_id = occurrence.job_id) THEN occurrence.job_id "
-            "ELSE NULL END AS linked_task_id, "
-            "jobs.failure_category AS linked_failure_category "
+            "SELECT occurrence.*, occurrence.task_id AS linked_task_id, "
+            "NULL AS linked_failure_category "
             "FROM automation_definition_occurrences occurrence "
-            "LEFT JOIN automation_jobs jobs ON jobs.job_id=occurrence.job_id "
             f"WHERE occurrence.definition_id IN ({placeholders}) AND NOT EXISTS ("
             "SELECT 1 FROM automation_definition_occurrences newer "
             "WHERE newer.definition_id=occurrence.definition_id AND ("
@@ -11508,7 +9373,6 @@ class SQLiteTaskRepository:
     # Compatibility spellings used by application adapters and migration probes.
     get_automation_task_definition_due_state = get_automation_definition_due_state
     initialize_automation_task_definition_due_state = initialize_automation_definition_due_state
-    enqueue_due_definition = enqueue_due_automation_definition
     get_latest_automation_occurrence = get_latest_automation_definition_occurrence
     list_automation_occurrences = list_automation_definition_occurrences
 
@@ -11565,7 +9429,7 @@ class SQLiteTaskRepository:
         Task/queue/display/audit commit are one transaction: an invalid, expired,
         over-bound or already-consumed ticket writes nothing, and a full shared
         queue consumes no authority and admits no orphan Task.  The legacy
-        ``consumed_job_id`` column and the audit's ``job_id`` field keep their
+        ``consumed_task_id`` column and the audit's ``task_id`` field keep their
         names and carry the substantive Task identity, exactly like the
         occurrence link, so existing readers stay unambiguous.
         """
@@ -11594,13 +9458,13 @@ class SQLiteTaskRepository:
                     raise ValueError("execution authorization is expired")
                 if task.item_limit is None or task.item_limit > value.max_items:
                     raise ValueError("remote organize limit exceeds execution authorization")
-                if self._shared_capacity_use_locked() >= capacity:
+                if self._scheduled_capacity_use_locked() >= capacity:
                     raise TaskQueueFull(
                         "the shared Task scheduling capacity is in use by other admitted work"
                     )
                 cursor = self._connection.execute(
                     "UPDATE execution_authorizations SET status=?, consumed_at=?, "
-                    "consumed_job_id=? WHERE authorization_id=? AND status=?",
+                    "consumed_task_id=? WHERE authorization_id=? AND status=?",
                     (
                         ExecutionAuthorizationStatus.CONSUMED.value,
                         now.isoformat(),
@@ -11619,7 +9483,7 @@ class SQLiteTaskRepository:
                     self._scheduling_values(scheduling),
                 )
                 self._insert_execution_authorization_audit(
-                    replace(audit, authorization_id=value.authorization_id, job_id=task.task_id)
+                    replace(audit, authorization_id=value.authorization_id, task_id=task.task_id)
                 )
                 updated = self._connection.execute(
                     "SELECT * FROM execution_authorizations WHERE authorization_id=?",
@@ -11629,69 +9493,6 @@ class SQLiteTaskRepository:
                 self._connection.rollback()
                 raise
             self._connection.commit()
-        return self._execution_authorization(updated)
-
-    def consume_execution_authorization(
-        self,
-        token_digest: str,
-        job: AutomationJob,
-        now: datetime,
-        audit: ExecutionAuthorizationAudit,
-        maximum_active_jobs: int,
-    ) -> ExecutionAuthorization:
-        expired = False
-        with self._lock:
-            self._connection.execute("BEGIN IMMEDIATE")
-            try:
-                row = self._connection.execute(
-                    "SELECT * FROM execution_authorizations WHERE token_digest=?", (token_digest,)
-                ).fetchone()
-                if row is None:
-                    raise ValueError("execution authorization is invalid")
-                value = self._execution_authorization(row)
-                if value.status is not ExecutionAuthorizationStatus.ACTIVE:
-                    raise ValueError(f"execution authorization is {value.status.value}")
-                if value.expires_at <= now:
-                    self._connection.execute(
-                        "UPDATE execution_authorizations SET status=? WHERE authorization_id=?",
-                        (ExecutionAuthorizationStatus.EXPIRED.value, value.authorization_id),
-                    )
-                    expired = True
-                elif job.limit is None or job.limit > value.max_items:
-                    raise ValueError("remote organize limit exceeds execution authorization")
-                elif not self._has_job_capacity(maximum_active_jobs):
-                    raise AutomationQueueFull(
-                        "automation queue reached configured active Job limit "
-                        f"{maximum_active_jobs}"
-                    )
-                else:
-                    cursor = self._connection.execute(
-                        "UPDATE execution_authorizations SET status=?, consumed_at=?, "
-                        "consumed_job_id=? WHERE authorization_id=? AND status=?",
-                        (
-                            ExecutionAuthorizationStatus.CONSUMED.value,
-                            now.isoformat(),
-                            job.job_id,
-                            value.authorization_id,
-                            ExecutionAuthorizationStatus.ACTIVE.value,
-                        ),
-                    )
-                    if cursor.rowcount != 1:
-                        raise ValueError("execution authorization was already consumed")
-                    self._insert_job(job)
-                    self._insert_execution_authorization_audit(
-                        replace(audit, authorization_id=value.authorization_id)
-                    )
-                    updated = self._connection.execute(
-                        "SELECT * FROM execution_authorizations WHERE authorization_id=?",
-                        (value.authorization_id,),
-                    ).fetchone()
-                self._connection.commit()
-            except Exception:
-                self._connection.rollback()
-                raise
-        if expired:
-            raise ValueError("execution authorization is expired")
         return self._execution_authorization(updated)
 
     def revoke_execution_authorization(
@@ -11736,7 +9537,7 @@ class SQLiteTaskRepository:
                 row["authorization_id"],
                 row["action"],
                 datetime.fromisoformat(row["occurred_at"]),
-                row["job_id"],
+                row["task_id"],
                 row["actor"],
             )
             for row in rows
@@ -11948,7 +9749,7 @@ class SQLiteTaskRepository:
     def append_operational_log(self, value: OperationalLogRecord) -> None:
         with self._lock, self._connection:
             self._connection.execute(
-                "INSERT INTO operational_logs VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)",
+                "INSERT INTO operational_logs VALUES (?, ?, ?, ?, ?, ?, ?, ?)",
                 (
                     value.log_id,
                     value.occurred_at.isoformat(),
@@ -11956,7 +9757,6 @@ class SQLiteTaskRepository:
                     value.component,
                     value.event,
                     value.task_id,
-                    value.job_id,
                     value.plan_id,
                     value.status,
                 ),
@@ -12008,7 +9808,6 @@ class SQLiteTaskRepository:
                 row["component"],
                 row["event"],
                 row["task_id"],
-                row["job_id"],
                 row["plan_id"],
                 row["status"],
             )
@@ -12021,7 +9820,6 @@ class SQLiteTaskRepository:
         plan_id: str,
         *,
         task_id: str | None = None,
-        job_id: str | None = None,
         limit: int = 20,
     ) -> tuple[OperationalLogRecord, ...]:
         """The operational logs of one run's persisted plan, bounded by that run.
@@ -12032,8 +9830,8 @@ class SQLiteTaskRepository:
         two independent attempts at the same source legitimately share one plan
         ID while being distinct Tasks.  Attribution therefore requires the
         calling run's own durable linkage: a row counts only when its persisted
-        ``plan_id`` matches AND it already carries this run's persisted Task ID
-        or Job ID.  With no run linkage at all, nothing is attributed — history
+        ``plan_id`` matches AND it already carries this run's persisted Task ID.
+        With no run linkage at all, nothing is attributed — history
         that cannot be tied to this run stays unavailable rather than being
         claimed as this item's log.
         """
@@ -12042,27 +9840,13 @@ class SQLiteTaskRepository:
             raise ValueError("operational log plan ID is required")
         if isinstance(limit, bool) or not isinstance(limit, int) or limit < 1 or limit > 100:
             raise ValueError("operational log plan limit must be between 1 and 100")
-        linkage: list[str] = []
-        for name, value in (("task", task_id), ("job", job_id)):
-            if value is None:
-                continue
-            if not isinstance(value, str) or not value.strip() or len(value) > 128:
-                raise ValueError(f"operational log {name} ID is invalid")
-            linkage.append(value)
-        if not linkage:
+        if task_id is None:
             # The reusable plan ID alone is not run evidence.
             return ()
-        predicates = ["plan_id = ?"]
-        parameters: list[object] = [plan_id]
-        if task_id is not None and job_id is not None:
-            predicates.append("(task_id = ? OR job_id = ?)")
-            parameters.extend((task_id, job_id))
-        elif task_id is not None:
-            predicates.append("task_id = ?")
-            parameters.append(task_id)
-        else:
-            predicates.append("job_id = ?")
-            parameters.append(job_id)
+        if not isinstance(task_id, str) or not task_id.strip() or len(task_id) > 128:
+            raise ValueError("operational log task ID is invalid")
+        predicates = ["plan_id = ?", "task_id = ?"]
+        parameters: list[object] = [plan_id, task_id]
         with self._lock:
             rows = self._connection.execute(
                 "SELECT * FROM operational_logs WHERE "
@@ -12078,7 +9862,6 @@ class SQLiteTaskRepository:
                 row["component"],
                 row["event"],
                 row["task_id"],
-                row["job_id"],
                 row["plan_id"],
                 row["status"],
             )
@@ -12616,15 +10399,7 @@ class SQLiteTaskRepository:
                     "the source Task changed or its pinned configuration no longer "
                     "matches; no recovery Preview was published"
                 )
-            active_continuation = self._connection.execute(
-                "SELECT 1 FROM scope_continuations WHERE source_task_id=? "
-                "AND status IN (?, ?) LIMIT 1",
-                (
-                    preview.recovery_source_task_id,
-                    ScopeContinuationStatus.QUEUED.value,
-                    ScopeContinuationStatus.RUNNING.value,
-                ),
-            ).fetchone()
+            active_continuation = None
             if active_continuation is not None:
                 raise ManualPreviewConflict(
                     "the source Task already has a queued continuation; no recovery "
@@ -13786,7 +11561,7 @@ class SQLiteTaskRepository:
                                 next_action="restore the configured Worker capacity and retry",
                             )
                         require_capacity(scheduling_capacity)
-                        if self._shared_capacity_use_locked() >= scheduling_capacity:
+                        if self._scheduled_capacity_use_locked() >= scheduling_capacity:
                             raise TaskQueueFull(
                                 "the shared Task scheduling capacity is in use by other "
                                 "admitted work"
@@ -14771,7 +12546,7 @@ class SQLiteTaskRepository:
                                 "this discovery admission identity already exists",
                                 details={"taskId": existing[0].task_id},
                             )
-                    if self._shared_capacity_use_locked() >= capacity:
+                    if self._scheduled_capacity_use_locked() >= capacity:
                         raise TaskQueueFull(
                             "the shared Task scheduling capacity is in use by other admitted work"
                         )
@@ -19288,7 +17063,7 @@ class SQLiteTaskRepository:
                         self._require_exact_scheduled_admission(existing, task, state)
                         self._connection.commit()
                         return ScheduledTaskAdmission(existing[0], existing[1], True)
-                if self._shared_capacity_use_locked() >= capacity:
+                if self._scheduled_capacity_use_locked() >= capacity:
                     self._connection.rollback()
                     raise TaskQueueFull(
                         "the shared Task scheduling capacity is in use by other admitted work"
@@ -20456,7 +18231,7 @@ class SQLiteTaskRepository:
                         "the admitted configuration pin changed; this Task's remaining work "
                         "cannot be continued under a different context"
                     )
-                if self._shared_capacity_use_locked() >= capacity:
+                if self._scheduled_capacity_use_locked() >= capacity:
                     self._connection.rollback()
                     raise TaskQueueFull(
                         "the shared Task scheduling capacity is in use by other admitted work"
@@ -20554,7 +18329,7 @@ class SQLiteTaskRepository:
                     raise TaskControlRejected(
                         "a cancelled Task is not re-analyzed; that is a new organizing request"
                     )
-                if self._shared_capacity_use_locked() >= capacity:
+                if self._scheduled_capacity_use_locked() >= capacity:
                     self._connection.rollback()
                     raise TaskQueueFull(
                         "the shared Task scheduling capacity is in use by other admitted work"
@@ -21490,6 +19265,11 @@ class SQLiteTaskRepository:
             ).fetchone()
             if row and int(row["version"]) > SCHEMA_VERSION:
                 raise ValueError("runtime database schema is newer than this MediaFlow version")
+            if row and int(row["version"]) < 58:
+                raise ValueError(
+                    "runtime database uses the retired Job schema; this version requires a "
+                    "fresh runtime database"
+                )
             self._connection.executescript(
                 """
                 CREATE TABLE IF NOT EXISTS tasks (
@@ -21594,7 +19374,7 @@ class SQLiteTaskRepository:
                     configuration_snapshot_digest TEXT NOT NULL,
                     boundary TEXT NOT NULL, status TEXT NOT NULL,
                     created_at TEXT NOT NULL, updated_at TEXT NOT NULL, actor TEXT NOT NULL,
-                    job_id TEXT NOT NULL UNIQUE, new_task_id TEXT, new_result_id TEXT,
+                    new_task_id TEXT, new_result_id TEXT,
                     started_at TEXT, completed_at TEXT, error TEXT, recovery TEXT,
                     authority_statement TEXT NOT NULL,
                     FOREIGN KEY(request_id) REFERENCES recovery_requests(request_id),
@@ -21606,24 +19386,6 @@ class SQLiteTaskRepository:
                     WHERE status IN ('queued', 'running');
                 CREATE INDEX IF NOT EXISTS recovery_continuations_item_created
                     ON recovery_continuations(source_item_id, created_at, continuation_id);
-                CREATE TABLE IF NOT EXISTS scope_continuations (
-                    continuation_id TEXT PRIMARY KEY, source_task_id TEXT NOT NULL,
-                    command TEXT NOT NULL, scope_path TEXT, item_limit INTEGER,
-                    configuration_snapshot_id TEXT NOT NULL,
-                    configuration_snapshot_digest TEXT NOT NULL,
-                    boundary TEXT NOT NULL, status TEXT NOT NULL,
-                    created_at TEXT NOT NULL, updated_at TEXT NOT NULL, actor TEXT NOT NULL,
-                    job_id TEXT NOT NULL UNIQUE, new_task_id TEXT,
-                    started_at TEXT, completed_at TEXT, error TEXT, recovery TEXT,
-                    authority_statement TEXT NOT NULL,
-                    FOREIGN KEY(source_task_id) REFERENCES tasks(task_id),
-                    FOREIGN KEY(job_id) REFERENCES automation_jobs(job_id)
-                );
-                CREATE UNIQUE INDEX IF NOT EXISTS one_active_scope_continuation
-                    ON scope_continuations(source_task_id)
-                    WHERE status IN ('queued', 'running');
-                CREATE INDEX IF NOT EXISTS scope_continuations_source_created
-                    ON scope_continuations(source_task_id, created_at, continuation_id);
                 CREATE TABLE IF NOT EXISTS recovery_batches (
                     batch_id TEXT PRIMARY KEY, source_task_id TEXT NOT NULL, actor TEXT NOT NULL,
                     status TEXT NOT NULL, created_at TEXT NOT NULL, updated_at TEXT NOT NULL,
@@ -21634,14 +19396,13 @@ class SQLiteTaskRepository:
                     source_task_id TEXT NOT NULL, source_item_id TEXT NOT NULL,
                     checkpoint_version TEXT NOT NULL, status TEXT NOT NULL,
                     created_at TEXT NOT NULL, updated_at TEXT NOT NULL,
-                    request_id TEXT, continuation_id TEXT, job_id TEXT,
+                    request_id TEXT, continuation_id TEXT,
                     reason TEXT, error TEXT, next_action TEXT,
                     FOREIGN KEY(batch_id) REFERENCES recovery_batches(batch_id),
                     FOREIGN KEY(source_task_id) REFERENCES tasks(task_id),
                     FOREIGN KEY(source_item_id) REFERENCES task_items(item_id),
                     FOREIGN KEY(request_id) REFERENCES recovery_requests(request_id),
                     FOREIGN KEY(continuation_id) REFERENCES recovery_continuations(continuation_id),
-                    FOREIGN KEY(job_id) REFERENCES automation_jobs(job_id),
                     UNIQUE(batch_id, source_item_id)
                 );
                 CREATE INDEX IF NOT EXISTS recovery_batch_items_batch
@@ -21662,6 +19423,9 @@ class SQLiteTaskRepository:
                     cleanup_step_count INTEGER NOT NULL DEFAULT 0,
                     effect_certainty TEXT NOT NULL DEFAULT 'unknown',
                     uncertain_effects TEXT NOT NULL DEFAULT '[]',
+                    primary_completed INTEGER NOT NULL DEFAULT 0,
+                    attachment_results TEXT NOT NULL DEFAULT '[]',
+                    source_observed_at TEXT,
                     FOREIGN KEY(task_id) REFERENCES tasks(task_id),
                     FOREIGN KEY(item_id) REFERENCES task_items(item_id)
                 );
@@ -22015,7 +19779,7 @@ class SQLiteTaskRepository:
                     configuration_snapshot_digest TEXT NOT NULL,
                     correction_version TEXT NOT NULL, status TEXT NOT NULL,
                     created_at TEXT NOT NULL, updated_at TEXT NOT NULL, actor TEXT NOT NULL,
-                    job_id TEXT NOT NULL UNIQUE, new_task_id TEXT, new_result_id TEXT,
+                    new_task_id TEXT, new_result_id TEXT,
                     started_at TEXT, completed_at TEXT, error TEXT, recovery TEXT,
                     FOREIGN KEY(review_id) REFERENCES metadata_corrections(review_id),
                     FOREIGN KEY(source_task_id) REFERENCES tasks(task_id),
@@ -22118,28 +19882,6 @@ class SQLiteTaskRepository:
                 );
                 CREATE INDEX IF NOT EXISTS classification_reviews_status_created
                     ON classification_reviews(status, created_at, review_id);
-                CREATE TABLE IF NOT EXISTS automation_jobs (
-                    job_id TEXT PRIMARY KEY, command TEXT NOT NULL, status TEXT NOT NULL,
-                    created_at TEXT NOT NULL, updated_at TEXT NOT NULL, limit_value INTEGER,
-                    started_at TEXT, completed_at TEXT, task_id TEXT, error TEXT,
-                    cancellation_requested INTEGER NOT NULL DEFAULT 0, schedule_id TEXT,
-                    execute_authorized INTEGER NOT NULL DEFAULT 0, claim_token TEXT,
-                    worker_id TEXT,
-                    configuration_snapshot_id TEXT, configuration_snapshot_digest TEXT,
-                    failure_category TEXT, failure_durable_state TEXT,
-                    failure_side_effects TEXT, failure_retry_safe INTEGER,
-                    failure_next_action TEXT,
-                    definition_id TEXT, definition_fingerprint TEXT,
-                    definition_version INTEGER, occurrence_at TEXT,
-                    run_mode TEXT, resource_library_id TEXT, source_scope TEXT,
-                    configuration_snapshot_version INTEGER,
-                    execution_origin TEXT NOT NULL DEFAULT 'scheduled',
-                    execution_principal TEXT, admission_request_id TEXT
-                );
-                CREATE INDEX IF NOT EXISTS automation_jobs_status_created
-                    ON automation_jobs(status, created_at, job_id);
-                CREATE INDEX IF NOT EXISTS automation_jobs_task_id
-                    ON automation_jobs(task_id);
                 CREATE TABLE IF NOT EXISTS processing_workers (
                     worker_id TEXT PRIMARY KEY,
                     label TEXT NOT NULL,
@@ -22189,13 +19931,13 @@ class SQLiteTaskRepository:
                 CREATE TABLE IF NOT EXISTS automation_definition_due_state (
                     definition_id TEXT PRIMARY KEY, next_run_at TEXT NOT NULL,
                     updated_at TEXT NOT NULL, last_occurrence_at TEXT,
-                    last_job_id TEXT, last_outcome TEXT, last_reason TEXT,
+                    last_task_id TEXT, last_outcome TEXT, last_reason TEXT,
                     last_next_action TEXT, definition_fingerprint TEXT
                 );
                 CREATE TABLE IF NOT EXISTS automation_definition_occurrences (
                     occurrence_id TEXT PRIMARY KEY, definition_id TEXT NOT NULL,
                     occurrence_at TEXT NOT NULL, emitted_at TEXT NOT NULL,
-                    job_id TEXT NOT NULL UNIQUE, definition_fingerprint TEXT NOT NULL,
+                    task_id TEXT NOT NULL UNIQUE, definition_fingerprint TEXT NOT NULL,
                     definition_version INTEGER NOT NULL,
                     configuration_revision_id TEXT NOT NULL,
                     configuration_revision_version INTEGER NOT NULL,
@@ -22213,12 +19955,12 @@ class SQLiteTaskRepository:
                     ON automation_definition_occurrences(emitted_at, occurrence_id);
                 CREATE TABLE IF NOT EXISTS automation_schedules (
                     schedule_id TEXT PRIMARY KEY, next_run_at TEXT NOT NULL,
-                    updated_at TEXT NOT NULL, last_job_id TEXT
+                    updated_at TEXT NOT NULL, last_task_id TEXT
                 );
                 CREATE TABLE IF NOT EXISTS schedule_audit (
                     audit_id TEXT PRIMARY KEY, schedule_id TEXT NOT NULL,
                     occurrence_at TEXT NOT NULL, emitted_at TEXT NOT NULL,
-                    job_id TEXT NOT NULL UNIQUE, command TEXT NOT NULL,
+                    task_id TEXT NOT NULL UNIQUE, command TEXT NOT NULL,
                     next_run_at TEXT NOT NULL
                 );
                 CREATE INDEX IF NOT EXISTS schedule_audit_schedule_time
@@ -22237,11 +19979,11 @@ class SQLiteTaskRepository:
                     authorization_id TEXT PRIMARY KEY, token_digest TEXT NOT NULL UNIQUE,
                     status TEXT NOT NULL, created_at TEXT NOT NULL, expires_at TEXT NOT NULL,
                     max_items INTEGER NOT NULL, actor TEXT, note TEXT, consumed_at TEXT,
-                    consumed_job_id TEXT, revoked_at TEXT
+                    consumed_task_id TEXT, revoked_at TEXT
                 );
                 CREATE TABLE IF NOT EXISTS execution_authorization_audit (
                     audit_id TEXT PRIMARY KEY, authorization_id TEXT NOT NULL,
-                    action TEXT NOT NULL, occurred_at TEXT NOT NULL, job_id TEXT, actor TEXT,
+                    action TEXT NOT NULL, occurred_at TEXT NOT NULL, task_id TEXT, actor TEXT,
                     FOREIGN KEY(authorization_id)
                         REFERENCES execution_authorizations(authorization_id)
                 );
@@ -22281,7 +20023,7 @@ class SQLiteTaskRepository:
                     ON security_audit(occurred_at, audit_id);
                 CREATE TABLE IF NOT EXISTS operational_logs (
                     log_id TEXT PRIMARY KEY, occurred_at TEXT NOT NULL, level INTEGER NOT NULL,
-                    component TEXT NOT NULL, event TEXT NOT NULL, task_id TEXT, job_id TEXT,
+                    component TEXT NOT NULL, event TEXT NOT NULL, task_id TEXT,
                     plan_id TEXT, status TEXT
                 );
                 CREATE INDEX IF NOT EXISTS operational_logs_time
@@ -22516,10 +20258,6 @@ class SQLiteTaskRepository:
                     self._connection.execute(
                         f"ALTER TABLE operations_run_display ADD COLUMN {column} TEXT"
                     )
-            columns = {
-                row["name"]
-                for row in self._connection.execute("PRAGMA table_info(task_results)").fetchall()
-            }
             task_columns = {
                 row["name"]
                 for row in self._connection.execute("PRAGMA table_info(tasks)").fetchall()
@@ -22573,10 +20311,6 @@ class SQLiteTaskRepository:
                 "ON operational_logs(task_id, occurred_at, log_id)"
             )
             self._connection.execute(
-                "CREATE INDEX IF NOT EXISTS operational_logs_job_time "
-                "ON operational_logs(job_id, occurred_at, log_id)"
-            )
-            self._connection.execute(
                 "CREATE INDEX IF NOT EXISTS operational_logs_plan_time "
                 "ON operational_logs(plan_id, occurred_at, log_id)"
             )
@@ -22600,92 +20334,6 @@ class SQLiteTaskRepository:
                 "CREATE INDEX IF NOT EXISTS conflict_confirmations_task_created "
                 "ON conflict_confirmations(task_id, created_at, confirmation_id)"
             )
-            job_columns = {
-                row["name"]
-                for row in self._connection.execute("PRAGMA table_info(automation_jobs)").fetchall()
-            }
-            if "configuration_snapshot_id" not in job_columns:
-                self._connection.execute(
-                    "ALTER TABLE automation_jobs ADD COLUMN configuration_snapshot_id TEXT"
-                )
-            if "configuration_snapshot_digest" not in job_columns:
-                self._connection.execute(
-                    "ALTER TABLE automation_jobs ADD COLUMN configuration_snapshot_digest TEXT"
-                )
-            for column, definition in (
-                ("failure_category", "TEXT"),
-                ("failure_durable_state", "TEXT"),
-                ("failure_side_effects", "TEXT"),
-                ("failure_retry_safe", "INTEGER"),
-                ("failure_next_action", "TEXT"),
-            ):
-                if column not in job_columns:
-                    self._connection.execute(
-                        f"ALTER TABLE automation_jobs ADD COLUMN {column} {definition}"
-                    )
-            if "completed_operations" not in columns:
-                self._connection.execute(
-                    "ALTER TABLE task_results ADD COLUMN "
-                    "completed_operations TEXT NOT NULL DEFAULT '[]'"
-                )
-            if "attachment_count" not in columns:
-                self._connection.execute(
-                    "ALTER TABLE task_results ADD COLUMN "
-                    "attachment_count INTEGER NOT NULL DEFAULT 0"
-                )
-            if "retry_attempts" not in columns:
-                self._connection.execute(
-                    "ALTER TABLE task_results ADD COLUMN retry_attempts INTEGER NOT NULL DEFAULT 0"
-                )
-            if "retry_category" not in columns:
-                self._connection.execute("ALTER TABLE task_results ADD COLUMN retry_category TEXT")
-            if "cleanup_status" not in columns:
-                self._connection.execute("ALTER TABLE task_results ADD COLUMN cleanup_status TEXT")
-            if "cleanup_step_count" not in columns:
-                self._connection.execute(
-                    "ALTER TABLE task_results ADD COLUMN cleanup_step_count "
-                    "INTEGER NOT NULL DEFAULT 0"
-                )
-            if "effect_certainty" not in columns:
-                self._connection.execute(
-                    "ALTER TABLE task_results ADD COLUMN effect_certainty "
-                    "TEXT NOT NULL DEFAULT 'unknown'"
-                )
-            if "uncertain_effects" not in columns:
-                self._connection.execute(
-                    "ALTER TABLE task_results ADD COLUMN uncertain_effects "
-                    "TEXT NOT NULL DEFAULT '[]'"
-                )
-            if "primary_completed" not in columns:
-                self._connection.execute(
-                    "ALTER TABLE task_results ADD COLUMN "
-                    "primary_completed INTEGER NOT NULL DEFAULT 0"
-                )
-            if "attachment_results" not in columns:
-                self._connection.execute(
-                    "ALTER TABLE task_results ADD COLUMN "
-                    "attachment_results TEXT NOT NULL DEFAULT '[]'"
-                )
-            if "source_observed_at" not in columns:
-                # Additive: a legacy Result keeps no observation instant and is
-                # simply measured from its persisted occurrence on a later read.
-                self._connection.execute(
-                    "ALTER TABLE task_results ADD COLUMN source_observed_at TEXT"
-                )
-            grant_columns = {
-                row["name"]
-                for row in self._connection.execute(
-                    "PRAGMA table_info(unattended_execution_grants)"
-                ).fetchall()
-            }
-            if "preview_id" not in grant_columns:
-                self._connection.execute(
-                    "ALTER TABLE unattended_execution_grants ADD COLUMN preview_id TEXT"
-                )
-            job_columns = {
-                row["name"]
-                for row in self._connection.execute("PRAGMA table_info(automation_jobs)").fetchall()
-            }
             execution_columns = {
                 row["name"]
                 for row in self._connection.execute(
@@ -22717,53 +20365,6 @@ class SQLiteTaskRepository:
                     self._connection.execute(
                         f"ALTER TABLE files_transfers ADD COLUMN {column} {definition}"
                     )
-            if "cancellation_requested" not in job_columns:
-                self._connection.execute(
-                    "ALTER TABLE automation_jobs ADD COLUMN "
-                    "cancellation_requested INTEGER NOT NULL DEFAULT 0"
-                )
-            if "schedule_id" not in job_columns:
-                self._connection.execute("ALTER TABLE automation_jobs ADD COLUMN schedule_id TEXT")
-            if "execute_authorized" not in job_columns:
-                self._connection.execute(
-                    "ALTER TABLE automation_jobs ADD COLUMN "
-                    "execute_authorized INTEGER NOT NULL DEFAULT 0"
-                )
-            if "claim_token" not in job_columns:
-                self._connection.execute("ALTER TABLE automation_jobs ADD COLUMN claim_token TEXT")
-            if "worker_id" not in job_columns:
-                self._connection.execute("ALTER TABLE automation_jobs ADD COLUMN worker_id TEXT")
-            for column, definition in (
-                ("definition_id", "TEXT"),
-                ("definition_fingerprint", "TEXT"),
-                ("definition_version", "INTEGER"),
-                ("occurrence_at", "TEXT"),
-                ("run_mode", "TEXT"),
-                ("resource_library_id", "TEXT"),
-                ("source_scope", "TEXT"),
-                ("configuration_snapshot_version", "INTEGER"),
-                ("execution_origin", "TEXT NOT NULL DEFAULT 'scheduled'"),
-                ("execution_principal", "TEXT"),
-                ("admission_request_id", "TEXT"),
-            ):
-                if column not in job_columns:
-                    self._connection.execute(
-                        f"ALTER TABLE automation_jobs ADD COLUMN {column} {definition}"
-                    )
-            self._connection.execute(
-                "CREATE INDEX IF NOT EXISTS automation_jobs_definition_occurrence "
-                "ON automation_jobs(definition_id, occurrence_at, job_id)"
-            )
-            self._connection.execute(
-                "CREATE UNIQUE INDEX IF NOT EXISTS automation_jobs_run_once_request "
-                "ON automation_jobs(execution_principal, admission_request_id) "
-                "WHERE execution_origin='run-once' AND admission_request_id IS NOT NULL"
-            )
-            self._connection.execute(
-                "CREATE INDEX IF NOT EXISTS automation_jobs_run_once_principal "
-                "ON automation_jobs(execution_principal, created_at, job_id) "
-                "WHERE execution_origin='run-once'"
-            )
             review_columns = {
                 row["name"]
                 for row in self._connection.execute(
@@ -23627,90 +21228,6 @@ class SQLiteTaskRepository:
         )
 
     @staticmethod
-    def _recovery_continuation_values(
-        continuation: RecoveryContinuation,
-    ) -> tuple[object, ...]:
-        return (
-            continuation.continuation_id,
-            continuation.request_id,
-            continuation.source_task_id,
-            continuation.source_item_id,
-            continuation.checkpoint_version,
-            continuation.configuration_snapshot_id,
-            continuation.configuration_snapshot_digest,
-            continuation.boundary,
-            continuation.status.value,
-            continuation.created_at.isoformat(),
-            continuation.updated_at.isoformat(),
-            continuation.actor,
-            continuation.job_id,
-            continuation.new_task_id,
-            continuation.new_result_id,
-            continuation.started_at.isoformat() if continuation.started_at else None,
-            continuation.completed_at.isoformat() if continuation.completed_at else None,
-            continuation.error,
-            continuation.recovery,
-            continuation.authority_statement,
-        )
-
-    @staticmethod
-    def _scope_continuation_values(
-        continuation: ScopeContinuation,
-    ) -> tuple[object, ...]:
-        return (
-            continuation.continuation_id,
-            continuation.source_task_id,
-            continuation.command,
-            continuation.scope_path,
-            continuation.item_limit,
-            continuation.configuration_snapshot_id,
-            continuation.configuration_snapshot_digest,
-            continuation.boundary,
-            continuation.status.value,
-            continuation.created_at.isoformat(),
-            continuation.updated_at.isoformat(),
-            continuation.actor,
-            continuation.job_id,
-            continuation.new_task_id,
-            continuation.started_at.isoformat() if continuation.started_at else None,
-            continuation.completed_at.isoformat() if continuation.completed_at else None,
-            continuation.error,
-            continuation.recovery,
-            continuation.authority_statement,
-        )
-
-    @staticmethod
-    def _scope_continuation(row: sqlite3.Row) -> ScopeContinuation:
-        try:
-            status = ScopeContinuationStatus(row["status"])
-        except ValueError:
-            # An externally written or future status is never promoted into a
-            # live continuation: it reads as the conservative terminal failure
-            # so no claim or admission can treat it as claimable work.
-            status = ScopeContinuationStatus.FAILED
-        return ScopeContinuation(
-            row["continuation_id"],
-            row["source_task_id"],
-            row["command"],
-            row["scope_path"],
-            row["item_limit"],
-            row["configuration_snapshot_id"],
-            row["configuration_snapshot_digest"],
-            row["boundary"],
-            status,
-            datetime.fromisoformat(row["created_at"]),
-            datetime.fromisoformat(row["updated_at"]),
-            row["actor"],
-            row["job_id"],
-            row["new_task_id"],
-            datetime.fromisoformat(row["started_at"]) if row["started_at"] else None,
-            datetime.fromisoformat(row["completed_at"]) if row["completed_at"] else None,
-            row["error"],
-            row["recovery"],
-            row["authority_statement"],
-        )
-
-    @staticmethod
     def _recovery_batch_item_values(item: RecoveryBatchItem) -> tuple[object, ...]:
         return (
             item.batch_item_id,
@@ -23723,7 +21240,6 @@ class SQLiteTaskRepository:
             item.updated_at.isoformat(),
             item.request_id,
             item.continuation_id,
-            item.job_id,
             item.reason,
             item.error,
             item.next_action,
@@ -23756,7 +21272,6 @@ class SQLiteTaskRepository:
             datetime.fromisoformat(row["updated_at"]),
             row["request_id"],
             row["continuation_id"],
-            row["job_id"],
             new_task_id,
             new_result_id,
             recovery_status,
@@ -23803,7 +21318,6 @@ class SQLiteTaskRepository:
             datetime.fromisoformat(row["created_at"]),
             datetime.fromisoformat(row["updated_at"]),
             row["actor"],
-            row["job_id"],
             row["new_task_id"],
             row["new_result_id"],
             datetime.fromisoformat(row["started_at"]) if row["started_at"] else None,
@@ -24005,58 +21519,6 @@ class SQLiteTaskRepository:
         )
 
     @staticmethod
-    def _metadata_correction_continuation_values(
-        value: MetadataCorrectionContinuation,
-    ) -> tuple[object, ...]:
-        return (
-            value.continuation_id,
-            value.file_id,
-            value.review_id,
-            value.source_task_id,
-            value.source_item_id,
-            value.configuration_snapshot_id,
-            value.configuration_snapshot_digest,
-            value.correction_version,
-            value.status.value,
-            value.created_at.isoformat(),
-            value.updated_at.isoformat(),
-            value.actor,
-            value.job_id,
-            value.new_task_id,
-            value.new_result_id,
-            value.started_at.isoformat() if value.started_at else None,
-            value.completed_at.isoformat() if value.completed_at else None,
-            value.error,
-            value.recovery,
-        )
-
-    @staticmethod
-    def _metadata_correction_continuation(
-        row: sqlite3.Row,
-    ) -> MetadataCorrectionContinuation:
-        return MetadataCorrectionContinuation(
-            row["continuation_id"],
-            row["file_id"],
-            row["review_id"],
-            row["source_task_id"],
-            row["source_item_id"],
-            row["configuration_snapshot_id"],
-            row["configuration_snapshot_digest"],
-            row["correction_version"],
-            MetadataCorrectionContinuationStatus(row["status"]),
-            datetime.fromisoformat(row["created_at"]),
-            datetime.fromisoformat(row["updated_at"]),
-            row["actor"],
-            row["job_id"],
-            row["new_task_id"],
-            row["new_result_id"],
-            datetime.fromisoformat(row["started_at"]) if row["started_at"] else None,
-            datetime.fromisoformat(row["completed_at"]) if row["completed_at"] else None,
-            row["error"],
-            row["recovery"],
-        )
-
-    @staticmethod
     def _metadata_review(row: sqlite3.Row) -> MetadataReview:
         return MetadataReview(
             row["review_id"],
@@ -24145,109 +21607,6 @@ class SQLiteTaskRepository:
         )
 
     @staticmethod
-    def _job_values(job: AutomationJob) -> tuple[object, ...]:
-        return (
-            job.job_id,
-            job.command.value if isinstance(job.command, AutomationCommand) else str(job.command),
-            job.status.value,
-            job.created_at.isoformat(),
-            job.updated_at.isoformat(),
-            job.limit,
-            job.started_at.isoformat() if job.started_at else None,
-            job.completed_at.isoformat() if job.completed_at else None,
-            job.task_id,
-            job.error,
-            int(job.cancellation_requested),
-            job.schedule_id,
-            int(job.execute_authorized),
-            job.claim_token,
-            job.worker_id,
-            job.configuration_snapshot_id,
-            job.configuration_snapshot_digest,
-            job.failure_category,
-            job.failure_durable_state,
-            job.failure_side_effects,
-            None if job.failure_retry_safe is None else int(job.failure_retry_safe),
-            job.failure_next_action,
-            job.definition_id,
-            job.definition_fingerprint,
-            job.definition_version,
-            job.occurrence_at.isoformat() if job.occurrence_at else None,
-            job.run_mode.value if job.run_mode else None,
-            job.resource_library_id,
-            job.source_scope,
-            job.configuration_snapshot_version,
-            job.execution_origin.value,
-            job.execution_principal,
-            job.admission_request_id,
-        )
-
-    def _insert_job(self, job: AutomationJob) -> None:
-        """Insert by column name so older migrated databases remain compatible.
-
-        Historical migrations append columns with ALTER TABLE.  Positional
-        INSERTs therefore do not have a stable order across schema versions.
-        The explicit column list keeps the new snapshot fields additive while
-        preserving the legacy job table layout.
-        """
-        self._connection.execute(
-            "INSERT INTO automation_jobs "
-            "(job_id, command, status, created_at, updated_at, limit_value, "
-            "started_at, completed_at, task_id, error, cancellation_requested, "
-            "schedule_id, execute_authorized, claim_token, worker_id, "
-            "configuration_snapshot_id, configuration_snapshot_digest, failure_category, "
-            "failure_durable_state, failure_side_effects, failure_retry_safe, "
-            "failure_next_action, definition_id, definition_fingerprint, definition_version, "
-            "occurrence_at, run_mode, resource_library_id, source_scope, "
-            "configuration_snapshot_version, execution_origin, execution_principal, "
-            "admission_request_id) "
-            "VALUES ("
-            "?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, "
-            "?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?"
-            ")",
-            self._job_values(job),
-        )
-
-    @staticmethod
-    def _job(row: sqlite3.Row) -> AutomationJob:
-        return AutomationJob(
-            row["job_id"],
-            next((c for c in AutomationCommand if c.value == row["command"]), row["command"]),
-            AutomationJobStatus(row["status"]),
-            datetime.fromisoformat(row["created_at"]),
-            datetime.fromisoformat(row["updated_at"]),
-            row["limit_value"],
-            datetime.fromisoformat(row["started_at"]) if row["started_at"] else None,
-            datetime.fromisoformat(row["completed_at"]) if row["completed_at"] else None,
-            row["task_id"],
-            row["error"],
-            bool(row["cancellation_requested"]),
-            row["schedule_id"],
-            bool(row["execute_authorized"]),
-            row["claim_token"],
-            row["worker_id"] if "worker_id" in row.keys() else None,
-            row["configuration_snapshot_id"],
-            row["configuration_snapshot_digest"],
-            row["failure_category"],
-            row["failure_durable_state"],
-            row["failure_side_effects"],
-            None if row["failure_retry_safe"] is None else bool(row["failure_retry_safe"]),
-            row["failure_next_action"],
-            row["definition_id"],
-            row["definition_fingerprint"],
-            row["definition_version"],
-            datetime.fromisoformat(row["occurrence_at"]) if row["occurrence_at"] else None,
-            (AutomationTaskRunMode.parse(row["run_mode"]) if row["run_mode"] else None),
-            row["resource_library_id"],
-            row["source_scope"],
-            row["configuration_snapshot_version"],
-            AutomationJobOrigin.parse(
-                row["execution_origin"] if "execution_origin" in row.keys() else None
-            ),
-            (row["execution_principal"] if "execution_principal" in row.keys() else None),
-            (row["admission_request_id"] if "admission_request_id" in row.keys() else None),
-        )
-
     @staticmethod
     def _automation_definition_due_state(
         row: sqlite3.Row,
@@ -24259,7 +21618,7 @@ class SQLiteTaskRepository:
             datetime.fromisoformat(row["last_occurrence_at"])
             if row["last_occurrence_at"]
             else None,
-            row["last_job_id"],
+            row["last_task_id"],
             row["last_outcome"],
             row["last_reason"],
             row["last_next_action"],
@@ -24276,7 +21635,7 @@ class SQLiteTaskRepository:
             row["definition_id"],
             datetime.fromisoformat(row["occurrence_at"]),
             datetime.fromisoformat(row["emitted_at"]),
-            row["job_id"],
+            row["task_id"],
             row["definition_fingerprint"],
             int(row["definition_version"]),
             row["configuration_revision_id"],
@@ -24289,7 +21648,6 @@ class SQLiteTaskRepository:
             row["outcome"],
             row["reason"],
             row["next_action"],
-            row["linked_task_id"] if "linked_task_id" in columns else None,
             row["linked_failure_category"] if "linked_failure_category" in columns else None,
         )
 
@@ -24305,7 +21663,7 @@ class SQLiteTaskRepository:
             value.actor,
             value.note,
             value.consumed_at.isoformat() if value.consumed_at else None,
-            value.consumed_job_id,
+            value.consumed_task_id,
             value.revoked_at.isoformat() if value.revoked_at else None,
         )
 
@@ -24321,7 +21679,7 @@ class SQLiteTaskRepository:
             row["actor"],
             row["note"],
             datetime.fromisoformat(row["consumed_at"]) if row["consumed_at"] else None,
-            row["consumed_job_id"],
+            row["consumed_task_id"],
             datetime.fromisoformat(row["revoked_at"]) if row["revoked_at"] else None,
         )
 
@@ -24333,7 +21691,7 @@ class SQLiteTaskRepository:
                 value.authorization_id,
                 value.action,
                 value.occurred_at.isoformat(),
-                value.job_id,
+                value.task_id,
                 value.actor,
             ),
         )
@@ -24409,7 +21767,7 @@ class SQLiteTaskRepository:
             row["schedule_id"],
             datetime.fromisoformat(row["next_run_at"]),
             datetime.fromisoformat(row["updated_at"]),
-            row["last_job_id"],
+            row["last_task_id"],
         )
 
     @staticmethod

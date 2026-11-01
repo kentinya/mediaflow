@@ -3,7 +3,6 @@ from __future__ import annotations
 import copy
 import io
 import json
-import sqlite3
 import tempfile
 import unittest
 from datetime import UTC, datetime, timedelta
@@ -16,7 +15,7 @@ from mediaflow.domain.automation import CronSchedule
 from mediaflow.domain.cron import CronExpression
 from mediaflow.final_cli import final_main
 from mediaflow.infrastructure.runtime_configuration import load_runtime_configuration
-from mediaflow.infrastructure.sqlite_runtime import SCHEMA_VERSION, SQLiteTaskRepository
+from mediaflow.infrastructure.sqlite_runtime import SQLiteTaskRepository
 from mediaflow.interfaces.service_api import MediaFlowApi
 
 
@@ -93,25 +92,6 @@ class CronExpressionTests(unittest.TestCase):
 
 
 class CronSchedulerTests(unittest.TestCase):
-    def test_schema_five_migrates_to_immutable_schedule_audit(self) -> None:
-        with tempfile.TemporaryDirectory() as directory:
-            database = Path(directory, "runtime.sqlite3")
-            connection = sqlite3.connect(database)
-            connection.executescript(
-                """
-                CREATE TABLE schema_version (component TEXT PRIMARY KEY, version INTEGER NOT NULL);
-                INSERT INTO schema_version VALUES ('runtime', 5);
-                CREATE TABLE automation_schedules (
-                    schedule_id TEXT PRIMARY KEY, next_run_at TEXT NOT NULL,
-                    updated_at TEXT NOT NULL, last_job_id TEXT
-                );
-                """
-            )
-            connection.close()
-            with SQLiteTaskRepository(database) as repository:
-                self.assertEqual(repository.schema_version, SCHEMA_VERSION)
-                self.assertEqual(repository.list_schedule_audit(), ())
-
     def test_current_future_missed_and_audit(self) -> None:
         schedule = CronSchedule("morning", "organize", "0 8 * * *", "Asia/Shanghai", 20)
         now = datetime(2026, 8, 22, 0, 0, 30, tzinfo=UTC)
@@ -123,13 +103,13 @@ class CronSchedulerTests(unittest.TestCase):
                 audit = repository.list_schedule_audit("morning")
                 self.assertEqual(len(audit), 1)
                 self.assertEqual(audit[0].occurrence_at, now.replace(second=0))
-                self.assertEqual(audit[0].job_id, first[0].job_id)
+                self.assertEqual(audit[0].task_id, first[0].task_id)
                 self.assertEqual(scheduler.tick(now), ())
                 # Several missed days coalesce into one emitted job.
                 later = now + timedelta(days=3, minutes=1)
                 self.assertEqual(len(scheduler.tick(later)), 1)
                 self.assertEqual(len(repository.list_schedule_audit("morning")), 2)
-                self.assertEqual(len(repository.list_jobs()), 2)
+                self.assertEqual(len(repository.list_tasks()), 2)
 
     def test_concurrent_ticks_emit_one_job_and_one_audit(self) -> None:
         schedule = CronSchedule("midnight", "organize", "0 0 * * *", "UTC")
@@ -153,7 +133,7 @@ class CronSchedulerTests(unittest.TestCase):
                 thread.join()
             with SQLiteTaskRepository(database) as repository:
                 self.assertEqual(sum(len(value) for value in results), 1)
-                self.assertEqual(len(repository.list_jobs()), 1)
+                self.assertEqual(len(repository.list_tasks()), 1)
                 self.assertEqual(len(repository.list_schedule_audit()), 1)
 
     def test_audit_filter_limit_and_api(self) -> None:

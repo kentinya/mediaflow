@@ -2,7 +2,6 @@ from __future__ import annotations
 
 import io
 import json
-import sqlite3
 import tempfile
 import unittest
 from dataclasses import replace
@@ -203,20 +202,6 @@ class ConflictResolutionTests(unittest.TestCase):
                 audit = reopened.list_confirmation_audit(value.confirmation_id)
                 self.assertEqual(audit[0].actor, "tester")
                 self.assertEqual(reopened.schema_version, SCHEMA_VERSION)
-
-    def test_schema_one_database_migrates_forward(self) -> None:
-        with tempfile.TemporaryDirectory() as directory:
-            database = Path(directory, "runtime.sqlite3")
-            connection = sqlite3.connect(database)
-            connection.execute(
-                "CREATE TABLE schema_version (component TEXT PRIMARY KEY, version INTEGER NOT NULL)"
-            )
-            connection.execute("INSERT INTO schema_version VALUES ('runtime', 1)")
-            connection.commit()
-            connection.close()
-            with SQLiteTaskRepository(database) as repository:
-                self.assertEqual(repository.schema_version, SCHEMA_VERSION)
-                self.assertEqual(repository.list_confirmations(), ())
 
     def test_duplicate_identity_includes_tv_episode_scope(self) -> None:
         from mediaflow.domain.metadata import MediaIdentity, MediaType

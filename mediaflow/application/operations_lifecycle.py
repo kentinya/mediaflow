@@ -28,12 +28,6 @@ from enum import StrEnum
 
 from mediaflow.application.failure_explanation import classify_failure
 from mediaflow.application.task_runtime import PersistentTaskCoordinator
-from mediaflow.domain.automation import (
-    AutomationCommand,
-    AutomationJob,
-    AutomationJobStatus,
-    job_control_version,
-)
 from mediaflow.domain.direct_files import split_library_identity
 from mediaflow.domain.failure import failure_document
 from mediaflow.domain.manual_safety import (
@@ -119,14 +113,6 @@ TASK_CANCELLABLE_STATUSES = frozenset(
 _PREVIEW_EXECUTION_STATES = frozenset(
     {"not_available_in_this_task", "ready_for_explicit_authorization"}
 )
-JOB_TERMINAL_STATUSES = frozenset(
-    {
-        AutomationJobStatus.COMPLETED,
-        AutomationJobStatus.FAILED,
-        AutomationJobStatus.CANCELLED,
-    }
-)
-
 _UNCERTAIN_CERTAINTY = "attempted_unverified"
 _VERIFIED_CERTAINTY = "verified_complete"
 _MAX_BOUNDED_TEXT = 512
@@ -695,78 +681,6 @@ def task_result_operator_document(result: PersistentResultRecord) -> dict[str, o
     }
 
 
-def job_failure_document(job: AutomationJob) -> dict[str, object] | None:
-    """Normalized failure evidence for one Job, never its raw durable error.
-
-    A decoded durable envelope is only evidence when it survives the same
-    bounded scrubbing as every other structured field: a legacy or externally
-    written row can hold credentials or absolute host paths inside an
-    otherwise valid envelope.
-    """
-
-    envelope = bounded_failure_document(job.error)
-    if envelope is not None:
-        return envelope
-    if job.failure_category:
-        return {
-            "category": _bounded_evidence_text(job.failure_category, limit=96)
-            or "workflow_failure",
-            "message": (
-                "the scheduled workflow stopped at a bounded boundary; inspect the recorded "
-                "durable state and next action"
-            ),
-            "durableState": _bounded_evidence_text(job.failure_durable_state)
-            or "the Job admission record is durable",
-            "sideEffects": _bounded_evidence_text(job.failure_side_effects) or "none",
-            "retrySafe": bool(job.failure_retry_safe),
-            "nextAction": _bounded_evidence_text(job.failure_next_action)
-            or "inspect the linked Task and Result state before repeating any work",
-        }
-    if job.error:
-        return classify_failure(error=job.error).document()
-    return None
-
-
-def job_operator_document(job: AutomationJob) -> dict[str, object]:
-    """One bounded, secret-free Job admission projection.
-
-    The definition fingerprint, the raw source scope and the configuration
-    digest stay out; the durable bounded failure evidence is preserved in both
-    its existing structured fields and one normalized envelope.
-    """
-
-    return {
-        "job_id": job.job_id,
-        "command": job.command.value,
-        "status": job.status.value,
-        "created_at": job.created_at.isoformat(),
-        "updated_at": job.updated_at.isoformat(),
-        "started_at": job.started_at.isoformat() if job.started_at else None,
-        "completed_at": job.completed_at.isoformat() if job.completed_at else None,
-        "task_id": job.task_id,
-        "schedule_id": job.schedule_id,
-        "definition_id": job.definition_id,
-        "definition_version": job.definition_version,
-        "occurrence_at": job.occurrence_at.isoformat() if job.occurrence_at else None,
-        "run_mode": job.run_mode.value if job.run_mode is not None else None,
-        "resource_library_id": job.resource_library_id,
-        "limit": job.limit,
-        "worker_id": job.worker_id,
-        "cancellation_requested": job.cancellation_requested,
-        "execute_authorized": job.execute_authorized,
-        # The immutable revision identity is the operator-visible pin evidence.
-        # The snapshot digest is a fingerprint and stays out of the document.
-        "configuration_snapshot_id": job.configuration_snapshot_id,
-        "configuration_snapshot_version": job.configuration_snapshot_version,
-        "failure": job_failure_document(job),
-        "failure_category": _bounded_evidence_text(job.failure_category),
-        "failure_durable_state": _bounded_evidence_text(job.failure_durable_state),
-        "failure_side_effects": _bounded_evidence_text(job.failure_side_effects),
-        "failure_retry_safe": job.failure_retry_safe,
-        "failure_next_action": _bounded_evidence_text(job.failure_next_action),
-    }
-
-
 def scope_continuation_operator_document(continuation: object) -> dict[str, object]:
     """The bounded, redacted operator projection of one scope continuation.
 
@@ -785,7 +699,6 @@ def scope_continuation_operator_document(continuation: object) -> dict[str, obje
         "status": _bounded_evidence_text(
             getattr(getattr(continuation, "status", None), "value", None), limit=64
         ),
-        "jobId": _bounded_identifier(getattr(continuation, "job_id", None)),
         "newTaskId": _bounded_identifier(getattr(continuation, "new_task_id", None)),
         "createdAt": _bounded_evidence_text(
             _isoformat(getattr(continuation, "created_at", None)), limit=64
@@ -832,7 +745,6 @@ def scope_recovery_operator_document(
         "itemLimit": item_limit,
         "boundary": "manual_organize_exact_preview",
         "status": _bounded_evidence_text(status, limit=64),
-        "jobId": None,
         "newTaskId": _bounded_identifier(getattr(recovery, "new_task_id", None)),
         "createdAt": _bounded_evidence_text(_isoformat(created_at), limit=64),
         "updatedAt": _bounded_evidence_text(_isoformat(completed_at or created_at), limit=64),
@@ -1969,66 +1881,6 @@ def task_lifecycle_document(
     }
 
 
-def job_lifecycle_document(
-    job: AutomationJob,
-    *,
-    permissions: frozenset[ApiPermission],
-) -> dict[str, object]:
-    """Backend-computed control projection for one exact Job and principal."""
-
-    permitted = ApiPermission.CANCEL_JOB in permissions
-    terminal = job.status in JOB_TERMINAL_STATUSES
-    cancelable = job.status in {AutomationJobStatus.PENDING, AutomationJobStatus.RUNNING}
-    reason = _permission_reason(permitted, ApiPermission.CANCEL_JOB)
-    if reason is None and job.cancellation_requested:
-        reason = (
-            "cancellation is already durably requested; the Job reaches cancelled at its own "
-            "cooperative boundary"
-        )
-    elif reason is None and not cancelable:
-        reason = f"a {job.status.value} Job cannot be cancelled"
-    cancel = _action(
-        action="cancel",
-        label="Cancel Job",
-        path=f"/api/v1/jobs/{job.job_id}/cancel",
-        available=permitted and cancelable and not job.cancellation_requested,
-        unavailable_reason=reason,
-        durable_outcome=(
-            "a durable cancellation request is stored; a pending Job becomes cancelled "
-            "immediately and a running Job reaches cancelled at its next cooperative boundary"
-        ),
-        side_effects=(
-            "no Storage mutation; an in-flight Provider/Storage call is not interrupted and "
-            "completed effects are not undone"
-        ),
-        next_action="refresh the Job to read the durable cancellation state",
-    )
-    command_kind = {
-        AutomationCommand.ORGANIZE: "media organization",
-    }.get(job.command, "bounded continuation")
-    return {
-        "objectType": "job",
-        "objectId": job.job_id,
-        "state": job.status.value,
-        "version": job_control_version(job),
-        "terminal": terminal,
-        "permitted": permitted,
-        "permission": ApiPermission.CANCEL_JOB.value,
-        "cancellationRequested": job.cancellation_requested,
-        "commandKind": command_kind,
-        "knownEffects": (
-            "the Job owns admission and queue state; Storage effects, if any, belong to its "
-            "linked Task and its per-item Results"
-        ),
-        "nextAction": (
-            "this Job is terminal; no lifecycle control is available"
-            if terminal
-            else str(cancel["nextAction"])
-        ),
-        "actions": [cancel],
-    }
-
-
 class TaskLifecycleService:
     """Cooperative Task controls over existing durable coordination behavior.
 
@@ -2654,9 +2506,6 @@ __all__ = [
     "bounded_identity_path",
     "is_files_worker_task_command",
     "is_files_transfer_task_command",
-    "job_failure_document",
-    "job_lifecycle_document",
-    "job_operator_document",
     "manual_action_matrix_operator_document",
     "manual_execution_plan_evidence_operator",
     "require_cancellable",

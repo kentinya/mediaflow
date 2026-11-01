@@ -508,53 +508,6 @@ class RunOnceApiTests(unittest.TestCase):
             unattended_grant_service=value.api._unattended_grants,
         )
 
-    @staticmethod
-    def _run_once_job(value, task, state):
-        from mediaflow.domain.automation import (
-            AutomationCommand,
-            AutomationJob,
-            AutomationJobOrigin,
-            AutomationJobStatus,
-        )
-
-        display = value.repository.get_run_display_context(task.task_id)
-        raw = next(
-            (
-                item
-                for item in value.runtime.automation_task_definitions
-                if item.definition_id == display.origin_definition_id
-            ),
-            None,
-        )
-        if raw is None:
-            raise RuntimeError("pinned definition is unavailable")
-        # A due occurrence is a scheduled run; only an explicit Run once carries
-        # the Run once origin and its authenticated admission principal.
-        run_once = state.admission_trigger.value == "run_once"
-        return AutomationJob(
-            task.task_id,
-            AutomationCommand.ORGANIZE,
-            AutomationJobStatus.PENDING,
-            task.created_at,
-            task.updated_at,
-            limit=task.item_limit,
-            task_id=task.task_id,
-            execute_authorized=True,
-            configuration_snapshot_id=task.configuration_snapshot_id,
-            configuration_snapshot_digest=task.configuration_snapshot_digest,
-            definition_id=raw.definition_id,
-            definition_fingerprint=raw.definition_fingerprint,
-            definition_version=1,
-            run_mode=raw.mode,
-            resource_library_id=raw.resource_library_id,
-            source_scope=raw.source_scope,
-            execution_origin=(
-                AutomationJobOrigin.RUN_ONCE if run_once else AutomationJobOrigin.SCHEDULED
-            ),
-            execution_principal=state.admission_principal if run_once else None,
-            admission_request_id=state.admission_request_id,
-        )
-
     def execute(self, value):
         """Run the next admitted Run once through its real durable identity.
 
@@ -565,7 +518,6 @@ class RunOnceApiTests(unittest.TestCase):
 
         from mediaflow.application.automation import (
             AutomationCancelled,
-            AutomationWorker,
             AutomationWorkflowFailed,
         )
         from mediaflow.application.manual_task_engine import ManualTaskEngineWorker
@@ -583,10 +535,6 @@ class RunOnceApiTests(unittest.TestCase):
         )
         provider_registry = MetadataProviderRegistry((provider,))
         service = self._run_once_service(value, lambda ids: provider_registry)
-        legacy = AutomationWorker(value.repository, service.run).run_next()
-        if legacy is not None:
-            return legacy
-
         scheduling = TaskSchedulingService(value.repository, capacity=100)
         worker_id = f"run-once-test-{len(value.repository.list_tasks())}"
         value.repository.register_worker(
@@ -646,12 +594,13 @@ class RunOnceApiTests(unittest.TestCase):
                 )
                 continuation.run_pass(task, scheduling, claim, clock=clock, heartbeat=heartbeat)
                 return
-            job = self._run_once_job(value, task, state)
             try:
                 service.run(
-                    job,
-                    lambda: False,
-                    task_context=(scheduling, claim),
+                    task,
+                    scheduling,
+                    claim,
+                    run_once=state.admission_trigger.value == "run_once",
+                    cancellation_check=lambda: False,
                     clock=clock,
                     heartbeat=heartbeat,
                 )
@@ -706,24 +655,27 @@ class RunOnceApiTests(unittest.TestCase):
         with self.journey(definitions=definitions) as value:
             revision = value.managed.active()
             emitted = self.scheduled(value).tick(self.clock.now)
-            self.assertEqual({job.definition_id for job in emitted}, {"healthy", "missing"})
+            self.assertEqual(
+                {
+                    value.repository.get_run_display_context(task.task_id).origin_definition_id
+                    for task in emitted
+                },
+                {"healthy", "missing"},
+            )
             for _ in emitted:
                 self.assertIsNotNone(self.execute(value))
 
-            jobs = {job.definition_id: job for job in value.repository.list_jobs()}
-            missing_job = jobs["missing"]
-            healthy_job = jobs["healthy"]
-            self.assertEqual("failed", missing_job.status.value)
-            self.assertIsNone(missing_job.task_id)
-            self.assertEqual("scope_root_missing", missing_job.failure_category)
-            self.assertIsNotNone(missing_job.failure_next_action)
-            self.assertEqual("completed", healthy_job.status.value)
-            self.assertIsNotNone(healthy_job.task_id)
+            tasks = {
+                value.repository.get_run_display_context(task.task_id).origin_definition_id: task
+                for task in (value.repository.get_task(task.task_id) for task in emitted)
+            }
+            self.assertEqual("failed", tasks["missing"].status.value)
+            self.assertEqual("completed", tasks["healthy"].status.value)
 
             def counts():
                 return (
                     len(value.repository.list_tasks()),
-                    len(value.repository.list_jobs()),
+                    len(()),
                     len(value.repository.list_unattended_execution_grants()),
                     len(value.discovery.list()),
                     value.managed.active().revision_id,
@@ -738,23 +690,15 @@ class RunOnceApiTests(unittest.TestCase):
             records = {record["historyContext"]["definitionId"]: record for record in page["items"]}
             failure = records["missing"]
             self.assertEqual("failed", failure["status"])
-            self.assertIsNone(failure["task_id"])
+            self.assertIsNotNone(failure["task_id"])
             self.assertFalse(failure["result"]["organized"])
             self.assertFalse(failure["result"]["noWork"])
-            self.assertEqual("prestart_repair", failure["handoff"]["ownership"])
             stage = failure["failureStage"]
+            self.assertEqual("linked_task_stage", stage["stage"])
+            self.assertEqual([], stage["items"])
             self.assertEqual(
-                {
-                    "stage": "before_formal_execution",
-                    "category": "scope_root_missing",
-                    "nextAction": missing_job.failure_next_action,
-                    "statement": "整理开始前失败：没有创建正式整理任务，也没有产生媒体效果",
-                    "items": [],
-                    "effects": {"none": 0, "known": 0, "uncertain": 0, "partial": 0},
-                    "itemsTruncated": False,
-                    "unavailable": False,
-                },
-                stage,
+                {"none": 0, "known": 0, "uncertain": 0, "partial": 0},
+                stage["effects"],
             )
 
             healthy = records["healthy"]
@@ -772,8 +716,6 @@ class RunOnceApiTests(unittest.TestCase):
             self.assertEqual(200, status, refreshed)
             self.assertEqual(page["total"], refreshed["total"])
             self.assertEqual(before_refresh, counts())
-            self.assertEqual("failed", value.repository.get_job(missing_job.job_id).status.value)
-            self.assertIsNone(value.repository.get_job(missing_job.job_id).task_id)
             self.assertEqual([], value.source.mutations)
             self.assertEqual([], value.target.mutations)
             self.assertEqual(
@@ -814,7 +756,7 @@ class RunOnceApiTests(unittest.TestCase):
             self.assertEqual((), value.repository.list_unattended_execution_grants())
             self.assertEqual((), value.discovery.list())
             self.assertEqual(1, len(value.repository.list_tasks()))
-            self.assertEqual(0, len(value.repository.list_jobs()))
+            self.assertEqual(0, len(()))
             # The first automatic stage ended at the terminal settlement, so its
             # write-once evidence records the completed outcome and real window
             # the Automation record publishes.
@@ -844,7 +786,7 @@ class RunOnceApiTests(unittest.TestCase):
             status, first = self.admit(value)
             self.assertEqual(202, status, first)
             status, second = self.admit(value)
-            self.assertEqual(first["jobId"], second["jobId"])
+            self.assertEqual(first["taskId"], second["taskId"])
             self.execute(value)
             status, read = self.request(
                 value,
@@ -863,7 +805,7 @@ class RunOnceApiTests(unittest.TestCase):
             self.assertEqual(202, status, run)
             self.execute(value)
             self.assertEqual(
-                "no_work", value.run_once.document(value.run_once.get(run["jobId"]))["phase"]
+                "no_work", value.run_once.document(value.run_once.get(run["taskId"]))["phase"]
             )
             # A healthy empty run freezes its own completed no-work stage.
             window = value.repository.operations_runs_window(
@@ -934,7 +876,7 @@ class RunOnceApiTests(unittest.TestCase):
             )
             self.assertEqual(404, status)
             self.assertEqual((), value.repository.list_tasks())
-            self.assertEqual((), value.repository.list_jobs())
+            self.assertEqual((), ())
             self.assertEqual([], value.source.mutations)
 
     def test_automatic_folder_filtering_keeps_images_and_sidecars_out_of_primaries(self):
@@ -976,7 +918,7 @@ class RunOnceApiTests(unittest.TestCase):
             self.assertEqual(200, status)
             self.assertTrue(read["zeroMutation"])
             self.assertNotIn("executionKind", read)
-            self.assertEqual((), value.repository.list_jobs())
+            self.assertEqual((), ())
             self.assertEqual((), value.repository.list_tasks())
 
     def test_real_positive_size_interval_waits_once_and_reobserves(self):
@@ -1080,7 +1022,7 @@ class RunOnceApiTests(unittest.TestCase):
             self.assertTrue(all(status == 202 for status, body in responses), responses)
             self.assertEqual(responses[0][1]["taskId"], responses[1][1]["taskId"])
             self.assertEqual(1, len(value.repository.list_tasks()))
-            self.assertEqual(0, len(value.repository.list_jobs()))
+            self.assertEqual(0, len(()))
             status, listing = self.request(
                 value, "GET", "/api/v1/operations/automation/run-once", token=VIEWER_TOKEN
             )
@@ -1100,13 +1042,13 @@ class RunOnceApiTests(unittest.TestCase):
                 status, _ = self.admit(value)
                 self.assertEqual(500, status)
             self.assertEqual((), value.repository.list_tasks())
-            self.assertEqual((), value.repository.list_jobs())
+            self.assertEqual((), ())
             status, run = self.admit(value)
             self.assertEqual(202, status, run)
             status, _ = self.admit(value, "second")
             self.assertEqual(409, status)
             self.assertEqual(1, len(value.repository.list_tasks()))
-            self.assertEqual(0, len(value.repository.list_jobs()))
+            self.assertEqual(0, len(()))
 
     def test_recognition_and_classification_block_inside_real_task_and_center(self):
         # Each case uses a fresh fixture database, not a manually invented Task.
@@ -1171,7 +1113,7 @@ class RunOnceApiTests(unittest.TestCase):
             state = value.repository.get_task_scheduling(task_id)
             self.assertEqual(state.queue_state.value, "waiting_human")
             self.assertEqual(0, value.repository.count_scheduled_capacity_use())
-            self.assertEqual((), value.repository.list_jobs())
+            self.assertEqual((), ())
 
             status, detail = self.request(
                 value, "GET", f"/api/v1/tasks/{task_id}/items/{item.item_id}/recovery"
@@ -1204,7 +1146,7 @@ class RunOnceApiTests(unittest.TestCase):
             state = value.repository.get_task_scheduling(task_id)
             self.assertEqual(state.queue_state.value, "queued")
             self.assertEqual(1, value.repository.count_scheduled_capacity_use())
-            self.assertEqual((), value.repository.list_jobs())
+            self.assertEqual((), ())
             self.assertEqual([], value.source.mutations)
             self.assertEqual([], value.target.mutations)
 
@@ -1274,7 +1216,7 @@ class RunOnceApiTests(unittest.TestCase):
             self.assertEqual(202, status, confirmed)
             self.assertEqual(ready, confirmed["selectedItemIds"], confirmed)
             self.assertEqual(task_id, confirmed["taskId"], confirmed)
-            self.assertEqual((), value.repository.list_jobs())
+            self.assertEqual((), ())
 
             # The confirmed execution runs on the same Task through the resident
             # engine's manual-execution branch.
@@ -1341,7 +1283,7 @@ class RunOnceApiTests(unittest.TestCase):
             settled = worker.run_next()
             self.assertIsNotNone(settled)
             self.assertEqual("completed", settled.status.value, settled.error)
-            self.assertEqual((), value.repository.list_jobs())
+            self.assertEqual((), ())
             self.assertFalse((self.source_root / "One.2001.mkv").exists())
             organized = list((self.target_root / "Organized" / "Movies").rglob("*.mkv"))
             self.assertEqual(1, len(organized), organized)
@@ -1494,7 +1436,7 @@ class RunOnceApiTests(unittest.TestCase):
             settled = worker.run_next()
             self.assertIsNotNone(settled)
             self.assertEqual("completed", settled.status.value, settled.error)
-            self.assertEqual((), value.repository.list_jobs())
+            self.assertEqual((), ())
             self.assertFalse((self.source_root / "One.2001.mkv").exists())
             organized = sorted(
                 str(path.relative_to(self.target_root))
@@ -1703,7 +1645,7 @@ class RunOnceApiTests(unittest.TestCase):
             ).tick(value.clock.now)
             self.assertEqual(1, len(emitted))
             task_id = emitted[0].task_id
-            self.assertEqual((), value.repository.list_jobs(limit=10))
+            self.assertFalse(hasattr(value.repository, "list_jobs"))
             state = value.repository.get_task_scheduling(task_id)
             self.assertEqual("automation-scheduler", state.admission_principal)
             self.assertEqual("schedule", state.admission_trigger.value)
@@ -1816,7 +1758,7 @@ class RunOnceApiTests(unittest.TestCase):
             )
             self.assertEqual(202, status, confirmed)
             self.assertEqual(task_id, confirmed["taskId"])
-            self.assertEqual((), value.repository.list_jobs(limit=10))
+            self.assertFalse(hasattr(value.repository, "list_jobs"))
 
             settled = self._run_manual_execution_worker(
                 value, prefix="scheduled-recovery"
@@ -1830,7 +1772,7 @@ class RunOnceApiTests(unittest.TestCase):
             results = value.repository.list_results(task_id)
             self.assertEqual(1, len(results), results)
             self.assertEqual("SUCCESS", results[0].status)
-            self.assertEqual((), value.repository.list_jobs(limit=10))
+            self.assertFalse(hasattr(value.repository, "list_jobs"))
 
             # The due run stays the one original Automation record after its
             # same-Task recovery completed it: same identity, scheduled
@@ -1947,7 +1889,7 @@ class RunOnceApiTests(unittest.TestCase):
             self.assertEqual(1, listing["total"], listing)
             self.assertEqual([], value.source.mutations)
             self.assertEqual([], value.target.mutations)
-            self.assertEqual((), value.repository.list_jobs(limit=10))
+            self.assertFalse(hasattr(value.repository, "list_jobs"))
 
             status, detail = self.request(
                 value, "GET", f"/api/v1/tasks/{task_id}/items/{item.item_id}/recovery"
@@ -2010,14 +1952,14 @@ class RunOnceApiTests(unittest.TestCase):
             self.assertFalse((self.source_root / "One.2001.mkv").exists())
             organized = list(self.target_root.rglob("*.mkv"))
             self.assertEqual(1, len(organized), organized)
-            self.assertEqual((), value.repository.list_jobs(limit=10))
+            self.assertFalse(hasattr(value.repository, "list_jobs"))
 
     def test_cancel_pending_run_once_settles_its_admitted_task(self):
         with self.journey() as value:
             status, body = self.admit(value)
             self.assertEqual(202, status, body)
             task_id = body["taskId"]
-            self.assertEqual((), value.repository.list_jobs())
+            self.assertEqual((), ())
             status, response = self.request(
                 value, "POST", f"/api/v1/tasks/{task_id}/cancel", token=ADMIN_TOKEN
             )
@@ -2080,49 +2022,6 @@ class RunOnceApiTests(unittest.TestCase):
             self.assertEqual([], value.source.mutations)
             self.assertEqual([], value.target.mutations)
 
-    def test_previously_started_run_once_is_not_scanned_or_replayed(self):
-        from mediaflow.application.automation import AutomationWorkflowFailed
-        from mediaflow.application.metadata import MetadataProviderRegistry
-        from mediaflow.application.strategy_test import SyntheticMetadataProvider
-        from mediaflow.application.task_scheduling import TaskSchedulingService
-        from mediaflow.infrastructure.sqlite_runtime import SCHEMA_VERSION
-
-        self.media("One.2001.mkv")
-        with self.journey() as value:
-            status, body = self.admit(value)
-            self.assertEqual(202, status, body)
-            task_id = body["taskId"]
-            scheduling = TaskSchedulingService(value.repository, capacity=100)
-            value.repository.register_worker(
-                "previous-owner",
-                "previous owner",
-                5.0,
-                ("organize",),
-                None,
-                None,
-                SCHEMA_VERSION,
-                value.clock.now,
-            )
-            claim = scheduling.claim_next(worker_id="previous-owner", now=value.clock.now)
-            scheduling.begin_work(claim, now=value.clock.now)
-            provider = SyntheticMetadataProvider(())
-            service = self._run_once_service(
-                value, lambda ids: MetadataProviderRegistry((provider,))
-            )
-            task = value.repository.get_task(task_id)
-            state = scheduling.state(task_id)
-            job = self._run_once_job(value, task, state)
-            # The Task already entered its running boundary under an earlier
-            # owner.  A fresh execution must not re-enter its scope.
-            with self.assertRaises(AutomationWorkflowFailed) as raised:
-                service.run(job, lambda: False, clock=value.clock)
-            self.assertEqual("run_once_already_started", raised.exception.evidence.category)
-            self.assertFalse(raised.exception.evidence.retry_safe)
-            self.assertEqual("unknown", raised.exception.evidence.side_effects)
-            self.assertEqual((), value.repository.list_items(task_id))
-            self.assertEqual([], value.source.mutations)
-            self.assertEqual([], value.target.mutations)
-
     def test_scheduled_definition_runs_as_one_kernel_task_without_a_job(self) -> None:
         from mediaflow.application.automation import IntervalScheduler
         from mediaflow.application.automation_definition_execution import (
@@ -2136,9 +2035,6 @@ class RunOnceApiTests(unittest.TestCase):
         )
         from mediaflow.application.task_scheduling import TaskSchedulingService
         from mediaflow.domain.automation import (
-            AutomationCommand,
-            AutomationJob,
-            AutomationJobStatus,
             AutomationTaskDefinition,
             SchedulerConfigurationSnapshot,
         )
@@ -2185,7 +2081,7 @@ class RunOnceApiTests(unittest.TestCase):
             self.assertEqual(1, len(emitted))
             task_id = emitted[0].task_id
             # No Job row exists; the durable work identity is the Task.
-            self.assertEqual((), value.repository.list_jobs(limit=10))
+            self.assertFalse(hasattr(value.repository, "list_jobs"))
             self.assertIsNotNone(value.repository.get_task_scheduling(task_id))
 
             value.repository.register_worker(
@@ -2213,25 +2109,15 @@ class RunOnceApiTests(unittest.TestCase):
             )
 
             def runner(task, claim, clock=None, heartbeat=None):
-                job = AutomationJob(
-                    task.task_id,
-                    AutomationCommand.ORGANIZE,
-                    AutomationJobStatus.PENDING,
-                    value.clock.now,
-                    value.clock.now,
-                    limit=task.item_limit,
-                    task_id=task.task_id,
-                    definition_id=definition.definition_id,
-                    definition_fingerprint=definition.definition_fingerprint,
-                    definition_version=version,
-                    run_mode=definition.mode,
-                    resource_library_id=definition.resource_library_id,
-                    source_scope=definition.source_scope,
-                    configuration_snapshot_id=task.configuration_snapshot_id,
-                    configuration_snapshot_digest=task.configuration_snapshot_digest,
-                    configuration_snapshot_version=version,
+                service.run(
+                    task,
+                    scheduling,
+                    claim,
+                    run_once=False,
+                    cancellation_check=lambda: False,
+                    clock=clock,
+                    heartbeat=heartbeat,
                 )
-                service.run(job, lambda: False, task_context=(scheduling, claim), clock=clock)
 
             worker = ManualTaskEngineWorker(
                 value.repository,
@@ -2246,7 +2132,7 @@ class RunOnceApiTests(unittest.TestCase):
 
             task = value.repository.get_task(task_id)
             self.assertEqual("completed", task.status.value)
-            self.assertEqual((), value.repository.list_jobs(limit=10))
+            self.assertFalse(hasattr(value.repository, "list_jobs"))
             self.assertEqual([], value.source.mutations)
             self.assertEqual([], value.target.mutations)
 
@@ -2263,9 +2149,6 @@ class RunOnceApiTests(unittest.TestCase):
         )
         from mediaflow.application.task_scheduling import TaskSchedulingService
         from mediaflow.domain.automation import (
-            AutomationCommand,
-            AutomationJob,
-            AutomationJobStatus,
             AutomationTaskDefinition,
             SchedulerConfigurationSnapshot,
         )
@@ -2311,7 +2194,7 @@ class RunOnceApiTests(unittest.TestCase):
             ).tick(value.clock.now)
             self.assertEqual(1, len(emitted))
             task_id = emitted[0].task_id
-            self.assertEqual((), value.repository.list_jobs(limit=10))
+            self.assertFalse(hasattr(value.repository, "list_jobs"))
             value.repository.register_worker(
                 "auto-worker",
                 "auto worker",
@@ -2339,25 +2222,15 @@ class RunOnceApiTests(unittest.TestCase):
             )
 
             def runner(task, claim, clock=None, heartbeat=None):
-                job = AutomationJob(
-                    task.task_id,
-                    AutomationCommand.ORGANIZE,
-                    AutomationJobStatus.PENDING,
-                    value.clock.now,
-                    value.clock.now,
-                    limit=task.item_limit,
-                    task_id=task.task_id,
-                    definition_id=definition.definition_id,
-                    definition_fingerprint=definition.definition_fingerprint,
-                    definition_version=version,
-                    run_mode=definition.mode,
-                    resource_library_id=definition.resource_library_id,
-                    source_scope=definition.source_scope,
-                    configuration_snapshot_id=task.configuration_snapshot_id,
-                    configuration_snapshot_digest=task.configuration_snapshot_digest,
-                    configuration_snapshot_version=version,
+                service.run(
+                    task,
+                    scheduling,
+                    claim,
+                    run_once=False,
+                    cancellation_check=lambda: False,
+                    clock=clock,
+                    heartbeat=heartbeat,
                 )
-                service.run(job, lambda: False, task_context=(scheduling, claim), clock=clock)
 
             worker = ManualTaskEngineWorker(
                 value.repository,
@@ -2375,7 +2248,7 @@ class RunOnceApiTests(unittest.TestCase):
             self.assertEqual(1, task.completed_items)
             self.assertFalse((self.source_root / "Movies/One.2001.mkv").exists())
             self.assertTrue(value.target.mutations)
-            self.assertEqual((), value.repository.list_jobs(limit=10))
+            self.assertFalse(hasattr(value.repository, "list_jobs"))
 
     def _kernel_file_journey(self, value, *, provider):
         """Build the real Scheduler + definition service for one ready file."""
@@ -2418,7 +2291,7 @@ class RunOnceApiTests(unittest.TestCase):
         ).tick(value.clock.now)
         self.assertEqual(1, len(emitted))
         task_id = emitted[0].task_id
-        self.assertEqual((), value.repository.list_jobs(limit=10))
+        self.assertEqual((), ())
         value.repository.register_worker(
             "auto-worker",
             "auto worker",
@@ -2443,34 +2316,12 @@ class RunOnceApiTests(unittest.TestCase):
         )
 
         def runner(task, claim, clock=None, heartbeat=None):
-            from mediaflow.domain.automation import (
-                AutomationCommand,
-                AutomationJob,
-                AutomationJobStatus,
-            )
-
-            job = AutomationJob(
-                task.task_id,
-                AutomationCommand.ORGANIZE,
-                AutomationJobStatus.PENDING,
-                value.clock.now,
-                value.clock.now,
-                limit=task.item_limit,
-                task_id=task.task_id,
-                definition_id=definition.definition_id,
-                definition_fingerprint=definition.definition_fingerprint,
-                definition_version=version,
-                run_mode=definition.mode,
-                resource_library_id=definition.resource_library_id,
-                source_scope=definition.source_scope,
-                configuration_snapshot_id=task.configuration_snapshot_id,
-                configuration_snapshot_digest=task.configuration_snapshot_digest,
-                configuration_snapshot_version=version,
-            )
             service.run(
-                job,
-                lambda: False,
-                task_context=(scheduling, claim),
+                task,
+                scheduling,
+                claim,
+                run_once=False,
+                cancellation_check=lambda: False,
                 clock=clock,
                 heartbeat=heartbeat,
             )
@@ -2660,7 +2511,7 @@ class RunOnceApiTests(unittest.TestCase):
                 for item in emitted
             }
             self.assertEqual({"legacy-interval", "legacy-cron"}, names)
-            self.assertEqual((), value.repository.list_jobs(limit=10))
+            self.assertFalse(hasattr(value.repository, "list_jobs"))
             for item in emitted:
                 self.assertEqual(
                     "legacy-schedule",
@@ -2694,7 +2545,7 @@ class RunOnceApiTests(unittest.TestCase):
                 task = value.repository.get_task(item.task_id)
                 self.assertEqual("completed", task.status.value)
                 self.assertEqual(0, task.total_items)
-            self.assertEqual((), value.repository.list_jobs(limit=10))
+            self.assertFalse(hasattr(value.repository, "list_jobs"))
 
     def test_repeated_storage_cursor_cannot_be_reported_as_empty_scope(self):
         from mediaflow.domain.storage import StoragePage

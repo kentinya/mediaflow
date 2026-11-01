@@ -772,7 +772,7 @@ class MediaLibraryActivationTests(unittest.TestCase):
             connection = runtime_repository._connection
             before_counts = {
                 table: connection.execute(f"SELECT COUNT(*) FROM {table}").fetchone()[0]
-                for table in ("tasks", "automation_jobs")
+                for table in ("tasks",)
             }
             provider_factory = patch.object(
                 objects,
@@ -784,11 +784,6 @@ class MediaLibraryActivationTests(unittest.TestCase):
                 "create_task",
                 side_effect=AssertionError("Save must not create a Task"),
             )
-            job_create = patch.object(
-                runtime_repository,
-                "create_job",
-                side_effect=AssertionError("Save must not create a Job"),
-            )
             organizer_execute = patch(
                 "mediaflow.application.organizer.OrganizerExecutor.execute",
                 side_effect=AssertionError("Save must not invoke OrganizerExecutor"),
@@ -797,7 +792,7 @@ class MediaLibraryActivationTests(unittest.TestCase):
                 "mediaflow.application.library_pipeline.ResourceLibraryScanner.scan_all",
                 side_effect=AssertionError("Save must not invoke Scan"),
             )
-            with provider_factory, task_create, job_create, organizer_execute, scanner:
+            with provider_factory, task_create, organizer_execute, scanner:
                 status, response = request(
                     api,
                     "/api/v1/media-libraries",
@@ -809,7 +804,7 @@ class MediaLibraryActivationTests(unittest.TestCase):
             self.assertNotEqual(service.active().revision_id, active.revision_id)
             after_counts = {
                 table: connection.execute(f"SELECT COUNT(*) FROM {table}").fetchone()[0]
-                for table in ("tasks", "automation_jobs")
+                for table in ("tasks",)
             }
             self.assertEqual(after_counts, before_counts)
             self.assertEqual(source.mutations, [])

@@ -116,7 +116,7 @@ describe("normalizeWorkerList", () => {
       last_heartbeat_at: "2026-08-22T12:00:00+00:00",
       registered_at: "2026-08-22T11:00:00+00:00",
       heartbeat_interval_seconds: 5,
-      supported_commands: ["preview", "preview"],
+      supported_commands: ["organize", "organize"],
       configuration_snapshot_id: "snap-1",
       runtime_schema_version: 33,
       ...overrides,
@@ -125,7 +125,10 @@ describe("normalizeWorkerList", () => {
 
   it("accepts a modelled worker list", () => {
     const model = normalizeWorkerList({ workers: [worker()], count: 1 });
-    expect(model.workers[0]?.supportedCommands).toEqual(["preview", "preview"]);
+    expect(model.workers[0]?.supportedCommands).toEqual([
+      "organize",
+      "organize",
+    ]);
   });
 
   it("models the resident transfer command families", () => {
@@ -146,13 +149,13 @@ describe("normalizeWorkerList", () => {
   it("rejects an unknown supported command instead of coercing it", () => {
     expect(() =>
       normalizeWorkerList({
-        workers: [worker({ supported_commands: ["preview", "obliterate"] })],
+        workers: [worker({ supported_commands: ["organize", "obliterate"] })],
         count: 1,
       }),
     ).toThrow();
     expect(() =>
       normalizeWorkerList({
-        workers: [worker({ supported_commands: "preview" })],
+        workers: [worker({ supported_commands: "organize" })],
         count: 1,
       }),
     ).toThrow();

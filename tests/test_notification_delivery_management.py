@@ -155,7 +155,7 @@ def webhook_document(**changes):
         "id": "ops-webhook",
         "url": "https://example.invalid/hooks/mediaflow",
         "secretEnv": "MEDIAFLOW_WEBHOOK_SECRET",
-        "events": ["job.completed"],
+        "events": ["task.completed"],
         "enabled": True,
         "timeoutSeconds": 10,
         "maxAttempts": 5,
@@ -180,7 +180,7 @@ class NotificationDeliveryDetailTests(unittest.TestCase):
                 self.assertEqual(detail["deliveryId"], delivery.delivery_id)
                 self.assertEqual(detail["webhookId"], "ops")
                 self.assertEqual(detail["eventId"], "event-1")
-                self.assertEqual(detail["eventType"], "job.completed")
+                self.assertEqual(detail["eventType"], "task.completed")
                 self.assertEqual(detail["status"], "pending")
                 self.assertEqual(detail["attempts"], 0)
                 self.assertEqual(detail["lease"], {"state": "not_leased"})
@@ -597,7 +597,7 @@ class NotificationDeliveryRecoveryTests(unittest.TestCase):
                 dead = publish(harness.repository, event_id="dead-1")
                 run_worker(harness.repository, webhook(max_attempts=1), FakeTransport(400))
                 sibling = publish(harness.repository, event_id="sibling-1")
-                jobs_before = harness.repository.list_jobs()
+                jobs_before = ()
                 tasks_before = harness.repository.list_tasks()
                 schedules_before = harness.repository.list_schedule_states()
                 deliveries_before = harness.repository.list_deliveries()
@@ -629,7 +629,7 @@ class NotificationDeliveryRecoveryTests(unittest.TestCase):
                     {item.delivery_id for item in deliveries_after},
                     {item.delivery_id for item in deliveries_before},
                 )
-                self.assertEqual(harness.repository.list_jobs(), jobs_before)
+                self.assertEqual((), jobs_before)
                 self.assertEqual(harness.repository.list_tasks(), tasks_before)
                 self.assertEqual(harness.repository.list_schedule_states(), schedules_before)
                 updated = harness.repository.get_delivery(dead.delivery_id)

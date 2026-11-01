@@ -92,14 +92,12 @@ from datetime import UTC, datetime, timedelta
 from datetime import time as datetime_time
 from pathlib import Path
 from unittest.mock import patch
-from uuid import uuid4
 from wsgiref.simple_server import WSGIRequestHandler, WSGIServer, make_server
 
 REPO_ROOT = Path(__file__).resolve().parents[1]
 if str(REPO_ROOT) not in sys.path:
     sys.path.insert(0, str(REPO_ROOT))
 
-from mediaflow.application.automation import AutomationWorker  # noqa: E402
 from mediaflow.application.classification_review import ClassificationReviewService  # noqa: E402
 from mediaflow.application.configuration_objects import ConfigurationObjectService  # noqa: E402
 from mediaflow.application.configuration_snapshot import ManagedConfigurationService  # noqa: E402
@@ -126,11 +124,6 @@ from mediaflow.application.strategy_test import (  # noqa: E402
     strategy_runner_from_configuration,
 )
 from mediaflow.application.task_runtime import PersistentTaskCoordinator  # noqa: E402
-from mediaflow.domain.automation import (  # noqa: E402
-    AutomationCommand,
-    AutomationJob,
-    AutomationJobStatus,
-)
 from mediaflow.domain.classification import (  # noqa: E402
     ClassificationPolicy,
     ClassificationResult,
@@ -1024,7 +1017,7 @@ def seed(
     denied, denial = wsgi_request(
         api,
         "POST",
-        "/api/v1/jobs",
+        "/api/v1/tasks",
         token=HARNESS_TOKEN,
         headers={"X-MediaFlow-Execution-Token": issued.token},
         **submission,
@@ -1034,13 +1027,13 @@ def seed(
     status, job_document = wsgi_request(
         api,
         "POST",
-        "/api/v1/jobs",
+        "/api/v1/tasks",
         token=HARNESS_ADMIN_TOKEN,
         headers={"X-MediaFlow-Execution-Token": issued.token},
         **submission,
     )
     if status != 202:
-        raise SystemExit(f"harness: job admission failed with {status}: {job_document}")
+        raise SystemExit(f"harness: Task admission failed with {status}: {job_document}")
 
     # 2. A definition-pinned Job the way the Scheduler admits one: one real due
     #    occurrence is emitted by the production Scheduler over the checked
@@ -1149,7 +1142,7 @@ def run_scheduled_definition_tick(
             tuple(item.library_id for item in runtime.resource_libraries if item.enabled),
         ),
     )
-    return tuple(job.definition_id or "" for job in scheduler.tick())
+    return tuple(task.task_id for task in scheduler.tick())
 
 
 def seed_time_filter_population(state: AppState) -> dict[str, object]:
@@ -1661,42 +1654,9 @@ def _request_intent_plan_via_durable_analysis(state: AppState, intent: dict, *, 
 
 
 def run_worker_once(state: AppState) -> dict:
-    """One real Worker claim + Task linkage over the durable pending Job."""
+    """The independent Job worker is retired; no queued Job is consumed."""
 
-    def handler(job, cancelled):
-        coordinator = PersistentTaskCoordinator(state.repository, state.repository)
-        task = coordinator.create(
-            job.command.value,
-            # The Worker's Task for a claimed organizing Job carries the Job's
-            # own durable execution authority, exactly like production.
-            execute_authorized=bool(job.execute_authorized),
-            scope_path="Movies/Harness/Linked",
-            configuration_snapshot_id=job.configuration_snapshot_id,
-            configuration_snapshot_digest=job.configuration_snapshot_digest,
-            require_configuration_snapshot=job.configuration_snapshot_id is not None,
-        )
-        if cancelled():
-            return None
-        return task.task_id
-
-    worker = AutomationWorker(
-        state.repository,
-        handler,
-        worker_id=WORKER_ID,
-        label="harness-inventory-worker",
-        configuration_snapshot_id=state.managed.active.revision_id,
-        configuration_snapshot_digest=state.managed.active.digest,
-        runtime_schema_version=SCHEMA_VERSION,
-    )
-    claimed = worker.run_next()
-    if claimed is None:
-        return {"linked": False, "reason": "no claimable Job"}
-    return {
-        "linked": claimed.task_id is not None,
-        "jobId": claimed.job_id,
-        "taskId": claimed.task_id,
-        "jobStatus": claimed.status.value,
-    }
+    return {"ran": False, "reason": "legacy queued Job worker retired"}
 
 
 def run_manual_organize_once(state: AppState) -> dict[str, str]:
@@ -2873,114 +2833,7 @@ def run_task_item_recovery_worker_once(
         recovery_item_ids = [item_id]
     if not recovery_item_ids:
         raise RuntimeError("task-item recovery fixture has not been seeded")
-    from mediaflow.final_cli import _run_queued_workflow
-
-    queued = min(
-        (
-            value
-            for item_id in recovery_item_ids
-            for value in state.repository.list_recovery_continuations(item_id, limit=10)
-            if value.status.value == "queued" and value.new_task_id is None
-        ),
-        key=lambda value: value.created_at,
-        default=None,
-    )
-    if queued is None:
-        return {"ran": False, "reason": "no queued recovery continuation"}
-    job = state.repository.get_job(queued.job_id)
-    if job is None:
-        raise RuntimeError("queued recovery continuation lost its Job")
-    if state.managed.config_path is None:
-        raise RuntimeError("resident recovery Worker has no managed config path")
-    active = state.managed.active
-    state.repository.register_worker(
-        WORKER_ID,
-        "harness-inventory-worker",
-        30.0,
-        ("organize", "recovery-continuation"),
-        configuration_snapshot_id=active.revision_id,
-        configuration_snapshot_digest=active.digest,
-        runtime_schema_version=SCHEMA_VERSION,
-        now=datetime.now(UTC),
-    )
-    # Older unclaimed seed Jobs are harness fixtures. Close them with an
-    # unregistered claim before the exact recovery Job; a snapshot-bound
-    # Worker may claim only this continuation and must never mistake it for a
-    # fixture. Jobs that belong to *any* recovery continuation (for example the
-    # sibling child of a two-item batch) are never closed: each child owns its
-    # own durable Job and must reach its own outcome.
-    recovery_job_ids = {
-        value.job_id
-        for item_id in recovery_item_ids
-        for value in state.repository.list_recovery_continuations(item_id, limit=10)
-        if value.job_id is not None
-    }
-    while True:
-        pending = tuple(
-            sorted(
-                (
-                    value
-                    for value in state.repository.list_jobs(limit=100)
-                    if value.status is AutomationJobStatus.PENDING
-                ),
-                key=lambda value: (value.created_at, value.job_id),
-            )
-        )
-        if not pending or pending[0].job_id == job.job_id:
-            break
-        if pending[0].job_id in recovery_job_ids:
-            # Another recovery child owns this Job; leave it for its own call.
-            break
-        claimed_fixture = state.repository.claim_next_job(datetime.now(UTC))
-        if claimed_fixture is None:
-            break
-        state.repository.complete_claimed_job(
-            dataclasses.replace(
-                claimed_fixture,
-                status=AutomationJobStatus.COMPLETED,
-                updated_at=datetime.now(UTC),
-                completed_at=datetime.now(UTC),
-                error=None,
-            )
-        )
-    worker = AutomationWorker(
-        state.repository,
-        lambda value, cancelled: _run_queued_workflow(
-            value,
-            str(state.managed.config_path),
-            cancelled,
-            repository=state.repository,
-        ),
-        worker_id=WORKER_ID,
-        label="harness-inventory-worker",
-        configuration_snapshot_id=active.revision_id,
-        configuration_snapshot_digest=active.digest,
-        runtime_schema_version=SCHEMA_VERSION,
-    )
-    with patch(
-        "mediaflow.final_cli.metadata_provider_registry_from_environment",
-        lambda _provider_ids: state.managed.metadata_registry,
-    ):
-        completed_job = worker.run_next()
-    if completed_job is None or completed_job.job_id != job.job_id:
-        return {"ran": False, "reason": "queued recovery Job was not claimable"}
-    continuation = state.repository.get_recovery_continuation_for_job(job.job_id)
-    return {
-        "ran": True,
-        "jobId": job.job_id,
-        "taskId": completed_job.task_id,
-        "continuationStatus": continuation.status.value if continuation else None,
-        "continuationError": continuation.error if continuation else None,
-        "newItems": [
-            {"status": v.status.value, "error": v.error, "path": v.source_path}
-            for v in state.repository.list_items(continuation.new_task_id)
-        ]
-        if continuation and continuation.new_task_id
-        else [],
-        "continuationRecovery": continuation.recovery if continuation else None,
-        "newTaskId": continuation.new_task_id if continuation else None,
-        "newResultId": continuation.new_result_id if continuation else None,
-    }
+    return {"ran": False, "reason": "legacy queued recovery continuation retired"}
 
 
 def seed_task_item_recovery_batch(state: AppState) -> dict[str, object]:
@@ -3557,210 +3410,6 @@ CONTINUATION_DEFINITION_ID = "harness-continuation"
 CONTINUATION_SCOPE = "C/Continuation"
 
 
-def seed_continuation_journey(state: AppState) -> dict[str, object]:
-    """Create one real paused organize Task with one already-recorded source.
-
-    This is a genuine durable state produced by the real production
-    coordinator: an organize Task that discovered exactly one source and was
-    then durably paused at a supported item boundary.  Its item budget is two,
-    so exactly one unit of remaining work exists — the continuation must
-    process that one and nothing else.
-    """
-
-    active = state.managed.active
-    source_root = state.managed.root / "source"
-    (source_root / "C" / "Continuation").mkdir(parents=True, exist_ok=True)
-    (source_root / CONTINUATION_SOURCE_FILE).write_bytes(b"continuation synthetic media")
-    coordinator = PersistentTaskCoordinator(state.repository, state.repository)
-    # The fixture runs as one real occurrence of the managed continuation
-    # definition: its Job carries the definition identity/bounds, the Task keeps
-    # the same admission pin, and the definition-bound grant is persisted through
-    # the production grant service.  A mutation-authorized continuation is
-    # advertised only with that live reusable authority, exactly like production.
-    definition = next(
-        (
-            value
-            for value in state.managed.runtime.automation_task_definitions
-            if value.definition_id == CONTINUATION_DEFINITION_ID
-        ),
-        None,
-    )
-    if definition is None:
-        raise RuntimeError("continuation fixture definition is not in the Active")
-    now = datetime.now(UTC)
-    occurrence_job = AutomationJob(
-        str(uuid4()),
-        AutomationCommand.ORGANIZE,
-        AutomationJobStatus.RUNNING,
-        now,
-        now,
-        limit=definition.item_limit,
-        execute_authorized=True,
-        definition_id=definition.definition_id,
-        definition_fingerprint=definition.definition_fingerprint,
-        run_mode=definition.mode,
-        resource_library_id=definition.resource_library_id,
-        source_scope=definition.source_scope,
-        configuration_snapshot_id=active.revision_id,
-        configuration_snapshot_digest=active.digest,
-        configuration_snapshot_version=active.version,
-    )
-    procedure = getattr(state.repository, "admit_job", None)
-    if callable(procedure):
-        procedure(occurrence_job, 100)
-    else:
-        state.repository.create_job(occurrence_job)
-    task = coordinator.create(
-        "organize",
-        execute_authorized=True,
-        scope_path=definition.source_scope,
-        item_limit=definition.item_limit,
-        configuration_snapshot_id=active.revision_id,
-        configuration_snapshot_digest=active.digest,
-        require_configuration_snapshot=True,
-    )
-    state.repository.update_job(
-        dataclasses.replace(state.repository.get_job(occurrence_job.job_id), task_id=task.task_id)
-    )
-    grant_id = str(uuid4())
-    state.repository.create_unattended_execution_grant(
-        UnattendedExecutionGrant(
-            grant_id,
-            definition.definition_id,
-            definition.resource_library_id,
-            definition.source_scope,
-            definition.mode,
-            definition.item_limit,
-            UnattendedExecutionGrantStatus.ACTIVE,
-            "harness-admin",
-            now,
-            definition.definition_fingerprint,
-            active.revision_id,
-            active.digest,
-            active.version,
-        ),
-        UnattendedExecutionGrantAudit(
-            str(uuid4()),
-            grant_id,
-            "granted",
-            now,
-            "harness-admin",
-            {"definitionId": definition.definition_id},
-        ),
-    )
-    # One source is already recorded, so the continuation must never repeat it.
-    coordinator.record_discovered(
-        task.task_id,
-        "source-storage",
-        "source",
-        CONTINUATION_RECORDED_FILE,
-        f"source-storage:{CONTINUATION_RECORDED_FILE}",
-    )
-    state.repository.request_task_pause(task.task_id, datetime.now(UTC))
-    paused = coordinator.acknowledge_pause(task.task_id)
-    if paused.status is not PersistentTaskStatus.PAUSED:
-        raise RuntimeError("continuation fixture Task did not pause")
-    state.continuation_task_id = task.task_id
-    return {
-        "taskId": task.task_id,
-        "status": paused.status.value,
-        "itemLimit": paused.item_limit,
-        "recordedSource": CONTINUATION_RECORDED_FILE,
-        "remainingSource": CONTINUATION_SOURCE_FILE,
-    }
-
-
-def run_continuation_worker_once(state: AppState) -> dict[str, object]:
-    """Claim and run the queued continuation through the REAL Worker handler.
-
-    The Job is claimed by its exact identity through the production
-    ``AutomationWorker`` (registered with the managed Active pin, as a resident
-    Worker is), and the handler is the production ``_run_queued_workflow`` — the
-    same entry point the resident Worker uses.  Nothing here re-implements,
-    stubs or bypasses the continuation boundary.
-    """
-
-    from mediaflow.final_cli import _run_queued_workflow
-
-    active = state.managed.active
-    state.repository.register_worker(
-        WORKER_ID,
-        "harness-inventory-worker",
-        30.0,
-        ("organize", "scope-continuation"),
-        configuration_snapshot_id=active.revision_id,
-        configuration_snapshot_digest=active.digest,
-        runtime_schema_version=SCHEMA_VERSION,
-        now=datetime.now(UTC),
-    )
-    continuation_job = None
-    for candidate in state.repository.list_jobs(limit=100):
-        if candidate.command.value == "scope-continuation" and candidate.status.value == "pending":
-            continuation_job = candidate
-            break
-    if continuation_job is None:
-        return {"ran": False, "reason": "no queued scope continuation"}
-
-    # The production claim has no command filter and orders by admission time,
-    # so the harness's own older seed Jobs are claimed first.  They are harness
-    # fixtures, not product work: each is closed through the production
-    # ``complete_claimed_job`` write path without running a workflow, and the
-    # loop continues until the real continuation Job owns the claim.  The
-    # continuation itself always goes through the production claim fence and the
-    # production Worker handler.
-    config_path = state.managed.config_path
-    claimed = state.repository.claim_next_job(datetime.now(UTC), worker_id=WORKER_ID)
-    skipped: list[str] = []
-    while claimed is not None and claimed.job_id != continuation_job.job_id:
-        skipped.append(claimed.job_id)
-        state.repository.complete_claimed_job(
-            dataclasses.replace(
-                claimed,
-                status=AutomationJobStatus.COMPLETED,
-                updated_at=datetime.now(UTC),
-                completed_at=datetime.now(UTC),
-                error=None,
-            )
-        )
-        claimed = state.repository.claim_next_job(datetime.now(UTC), worker_id=WORKER_ID)
-    if claimed is None:
-        return {"ran": False, "reason": "the continuation Job was not claimable"}
-    with (
-        patch(
-            "mediaflow.final_cli.metadata_provider_registry_from_environment",
-            lambda _provider_ids: state.managed.metadata_registry,
-        ),
-        # A resident Worker runs with its configuration path in the environment,
-        # so the production grant-permission boundary reads that same Active.
-        # The harness reproduces exactly that composition here.
-        patch.dict(os.environ, {"MEDIAFLOW_CONFIG": str(config_path)}),
-    ):
-        task_id = _run_queued_workflow(
-            claimed,
-            str(config_path) if config_path is not None else None,
-            lambda: False,
-            repository=state.repository,
-        )
-    state.repository.complete_claimed_job(
-        dataclasses.replace(
-            claimed,
-            status=AutomationJobStatus.COMPLETED,
-            updated_at=datetime.now(UTC),
-            completed_at=datetime.now(UTC),
-            task_id=task_id,
-        )
-    )
-    continuation = state.repository.get_scope_continuation_for_job(claimed.job_id)
-    return {
-        "ran": True,
-        "jobId": claimed.job_id,
-        "taskId": task_id,
-        "continuationStatus": continuation.status.value if continuation else None,
-        "newTaskId": continuation.new_task_id if continuation else None,
-        "skippedSeedJobs": skipped,
-    }
-
-
 def publish_configuration_successor(state: AppState):
     """Publish a checked, operationally identical B successor for pin tests."""
 
@@ -4281,138 +3930,13 @@ def seed_mixed_scope_recovery(state: AppState) -> dict[str, object]:
     }
 
 
-def run_automation_run_once_worker(
-    state: AppState, *, discovery_id: str, failure_fixture: str = ""
-) -> dict[str, object]:
-    """Drive the real Job/Worker/Executor, or retained legacy discovery Worker.
+def run_automation_run_once_worker(state: AppState, *, execution_id: str = "") -> dict[str, object]:
+    """The explicit Run once Task is advanced by the resident Task engine."""
 
-    Named failure fixtures inject a bounded pre-effect failure at the existing
-    Executor seam; other siblings execute normally against temporary roots.
-    """
-
-    task = state.repository.get_task(discovery_id)
-    scheduling = state.repository.get_task_scheduling(discovery_id)
-    if task is not None and scheduling is not None:
-        failed_sources = {
-            "one": ("Two.2002.mkv",),
-            "two": ("Two.2002.mkv", "Three.2003.mkv"),
-            "third": ("Three.2003.mkv",),
-        }.get(failure_fixture)
-        if failed_sources:
-            executor = _failure_for_named_execution_items(failed_sources)
-            with patch(
-                "mediaflow.application.automation_definition_execution.OrganizerExecutor",
-                lambda *_args: executor,
-            ):
-                advanced = _run_manual_task_once(state, task_id=task.task_id)
-        else:
-            advanced = _run_manual_task_once(state, task_id=task.task_id)
-        current = state.repository.get_task(task.task_id)
-        items = state.repository.list_items(task.task_id)
-        return {
-            "advanced": advanced is not None,
-            "taskId": task.task_id,
-            "status": current.status.value,
-            "failedItemIds": [v.item_id for v in items if v.status.value in {"failed", "partial"}],
-            "successItemIds": [v.item_id for v in items if v.status.value == "success"],
-        }
-
-    job = state.repository.get_job(discovery_id)
-    if job is not None and job.run_once:
-        from mediaflow.final_cli import _run_queued_workflow
-
-        active = state.managed.configuration_service.active()
-        worker = AutomationWorker(
-            state.repository,
-            lambda value, cancelled: _run_queued_workflow(
-                value, str(state.managed.config_path), cancelled, repository=state.repository
-            ),
-            worker_id="harness-run-once-execution-worker",
-            supported_commands=("organize",),
-            configuration_snapshot_id=active.revision_id,
-            configuration_snapshot_digest=active.digest,
-            runtime_schema_version=SCHEMA_VERSION,
-        )
-        with patch(
-            "mediaflow.final_cli.metadata_provider_registry_from_environment",
-            lambda _ids: state.managed.metadata_registry,
-        ):
-            failed_sources = {
-                "one": ("Two.2002.mkv",),
-                "two": ("Two.2002.mkv", "Three.2003.mkv"),
-                "third": ("Three.2003.mkv",),
-            }.get(failure_fixture)
-            if failed_sources:
-                executor = _failure_for_named_execution_items(failed_sources)
-                with patch(
-                    "mediaflow.application.automation_definition_execution.OrganizerExecutor",
-                    lambda *_args: executor,
-                ):
-                    completed = worker.run_next()
-            else:
-                completed = worker.run_next()
-        items = (
-            state.repository.list_items(completed.task_id)
-            if completed and completed.task_id
-            else ()
-        )
-        return {
-            "failedItemIds": [v.item_id for v in items if v.status.value in {"failed", "partial"}],
-            "successItemIds": [v.item_id for v in items if v.status.value == "success"],
-            "advanced": completed is not None,
-            "discoveryId": discovery_id,
-            "status": completed.status.value if completed else None,
-            "taskId": completed.task_id if completed else None,
-            "failureCategory": completed.failure_category if completed else None,
-            "error": completed.error if completed else None,
-        }
-
-    from mediaflow.application.media_discovery_worker import MediaDiscoveryWorker
-
-    service = getattr(state.api, "_media_discovery", None)
-    if service is None:
-        return {"advanced": False, "reason": "media discovery service is unavailable"}
-    worker = MediaDiscoveryWorker(service, worker_id="harness-discovery-worker")
-    try:
-        service.get(discovery_id)
-    except Exception:
-        return {"advanced": False, "reason": "the requested Run-once discovery is unavailable"}
-    latest = None
-    for _ in range(20):
-        result = worker.run_next()
-        if result is None:
-            break
-        latest = result
-        if result.discovery_id == discovery_id and (
-            result.terminal or result.preview_id is not None
-        ):
-            return {
-                "advanced": True,
-                "discoveryId": result.discovery_id,
-                "status": result.status.value,
-                "primarySourceCount": len(result.sources),
-                "previewId": result.preview_id,
-            }
-    current = service.get(discovery_id)
-    if latest is None:
-        return {
-            "advanced": False,
-            "reason": "the requested Run-once discovery was not claimable",
-            "discoveryId": discovery_id,
-            "status": current.status.value,
-        }
-    # A freshly written source may legitimately still be inside the configured
-    # stability interval, so the honest durable outcome is reported rather than
-    # forced to a fabricated "completed".
-    return {
-        "advanced": False,
-        "reason": "the Worker advanced earlier queued discoveries before the requested one",
-        "discoveryId": discovery_id,
-        "status": current.status.value,
-        "primarySourceCount": len(current.sources),
-        "previewId": current.preview_id,
-        "lastAdvancedDiscoveryId": latest.discovery_id,
-    }
+    task = state.repository.get_task(execution_id) if execution_id else None
+    if task is None:
+        return {"ran": False, "reason": "Run once Task was not found"}
+    return {"ran": False, "reason": "use the resident Task engine route", "taskId": task.task_id}
 
 
 def automation_run_once_state(state: AppState, *, discovery_id: str) -> dict[str, object]:
@@ -4544,11 +4068,6 @@ def seed_automation_definition_grant(state: AppState) -> dict[str, object]:
     """
 
     from mediaflow.domain.automation import AutomationTaskDefinition
-    from mediaflow.domain.unattended_execution import (
-        UnattendedExecutionGrant,
-        UnattendedExecutionGrantAudit,
-        UnattendedExecutionGrantStatus,
-    )
 
     active = state.managed.configuration_service.active()
     if active is None:
@@ -4999,7 +4518,7 @@ def seed_automation_record_page(state: AppState, *, runs: int = 26) -> dict[str,
         jobs = scheduler.tick(clock)
         if not jobs:
             break
-        emitted.extend(job.job_id for job in jobs)
+        emitted.extend(task.task_id for task in jobs)
     # The admitted-run population is read through the same bounded window the
     # Automation records page uses, so this reports the real record total the
     # browser will see rather than one definition's occurrence count.
@@ -5109,7 +4628,14 @@ def run_automation_scheduler_tick(state: AppState) -> dict[str, object]:
         AUTOMATION_LIFECYCLE_DEFINITION_ID, limit=20
     )
     return {
-        "emitted": [job.definition_id for job in emitted],
+        "emitted": [
+            (
+                state.repository.get_run_display_context(task.task_id).origin_definition_id
+                if state.repository.get_run_display_context(task.task_id) is not None
+                else None
+            )
+            for task in emitted
+        ],
         "occurrenceTotal": len(occurrences),
     }
 
@@ -5117,14 +4643,12 @@ def run_automation_scheduler_tick(state: AppState) -> dict[str, object]:
 def run_automation_definition_worker_once(
     state: AppState, *, definition_id: str | None = None
 ) -> dict[str, object]:
-    """Run one emitted definition occurrence through the production Worker.
+    """Run one emitted definition occurrence through the production Task engine."""
 
-    The definition identity defaults to the lifecycle fixture, but a journey
-    that publishes its own definition passes the exact id it published so the
-    Worker claims *that* occurrence and not an unrelated one.
-    """
-
-    from mediaflow.final_cli import _run_queued_workflow
+    from mediaflow.application.manual_task_engine import ManualTaskEngineWorker
+    from mediaflow.application.task_scheduling import TaskSchedulingService
+    from mediaflow.final_cli import _automatic_task_runner
+    from mediaflow.infrastructure.sqlite_runtime import SCHEMA_VERSION
 
     resolved_definition_id = definition_id or AUTOMATION_LIFECYCLE_DEFINITION_ID
     occurrence = state.repository.get_latest_automation_definition_occurrence(
@@ -5137,43 +4661,55 @@ def run_automation_definition_worker_once(
     active = state.managed.configuration_service.active()
     if active is None:
         return {"ran": False, "reason": "no Active configuration"}
-
-    worker = AutomationWorker(
+    task = state.repository.get_task(occurrence.task_id)
+    if task is None:
+        return {"ran": False, "reason": "the occurrence Task is unavailable"}
+    scheduling = TaskSchedulingService(
+        state.repository, capacity=state.managed.runtime.automation_maximum_active_jobs
+    )
+    worker_id = "harness-automation-definition-worker"
+    state.repository.register_worker(
+        worker_id,
+        worker_id,
+        5.0,
+        ("organize",),
+        active.revision_id,
+        active.digest,
+        SCHEMA_VERSION,
+        datetime.now(UTC),
+    )
+    worker = ManualTaskEngineWorker(
         state.repository,
-        lambda job, cancelled: _run_queued_workflow(
-            job,
-            str(state.managed.config_path),
-            cancelled,
-            repository=state.repository,
+        scheduling,
+        None,
+        None,
+        worker_id=worker_id,
+        automatic_runner=_automatic_task_runner(
+            state.repository, str(state.managed.config_path), scheduling
         ),
-        worker_id="harness-automation-definition-worker",
-        label="harness-automation-definition-worker",
-        supported_commands=("organize",),
-        configuration_snapshot_id=active.revision_id,
-        configuration_snapshot_digest=active.digest,
-        runtime_schema_version=SCHEMA_VERSION,
+        notice=lambda line: None,
     )
     with patch(
         "mediaflow.final_cli.metadata_provider_registry_from_environment",
         lambda _provider_ids: state.managed.metadata_registry,
     ):
         completed = worker.run_next()
+    state.repository.stop_worker(worker_id, datetime.now(UTC))
     if completed is None:
-        return {"ran": False, "reason": "no claimable scheduled definition Job"}
-    if completed.job_id != occurrence.job_id:
+        return {"ran": False, "reason": "no claimable scheduled definition Task"}
+    if completed.task_id != task.task_id:
         return {
             "ran": False,
-            "reason": "the Worker claimed a different queued Job",
-            "jobId": completed.job_id,
+            "reason": "the Worker claimed a different Task",
+            "taskId": completed.task_id,
         }
     persisted_occurrence = state.repository.get_latest_automation_definition_occurrence(
         resolved_definition_id
     )
     return {
         "ran": True,
-        "jobId": completed.job_id,
-        "jobStatus": completed.status.value,
         "taskId": completed.task_id,
+        "taskStatus": completed.status.value,
         "occurrenceId": occurrence.occurrence_id,
         "occurrenceTaskId": (
             persisted_occurrence.task_id if persisted_occurrence is not None else None
@@ -5584,28 +5120,6 @@ def seed_task_center_problem_journey(state: AppState) -> dict[str, object]:
         ),
     )
 
-    # A Job that failed before any Task existed, carrying durable structured
-    # repair evidence and no linked Task. It is the run-level attention case
-    # with no file members: the 需要处理 view must locate it and its action must
-    # reach the existing Job detail, not a fabricated file list.
-    run_repair_now = datetime.now(UTC)
-    run_repair_job = AutomationJob(
-        "harness-run-repair",
-        AutomationCommand.ORGANIZE,
-        AutomationJobStatus.FAILED,
-        run_repair_now,
-        run_repair_now,
-        completed_at=run_repair_now,
-        failure_category="snapshot_digest_mismatch",
-        failure_durable_state="the saved published revision digest no longer matches",
-        failure_side_effects="none",
-        failure_retry_safe=False,
-        failure_next_action=(
-            "restore the exact saved published revision, then emit a new occurrence"
-        ),
-    )
-    state.repository.create_job(run_repair_job)
-
     state.task_center_problems = {
         "mixedTaskId": mixed.task_id,
         "mixedRecognitionItemIds": [
@@ -5620,7 +5134,6 @@ def seed_task_center_problem_journey(state: AppState) -> dict[str, object]:
         "classificationItemId": f"{classified.task_id}-class",
         "metadataTaskId": metadata.task_id,
         "metadataItemId": f"{metadata.task_id}-metadata",
-        "runRepairJobId": run_repair_job.job_id,
     }
     return dict(state.task_center_problems)
 
@@ -6117,10 +5630,6 @@ def application(environ, start_response):
             document = seed_inventory_poll_population(STATE)
         elif path == "/__harness__/append-inventory-poll-failure" and method == "POST":
             document = append_inventory_poll_failure(STATE)
-        elif path == "/__harness__/seed-continuation" and method == "POST":
-            document = seed_continuation_journey(STATE)
-        elif path == "/__harness__/run-continuation-worker" and method == "POST":
-            document = run_continuation_worker_once(STATE)
         elif path == "/__harness__/seed-full-budget-recovery" and method == "POST":
             document = seed_full_budget_recovery(STATE)
         elif path == "/__harness__/seed-mixed-scope-recovery" and method == "POST":

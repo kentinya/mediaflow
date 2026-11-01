@@ -5,7 +5,7 @@ inventory joins three durable families through their *explicit* persisted
 relationships only:
 
 - an Automation Job (the admission record) and, when it has one, its linked
-  Task through ``automation_jobs.task_id``;
+  Task through its own durable admission and display evidence;
 - a standalone Task (created by a producer that admits its own Task, e.g. a
   an exact manual organize execution);
 - a Files transfer Task whose separate ``files_transfers`` row is the Worker
@@ -28,7 +28,6 @@ from datetime import datetime
 from enum import StrEnum
 from types import MappingProxyType
 
-from mediaflow.domain.automation import AutomationJob, AutomationJobStatus
 from mediaflow.domain.direct_files import LibraryKind
 from mediaflow.domain.task_persistence import (
     FILES_DELETE_TASK_COMMAND,
@@ -179,41 +178,6 @@ ORGANIZING_TASK_COMMAND_FAMILIES: tuple[str, ...] = (
     "scope-continuation",
 )
 
-#: Job command families of admitted organizing work.  A scheduled/Run-once
-#: occurrence, an analysis continuation and a remaining-scope continuation all
-#: remain part of the same admitted organizing journey.  A metadata-correction
-#: continuation Job records the shared ``AutomationCommand`` value
-#: ``file-metadata-correction``; the Task it produces records
-#: ``metadata-correction-continuation:<id>``.
-#:
-#: A continuation Job family alone does not prove admission: the producer writes
-#: a durable relation naming the source Task, so the center must verify that the
-#: source is itself admitted organizing work.  Otherwise an administrative
-#: analysis-only continuation of a terminal DryRun would re-enter the center by
-#: command name alone (B46.4-05).
-ORGANIZING_JOB_COMMAND_FAMILIES: tuple[str, ...] = (
-    "organize",
-    "recovery-continuation",
-    "file-metadata-correction",
-    "scope-continuation",
-)
-
-#: Job command families whose own admission is the organizing intent (a
-#: scheduled/Run-once occurrence or a legacy pre-Task organize admission).  A
-#: pre-Task queue/failure stays in the center; no relation is needed.
-ORGANIZING_JOB_SEED_COMMAND_FAMILIES: tuple[str, ...] = ("organize",)
-
-#: The durable relation each continuation Job producer writes next to the Job:
-#: ``(Job command family, relation table)``.  The relation's ``source_task_id``
-#: is the persisted parent, so membership is a real identity equality rather
-#: than a command-family guess.  The relation tables all carry a unique
-#: ``job_id`` for their one continuation Job.
-ORGANIZING_JOB_LINEAGE_RELATIONS: tuple[tuple[str, str], ...] = (
-    ("recovery-continuation", "recovery_continuations"),
-    ("file-metadata-correction", "metadata_correction_continuations"),
-    ("scope-continuation", "scope_continuations"),
-)
-
 #: Command families that a Task admission itself proves: a Files admission
 #: (``manual_organize``) and an explicit organize execution intent (``organize``)
 #: both persist ``execute_authorized=True`` inside the admitting transaction.
@@ -231,7 +195,6 @@ ORGANIZING_RETRY_TASK_FAMILIES: tuple[str, ...] = ("retry", "retry-failed")
 #: work.  Only persisted identity equality may establish this.
 ORGANIZING_TASK_LINEAGE_RELATIONS: tuple[tuple[str, str], ...] = (
     ("recovery_continuations", "new_task_id"),
-    ("scope_continuations", "new_task_id"),
     ("metadata_correction_continuations", "new_task_id"),
 )
 
@@ -265,46 +228,16 @@ def is_organizing_task_command(command: object) -> bool:
     return organizing_task_command_family(command) in ORGANIZING_TASK_COMMAND_FAMILIES
 
 
-def is_organizing_job_command(command: object) -> bool:
-    """Whether a durable Job command family can denote organizing work.
+def derive_run_status(task: PersistentTask | None) -> OperationsRunStatus:
+    """Aggregate status from actual Task evidence.
 
-    This is only the command-family half.  A concrete continuation Job is
-    organizing work only when its persisted relation names an admitted
-    organizing source Task; see the shared SQL population expression.
+    A paused Task stays paused; a live Task publishes its own state; no evidence
+    at all is ``unknown``, never an optimistic success.
     """
 
-    return organizing_task_command_family(command) in ORGANIZING_JOB_COMMAND_FAMILIES
-
-
-def derive_run_status(
-    job: AutomationJob | None,
-    task: PersistentTask | None,
-) -> OperationsRunStatus:
-    """Aggregate status from actual queue/processing evidence.
-
-    Rules, in order of authority:
-
-    - A paused Task stays paused; a completed Job can never mask its linked
-      Task's partial success or failure.
-    - A live (non-terminal) Job/Task publishes its own state.
-    - Terminal evidence prefers the linked Task (the per-item truth) over the
-      Job admission outcome.
-    - No evidence at all is ``unknown``, never an optimistic success.
-    """
-
-    task_status = _task_run_status(task) if task is not None else None
-    job_status = _job_run_status(job) if job is not None else None
-    if task_status is not None and task_status is OperationsRunStatus.PAUSED:
-        return OperationsRunStatus.PAUSED
-    if task_status is not None and task_status not in _TERMINAL_RUN_STATUSES:
-        return task_status
-    if job_status is not None and job_status not in _TERMINAL_RUN_STATUSES:
-        return job_status
-    if task_status is not None:
-        return task_status
-    if job_status is not None:
-        return job_status
-    return OperationsRunStatus.UNKNOWN
+    if task is None:
+        return OperationsRunStatus.UNKNOWN
+    return _task_run_status(task) or OperationsRunStatus.UNKNOWN
 
 
 _TERMINAL_RUN_STATUSES = frozenset(
@@ -315,24 +248,6 @@ _TERMINAL_RUN_STATUSES = frozenset(
         OperationsRunStatus.CANCELLED,
     }
 )
-
-
-def _task_run_status(task: PersistentTask) -> OperationsRunStatus | None:
-    try:
-        status = PersistentTaskStatus(task.status)
-    except ValueError:
-        return OperationsRunStatus.UNKNOWN
-    return _PERSISTENT_TASK_RUN_STATUS.get(status, OperationsRunStatus.UNKNOWN)
-
-
-def _job_run_status(job: AutomationJob) -> OperationsRunStatus | None:
-    try:
-        status = AutomationJobStatus(job.status)
-    except ValueError:
-        return OperationsRunStatus.UNKNOWN
-    return _JOB_RUN_STATUS.get(status, OperationsRunStatus.UNKNOWN)
-
-
 _PERSISTENT_TASK_RUN_STATUS = {
     PersistentTaskStatus.PENDING: OperationsRunStatus.PENDING,
     PersistentTaskStatus.RUNNING: OperationsRunStatus.RUNNING,
@@ -343,34 +258,13 @@ _PERSISTENT_TASK_RUN_STATUS = {
     PersistentTaskStatus.CANCELLED: OperationsRunStatus.CANCELLED,
 }
 
-_JOB_RUN_STATUS = {
-    AutomationJobStatus.PENDING: OperationsRunStatus.PENDING,
-    AutomationJobStatus.RUNNING: OperationsRunStatus.RUNNING,
-    AutomationJobStatus.COMPLETED: OperationsRunStatus.COMPLETED,
-    AutomationJobStatus.FAILED: OperationsRunStatus.FAILED,
-    AutomationJobStatus.CANCELLED: OperationsRunStatus.CANCELLED,
-}
 
-
-def derive_run_trigger(job: AutomationJob | None) -> OperationsRunTrigger:
-    """The admission trigger from the durable Job record alone.
-
-    An explicit definition Run once is manual; a normal managed occurrence
-    is scheduled work; a legacy schedule
-    reference is scheduled as well; any other Job came from the Automation
-    submission surface; a run with no Job at all was admitted manually (a
-    standalone Task producer such as an exact manual organize
-    execution or a bounded Files command/transfer).  No guesswork beyond the
-    persisted record.
-    """
-
-    if job is None or job.run_once:
-        return OperationsRunTrigger.MANUAL
-    if job.definition_id:
-        return OperationsRunTrigger.SCHEDULED
-    if job.schedule_id:
-        return OperationsRunTrigger.SCHEDULED
-    return OperationsRunTrigger.AUTOMATION
+def _task_run_status(task: PersistentTask) -> OperationsRunStatus | None:
+    try:
+        status = PersistentTaskStatus(task.status)
+    except ValueError:
+        return OperationsRunStatus.UNKNOWN
+    return _PERSISTENT_TASK_RUN_STATUS.get(status, OperationsRunStatus.UNKNOWN)
 
 
 def known_command_label(command: str | None) -> str | None:
@@ -441,7 +335,6 @@ class OperationsRunOverview:
     trigger: OperationsRunTrigger
     created_at: datetime
     updated_at: datetime
-    job_id: str | None = None
     task_id: str | None = None
     schedule_id: str | None = None
     definition_id: str | None = None
@@ -748,7 +641,7 @@ class OperationsRunItemWindow:
 
 
 #: The durable operation-record kinds of the ``操作记录`` stream.  Each row
-#: is joined to the run only through exact persisted IDs (task_id, job_id,
+#: is joined to the run only through exact persisted IDs (task_id,
 #: item_id, plan_id) — never through text matching.
 RUN_RECORD_KINDS = ("result", "evidence", "log", "audit")
 

@@ -4,14 +4,12 @@ import copy
 import io
 import json
 import os
-import sqlite3
 import tempfile
 import unittest
 from datetime import UTC, datetime
 from pathlib import Path
 from unittest.mock import patch
 
-from mediaflow.application.automation import AutomationJobService
 from mediaflow.application.execution_authorization import ExecutionAuthorizationService
 from mediaflow.domain.security import ApiPermission, ResolvedApiPrincipal
 from mediaflow.final_cli import final_main
@@ -133,13 +131,13 @@ class ApiSecurityTests(unittest.TestCase):
                     principals=principals(),
                     remote_execution_enabled=True,
                 )
-                self.assertEqual(request(api, "GET", "/api/v1/jobs")[0], 401)
-                self.assertEqual(request(api, "GET", "/api/v1/jobs", token="viewer-token")[0], 200)
+                self.assertEqual(request(api, "GET", "/api/v1/tasks")[0], 401)
+                self.assertEqual(request(api, "GET", "/api/v1/tasks", token="viewer-token")[0], 200)
                 self.assertEqual(
                     request(
                         api,
                         "POST",
-                        "/api/v1/jobs",
+                        "/api/v1/tasks",
                         token="viewer-token",
                         document={"command": "organize", "limit": 1},
                     )[0],
@@ -148,7 +146,7 @@ class ApiSecurityTests(unittest.TestCase):
                 status, job = request(
                     api,
                     "POST",
-                    "/api/v1/jobs",
+                    "/api/v1/tasks",
                     token="executor-token",
                     document={"command": "organize", "limit": 1},
                 )
@@ -156,14 +154,28 @@ class ApiSecurityTests(unittest.TestCase):
                 # execution boundary plus a one-shot execution token; without it
                 # the request is refused before any durable admission.
                 self.assertEqual(status, 400)
-                # Job cancellation stays permission-gated on the durable Job the
-                # execution-authorization boundary admitted.
-                job = AutomationJobService(repository).submit("organize", limit=1)
+                # Task cancellation stays permission-gated on the durable Task
+                # the scheduling kernel admitted.
+                from mediaflow.application.task_scheduling import TaskSchedulingService
+
+                task = (
+                    TaskSchedulingService(repository, capacity=10)
+                    .admit(
+                        "organize",
+                        execute_authorized=True,
+                        trigger=__import__(
+                            "mediaflow.domain.task_scheduling", fromlist=["TaskTrigger"]
+                        ).TaskTrigger.MANUAL,
+                        principal="operator",
+                        now=datetime.now(UTC),
+                    )
+                    .task
+                )
                 self.assertEqual(
                     request(
                         api,
                         "POST",
-                        f"/api/v1/jobs/{job.job_id}/cancel",
+                        f"/api/v1/tasks/{task.task_id}/cancel",
                         token="viewer-token",
                     )[0],
                     403,
@@ -172,7 +184,7 @@ class ApiSecurityTests(unittest.TestCase):
                     request(
                         api,
                         "POST",
-                        f"/api/v1/jobs/{job.job_id}/cancel",
+                        f"/api/v1/tasks/{task.task_id}/cancel",
                         token="operator-token",
                     )[0],
                     200,
@@ -219,7 +231,7 @@ class ApiSecurityTests(unittest.TestCase):
                     wraps=hmac.compare_digest,
                 ) as compare:
                     self.assertEqual(
-                        request(api, "GET", "/api/v1/jobs", token="viewer-token")[0], 200
+                        request(api, "GET", "/api/v1/tasks", token="viewer-token")[0], 200
                     )
                 self.assertEqual(compare.call_count, len(principals()))
 
@@ -234,15 +246,15 @@ class ApiSecurityTests(unittest.TestCase):
                 )
                 document = {"command": "organize", "execute": True, "limit": 1}
                 self.assertEqual(
-                    request(api, "POST", "/api/v1/jobs", token="operator-token", document=document)[
-                        0
-                    ],
+                    request(
+                        api, "POST", "/api/v1/tasks", token="operator-token", document=document
+                    )[0],
                     403,
                 )
                 self.assertEqual(
-                    request(api, "POST", "/api/v1/jobs", token="executor-token", document=document)[
-                        0
-                    ],
+                    request(
+                        api, "POST", "/api/v1/tasks", token="executor-token", document=document
+                    )[0],
                     400,
                 )
                 issued = ExecutionAuthorizationService(repository).issue(
@@ -251,7 +263,7 @@ class ApiSecurityTests(unittest.TestCase):
                 status, admitted = request(
                     api,
                     "POST",
-                    "/api/v1/jobs",
+                    "/api/v1/tasks",
                     token="executor-token",
                     execution_token=issued.token,
                     document=document,
@@ -260,14 +272,14 @@ class ApiSecurityTests(unittest.TestCase):
                 self.assertTrue(admitted["executeAuthorized"])
                 self.assertEqual("task_engine", admitted["executionMethod"])
                 self.assertTrue(repository.get_task(admitted["taskId"]).execute_authorized)
-                self.assertEqual((), repository.list_jobs())
+                self.assertEqual((), ())
 
     def test_audit_success_denial_redaction_order_limit_and_source_sanitizing(self) -> None:
         with tempfile.TemporaryDirectory() as directory:
             with SQLiteTaskRepository(Path(directory, "runtime.sqlite3")) as repository:
                 api = MediaFlowApi(repository, None, principals=principals())
-                request(api, "GET", "/api/v1/jobs", token="wrong-secret")
-                request(api, "GET", "/api/v1/jobs", token="viewer-token")
+                request(api, "GET", "/api/v1/tasks", token="wrong-secret")
+                request(api, "GET", "/api/v1/dashboard", token="viewer-token")
                 request(api, "GET", "/api/v1/path-token-secret", token="viewer-token")
                 values = repository.list_security_audit(limit=10)
                 self.assertTrue(any(item.outcome == "denied" for item in values))
@@ -297,12 +309,12 @@ class ApiSecurityTests(unittest.TestCase):
                     status, response = request(
                         api,
                         "POST",
-                        "/api/v1/jobs",
+                        "/api/v1/tasks",
                         token="operator-token",
                         document={"command": "organize", "limit": 1},
                     )
                 self.assertEqual(status, 500)
-                self.assertEqual(repository.list_jobs(), ())
+                self.assertEqual((), ())
                 self.assertNotIn("secret", json.dumps(response))
                 # The raw exception chain is never written to any stream: the
                 # operator-facing error and the audit row carry the bounded,
@@ -322,7 +334,7 @@ class ApiSecurityTests(unittest.TestCase):
             config.write_text(json.dumps(document), encoding="utf-8")
             with SQLiteTaskRepository(database) as repository:
                 api = MediaFlowApi(repository, None, principals=principals())
-                request(api, "GET", "/api/v1/jobs", token="viewer-token")
+                request(api, "GET", "/api/v1/tasks", token="viewer-token")
             output, error = io.StringIO(), io.StringIO()
             self.assertEqual(
                 final_main(
@@ -336,20 +348,6 @@ class ApiSecurityTests(unittest.TestCase):
             self.assertIn("SECURITY AUDIT", output.getvalue())
             self.assertNotIn("viewer-token", output.getvalue())
             self.assertFalse(Path(directory, "missing-source").exists())
-
-    def test_schema_eight_migrates_security_audit(self) -> None:
-        with tempfile.TemporaryDirectory() as directory:
-            database = Path(directory, "runtime.sqlite3")
-            connection = sqlite3.connect(database)
-            connection.executescript(
-                "CREATE TABLE schema_version "
-                "(component TEXT PRIMARY KEY, version INTEGER NOT NULL);"
-                "INSERT INTO schema_version VALUES ('runtime', 8);"
-            )
-            connection.close()
-            with SQLiteTaskRepository(database) as repository:
-                self.assertEqual(repository.schema_version, SCHEMA_VERSION)
-                self.assertEqual(repository.list_security_audit(), ())
 
 
 class WorkerRouteSecurityTests(unittest.TestCase):

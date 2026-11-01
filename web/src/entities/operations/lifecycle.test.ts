@@ -27,11 +27,7 @@ function projection(overrides: Record<string, unknown> = {}) {
     resultsObserved: 0,
     resultsComplete: true,
     uncertainResults: 0,
-    actions: [
-      action("cancel", true, null),
-      action("pause", true, null),
-      action("resume", false, "no durable queued continuation exists"),
-    ],
+    actions: [action("cancel", true, null)],
     ...overrides,
   };
 }
@@ -75,9 +71,8 @@ describe("normalizeLifecycleProjection", () => {
     const model = normalizeLifecycleProjection(projection(), OBJECT);
     expect(model.permitted).toBe(true);
     expect(availableLifecycleActions(model).map((item) => item.action)).toEqual(
-      ["cancel", "pause"],
+      ["cancel"],
     );
-    expect(availableLifecycleAction(model, "resume")).toBeNull();
     expect(availableLifecycleAction(model, "cancel")?.durableOutcome).toContain(
       "durable",
     );
@@ -127,20 +122,6 @@ describe("normalizeLifecycleProjection", () => {
       normalizeLifecycleProjection(
         projection({ actions: [action("obliterate", true, null)] }),
         OBJECT,
-      ),
-    ).toThrow();
-  });
-
-  it("rejects a job projection that advertises a Task-only action", () => {
-    expect(() =>
-      normalizeLifecycleProjection(
-        {
-          ...projection(),
-          objectType: "job",
-          objectId: "job-1",
-          actions: [action("pause", true, null)],
-        },
-        { objectType: "job", objectId: "job-1", state: "running" },
       ),
     ).toThrow();
   });
@@ -211,7 +192,7 @@ describe("native continuation recovery normalization", () => {
         state: "paused",
         actions: [
           action(
-            "resume",
+            "cancel",
             false,
             "the stored execute flag is not authority",
             RECOVERY,
@@ -236,7 +217,7 @@ describe("native continuation recovery normalization", () => {
     const model = normalizeLifecycleProjection(
       projection({
         state: "paused",
-        actions: [action("resume", false, "the pinned revision is gone")],
+        actions: [action("cancel", false, "the pinned revision is gone")],
       }),
       { ...OBJECT, state: "paused" },
     );
@@ -249,7 +230,7 @@ describe("native continuation recovery normalization", () => {
         projection({
           state: "paused",
           actions: [
-            action("resume", false, "authority required", {
+            action("cancel", false, "authority required", {
               ...RECOVERY,
               method: "DELETE",
             }),
@@ -266,7 +247,7 @@ describe("native continuation recovery normalization", () => {
         projection({
           state: "paused",
           actions: [
-            action("resume", false, "authority required", {
+            action("cancel", false, "authority required", {
               ...RECOVERY,
               available: false,
             }),
@@ -287,7 +268,7 @@ describe("native continuation recovery normalization", () => {
         state: "paused",
         actions: [
           action(
-            "resume",
+            "cancel",
             false,
             "every unit of this Task's originally admitted item budget is already recorded",
             RECOVERY,

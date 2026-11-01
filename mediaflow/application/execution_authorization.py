@@ -155,7 +155,7 @@ class ExecutionAuthorizationService:
                 state,
                 now,
                 ExecutionAuthorizationAudit(
-                    str(uuid4()), "resolved-by-digest", "consumed", now, job_id=task.task_id
+                    str(uuid4()), "resolved-by-digest", "consumed", now, task_id=task.task_id
                 ),
                 self._maximum_active_jobs,
                 display=display,

@@ -14,7 +14,7 @@ from urllib.parse import parse_qs, quote
 from uuid import uuid4
 from zoneinfo import ZoneInfo
 
-from mediaflow.application.automation import AutomationJobService, ProcessingWorkerService
+from mediaflow.application.automation import ProcessingWorkerService
 from mediaflow.application.automation_definition_occurrence import (
     AutomationDefinitionOccurrenceService,
 )
@@ -63,10 +63,6 @@ from mediaflow.application.manual_task_continuation import (
     ManualTaskContinuationService,
 )
 from mediaflow.application.media_discovery import MediaDiscoveryService
-from mediaflow.application.metadata_correction_continuation import (
-    FileMetadataCorrectionContinuationService,
-    MetadataCorrectionContinuationConflict,
-)
 from mediaflow.application.metadata_review import MetadataReviewService
 from mediaflow.application.notification_delivery import (
     DELIVERY_LEASE_DEFAULT_SECONDS,
@@ -77,8 +73,6 @@ from mediaflow.application.operations_lifecycle import (
     TaskLifecycleService,
     bounded_failure_document,
     bounded_identity_path,
-    job_lifecycle_document,
-    job_operator_document,
     manual_action_matrix_operator_document,
     manual_execution_operator_document,
     manual_execution_plan_evidence_operator,
@@ -91,8 +85,6 @@ from mediaflow.application.operations_lifecycle import (
     run_item_evidence_document,
     run_progress_document,
     run_record_document,
-    scope_continuation_operator_document,
-    scope_recovery_operator_document,
     task_item_operator_document,
     task_lifecycle_document,
     task_operator_document,
@@ -101,8 +93,6 @@ from mediaflow.application.operations_lifecycle import (
 from mediaflow.application.package_exchange import PackageExchangeService
 from mediaflow.application.processing_checkpoint import ProcessingCheckpointService
 from mediaflow.application.recovery_admission import RecoveryAdmissionService
-from mediaflow.application.recovery_batch import RecoveryBatchContinuationService
-from mediaflow.application.recovery_continuation import RecoveryContinuationService
 from mediaflow.application.resident_services import ResidentServiceService
 from mediaflow.application.rules_object_analysis import RulesObjectAnalysisService
 from mediaflow.application.rules_workspace_commands import (
@@ -111,10 +101,6 @@ from mediaflow.application.rules_workspace_commands import (
 from mediaflow.application.rules_workspace_commands import (
     RulesWorkspaceCommandService,
     rules_family_section,
-)
-from mediaflow.application.scope_continuation import (
-    ScopeContinuationService,
-    definition_occurrence_authority,
 )
 from mediaflow.application.storage_browser import (
     RuntimeFilesBrowserService,
@@ -133,8 +119,6 @@ from mediaflow.application.unattended_execution import (
 from mediaflow.application.webhook_test import WebhookTestService, webhook_events_supported
 from mediaflow.domain.automation import (
     AutomationCommand,
-    AutomationJobControlConflict,
-    AutomationJobStatus,
     AutomationQueueFull,
     AutomationTaskDefinition,
     WorkerReadiness,
@@ -176,9 +160,6 @@ from mediaflow.domain.media_discovery import (
     DiscoveryStatus,
     discovery_material_refusal,
 )
-from mediaflow.domain.metadata_correction import (
-    MetadataCorrectionContinuation,
-)
 from mediaflow.domain.notification import (
     NotificationDeliveryConflict,
     NotificationDeliveryStatus,
@@ -200,10 +181,6 @@ from mediaflow.domain.package_exchange import (
     PackageExchangeError,
 )
 from mediaflow.domain.recovery import RecoveryAdmissionError, RecoveryAdmissionReason
-from mediaflow.domain.recovery_continuation import (
-    RecoveryContinuationError,
-    RecoveryContinuationReason,
-)
 from mediaflow.domain.security import ApiPermission, ResolvedApiPrincipal, SecurityAuditRecord
 from mediaflow.domain.system_settings import (
     SystemSettingsEdit,
@@ -267,6 +244,8 @@ class _CurrentConfiguredPermissionAuthority:
     def __init__(self, fallback, configuration_service=None) -> None:
         self._fallback = tuple(fallback)
         self._configuration_service = configuration_service
+        if configuration_service is not None:
+            self._runtime_snapshot_validator = configuration_service.validate_runtime_snapshot
 
     def has_permission(self, principal_id: str, permission: str | ApiPermission) -> bool:
         principals = self._current_principals()
@@ -317,11 +296,9 @@ class _ApiRuntimeBinding:
 
     snapshot_id: str | None
     snapshot_digest: str | None
-    jobs: AutomationJobService
     maximum_active_jobs: int
     execution_authorizations: ExecutionAuthorizationService
     remote_execution_enabled: bool
-    stale_job_age_seconds: int
     system_status: object | None
     schedules: tuple
     metadata_policies: tuple
@@ -348,7 +325,6 @@ class _ApiRuntimeBinding:
     #: a continuation can never be advertised or admitted under another
     #: revision's definitions.
     automation_task_definitions: tuple = ()
-    scope_continuation_authority: object | None = None
 
 
 class MediaFlowApi:
@@ -415,6 +391,7 @@ class MediaFlowApi:
             raise ValueError("at least one API principal must be configured")
         self._repository = repository
         self._principals = principals
+        self._runtime_snapshot_validator = recovery_snapshot_validator
         if (
             isinstance(stale_job_age_seconds, bool)
             or not isinstance(stale_job_age_seconds, int)
@@ -608,18 +585,6 @@ class MediaFlowApi:
             configuration_service=configuration_service,
             metadata_provider_registry_factory=metadata_provider_registry_factory,
         )
-        # The shared admission boundary for a Web "Continue" of one durably
-        # paused Task's exact remaining admitted scope.  It performs zero
-        # Storage work and revalidates the live pin, the exact durable Task state
-        # and the applicable execution authority before queueing anything.
-        self._scope_continuations = ScopeContinuationService(
-            repository,
-            snapshot_validator=snapshot_validator,
-            # The live authority checker is resolved per binding below, because
-            # the saved definitions it validates against belong to the exact
-            # Active revision the request is served under.
-            mutation_authority=None,
-        )
         self._manual_execution = manual_execution_service
         if self._manual_execution is None and self._manual_previews is not None:
             self._manual_execution = ManualOrganizeExecutionService(
@@ -704,16 +669,6 @@ class MediaFlowApi:
             repository,
             snapshot_validator=snapshot_validator,
             checkpoint_service=self._checkpoint_service,
-        )
-        self._recovery_continuation = RecoveryContinuationService(
-            repository,
-            snapshot_validator=snapshot_validator,
-            checkpoint_service=self._checkpoint_service,
-        )
-        self._recovery_batch = RecoveryBatchContinuationService(
-            repository,
-            continuation_service=self._recovery_continuation,
-            admission_service=self._recovery_admission,
         )
         self._worker_service = worker_service
         if self._worker_service is None:
@@ -885,66 +840,6 @@ class MediaFlowApi:
                 "TaskItem was not found" if not_found else "recovery request was not admitted",
                 details=details,
             )
-        except RecoveryContinuationError as error:
-            reason = error.reason
-            status = (
-                404
-                if reason
-                in {
-                    RecoveryContinuationReason.UNKNOWN_ITEM,
-                    RecoveryContinuationReason.ITEM_TASK_MISMATCH,
-                }
-                else 503
-                if reason is RecoveryContinuationReason.SNAPSHOT_UNAVAILABLE
-                else 403
-                if reason is RecoveryContinuationReason.INSUFFICIENT_AUTHORITY
-                else 400
-                if reason
-                in {
-                    RecoveryContinuationReason.INVALID_INPUT,
-                    RecoveryContinuationReason.INVALID_VERSION,
-                }
-                else 409
-            )
-            not_found = reason in {
-                RecoveryContinuationReason.UNKNOWN_ITEM,
-                RecoveryContinuationReason.ITEM_TASK_MISMATCH,
-            }
-            details: dict[str, object] = {"sideEffects": "none"}
-            if not not_found:
-                details["reason"] = reason.value
-            if error.current_checkpoint_version and not not_found:
-                details["currentCheckpointVersion"] = error.current_checkpoint_version
-            if error.existing_continuation is not None and not not_found:
-                details["existingContinuation"] = error.existing_continuation.document()
-                details["nextAction"] = error.existing_continuation.next_action()
-            if reason is RecoveryContinuationReason.SNAPSHOT_UNAVAILABLE:
-                code = "configuration_unavailable"
-                message = "saved configuration snapshot is unavailable"
-            else:
-                code = "not_found" if not_found else "recovery_continuation_rejected"
-                message = (
-                    "TaskItem was not found"
-                    if not_found
-                    else "recovery continuation was not admitted"
-                )
-            self._safe_audit(
-                environ,
-                request_id,
-                locals().get("principal"),
-                method,
-                path,
-                "recovery-continuation",
-                "denied",
-                status,
-            )
-            return self._error(
-                start_response,
-                status,
-                code,
-                message,
-                details=details,
-            )
         except AutomationQueueFull as error:
             self._safe_audit(
                 environ,
@@ -962,52 +857,13 @@ class MediaFlowApi:
                 "queue_full",
                 str(error),
                 details={
-                    "durableState": "no new Job or continuation queued",
+                    "durableState": "no new Task or continuation was admitted",
                     "sideEffects": "none",
                     "retrySafe": True,
                     "nextAction": (
-                        "wait for active Jobs to finish or cancel one, then resubmit the "
-                        "same request and correction identity"
+                        "wait for an active Task to finish, then submit the same request again"
                     ),
                 },
-            )
-        except MetadataCorrectionContinuationConflict as error:
-            continuation = error.continuation
-            details = {
-                "durableState": (
-                    "current_continuation_preserved_source_unchanged"
-                    if continuation is not None
-                    else "correction_preserved_source_unchanged"
-                ),
-                "sideEffects": "none",
-                "retrySafe": True,
-                "nextAction": (
-                    "open the current linked continuation/Task"
-                    if continuation is not None
-                    else "refresh the File detail and use the current correction identity"
-                ),
-            }
-            if continuation is not None:
-                details["continuationId"] = continuation.continuation_id
-                details["jobId"] = continuation.job_id
-                details["status"] = continuation.status.value
-                details["taskId"] = continuation.new_task_id
-            self._safe_audit(
-                environ,
-                request_id,
-                locals().get("principal"),
-                method,
-                path,
-                "metadata-correction-continuation",
-                "conflict",
-                409,
-            )
-            return self._error(
-                start_response,
-                409,
-                "continuation_conflict",
-                str(error),
-                details=details,
             )
         except DirectFileError as error:
             self._safe_audit(
@@ -1534,24 +1390,6 @@ class MediaFlowApi:
                 str(error),
                 details=error.document(),
             )
-        except AutomationJobControlConflict as error:
-            self._safe_audit(
-                environ,
-                request_id,
-                locals().get("principal"),
-                method,
-                path,
-                "operations-lifecycle",
-                "conflict",
-                409,
-            )
-            return self._error(
-                start_response,
-                409,
-                "lifecycle_conflict",
-                str(error),
-                details=error.document(),
-            )
         except TaskItemRecoveryError as error:
             self._safe_audit(
                 environ,
@@ -1655,7 +1493,7 @@ class MediaFlowApi:
         if (
             len(parts) >= 4
             and parts[:3] == ["api", "v1", "operations"]
-            and parts[3] in {"tasks", "jobs", "workers"}
+            and parts[3] in {"tasks", "workers"}
         ):
             # The V2 Operations workspace reads one explicit bounded operator
             # projection.  The pre-existing /api/v1/tasks, /api/v1/jobs and
@@ -1684,7 +1522,6 @@ class MediaFlowApi:
             "confirmations",
             "dashboard",
             "files",
-            "jobs",
             "logs",
             "management",
             "manual-execution-authorizations",
@@ -1728,18 +1565,6 @@ class MediaFlowApi:
             )
         ):
             return self._error(start_response, 404, "not_found", "route was not found")
-        job_submission = None
-        if parts == ["api", "v1", "jobs"] and method == "POST":
-            job_submission = self._document(environ)
-            command = job_submission.get("command")
-            self._require(
-                principal,
-                ApiPermission.REMOTE_EXECUTE
-                if command == "organize"
-                else ApiPermission.SUBMIT_DRY_RUN,
-            )
-            if command not in {AutomationCommand.ORGANIZE.value}:
-                raise ValueError("unsupported job command")
         configuration_route = parts[:3] == ["api", "v1", "configuration"]
         automation_definition_route = parts[:4] == [
             "api",
@@ -6408,52 +6233,18 @@ class MediaFlowApi:
         ):
             self._require(principal, ApiPermission.SUBMIT_DRY_RUN)
             self._require_empty_query(environ, "task item action")
-            document = self._document(environ)
-            allowed = {"reviewId", "expectedCorrectionVersion"}
-            if set(document).difference(allowed):
-                raise ValueError(f"task item {parts[6]} request fields are invalid")
-            if set(document) != allowed:
-                raise ValueError(
-                    "Metadata correction continuation requires reviewId and "
-                    "expectedCorrectionVersion"
-                )
-            if self._configuration_service is None:
-                return self._error(
-                    start_response,
-                    503,
-                    "service_unavailable",
-                    "managed configuration service is unavailable",
-                )
-            submission = FileMetadataCorrectionContinuationService(
-                self._repository,
-                snapshot_validator=(self._configuration_service.validate_runtime_snapshot),
-            ).submit(
-                parts[3],
-                parts[5],
-                document["reviewId"],
-                expected_correction_version=document["expectedCorrectionVersion"],
-                actor=principal.principal_id,
-                maximum_active_jobs=binding.maximum_active_jobs,
-            )
-            continuation = submission.continuation
-            return self._response(
+            return self._error(
                 start_response,
-                202,
-                {
-                    "continuationId": continuation.continuation_id,
-                    "jobId": continuation.job_id,
-                    "taskId": continuation.new_task_id,
-                    "resultId": continuation.new_result_id,
-                    "status": continuation.status.value,
-                    "executionMode": "dry_run",
-                    "sourceTaskId": continuation.source_task_id,
-                    "sourceItemId": continuation.source_item_id,
-                    "configurationSnapshotId": continuation.configuration_snapshot_id,
-                    "configurationSnapshotDigest": continuation.configuration_snapshot_digest,
-                    "correctionVersion": continuation.correction_version,
+                410,
+                "job_continuation_retired",
+                "the independent Job continuation was retired",
+                details={
+                    "durableState": "unchanged; no Job, Task or Result was created",
                     "sideEffects": "none",
+                    "retrySafe": False,
                     "nextAction": (
-                        "run or wait for the Worker, then inspect the linked Task/Result"
+                        "save the Metadata decision and continue the same Task through its "
+                        "Task item recovery action"
                     ),
                 },
             )
@@ -7201,6 +6992,40 @@ class MediaFlowApi:
             )
         if method == "GET":
             self._require(principal, ApiPermission.READ)
+        if parts == ["api", "v1", "tasks"] and method == "POST":
+            self._require(principal, ApiPermission.REMOTE_EXECUTE)
+            self._require_empty_query(environ, "remote organize submission")
+            document = self._document(environ)
+            if not binding.remote_execution_enabled:
+                raise ValueError("remote execution is disabled")
+            if document.get("command") != AutomationCommand.ORGANIZE.value:
+                raise ValueError("remote Task submission supports only command organize")
+            if document.get("execute") is not True:
+                raise ValueError("remote organize requires execute=true")
+            unsupported = set(document).difference({"command", "execute", "limit"})
+            if unsupported:
+                raise ValueError(f"unsupported remote organize field {sorted(unsupported)[0]!r}")
+            token = str(environ.get("HTTP_X_MEDIAFLOW_EXECUTION_TOKEN", ""))
+            submission = binding.execution_authorizations.submit_organize(
+                token, limit=document.get("limit")
+            )
+            admitted_task = submission.task
+            return self._response(
+                start_response,
+                202,
+                redact_manual_value(
+                    {
+                        "taskId": admitted_task.task_id,
+                        "command": admitted_task.command,
+                        "status": "queued",
+                        "executeAuthorized": bool(admitted_task.execute_authorized),
+                        "itemLimit": admitted_task.item_limit,
+                        "executionMethod": "task_engine",
+                        "task": f"/api/v1/tasks/{admitted_task.task_id}",
+                        "sideEffects": "none",
+                    }
+                ),
+            )
         if parts == ["api", "v1", "tasks"] and method == "GET":
             task_status, task_command, limit, cursor = self._task_collection_query(environ)
             scope = _collection_scope(task_status.value if task_status else None, task_command)
@@ -7364,22 +7189,19 @@ class MediaFlowApi:
                     202,
                     {**continuation.document(), "executionMethod": "task_engine"},
                 )
-            binding = self._runtime_binding
-            submission = self._recovery_continuation.submit(
-                parts[3],
-                parts[5],
-                expected_checkpoint_version=expected,
-                actor=principal.principal_id,
-                maximum_active_jobs=binding.maximum_active_jobs,
-            )
-            continuation = submission.continuation
-            return self._response(
+            return self._error(
                 start_response,
-                202,
-                {
-                    **continuation.document(),
-                    "executionMode": "dry_run",
+                410,
+                "job_continuation_retired",
+                "the independent Job continuation was retired",
+                details={
+                    "durableState": "unchanged; no Job, child Task or Result was created",
                     "sideEffects": "none",
+                    "retrySafe": False,
+                    "nextAction": (
+                        "open the Task's current item checkpoint and use its supported "
+                        "same-Task recovery action"
+                    ),
                 },
             )
         if (
@@ -7677,65 +7499,43 @@ class MediaFlowApi:
                         **error.details,
                     },
                 )
-            binding = self._runtime_binding
-            batch = self._recovery_batch.submit(
-                parts[3],
-                document["items"],
-                actor=principal.principal_id,
-                maximum_active_jobs=binding.maximum_active_jobs,
-                batch_id=document.get("batchId"),
-            )
-            return self._response(
+            return self._error(
                 start_response,
-                202,
-                {
-                    **self._recovery_batch_document(batch),
-                    "executionMode": "dry_run",
+                410,
+                "job_batch_continuation_retired",
+                "the independent Job batch continuation was retired",
+                details={
+                    "durableState": "unchanged; no Job, child Task or Result was created",
                     "sideEffects": "none",
+                    "retrySafe": False,
+                    "nextAction": (
+                        "continue the same Task through its supported same-Task recovery action"
+                    ),
                 },
             )
         if (
-            len(parts) == 6
-            and parts[:3] == ["api", "v1", "tasks"]
-            and parts[4] == "recovery-batches"
-            and method == "GET"
-        ):
-            self._require(principal, ApiPermission.READ)
-            self._require_empty_query(environ, "Task recovery batch")
-            batch = self._repository.get_recovery_batch(parts[5])
-            if batch.source_task_id != parts[3]:
-                raise LookupError("Task recovery batch was not found")
-            return self._response(start_response, 200, self._recovery_batch_document(batch))
-        if len(parts) == 4 and parts[:3] == ["api", "v1", "recovery-batches"] and method == "GET":
-            self._require(principal, ApiPermission.READ)
-            self._require_empty_query(environ, "recovery batch")
-            return self._response(
-                start_response,
-                200,
-                self._recovery_batch_document(self._repository.get_recovery_batch(parts[3])),
+            (
+                len(parts) == 6
+                and parts[:3] == ["api", "v1", "tasks"]
+                and parts[4] == "recovery-batches"
             )
-        if (
-            len(parts) == 5
-            and parts[:3] == ["api", "v1", "recovery-batches"]
-            and parts[4] == "resume"
-            and method == "POST"
-        ):
-            self._require(principal, ApiPermission.SUBMIT_DRY_RUN)
-            self._require_empty_query(environ, "recovery batch resume")
-            self._require_empty_body(environ, "recovery batch resume")
-            binding = self._runtime_binding
-            batch = self._recovery_batch.resume(
-                parts[3],
-                actor=principal.principal_id,
-                maximum_active_jobs=binding.maximum_active_jobs,
+            or (len(parts) == 4 and parts[:3] == ["api", "v1", "recovery-batches"])
+            or (
+                len(parts) == 5
+                and parts[:3] == ["api", "v1", "recovery-batches"]
+                and parts[4] == "resume"
             )
-            return self._response(
+        ):
+            return self._error(
                 start_response,
-                202,
-                {
-                    **self._recovery_batch_document(batch),
-                    "executionMode": "dry_run",
+                410,
+                "job_batch_continuation_retired",
+                "the independent Job batch continuation was retired",
+                details={
+                    "durableState": "unchanged; no Job, child Task or Result was created",
                     "sideEffects": "none",
+                    "retrySafe": False,
+                    "nextAction": "use the Task's supported same-Task recovery action",
                 },
             )
         if (
@@ -7789,8 +7589,8 @@ class MediaFlowApi:
                 return self._retired_pause_control(start_response, action)
             service = TaskLifecycleService(
                 self._repository,
-                snapshot_validator=self._scope_continuations._snapshot_validator,
-                mutation_authority=binding.scope_continuation_authority,
+                snapshot_validator=self._runtime_snapshot_validator,
+                mutation_authority=None,
             )
             task = self._cancel_task(service, parts[3], expected_version, binding)
             lifecycle = self._task_lifecycle(
@@ -7865,14 +7665,6 @@ class MediaFlowApi:
                         for item in result_page
                     ],
                     "manualExecutionDiscovery": manual_discovery,
-                    "recovery_batches": [
-                        batch.document()
-                        for batch in (
-                            self._repository.list_recovery_batches(task.task_id)
-                            if callable(getattr(self._repository, "list_recovery_batches", None))
-                            else ()
-                        )
-                    ],
                     "item_limit": item_limit,
                     "result_limit": result_limit,
                     "items_truncated": has_next_items,
@@ -7896,12 +7688,8 @@ class MediaFlowApi:
                         self._task_lifecycle(
                             TaskLifecycleService(
                                 self._repository,
-                                snapshot_validator=(self._scope_continuations._snapshot_validator),
-                                mutation_authority=(
-                                    binding.scope_continuation_authority
-                                    if binding is not None
-                                    else None
-                                ),
+                                snapshot_validator=(self._runtime_snapshot_validator),
+                                mutation_authority=None,
                             ),
                             task,
                             principal,
@@ -8155,7 +7943,6 @@ class MediaFlowApi:
                             "component": item.component,
                             "event": item.event,
                             "task_id": item.task_id,
-                            "job_id": item.job_id,
                             "plan_id": item.plan_id,
                             "status": item.status,
                         }
@@ -8174,172 +7961,6 @@ class MediaFlowApi:
                         "operational_logs", page, has_next, CursorDirection.NEXT, scope=scope
                     ),
                 },
-            )
-        if parts == ["api", "v1", "jobs", "stale"]:
-            if method != "GET":
-                return self._error(start_response, 405, "method_not_allowed", "GET required")
-            self._require(principal, ApiPermission.READ)
-            limit = self._stale_job_limit(environ)
-            return self._response(
-                start_response,
-                200,
-                {
-                    "threshold_seconds": binding.stale_job_age_seconds,
-                    "items": [
-                        self._stale_job_value(item)
-                        for item in binding.jobs.stale(
-                            age_seconds=binding.stale_job_age_seconds, limit=limit
-                        )
-                    ],
-                },
-            )
-        if parts == ["api", "v1", "jobs"]:
-            if method == "GET":
-                job_status, job_command, limit, cursor = self._job_collection_query(environ)
-                scope = (
-                    f"status={job_status.value if job_status else 'all'};"
-                    f"command={job_command.value if job_command else 'all'}"
-                )
-                values = self._list_page(
-                    lambda **kwargs: self._repository.list_jobs(
-                        status=job_status.value if job_status else None,
-                        command=job_command.value if job_command else None,
-                        **kwargs,
-                    ),
-                    limit,
-                    cursor,
-                )
-                page, has_previous, has_next = self._page_window(values, limit, cursor)
-                return self._response(
-                    start_response,
-                    200,
-                    {
-                        "items": [
-                            self._job_document(item, principal, bounded=operations_projection)
-                            for item in page
-                        ],
-                        "limit": limit,
-                        "status": job_status.value if job_status else None,
-                        "command": job_command.value if job_command else None,
-                        "truncated": has_next,
-                        "previous_cursor": self._page_cursor(
-                            "jobs",
-                            page,
-                            has_previous,
-                            CursorDirection.PREVIOUS,
-                            scope=scope,
-                        ),
-                        "next_cursor": self._page_cursor(
-                            "jobs", page, has_next, CursorDirection.NEXT, scope=scope
-                        ),
-                    },
-                )
-            if method == "POST":
-                self._require_empty_query(environ, "job submission")
-                document = job_submission if job_submission is not None else self._document(environ)
-                forbidden = {
-                    "overwrite",
-                    "delete",
-                    "executionToken",
-                    "authorization",
-                }.intersection(document)
-                if forbidden:
-                    raise ValueError(f"unsupported service field {sorted(forbidden)[0]!r}")
-                command = document.get("command", "")
-                if command == "organize":
-                    self._require(principal, ApiPermission.REMOTE_EXECUTE)
-                    if not binding.remote_execution_enabled:
-                        raise ValueError("remote execution is disabled")
-                    if document.get("execute") is not True:
-                        raise ValueError("remote organize requires execute=true")
-                    unsupported = set(document).difference({"command", "execute", "limit"})
-                    if unsupported:
-                        raise ValueError(
-                            f"unsupported remote organize field {sorted(unsupported)[0]!r}"
-                        )
-                    token = str(environ.get("HTTP_X_MEDIAFLOW_EXECUTION_TOKEN", ""))
-                    submission = binding.execution_authorizations.submit_organize(
-                        token, limit=document.get("limit")
-                    )
-                    # Slice 47 RO-2: the remote organize submission is one
-                    # shared Task, not a Job.  The response names the durable
-                    # Task identity and its read path so the caller can follow
-                    # the real run instead of a retired queue row.
-                    admitted_task = submission.task
-                    return self._response(
-                        start_response,
-                        202,
-                        redact_manual_value(
-                            {
-                                "taskId": admitted_task.task_id,
-                                "command": admitted_task.command,
-                                "status": "queued",
-                                "executeAuthorized": bool(admitted_task.execute_authorized),
-                                "itemLimit": admitted_task.item_limit,
-                                "executionMethod": "task_engine",
-                                "task": f"/api/v1/operations/tasks/{admitted_task.task_id}",
-                                "sideEffects": "none",
-                            }
-                        ),
-                    )
-                else:
-                    self._require(principal, ApiPermission.SUBMIT_DRY_RUN)
-                    unsupported = set(document).difference({"command", "limit"})
-                    if unsupported:
-                        raise ValueError(f"unsupported DryRun job field {sorted(unsupported)[0]!r}")
-                    job = binding.jobs.submit(command, limit=document.get("limit"))
-                return self._response(start_response, 202, self._job_document(job, principal))
-        if len(parts) == 4 and parts[:3] == ["api", "v1", "jobs"] and method == "GET":
-            job = self._repository.get_job(parts[3])
-            if job is None:
-                raise LookupError(f"automation job {parts[3]!r} was not found")
-            return self._response(
-                start_response,
-                200,
-                self._job_document(job, principal, bounded=operations_projection),
-            )
-        if len(parts) == 5 and parts[:3] == ["api", "v1", "jobs"] and parts[4] == "cancel":
-            if method != "POST":
-                return self._error(start_response, 405, "method_not_allowed", "POST required")
-            self._require(principal, ApiPermission.CANCEL_JOB)
-            self._require_empty_query(environ, "job cancellation")
-            expected_version = self._control_version(environ, "job cancellation")
-            # The durable transition itself binds the cancellable state, the
-            # unset request flag and the version the operator read in one atomic
-            # compare-and-set, so a concurrent or repeated control is refused
-            # instead of being admitted twice.
-            return self._response(
-                start_response,
-                200,
-                self._job_document(
-                    binding.jobs.cancel(parts[3], expected_version=expected_version),
-                    principal,
-                    bounded=True,
-                ),
-            )
-        if len(parts) == 5 and parts[:3] == ["api", "v1", "jobs"] and parts[4] == "requeue-stale":
-            if method != "POST":
-                return self._error(start_response, 405, "method_not_allowed", "POST required")
-            self._require(principal, ApiPermission.CANCEL_JOB)
-            self._require_empty_query(environ, "stale Job requeue")
-            self._require_empty_body(environ, "stale Job requeue")
-            job = self._repository.get_job(parts[3])
-            if job is None:
-                raise LookupError(f"automation job {parts[3]!r} was not found")
-            if job.command is not AutomationCommand.FILE_METADATA_CORRECTION:
-                raise ValueError(
-                    "stale requeue is only available for a File correction continuation"
-                )
-            return self._response(
-                start_response,
-                200,
-                self._job_document(
-                    binding.jobs.requeue_stale(
-                        parts[3],
-                        age_seconds=binding.stale_job_age_seconds,
-                    ),
-                    principal,
-                ),
             )
         if (
             len(parts) == 5
@@ -9334,7 +8955,6 @@ class MediaFlowApi:
         if parts == ["api", "v1", "management", "readiness"]:
             return False
         if tuple(parts[:3]) in {
-            ("api", "v1", "jobs"),
             ("api", "v1", "tasks"),
             ("api", "v1", "manual-intents"),
             ("api", "v1", "manual-previews"),
@@ -9546,12 +9166,6 @@ class MediaFlowApi:
         return _ApiRuntimeBinding(
             snapshot_id,
             snapshot_digest,
-            AutomationJobService(
-                self._repository,
-                maximum_active_jobs=maximum_active_jobs,
-                configuration_snapshot_id=snapshot_id,
-                configuration_snapshot_digest=snapshot_digest,
-            ),
             maximum_active_jobs,
             ExecutionAuthorizationService(
                 self._repository,
@@ -9561,7 +9175,6 @@ class MediaFlowApi:
                 configuration_snapshot_digest=snapshot_digest,
             ),
             remote_execution_enabled,
-            stale_job_age_seconds,
             system_status,
             tuple(schedules),
             tuple(metadata_policies),
@@ -9577,15 +9190,6 @@ class MediaFlowApi:
             direct_media_transfers,
             runtime_settings,
             tuple(getattr(runtime_configuration, "automation_task_definitions", ())),
-            (
-                definition_occurrence_authority(
-                    self._repository,
-                    getattr(runtime_configuration, "automation_task_definitions", ()),
-                    self._unattended_grants,
-                )
-                if runtime_configuration is not None
-                else None
-            ),
         )
 
     def _audit(
@@ -9622,7 +9226,7 @@ class MediaFlowApi:
         if (
             len(parts) >= 4
             and parts[:3] == ["api", "v1", "operations"]
-            and parts[3] in {"tasks", "jobs", "workers"}
+            and parts[3] in {"tasks", "workers"}
         ):
             # The V2 Operations read alias names its own bounded projection
             # without publishing an object identifier in audit evidence.
@@ -9653,8 +9257,6 @@ class MediaFlowApi:
             ("api", "v1", "schedules"),
             ("api", "v1", "notifications"),
             ("api", "v1", "logs"),
-            ("api", "v1", "jobs"),
-            ("api", "v1", "jobs", "stale"),
             ("api", "v1", "resource-libraries"),
             ("api", "v1", "storages"),
             ("api", "v1", "security-audit"),
@@ -9676,10 +9278,7 @@ class MediaFlowApi:
         key = tuple(parts)
         if key in exact:
             return "/" + "/".join(parts)
-        if len(parts) == 4 and parts[:3] in (
-            ["api", "v1", "tasks"],
-            ["api", "v1", "jobs"],
-        ):
+        if len(parts) == 4 and parts[:3] == ["api", "v1", "tasks"]:
             return f"/api/v1/{parts[2]}/{{id}}"
         if len(parts) == 5 and parts[:4] == ["api", "v1", "automation", "task-definitions"]:
             return "/api/v1/automation/task-definitions/{id}"
@@ -9837,8 +9436,6 @@ class MediaFlowApi:
             and parts[4] == "resume"
         ):
             return "/api/v1/recovery-batches/{id}/resume"
-        if len(parts) == 5 and parts[:3] == ["api", "v1", "jobs"] and parts[4] == "cancel":
-            return "/api/v1/jobs/{id}/cancel"
         if (
             len(parts) == 5
             and parts[:3] == ["api", "v1", "tasks"]
@@ -10124,29 +9721,6 @@ class MediaFlowApi:
         if limit < 1 or limit > 100:
             raise ValueError("metadata correction limit must be between 1 and 100")
         return limit
-
-    @staticmethod
-    def _stale_job_limit(environ: dict) -> int:
-        values = parse_qs(str(environ.get("QUERY_STRING", "")), keep_blank_values=True)
-        if set(values).difference({"limit"}) or any(len(value) != 1 for value in values.values()):
-            raise ValueError("stale job query accepts one limit field")
-        return MediaFlowApi._parse_bounded_limit(values.get("limit", ["100"])[0], "stale job")
-
-    def _stale_job_value(self, value) -> dict:
-        document = {
-            "job_id": value.job_id,
-            "command": value.command.value,
-            "status": value.status.value,
-            "created_at": value.created_at.isoformat(),
-            "updated_at": value.updated_at.isoformat(),
-            "started_at": value.started_at.isoformat() if value.started_at else None,
-            "task_id": value.task_id,
-            "cancellation_requested": value.cancellation_requested,
-            "schedule_id": value.schedule_id,
-            "execute_authorized": value.execute_authorized,
-        }
-        document.update(self._worker_owner_evidence(value.worker_id))
-        return document
 
     @staticmethod
     def _require_empty_query(environ: dict, resource: str) -> None:
@@ -10450,50 +10024,6 @@ class MediaFlowApi:
         return status, command, limit, cursor
 
     @staticmethod
-    def _job_collection_query(
-        environ: dict,
-    ) -> tuple[AutomationJobStatus | None, AutomationCommand | None, int, DecodedCursor | None]:
-        """Bounded Job collection filter state plus its filter-bound cursor."""
-
-        values = parse_qs(str(environ.get("QUERY_STRING", "")), keep_blank_values=True)
-        if set(values).difference({"limit", "cursor", "status", "command"}) or any(
-            len(value) != 1 for value in values.values()
-        ):
-            raise ValueError("job query accepts limit, cursor, status, and command once")
-        limit = MediaFlowApi._parse_bounded_limit(values.get("limit", ["100"])[0], "job")
-        raw_status = values.get("status", ["all"])[0]
-        if raw_status in {"", "all"}:
-            status = None
-        else:
-            try:
-                status = AutomationJobStatus(raw_status)
-            except ValueError as error:
-                raise ValueError("job status is invalid") from error
-        raw_command = values.get("command", [""])[0]
-        if raw_command in {"", "all"}:
-            command = None
-        else:
-            try:
-                command = AutomationCommand(raw_command)
-            except ValueError as error:
-                raise ValueError("job command is invalid") from error
-        scope = _collection_scope(
-            status.value if status else None, command.value if command else None
-        )
-        raw_cursor = values.get("cursor")
-        cursor = (
-            decode_directional_cursor(
-                raw_cursor[0],
-                "jobs",
-                expected_scope=scope,
-                scope_optional=status is None and command is None,
-            )
-            if raw_cursor
-            else None
-        )
-        return status, command, limit, cursor
-
-    @staticmethod
     def _task_detail_page(
         environ: dict,
     ) -> tuple[int, int, DecodedCursor | None, DecodedCursor | None]:
@@ -10752,7 +10282,6 @@ class MediaFlowApi:
         record = page[0] if direction is CursorDirection.PREVIOUS else page[-1]
         attribute = {
             "tasks": "task_id",
-            "jobs": "job_id",
             "run_items": "item_id",
             "run_problem_items": "item_id",
             "run_records": "record_id",
@@ -11229,10 +10758,8 @@ class MediaFlowApi:
         if task is not None:
             service = TaskLifecycleService(
                 self._repository,
-                snapshot_validator=self._scope_continuations._snapshot_validator,
-                mutation_authority=(
-                    binding.scope_continuation_authority if binding is not None else None
-                ),
+                snapshot_validator=self._runtime_snapshot_validator,
+                mutation_authority=None,
             )
             results = service.results(task.task_id)
             document["lifecycle"] = self._task_lifecycle(
@@ -12899,76 +12426,6 @@ class MediaFlowApi:
         document["limits"] = {"intentMaxItems": self._organize_intent_limit()}
         return document
 
-    def _recovery_batch_document(self, batch) -> dict:
-        """Bound one batch and attach each child's durable same-page summary.
-
-        A batch child that reached a completed linked analysis can be prepared
-        into the same non-authorizing plan summary the per-item journey uses.
-        The batch projection exposes each child's *current durable* preparation
-        (identity, status, ready/not-ready and the linked execution) so the
-        operator can aggregate the independent summaries in the task's own
-        interface, select exactly the ready subset and confirm only those.  It
-        creates nothing, mints no authority and never guesses a summary from a
-        child's status; a child with no preparation simply has none.
-        """
-
-        document = batch.document()
-        recovery = getattr(self, "_manual_recovery", None)
-        items = document.get("items")
-        if not isinstance(items, list):
-            return document
-        for child in items:
-            if not isinstance(child, dict):
-                continue
-            source_item_id = child.get("source_item_id")
-            if not isinstance(source_item_id, str) or not source_item_id:
-                continue
-            if recovery is not None:
-                try:
-                    preparation = recovery.discovery_for_preparation(
-                        batch.source_task_id, source_item_id
-                    )
-                except Exception:
-                    preparation = None
-                if preparation is not None:
-                    child["manualRecoveryPreparation"] = preparation
-            try:
-                checkpoint = self._checkpoint_service.get(
-                    source_item_id, task_id=batch.source_task_id
-                )
-            except Exception:
-                checkpoint = None
-            if checkpoint is not None:
-                # The current durable checkpoint version lets the batch
-                # interface prepare this child's own summary without guessing
-                # the version the operator selected before the analysis ran.
-                child["currentCheckpointVersion"] = checkpoint.checkpoint_version
-                child["recoveryContinuationStatus"] = (
-                    checkpoint.recovery_continuation.status.value
-                    if checkpoint.recovery_continuation is not None
-                    else None
-                )
-            # The same bounded per-item decision the item page and item panel
-            # publish.  A saved batch that contains a technical-history child
-            # (created before the center contraction or through the preserved
-            # administrative API) cannot offer that child a new four-type
-            # summary/confirmation action here.  The management API itself is
-            # unchanged.
-            child["recoveryKind"] = self._task_item_recovery.recovery_kind(
-                source_item_id,
-                has_blocker=(checkpoint is not None and checkpoint.blocker is not None),
-            )
-            if recovery is not None:
-                try:
-                    child["manualRecoveryAvailable"] = recovery.supports_source_item(
-                        batch.source_task_id, source_item_id
-                    )
-                except Exception:
-                    child["manualRecoveryAvailable"] = False
-            else:
-                child["manualRecoveryAvailable"] = False
-        return document
-
     def _organize_preview_document(self, preview, principal: ResolvedApiPrincipal) -> dict:
         document = manual_preview_operator_document(preview.document())
         document["journey"] = "organize"
@@ -13574,7 +13031,6 @@ class MediaFlowApi:
         operator = self._strip_automation_operator_evidence(document)
         actions: dict[str, object] = {}
         task_id = operator.get("taskId")
-        job_id = operator.get("jobId")
         if isinstance(task_id, str) and task_id:
             actions["task"] = {
                 "available": True,
@@ -13583,26 +13039,7 @@ class MediaFlowApi:
                 "path": f"/api/v1/operations/tasks/{task_id}",
                 "sideEffects": "none",
                 "durableOutcome": None,
-                "nextAction": "inspect the durable Task and its per-item Results",
-            }
-        if (
-            isinstance(job_id, str)
-            and job_id
-            # A Task-only admission writes the Task identity into the
-            # occurrence's legacy link column, so no Job row exists to open:
-            # advertising a Job transport there would publish a link that can
-            # only 404.  A historical Job-backed occurrence keeps its own
-            # action because its Job id and Task id are distinct identities.
-            and job_id != task_id
-        ):
-            actions["job"] = {
-                "available": True,
-                "reason": None,
-                "method": "GET",
-                "path": f"/api/v1/operations/jobs/{job_id}",
-                "sideEffects": "none",
-                "durableOutcome": None,
-                "nextAction": "inspect the durable admission Job",
+                "nextAction": None,
             }
         operator["actions"] = actions
         return operator
@@ -14103,57 +13540,13 @@ class MediaFlowApi:
         return self._response(start_response, 200, document)
 
     def _operations_run_continuation(self, overview) -> dict[str, object] | None:
-        """The bounded, redacted continuation evidence of one selected run.
+        """Remaining-scope continuations were retired with Job support.
 
-        The internal ``scope_path``, the configuration pin and the actor are
-        never published: the operator document carries only the bounded
-        identifiers the Web needs to follow the linked continuation run, plus
-        the run's own truthful next action.
+        The selected run keeps its own Task/Result/checkpoint evidence; there is
+        no queued scope-continuation identity to publish.
         """
 
-        repository = self._repository
-        task_id = getattr(overview, "task_id", None)
-        if repository is None or not isinstance(task_id, str) or not task_id:
-            return None
-        candidates: list[tuple[object, dict[str, object]]] = []
-        lister = getattr(repository, "list_scope_continuations", None)
-        if callable(lister):
-            try:
-                values = tuple(lister(task_id, limit=8))
-            except Exception:
-                values = ()
-            for value in values:
-                document = scope_continuation_operator_document(value)
-                document.update(
-                    {
-                        "recoveryKind": "queued_continuation",
-                        "recoveryPreviewId": None,
-                        "executionId": None,
-                    }
-                )
-                document["attemptCount"] = len(values)
-                document["truncated"] = len(values) >= 8
-                candidates.append((value.created_at, document))
-
-        recovery_lister = getattr(repository, "list_scope_recovery_links", None)
-        if callable(recovery_lister):
-            try:
-                recoveries = tuple(recovery_lister(task_id, limit=8))
-            except Exception:
-                recoveries = ()
-            task_reader = getattr(repository, "get_task", None)
-            try:
-                source = task_reader(task_id) if callable(task_reader) else None
-            except Exception:
-                source = None
-            for value in recoveries:
-                document = scope_recovery_operator_document(value, source)
-                document["attemptCount"] = len(recoveries)
-                document["truncated"] = len(recoveries) >= 8
-                candidates.append((value.created_at, document))
-        if not candidates:
-            return None
-        return max(candidates, key=lambda candidate: candidate[0])[1]
+        return None
 
     def _operations_run_lifecycle(self, overview, principal) -> dict[str, object] | None:
         """Backend-computed controls for one selected run, or ``None``."""
@@ -14166,13 +13559,10 @@ class MediaFlowApi:
                 # The projection judges the same binding the control endpoint
                 # would use, so an advertised Continue and an accepted Continue
                 # can never disagree about the live authority.
-                binding = self._runtime_binding
                 service = TaskLifecycleService(
                     repository,
-                    snapshot_validator=self._scope_continuations._snapshot_validator,
-                    mutation_authority=(
-                        binding.scope_continuation_authority if binding is not None else None
-                    ),
+                    snapshot_validator=self._runtime_snapshot_validator,
+                    mutation_authority=None,
                 )
                 return redact_manual_value(
                     self._task_lifecycle(
@@ -14182,23 +13572,14 @@ class MediaFlowApi:
                         results=service.results(task.task_id),
                     )
                 )
-        job_id = getattr(overview, "job_id", None)
-        if isinstance(job_id, str) and job_id:
-            reader = getattr(repository, "get_job", None)
-            job = reader(job_id) if callable(reader) else None
-            if job is not None:
-                return redact_manual_value(
-                    job_lifecycle_document(job, permissions=principal.permissions)
-                )
         return None
 
     @staticmethod
     def _operations_run_detail(repository, identifier: str):
         """Resolve one supported *Task Center* identity to ``(overview, progress)``.
 
-        The exact run anchor wins; a Job-linked Task ID resolves only through
-        the persisted ``automation_jobs.task_id`` link (never a filename,
-        label or time proximity).  Task Center's population is admitted
+        The exact run anchor is the Task ID (never a filename, label or time
+        proximity).  Task Center's population is admitted
         organizing work only (Slice46 RO-4), so an ordinary file work's Task or
         an unrelated Job published the same ID resolves to *nothing* here: the
         ordinary record keeps its own library-local surface and cannot be
@@ -14280,8 +13661,7 @@ class MediaFlowApi:
 
         return (
             f"principal={principal_id};run={overview.run_id};"
-            f"task={overview.task_id or '-'};job={overview.job_id or '-'};"
-            f"kind={kind or 'all'}"
+            f"task={overview.task_id or '-'};kind={kind or 'all'}"
         )
 
     @classmethod
@@ -14589,7 +13969,6 @@ class MediaFlowApi:
         )
         window = repository.operations_run_records_window(
             overview.task_id,
-            overview.job_id,
             kind=kind,
             limit=limit,
             after=cursor.position if cursor and cursor.direction is CursorDirection.NEXT else None,
@@ -14603,7 +13982,6 @@ class MediaFlowApi:
             {
                 "run_id": overview.run_id,
                 "task_id": overview.task_id,
-                "job_id": overview.job_id,
                 "filter": {"kind": kind},
                 "limit": limit,
                 "records": [run_record_document(record) for record in window.page],
@@ -14698,7 +14076,6 @@ class MediaFlowApi:
                 for value in log_reader(
                     plan_id,
                     task_id=task_id,
-                    job_id=overview.job_id,
                     limit=20,
                 )
             ]
@@ -14820,7 +14197,6 @@ class MediaFlowApi:
             "trigger": overview.trigger.value,
             "created_at": overview.created_at.isoformat(),
             "updated_at": overview.updated_at.isoformat(),
-            "job_id": overview.job_id,
             "task_id": overview.task_id,
             "schedule_id": overview.schedule_id,
             "definition_id": overview.definition_id,
@@ -15596,11 +14972,6 @@ class MediaFlowApi:
             if overview.task_id
             else None
         )
-        job_center = (
-            {"jobId": overview.job_id, "path": f"/api/v1/operations/jobs/{overview.job_id}"}
-            if overview.job_id
-            else None
-        )
         route = self._automation_record_route(overview)
         document["recordId"] = overview.run_id
         document["origin"] = (
@@ -15649,8 +15020,17 @@ class MediaFlowApi:
             "admittedItemBound": overview.admitted_item_bound,
             "statement": self._automation_record_result_statement(overview),
         }
-        document["failureStage"] = self._automation_record_failure_stage(overview, failure_evidence)
-        document["recordOutcome"] = automation_record_display(overview, failure_evidence)
+        failure_stage = self._automation_record_failure_stage(overview, failure_evidence)
+        document["failureStage"] = failure_stage
+        document["recordOutcome"] = automation_record_display(
+            overview,
+            failure_evidence,
+            fallback_category=(
+                str(failure_stage["category"])
+                if failure_stage is not None and failure_stage.get("category")
+                else None
+            ),
+        )
         document["nextAction"] = route["next_action"]
         # The separately linked follow-up handling state.  It never rewrites the
         # original outcome; a recovery attempt is not a new scheduled trigger and
@@ -15676,7 +15056,6 @@ class MediaFlowApi:
             "durableState": route["durable_state"],
             "explanation": route["explanation"],
             "taskCenter": task_center,
-            "job": job_center,
             "definitionSettings": (
                 f"/ui-v2/operations/automation/definition/"
                 f"{overview.definition_id or overview.origin_definition_id}"
@@ -15718,9 +15097,8 @@ class MediaFlowApi:
             return "本次执行已取消；已完成的效果保持不变，未执行的部分没有被重放"
         return "本次执行仍在进行或等待，逐项结果会在任务中心更新"
 
-    @staticmethod
     def _automation_record_failure_stage(
-        overview, failure_evidence: dict | None = None
+        self, overview, failure_evidence: dict | None = None
     ) -> dict[str, object] | None:
         """The bounded failure stage/reason of one record, or ``None``.
 
@@ -15787,6 +15165,26 @@ class MediaFlowApi:
             else (f"{stage_values[0]}_stage" if stage_values else "linked_task_stage")
         )
         if not items:
+            # A Task that failed before producing an item can still carry the
+            # bounded structured evidence of that stage.  Publish it through the
+            # same closed failure shape instead of claiming the reason is
+            # unreadable.
+            task = self._repository.get_task(overview.task_id)
+            task_failure = (
+                bounded_failure_document(task.error) if task is not None and task.error else None
+            )
+            if task_failure is not None:
+                return {
+                    "stage": stage,
+                    "category": task_failure.get("category"),
+                    "nextAction": task_failure.get("nextAction"),
+                    "statement": task_failure.get("message")
+                    or "正式整理任务在产生逐项结果前失败；已完成的效果保持不变",
+                    "unavailable": False,
+                    "items": [],
+                    "effects": {"none": 0, "known": 0, "uncertain": 0, "partial": 0},
+                    "itemsTruncated": False,
+                }
             # The same closed shape as an inspectable failure, with every
             # count explicitly absent-from-zero: a Web consumer must not have to
             # guess which keys a partially-unavailable document carries.
@@ -17925,9 +17323,6 @@ class MediaFlowApi:
             values = reader(definition_id, limit=50)
         except Exception:
             return []
-        jobs_reader = getattr(self._repository, "list_automation_run_once_jobs", None)
-        if callable(jobs_reader):
-            values = (*jobs_reader(definition_id=definition_id, limit=50), *values)
         task_reader = getattr(service, "list_task_executions", None)
         if callable(task_reader):
             values = (*task_reader(definition_id, limit=50), *values)
@@ -20659,63 +20054,6 @@ class MediaFlowApi:
         return redact_manual_value(document)
 
     @classmethod
-    def _metadata_correction_continuation_value(
-        cls,
-        continuation: MetadataCorrectionContinuation,
-        *,
-        display_status: str | None = None,
-        next_action: str | None = None,
-        job=None,
-    ) -> dict:
-        status = display_status or continuation.status.value
-        return {
-            "continuationId": continuation.continuation_id,
-            "jobId": continuation.job_id,
-            "taskId": continuation.new_task_id,
-            "resultId": continuation.new_result_id,
-            "status": status,
-            "executionMode": "dry_run",
-            "sourceTaskId": continuation.source_task_id,
-            "sourceItemId": continuation.source_item_id,
-            "configurationSnapshotId": continuation.configuration_snapshot_id,
-            "configurationSnapshotDigest": continuation.configuration_snapshot_digest,
-            "correctionVersion": continuation.correction_version,
-            "failureCategory": getattr(job, "failure_category", None),
-            "snapshotUnavailable": getattr(job, "failure_category", None)
-            in {
-                "active_missing",
-                "active_unreadable",
-                "digest_corrupt",
-                "job_snapshot_incomplete",
-                "job_snapshot_missing",
-                "runtime_invalid",
-                "schema_unsupported",
-                "snapshot_digest_mismatch",
-                "snapshot_missing",
-                "snapshot_not_published",
-                "snapshot_unreadable",
-            },
-            "error": continuation.error,
-            "recovery": continuation.recovery,
-            "nextAction": next_action or cls._metadata_correction_continuation_next_action(status),
-            "createdAt": continuation.created_at.isoformat(),
-            "updatedAt": continuation.updated_at.isoformat(),
-        }
-
-    @staticmethod
-    def _metadata_correction_continuation_next_action(status: str) -> str:
-        return {
-            "queued": "wait for the Worker, then inspect the linked DryRun Task/Result",
-            "running": "wait for the Worker, then inspect the linked DryRun Task/Result",
-            "stale": "inspect and explicitly requeue the stale Job, then reload this File",
-            "completed": "inspect the linked DryRun Task/Result; the source remains unchanged",
-            "failed": (
-                "inspect the failure, repair the stated condition, then retry this correction"
-            ),
-            "cancelled": "refresh the File detail and explicitly continue this correction again",
-        }.get(status, "inspect the linked continuation state")
-
-    @classmethod
     def _value(cls, value):
         if hasattr(value, "__dataclass_fields__"):
             document = {
@@ -20768,46 +20106,6 @@ class MediaFlowApi:
             headers.append(("WWW-Authenticate", 'Bearer realm="mediaflow"'))
         start_response(f"{status} {labels[status]}", headers)
         return [body]
-
-    def _job_document(
-        self, job, principal: ResolvedApiPrincipal, *, bounded: bool = False
-    ) -> dict[str, object]:
-        """Project one Job with its worker evidence and lifecycle projection.
-
-        The bounded Operations projection is an explicit operator allowlist.
-        The pre-existing compatibility document keeps its historical keys for
-        existing clients while the claim/fence, scope, fingerprint and raw error
-        values stay out of every document.  Either way the response carries the
-        bounded worker ownership evidence (workerId, ownerLastHeartbeatAt) for a
-        RUNNING Job and the operational condition (no-worker / stale-worker) for
-        a PENDING or stale RUNNING Job with a bounded recovery next action.
-        """
-        document = job_operator_document(job) if bounded else self._compatibility_document(job)
-        status_value = document.get("status")
-        if status_value == "running":
-            worker_id = getattr(job, "worker_id", None)
-            if worker_id:
-                document["workerId"] = worker_id
-            document.update(self._worker_owner_evidence(worker_id))
-        elif status_value == "pending":
-            if self._worker_service is not None:
-                readiness = self._worker_service.evaluate_readiness(
-                    active_snapshot_id=self._runtime_binding.snapshot_id,
-                    active_snapshot_digest=self._runtime_binding.snapshot_digest,
-                )
-                if not readiness.get("ready"):
-                    document["operationalCondition"] = {
-                        "condition": readiness.get("condition"),
-                        "stage": "pending",
-                        "durableState": readiness.get("durableState"),
-                        "sideEffects": "none",
-                        "retrySafe": True,
-                        "nextAction": readiness.get("nextAction"),
-                    }
-        document["lifecycle"] = redact_manual_value(
-            job_lifecycle_document(job, permissions=principal.permissions)
-        )
-        return document
 
     def _worker_owner_evidence(self, worker_id: str | None) -> dict[str, object]:
         """Bound worker ownership and recovery evidence for one running Job."""

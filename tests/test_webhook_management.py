@@ -76,7 +76,7 @@ class MutatingTransport:
         revision = self.configuration.require(self.revision_id)
         objects = ConfigurationObjectService(self.configuration)
         value = webhook_document()
-        value["events"] = ["job.completed", "job.failed", "schedule.emitted"]
+        value["events"] = ["task.completed", "task.failed", "schedule.emitted"]
         objects.mutate(
             self.revision_id,
             ConfigurationObjectKind.WEBHOOK_DEFINITION,
@@ -93,7 +93,7 @@ def webhook_document(**changes):
         "id": "ops-webhook",
         "url": "https://example.invalid/hooks/mediaflow",
         "secretEnv": "MEDIAFLOW_WEBHOOK_SECRET",
-        "events": ["job.completed", "job.failed"],
+        "events": ["task.completed", "task.failed"],
         "enabled": True,
         "timeoutSeconds": 10,
         "maxAttempts": 5,
@@ -198,7 +198,7 @@ class WebhookManagementTests(unittest.TestCase):
 
                 # Edit: add an event and reduce the retry window.
                 edited = webhook_document(
-                    events=["job.completed", "job.failed", "job.cancelled"],
+                    events=["task.completed", "task.failed", "task.cancelled"],
                     maxRetrySeconds=30,
                 )
                 status, updated = request(
@@ -375,7 +375,9 @@ class WebhookManagementTests(unittest.TestCase):
                     "fragment_url": webhook_document(url="https://example.invalid/hook#frag"),
                     "bad_env": webhook_document(secretEnv="NOT AN ENV"),
                     "empty_events": webhook_document(events=[]),
-                    "duplicate_events": webhook_document(events=["job.completed", "job.completed"]),
+                    "duplicate_events": webhook_document(
+                        events=["task.completed", "task.completed"]
+                    ),
                     "unsupported_event": webhook_document(events=["job.unknown"]),
                     "zero_timeout": webhook_document(timeoutSeconds=0),
                     "oversized_timeout": webhook_document(timeoutSeconds=99999),
@@ -441,7 +443,7 @@ class WebhookManagementTests(unittest.TestCase):
                 )
                 self.assertEqual(status, 200)
                 revision = harness.configuration.require(revision_id)
-                jobs_before = harness.repository.list_jobs()
+                jobs_before = ()
                 tasks_before = harness.repository.list_tasks()
                 deliveries_before = harness.repository.list_deliveries()
 
@@ -495,7 +497,7 @@ class WebhookManagementTests(unittest.TestCase):
                 self.assertEqual(len(transport.requests), 2)
 
                 self.assertEqual(harness.repository.list_deliveries(), deliveries_before)
-                self.assertEqual(harness.repository.list_jobs(), jobs_before)
+                self.assertEqual((), jobs_before)
                 self.assertEqual(harness.repository.list_tasks(), tasks_before)
                 self.assertEqual(harness.repository.list_schedule_states(), ())
             finally:

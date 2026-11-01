@@ -175,10 +175,34 @@ class NotificationDeliveryConflict(RuntimeError):
 
 
 class NotificationEventType(StrEnum):
-    JOB_COMPLETED = "job.completed"
-    JOB_FAILED = "job.failed"
-    JOB_CANCELLED = "job.cancelled"
+    """Task-owned lifecycle events plus the schedule admission event.
+
+    ``JOB_*`` spellings remain aliases of the Task events so already-supported
+    Webhook documents keep parsing with unchanged meaning; the durable event
+    name and payload now describe the Task, never a removed Job queue.
+    """
+
+    TASK_COMPLETED = "task.completed"
+    TASK_FAILED = "task.failed"
+    TASK_CANCELLED = "task.cancelled"
     SCHEDULE_EMITTED = "schedule.emitted"
+    # Compatibility aliases for accepted configuration/event literals.
+    JOB_COMPLETED = TASK_COMPLETED
+    JOB_FAILED = TASK_FAILED
+    JOB_CANCELLED = TASK_CANCELLED
+
+    @classmethod
+    def parse(cls, value: object) -> NotificationEventType:
+        if isinstance(value, cls):
+            return value
+        aliases = {
+            "job.completed": cls.TASK_COMPLETED,
+            "job.failed": cls.TASK_FAILED,
+            "job.cancelled": cls.TASK_CANCELLED,
+        }
+        if isinstance(value, str) and value in aliases:
+            return aliases[value]
+        return cls(value)
 
 
 class NotificationDeliveryStatus(StrEnum):
@@ -296,7 +320,7 @@ class WebhookDefinition:
         events = []
         try:
             for item in raw_events:
-                events.append(NotificationEventType(item))
+                events.append(NotificationEventType.parse(item))
         except (TypeError, ValueError) as error:
             raise ValueError("Webhook contains an unsupported event") from error
         if len(events) != len(set(events)):

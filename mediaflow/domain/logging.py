@@ -24,7 +24,6 @@ class OperationalLogRecord:
     component: str
     event: str
     task_id: str | None = None
-    job_id: str | None = None
     plan_id: str | None = None
     status: str | None = None
 

@@ -18,16 +18,6 @@ class DashboardTaskCounts:
 
 
 @dataclass(frozen=True)
-class DashboardJobCounts:
-    total: int = 0
-    pending: int = 0
-    running: int = 0
-    completed: int = 0
-    failed: int = 0
-    cancelled: int = 0
-
-
-@dataclass(frozen=True)
 class RecentOperationalFailure:
     kind: str
     identifier: str
@@ -39,7 +29,6 @@ class RecentOperationalFailure:
 @dataclass(frozen=True)
 class DashboardPersistentState:
     tasks: DashboardTaskCounts
-    jobs: DashboardJobCounts
     pending_confirmations: int
     pending_metadata_reviews: int
     pending_classification_reviews: int
@@ -53,7 +42,6 @@ class DashboardSnapshot:
     resource_libraries: int
     media_libraries: int
     tasks: DashboardTaskCounts
-    jobs: DashboardJobCounts
     pending_confirmations: int
     pending_metadata_reviews: int
     pending_classification_reviews: int

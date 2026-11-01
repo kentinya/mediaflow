@@ -3,7 +3,7 @@
  *
  * The Python contract (`GET /api/v1/operations/runs`,
  * `GET /api/v1/operations/runs/{id}`) returns the bounded, secret-free run
- * projection over one deduplicated Job/Task population. Normalization is
+ * projection over one deduplicated Task population. Normalization is
  * deliberately fail-closed: an unknown status, trigger or library kind, a
  * coerced boolean or a miscounted progress pair makes the whole response
  * malformed instead of being rendered as an approximate truth. The document
@@ -197,15 +197,6 @@ export const RUN_TASK_LIFECYCLE_STATES = [
   "cancelled",
 ] as const;
 
-/** The raw Job states a pre-Task run lifecycle projection may carry. */
-export const RUN_JOB_LIFECYCLE_STATES = [
-  "pending",
-  "running",
-  "completed",
-  "failed",
-  "cancelled",
-] as const;
-
 /** The backend-submitted status filter values (exactly the modelled set). */
 export const RUN_STATUS_FILTERS = RUN_STATUSES;
 
@@ -219,7 +210,6 @@ export interface RunSummary {
   readonly trigger: RunTrigger;
   readonly createdAt: string;
   readonly updatedAt: string;
-  readonly jobId: string | null;
   readonly taskId: string | null;
   readonly scheduleId: string | null;
   readonly definitionId: string | null;
@@ -251,7 +241,7 @@ export interface RunSummary {
    * read and absent (null) on inventory rows. */
   readonly progress: RunProgress | null;
   /** The backend-advertised lifecycle controls for the durable object this run
-   * resolves to, or `null` when the run has neither a linked Task nor a Job.
+   * resolves to, or `null` when the run has no linked Task.
    * Only the single-run overview read publishes it; inventory rows carry
    * `null`. It is the only source of a rendered control. */
   readonly lifecycle: LifecycleProjection | null;
@@ -284,7 +274,6 @@ export interface RunContinuation {
   readonly continuationId: string;
   readonly status: string;
   readonly command: string;
-  readonly jobId: string | null;
   readonly newTaskId: string | null;
   readonly itemLimit: number | null;
   readonly createdAt: string;
@@ -472,8 +461,7 @@ function commandFamily(command: string | null): string | null {
  * durable identities.
  *
  * The projection must describe exactly the object this run resolves to: a
- * linked Task (`objectType: "task"`, matching `taskId`) or a Job
- * (`objectType: "job"`, matching `jobId`). A run that does not carry the
+ * linked Task (`objectType: "task"`, matching `taskId`). A run that does not carry the
  * identity the projection names cannot own that projection at all, so the
  * whole response fails closed instead of attaching a control to an approximate
  * object. The raw `state` is validated against the closed set of states its
@@ -483,7 +471,6 @@ function commandFamily(command: string | null): string | null {
 function normalizeRunLifecycle(
   value: unknown,
   taskId: string | null,
-  jobId: string | null,
 ): LifecycleProjection | null {
   if (value === null || value === undefined) {
     return null;
@@ -501,16 +488,6 @@ function normalizeRunLifecycle(
         objectType: "task",
         objectId: taskId,
         state: RUN_TASK_LIFECYCLE_STATES,
-      });
-    }
-    if (rawObjectType === "job") {
-      if (jobId === null) {
-        return fail();
-      }
-      return normalizeLifecycleProjection(value, {
-        objectType: "job",
-        objectId: jobId,
-        state: RUN_JOB_LIFECYCLE_STATES,
       });
     }
     // An unknown object type can never supply a run control.
@@ -614,9 +591,8 @@ export function normalizeRunSummary(payload: unknown): RunSummary {
     source["problem_file_counts"],
     "run.problem_file_counts",
   );
-  const jobId = optionalText(source, "job_id");
   const taskId = optionalText(source, "task_id");
-  const lifecycle = normalizeRunLifecycle(source["lifecycle"], taskId, jobId);
+  const lifecycle = normalizeRunLifecycle(source["lifecycle"], taskId);
   const continuation = normalizeRunContinuation(source["continuation"]);
   return {
     runId: text(source, "run_id"),
@@ -628,7 +604,6 @@ export function normalizeRunSummary(payload: unknown): RunSummary {
     trigger,
     createdAt: text(source, "created_at"),
     updatedAt: text(source, "updated_at"),
-    jobId,
     taskId,
     scheduleId: optionalText(source, "schedule_id"),
     definitionId: optionalText(source, "definition_id"),
@@ -734,10 +709,6 @@ function normalizeRunContinuation(value: unknown): RunContinuation | null {
         "run.continuation.command",
         64,
       ),
-      jobId:
-        source["jobId"] === null || source["jobId"] === undefined
-          ? null
-          : normalizeBoundedText(source["jobId"], "run.continuation.jobId"),
       newTaskId:
         source["newTaskId"] === null || source["newTaskId"] === undefined
           ? null

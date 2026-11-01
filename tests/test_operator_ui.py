@@ -157,8 +157,6 @@ class OperatorUiTests(unittest.TestCase):
         # Overwrite may only be displayed, never requested: no served path sends the field.
         self.assertNotIn("overwrite:", script)
         self.assertNotIn("overwrite=true", script)
-        self.assertIn("Queue Job", script)
-        self.assertIn("'/api/v1/jobs', {method: 'POST'", script)
         self.assertNotIn("/api/v1/tasks/${encodeURIComponent(id)}/resume", script)
         self.assertIn("Admitted recovery request", script)
         self.assertIn("request.actor", script)
@@ -831,7 +829,6 @@ class OperatorUiTests(unittest.TestCase):
             "document.createElement('textarea')",
             "actionButton('Save Draft'",
             "activateConfigurationRevision(data",
-            "actionButton('Queue first DryRun Preview'",
         ):
             with self.subTest(normal_control=normal_control):
                 self.assertLess(return_position, show_revision.index(normal_control, guard))

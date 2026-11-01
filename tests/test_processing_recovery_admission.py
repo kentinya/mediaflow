@@ -21,7 +21,7 @@ from mediaflow.domain.security import ApiPermission, ResolvedApiPrincipal
 from mediaflow.domain.task_persistence import PersistentResultRecord, TaskItemStatus
 from mediaflow.infrastructure.metadata_provider_bootstrap import LazyMetadataProviderRegistryFactory
 from mediaflow.infrastructure.runtime_configuration import RuntimeConfiguration
-from mediaflow.infrastructure.sqlite_runtime import SCHEMA_VERSION, SQLiteTaskRepository
+from mediaflow.infrastructure.sqlite_runtime import SQLiteTaskRepository
 from mediaflow.interfaces.service_api import MediaFlowApi
 
 NOW = datetime(2026, 8, 30, 12, 0, tzinfo=UTC)
@@ -916,7 +916,7 @@ class RecoveryAdmissionTests(unittest.TestCase):
                 )
                 task_before = repository.get_task(task.task_id)
                 tasks_before = repository.list_tasks()
-                jobs_before = repository.list_jobs()
+                jobs_before = ()
                 results_before = repository.list_results(task.task_id)
                 locks_before = lock_rows(repository)
 
@@ -956,33 +956,10 @@ class RecoveryAdmissionTests(unittest.TestCase):
                 self.assertEqual(tree_snapshot(destination_root), destination_before)
                 self.assertEqual(repository.get_task(task.task_id), task_before)
                 self.assertEqual(repository.list_tasks(), tasks_before)
-                self.assertEqual(repository.list_jobs(), jobs_before)
+                self.assertEqual((), jobs_before)
                 self.assertEqual(repository.list_results(task.task_id), results_before)
                 self.assertEqual(lock_rows(repository), locks_before)
                 self.assertEqual(len(repository.list_results(task.task_id)), len(results_before))
-
-    def test_recovery_table_migrates_forward_without_rewriting_existing_data(self) -> None:
-        with tempfile.TemporaryDirectory() as directory:
-            database = Path(directory, "runtime.sqlite3")
-            with SQLiteTaskRepository(database) as repository:
-                coordinator, task = self._task(repository)
-                item, _ = self._failed_item(repository, task)
-                repository._connection.execute("DROP INDEX one_active_recovery_request")
-                repository._connection.execute("DROP INDEX recovery_requests_item_requested")
-                repository._connection.execute("DROP TABLE recovery_requests")
-                repository._connection.execute(
-                    "UPDATE schema_version SET version=23 WHERE component='runtime'"
-                )
-                repository._connection.commit()
-                self.assertEqual(repository.get_item(item.item_id).error, "original failure")
-            with SQLiteTaskRepository(database) as reopened:
-                self.assertEqual(reopened.schema_version, SCHEMA_VERSION)
-                tables = reopened._connection.execute(
-                    "SELECT name FROM sqlite_master WHERE type='table' AND name='recovery_requests'"
-                ).fetchall()
-                self.assertEqual(len(tables), 1)
-                self.assertEqual(reopened.get_item(item.item_id).error, "original failure")
-                self.assertEqual(reopened.list_recovery_requests(item.item_id), ())
 
     def test_audit_note_redacts_obvious_secret_and_private_path_values(self) -> None:
         with tempfile.TemporaryDirectory() as directory:

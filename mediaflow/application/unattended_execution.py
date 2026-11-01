@@ -16,7 +16,6 @@ from uuid import uuid4
 
 from mediaflow.application.automation_execution_intent import ExecutionPrincipal
 from mediaflow.domain.automation import (
-    AutomationJobOrigin,
     AutomationTaskDefinition,
     AutomationTaskRunMode,
 )
@@ -375,18 +374,17 @@ class UnattendedExecutionGrantService:
             return ()
         return getter(_bounded(grant_id, 128, "grant ID"), limit=limit)
 
-    def authorize(self, job, definition) -> UnattendedExecutionAuthority:
-        """Admit the current intent before any Task or adapter exists.
+    def authorize_task(self, task, definition, *, run_once: bool) -> UnattendedExecutionAuthority:
+        """Admit the current intent for one already-admitted Task.
 
         A scheduled occurrence must still be an Enabled published definition
         at this boundary and its publishing principal must currently hold the
-        scheduled execution capability.  A Run once Job carries its own
+        scheduled execution capability.  A Run once Task carries its own
         explicit principal and only needs the current manual-execution
         permission; a disabled schedule is deliberately runnable once.
         """
 
         definition = _definition(definition)
-        run_once = _is_run_once(job)
         if not run_once and not definition.enabled:
             raise UnattendedExecutionGrantError(
                 "the pinned Automation Task Definition is disabled; no scheduled work was started",
@@ -398,7 +396,7 @@ class UnattendedExecutionGrantService:
                 ),
                 details={"definitionId": definition.definition_id},
             )
-        principal = self._intent_principal(job, definition)
+        principal = self._intent_principal(task, definition, run_once=run_once)
         permission = (
             ApiPermission.EXECUTE_MANUAL_ORGANIZE
             if run_once
@@ -407,7 +405,7 @@ class UnattendedExecutionGrantService:
         self._assert_current_permission(principal, permission=permission, boundary=False)
         if not run_once:
             self._assert_live_definition(definition, boundary=False)
-            self._assert_intent_continuity(job, definition)
+            self._assert_intent_continuity(task, definition)
         grant = self._current_grant_evidence(definition.definition_id)
         return UnattendedExecutionAuthority(
             grant,
@@ -418,11 +416,22 @@ class UnattendedExecutionGrantService:
             run_once=run_once,
         )
 
-    def assert_live(self, job, definition) -> UnattendedExecutionGrant | None:
+    def authorize(self, task, definition) -> UnattendedExecutionAuthority:
+        """Compatibility wrapper for Task-shaped callers."""
+
+        return self.authorize_task(task, definition, run_once=_task_run_once(task))
+
+    def assert_live(self, task, definition) -> UnattendedExecutionGrant | None:
+        """Compatibility wrapper for Task-shaped callers."""
+
+        return self.assert_live_task(task, definition, run_once=_task_run_once(task))
+
+    def assert_live_task(
+        self, task, definition, *, run_once: bool
+    ) -> UnattendedExecutionGrant | None:
         """Re-read current permission and schedule state at one effect boundary."""
 
         definition = _definition(definition)
-        run_once = _is_run_once(job)
         try:
             if not run_once and not definition.enabled:
                 raise UnattendedExecutionGrantError(
@@ -432,7 +441,7 @@ class UnattendedExecutionGrantService:
                     next_action="inspect the completed items and use a new Enabled revision if "
                     "wanted",
                 )
-            principal = self._intent_principal(job, definition)
+            principal = self._intent_principal(task, definition, run_once=run_once)
             permission = (
                 ApiPermission.EXECUTE_MANUAL_ORGANIZE
                 if run_once
@@ -441,7 +450,7 @@ class UnattendedExecutionGrantService:
             self._assert_current_permission(principal, permission=permission, boundary=True)
             if not run_once:
                 self._assert_live_definition(definition, boundary=True)
-                self._assert_intent_continuity(job, definition)
+                self._assert_intent_continuity(task, definition)
         except UnattendedExecutionGrantError as error:
             raise UnattendedExecutionBoundaryError(
                 category=error.code,
@@ -452,14 +461,16 @@ class UnattendedExecutionGrantService:
         return self._current_grant_evidence(definition.definition_id)
 
     def _intent_principal(
-        self, job, definition: AutomationTaskDefinition
+        self, task, definition: AutomationTaskDefinition, *, run_once: bool
     ) -> str | ExecutionPrincipal:
-        principal = getattr(job, "execution_principal", None)
-        if _is_run_once(job) and isinstance(principal, str) and principal.strip():
-            return principal.strip()
-        if _is_run_once(job):
+        if run_once:
+            reader = getattr(self._repository, "get_task_scheduling", None)
+            state = reader(task.task_id) if callable(reader) else None
+            principal = getattr(state, "admission_principal", None)
+            if isinstance(principal, str) and principal.strip():
+                return principal.strip()
             raise UnattendedExecutionGrantError(
-                "the Run once Job has no explicit principal; no work was started",
+                "the Run once Task has no explicit principal; no work was started",
                 code="run_once_principal_missing",
                 durable_state="no Task, adapter, Provider request, or media effect was created",
                 next_action="start Run once again from an authenticated session",
@@ -468,7 +479,7 @@ class UnattendedExecutionGrantService:
         resolver = self._publication_principal_resolver
         if resolver is not None:
             try:
-                value = resolver(job, definition)
+                value = resolver(task, definition)
             except Exception as error:
                 raise UnattendedExecutionGrantError(
                     "the Enabled definition's publication principal could not be read",
@@ -505,11 +516,11 @@ class UnattendedExecutionGrantService:
             details={"definitionId": definition.definition_id},
         )
 
-    def _assert_intent_continuity(self, job, definition):
+    def _assert_intent_continuity(self, task, definition):
         if self._live_intent_checker is None:
             return
         try:
-            self._live_intent_checker(job, definition)
+            self._live_intent_checker(task, definition)
         except Exception as error:
             raise UnattendedExecutionGrantError(
                 "the admitted schedule was stopped or its publication continuity is unavailable",
@@ -866,69 +877,6 @@ class UnattendedExecutionGrantService:
             )
             for definition, definition_id in zip(values, ids, strict=True)
         }
-
-    def _assert_match(self, grant, job, definition) -> None:
-        if grant.status is not UnattendedExecutionGrantStatus.ACTIVE:
-            raise UnattendedExecutionGrantError(
-                "unattended execution grant is revoked",
-                code="unattended_execution_grant_revoked",
-                next_action="review completed history and explicitly grant the exact bounds again",
-            )
-        if getattr(job, "definition_id", None) != grant.definition_id:
-            raise self._mismatch(
-                "definition identity", "unattended_execution_grant_definition_mismatch"
-            )
-        if getattr(job, "resource_library_id", None) != grant.resource_library_id:
-            raise self._mismatch("ResourceLibrary", "unattended_execution_grant_resource_mismatch")
-        try:
-            job_scope = AutomationTaskDefinition.normalize_scope(getattr(job, "source_scope", None))
-        except (TypeError, ValueError):
-            job_scope = object()
-        if job_scope != grant.source_scope or definition.source_scope != grant.source_scope:
-            raise self._mismatch("source scope", "unattended_execution_grant_scope_mismatch")
-        if (
-            getattr(job, "run_mode", None) != grant.run_mode
-            or definition.mode is not grant.run_mode
-        ):
-            raise self._mismatch("run mode", "unattended_execution_grant_mode_mismatch")
-        limit = getattr(job, "limit", None)
-        if (
-            isinstance(limit, bool)
-            or not isinstance(limit, int)
-            or limit < 1
-            or limit > grant.max_items_per_run
-        ):
-            raise UnattendedExecutionGrantError(
-                "occurrence workload exceeds the unattended execution grant",
-                code="unattended_execution_grant_limit_exceeded",
-                next_action=(
-                    "lower the occurrence bound or explicitly grant a larger bound after review"
-                ),
-            )
-        if _definition_changed_since_grant(grant, definition):
-            raise UnattendedExecutionGrantError(
-                "definition changed since the unattended execution grant",
-                code="unattended_execution_grant_definition_changed",
-                next_action=(
-                    "review the changed definition and explicitly grant its exact bounds again"
-                ),
-            )
-        if getattr(job, "configuration_snapshot_id", None) != grant.configuration_snapshot_id:
-            raise self._mismatch(
-                "configuration snapshot", "unattended_execution_grant_snapshot_mismatch"
-            )
-        if (
-            getattr(job, "configuration_snapshot_digest", None)
-            != grant.configuration_snapshot_digest
-        ):
-            raise self._mismatch(
-                "configuration snapshot digest", "unattended_execution_grant_snapshot_mismatch"
-            )
-        job_version = getattr(job, "configuration_snapshot_version", None)
-        if job_version != grant.configuration_snapshot_version:
-            raise self._mismatch(
-                "configuration snapshot version", "unattended_execution_grant_snapshot_mismatch"
-            )
 
     @staticmethod
     def _mismatch(label: str, code: str) -> UnattendedExecutionGrantError:
@@ -1301,11 +1249,12 @@ def _prefer_grant(
     )
 
 
-def _is_run_once(job) -> bool:
-    origin = getattr(job, "execution_origin", None)
-    if isinstance(origin, AutomationJobOrigin):
-        return origin is AutomationJobOrigin.RUN_ONCE
-    return origin in {"run-once", "run_once"}
+def _task_run_once(task) -> bool:
+    origin = getattr(task, "execution_origin", None)
+    if isinstance(origin, str):
+        return origin in {"run-once", "run_once"}
+    trigger = getattr(getattr(task, "admission_trigger", None), "value", None)
+    return trigger == "run_once"
 
 
 def _definition_changed_since_grant(

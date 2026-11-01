@@ -507,7 +507,7 @@ class AuthorizedOccurrenceProjectionTests(unittest.TestCase):
                     "definition-summary",
                     NOW,
                     NOW,
-                    "job-summary",
+                    "task-summary",
                     "a" * 64,
                     1,
                     "revision-summary",
@@ -517,7 +517,6 @@ class AuthorizedOccurrenceProjectionTests(unittest.TestCase):
                     "resource",
                     "Media/incoming",
                     4,
-                    task_id="task-summary",
                 )
                 checkpoints = ProcessingCheckpointService(repository)
                 projection = AutomationDefinitionOccurrenceService(repository)
@@ -621,8 +620,10 @@ class AuthorizedOccurrenceProjectionTests(unittest.TestCase):
                 ).tick(NOW)
                 self.assertEqual(len(emitted), 1)
                 repository._connection.execute(
-                    "UPDATE automation_jobs SET task_id=? WHERE job_id=?",
-                    ("task-api-summary", emitted[0].job_id),
+                    "UPDATE automation_definition_occurrences SET task_id=? "
+                    "WHERE occurrence_id=(SELECT occurrence_id "
+                    "FROM automation_definition_occurrences ORDER BY emitted_at DESC LIMIT 1)",
+                    ("task-api-summary",),
                 )
                 repository._connection.commit()
                 active = SimpleNamespace(
@@ -654,7 +655,7 @@ class AuthorizedOccurrenceProjectionTests(unittest.TestCase):
                 )
                 before_read_only_state = (
                     tuple(task.task_id for task in repository.list_tasks()),
-                    tuple(job.job_id for job in repository.list_jobs()),
+                    tuple(job.job_id for job in ()),
                     tuple(
                         grant.grant_id for grant in repository.list_unattended_execution_grants()
                     ),
@@ -738,7 +739,7 @@ class AuthorizedOccurrenceProjectionTests(unittest.TestCase):
                 )
                 after_read_only_state = (
                     tuple(task.task_id for task in repository.list_tasks()),
-                    tuple(job.job_id for job in repository.list_jobs()),
+                    tuple(job.job_id for job in ()),
                     tuple(
                         grant.grant_id for grant in repository.list_unattended_execution_grants()
                     ),

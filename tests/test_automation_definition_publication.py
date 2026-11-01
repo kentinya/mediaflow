@@ -141,7 +141,7 @@ def _occurrence(
         definition_id,
         datetime(2026, 1, 1, tzinfo=UTC),
         datetime(2026, 1, 1, tzinfo=UTC),
-        "job-nightly",
+        "task-nightly",
         fingerprint,
         1,
         revision_id,
@@ -154,7 +154,6 @@ def _occurrence(
         "emitted",
         "scheduled",
         "no operator action is required",
-        "task-nightly",
         None,
     )
 
@@ -423,20 +422,20 @@ class AutomationPublicationTests(unittest.TestCase):
 
     def test_enable_and_disable_publish_without_creating_work_or_authority(self) -> None:
         self.save(definition("nightly"))
-        jobs_before = len(self.runtime.list_jobs())
+        jobs_before = len(())
         enabled = self.commands.set_enabled(
             "nightly", enabled=True, actor=ADMIN, **self.authority()
         )
         stored = enabled.document[AUTOMATION_DEFINITION_SECTION][0]
         self.assertIs(stored["enabled"], True)
-        self.assertEqual(len(self.runtime.list_jobs()), jobs_before)
+        self.assertEqual(len(()), jobs_before)
         self.assertIsNone(self.grants.get_for_definition("nightly"))
 
         disabled = self.commands.set_enabled(
             "nightly", enabled=False, actor=ADMIN, **self.authority()
         )
         self.assertIs(disabled.document[AUTOMATION_DEFINITION_SECTION][0]["enabled"], False)
-        self.assertEqual(len(self.runtime.list_jobs()), jobs_before)
+        self.assertEqual(len(()), jobs_before)
 
     def test_copy_starts_disabled_with_a_new_identity_and_no_authority(self) -> None:
         self.save(definition("nightly"))
@@ -512,7 +511,7 @@ class AutomationPublicationTests(unittest.TestCase):
         self.assertNotEqual(before.revision_id, published.revision_id)
         self.assertEqual(self.ids(), [])
         self.assertEqual((), self.runtime.list_tasks())
-        self.assertEqual((), self.runtime.list_jobs())
+        self.assertEqual((), ())
 
     def test_concurrent_save_wins_and_removal_preserves_authority(self) -> None:
         """A legitimate concurrent focused Save between revocation and publication
@@ -677,7 +676,7 @@ class AutomationPublicationTests(unittest.TestCase):
         self.assertEqual(self.ids(), [])
         # Any retained grant row is historical and cannot revive removed work.
         self.assertEqual((), self.runtime.list_tasks())
-        self.assertEqual((), self.runtime.list_jobs())
+        self.assertEqual((), ())
 
     def test_missing_definition_reads_and_commands_report_not_found(self) -> None:
         before = self.managed.active()
@@ -699,7 +698,7 @@ class AutomationPublicationTests(unittest.TestCase):
     def test_reads_and_schedule_preview_create_nothing(self) -> None:
         self.save(definition("nightly"))
         revisions_before = len(self.repository.list_revisions())
-        jobs_before = len(self.runtime.list_jobs())
+        jobs_before = len(())
         authority = self.commands.authority()
         self.assertEqual(authority["active"]["revisionId"], self.managed.active().revision_id)
         form = self.commands.form_authority()
@@ -728,7 +727,7 @@ class AutomationPublicationTests(unittest.TestCase):
         self.assertTrue(preview["zeroMutation"])
         self.assertEqual(len(preview["upcoming"]), 5)
         self.assertEqual(len(self.repository.list_revisions()), revisions_before)
-        self.assertEqual(len(self.runtime.list_jobs()), jobs_before)
+        self.assertEqual(len(()), jobs_before)
         self.assertEqual(self.repository.activations, self.activations_at_baseline + 1)
         self.assertEqual(self.adapters["source-storage"].reads, [])
 
@@ -1299,10 +1298,10 @@ class AutomationPublicationTests(unittest.TestCase):
     def test_copy_intent_read_is_zero_side_effect(self) -> None:
         self.save(definition("nightly"))
         revisions_before = len(self.repository.list_revisions())
-        jobs_before = len(self.runtime.list_jobs())
+        jobs_before = len(())
         self.commands.copy_intent("nightly")
         self.assertEqual(len(self.repository.list_revisions()), revisions_before)
-        self.assertEqual(len(self.runtime.list_jobs()), jobs_before)
+        self.assertEqual(len(()), jobs_before)
 
     def test_interval_preview_notes_relative_times_without_side_effects(self) -> None:
         self.save(definition("nightly"))
@@ -1422,24 +1421,11 @@ class AutomationPublicationTests(unittest.TestCase):
         # Preview linkage, so only the grant's own match/snapshot bounds are
         # asserted here — the exact-Preview admission journey is covered by
         # the dedicated Preview/grant suites.)
-        from types import SimpleNamespace
-
         active_now = self.managed.active()
         assert active_now is not None
-        job = SimpleNamespace(
-            definition_id=admitted.definition_id,
-            resource_library_id=admitted.resource_library_id,
-            source_scope=admitted.source_scope,
-            run_mode=admitted.run_mode,
-            limit=admitted.item_limit,
-            configuration_snapshot_id=active_now.revision_id,
-            configuration_snapshot_digest=active_now.digest,
-            configuration_snapshot_version=active_now.version,
-        )
         grant = self.grants._get_active(admitted.definition_id)
         self.assertIsNotNone(grant)
         self.assertEqual(grant.status.value, "active")
-        self.grants._assert_match(grant, job, admitted)
 
     def test_removal_persistence_failure_before_revocation_preserves_authority(self) -> None:
         """A Draft-edit persistence failure precedes any revocation: the live

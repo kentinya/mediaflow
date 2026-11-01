@@ -10,6 +10,7 @@ already supported analysis records and never automatically acquire execution.
 from __future__ import annotations
 
 from collections.abc import Callable, Mapping
+from dataclasses import dataclass
 from datetime import UTC, datetime
 
 from mediaflow.domain.automation import AutomationTaskDefinition, AutomationTaskRunMode
@@ -21,6 +22,31 @@ from mediaflow.domain.media_discovery import (
     MediaDiscovery,
     discovery_manifest_incomplete,
 )
+
+
+@dataclass(frozen=True)
+class TaskRunOnceView:
+    """The durable, Task-owned identity and pinned intent of one Run once."""
+
+    task_id: str
+    definition_id: str
+    definition_name: str | None
+    definition_version: int | None
+    resource_library_id: str | None
+    source_scope: str | None
+    run_mode: AutomationTaskRunMode
+    item_limit: int | None
+    status: str
+    created_at: datetime
+    updated_at: datetime
+    started_at: datetime | None
+    completed_at: datetime | None
+    error: str | None
+    configuration_snapshot_id: str | None
+    configuration_snapshot_digest: str | None
+    admission_request_id: str | None
+    admission_principal: str | None
+
 
 #: Bounded operator-facing phases of one definition-bound Run once.
 RUN_ONCE_PHASES = (
@@ -235,18 +261,12 @@ class AutomationRunOnceService:
         return self._execution_view(admitted.task, admitted.state)
 
     def _execution_view(self, task, state):
-        """A durable read view of one Task-admitted Run once.
+        """The durable Task identity and pinned definition of one Run once.
 
-        The Task is the identity; this bounded view keeps the existing operator
-        projection while never writing, reviving or guessing a Job row.
+        The Task is the run; this view only carries its immutable admission pin
+        and the exact definition identity it was admitted from.  It is never a
+        Job row or a second execution object.
         """
-
-        from mediaflow.domain.automation import (
-            AutomationCommand,
-            AutomationJob,
-            AutomationJobOrigin,
-            AutomationJobStatus,
-        )
 
         display = None
         reader = getattr(self._repository, "get_run_display_context", None)
@@ -261,16 +281,8 @@ class AutomationRunOnceService:
             raise AutomationRunOnceError(
                 "the admitted Task has no durable definition origin", status=503
             )
-        status = {
-            "pending": AutomationJobStatus.PENDING,
-            "running": AutomationJobStatus.RUNNING,
-            "paused": AutomationJobStatus.RUNNING,
-            "completed": AutomationJobStatus.COMPLETED,
-            "partial_success": AutomationJobStatus.COMPLETED,
-            "failed": AutomationJobStatus.FAILED,
-            "cancelled": AutomationJobStatus.CANCELLED,
-        }.get(task.status.value, AutomationJobStatus.PENDING)
         run_mode = AutomationTaskRunMode.AUTOMATIC_ORGANIZATION
+        definition_name = display.origin_definition_name if display is not None else None
         resource_library_id = None
         definition_version = None
         source_scope = display.source_scope if display is not None else None
@@ -289,34 +301,32 @@ class AutomationRunOnceService:
                 run_mode = pinned.mode
                 resource_library_id = pinned.resource_library_id
                 source_scope = pinned.source_scope
+                definition_name = pinned.name
                 definition_version = revision.version
         except Exception:
             # A removed/unreadable historical revision never erases the durable
             # Task identity; the projection keeps the admission-written origin.
             pass
-        return AutomationJob(
-            task.task_id,
-            AutomationCommand.ORGANIZE,
-            status,
-            task.created_at,
-            task.updated_at,
-            limit=task.item_limit,
-            started_at=task.started_at,
-            completed_at=task.completed_at,
+        status = task.status.value
+        return TaskRunOnceView(
             task_id=task.task_id,
-            error=task.error,
-            execute_authorized=True,
-            configuration_snapshot_id=task.configuration_snapshot_id,
-            configuration_snapshot_digest=task.configuration_snapshot_digest,
             definition_id=definition_id,
+            definition_name=definition_name,
             definition_version=definition_version,
-            run_mode=run_mode,
             resource_library_id=resource_library_id,
             source_scope=source_scope,
-            configuration_snapshot_version=definition_version,
-            execution_origin=AutomationJobOrigin.RUN_ONCE,
-            execution_principal=state.admission_principal,
+            run_mode=run_mode,
+            item_limit=task.item_limit,
+            status=status,
+            created_at=task.created_at,
+            updated_at=task.updated_at,
+            started_at=task.started_at,
+            completed_at=task.completed_at,
+            error=task.error,
+            configuration_snapshot_id=task.configuration_snapshot_id,
+            configuration_snapshot_digest=task.configuration_snapshot_digest,
             admission_request_id=state.admission_request_id,
+            admission_principal=state.admission_principal,
         )
 
     def find_execution(self, actor, request_id):
@@ -329,19 +339,17 @@ class AutomationRunOnceService:
                 task, state = admission
                 if state.admission_trigger.value == "run_once":
                     return self._execution_view(task, state)
-        return self._repository.find_automation_run_once_job(
-            principal_id=actor, admission_request_id=request_id
-        )
+        return None
 
-    def execution_document(self, job):
-        revision = self._managed.require(job.configuration_snapshot_id)
+    def execution_document(self, execution: TaskRunOnceView):
+        revision = self._managed.require(execution.configuration_snapshot_id)
         definition = next(
             v
             for v in revision.document["automationTaskDefinitions"]
-            if v["id"] == job.definition_id
+            if v["id"] == execution.definition_id
         )
-        task = self._repository.get_task(job.task_id) if job.task_id else None
-        status = task.status.value if task else job.status.value
+        task = self._repository.get_task(execution.task_id)
+        status = execution.status
         status = "queued" if status == "pending" else status
         phase = (
             "executing"
@@ -361,16 +369,15 @@ class AutomationRunOnceService:
         return {
             "journey": "automation-run-once",
             "executionKind": "organizing",
-            "discoveryId": job.job_id,
-            "jobId": job.job_id,
-            "taskId": job.task_id,
-            "definitionId": job.definition_id,
-            "definitionName": definition.get("name") or job.definition_id,
-            "resourceLibraryId": job.resource_library_id,
-            "sourceScope": job.source_scope,
-            "runMode": job.run_mode.value,
+            "discoveryId": execution.task_id,
+            "taskId": execution.task_id,
+            "definitionId": execution.definition_id,
+            "definitionName": definition.get("name") or execution.definition_id,
+            "resourceLibraryId": execution.resource_library_id,
+            "sourceScope": execution.source_scope,
+            "runMode": definition.get("runMode") or execution.run_mode.value,
             "definitionItemLimit": definition.get("itemLimit", 100),
-            "effectivePrimaryLimit": job.limit,
+            "effectivePrimaryLimit": execution.item_limit,
             "phase": phase,
             "status": status,
             "version": 1,
@@ -388,12 +395,12 @@ class AutomationRunOnceService:
             "frozen": False,
             "zeroMutation": False,
             "sideEffects": "none" if status == "queued" else "see_linked_task_results",
-            "admissionRequestId": job.admission_request_id,
+            "admissionRequestId": execution.admission_request_id,
             "intentId": None,
             "previewId": None,
             "nextAction": "open the linked task for live progress, independent results and "
             "permitted recovery",
-            "error": job.error or (task.error if task else None),
+            "error": execution.error or (task.error if task else None),
             "actions": {},
         }
 
@@ -457,18 +464,10 @@ class AutomationRunOnceService:
                     state = scheduling_reader(task.task_id)
                     if state is not None and state.admission_trigger.value == "run_once":
                         return self._execution_view(task, state)
-            job = self._repository.get_job(discovery_id)
-            if job is not None and job.run_once:
-                return job
         return self._discovery.get(discovery_id)
 
     def list(self, *, actor: str | None = None, limit: int = 100) -> tuple[MediaDiscovery, ...]:
         legacy = self._discovery.list(actor=actor, limit=limit)
-        jobs = (
-            self._repository.list_automation_run_once_jobs(principal_id=actor, limit=limit)
-            if self._repository
-            else ()
-        )
         tasks = ()
         task_reader = (
             getattr(self._repository, "list_run_once_task_admissions", None)
@@ -480,7 +479,7 @@ class AutomationRunOnceService:
                 self._execution_view(task, state)
                 for task, state in task_reader(principal_id=actor, limit=limit)
             )
-        return (*tasks, *jobs, *legacy)[:limit]
+        return (*tasks, *legacy)[:limit]
 
     def list_task_executions(self, definition_id: str, *, limit: int = 50) -> tuple:
         """Task-admitted Run once views for one definition's history."""
@@ -498,9 +497,7 @@ class AutomationRunOnceService:
     def document(self, discovery: MediaDiscovery) -> dict[str, object]:
         """The bounded Run-once projection of one definition-bound discovery."""
 
-        from mediaflow.domain.automation import AutomationJob
-
-        if isinstance(discovery, AutomationJob):
+        if isinstance(discovery, TaskRunOnceView):
             return self.execution_document(discovery)
         origin = discovery.definition_origin
         if origin is None:

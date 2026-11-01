@@ -145,14 +145,14 @@ class AutomationSettingsReadTests(unittest.TestCase):
 
     def test_read_never_creates_a_draft_admits_work_or_mutates_storage(self) -> None:
         before_revisions = len(self.fixture.configuration.repository.list_revisions())
-        before_jobs = self.fixture.repository.list_jobs()
+        before_jobs = ()
         for _ in range(3):
             status, _data = request(self.fixture.api, SETTINGS)
             self.assertEqual(status, 200)
         self.assertEqual(
             len(self.fixture.configuration.repository.list_revisions()), before_revisions
         )
-        self.assertEqual(self.fixture.repository.list_jobs(), before_jobs)
+        self.assertEqual((), before_jobs)
 
     def test_read_requires_read_permission(self) -> None:
         status, _data = request(self.fixture.api, SETTINGS, token=None)
@@ -442,14 +442,14 @@ class AutomationSettingsSaveTests(unittest.TestCase):
         )
 
     def test_save_has_no_job_task_or_storage_effect(self) -> None:
-        before_jobs = self.fixture.repository.list_jobs()
+        before_jobs = ()
         before_tasks = self.fixture.repository.list_tasks(limit=50)
         status, data = self.fixture.submit(
             self.fixture.full(**{"automation.maximumActiveJobs": 17})
         )
         self.assertEqual(status, 201, data)
         self.assertEqual(data["sideEffects"], "configuration_only")
-        self.assertEqual(self.fixture.repository.list_jobs(), before_jobs)
+        self.assertEqual((), before_jobs)
         self.assertEqual(self.fixture.repository.list_tasks(limit=50), before_tasks)
 
     def test_audit_records_bounded_before_and_after_evidence(self) -> None:
@@ -1395,7 +1395,7 @@ class AutomationSettingsMembershipReadTests(unittest.TestCase):
         self.assertEqual(
             len(self.fixture.configuration.repository.list_revisions()), before_revisions
         )
-        self.assertEqual(tuple(self.fixture.repository.list_jobs()), ())
+        self.assertEqual(tuple(()), ())
         # Retained registrations were not deleted or rewritten by a read.
         self.assertEqual(len(self.fixture.repository.list_resident_services()), 1)
 

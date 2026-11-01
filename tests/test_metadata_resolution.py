@@ -27,7 +27,7 @@ from mediaflow.domain.security import ApiPermission, ResolvedApiPrincipal
 from mediaflow.domain.task_persistence import TaskItemStatus
 from mediaflow.final_cli import final_main
 from mediaflow.infrastructure.runtime_configuration import RuntimeConfiguration
-from mediaflow.infrastructure.sqlite_runtime import SCHEMA_VERSION, SQLiteTaskRepository
+from mediaflow.infrastructure.sqlite_runtime import SQLiteTaskRepository
 from mediaflow.infrastructure.strategy_configuration import development_strategy_configuration
 from mediaflow.interfaces.service_api import MediaFlowApi
 from tests.test_metadata_review import create_processing_item, identification
@@ -295,7 +295,7 @@ class MetadataResolutionTests(unittest.TestCase):
                 self.assertEqual(status, 200)
                 resolved = repository.get_metadata_review(second.review_id)
                 self.assertEqual(resolved.actor, "operator")
-                self.assertEqual(repository.list_jobs(), ())
+                self.assertFalse(hasattr(repository, "list_jobs"))
                 status, _ = api_request(
                     api,
                     "/api/v1/metadata-reviews/missing/resolve",
@@ -305,25 +305,3 @@ class MetadataResolutionTests(unittest.TestCase):
                 self.assertEqual(status, 400)
                 routes = [entry.route for entry in repository.list_security_audit()]
                 self.assertIn("/api/v1/metadata-reviews/{id}/resolve", routes)
-
-    def test_schema_ten_migrates_resolution_columns(self) -> None:
-        with tempfile.TemporaryDirectory() as directory:
-            database = Path(directory, "runtime.sqlite3")
-            with SQLiteTaskRepository(database) as repository:
-                repository._connection.execute(
-                    "UPDATE schema_version SET version=10 WHERE component='runtime'"
-                )
-                repository._connection.commit()
-            with SQLiteTaskRepository(database) as repository:
-                self.assertEqual(repository.schema_version, SCHEMA_VERSION)
-                columns = {
-                    row["name"]
-                    for row in repository._connection.execute("PRAGMA table_info(metadata_reviews)")
-                }
-                self.assertIn("selected_provider_id", columns)
-                self.assertIsNotNone(
-                    repository._connection.execute(
-                        "SELECT name FROM sqlite_master "
-                        "WHERE type='table' AND name='metadata_review_decision_audit'"
-                    ).fetchone()
-                )

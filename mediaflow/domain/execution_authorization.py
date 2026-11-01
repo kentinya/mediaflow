@@ -5,8 +5,6 @@ from datetime import datetime
 from enum import StrEnum
 from typing import Protocol
 
-from mediaflow.domain.automation import AutomationJob
-
 
 class ExecutionAuthorizationStatus(StrEnum):
     ACTIVE = "active"
@@ -26,7 +24,7 @@ class ExecutionAuthorization:
     actor: str | None = None
     note: str | None = None
     consumed_at: datetime | None = None
-    consumed_job_id: str | None = None
+    consumed_task_id: str | None = None
     revoked_at: datetime | None = None
 
 
@@ -36,7 +34,7 @@ class ExecutionAuthorizationAudit:
     authorization_id: str
     action: str
     occurred_at: datetime
-    job_id: str | None = None
+    task_id: str | None = None
     actor: str | None = None
 
 
@@ -49,14 +47,6 @@ class ExecutionAuthorizationRepository(Protocol):
     ) -> ExecutionAuthorization | None: ...
     def list_execution_authorizations(self) -> tuple[ExecutionAuthorization, ...]: ...
     def expire_execution_authorizations(self, now: datetime) -> int: ...
-    def consume_execution_authorization(
-        self,
-        token_digest: str,
-        job: AutomationJob,
-        now: datetime,
-        audit: ExecutionAuthorizationAudit,
-        maximum_active_jobs: int,
-    ) -> ExecutionAuthorization: ...
     def revoke_execution_authorization(
         self, authorization_id: str, now: datetime, audit: ExecutionAuthorizationAudit
     ) -> ExecutionAuthorization: ...

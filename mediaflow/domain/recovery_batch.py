@@ -41,7 +41,6 @@ class RecoveryBatchItem:
     updated_at: datetime
     request_id: str | None = None
     continuation_id: str | None = None
-    job_id: str | None = None
     new_task_id: str | None = None
     new_result_id: str | None = None
     recovery_status: str | None = None
@@ -62,7 +61,6 @@ class RecoveryBatchItem:
             "updated_at": self.updated_at.isoformat(),
             "request_id": self.request_id,
             "continuation_id": self.continuation_id,
-            "job_id": self.job_id,
             "new_task_id": self.new_task_id,
             "new_result_id": self.new_result_id,
             "recovery_status": self.recovery_status,

@@ -2,7 +2,6 @@ from __future__ import annotations
 
 import io
 import json
-import sqlite3
 import tempfile
 import threading
 import unittest
@@ -18,45 +17,10 @@ from mediaflow.application.task_runtime import (
 from mediaflow.domain.task_persistence import PersistentTaskStatus, TaskItemStatus
 from mediaflow.final_cli import final_main, render_task
 from mediaflow.infrastructure.runtime_configuration import RuntimeConfiguration
-from mediaflow.infrastructure.sqlite_runtime import SCHEMA_VERSION, SQLiteTaskRepository
+from mediaflow.infrastructure.sqlite_runtime import SQLiteTaskRepository
 
 
 class TaskPauseResumeTest(unittest.TestCase):
-    def test_schema_fourteen_migrates_pause_fields_without_changing_records(self) -> None:
-        with tempfile.TemporaryDirectory() as directory:
-            database = Path(directory, "runtime.sqlite3")
-            connection = sqlite3.connect(database)
-            connection.executescript(
-                """
-                CREATE TABLE schema_version (component TEXT PRIMARY KEY, version INTEGER NOT NULL);
-                INSERT INTO schema_version VALUES ('runtime', 14);
-                CREATE TABLE tasks (
-                    task_id TEXT PRIMARY KEY, command TEXT NOT NULL, status TEXT NOT NULL,
-                    execute_authorized INTEGER NOT NULL, created_at TEXT NOT NULL,
-                    updated_at TEXT NOT NULL, started_at TEXT, completed_at TEXT,
-                    total_items INTEGER NOT NULL, completed_items INTEGER NOT NULL,
-                    failed_items INTEGER NOT NULL, error TEXT
-                );
-                INSERT INTO tasks VALUES (
-                    'legacy', 'preview', 'completed', 0,
-                    '2026-08-23T00:00:00+00:00', '2026-08-23T00:00:00+00:00',
-                    NULL, '2026-08-23T00:00:00+00:00', 1, 1, 0, NULL
-                );
-                """
-            )
-            connection.commit()
-            connection.close()
-
-            with SQLiteTaskRepository(database) as repository:
-                task = repository.get_task("legacy")
-                self.assertEqual(repository.schema_version, SCHEMA_VERSION)
-                self.assertIsNotNone(task)
-                assert task is not None
-                self.assertFalse(task.pause_requested)
-                self.assertIsNone(task.scope_path)
-                self.assertIsNone(task.item_limit)
-                self.assertEqual(task.status, PersistentTaskStatus.COMPLETED)
-
     def test_pause_request_is_durable_idempotent_and_rejects_terminal_task(self) -> None:
         with tempfile.TemporaryDirectory() as directory:
             database = Path(directory, "runtime.sqlite3")

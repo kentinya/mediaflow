@@ -10,7 +10,6 @@ from pathlib import Path
 from unittest.mock import patch
 
 from mediaflow.application.dashboard import DashboardService
-from mediaflow.domain.automation import AutomationCommand, AutomationJob, AutomationJobStatus
 from mediaflow.domain.notification import (
     NotificationDelivery,
     NotificationDeliveryStatus,
@@ -56,7 +55,6 @@ class DashboardTests(unittest.TestCase):
                     repository, resource_library_count=0, media_library_count=0
                 ).snapshot()
                 self.assertEqual(snapshot.tasks.total, 0)
-                self.assertEqual(snapshot.jobs.total, 0)
             connection = sqlite3.connect(database)
             try:
                 self.assertIsNone(
@@ -73,8 +71,6 @@ class DashboardTests(unittest.TestCase):
             with SQLiteTaskRepository(database) as repository:
                 repository.create_task(self._task("task-failed", PersistentTaskStatus.FAILED))
                 repository.create_task(self._task("task-running", PersistentTaskStatus.RUNNING))
-                repository.create_job(self._job("job-failed", AutomationJobStatus.FAILED, 2))
-                repository.create_job(self._job("job-pending", AutomationJobStatus.PENDING, 1))
                 repository.create_confirmation(self._confirmation())
                 repository.create_delivery(self._delivery())
                 snapshot = DashboardService(
@@ -84,8 +80,6 @@ class DashboardTests(unittest.TestCase):
             self.assertEqual((snapshot.resource_libraries, snapshot.media_libraries), (2, 3))
             self.assertEqual(snapshot.tasks.running, 1)
             self.assertEqual(snapshot.tasks.failed, 1)
-            self.assertEqual(snapshot.jobs.pending, 1)
-            self.assertEqual(snapshot.jobs.failed, 1)
             self.assertEqual(snapshot.pending_confirmations, 1)
             self.assertEqual(snapshot.dead_letter_notifications, 1)
             self.assertEqual(len(snapshot.recent_failures), 2)
@@ -95,7 +89,7 @@ class DashboardTests(unittest.TestCase):
             self.assertNotIn("webhook-body", serialized)
             self.assertEqual(
                 [item.identifier for item in snapshot.recent_failures],
-                ["delivery-dead", "job-failed"],
+                ["delivery-dead", "task-failed"],
             )
 
     def test_cli_and_api_are_read_only_bounded_and_audited(self) -> None:
@@ -161,18 +155,6 @@ class DashboardTests(unittest.TestCase):
             NOW,
             NOW,
             error="super-secret /private/media" if status is PersistentTaskStatus.FAILED else None,
-        )
-
-    @staticmethod
-    def _job(identifier: str, status: AutomationJobStatus, minutes: int) -> AutomationJob:
-        occurred = NOW + timedelta(minutes=minutes)
-        return AutomationJob(
-            identifier,
-            AutomationCommand.ORGANIZE,
-            status,
-            occurred,
-            occurred,
-            error="super-secret /private/media" if status is AutomationJobStatus.FAILED else None,
         )
 
     @staticmethod

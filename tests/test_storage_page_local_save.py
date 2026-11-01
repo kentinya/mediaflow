@@ -575,8 +575,10 @@ class StoragePageLocalSaveTests(unittest.TestCase):
         connection = sqlite3.connect(self.root / "runtime.sqlite3")
         try:
             self.assertEqual(
-                connection.execute("SELECT COUNT(*) FROM automation_jobs").fetchone()[0],
-                0,
+                connection.execute(
+                    "SELECT name FROM sqlite_master WHERE name='automation_jobs'"
+                ).fetchone(),
+                None,
             )
             self.assertEqual(connection.execute("SELECT COUNT(*) FROM tasks").fetchone()[0], 0)
         finally:

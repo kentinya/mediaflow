@@ -443,7 +443,7 @@ function OperationDetail({
       mutateLifecycle(token, {
         objectType: "task",
         objectId: taskId,
-        action: request.action as "pause" | "cancel" | "resume",
+        action: request.action as "cancel",
         expectedVersion: request.expectedVersion,
       }),
     retry: false,

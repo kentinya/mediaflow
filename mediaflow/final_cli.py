@@ -2,11 +2,9 @@ from __future__ import annotations
 
 import argparse
 import hashlib
-import io
 import ipaddress
 import json
 import os
-import posixpath
 import re
 import secrets
 import signal
@@ -22,11 +20,8 @@ from uuid import uuid4
 from zoneinfo import ZoneInfo
 
 from mediaflow.application.automation import (
-    AutomationCancelled,
-    AutomationConfigurationUnavailable,
-    AutomationJobService,
-    AutomationWorker,
     IntervalScheduler,
+    ResidentProcessingWorker,
 )
 from mediaflow.application.automation_definition_execution import (
     DefinitionScopedExecutionService,
@@ -44,35 +39,22 @@ from mediaflow.application.manual_organize import ManualOrganizeIntentService
 from mediaflow.application.manual_organize_execution import ManualOrganizeExecutionService
 from mediaflow.application.manual_organize_preview import ManualOrganizePreviewService
 from mediaflow.application.manual_organize_worker import ManualOrganizeExecutionWorker
-from mediaflow.application.manual_source_validation import ManualSourceValidator
 from mediaflow.application.media_organizer import MediaOrganizerBatchResult, MediaOrganizerService
 from mediaflow.application.metadata_correction import MetadataCorrectionService
-from mediaflow.application.metadata_correction_continuation import (
-    MetadataCorrectionContinuationWorkerService,
-)
 from mediaflow.application.metadata_review import MetadataReviewService
 from mediaflow.application.notification import NotificationPublisher, NotificationWorker
 from mediaflow.application.organizer import OrganizerExecutor
 from mediaflow.application.processing_checkpoint import ProcessingCheckpointService
 from mediaflow.application.recognition_review import RecognitionReviewService
 from mediaflow.application.recovery_admission import RecoveryAdmissionService
-from mediaflow.application.recovery_continuation import RecoveryContinuationWorkerService
-from mediaflow.application.recovery_decisions import collect_resolved_continuation_decisions
 from mediaflow.application.resident_services import ResidentServiceService
-from mediaflow.application.scanner import StorageScanner, normalize_resource_root
-from mediaflow.application.scope_continuation import (
-    continuation_origin,
-    definition_occurrence_authority,
-)
+from mediaflow.application.scanner import StorageScanner
 from mediaflow.application.storage_browser import StorageBrowserError
 from mediaflow.application.strategy_test import strategy_runner_from_configuration
 from mediaflow.application.task_runtime import KernelTaskCoordinator, PersistentTaskCoordinator
 from mediaflow.application.unattended_execution import UnattendedExecutionGrantService
 from mediaflow.cli import render_strategy_result
 from mediaflow.domain.automation import (
-    AutomationCommand,
-    AutomationFailureEvidence,
-    AutomationTaskDefinition,
     CronSchedule,
     SchedulerConfigurationSnapshot,
 )
@@ -83,9 +65,7 @@ from mediaflow.domain.classification_review import (
 )
 from mediaflow.domain.configuration_management import RuntimeSnapshotUnavailable
 from mediaflow.domain.failure import decode_failure_explanation
-from mediaflow.domain.library import ScanMode
 from mediaflow.domain.logging import LogLevel
-from mediaflow.domain.manual_organize import ManualIntentError
 from mediaflow.domain.metadata_correction import (
     MetadataCorrectionSelection,
     MetadataCorrectionStatus,
@@ -96,7 +76,6 @@ from mediaflow.domain.organizer import ConflictStrategy
 from mediaflow.domain.recognition_review import RecognitionReviewStatus, RecognitionSelection
 from mediaflow.domain.resident_services import ResidentServiceWaiting
 from mediaflow.domain.security import ApiPermission, ApiPrincipalDefinition, ApiRole
-from mediaflow.domain.storage import StorageEntryType
 from mediaflow.domain.task_persistence import (
     FILES_DELETE_TASK_COMMAND,
     FILES_TRANSFER_TASK_COMMAND,
@@ -199,6 +178,8 @@ def final_main(
     task_ignore_pending.add_argument("--note")
     task_ignore_pending.add_argument("--limit", type=int, default=100)
     task_ignore_pending.add_argument("--task-id")
+    task_cancel = task_commands.add_parser("cancel")
+    task_cancel.add_argument("task_id")
     # ``pause`` and ``resume`` were retired for every media operation and are
     # deliberately absent from the command surface: invoking one is an
     # unrecognized-command error with zero effect.  The separate
@@ -255,23 +236,7 @@ def final_main(
     )
     file_list.add_argument("--limit", type=int, default=100)
     file_list.add_argument("--cursor")
-    jobs = commands.add_parser("jobs", help="persistent background jobs")
-    job_commands = jobs.add_subparsers(dest="job_command", required=True)
-    job_list = job_commands.add_parser("list")
-    job_list.add_argument("--limit", type=int, default=20)
-    job_show = job_commands.add_parser("show")
-    job_show.add_argument("job_id")
-    job_submit = job_commands.add_parser("submit")
-    job_submit.add_argument("workflow", choices=("organize",))
-    job_submit.add_argument("--limit", type=int)
-    job_cancel = job_commands.add_parser("cancel")
-    job_cancel.add_argument("job_id")
-    job_stale = job_commands.add_parser("stale")
-    job_stale.add_argument("--age-seconds", type=float, required=True)
-    job_requeue = job_commands.add_parser("requeue")
-    job_requeue.add_argument("job_id")
-    job_requeue.add_argument("--age-seconds", type=float, required=True)
-    worker = commands.add_parser("worker", help="run persistent DryRun jobs")
+    worker = commands.add_parser("worker", help="run resident Task and file work")
     worker_commands = worker.add_subparsers(dest="worker_command", required=True)
     worker_commands.add_parser("run-next")
     worker_run = worker_commands.add_parser("run")
@@ -964,6 +929,7 @@ def final_main(
             "show-item",
             "ignore-item",
             "ignore-pending",
+            "cancel",
         }:
             with ExitStack() as stack:
                 repository = stack.enter_context(SQLiteTaskRepository(configuration.database_path))
@@ -995,6 +961,21 @@ def final_main(
                         arguments.item_id, task_id=arguments.task_id
                     )
                     stdout.write(render_recovery_checkpoint(checkpoint))
+                elif arguments.task_command == "cancel":
+                    from mediaflow.application.operations_lifecycle import (
+                        TaskLifecycleService,
+                    )
+
+                    task = repository.get_task(arguments.task_id)
+                    if task is None:
+                        raise LookupError(f"task {arguments.task_id!r} was not found")
+                    cancelled = TaskLifecycleService(repository).cancel(
+                        task.task_id,
+                        expected_version=task.updated_at.isoformat(),
+                    )
+                    stdout.write(
+                        f"Task ID: {cancelled.task_id}\nStatus: {cancelled.status.value}\n"
+                    )
                 elif arguments.task_command == "ignore-pending":
                     decisions = ManualIgnoreService(
                         repository, recovery_admission=recovery_admission
@@ -1100,48 +1081,6 @@ def final_main(
             lines.extend(("", f"Total: {len(selected)}", f"Failed: {failures}", ""))
             stdout.write("\n".join(lines))
             return 1 if failures else 0
-        if arguments.command == "jobs":
-            if arguments.job_command == "submit":
-                # Slice 47 RO-2: new organizing work is admitted as a Task, never
-                # as a new Job.  This legacy submission entrance therefore refuses
-                # bounded and effect-free — no Job row, no Task, no queue entry,
-                # no execution authority — and names the usable equivalents
-                # instead of silently losing the command.
-                raise ValueError(
-                    "jobs submit organize no longer queues new organizing work; "
-                    "new organize runs are admitted as Tasks. Use 'organize' for the "
-                    "zero-mutation analysis or 'organize --execute' for an explicit "
-                    "execution (the remote API needs REMOTE_EXECUTE, execute=true and a "
-                    "one-time execution token). Historical Jobs stay readable with "
-                    "'jobs list' and 'jobs show'."
-                )
-            with SQLiteTaskRepository(configuration.database_path) as repository:
-                service = AutomationJobService(
-                    repository,
-                    maximum_active_jobs=configuration.automation_maximum_active_jobs,
-                    configuration_snapshot_id=configuration.configuration_snapshot_id,
-                    configuration_snapshot_digest=configuration.configuration_snapshot_digest,
-                )
-                if arguments.job_command == "list":
-                    stdout.write(render_jobs(repository.list_jobs(limit=arguments.limit)))
-                elif arguments.job_command == "show":
-                    job = repository.get_job(arguments.job_id)
-                    if job is None:
-                        raise LookupError(f"automation job {arguments.job_id!r} was not found")
-                    stdout.write(render_job(job))
-                elif arguments.job_command == "cancel":
-                    stdout.write(render_job(service.cancel(arguments.job_id)))
-                elif arguments.job_command == "stale":
-                    stdout.write(render_jobs(service.stale(age_seconds=arguments.age_seconds)))
-                else:
-                    stdout.write(
-                        render_job(
-                            service.requeue_stale(
-                                arguments.job_id, age_seconds=arguments.age_seconds
-                            )
-                        )
-                    )
-            return 0
         if arguments.command == "worker":
             return _run_worker(
                 configuration,
@@ -1910,7 +1849,6 @@ def render_recovery_checkpoint(checkpoint) -> str:
                 f"Status: {continuation.status.value}",
                 f"Boundary: {continuation.boundary}",
                 f"Bound checkpoint: {continuation.checkpoint_version}",
-                f"Job: {continuation.job_id}",
                 f"New Task: {continuation.new_task_id or '-'}",
                 f"New Result: {continuation.new_result_id or '-'}",
                 f"Actor: {continuation.actor}",
@@ -2010,48 +1948,6 @@ def render_storage_definitions(definitions) -> str:
     return "\n".join(lines)
 
 
-def render_jobs(values) -> str:
-    lines = ["", "AUTOMATION JOBS", ""]
-    for value in values:
-        lines.append(
-            f"{value.job_id} | {value.command.value} | {value.status.value} | "
-            f"limit={value.limit or '-'} | task={value.task_id or '-'} | "
-            f"schedule={value.schedule_id or '-'}"
-        )
-    lines.extend(("", f"Total: {len(values)}", ""))
-    return "\n".join(lines)
-
-
-def render_job(value) -> str:
-    retry_safe = (
-        "-" if value.failure_retry_safe is None else ("YES" if value.failure_retry_safe else "NO")
-    )
-    return "\n".join(
-        (
-            "",
-            "AUTOMATION JOB",
-            "",
-            f"ID: {value.job_id}",
-            f"Command: {value.command.value}",
-            f"Status: {value.status.value}",
-            f"Limit: {value.limit or '-'}",
-            f"Task ID: {value.task_id or '-'}",
-            f"Error: {value.error or '-'}",
-            f"Cancellation requested: {'YES' if value.cancellation_requested else 'NO'}",
-            f"Schedule ID: {value.schedule_id or '-'}",
-            f"Execute authorized: {'YES' if value.execute_authorized else 'NO'}",
-            f"Configuration snapshot: {value.configuration_snapshot_id or '-'}",
-            f"Configuration digest: {value.configuration_snapshot_digest or '-'}",
-            f"Failure category: {value.failure_category or '-'}",
-            f"Durable state: {value.failure_durable_state or '-'}",
-            f"Side effects: {value.failure_side_effects or '-'}",
-            f"Retry safe: {retry_safe}",
-            f"Next action: {value.failure_next_action or '-'}",
-            "",
-        )
-    )
-
-
 def render_notifications(values) -> str:
     lines = ["", "NOTIFICATION DELIVERIES", ""]
     for value in values:
@@ -2068,9 +1964,7 @@ def render_operational_logs(values) -> str:
     lines = ["", "OPERATIONAL LOGS", ""]
     for value in values:
         identifiers = ",".join(
-            item
-            for item in (value.task_id, value.job_id, value.plan_id, value.status)
-            if item is not None
+            item for item in (value.task_id, value.plan_id, value.status) if item is not None
         )
         lines.append(
             f"{value.occurred_at.isoformat()} | {value.level.name} | {value.component} | "
@@ -2188,7 +2082,7 @@ def render_execution_authorizations(values) -> str:
         lines.append(
             f"{value.authorization_id} | {value.status.value} | "
             f"expires={value.expires_at.isoformat()} | maxItems={value.max_items} | "
-            f"job={value.consumed_job_id or '-'}"
+            f"task={value.consumed_task_id or '-'}"
         )
     lines.extend(("", f"Total: {len(values)}", ""))
     return "\n".join(lines)
@@ -2204,13 +2098,13 @@ def render_execution_authorization(value, audit) -> str:
         f"Created: {value.created_at.isoformat()}",
         f"Expires: {value.expires_at.isoformat()}",
         f"Max items: {value.max_items}",
-        f"Consumed job: {value.consumed_job_id or '-'}",
+        f"Consumed task: {value.consumed_task_id or '-'}",
         "",
         "AUDIT",
         "",
     ]
     lines.extend(
-        f"{item.occurred_at.isoformat()} | {item.action} | job={item.job_id or '-'} | "
+        f"{item.occurred_at.isoformat()} | {item.action} | task={item.task_id or '-'} | "
         f"actor={item.actor or '-'}"
         for item in audit
     )
@@ -2239,8 +2133,6 @@ def render_dashboard(value) -> str:
         f"Resource libraries: {value.resource_libraries}",
         f"Media libraries: {value.media_libraries}",
         f"Tasks: {value.tasks.total} (running={value.tasks.running}, failed={value.tasks.failed})",
-        f"Jobs: {value.jobs.total} (pending={value.jobs.pending}, running={value.jobs.running}, "
-        f"failed={value.jobs.failed})",
         f"Pending confirmations: {value.pending_confirmations}",
         f"Pending metadata reviews: {value.pending_metadata_reviews}",
         f"Pending classification reviews: {value.pending_classification_reviews}",
@@ -2498,153 +2390,6 @@ def render_classification_review(review, choices, audit=()) -> str:
     return "\n".join(lines)
 
 
-def _run_queued_workflow(
-    job,
-    configured_path: str | None,
-    cancellation_check: Callable[[], bool],
-    *,
-    repository=None,
-) -> str | None:
-    if job.command not in set(AutomationCommand):
-        raise ValueError("unsupported workflow; no discovery or work was started")
-    definition_pinned = bool(
-        getattr(job, "definition_id", None) or getattr(job, "automation_definition_id", None)
-    )
-    try:
-        if definition_pinned and (
-            not getattr(job, "configuration_snapshot_id", None)
-            or not getattr(job, "configuration_snapshot_digest", None)
-        ):
-            raise AutomationConfigurationUnavailable(
-                AutomationFailureEvidence(
-                    category="job_snapshot_incomplete",
-                    durable_state=(
-                        "definition-pinned Job has no complete saved configuration identity"
-                    ),
-                    side_effects="none",
-                    retry_safe=False,
-                    next_action=(
-                        "restore the saved snapshot identity and emit a new definition occurrence"
-                    ),
-                )
-            )
-        _require_queued_job_snapshot(job, configured_path)
-        resolved_configuration = None
-        if job.configuration_snapshot_id or definition_pinned:
-            resolved_configuration = _configuration(
-                configured_path,
-                snapshot_id=job.configuration_snapshot_id,
-                snapshot_digest=job.configuration_snapshot_digest,
-            )
-    except RuntimeSnapshotUnavailable as error:
-        if job.command is AutomationCommand.FILE_METADATA_CORRECTION:
-            _fail_metadata_correction_continuation_snapshot(job, configured_path)
-        if job.command is AutomationCommand.RECOVERY_CONTINUATION:
-            _fail_recovery_continuation_snapshot(job, configured_path)
-        raise _automation_configuration_unavailable(error) from error
-    except (OSError, ValueError, LookupError) as error:
-        if definition_pinned:
-            raise AutomationConfigurationUnavailable(
-                AutomationFailureEvidence(
-                    category="snapshot_unreadable",
-                    durable_state=(
-                        "saved configuration snapshot could not be loaded; no Task was created"
-                    ),
-                    side_effects="none",
-                    retry_safe=False,
-                    next_action=(
-                        "restore the saved published revision and emit a new definition occurrence"
-                    ),
-                )
-            ) from error
-        raise
-    if definition_pinned:
-        if resolved_configuration is None:
-            raise AutomationConfigurationUnavailable(
-                AutomationFailureEvidence(
-                    category="snapshot_missing",
-                    durable_state="definition-pinned Job has no resolved configuration snapshot",
-                    side_effects="none",
-                    retry_safe=False,
-                    next_action=(
-                        "restore the saved published revision and emit a new definition occurrence"
-                    ),
-                )
-            )
-        return _run_definition_scoped_workflow(
-            job,
-            resolved_configuration,
-            cancellation_check,
-            repository=repository,
-            configured_path=configured_path,
-        )
-    if job.command is AutomationCommand.FILE_METADATA_CORRECTION:
-        if resolved_configuration is None:
-            raise RuntimeError("metadata correction continuation has no resolved configuration")
-        return _run_metadata_correction_continuation(
-            job, resolved_configuration, cancellation_check
-        )
-    if job.command is AutomationCommand.RECOVERY_CONTINUATION:
-        if resolved_configuration is None:
-            raise RuntimeError("recovery continuation has no resolved configuration")
-        return _run_recovery_continuation(job, resolved_configuration, cancellation_check)
-    if job.command is AutomationCommand.SCOPE_CONTINUATION:
-        # Paused-scope remaining-scope continuation was retired together with
-        # pause/resume.  A legacy queued Job is refused here with a bounded,
-        # side-effect-free failure instead of starting the old compatible
-        # executor; no scope, Task, Result or Storage change is made.
-        raise RuntimeError(
-            "scope continuation was retired; this paused-scope executor is no longer available"
-        )
-    args = []
-    resolved = configured_path or os.environ.get("MEDIAFLOW_CONFIG")
-    if resolved:
-        args.extend(("--config", resolved))
-    if job.configuration_snapshot_id:
-        args.extend(("--configuration-snapshot-id", job.configuration_snapshot_id))
-    if job.configuration_snapshot_digest:
-        args.extend(("--configuration-snapshot-digest", job.configuration_snapshot_digest))
-    args.append(job.command.value)
-    if job.limit is not None:
-        args.extend(("--limit", str(job.limit)))
-    if job.command is AutomationCommand.ORGANIZE:
-        if not job.execute_authorized:
-            raise RuntimeError("organize job lacks persisted execute authorization")
-        args.append("--execute")
-    elif job.execute_authorized:
-        raise RuntimeError("non-organize job must not carry execute authorization")
-    output, errors = io.StringIO(), io.StringIO()
-    observed: list[str] = []
-    code = final_main(
-        args,
-        stdout=output,
-        stderr=errors,
-        cancellation_check=cancellation_check,
-        _resolved_configuration=resolved_configuration,
-        _task_observer=observed.append,
-    )
-    task_id = observed[0] if observed else None
-    if task_id is not None and _task_was_cancelled(repository, task_id):
-        # A durable cooperative Task cancellation accepted by the operator is a
-        # Job cancellation too: the Workflow really stopped at a supported item
-        # boundary, so the Job must not be reported as completed.
-        raise AutomationCancelled(task_id)
-    if code == 130:
-        raise AutomationCancelled(task_id)
-    if code:
-        raise RuntimeError("queued workflow returned a failure status")
-    return task_id
-
-
-def _task_was_cancelled(repository, task_id: str) -> bool:
-    """Whether one durable Task cancellation was accepted while the Job ran."""
-
-    if repository is None:
-        return False
-    task = repository.get_task(task_id)
-    return task is not None and task.status is PersistentTaskStatus.CANCELLED
-
-
 class _ConfiguredPermissionAuthority:
     """Read current configured principal roles without resolving credentials."""
 
@@ -2715,6 +2460,26 @@ def _definition_scoped_service(
             ),
         ),
         logger=operational_logger,
+    )
+
+
+def _scheduler_execution_authority(configuration, repository):
+    """Build the live definition authority the Scheduler checks before admission."""
+
+    return UnattendedExecutionGrantService(
+        repository,
+        permission_authority=_ConfiguredPermissionAuthority(
+            lambda: _current_automation_configuration(configuration.database_path)
+        ),
+        publication_principal_resolver=lambda task, definition: _definition_publication_principal(
+            configuration.database_path, task, definition
+        ),
+        live_intent_checker=lambda task, definition: _schedule_intent_continuity(
+            configuration.database_path, task, definition
+        ),
+        live_definition_resolver=lambda definition_id: _live_automation_definition(
+            configuration.database_path, definition_id
+        ),
     )
 
 
@@ -3087,12 +2852,6 @@ def _automatic_task_runner(repository, configured_path, scheduling_service):
     """
 
     def run(task, claim, clock=None, heartbeat=None) -> None:
-        from mediaflow.domain.automation import (
-            AutomationCommand,
-            AutomationJob,
-            AutomationJobOrigin,
-            AutomationJobStatus,
-        )
         from mediaflow.domain.task_scheduling import TaskTrigger
 
         display = repository.get_run_display_context(task.task_id)
@@ -3110,9 +2869,6 @@ def _automatic_task_runner(repository, configured_path, scheduling_service):
                 )
             return
         if display is not None and display.origin_kind == "legacy-schedule":
-            # A legacy interval/Cron occurrence has no saved definition.  It
-            # still runs through the same production pipeline and claim fence;
-            # its admitted scope is every configured ResourceLibrary.
             configuration = _configuration(
                 configured_path,
                 snapshot_id=task.configuration_snapshot_id,
@@ -3134,9 +2890,6 @@ def _automatic_task_runner(repository, configured_path, scheduling_service):
             )
             return
         if display is not None and display.origin_kind in {"remote-organize", "direct-organize"}:
-            # A remote-ticket or direct CLI organize admission: the same shared
-            # pipeline, the Task's own admitted scope/limit and pin, no
-            # definition and no second executor.
             configuration = _configuration(
                 configured_path,
                 snapshot_id=task.configuration_snapshot_id,
@@ -3175,35 +2928,9 @@ def _automatic_task_runner(repository, configured_path, scheduling_service):
         )
         if definition is None:
             raise RuntimeError("pinned Automation Task Definition is unavailable")
-        version = getattr(configuration, "configuration_snapshot_version", None)
-        now = datetime.now(UTC)
         state = scheduling_service.state(task.task_id)
         trigger = state.admission_trigger if state is not None else None
         run_once = trigger is TaskTrigger.RUN_ONCE
-        job = AutomationJob(
-            task.task_id,
-            AutomationCommand.ORGANIZE,
-            AutomationJobStatus.PENDING,
-            now,
-            now,
-            limit=task.item_limit,
-            task_id=task.task_id,
-            definition_id=definition_id,
-            definition_fingerprint=definition.definition_fingerprint,
-            definition_version=version,
-            run_mode=definition.mode,
-            resource_library_id=definition.resource_library_id,
-            source_scope=definition.source_scope,
-            configuration_snapshot_id=task.configuration_snapshot_id,
-            configuration_snapshot_digest=task.configuration_snapshot_digest,
-            configuration_snapshot_version=version,
-            execution_origin=(
-                AutomationJobOrigin.RUN_ONCE if run_once else AutomationJobOrigin.SCHEDULED
-            ),
-            execution_principal=(
-                state.admission_principal if run_once and state is not None else None
-            ),
-        )
 
         def task_cancelled() -> bool:
             current = scheduling_service.state(task.task_id)
@@ -3211,551 +2938,16 @@ def _automatic_task_runner(repository, configured_path, scheduling_service):
 
         service = _definition_scoped_service(repository, configuration, configured_path)
         service.run(
-            job,
-            task_cancelled,
-            task_context=(scheduling_service, claim),
+            task,
+            scheduling_service,
+            claim,
+            run_once=run_once,
+            cancellation_check=task_cancelled,
             clock=clock,
             heartbeat=heartbeat,
         )
 
     return run
-
-
-def _run_definition_scoped_workflow(
-    job,
-    configuration: RuntimeConfiguration,
-    cancellation_check: Callable[[], bool],
-    *,
-    repository=None,
-    configured_path: str | None = None,
-) -> str:
-    """Bridge one claimed managed occurrence to the existing Task pipeline."""
-
-    with ExitStack() as stack:
-        task_repository = repository
-        if task_repository is None:
-            task_repository = stack.enter_context(SQLiteTaskRepository(configuration.database_path))
-        service = _definition_scoped_service(task_repository, configuration, configured_path)
-        return service.run(job, cancellation_check)
-
-
-def _fail_metadata_correction_continuation_snapshot(job, configured_path: str | None) -> None:
-    resolved = configured_path or os.environ.get("MEDIAFLOW_CONFIG")
-    if not resolved:
-        return
-    try:
-        database_path = _bootstrap_database_path(_configuration_document(resolved))
-    except (OSError, ValueError, RuntimeSnapshotUnavailable):
-        return
-    try:
-        with SQLiteTaskRepository(database_path) as repository:
-            MetadataCorrectionContinuationWorkerService(repository).failed(
-                job.job_id, snapshot_unavailable=True, queued=True
-            )
-    except (OSError, LookupError, ValueError, RuntimeError):
-        return
-
-
-def _run_metadata_correction_continuation(
-    job, configuration: RuntimeConfiguration, cancellation_check: Callable[[], bool]
-) -> str | None:
-    with SQLiteTaskRepository(configuration.database_path) as repository:
-        shared_storages = _SharedResolvedStorages(configuration)
-        continuation_service = MetadataCorrectionContinuationWorkerService(
-            repository,
-            source_validator=_continuation_source_validator(configuration, shared_storages),
-        )
-        prepared = None
-        started = False
-        task_id: str | None = None
-        try:
-            if cancellation_check():
-                raise AutomationCancelled()
-            prepared = continuation_service.prepare(job.job_id)
-            continuation_service.started(job.job_id)
-            started = True
-            if cancellation_check():
-                continuation_service.cancelled(job.job_id)
-                raise AutomationCancelled()
-            if (
-                configuration.configuration_snapshot_id
-                != prepared.continuation.configuration_snapshot_id
-                or configuration.configuration_snapshot_digest
-                != prepared.continuation.configuration_snapshot_digest
-            ):
-                raise RuntimeError("runtime configuration snapshot does not match continuation")
-            resource = next(
-                (
-                    item
-                    for item in configuration.resource_libraries
-                    if item.library_id == prepared.source_item.resource_library_id
-                ),
-                None,
-            )
-            if resource is None:
-                raise ValueError(
-                    "task item references missing ResourceLibrary "
-                    f"{prepared.source_item.resource_library_id!r}"
-                )
-            providers = metadata_provider_registry_from_environment((prepared.selection.provider,))
-            storages = shared_storages.get()
-            strategy = strategy_runner_from_configuration(
-                configuration.strategy, providers, storages=storages
-            )
-            operational_logger = (
-                SQLiteOperationalLogger(
-                    repository,
-                    "workflow",
-                    configuration.operational_logging_minimum_level,
-                )
-                if configuration.operational_logging_enabled
-                else None
-            )
-            coordinator = PersistentTaskCoordinator(repository, repository)
-            task = coordinator.create(
-                f"metadata-correction-continuation:{prepared.continuation.continuation_id}",
-                execute_authorized=False,
-                scope_path=prepared.source_item.source_display,
-                item_limit=1,
-                configuration_snapshot_id=prepared.continuation.configuration_snapshot_id,
-                configuration_snapshot_digest=(prepared.continuation.configuration_snapshot_digest),
-                require_configuration_snapshot=True,
-            )
-            task_id = task.task_id
-            repository.bind_metadata_correction_continuation_task(job.job_id, task.task_id)
-
-            def workflow_stop() -> bool:
-                return bool(
-                    cancellation_check()
-                    or coordinator.pause_requested(task_id or "")
-                    or coordinator.cancellation_observed(task_id or "")
-                )
-
-            service = MediaOrganizerService(
-                strategy,
-                StorageScanner(storages, logger=operational_logger),
-                storages,
-                {item.library_id: item for item in configuration.media_libraries},
-                configuration.strategy.recognition_type_policies,
-                JsonLinesOperationHistoryRepository(configuration.history_path),
-                executor=OrganizerExecutor(operational_logger),
-                source_display_roots=dict(configuration.resource_display_roots),
-                logger=operational_logger,
-                task_coordinator=coordinator,
-                task_id=task.task_id,
-                metadata_corrections={
-                    (prepared.source_item.storage_id, prepared.source_item.source_path): (
-                        prepared.selection
-                    )
-                },
-                retry_policy=configuration.workflow_retry_policy,
-                retry_cancellation_check=workflow_stop,
-                secret_free_errors=True,
-                # A correction continuation only re-analyzes the exact source it
-                # was admitted for, so it gains no execution authority and its own
-                # lineage is the source of the attempt, not a competing owner.
-                enforce_source_ownership=False,
-                ownership_lineage_task_ids=(prepared.continuation.source_task_id,),
-            )
-            item = service.process_file(
-                # ``source_display`` is an operator-facing, Storage-qualified
-                # label (for example ``storage-id:relative/path``).  The
-                # strategy parser needs the ResourceLibrary-relative media
-                # path so a Storage ID cannot become part of the title query.
-                prepared.source_item.source_path,
-                resource_library=resource,
-                storage_path=prepared.source_item.source_path,
-                execute=False,
-                # ``prepare`` already re-observed the exact source against live
-                # pinned Storage; the live verified occurrence travels with the
-                # new TaskItem/Result instead of copying a saved label forward.
-                source_occurrence_id=(
-                    prepared.live_source.occurrence_id
-                    if prepared.live_source is not None
-                    else prepared.source_item.source_occurrence_id
-                ),
-                source_fingerprint=(
-                    prepared.live_source.fingerprint
-                    if prepared.live_source is not None
-                    else prepared.source_item.source_fingerprint
-                ),
-                source_fingerprint_state=(
-                    "verified"
-                    if prepared.live_source is not None
-                    else prepared.source_item.source_fingerprint_state
-                ),
-                # The continuation measures the configured stable-size interval
-                # from the work's own durable first observation, never from a
-                # trusted fingerprint alone.
-                source_observed_at=prepared.source_observed_at,
-                # ``prepare`` already proved the persisted source against live
-                # pinned Storage; the pipeline never re-derives it.
-                resolve_source_evidence=False,
-            )
-            if cancellation_check():
-                coordinator.cancel(task.task_id)
-                continuation_service.cancelled(job.job_id)
-                raise AutomationCancelled(task.task_id)
-            if coordinator.cancellation_observed(task.task_id):
-                # An operator-accepted durable cancellation owns this Task
-                # outcome, so the continuation is cancelled rather than
-                # reported as completed.
-                continuation_service.cancelled(job.job_id)
-                raise AutomationCancelled(task.task_id)
-            finished = coordinator.finish(task.task_id, MediaOrganizerBatchResult((item,)))
-            task_id = finished.task_id
-            continuation = continuation_service.finish(job.job_id, finished.task_id)
-            if continuation.status.value == "failed":
-                raise RuntimeError("metadata correction continuation failed")
-            return continuation.new_task_id
-        except AutomationCancelled:
-            if task_id is not None:
-                active_task = repository.get_task(task_id)
-                if active_task is not None and active_task.status is PersistentTaskStatus.RUNNING:
-                    coordinator.cancel(task_id)
-            if started:
-                continuation_service.cancelled(job.job_id)
-            elif prepared is not None:
-                continuation_service.cancelled(job.job_id)
-            raise
-        except ManualIntentError as error:
-            # A source that changed, disappeared or could not be verified before
-            # the pipeline is refused with its own bounded reason and recovery
-            # action instead of a generic preflight failure.
-            continuation_service.failed(
-                job.job_id,
-                queued=True,
-                preflight=True,
-                error=str(error),
-                recovery=error.next_action,
-            )
-            raise
-        except Exception:
-            if task_id is not None:
-                failed_task = repository.get_task(task_id)
-                if failed_task is not None and failed_task.status is PersistentTaskStatus.RUNNING:
-                    now = datetime.now(UTC)
-                    repository.update_task(
-                        replace(
-                            failed_task,
-                            status=PersistentTaskStatus.FAILED,
-                            updated_at=now,
-                            completed_at=now,
-                            error="continuation failed before Task completion",
-                        )
-                    )
-            if started:
-                continuation_service.failed(job.job_id, task_id=task_id)
-            else:
-                continuation_service.failed(job.job_id, queued=True, preflight=True)
-            raise
-
-
-def _fail_recovery_continuation_snapshot(job, configured_path: str | None) -> None:
-    resolved = configured_path or os.environ.get("MEDIAFLOW_CONFIG")
-    if not resolved:
-        return
-    try:
-        database_path = _bootstrap_database_path(_configuration_document(resolved))
-    except (OSError, ValueError, RuntimeSnapshotUnavailable):
-        return
-    try:
-        with SQLiteTaskRepository(database_path) as repository:
-            RecoveryContinuationWorkerService(repository).failed(
-                job.job_id, snapshot_unavailable=True, queued=True
-            )
-    except (OSError, LookupError, ValueError, RuntimeError):
-        return
-
-
-class _SharedResolvedStorages:
-    """Build one Worker resolution's Storage adapters exactly once.
-
-    Source revalidation and the pipeline must read the *same* live adapters, and a
-    linkage refusal must still occur before any adapter is constructed.  This
-    cache builds on first use (which is only reached after the durable linkage
-    checks pass) and then serves both callers.
-    """
-
-    def __init__(self, configuration: RuntimeConfiguration) -> None:
-        self._configuration = configuration
-        self._values: dict | None = None
-
-    def get(self, storage_ids=None):
-        if self._values is None:
-            self._values = self._configuration.create_storages(storage_ids=storage_ids)
-        return self._values
-
-
-def _continuation_source_validator(
-    configuration: RuntimeConfiguration,
-    storages: _SharedResolvedStorages | None = None,
-) -> ManualSourceValidator:
-    """Build the live pinned-Storage source validator for one Worker resolution.
-
-    Reuses the same application source-validation boundary the manual intent and
-    Preview admission use, pinned to the exact configuration the Worker already
-    resolved.  Storage adapters are constructed only when validation actually
-    runs, and every read is guarded read-only.
-    """
-
-    from mediaflow.application.manual_source_validation import ManualSourceValidator
-
-    shared = storages or _SharedResolvedStorages(configuration)
-
-    def resolve(snapshot_id: str, snapshot_digest: str):
-        if (
-            configuration.configuration_snapshot_id != snapshot_id
-            or configuration.configuration_snapshot_digest != snapshot_digest
-        ):
-            raise ManualIntentError(
-                "the continuation source pin does not match the resolved configuration",
-                code="storage_unavailable",
-                status=503,
-                next_action="restore the saved published revision, then continue only this item",
-            )
-        return configuration
-
-    return ManualSourceValidator(
-        runtime_resolver=resolve,
-        storage_factory=lambda runtime, storage_ids: shared.get(),
-    )
-
-
-def _run_recovery_continuation(
-    job, configuration: RuntimeConfiguration, cancellation_check: Callable[[], bool]
-) -> str | None:
-    with SQLiteTaskRepository(configuration.database_path) as repository:
-        shared_storages = _SharedResolvedStorages(configuration)
-        continuation_service = RecoveryContinuationWorkerService(
-            repository,
-            source_validator=_continuation_source_validator(configuration, shared_storages),
-        )
-        prepared = None
-        started = False
-        task_id: str | None = None
-        try:
-            if cancellation_check():
-                raise AutomationCancelled()
-            prepared = continuation_service.prepare(job.job_id)
-            continuation_service.started(job.job_id)
-            started = True
-            if cancellation_check():
-                continuation_service.cancelled(job.job_id)
-                raise AutomationCancelled()
-            if (
-                configuration.configuration_snapshot_id
-                != prepared.continuation.configuration_snapshot_id
-                or configuration.configuration_snapshot_digest
-                != prepared.continuation.configuration_snapshot_digest
-            ):
-                raise RuntimeError("runtime configuration snapshot does not match continuation")
-            resource = next(
-                (
-                    item
-                    for item in configuration.resource_libraries
-                    if item.library_id == prepared.source_item.resource_library_id
-                ),
-                None,
-            )
-            if resource is None:
-                raise ValueError(
-                    "task item references missing ResourceLibrary "
-                    f"{prepared.source_item.resource_library_id!r}"
-                )
-            stored = prepared.source_item
-            # Resolved decisions live on the original item and on the analysis items
-            # of every prior single-item re-analysis of the same source (the ones an
-            # operator resolves blockers on); the newest decision wins.  The shared
-            # collector is also used by the continuation Preview so both surfaces
-            # consume exactly the same saved evidence for the same source.
-            decisions = collect_resolved_continuation_decisions(
-                repository, source_item_id=stored.item_id
-            )
-            conflict_decisions = dict(decisions.confirmations)
-            metadata_selections = {
-                key: MetadataSelection(
-                    review.recognition_type,
-                    review.metadata_policy_id,
-                    review.selected_provider,
-                    review.selected_provider_id,
-                    review.selected_media_type,
-                )
-                for key, review in decisions.metadata_reviews.items()
-            }
-            metadata_corrections = {
-                key: MetadataCorrectionSelection(
-                    review.recognition_type,
-                    review.metadata_policy_id,
-                    review.provider_id,
-                    review.corrected_query,
-                    review.corrected_year,
-                    review.corrected_media_type,
-                    review.direct_provider_id,
-                )
-                for key, review in decisions.metadata_corrections.items()
-            }
-            classification_selections = {
-                key: ClassificationSelection(
-                    review.recognition_type,
-                    review.classification_policy_id,
-                    review.selected_rule_id,
-                    review.selected_media_library_id,
-                    review.selected_relative_path,
-                )
-                for key, review in decisions.classification_reviews.items()
-            }
-            recognition_selections = {
-                key: RecognitionSelection(review.selected_recognition_type)
-                for key, review in decisions.recognition_reviews.items()
-            }
-            provider_ids = tuple(
-                dict.fromkeys(
-                    policy.provider_id
-                    for policy in configuration.strategy.metadata_policies
-                    if policy.enabled and policy.provider_id
-                )
-            )
-            providers = metadata_provider_registry_from_environment(provider_ids or ("tmdb",))
-            storages = shared_storages.get()
-            strategy = strategy_runner_from_configuration(
-                configuration.strategy, providers, storages=storages
-            )
-            operational_logger = (
-                SQLiteOperationalLogger(
-                    repository,
-                    "workflow",
-                    configuration.operational_logging_minimum_level,
-                )
-                if configuration.operational_logging_enabled
-                else None
-            )
-            coordinator = PersistentTaskCoordinator(repository, repository)
-            task = coordinator.create(
-                f"recovery-continuation:{prepared.continuation.continuation_id}",
-                execute_authorized=False,
-                scope_path=prepared.source_item.source_display,
-                item_limit=1,
-                configuration_snapshot_id=prepared.continuation.configuration_snapshot_id,
-                configuration_snapshot_digest=(prepared.continuation.configuration_snapshot_digest),
-                require_configuration_snapshot=True,
-            )
-            task_id = task.task_id
-            repository.bind_recovery_continuation_task(job.job_id, task.task_id)
-
-            def workflow_stop() -> bool:
-                return bool(
-                    cancellation_check()
-                    or coordinator.pause_requested(task_id or "")
-                    or coordinator.cancellation_observed(task_id or "")
-                )
-
-            service = MediaOrganizerService(
-                strategy,
-                StorageScanner(storages, logger=operational_logger),
-                storages,
-                {item.library_id: item for item in configuration.media_libraries},
-                configuration.strategy.recognition_type_policies,
-                JsonLinesOperationHistoryRepository(configuration.history_path),
-                executor=OrganizerExecutor(operational_logger),
-                source_display_roots=dict(configuration.resource_display_roots),
-                logger=operational_logger,
-                task_coordinator=coordinator,
-                task_id=task.task_id,
-                conflict_decisions=conflict_decisions,
-                metadata_selections=metadata_selections,
-                metadata_corrections=metadata_corrections,
-                classification_selections=classification_selections,
-                recognition_selections=recognition_selections,
-                retry_policy=configuration.workflow_retry_policy,
-                retry_cancellation_check=workflow_stop,
-                secret_free_errors=True,
-                # A recovery continuation re-analyzes exactly one still-undecided
-                # source of the Task it continues.  It is analysis-only, so it
-                # creates no organizing work and its lineage is that source Task,
-                # never a competing owner of the same source.
-                enforce_source_ownership=False,
-                ownership_lineage_task_ids=(prepared.continuation.source_task_id,),
-            )
-            item = service.process_file(
-                # The display label is Storage-qualified; parsing must use the
-                # exact ResourceLibrary-relative media path instead.
-                prepared.source_item.source_path,
-                resource_library=resource,
-                storage_path=prepared.source_item.source_path,
-                execute=False,
-                # The continuation analyzes the exact source occurrence the
-                # original TaskItem was admitted under.  ``prepare`` already
-                # re-observed that source against live pinned Storage, so the
-                # live verified occurrence travels with the new TaskItem/Result
-                # instead of copying a saved label forward; a changed or missing
-                # source never reaches Provider analysis.
-                source_occurrence_id=prepared.source_occurrence_id,
-                source_fingerprint=prepared.source_fingerprint,
-                source_fingerprint_state=prepared.source_fingerprint_state,
-                source_observed_at=prepared.source_observed_at,
-                # ``prepare`` already re-observed and proved the original
-                # persisted evidence, so the pipeline must never re-derive it
-                # from the current file.
-                resolve_source_evidence=False,
-            )
-            if cancellation_check():
-                coordinator.cancel(task.task_id)
-                continuation_service.cancelled(job.job_id)
-                raise AutomationCancelled(task.task_id)
-            if coordinator.cancellation_observed(task.task_id):
-                # An operator-accepted durable cancellation owns this Task
-                # outcome, so the continuation is cancelled rather than
-                # reported as completed.
-                continuation_service.cancelled(job.job_id)
-                raise AutomationCancelled(task.task_id)
-            finished = coordinator.finish(task.task_id, MediaOrganizerBatchResult((item,)))
-            task_id = finished.task_id
-            continuation = continuation_service.finish(job.job_id, finished.task_id)
-            if continuation.status.value == "failed":
-                raise RuntimeError("recovery continuation failed")
-            return continuation.new_task_id
-        except AutomationCancelled:
-            if task_id is not None:
-                active_task = repository.get_task(task_id)
-                if active_task is not None and active_task.status is PersistentTaskStatus.RUNNING:
-                    coordinator.cancel(task_id)
-            if started:
-                continuation_service.cancelled(job.job_id)
-            elif prepared is not None:
-                continuation_service.cancelled(job.job_id)
-            raise
-        except ManualIntentError as error:
-            # A source that changed, disappeared or could not be verified before
-            # the pipeline is refused with its own bounded reason and recovery
-            # action instead of a generic preflight failure.
-            continuation_service.failed(
-                job.job_id,
-                queued=True,
-                preflight=True,
-                error=str(error),
-                recovery=error.next_action,
-            )
-            raise
-        except Exception:
-            if task_id is not None:
-                failed_task = repository.get_task(task_id)
-                if failed_task is not None and failed_task.status is PersistentTaskStatus.RUNNING:
-                    now = datetime.now(UTC)
-                    repository.update_task(
-                        replace(
-                            failed_task,
-                            status=PersistentTaskStatus.FAILED,
-                            updated_at=now,
-                            completed_at=now,
-                            error="continuation failed before Task completion",
-                        )
-                    )
-            if started:
-                continuation_service.failed(job.job_id, task_id=task_id)
-            else:
-                continuation_service.failed(job.job_id, queued=True, preflight=True)
-            raise
 
 
 def _definition_publication_principal(database_path, job, definition):
@@ -3790,323 +2982,6 @@ def _current_automation_configuration(database_path):
         return load_managed_runtime_configuration(
             active.document, bootstrap_database_path=str(database_path)
         )
-
-
-def _scope_continuation_grants(configuration, repository):
-    """The production unattended-grant service over the Worker's own repository."""
-
-    return UnattendedExecutionGrantService(
-        repository,
-        permission_authority=_ConfiguredPermissionAuthority(
-            lambda: _current_automation_configuration(configuration.database_path)
-        ),
-        publication_principal_resolver=lambda job, definition: _definition_publication_principal(
-            configuration.database_path, job, definition
-        ),
-        live_intent_checker=lambda job, definition: _schedule_intent_continuity(
-            configuration.database_path, job, definition
-        ),
-        live_definition_resolver=lambda definition_id: _live_automation_definition(
-            configuration.database_path, definition_id
-        ),
-    )
-
-
-def _scope_continuation_authority(configuration, repository):
-    """The shared live-authority checker for one continuation.
-
-    It resolves the occurrence's own Job and the definition from the exact saved
-    revision the continuation is pinned to, then re-reads the publication intent,
-    current permissions and Enabled continuity
-    through the shared production authority.  This is the same
-    decision the API admission and the Web projection make, so a continuation
-    can never be admitted under authority that the Worker would refuse.
-    """
-
-    return definition_occurrence_authority(
-        repository,
-        getattr(configuration, "automation_task_definitions", ()),
-        _scope_continuation_grants(configuration, repository),
-    )
-
-
-def _scope_continuation_mutation_authority(configuration, repository, original):
-    """The live mutation hook the pipeline calls at every mutation boundary.
-
-    A continuation that would mutate media must prove its authority again at
-    each boundary, exactly as the definition-scoped execution path does.  The
-    hook is returned **only** together with the exact ``(job, definition)`` pair
-    the continuation will re-verify, and it re-checks that same pair on every
-    call, so a disabled/removed definition or permission loss stops the next
-    mutation with zero new effect.
-
-    A mutation-authorized Task whose authority cannot be resolved returns
-    ``None``.  The caller must then refuse the continuation outright: passing
-    ``None`` to the executor means "no authority check", which would silently
-    mutate media without live authority.
-    """
-
-    if not original.execute_authorized:
-        # Analysis-only work has nothing to authorize.
-        return None
-    checker = _scope_continuation_authority(configuration, repository)
-    if not checker(original):
-        return None
-    origin = continuation_origin(repository, original)
-    job = repository.get_job_for_task(origin.task_id)
-    definitions = tuple(getattr(configuration, "automation_task_definitions", ()))
-    definition_id = getattr(job, "definition_id", None)
-    definition = next(
-        (
-            value
-            for value in definitions
-            if getattr(value, "definition_id", getattr(value, "id", None)) == definition_id
-        ),
-        None,
-    )
-    if definition is None:
-        return None
-    grants = _scope_continuation_grants(configuration, repository)
-
-    def authority(_plan, _boundary: str) -> None:
-        grants.assert_live(job, definition)
-
-    return authority
-
-
-def _continue_scope_from_admission(
-    service: MediaOrganizerService,
-    configuration: RuntimeConfiguration,
-    original: PersistentTask,
-    storages,
-    coordinator: PersistentTaskCoordinator,
-    task_id: str,
-    execute: bool,
-    limit: int | None,
-    skip_sources: frozenset[tuple[str, str]],
-    cancellation_check: Callable[[], bool],
-    *,
-    original_job=None,
-    definition_origin: PersistentTask | None = None,
-) -> MediaOrganizerBatchResult:
-    """Walk only the original admitted scope that is not already recorded.
-
-    This mirrors the operator CLI's proven ``_continue_paused_scope`` semantics:
-    a scan rescans its libraries while skipping every already-discovered source,
-    and a preview/organize re-walks its exact recorded scope path with the same
-    exclusion set.  The remaining item budget is enforced by the caller, so
-    discovery can never broaden the originally admitted limits.
-    """
-
-    if limit == 0:
-        return MediaOrganizerBatchResult(())
-
-    if original.command not in {"organize"}:
-        raise ValueError("paused task command cannot be continued")
-    if original.scope_path is None:
-        return service.process_all_libraries(
-            configuration.resource_libraries,
-            execute=execute,
-            limit=limit,
-            cancellation_check=cancellation_check,
-            skip_sources=set(skip_sources),
-        )
-    library, storage_path, display_path = _continuation_scope(
-        configuration, original, original_job, definition_origin
-    )
-    entry = storages[library.storage_id].stat(storage_path)
-    if entry.entry_type is StorageEntryType.DIRECTORY:
-        scoped = replace(library, root_path=storage_path, scan_mode=ScanMode.INCREMENTAL)
-        return service.process_library(
-            scoped,
-            execute=execute,
-            limit=limit,
-            cancellation_check=cancellation_check,
-            skip_sources=set(skip_sources),
-            source_display_root=display_path,
-        )
-    if (library.storage_id, storage_path) in skip_sources:
-        return MediaOrganizerBatchResult(())
-    if entry.entry_type is not StorageEntryType.FILE:
-        raise ValueError("paused media scope is no longer a file or directory")
-    return MediaOrganizerBatchResult(
-        (
-            service.process_file(
-                display_path,
-                resource_library=library,
-                storage_path=storage_path,
-                execute=execute,
-            ),
-        )
-    )
-
-
-def _continuation_scope(
-    configuration,
-    original: PersistentTask,
-    original_job,
-    definition_origin: PersistentTask | None = None,
-):
-    """Resolve one paused scope from its pinned Definition or configured display root.
-
-    Definition occurrences persist a Storage-relative Task path, while direct
-    CLI Tasks persist a display path. The Job-to-Task link and immutable
-    configuration pin disambiguate those forms without guessing from path
-    shape or widening a sub-scope to its ResourceLibrary root.
-    """
-
-    if original_job is not None and getattr(original_job, "definition_id", None):
-        pinned_task = definition_origin or original
-        if (
-            getattr(original_job, "task_id", None) != pinned_task.task_id
-            or getattr(original_job, "configuration_snapshot_id", None)
-            != pinned_task.configuration_snapshot_id
-            or getattr(original_job, "configuration_snapshot_digest", None)
-            != pinned_task.configuration_snapshot_digest
-            or original.command != pinned_task.command
-            or original.scope_path != pinned_task.scope_path
-            or original.item_limit != pinned_task.item_limit
-            or original.configuration_snapshot_id != pinned_task.configuration_snapshot_id
-            or original.configuration_snapshot_digest != pinned_task.configuration_snapshot_digest
-            or original.execute_authorized != pinned_task.execute_authorized
-        ):
-            raise ValueError("paused Definition Task no longer matches its pinned Job")
-        definition = next(
-            (
-                value
-                for value in getattr(configuration, "automation_task_definitions", ())
-                if getattr(value, "definition_id", None) == original_job.definition_id
-            ),
-            None,
-        )
-        if definition is None:
-            raise ValueError("paused Definition is absent from the pinned configuration")
-        # A paused Definition continuation is only meaningful for the single
-        # retained intent.  A recorded pre-amendment mode has no runnable
-        # command, so its old work stops here instead of continuing through a
-        # compatible scan/plan branch.
-        if not definition.mode.is_runnable:
-            raise ValueError(
-                "paused Definition records an unsupported Automation mode and cannot continue"
-            )
-        expected_command = AutomationCommand.ORGANIZE
-        if (
-            original_job.command is not expected_command
-            or pinned_task.command != expected_command.value
-            or original_job.run_mode is not definition.mode
-            or original_job.definition_fingerprint != definition.definition_fingerprint
-            or original_job.resource_library_id != definition.resource_library_id
-            or original_job.source_scope != definition.source_scope
-            or original_job.limit != definition.item_limit
-            or pinned_task.item_limit != definition.item_limit
-            or pinned_task.execute_authorized != original_job.execute_authorized
-        ):
-            raise ValueError("paused Definition Task no longer matches its pinned scope")
-        libraries = tuple(
-            value
-            for value in configuration.resource_libraries
-            if value.library_id == definition.resource_library_id
-        )
-        if len(libraries) != 1 or not libraries[0].enabled:
-            raise ValueError("paused Definition ResourceLibrary is unavailable")
-        library = libraries[0]
-        normalized_scope = AutomationTaskDefinition.normalize_scope(definition.source_scope)
-        storage_path = normalize_resource_root(
-            posixpath.join(normalize_resource_root(library.root_path), normalized_scope or "")
-        )
-        if normalize_resource_root(pinned_task.scope_path or "") != storage_path:
-            raise ValueError("paused Definition Task scope differs from its pinned Definition")
-        display_roots = dict(configuration.resource_display_roots)
-        display_root = display_roots.get(library.library_id, library.root_path)
-        display_path = posixpath.join(display_root, normalized_scope or "").rstrip("/")
-        return library, storage_path, display_path or display_root
-
-    if original.scope_path is None:
-        raise ValueError("paused Task has no exact source scope")
-    path = Path(original.scope_path)
-    if not path.is_absolute():
-        raise ValueError("paused Task scope is neither a pinned Definition nor a display path")
-    library, display_root = _resource_library(configuration, original.scope_path)
-    resolved_path = path.resolve(strict=False)
-    resolved_root = Path(display_root).resolve(strict=False)
-    try:
-        relative = resolved_path.relative_to(resolved_root).as_posix()
-    except ValueError as error:
-        raise ValueError("paused Task scope is outside its configured ResourceLibrary") from error
-    storage_path = normalize_resource_root(_storage_path(library.root_path, relative))
-    return library, storage_path, resolved_path.as_posix()
-
-
-def _automation_configuration_unavailable(
-    error: RuntimeSnapshotUnavailable,
-) -> AutomationConfigurationUnavailable:
-    allowed_categories = {
-        "active_missing",
-        "active_unreadable",
-        "digest_corrupt",
-        "job_snapshot_incomplete",
-        "job_snapshot_missing",
-        "runtime_invalid",
-        "schema_unsupported",
-        "snapshot_digest_mismatch",
-        "snapshot_missing",
-        "snapshot_not_published",
-        "snapshot_unreadable",
-    }
-    category = error.reason if error.reason in allowed_categories else "configuration_unavailable"
-    return AutomationConfigurationUnavailable(
-        AutomationFailureEvidence(
-            category,
-            "saved_configuration_unavailable",
-            "none",
-            False,
-            "restore the saved published revision, or explicitly create new work under "
-            "the current Active configuration",
-        )
-    )
-
-
-def _require_queued_job_snapshot(job, configured_path: str | None) -> None:
-    """Reject legacy unpinned work once managed authority exists.
-
-    The worker command intentionally claims jobs before loading workflow
-    configuration.  A queued row without the immutable pair must therefore be
-    rejected at the handler boundary instead of silently rebinding to the
-    current Active revision.  Before managed activation, JSON bootstrap jobs
-    remain compatible with the pre-managed runtime.
-    """
-
-    snapshot_id = getattr(job, "configuration_snapshot_id", None)
-    snapshot_digest = getattr(job, "configuration_snapshot_digest", None)
-    if bool(snapshot_id) != bool(snapshot_digest):
-        raise RuntimeSnapshotUnavailable(
-            "queued automation Job has an incomplete configuration snapshot pin",
-            revision_id=snapshot_id,
-            digest=snapshot_digest,
-            reason="job_snapshot_incomplete",
-        )
-    if snapshot_id and snapshot_digest:
-        return
-    if not configured_path and not os.environ.get("MEDIAFLOW_CONFIG"):
-        # Direct unit/service invocations may intentionally exercise the
-        # handler without a production bootstrap document.  The production
-        # worker entry point always loads the management bootstrap first, so
-        # this compatibility branch cannot bypass managed authority there.
-        return
-    document = _configuration_document(configured_path)
-    database_path = _bootstrap_database_path(document)
-    with SQLiteConfigurationRepository(database_path) as repository:
-        if not repository.has_managed_activation():
-            return
-        marker = repository.last_known_active()
-    raise RuntimeSnapshotUnavailable(
-        "legacy automation Job has no managed configuration snapshot pin; "
-        "recreate the Job under the current Active revision",
-        revision_id=marker.get("revisionId") if marker else None,
-        version=(marker.get("revisionSequence") if marker else None),
-        digest=marker.get("digest") if marker else None,
-        reason="job_snapshot_missing",
-    )
 
 
 def render_schedules(definitions, states) -> str:
@@ -4147,7 +3022,7 @@ def render_schedule_audit(values, definitions=()) -> str:
         lines.append(
             f"{value.emitted_at.isoformat()} | {value.schedule_id} | "
             f"occurrenceUtc={value.occurrence_at.isoformat()} | occurrenceLocal={local} | "
-            f"job={value.job_id} | "
+            f"task={value.task_id} | "
             f"command={value.command.value} | next={value.next_run_at.isoformat()}"
         )
     lines.extend(("", f"Total: {len(values)}", ""))
@@ -4348,23 +3223,17 @@ def _run_worker(
 
             with repository._lock:
                 row = repository._connection.execute(
-                    "SELECT configuration_snapshot_id, configuration_snapshot_digest "
-                    "FROM automation_jobs WHERE status='pending' "
-                    "ORDER BY created_at, job_id LIMIT 1"
+                    "SELECT tasks.configuration_snapshot_id, "
+                    "tasks.configuration_snapshot_digest "
+                    "FROM task_scheduling JOIN tasks "
+                    "ON tasks.task_id=task_scheduling.task_id "
+                    "WHERE task_scheduling.queue_state IN (?, ?) "
+                    "AND tasks.status='pending' "
+                    "ORDER BY COALESCE(task_scheduling.queue_eligible_at, "
+                    "task_scheduling.created_at), task_scheduling.created_at, "
+                    "task_scheduling.task_id LIMIT 1",
+                    (TaskQueueState.QUEUED.value, TaskQueueState.CLAIMED.value),
                 ).fetchone()
-                if row is None:
-                    row = repository._connection.execute(
-                        "SELECT tasks.configuration_snapshot_id, "
-                        "tasks.configuration_snapshot_digest "
-                        "FROM task_scheduling JOIN tasks "
-                        "ON tasks.task_id=task_scheduling.task_id "
-                        "WHERE task_scheduling.queue_state IN (?, ?) "
-                        "AND tasks.status='pending' "
-                        "ORDER BY COALESCE(task_scheduling.queue_eligible_at, "
-                        "task_scheduling.created_at), task_scheduling.created_at, "
-                        "task_scheduling.task_id LIMIT 1",
-                        (TaskQueueState.QUEUED.value, TaskQueueState.CLAIMED.value),
-                    ).fetchone()
             if row is not None:
                 return row["configuration_snapshot_id"], row["configuration_snapshot_digest"]
             try:
@@ -4393,12 +3262,8 @@ def _run_worker(
                     # The resident Worker records its own presence through the same
                     # heartbeat the resident registry reads, so a slow provider call
                     # or a long claim never makes the deployment look stopped.
-                    worker_service = AutomationWorker(
+                    worker_service = ResidentProcessingWorker(
                         repository,
-                        lambda job, cancelled: _run_queued_workflow(
-                            job, configured_path, cancelled, repository=repository
-                        ),
-                        _worker_notification_publisher(repository, configured_path),
                         configuration_snapshot_resolver=pending_snapshot,
                         runtime_schema_version=SCHEMA_VERSION,
                         manual_organize_worker=manual_organize_worker,
@@ -4427,19 +3292,16 @@ def _run_worker(
                     )
                     worker_service.set_manual_task_worker(manual_task_worker)
                     if arguments.worker_command == "run-next":
-                        job = worker_service.run_next()
-                        if job is not None:
-                            stdout.write(render_job(job))
-                            return 0 if job.status.value in {"completed", "cancelled"} else 1
-                        manual_task = manual_task_worker.run_next()
-                        if manual_task is not None:
-                            stdout.write(
-                                f"Task ID: {manual_task.task_id}\n"
-                                f"Status: {manual_task.status.value}\n"
-                            )
+                        result = worker_service.run_next()
+                        if result is None:
+                            stdout.write("No pending work\n")
+                            return 0
+                        if hasattr(result, "task_id") and hasattr(result, "status"):
+                            status = getattr(result.status, "value", str(result.status))
+                            stdout.write(f"Task ID: {result.task_id}\nStatus: {status}\n")
                             return (
                                 0
-                                if manual_task.status.value
+                                if status
                                 in {
                                     "completed",
                                     "partial_success",
@@ -4447,28 +3309,28 @@ def _run_worker(
                                 }
                                 else 1
                             )
-                        discovered = media_discovery_worker.run_next()
-                        if discovered is not None:
+                        if hasattr(result, "discovery_id"):
                             stdout.write(
-                                f"Discovery ID: {discovered.discovery_id}\n"
-                                f"Status: {discovered.status.value}\n"
+                                f"Discovery ID: {result.discovery_id}\n"
+                                f"Status: {result.status.value}\n"
                             )
                             return 0
-                        execution = manual_organize_worker.run_next()
-                        if execution is not None:
+                        if hasattr(result, "execution_id"):
                             stdout.write(
-                                f"Manual execution ID: {execution.execution_id}\n"
-                                f"Status: {execution.status.value}\n"
+                                f"Manual execution ID: {result.execution_id}\n"
+                                f"Status: {result.status.value}\n"
                             )
-                            return 0 if execution.status.value in {"completed", "cancelled"} else 1
-                        transfer = files_transfer_worker.run_next()
-                        if transfer is None:
-                            stdout.write("No pending automation jobs\n")
-                            return 0
-                        stdout.write(
-                            f"Task ID: {transfer.task_id}\nStatus: {transfer.status.value}\n"
-                        )
-                        return 0 if transfer.terminal else 1
+                            return (
+                                0
+                                if result.status.value
+                                in {
+                                    "completed",
+                                    "cancelled",
+                                }
+                                else 1
+                            )
+                        stdout.write("No pending work\n")
+                        return 0
                     poll = getattr(arguments, "poll_seconds", None) or getattr(
                         configuration, "worker_poll_seconds", default_poll
                     )
@@ -4509,16 +3371,9 @@ def _run_worker(
                     manual_task_worker.set_worker_heartbeat(heartbeat)
 
                     def step(loop: ResidentLoop) -> int:
-                        if worker_service._registered and not worker_service.heartbeat():
+                        if not worker_service.heartbeat():
                             raise RuntimeError("worker registration unavailable")
                         worked = worker_service.run_next() is not None
-                        if not worked:
-                            worked = (
-                                worker_service._run_manual_task_work()
-                                or worker_service._run_media_discovery_work()
-                                or worker_service._run_manual_organize_work()
-                                or worker_service._run_files_transfer_work()
-                            )
                         if worked:
                             loop.clear_waiting()
                         else:
@@ -4651,7 +3506,7 @@ def _run_scheduler(
                 NotificationPublisher(
                     repository, getattr(resolved, "webhooks", ()) if resolved else ()
                 ),
-                execution_authority=_scope_continuation_grants(
+                execution_authority=_scheduler_execution_authority(
                     resolved or configuration, repository
                 ),
                 maximum_active_jobs=(
@@ -4709,7 +3564,7 @@ def _run_scheduler(
             )
             return 0
         if arguments.scheduler_command == "tick":
-            stdout.write(render_jobs(build_service(current).tick()))
+            stdout.write(render_tasks(tuple(build_service(current).tick())))
             return 0
 
         def step(loop: ResidentLoop) -> int:

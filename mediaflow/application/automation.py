@@ -10,14 +10,12 @@ from zoneinfo import ZoneInfo
 
 from mediaflow.application.notification import NotificationPublisher
 from mediaflow.domain.automation import (
-    AutomationClaimLost,
+    AutomationClaimLost,  # noqa: F401 - compatibility re-export
     AutomationCommand,
     AutomationDefinitionOccurrence,
     AutomationFailureEvidence,
-    AutomationJob,
-    AutomationJobRepository,
-    AutomationJobStatus,
-    AutomationQueueFull,
+    AutomationQueueFull,  # noqa: F401 - compatibility re-export
+    AutomationSchedulerRepository,
     AutomationTaskDefinition,
     AutomationTaskRunMode,
     CronSchedule,
@@ -36,12 +34,10 @@ from mediaflow.domain.automation import (
 from mediaflow.domain.cron import CronExpression
 from mediaflow.domain.notification import NotificationEvent, NotificationEventType
 
-MAX_AUTOMATION_JOB_LIMIT = 10_000
-
 
 class AutomationCancelled(RuntimeError):
     def __init__(self, task_id: str | None = None) -> None:
-        super().__init__("automation job was cancelled")
+        super().__init__("automation work was cancelled")
         self.task_id = task_id
 
 
@@ -64,104 +60,6 @@ class AutomationWorkflowFailed(RuntimeError):
         self.evidence = evidence
 
 
-class AutomationJobService:
-    """Queues only the mutation-free workflows admitted by the service boundary."""
-
-    def __init__(
-        self,
-        repository: AutomationJobRepository,
-        *,
-        maximum_active_jobs: int = 100,
-        configuration_snapshot_id: str | None = None,
-        configuration_snapshot_digest: str | None = None,
-    ) -> None:
-        if (configuration_snapshot_id is None) != (configuration_snapshot_digest is None):
-            raise ValueError("Job configuration snapshot ID and digest must be provided together")
-        if (
-            isinstance(maximum_active_jobs, bool)
-            or not isinstance(maximum_active_jobs, int)
-            or maximum_active_jobs < 1
-            or maximum_active_jobs > 10_000
-        ):
-            raise ValueError("maximum active Jobs must be between 1 and 10000")
-        self._repository = repository
-        self._maximum_active_jobs = maximum_active_jobs
-        self._configuration_snapshot_id = configuration_snapshot_id
-        self._configuration_snapshot_digest = configuration_snapshot_digest
-
-    def bind_configuration_snapshot(self, snapshot_id: str | None, digest: str | None) -> None:
-        if (snapshot_id is None) != (digest is None):
-            raise ValueError("Job configuration snapshot ID and digest must be provided together")
-        self._configuration_snapshot_id = snapshot_id
-        self._configuration_snapshot_digest = digest
-
-    def submit(
-        self,
-        command: str,
-        *,
-        limit: int | None = None,
-        definition_id: str | None = None,
-        automation_definition_id: str | None = None,
-    ) -> AutomationJob:
-        if definition_id is not None or automation_definition_id is not None:
-            raise ValueError(
-                "definition-pinned Jobs must be emitted by the Automation Scheduler, "
-                "not the legacy Job submission service"
-            )
-        try:
-            parsed = AutomationCommand(command)
-        except ValueError as error:
-            raise ValueError("automation command must be organize") from error
-        if parsed is not AutomationCommand.ORGANIZE:
-            raise ValueError("automation command must be organize")
-        if limit is not None and (
-            isinstance(limit, bool)
-            or not isinstance(limit, int)
-            or limit < 1
-            or limit > MAX_AUTOMATION_JOB_LIMIT
-        ):
-            raise ValueError(
-                f"automation job limit must be an integer between 1 and {MAX_AUTOMATION_JOB_LIMIT}"
-            )
-        now = datetime.now(UTC)
-        job = AutomationJob(
-            str(uuid4()),
-            parsed,
-            AutomationJobStatus.PENDING,
-            now,
-            now,
-            limit=limit,
-            configuration_snapshot_id=self._configuration_snapshot_id,
-            configuration_snapshot_digest=self._configuration_snapshot_digest,
-        )
-        if not self._repository.admit_job(job, self._maximum_active_jobs):
-            raise AutomationQueueFull(
-                f"automation queue reached configured active Job limit {self._maximum_active_jobs}"
-            )
-        return job
-
-    def cancel(self, job_id: str, *, expected_version: str | None = None) -> AutomationJob:
-        return self._repository.request_job_cancellation(
-            job_id, datetime.now(UTC), expected_version=expected_version
-        )
-
-    def stale(self, *, age_seconds: float, limit: int = 100) -> tuple[AutomationJob, ...]:
-        if age_seconds <= 0:
-            raise ValueError("stale age must be positive")
-        if isinstance(limit, bool) or not isinstance(limit, int) or limit < 1 or limit > 100:
-            raise ValueError("stale job limit must be between 1 and 100")
-
-        return self._repository.list_stale_running_jobs(
-            datetime.now(UTC) - timedelta(seconds=age_seconds), limit=limit
-        )
-
-    def requeue_stale(self, job_id: str, *, age_seconds: float) -> AutomationJob:
-        if age_seconds <= 0:
-            raise ValueError("stale age must be positive")
-        now = datetime.now(UTC)
-        return self._repository.requeue_stale_job(job_id, now - timedelta(seconds=age_seconds), now)
-
-
 class ProcessingWorkerService:
     """Manages worker registration, heartbeats, clean stops, and fail-closed readiness."""
 
@@ -174,7 +72,7 @@ class ProcessingWorkerService:
         # Kept in step with ``mediaflow.infrastructure.sqlite_runtime.SCHEMA_VERSION``:
         # the application layer must not import the infrastructure module, and an
         # additive runtime schema bump is expected to update both defaults.
-        runtime_schema_version: int = 57,
+        runtime_schema_version: int = 58,
     ) -> None:
         self._repository = repository
         self._active_configuration_snapshot_id = active_configuration_snapshot_id
@@ -264,7 +162,7 @@ class ProcessingWorkerService:
         active_snapshot_digest: str | None = None,
         runtime_schema_version: int | None = None,
     ) -> dict[str, object]:
-        """Readiness for the queued Job queue bound to the current Active snapshot."""
+        """Readiness for the shared Task queue bound to the current Active snapshot."""
 
         current_now = now or datetime.now(UTC)
         workers = self.list_workers(current_now)
@@ -555,114 +453,64 @@ class ProcessingWorkerService:
         }
 
 
-def evaluate_pending_job_operational_condition(
-    readiness: dict[str, object],
-) -> dict[str, object] | None:
-    if readiness.get("ready"):
-        return None
-    return {
-        "condition": readiness.get("condition"),
-        "stage": "pending",
-        "durableState": readiness.get("durableState"),
-        "sideEffects": "none",
-        "retrySafe": True,
-        "nextAction": readiness.get("nextAction"),
-    }
+class ResidentProcessingWorker:
+    """Resident loop over Task-kernel and ordinary-work runners.
 
-
-class AutomationWorker:
-    """Claims one durable job and delegates the existing workflow to its injected handler."""
+    The Task scheduling kernel owns organizing claims; this class owns only the
+    shared Worker registration/heartbeat and the ordered dispatch of the
+    independent runners that already hold their own durable claim fences.  It
+    never claims a Job, writes a Job row or invokes a second execution engine.
+    """
 
     def __init__(
         self,
-        repository: AutomationJobRepository,
-        handler: Callable[[AutomationJob, Callable[[], bool]], str | None],
-        notifications: NotificationPublisher | None = None,
+        repository,
         *,
+        manual_task_worker=None,
+        media_discovery_worker=None,
+        manual_organize_worker=None,
+        files_transfer_worker=None,
         worker_id: str | None = None,
         label: str | None = None,
         heartbeat_interval_seconds: float = 5.0,
         supported_commands: tuple[str, ...] | None = None,
         configuration_snapshot_id: str | None = None,
         configuration_snapshot_digest: str | None = None,
-        runtime_schema_version: int = 34,
-        manual_organize_worker=None,
-        media_discovery_worker=None,
-        files_transfer_worker=None,
-        manual_task_worker=None,
         configuration_snapshot_resolver: Callable[[], tuple[str | None, str | None]] | None = None,
+        runtime_schema_version: int = 58,
     ) -> None:
         self._repository = repository
-        self._handler = handler
-        self._notifications = notifications
-        raw_worker_id = worker_id or f"worker-{uuid4().hex[:12]}"
-        self._worker_id = validate_worker_id(raw_worker_id)
-        raw_label = label or f"worker-{self._worker_id[-6:]}"
-        self._label = validate_worker_label(raw_label)
+        self._manual_task_worker = manual_task_worker
+        self._media_discovery_worker = media_discovery_worker
+        self._manual_organize_worker = manual_organize_worker
+        self._files_transfer_worker = files_transfer_worker
+        self._worker_id = validate_worker_id(worker_id or f"worker-{uuid4().hex[:12]}")
+        self._label = validate_worker_label(label or f"worker-{self._worker_id[-6:]}")
         self._heartbeat_interval_seconds = max(0.1, float(heartbeat_interval_seconds))
-        if supported_commands is not None:
-            raw_commands = supported_commands
+        if supported_commands is None:
+            raw_commands: tuple[str, ...] = (
+                "organize",
+                "manual_organize",
+                *tuple(getattr(media_discovery_worker, "commands", ())),
+                *tuple(getattr(files_transfer_worker, "commands", ())),
+            )
         else:
-            raw_commands = tuple(c.value for c in AutomationCommand)
-            if manual_organize_worker is not None:
-                raw_commands += ("manual_organize",)
-            raw_commands += tuple(getattr(media_discovery_worker, "commands", ()))
-            transfer_commands = getattr(files_transfer_worker, "commands", ())
-            raw_commands += tuple(transfer_commands)
+            raw_commands = supported_commands
         self._supported_commands = validate_worker_commands(tuple(raw_commands))
         self._configuration_snapshot_id = configuration_snapshot_id
         self._configuration_snapshot_digest = configuration_snapshot_digest
         self._configuration_snapshot_resolver = configuration_snapshot_resolver
         self._runtime_schema_version = runtime_schema_version
-        # Optional admitted-manual-execution runner sharing this Worker's
-        # resident loop.  It owns its own durable claim/lease boundary and is
-        # always constructed with a real runtime Task repository, so a missing
-        # value simply means this Worker serves queued Jobs only.
-        self._manual_organize_worker = manual_organize_worker
-        # Optional admitted bounded-discovery runner sharing this Worker's
-        # resident loop.  Discovery is metadata-only and zero mutation, so this
-        # runner owns only an exclusive claim, never execution authority.
-        self._media_discovery_worker = media_discovery_worker
-        # Optional admitted Files Copy/Move transfer runner sharing this
-        # Worker's resident loop.  It owns its own durable claim/lease fence
-        # and only executes transfers the API durably admitted; a missing
-        # value means no Worker serves queued transfers.
-        self._files_transfer_worker = files_transfer_worker
-        # Optional Task-kernel engine for newly admitted Files manual work.  It
-        # claims the same registered Worker identity and never competes with the
-        # legacy discovery/manual-execution runners, which explicitly exclude
-        # kernel-managed rows.
-        self._manual_task_worker = manual_task_worker
-        # Every runner sharing this resident loop keeps the *containing*
-        # processing-Worker registration live while its own long claim runs:
-        # a blocked discovery walk must never make a working Worker report
-        # stale.  The Files transfer runner owns the same seam already; the
-        # metadata-only runners bind it identically.
-        bind_registration_heartbeat = getattr(
-            self._files_transfer_worker, "set_worker_heartbeat", None
-        )
-        if callable(bind_registration_heartbeat):
-            bind_registration_heartbeat(self.heartbeat)
-        for other_runner in (
-            self._media_discovery_worker,
-            self._manual_organize_worker,
-            self._manual_task_worker,
+        self._registered = False
+        for runner in (
+            manual_task_worker,
+            media_discovery_worker,
+            manual_organize_worker,
+            files_transfer_worker,
         ):
-            binder = getattr(other_runner, "set_worker_heartbeat", None)
+            binder = getattr(runner, "set_worker_heartbeat", None)
             if callable(binder):
                 binder(self.heartbeat)
-        # Preserve the legacy in-process helper path unless the caller supplies
-        # the identity needed for durable Worker ownership and snapshot fencing.
-        self._worker_registration_enabled = (
-            worker_id is not None
-            or configuration_snapshot_id is not None
-            or configuration_snapshot_digest is not None
-            or manual_organize_worker is not None
-            or media_discovery_worker is not None
-            or files_transfer_worker is not None
-            or manual_task_worker is not None
-        )
-        self._registered = False
 
     @property
     def worker_id(self) -> str:
@@ -672,12 +520,8 @@ class AutomationWorker:
     def label(self) -> str:
         return self._label
 
-    def register(self, now: datetime | None = None) -> ProcessingWorker | None:
-        if not self._worker_registration_enabled or not hasattr(
-            self._repository, "register_worker"
-        ):
-            return None
-        current_now = now or datetime.now(UTC)
+    def register(self, now: datetime | None = None):
+        current = now or datetime.now(UTC)
         worker = self._repository.register_worker(
             worker_id=self._worker_id,
             label=self._label,
@@ -686,26 +530,24 @@ class AutomationWorker:
             configuration_snapshot_id=self._configuration_snapshot_id,
             configuration_snapshot_digest=self._configuration_snapshot_digest,
             runtime_schema_version=self._runtime_schema_version,
-            now=current_now,
+            now=current,
         )
         self._registered = True
         return worker
 
     def heartbeat(self, now: datetime | None = None) -> bool:
-        if not self._worker_registration_enabled or not hasattr(
-            self._repository, "heartbeat_worker"
-        ):
-            return True
-        current_now = now or datetime.now(UTC)
-        return self._repository.heartbeat_worker(self._worker_id, current_now)
+        return self._repository.heartbeat_worker(self._worker_id, now or datetime.now(UTC))
 
-    def stop(self, now: datetime | None = None) -> ProcessingWorker | None:
-        if not self._worker_registration_enabled or not hasattr(self._repository, "stop_worker"):
-            return None
-        current_now = now or datetime.now(UTC)
-        return self._repository.stop_worker(self._worker_id, current_now)
+    def stop(self, now: datetime | None = None):
+        return self._repository.stop_worker(self._worker_id, now or datetime.now(UTC))
 
-    def run_next(self) -> AutomationJob | None:
+    def set_manual_task_worker(self, worker) -> None:
+        self._manual_task_worker = worker
+        binder = getattr(worker, "set_worker_heartbeat", None)
+        if callable(binder):
+            binder(self.heartbeat)
+
+    def run_next(self):
         if self._configuration_snapshot_resolver is not None:
             snapshot_id, digest = self._configuration_snapshot_resolver()
             if (snapshot_id, digest) != (
@@ -715,225 +557,23 @@ class AutomationWorker:
                 self._configuration_snapshot_id = snapshot_id
                 self._configuration_snapshot_digest = digest
                 self._registered = False
-        if (
-            self._worker_registration_enabled
-            and not self._registered
-            and hasattr(self._repository, "register_worker")
-        ):
+        if not self._registered:
             self.register()
-        job = self._repository.claim_next_job(
-            datetime.now(UTC),
-            worker_id=(
-                self._worker_id
-                if self._worker_registration_enabled
-                and hasattr(self._repository, "register_worker")
-                else None
-            ),
-        )
-        if job is None:
-            return None
-        try:
-            if not job.claim_token:
-                raise AutomationClaimLost("claimed automation Job has no ownership token")
-
-            def cancelled() -> bool:
-                if not self.heartbeat():
-                    raise AutomationClaimLost(
-                        f"processing worker {self._worker_id!r} lost registration or was stopped"
-                    )
-                return self._repository.heartbeat_job(
-                    job.job_id, job.claim_token or "", datetime.now(UTC)
-                )
-
-            if cancelled():
-                raise AutomationCancelled()
-            if job.command not in set(AutomationCommand):
-                raise AutomationConfigurationUnavailable(
-                    AutomationFailureEvidence(
-                        "unsupported_workflow",
-                        "unsupported workflow; no Task or discovery started",
-                        "none",
-                        False,
-                        "submit a supported workflow",
-                    )
-                )
-            task_id = self._handler(job, cancelled)
-            if cancelled():
-                raise AutomationCancelled(task_id)
-        except AutomationCancelled as error:
-            cancellation_evidence = (
-                _definition_cancellation_evidence(error.task_id) if job.definition_pinned else None
-            )
-            finished = replace(
-                job,
-                status=AutomationJobStatus.CANCELLED,
-                cancellation_requested=True,
-                updated_at=datetime.now(UTC),
-                completed_at=datetime.now(UTC),
-                task_id=error.task_id,
-                error="workflow cancelled",
-                failure_category=(
-                    cancellation_evidence.category if cancellation_evidence else None
-                ),
-                failure_durable_state=(
-                    cancellation_evidence.durable_state if cancellation_evidence else None
-                ),
-                failure_side_effects=(
-                    cancellation_evidence.side_effects if cancellation_evidence else None
-                ),
-                failure_retry_safe=(
-                    cancellation_evidence.retry_safe if cancellation_evidence else None
-                ),
-                failure_next_action=(
-                    cancellation_evidence.next_action if cancellation_evidence else None
-                ),
-            )
-        except AutomationConfigurationUnavailable as error:
-            evidence = error.evidence
-            finished = replace(
-                job,
-                status=AutomationJobStatus.FAILED,
-                updated_at=datetime.now(UTC),
-                completed_at=datetime.now(UTC),
-                error="saved configuration snapshot is unavailable",
-                failure_category=evidence.category,
-                failure_durable_state=evidence.durable_state,
-                failure_side_effects=evidence.side_effects,
-                failure_retry_safe=evidence.retry_safe,
-                failure_next_action=evidence.next_action,
-            )
-        except AutomationWorkflowFailed as error:
-            evidence = error.evidence
-            finished = replace(
-                job,
-                status=AutomationJobStatus.FAILED,
-                updated_at=datetime.now(UTC),
-                completed_at=datetime.now(UTC),
-                task_id=error.task_id,
-                error="definition-scoped workflow failed",
-                failure_category=evidence.category,
-                failure_durable_state=evidence.durable_state,
-                failure_side_effects=evidence.side_effects,
-                failure_retry_safe=evidence.retry_safe,
-                failure_next_action=evidence.next_action,
-            )
-        except Exception as error:
-            # External messages may contain credentials. Persist only the exception category.
-            finished = replace(
-                job,
-                status=AutomationJobStatus.FAILED,
-                updated_at=datetime.now(UTC),
-                completed_at=datetime.now(UTC),
-                error=f"workflow failed ({type(error).__name__})",
-                failure_category=None,
-                failure_durable_state=None,
-                failure_side_effects=None,
-                failure_retry_safe=None,
-                failure_next_action=None,
-            )
-        else:
-            finished = replace(
-                job,
-                status=AutomationJobStatus.COMPLETED,
-                updated_at=datetime.now(UTC),
-                completed_at=datetime.now(UTC),
-                task_id=task_id,
-                error=None,
-                failure_category=None,
-                failure_durable_state=None,
-                failure_side_effects=None,
-                failure_retry_safe=None,
-                failure_next_action=None,
-            )
-        if job.run_once and job.task_id:
-            if finished.task_id is None:
-                finished = replace(finished, task_id=job.task_id)
-            pending_task = self._repository.get_task(job.task_id)
-            if (
-                pending_task is not None
-                and pending_task.status.value == "pending"
-                and finished.status in {AutomationJobStatus.FAILED, AutomationJobStatus.CANCELLED}
-            ):
-                finished = replace(
-                    finished,
-                    failure_durable_state=(
-                        "the admitted Task and exact pin are retained; no media effect was started"
-                    ),
-                )
-        if finished.task_id is None and job.command is AutomationCommand.SCOPE_CONTINUATION:
-            # A scope continuation can durably create and bind its processing
-            # Task, then exit non-successfully when that Task pauses again or
-            # encounters a later failure.  Preserve that exact persisted link
-            # on the admission Job so the unified run projection keeps one
-            # stable identity and can show the Task's actual progress/actions.
-            # This is read only from the continuation's explicit Job→Task
-            # record; it is never inferred from timing, scope or filenames.
-            reader = getattr(self._repository, "get_scope_continuation_for_job", None)
-            if callable(reader):
-                continuation = reader(job.job_id)
-                continuation_task_id = getattr(continuation, "new_task_id", None)
-                if isinstance(continuation_task_id, str) and continuation_task_id.strip():
-                    finished = replace(finished, task_id=continuation_task_id)
-        if not self._repository.complete_claimed_job(finished):
-            current = self._repository.get_job(job.job_id)
-            if current is None:
-                raise AutomationClaimLost(
-                    "automation Job disappeared after claim ownership was lost"
-                )
-            raise AutomationClaimLost(
-                f"automation Job {job.job_id!r} claim ownership was lost; "
-                "stale terminal commit refused"
-            )
-        persisted = self._repository.get_job(job.job_id)
-        if persisted is None:
-            raise AutomationClaimLost("automation Job disappeared after terminal commit")
-        finished = persisted
-        if (
-            finished.run_once
-            and finished.task_id
-            and finished.status in {AutomationJobStatus.FAILED, AutomationJobStatus.CANCELLED}
+        for runner in (
+            self._manual_task_worker,
+            self._media_discovery_worker,
+            self._manual_organize_worker,
+            self._files_transfer_worker,
         ):
-            task = self._repository.get_task(finished.task_id)
-            if task is not None and task.status.value == "pending":
-                from mediaflow.domain.task_persistence import PersistentTaskStatus
-
-                self._repository.update_task(
-                    replace(
-                        task,
-                        status=(
-                            PersistentTaskStatus.CANCELLED
-                            if finished.status is AutomationJobStatus.CANCELLED
-                            else PersistentTaskStatus.FAILED
-                        ),
-                        updated_at=finished.updated_at,
-                        completed_at=finished.completed_at,
-                        error=finished.failure_durable_state or finished.error,
-                    )
-                )
-        if self._notifications:
-            event_type = {
-                AutomationJobStatus.COMPLETED: NotificationEventType.JOB_COMPLETED,
-                AutomationJobStatus.FAILED: NotificationEventType.JOB_FAILED,
-                AutomationJobStatus.CANCELLED: NotificationEventType.JOB_CANCELLED,
-            }.get(finished.status)
-            if event_type:
-                try:
-                    self._notifications.publish(
-                        NotificationEvent(
-                            f"job:{finished.job_id}:{finished.status.value}",
-                            event_type,
-                            finished.completed_at or finished.updated_at,
-                            {
-                                "command": finished.command.value,
-                                "jobId": finished.job_id,
-                                "status": finished.status.value,
-                                "taskId": finished.task_id,
-                            },
-                        )
-                    )
-                except Exception:
-                    pass
-        return finished
+            if runner is None:
+                continue
+            try:
+                value = runner.run_next()
+            except Exception:
+                continue
+            if value is not None:
+                return value
+        return None
 
     def run(
         self,
@@ -953,15 +593,7 @@ class AutomationWorker:
                         f"processing worker {self._worker_id!r} lost registration or was stopped"
                     )
                 if self.run_next() is None:
-                    if (
-                        self._run_manual_task_work()
-                        or self._run_media_discovery_work()
-                        or self._run_manual_organize_work()
-                        or self._run_files_transfer_work()
-                    ):
-                        processed += 1
-                    else:
-                        sleep(poll_seconds)
+                    sleep(poll_seconds)
                 else:
                     processed += 1
         finally:
@@ -971,98 +603,11 @@ class AutomationWorker:
                 pass
         return processed
 
-    def set_manual_task_worker(self, worker) -> None:
-        """Attach the Task-kernel runner after this Worker's identity exists."""
-
-        if worker is None:
-            raise ValueError("manual Task worker is required")
-        self._manual_task_worker = worker
-        binder = getattr(worker, "set_worker_heartbeat", None)
-        if callable(binder):
-            binder(self.heartbeat)
-
-    def _run_manual_task_work(self) -> bool:
-        """Advance one kernel-admitted Files manual Task without a Job."""
-
-        runner = self._manual_task_worker
-        if runner is None:
-            return False
-        try:
-            return runner.run_next() is not None
-        except Exception:
-            return False
-
-    def _run_media_discovery_work(self) -> bool:
-        """Serve one admitted bounded discovery without holding a Job.
-
-        The runner records its own bounded, secret-free notice and durable
-        outcome, so a rejected discovery never stops this Worker from serving
-        queued Jobs or other admitted work.
-        """
-
-        runner = self._media_discovery_worker
-        if runner is None:
-            return False
-        try:
-            return runner.run_next() is not None
-        except Exception:
-            return False
-
-    def _run_manual_organize_work(self) -> bool:
-        """Serve one admitted exact manual execution without holding a Job.
-
-        The runner records its own bounded, secret-free notice and durable
-        outcome, so a rejected execution never stops this Worker from serving
-        queued Jobs or other admitted executions.
-        """
-
-        runner = self._manual_organize_worker
-        if runner is None:
-            return False
-        try:
-            return runner.run_next() is not None
-        except Exception:
-            return False
-
-    def _run_files_transfer_work(self) -> bool:
-        """Serve one admitted Files transfer without holding a Job.
-
-        The runner records its own bounded, secret-free notice and durable
-        outcome, so a rejected transfer never stops this Worker from serving
-        queued Jobs or other admitted work.
-        """
-
-        runner = self._files_transfer_worker
-        if runner is None:
-            return False
-        try:
-            return runner.run_next() is not None
-        except Exception:
-            return False
-
-
-def _definition_cancellation_evidence(task_id: str | None) -> AutomationFailureEvidence:
-    if task_id:
-        return AutomationFailureEvidence(
-            "workflow_cancelled",
-            "completed Task items are preserved; an in-flight external call was not interrupted",
-            "none",
-            False,
-            "inspect the linked Task and explicitly rerun only after confirming its item state",
-        )
-    return AutomationFailureEvidence(
-        "workflow_cancelled",
-        "no Task was created and no media effect occurred",
-        "none",
-        True,
-        "inspect the Automation definition and leave it enabled for the next scheduled occurrence",
-    )
-
 
 class IntervalScheduler:
     def __init__(
         self,
-        repository: AutomationJobRepository,
+        repository: AutomationSchedulerRepository,
         schedules: tuple[ScheduleDefinition, ...],
         notifications: NotificationPublisher | None = None,
         *,
@@ -1079,20 +624,18 @@ class IntervalScheduler:
         scheduled_principal: str = "automation-scheduler",
     ) -> None:
         if (configuration_snapshot_id is None) != (configuration_snapshot_digest is None):
-            raise ValueError("Job configuration snapshot ID and digest must be provided together")
+            raise ValueError("configuration snapshot ID and digest must be provided together")
         if (
             isinstance(maximum_active_jobs, bool)
             or not isinstance(maximum_active_jobs, int)
             or maximum_active_jobs < 1
             or maximum_active_jobs > 10_000
         ):
-            raise ValueError("maximum active Jobs must be between 1 and 10000")
+            raise ValueError("maximum active Tasks must be between 1 and 10000")
         self._execution_authority = execution_authority
         self._repository = repository
-        # Slice 47 RO-1/RO-2: a due occurrence is admitted as the Task itself.
-        # When the Task kernel is wired (production), no Job row is written and
-        # the occurrence/schedule advance commits with the Task.  The legacy Job
-        # emission is retained only for adapters that never wired the kernel.
+        # A due occurrence is admitted as the Task itself; the occurrence and
+        # schedule advance commit with that Task in one transaction.
         self._scheduling = scheduling_service
         from mediaflow.domain.task_scheduling import bounded_text
 
@@ -1113,7 +656,7 @@ class IntervalScheduler:
             if isinstance(item, CronSchedule)
         }
 
-    def tick(self, now: datetime | None = None) -> tuple[AutomationJob, ...]:
+    def tick(self, now: datetime | None = None) -> tuple[object, ...]:
         current = now or datetime.now(UTC)
         resolution_error = None
         try:
@@ -1181,50 +724,27 @@ class IntervalScheduler:
             if state.next_run_at > current:
                 continue
             next_run = self._next_run(schedule, current, cron)
-            if self._scheduling is not None:
-                admitted_task = self._admit_schedule_task(
-                    schedule,
-                    state.next_run_at,
-                    next_run,
-                    current,
-                    snapshot,
-                    maximum_active_jobs,
-                )
-                if admitted_task is None:
-                    continue
-                job = admitted_task
-            else:
-                job = AutomationJob(
-                    str(uuid4()),
-                    schedule.command,
-                    AutomationJobStatus.PENDING,
-                    current,
-                    current,
-                    limit=schedule.limit,
-                    schedule_id=schedule.schedule_id,
-                    configuration_snapshot_id=snapshot[0] if snapshot else None,
-                    configuration_snapshot_digest=snapshot[1] if snapshot else None,
-                )
-                if not self._repository.enqueue_due_schedule(
-                    schedule.schedule_id,
-                    job,
-                    state.next_run_at,
-                    next_run,
-                    current,
-                    maximum_active_jobs,
-                ):
-                    continue
-            queued.append(job)
+            admitted_task = self._admit_schedule_task(
+                schedule,
+                state.next_run_at,
+                next_run,
+                current,
+                snapshot,
+                maximum_active_jobs,
+            )
+            if admitted_task is None:
+                continue
+            queued.append(admitted_task)
             if self._notifications:
                 try:
                     self._notifications.publish(
                         NotificationEvent(
-                            f"schedule:{schedule.schedule_id}:{job.job_id}",
+                            f"schedule:{schedule.schedule_id}:task:{admitted_task.task_id}",
                             NotificationEventType.SCHEDULE_EMITTED,
                             current,
                             {
-                                "command": job.command.value,
-                                "jobId": job.job_id,
+                                "command": schedule.command.value,
+                                "taskId": admitted_task.task_id,
                                 "scheduleId": schedule.schedule_id,
                             },
                         )
@@ -1254,37 +774,17 @@ class IntervalScheduler:
         now: datetime,
         snapshot: tuple[str, str] | None,
         capacity: int,
-    ) -> AutomationJob | None:
-        """Admit one due legacy schedule as a kernel Task (or its legacy Job).
+    ) -> object | None:
+        """Admit one due legacy schedule as a kernel Task.
 
-        An organizing legacy schedule enters the Task kernel: the Task, its
-        scheduling slot, the schedule advance and its audit row commit in one
-        transaction and no Job row is written.  A non-organizing legacy command
-        keeps its original Job path, because this Task owns organizing work
-        only.  The returned value is an in-memory dispatch record for the
-        caller's rendering/notification; it is never persisted.
+        The Task, its scheduling slot, the schedule advance and its audit row
+        commit in one transaction.  There is no second Job row or legacy
+        execution path: every due occurrence is the Task the Worker consumes.
         """
 
         command = schedule.command
         if not isinstance(command, AutomationCommand):
             command = AutomationCommand(str(command))
-        if command is not AutomationCommand.ORGANIZE:
-            job = AutomationJob(
-                str(uuid4()),
-                command,
-                AutomationJobStatus.PENDING,
-                now,
-                now,
-                limit=schedule.limit,
-                schedule_id=schedule.schedule_id,
-                configuration_snapshot_id=snapshot[0] if snapshot else None,
-                configuration_snapshot_digest=snapshot[1] if snapshot else None,
-            )
-            if self._repository.enqueue_due_schedule(
-                schedule.schedule_id, job, occurrence_at, next_run, now, capacity
-            ):
-                return job
-            return None
         from mediaflow.application.task_scheduling import build_scheduled_task_admission
         from mediaflow.domain.task_persistence import RunDisplayContext
         from mediaflow.domain.task_scheduling import TaskTrigger
@@ -1308,30 +808,12 @@ class IntervalScheduler:
             next_run_at=next_run,
             now=now,
             capacity=capacity,
-            # A legacy interval/Cron occurrence has no saved definition, but
-            # the Task still carries the exact schedule identity that produced
-            # it so the production runner can dispatch it without guessing from
-            # a command label or a timestamp.
             display=RunDisplayContext(
                 origin_definition_name=schedule.schedule_id,
                 origin_kind="legacy-schedule",
             ),
         )
-        if admitted is None:
-            return None
-        return AutomationJob(
-            admitted.task.task_id,
-            command,
-            AutomationJobStatus.PENDING,
-            now,
-            now,
-            limit=schedule.limit,
-            task_id=admitted.task.task_id,
-            schedule_id=schedule.schedule_id,
-            execute_authorized=True,
-            configuration_snapshot_id=snapshot[0] if snapshot else None,
-            configuration_snapshot_digest=snapshot[1] if snapshot else None,
-        )
+        return None if admitted is None else admitted.task
 
     def _tick_automation_definitions(
         self,
@@ -1343,10 +825,10 @@ class IntervalScheduler:
         resource_library_ids: tuple[str, ...],
         enabled_resource_library_ids: tuple[str, ...],
         resolution_error: Exception | None,
-    ) -> list[AutomationJob]:
+    ) -> list[object]:
         """Emit managed-definition occurrences without constructing media work."""
 
-        queued: list[AutomationJob] = []
+        queued: list[object] = []
         known_ids = set()
         for definition in definitions:
             definition_id = _definition_id(definition)
@@ -1468,124 +950,58 @@ class IntervalScheduler:
                 definition_fingerprint = _definition_fingerprint(definition)
                 source_scope = _definition_source_scope(definition)
                 item_limit = _definition_limit(definition)
-                if self._scheduling is not None:
-                    from mediaflow.application.task_scheduling import (
-                        build_scheduled_task_admission,
-                    )
-                    from mediaflow.domain.task_persistence import RunDisplayContext
-                    from mediaflow.domain.task_scheduling import TaskTrigger
+                from mediaflow.application.task_scheduling import (
+                    build_scheduled_task_admission,
+                )
+                from mediaflow.domain.task_persistence import RunDisplayContext
+                from mediaflow.domain.task_scheduling import TaskTrigger
 
-                    command = _command_for_definition_mode(mode)
-                    task, scheduling_state = build_scheduled_task_admission(
-                        command.value,
-                        execute_authorized=True,
-                        trigger=TaskTrigger.SCHEDULE,
-                        principal=self._scheduled_principal,
-                        scope_path=source_scope,
-                        item_limit=item_limit,
-                        configuration_snapshot_id=snapshot[0],
-                        configuration_snapshot_digest=snapshot[1],
-                        require_configuration_snapshot=True,
-                        now=now,
-                    )
-                    job = AutomationJob(
-                        task.task_id,
-                        command,
-                        AutomationJobStatus.PENDING,
-                        now,
-                        now,
-                        limit=item_limit,
-                        task_id=task.task_id,
-                        definition_id=definition_id,
-                        definition_fingerprint=definition_fingerprint,
-                        definition_version=snapshot_version,
-                        occurrence_at=occurrence_at,
-                        run_mode=mode,
-                        resource_library_id=resource_id,
+                command = _command_for_definition_mode(mode)
+                task, scheduling_state = build_scheduled_task_admission(
+                    command.value,
+                    execute_authorized=True,
+                    trigger=TaskTrigger.SCHEDULE,
+                    principal=self._scheduled_principal,
+                    scope_path=source_scope,
+                    item_limit=item_limit,
+                    configuration_snapshot_id=snapshot[0],
+                    configuration_snapshot_digest=snapshot[1],
+                    require_configuration_snapshot=True,
+                    now=now,
+                )
+                if self._execution_authority is not None:
+                    self._execution_authority.authorize_task(task, definition, run_once=False)
+                occurrence = AutomationDefinitionOccurrence(
+                    str(uuid4()),
+                    definition_id,
+                    occurrence_at,
+                    now,
+                    task.task_id,
+                    definition_fingerprint,
+                    snapshot_version,
+                    snapshot[0],
+                    snapshot_version,
+                    snapshot[1],
+                    mode,
+                    resource_id,
+                    source_scope,
+                    item_limit,
+                )
+                admitted = self._repository.admit_due_automation_definition_task(
+                    definition_id,
+                    task,
+                    scheduling_state,
+                    occurrence,
+                    next_run_at=next_run_at,
+                    now=now,
+                    capacity=maximum_active_jobs,
+                    display=RunDisplayContext(
                         source_scope=source_scope,
-                        configuration_snapshot_id=snapshot[0],
-                        configuration_snapshot_digest=snapshot[1],
-                        configuration_snapshot_version=snapshot_version,
-                    )
-                    if self._execution_authority is not None:
-                        self._execution_authority.authorize(job, definition)
-                    occurrence = AutomationDefinitionOccurrence(
-                        str(uuid4()),
-                        definition_id,
-                        occurrence_at,
-                        now,
-                        task.task_id,
-                        definition_fingerprint,
-                        snapshot_version,
-                        snapshot[0],
-                        snapshot_version,
-                        snapshot[1],
-                        mode,
-                        resource_id,
-                        source_scope,
-                        item_limit,
-                        task_id=task.task_id,
-                    )
-                    admitted = self._repository.admit_due_automation_definition_task(
-                        definition_id,
-                        task,
-                        scheduling_state,
-                        occurrence,
-                        next_run_at=next_run_at,
-                        now=now,
-                        capacity=maximum_active_jobs,
-                        display=RunDisplayContext(
-                            source_scope=source_scope,
-                            origin_definition_id=definition_id,
-                            origin_definition_name=getattr(definition, "name", None),
-                            origin_kind="definition-scheduled",
-                        ),
-                    )
-                else:
-                    job = AutomationJob(
-                        str(uuid4()),
-                        _command_for_definition_mode(mode),
-                        AutomationJobStatus.PENDING,
-                        now,
-                        now,
-                        limit=item_limit,
-                        definition_id=definition_id,
-                        definition_fingerprint=definition_fingerprint,
-                        definition_version=snapshot_version,
-                        occurrence_at=occurrence_at,
-                        run_mode=mode,
-                        resource_library_id=resource_id,
-                        source_scope=source_scope,
-                        configuration_snapshot_id=snapshot[0],
-                        configuration_snapshot_digest=snapshot[1],
-                        configuration_snapshot_version=snapshot_version,
-                    )
-                    if self._execution_authority is not None:
-                        self._execution_authority.authorize(job, definition)
-                    occurrence = AutomationDefinitionOccurrence(
-                        str(uuid4()),
-                        definition_id,
-                        occurrence_at,
-                        now,
-                        job.job_id,
-                        definition_fingerprint,
-                        snapshot_version,
-                        snapshot[0],
-                        snapshot_version,
-                        snapshot[1],
-                        mode,
-                        resource_id,
-                        source_scope,
-                        item_limit,
-                    )
-                    admitted = self._repository.enqueue_due_automation_definition(
-                        definition_id,
-                        job,
-                        occurrence,
-                        next_run_at,
-                        now,
-                        maximum_active_jobs,
-                    )
+                        origin_definition_id=definition_id,
+                        origin_definition_name=getattr(definition, "name", None),
+                        origin_kind="definition-scheduled",
+                    ),
+                )
             except Exception:
                 self._record_definition_failure(
                     definition_id,
@@ -1601,9 +1017,9 @@ class IntervalScheduler:
                 if latest is not None and latest.next_run_at != occurrence_at:
                     reason = "duplicate or concurrent tick did not win this occurrence"
                     action = "inspect the already-emitted occurrence; no duplicate retry is needed"
-                elif self._active_job_capacity_reached(maximum_active_jobs):
-                    reason = "configured active Job capacity has been reached"
-                    action = "wait for an active Job to finish, then tick again"
+                elif self._active_task_capacity_reached(maximum_active_jobs):
+                    reason = "configured active Task capacity has been reached"
+                    action = "wait for an active Task to finish, then tick again"
                 else:
                     reason = "another scheduler instance owns this occurrence"
                     action = "inspect the occurrence state, then tick again if it remains due"
@@ -1616,17 +1032,17 @@ class IntervalScheduler:
                     expected_next_run_at=occurrence_at,
                 )
                 continue
-            queued.append(job)
+            queued.append(admitted.task)
             if self._notifications:
                 try:
                     self._notifications.publish(
                         NotificationEvent(
-                            f"automation-definition:{definition_id}:{job.job_id}",
+                            f"automation-definition:{definition_id}:task:{admitted.task.task_id}",
                             NotificationEventType.SCHEDULE_EMITTED,
                             now,
                             {
                                 "definitionId": definition_id,
-                                "jobId": job.job_id,
+                                "taskId": admitted.task.task_id,
                                 "occurrenceAt": occurrence_at.isoformat(),
                                 "runMode": mode.value,
                             },
@@ -1693,8 +1109,8 @@ class IntervalScheduler:
             # execute or suppress an already durable occurrence.
             pass
 
-    def _active_job_capacity_reached(self, maximum_active_jobs: int) -> bool:
-        counter = getattr(self._repository, "active_automation_job_count", None)
+    def _active_task_capacity_reached(self, maximum_active_jobs: int) -> bool:
+        counter = getattr(self._repository, "count_scheduled_capacity_use", None)
         if not callable(counter):
             return False
         try:

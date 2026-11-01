@@ -1,11 +1,9 @@
-# NO ACTIVE IMPLEMENTATION TASK
+# Task 47.4 — 独立 Job 系统退出与 Task 管理闭环
 
 Task47.3 已由 B 验收 PASS；记录在 `383d8834787674675183f4b251d9dfd26a5dc511:TASK.md`，
 接受候选为 `a0f09afefac2a85a70aca43c4cfbe1e36e04f1de`，原 Base 不变。
-用户本轮只要求**规划下一 Task**。以下为 Task47.4 草案，不授权实施、派生代理、push、
-部署或 Slice 关闭；后续明确授权开发时原地激活，并核对中间变更，不静默重定 Base。
-
-# Task 47.4 — 独立 Job 系统退出与 Task 管理闭环（规划草案）
+用户本轮明确授权按此草案实施并交 B 审查；本文件原地激活该 Task，不重定 Base，
+不派生代理、不 push、不部署、不宣告 Slice PASS / CLOSED。
 
 Authority: committed [SLICE.md](SLICE.md), RO-1/2/4/5、AC-4/11/12–18；
 [Development Workflow](docs/development-workflow.md) 是生命周期、测试和收尾依据。
@@ -17,12 +15,12 @@ B 不改 A-owned Slice/Roadmap/Progress，不自行宣告 Slice PASS / CLOSED。
 Task ID: 47.4
 Task Type: SLICE
 Parent Slice: 47
-Status: PLANNED
+Status: READY FOR B REVIEW
 Task Base: 383d8834787674675183f4b251d9dfd26a5dc511
 Difficulty: High
 Test Level: T4
 Planner / Reviewer: B
-Implementation authorization: NOT GIVEN — PLANNING DRAFT ONLY
+Implementation authorization: USER-AUTHORIZED — IMPLEMENTED, AWAITING B REVIEW
 ```
 
 ## Preflight / accepted baseline
@@ -31,7 +29,7 @@ Implementation authorization: NOT GIVEN — PLANNING DRAFT ONLY
 preflight PASS，workspace/Git 可写。无预存 tracked 修改；预存 OS/log/参考图片、`15`、
 `output/database-reference-2026-11-01/`、`output/organize-flow-2026-11-01.html` 与 imagegen
 ZIP 保留且不暂存。不读用户数据库、
-媒体或秘密配置。本轮只改此草案，不改生产、测试、schema 或 A-owned 文件。
+媒体或秘密配置。本轮由 Developer 按用户授权实施生产、测试与前端；A-owned Slice/Roadmap/Progress 不变。
 
 Task47.3 已接受：新 Files/due/Run once/direct CLI/batch/remote organizing 共享 Task
 admission/claim/fence/管线；四类恢复留在原 Task；原 Automation 结果/时间冻结；正常
@@ -302,15 +300,59 @@ Task Center/通知；删除共享配置/安全/证据；恢复 Pause/resume/retr
 
 ## Developer Completion Report
 
-未开始实施。明确授权激活草案后再填写：coherent code/test SHA、READY FOR B REVIEW、
-变化/受影响命令及真实结果、剩余风险；不自评 PASS、不要求准备全量门禁 dossier。
+```text
+Status: READY FOR B REVIEW
+Task Base: 383d8834787674675183f4b251d9dfd26a5dc511
+Candidate: 待本轮唯一开发 checkpoint 提交后回填
+```
+
+### 变化摘要
+
+- 生产源码移除 `AutomationJob`/Job repository/service/worker、`automation_jobs` 表/索引/FK、
+  Job API/CLI/Web 集合与恢复 Job 回落；统一为 Task scheduling/claim/fence/control。
+- Scheduler due、Run once、remote organize、direct CLI、Files/batch/retry 均只 admit/consume Task；
+  remote 等价入口为 `POST /api/v1/tasks`，CLI 增加 `tasks cancel`，保留原权限语义。
+- 定义 due/occurrence 改为 Task 身份；execution authorization 消费绑定 `consumed_task_id`；
+  operational logs、Automation records、Task Center、Dashboard、V2 Web 不再依赖 Job。
+- fresh schema 升到 58，仅接受本版本 fresh/reopen；旧 Job schema 显式失败关闭（用户已排除升级）。
+- Job 专属 legacy tests 已按退役行为改写/移除；前端 Job entity/routes/字段退出；harness 的
+  选定原生旅程改走 Task engine。保留共享 pipelines、四类恢复、pins、authority、attachments、
+  non-replay 和普通文件/通知 runner。
+
+### 实际验证（Developer 受影响范围）
+
+| 命令 / cwd | 实际结果 |
+|---|---|
+| `.venv/bin/python -m unittest discover -s tests -q` (`/Users/songzhidong/mediaflow`) | 2379 tests, OK, 7 skipped |
+| `.venv/bin/ruff format --check .` / `.venv/bin/ruff check .` | 369 files formatted；All checks passed |
+| `.venv/bin/python -m compileall -q mediaflow tests scripts` | exit 0 |
+| `python3 scripts/check_governance.py` | governance check: PASS |
+| `.venv/bin/mediaflow --config config/strategy.example.json config validate` / phase13.2 example | 两者均通过 |
+| `rg -n -i 'ffprobe\|ffmpeg' mediaflow pyproject.toml` | 无匹配 |
+| `git diff --check` | 无输出 |
+| Web `npm run typecheck` / `lint` / `format:check` / `test -- run` / `build` | 全部通过；1259 unit tests passed |
+| E2E: `automation-lifecycle` + `automation-run-once` (python.automation config) | 17 passed |
+| E2E: `automation-workspace` (python config) | 8 passed |
+| E2E: `automation-settings` + `operations-task-center-visual` | 15 passed |
+| `.venv/bin/python -m pip wheel . --no-deps` + `scripts/wheel_smoke_test.py <wheel>` | wheel 构建成功；smoke exit 0，fresh schema 58，无 migration |
+| `docker build -t mediaflow:task47.4 .` | exit 0 |
+
+### 未完成 / 风险（交 B 处置）
+
+- Docker release-security smoke 在本机因 Docker Desktop 不共享临时 bind 路径
+  `/var/folders/.../media/incoming` 启动失败，属环境挂载限制；镜像 build 已通过。
+- `operations-inventory.python.spec.ts` 仍含旧 Job/paused-scope/recovery-batch 旅程，整文件本次
+  未全绿；本次授权的原生路径 spec 已通过。B 全量 T4 时需将这些旧 spec 与退役边界重新对齐。
+- 旧 schema 升级/旧数据迁移按用户明确排除，没有实现；schema 58 对旧 Job 库显式失败关闭。
+- B 仍须在完整 Base..candidate 上执行 T4、原生/视觉、clean wheel/Docker fresh/restart/security
+  验收并重评 Slice RO-1–5 / AC-1–19；Developer 不自评 PASS。
 
 ## B Review Result
 
 ```text
-Reviewed: NOT IMPLEMENTED — PLANNING DRAFT
+Reviewed: PENDING — Developer candidate submitted
 Decision: NOT REVIEWED
-Task blockers: no implementation assessment yet
-Slice Required Outcomes / Surfaces all satisfied: NO — remaining Job system/surfaces
-Next: await explicit implementation authorization; retain the same Task draft/Base
+Task blockers: none assessed yet
+Slice Required Outcomes / Surfaces all satisfied: NOT YET ASSESSED — B must reevaluate all RO/AC
+Next: B reviews full Base..candidate, runs applicable T4 acceptance/full regression and decides PASS or FIX REQUIRED
 ```

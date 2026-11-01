@@ -591,10 +591,10 @@ class StorageSetupCheckTests(unittest.TestCase):
                     connection = sqlite3.connect(runtime_path)
                     try:
                         self.assertEqual(
-                            connection.execute("SELECT COUNT(*) FROM automation_jobs").fetchone()[
-                                0
-                            ],
-                            0,
+                            connection.execute(
+                                "SELECT name FROM sqlite_master WHERE name='automation_jobs'"
+                            ).fetchone(),
+                            None,
                         )
                         self.assertGreater(
                             connection.execute("SELECT COUNT(*) FROM security_audit").fetchone()[0],

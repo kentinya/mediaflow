@@ -187,7 +187,6 @@ export interface RecoveryBatchChild {
   readonly checkpointVersion: string;
   readonly status: string;
   readonly continuationId: string | null;
-  readonly jobId: string | null;
   readonly newTaskId: string | null;
   readonly newResultId: string | null;
   readonly reason: string | null;
@@ -593,7 +592,6 @@ export function normalizeRecoveryBatch(payload: unknown): RecoveryBatchModel {
         checkpointVersion: text(item, "checkpoint_version"),
         status: text(item, "status"),
         continuationId: optionalText(item, "continuation_id"),
-        jobId: optionalText(item, "job_id"),
         newTaskId: optionalText(item, "new_task_id"),
         newResultId: optionalText(item, "new_result_id"),
         reason: optionalText(item, "reason"),

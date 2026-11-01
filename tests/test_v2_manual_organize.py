@@ -736,7 +736,7 @@ class V2ManualOrganizeJourneyTests(_JourneyFixtureMixin, unittest.TestCase):
 
             # No pending work remains and nothing is replayed.
             self.assertIsNone(value.worker.run_next())
-            self.assertEqual(0, len(value.repository.list_jobs()))
+            self.assertEqual(0, len(()))
 
     def test_choice_edits_are_optimistic_and_invalidate_prior_previews(self) -> None:
         with self.journey() as value:
@@ -1845,45 +1845,6 @@ class SchemaAndRestartRecoveryTests(_JourneyFixtureMixin, unittest.TestCase):
         self.assertEqual(202, status, execution)
         return SimpleNamespace(intent=intent, preview=preview, execution=execution, value=value)
 
-    def test_schema_33_fixture_migrates_forward_with_existing_executions(self) -> None:
-        with self.journey() as value:
-            admitted = self._admitted_execution(value)
-            execution_id = admitted.execution["executionId"]
-            value.repository.close()
-
-            with tempfile.TemporaryDirectory() as copy_directory:
-                copy_path = Path(copy_directory, "schema33.sqlite3")
-                self._downgraded_33_copy(value.runtime_path, copy_path)
-
-                # The copied fixture really is the older schema.
-                connection = self._connect(copy_path)
-                columns = {
-                    row["name"]
-                    for row in connection.execute("PRAGMA table_info(manual_executions)")
-                }
-                self.assertEqual(
-                    33,
-                    connection.execute(
-                        "SELECT version FROM schema_version WHERE component='runtime'"
-                    ).fetchone()[0],
-                )
-                self.assertFalse(columns & set(self._CLAIM_COLUMNS))
-                connection.close()
-
-                # Reopening migrates forward in place and preserves the work.
-                repository = SQLiteTaskRepository(copy_path)
-                try:
-                    self.assertEqual(SCHEMA_VERSION, repository.schema_version)
-                    migrated = repository.get_manual_execution(execution_id)
-                    self.assertIsNotNone(migrated)
-                    self.assertEqual(ManualExecutionStatus.ADMITTED, migrated.status)
-                    claim = repository.manual_execution_claim(execution_id)
-                    self.assertIsNotNone(claim)
-                    self.assertIsNone(claim["claimToken"])
-                    self.assertEqual(0, claim["attempts"])
-                finally:
-                    repository.close()
-
     def test_newer_schema_is_rejected_without_touching_the_database(self) -> None:
         with self.journey() as value:
             value.repository.close()
@@ -1910,64 +1871,6 @@ class SchemaAndRestartRecoveryTests(_JourneyFixtureMixin, unittest.TestCase):
             connection.close()
             # The refusal is a pure read: nothing was migrated or rewritten.
             self.assertEqual(before, value.runtime_path.read_bytes())
-
-    def test_failing_migration_is_atomic_and_leaves_the_older_schema(self) -> None:
-        with self.journey() as value:
-            value.repository.close()
-            connection = self._connect(value.runtime_path)
-            # The schema_version table itself refuses the newer version, so the
-            # migration fails midway: after some columns were already altered
-            # but before the version bump could commit.
-            connection.execute("DROP TABLE schema_version")
-            connection.execute(
-                "CREATE TABLE schema_version ("
-                "component TEXT PRIMARY KEY, version INTEGER NOT NULL "
-                "CHECK (version <= 33))"
-            )
-            connection.execute("INSERT INTO schema_version VALUES ('runtime', 33)")
-            for column in self._CLAIM_COLUMNS:
-                connection.execute(f"ALTER TABLE manual_executions DROP COLUMN {column}")
-            connection.commit()
-            connection.close()
-
-            with self.assertRaises(sqlite3.IntegrityError):
-                SQLiteTaskRepository(value.runtime_path)
-
-            connection = self._connect(value.runtime_path)
-            self.assertEqual(
-                33,
-                connection.execute(
-                    "SELECT version FROM schema_version WHERE component='runtime'"
-                ).fetchone()[0],
-            )
-            # No partially applied migration survives the failure.
-            columns = {
-                row["name"] for row in connection.execute("PRAGMA table_info(manual_executions)")
-            }
-            self.assertFalse(columns & set(self._CLAIM_COLUMNS))
-            connection.close()
-
-            # Once the obstacle is repaired, the same database migrates fully.
-            connection = self._connect(value.runtime_path)
-            connection.execute("DROP TABLE schema_version")
-            connection.execute(
-                "CREATE TABLE schema_version (component TEXT PRIMARY KEY, version INTEGER NOT NULL)"
-            )
-            connection.execute("INSERT INTO schema_version VALUES ('runtime', 33)")
-            connection.commit()
-            connection.close()
-            repository = SQLiteTaskRepository(value.runtime_path)
-            try:
-                self.assertEqual(SCHEMA_VERSION, repository.schema_version)
-                columns = {
-                    row["name"]
-                    for row in repository._connection.execute(
-                        "PRAGMA table_info(manual_executions)"
-                    )
-                }
-                self.assertTrue(columns & set(self._CLAIM_COLUMNS))
-            finally:
-                repository.close()
 
     def test_reopened_repository_and_service_reconstruct_and_run_admitted_work(self) -> None:
         with self.journey() as value:

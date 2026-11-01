@@ -137,15 +137,13 @@ export type AutomationActionKind =
   | "preview-definition"
   | "preview-grant-state"
   | "preview-grant"
-  | "occurrence-task"
-  | "occurrence-job";
+  | "occurrence-task";
 
 const AUTOMATION_DEFINITIONS_ROUTE = "/api/v1/automation/task-definitions/";
 const OPERATIONS_DEFINITIONS_ROUTE =
   "/api/v1/operations/automation/task-definitions/";
 const CONFIGURATION_REVISIONS_ROUTE = "/api/v1/configuration/revisions/";
 const OPERATIONS_TASKS_ROUTE = "/api/v1/operations/tasks/";
-const OPERATIONS_JOBS_ROUTE = "/api/v1/operations/jobs/";
 
 type AutomationActionContract = ActionTransportContract;
 
@@ -311,14 +309,6 @@ export const AUTOMATION_ACTION_CONTRACTS: Readonly<
   "occurrence-task": {
     method: "GET",
     routePrefix: OPERATIONS_TASKS_ROUTE,
-    suffix: "",
-    requiresConfirmation: false,
-    offeredWithoutTransport: false,
-    objectBound: true,
-  },
-  "occurrence-job": {
-    method: "GET",
-    routePrefix: OPERATIONS_JOBS_ROUTE,
     suffix: "",
     requiresConfirmation: false,
     offeredWithoutTransport: false,
@@ -828,7 +818,6 @@ export interface AutomationOccurrenceModel {
   readonly definitionId: string;
   readonly occurrenceAt: string;
   readonly emittedAt: string;
-  readonly jobId: string;
   readonly definitionVersion: number;
   readonly configurationRevisionId: string;
   readonly configurationRevisionVersion: number;
@@ -844,7 +833,6 @@ export interface AutomationOccurrenceModel {
   readonly outcomeSummary: AutomationOutcomeSummaryModel | null;
   readonly actions: {
     readonly task: AutomationActionModel | null;
-    readonly job: AutomationActionModel | null;
   };
 }
 
@@ -855,9 +843,7 @@ export function normalizeAutomationOccurrence(
 ): AutomationOccurrenceModel {
   const source = readRecord(value, field);
   const taskId = optionalText(source, "taskId");
-  const jobId = text(source, "jobId");
   let task: AutomationActionModel | null = null;
-  let job: AutomationActionModel | null = null;
   if (withActions) {
     const actions = readRecord(source["actions"], `${field}.actions`);
     task =
@@ -869,19 +855,12 @@ export function normalizeAutomationOccurrence(
             "occurrence-task",
             taskId,
           );
-    job = normalizeAutomationAction(
-      actions["job"],
-      `${field}.actions.job`,
-      "occurrence-job",
-      jobId,
-    );
   }
   return {
     occurrenceId: text(source, "occurrenceId"),
     definitionId: text(source, "definitionId"),
     occurrenceAt: text(source, "occurrenceAt"),
     emittedAt: text(source, "emittedAt"),
-    jobId,
     definitionVersion: count(source, "definitionVersion"),
     configurationRevisionId: text(source, "configurationRevisionId"),
     configurationRevisionVersion: count(source, "configurationRevisionVersion"),
@@ -902,7 +881,7 @@ export function normalizeAutomationOccurrence(
       source["outcomeSummary"],
       `${field}.outcomeSummary`,
     ),
-    actions: { task, job },
+    actions: { task },
   };
 }
 
@@ -955,7 +934,6 @@ export interface AutomationDefinitionModel {
   readonly definitionState: (typeof AUTOMATION_DEFINITION_STATES)[number];
   readonly nextRunAt: string | null;
   readonly lastOccurrenceAt: string | null;
-  readonly lastJobId: string | null;
   readonly lastTaskId: string | null;
   readonly lastOutcome: string | null;
   readonly lastReason: string | null;
@@ -1011,7 +989,6 @@ export function normalizeAutomationDefinition(
     ),
     nextRunAt: optionalText(occurrence, "nextRunAt"),
     lastOccurrenceAt: optionalText(occurrence, "lastOccurrenceAt"),
-    lastJobId: optionalText(occurrence, "lastJobId"),
     lastTaskId: optionalText(occurrence, "lastTaskId"),
     lastOutcome: optionalText(occurrence, "lastOutcome"),
     lastReason: optionalText(occurrence, "lastReason"),
@@ -2076,7 +2053,6 @@ export interface AutomationRecordModel {
   /** The real execution window; `null` while that stage was not reached. */
   readonly executionStartedAt: string | null;
   readonly executionFinishedAt: string | null;
-  readonly jobId: string | null;
   readonly taskId: string | null;
   readonly definitionId: string | null;
   readonly sourceScope: string | null;
@@ -2109,7 +2085,6 @@ export interface AutomationRecordModel {
     readonly durableState: string;
     readonly explanation: string;
     readonly taskCenterRunId: string | null;
-    readonly jobId: string | null;
     readonly definitionSettings: string | null;
     readonly supportedCommand: string | null;
     readonly startAgainAllowed: boolean;
@@ -2159,7 +2134,6 @@ function normalizeAutomationRecord(
     updatedAt: text(source, "updated_at"),
     executionStartedAt: optionalText(source, "executionStartedAt"),
     executionFinishedAt: optionalText(source, "executionFinishedAt"),
-    jobId: optionalText(source, "job_id"),
     taskId: optionalText(source, "task_id"),
     definitionId: optionalText(history, "definitionId"),
     sourceScope: optionalText(source, "source_scope"),
@@ -2226,7 +2200,6 @@ function normalizeAutomationRecord(
       durableState: text(handoff, "durableState"),
       explanation: text(handoff, "explanation"),
       taskCenterRunId: optionalText(taskCenter ?? {}, "runId"),
-      jobId: optionalText(handoff, "jobId"),
       definitionSettings: optionalText(handoff, "definitionSettings"),
       supportedCommand: optionalText(handoff, "supportedCommand"),
       startAgainAllowed,

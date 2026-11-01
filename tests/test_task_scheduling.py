@@ -17,11 +17,6 @@ from datetime import UTC, datetime, timedelta
 from pathlib import Path
 
 from mediaflow.application.task_runtime import PersistentTaskCoordinator
-from mediaflow.domain.automation import (
-    AutomationCommand,
-    AutomationJob,
-    AutomationJobStatus,
-)
 from mediaflow.domain.media_evidence import PipelineEvidence
 from mediaflow.domain.task_persistence import (
     PersistentResultRecord,
@@ -166,7 +161,7 @@ class SchedulingKernelTestCase(unittest.TestCase):
         return self.repository
 
     def row_counts(self) -> dict[str, int]:
-        names = ("tasks", "task_items", "task_results", "task_scheduling", "automation_jobs")
+        names = ("tasks", "task_items", "task_results", "task_scheduling")
         with sqlite3.connect(self.database) as connection:
             return {
                 name: connection.execute(f"SELECT COUNT(*) FROM {name}").fetchone()[0]
@@ -195,7 +190,6 @@ class AdmissionTests(SchedulingKernelTestCase):
                 "task_items": 0,
                 "task_results": 0,
                 "task_scheduling": 1,
-                "automation_jobs": 0,
             },
         )
 
@@ -535,7 +529,6 @@ class CapacityTransitionTests(SchedulingKernelTestCase):
             self.repository.get_task(admission.task.task_id).status,
             PersistentTaskStatus.PAUSED,
         )
-        self.assertEqual(self.row_counts()["automation_jobs"], 0)
 
         # Once capacity is free again the *same* Task is re-admitted.
         claim_other = self.claimed(service, now=NOW + timedelta(seconds=7))
@@ -1560,6 +1553,7 @@ class TransitionBoundaryTests(unittest.TestCase):
             # Task47.3: the definition-scoped automatic pipeline adopts a
             # Scheduler/Run once kernel Task and publishes under its claim.
             "application/task_runtime.py",
+            "application/unattended_execution.py",
             "final_cli.py",
             "interfaces/service_api.py",
             "domain/task_scheduling.py",
@@ -1577,69 +1571,6 @@ class TransitionBoundaryTests(unittest.TestCase):
         # can never claim the same new work through the old queue.
         runtime = (package / "infrastructure" / "sqlite_runtime.py").read_text(encoding="utf-8")
         self.assertIn("NOT EXISTS (SELECT 1 FROM task_scheduling", runtime)
-
-
-class CoexistenceCapacityTests(SchedulingKernelTestCase):
-    """The new Task kernel and the legacy Job queue share one capacity (M6).
-
-    During phased coexistence both entrances stay live.  The shared configured
-    maximum must therefore bound the *sum* of new Task machine work and the
-    still-queued legacy Jobs, deduplicated by the explicit Job -> Task link, so
-    two different entrances can never each admit a "last slot".
-    """
-
-    def _job(self, job_id: str, *, task_id: str | None = None):
-        return AutomationJob(
-            job_id,
-            AutomationCommand.ORGANIZE,
-            AutomationJobStatus.PENDING,
-            NOW,
-            NOW,
-            task_id=task_id,
-        )
-
-    def test_full_legacy_job_queue_rejects_a_new_task_admission(self) -> None:
-        self.assertTrue(self.repository.admit_job(self._job("job-1"), 1))
-        before = self.row_counts()
-
-        with self.assertRaises(TaskQueueFull):
-            _admit(self.service(capacity=1), request_id="request-2")
-
-        self.assertEqual(self.row_counts(), before)
-        self.assertEqual(
-            self.repository.count_scheduled_capacity_use(), 0, "no orphan Task was written"
-        )
-
-    def test_full_task_slot_rejects_a_new_legacy_job(self) -> None:
-        _admit(self.service(capacity=1))
-
-        self.assertFalse(self.repository.admit_job(self._job("job-1"), 1))
-        self.assertEqual(self.row_counts()["automation_jobs"], 0)
-
-    def test_a_job_linked_to_a_scheduled_task_is_counted_once(self) -> None:
-        admission = _admit(self.service(capacity=2))
-        # The explicit Job -> Task link is the same admission: it must not make
-        # the shared use look like two of the two slots.
-        self.assertTrue(
-            self.repository.admit_job(self._job("job-linked", task_id=admission.task.task_id), 2)
-        )
-
-        self.assertTrue(
-            self.repository.admit_job(
-                self._job("job-2"),
-                2,
-            )
-        )
-        self.assertFalse(self.repository.admit_job(self._job("job-3"), 2))
-
-    def test_exact_duplicate_still_converges_at_full_shared_capacity(self) -> None:
-        service = self.service(capacity=1)
-        admission = _admit(service)
-        self.assertTrue(self.repository.admit_job(self._job("job-1"), 1) is False)
-
-        duplicate = _admit(service)
-        self.assertTrue(duplicate.duplicate)
-        self.assertEqual(duplicate.task.task_id, admission.task.task_id)
 
 
 if __name__ == "__main__":

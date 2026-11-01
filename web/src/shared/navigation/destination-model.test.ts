@@ -28,8 +28,6 @@ describe("destination model", () => {
       "Task list",
       "Edit rule object",
       "Task detail",
-      "Job list",
-      "Job detail",
       "Manual organize",
       "Manual intent",
       "整理发现",
@@ -343,12 +341,6 @@ describe("destination model", () => {
       ).toBe("status=failed&command=preview");
       expect(
         allowlistedDestinationSearch(
-          "/operations/jobs",
-          "authorization=Bearer%20x&status=pending",
-        ),
-      ).toBe("status=pending");
-      expect(
-        allowlistedDestinationSearch(
           "/operations/tasks",
           "token=secret&unknown=x",
         ),
@@ -362,18 +354,6 @@ describe("destination model", () => {
           "q_status=failed&q_command=preview&status=failed&token=secret",
         ),
       ).toBe("q_status=failed&q_command=preview");
-      expect(
-        allowlistedDestinationSearch(
-          "/operations/jobs/$jobId",
-          "q_status=pending&token=secret",
-        ),
-      ).toBe("q_status=pending");
-      expect(
-        allowlistedDestinationSearch(
-          "/operations/jobs/$jobId",
-          "token=secret&status=pending",
-        ),
-      ).toBeNull();
     });
 
     it("keeps the bounded selected-run detail context through continuation", () => {
@@ -403,13 +383,6 @@ describe("destination model", () => {
           "/operations",
           "tab=admin&istat=half_done&rkind=mystery&item=bad%20value" +
             "&icur=../../etc/passwd&idir=sideways&token=secret",
-        ),
-      ).toBeNull();
-      // A Job detail route never owns the run detail context.
-      expect(
-        allowlistedDestinationSearch(
-          "/operations/jobs/$jobId",
-          "tab=records&istat=waiting",
         ),
       ).toBeNull();
     });

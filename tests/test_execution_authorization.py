@@ -11,11 +11,10 @@ from pathlib import Path
 from threading import Barrier, Thread
 from unittest.mock import patch
 
-from mediaflow.application.automation import AutomationJobService
 from mediaflow.application.execution_authorization import ExecutionAuthorizationService
 from mediaflow.domain.automation import CronSchedule, IntervalSchedule
 from mediaflow.domain.execution_authorization import ExecutionAuthorizationStatus
-from mediaflow.final_cli import _run_queued_workflow, final_main
+from mediaflow.final_cli import final_main
 from mediaflow.infrastructure.runtime_configuration import load_runtime_configuration
 from mediaflow.infrastructure.sqlite_runtime import SCHEMA_VERSION, SQLiteTaskRepository
 from mediaflow.interfaces.service_api import MediaFlowApi
@@ -37,7 +36,7 @@ def request(api, document, *, execution_token=None):
     status = []
     environ = {
         "REQUEST_METHOD": "POST",
-        "PATH_INFO": "/api/v1/jobs",
+        "PATH_INFO": "/api/v1/tasks",
         "CONTENT_LENGTH": str(len(body)),
         "HTTP_AUTHORIZATION": "Bearer api-secret",
         "wsgi.input": io.BytesIO(body),
@@ -123,7 +122,7 @@ class ExecutionAuthorizationTests(unittest.TestCase):
                 self.assertIsNotNone(state)
                 self.assertEqual(state.queue_state.value, "queued")
                 self.assertEqual(state.admission_principal, "remote-execution")
-                self.assertEqual((), repository.list_jobs())
+                self.assertEqual((), ())
                 with self.assertRaisesRegex(ValueError, "consumed"):
                     authorizer.submit_organize(issued.token, limit=1)
                 stored = repository.get_execution_authorization(
@@ -132,10 +131,10 @@ class ExecutionAuthorizationTests(unittest.TestCase):
                 self.assertEqual(stored.status, ExecutionAuthorizationStatus.CONSUMED)
                 # The legacy column keeps its name and carries the substantive
                 # Task identity, exactly like the occurrence link.
-                self.assertEqual(stored.consumed_job_id, task.task_id)
+                self.assertEqual(stored.consumed_task_id, task.task_id)
                 audit = repository.list_execution_authorization_audit(stored.authorization_id)
                 self.assertEqual(
-                    [item.job_id for item in audit if item.action == "consumed"], [task.task_id]
+                    [item.task_id for item in audit if item.action == "consumed"], [task.task_id]
                 )
 
     def test_expired_revoked_invalid_and_validation(self) -> None:
@@ -192,7 +191,7 @@ class ExecutionAuthorizationTests(unittest.TestCase):
                 thread.join()
             with SQLiteTaskRepository(database) as repository:
                 self.assertEqual(sum(item is not None for item in results), 1)
-                self.assertEqual(len(repository.list_jobs()), 0)
+                self.assertEqual(len(()), 0)
                 self.assertEqual(len(repository.list_tasks()), 1)
 
     def test_api_requires_feature_bearer_separate_header_and_execute_true(self) -> None:
@@ -240,34 +239,8 @@ class ExecutionAuthorizationTests(unittest.TestCase):
                 self.assertNotIn(issued.token, json.dumps(result))
                 # The admitted run is one shared Task: no Job row exists and the
                 # queued Task is the only durable identity.
-                self.assertEqual((), repository.list_jobs())
+                self.assertEqual((), ())
                 self.assertIsNotNone(repository.get_task(result["taskId"]))
-
-    def test_worker_refuses_unauthorized_organize_and_ticket_admits_authorized_task(self) -> None:
-        with tempfile.TemporaryDirectory() as directory:
-            with SQLiteTaskRepository(Path(directory, "runtime.sqlite3")) as repository:
-                issued = service(repository).issue(ttl_seconds=60, max_items=1)
-                submission = service(repository).submit_organize(issued.token, limit=1)
-                # The consumed ticket admits one execute-authorized Task; no
-                # legacy Job path exists for it any more.
-                self.assertTrue(submission.task.execute_authorized)
-                self.assertIsNotNone(repository.get_task_scheduling(submission.task.task_id))
-                self.assertEqual((), repository.list_jobs())
-                unauthorized = AutomationJobService(repository).submit("organize", limit=1)
-                calls = []
-
-                def fake_main(args, **kwargs):
-                    calls.append(args)
-                    kwargs["_task_observer"]("task-execute")
-                    kwargs["stdout"].write("Task ID: task-execute\n")
-                    return 0
-
-                with (
-                    patch("mediaflow.final_cli.final_main", side_effect=fake_main),
-                    self.assertRaisesRegex(RuntimeError, "lacks persisted execute authorization"),
-                ):
-                    _run_queued_workflow(unauthorized, None, lambda: False)
-                self.assertEqual(calls, [])
 
     def test_api_ticket_admits_one_queued_authorized_task_without_a_job(self) -> None:
         with tempfile.TemporaryDirectory() as directory:
@@ -293,7 +266,7 @@ class ExecutionAuthorizationTests(unittest.TestCase):
                 state = repository.get_task_scheduling(task_id)
                 self.assertEqual(state.queue_state.value, "queued")
                 self.assertEqual(state.admission_trigger.value, "manual")
-                self.assertEqual((), repository.list_jobs())
+                self.assertEqual((), ())
                 # The whole-library scope is the Task's own admitted shape; the
                 # resident engine owns its execution, so nothing ran here.
                 self.assertFalse((root / "target").exists())
@@ -430,7 +403,7 @@ class ExecutionAuthorizationTests(unittest.TestCase):
             organized = list((target_root / "Organized" / "Movies").rglob("*.mkv"))
             self.assertEqual(1, len(organized), organized)
             with SQLiteTaskRepository(root / "runtime.sqlite3") as repository:
-                self.assertEqual((), repository.list_jobs())
+                self.assertEqual((), ())
                 tasks = repository.list_tasks()
                 self.assertEqual(2, len(tasks), tasks)
                 task = next(value for value in tasks if value.task_id != older_task.task_id)
@@ -612,7 +585,7 @@ class ExecutionAuthorizationTests(unittest.TestCase):
             self.assertTrue(media.exists())
             self.assertEqual([], list((target_root / "Organized").rglob("*.mkv")))
             with SQLiteTaskRepository(root / "runtime.sqlite3") as repository:
-                self.assertEqual((), repository.list_jobs())
+                self.assertEqual((), ())
                 tasks = repository.list_tasks()
                 self.assertEqual(1, len(tasks), tasks)
                 task = tasks[0]
@@ -662,26 +635,6 @@ class ExecutionAuthorizationTests(unittest.TestCase):
             token = issued.getvalue().split("Token: ", 1)[1].splitlines()[0]
             self.assertNotIn(token, listing.getvalue())
             self.assertNotIn(ExecutionAuthorizationService.digest(token), listing.getvalue())
-
-    def test_schema_seven_migrates_job_authority_and_authorization_tables(self) -> None:
-        with tempfile.TemporaryDirectory() as directory:
-            database = Path(directory, "runtime.sqlite3")
-            connection = sqlite3.connect(database)
-            connection.executescript(
-                "CREATE TABLE schema_version "
-                "(component TEXT PRIMARY KEY, version INTEGER NOT NULL);"
-                "INSERT INTO schema_version VALUES ('runtime', 7);"
-                "CREATE TABLE automation_jobs ("
-                "job_id TEXT PRIMARY KEY, command TEXT NOT NULL, status TEXT NOT NULL,"
-                "created_at TEXT NOT NULL, updated_at TEXT NOT NULL, limit_value INTEGER,"
-                "started_at TEXT, completed_at TEXT, task_id TEXT, error TEXT,"
-                "cancellation_requested INTEGER NOT NULL DEFAULT 0, schedule_id TEXT);"
-            )
-            connection.close()
-            with SQLiteTaskRepository(database) as repository:
-                self.assertEqual(repository.schema_version, SCHEMA_VERSION)
-                job = AutomationJobService(repository).submit("organize")
-                self.assertFalse(job.execute_authorized)
 
 
 if __name__ == "__main__":

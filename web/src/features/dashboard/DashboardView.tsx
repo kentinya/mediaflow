@@ -49,13 +49,6 @@ function FailureTarget({
       </Link>
     );
   }
-  if (failure.kind === "job" && safeIdentifier(failure.identifier)) {
-    return (
-      <Link to="/operations/jobs/$jobId" params={{ jobId: failure.identifier }}>
-        Open this Job in the Task Center
-      </Link>
-    );
-  }
   if (failure.kind === "notification") {
     // The Dashboard links the exact durable delivery state when the backend
     // supplied a bounded identity; anything else stays plain text so an
@@ -121,10 +114,7 @@ function LinkedCounts({
   counts,
 }: {
   readonly title: string;
-  readonly to:
-    | "/operations/tasks"
-    | "/operations/jobs"
-    | "/operations/notifications/deliveries";
+  readonly to: "/operations/tasks" | "/operations/notifications/deliveries";
   readonly counts: readonly CountLink[];
 }) {
   return (
@@ -197,26 +187,6 @@ export function DashboardView({
             status: "cancelled",
           },
           { label: "Paused", value: model.tasks.paused, status: "paused" },
-        ]}
-      />
-      <LinkedCounts
-        title="Jobs"
-        to="/operations/jobs"
-        counts={[
-          { label: "Total", value: model.jobs.total, status: null },
-          { label: "Pending", value: model.jobs.pending, status: "pending" },
-          { label: "Running", value: model.jobs.running, status: "running" },
-          {
-            label: "Completed",
-            value: model.jobs.completed,
-            status: "completed",
-          },
-          { label: "Failed", value: model.jobs.failed, status: "failed" },
-          {
-            label: "Cancelled",
-            value: model.jobs.cancelled,
-            status: "cancelled",
-          },
         ]}
       />
       <CountGrid

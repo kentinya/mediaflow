@@ -64,7 +64,7 @@ def webhook_document(**changes):
         "id": "ops-webhook",
         "url": "https://example.invalid/hooks/mediaflow",
         "secretEnv": "MEDIAFLOW_WEBHOOK_SECRET",
-        "events": ["job.completed", "job.failed"],
+        "events": ["task.completed", "task.failed"],
         "enabled": True,
         "timeoutSeconds": 10,
         "maxAttempts": 5,
@@ -154,7 +154,7 @@ class WebhookSecurityHarness:
                 webhook_document(
                     id=f"legacy-webhook-{index + 1}",
                     url=url,
-                    events=["job.completed"],
+                    events=["task.completed"],
                 )
             )
         if webhooks:
@@ -431,7 +431,7 @@ class WebhookUrlLegacyProjectionTests(unittest.TestCase):
                 safe_a = webhook_document(
                     id="legacy-webhook-1",
                     url="https://example.invalid/hooks/legacy-a",
-                    events=["job.completed"],
+                    events=["task.completed"],
                 )
                 status, corrected = request(
                     harness.api,
@@ -478,7 +478,7 @@ class WebhookUrlLegacyProjectionTests(unittest.TestCase):
                 safe_b = webhook_document(
                     id="legacy-webhook-2",
                     url="https://example.invalid/hooks/legacy-b",
-                    events=["job.completed"],
+                    events=["task.completed"],
                 )
                 status, _ = request(
                     harness.api,
@@ -535,7 +535,7 @@ class WebhookUrlLegacyProjectionTests(unittest.TestCase):
                 safe = webhook_document(
                     id="legacy-webhook-1",
                     url="https://example.invalid/hooks/corrected",
-                    events=["job.completed"],
+                    events=["task.completed"],
                 )
                 objects_service = ConfigurationObjectService(harness.configuration)
                 updated = objects_service.mutate(
@@ -572,7 +572,7 @@ class WebhookUrlCompatibilityTests(unittest.TestCase):
                             "object": webhook_document(
                                 id="ops-webhook",
                                 url=safe_url,
-                                events=["job.completed"],
+                                events=["task.completed"],
                             ),
                             "expectedVersion": 1,
                         }
@@ -619,7 +619,7 @@ class WebhookUrlCompatibilityTests(unittest.TestCase):
                         actor="bootstrap",
                     )
                     deliveries_before = harness.repository.list_deliveries()
-                    jobs_before = harness.repository.list_jobs()
+                    jobs_before = ()
                     status, test_result = request(
                         harness.api,
                         f"/api/v1/configuration/revisions/{active.revision_id}/objects/"
@@ -635,7 +635,7 @@ class WebhookUrlCompatibilityTests(unittest.TestCase):
                     self.assertEqual(status, 200)
                     self.assertEqual(test_result["outcome"], "success")
                     self.assertEqual(harness.repository.list_deliveries(), deliveries_before)
-                    self.assertEqual(harness.repository.list_jobs(), jobs_before)
+                    self.assertEqual((), jobs_before)
 
                     # Signed delivery through the Worker still works and creates
                     # exactly one durable delivery for a published event.

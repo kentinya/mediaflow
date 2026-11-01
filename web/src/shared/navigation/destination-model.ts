@@ -130,23 +130,6 @@ const childDestinationData = [
     dynamicPrefix: "/operations/tasks/" as const,
   },
   {
-    id: "operations-jobs",
-    label: "Job list",
-    path: "/operations/jobs",
-    title: "Jobs | MediaFlow",
-    availability: "implemented" as const,
-    description: "List and page durable Jobs.",
-  },
-  {
-    id: "operations-job-detail",
-    label: "Job detail",
-    path: "/operations/jobs/$jobId",
-    title: "Job detail | MediaFlow",
-    availability: "implemented" as const,
-    description: "Job admission state, linked Task and Worker ownership.",
-    dynamicPrefix: "/operations/jobs/" as const,
-  },
-  {
     id: "operations-organize-new",
     label: "Manual organize",
     path: "/operations/organize/new",
@@ -827,7 +810,7 @@ export function allowlistedDestinationSearch(
     );
     return allowed.toString().length > 0 ? allowed.toString() : null;
   }
-  if (path === "/operations/tasks" || path === "/operations/jobs") {
+  if (path === "/operations/tasks") {
     // Only the backend-submitted filter values travel in the URL, so a
     // reconnect resumes the same bounded collection read and never replays
     // credential-like, authority-bearing or arbitrary state.
@@ -967,10 +950,7 @@ export function allowlistedDestinationSearch(
     }
     return allowed.toString().length > 0 ? allowed.toString() : null;
   }
-  if (
-    path === "/operations/tasks/$taskId" ||
-    path === "/operations/jobs/$jobId"
-  ) {
+  if (path === "/operations/tasks/$taskId") {
     // A detail route carries only its bounded parent-list filter context back.
     const allowed = new URLSearchParams();
     const current = new URLSearchParams(search);

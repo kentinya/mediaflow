@@ -240,7 +240,7 @@ class ConfirmationApiTests(unittest.TestCase):
                         )[0],
                         403,
                     )
-                self.assertEqual(repository.list_jobs(), ())
+                self.assertEqual((), ())
 
     def test_remote_high_risk_and_injected_fields_are_rejected_and_redacted(self) -> None:
         with tempfile.TemporaryDirectory() as directory:
@@ -363,4 +363,4 @@ class ConfirmationApiTests(unittest.TestCase):
                         )[0],
                         200,
                     )
-                self.assertEqual(repository.list_jobs(), ())
+                self.assertEqual((), ())

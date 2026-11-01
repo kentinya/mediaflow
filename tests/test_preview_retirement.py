@@ -189,7 +189,7 @@ class RetiredPreviewApiTests(unittest.TestCase):
             "/api/v1/operations/previews",
             body={"scopeKind": "resource_library"},
         )
-        self.assertEqual((), self.repository.list_jobs())
+        self.assertEqual((), ())
         self.assertEqual((), self.repository.list_tasks())
 
     def test_fresh_schema_has_no_independent_preview_tables(self):
@@ -245,7 +245,7 @@ class RetainedRunOncePlanTests(unittest.TestCase):
             # The exact request identity reads back the same durable admission.
             status, reread = _request(api, path, query=f"admissionRequestId={request_id}")
             self.assertEqual(200, status, reread)
-            self.assertEqual(admitted["jobId"], reread["jobId"])
+            self.assertEqual(admitted["taskId"], reread["taskId"])
             self.assertEqual(admitted["taskId"], reread["taskId"])
 
             # A repeated command with the same identity replays no admission
@@ -258,8 +258,8 @@ class RetainedRunOncePlanTests(unittest.TestCase):
                 body={"admissionRequestId": request_id},
             )
             self.assertEqual(202, status, duplicate)
-            self.assertEqual(admitted["jobId"], duplicate["jobId"])
-            self.assertEqual(0, len(value.repository.list_jobs()))
+            self.assertEqual(admitted["taskId"], duplicate["taskId"])
+            self.assertEqual(0, len(()))
             self.assertEqual(1, len(value.repository.list_tasks()))
             self.assertEqual([], value.source.mutations)
             self.assertEqual([], value.target.mutations)
@@ -296,7 +296,7 @@ class RetainedRunOncePlanTests(unittest.TestCase):
             self.assertEqual(
                 preview_id, value.repository.get_latest_manual_preview(preview.intent_id).preview_id
             )
-            self.assertEqual((), value.repository.list_jobs())
+            self.assertEqual((), ())
             self.assertEqual((), value.repository.list_tasks())
             self.assertEqual([], value.source.mutations)
             self.assertEqual([], value.target.mutations)

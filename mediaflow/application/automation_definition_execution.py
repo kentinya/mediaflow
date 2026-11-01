@@ -27,9 +27,7 @@ from mediaflow.application.unattended_execution import (
     UnattendedExecutionGrantService,
 )
 from mediaflow.domain.automation import (
-    AutomationCommand,
     AutomationFailureEvidence,
-    AutomationJobOrigin,
     AutomationTaskDefinition,
     AutomationTaskRunMode,
 )
@@ -72,127 +70,80 @@ class DefinitionScopedExecutionService:
 
     def run(
         self,
-        job,
-        cancellation_check: Callable[[], bool],
+        task,
+        scheduling,
+        claim,
         *,
-        task_context=None,
+        run_once: bool,
+        cancellation_check: Callable[[], bool],
         clock=None,
         heartbeat: Callable[[], bool] | None = None,
     ) -> str:
-        """Consume a claimed definition intent and return its durable Task id.
+        """Consume one already-admitted definition Task.
 
-        Only an automatic-organization definition reaches Storage, Provider or
-        Task construction.  A recorded pre-amendment mode fails closed *before*
-        any adapter or Task exists, so old queued/running work stops safely and
-        can never acquire mutation authority or a compatible executor.
-
-        ``task_context`` is the kernel ``(scheduling_service, claim)`` for a Task
-        the Scheduler or Run once already admitted before business readiness.
-        When present it is adopted in place of creating a second Task, and every
-        machine publication is made under that live claim fence.
+        The Task owns its identity, admitted pin, source scope, item limit and
+        claim fence.  This service resolves the exact pinned definition from
+        that pin and runs the one production pipeline; it never creates a
+        second Task, Job or queue entry.  A recorded pre-amendment mode fails
+        closed before any adapter or Provider call.
         """
 
-        if job.command not in set(AutomationCommand):
-            raise self._failure(
-                "unsupported_workflow",
-                "unsupported workflow; no Task or discovery started",
-                False,
-                "submit a supported workflow",
-            )
-        definition = self._resolve_definition(job)
+        definition = self._resolve_definition(task)
         resource = self._resolve_resource_library(definition)
-        scope_root = self._resolve_scope_root(resource, definition, job)
+        scope_root = self._resolve_scope_root(resource, definition, task, run_once=run_once)
 
         if self._unattended_grants is None:
             raise self._failure(
                 "automation_execution_authority_unavailable",
-                "the definition-scoped execution authority is unavailable; no Task was created",
+                "the definition-scoped execution authority is unavailable; no work was started",
                 False,
                 "restore the configured permission authority and let the next due occurrence "
                 "or Run once command execute",
             )
         try:
-            # Proving the exact current intent *before* any Task exists keeps a
-            # knowable fail-closed case ahead of Storage/Provider construction.
-            # Scheduled work needs a currently Enabled published definition and
-            # its publisher's current capability; Run once carries its own
-            # explicit principal and one-run intent.
-            self._unattended_grants.authorize(job, definition)
+            self._unattended_grants.authorize_task(
+                task,
+                definition,
+                run_once=run_once,
+            )
         except UnattendedExecutionGrantError as error:
             raise self._failure(
                 error.code,
-                "the admitted Task and pin are retained; no media effect was started"
-                if job.task_id
-                else error.durable_state,
+                error.durable_state,
                 error.retry_safe,
                 error.next_action,
             ) from error
 
         if cancellation_check():
-            raise AutomationCancelled()
+            raise AutomationCancelled(task.task_id)
+
+        if task.configuration_snapshot_id != self._configuration.configuration_snapshot_id or (
+            task.configuration_snapshot_digest != self._configuration.configuration_snapshot_digest
+        ):
+            raise self._failure(
+                "snapshot_digest_mismatch",
+                "the Task's pinned configuration snapshot is not available to the Worker",
+                False,
+                "restore the exact saved published revision, then let the Task run",
+            )
+        if task.status is PersistentTaskStatus.CANCELLED:
+            raise AutomationCancelled(task.task_id)
+        if task.status not in {PersistentTaskStatus.PENDING, PersistentTaskStatus.RUNNING}:
+            # A reclaimed intent must never scan a previously entered Task again:
+            # completed/uncertain effects may still exist.
+            raise AutomationWorkflowFailed(
+                task.task_id,
+                AutomationFailureEvidence(
+                    "task_already_started",
+                    "the admitted Task and prior item effects are retained",
+                    "unknown",
+                    False,
+                    "inspect the existing task; completed or uncertain effects are never replayed",
+                ),
+            )
 
         source_storages = self._preflight_scope_storage(resource, scope_root)
-        kernel_scheduling, kernel_claim = task_context or (None, None)
-        effective_limit = _effective_item_limit(job, definition)
-        if job.task_id:
-            task = self._repository.get_task(job.task_id)
-            if task is None or task.configuration_snapshot_id != job.configuration_snapshot_id:
-                raise RuntimeError("admitted automatic Task pin is unavailable")
-            if task.status is PersistentTaskStatus.CANCELLED:
-                raise AutomationCancelled(task.task_id)
-            if task.status is PersistentTaskStatus.PENDING:
-                if kernel_claim is not None:
-                    from mediaflow.domain.task_scheduling import TaskMachineStage
-
-                    now = clock() if clock is not None else datetime.now(UTC)
-                    kernel_claim = kernel_scheduling.begin_work(
-                        kernel_claim,
-                        stage=TaskMachineStage.EXECUTION,
-                        now=now,
-                    )
-                    task = kernel_claim.task
-                else:
-                    task = PersistentTaskCoordinator(
-                        self._repository, self._repository
-                    ).begin_queued(task.task_id)
-            elif task.status is PersistentTaskStatus.RUNNING and kernel_claim is not None:
-                # The resident Task engine already published this Task's running
-                # boundary under its live claim before invoking this runner.
-                pass
-            else:
-                # A reclaimed intent must never scan a previously entered Task
-                # again: COPY successes and uncertain effects may still exist.
-                self._fail_task(
-                    task.task_id,
-                    message=(
-                        "Run once processing was interrupted; inspect existing item effects "
-                        "before any new action"
-                    ),
-                )
-                raise AutomationWorkflowFailed(
-                    task.task_id,
-                    AutomationFailureEvidence(
-                        "run_once_already_started",
-                        "the admitted Task and prior item effects are retained",
-                        "unknown",
-                        False,
-                        "inspect the existing task; completed or uncertain effects "
-                        "are never replayed",
-                    ),
-                )
-        else:
-            task = PersistentTaskCoordinator(self._repository, self._repository).create(
-                job.command.value,
-                execute_authorized=True,
-                scope_path=scope_root,
-                item_limit=effective_limit,
-                configuration_snapshot_id=job.configuration_snapshot_id,
-                configuration_snapshot_digest=job.configuration_snapshot_digest,
-                require_configuration_snapshot=True,
-            )
-        coordinator = self._coordinator(
-            (kernel_scheduling, kernel_claim), clock=clock, heartbeat=heartbeat
-        )
+        coordinator = self._coordinator((scheduling, claim), clock=clock, heartbeat=heartbeat)
         try:
             self._run_scan_and_plan(
                 coordinator,
@@ -203,15 +154,13 @@ class DefinitionScopedExecutionService:
                 cancellation_check,
                 execute=True,
                 definition=definition,
-                job=job,
+                run_once=run_once,
                 heartbeat=heartbeat,
             )
         except AutomationCancelled:
             self._cancel_task_if_running(coordinator, task.task_id)
             raise
         except AutomationClaimLost:
-            # The Worker no longer owns the Task claim.  Do not rewrite Task
-            # state from a stale claimant.
             raise
         except IncompleteOrganizingScope as error:
             self._fail_task(task.task_id, message=str(error))
@@ -243,20 +192,19 @@ class DefinitionScopedExecutionService:
                 ),
             ) from error
         if coordinator.cancellation_observed(task.task_id):
-            # The operator accepted a durable cooperative cancellation for this
-            # Task, so the owning Job is cancelled at that boundary as well
-            # instead of being reported as a completed occurrence.
             raise AutomationCancelled(task.task_id)
         return task.task_id
 
-    def _resolve_definition(self, job) -> Any:
-        definition_id = getattr(job, "definition_id", None)
+    def _resolve_definition(self, task) -> Any:
+        reader = getattr(self._repository, "get_run_display_context", None)
+        display = reader(task.task_id) if callable(reader) else None
+        definition_id = display.origin_definition_id if display is not None else None
         if not isinstance(definition_id, str) or not definition_id.strip():
             raise self._failure(
                 "definition_missing",
-                "definition-pinned Job has no usable Automation Task Definition identity",
+                "the admitted Task has no usable Automation Task Definition identity",
                 False,
-                "inspect the queued Job and emit a new occurrence from a valid Active definition",
+                "inspect the Task's durable definition origin and admit a new occurrence",
             )
         definitions = tuple(getattr(self._configuration, "automation_task_definitions", ()))
         definition = next(
@@ -272,7 +220,7 @@ class DefinitionScopedExecutionService:
                 "definition_missing",
                 "pinned Automation Task Definition is absent from the saved configuration snapshot",
                 False,
-                "restore the saved definition snapshot or explicitly emit a new occurrence",
+                "restore the saved definition snapshot or explicitly admit a new occurrence",
             )
         if not isinstance(definition, AutomationTaskDefinition):
             try:
@@ -282,7 +230,7 @@ class DefinitionScopedExecutionService:
                     "definition_invalid",
                     "pinned Automation Task Definition cannot be consumed safely",
                     False,
-                    "validate and activate a corrected definition, then emit a new occurrence",
+                    "validate and activate a corrected definition, then admit a new occurrence",
                 ) from error
         try:
             AutomationTaskRunMode.parse(definition.mode)
@@ -293,8 +241,11 @@ class DefinitionScopedExecutionService:
                 False,
                 "validate the definition configuration before submitting work",
             ) from error
-        self._verify_definition_pins(job, definition)
-        if not _is_run_once(job) and not definition.enabled:
+        self._verify_definition_pins(task, definition)
+        if (
+            not getattr(display, "origin_kind", None) == "definition-run-once"
+            and not definition.enabled
+        ):
             raise self._failure(
                 "definition_disabled",
                 "pinned Automation Task Definition is disabled; no scheduled work was started",
@@ -304,69 +255,35 @@ class DefinitionScopedExecutionService:
             )
         return definition
 
-    def _verify_definition_pins(self, job, definition: AutomationTaskDefinition) -> None:
+    def _verify_definition_pins(self, task, definition: AutomationTaskDefinition) -> None:
         configuration_id = getattr(self._configuration, "configuration_snapshot_id", None)
         configuration_digest = getattr(self._configuration, "configuration_snapshot_digest", None)
-        if not job.configuration_snapshot_id or not job.configuration_snapshot_digest:
+        if not task.configuration_snapshot_id or not task.configuration_snapshot_digest:
             raise self._failure(
-                "job_snapshot_incomplete",
-                "definition-pinned Job does not match one complete saved configuration snapshot",
+                "task_snapshot_incomplete",
+                "the admitted Task has no complete saved configuration snapshot pin",
                 False,
-                "restore the exact saved snapshot identity, then emit a new occurrence",
+                "restore the exact saved snapshot identity, then admit a new occurrence",
             )
         if (
             not configuration_id
             or not configuration_digest
-            or configuration_id != job.configuration_snapshot_id
+            or configuration_id != task.configuration_snapshot_id
+            or configuration_digest != task.configuration_snapshot_digest
         ):
             raise self._failure(
                 "snapshot_missing",
-                "the Job's pinned configuration snapshot is not available to the Worker",
+                "the Task's pinned configuration snapshot is not available to the Worker",
                 False,
-                "restore the exact saved published revision, then emit a new occurrence",
+                "restore the exact saved published revision, then admit a new occurrence",
             )
-        if configuration_digest != job.configuration_snapshot_digest:
-            raise self._failure(
-                "snapshot_digest_mismatch",
-                "the Worker configuration digest does not match the Job's pinned snapshot",
-                False,
-                "restore the exact saved published revision, then emit a new occurrence",
-            )
-        configuration_version = getattr(self._configuration, "configuration_snapshot_version", None)
-        if (
-            isinstance(configuration_version, bool)
-            or not isinstance(configuration_version, int)
-            or configuration_version < 1
-            or job.definition_version != configuration_version
-        ):
-            raise self._failure(
-                "definition_version_mismatch",
-                "pinned Automation Task Definition version does not match the saved snapshot",
-                False,
-                "activate the intended definition version and emit a new occurrence",
-            )
-        if definition.definition_fingerprint != job.definition_fingerprint:
-            raise self._failure(
-                "definition_fingerprint_mismatch",
-                "pinned Automation Task Definition fingerprint does not match the saved snapshot",
-                False,
-                "activate the intended definition content and emit a new occurrence",
-            )
-        expected_mode = definition.mode
-        expected_command = AutomationCommand.ORGANIZE
-        expected_limit = _effective_item_limit(job, definition)
-        if (
-            job.run_mode != expected_mode
-            or job.command != expected_command
-            or job.resource_library_id != definition.resource_library_id
-            or job.source_scope != definition.source_scope
-            or job.limit != expected_limit
-        ):
+        expected_limit = _effective_item_limit(task.item_limit, definition)
+        if task.item_limit is not None and task.item_limit != expected_limit:
             raise self._failure(
                 "definition_pin_mismatch",
-                "definition-pinned Job fields do not match the saved definition identity",
+                "the admitted Task item limit does not match the saved definition identity",
                 False,
-                "inspect the queued Job and emit a new occurrence from the saved definition",
+                "inspect the admitted Task and admit a new occurrence from the saved definition",
             )
 
     def _resolve_resource_library(self, definition) -> ResourceLibrary:
@@ -394,7 +311,7 @@ class DefinitionScopedExecutionService:
             )
         return resource
 
-    def _resolve_scope_root(self, resource, definition, job) -> str:
+    def _resolve_scope_root(self, resource, definition, task, *, run_once: bool) -> str:
         try:
             library_root = normalize_resource_root(resource.root_path)
             source_scope = AutomationTaskDefinition.normalize_scope(definition.source_scope)
@@ -415,20 +332,29 @@ class DefinitionScopedExecutionService:
                 "replace the scope with a normalized sub-scope inside the ResourceLibrary root",
             )
         try:
-            job_scope = AutomationTaskDefinition.normalize_scope(job.source_scope)
+            admitted_scope = AutomationTaskDefinition.normalize_scope(task.scope_path)
         except (TypeError, ValueError) as error:
             raise self._failure(
                 "scope_root_invalid",
-                "pinned Job source scope is not a safe Storage-relative path",
+                "the admitted Task source scope is not a safe Storage-relative path",
                 False,
-                "discard the altered Job and emit a new occurrence from the saved definition",
+                "inspect the admitted Task and admit a new occurrence from the saved definition",
             ) from error
-        if job_scope != definition.source_scope:
+        expected_scope = (
+            normalize_resource_root(posixpath.join(library_root, definition.source_scope or ""))
+            if run_once
+            else definition.source_scope
+        )
+        # A Run once admission may persist either the definition-relative scope
+        # or its resolved Storage-relative root, depending on the entrance.  Both
+        # name the same admitted source; any other value is a pin mismatch.
+        allowed_scopes = {expected_scope, definition.source_scope}
+        if admitted_scope not in allowed_scopes:
             raise self._failure(
                 "definition_pin_mismatch",
-                "pinned Job source scope does not match the saved definition",
+                "the admitted Task source scope does not match the saved definition",
                 False,
-                "inspect the queued Job and emit a new occurrence from the saved definition",
+                "inspect the admitted Task and admit a new occurrence from the saved definition",
             )
         return scoped_root
 
@@ -478,7 +404,7 @@ class DefinitionScopedExecutionService:
         *,
         execute: bool = False,
         definition=None,
-        job=None,
+        run_once: bool = False,
         heartbeat: Callable[[], bool] | None = None,
     ) -> None:
         if self._provider_factory is None or self._strategy_factory is None:
@@ -526,7 +452,7 @@ class DefinitionScopedExecutionService:
 
         scanner_storages = (
             {key: BoundedScopeReader(value, root=scope_root) for key, value in storages.items()}
-            if _is_run_once(job)
+            if run_once
             else storages
         )
         service = MediaOrganizerService(
@@ -555,7 +481,11 @@ class DefinitionScopedExecutionService:
             # refused sibling is published as its own per-item outcome.
             enforce_source_ownership=True,
             mutation_authority=(
-                (lambda _plan, _boundary: self._unattended_grants.assert_live(job, definition))
+                (
+                    lambda _plan, _boundary: self._unattended_grants.assert_live_task(
+                        task, definition, run_once=run_once
+                    )
+                )
                 if execute and self._unattended_grants is not None
                 else None
             ),
@@ -565,7 +495,7 @@ class DefinitionScopedExecutionService:
             execute=execute,
             limit=task.item_limit,
             cancellation_check=workflow_stop,
-            require_complete_scope=_is_run_once(job),
+            require_complete_scope=run_once,
         )
         if cancellation_check():
             self._cancel_task_if_running(coordinator, task.task_id)
@@ -895,22 +825,17 @@ class DefinitionScopedExecutionService:
         )
 
 
-def _is_run_once(job) -> bool:
-    origin = getattr(job, "execution_origin", None)
-    if isinstance(origin, AutomationJobOrigin):
-        return origin is AutomationJobOrigin.RUN_ONCE
-    return origin in {"run-once", "run_once"}
+def _effective_item_limit(item_limit: int | None, definition: AutomationTaskDefinition) -> int:
+    """The admitted primary bound of this exact Task.
 
-
-def _effective_item_limit(job, definition: AutomationTaskDefinition) -> int:
-    """The admitted primary bound of this exact intent.
-
-    A normal due occurrence uses the saved definition ceiling.  Run once keeps
-    its longstanding effective bound ``min(definition.itemLimit, 100)`` so one
-    deliberate command can never inherit an unbounded scheduled ceiling.
+    A normal due occurrence keeps the saved definition ceiling.  Run once keeps
+    its longstanding effective bound ``min(definition.itemLimit, 100)``; its Task
+    admission already stores that exact value, so this fallback never widens it.
     """
 
-    return min(definition.item_limit, 100) if _is_run_once(job) else definition.item_limit
+    if item_limit is not None:
+        return min(item_limit, definition.item_limit)
+    return min(definition.item_limit, 100)
 
 
 def _contains(parent: str, child: str) -> bool:

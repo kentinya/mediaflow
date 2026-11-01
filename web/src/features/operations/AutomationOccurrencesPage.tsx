@@ -2,7 +2,7 @@
  * V2 Automation occurrence history.
  *
  * Each occurrence preserves its pinned definition/configuration identity and
- * links the exact Job/Task evidence already owned by Operations. Reading and
+ * links the exact Task evidence already owned by Operations. Reading and
  * paging never emits an occurrence, submits work or touches Storage.
  */
 
@@ -157,16 +157,14 @@ export function AutomationOccurrencesPage() {
                   <p className="mf-dashboard-meta">{occurrence.nextAction}</p>
                 )}
                 <div className="mf-actions">
-                  {/* Slice46 RO-4 / B46.4-04: the retired `/operations/jobs` and
-                      `/operations/tasks` collections are closed, so the exact
+                  {/* The retired mixed collections are closed, so the exact
                       occurrence evidence opens the same run *inside* the center,
                       never a second mixed list.  Reading it stays GET-only. */}
-                  {(occurrence.actions.job?.available === true ||
-                    occurrence.actions.task?.available === true) && (
+                  {occurrence.actions.task?.available === true && (
                     <Link
                       className="mf-button mf-button-secondary"
                       to="/operations"
-                      search={{ run: occurrence.jobId ?? occurrence.taskId }}
+                      search={{ run: occurrence.taskId }}
                     >
                       Open the exact run in the Task Center
                     </Link>

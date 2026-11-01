@@ -10,13 +10,9 @@ from unittest.mock import patch
 
 from mediaflow.application.automation import (
     ProcessingWorkerService,
-    evaluate_pending_job_operational_condition,
 )
 from mediaflow.application.configuration_snapshot import ManagedConfigurationService
 from mediaflow.domain.automation import (
-    AutomationCommand,
-    AutomationJob,
-    AutomationJobStatus,
     WorkerReadiness,
     WorkerStatus,
 )
@@ -52,23 +48,6 @@ def _request(
     }
     body = b"".join(api(environ, lambda status, headers: statuses.append(status)))
     return int(statuses[0].split()[0]), json.loads(body)
-
-
-def _job(
-    job_id: str,
-    updated_at: datetime,
-    status: AutomationJobStatus = AutomationJobStatus.PENDING,
-    execute_authorized: bool = False,
-) -> AutomationJob:
-    return AutomationJob(
-        job_id=job_id,
-        command=AutomationCommand.ORGANIZE if execute_authorized else AutomationCommand.ORGANIZE,
-        status=status,
-        created_at=updated_at - timedelta(minutes=1),
-        updated_at=updated_at,
-        started_at=updated_at - timedelta(minutes=1),
-        execute_authorized=execute_authorized,
-    )
 
 
 class TestProcessingWorkerReadiness(unittest.TestCase):
@@ -468,37 +447,6 @@ class TestProcessingWorkerReadiness(unittest.TestCase):
             (),
             "readiness probes must be side-effect free and create no audit rows",
         )
-
-    # AC4: Queued work is explained
-    def test_pending_job_operational_condition_when_no_worker(self) -> None:
-        # No worker registered
-        readiness = self.service.evaluate_readiness(now=datetime.now(UTC))
-        self.assertFalse(readiness["ready"])
-        self.assertEqual(readiness["condition"], WorkerReadiness.NO_WORKER.value)
-        # Operational condition for a pending job waiting beyond the threshold
-        condition = evaluate_pending_job_operational_condition(readiness)
-        self.assertIsNotNone(condition)
-        self.assertEqual(condition["condition"], WorkerReadiness.NO_WORKER.value)
-        self.assertEqual(condition["stage"], "pending")
-        self.assertEqual(condition["sideEffects"], "none")
-        self.assertTrue(condition["retrySafe"])
-        self.assertEqual(
-            condition["nextAction"], "start a resident worker with the active configuration"
-        )
-
-    def test_pending_job_no_operational_condition_with_live_worker(self) -> None:
-        # Live usable worker -> no operational condition projected for pending job
-        self.service.register_worker(
-            worker_id="worker-3",
-            label="live-worker",
-            heartbeat_interval_seconds=5.0,
-            supported_commands=("scan",),
-            now=datetime.now(UTC),
-        )
-        readiness = self.service.evaluate_readiness(now=datetime.now(UTC))
-        self.assertTrue(readiness["ready"])
-        condition = evaluate_pending_job_operational_condition(readiness)
-        self.assertIsNone(condition)
 
     # AC7: API never supervises a Worker
     def test_api_exposes_no_worker_mutation_methods(self) -> None:

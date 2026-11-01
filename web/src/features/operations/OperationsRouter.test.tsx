@@ -149,7 +149,7 @@ describe("Operations legacy route closure (RO-4 / B46.4-04)", () => {
     authStore.setToken(TOKEN);
     renderApp("/ui-v2/operations/jobs");
 
-    await screen.findByRole("heading", { name: "Job 列表已并入任务中心" });
+    await screen.findByRole("heading", { name: "旧列表已并入任务中心" });
     expect(
       requested.filter((url) => url.startsWith("/api/v1/operations/jobs")),
     ).toHaveLength(0);
@@ -267,10 +267,10 @@ describe("Operations legacy route closure (RO-4 / B46.4-04)", () => {
     authStore.setToken(TOKEN);
     renderApp("/ui-v2/operations/jobs/ghost-task");
 
-    await screen.findByRole("heading", {
-      name: "正在确认该 Job 的归属",
-    });
-    expect(await screen.findByText(/没有提交任何命令。$/)).toBeVisible();
+    await screen.findByRole("heading", { name: "该旧记录已不可用" });
+    expect(
+      requested.filter((url) => url.includes("/api/v1/operations/jobs")),
+    ).toHaveLength(0);
     // A missing identity is never turned into a command, a retry or a guessed
     // library/source context.
     expect(

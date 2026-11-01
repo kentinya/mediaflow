@@ -17,6 +17,7 @@ from dataclasses import replace
 from datetime import UTC, datetime
 
 from mediaflow.domain.automation import AutomationClaimLost
+from mediaflow.domain.failure import FailureExplanation
 from mediaflow.domain.manual_execution import (
     ManualExecution,
     ManualExecutionStatus,
@@ -670,7 +671,27 @@ class ManualTaskEngineWorker:
                 return
             task = self._task(claim.task_id)
             now = self._clock()
-            message = self._bounded_error(error)
+            evidence = getattr(error, "evidence", None)
+            if evidence is not None and all(
+                hasattr(evidence, name)
+                for name in (
+                    "category",
+                    "durable_state",
+                    "side_effects",
+                    "retry_safe",
+                    "next_action",
+                )
+            ):
+                message = FailureExplanation(
+                    category=str(evidence.category),
+                    message=self._bounded_error(error),
+                    durable_state=str(evidence.durable_state),
+                    side_effects=str(evidence.side_effects),
+                    retry_safe=bool(evidence.retry_safe),
+                    next_action=str(evidence.next_action),
+                ).encode()
+            else:
+                message = self._bounded_error(error)
             updated = self._with_status(task, PersistentTaskStatus.FAILED, now, message)
             items = self._terminal_items(task.task_id, TaskItemStatus.FAILED, now, message)
             updated = self._with_counts(updated, overrides=items)

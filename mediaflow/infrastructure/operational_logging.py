@@ -57,7 +57,6 @@ class SQLiteOperationalLogger(Logger):
                     self._component,
                     event,
                     task_id=_safe(context.get("task_id")),
-                    job_id=_safe(context.get("job_id")),
                     plan_id=_safe(context.get("plan_id")),
                     status=_safe(status),
                 )

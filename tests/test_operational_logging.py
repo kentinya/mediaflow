@@ -83,7 +83,6 @@ class OperationalLoggingTests(unittest.TestCase):
                     "component",
                     "event",
                     "task_id",
-                    "job_id",
                     "plan_id",
                     "status",
                 }
@@ -147,7 +146,6 @@ class OperationalLoggingTests(unittest.TestCase):
                         (
                             value.event,
                             value.task_id or "",
-                            value.job_id or "",
                             value.plan_id or "",
                             value.status or "",
                         )

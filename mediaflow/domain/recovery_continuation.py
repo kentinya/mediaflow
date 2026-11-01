@@ -14,8 +14,6 @@ from datetime import datetime
 from enum import StrEnum
 from typing import Protocol
 
-from mediaflow.domain.automation import AutomationJob
-
 
 class RecoveryContinuationStatus(StrEnum):
     QUEUED = "queued"
@@ -84,7 +82,6 @@ class RecoveryContinuation:
     created_at: datetime
     updated_at: datetime
     actor: str
-    job_id: str
     new_task_id: str | None = None
     new_result_id: str | None = None
     started_at: datetime | None = None
@@ -130,7 +127,6 @@ class RecoveryContinuation:
             "created_at": self.created_at.isoformat(),
             "updated_at": self.updated_at.isoformat(),
             "actor": self.actor,
-            "job_id": self.job_id,
             "new_task_id": self.new_task_id,
             "new_result_id": self.new_result_id,
             "started_at": self.started_at.isoformat() if self.started_at else None,
@@ -146,46 +142,9 @@ class RecoveryContinuationRepository(Protocol):
     def get_recovery_continuation_for_request(
         self, request_id: str
     ) -> RecoveryContinuation | None: ...
-    def get_recovery_continuation_for_job(self, job_id: str) -> RecoveryContinuation | None: ...
     def list_recovery_continuations(
         self, item_id: str, *, limit: int = 32
     ) -> tuple[RecoveryContinuation, ...]: ...
     def list_recovery_continuations_for_task(
         self, task_id: str, *, limit: int = 32
     ) -> tuple[RecoveryContinuation, ...]: ...
-    def admit_recovery_continuation(
-        self,
-        job: AutomationJob,
-        continuation: RecoveryContinuation,
-        *,
-        maximum_active_jobs: int,
-        batch_item_id: str | None = None,
-    ) -> tuple[RecoveryContinuation, bool]: ...
-    def mark_recovery_continuation_running(
-        self, job_id: str, now: datetime | None = None
-    ) -> RecoveryContinuation: ...
-    def bind_recovery_continuation_task(
-        self, job_id: str, task_id: str
-    ) -> RecoveryContinuation: ...
-    def complete_recovery_continuation(
-        self,
-        job_id: str,
-        *,
-        new_task_id: str | None = None,
-        new_result_id: str | None = None,
-        success: bool,
-        error: str | None = None,
-        recovery: str | None = None,
-        now: datetime | None = None,
-    ) -> RecoveryContinuation: ...
-    def fail_queued_recovery_continuation(
-        self,
-        job_id: str,
-        *,
-        error: str,
-        recovery: str,
-        now: datetime | None = None,
-    ) -> RecoveryContinuation: ...
-    def cancel_recovery_continuation(
-        self, job_id: str, *, now: datetime | None = None
-    ) -> RecoveryContinuation: ...

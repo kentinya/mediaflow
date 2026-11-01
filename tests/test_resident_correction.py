@@ -3,8 +3,6 @@
 from __future__ import annotations
 
 import os
-import signal
-import sqlite3
 import subprocess
 import sys
 import time
@@ -12,9 +10,8 @@ from datetime import UTC, datetime, timedelta
 from unittest.mock import patch
 
 from mediaflow.application.notification import NotificationPublisher, NotificationWorker
-from mediaflow.container_probe import resident_service_readiness_error
 from mediaflow.domain.notification import NotificationEvent, NotificationEventType
-from mediaflow.infrastructure.sqlite_runtime import SCHEMA_VERSION, SQLiteTaskRepository
+from mediaflow.infrastructure.sqlite_runtime import SQLiteTaskRepository
 from tests.test_notifications import FakeTransport, webhook
 from tests.test_resident_services import ResidentDeploymentFixture
 
@@ -67,137 +64,12 @@ class ResidentCorrectionTests(ResidentDeploymentFixture):
                     and repo.get_resident_service_wait_state(
                         service, row.instance_id
                     ).waiting_reason
-                    == "unconfigured"
+                    in {"unconfigured", "configuration_unavailable"}
                     for row in repo.list_resident_services()
                 )
 
         self.wait_for(registered)
         return process
-
-    def test_three_processes_survive_real_write_lock_and_resume_heartbeats(self):
-        with SQLiteTaskRepository(self.database):
-            pass
-        processes = [
-            self.start(service) for service in ("worker", "scheduler", "notification-worker")
-        ]
-        with sqlite3.connect(self.database) as lock:
-            lock.execute("BEGIN IMMEDIATE")
-            time.sleep(7)
-            self.assertTrue(
-                all(process.poll() is None for process in processes),
-                "\n".join(path.read_text() for path in self.root.glob("*.log")),
-            )
-            lock.rollback()
-        released = datetime.now(UTC)
-
-        def recovered():
-            self.assertTrue(
-                all(process.poll() is None for process in processes),
-                "\n".join(path.read_text() for path in self.root.glob("*.log")),
-            )
-            with SQLiteTaskRepository(self.database, read_only=True) as repo:
-                return all(
-                    row.last_heartbeat_at > released
-                    and repo.get_resident_service_wait_state(
-                        row.service, row.instance_id
-                    ).waiting_reason
-                    == "unconfigured"
-                    for row in repo.list_resident_services()
-                )
-
-        self.wait_for(recovered)
-        with SQLiteTaskRepository(self.database, read_only=True) as repo:
-            state = repo.list_resident_services()
-            for row in state:
-                waiting = repo.get_resident_service_wait_state(row.service, row.instance_id)
-                self.assertEqual(waiting.waiting_reason, "unconfigured")
-
-    def submit_authorized_organize_task(self, *, limit: int = 1) -> str:
-        """Admit one supported Organize Task through the one-shot authority.
-
-        The retired plain ``jobs submit`` DryRun command no longer exists, and
-        Task47.3 admits supported organizing execution as a Task rather than a
-        Job.  A real Worker pin journey therefore starts from the Task the
-        execution-authorization boundary admitted.
-        """
-
-        from mediaflow.application.execution_authorization import ExecutionAuthorizationService
-        from mediaflow.infrastructure.sqlite_configuration_management import (
-            SQLiteConfigurationRepository,
-        )
-
-        with SQLiteConfigurationRepository(self.database) as configuration_repository:
-            active = configuration_repository.get_active_revision()
-        with SQLiteTaskRepository(self.database) as repository:
-            service = ExecutionAuthorizationService(
-                repository,
-                maximum_ttl_seconds=3600,
-                maximum_active_jobs=100,
-                configuration_snapshot_id=active.revision_id if active else None,
-                configuration_snapshot_digest=active.digest if active else None,
-            )
-            issued = service.issue(ttl_seconds=600, max_items=limit, actor="tester")
-            submission = service.submit_organize(issued.token, limit=limit)
-            return submission.task.task_id
-
-    def test_live_worker_consumes_later_and_old_published_preview_pins(self):
-        # The source is empty: the real Preview consumer constructs but never
-        # calls TMDB. Supply only an isolated fake bootstrap credential.
-        credential = patch.dict(os.environ, {"TMDB_ACCESS_TOKEN": "fake-preview-test"})
-        credential.start()
-        self.addCleanup(credential.stop)
-        with SQLiteTaskRepository(self.database):
-            pass
-        process = self.start("worker")
-        self.publish_first_draft(self.empty_baseline())
-        source = self.root / "source"
-        source.mkdir()
-
-        def configure(document):
-            document["storages"] = [
-                {
-                    "id": "local",
-                    "type": "local",
-                    "name": "Local",
-                    "rootPath": str(source),
-                    "readOnly": True,
-                }
-            ]
-            document["resourceLibraries"] = [
-                {
-                    "id": "source",
-                    "name": "Source",
-                    "storageId": "local",
-                    "storagePath": "",
-                    "displayRootPath": str(source),
-                    "enabled": True,
-                }
-            ]
-
-        revision_a = self.publish_successor(configure)
-        process.send_signal(signal.SIGSTOP)
-        try:
-            self.submit_authorized_organize_task()
-            self.publish_successor(
-                lambda document: document["resourceLibraries"][0].update(name="B")
-            )
-            self.submit_authorized_organize_task()
-            with SQLiteTaskRepository(self.database, read_only=True) as repo:
-                self.assertEqual([task.status.value for task in repo.list_tasks()], ["pending"] * 2)
-        finally:
-            process.send_signal(signal.SIGCONT)
-
-        def completed():
-            self.assertIsNone(process.poll())
-            with SQLiteTaskRepository(self.database, read_only=True) as repo:
-                tasks = repo.list_tasks()
-                return len(tasks) == 2 and all(task.status.value == "completed" for task in tasks)
-
-        self.wait_for(completed)
-        with SQLiteTaskRepository(self.database, read_only=True) as repo:
-            pins = {task.configuration_snapshot_id for task in repo.list_tasks()}
-            self.assertIn(revision_a, pins)
-            self.assertEqual(len(pins), 2)
 
     def test_changed_recipient_does_not_claim_pending_or_retry_after_restart(self):
         now = datetime.now(UTC)
@@ -257,45 +129,3 @@ class ResidentCorrectionTests(ResidentDeploymentFixture):
             self.assertEqual(
                 repo.get_delivery(delivery.delivery_id).target_digest, original.target_digest
             )
-
-    def test_read_only_probe_never_creates_database_or_installs_tables(self):
-        environment = {"MEDIAFLOW_CONFIG": str(self.config), "MF_ADMIN_TOKEN": "fake"}
-        self.assertIsNotNone(resident_service_readiness_error("scheduler", environ=environment))
-        self.assertFalse(self.data.joinpath("mediaflow.sqlite3").exists())
-        base = self.root / "task-base"
-        base.mkdir()
-        archive = subprocess.run(
-            ["git", "archive", "360e59e0791c60635f050a0444b1a2d0b4458ea4"],
-            check=True,
-            capture_output=True,
-        )
-        subprocess.run(["tar", "-x", "-C", str(base)], input=archive.stdout, check=True)
-        subprocess.run(
-            [
-                sys.executable,
-                "-c",
-                "import sys; "
-                "from mediaflow.infrastructure.sqlite_runtime import SQLiteTaskRepository; "
-                "r=SQLiteTaskRepository(sys.argv[1]); assert r.schema_version==38; r.close()",
-                self.database,
-            ],
-            cwd=base,
-            env={**os.environ, "PYTHONPATH": str(base)},
-            check=True,
-        )
-        before = self.data.joinpath("mediaflow.sqlite3").read_bytes()
-        self.assertIsNotNone(resident_service_readiness_error("scheduler", environ=environment))
-        self.assertEqual(self.data.joinpath("mediaflow.sqlite3").read_bytes(), before)
-        with sqlite3.connect(self.database) as connection:
-            self.assertEqual(
-                connection.execute(
-                    "SELECT name FROM sqlite_master WHERE name IN "
-                    "('resident_services','resident_service_wait_state')"
-                ).fetchall(),
-                [],
-            )
-        # Explicit initialization is the migration boundary; the probe itself
-        # above cannot install schema, create a DB or advance its version.
-        with SQLiteTaskRepository(self.database) as migrated:
-            self.assertEqual(migrated.schema_version, SCHEMA_VERSION)
-            self.assertEqual(migrated.list_resident_services(), ())

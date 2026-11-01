@@ -6,7 +6,6 @@ import hmac
 import io
 import json
 import os
-import sqlite3
 import tempfile
 import unittest
 from datetime import UTC, datetime, timedelta
@@ -14,11 +13,7 @@ from pathlib import Path
 from threading import Barrier, Thread
 from unittest.mock import patch
 
-from mediaflow.application.automation import (
-    AutomationJobService,
-    AutomationWorker,
-    IntervalScheduler,
-)
+from mediaflow.application.automation import IntervalScheduler
 from mediaflow.application.notification import NotificationPublisher, NotificationWorker
 from mediaflow.domain.automation import IntervalSchedule
 from mediaflow.domain.notification import (
@@ -29,7 +24,7 @@ from mediaflow.domain.notification import (
 )
 from mediaflow.final_cli import final_main
 from mediaflow.infrastructure.runtime_configuration import load_runtime_configuration
-from mediaflow.infrastructure.sqlite_runtime import SCHEMA_VERSION, SQLiteTaskRepository
+from mediaflow.infrastructure.sqlite_runtime import SQLiteTaskRepository
 from mediaflow.interfaces.service_api import MediaFlowApi
 
 NOW = datetime(2026, 8, 22, 12, 0, tzinfo=UTC)
@@ -53,7 +48,7 @@ def webhook(**changes) -> WebhookDefinition:
         "webhook_id": "ops",
         "url": "https://example.invalid/hooks/mediaflow",
         "secret_env": "MEDIAFLOW_WEBHOOK_SECRET",
-        "events": (NotificationEventType.JOB_COMPLETED,),
+        "events": (NotificationEventType.TASK_COMPLETED,),
         "max_attempts": 3,
         "base_retry_seconds": 2,
         "max_retry_seconds": 10,
@@ -65,7 +60,7 @@ def webhook(**changes) -> WebhookDefinition:
 def publish(repository, definition=None):
     event = NotificationEvent(
         "event-1",
-        NotificationEventType.JOB_COMPLETED,
+        NotificationEventType.TASK_COMPLETED,
         NOW,
         {"title": "千与千寻", "jobId": "job-1"},
     )
@@ -92,7 +87,7 @@ class NotificationTests(unittest.TestCase):
                 self.assertEqual(
                     publish(
                         repository,
-                        webhook(events=(NotificationEventType.JOB_FAILED,)),
+                        webhook(events=(NotificationEventType.TASK_FAILED,)),
                     ),
                     (),
                 )
@@ -250,7 +245,7 @@ class NotificationTests(unittest.TestCase):
                     "id": "ops",
                     "url": "https://example.invalid/hook",
                     "secretEnv": "MEDIAFLOW_WEBHOOK_SECRET",
-                    "events": ["job.completed", "job.failed"],
+                    "events": ["task.completed", "task.failed"],
                 }
             ],
         }
@@ -317,25 +312,11 @@ class NotificationTests(unittest.TestCase):
             self.assertNotIn("secret", output.getvalue())
             self.assertIn("updated=", output.getvalue())
 
-    def test_schema_six_migrates_to_notification_outbox(self) -> None:
-        with tempfile.TemporaryDirectory() as directory:
-            database = Path(directory, "runtime.sqlite3")
-            connection = sqlite3.connect(database)
-            connection.executescript(
-                "CREATE TABLE schema_version "
-                "(component TEXT PRIMARY KEY, version INTEGER NOT NULL);"
-                "INSERT INTO schema_version VALUES ('runtime', 6);"
-            )
-            connection.close()
-            with SQLiteTaskRepository(database) as repository:
-                self.assertEqual(repository.schema_version, SCHEMA_VERSION)
-                self.assertEqual(repository.list_deliveries(), ())
-
     def test_terminal_job_and_schedule_events_enter_outbox(self) -> None:
         definitions = (
             webhook(
                 events=(
-                    NotificationEventType.JOB_COMPLETED,
+                    NotificationEventType.TASK_COMPLETED,
                     NotificationEventType.SCHEDULE_EMITTED,
                 )
             ),
@@ -343,11 +324,14 @@ class NotificationTests(unittest.TestCase):
         with tempfile.TemporaryDirectory() as directory:
             with SQLiteTaskRepository(Path(directory, "runtime.sqlite3")) as repository:
                 publisher = NotificationPublisher(repository, definitions)
-                AutomationJobService(repository).submit("organize")
-                finished = AutomationWorker(
-                    repository, lambda job, cancelled: "task-1", publisher
-                ).run_next()
-                self.assertEqual(finished.status.value, "completed")
+                publisher.publish(
+                    NotificationEvent(
+                        "task:task-1:completed",
+                        NotificationEventType.TASK_COMPLETED,
+                        NOW,
+                        {"taskId": "task-1", "status": "completed"},
+                    )
+                )
                 schedule = IntervalSchedule("hourly", "organize", 3600)
                 self.assertEqual(
                     len(IntervalScheduler(repository, (schedule,), publisher).tick(NOW)), 1
@@ -355,7 +339,7 @@ class NotificationTests(unittest.TestCase):
                 self.assertEqual(
                     {item.event_type for item in repository.list_deliveries()},
                     {
-                        NotificationEventType.JOB_COMPLETED,
+                        NotificationEventType.TASK_COMPLETED,
                         NotificationEventType.SCHEDULE_EMITTED,
                     },
                 )

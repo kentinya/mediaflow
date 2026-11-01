@@ -32,7 +32,6 @@ class DashboardService:
             resource_libraries=self._resource_library_count,
             media_libraries=self._media_library_count,
             tasks=state.tasks,
-            jobs=state.jobs,
             pending_confirmations=state.pending_confirmations,
             pending_metadata_reviews=state.pending_metadata_reviews,
             pending_classification_reviews=state.pending_classification_reviews,

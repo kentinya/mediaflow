@@ -128,7 +128,7 @@ def _webhook_document(**changes) -> dict:
         "id": WEBHOOK_ID,
         "url": "https://example.invalid/hooks/mediaflow",
         "secretEnv": SECRET_ENV,
-        "events": ["job.completed", "job.failed"],
+        "events": ["task.completed", "task.failed"],
         "enabled": True,
         "timeoutSeconds": 10,
         "maxAttempts": 3,
@@ -312,7 +312,7 @@ class WebhookDefinitionsPageTests(unittest.TestCase):
                 self.assertFalse(page["draftState"]["present"])
                 self.assertEqual(
                     page["supportedEvents"],
-                    ["job.completed", "job.failed", "job.cancelled", "schedule.emitted"],
+                    ["task.completed", "task.failed", "task.cancelled", "schedule.emitted"],
                 )
                 item = page["items"][0]
                 self.assertEqual(
@@ -531,7 +531,7 @@ class WebhookMutationJourneyTests(unittest.TestCase):
                         "expectedVersion": version,
                     },
                     {
-                        "object": _webhook_document(events=["job.completed", "job.completed"]),
+                        "object": _webhook_document(events=["task.completed", "task.completed"]),
                         "expectedVersion": version,
                     },
                     {"object": _webhook_document(maxAttempts=0), "expectedVersion": version},

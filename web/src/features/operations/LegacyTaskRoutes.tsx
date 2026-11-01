@@ -333,13 +333,10 @@ export function LegacyJobListPage() {
       <header className="mf-dashboard-head">
         <h2>任务中心</h2>
       </header>
-      <StatusBanner variant="info" title="Job 列表已并入任务中心">
+      <StatusBanner variant="info" title="旧列表已并入任务中心">
         <p>
-          旧的 Job
-          列表会同时显示普通文件维护等非整理工作，因此已不再提供独立列表；
-          同一个整理工作仍按真实关联在任务中心去重显示，排队中或尚未生成 Task
-          的整理
-          记录也仍可在“全部任务”中查看。这里没有自动提交、重试或跳转到通用失败恢复。
+          独立的后台任务列表已退役；同一个整理工作按真实关联在任务中心去重显示。
+          这里没有自动提交、重试、身份猜测或跳转到通用失败恢复。
         </p>
         <div className="mf-actions">
           <Link className="mf-button mf-button-primary" to="/operations">
@@ -371,10 +368,14 @@ export function LegacyTaskDetailPage() {
   );
 }
 
-/** The closed `/operations/jobs/$jobId` deep link. */
+/** The closed `/operations/jobs/$jobId` deep link: bounded unavailable only. */
 export function LegacyJobDetailPage() {
-  const { jobId } = useParams({ strict: false }) as { jobId: string };
   return (
-    <LegacyResolutionBoundary identity={jobId} title="正在确认该 Job 的归属" />
+    <LegacyUnavailable
+      title="该旧记录已不可用"
+      code="not_found"
+      onRefresh={() => undefined}
+      refreshing={false}
+    />
   );
 }

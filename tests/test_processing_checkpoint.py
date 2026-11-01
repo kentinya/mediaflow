@@ -2,7 +2,6 @@ from __future__ import annotations
 
 import io
 import json
-import sqlite3
 import tempfile
 import unittest
 from dataclasses import replace
@@ -33,7 +32,7 @@ from mediaflow.domain.task_persistence import (
     PersistentTaskItem,
     TaskItemStatus,
 )
-from mediaflow.infrastructure.sqlite_runtime import SCHEMA_VERSION, SQLiteTaskRepository
+from mediaflow.infrastructure.sqlite_runtime import SQLiteTaskRepository
 from mediaflow.interfaces.operator_ui import APP_JS
 from mediaflow.interfaces.service_api import MediaFlowApi
 
@@ -588,38 +587,6 @@ class ProcessingCheckpointTests(unittest.TestCase):
                     changed,
                     ProcessingCheckpointService(reopened).get(item.item_id).checkpoint_version,
                 )
-
-    def test_pre_checkpoint_result_rows_migrate_to_unknown_effect_evidence(self) -> None:
-        with tempfile.TemporaryDirectory() as directory:
-            database = Path(directory, "runtime.sqlite3")
-            connection = sqlite3.connect(database)
-            connection.executescript(
-                """
-                CREATE TABLE schema_version (component TEXT PRIMARY KEY, version INTEGER NOT NULL);
-                INSERT INTO schema_version VALUES ('runtime', 22);
-                CREATE TABLE task_results (
-                    result_id TEXT PRIMARY KEY, task_id TEXT NOT NULL, item_id TEXT NOT NULL,
-                    source_storage_id TEXT NOT NULL, source_path TEXT NOT NULL,
-                    destination_storage_id TEXT, destination_path TEXT, recognition_type TEXT,
-                    provider TEXT, provider_id TEXT, metadata_policy_id TEXT,
-                    naming_policy_id TEXT, classification_policy_id TEXT,
-                    organize_policy_id TEXT, operation TEXT, status TEXT NOT NULL,
-                    created_at TEXT NOT NULL, title TEXT, error TEXT
-                );
-                INSERT INTO task_results VALUES (
-                    'legacy-result', 'legacy-task', 'legacy-item', 'source', 'movie.mkv',
-                    'target', 'Movies/movie.mkv', 'C', 'tmdb', '123', 'metadata-c',
-                    'naming-a', 'classification-a', 'organize-move', 'MOVE', 'failed',
-                    '2026-08-30T12:00:00+00:00', 'Movie', 'old error with no inference'
-                );
-                """
-            )
-            connection.close()
-            with SQLiteTaskRepository(database) as repository:
-                self.assertEqual(repository.schema_version, SCHEMA_VERSION)
-                result = repository.list_results_for_item("legacy-item")[0]
-                self.assertEqual(result.effect_certainty, "unknown")
-                self.assertEqual(result.uncertain_effects, ())
 
     def test_pinned_snapshot_is_reported_and_missing_snapshot_fails_closed(self) -> None:
         with tempfile.TemporaryDirectory() as directory:

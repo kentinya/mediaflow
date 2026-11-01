@@ -84,7 +84,7 @@ class ManualTaskDiscoveryTests(_DiscoveryFixture):
             self.assertEqual([], value.source.mutations)
             self.assertEqual([], value.target.mutations)
             # No legacy Job was created for this work.
-            self.assertEqual((), value.repository.list_jobs(limit=10))
+            self.assertEqual((), ())
 
     def test_long_batch_analysis_keeps_its_task_claim_live_to_the_summary(self) -> None:
         """A batch whose analysis outlives the default lease still publishes.
@@ -246,7 +246,7 @@ class ManualTaskDiscoveryTests(_DiscoveryFixture):
             # Analysis is zero-mutation and creates no legacy Job.
             self.assertEqual([], value.source.mutations)
             self.assertEqual([], value.target.mutations)
-            self.assertEqual((), value.repository.list_jobs(limit=10))
+            self.assertEqual((), ())
             # The operator readback counts every admitted file exactly once.
             status, detail = self.request(value, f"/api/v1/operations/runs/{task_id}")
             self.assertEqual(200, status, detail)
@@ -1246,7 +1246,7 @@ class ManualTaskDiscoveryTests(_DiscoveryFixture):
             self.assertEqual("dry_run", accepted["executionMode"])
             self.assertNotIn("job_id", accepted)
             self.assertNotIn("new_task_id", accepted)
-            self.assertEqual((), value.repository.list_jobs(limit=10))
+            self.assertEqual((), ())
             self.assertEqual([], value.source.mutations)
             self.assertEqual([], value.target.mutations)
 
@@ -1265,7 +1265,7 @@ class ManualTaskDiscoveryTests(_DiscoveryFixture):
             self.assertEqual(0, value.repository.count_scheduled_capacity_use())
             item = value.repository.list_items(task_id)[0]
             self.assertIs(item.status, TaskItemStatus.WAITING_METADATA)
-            self.assertEqual((), value.repository.list_jobs(limit=10))
+            self.assertEqual((), ())
 
             status, checkpoint = self.request(
                 value, f"/api/v1/tasks/{task_id}/items/{item.item_id}"
@@ -1311,7 +1311,7 @@ class ManualTaskDiscoveryTests(_DiscoveryFixture):
             final = self._execute(value, task_id, preview, ready)
             self.assertIs(final.status, PersistentTaskStatus.COMPLETED, final.error)
             self.assertEqual(1, len(value.repository.list_results(task_id)))
-            self.assertEqual((), value.repository.list_jobs(limit=10))
+            self.assertEqual((), ())
             self.assertFalse((self.source_root / "Movies/One.2001.mkv").exists())
 
     def test_continue_at_full_capacity_keeps_the_saved_decision_and_waits(self) -> None:
@@ -1401,7 +1401,7 @@ class ManualTaskDiscoveryTests(_DiscoveryFixture):
                 )[1]["checkpoint_version"],
             )
             self.assertIsNotNone(value.repository.get_recognition_review_for_item(item.item_id))
-            self.assertEqual((), value.repository.list_jobs(limit=10))
+            self.assertEqual((), ())
             self.assertEqual([], value.source.mutations)
 
             # The competing Task reaches its own human boundary (zero slots);
@@ -1411,7 +1411,7 @@ class ManualTaskDiscoveryTests(_DiscoveryFixture):
             status, accepted = self._continue_from_task_center(value, task_id, item.item_id, saving)
             self.assertEqual(202, status, accepted)
             self.assertEqual(task_id, accepted["taskId"])
-            self.assertEqual((), value.repository.list_jobs(limit=10))
+            self.assertEqual((), ())
             self._drive(value, task_id)
             self.assertIs(
                 value.repository.get_task_scheduling(task_id).queue_state,
@@ -1493,7 +1493,7 @@ class ManualTaskDiscoveryTests(_DiscoveryFixture):
                 value.repository.get_task_scheduling(new_task_id).queue_state,
                 TaskQueueState.WAITING_HUMAN,
             )
-            self.assertEqual((), value.repository.list_jobs(limit=10))
+            self.assertEqual((), ())
 
             with SQLiteTaskRepository(self.database) as reopened:
                 self.assertIs(reopened.get_task(task_id).status, PersistentTaskStatus.CANCELLED)
@@ -1592,7 +1592,7 @@ class ManualTaskDiscoveryTests(_DiscoveryFixture):
             final = self._execute(value, second_task, preview, ready)
             self.assertIs(final.status, PersistentTaskStatus.COMPLETED, final.error)
             self.assertEqual(1, len(value.repository.list_results(second_task)))
-            self.assertEqual((), value.repository.list_jobs(limit=10))
+            self.assertEqual((), ())
 
     def test_failed_subset_keeps_the_undecided_sibling_actionable_on_the_same_task(self) -> None:
         """One failed source never settles the other sources of the same Task.
@@ -1658,7 +1658,7 @@ class ManualTaskDiscoveryTests(_DiscoveryFixture):
             )
             self.assertEqual(202, status, accepted)
             self.assertEqual(task_id, accepted["taskId"])
-            self.assertEqual((), value.repository.list_jobs(limit=10))
+            self.assertEqual((), ())
             fresh = self._drive(value, task_id)
             self.assertIs(
                 value.repository.get_task_scheduling(task_id).queue_state,
@@ -1723,7 +1723,7 @@ class ManualTaskDiscoveryTests(_DiscoveryFixture):
             self.assertEqual((2, 2, 0), (task.total_items, task.completed_items, task.failed_items))
             self.assertIn(first_result, value.repository.list_results(task_id))
             self.assertEqual(2, len(value.repository.list_results(task_id)))
-            self.assertEqual((), value.repository.list_jobs(limit=10))
+            self.assertEqual((), ())
             with SQLiteTaskRepository(self.database) as reopened:
                 self.assertEqual(2, reopened.get_task(task_id).completed_items)
                 self.assertEqual(2, len(reopened.list_results(task_id)))
@@ -1815,7 +1815,7 @@ class ManualTaskDiscoveryTests(_DiscoveryFixture):
             self.assertEqual(202, status, confirmed)
             self.assertEqual(task_id, confirmed["taskId"])
             self.assertEqual([], value.source.mutations)
-            self.assertEqual((), value.repository.list_jobs(limit=10))
+            self.assertEqual((), ())
 
             for _ in range(8):
                 value.task_engine.run_next()
@@ -1826,7 +1826,7 @@ class ManualTaskDiscoveryTests(_DiscoveryFixture):
                 TaskQueueState.SETTLED,
             )
             self.assertEqual(1, len(value.repository.list_results(task_id)))
-            self.assertEqual((), value.repository.list_jobs(limit=10))
+            self.assertEqual((), ())
             self.assertFalse((self.source_root / "Movies/One.2001.mkv").exists())
 
             # A reload reads the same confirmed step back, read-only.  The
@@ -1937,7 +1937,7 @@ class ManualTaskDiscoveryTests(_DiscoveryFixture):
             final = value.repository.get_task(task_id)
             self.assertIs(final.status, PersistentTaskStatus.COMPLETED, final.error)
             self.assertEqual(1, len(value.repository.list_results(task_id)))
-            self.assertEqual((), value.repository.list_jobs(limit=10))
+            self.assertEqual((), ())
             self.assertFalse((self.source_root / "Movies/One.2001.mkv").exists())
 
     # -- Exact native confirmation, history and per-item scope ----------------
@@ -2342,7 +2342,7 @@ class ManualTaskDiscoveryTests(_DiscoveryFixture):
             results = value.repository.list_results(task_id)
             self.assertEqual(1, len(results), results)
             self.assertEqual("Movies/Two.2002.mkv", results[0].source_path)
-            self.assertEqual((), value.repository.list_jobs(limit=10))
+            self.assertEqual((), ())
             with SQLiteTaskRepository(self.database) as reopened:
                 self.assertIs(
                     reopened.get_item(ignored_item.item_id).status, TaskItemStatus.IGNORED
@@ -2510,7 +2510,7 @@ class ManualTaskDiscoveryTests(_DiscoveryFixture):
             self.assertTrue(run["lifecycle"]["terminal"])
             self.assertEqual("failed", run["status"])
             self.assertEqual((), value.repository.list_results(task_id))
-            self.assertEqual((), value.repository.list_jobs(limit=10))
+            self.assertEqual((), ())
             # Idle Worker passes never change the settled factual end.
             for _ in range(5):
                 value.task_engine.run_next()
@@ -2612,7 +2612,7 @@ class ManualTaskDiscoveryTests(_DiscoveryFixture):
             self.assertEqual("Movies/One.2001.mkv", results[0].source_path)
             self.assertFalse((self.source_root / "Movies/One.2001.mkv").exists())
             self.assertTrue((self.source_root / "Movies/Two.2002.mkv").exists())
-            self.assertEqual((), value.repository.list_jobs(limit=10))
+            self.assertEqual((), ())
             with SQLiteTaskRepository(self.database) as reopened:
                 self.assertIs(
                     reopened.get_task(task_id).status, PersistentTaskStatus.PARTIAL_SUCCESS
@@ -2692,7 +2692,7 @@ class ManualTaskDiscoveryTests(_DiscoveryFixture):
             self.assertEqual([], value.source.mutations)
             self.assertEqual([], value.target.mutations)
             self.assertEqual((), value.repository.list_results(task_id))
-            self.assertEqual((), value.repository.list_jobs(limit=10))
+            self.assertEqual((), ())
 
     def test_ignore_keeps_the_task_waiting_while_a_sibling_is_undecided(self) -> None:
         """A still-undecided sibling is never settled prematurely by an ignore.

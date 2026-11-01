@@ -19,7 +19,6 @@ INDEX_HTML = b"""<!doctype html>
     <button data-view="dashboard" class="active">Dashboard</button>
     <button data-view="tasks">Tasks</button>
     <button data-view="files">Files</button>
-    <button data-view="jobs">Jobs</button>
     <button data-view="schedules">Schedules</button>
     <button data-view="automation">Automation</button>
     <button data-view="notifications">Notifications</button>
@@ -103,7 +102,7 @@ APP_JS = b"""(() => {
     }
     if (details && details.continuationId) {
       fragments.push(`Continuation: ${details.continuationId} ` +
-        `(Job ${details.jobId || '-'}; status ${details.status || '-'})`);
+        `(status ${details.status || '-'})`);
     }
     if (details && details.currentDraft) {
       fragments.push(`Current Draft: ${details.currentDraft.revisionId || '-'} ` +
@@ -2258,11 +2257,6 @@ APP_JS = b"""(() => {
           }
         }
       }
-      if (data.status === 'active') actions.append(actionButton('Queue first DryRun Preview', async () => {
-        try { const job = await api('/api/v1/jobs', {method: 'POST', body: JSON.stringify({command: 'preview'})});
-          message(`DryRun Preview queued: ${job.job_id || job.jobId || '-'}`); }
-        catch (error) { message(errorText(error), true); }
-      }));
       detailContent.append(actions); detail.hidden = false;
     } catch (error) { message(errorText(error), true); }
   }
@@ -2952,85 +2946,18 @@ APP_JS = b"""(() => {
     detailContent.append(confirmation);
   }
   async function renderObservability(kind, cursor = null) {
+    if (kind !== 'tasks') return;
     const suffix = cursor ? `&cursor=${encodeURIComponent(cursor)}` : '';
-    const data = await api(`/api/v1/${kind}?limit=100${suffix}`); const items = data.items || [];
-    clear(content); content.append(text('h2', kind === 'tasks' ? 'Tasks' : 'Automation jobs'));
-    if (kind === 'jobs') {
-      content.append(actionButton('Queue Job', showQueueJobForm));
-      content.append(actionButton('Show stale running jobs', renderStaleJobs));
-    }
-    if (kind === 'tasks') {
-      const rows = items.map(item => [item.task_id, item.command, item.status,
-        item.execute_authorized ? 'MUTATION_AUTHORIZED' : 'DRY_RUN', item.completed_items,
-        item.failed_items, item.updated_at]);
-      content.append(table(['ID', 'Command', 'Status', 'Authority', 'Done', 'Failed', 'Updated'], rows,
-        index => showTask(items[index].task_id)));
-      pageNavigation(content, 'tasks', data.previous_cursor, data.next_cursor,
-        () => renderObservability(kind, data.previous_cursor),
-        () => renderObservability(kind, data.next_cursor));
-    } else {
-      const rows = items.map(item => [item.job_id, item.command, item.status,
-        item.execute_authorized ? 'MUTATION_AUTHORIZED' : 'DRY_RUN', item.task_id || '-',
-        item.updated_at]);
-      content.append(table(['ID', 'Command', 'Status', 'Authority', 'Task', 'Updated'], rows,
-        index => showJob(items[index].job_id)));
-      pageNavigation(content, 'jobs', data.previous_cursor, data.next_cursor,
-        () => renderObservability(kind, data.previous_cursor),
-        () => renderObservability(kind, data.next_cursor));
-    }
-  }
-  async function renderStaleJobs() {
-    const data = await api('/api/v1/jobs/stale?limit=100'); const items = data.items || [];
-    clear(content); content.append(text('h2', 'Stale running automation jobs'));
-    content.append(text('p', `Running jobs not updated for ${data.threshold_seconds} seconds. ` +
-      'Age is an observation, not proof that a worker died. Inspect locally before recovery; ' +
-      'automatic requeue is intentionally unavailable.', 'warning'));
-    const rows = items.map(item => [item.job_id, item.command, item.status,
-      item.execute_authorized ? 'MUTATION_AUTHORIZED \\u2014 MANUAL RECOVERY ONLY' : 'DRY_RUN',
-      item.task_id || '-', item.ownerStatus || '-',
-      (item.operationalCondition && item.operationalCondition.nextAction) || '-',
-      item.updated_at]);
-    content.append(table(['ID', 'Command', 'Status', 'Authority', 'Task', 'Owner', 'Next action', 'Updated'], rows,
-      index => showJob(items[index].job_id)));
-    content.append(actionButton('Back to automation jobs', () => renderObservability('jobs')));
-  }
-  function showQueueJobForm() {
-    clear(detailContent); detailContent.append(text('h2', 'Queue Job'));
-    const command = document.createElement('select'); command.setAttribute('aria-label', 'Job command');
-    ['organize'].forEach(value => { const option = text('option', value); option.value = value;
-      command.append(option); });
-    const limit = document.createElement('input'); limit.type = 'number'; limit.min = '1';
-    limit.max = '10000'; limit.step = '1'; limit.placeholder = 'Optional limit';
-    limit.setAttribute('aria-label', 'Optional item limit');
-    const controls = text('div', '', 'choices'); controls.append(command, limit,
-      actionButton('Review Job', () => {
-        if (limit.value && !limit.reportValidity()) return;
-        reviewQueueJob(command.value, limit.value ? Number(limit.value) : null);
-      }), actionButton('Keep jobs unchanged', () => { detail.hidden = true; }));
-    detailContent.append(text('p', 'Organize requires the separate one-shot execution authority ' +
-      'and an explicit final confirmation.', 'warning'), controls); detail.hidden = false;
-  }
-  function reviewQueueJob(command, limit) {
-    const base = limit === null ? {command} : {command, limit};
-    const payload = Object.freeze({...base, execute: true});
-    clear(detailContent); detailContent.append(text('h2', 'Review Queue Job'));
-    detailContent.append(cards([
-      ['Command', payload.command], ['Limit', payload.limit || 'No explicit limit'],
-      ['Authority', 'REMOTE_EXECUTE (one-shot)'], ['Storage mutation', 'POSSIBLE']
-    ]), text('p', 'This queues a real Organize Job that may mutate Storage only after ' +
-      'the Worker revalidates current source, destination, pinned configuration, capability and live ' +
-      'execution authority. A normal login token is not execution authority; the separate one-shot ' +
-      'execution authorization is presented out of band and remains out of browser JavaScript.',
-      'warning'), actionButton('Confirm Organize', () => submitQueueJob(payload)),
-      actionButton('Back without queueing', showQueueJobForm));
-    detail.hidden = false;
-  }
-  async function submitQueueJob(payload) {
-    try {
-      const created = await api('/api/v1/jobs', {method: 'POST', body: JSON.stringify(payload)});
-      await renderObservability('jobs'); await showJob(created.job_id);
-      message('Real Organize Job queued under one-shot authority.');
-          } catch (error) { message(errorText(error), true); }
+    const data = await api(`/api/v1/tasks?limit=100${suffix}`); const items = data.items || [];
+    clear(content); content.append(text('h2', 'Tasks'));
+    const rows = items.map(item => [item.task_id, item.command, item.status,
+      item.execute_authorized ? 'MUTATION_AUTHORIZED' : 'DRY_RUN', item.completed_items,
+      item.failed_items, item.updated_at]);
+    content.append(table(['ID', 'Command', 'Status', 'Authority', 'Done', 'Failed', 'Updated'], rows,
+      index => showTask(items[index].task_id)));
+    pageNavigation(content, 'tasks', data.previous_cursor, data.next_cursor,
+      () => renderObservability(kind, data.previous_cursor),
+      () => renderObservability(kind, data.next_cursor));
   }
   async function renderSchedules() {
     const data = await api('/api/v1/schedules'); const items = data.items || [];
@@ -3038,8 +2965,8 @@ APP_JS = b"""(() => {
     const rows = items.map(item => [item.schedule_id, item.command,
       item.expression || `${item.interval_seconds}s`, item.timezone || '-',
       item.enabled, item.state && item.state.next_run_at || '-',
-      item.state && item.state.last_job_id || '-']);
-    content.append(table(['ID', 'Command', 'Timing', 'Timezone', 'Enabled', 'Next run', 'Last job'],
+      item.state && item.state.last_task_id || '-']);
+    content.append(table(['ID', 'Command', 'Timing', 'Timezone', 'Enabled', 'Next run', 'Last task'],
       rows, index => showScheduleAudit(items[index].schedule_id)));
   }
   async function showScheduleAudit(id, cursor = null) {
@@ -3048,8 +2975,8 @@ APP_JS = b"""(() => {
       const data = await api(`/api/v1/schedules/${encodeURIComponent(id)}/audit?limit=100${suffix}`);
       clear(detailContent); detailContent.append(text('h2', 'Schedule occurrence audit'));
       const rows = (data.items || []).map(item => [item.audit_id, item.occurrence_at,
-        item.emitted_at, item.command, item.job_id, item.next_run_at]);
-      detailContent.append(table(['Audit ID', 'Occurrence', 'Emitted', 'Command', 'Job', 'Next run'],
+        item.emitted_at, item.command, item.task_id, item.next_run_at]);
+      detailContent.append(table(['Audit ID', 'Occurrence', 'Emitted', 'Command', 'Task', 'Next run'],
         rows));
       pageNavigation(detailContent, 'schedule records', data.previous_cursor, data.next_cursor,
         () => showScheduleAudit(id, data.previous_cursor),
@@ -3176,10 +3103,10 @@ APP_JS = b"""(() => {
         detailContent.append(text('p', 'No per-item outcome summary has been published yet.', 'warning'));
       }
       const occurrenceRows = (occurrenceData.items || []).map(value => [value.occurrenceId,
-        value.occurrenceAt, value.emittedAt, value.jobId, value.taskId || '-', value.configurationRevisionId,
+        value.occurrenceAt, value.emittedAt, value.taskId || '-', value.configurationRevisionId,
         value.configurationRevisionVersion, value.configurationRevisionDigest,
         value.runMode, value.outcome, value.failureCategory || '-', value.reason || '-', value.nextAction || '-']);
-      detailContent.append(table(['Occurrence', 'Due', 'Emitted', 'Job', 'Task', 'Configuration', 'Version', 'Digest', 'Run mode', 'Outcome', 'Failure category', 'Reason', 'Next action'], occurrenceRows,
+      detailContent.append(table(['Occurrence', 'Due', 'Emitted', 'Task', 'Configuration', 'Version', 'Digest', 'Run mode', 'Outcome', 'Failure category', 'Reason', 'Next action'], occurrenceRows,
         index => {
           const taskId = (occurrenceData.items || [])[index].taskId;
           if (taskId) showTask(taskId);
@@ -3489,8 +3416,8 @@ APP_JS = b"""(() => {
     const data = await api(`/api/v1/logs?limit=100&level=${encodeURIComponent(level)}${suffix}`);
     clear(content); content.append(text('h2', 'Operational logs'), selector, refresh);
     const rows = (data.items || []).map(item => [item.occurred_at, item.level, item.component,
-      item.event, item.task_id || '-', item.job_id || '-', item.plan_id || '-', item.status || '-']);
-    content.append(table(['Time', 'Level', 'Component', 'Event', 'Task', 'Job', 'Plan', 'Status'], rows));
+      item.event, item.task_id || '-', item.plan_id || '-', item.status || '-']);
+    content.append(table(['Time', 'Level', 'Component', 'Event', 'Task', 'Plan', 'Status'], rows));
     pageNavigation(content, 'logs', data.previous_cursor, data.next_cursor,
       () => renderLogs(level, data.previous_cursor),
       () => renderLogs(level, data.next_cursor));
@@ -3612,7 +3539,7 @@ APP_JS = b"""(() => {
           'New Task', 'New Result', 'Reason', 'Error', 'Next action'],
         batchItems.map(item => [item.source_item_id, item.status,
           item.checkpoint_version || '-', item.request_id || '-',
-          item.continuation_id || '-', item.job_id || '-', item.new_task_id || '-',
+          item.continuation_id || '-', item.new_task_id || '-',
           item.new_result_id || '-', item.reason || '-', item.error || '-',
           item.next_action || '-']),
         index => showTaskItem(batchItems[index].source_task_id,
@@ -3624,11 +3551,6 @@ APP_JS = b"""(() => {
           links.append(actionButton(
             `Open linked Task/Result for ${item.source_item_id}`,
             () => showTask(item.new_task_id)));
-          if (item.job_id) {
-            links.append(actionButton(
-              `Open linked Job for ${item.source_item_id}`,
-              () => showJob(item.job_id)));
-          }
         });
         detailContent.append(text('h3', 'Linked DryRun Tasks/Results'), links);
       }
@@ -3763,7 +3685,6 @@ APP_JS = b"""(() => {
         const continuationList = document.createElement('dl');
         field(continuationList, 'Continuation', continuation.continuation_id);
         field(continuationList, 'Request', continuation.request_id);
-        field(continuationList, 'Job', continuation.job_id || '-');
         field(continuationList, 'New Task', continuation.new_task_id || '-');
         field(continuationList, 'New Result', continuation.new_result_id || '-');
         field(continuationList, 'Error', continuation.error || 'none');
@@ -3771,9 +3692,6 @@ APP_JS = b"""(() => {
         field(continuationList, 'Next action', continuation.next_action || '-');
         continuationSection.append(continuationList);
         const continuationLinks = text('div', '', 'choices');
-        if (continuation.job_id) {
-          continuationLinks.append(actionButton('Open linked Job', () => showJob(continuation.job_id)));
-        }
         if (continuation.new_task_id) {
           continuationLinks.append(actionButton('Open linked Task', () => showTask(continuation.new_task_id)));
         }
@@ -3913,48 +3831,6 @@ APP_JS = b"""(() => {
       detailContent.append(scalarDetails(data)); detail.hidden = false;
     } catch (error) { message(errorText(error), true); }
   }
-  async function showJob(id) {
-    try {
-      const data = await api(`/api/v1/jobs/${encodeURIComponent(id)}`);
-      clear(detailContent); detailContent.append(text('h2', 'Automation job detail'),
-        scalarDetails(data));
-      if (data.failure_category) detailContent.append(text('p',
-        `Configuration failure: ${data.failure_category}. ` +
-        `State: ${data.failure_durable_state || '-'}. ` +
-        `Side effects: ${data.failure_side_effects || 'unknown'}. ` +
-        `Retry safe: ${data.failure_retry_safe ? 'YES' : 'NO'}. ` +
-        `Next action: ${data.failure_next_action || 'inspect the saved snapshot'}.`, 'error'));
-      if (data.workerId) detailContent.append(text('p',
-        `Owner worker: ${data.workerId} (${data.ownerStatus || '-'}, last heartbeat ` +
-        `${data.ownerLastHeartbeatAt || '-'}).`, 'hint'));
-      if (data.operationalCondition) detailContent.append(text('p',
-        `Worker condition: ${data.operationalCondition.condition || '-'}. ` +
-        `${data.operationalCondition.durableState || ''} ` +
-        `Next action: ${data.operationalCondition.nextAction || '-'}.`, 'warning'));
-      if (data.task_id) detailContent.append(actionButton('Open linked task', () => showTask(data.task_id)));
-      if (data.status === 'pending' || data.status === 'running') {
-        detailContent.append(text('p', data.status === 'running' ?
-          'Cancellation is cooperative. An in-flight operation may finish and completed work is not rolled back.' :
-          'Cancellation prevents this pending job from starting. It grants no media execution authority.',
-          'warning'));
-        detailContent.append(actionButton('Request cancellation', () => confirmJobCancellation(id)));
-      }
-      detail.hidden = false;
-    } catch (error) { message(errorText(error), true); }
-  }
-  function confirmJobCancellation(id) {
-    const confirmation = text('div', '', 'choices');
-    confirmation.append(text('p', 'Cancel this automation job? This does not roll back completed work.'),
-      actionButton('Confirm cancellation', () => cancelJob(id)),
-      actionButton('Keep job', () => confirmation.remove()));
-    detailContent.append(confirmation);
-  }
-  async function cancelJob(id) {
-    try {
-      await api(`/api/v1/jobs/${encodeURIComponent(id)}/cancel`, {method: 'POST'});
-      await renderObservability('jobs'); await showJob(id); message('Cancellation recorded.');
-    } catch (error) { message(errorText(error), true); }
-  }
   async function showDetail(kind, id) {
     try {
       const data = await api(`/api/v1/${kind}/${encodeURIComponent(id)}`);
@@ -4007,7 +3883,7 @@ APP_JS = b"""(() => {
   async function load() {
     try { message('Loading...');
       if (view === 'dashboard') renderDashboard(await api('/api/v1/dashboard?recentLimit=10'));
-      else if (view === 'tasks' || view === 'jobs') await renderObservability(view);
+      else if (view === 'tasks') await renderObservability(view);
       else if (view === 'schedules') await renderSchedules();
       else if (view === 'automation') await renderAutomation();
       else if (view === 'notifications') await renderNotifications();

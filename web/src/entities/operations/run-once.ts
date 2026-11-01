@@ -52,7 +52,6 @@ export interface AutomationRunOnceAction {
 export interface AutomationRunOnceModel {
   readonly executionKind: "organizing" | "analysis";
   readonly taskId: string | null;
-  readonly jobId: string | null;
   readonly discoveryId: string;
   readonly definitionId: string;
   readonly definitionName: string;
@@ -142,7 +141,6 @@ export function normalizeAutomationRunOnce(
   return {
     executionKind: organizing ? "organizing" : "analysis",
     taskId: organizing ? boundedText(record, "taskId") : null,
-    jobId: organizing ? boundedText(record, "jobId") : null,
     discoveryId: boundedText(record, "discoveryId"),
     definitionId: boundedText(record, "definitionId"),
     definitionName: boundedText(record, "definitionName"),

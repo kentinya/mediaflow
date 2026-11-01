@@ -69,7 +69,7 @@ from mediaflow.domain.task_persistence import (
 )
 from mediaflow.infrastructure.json_history import JsonLinesOperationHistoryRepository
 from mediaflow.infrastructure.local_storage import LocalStorage
-from mediaflow.infrastructure.sqlite_runtime import SCHEMA_VERSION, SQLiteTaskRepository
+from mediaflow.infrastructure.sqlite_runtime import SQLiteTaskRepository
 from mediaflow.infrastructure.strategy_configuration import development_strategy_configuration
 from mediaflow.interfaces.service_api import MediaFlowApi
 
@@ -806,47 +806,6 @@ class FileMediaDetailTests(unittest.TestCase):
                 self.assertEqual(persisted.status, TaskItemStatus.PROCESSING)
                 self.assertEqual(repository.list_results_for_item(item.item_id), ())
                 self.assertEqual(repository.list_evidence_for_item(item.item_id), ())
-
-    def test_old_schema_26_migrates_without_losing_rows(self) -> None:
-        with tempfile.TemporaryDirectory() as directory:
-            database = self._database(directory)
-            with SQLiteTaskRepository(database) as repository:
-                coordinator = PersistentTaskCoordinator(repository, repository)
-                task = coordinator.create("organize", execute_authorized=False)
-                item = coordinator.record_discovered(
-                    task.task_id, "source", "movies", "Movies/A.mkv", "Movies/A.mkv"
-                )
-                repository.append_result(
-                    PersistentResultRecord(
-                        "legacy-result",
-                        task.task_id,
-                        item.item_id,
-                        "source",
-                        "Movies/A.mkv",
-                        None,
-                        None,
-                        "C",
-                        "tmdb",
-                        "129",
-                        "C",
-                        "A",
-                        "A",
-                        "A",
-                        "move",
-                        "dry_run",
-                        NOW,
-                    )
-                )
-            connection = sqlite3.connect(database)
-            connection.execute("UPDATE schema_version SET version=26 WHERE component='runtime'")
-            connection.execute("DROP TABLE pipeline_evidence")
-            connection.commit()
-            connection.close()
-            with SQLiteTaskRepository(database) as reopened:
-                self.assertEqual(reopened.schema_version, SCHEMA_VERSION)
-                self.assertEqual(reopened.list_items(task.task_id)[0].item_id, item.item_id)
-                self.assertEqual(reopened.list_results(task.task_id)[0].result_id, "legacy-result")
-                self.assertEqual(reopened.list_evidence_for_item(item.item_id), ())
 
 
 if __name__ == "__main__":

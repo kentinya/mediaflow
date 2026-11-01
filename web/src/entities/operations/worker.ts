@@ -17,7 +17,6 @@ import {
   normalizeOptionalText,
   readRecord,
 } from "../shared/normalize";
-import { JOB_COMMANDS } from "./job";
 
 export const WORKER_READINESS_CONDITIONS = [
   "ready",
@@ -69,7 +68,11 @@ export interface WorkerSummary {
 }
 
 export const WORKER_COMMANDS = [
-  ...JOB_COMMANDS,
+  "organize",
+  "manual_organize",
+  "file-copy",
+  "file-move",
+  "file-delete",
   "manual_organize",
   "files_transfer",
   "media_files_transfer",

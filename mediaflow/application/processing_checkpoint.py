@@ -745,7 +745,6 @@ def _safe_recovery_continuation(value):
         ),
         boundary=_bounded(value.boundary, 256),
         actor=_bounded(value.actor, 256),
-        job_id=_safe_identifier(value.job_id),
         new_task_id=_safe_identifier(value.new_task_id) if value.new_task_id else None,
         new_result_id=_safe_identifier(value.new_result_id) if value.new_result_id else None,
         error=_bounded(value.error, 512),

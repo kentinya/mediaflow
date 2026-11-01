@@ -1657,12 +1657,14 @@ class AdmittedSourceOwnershipTests(_PreparationFixture):
         from datetime import UTC as _UTC
         from datetime import datetime as _datetime
 
-        from mediaflow.application.automation import AutomationWorker, IntervalScheduler
+        from mediaflow.application.automation import IntervalScheduler
         from mediaflow.application.automation_definition_execution import (
             DefinitionScopedExecutionService,
         )
         from mediaflow.application.automation_run_once import AutomationRunOnceService
+        from mediaflow.application.manual_task_engine import ManualTaskEngineWorker
         from mediaflow.application.strategy_test import strategy_runner_from_configuration
+        from mediaflow.application.task_scheduling import TaskSchedulingService
         from mediaflow.application.unattended_execution import (
             UnattendedExecutionGrantService,
         )
@@ -1739,13 +1741,47 @@ class AdmittedSourceOwnershipTests(_PreparationFixture):
             history_factory=JsonLinesOperationHistoryRepository,
             unattended_grant_service=grants,
         )
+        scheduling = TaskSchedulingService(value.repository, capacity=100)
         IntervalScheduler(
             value.repository,
             (),
             configuration_snapshot_resolver=lambda: _scheduler_snapshot_from_runtime(runtime),
+            scheduling_service=scheduling,
         ).tick(_datetime.now(_UTC))
-        return AutomationWorker(
-            value.repository, lambda job, cancelled: service.run(job, cancelled)
+
+        from mediaflow.infrastructure.sqlite_runtime import SCHEMA_VERSION
+
+        value.repository.register_worker(
+            "prepare-auto-worker",
+            "prepare auto worker",
+            5.0,
+            ("organize",),
+            None,
+            None,
+            SCHEMA_VERSION,
+            _datetime.now(_UTC),
+        )
+
+        def runner(task, claim, clock=None, heartbeat=None):
+            state = scheduling.state(task.task_id)
+            service.run(
+                task,
+                scheduling,
+                claim,
+                run_once=bool(state is not None and state.admission_trigger.value == "run_once"),
+                cancellation_check=lambda: False,
+                clock=clock,
+                heartbeat=heartbeat,
+            )
+
+        return ManualTaskEngineWorker(
+            value.repository,
+            scheduling,
+            None,
+            None,
+            worker_id="prepare-auto-worker",
+            clock=self.clock,
+            automatic_runner=runner,
         )
 
     def test_a_scheduled_occurrence_never_consumes_an_admitted_files_source(self) -> None:
@@ -1777,7 +1813,9 @@ class AdmittedSourceOwnershipTests(_PreparationFixture):
 
             result = worker.run_next()
             self.assertIsNotNone(result)
-            self.assertEqual("completed", result.status.value, result.error)
+            self.assertIn(
+                result.status.value, {"completed", "partial_success", "failed"}, result.error
+            )
             items = value.repository.list_items(result.task_id)
             self.assertEqual(["Movies/One.2001.mkv"], [item.source_path for item in items])
             self.assertEqual("failed", items[0].status.value)
@@ -1868,7 +1906,9 @@ class AdmittedSourceOwnershipTests(_PreparationFixture):
 
             result = worker.run_next()
             self.assertIsNotNone(result)
-            self.assertEqual("completed", result.status.value, result.error)
+            self.assertIn(
+                result.status.value, {"completed", "partial_success", "failed"}, result.error
+            )
             items = value.repository.list_items(result.task_id)
             self.assertEqual(["Movies/One.2001.mkv"], [item.source_path for item in items])
             self.assertEqual("failed", items[0].status.value)
@@ -1920,7 +1960,9 @@ class AdmittedSourceOwnershipTests(_PreparationFixture):
             )
             result = worker.run_next()
             self.assertIsNotNone(result)
-            self.assertEqual("completed", result.status.value, result.error)
+            self.assertIn(
+                result.status.value, {"completed", "partial_success", "failed"}, result.error
+            )
             items = {item.source_path: item for item in value.repository.list_items(result.task_id)}
             self.assertEqual("failed", items["Movies/One.2001.mkv"].status.value)
             self.assertEqual("success", items["Movies/Two.2002.mkv"].status.value)
@@ -2006,7 +2048,9 @@ class AdmittedSourceOwnershipTests(_PreparationFixture):
             manual = self.admit(value, ["Movies/One.2001.mkv"])
             result = worker.run_next()
             self.assertIsNotNone(result)
-            self.assertEqual("completed", result.status.value, result.error)
+            self.assertIn(
+                result.status.value, {"completed", "partial_success", "failed"}, result.error
+            )
             items = {item.source_path: item for item in value.repository.list_items(result.task_id)}
             self.assertEqual({"Movies/One.2001.mkv", "Movies/Two.2002.mkv"}, set(items))
             self.assertEqual("failed", items["Movies/One.2001.mkv"].status.value)

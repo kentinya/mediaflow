@@ -38,7 +38,9 @@ _REASONS = {
 }
 
 
-def automation_record_display(overview, failure_evidence: dict | None) -> dict[str, object]:
+def automation_record_display(
+    overview, failure_evidence: dict | None, *, fallback_category: str | None = None
+) -> dict[str, object]:
     """Use the same SQL outcome consumed by server filtering, not live handling."""
     evidence = overview.automation_record_evidence or {}
     status = evidence.get("record_outcome", "unknown")
@@ -97,6 +99,8 @@ def automation_record_display(overview, failure_evidence: dict | None) -> dict[s
         categories = []
         if not overview.task_id and overview.attention_failure_category:
             categories.append(overview.attention_failure_category)
+        if not (failure_evidence or {}).get("items") and fallback_category:
+            categories.append(fallback_category)
         for item in (failure_evidence or {}).get("items", []):
             error = item.get("error")
             document = bounded_failure_document(error) if error else None

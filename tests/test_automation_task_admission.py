@@ -84,17 +84,14 @@ class SchedulerTaskAdmissionTests(unittest.TestCase):
 
         self.assertEqual(len(emitted), 1)
         task_id = emitted[0].task_id
-        self.assertEqual(emitted[0].job_id, task_id)
-        self.assertEqual(_rows(self.repository, "automation_jobs"), 0)
         task = self.repository.get_task(task_id)
         self.assertIsNotNone(task)
         state = self.repository.get_task_scheduling(task_id)
         self.assertIs(state.admission_trigger, TaskTrigger.SCHEDULE)
         self.assertIs(state.queue_state, TaskQueueState.QUEUED)
         occurrence = self.repository.get_latest_automation_definition_occurrence("definition")
-        # The occurrence keeps its durable link through the existing ``job_id``
-        # column, which now carries the substantive Task identity (no Job row).
-        self.assertEqual(occurrence.job_id, task_id)
+        # The occurrence keeps its durable link through its Task identity.
+        self.assertEqual(occurrence.task_id, task_id)
         # the due state advanced once
         due = self.repository.get_automation_definition_due_state("definition")
         self.assertEqual(due.last_occurrence_at, NOW)
@@ -105,7 +102,6 @@ class SchedulerTaskAdmissionTests(unittest.TestCase):
         second = self._scheduler(active).tick(NOW)
         self.assertEqual(len(first), 1)
         self.assertEqual(len(second), 0)
-        self.assertEqual(_rows(self.repository, "automation_jobs"), 0)
         states = [
             self.repository.get_task_scheduling(row["task_id"])
             for row in self.repository._connection.execute(
@@ -131,7 +127,6 @@ class SchedulerTaskAdmissionTests(unittest.TestCase):
         emitted = self._scheduler(active, capacity=1).tick(NOW)
 
         self.assertEqual(emitted, ())
-        self.assertEqual(_rows(self.repository, "automation_jobs"), 0)
         self.assertEqual(_rows(self.repository, "task_scheduling"), 1)
         due = self.repository.get_automation_definition_due_state("definition")
         self.assertIsNone(due.last_occurrence_at)

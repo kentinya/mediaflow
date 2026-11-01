@@ -22,10 +22,10 @@ import {
   readRecord,
 } from "../shared/normalize";
 
-export const LIFECYCLE_ACTION_NAMES = ["cancel", "pause", "resume"] as const;
+export const LIFECYCLE_ACTION_NAMES = ["cancel"] as const;
 export type LifecycleActionName = (typeof LIFECYCLE_ACTION_NAMES)[number];
 
-export const LIFECYCLE_OBJECT_TYPES = ["task", "job"] as const;
+export const LIFECYCLE_OBJECT_TYPES = ["task"] as const;
 export type LifecycleObjectType = (typeof LIFECYCLE_OBJECT_TYPES)[number];
 
 export const EFFECT_CERTAINTIES = [
@@ -147,15 +147,12 @@ function readRecoveryAction(value: unknown): LifecycleRecoveryAction | null {
   }
 }
 
-function readAction(
-  value: unknown,
-  objectType: LifecycleObjectType,
-): LifecycleAction {
+function readAction(value: unknown): LifecycleAction {
   const source = readRecord(value, "lifecycle.action");
   const action = normalizeEnum(
     source["action"],
     "lifecycle.action.action",
-    objectType === "task" ? LIFECYCLE_ACTION_NAMES : (["cancel"] as const),
+    LIFECYCLE_ACTION_NAMES,
   );
   const method = source["method"];
   if (method !== "POST") {
@@ -267,9 +264,7 @@ export function normalizeLifecycleProjection(
   if (!Array.isArray(rawActions)) {
     fail();
   }
-  const actions = rawActions.map((item) =>
-    readAction(item, expected.objectType),
-  );
+  const actions = rawActions.map((item) => readAction(item));
   if (new Set(actions.map((item) => item.action)).size !== actions.length) {
     fail();
   }

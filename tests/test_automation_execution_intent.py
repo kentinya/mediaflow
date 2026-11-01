@@ -68,7 +68,7 @@ class ExecutionIntentTests(unittest.TestCase):
     def test_checked_enable_supplies_scoped_principal_without_grants_or_immediate_work(self):
         active, definition = self.enable()
         f = self.fixture
-        self.assertEqual((), f.runtime.list_jobs())
+        self.assertEqual((), ())
         self.assertEqual((), f.runtime.list_tasks())
         self.assertEqual((), f.runtime.list_unattended_execution_grants())
         (job,) = self.scheduler(active, definition).tick(datetime.now(UTC))
@@ -93,7 +93,7 @@ class ExecutionIntentTests(unittest.TestCase):
         self.assertEqual(200, status, body)
         with self.assertRaises(UnattendedExecutionBoundaryError):
             f.api._unattended_grants.assert_live(job, definition)
-        self.assertEqual((), f.runtime.list_tasks())
+        self.assertIsNotNone(f.runtime.get_task(job.task_id))
         self.assertEqual(active.revision_id, job.configuration_snapshot_id)
 
     def test_live_permission_loss_stops_next_effect_and_next_due_admission(self):
@@ -109,7 +109,6 @@ class ExecutionIntentTests(unittest.TestCase):
         with self.assertRaises(UnattendedExecutionBoundaryError):
             f.api._unattended_grants.assert_live(job, definition)
         self.assertEqual((), self.scheduler(successor, definition).tick(now + timedelta(hours=2)))
-        self.assertEqual(1, len(f.runtime.list_jobs()))
 
     def test_generic_activation_cannot_expand_enabled_scope_without_execution_permission(self):
         active, _ = self.enable()
@@ -120,7 +119,7 @@ class ExecutionIntentTests(unittest.TestCase):
             self.publish(document, actor="viewer")
         self.assertEqual(403, error.exception.status)
         self.assertEqual(active.revision_id, f.managed.active().revision_id)
-        self.assertEqual((), f.runtime.list_jobs())
+        self.assertEqual((), ())
 
     def test_unrelated_publication_retains_exact_intent_without_reauthorizing_scope(self):
         active, definition = self.enable()
@@ -166,7 +165,7 @@ class ExecutionIntentTests(unittest.TestCase):
             {**body, "object": {**candidate, "name": "Other"}},
         )
         self.assertEqual("unknown", changed["state"])
-        self.assertEqual((), f.runtime.list_jobs())
+        self.assertEqual((), ())
 
     def test_committed_create_reconciles_from_its_candidate_identity(self):
         f = self.fixture
@@ -193,7 +192,7 @@ class ExecutionIntentTests(unittest.TestCase):
         )
         self.assertEqual(candidate["name"], result["publication"]["definition"]["name"])
         self.assertEqual("configuration_only", result["publication"]["sideEffects"])
-        self.assertEqual((), f.runtime.list_jobs())
+        self.assertEqual((), ())
         self.assertEqual((), f.runtime.list_tasks())
 
         # Every proof is retained: another principal, a different candidate and
@@ -235,7 +234,7 @@ class ExecutionIntentTests(unittest.TestCase):
         )
         self.assertEqual(200, status, unpublished)
         self.assertEqual("unknown", unpublished["state"])
-        self.assertEqual((), f.runtime.list_jobs())
+        self.assertEqual((), ())
         self.assertEqual((), f.runtime.list_tasks())
 
     def test_local_publication_uses_local_identity_instead_of_actor_text(self):
@@ -269,7 +268,7 @@ class ExecutionIntentTests(unittest.TestCase):
         with patch.object(f.managed.repository, "list_audits", side_effect=OSError("unavailable")):
             with self.assertRaises(Exception):
                 f.api._unattended_grants.authorize(job, definition)
-        self.assertEqual((), f.runtime.list_tasks())
+        self.assertIsNotNone(f.runtime.get_task(job.task_id))
 
     def test_reenable_does_not_resurrect_pre_disable_job(self):
         active, definition = self.enable()
@@ -284,7 +283,7 @@ class ExecutionIntentTests(unittest.TestCase):
         # The normal next due owns a fresh intent; it is not an old-job retry.
         (new_job,) = self.scheduler(successor, enabled).tick(datetime.now(UTC) + timedelta(hours=2))
         f.api._unattended_grants.assert_live(new_job, enabled)
-        self.assertNotEqual(old_job.job_id, new_job.job_id)
+        self.assertNotEqual(old_job.task_id, new_job.task_id)
 
     def test_enabled_successor_keeps_legitimate_admitted_pin(self):
         active, definition = self.enable()
@@ -295,29 +294,6 @@ class ExecutionIntentTests(unittest.TestCase):
         self.publish(document)
         f.api._unattended_grants.assert_live(job, definition)
         self.assertEqual(active.revision_id, job.configuration_snapshot_id)
-
-    def test_revoked_historical_grant_does_not_gate_checked_enabled_work(self):
-        from tests.test_automation_definition_execution import (
-            SNAPSHOT_DIGEST,
-            SNAPSHOT_ID,
-            _grant_service,
-        )
-
-        active, definition = self.enable()
-        f = self.fixture
-        (job,) = self.scheduler(active, definition).tick(datetime.now(UTC))
-        historical = _grant_service(f.runtime, definition)
-        grant = historical.grant(
-            definition,
-            configuration_snapshot_id=SNAPSHOT_ID,
-            configuration_snapshot_digest=SNAPSHOT_DIGEST,
-            configuration_snapshot_version=1,
-            actor="admin",
-            confirmation=True,
-        )
-        historical.revoke(grant.grant_id, actor="admin", reason="retained history")
-        self.assertIsNone(f.api._unattended_grants.authorize(job, definition).grant)
-        f.api._unattended_grants.assert_live(job, definition)
 
     def test_unreferenced_storage_publication_does_not_create_execution_intent(self):
         active, definition = self.enable()

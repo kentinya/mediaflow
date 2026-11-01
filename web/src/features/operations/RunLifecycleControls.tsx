@@ -24,16 +24,13 @@ import type { LifecycleMutationResult } from "../../shared/api/api-client";
 import {
   type LifecycleAction,
   type LifecycleProjection,
-  type LifecycleRecoveryAction,
 } from "../../entities/operations/lifecycle";
 
-/** Chinese operator labels for the three modelled lifecycle actions. */
+/** Chinese operator label for the accepted lifecycle action. */
 export const RUN_LIFECYCLE_ACTION_LABELS: Readonly<
   Record<LifecycleAction["action"], string>
 > = {
   cancel: "取消运行",
-  pause: "请求暂停",
-  resume: "继续剩余范围",
 };
 
 /** Chinese labels for the raw durable object states a projection may carry. */
@@ -153,14 +150,6 @@ export interface RunLifecycleControlsProps {
   readonly locked: boolean;
   /** True while the reconciling overview read is in flight. */
   readonly reconciling?: boolean;
-  /**
-   * Admit the native exact Preview the backend advertised for a withheld
-   * Continue (RO-5). The recovery entry carries its own backend path, so the
-   * component never invents the recovery surface or its scope.
-   */
-  readonly onPreview?: (recovery: LifecycleRecoveryAction) => void;
-  /** True while the exact Preview admission is in flight. */
-  readonly previewPending?: boolean;
 }
 
 export function RunLifecycleControls({
@@ -171,19 +160,12 @@ export function RunLifecycleControls({
   onReconcile,
   locked,
   reconciling = false,
-  onPreview,
-  previewPending = false,
 }: RunLifecycleControlsProps) {
   const available = projection.actions.filter((item) => item.available);
   const withheld = projection.actions.filter(
     (item) => !item.available && item.unavailableReason !== null,
   );
-  // A withheld Continue carries its own actionable next step; it is the one
-  // withheld action the operator must be able to understand without a CLI.
-  const withheldResume = withheld.find((item) => item.action === "resume");
   const controlsDisabled = pendingAction !== null || locked;
-  const requestedNotAcknowledged =
-    projection.pauseRequested === true && projection.state !== "paused";
   const cancellationRequested =
     projection.cancellationRequested === true &&
     projection.state !== "cancelled";
@@ -201,12 +183,6 @@ export function RunLifecycleControls({
         {projection.terminal ? "(终态)" : ""}；权限:
         {projection.permission}
       </p>
-      {requestedNotAcknowledged && (
-        <p className="mf-dashboard-meta" role="note">
-          暂停请求已持久保存;只有在受支持的条目边界才会被确认。在确认之前,本页面
-          不会声称正在执行的工作已经停止,已记录的效果也不会被撤销。
-        </p>
-      )}
       {cancellationRequested && (
         <p className="mf-dashboard-meta" role="note">
           取消请求已持久保存;该对象会在自己的协作边界到达已取消。已记录的效果不会
@@ -244,33 +220,6 @@ export function RunLifecycleControls({
             </li>
           ))}
         </ul>
-      )}
-      {withheldResume !== undefined && (
-        <div className="mf-dashboard-meta">
-          <p>继续不可用的下一步:{withheldResume.nextAction}</p>
-          {/* The native recovery the backend advertised with the refusal. It is
-              rendered only from the backend projection, never inferred from the
-              refusal copy, so the operator gets a real surface instead of an
-              instruction they cannot act on. */}
-          {withheldResume.recovery !== null && onPreview !== undefined && (
-            <div className="mf-actions">
-              <button
-                type="button"
-                className="mf-button mf-button-secondary"
-                disabled={controlsDisabled || previewPending}
-                aria-busy={previewPending}
-                onClick={() => onPreview(withheldResume.recovery!)}
-              >
-                {previewPending
-                  ? "正在生成计划摘要…"
-                  : "在当前界面生成剩余范围摘要"}
-              </button>
-              <span className="mf-dashboard-meta">
-                {withheldResume.recovery.durableOutcome}
-              </span>
-            </div>
-          )}
-        </div>
       )}
       {/* The result region is announced without moving focus away from the
           control the operator just used. */}

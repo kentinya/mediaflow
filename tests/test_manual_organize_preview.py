@@ -340,11 +340,9 @@ class ManualOrganizePreviewTests(unittest.TestCase):
                     name: repository._connection.execute(
                         f"SELECT COUNT(*) AS count FROM {name}"
                     ).fetchone()["count"]
-                    for name in ("tasks", "automation_jobs", "execution_authorizations")
+                    for name in ("tasks", "execution_authorizations")
                 }
-                self.assertEqual(
-                    {"tasks": 0, "automation_jobs": 0, "execution_authorizations": 0}, counts
-                )
+                self.assertEqual({"tasks": 0, "execution_authorizations": 0}, counts)
             with SQLiteTaskRepository(database) as repository:
                 intents, previews, _, _ = self._services(
                     repository, configuration, provider, source_root, target_root

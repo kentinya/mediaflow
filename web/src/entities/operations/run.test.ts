@@ -131,11 +131,7 @@ function lifecycleProjection(overrides: Record<string, unknown> = {}) {
     uncertainResults: 0,
     knownEffects: "no Storage effect is recorded for this Task",
     nextAction: "refresh the Task to read the durable state",
-    actions: [
-      lifecycleAction("cancel", true, null),
-      lifecycleAction("pause", true, null),
-      lifecycleAction("resume", false, "no durable queued continuation exists"),
-    ],
+    actions: [lifecycleAction("cancel", true, null)],
     ...overrides,
   };
 }
@@ -571,28 +567,7 @@ describe("run lifecycle projection normalization", () => {
       run.lifecycle?.actions
         .filter((item) => item.available)
         .map((i) => i.action),
-    ).toEqual(["cancel", "pause"]);
-  });
-
-  it("accepts a valid pre-Task Job lifecycle advertising only cancel", () => {
-    const run = normalizeRunSummary(
-      runDocument({
-        run_kind: "job",
-        run_id: "job-1",
-        task_id: null,
-        job_id: "job-1",
-        lifecycle: {
-          ...lifecycleProjection(),
-          objectType: "job",
-          objectId: "job-1",
-          actions: [lifecycleAction("cancel", true, null)],
-        },
-      }),
-    );
-    expect(run.lifecycle?.objectType).toBe("job");
-    expect(run.lifecycle?.actions.map((item) => item.action)).toEqual([
-      "cancel",
-    ]);
+    ).toEqual(["cancel"]);
   });
 
   it("accepts every modelled raw Task state and rejects an unknown one", () => {
@@ -617,71 +592,11 @@ describe("run lifecycle projection normalization", () => {
     ).toThrow(RunNormalizationError);
   });
 
-  it("accepts every modelled raw Job state and rejects a Task-only state", () => {
-    for (const state of [
-      "pending",
-      "running",
-      "completed",
-      "failed",
-      "cancelled",
-    ]) {
-      const run = normalizeRunSummary(
-        runDocument({
-          run_kind: "job",
-          run_id: "job-1",
-          task_id: null,
-          job_id: "job-1",
-          lifecycle: {
-            ...lifecycleProjection(),
-            objectType: "job",
-            objectId: "job-1",
-            state,
-            actions: [lifecycleAction("cancel", false, "terminal")],
-            permitted: false,
-          },
-        }),
-      );
-      expect(run.lifecycle?.state).toBe(state);
-    }
-    // `paused` is a raw Task state, never a Job state.
-    expect(() =>
-      normalizeRunSummary(
-        runDocument({
-          run_kind: "job",
-          run_id: "job-1",
-          task_id: null,
-          job_id: "job-1",
-          lifecycle: {
-            ...lifecycleProjection(),
-            objectType: "job",
-            objectId: "job-1",
-            state: "paused",
-            actions: [lifecycleAction("cancel", false, "not cancellable")],
-            permitted: false,
-          },
-        }),
-      ),
-    ).toThrow(RunNormalizationError);
-  });
-
   it("rejects a lifecycle for another object identity", () => {
     expect(() =>
       normalizeRunSummary(
         runDocument({
           lifecycle: lifecycleProjection({ objectId: "task-other" }),
-        }),
-      ),
-    ).toThrow(RunNormalizationError);
-    expect(() =>
-      normalizeRunSummary(
-        runDocument({
-          job_id: "job-1",
-          lifecycle: {
-            ...lifecycleProjection(),
-            objectType: "job",
-            objectId: "job-other",
-            actions: [lifecycleAction("cancel", true, null)],
-          },
         }),
       ),
     ).toThrow(RunNormalizationError);
@@ -702,21 +617,6 @@ describe("run lifecycle projection normalization", () => {
     expect(() =>
       normalizeRunSummary(
         runDocument({ task_id: null, lifecycle: lifecycleProjection() }),
-      ),
-    ).toThrow(RunNormalizationError);
-    // ...and a run with no Job cannot own a Job projection.
-    expect(() =>
-      normalizeRunSummary(
-        runDocument({
-          task_id: null,
-          job_id: null,
-          lifecycle: {
-            ...lifecycleProjection(),
-            objectType: "job",
-            objectId: "job-1",
-            actions: [lifecycleAction("cancel", true, null)],
-          },
-        }),
       ),
     ).toThrow(RunNormalizationError);
   });
@@ -769,7 +669,6 @@ describe("run lifecycle projection normalization", () => {
           continuationId: "continuation-1",
           status: "queued",
           command: "preview",
-          jobId: "job-1",
           newTaskId: null,
           itemLimit: 2,
           createdAt: "2026-08-22T12:41:00+00:00",
@@ -785,7 +684,6 @@ describe("run lifecycle projection normalization", () => {
       continuationId: "continuation-1",
       status: "queued",
       command: "preview",
-      jobId: "job-1",
       newTaskId: null,
       itemLimit: 2,
       createdAt: "2026-08-22T12:41:00+00:00",

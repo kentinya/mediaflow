@@ -201,7 +201,6 @@ class AutomationDefinitionOccurrenceService:
         document["lastOccurrence"] = latest_document
         document["nextRunAt"] = occurrence["nextRunAt"]
         document["lastOccurrenceAt"] = occurrence["lastOccurrenceAt"]
-        document["lastJobId"] = occurrence["lastJobId"]
         document["lastOutcome"] = occurrence["lastOutcome"]
         document["lastReason"] = occurrence["lastReason"]
         document["nextAction"] = occurrence["nextAction"]
@@ -427,7 +426,6 @@ class AutomationDefinitionOccurrenceService:
                 "enabled": None,
                 "nextRunAt": None,
                 "lastOccurrenceAt": None,
-                "lastJobId": None,
                 "lastOutcome": None,
                 "lastReason": None,
                 "nextAction": None,
@@ -440,11 +438,10 @@ class AutomationDefinitionOccurrenceService:
             "lastOccurrenceAt": (
                 state.last_occurrence_at.isoformat() if state.last_occurrence_at else None
             ),
-            "lastJobId": state.last_job_id,
             "lastOutcome": state.last_outcome,
             "lastReason": state.last_reason,
             "nextAction": state.last_next_action,
-            "lastTaskId": None,
+            "lastTaskId": state.last_task_id,
             "lastFailureCategory": None,
         }
 

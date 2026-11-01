@@ -111,11 +111,11 @@ class ProductionWsgiCliTests(unittest.TestCase):
             def fake_serve(app, *, host, port, threads):
                 calls.append((host, port, threads))
                 self.assertEqual(request(app, "GET", "/health")[0], 200)
-                self.assertEqual(request(app, "GET", "/api/v1/jobs")[0], 401)
+                self.assertEqual(request(app, "GET", "/api/v1/tasks")[0], 401)
                 status, _ = request(
                     app,
                     "GET",
-                    "/api/v1/jobs",
+                    "/api/v1/tasks",
                     token="production-secret",
                 )
                 self.assertEqual(status, 200)

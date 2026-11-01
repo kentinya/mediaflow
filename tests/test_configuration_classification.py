@@ -512,7 +512,7 @@ class ManagedClassificationPolicyJourneyTests(unittest.TestCase):
                 # Runtime schema 43 adds durable scope continuations; schema
                 # 44 links exact-Preview recovery to the paused source Task and
                 # schema 54 adds the Task-owned scheduling facts.
-                self.assertEqual(RUNTIME_SCHEMA_VERSION, 57)
+                self.assertEqual(RUNTIME_SCHEMA_VERSION, 58)
 
                 optional = copy.deepcopy(document)
                 optional.pop("classificationPolicies")

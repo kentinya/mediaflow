@@ -512,7 +512,6 @@ export interface RunRecord {
 export interface RunRecordsPage {
   readonly runId: string;
   readonly taskId: string | null;
-  readonly jobId: string | null;
   readonly kindFilter: RunRecordKind | null;
   readonly limit: number;
   readonly records: readonly RunRecord[];
@@ -620,7 +619,6 @@ export function normalizeRunRecordsPage(payload: unknown): RunRecordsPage {
   return {
     runId: text(source, "run_id"),
     taskId: optionalText(source, "task_id"),
-    jobId: optionalText(source, "job_id"),
     kindFilter,
     limit: count(source, "limit"),
     records,

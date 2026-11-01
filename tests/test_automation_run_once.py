@@ -1566,7 +1566,6 @@ class HistoricalModeTests(_RunOnceFixture):
                 "emitted",
                 "scheduled",
                 "no operator action is required",
-                "task-legacy",
                 None,
             )
 

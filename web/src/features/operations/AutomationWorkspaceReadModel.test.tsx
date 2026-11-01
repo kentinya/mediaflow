@@ -692,7 +692,7 @@ describe("V2 Automation workspace read model", () => {
 
     const failedRow = within(region)
       .getAllByRole("row")
-      .filter((row) => row.textContent?.includes("missing"));
+      .filter((row) => row.textContent?.includes("失败"));
     expect(failedRow).toHaveLength(1);
     expect(within(failedRow[0]).getByText("失败")).toBeVisible();
     const detailToggle = within(failedRow[0]).getByRole("button", {
@@ -720,7 +720,7 @@ describe("V2 Automation workspace read model", () => {
     // being hidden by the strict-read failure.
     const healthyRow = within(region)
       .getAllByRole("row")
-      .filter((row) => row.textContent?.includes("healthy"));
+      .filter((row) => row.textContent?.includes("无工作完成"));
     expect(healthyRow).toHaveLength(1);
     expect(within(healthyRow[0]).getByText("成功")).toBeVisible();
     expect(within(healthyRow[0]).getByText(/无工作完成/)).toBeVisible();

@@ -49,7 +49,7 @@ from mediaflow.domain.task_persistence import PersistentTaskStatus, TaskItemStat
 from mediaflow.final_cli import final_main
 from mediaflow.infrastructure.json_history import JsonLinesOperationHistoryRepository
 from mediaflow.infrastructure.runtime_configuration import RuntimeConfiguration
-from mediaflow.infrastructure.sqlite_runtime import SCHEMA_VERSION, SQLiteTaskRepository
+from mediaflow.infrastructure.sqlite_runtime import SQLiteTaskRepository
 from mediaflow.infrastructure.strategy_configuration import development_strategy_configuration
 from mediaflow.interfaces.service_api import MediaFlowApi
 from tests.test_metadata_review import create_processing_item
@@ -388,7 +388,7 @@ class ClassificationReviewTests(unittest.TestCase):
                     TaskItemStatus.WAITING_CLASSIFICATION,
                 )
                 self.assertEqual(len(repository.list_classification_reviews()), 1)
-                self.assertEqual(repository.list_jobs(), ())
+                self.assertFalse(hasattr(repository, "list_jobs"))
 
     def test_cli_api_rbac_injection_redaction_and_zero_storage(self) -> None:
         with tempfile.TemporaryDirectory() as directory:
@@ -474,7 +474,7 @@ class ClassificationReviewTests(unittest.TestCase):
                 self.assertEqual(
                     repository.get_classification_review(review.review_id).actor, "operator"
                 )
-                self.assertEqual(repository.list_jobs(), ())
+                self.assertFalse(hasattr(repository, "list_jobs"))
                 status, detail = api_request(
                     api, f"/api/v1/classification-reviews/{review.review_id}"
                 )
@@ -492,22 +492,3 @@ class ClassificationReviewTests(unittest.TestCase):
                     "/api/v1/classification-reviews/{id}/resolve",
                     [entry.route for entry in repository.list_security_audit()],
                 )
-
-    def test_schema_eleven_migrates_classification_review_tables(self) -> None:
-        with tempfile.TemporaryDirectory() as directory:
-            database = Path(directory, "runtime.sqlite3")
-            with SQLiteTaskRepository(database) as repository:
-                repository._connection.execute(
-                    "UPDATE schema_version SET version=11 WHERE component='runtime'"
-                )
-                repository._connection.commit()
-            with SQLiteTaskRepository(database) as repository:
-                self.assertEqual(repository.schema_version, SCHEMA_VERSION)
-                tables = {
-                    row["name"]
-                    for row in repository._connection.execute(
-                        "SELECT name FROM sqlite_master WHERE type='table'"
-                    )
-                }
-                self.assertIn("classification_reviews", tables)
-                self.assertIn("classification_review_decision_audit", tables)

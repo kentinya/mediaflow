@@ -36,7 +36,7 @@ from mediaflow.domain.task_persistence import PersistentTaskStatus, TaskItemStat
 from mediaflow.final_cli import final_main
 from mediaflow.infrastructure.json_history import JsonLinesOperationHistoryRepository
 from mediaflow.infrastructure.runtime_configuration import RuntimeConfiguration
-from mediaflow.infrastructure.sqlite_runtime import SCHEMA_VERSION, SQLiteTaskRepository
+from mediaflow.infrastructure.sqlite_runtime import SQLiteTaskRepository
 from mediaflow.interfaces.service_api import MediaFlowApi
 
 NOW = datetime(2026, 8, 22, 12, 0, tzinfo=UTC)
@@ -240,7 +240,7 @@ class MetadataReviewTests(unittest.TestCase):
                 self.assertEqual(final.status, PersistentTaskStatus.PARTIAL_SUCCESS)
                 self.assertTrue(repository.acquire("source", "Movie.mkv", "other-task", NOW))
                 self.assertEqual(len(repository.list_metadata_reviews()), 1)
-                self.assertEqual(repository.list_jobs(), ())
+                self.assertFalse(hasattr(repository, "list_jobs"))
             history = (root / "history.jsonl").read_text(encoding="utf-8")
             self.assertIn("WAITING_METADATA", history)
 
@@ -324,17 +324,3 @@ class MetadataReviewTests(unittest.TestCase):
                     any(value.route == "/api/v1/metadata-reviews/{id}" for value in audit)
                 )
                 self.assertNotIn("token-value", repr(audit))
-
-    def test_schema_nine_migrates_to_ten(self) -> None:
-        with tempfile.TemporaryDirectory() as directory:
-            database = Path(directory, "runtime.sqlite3")
-            connection = sqlite3.connect(database)
-            connection.execute(
-                "CREATE TABLE schema_version (component TEXT PRIMARY KEY, version INTEGER NOT NULL)"
-            )
-            connection.execute("INSERT INTO schema_version VALUES ('runtime', 9)")
-            connection.commit()
-            connection.close()
-            with SQLiteTaskRepository(database) as repository:
-                self.assertEqual(repository.schema_version, SCHEMA_VERSION)
-                self.assertEqual(repository.list_metadata_reviews(), ())

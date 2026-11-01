@@ -695,16 +695,6 @@ import {
   type TaskStatus,
 } from "../../entities/operations/task";
 import {
-  normalizeJobListPage,
-  normalizeJobDetail,
-  JOB_COMMANDS,
-  JOB_STATUSES,
-  type JobListPage,
-  type JobSummary,
-  type JobCommand,
-  type JobStatus,
-} from "../../entities/operations/job";
-import {
   normalizeWorkerReadiness,
   normalizeWorkerList,
   type WorkerReadinessModel,
@@ -887,12 +877,6 @@ export const TASK_FILTER_VALUES = {
   commands: TASK_COMMAND_FILTERS,
 } as const;
 
-/** The bounded Job status and command filter values the backend accepts. */
-export const JOB_FILTER_VALUES = {
-  statuses: JOB_STATUSES,
-  commands: JOB_COMMANDS,
-} as const;
-
 // --- Task detail ---
 
 export interface TaskDetailQueryOptions {
@@ -1031,7 +1015,7 @@ function lifecycleFailure(status: number, body: unknown): LifecycleFailure {
 export async function mutateLifecycle(
   token: string | null,
   options: {
-    readonly objectType: "task" | "job";
+    readonly objectType: "task";
     readonly objectId: string;
     readonly action: LifecycleActionName;
     readonly expectedVersion: string;
@@ -1044,8 +1028,7 @@ export async function mutateLifecycle(
   ) {
     return { ok: false, status: 0, code: "invalid_request" };
   }
-  const collection = options.objectType === "task" ? "tasks" : "jobs";
-  const url = `/api/v1/${collection}/${encodeURIComponent(options.objectId)}/${options.action}`;
+  const url = `/api/v1/tasks/${encodeURIComponent(options.objectId)}/${options.action}`;
   let response: Response;
   try {
     response = await fetchImpl(url, {
@@ -1070,22 +1053,6 @@ export async function mutateLifecycle(
   }
   const document = body as Record<string, unknown>;
   try {
-    if (options.objectType === "job") {
-      const job: JobSummary = normalizeJobDetail(document);
-      return {
-        ok: true,
-        status: response.status,
-        action: options.action,
-        objectId: job.jobId,
-        state: job.status,
-        version: job.lifecycle.version,
-        lifecycle: job.lifecycle,
-        durableOutcome:
-          job.lifecycle.actions.find((item) => item.action === options.action)
-            ?.durableOutcome ?? null,
-        nextAction: job.lifecycle.nextAction,
-      };
-    }
     const task = normalizeTaskRecord(document["task"]);
     const lifecycle = normalizeLifecycleProjection(document["lifecycle"], {
       objectType: "task",
@@ -1112,118 +1079,6 @@ export async function mutateLifecycle(
     };
   } catch {
     return { ok: false, status: response.status, code: "malformed_response" };
-  }
-}
-
-// --- Job list ---
-
-export interface JobListQueryOptions {
-  readonly status?: JobStatus | null;
-  readonly command?: JobCommand | null;
-  readonly limit?: number;
-  readonly cursor?: string | null;
-}
-
-export function jobListUrl(options: JobListQueryOptions): string {
-  const params = new URLSearchParams();
-  if (options.status) params.set("status", options.status);
-  if (options.command) params.set("command", options.command);
-  if (options.limit !== undefined) params.set("limit", String(options.limit));
-  if (options.cursor) params.set("cursor", options.cursor);
-  const qs = params.toString();
-  return `/api/v1/operations/jobs${qs ? `?${qs}` : ""}`;
-}
-
-export async function fetchJobList(
-  token: string | null,
-  options: JobListQueryOptions = {},
-  fetchImpl: FetchLike = fetch,
-): Promise<OperationsRead<JobListPage>> {
-  let response: Response;
-  try {
-    response = await fetchImpl(jobListUrl(options), {
-      method: "GET",
-      headers: operationsHeaders(token),
-    });
-  } catch {
-    return { ok: false, failure: operationsFailure("unavailable") };
-  }
-  if (response.status === 401) {
-    throw new OperationsApiError("unauthorized");
-  }
-  if (response.status === 403) {
-    throw new OperationsApiError("forbidden");
-  }
-  if (response.status >= 500) {
-    return { ok: false, failure: operationsFailure("unavailable") };
-  }
-  if (!response.ok) {
-    return { ok: false, failure: operationsFailure("rejected") };
-  }
-  let payload: unknown;
-  try {
-    payload = await response.json();
-  } catch {
-    throw new OperationsApiError("malformed");
-  }
-  try {
-    return { ok: true, model: normalizeJobListPage(payload) };
-  } catch {
-    throw new OperationsApiError("malformed");
-  }
-}
-
-// --- Job detail ---
-
-export type JobDetailRead =
-  | { readonly ok: true; readonly model: JobSummary }
-  | { readonly ok: false; readonly failure: OperationsFailure };
-
-export async function fetchJobDetail(
-  token: string | null,
-  jobId: string,
-  fetchImpl: FetchLike = fetch,
-): Promise<JobDetailRead> {
-  if (!isSafeIdentifier(jobId)) {
-    return { ok: false, failure: operationsFailure("not_found") };
-  }
-  let response: Response;
-  try {
-    response = await fetchImpl(
-      `/api/v1/operations/jobs/${encodeURIComponent(jobId)}`,
-      {
-        method: "GET",
-        headers: operationsHeaders(token),
-      },
-    );
-  } catch {
-    return { ok: false, failure: operationsFailure("unavailable") };
-  }
-  if (response.status === 401) {
-    throw new OperationsApiError("unauthorized");
-  }
-  if (response.status === 403) {
-    throw new OperationsApiError("forbidden");
-  }
-  if (response.status === 404) {
-    return { ok: false, failure: operationsFailure("not_found") };
-  }
-  if (response.status >= 500) {
-    return { ok: false, failure: operationsFailure("unavailable") };
-  }
-  if (!response.ok) {
-    return { ok: false, failure: operationsFailure("rejected") };
-  }
-  let payload: unknown;
-  try {
-    payload = await response.json();
-  } catch {
-    throw new OperationsApiError("malformed");
-  }
-  try {
-    return { ok: true, model: normalizeJobDetail(payload) };
-  } catch {
-    throw new OperationsApiError("malformed");
   }
 }
 
