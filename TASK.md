@@ -15,7 +15,7 @@ B 不改 A-owned Slice/Roadmap/Progress，不自行宣告 Slice PASS / CLOSED。
 Task ID: 47.4
 Task Type: SLICE
 Parent Slice: 47
-Status: READY FOR B REVIEW
+Status: FIX REQUIRED
 Task Base: 383d8834787674675183f4b251d9dfd26a5dc511
 Difficulty: High
 Test Level: T4
@@ -380,126 +380,115 @@ Candidate: 4dd55b87c59807e2816313e8c26121bae8e85651 (implementation checkpoint; 
 ## B Review Result
 
 ```text
-Reviewed: 383d8834787674675183f4b251d9dfd26a5dc511..a2c2bbb7168bd79cdbc9e7c67505c8d4bcb42962
-Implementation: c1c2190882fbf320d263215cfa60d810f1a16c95
+Reviewed: 383d8834787674675183f4b251d9dfd26a5dc511..24cbef4b0964d7ae0d205bf323393a25e0c87542
+Correction implementation: 4dd55b87c59807e2816313e8c26121bae8e85651
 Decision: FIX REQUIRED
-Task blockers: terminal notification delivery; retained-behavior test coverage; affected consumers/docs
+Task blockers: Notification Web event-contract mismatch; removed native recovery coverage lacks an equivalent
 Slice Required Outcomes / Surfaces all satisfied: NO
-Next: SAME TASK FIX LOOP — preserve Task ID/Base/Goal and user exclusions
+Next: SAME TASK FIX LOOP — retain Task ID/Base/Goal and user exclusions
 ```
 
-B 已按完整 Base..Head 核对 150 文件变更清单、生产者/Worker、schema/关系、恢复、
-授权/查询、Web/V1、测试及发布消费者；后续 handoff commit 仅改 TASK.md，执行输入
-与 c1c2190 相同。发现下列必要结果未交付，依 workflow §6 提前 FIX REQUIRED，不将
-Developer 报告中的全量通过数当作独立验收，也不继续运行昂贵全矩阵。
+B 在 main / `24cbef4b0964d7ae0d205bf323393a25e0c87542` 开始复核，governance
+PASS、工作区/Git 可写，无 tracked 修改；预存未跟踪文件全部保留。本轮核对原始
+Base..candidate 变更范围和本次 39 文件修正，重点沿通知发布/页面、恢复、测试与实际
+调用者闭环审查。交接 commit 仅改 TASK；执行输入为 4dd55b8。前次决定保留在
+`7041a899fad5c7d2bda8a45e04f60538fc3e9f59:TASK.md`，不重定 Base 或新增 Task。
 
-本轮未改生产/测试代码；只维护本 Task 及 ignored 本地复核证据。main 起点为上述
-候选，governance 与工作区/Git 可写检查通过，所有预存未跟踪文件保持未暂存。
-旧任务、跨版本升级、历史 ID 兼容仍按用户指令排除，不作为返工内容。
+### 已确认改善
 
-### 必须修复的结果及 Developer 指导
+- **上次“整理成功但没有通知”的后端问题已修。** 原 B 复现脚本不改动重跑：remote
+  Task POST 202 → 正式 `worker run-next` exit 0 → 文件实际移动、Task completed、一个
+  Result，现在读到 **1 条通知**（上次为 0），fresh schema 仍无 Job 对象。
+- `tests.test_notifications` + `tests.test_v2_notification_operations` 实跑 **40 tests / OK**，
+  含正常完成、失败、取消等后端证据；没有把这些通过结果扩大为真实 Web 通过。
+- 配置快照、resident、Task Center、occurrence、日志隔离、plan evidence 等测试已恢复
+  并适配 Task；多处恒真比较已替换成实际 Task/效果断言。恢复范围与上次相比有实质改善。
+- README remote 示例与 Task cancel 说明已同步；Docker fresh/health/security/restart
+  消费者已有 Task 适配。本轮没有运行完整容器矩阵，不能据静态改动宣称该门禁通过。
 
-1. **P1 — 整理已完成，但没有自动产生终态通知。**
-   在临时 LocalStorage/SQLite 上启用原已支持的完成/失败/取消 Webhook 订阅，经
-   `POST /api/v1/tasks` 使用一次性票据受理，再运行正式 CLI `worker run-next`：
-   API 202、Worker exit 0、Task completed、一个 Result、源文件已移动、目标存在，
-   但 `list_deliveries()` 为零。fresh schema 的 Job 对象查询同时为空。
-   用户的完整旅程是“配置通知 → 发起整理 → Worker 完成 → 查看通知投递/接收结果”；
-   目前停在最后一步，并非通知服务重试就能修复，因为根本没有待投递记录。
+### 仍需修复 / Developer 指导
 
-   **修法：** 将现有终态事件发布接到真正的 Task 执行/持久化结果边界，复用现有
-   NotificationPublisher/outbox 和当前配置解析；覆盖仍支持的正常完成、失败、取消。
-   事件身份来自真实 Task/原运行事实，重复轮询、同版本重启与四类后续处理不能重复
-   发送同一次原始运行结果，也不能改写原结果。通知异常仍不得改变媒体结果或触发
-   媒体重放。不要恢复 Job、另造通知队列或直接让测试调用 publisher 假装自动发布。
-   将 `tests/test_notifications.py::test_terminal_job_and_schedule_events_enter_outbox`
-   改成真实 Task 入口/Worker 触发，断言实际 outbox、Task 关联、去重及无二次媒体效果。
+1. **P1 — 用户打开“通知”页就失败，无法继续管理通知。**
+   B 使用本候选新构建资产、现有 `operations_inventory_harness.py` 的真实 Python
+   API/managed 配置/SQLite，登录后访问已注册的 `/ui-v2/operations/notifications`。
+   浏览器真实请求 `/api/v1/operations/notifications/webhooks` 返回 200、一个配置项，
+   `supportedEvents` 为 `task.completed/task.failed/task.cancelled/schedule.emitted`；
+   页面却显示 **Notification definitions unavailable / The Operations response could
+   not be understood as the expected contract.** 截图已人工查看。
 
-2. **P1 — 保留能力的自动化证明被删除或变成恒真。**
-   `tests/test_configuration_snapshot.py` 的 45 项、
-   `tests/test_automation_settings_resident.py` 的 25 项等整文件被删；其中包含当前
-   Active 发布失败回滚、并发发布与受理不能混 pin、实际 resident adoption、日志隔离
-   等仍适用的断言，不只是 Job/旧升级测试。候选 Python 测试中同表达式比较为 67 处，
-   Base 为 1 处；例如 `tests/test_execution_authorization.py` 多处用
-   `self.assertEqual((), ())` 替代真实仓库查询。70 项定向测试全绿仍漏过上项实际故障。
-   用户例子：“整理排队后保存新设置，Worker 仍按原固定配置完成，而设置页反映真实
-   新轮询值”；只删旧测试无法证明这条保留旅程仍成立。
+   用户旅程是“打开侧栏通知 → 查看/配置整理完成订阅 → 整理后查看投递并处理失败”；
+   当前在第一步就停止。后端能够写 outbox，仍不能完成现有 Web 管理旅程。
 
-   **修法：** 逐项区分已退役行为与仍支持行为；前者可删除，后者把 fixture/查询/
-   断言改到现有 Task 身份和 fresh 同版本数据。重点恢复配置发布/RBAC/失败原子性、
-   准入 pin/授权/容量、实际 resident adoption、Task Center 查询/分页/四类及原记录、
-   scoped logs/plan redaction、同版本 restart/uncertain 非重放的受影响覆盖。
-   沿用 Base 中这些现成测试，允许合并/改名并指出等价覆盖；不要求原测试数量或文件名
-   完全相等。移除本 Task 引入的恒真替代，改为真实 schema/Task/消费/audit/效果断言。
-   不恢复旧 Job fixture、旧任务迁移、Pause/resume 或已退役恢复体系。
+   **修法：** 对齐 Python 事件协议与 `web/src/entities/operations/notification.ts`
+   中的 `NOTIFICATION_EVENT_TYPES`、定义/编辑/投递 list/detail normalizer 和真实调用者。
+   该前端当前只允许 job.*，而后端 `webhook_events_supported()` 和新 delivery 返回 task.*。
+   可采用一致的 Task wire 名称并保留必要的有界旧配置解析，或保留已支持的协议字面值
+   映射到 Task 事实；不能恢复 Job 模型/存储/执行器，也不能用“接受任意字符串”绕过
+   fail-closed 校验。同步对应 fixtures/normalizer/UI tests，确保示例配置仍可读。
+   沿真实通知页面完成定义读取/事件选择/保存/启用、自动终态投递列表/详情及已有失败
+   恢复操作，继续保持 RBAC、secret/body 隐藏和投递重试不重放媒体。
+   至少有一条原生浏览器测试读取真实 Python API 响应；仅沿用旧 job.* fake 数据会漏过
+   这次问题。复用现有 Python harness，不创建新平台或替换整个通知页面。
 
-3. **P1 — 新接口的实际调用者和使用说明没有完成切换。**
-   README 的 remote curl 仍向已删除的 `/api/v1/jobs` POST；用户照说明签发票据后
-   无法提交新整理。`scripts/docker_release_security_smoke_test.py` 仍要求认证读取
-   `/api/v1/jobs` 返回 200，health/fresh/restart/empty-baseline smoke 也仍调用 Job
-   API/模型；修好本机 bind 路径后，这些真实断言仍不能验证当前产品。
-   `operations-inventory.python.spec.ts` 与改过的 harness 仍有 Worker stub 返回
-   “retired”，而现有四类/八视图等必要旅程尚未全部完成当前 Task 对齐。
+2. **必要验收覆盖缺口 — 删除的三类恢复旅程没有等价原生替代。**
+   本次从 `operations-inventory.python.spec.ts` 删除了识别、Metadata 候选/标题修正、
+   分类、冲突和 overwrite 等真实浏览器恢复用例。旧 Job/child-Task 预期可以退役；
+   四类决定 → 分析 → 摘要 → 明确确认 → 同 Task 文件结果仍是本 Task 必须保留的行为。
+   交接称由 `automation-run-once.python.spec.ts` 替代，但该文件的恢复用例实际只有
+   Conflict（含一个技术失败 sibling 的变体）；八视图/问题文件定位也没有执行另外
+   三类决定表单。不能把 Python 单测、只读问题页或冲突旅程当作另外三类的原生闭环。
+   这项是尚缺验证，不据此宣称识别/Metadata/分类功能已经坏了。
 
-   **修法：** 同步 README 和受影响 API/CLI/config/deployment 操作说明中的可执行
-   示例；明确 remote Task POST、Task cancel、Task 容量/诊断语义及旧 Job 拒绝。
-   最终 A-owned CURRENT/TARGET/闭环协调仍留给 A。将现有 Docker fresh/health/
-   security/restart 消费者接到 Task API/身份，保留原权限、零副作用、固定配置、效果与
-   重启断言；只将旧 Job 专属用例改为退役拒绝，不能删掉整个安全门禁。
-   原生 harness 用当前合法 Files/Run once/due 等生产者产生测试工作，Worker 跑现有
-   Task engine，四类继续断言同一 Task/独立效果。过时的暂停/Job 子任务预期应删除或
-   改为有界拒绝，保留当前真实旅程。无需新建测试平台；旧升级脚本不属本项要求。
+   **修法：** 在现有原生 spec/harness 中把必要恢复用例改用当前 Files / Run once /
+   due 等真实合法生产者生成 Task，跑已有 Task engine；保留识别、Metadata 候选与
+   修正、分类的实际表单和分析/确认/效果断言，可参数化复用。Task ID 保持同一工作，
+   Save/analysis 零修改、成功 sibling 不重放、原结果独立；冲突涉及 overwrite 的现有
+   明确同意/拒绝断言仍需保留或指出确切等价用例。不恢复 legacy Job continuation、
+   Pause/resume、已拒绝的 Job batch 或附件自动重试。不要求每个旧文件/测试数相等。
 
-### 本轮实际验证 / 待验门禁
+### 实际验证和交接
 
-本地证据根（ignored，不声称远端可达）：
-`.git/validation-evidence/a2c2bbb7168bd79cdbc9e7c67505c8d4bcb42962/b-task47.4/`。
+证据根（ignored、本地可读，不声称远端可达）：
+`.git/validation-evidence/24cbef4b0964d7ae0d205bf323393a25e0c87542/b-task47.4/`。
 
-| 检查 | 实际结果 |
+| 检查 | 本轮实际结果 |
 |---|---|
-| `.venv/bin/python -m unittest tests.test_notifications tests.test_execution_authorization tests.test_api_security tests.test_v2_automation_run_once -q` | 70 tests，6.829s，OK；`focused-python.log`。仅为定向回归，不是 T4 全量。 |
-| `PYTHONPATH=. .venv/bin/python <证据根>/repro_terminal_notification.py` | 0.092s；真实 remote API → 正式 Worker → 文件成功后，预期通知为 1、实际为 0，断言失败；脚本与 log 均保留。只用现有 fixture、临时媒体和 synthetic Provider，没有外部 HTTP。 |
-| 完整 diff whitespace / governance / Git 可写 | `git diff --check 383d8834787674675183f4b251d9dfd26a5dc511..a2c2bbb7168bd79cdbc9e7c67505c8d4bcb42962` 与 `python3 scripts/check_governance.py` 通过。 |
-| 源码/测试静态核对 | 发布调用、schema、真实路径和 deleted/shared coverage 已核对；`test-assertion-audit.txt` 留实际同表达式断言清单。测试方法数仅辅助定位，不充当功能证明。 |
-| 全量/原生视觉/clean wheel/Docker fresh-restart-security | 因已证明阻塞，本轮未跑，仍由 B 在修正候选负责；Developer 已报结果不转记为 B PASS。bind 环境问题由 B 处置，实际过时的 smoke 消费者按上项修正。 |
+| 原 `repro_terminal_notification.py` | PASS，0.097s；文件成功、1 Result、1 delivery、fresh 无 Job；`previous-notification-repro.log`。 |
+| `.venv/bin/python -m unittest tests.test_notifications tests.test_v2_notification_operations -q` | 40 tests / 2.638s / OK；有数据库 ResourceWarnings；`notification-python.log`。 |
+| Web cwd `npm run build` | exit 0，281 modules、Vite build 293ms；chunk-size 提示保留；`web-build.log`。 |
+| 现有 Python harness + 真实 Notifications 路由 | 真实 200 响应被生产页面拒绝，产品验收 FAIL；`notification-page.mjs/.log`、`notification-page-observed.json`、`notification-page.png`。无 response mock、无秘密/用户媒体/外部请求；harness 已停止。 |
+| governance / Base..candidate whitespace / workspace | `python3 scripts/check_governance.py`、`git diff --check 383d883..24cbef4b` 通过；预存文件未暂存。 |
+| 全量 Python/Web/E2E、完整原生/视觉、clean installed wheel、Docker fresh/restart/security | 已证明产品阻塞，依 workflow §6 提前 FIX REQUIRED，本轮未执行这些门禁；仍归 B。没有把 Developer 的结果冒充 B 独立通过，也未将缺少 B 全量结果派回 Developer。 |
 
-测试墙钟约 7s，连同相关静态门禁保守按 10s；自本轮明确计时点起已完成复核至少 211s，
-占比低于 5%（此前合同/代码阅读未算入分母）。没有空等凑比例或用省略门禁宣告 PASS。
+本轮已知 Python/构建/browser 执行约 5s；将 harness 准备、视觉检查和静态核对一并保守
+计入，测试不超过 60s，本轮已明确计时复核至少 208s，低于 29%，满足用户 <50% 约束。
+没有空等、增加自动 retry、放宽断言或隐瞒失败。
 
-Developer 修正后只跑新增/修改和直接受影响组：
+Developer 下一轮仅跑新/修改/直接受影响组：Python notification/webhook 组、Web
+notification normalizer/API/Router 的 affected tests 与 typecheck/lint/build；修正现有
+原生 spec 后跑恢复和真实通知页面用例，交准确命令/结果及源码 checkpoint。全量 T4、
+clean wheel/Docker 矩阵留 B；不要为解决契约失配进行全仓库重构或开发过程工具。
 
-```sh
-.venv/bin/python -m unittest tests.test_notifications tests.test_execution_authorization \
-  tests.test_api_security tests.test_v2_automation_run_once -q
-```
+### Entire Slice reassessment — 全部结果 / AC
 
-另跑恢复/适配后的配置快照、resident、Task Center/records/log isolation 等实际修改
-测试模块，并在交接列准确模块名和结果；原计划引用的已删除文件不能继续声称执行。
-改到 Web/harness 时，构建后按当前 spec 的真实名称选跑四类恢复、八视图及本次受影响
-原生旅程。Docker smoke 的修改先做语法/直接受影响断言核对；完整镜像/发布矩阵仍归 B。
-继续做 changed-file Ruff/compileall、governance、whitespace；不把全仓回归交回 Developer。
-
-### Entire Slice reassessment — 全部结果和 AC
-
-| 结果 | 本轮判断 |
+| 结果 | 当前判断 |
 |---|---|
-| RO-1 — 一个 Task / 统一调度 | Task47.1–3 已验基础保留；本轮 remote 实际受理/执行和 fresh 无 Job 已观察。跨层删除后的全量容量/fence/控制与重启证明尚待修正后 T4，不能扩称本轮全部通过。 |
-| RO-2 — 统一应用引擎 | 主入口/Worker 已切 Task，remote 实际文件效果通过；未发现需要另建引擎的理由。其余入口定向与既有证据不代替变更后全量门禁。 |
-| RO-3 — 同工作四类恢复 | 当前 Run once 定向含同 Task 恢复/原记录/中断覆盖通过；共享覆盖被删及部分原生 harness 失配仍未完成，不能声明所有界面/重启证据完备。 |
-| RO-4 — 完整退出 Job | fresh schema 和主生产模型/服务已去 Job；旧任务/跨版本迁移依用户排除。新版本同版本 reopen、failure atomicity、clean wheel/container 全证据尚未完成。 |
-| RO-5 — 用户/管理闭环 | 未完成：终态通知缺失、remote 操作说明错误、受影响原生/发布消费者未对齐。Files/Automation/Task Center 主能力不能因此全部判失败或全部判通过。 |
+| RO-1 — 一个 Task / 统一调度 | 前序已验基础保留；本轮 remote → Worker 文件效果和通知通过。变更后完整 capacity/fence/control/restart T4 未完成。 |
+| RO-2 — 共用引擎 | Job 退出主体保持，正式 Worker 跑同一 Task；本轮未要求第二套引擎或新入口。其他入口的完整当前候选门禁待验。 |
+| RO-3 — 同 Task 四类恢复 | 生产 API/Python 基础仍有覆盖；三类原生表单/分析/确认替代覆盖未完成，不能声明全部用户旅程证明齐全。 |
+| RO-4 — Job 退出 | fresh schema 已观察无 Job、Task 原结果/通知可 reopen；clean wheel/container、同版本重启/失败原子全证据待验。旧任务/跨版本升级依用户指令排除。 |
+| RO-5 — 用户/管理闭环 | 未完成：真实 Notifications 页面失败。remote 操作示例/调用者已有改善，完整容器和其余表面门禁待验。 |
 
-| AC | 状态 |
+| AC | 当前判断 |
 |---|---|
-| AC-1–3 | 前序已验；本轮真实 remote 和定向通过部分，修正候选仍需完整 admission/capacity/claim/control 验收。 |
-| AC-4–6 | 主引擎/入口切换已审，Run once/remote 定向通过；保留 filtering/附件/完整范围/稳定性全矩阵未重验。 |
-| AC-7–8 | 同 Task 四类及中断定向通过部分；当前原生链/完整非重放和同版本 restart 门禁待补齐。 |
-| AC-9–10 | 用户排除旧任务/跨版本升级；fresh/同版本 reopen/restart、失败原子与 uncertain 安全仍需验证，不能借排除升级一起删掉。 |
-| AC-11 | fresh SQLite 无 Job 对象已观察；源码退出主体已审，clean wheel/container 与消费者完整证明待验。 |
-| AC-12–16 | 部分定向通过，通知、仍适用自动化覆盖及消费者构成阻塞；settings/adoption/分页/导出/RBAC 全量待验。 |
-| AC-17 | 当前 full/native/visual/package/container 门禁未由 B 完成，不满足。 |
-| AC-18 | 本轮完整范围审查给 FIX REQUIRED；未达到交 A 条件，未做 A Final Review。 |
-| AC-19 | 未发现本次恢复 Pause/resume 的授权；继续保持前序退出边界，修正中不得重新接回。 |
+| AC-1–3 | 本轮 remote 受理/执行部分通过；完整并发/容量/claim/control 待修正后验收。 |
+| AC-4–6 | 主引擎退出变更已审；全入口授权差异/filtering/附件/完整范围/真实稳定性矩阵待验。 |
+| AC-7–8 | 三类原生恢复替代尚缺；中断、独立结果和 non-replay 全门禁仍待验，不恢复退役流程。 |
+| AC-9–10 | 旧任务/跨版本升级排除；fresh/同版本 reopen/restart 和 failure atomicity/uncertain 义务保留。 |
+| AC-11–12 | fresh Job-free 已观察；pin/设置/resident 测试已恢复适配，完整 package/container/adoption 门禁待验。 |
+| AC-13–16 | Task Center/日志/plan 等覆盖改善；通知 Web 故障是必要表面阻塞，其他分页/原记录/权限/导出完整证明待验。 |
+| AC-17–18 | B 真实浏览器复现失败，当前全 T4/产物矩阵未完成；未达到交 A 条件，不做 A Final Review。 |
+| AC-19 | 继续保留 Pause/resume 退出和安全取消/四类继续，不因补测试恢复旧执行能力。 |
 
-结论：保留 Task47.4，同 Base 修正以上必要交付后再交 B；不拆新 Task，不扩大范围，
-不变更 A-owned Slice/Roadmap/Progress，不声明 Slice READY FOR A REVIEW / PASS / CLOSED。
+结论：保持 Task47.4 / FIX REQUIRED，修正以上实际故障和必要原生覆盖后再交 B。
+不拆新 Task，不修改 A-owned Slice/Roadmap/Progress，不宣称 Slice READY FOR A REVIEW / CLOSED。
