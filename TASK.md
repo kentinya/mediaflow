@@ -4,20 +4,31 @@ Authority: committed [SLICE.md](SLICE.md), especially RO-1/RO-2/RO-3 and the nec
 readback; [Development Workflow](docs/development-workflow.md) governs planning, review and closure.
 The user confirmed on 2026-10-31 that B should establish the next active Task, not retain a
 planning-only draft. Task47.3 remains the same formal Task within committed ACTIVE Slice47;
-the partial checkpoint received FIX REQUIRED below. Developer returns it to IN PROGRESS for the
-same-Task correction; B owns independent review. No delegation, push or deployment is authorized.
+the current implementation has been handed off and B owns the remaining independent acceptance.
+The upgrade-only FIX REQUIRED below has been withdrawn under the user clarification. No delegation, push or deployment is authorized.
 Recheck intervening commits without silently repinning the Task Base.
 
 ```text
 Task ID: 47.3
 Task Type: SLICE
 Parent Slice: 47
-Status: FIX REQUIRED
+Status: READY FOR B REVIEW
 Task Base: dfcfebbdb9c879b38806e29c7b41c9192aeca83e
 Difficulty: High
 Test Level: T4
 Planner / Reviewer: B
 ```
+
+## User-confirmed boundary — 2026-11-01
+
+用户明确：**没有旧任务，不考虑升级。** 本轮以本版本新任务/新初始化运行环境为验收对象；
+不要求跨版本升级、旧任务迁移、旧待处理任务恢复或历史执行兼容，也不将这些场景的反例
+作为返工/PASS 阻塞。此用户指令优先于本 Task 早先及引用文档中的升级/旧任务条款。
+既有相关代码/测试无需为此额外改造或删除，不能借此扩大本 Task 做全项目清理。
+
+本版本新受理 Task 的真实入口、四类续作、原记录、权限、来源占用、并发/fence、
+已完成/不确定效果非重放、fresh 初始化与同版本服务重启/reopen 继续验收。Task Base、
+High/T4 和新任务安全义务不变。A-owned Slice/Roadmap/Progress 本次不改，不宣告 Slice 关闭。
 
 ## Preflight and actual-code gap
 
@@ -103,22 +114,22 @@ not claimed by this Task.
    八视图、Dashboard、任务日志/JSON、API/CLI、readiness/settings 的受影响查询，使新工作
    不依赖 Job row 才能显示/控制，队列容量/实际 resident adoption 说的就是 Task 语义。
    保留不可变旧 JSON/digest/parser 和 overrides。必要时可做最小、版本化、失败原子且可
-   reopen 的 schema55 增量存储变更，但不得借此开始全部历史 Job 转换/删除或新建竞争生命周期。
+   reopen 的最小 schema 存储变更；跨版本升级不在本轮范围，不新建竞争生命周期。
    只改为显示/控制新 Task 所必需的关联和查询，不重做这些页面、全套设置或已有恢复流程。
 
 ### Transitional boundary
 
-本 Task 的“无 Job”验收对象是所有新受理的整理及其后续四类处理，不是声称仓库已彻底没有
-Job。既存历史/旧 queued Jobs 及其安全处理、原关联和已有共享容量防重保留；不新增 Job
-兼容执行器、不双写、不让新提交回落旧队列、不把旧工作静默重置/丢弃。全面迁移旧历史和
-删除原有 Job reader/dispatcher/schema/surfaces 属于剩余 RO-4/RO-5；不能据此给 Slice PASS。
+本 Task 的“无 Job”验收对象是所有新受理的整理及其后续四类处理，不声称仓库已彻底没有
+Job。按上述用户边界，不要求旧 queued/history 的迁移、恢复或升级兼容；不新增兼容执行器、
+不双写、不让新提交回落旧队列。全量独立 Job schema/domain/dispatcher 移除不由本 Task
+提前展开；本轮的旧任务升级反例已撤回，不能据此要求 Developer 再返工。
 
 ### Existing-entry coverage and disposition
 
 以下清单来自当前 CLI parser/dispatch 和 API route，不代表新增产品入口。按真实输入及现有
 合法条件逐项核对；不能只验收 Automation 主按钮，也不能把解析到的命令一律视为可执行。
 对每项说明实际处置、权限/授权、返回身份和读回，并给出对应受影响测试；新提交的整理执行
-走 Task，旧历史的兼容边界保持上述限制。不为清单里的每个命令另建 Task 或实现一套新流程。
+走 Task；旧历史相关条目仅描述既有处置，不产生本轮升级/兼容实施义务。不为清单里的每个命令另建 Task 或实现一套新流程。
 
 | 当前实际入口 | 本 Task 的处置/必须保留的区别 |
 |---|---|
@@ -173,9 +184,9 @@ Job。既存历史/旧 queued Jobs 及其安全处理、原关联和已有共享
   Web 桌面/窄屏可读：due 不增加每次运行确认，Run once 不增加第二次初始确认，Files
   初始摘要确认和四类恢复的明确继续仍保留；读取无 Provider/Storage effects。原 ordinary-file
   local work、通知、Files summary 和已退役 Pause/resume 不回归。
-- [ ] **过渡数据完整：** fresh/reopen/必要增量升级保留原 Jobs、关系、pins、消耗/audit/logs
-  和结果；升级失败原权威/schema marker 不变。旧 queued/history 不丢、不虚构合并/权限。
-  以实际已有迁移/临时 fixture 验证，不读用户数据库、不靠字符串替换降低断言。
+- [ ] **新运行环境数据完整：** fresh 初始化、同版本 reopen/重启保留本版本新建的 Task、
+  关系、pins、授权消耗/audit/logs、原阶段摘要和结果；失败原子，不虚构成功/权限。
+  使用临时 fixture，不读用户数据库。旧任务/跨版本升级不作为本轮验收要求。
 
 ## Required Tests
 
@@ -208,7 +219,7 @@ git diff --check
 每组覆盖准入/到期唯一、disabled Run once、票据不升级权限、Worker fence/容量、手动和
 旧 Job 共存回归；新增真实 CLI submission/control 和 API/readback 断言放在直接受影响
 测试模块，依照入口处置表核对实际执行、只分析和合法拒绝，不将所有入口强行变成执行成功；
-交接时列准确命令。变更 schema 时额外跑 `tests.test_task_scheduling_migration`；
+交接时列准确命令。schema 变化验证 fresh 初始化、同版本 reopen 和直接受影响的失败原子边界；
 变更 resident adoption 时额外跑 `tests.test_automation_settings_resident`。对修改的 Python
 文件执行 `.venv/bin/ruff format --check <changed-files>` 和 `.venv/bin/ruff check <changed-files>`。
 
@@ -231,8 +242,8 @@ git diff --check
    并发、队满、权限/配置变化、取消、长调用、重启和上述 uncertain 非重放边界。
 3. 根目录执行 workflow 的 [shared full T4 gates](docs/development-workflow.md#shared-full-regression-commands)：
    全 Python/static/examples/forbidden-dependency、Web/full E2E、wheel/source-external consumer、
-   Docker fresh/restart/适用升级/security。如本 Task 无新 schema，reopen/原有兼容升级仍需
-   验证，但不将完整 RO-4 Job-removal 迁移提前变成本 Task 门禁。
+   Docker fresh/restart/security。按用户边界保留本版本 reopen/重启验证，不安排跨版本
+   升级或旧任务迁移门禁，也不将完整 RO-4 Job-removal 迁移提前变成本 Task 门禁。
 4. 完成 Web build 后在 `web/` 运行真实原生 Automation journeys：
 
    ```sh
@@ -264,32 +275,33 @@ git diff --check
 ## B Review Result
 
 ```text
-Reviewed: dfcfebbdb9c879b38806e29c7b41c9192aeca83e..c4e24211368a5c1bea1d1b8a86801318009e558d
+Reviewed candidate: dfcfebbdb9c879b38806e29c7b41c9192aeca83e..c4e24211368a5c1bea1d1b8a86801318009e558d
 Implementation checkpoint: 75a12d344a3dfd560cbdcf917e2480246974d2fc
-Decision: FIX REQUIRED
-Slice Required Outcomes / Surfaces all satisfied: NO
-Next: SAME TASK FIX LOOP
+Previous FIX REQUIRED: WITHDRAWN — excluded old-task upgrade scenario
+Current acceptance: PENDING B GATES; no Task PASS issued
+Next: B CONTINUES ACCEPTANCE; no Developer fix requested for the withdrawn finding
 ```
 
-B reassessed the complete 40-file Base..Head change using preceding full-range reviews, inspected
-all current nine-file changes and the real stage/recovery/read/migration consumers. The successor
-`75a12d34..c4e24211` changes only `TASK.md`; executable inputs are identical. Review started on
-main at the reviewed Head with no tracked edits; unrelated untracked OS/log/reference/archive
-files remain untouched/unstaged. Governance passed; Base/scope/High/T4 remain unchanged.
-Superseded reports/review details remain reachable in Git.
+### Scope correction
 
-### Verified corrections
+用户重申没有旧任务、不考虑升级。B 上轮把 schema56 已交人工 Task 的升级反例列为
+阻塞，范围判断错误，现撤回该 P1 及其四步返工要求；Developer 无需为该项再修改代码。
+该探针虽有实际输出，但其部署前提不在本轮范围，不能作为新任务交付的阻塞。
+上一评审与详细探针留在 Git/既有 ignored evidence，不删除失败日志或改称该探针通过。
 
-- **新任务的上轮主反例通过。** 首次自动处理结束时冻结 Task-owned 有界摘要，原
-  records-only 结果保持 failed/1 个成功/1 个等待人工；1 小时后恢复成功，原结果及
-  12:00 的原结束时间不变，当前 Task 则如实 completed/2，handling resolved。
-  B 的 `initial_pass_record_probe.py` 在本候选上通过，不再保留这个新任务场景为阻塞。
-- **54 项 focused tests 通过。** 包含真实 Run once/due 恢复、新摘要读回、schema57
-  fresh/结构升级/reopen、新来源占用竞争及 CLI/remote 续作。先前可见性/due trigger/
-  历史 child 排除修复保留，原成功 sibling 没有重放。
-- 摘要不是独立工作：1:1 Task 身份，无队列/claim/执行控制；正常初次阶段的写入与
-  stage release 在同一 claim-fenced 事务内，已有摘要不会被覆盖。这个存储方向符合
-  原指导；本轮问题是**缺失摘要时如何证明当前就是初次执行**。
+当前产品候选未变化，后续 `c4e24211..0741e814` 只有 Task 文档；本轮只修正规划/评审
+范围，不重新要求实现，也不以撤回一项阻塞代替 T4 验收。Task 恢复 READY FOR B REVIEW。
+
+### Verified new-task corrections
+
+- 新任务首次自动处理结束时冻结 Task-owned 有界摘要，原 records-only 结果保持
+  failed/1 个成功/1 个等待人工；1 小时后恢复成功，原结果及 12:00 的原结束时间不变，
+  当前 Task 如实 completed/2、handling resolved。B 的新任务主反例已通过。
+- 上轮在同一产品候选运行的 **54 项 focused tests 通过**，包括真实 Run once/due 恢复、
+  原摘要读回、新来源占用竞争、CLI/remote 续作；原成功 sibling 未重放。
+  fresh 初始化与同版本 reopen 的结果继续适用；既有升级用例不构成本轮新增要求。
+- 原记录可见性、due trigger、同 Task 恢复及源所有权修复保留。摘要为 1:1 Task 证据，
+  无独立队列/claim/控制；新任务的原记录冻结方向已通过当前关键复核。
 
 ### 已验收的来源占用行为（保留开发指导）
 
@@ -312,110 +324,39 @@ Superseded reports/review details remain reachable in Git.
 验收至少用上述两个 Task 的实际 item/Result 和用户读回证明：A 只有一个未完成 owner，
 另一份是无修改的拒绝记录；等待人工时 owner 不变；B 不被整批连带阻塞。沿用现有结果/恢复模型，不新增等待队列或占用管理界面。
 
-### Remaining Task blocker and actionable correction
+### Actual evidence and remaining B acceptance
 
-**P1 — 旧版已交人工的 Task 升级后继续分析，会把恢复阶段伪装成首次自动执行。**
-
-真实用户触发：schema56 版本中运行一次，两文件的 Two 已成功、One 因目标冲突交给人工；
-停服升级 schema57 后，保存 rename 决定并继续分析。B 使用 committed
-`b9fc928b99fbaa53af91426ee9e768808765e294` 的真实源码/既有 Run once API fixture 生成
-数据库并关闭连接，证明 schema=56、waiting_human、waiting_confirm、无新摘要表。
-随后由本候选正常打开升级，不降 schema marker、不删表造旧状态、不改 Task/item 行，
-也不重新发布配置；升级刚完成时摘要为空。把应用 fixture 时钟从 12:00 推进到 13:00，
-调用原生 decision（200）和 continue（202），运行真实应用 continuation/Task Worker。
-仅零修改分析结束后，新表却出现 stage_status=waiting_human、started_at=12:00、
-finished_at=13:00 的“首次执行”摘要；records 随之展示 13:00 为原结束时间。分析效果为空。
-
-根因：`_settle_automatic()` 对初次运行和四类 continuation 都传
-`initial_execution_stage`；`release_scheduled_claim()` 只检查 Task 有 started_at，
-`_record_initial_execution_locked()` 只检查摘要行不存在。**没有摘要不等于没有发生过
-初次执行**：旧任务的初次阶段已结束，但当时 schema56 没有此表。schema57 迁移不回填
-本身正确，后续恢复却通过普通 stage release 写入了错误历史。只写一次保护只能防覆盖，
-不能证明第一次写入所描述的阶段正确。
-
-这是本轮 schema57 增量升级/原事实保真缺口，属于原 Task scope 6/7 和原指导“没有可靠
-原阶段证据的旧历史不能反推旧结束时间”，不要求提前展开 RO-4 全量 Job 迁移。
-
-### 本轮开发指导与验收
-
-1. **传递真实执行阶段上下文。** 从 `_automatic_task_runner()` 的实际分支入手：它已有
-   “无 item 的初次处理”和“已有 item 的 continuation”路由，后者调用的
-   `AutomaticTaskContinuationService.run_pass()` 也有实际分析结果。把足以证明本次是
-   初次自动执行的上下文贯穿到 Worker 的结束/失败/取消发布及 repository 写入边界；
-   只有确实结束的初次阶段才能创建原摘要。沿用现有 Task/claim，不另建生命周期。
-   不能仅凭没有摘要、有 started_at、automatic trigger、没有 Files/manual execution
-   或当前队列状态就将恢复当成首次执行。
-2. **保留升级任务的真实证据。** 已在旧版完成初次处理的待人工 Task，升级后继续分析/
-   确认/执行或取消，都不能创建一条以恢复时间为原结束时间的摘要。缺失且无法证明的原
-   事实应保持明确不可核对，不从最新 Result、当前状态或 Active 倒推；已有可证旧 Job/
-   attempt/history 保持原语义。旧版尚未开始、升级后才真正首次执行的 Pending Task
-   则仍可在真实初次阶段结束时写摘要，不能一律禁止所有升级 Task。
-3. **将负例落实到真实升级链。** 使用 genuine schema56 fixture（可沿用 B 的旧提交
-   生成方式/已有迁移 fixture），先实际运行至人等并关闭，再让候选升级，沿已有 API
-   保存决定→继续分析→摘要→明确执行。断言恢复分析不会凭空新增初次摘要/旧结束时间，
-   来源/pin/原结果不变，继续仍可完成合法剩余工作且不重放成功 sibling。覆盖既有人等
-   的恢复失败/安全取消共用边界，以及升级前 Pending、升级后首次执行的正例；不要
-   以手工插入摘要或直接调用内部 writer 代替用户路径，不要求新的技术恢复产品。
-4. **保留新任务与事务保护回归后交接。** 本轮新任务的冻结/不可覆盖/过滤/reopen 测试
-   应继续通过；核对初次阶段的长调用、stability/machine waiting、claim loss 和 uncertain
-   mutation 不会提前冻结，写入仍与合法阶段发布原子完成。Developer 跑新失败及直接
-   受影响的 engine/scheduling/migration/records 测试；B 继续承担全量/native/package
-   门禁及旧 harness 适配，不转交整套矩阵。
-
-原记录语义继续适用：只冻结首次自动阶段实际结束时的 records-only 结果/原因/已知效果
-及真实起止时间，不永久冻结中途 running，不冻结全部 raw Task/API 字段。Task Center/
-handling 继续如实反映当前工作，metrics/latest 的既有语义不在此重定义；原受理只计一次。
-不新增 Job/顶层 Task 来记录恢复，不删除原关系，不借修复展开历史全迁移。
-
-### Actual validation and pending gates
-
-Local ignored evidence:
+Matching product-candidate evidence:
 `.git/validation-evidence/c4e24211368a5c1bea1d1b8a86801318009e558d/b-review-20261101/`.
 
-- Root `.venv/bin/python -m unittest tests.test_v2_automation_run_once
-  tests.test_task_scheduling_migration tests.test_task_source_ownership_race
-  tests.test_automation_entrance_recovery` — **54 passed**, 7.500s / 7.77s wall (`focused.log`).
-- Previous B `initial_pass_record_probe.py` against this candidate — **PASS**, 0.46s wall
-  (`initial_pass_record_probe.log`), original records-only result/end unchanged across recovery.
-- `schema56_seed.py` in the archived committed schema56 source, current venv interpreter —
-  **PASS**, 0.83s wall (`schema56_seed.log`). `schema56-source/` comes from `git archive` of
-  `b9fc928b99fbaa53af91426ee9e768808765e294`; `schema56_descriptor.json` points to the isolated
-  runtime fixture retained here. Existing actual API/Local Storage/Task Worker generated the old
-  waiting Task, not a downgraded candidate or an invented schema. No user DB/media/services used.
-- Root `PYTHONPATH=. .venv/bin/python <this-evidence>/upgraded_waiting_probe.py` — **FAIL**,
-  0.49s wall (`upgraded_waiting_probe.log`). Normal upgrade then real decision/continue/Worker,
-  initial snapshot absent→incorrectly created with recovery's 13:00 end; zero analysis effects.
-  The fixture reopens the already-published revision without activating a new one. Assertion/log
-  retained. An initial seed launcher used the wrong evidence-relative cwd and exited before Python
-  ran (0.02s); the corrected absolute launcher above is the actual seeded fixture/evidence.
-- Timed tests/probes total **9.57s**, including the failed launcher, below 50% of this review
-  turn; no idle padding. Governance and full Base..Head whitespace checks pass; current document
-  checks accompany this checkpoint. No production/test/harness edits by B.
-- Proven P1 permits early FIX REQUIRED under workflow §6. Full T4 Python/Web/E2E/native visual/
-  wheel/Docker gates remain **pending**, neither waived nor PASS. Earlier native harness failures
-  remain B-owned evidence/composition work; they are not extra Developer product blockers and
-  are not claimed resolved or reused as PASS on this changed executable/schema candidate.
+- `focused.log` — 54 tests passed, 7.500s / 7.77s wall on the unchanged product candidate.
+- `initial_pass_record_probe.log` — new-task original-record recovery probe PASS, 0.46s wall.
+- The previous `upgraded_waiting_probe.log` failure remains recorded but is **out of scope and
+  non-blocking** under the explicit user boundary; its fix/test plan has been withdrawn.
+- This scope-correction checkpoint changes only TASK.md; governance and whitespace checks pass.
+  No production/test/harness/A-owned files changed; unrelated untracked files remain unstaged.
+- Full T4 Python/Web/E2E/native visual/wheel/Docker fresh/restart/security acceptance remains
+  B-owned and pending; no PASS is claimed. Cross-version upgrades/old-task migration are excluded.
+  Earlier native harness composition failures remain B's gate work, not Developer product blockers.
 
-### Entire Slice outcome reassessment
+### Entire Slice outcome reassessment under the user boundary
 
 | Outcome | Current result |
 |---|---|
-| RO-1 — stable Task and shared scheduling | Existing queue/source-ownership/claim foundations retained; focused regressions pass, full gates pending. |
-| RO-2 — one engine across entrances | Due/Run once/CLI/remote foundations retained; no new competing execution lifecycle introduced. |
-| RO-3 — same-work four-type recovery | New-task recovery retains the original snapshot; upgraded human-waiting Tasks can still acquire a false initial snapshot from continuation. |
-| RO-4 — safe historical Job migration/removal | Not delivered and outside this Task's complete-migration scope; not an added blocker. This Task's own additive schema57 upgrade still needs its correction. |
-| RO-5 — complete operator/admin journeys | New-task original records now pass; upgraded-task original time integrity and broader assigned gates remain incomplete. |
+| RO-1 — stable Task and shared scheduling | New-task foundations and focused source/claim regressions pass; full acceptance pending. |
+| RO-2 — one engine across entrances | Due/Run once/CLI/remote foundations retained; broader assigned acceptance pending. |
+| RO-3 — same-work four-type recovery | New-task main recovery/original-record proof passes; old-task upgrade finding withdrawn. |
+| RO-4 — historical migration / Job removal | Old-task migration/upgrade is excluded by the user; independent Job structure removal is not claimed delivered by this Task. |
+| RO-5 — complete operator/admin journeys | New-task original records pass critical proof; broader native/readback/full gates remain pending. |
 
-Continue the same Task47.3 correction. No new Task, Task PASS or Slice closure is claimed;
-Task47.2 PASS and A-owned Slice/Roadmap/Progress remain unchanged. Slice47 remains ACTIVE.
+No next Task or Slice closure is planned/claimed. B continues acceptance of the current new-task
+candidate. Task47.2 PASS and A-owned Slice/Roadmap/Progress remain unchanged.
 
 ### Developer guidance — complete the three corrections in this Task
 
-以下保留三项原实施指导（最初基于 `405d2757`）；其中旧反例已修部分以上述 Verified
-corrections 为准，本轮必须修复的是上述升级后将恢复阶段误记为首次执行的问题。本指导细化已有
-scope 4/6/7，不改变 Task Base、验收或 High/T4。开始修改时将状态置为 IN PROGRESS。
-建议按“恢复链路 → 读回 → 剩余提交入口”实施，在同一候选中完成连接；三项不能自行移到
-下一 Task。函数名是复用线索，不是文件白名单。不要借此提前实施 RO-4 全量历史迁移。
+以下保留原三项实施指导供新任务验收回归参照；已修部分以上述 Verified 为准。
+其中任何旧任务/升级/历史兼容条款均受本轮用户边界覆盖，不再产生返工义务。
+当前无须因上轮升级反例进入 IN PROGRESS；B 负责继续验收，未新增 Developer 修复任务。
 
 #### 1. 自动任务的决定、分析、摘要和明确执行接起来
 
@@ -519,7 +460,7 @@ scope 4/6/7，不改变 Task Base、验收或 High/T4。开始修改时将状态
   tests.test_automation_api tests.test_task_scheduling tests.test_automation_task_admission
 ```
 
-修改 schema 时增加 `tests.test_task_scheduling_migration`；修改 resident adoption 时增加
+schema 变化仅增加本轮适用的 fresh/同版本 reopen/失败原子验证；修改 resident adoption 时增加
 `tests.test_automation_settings_resident`。修改 Web/其 API 投影时，按上文 Developer affected
 计划运行改动页面测试、typecheck/lint/格式/build 和直接受影响原生 browser spec；不能只用
 mock 组件证明真实链接/恢复成功。修改的 Python 文件跑 ruff format/check，最后跑 governance
