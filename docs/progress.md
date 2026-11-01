@@ -11,9 +11,13 @@ workflow authority. Closure rules live only in
 Slice47 — **Unified Task Scheduling and Organizing Execution** — is **ACTIVE**, selected by A
 under explicit user authorization on 2026-10-30. Immutable Base:
 `5144ab1fc2344b06194969cc2c496835729664c0`; Implementation Head: **NOT SET**.
-[SLICE.md](../SLICE.md) owns outcomes/acceptance; `V2-TASK-001–007` and journey/architecture TARGET
-sections describe required work, not accepted delivery. [TASK.md](../TASK.md) retains Task47.2 in FIX REQUIRED. Next: **B ADJUSTS TASK47.2 TO ORGANIZING PAUSE RETIREMENT** against the committed Contract.
-No Slice47 closure or implementation is recorded by this scope action.
+[SLICE.md](../SLICE.md) owns six outcomes and AC-1–25. Task47.4 passed B at
+`dd3f1c25126cd574d8df293d0163131bc6cb9ad6`; the original five-outcome readiness packet remains in
+`980ce42a977b5bc20cf8426dbaf5a232f46cf22b:TASK.md`. User scope amendment 2026-11-02 adds
+`V2-TASK-008–010`: automatic failed/partial history exclusion, warned new manual organizing and
+CLI retry-failed removal. Next: **B PLANS TASK47.5 AGAINST THE COMMITTED AMENDMENT**.
+The new outcome is not implemented or accepted; Slice47 remains ACTIVE, with no A Final Review or
+closure. No old-task/cross-version upgrade or V1 support is required. The closure ledger is unchanged.
 
 The latest large-Slice acceptance remains Slice46, **PASS / CLOSED** by A on 2026-10-29, with
 original Base `e9f1a8dc607cfc6d5ea02141b058da8ce849cd70` and reviewed implementation

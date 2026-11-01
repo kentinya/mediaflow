@@ -69,6 +69,24 @@ remain reproducible; adopt Task terminology/semantics through compatible parsing
 successors, never by changing an old revision/digest. No unrelated ordinary-file queue, notification
 delivery or supervision redesign is selected. Full outcomes/evidence are in the committed Contract.
 
+## Source-dependent failed-history admission — TARGET (Slice47, 2026-11-02)
+
+User-authorized scope, not delivered CURRENT behavior. `V2-TASK-008–010` supersede only the
+affected history-refusal and standalone CLI retry realization in `V2-TASK-002/003/005/006`,
+`V2-OPS-016/017`, `V2-AUTO-004`, `REQ-TASK-004`, `REQ-RECOVERY-006/008/009` and related
+non-replay wording. Same-Task automatic/uncertain replay remains prohibited; this permits a new
+explicitly warned manual organizing request without rewriting its predecessor's results or authority.
+
+| ID | Requirement | Acceptance meaning |
+|---|---|---|
+| V2-TASK-008 | Definition-driven new organizing excludes prior failed/partial versions at shared per-source admission. | Due and Run once examine complete organizing history by canonical Storage/path and comparable source version, not enclosing Task outcome or recent-page sampling. A prior failed/partial version, including zero-effect failure, is not automatically reintroduced; independent free sources still run. Durable exclusion reasons/counts preserve truthful no-work/skipped outcomes and complete traversal limits. Browsing, synthetic tests and analysis-only findings do not create this exclusion; real replacement is new content. Other terminal states are not added to this new exclusion. |
+| V2-TASK-009 | New manual organizing admits prior failed/partial sources with a clear history warning and ordinary exact execution confirmation. | Files direct/folder/mixed selection includes historical partial/unknown effects without a permanent history-only veto. Display backend-proven prior outcome, known/uncertain effects and source/target context before the existing selected confirmation, without a new verification page or routine extra checkbox. User checks Storage and deliberately creates new work using current configuration; normal conflicts/capabilities/overwrite/cleanup permissions apply. Historical uncertainty is not verified or erased. Known active work still blocks; required application fencing/exact source-lock handoff prevents a predecessor starting further steps. No promise that acknowledgement stops an already dispatched remote call, no new operation-completion detector, attachment-only recovery or arbitrary old-step restoration. CLI manual execution retains explicit intent and warning; remote discovery cannot spoof manual Files consent. |
+| V2-TASK-010 | Remove the independent tasks retry-failed CLI entrance; use new organizing and existing four-type continuation. | Parser/help/dispatch/exclusive helper code and installed consumers no longer expose retry-failed or aliases. Old input fails normally before work/Provider/Storage/authority consumption. Keep scoped zero-mutation analysis, ordinary organize, shared ignore/audit, four-type decision→analysis→summary→confirmation and immutable original Results/pins/Automation records. No hidden fallback, second recovery system or automatic replay is introduced. |
+
+Explicit user boundaries carried forward: no old-task/cross-version upgrade scope and no supported
+V1 product. Fresh/new-work and same-version reopen/restart safety remain. [Slice47](../SLICE.md)
+RO-6/AC-20–25 own the proof boundaries; prior accepted implementation facts remain in Git.
+
 ## Slice46 authorized amendments — CURRENT
 
 The following stable amendments select readable actions, organizing-only Task Center, earlier Files

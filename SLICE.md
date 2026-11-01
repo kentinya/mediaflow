@@ -11,7 +11,7 @@ Working Branch: main
 Development Authorization: USER-REQUESTED REFACTOR; A SCOPE AUTHORITY — 2026-10-30
 Risk: High
 Final Test Level: T4
-Next Action: B ADJUSTS TASK47.2 TO THE USER-AUTHORIZED ORGANIZING PAUSE RETIREMENT
+Next Action: B PLANS TASK47.5 AGAINST THE 2026-11-02 SOURCE-HISTORY AMENDMENT
 ```
 
 ## Authority and accepted baseline
@@ -60,6 +60,64 @@ data remains readable and is never deleted, falsely relabelled or automatically 
 This narrowly authorizes removal of ordinary-file Pause/Resume, not a redesign of those operations.
 It supersedes Pause/resume obligations in REQ-TASK-004, V2-OPS-007 and affected CURRENT/TARGET prose;
 all other permissions, cancellation, authority, confinement and evidence guarantees remain.
+
+## User-authorized scope amendment — 2026-11-02
+
+The user explicitly adds source-dependent handling of prior `failed` / `partial` organizing
+items and retirement of the independent CLI `tasks retry-failed` entrance to this Slice, and
+requests Task planning only. This is A's scope checkpoint; the same agent then acts as B planner,
+disclosed here. It is no implementation, independent Task review or A Final Review. The original
+Slice Base and Tasks47.1–47.4 acceptance remain unchanged. Task47.4 passed B at
+`383d8834787674675183f4b251d9dfd26a5dc511..dd3f1c25126cd574d8df293d0163131bc6cb9ad6`;
+its packet is preserved in `980ce42a977b5bc20cf8426dbaf5a232f46cf22b:TASK.md`. The new outcome
+must be delivered before the enlarged Slice can become READY FOR A REVIEW.
+
+- Shared per-source TaskItem admission uses backend-proven trigger/context and prior organizing
+  history. Definition due work excludes the same observed source version when it has a prior
+  `failed` or `partial` organizing outcome. Run once uses the same definition-derived exclusion,
+  preserving its existing one-click initial execution. Report the exclusion honestly; a scope
+  containing only historical exclusions is not a newly organized-media success or a scan failure.
+- A deliberate new manual organizing request does not exclude a file merely for prior `failed` /
+  `partial` history, including completed steps or historical unknown effects. Files direct, folder
+  and mixed selections reach the existing exact plan summary with a conspicuous per-file history
+  warning before its ordinary selected execution confirmation. The user checks source, target and
+  Storage effects and explicitly starts new work; no extra verification page, routine checkbox,
+  CLI recovery command or automatic operation-completion detector is selected.
+- This is a narrow explicit-intent amendment to the old blanket manual uncertain-history refusal,
+  not automatic replay or resumed execution of an old item. New work receives its own current
+  configuration pin, exact source/plan and authority. Old item/Result/pin/effect certainty and original
+  Automation outcome/time remain factual. Historical unknown effects do not become verified or
+  acquire fresh old authority merely because a new request was confirmed.
+- Explicitly queued/processing work and genuine live source ownership still prevent concurrent
+  execution. Historical unknown markers are not by themselves proof a Worker is still running,
+  nor a permanent veto on explicit manual re-organizing. Necessary application-owner fencing and
+  exact per-file lock handoff preserve siblings and prevent a superseded Worker starting later
+  steps or rewriting old results. Already dispatched remote calls cannot be stopped or proved
+  finished by a Web warning; disclose that limitation and leave their factual evidence intact.
+- Existing directories, targets and copy remnants use the normal plan/capability/Hash/conflict
+  and explicit destructive-effect rules. Do not add special residual deletion, attachment-only
+  replay, historical-step restoration or universal rollback. Other old statuses are not newly
+  auto-excluded under this amendment. Four-type continuation inside its original Task is not a
+  new automatic discovery and retains its existing decision/analysis/summary/confirmation path.
+- Remove `tasks retry-failed` parser/help/dispatch and exclusive execution/analysis helpers;
+  unsupported old input fails normally with zero work/effects. Keep ordinary `organize`, scoped
+  analysis and shared four-type decisions/ignore/audit. New manual CLI execution emits the same
+  history warning and uses its existing explicit `--execute`; unattended remote discovery cannot
+  impersonate selected Files manual intent to bypass history filtering or permissions.
+
+The user's intervening explicit boundaries also remain: no old tasks/cross-version upgrade scope,
+and V1 is unsupported. Fresh initialization and same-version reopen/restart, existing new-work
+history, permissions, pins, audit and data integrity remain required. This supersedes the obsolete
+upgrade/V1 obligations in RO-4/AC-9/10/11/17 only within that stated scope; none are claimed tested.
+Accepted43–46 and Task47.4 are not retroactively re-reviewed or relabelled by this amendment.
+
+### Amendment traceability
+
+`V2-TASK-008–010` in [V2 Requirements](docs/v2-requirements.md) owns the durable new rules.
+This section and RO-6 supersede affected blanket history-refusal/CLI retry wording in RO-1/2/3/5,
+the Safety invariants and AC-6/8/15/16 only for deliberate new manual work. Automatic and same-Task
+uncertain replay remain forbidden. The new TARGET journey/architecture sections distinguish this
+authorized work from accepted CURRENT delivery.
 
 ## Requirements and journeys
 
@@ -245,6 +303,19 @@ never execute, infer a new identity or require the removed Job collections. Remo
 submission, cancellation and stale-requeue APIs/commands; retained capabilities use Task equivalents
 with unchanged permissions and safe-repeatability limits.
 
+### RO-6 — source-dependent history admission and one new-organizing journey
+
+Apply the 2026-11-02 amendment at each concrete source's shared Task admission, including files
+found after a directory Task was created. Automation due/Run once excludes prior failed/partial
+versions before Provider work or effects; manual selection reaches a backend-generated exact
+summary containing the prior result/effects warning and can execute a newly confirmed legal plan.
+Compare real Storage/path/version across library bindings and complete history, not names, the
+latest page of Results, or the enclosing Task's aggregate. Recheck history and ownership atomically
+at relevant admission/confirmation boundaries. A truly replaced source is new content; missing or
+incomparable version evidence cannot silently erase an applicable failed/partial history warning.
+Use existing Task/TaskItem/Result/discovery/authorization evidence, no global FileIndex replacement
+or new queue/recovery product. Remove CLI retry-failed without dropping shared four-type behavior.
+
 ## Required surfaces and boundaries
 
 Domain Task/TaskItem/Result/queue ports; application admission/engine/Worker/Scheduler and four-type
@@ -292,6 +363,12 @@ RecognitionType C remains C with NamingPolicy A and ClassificationPolicy A. No F
 | AC-17 | Real Python/API/SQLite/Worker/Scheduler browser journeys using built assets, desktop/narrow inspection, installed wheel and Docker fresh/restart/upgrade/security gates establish the same Task lifecycle and preserved records. |
 | AC-18 | B supplies applicable full T4 results and exact Base..Head evidence; unavailable gates remain pending/disclosed. A independently reviews the whole Slice before PASS / CLOSED and CURRENT reconciliation. |
 | AC-19 | Organizing and ordinary-file operations expose no Pause/resume-from-pause in Web/API/CLI or dedicated live dispatch. Old requests are refused without effects; safe cancellation and four-type organizing continuation still work. No paused-organizing migration/restoration system is required; preserve existing readable history and non-replay. |
+| AC-20 | Due and definition Run once use shared per-source history admission. Same-version failed/partial items are excluded independently, even zero-effect failures and after restart; free siblings proceed. Historical exclusions are durable/readable and do not fabricate new media success, Attention problems or first-N scope completeness. |
+| AC-21 | Manual direct/folder/mixed selection of failed/partial sources, including partial directories/copy remnants and historical unknown effects, reaches the real existing summary with clear per-file history/effects warning before selected confirmation. Current pinned new plans execute through normal conflict/capability/destructive authority, with no new recovery page or mandatory extra operator chore. |
+| AC-22 | Query complete organizing history by canonical Storage/path and comparable version across library bindings, before limiting display. Cover older matching history beyond recent pages, mixed results, analysis-only/non-organizing records, genuine replacement and unknown versions. Reads and warnings have zero Provider/media effects. |
+| AC-23 | Source-history and ownership checks are backend-authoritative and race-safe. Known active work still blocks; explicit new manual work is not permanently refused by historical partial/unknown markers. Application-owner fencing/exact lock handoff prevents later old steps/writes, retains siblings/old unknown evidence, and never pretends an in-flight remote call was stopped. Confirmation/request loss, stale history/plan, queue full and permission loss retain normal refusal/readback semantics. |
+| AC-24 | retry-failed is absent from parser/help/dispatch and exclusive helpers in source, clean wheel and image. Old input stops without Task/Provider/Storage/authority effects. Organize/analysis and same-Task four-type continuation/ignore retain legal behavior; manual CLI prints history warnings and remote unattended input cannot spoof warned manual consent. |
+| AC-25 | Real V2 Files/API/SQLite/Worker desktop/narrow journeys prove warning → normal confirmation → actual new organize effects; scheduled and Run once probes prove exclusion/free siblings/no-work truth. Old Results/pins/unknown effects and original Automation time/outcome stay immutable. B supplies applicable T4/native/packaging/restart validation for RO-6 before whole-Slice A review. |
 
 ## Validation and handoff
 
@@ -324,3 +401,9 @@ The user grants A scope authority; earlier B investigation is disclosed. No impl
 Task review or A Final Review is conducted by this scope action. Roles remain separate under the
 workflow; no sub-agents are requested or spawned. `TASK.md` remains NO ACTIVE IMPLEMENTATION TASK
 until B plans against the committed Contract. No original closed Slice fact is changed.
+
+2026-11-02 scope/planning workspace: branch `main`, starting HEAD
+`980ce42a977b5bc20cf8426dbaf5a232f46cf22b`; no pre-existing tracked edits. Pre-existing untracked
+OS/log/reference files, `15` and output artifacts are preserved unstaged. Governance preflight PASS.
+The same root agent acts as A for this scope checkpoint and subsequently as B planner, with no
+delegation, implementation, final review, push or change to prior acceptance facts.

@@ -90,6 +90,35 @@ replacing Job/Task handoffs with one Task identity.
 Full migration, compatibility limits and evidence requirements live in the Contract/Architecture.
 There is no history clearing, new recovery system, arbitrary historical Reprocess or rollback.
 
+## TARGET — New organizing after failed/partial history (Slice47, 2026-11-02)
+
+This is the user-authorized `V2-TASK-008–010` extension, not a claim of delivered behavior.
+
+- **Goal/entry:** use normal ResourceLibrary Files 整理 for a previously failed/partial file;
+  definition due/Run once does not automatically reintroduce that observed version. The check is
+  per concrete file in shared admission, including files discovered inside a selected directory.
+- **Visible state:** automatic work records excluded files/reasons and free siblings truthfully.
+  Files preparation/summary visibly identifies each affected file's prior outcome, previous target,
+  completed steps and unknown effects, with bounded readable evidence and a clear reminder to
+  check source/target/Storage before re-organizing. Read/refresh creates no work or Provider call.
+- **Action:** user checks actual effects and uses the existing selected plan confirmation. No new
+  verification page, routine extra checkbox, terminal-failure center or CLI retry command is needed.
+  Existing directories and target/remnant files follow normal conflict policy; explicit overwrite
+  and source-cleanup authority remain separate. A new request uses current configuration and
+  reviewed live source evidence; same-Task four-type continuation retains its legitimate old pin.
+- **Success:** a new Task records only its own actual effects; old attempts/Results/unknown evidence
+  and original Automation result/time remain unchanged. Same request readback does not duplicate work.
+- **Failure/recovery:** known queued/running work still owns its source. Historical partial/unknown
+  evidence alone is not a permanent manual-entry prohibition. Backend handoff fences any superseded
+  application owner and preserves siblings; a user confirmation cannot prove or stop an already sent
+  remote Storage call. Explain that limitation without claiming automated verification. New conflicts,
+  source/plan changes, denied authority or queue-full retain normal explicit correction/readback.
+
+CLI `tasks retry-failed` is removed, including its analysis-only form; ordinary `organize` analysis
+and explicit execution remain. Source identity is canonical Storage/path plus comparable version,
+not a permanent pathname blacklist or a new global FileIndex. The latest selected rule excludes
+failed/partial history only; it does not extend automatic suppression to every historical status.
+
 ## Readable actions and Entry
 
 Open Entry or a V2 page/dialog → distinguish text, availability and focus → submit the permitted
