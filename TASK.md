@@ -682,3 +682,126 @@ git diff --check                                           # clean
 
 未读写用户数据库/生产媒体；未修改 A-owned Slice/Roadmap/Progress；未 push/部署；预存
 无关未跟踪文件保持未暂存。B 负责本 Task 原 T4 验收与独立审查。
+
+## Developer Completion Report — Round 9
+
+**Status: READY FOR B REVIEW.** 同 Task 修复本轮唯一 P1（原文件效果不明仍被
+retry-failed 当作可执行项重放）；不是自评 PASS。
+
+```text
+Task Base: dfcfebbdb9c879b38806e29c7b41c9192aeca83e (not repinned)
+Code/test checkpoint: be35a5f541cc481bfbc91c9ecc51ab734b2d7c94
+Report checkpoint: this documentation commit
+Pre-existing untracked files: preserved, unstaged. No push/deploy/self-approval.
+```
+
+### Correction implemented（按 B 的四点指导）
+
+1. **准入前按文件核对原效果证据。** 新增
+   `PersistentTaskCoordinator.execution_retry_items()`：先复用现有
+   `retryable_items()` 取候选，再逐文件按原工作自己的证据划分"可执行 / 效果不明"。
+   判定与仓库同 Task item 重启围栏（`_scheduled_item_effect_history_is_replay_safe_locked`）
+   的零效果证明保持一致：仅当该 item 全部 Result 均为 `certainty=none`、无
+   uncertain_effects、无 completed_operations、primary 未完成、状态非
+   success/partial 才算可执行；任一不满足即拒绝。额外两层独立证据：原 Task
+   scheduling 的在途 mutation（`mutation_in_flight` + `mutation_item_id` 命中即拒）；
+   无 Result 的候选复用现有 checkpoint 效果判定（`ProcessingCheckpointService`），
+   只有其证明 `none`（如 durable failure envelope）才放行，其余关闭。failed/partial
+   状态、来源仍存在、配置有效、显式 `--execute` 都不作为"上次没生效"的证明。
+2. **拒绝发生在新 Task 准入与原锁释放之前。** `final_cli.py` 的
+   `tasks retry-failed --execute` 分支先划分；全部候选被拒时直接
+   `ValueError`（exit 2），零准入、零锁释放、零 marker 变化。部分可执行时才
+   `_admit_cli_retry_task`，且把原 `reclaim_task_locks(整 Task)` 改为仅对可执行
+   文件逐个 `release(storage_id, source_path, original.task_id)`——效果不明的文件
+   保留原锁行、未完结 owner 与不确定边界；运行严格消费已核对的
+   `retry_items`（后续 selection 映射与逐文件执行同一元组）。
+3. **拒绝项如实说明，不输出笼统 Retry failed。** 全拒时 stderr 给出
+   `no retry run was started: the last mutation result of <文件> could not be
+   verified; inspect the recorded effects of the original task ...`（按文件名列出，
+   最多 5 个 + 溢出计数）。混合批次在 stdout 输出 `NOT RETRIED` 段：每个被拒文件
+   附具体证据种类（在途 mutation 未证实 / certainty 未证实 / primary 已完成 /
+   存在已完成操作 / 已有终态），并说明原 Task 保留不确定边界与来源占用、下一步
+   是核查原记录。退出码沿用实际运行的语义（可执行子集成功为 0）。
+4. **保留既有已验收行为。** 默认（无 `--execute`）retry-failed 仍是零修改分析，
+   路径不变；原 pin/scope/limit、原执行授权、共享容量/命名 claim/fence、成功
+   sibling 不重放全部保持；未恢复 retry-request，未新增 pending 登记或迁移；
+   请求记录不等于文件修改授权，重新分析不改写原不确定效果。
+
+### Actual validation（本轮命令与结果，候选 be35a5f5）
+
+```sh
+.venv/bin/python -m unittest tests.test_automation_entrance_recovery
+# Ran 8 tests — OK（0.7s）；含两个新反例与既有 CLI retirement/容量/零修改分析回归
+
+.venv/bin/python -m unittest \
+  tests.test_automation_admission tests.test_automation_definition_occurrence \
+  tests.test_automation_execution_intent tests.test_v2_automation_run_once \
+  tests.test_automation_definition_execution tests.test_automation_run_once \
+  tests.test_execution_authorization tests.test_automation_api
+# Ran 178 tests — OK（12.4s）
+
+.venv/bin/python -m unittest tests.test_task_scheduling tests.test_task_scheduling_fencing \
+  tests.test_manual_task_engine tests.test_processing_worker_readiness \
+  tests.test_automation_job_fencing
+# Ran 127 tests — OK（9.3s）
+
+.venv/bin/python -m unittest tests.test_task_retry tests.test_task_persistence \
+  tests.test_recovery_continuation tests.test_batch_cli tests.test_processing_recovery_admission
+# Ran 111 tests — OK（23.3s）
+
+.venv/bin/python -m unittest tests.test_manual_ignore tests.test_manual_ignore_batch \
+  tests.test_metadata_correction_batch tests.test_metadata_review_batch \
+  tests.test_metadata_resolution tests.test_recognition_batch_resolve \
+  tests.test_conflict_resolution tests.test_classification_review \
+  tests.test_metadata_review tests.test_metadata_correction
+# Ran 72 tests — OK（2.6s）
+
+.venv/bin/python -m unittest tests.test_automation_workspace_read_model \
+  tests.test_operations_run_inventory tests.test_operations_task_center \
+  tests.test_task_center_recovery_lineage tests.test_operations_run_detail
+# Ran 160 tests — OK（18.5s）
+
+.venv/bin/ruff format --check / ruff check <3 个修改文件>   # 全部通过
+.venv/bin/python -m compileall -q mediaflow tests          # OK
+python3 scripts/check_governance.py                        # PASS
+git diff --check                                           # clean
+```
+
+计时测试合计约 67s，低于本轮总耗时 50%；无空等凑比例，未删断言、未加重试、
+未改超时。未修改 Web 投影/harness，故未跑 Web 构建/E2E。
+
+### 新增真实链路反例（tests/test_automation_entrance_recovery.py）
+
+- `test_retry_failed_execute_refuses_the_original_unverified_mutation`：第一轮真实
+  COPY 进入生产管线，只在真实 `LocalStorage.write` 边界注入丢失响应超时；原 CLI
+  exit 2（"unverified in-flight mutation"），durable item partial、Result
+  attempted_unverified、原 Task claimed 且 `mutation_in_flight=True`，目标无文件。
+  第二轮恢复写后真实执行 `tasks retry-failed <原 Task> --execute`：exit 2，
+  stderr 命名该文件并要求先核查原记录；零 Storage.write、零 Provider 调用
+  （provider.calls 不变）、零新 Task、原 item/Result/在途 marker/来源占用
+  （`find_owned_source_work` 返回原 Task）全部原样。
+- `test_retry_failed_execute_retries_only_the_proven_zero_effect_sibling`：一轮内
+  One 在 Executor 前失败（Result failed/none，边界随其发布清除）、Two 的真实
+  COPY 写丢失响应（partial/attempted_unverified，边界保留）。显式重试只受理
+  One：新 kernel Task 仅含 One、真实复制成功 exit 0，stdout `NOT RETRIED` 段
+  命名 Two；Two 的源文件、原记录、在途 marker、来源占用原样，共享槽位回到
+  原 Task 的保留槽（`count_scheduled_capacity_use()==1`），零新 Job。
+- fixture 仅新增可选 `organize_operation` 参数（既有调用不受影响）；故障注入
+  全部发生在真实 Executor/Storage 调用边界，未伪造 durable 行，未读写用户数据库。
+
+### Remaining work / risks（如实陈述）
+
+1. **检查与取用同进程一致，跨进程竞争未新增围栏。** 划分、准入与执行在同一
+   CLI 进程内按同一候选元组进行；被拒文件不释放占用、不清 marker。若原 Task
+   在检查与运行之间被另一 Worker 合法接管并重启同一零效果 item（其自身续作
+   受同 Task 重启围栏约束），两条执行链仍依赖既有 claim/fence 仲裁；本轮未
+   为该窗口增加新的跨进程 item 级围栏，属既有 lineage 设计范围。
+2. 混合批次中被拒文件不进入任何新 Task；用户对其后续处理仍走原 Task 既有
+   检查/恢复入口（本轮未新增技术重试或补偿入口，与 B 指导一致）。
+3. B 仍负责本 Task 原 T4 full Python/Web/E2E/wheel/Docker/native 门禁与独立
+   审查；本轮未运行这些门禁。
+
+### Scope statement
+
+未读写用户数据库/生产媒体；未修改 A-owned Slice/Roadmap/Progress；未 push/部署；
+预存无关未跟踪文件保持未暂存。B 负责本 Task 原 T4 验收与独立审查。
