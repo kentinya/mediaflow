@@ -15,12 +15,12 @@ B 不改 A-owned Slice/Roadmap/Progress，不自行宣告 Slice PASS / CLOSED。
 Task ID: 47.4
 Task Type: SLICE
 Parent Slice: 47
-Status: READY FOR B REVIEW
+Status: FIX REQUIRED
 Task Base: 383d8834787674675183f4b251d9dfd26a5dc511
 Difficulty: High
 Test Level: T4
 Planner / Reviewer: B
-Implementation authorization: USER-AUTHORIZED — IMPLEMENTED, AWAITING B REVIEW
+Implementation authorization: USER-AUTHORIZED — SAME TASK CORRECTION REQUIRED
 ```
 
 ## Preflight / accepted baseline
@@ -350,9 +350,126 @@ Candidate: c1c2190882fbf320d263215cfa60d810f1a16c95 (implementation checkpoint; 
 ## B Review Result
 
 ```text
-Reviewed: PENDING — Developer candidate submitted
-Decision: NOT REVIEWED
-Task blockers: none assessed yet
-Slice Required Outcomes / Surfaces all satisfied: NOT YET ASSESSED — B must reevaluate all RO/AC
-Next: B reviews full Base..candidate, runs applicable T4 acceptance/full regression and decides PASS or FIX REQUIRED
+Reviewed: 383d8834787674675183f4b251d9dfd26a5dc511..a2c2bbb7168bd79cdbc9e7c67505c8d4bcb42962
+Implementation: c1c2190882fbf320d263215cfa60d810f1a16c95
+Decision: FIX REQUIRED
+Task blockers: terminal notification delivery; retained-behavior test coverage; affected consumers/docs
+Slice Required Outcomes / Surfaces all satisfied: NO
+Next: SAME TASK FIX LOOP — preserve Task ID/Base/Goal and user exclusions
 ```
+
+B 已按完整 Base..Head 核对 150 文件变更清单、生产者/Worker、schema/关系、恢复、
+授权/查询、Web/V1、测试及发布消费者；后续 handoff commit 仅改 TASK.md，执行输入
+与 c1c2190 相同。发现下列必要结果未交付，依 workflow §6 提前 FIX REQUIRED，不将
+Developer 报告中的全量通过数当作独立验收，也不继续运行昂贵全矩阵。
+
+本轮未改生产/测试代码；只维护本 Task 及 ignored 本地复核证据。main 起点为上述
+候选，governance 与工作区/Git 可写检查通过，所有预存未跟踪文件保持未暂存。
+旧任务、跨版本升级、历史 ID 兼容仍按用户指令排除，不作为返工内容。
+
+### 必须修复的结果及 Developer 指导
+
+1. **P1 — 整理已完成，但没有自动产生终态通知。**
+   在临时 LocalStorage/SQLite 上启用原已支持的完成/失败/取消 Webhook 订阅，经
+   `POST /api/v1/tasks` 使用一次性票据受理，再运行正式 CLI `worker run-next`：
+   API 202、Worker exit 0、Task completed、一个 Result、源文件已移动、目标存在，
+   但 `list_deliveries()` 为零。fresh schema 的 Job 对象查询同时为空。
+   用户的完整旅程是“配置通知 → 发起整理 → Worker 完成 → 查看通知投递/接收结果”；
+   目前停在最后一步，并非通知服务重试就能修复，因为根本没有待投递记录。
+
+   **修法：** 将现有终态事件发布接到真正的 Task 执行/持久化结果边界，复用现有
+   NotificationPublisher/outbox 和当前配置解析；覆盖仍支持的正常完成、失败、取消。
+   事件身份来自真实 Task/原运行事实，重复轮询、同版本重启与四类后续处理不能重复
+   发送同一次原始运行结果，也不能改写原结果。通知异常仍不得改变媒体结果或触发
+   媒体重放。不要恢复 Job、另造通知队列或直接让测试调用 publisher 假装自动发布。
+   将 `tests/test_notifications.py::test_terminal_job_and_schedule_events_enter_outbox`
+   改成真实 Task 入口/Worker 触发，断言实际 outbox、Task 关联、去重及无二次媒体效果。
+
+2. **P1 — 保留能力的自动化证明被删除或变成恒真。**
+   `tests/test_configuration_snapshot.py` 的 45 项、
+   `tests/test_automation_settings_resident.py` 的 25 项等整文件被删；其中包含当前
+   Active 发布失败回滚、并发发布与受理不能混 pin、实际 resident adoption、日志隔离
+   等仍适用的断言，不只是 Job/旧升级测试。候选 Python 测试中同表达式比较为 67 处，
+   Base 为 1 处；例如 `tests/test_execution_authorization.py` 多处用
+   `self.assertEqual((), ())` 替代真实仓库查询。70 项定向测试全绿仍漏过上项实际故障。
+   用户例子：“整理排队后保存新设置，Worker 仍按原固定配置完成，而设置页反映真实
+   新轮询值”；只删旧测试无法证明这条保留旅程仍成立。
+
+   **修法：** 逐项区分已退役行为与仍支持行为；前者可删除，后者把 fixture/查询/
+   断言改到现有 Task 身份和 fresh 同版本数据。重点恢复配置发布/RBAC/失败原子性、
+   准入 pin/授权/容量、实际 resident adoption、Task Center 查询/分页/四类及原记录、
+   scoped logs/plan redaction、同版本 restart/uncertain 非重放的受影响覆盖。
+   沿用 Base 中这些现成测试，允许合并/改名并指出等价覆盖；不要求原测试数量或文件名
+   完全相等。移除本 Task 引入的恒真替代，改为真实 schema/Task/消费/audit/效果断言。
+   不恢复旧 Job fixture、旧任务迁移、Pause/resume 或已退役恢复体系。
+
+3. **P1 — 新接口的实际调用者和使用说明没有完成切换。**
+   README 的 remote curl 仍向已删除的 `/api/v1/jobs` POST；用户照说明签发票据后
+   无法提交新整理。`scripts/docker_release_security_smoke_test.py` 仍要求认证读取
+   `/api/v1/jobs` 返回 200，health/fresh/restart/empty-baseline smoke 也仍调用 Job
+   API/模型；修好本机 bind 路径后，这些真实断言仍不能验证当前产品。
+   `operations-inventory.python.spec.ts` 与改过的 harness 仍有 Worker stub 返回
+   “retired”，而现有四类/八视图等必要旅程尚未全部完成当前 Task 对齐。
+
+   **修法：** 同步 README 和受影响 API/CLI/config/deployment 操作说明中的可执行
+   示例；明确 remote Task POST、Task cancel、Task 容量/诊断语义及旧 Job 拒绝。
+   最终 A-owned CURRENT/TARGET/闭环协调仍留给 A。将现有 Docker fresh/health/
+   security/restart 消费者接到 Task API/身份，保留原权限、零副作用、固定配置、效果与
+   重启断言；只将旧 Job 专属用例改为退役拒绝，不能删掉整个安全门禁。
+   原生 harness 用当前合法 Files/Run once/due 等生产者产生测试工作，Worker 跑现有
+   Task engine，四类继续断言同一 Task/独立效果。过时的暂停/Job 子任务预期应删除或
+   改为有界拒绝，保留当前真实旅程。无需新建测试平台；旧升级脚本不属本项要求。
+
+### 本轮实际验证 / 待验门禁
+
+本地证据根（ignored，不声称远端可达）：
+`.git/validation-evidence/a2c2bbb7168bd79cdbc9e7c67505c8d4bcb42962/b-task47.4/`。
+
+| 检查 | 实际结果 |
+|---|---|
+| `.venv/bin/python -m unittest tests.test_notifications tests.test_execution_authorization tests.test_api_security tests.test_v2_automation_run_once -q` | 70 tests，6.829s，OK；`focused-python.log`。仅为定向回归，不是 T4 全量。 |
+| `PYTHONPATH=. .venv/bin/python <证据根>/repro_terminal_notification.py` | 0.092s；真实 remote API → 正式 Worker → 文件成功后，预期通知为 1、实际为 0，断言失败；脚本与 log 均保留。只用现有 fixture、临时媒体和 synthetic Provider，没有外部 HTTP。 |
+| 完整 diff whitespace / governance / Git 可写 | `git diff --check 383d8834787674675183f4b251d9dfd26a5dc511..a2c2bbb7168bd79cdbc9e7c67505c8d4bcb42962` 与 `python3 scripts/check_governance.py` 通过。 |
+| 源码/测试静态核对 | 发布调用、schema、真实路径和 deleted/shared coverage 已核对；`test-assertion-audit.txt` 留实际同表达式断言清单。测试方法数仅辅助定位，不充当功能证明。 |
+| 全量/原生视觉/clean wheel/Docker fresh-restart-security | 因已证明阻塞，本轮未跑，仍由 B 在修正候选负责；Developer 已报结果不转记为 B PASS。bind 环境问题由 B 处置，实际过时的 smoke 消费者按上项修正。 |
+
+测试墙钟约 7s，连同相关静态门禁保守按 10s；自本轮明确计时点起已完成复核至少 211s，
+占比低于 5%（此前合同/代码阅读未算入分母）。没有空等凑比例或用省略门禁宣告 PASS。
+
+Developer 修正后只跑新增/修改和直接受影响组：
+
+```sh
+.venv/bin/python -m unittest tests.test_notifications tests.test_execution_authorization \
+  tests.test_api_security tests.test_v2_automation_run_once -q
+```
+
+另跑恢复/适配后的配置快照、resident、Task Center/records/log isolation 等实际修改
+测试模块，并在交接列准确模块名和结果；原计划引用的已删除文件不能继续声称执行。
+改到 Web/harness 时，构建后按当前 spec 的真实名称选跑四类恢复、八视图及本次受影响
+原生旅程。Docker smoke 的修改先做语法/直接受影响断言核对；完整镜像/发布矩阵仍归 B。
+继续做 changed-file Ruff/compileall、governance、whitespace；不把全仓回归交回 Developer。
+
+### Entire Slice reassessment — 全部结果和 AC
+
+| 结果 | 本轮判断 |
+|---|---|
+| RO-1 — 一个 Task / 统一调度 | Task47.1–3 已验基础保留；本轮 remote 实际受理/执行和 fresh 无 Job 已观察。跨层删除后的全量容量/fence/控制与重启证明尚待修正后 T4，不能扩称本轮全部通过。 |
+| RO-2 — 统一应用引擎 | 主入口/Worker 已切 Task，remote 实际文件效果通过；未发现需要另建引擎的理由。其余入口定向与既有证据不代替变更后全量门禁。 |
+| RO-3 — 同工作四类恢复 | 当前 Run once 定向含同 Task 恢复/原记录/中断覆盖通过；共享覆盖被删及部分原生 harness 失配仍未完成，不能声明所有界面/重启证据完备。 |
+| RO-4 — 完整退出 Job | fresh schema 和主生产模型/服务已去 Job；旧任务/跨版本迁移依用户排除。新版本同版本 reopen、failure atomicity、clean wheel/container 全证据尚未完成。 |
+| RO-5 — 用户/管理闭环 | 未完成：终态通知缺失、remote 操作说明错误、受影响原生/发布消费者未对齐。Files/Automation/Task Center 主能力不能因此全部判失败或全部判通过。 |
+
+| AC | 状态 |
+|---|---|
+| AC-1–3 | 前序已验；本轮真实 remote 和定向通过部分，修正候选仍需完整 admission/capacity/claim/control 验收。 |
+| AC-4–6 | 主引擎/入口切换已审，Run once/remote 定向通过；保留 filtering/附件/完整范围/稳定性全矩阵未重验。 |
+| AC-7–8 | 同 Task 四类及中断定向通过部分；当前原生链/完整非重放和同版本 restart 门禁待补齐。 |
+| AC-9–10 | 用户排除旧任务/跨版本升级；fresh/同版本 reopen/restart、失败原子与 uncertain 安全仍需验证，不能借排除升级一起删掉。 |
+| AC-11 | fresh SQLite 无 Job 对象已观察；源码退出主体已审，clean wheel/container 与消费者完整证明待验。 |
+| AC-12–16 | 部分定向通过，通知、仍适用自动化覆盖及消费者构成阻塞；settings/adoption/分页/导出/RBAC 全量待验。 |
+| AC-17 | 当前 full/native/visual/package/container 门禁未由 B 完成，不满足。 |
+| AC-18 | 本轮完整范围审查给 FIX REQUIRED；未达到交 A 条件，未做 A Final Review。 |
+| AC-19 | 未发现本次恢复 Pause/resume 的授权；继续保持前序退出边界，修正中不得重新接回。 |
+
+结论：保留 Task47.4，同 Base 修正以上必要交付后再交 B；不拆新 Task，不扩大范围，
+不变更 A-owned Slice/Roadmap/Progress，不声明 Slice READY FOR A REVIEW / PASS / CLOSED。
