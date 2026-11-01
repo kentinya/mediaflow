@@ -1201,6 +1201,7 @@ def final_main(
             coordinator = PersistentTaskCoordinator(repository, repository)
             kernel_context = None
             retry_items: tuple[PersistentTaskItem, ...] | None = None
+            effect_blocked: tuple[tuple[PersistentTaskItem, str], ...] = ()
             if arguments.command == "tasks":
                 original = coordinator.require(arguments.task_id)
                 if original.command not in {"organize"}:
@@ -1215,6 +1216,19 @@ def final_main(
                 )
                 execute = bool(arguments.execute and original.execute_authorized)
                 if execute and retry_items:
+                    # The original work's own effect evidence gates a retried
+                    # execution per file, BEFORE any new Task admission or
+                    # original lock release: a file whose last mutation result
+                    # is unverified is never retried, so its uncertain-effect
+                    # record, its source occupation and the original Task's
+                    # mutation marker stay exactly as they were.
+                    execution_items, effect_blocked = coordinator.execution_retry_items(
+                        original.task_id,
+                        failed_only=arguments.task_command == "retry-failed",
+                    )
+                    if not execution_items:
+                        raise ValueError(_unverified_effect_refusal(effect_blocked))
+                    retry_items = execution_items
                     # RO-2: a retried CLI execution is the same shared Task work
                     # every other entrance runs.  The kernel admits it — shared
                     # capacity, the original work's pin and atomic scheduling
@@ -1233,7 +1247,12 @@ def final_main(
                         original,
                         command=arguments.task_command,
                     )
-                    repository.reclaim_task_locks(original.task_id)
+                    # Only the re-executable sources release their original
+                    # exclusion.  An effect-blocked file keeps its own lock row
+                    # and its unfinished owner, so no successor Task can take
+                    # a source whose last effect was never proved.
+                    for item in execution_items:
+                        repository.release(item.storage_id, item.source_path, original.task_id)
                     claim, direct_organize_worker_id = _drive_direct_organize_claim(
                         repository,
                         scheduling,
@@ -1509,6 +1528,8 @@ def final_main(
                 coordinator.finish(task.task_id, summary)
             stdout.write(f"Task ID: {task.task_id}\n")
             stdout.write(render_summary(summary, execute=execute, analysis_only=analysis_only))
+            if effect_blocked:
+                stdout.write(render_unverified_effect_refusals(effect_blocked))
             paused = coordinator.require(task.task_id).status is PersistentTaskStatus.PAUSED
             return 130 if cancelled else 75 if paused else 1 if summary.failed else 0
     except (OSError, ValueError, LookupError, RuntimeError) as error:
@@ -2801,6 +2822,47 @@ def _admit_direct_organize_task(repository, configuration, *, path, limit):
     if admitted.duplicate:
         task, state = admitted.task, admitted.state
     return task, scheduling
+
+
+def _unverified_effect_refusal(blocked: tuple[tuple[PersistentTaskItem, str], ...]) -> str:
+    """The bounded refusal for a retry whose every candidate is effect-blocked.
+
+    The answer names each refused file and its evidence kind, and always sends
+    the operator to the original work's recorded result — never to a new
+    mutation, an alias or an automatic replay.
+    """
+
+    names = [item.source_display or item.source_path for item, _reason in blocked[:5]]
+    more = len(blocked) - len(names)
+    listing = ", ".join(names) + (f" (and {more} more)" if more > 0 else "")
+    return (
+        "no retry run was started: the last mutation result of "
+        f"{listing} could not be verified; inspect the recorded effects of the "
+        "original task before retrying any of these files"
+    )
+
+
+def render_unverified_effect_refusals(
+    blocked: tuple[tuple[PersistentTaskItem, str], ...],
+) -> str:
+    """Report the files an executed retry did not touch because their last
+    mutation result is unverified; the original record stays authoritative."""
+
+    lines = ["", "NOT RETRIED — the last mutation result is unverified", ""]
+    for item, reason in blocked[:5]:
+        lines.append(f"{item.source_display or item.source_path} | {reason}")
+    more = len(blocked) - min(len(blocked), 5)
+    if more > 0:
+        lines.append(f"... and {more} more")
+    lines.extend(
+        (
+            "",
+            "The original task keeps its uncertain-effect boundary and its source claim; "
+            "inspect each file's recorded result before retrying it.",
+            "",
+        )
+    )
+    return "\n".join(lines)
 
 
 def _admit_cli_retry_task(repository, configuration, original, *, command):
