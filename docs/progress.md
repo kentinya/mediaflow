@@ -15,7 +15,10 @@ under explicit user authorization on 2026-10-30. Immutable Base:
 `dd3f1c25126cd574d8df293d0163131bc6cb9ad6`; the original five-outcome readiness packet remains in
 `980ce42a977b5bc20cf8426dbaf5a232f46cf22b:TASK.md`. User scope amendment 2026-11-02 adds
 `V2-TASK-008–010`: automatic failed/partial history exclusion, warned new manual organizing and
-CLI retry-failed removal. Next: **TASK47.5 PLANNED — AWAITS EXPLICIT IMPLEMENTATION AUTHORIZATION**;
+CLI retry-failed removal. The user's planning correction selects latest formal outcome; later manual
+success removes earlier failure-based exclusion. Current handling/lock/fence updates are allowed
+while recorded outcomes remain factual; no new CLI warning/remote gate is required.
+Next: **TASK47.5 PLANNED — AWAITS EXPLICIT IMPLEMENTATION AUTHORIZATION**;
 [TASK.md](../TASK.md) contains the draft against the committed amendment.
 The new outcome is not implemented or accepted; Slice47 remains ACTIVE, with no A Final Review or
 closure. No old-task/cross-version upgrade or V1 support is required. The closure ledger is unchanged.

@@ -133,20 +133,26 @@ Task's aggregate status are not authority. An enclosing directory Task may alrea
 the concrete file decision is possible; apply the gate before per-file Provider/execution admission.
 
 Query existing organizing TaskItem/Result/source evidence by canonical Storage/path and comparable
-version across library bindings, restricting the matching population before bounding display.
-Prior failed/partial versions are excluded for definition-driven new discovery, independently per
-file. Genuine replacement is new content; absent/incomparable evidence does not silently drop
+version across library bindings, selecting its latest formal organizing outcome before bounding
+display. Use durable attempt/admission ordering and lineage, not a late old publication's arrival
+time, to identify the newer work. Definition due/Run once excludes only latest failed/partial;
+a later manual success removes that exclusion while retaining earlier results. Genuine replacement
+is new content; absent/incomparable evidence does not silently drop
 history. Preserve complete traversal, limits, attachments/stability and truthful excluded/no-work
 projection; build no FileIndex replacement, independent processing engine or queue.
 
-For explicit new manual work, the backend supplies immutable summary-bound history/effect warnings
-and rechecks them together with live source, plan, current permission, capacity and exact selected
-scope. Historical partial/unknown outcomes alone do not block this new request. Required source/
+For explicit new manual work, the backend supplies summary-bound applicable history/effect warnings
+and rechecks relevant reviewed effects together with live source, plan, current permission, capacity
+and exact selected scope. An unrelated history append does not by itself invalidate confirmation.
+Historical partial/unknown outcomes alone do not block this new request. Required source/
 destination lock handoff and predecessor application-owner fencing are atomic, per exact affected
 source/generation, not task-wide lock deletion. Never reopen/replay the old item, rewrite its
 Results/pin/unknown evidence, refresh its consumed authority, release siblings or authorize later
-stale-owner steps. Explicitly running/queued owners still block. Historical unresolved mutation
-evidence must not be mistaken for proof of a currently running Worker or erased to make admission
+stale-owner steps. Necessary lock/claim/fence/current handling-state updates are allowed; immutable
+history is not a requirement that all old Task/item fields stay byte-for-byte unchanged. A concrete
+item queued/processing without its own terminal outcome retains mutual exclusion; parent Task
+running and historical unknown markers alone cannot reclassify a failed/partial item as active.
+No remote completion proof is required. Unresolved mutation evidence is not erased to make admission
 succeed. A warned new manual request is the authorized exception to blanket historical refusal;
 automatic and old-attempt uncertain replay remain forbidden.
 
@@ -155,7 +161,9 @@ that a remote call ended. No Storage protocol redesign/remote operation-ID polli
 Normal OrganizerExecutor/capability/Hash/conflict/destructive-authority logic handles directories,
 targets and remnants; failed attachments keep existing manual guidance. Remove retry-failed's
 exclusive CLI admission and renderers while retaining ordinary analysis/organize and shared
-four-type code. Remote unattended discovery cannot gain manual consent from a forged origin.
+four-type code. Keep ordinary CLI/remote source and authorization semantics; add no CLI history
+warning obligation or new remote history/consent category. Existing backend origin/permission checks
+are retained.
 
 This is TARGET scope only. No old-task/cross-version migration or V1 support is added; fresh and
 same-version persistence, audit, idempotency, pins and permission checks remain applicable.

@@ -72,9 +72,11 @@ Slice Base and Tasks47.1–47.4 acceptance remain unchanged. Task47.4 passed B a
 its packet is preserved in `980ce42a977b5bc20cf8426dbaf5a232f46cf22b:TASK.md`. The new outcome
 must be delivered before the enlarged Slice can become READY FOR A REVIEW.
 
-- Shared per-source TaskItem admission uses backend-proven trigger/context and prior organizing
-  history. Definition due work excludes the same observed source version when it has a prior
-  `failed` or `partial` organizing outcome. Run once uses the same definition-derived exclusion,
+- Shared per-source TaskItem admission uses backend-proven trigger/context and the latest formal
+  organizing outcome for the same observed source version. Definition due work excludes that
+  source only when this outcome is `failed` or `partial`. A later manual organizing success means
+  an earlier failure no longer causes this exclusion; normal filtering/conflicts still apply.
+  Run once uses the same definition-derived exclusion,
   preserving its existing one-click initial execution. Report the exclusion honestly; a scope
   containing only historical exclusions is not a newly organized-media success or a scan failure.
 - A deliberate new manual organizing request does not exclude a file merely for prior `failed` /
@@ -85,12 +87,16 @@ must be delivered before the enlarged Slice can become READY FOR A REVIEW.
   CLI recovery command or automatic operation-completion detector is selected.
 - This is a narrow explicit-intent amendment to the old blanket manual uncertain-history refusal,
   not automatic replay or resumed execution of an old item. New work receives its own current
-  configuration pin, exact source/plan and authority. Old item/Result/pin/effect certainty and original
-  Automation outcome/time remain factual. Historical unknown effects do not become verified or
+  configuration pin, exact source/plan and authority. Old recorded outcomes, completed steps,
+  Results/pins/effect certainty and original Automation outcome/time remain factual. Necessary
+  lock/claim/fence and current handling-state changes are permitted, without rewriting that history.
+  Historical unknown effects do not become verified or
   acquire fresh old authority merely because a new request was confirmed.
-- Explicitly queued/processing work and genuine live source ownership still prevent concurrent
-  execution. Historical unknown markers are not by themselves proof a Worker is still running,
-  nor a permanent veto on explicit manual re-organizing. Necessary application-owner fencing and
+- A concrete file still queued/processing without its own terminal outcome retains normal source
+  ownership. A file item already recorded as `failed` or `partial` is history for this manual rule:
+  neither its parent Task's running status nor a historical unknown marker alone reclassifies it
+  as an active file or permanently vetoes new manual organizing. No proof of remote completion is
+  required from this Task or the user. Necessary application-owner fencing and
   exact per-file lock handoff preserve siblings and prevent a superseded Worker starting later
   steps or rewriting old results. Already dispatched remote calls cannot be stopped or proved
   finished by a Web warning; disclose that limitation and leave their factual evidence intact.
@@ -101,9 +107,10 @@ must be delivered before the enlarged Slice can become READY FOR A REVIEW.
   new automatic discovery and retains its existing decision/analysis/summary/confirmation path.
 - Remove `tasks retry-failed` parser/help/dispatch and exclusive execution/analysis helpers;
   unsupported old input fails normally with zero work/effects. Keep ordinary `organize`, scoped
-  analysis and shared four-type decisions/ignore/audit. New manual CLI execution emits the same
-  history warning and uses its existing explicit `--execute`; unattended remote discovery cannot
-  impersonate selected Files manual intent to bypass history filtering or permissions.
+  analysis and shared four-type decisions/ignore/audit. Apart from retiring retry-failed and the
+  shared normal manual-organizing adjustment, ordinary CLI/remote keep their existing source and
+  authorization semantics; add no CLI warning requirement, new remote category, consent field or
+  history-refusal rule. The conspicuous new warning is required in Web Files only.
 
 The user's intervening explicit boundaries also remain: no old tasks/cross-version upgrade scope,
 and V1 is unsupported. Fresh initialization and same-version reopen/restart, existing new-work
@@ -111,12 +118,17 @@ history, permissions, pins, audit and data integrity remain required. This super
 upgrade/V1 obligations in RO-4/AC-9/10/11/17 only within that stated scope; none are claimed tested.
 Accepted43–46 and Task47.4 are not retroactively re-reviewed or relabelled by this amendment.
 
+The user's planning correction confirms latest formal outcome, not any-ever failure, as the
+criterion. Task47.5 stays PLANNED with the same immutable Task Base; A checkpoints these narrower
+terms before B updates its draft. This correction adds no implementation or review acceptance.
+
 ### Amendment traceability
 
 `V2-TASK-008–010` in [V2 Requirements](docs/v2-requirements.md) owns the durable new rules.
 This section and RO-6 supersede affected blanket history-refusal/CLI retry wording in RO-1/2/3/5,
-the Safety invariants and AC-6/8/15/16 only for deliberate new manual work. Automatic and same-Task
-uncertain replay remain forbidden. The new TARGET journey/architecture sections distinguish this
+the Safety invariants and AC-6/8/15/16 only for deliberate new manual work. Automatic replay of an
+unresolved old attempt and same-Task uncertain replay remain forbidden; new automatic admission
+uses the latest-formal-outcome rule above. The new TARGET journey/architecture sections distinguish this
 authorized work from accepted CURRENT delivery.
 
 ## Requirements and journeys
@@ -306,11 +318,14 @@ with unchanged permissions and safe-repeatability limits.
 ### RO-6 — source-dependent history admission and one new-organizing journey
 
 Apply the 2026-11-02 amendment at each concrete source's shared Task admission, including files
-found after a directory Task was created. Automation due/Run once excludes prior failed/partial
-versions before Provider work or effects; manual selection reaches a backend-generated exact
-summary containing the prior result/effects warning and can execute a newly confirmed legal plan.
-Compare real Storage/path/version across library bindings and complete history, not names, the
-latest page of Results, or the enclosing Task's aggregate. Recheck history and ownership atomically
+found after a directory Task was created. Automation due/Run once excludes versions whose latest
+formal organizing outcome is failed/partial before Provider work or effects; a later manual success
+removes this failure-based exclusion without deleting the earlier result. Manual selection reaches
+a backend-generated exact summary containing the applicable result/effects warning and can execute
+a newly confirmed legal plan.
+Compare real Storage/path/version across library bindings, finding the latest applicable formal
+outcome from the full matching population, not names, the latest arbitrary page of Results, or the
+enclosing Task's aggregate. Recheck relevant summary evidence and ownership atomically
 at relevant admission/confirmation boundaries. A truly replaced source is new content; missing or
 incomparable version evidence cannot silently erase an applicable failed/partial history warning.
 Use existing Task/TaskItem/Result/discovery/authorization evidence, no global FileIndex replacement
@@ -363,11 +378,11 @@ RecognitionType C remains C with NamingPolicy A and ClassificationPolicy A. No F
 | AC-17 | Real Python/API/SQLite/Worker/Scheduler browser journeys using built assets, desktop/narrow inspection, installed wheel and Docker fresh/restart/upgrade/security gates establish the same Task lifecycle and preserved records. |
 | AC-18 | B supplies applicable full T4 results and exact Base..Head evidence; unavailable gates remain pending/disclosed. A independently reviews the whole Slice before PASS / CLOSED and CURRENT reconciliation. |
 | AC-19 | Organizing and ordinary-file operations expose no Pause/resume-from-pause in Web/API/CLI or dedicated live dispatch. Old requests are refused without effects; safe cancellation and four-type organizing continuation still work. No paused-organizing migration/restoration system is required; preserve existing readable history and non-replay. |
-| AC-20 | Due and definition Run once use shared per-source history admission. Same-version failed/partial items are excluded independently, even zero-effect failures and after restart; free siblings proceed. Historical exclusions are durable/readable and do not fabricate new media success, Attention problems or first-N scope completeness. |
+| AC-20 | Due and definition Run once use shared per-source admission: exclude only when the same version's latest formal organizing outcome is failed/partial, including zero-effect failure and after restart. Later manual success removes this failure-based exclusion; earlier results remain. Free siblings proceed. Exclusions are durable/readable and do not fabricate new media success, Attention problems or first-N scope completeness. |
 | AC-21 | Manual direct/folder/mixed selection of failed/partial sources, including partial directories/copy remnants and historical unknown effects, reaches the real existing summary with clear per-file history/effects warning before selected confirmation. Current pinned new plans execute through normal conflict/capability/destructive authority, with no new recovery page or mandatory extra operator chore. |
-| AC-22 | Query complete organizing history by canonical Storage/path and comparable version across library bindings, before limiting display. Cover older matching history beyond recent pages, mixed results, analysis-only/non-organizing records, genuine replacement and unknown versions. Reads and warnings have zero Provider/media effects. |
-| AC-23 | Source-history and ownership checks are backend-authoritative and race-safe. Known active work still blocks; explicit new manual work is not permanently refused by historical partial/unknown markers. Application-owner fencing/exact lock handoff prevents later old steps/writes, retains siblings/old unknown evidence, and never pretends an in-flight remote call was stopped. Confirmation/request loss, stale history/plan, queue full and permission loss retain normal refusal/readback semantics. |
-| AC-24 | retry-failed is absent from parser/help/dispatch and exclusive helpers in source, clean wheel and image. Old input stops without Task/Provider/Storage/authority effects. Organize/analysis and same-Task four-type continuation/ignore retain legal behavior; manual CLI prints history warnings and remote unattended input cannot spoof warned manual consent. |
+| AC-22 | Find the latest applicable formal organizing outcome by canonical Storage/path and comparable version across library bindings, before limiting display. Cover matching history beyond recent pages, failed→manual success, mixed results, analysis-only/non-organizing records, genuine replacement and unknown versions. A late predecessor publication cannot masquerade as a newer organizing attempt. Reads and warnings have zero Provider/media effects. |
+| AC-23 | Backend source checks distinguish file items with no terminal outcome from items already failed/partial; parent Task running or historical unknown markers alone cannot block the latter's new manual request. Necessary atomic application fencing/lock/current-state changes preserve old outcomes/Results/pins/steps/unknown evidence and siblings, and do not claim a remote call stopped. Normal source/plan/permission/queue/request checks remain; an unrelated history append alone adds no re-confirmation chore. |
+| AC-24 | No live retry-failed parser/help/dispatch/exclusive helpers remain in source, clean wheel or image; documentation and negative-test literals may remain. Old input stops without Task/Provider/Storage/authority effects. Normal CLI/remote source/authority semantics, organize/analysis and same-Task four-type continuation/ignore remain; no new CLI warning or remote history gate is required. |
 | AC-25 | Real V2 Files/API/SQLite/Worker desktop/narrow journeys prove warning → normal confirmation → actual new organize effects; scheduled and Run once probes prove exclusion/free siblings/no-work truth. Old Results/pins/unknown effects and original Automation time/outcome stay immutable. B supplies applicable T4/native/packaging/restart validation for RO-6 before whole-Slice A review. |
 
 ## Validation and handoff

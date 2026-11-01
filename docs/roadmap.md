@@ -44,6 +44,8 @@ under explicit user authorization on 2026-10-30. Immutable Base:
 `980ce42a977b5bc20cf8426dbaf5a232f46cf22b:TASK.md`. The user explicitly adds
 `V2-TASK-008–010` on 2026-11-02: definition due/Run once excludes prior failed/partial versions;
 new manual organizing warns before normal confirmation; independent CLI retry-failed exits.
+The user's planning correction uses the latest formal outcome: later manual success removes the
+earlier failure-based exclusion, without rewriting history or adding CLI/remote product rules.
 Next: **TASK47.5 PLANNED — AWAITS EXPLICIT IMPLEMENTATION AUTHORIZATION**; [TASK.md](../TASK.md)
 contains the draft against the committed amendment. The enlarged Slice remains ACTIVE;
 the earlier readiness packet does not cover the new outcome. No implementation or A final acceptance
