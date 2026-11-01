@@ -248,7 +248,7 @@ class ApiSecurityTests(unittest.TestCase):
                 issued = ExecutionAuthorizationService(repository).issue(
                     ttl_seconds=60, max_items=1
                 )
-                status, job = request(
+                status, admitted = request(
                     api,
                     "POST",
                     "/api/v1/jobs",
@@ -257,7 +257,10 @@ class ApiSecurityTests(unittest.TestCase):
                     document=document,
                 )
                 self.assertEqual(status, 202)
-                self.assertTrue(job["execute_authorized"])
+                self.assertTrue(admitted["executeAuthorized"])
+                self.assertEqual("task_engine", admitted["executionMethod"])
+                self.assertTrue(repository.get_task(admitted["taskId"]).execute_authorized)
+                self.assertEqual((), repository.list_jobs())
 
     def test_audit_success_denial_redaction_order_limit_and_source_sanitizing(self) -> None:
         with tempfile.TemporaryDirectory() as directory:

@@ -4308,10 +4308,13 @@ def run_automation_run_once_worker(
         else:
             advanced = _run_manual_task_once(state, task_id=task.task_id)
         current = state.repository.get_task(task.task_id)
+        items = state.repository.list_items(task.task_id)
         return {
             "advanced": advanced is not None,
             "taskId": task.task_id,
             "status": current.status.value,
+            "failedItemIds": [v.item_id for v in items if v.status.value in {"failed", "partial"}],
+            "successItemIds": [v.item_id for v in items if v.status.value == "success"],
         }
 
     job = state.repository.get_job(discovery_id)
