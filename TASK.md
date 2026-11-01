@@ -31,6 +31,18 @@ Planner / Reviewer: B
 已完成/不确定效果非重放、fresh 初始化与同版本服务重启/reopen 继续验收。Task Base、
 High/T4 和新任务安全义务不变。A-owned Slice/Roadmap/Progress 本次不改，不宣告 Slice 关闭。
 
+## User-confirmed CLI simplification — 2026-11-01
+
+用户明确要求：**两种 CLI 重试命令只保留 `tasks retry-failed`，删除
+`tasks retry-request`。** 这是当前 Task 的显式用户授权，覆盖下文原先保留两条命令的
+入口处置；不需要为已退役 resume 补一条继续命令，也不保留仅把 failed 改为 pending
+却无法由 CLI 完成处理的准备步骤。`ignore-item` / `ignore-pending` 不在本次删除范围。
+
+本轮 B 仅更新 Task 的实施范围/验收/开发指导，尚未修改生产代码或宣称命令已删除。
+Task 保持 FIX REQUIRED、原 Base 和 High/T4；Developer 同时完成下面的命令删除及
+已有 retry-failed 共享调度 P1。没有旧任务/升级，不增加 pending 迁移、兼容别名或恢复层。
+四类业务恢复内部的请求、决定、checkpoint、审计和同 Task 分析/确认仍须保留。
+
 ## Preflight and actual-code gap
 
 Planning/activation checkpoint: repository `/Users/songzhidong/mediaflow`, branch `main`,
@@ -140,7 +152,7 @@ Job。按上述用户边界，不要求旧 queued/history 的迁移、恢复或�
 | `organize --execute`、`batch organize --execute` | 统一到 Task 整理执行，保留路径/全资源库两种实际源范围、limit 和显式执行意图。 |
 | 不带 `--execute` 的 `organize` / `batch organize`，以及现有 `jobs submit organize` | 逐项保留原有非执行授权/分析或合法拒绝语义，不能因命令含 organize 而获得执行权；分析只复用管线并保留证据，不新增 Job 或整理执行队列项。 |
 | `POST /api/v1/jobs` 的 remote organize 提交分支 | 新整理改用 Task；remote enablement、当前权限、`execute=true`、执行票据和 limit 全部保留。若替换旧提交路由，须在同一 Task 提供并测试同等受限的 Task 入口与明确指引，不留新 Job 后门。 |
-| `tasks retry-request` / `tasks retry-failed` | 核对既有允许动作、源/结果/授权证据；新 Task 的合法四类续作必须回到同一 Task。不能仅凭 retry 字样归为四类业务恢复，不能据此增加技术失败/uncertain 的重放能力；历史工作不借此批量迁移。 |
+| `tasks retry-failed`；删除 `tasks retry-request` | 按用户指令仅保留可完成重新分析/显式执行的 retry-failed，并修复共享调度 P1；retry-request 从 parser/help/dispatch 删除，旧输入普通参数错误且零效果，不自动转成 retry-failed。保持源/结果/授权核对，四类业务续作仍回原 Task；不扩展技术/uncertain 重放，不做旧请求迁移。 |
 | `POST /api/v1/tasks/{id}/cancel`、已有 item recovery 的 decision/prepare-summary/authorize-organize/continue 和 `POST /api/v1/tasks/{id}/recovery/continue-batch` | 新自动 Task 能通过原生控制/四类流程处理；保存/分析无修改效果，执行仍要合法明确继续，不能另建 Job 或顶层 Task。保留 backend-offered 动作边界，不能恢复 Pause/resume。 |
 | `jobs cancel` / `jobs requeue`、`POST /api/v1/jobs/{id}/cancel` / `requeue-stale` | 过渡期只处理其原有合法历史对象，不把新 Task 转回旧队列；尤其 API stale requeue 现有限定于 File correction continuation，不扩大为任意整理重试。新 Task 使用 Task 控制；若缺少完成原支持能力的等价入口，只补最小必要入口并验证权限和非重放。 |
 | 原有 Task/Job list/show/GET、Automation records、Dashboard、logs/export/readiness | 新 Task 不依赖 Job row 才能读回；原 Job 标识仅按可证明关系展示历史，保留当前只读能力。不把查看当作提交、重试或授权。 |
@@ -157,6 +169,11 @@ Job。按上述用户边界，不要求旧 queued/history 的迁移、恢复或�
   历史读回及必要的失败/重复行为；不能只接主按钮而遗留可受理新 Job 的旧提交分支。
   若换入口，保留原支持能力和同等权限/安全限制并给出可用指引；已退役或原本不合法的
   命令不为满足“入口覆盖”而恢复成可执行路径。不要求全组合/所有理论崩溃点穷举。
+- [ ] **CLI 重试入口收敛：** `tasks --help` 不再列出 retry-request；真实 CLI 传入
+  `tasks retry-request --actor ...` 在参数解析阶段失败，零 Task/item/request/audit/queue
+  写入、零 Provider/Storage effects，不保留别名或自动转为执行。`retry-failed` 保留默认
+  分析零修改、显式 `--execute` 及原执行授权/固定配置/来源/效果核对，执行使用共享队列。
+  四类恢复的 Save→analysis→summary→explicit continue 与 ignore 两个命令不回归。
 - [ ] **原子到期与重复核对：** 并发 Scheduler ticks/进程重启，一发生点只受理一次、due
   只推进一次；注入提交失败不留半条关系。满队列拒绝新手动/Run once/due 时无孤儿/授权
   消耗，due occurrence/state 不变；已受理的精确重复仍返回原 Task，冲突请求不能混入。
@@ -280,12 +297,13 @@ Reviewed candidate: dfcfebbdb9c879b38806e29c7b41c9192aeca83e..c139e0419a86a6a0d5
 Implementation checkpoint: 75a12d344a3dfd560cbdcf917e2480246974d2fc
 Decision: FIX REQUIRED — one P1, existing CLI retry-failed bypasses shared Task scheduling
 Previous upgrade finding: WITHDRAWN; old tasks / cross-version upgrades remain excluded
-Next: Developer fixes this entrance in Task47.3; B reviews the corrected candidate
+Next: Developer fixes retry-failed scheduling and removes retry-request as user directed; B reviews the corrected candidate
 ```
 
 完整 Task Base..Head 的 43 个变更文件已独立审查。此前已修的同 Task 四类续作、原执行
 记录冻结和原子来源占用未发现新的阻塞；T4 回归结果见下。当前只剩以下真实入口问题，
-不是要求恢复旧任务、升级兼容或增加新的技术故障恢复产品。
+不是要求恢复旧任务、升级兼容或增加新的技术故障恢复产品。用户随后新增的 CLI 命令
+删除要求尚待实现，见本 Task 的 User-confirmed CLI simplification 及下方开发指导。
 
 ### P1 — 失败项重试仍能绕过统一队列直接修改文件
 
@@ -342,6 +360,35 @@ Next: Developer fixes this entrance in Task47.3; B reviews the corrected candida
 5. Developer 只运行新/修改及直接受影响的 CLI、入口、Task scheduling/source ownership
    回归和 changed-file lint，提交实际 checkpoint/results/risks。B 保留 full T4 门禁责任，
    修复仍在本 Task，不另规划 Task 或提前关闭 Slice。
+
+### Developer guidance — 删除独立 retry-request CLI，保留共享恢复证据
+
+用户结果：修好临时技术故障后，CLI 重试只提供 `tasks retry-failed <task-id>`，默认
+重新分析、显式加 `--execute` 才允许整理。用户无需先登记 pending；业务四类决定继续走
+原 Task 的既有流程。保留命令必须同时完成上方共享调度 P1，不能以删除另一条命令代替。
+
+1. 在 `mediaflow/final_cli.py` 删除 retry-request parser/参数、只读管理分发集合中的
+   名称、该分支的 `TaskRetryRequestService.request()` 调用及专属 renderer/import。
+   不留隐藏分支、别名、兼容入口，不把旧输入转成 retry-failed，也不再要求 actor/登记
+   请求作为 retry-failed 的前置步骤。`ignore-item` / `ignore-pending` 的 admission 保持。
+2. 基于实际引用清理专属代码：`application/task_retry.py::TaskRetryRequestService`
+   当前生产消费者只有该 CLI；删除入口后若无生产调用者，清理这份专属封装及只为它
+   服务的测试。不要按 retry 字符串删除共享代码：`RecoveryAdmissionService`、
+   `task_retry_requested` 内部阶段、`domain/task_retry.py` 的共享审计类型、repository
+   审计/请求以及四类继续链仍有实际调用者。无需为这次命令删除改 schema、搬旧 pending
+   或实现升级兼容；不以清理为由扩大到整个恢复系统。
+3. 同步当前 CLI 使用说明及适用文档中“retry-request 后 tasks resume”的过时指引。
+   `docs/requirements.md` 当前批量操作说明含该指引，按本次用户决策说明 CLI 只保留
+   retry-failed；不改 Git 历史或 `docs/history/` 的历史事实，不修改 A-owned
+   Slice/Roadmap/Progress，不重新规划别的 Task。
+4. 用真实 `final_main` / 已安装入口验证 help 和旧输入：旧命令为普通参数错误，解析即
+   停止，不建立数据库/Storage/Provider、不产生恢复请求、pending 改写或执行。仅检查
+   help 文本不算完整删除证明。给 retry-failed 加对照，验证无需 retry-request 即可独立
+   完成合法重新分析/显式执行；保留满队列拒绝、无授权拒绝、成功 sibling 不重放。
+5. Developer 跑新/修改和直接受影响的入口、批量 CLI、recovery admission/continuation、
+   manual Task engine 测试及 changed-file 静态检查；现有 `tests/test_task_retry.py`
+   中专属 CLI 成功用例替换为退役拒绝用例，共享恢复测试保留。B 复核真实入口/Task
+   Base..新 Head 并负责所需 T4 门禁。不得删掉共享安全断言来使删除命令后的测试通过。
 
 ### B 实际验收结果
 
@@ -420,7 +467,8 @@ B 证据已提供但 Task/Slice 未 PASS，仍需修复与最终独立 A 审查�
 
 以下保留原三项实施指导供新任务验收回归参照；已修部分以上述验收结果为准。
 其中任何旧任务/升级/历史兼容条款均受本轮用户边界覆盖，不再产生返工义务。
-上轮升级反例仍无需修复；本次 IN PROGRESS 仅修复上方已证明的新任务 CLI retry-failed 缺口。
+上轮升级反例仍无需修复；本次 IN PROGRESS 修复上方 retry-failed 缺口，并按用户指令删除
+独立 retry-request CLI，已修的三项行为继续保留。
 
 #### 1. 自动任务的决定、分析、摘要和明确执行接起来
 
@@ -486,7 +534,7 @@ B 证据已提供但 Task/Slice 未 PASS，仍需修复与最终独立 A 审查�
 1. 按本 Task 的 Existing-entry 表核对真实 parser/route/dispatch 和调用者，列清
    每项“执行 / 只分析 / 合法拒绝 / 旧历史只读”的最终处置。`final_cli.py` 的 batch 会先
    归一为 organize/path=None；复用这个实际分支，不能只改带 path 的 organize。
-   `jobs submit organize`、retry-request/retry-failed 等按原有合法语义核对，不顺便开放
+   `jobs submit organize`、retry-failed 按本 Task 最新处置核对；retry-request 按用户指令删除，不顺便开放
    执行或技术失败重放，也不为已退役命令恢复能力。
 2. 将 `final_main` 中直接 execute 的 generic coordinator 入口接到共享 Task application
    准入/引擎，传递路径或全库范围、limit、trigger/principal、固定配置和明确执行意图。
