@@ -349,7 +349,9 @@ class QueuedJobExecutionBoundaryTests(unittest.TestCase):
                     status, _ = self._job_request(api, document, execution_token="one-time-secret")
                     self.assertEqual(status, 400)
                 self.assertEqual(len(repository.list_jobs()), 0)
-                # One valid one-shot authority admits exactly one execute-authorized Job.
+                # One valid one-shot authority admits exactly one execute-authorized
+                # Task (Slice 47 RO-2: the remote organize submission is a durable
+                # Task, not a Job; no Job row is written for new work).
                 status, created = self._job_request(
                     api,
                     {"command": "organize", "execute": True, "limit": 1},
@@ -357,9 +359,13 @@ class QueuedJobExecutionBoundaryTests(unittest.TestCase):
                 )
                 self.assertEqual(status, 202)
                 self.assertEqual(created["command"], "organize")
-                self.assertTrue(created["execute_authorized"])
+                self.assertTrue(created["executeAuthorized"])
+                self.assertEqual("task_engine", created["executionMethod"])
                 self.assertNotIn("one-time-secret", json.dumps(created))
-                self.assertEqual(len(repository.list_jobs()), 1)
+                admitted = repository.get_task(created["taskId"])
+                self.assertIsNotNone(admitted)
+                self.assertTrue(admitted.execute_authorized)
+                self.assertEqual((), repository.list_jobs())
                 # The one-shot authority is consumed and cannot be silently reused.
                 status, _ = self._job_request(
                     api,
@@ -367,7 +373,7 @@ class QueuedJobExecutionBoundaryTests(unittest.TestCase):
                     execution_token="one-time-secret",
                 )
                 self.assertEqual(status, 400)
-                self.assertEqual(len(repository.list_jobs()), 1)
+                self.assertEqual((), repository.list_jobs())
                 self.assertEqual(
                     repository.get_execution_authorization(
                         issued.authorization.authorization_id

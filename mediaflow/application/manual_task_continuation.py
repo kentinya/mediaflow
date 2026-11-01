@@ -1,19 +1,19 @@
-"""Native four-type continuation of one Files-admitted organizing Task.
+"""Native four-type continuation of one kernel-admitted organizing Task.
 
 Slice 47 RO-1/RO-3 makes the admitted Task the only subject of its own manual
 work.  An operator who saved a Recognition/Metadata/Classification/Conflict
 decision in the Task Center therefore continues that *same* Task: the bounded
-zero-mutation analysis of its linked Files preparation is re-registered on the
+zero-mutation analysis of the Task's own work context is re-registered on the
 Task through the existing scheduling kernel instead of minting a Job and a
 second analysis Task.
 
 This module owns only that decision: which command is legal for the exact
-checkpoint, whether the Task really owns a linked preparation, and the bounded
-answer when it cannot continue.  The production discovery service still runs the
-complete analysis chain and the scheduling kernel still owns capacity, claim,
-fencing and slot release, so no second queue, recovery system or pipeline is
-introduced.  Nothing here mutates Storage, consumes execution authority or
-crosses the OrganizerExecutor boundary.
+checkpoint, whether the Task really owns a continuable work context, and the
+bounded answer when it cannot continue.  The production discovery service still
+runs the Files analysis chain and the scheduling kernel still owns capacity,
+claim, fencing and slot release, so no second queue, recovery system or
+pipeline is introduced.  Nothing here mutates Storage, consumes execution
+authority or crosses the OrganizerExecutor boundary.
 """
 
 from __future__ import annotations
@@ -37,6 +37,14 @@ from mediaflow.domain.task_scheduling import (
 _CONTINUABLE_ACTIONS = frozenset({"retry", "continue"})
 
 _UNCERTAIN_EFFECTS = frozenset({EffectCertainty.ATTEMPTED_UNVERIFIED, EffectCertainty.UNKNOWN})
+
+#: Origin kinds a manual *organizing* admission persists beside its Task.  A
+#: Files manual Task owns a linked discovery and never reaches the kernel
+#: continuation below; a direct CLI or remote-ticket organize Task owns no
+#: discovery, so its saved decision continues its own admitted scope through
+#: the same kernel.  Any other manual Task without a proved organizing origin
+#: keeps the bounded refusal instead of being granted a continuation.
+_MANUAL_ORGANIZE_ORIGINS = frozenset({"direct-organize", "remote-organize"})
 
 
 class ManualTaskContinuationError(ValueError):
@@ -67,11 +75,12 @@ class NativeTaskContinuation:
     preparation and that preparation's new analysis version so the operator can
     read the answer back after a reload.
 
-    A Scheduler/Run once admitted Task owns no Files discovery.  Its
-    continuation re-enters the *same* Task's own zero-mutation analysis through
-    the scheduling kernel, so ``source`` is ``"automatic"`` and the durable
-    identity it names is the Task and TaskItem themselves — never a fabricated
-    Files submission.
+    A Scheduler due, Run once, direct CLI or remote-ticket admitted Task owns
+    no Files discovery.  Its continuation re-enters the *same* Task's own
+    zero-mutation analysis through the scheduling kernel, so ``source`` is
+    ``"automatic"`` — the kernel-owned, discovery-free work context — and the
+    durable identity it names is the Task and TaskItem themselves — never a
+    fabricated Files submission.
     """
 
     task_id: str
@@ -96,7 +105,7 @@ class NativeTaskContinuation:
                 "executionMode": "dry_run",
                 "nextAction": (
                     "the resident Processing Worker is re-running the complete zero-mutation "
-                    "analysis of this same automatic Task; review the fresh plan summary and "
+                    "analysis of this same Task; review the fresh plan summary and "
                     "confirm the ready subset explicitly before any organizing"
                 ),
             }
@@ -218,7 +227,7 @@ class ManualTaskContinuationService:
             )
         discovery = self._linked_discovery(task_id)
         if discovery is None:
-            return self._continue_automatic_analysis(
+            return self._continue_kernel_analysis(
                 task_id,
                 item_id,
                 checkpoint,
@@ -260,7 +269,7 @@ class ManualTaskContinuationService:
             preview_id=updated.preview_id,
         )
 
-    def _continue_automatic_analysis(
+    def _continue_kernel_analysis(
         self,
         task_id: str,
         item_id: str,
@@ -268,16 +277,20 @@ class ManualTaskContinuationService:
         *,
         actor: str,
     ) -> NativeTaskContinuation:
-        """Re-enter one automatic Task's own zero-mutation analysis.
+        """Re-enter one kernel-admitted Task's own zero-mutation analysis.
 
-        A Scheduler due / Run once admitted Task owns no Files discovery: its
-        admitted sources, saved decisions and pinned configuration *are* the
-        continuable work context.  The saved decision therefore re-queues this
-        same Task's remaining machine work through the scheduling kernel, and
-        the resident engine re-runs the shared zero-mutation analysis for the
-        sources this Task still allows.  Nothing here executes, mutates Storage
-        or consumes authority, and a full shared queue leaves the saved
-        decision, every result and the human-waiting state exactly as they were.
+        A Scheduler due, Run once, direct CLI or remote-ticket admitted Task
+        owns no Files discovery: its admitted scope, saved decisions and pinned
+        configuration *are* the continuable work context.  The saved decision
+        therefore re-queues this same Task's remaining machine work through the
+        scheduling kernel, and the resident engine re-runs the shared
+        zero-mutation analysis for the sources this Task still allows.  A manual
+        Task is continuable only when its durable display origin proves it is
+        one of those organizing admissions — a Files Task keeps its own linked
+        discovery path and any other manual Task keeps the bounded refusal.
+        Nothing here executes, mutates Storage or consumes authority, and a full
+        shared queue leaves the saved decision, every result and the
+        human-waiting state exactly as they were.
         """
 
         scheduling = self._scheduling() if callable(self._scheduling) else None
@@ -288,10 +301,25 @@ class ManualTaskContinuationService:
                 next_action="open the organizing work this Task was admitted from",
             )
         state = scheduling.state(task_id)
-        if state is None or state.admission_trigger not in {
-            TaskTrigger.SCHEDULE,
-            TaskTrigger.RUN_ONCE,
-        }:
+        if state is None:
+            raise ManualTaskContinuationError(
+                "this Task has no linked Files preparation to re-analyze",
+                code="no_linked_preparation",
+                next_action="open the organizing work this Task was admitted from",
+            )
+        if state.admission_trigger is TaskTrigger.MANUAL:
+            # A Files manual Task never reaches this method (its linked discovery
+            # took the other branch).  A direct CLI / remote-ticket organize
+            # admission owns no discovery, so its proved durable origin selects
+            # the same kernel continuation; any other manual Task without one
+            # is refused instead of being granted a continuation.
+            if self._organize_origin(task_id) not in _MANUAL_ORGANIZE_ORIGINS:
+                raise ManualTaskContinuationError(
+                    "this Task has no linked Files preparation to re-analyze",
+                    code="no_linked_preparation",
+                    next_action="open the organizing work this Task was admitted from",
+                )
+        elif state.admission_trigger not in {TaskTrigger.SCHEDULE, TaskTrigger.RUN_ONCE}:
             raise ManualTaskContinuationError(
                 "this Task has no linked Files preparation to re-analyze",
                 code="no_linked_preparation",
@@ -410,6 +438,27 @@ class ManualTaskContinuationService:
         if discovery is None or discovery.organize_task_id != task_id:
             return None
         return discovery
+
+    def _organize_origin(self, task_id: str) -> str | None:
+        """The durable origin kind a Task was admitted with, when recorded.
+
+        The ``operations_run_display`` row is written in the same admission
+        transaction as the Task, so its ``origin_kind`` is admitted evidence,
+        never a name/time guess.  An unreadable or missing row answers ``None``
+        and the caller refuses fail-closed.
+        """
+
+        reader = getattr(self._repository, "get_run_display_context", None)
+        if not callable(reader):
+            return None
+        try:
+            display = reader(task_id)
+        except Exception:  # noqa: BLE001 - an unreadable row refuses the continuation
+            return None
+        if display is None:
+            return None
+        origin = getattr(display, "origin_kind", None)
+        return origin if isinstance(origin, str) else None
 
 
 __all__ = [

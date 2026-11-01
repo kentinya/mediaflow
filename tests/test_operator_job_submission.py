@@ -4,9 +4,12 @@ import io
 import json
 import tempfile
 import unittest
+from datetime import UTC, datetime
 from pathlib import Path
 
+from mediaflow.domain.automation import AutomationCommand, AutomationJob, AutomationJobStatus
 from mediaflow.domain.security import ApiPermission, ResolvedApiPrincipal
+from mediaflow.final_cli import final_main
 from mediaflow.infrastructure.sqlite_runtime import SQLiteTaskRepository
 from mediaflow.interfaces.operator_ui import APP_JS
 from mediaflow.interfaces.service_api import MediaFlowApi
@@ -153,6 +156,97 @@ def _js_function_body(script: str, name: str) -> str:
             if depth == 0:
                 return script[opening + 1 : index]
     raise AssertionError("JavaScript block has an unbalanced body")
+
+
+class LegacyJobSubmissionEntranceTests(unittest.TestCase):
+    """Task47.3: the legacy ``jobs submit organize`` CLI entrance refuses new work.
+
+    New organizing work is admitted as a Task, never as a new Job.  The live
+    submit branch therefore answers with a bounded, effect-free refusal that
+    names the usable equivalents — zero-mutation analysis via ``organize``,
+    explicit execution via ``organize --execute`` and the remote-ticket API —
+    while historical Jobs stay readable through ``jobs list``/``jobs show``.
+    """
+
+    def test_submit_organize_refuses_every_limit_without_job_task_or_effect(self) -> None:
+        with tempfile.TemporaryDirectory() as directory:
+            root = Path(directory)
+            source_root = root / "source"
+            target_root = root / "target"
+            source_root.mkdir()
+            target_root.mkdir()
+            media = source_root / "One.2001.mkv"
+            media.write_bytes(b"m" * 512)
+            document = json.loads(Path("config/strategy.example.json").read_text(encoding="utf-8"))
+            document["persistence"] = {"databasePath": str(root / "runtime.sqlite3")}
+            document["historyPath"] = str(root / "history.jsonl")
+            document["storages"][0]["rootPath"] = str(source_root)
+            document["storages"][1]["rootPath"] = str(target_root)
+            config = root / "bootstrap.json"
+            config.write_text(json.dumps(document, ensure_ascii=False), encoding="utf-8")
+            for limit in (None, 1, 0, -1, 10_001):
+                arguments = ["--config", str(config), "jobs", "submit", "organize"]
+                if limit is not None:
+                    arguments.extend(("--limit", str(limit)))
+                with self.subTest(limit=limit):
+                    output, errors = io.StringIO(), io.StringIO()
+                    code = final_main(arguments, stdout=output, stderr=errors)
+                    self.assertEqual(2, code, output.getvalue())
+                    message = errors.getvalue()
+                    self.assertIn("no longer queues new organizing work", message)
+                    self.assertIn("'organize'", message)
+                    self.assertIn("'organize --execute'", message)
+                    self.assertIn("'jobs list'", message)
+                    self.assertNotIn("Task ID:", output.getvalue())
+            with SQLiteTaskRepository(root / "runtime.sqlite3") as repository:
+                self.assertEqual((), repository.list_jobs())
+                self.assertEqual((), repository.list_tasks())
+            self.assertTrue(media.exists(), "the refusal must not touch the source")
+            self.assertEqual(list((target_root).rglob("*")), [], "no target effect")
+
+    def test_historical_jobs_stay_readable_and_cancellable(self) -> None:
+        with tempfile.TemporaryDirectory() as directory:
+            root = Path(directory)
+            document = json.loads(Path("config/strategy.example.json").read_text(encoding="utf-8"))
+            document["persistence"] = {"databasePath": str(root / "runtime.sqlite3")}
+            document["historyPath"] = str(root / "history.jsonl")
+            config = root / "bootstrap.json"
+            config.write_text(json.dumps(document, ensure_ascii=False), encoding="utf-8")
+            with SQLiteTaskRepository(root / "runtime.sqlite3") as repository:
+                historical = AutomationJob(
+                    "legacy-job-1",
+                    AutomationCommand.ORGANIZE,
+                    AutomationJobStatus.PENDING,
+                    datetime.now(UTC),
+                    datetime.now(UTC),
+                    execute_authorized=False,
+                )
+                repository.create_job(historical)
+            output, errors = io.StringIO(), io.StringIO()
+            code = final_main(
+                ["--config", str(config), "jobs", "list"], stdout=output, stderr=errors
+            )
+            self.assertEqual(0, code, errors.getvalue())
+            self.assertIn("legacy-job-1", output.getvalue())
+            output, errors = io.StringIO(), io.StringIO()
+            code = final_main(
+                ["--config", str(config), "jobs", "show", "legacy-job-1"],
+                stdout=output,
+                stderr=errors,
+            )
+            self.assertEqual(0, code, errors.getvalue())
+            self.assertIn("legacy-job-1", output.getvalue())
+            output, errors = io.StringIO(), io.StringIO()
+            code = final_main(
+                ["--config", str(config), "jobs", "cancel", "legacy-job-1"],
+                stdout=output,
+                stderr=errors,
+            )
+            self.assertEqual(0, code, errors.getvalue())
+            with SQLiteTaskRepository(root / "runtime.sqlite3") as repository:
+                stored = repository.get_job("legacy-job-1")
+                self.assertIsNotNone(stored)
+                self.assertEqual("cancelled", stored.status.value)
 
 
 if __name__ == "__main__":

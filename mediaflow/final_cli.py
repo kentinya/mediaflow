@@ -1116,6 +1116,20 @@ def final_main(
             stdout.write("\n".join(lines))
             return 1 if failures else 0
         if arguments.command == "jobs":
+            if arguments.job_command == "submit":
+                # Slice 47 RO-2: new organizing work is admitted as a Task, never
+                # as a new Job.  This legacy submission entrance therefore refuses
+                # bounded and effect-free — no Job row, no Task, no queue entry,
+                # no execution authority — and names the usable equivalents
+                # instead of silently losing the command.
+                raise ValueError(
+                    "jobs submit organize no longer queues new organizing work; "
+                    "new organize runs are admitted as Tasks. Use 'organize' for the "
+                    "zero-mutation analysis or 'organize --execute' for an explicit "
+                    "execution (the remote API needs REMOTE_EXECUTE, execute=true and a "
+                    "one-time execution token). Historical Jobs stay readable with "
+                    "'jobs list' and 'jobs show'."
+                )
             with SQLiteTaskRepository(configuration.database_path) as repository:
                 service = AutomationJobService(
                     repository,
@@ -1129,9 +1143,6 @@ def final_main(
                     job = repository.get_job(arguments.job_id)
                     if job is None:
                         raise LookupError(f"automation job {arguments.job_id!r} was not found")
-                    stdout.write(render_job(job))
-                elif arguments.job_command == "submit":
-                    job = service.submit(arguments.workflow, limit=arguments.limit)
                     stdout.write(render_job(job))
                 elif arguments.job_command == "cancel":
                     stdout.write(render_job(service.cancel(arguments.job_id)))
