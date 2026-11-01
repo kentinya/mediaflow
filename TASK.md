@@ -556,3 +556,74 @@ whitespace 后交完整源码 checkpoint，B 承担剩余验收。
 
 保持同一 Task47.4 / FIX REQUIRED。A-owned Slice/Roadmap/Progress 不变；不宣布
 Slice READY FOR A REVIEW / PASS / CLOSED。
+
+## Developer Fix Report — real delivery event identity
+
+```text
+Status: READY FOR B REVIEW
+Task Base: 383d8834787674675183f4b251d9dfd26a5dc511
+Source candidate: 8db3ce45c1e589e9b8b9e48aa71d355061f1d1b3
+```
+
+### 本轮修复
+
+- **P1 根因**：`normalizeDeliveryIdentity` 用 `NOTIFICATION_URI_SAFE_SEGMENT`
+  校验 `eventId`，只接受字母数字与 `._-`；生产者实际写入
+  `task:<taskId>:<status>`、`schedule:<scheduleId>:task:<taskId>`、
+  `automation-definition:<definitionId>:task:<taskId>`，冒号使整份 list/detail
+  文档被判 malformed，页面只能显示 contract unavailable。
+- **有界事件身份**：新增 `NOTIFICATION_EVENT_ID`
+  `/^[A-Za-z0-9][A-Za-z0-9._-]*(?::[A-Za-z0-9._-]+)*$/` 与 `eventIdentity()`，
+  保留完整冒号分隔原值、沿用 128 上限并拒绝空白/路径/百分号编码/空段/前后冒号；
+  `deliveryId`、`webhookId` 仍走严格 URI 段规则，`eventType` 仍只接受 catalog 与
+  既有 `job.*` 别名映射。list 与 detail 共用同一 parser，因此两处同时修复。
+- **回归**：`notification.test.ts` 现覆盖真实 `task:`/`schedule:` 身份的 list 与
+  detail 原值保留、非法身份（管道/空格/路径/百分号/空段/超长）拒绝；先以现有
+  parser 复现 `NotificationNormalizationError (eventId)` 再修复。
+- **真实生产者原生旅程**：`operations_inventory_harness.py` 的 Active fixture 通过
+  既有 checked draft→activate 路径把示例 Webhook 发布为 enabled（订阅仍是已支持的
+  历史 `job.*` 字面值，配置解析映射到规范 Task 事件），因此 Task 内核settle 后的
+  post-commit observer 成为唯一 outbox writer；harness 不运行 Notification Worker、
+  不发外部 HTTP，投递行如实保持 pending。未手工构造 delivery。
+- **原生用例扩展**：`operations-inventory.python.spec.ts` 新增最后一个旅程：
+  真实 `run-worker` 结算 definition-pinned Task → 读取 `task:<taskId>:completed`
+  outbox 行（唯一、task.completed、pending）→ 打开 Notifications → Open deliveries
+  （真实 `GET /api/v1/notifications` 200，无 unavailable）→ 首个（最新）Open delivery
+  进入精确 `deliveryId` 详情，显示完整 `task.completed (task:…:completed)` 与
+  `pending`/`not_leased` → Refresh 重读详情 → 同一 eventId 仍只有 1 条 delivery、
+  Task `completed_at` 未变、无 item、页面零 `/api/v1/jobs` 请求。
+
+### 实际验证（Developer 受影响范围）
+
+| 命令 / cwd | 实际结果 |
+|---|---|
+| `npm run test:e2e -- --config=playwright.python.config.ts tests/e2e/operations-inventory.python.spec.ts` (`web/`) | **43 passed，1.1m**；含新增真实 outbox delivery 旅程。 |
+| `npm run test:e2e -- --config=playwright.python.config.ts tests/e2e/operations-inventory.python.spec.ts --grep "Notifications page reads\|settled Task publishes"` | **2 passed，2.3s**（seed 状态独立可复现）。 |
+| `npm run test:e2e -- tests/e2e/notifications.spec.ts` | **12 passed，7.1s**；既有投递列表/详情/恢复/RBAC fake-server 旅程无回归。 |
+| `npm run test -- run src/entities/operations/notification.test.ts` | **61 passed**；新增真实身份/非法身份用例。 |
+| `npm run test -- run src/entities/operations/notification.test.ts src/features/operations/NotificationRouter.test.tsx` | **86 passed，3.3s**。 |
+| `.venv/bin/python -m unittest tests.test_notifications tests.test_v2_notification_operations -q` | **40 tests OK，3.0s**（保留既有 ResourceWarning）。 |
+| `npm run typecheck` / `lint` / `format:check` / `build` (`web/`) | 全部通过；Prettier 已格式化两个改动测试文件。 |
+| `.venv/bin/ruff format --check` / `ruff check`（harness）/ `python3 scripts/check_governance.py` / `git diff --check` | 全部通过；governance PASS。 |
+
+本轮测试墙钟约 4 分钟（含全量 43 项原生 harness 旅程 1.1m、fake-server 通知旅程与
+单元组）；本轮开发总用时约 30 分钟，测试占比约 13%，低于 30%。失败的 refresh 等待
+是测试自身路径写成 `/api/v1/notifications/{id}`（实际 detail 走
+`/api/v1/operations/notifications/deliveries/{id}`），按真实契约修正等待路径，未放宽
+超时或删除断言。
+
+### 未完成 / 风险（交 B）
+
+- 全量 Python/Web/E2E、原生视觉、clean installed wheel、Docker fresh/restart/security
+  仍归 B；本轮未执行，不宣称 T4 通过。
+- harness 的 Webhook 订阅继续使用示例配置里已支持的历史 `job.*` 字面值（Python 解析
+  映射为规范 Task 事件），用于证明真实别名配置也能产生 Task 事件投递；fixture 未运行
+  Notification Worker，因此投递始终 pending、无外部请求。
+- fake-server `notifications.spec.ts` 的事件编号仍是无冒号测试夹具；真实生产身份由
+  新增单测与真实 Python harness 原生旅程覆盖，未用它替代生产数据。
+- harness 未配置 `MEDIAFLOW_WEBHOOK_SECRET`，详情页因此如实显示“目标不可交付、无手工
+  恢复”；既有 dead-letter requeue/stale resolve 行为仍由 fake-server 旅程与 Python
+  通知测试覆盖，本轮未新增恢复 UI。
+- 旧任务/跨版本升级仍按用户明确排除；未接触用户库、媒体、Provider 或外部端点。
+- B 须在完整 Base..candidate 上重跑通知原生旅程及 T4/包装/容器门禁，并重评 Slice
+  RO-1–5 / AC-1–19；Developer 不自评 PASS。
