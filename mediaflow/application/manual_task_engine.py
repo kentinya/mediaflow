@@ -478,7 +478,7 @@ class ManualTaskEngineWorker:
         """
 
         if self._automatic_runner is None:
-            return self._fail_unlinked(claim)
+            return self._fail_unlinked(claim, initial_execution_stage="failed")
         task = self._task(claim.task_id)
         if task.status is PersistentTaskStatus.PENDING:
             state = self._scheduling.state(claim.task_id)
@@ -508,7 +508,7 @@ class ManualTaskEngineWorker:
             if state is not None and state.control_request is not None:
                 return self._settle_pending_control(claim)
             self._notice(self._bounded_notice(claim.task_id, error))
-            self._record_failure(claim, error)
+            self._record_failure(claim, error, initial_execution_stage="failed")
             return self._task(claim.task_id)
         return self._settle_automatic(claim)
 
@@ -549,11 +549,28 @@ class ManualTaskEngineWorker:
                 self._with_status(task, PersistentTaskStatus.RUNNING, now, task.error)
             )
             self._scheduling.publish_task(claim, updated, now=now)
-            self._scheduling.defer_to_human(claim, task=updated, items=(), now=now)
+            # This is the end of the automatic stage that actually ran: the
+            # machine work stopped and handed the unresolved sources to the
+            # operator.  Freeze that stage's own bounded evidence once, so the
+            # Automation record keeps expressing it even after the same Task's
+            # later recovery completes the remaining work.
+            self._scheduling.defer_to_human(
+                claim,
+                task=updated,
+                items=(),
+                now=now,
+                initial_execution_stage="waiting_human",
+            )
             return self._task(claim.task_id)
         status = task_work_status(items) if items else PersistentTaskStatus.COMPLETED
         updated = self._with_counts(self._with_status(task, status, now, task.error))
-        self._scheduling.settle(claim, task=updated, items=items, now=now)
+        self._scheduling.settle(
+            claim,
+            task=updated,
+            items=items,
+            now=now,
+            initial_execution_stage=status.value,
+        )
         return self._task(claim.task_id)
 
     def _settle_pending_control(self, claim) -> PersistentTask:
@@ -589,18 +606,24 @@ class ManualTaskEngineWorker:
                 # An item is still inside an executor call or carries an
                 # unproved effect.  Keep the slot and the marker for inspection.
                 return self._task(claim.task_id)
+        # An automatic Task owns neither a manual execution nor a Files
+        # discovery: its cancellation is the end of its own executed stage, so
+        # that stage's bounded evidence freezes with the settlement.  A Files
+        # Task's cancellation keeps its existing read semantics.
+        automatic_cancel = execution is None and self._linked_discovery(claim.task_id) is None
         self._scheduling.acknowledge_control(
             claim,
             discovery=self._linked_discovery(claim.task_id),
             execution=settlement.execution if settlement is not None else None,
             execution_items=settlement.items if settlement is not None else (),
             now=self._clock(),
+            initial_execution_stage="cancelled" if automatic_cancel else None,
         )
         return self._task(claim.task_id)
 
     # -- Failure / helpers ---------------------------------------------------
 
-    def _fail_unlinked(self, claim) -> PersistentTask:
+    def _fail_unlinked(self, claim, initial_execution_stage: str | None = None) -> PersistentTask:
         task = self._task(claim.task_id)
         if task.status is PersistentTaskStatus.PENDING:
             claim = self._scheduling.begin_work(
@@ -612,7 +635,13 @@ class ManualTaskEngineWorker:
         updated = self._with_status(task, PersistentTaskStatus.FAILED, now, error)
         items = self._terminal_items(task.task_id, TaskItemStatus.FAILED, now)
         updated = self._with_counts(updated, overrides=items)
-        self._scheduling.settle(claim, task=updated, items=items, now=now)
+        self._scheduling.settle(
+            claim,
+            task=updated,
+            items=items,
+            now=now,
+            initial_execution_stage=initial_execution_stage,
+        )
         return self._task(claim.task_id)
 
     def _fail_discovery(
@@ -630,7 +659,9 @@ class ManualTaskEngineWorker:
             pass
         return self._task(claim.task_id)
 
-    def _record_failure(self, claim, error: BaseException) -> None:
+    def _record_failure(
+        self, claim, error: BaseException, initial_execution_stage: str | None = None
+    ) -> None:
         try:
             state = self._scheduling.state(claim.task_id)
             if state is None or state.mutation_in_flight:
@@ -643,7 +674,13 @@ class ManualTaskEngineWorker:
             updated = self._with_status(task, PersistentTaskStatus.FAILED, now, message)
             items = self._terminal_items(task.task_id, TaskItemStatus.FAILED, now, message)
             updated = self._with_counts(updated, overrides=items)
-            self._scheduling.settle(claim, task=updated, items=items, now=now)
+            self._scheduling.settle(
+                claim,
+                task=updated,
+                items=items,
+                now=now,
+                initial_execution_stage=initial_execution_stage,
+            )
         except Exception:
             return
 

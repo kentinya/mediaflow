@@ -15614,13 +15614,16 @@ class MediaFlowApi:
         )
         # The real execution window.  A pending/queued row has none, and
         # ``created_at``/``updated_at`` are never relabelled as execution start
-        # or end.
-        document["executionStartedAt"] = (
+        # or end.  A Task whose first automatic execution stage already ended
+        # publishes that stage's own frozen window: the original run's real
+        # start and end, never a later recovery's settlement time.
+        evidence = overview.automation_record_evidence or {}
+        document["executionStartedAt"] = evidence.get("record_started_at") or (
             overview.execution_started_at.isoformat()
             if overview.execution_started_at is not None
             else None
         )
-        document["executionFinishedAt"] = (
+        document["executionFinishedAt"] = evidence.get("record_finished_at") or (
             overview.execution_finished_at.isoformat()
             if overview.execution_finished_at is not None
             else None

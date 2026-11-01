@@ -815,6 +815,20 @@ class RunOnceApiTests(unittest.TestCase):
             self.assertEqual((), value.discovery.list())
             self.assertEqual(1, len(value.repository.list_tasks()))
             self.assertEqual(0, len(value.repository.list_jobs()))
+            # The first automatic stage ended at the terminal settlement, so its
+            # write-once evidence records the completed outcome and real window
+            # the Automation record publishes.
+            window = value.repository.operations_runs_window(
+                limit=20, automation_admissions=True, record_evidence=True
+            )
+            (item,) = window.page
+            evidence = item.automation_record_evidence
+            self.assertEqual(task.task_id, item.task_id)
+            self.assertEqual("completed", evidence["record_outcome"], evidence)
+            self.assertEqual(1, evidence["success_count"], evidence)
+            self.assertEqual(0, evidence["waiting_count"], evidence)
+            self.assertIsNotNone(evidence["record_started_at"], evidence)
+            self.assertIsNotNone(evidence["record_finished_at"], evidence)
             status, runs = self.request(
                 value, "GET", "/api/v1/operations/runs?view=all&trigger=manual"
             )
@@ -851,6 +865,15 @@ class RunOnceApiTests(unittest.TestCase):
             self.assertEqual(
                 "no_work", value.run_once.document(value.run_once.get(run["jobId"]))["phase"]
             )
+            # A healthy empty run freezes its own completed no-work stage.
+            window = value.repository.operations_runs_window(
+                limit=20, automation_admissions=True, record_evidence=True
+            )
+            (item,) = [entry for entry in window.page if entry.task_id == run["taskId"]]
+            evidence = item.automation_record_evidence
+            self.assertEqual("completed", evidence["record_outcome"], evidence)
+            self.assertEqual(0, evidence["item_count"], evidence)
+            self.assertEqual(0, evidence["waiting_count"], evidence)
         self.media("Movies/One.2001.mkv")
         self.media("Movies/Two.2002.mkv")
         with self.journey(item_limit=1) as value:
@@ -866,6 +889,16 @@ class RunOnceApiTests(unittest.TestCase):
             self.assertEqual("failed", result.status.value)
             self.assertEqual([], value.source.mutations)
             self.assertEqual([], value.target.mutations)
+            # A failed first automatic stage freezes its own failed outcome;
+            # the record never upgrades it to success after the fact.
+            window = value.repository.operations_runs_window(
+                limit=20, automation_admissions=True, record_evidence=True
+            )
+            (item,) = [entry for entry in window.page if entry.task_id == result.task_id]
+            evidence = item.automation_record_evidence
+            self.assertEqual("failed", evidence["record_outcome"], evidence)
+            self.assertEqual(0, evidence["success_count"], evidence)
+            self.assertIsNotNone(evidence["record_finished_at"], evidence)
 
     def test_effective_ceiling_is_one_hundred_and_small_scope_completes(self):
         self.media("One.2001.mkv")
@@ -1384,7 +1417,23 @@ class RunOnceApiTests(unittest.TestCase):
             self.assertEqual("manual", before["trigger"])
             started_at = before["executionStartedAt"]
             self.assertIsNotNone(started_at)
-            self.assertIsNone(before["executionFinishedAt"])
+            # The first automatic stage really ended here: it organized Two,
+            # parked One at the conflict and handed the work to the operator.
+            # The record freezes that stage's own outcome and real window, so a
+            # later same-Task recovery can never rewrite them.
+            finished_at = before["executionFinishedAt"]
+            self.assertIsNotNone(finished_at)
+            original_outcome = before["recordOutcome"]
+            self.assertEqual("failed", original_outcome["status"], original_outcome)
+            self.assertFalse(original_outcome["noWork"])
+            self.assertEqual(1, original_outcome["successItems"], original_outcome)
+            self.assertIn("等待人工决定", original_outcome["failureReason"], original_outcome)
+            self.assertIn("任务中心", original_outcome["nextStep"], original_outcome)
+
+            # The operator returns an hour later: every later write uses the
+            # advanced fixture clock, so the frozen original stage must stay
+            # exactly as captured above across the whole recovery.
+            self.clock.advance(3600)
 
             route = f"/api/v1/tasks/{task_id}/items/{items['One.2001.mkv'].item_id}/recovery"
             status, detail = self.request(value, "GET", route)
@@ -1410,6 +1459,8 @@ class RunOnceApiTests(unittest.TestCase):
             self.execute(value)
             analyzed = original_record("after analysis")
             self.assertEqual(started_at, analyzed["executionStartedAt"])
+            self.assertEqual(finished_at, analyzed["executionFinishedAt"])
+            self.assertEqual(original_outcome, analyzed["recordOutcome"])
 
             status, detail = self.request(value, "GET", route)
             self.assertEqual(200, status, detail)
@@ -1436,6 +1487,8 @@ class RunOnceApiTests(unittest.TestCase):
             # exclude the original admitted run from its own records page.
             after_confirm = original_record("immediately after confirm")
             self.assertEqual(started_at, after_confirm["executionStartedAt"])
+            self.assertEqual(finished_at, after_confirm["executionFinishedAt"])
+            self.assertEqual(original_outcome, after_confirm["recordOutcome"])
 
             worker = self._run_manual_execution_worker(value, prefix="conflict-recovery")
             settled = worker.run_next()
@@ -1484,10 +1537,25 @@ class RunOnceApiTests(unittest.TestCase):
                 before["historyContext"]["definitionId"],
                 after["historyContext"]["definitionId"],
             )
-            # The run's own real window: the first execution's start and the
-            # actual settlement, never a fabricated or backfilled time.
+            # The original stage's own frozen facts: the first execution's real
+            # start and end and its "1 success, 1 unresolved" outcome survive
+            # the later same-Task recovery unchanged, on the API document, the
+            # outcome filter and a reopen alike.
             self.assertEqual(started_at, after["executionStartedAt"])
-            self.assertIsNotNone(after["executionFinishedAt"])
+            self.assertEqual(finished_at, after["executionFinishedAt"])
+            self.assertEqual(original_outcome, after["recordOutcome"])
+            status, failed_only = self.request(value, "GET", records_route + "&outcome=failed")
+            self.assertEqual(200, status, failed_only)
+            self.assertEqual(1, failed_only["total"], failed_only["items"])
+            status, completed_only = self.request(
+                value, "GET", records_route + "&outcome=completed"
+            )
+            self.assertEqual(200, status, completed_only)
+            self.assertEqual(0, completed_only["total"], completed_only["items"])
+            # The run's current aggregate stays the Task's own live truth: the
+            # same Task really completed both files, while the original record
+            # above kept the first stage's facts and the recovery progress is
+            # reported separately.
             self.assertEqual("completed", after["result"]["status"])
             self.assertTrue(after["result"]["organized"])
             self.assertEqual(2, after["result"]["successItems"])
@@ -1519,7 +1587,16 @@ class RunOnceApiTests(unittest.TestCase):
             )
             self.assertEqual(1, window.total, [item.task_id for item in window.page])
             self.assertEqual(1, sum(window.status_counts.values()))
-            self.assertEqual(task_id, window.page[0].task_id)
+            (item,) = window.page
+            self.assertEqual(task_id, item.task_id)
+            evidence = item.automation_record_evidence
+            self.assertEqual("failed", evidence["record_outcome"], evidence)
+            self.assertEqual("failed", evidence["original_status"], evidence)
+            self.assertEqual(2, evidence["item_count"], evidence)
+            self.assertEqual(1, evidence["success_count"], evidence)
+            self.assertEqual(1, evidence["waiting_count"], evidence)
+            self.assertEqual(started_at, evidence["record_started_at"], evidence)
+            self.assertEqual(finished_at, evidence["record_finished_at"], evidence)
 
     def _run_manual_execution_worker(self, value, *, prefix: str):
         """The real resident Worker branch that executes a confirmed exact subset."""
@@ -1638,6 +1715,26 @@ class RunOnceApiTests(unittest.TestCase):
             self.assertEqual([], value.source.mutations)
             self.assertEqual([], value.target.mutations)
 
+            # The due run's first automatic stage really ended here: it handed
+            # the unresolved source to the operator.  Freeze that stage's own
+            # facts, then advance the clock so every later recovery write uses
+            # a later time the frozen record must never adopt.
+            status, first_record = self.request(
+                value, "GET", "/api/v1/operations/automation/records?limit=20"
+            )
+            self.assertEqual(200, status, first_record)
+            self.assertEqual(1, first_record["total"], first_record["items"])
+            (first_record,) = first_record["items"]
+            first_outcome = first_record["recordOutcome"]
+            self.assertEqual("failed", first_outcome["status"], first_outcome)
+            self.assertEqual(0, first_outcome["successItems"], first_outcome)
+            self.assertIn("等待人工决定", first_outcome["failureReason"], first_outcome)
+            first_started = first_record["executionStartedAt"]
+            first_finished = first_record["executionFinishedAt"]
+            self.assertIsNotNone(first_started)
+            self.assertIsNotNone(first_finished)
+            self.clock.advance(3600)
+
             status, detail = self.request(
                 value, "GET", f"/api/v1/tasks/{task_id}/items/{item.item_id}/recovery"
             )
@@ -1750,6 +1847,19 @@ class RunOnceApiTests(unittest.TestCase):
             self.assertEqual("completed", record["result"]["status"], record)
             self.assertTrue(record["result"]["organized"], record)
             self.assertEqual("resolved", record["handling"]["state"], record["handling"])
+            # The original record still expresses the due run's FIRST automatic
+            # stage — the handoff to the operator — with its own real window,
+            # never the later recovery's success or settlement time.
+            self.assertEqual(first_outcome, record["recordOutcome"], record)
+            self.assertEqual(first_started, record["executionStartedAt"], record)
+            self.assertEqual(first_finished, record["executionFinishedAt"], record)
+            status, failed_only = self.request(
+                value,
+                "GET",
+                "/api/v1/operations/automation/records?limit=20&outcome=failed",
+            )
+            self.assertEqual(200, status, failed_only)
+            self.assertEqual(1, failed_only["total"], failed_only["items"])
             status, filtered = self.request(
                 value,
                 "GET",

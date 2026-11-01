@@ -75,6 +75,13 @@ def automation_record_display(overview, failure_evidence: dict | None) -> dict[s
         if cancelled:
             reasons.append("本次运行已取消")
             steps.append("本次已取消；已完成的操作保留")
+        waiting = int(evidence.get("waiting_count") or 0)
+        if waiting and not cancelled:
+            # The frozen first automatic stage ended by handing unresolved
+            # sources to the operator: that handoff is the stage's own real
+            # end, and the frozen record says so instead of claiming success.
+            reasons.append(f"有 {waiting} 个文件等待人工决定")
+            steps.append("在任务中心保存决定并明确继续处理该工作")
         skipped = int(evidence.get("skipped_count") or 0)
         if skipped:
             reasons.append(f"按策略跳过或忽略了 {skipped} 个文件")

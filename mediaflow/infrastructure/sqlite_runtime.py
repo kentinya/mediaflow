@@ -385,7 +385,20 @@ from mediaflow.infrastructure.task_source_schema import ensure_task_occurrence_c
 # originally admitted the Task.  The original ``admission_principal`` and every
 # other scheduling fact stay untouched; a legacy row simply has no recorded
 # continuation actor and is never backfilled or re-labelled.
-SCHEMA_VERSION = 56
+# Schema 57 adds the additive ``task_initial_executions`` table: the bounded,
+# write-once evidence of one kernel-admitted automatic Task's FIRST execution
+# stage, recorded inside the same claim-fenced transaction that publishes that
+# stage's end (handed to human, terminal settlement, failure or cancellation).
+# It is keyed by the same ``task_id`` — no independent identity, no queue, no
+# claim and no execution control of its own, so it is the Task's own durable
+# provenance rather than a second lifecycle.  Later continuation of the same
+# Task never rewrites it: the Automation records read keeps expressing the
+# original automatic stage's own outcome and real window while the Task Center
+# and the Task aggregate keep reporting the current work.  A Task whose first
+# stage never reached such a boundary has no row, and the migration backfills
+# nothing: no existing Task, TaskItem, Result, pin, authorization or Job row is
+# rewritten, re-labelled or made executable by the upgrade.
+SCHEMA_VERSION = 57
 
 #: The conservative owner generation written to ``file_locks`` rows that predate
 #: schema 38.  It is a fixed, non-guessable-looking sentinel rather than NULL so
@@ -560,6 +573,81 @@ _TASK_SCHEDULING_ADMISSION_INDEX = (
     "ON task_scheduling(admission_principal, admission_request_id) "
     "WHERE admission_request_id IS NOT NULL"
 )
+
+#: Schema 57: the bounded, write-once evidence of one kernel-admitted automatic
+#: Task's first execution stage.  One 1:1 row keyed by the same ``task_id``; no
+#: independent identity, queue, claim or execution control.  The row is written
+#: only inside the claim-fenced transaction that publishes that stage's end, so
+#: it can never disagree with the aggregate it describes, and a later
+#: continuation of the same Task never rewrites it.
+_TASK_INITIAL_EXECUTIONS_CREATE = """
+    CREATE TABLE IF NOT EXISTS task_initial_executions (
+        task_id TEXT PRIMARY KEY, stage_status TEXT NOT NULL,
+        started_at TEXT NOT NULL, finished_at TEXT NOT NULL,
+        item_count INTEGER NOT NULL, success_count INTEGER NOT NULL,
+        uncertain_count INTEGER NOT NULL, partial_effect_count INTEGER NOT NULL,
+        skipped_count INTEGER NOT NULL, cancelled_count INTEGER NOT NULL,
+        failed_count INTEGER NOT NULL, attachment_failed_count INTEGER NOT NULL,
+        unreadable_count INTEGER NOT NULL, waiting_count INTEGER NOT NULL,
+        recorded_at TEXT NOT NULL,
+        FOREIGN KEY(task_id) REFERENCES tasks(task_id)
+    )
+"""
+
+#: The per-item original-stage evidence expressions shared by the write-once
+#: freeze (``task_initial_executions``) and the Automation records read model,
+#: so one durable vocabulary can never disagree with itself.  Aliases: ``i`` is
+#: the TaskItem row and ``r`` its latest Result (or NULL when none exists).
+#: The frozen write evaluates these expressions inside the claim-fenced
+#: transaction that publishes the stage's end, so the frozen counts describe
+#: exactly the item states that stage published.
+_TASK_ITEM_STAGE_EVIDENCE_SELECT = """
+                    COALESCE(lower(r.status), i.status) AS disposition,
+                    CASE WHEN r.effect_certainty = 'verified_complete'
+                         AND lower(r.status) = 'success' THEN 1
+                         WHEN r.primary_completed = 1 THEN 1 ELSE 0 END AS succeeded,
+                    CASE WHEN r.effect_certainty IN ('unknown', 'attempted_unverified')
+                         OR (json_valid(r.uncertain_effects) AND
+                             json_array_length(r.uncertain_effects) > 0)
+                         THEN 1 ELSE 0 END AS uncertain,
+                    CASE WHEN r.effect_certainty = 'partial' THEN 1 ELSE 0 END AS partial_effect,
+                    CASE WHEN r.result_id IS NULL OR
+                         r.effect_certainty NOT IN ('none', 'verified_complete', 'partial',
+                                                   'unknown', 'attempted_unverified')
+                         OR NOT json_valid(r.attachment_results)
+                         OR NOT json_valid(r.uncertain_effects)
+                         THEN 1
+                         WHEN json_type(r.attachment_results) <> 'array'
+                           OR json_type(r.uncertain_effects) <> 'array'
+                           OR json_array_length(r.attachment_results) <> r.attachment_count
+                         THEN 1 ELSE 0 END AS unreadable,
+                    (SELECT COUNT(*) FROM json_each(
+                        CASE WHEN json_valid(r.attachment_results)
+                             THEN r.attachment_results ELSE '[]' END
+                    ) a WHERE a.type = 'object' AND
+                        (lower(json_extract(a.value, '$.status')) IN
+                            ('failed', 'partial', 'skipped', 'ignored', 'cancelled', 'unexecuted')
+                         OR json_extract(a.value, '$.effect_certainty') IN
+                            ('unknown', 'attempted_unverified', 'partial'))
+                    ) AS attachment_failed,
+                    (SELECT COUNT(*) FROM json_each(
+                        CASE WHEN json_valid(r.attachment_results)
+                             THEN r.attachment_results ELSE '[]' END
+                    ) a WHERE CASE WHEN a.type <> 'object' THEN 1
+                        WHEN json_extract(a.value, '$.status') IS NULL
+                          OR lower(json_extract(a.value, '$.status')) NOT IN
+                            ('success', 'failed', 'partial', 'skipped', 'ignored', 'cancelled',
+                             'unexecuted')
+                          OR json_extract(a.value, '$.effect_certainty') IS NULL
+                          OR json_extract(a.value, '$.effect_certainty') NOT IN
+                            ('none', 'verified_complete', 'partial', 'unknown',
+                             'attempted_unverified')
+                          OR (lower(json_extract(a.value, '$.status')) = 'success'
+                              AND json_extract(a.value, '$.effect_certainty')
+                                  <> 'verified_complete')
+                        THEN 1 ELSE 0 END
+                    ) AS attachment_unreadable
+"""
 
 #: The shared capacity is a count of distinct Tasks in queued/claimed state, so
 #: one index answers admission control and every requeue without scanning.
@@ -7196,7 +7284,16 @@ class SQLiteTaskRepository:
         No recovery lineage, Storage traversal, or new historical store. Results
         belong to this exact Task, including attached-file dispositions. Missing
         or inconsistent proof is unknown, never an inferred success/failure.
+
+        A Task whose FIRST automatic execution stage already ended carries its
+        own write-once ``task_initial_executions`` row (schema 57): the record
+        then expresses that original stage's own outcome, real window and item
+        evidence instead of the Task's current aggregate, so a later same-Task
+        recovery can never rewrite the original result or its times.  A row
+        without that evidence keeps reading the durable current facts — the
+        migration never reconstructs a historical stage it cannot prove.
         """
+        settled_dispositions = "('success', 'failed', 'partial', 'skipped', 'ignored', 'cancelled')"
         return f"""
             WITH latest AS (
                 SELECT r.*, ROW_NUMBER() OVER (
@@ -7205,51 +7302,7 @@ class SQLiteTaskRepository:
                 ) AS rank FROM task_results r
             ), item_evidence AS (
                 SELECT i.task_id,
-                    COALESCE(lower(r.status), i.status) AS disposition,
-                    CASE WHEN r.effect_certainty = 'verified_complete'
-                         AND lower(r.status) = 'success' THEN 1
-                         WHEN r.primary_completed = 1 THEN 1 ELSE 0 END AS succeeded,
-                    CASE WHEN r.effect_certainty IN ('unknown', 'attempted_unverified')
-                         OR (json_valid(r.uncertain_effects) AND
-                             json_array_length(r.uncertain_effects) > 0)
-                         THEN 1 ELSE 0 END AS uncertain,
-                    CASE WHEN r.effect_certainty = 'partial' THEN 1 ELSE 0 END AS partial_effect,
-                    CASE WHEN r.result_id IS NULL OR
-                         r.effect_certainty NOT IN ('none', 'verified_complete', 'partial',
-                                                   'unknown', 'attempted_unverified')
-                         OR NOT json_valid(r.attachment_results)
-                         OR NOT json_valid(r.uncertain_effects)
-                         THEN 1
-                         WHEN json_type(r.attachment_results) <> 'array'
-                           OR json_type(r.uncertain_effects) <> 'array'
-                           OR json_array_length(r.attachment_results) <> r.attachment_count
-                         THEN 1 ELSE 0 END AS unreadable,
-                    (SELECT COUNT(*) FROM json_each(
-                        CASE WHEN json_valid(r.attachment_results)
-                             THEN r.attachment_results ELSE '[]' END
-                    ) a WHERE a.type = 'object' AND
-                        (lower(json_extract(a.value, '$.status')) IN
-                            ('failed', 'partial', 'skipped', 'ignored', 'cancelled', 'unexecuted')
-                         OR json_extract(a.value, '$.effect_certainty') IN
-                            ('unknown', 'attempted_unverified', 'partial'))
-                    ) AS attachment_failed,
-                    (SELECT COUNT(*) FROM json_each(
-                        CASE WHEN json_valid(r.attachment_results)
-                             THEN r.attachment_results ELSE '[]' END
-                    ) a WHERE CASE WHEN a.type <> 'object' THEN 1
-                        WHEN json_extract(a.value, '$.status') IS NULL
-                          OR lower(json_extract(a.value, '$.status')) NOT IN
-                            ('success', 'failed', 'partial', 'skipped', 'ignored', 'cancelled',
-                             'unexecuted')
-                          OR json_extract(a.value, '$.effect_certainty') IS NULL
-                          OR json_extract(a.value, '$.effect_certainty') NOT IN
-                            ('none', 'verified_complete', 'partial', 'unknown',
-                             'attempted_unverified')
-                          OR (lower(json_extract(a.value, '$.status')) = 'success'
-                              AND json_extract(a.value, '$.effect_certainty')
-                                  <> 'verified_complete')
-                        THEN 1 ELSE 0 END
-                    ) AS attachment_unreadable
+                    {_TASK_ITEM_STAGE_EVIDENCE_SELECT}
                 FROM task_items i LEFT JOIN latest r
                     ON r.task_id = i.task_id AND r.item_id = i.item_id AND r.rank = 1
             ), evidence AS (
@@ -7263,21 +7316,45 @@ class SQLiteTaskRepository:
                         AS failed_count,
                     SUM(attachment_failed) AS attachment_failed_count,
                     SUM(CASE WHEN unreadable OR attachment_unreadable OR disposition NOT IN
-                        ('success', 'failed', 'partial', 'skipped', 'ignored', 'cancelled')
-                        THEN 1 ELSE 0 END) AS unreadable_count
+                        {settled_dispositions}
+                        THEN 1 ELSE 0 END) AS unreadable_count,
+                    SUM(CASE WHEN disposition NOT IN {settled_dispositions}
+                        THEN 1 ELSE 0 END) AS waiting_count
                 FROM item_evidence GROUP BY task_id
             ), original AS (
-                SELECT population.*, e.*,
-                    CASE WHEN linked_task_status = 'paused' THEN 'paused'
-                         WHEN linked_task_status = 'pending' THEN 'pending'
-                         WHEN linked_task_status = 'running' THEN 'running'
-                         WHEN job_status IN ('pending', 'running') THEN job_status
-                         WHEN linked_task_status IN ('completed', 'partial_success', 'failed',
-                                                     'cancelled') THEN linked_task_status
-                         WHEN job_status IN ('completed', 'failed', 'cancelled') THEN job_status
-                         ELSE 'unknown' END AS original_status
+                SELECT population.*,
+                    COALESCE(frozen.item_count, e.item_count) AS item_count,
+                    COALESCE(frozen.success_count, e.success_count) AS success_count,
+                    COALESCE(frozen.uncertain_count, e.uncertain_count) AS uncertain_count,
+                    COALESCE(frozen.partial_effect_count, e.partial_effect_count)
+                        AS partial_effect_count,
+                    COALESCE(frozen.skipped_count, e.skipped_count) AS skipped_count,
+                    COALESCE(frozen.cancelled_count, e.cancelled_count) AS cancelled_count,
+                    COALESCE(frozen.failed_count, e.failed_count) AS failed_count,
+                    COALESCE(frozen.attachment_failed_count, e.attachment_failed_count)
+                        AS attachment_failed_count,
+                    COALESCE(frozen.unreadable_count, e.unreadable_count) AS unreadable_count,
+                    COALESCE(frozen.waiting_count, e.waiting_count) AS waiting_count,
+                    frozen.started_at AS record_started_at,
+                    frozen.finished_at AS record_finished_at,
+                    CASE WHEN frozen.task_id IS NOT NULL
+                         THEN CASE frozen.stage_status
+                                  WHEN 'waiting_human' THEN 'failed'
+                                  ELSE frozen.stage_status END
+                         ELSE CASE WHEN linked_task_status = 'paused' THEN 'paused'
+                              WHEN linked_task_status = 'pending' THEN 'pending'
+                              WHEN linked_task_status = 'running' THEN 'running'
+                              WHEN job_status IN ('pending', 'running') THEN job_status
+                              WHEN linked_task_status IN ('completed', 'partial_success', 'failed',
+                                                          'cancelled') THEN linked_task_status
+                              WHEN job_status IN ('completed', 'failed', 'cancelled')
+                              THEN job_status
+                              ELSE 'unknown' END
+                    END AS original_status
                 FROM ({document}) population LEFT JOIN evidence e
                     ON e.task_id = COALESCE(linked_task_id, transfer_task_id, anchor_id)
+                LEFT JOIN task_initial_executions frozen
+                    ON frozen.task_id = COALESCE(linked_task_id, transfer_task_id, anchor_id)
             ) SELECT original.*,
                 CASE WHEN original_status IN ('pending', 'running', 'paused', 'waiting')
                          THEN original_status
@@ -9745,6 +9822,9 @@ class SQLiteTaskRepository:
                         "failed_count",
                         "attachment_failed_count",
                         "unreadable_count",
+                        "waiting_count",
+                        "record_started_at",
+                        "record_finished_at",
                     )
                 }
                 if "record_outcome" in row.keys()
@@ -19916,6 +19996,7 @@ class SQLiteTaskRepository:
         discovery: MediaDiscovery | None = None,
         manual_execution: ManualExecution | None = None,
         manual_execution_items: tuple[ManualExecutionItem, ...] = (),
+        initial_execution_stage: str | None = None,
     ) -> TaskSchedulingState | None:
         """Publish one truthful queue transition and give the slot back.
 
@@ -19928,6 +20009,15 @@ class SQLiteTaskRepository:
         refused while the Task still carries an unverified in-flight mutation: a
         requested pause or cancel keeps its slot until that boundary is proved,
         and no control can force an in-flight effect to be forgotten.
+
+        ``initial_execution_stage`` freezes the bounded, write-once evidence of
+        an automatic Task's FIRST execution stage in the same transaction: the
+        stage's own end status, its real window and the exact item evidence it
+        published.  A later continuation of the same Task never rewrites that
+        row, so the Automation records read keeps expressing the original stage
+        while the Task aggregate moves on.  A stage that never started (no
+        ``started_at``) is never frozen — there is no executed stage to prove,
+        and inventing one would fabricate history.
         """
 
         queue_state = TaskQueueState(queue_state)
@@ -19937,6 +20027,8 @@ class SQLiteTaskRepository:
             TaskQueueState.SETTLED,
         }:
             raise ValueError("a released Task must settle, pause or wait for a human")
+        if initial_execution_stage is not None and not isinstance(initial_execution_stage, str):
+            raise ValueError("the initial execution stage label must be a string or None")
         if fence is not None and not isinstance(fence, TaskClaimFence):
             raise ValueError("Task claim fence is invalid")
         if stage is not None:
@@ -20077,6 +20169,19 @@ class SQLiteTaskRepository:
                             raise LookupError(
                                 f"manual execution item {item.execution_item_id!r} was not found"
                             )
+                # Freeze the bounded, write-once evidence of this Task's FIRST
+                # automatic execution stage in the same claim-fenced
+                # transaction that publishes its end.  The item states above are
+                # already final here, so the frozen counts describe exactly what
+                # this stage published; a later continuation of the same Task
+                # never rewrites the row.
+                if initial_execution_stage is not None and task.started_at is not None:
+                    self._record_initial_execution_locked(
+                        task.task_id,
+                        initial_execution_stage,
+                        task.started_at,
+                        now,
+                    )
                 # Retire exactly this round's short-lived execution locks in the
                 # same transaction that gives the claim back.  A new owner can
                 # only acquire its own generation after this commit, so a late
@@ -20108,6 +20213,81 @@ class SQLiteTaskRepository:
                 raise
             self._connection.commit()
         return state
+
+    def _record_initial_execution_locked(
+        self,
+        task_id: str,
+        stage_status: str,
+        started_at: datetime,
+        finished_at: datetime,
+    ) -> None:
+        """Freeze one automatic Task's first-stage evidence inside the open write.
+
+        The caller already holds the claim-fenced publication transaction, so
+        the frozen row and the stage end it describes commit (or fail) together.
+        The aggregate is computed by the exact same per-item evidence vocabulary
+        the Automation records read uses, so the frozen counts can never
+        disagree with the read model that consumes them.  The write is
+        write-once: a Task that already carries its first-stage row keeps it, so
+        a later continuation pass, retry or re-settlement of the same Task never
+        rewrites the original stage's outcome or times.
+        """
+
+        if started_at.tzinfo is None or finished_at.tzinfo is None:
+            raise ValueError("initial execution stage instants need timezone")
+        settled = "('success', 'failed', 'partial', 'skipped', 'ignored', 'cancelled')"
+        self._connection.execute(
+            f"""
+            INSERT INTO task_initial_executions (
+                task_id, stage_status, started_at, finished_at,
+                item_count, success_count, uncertain_count, partial_effect_count,
+                skipped_count, cancelled_count, failed_count, attachment_failed_count,
+                unreadable_count, waiting_count, recorded_at
+            )
+            SELECT ?, ?, ?, ?, aggregate.*, ? FROM (
+                SELECT COUNT(*) AS item_count,
+                    COALESCE(SUM(succeeded), 0) AS success_count,
+                    COALESCE(SUM(uncertain), 0) AS uncertain_count,
+                    COALESCE(SUM(partial_effect), 0) AS partial_effect_count,
+                    COALESCE(SUM(CASE WHEN disposition IN ('skipped', 'ignored')
+                        THEN 1 ELSE 0 END), 0) AS skipped_count,
+                    COALESCE(SUM(CASE WHEN disposition = 'cancelled'
+                        THEN 1 ELSE 0 END), 0) AS cancelled_count,
+                    COALESCE(SUM(CASE WHEN disposition IN ('failed', 'partial')
+                        THEN 1 ELSE 0 END), 0) AS failed_count,
+                    COALESCE(SUM(attachment_failed), 0) AS attachment_failed_count,
+                    COALESCE(SUM(CASE WHEN unreadable OR attachment_unreadable
+                        OR disposition NOT IN {settled}
+                        THEN 1 ELSE 0 END), 0) AS unreadable_count,
+                    COALESCE(SUM(CASE WHEN disposition NOT IN {settled}
+                        THEN 1 ELSE 0 END), 0) AS waiting_count
+                FROM (
+                    SELECT i.task_id, {_TASK_ITEM_STAGE_EVIDENCE_SELECT}
+                    FROM task_items i LEFT JOIN (
+                        SELECT results.*, ROW_NUMBER() OVER (
+                            PARTITION BY task_id, item_id
+                            ORDER BY created_at DESC, result_id DESC
+                        ) AS latest_rank
+                        FROM task_results results WHERE results.task_id = ?
+                    ) r ON r.task_id = i.task_id AND r.item_id = i.item_id AND r.latest_rank = 1
+                    WHERE i.task_id = ?
+                ) item_evidence
+            ) aggregate
+            WHERE NOT EXISTS (
+                SELECT 1 FROM task_initial_executions existing WHERE existing.task_id = ?
+            )
+            """,
+            (
+                task_id,
+                stage_status,
+                started_at.isoformat(),
+                finished_at.isoformat(),
+                finished_at.isoformat(),
+                task_id,
+                task_id,
+                task_id,
+            ),
+        )
 
     def yield_scheduled_claim(
         self,
@@ -21340,6 +21520,17 @@ class SQLiteTaskRepository:
                     search_text TEXT, created_at TEXT NOT NULL,
                     origin_definition_id TEXT, origin_definition_name TEXT,
                     origin_kind TEXT,
+                    FOREIGN KEY(task_id) REFERENCES tasks(task_id)
+                );
+                CREATE TABLE IF NOT EXISTS task_initial_executions (
+                    task_id TEXT PRIMARY KEY, stage_status TEXT NOT NULL,
+                    started_at TEXT NOT NULL, finished_at TEXT NOT NULL,
+                    item_count INTEGER NOT NULL, success_count INTEGER NOT NULL,
+                    uncertain_count INTEGER NOT NULL, partial_effect_count INTEGER NOT NULL,
+                    skipped_count INTEGER NOT NULL, cancelled_count INTEGER NOT NULL,
+                    failed_count INTEGER NOT NULL, attachment_failed_count INTEGER NOT NULL,
+                    unreadable_count INTEGER NOT NULL, waiting_count INTEGER NOT NULL,
+                    recorded_at TEXT NOT NULL,
                     FOREIGN KEY(task_id) REFERENCES tasks(task_id)
                 );
                 CREATE TABLE IF NOT EXISTS files_transfers (
@@ -22605,6 +22796,7 @@ class SQLiteTaskRepository:
                     f"DEFAULT '{LEGACY_LOCK_OWNER_TOKEN}'"
                 )
             self._migrate_manual_execution_task_scope_locked()
+            self._migrate_task_initial_executions_locked()
             self._migrate_task_scheduling_locked()
 
     def _migrate_manual_execution_task_scope_locked(self) -> None:
@@ -22687,6 +22879,22 @@ class SQLiteTaskRepository:
             "CREATE INDEX IF NOT EXISTS manual_executions_preview_created "
             "ON manual_executions(preview_id, created_at, execution_id)"
         )
+
+    def _migrate_task_initial_executions_locked(self) -> None:
+        """Schema 57: the write-once first-stage evidence of automatic Tasks.
+
+        The table is additive and idempotent: a fresh database and an in-place
+        upgrade build the identical layout, no existing row is rewritten and
+        nothing is backfilled.  A Task whose first automatic stage ended before
+        this schema existed simply has no row, so its Automation record keeps
+        reading the durable evidence it always had — the migration never
+        reconstructs a historical stage from the current state, never fabricates
+        an old end time and never grants or restores execution authority.  A
+        failure before the table exists leaves the previous schema version and
+        every row intact, and a later open safely completes the upgrade.
+        """
+
+        self._connection.execute(_TASK_INITIAL_EXECUTIONS_CREATE)
 
     def _migrate_task_scheduling_locked(self) -> None:
         """Schema 54/56: the Task-owned scheduling facts, and only those.

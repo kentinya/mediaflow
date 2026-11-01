@@ -399,6 +399,7 @@ class TaskSchedulingService:
         execution: ManualExecution | None = None,
         execution_items: tuple[ManualExecutionItem, ...] = (),
         now: datetime | None = None,
+        initial_execution_stage: str | None = None,
     ) -> TaskSchedulingState:
         """Acknowledge the accepted pause/cancel at the owner's safe boundary.
 
@@ -410,6 +411,10 @@ class TaskSchedulingService:
         still claims to be running.  A linked manual execution's cancellation
         projection is published in that same transaction, so its remaining
         items can never stay ``running`` beside a settled Task.
+
+        ``initial_execution_stage`` freezes the bounded, write-once evidence of
+        an automatic Task's first execution stage when the settled control is
+        that stage's cancellation boundary.
         """
 
         current = self._now(now)
@@ -426,6 +431,7 @@ class TaskSchedulingService:
             discovery=discovery,
             execution=execution,
             execution_items=execution_items,
+            initial_execution_stage=initial_execution_stage,
         )
 
     def defer_to_human(
@@ -435,6 +441,7 @@ class TaskSchedulingService:
         task: PersistentTask,
         items: tuple[PersistentTaskItem, ...] = (),
         now: datetime | None = None,
+        initial_execution_stage: str | None = None,
     ) -> TaskSchedulingState:
         """Release the slot because every remaining item now waits for a human.
 
@@ -443,6 +450,12 @@ class TaskSchedulingService:
         transaction re-reads every durable sibling, so a processing/queued item
         omitted from ``items`` still keeps the slot; the Task must also be the
         exact Task named by this claim.
+
+        ``initial_execution_stage`` freezes the bounded, write-once evidence of
+        an automatic Task's first execution stage in the same transaction (see
+        :meth:`SQLiteTaskRepository.release_scheduled_claim`).  The manual Files
+        path never passes it: its first human wait is the initial summary
+        confirmation, not the end of an executed stage.
         """
 
         current = self._now(now)
@@ -454,6 +467,7 @@ class TaskSchedulingService:
             queue_state=TaskQueueState.WAITING_HUMAN,
             stage=None,
             expected_control_revision=None,
+            initial_execution_stage=initial_execution_stage,
         )
         if released is None:
             raise TaskClaimFenceLost(f"task {claim.task_id!r} is no longer owned by this Worker")
@@ -466,12 +480,17 @@ class TaskSchedulingService:
         task: PersistentTask,
         items: tuple[PersistentTaskItem, ...] = (),
         now: datetime | None = None,
+        initial_execution_stage: str | None = None,
     ) -> TaskSchedulingState:
         """Publish one terminal Task outcome and release its slot.
 
         The aggregate and any final item state commit together under the claim
         fence; a Worker that already lost the Task writes nothing, so a stale
         frame can never publish a terminal outcome over the current owner.
+
+        ``initial_execution_stage`` freezes the bounded, write-once evidence of
+        an automatic Task's first execution stage in the same transaction (see
+        :meth:`SQLiteTaskRepository.release_scheduled_claim`).
         """
 
         current = self._now(now)
@@ -483,6 +502,7 @@ class TaskSchedulingService:
             queue_state=TaskQueueState.SETTLED,
             stage=None,
             expected_control_revision=None,
+            initial_execution_stage=initial_execution_stage,
         )
         if released is None:
             raise TaskClaimFenceLost(f"task {claim.task_id!r} is no longer owned by this Worker")
@@ -852,6 +872,7 @@ class TaskSchedulingService:
         discovery=None,
         execution: ManualExecution | None = None,
         execution_items: tuple[ManualExecutionItem, ...] = (),
+        initial_execution_stage: str | None = None,
     ) -> TaskSchedulingState:
         control = state.control_request
         if control is None:
@@ -911,6 +932,7 @@ class TaskSchedulingService:
             discovery=discovery,
             manual_execution=execution,
             manual_execution_items=execution_items,
+            initial_execution_stage=initial_execution_stage,
         )
         if released is None:
             raise TaskClaimFenceLost(f"task {task.task_id!r} is no longer owned by this Worker")

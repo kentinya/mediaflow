@@ -350,7 +350,7 @@ class TaskSchedulingMigrationTests(unittest.TestCase):
         database = self.base_database()
         with SQLiteTaskRepository(database) as repository:
             self.assertEqual(repository.schema_version, SCHEMA_VERSION)
-            self.assertEqual(SCHEMA_VERSION, 56)
+            self.assertEqual(SCHEMA_VERSION, 57)
             self.assert_base_facts_intact(repository)
             self.assert_never_admitted(repository, database)
             with sqlite3.connect(database) as connection:
@@ -620,6 +620,98 @@ class ManualExecutionTaskScopeMigrationTests(unittest.TestCase):
             self.assertEqual(
                 connection.execute("SELECT COUNT(*) FROM manual_executions").fetchone()[0], 2
             )
+
+
+class TaskInitialExecutionsMigrationTests(unittest.TestCase):
+    """Schema 57 adds only the write-once first-stage evidence table.
+
+    The upgrade is additive: an existing database gains the empty table, keeps
+    every existing Task/TaskItem/Result/scheduling fact byte-for-byte and never
+    backfills a historical stage it cannot prove.  A fresh database and an
+    in-place upgrade build the identical layout, and the upgrade is repeatable.
+    """
+
+    def test_schema56_database_gains_the_empty_table_without_rewriting_facts(self) -> None:
+        with tempfile.TemporaryDirectory() as directory:
+            database = Path(directory) / "runtime.sqlite3"
+            now = datetime(2026, 10, 1, 8, 0, tzinfo=UTC)
+            with SQLiteTaskRepository(database) as repository:
+                service = TaskSchedulingService(repository, capacity=2)
+                admission = service.admit(
+                    "organize",
+                    execute_authorized=True,
+                    trigger=TaskTrigger.RUN_ONCE,
+                    principal="operator",
+                    request_id="before-schema57",
+                    now=now,
+                )
+                task_id = admission.task.task_id
+            with sqlite3.connect(database) as connection:
+                # Recreate the exact pre-57 physical shape: the scheduling facts
+                # existed, the first-stage evidence table did not.
+                connection.execute("DROP TABLE task_initial_executions")
+                connection.execute(
+                    "UPDATE schema_version SET version=? WHERE component='runtime'", (56,)
+                )
+                connection.commit()
+            with SQLiteTaskRepository(database) as upgraded:
+                self.assertEqual(upgraded.schema_version, SCHEMA_VERSION)
+                state = upgraded.get_task_scheduling(task_id)
+                self.assertIsNotNone(state)
+                self.assertEqual("operator", state.admission_principal)
+                self.assertEqual("before-schema57", state.admission_request_id)
+                task = upgraded.get_task(task_id)
+                self.assertTrue(task.execute_authorized)
+                # Nothing is backfilled: a stage that ended before this schema
+                # existed has no row, and the records read keeps its durable
+                # current facts instead of inventing a historical stage.
+                count = upgraded._connection.execute(
+                    "SELECT COUNT(*) FROM task_initial_executions"
+                ).fetchone()[0]
+                self.assertEqual(count, 0)
+            # Idempotent: a second open must not rewrite or lose anything.
+            with SQLiteTaskRepository(database) as reopened:
+                self.assertEqual(reopened.schema_version, SCHEMA_VERSION)
+                self.assertIsNotNone(reopened.get_task_scheduling(task_id))
+            with sqlite3.connect(database) as connection:
+                self.assertEqual(connection.execute("PRAGMA integrity_check").fetchone()[0], "ok")
+                self.assertEqual(connection.execute("PRAGMA foreign_key_check").fetchall(), [])
+                self.assertEqual(
+                    connection.execute("SELECT COUNT(*) FROM task_initial_executions").fetchone()[
+                        0
+                    ],
+                    0,
+                )
+
+    def test_fresh_database_and_upgrade_build_the_identical_layout(self) -> None:
+        with tempfile.TemporaryDirectory() as directory:
+            fresh_path = Path(directory) / "fresh.sqlite3"
+            upgraded_path = Path(directory) / "upgraded.sqlite3"
+            with SQLiteTaskRepository(fresh_path) as fresh:
+                fresh_columns = [
+                    row[1]
+                    for row in fresh._connection.execute(
+                        "PRAGMA table_info(task_initial_executions)"
+                    ).fetchall()
+                ]
+            # Build the upgraded twin by creating a schema-56 database first,
+            # then letting the candidate upgrade it in place.
+            with SQLiteTaskRepository(upgraded_path):
+                pass
+            with sqlite3.connect(upgraded_path) as connection:
+                connection.execute("DROP TABLE task_initial_executions")
+                connection.execute(
+                    "UPDATE schema_version SET version=? WHERE component='runtime'", (56,)
+                )
+                connection.commit()
+            with SQLiteTaskRepository(upgraded_path) as upgraded:
+                upgraded_columns = [
+                    row[1]
+                    for row in upgraded._connection.execute(
+                        "PRAGMA table_info(task_initial_executions)"
+                    ).fetchall()
+                ]
+            self.assertEqual(fresh_columns, upgraded_columns)
 
 
 if __name__ == "__main__":
