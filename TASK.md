@@ -24,7 +24,7 @@ Current correction: Automation-only settings scope (V2-TASK-011 / AC-26) and A-P
 指导已被覆盖，不能按旧计划实施；本轮不是单独改数字，也不是新 Task 或独立 minor bug。
 Task ID/真实 Base 不变；目前没有实现候选，不签产品 PASS，不改 A-owned 合同或关闭 Slice。
 
-- 本轮起点 `/Users/songzhidong/mediaflow`，branch `main`，HEAD
+- 重规划起点 `/Users/songzhidong/mediaflow`，branch `main`，HEAD
   `c443a769d5bcdd8dfa61b08f4655ed219b6c167b`。governance PASS，无预存 tracked 修改；
   workspace/Git 可写。原有 `.DS_Store`、`.mgmt.log`、`.t.log`、`.t_test_*.log`、`15`、
   docs 参考图/OS 文件、output 参考目录/ZIP/HTML、testdata/web OS 文件全部保留不暂存。
@@ -39,8 +39,10 @@ Task ID/真实 Base 不变；目前没有实现候选，不签产品 PASS，不�
   → 实际 MOVE”。证据在 `.git/validation-evidence/c8657032/b-planning-47.6/` 及
   `.git/validation-evidence/5c808d4a/a-final-review/web-capacity/`，均为本地 ignored。
   这些缺陷事实保留，但旧的全入口共享额度解释不再有效；本轮未重跑旧浏览器缺陷脚本。
-- 本轮仅改 B-owned Task。governance、`git diff --check` PASS；
-  `.venv/bin/python -m unittest tests.test_release_security` 为 **8 tests OK / 0.021s**。
+- 本次断言修订起点 branch `main`、HEAD `8168878af1bed382a54d884090e65e5ee903b4fc`，
+  无预存 tracked 修改，以上 untracked 文件保留。仅改 B-owned Task，ID/Base/High/T4 不变。
+  governance、`git diff --check` PASS；
+  `.venv/bin/python -m unittest tests.test_release_security` 为 **8 tests OK / 0.022s**。
   本轮测试耗时远低于总用时 50%；未实施产品修改或宣称完成新合同验收。
 
 ## Goal / complete journeys
@@ -81,14 +83,14 @@ Task 生命周期、repository 调度权威、claim/heartbeat/fence、整理应�
 | `TaskTrigger`、Task scheduling 原始准入记录、定义 occurrence/Run once origin 及 display/intent 关联已存在；`ManualTaskEngineWorker._is_automatic` 也会运行 CLI/remote | 复用持久关联证明来源；不能靠 runner 名、是否点击按钮、恢复动作发起页面或客户端字段来分类。不要把共用 automatic runner 的 CLI/remote 算进自动化。 |
 | `automation_settings.py` 逐实例 cadence evidence 和 API-local capacity/stale 发布说明；`service_api.py` 传递 stale 参数 | 读回必须如实说明自动化范围和真正使用的值。现有 stale 参数并不等于已运行观察器；核对实际消费者，不能用参数/Active 回显伪造采用。 |
 
-**本轮明确的手动运行策略来源（内部默认，非新产品设置）：**
+**手动运行策略的代码依据与建议（内部默认，非新产品设置）：**
 
-- 手动容量采用集中定义的 **100**，取自现有 `TaskSchedulingService` 各组合路径、API
-  与 `ExecutionAuthorizationService` 的默认/回退值 100；本轮把它独立成手动默认，
+- 手动容量建议集中沿用 **100**，取自现有 `TaskSchedulingService` 各组合路径、API
+  与 `ExecutionAuthorizationService` 的默认/回退值 100；将其独立成手动默认，
   不再从 Active 的 `automation.maximumActiveJobs` 派生。保留现有受信构造注入能力
   供运行组合/测试使用；`MediaFlowApi.maximum_active_jobs` 现有自动化 override 不可
   再经共享 binding 泄漏成手动策略。不添加手动 CLI flag、环境变量或表单。
-- 手动常驻调度默认 **5.0s**，来自 `final_cli.py::_resident_infrastructure_defaults()`
+- 手动常驻调度建议沿用默认 **5.0s**，来自 `final_cli.py::_resident_infrastructure_defaults()`
   的现有 poll fallback。既有 `worker run --poll-seconds` 是显式运行 override，保持
   高于默认/自动化表单；其实际适用范围与回报必须明确，不能因表单 Save 被覆盖。
   自动化自己的 cadence 继续按其配置/已有 override 消费；不把手动 tick 变成提前
@@ -99,6 +101,11 @@ Task 生命周期、repository 调度权威、claim/heartbeat/fence、整理应�
   各原路径保持原规则，均不得读取 `automation.staleJobAgeSeconds`。失联仍不证明无效果。
   自动化 stale 只用于其已有无更新观察语义；若 Job 退出后丢失有效消费，在现有 Task
   观察/读回边界最小补齐，不能新增超时取消、强制终态、重排或恢复产品。
+
+100/5.0s 是基于真实代码的默认方案，不是 Slice 新增的固定产品数字。Developer 应集中
+表达独立策略并在交接说明最终默认、来源和 override 范围；若现有组合需要等价的有界
+方案，说明理由及影响即可，不新增调参入口。验收检查策略独立、有界和实际行为，不检查
+字面量、常量名称或对象数量；lease/heartbeat 的既有差异也不是本轮统一目标。
 
 ## Implementation Scope / Developer guidance
 
@@ -117,10 +124,11 @@ Task 生命周期、repository 调度权威、claim/heartbeat/fence、整理应�
    以及等待人工后的分析/摘要确认/四类继续。Task 全部人工等待占 0；机器工作/稳定等待
    占本范围 1；在途取消仍占原范围，安全结束才释放。不要先在应用层 count 再写库。
    范围隔离不能放松跨范围的同文件互斥、fence 或历史未知非重放。
-4. **分离消费周期而非执行引擎。** 保留单个 `ResidentLoop`/Worker 和 claim 协议；在既有
-   step/候选查询增加范围资格和各自业务 deadline，物理 wake 可取下一手动/自动化/
-   heartbeat/config-recheck 的最早时刻。自动化唤醒不能提前处理自动化，手动 deadline
-   不受其 Save 改变。仅一个 in-flight pass；不抢占 Storage 调用、不另开 Worker/线程。
+4. **分离消费周期而非执行引擎。** 保留共享 Worker、一个调度权威和既有 claim 协议。
+   推荐在既有 `ResidentLoop` 的 step/候选查询区分范围资格和业务检查时刻，物理 wake
+   可取各范围/heartbeat/config-recheck 的最早时刻；内部 helper/对象划分不作为验收条件。
+   手动检查不能提前领取尚未到自动化业务检查时刻的工作；自动化 Save 不能改变手动
+   调度策略。保持现有串行执行，不增加 Worker/线程并行度，不抢占 Storage 调用。
    `pending_snapshot` 和真实 claim 选择应一致，避免用不合适 pin 注册后饿死另一范围。
    手动无需“立刻执行”保证；正在处理的其他工作带来的资源等待保持诚实。
 5. **四字段与 UX 一起闭环。** Scheduler poll 仅管自动化 due；Worker poll 仅管自动化
@@ -128,8 +136,8 @@ Task 生命周期、repository 调度权威、claim/heartbeat/fence、整理应�
    简短意义、队满拒绝和逐实例采用证据须讲清自动化范围，移除误称所有整理共享的含义，
    不换表单位置、不添加新控件/额外确认。不能用旧 Published 提示证明本次 Save，等待
    本次 PUT 与新 Active/采用读回。保留 Save 对无关 Draft/设置的隔离和不可变 digest。
-6. **补真实 Web 与交接。** 在 `web/tests/e2e/automation-settings.python.spec.ts` 增加
-   `automation settings leave manual organizing independent` 场景：表单 Save 1025/10000
+6. **补真实 Web 与交接。** 优先在 `web/tests/e2e/automation-settings.python.spec.ts` 增加
+   设置与手动整理隔离场景（建议统一测试标题前缀，便于定向运行）：表单 Save 1025/10000
    后 Files 正常摘要/确认/真实效果；另以容量 1 的真实自动化占用验证不同来源手动仍可
    完成。既有 harness 只推进真实 Worker/读取隔离文件事实，不代替正常页面命令。
    改前应暴露错误，改后不能靠降值/重启/route mock/吞 400 通过。跑受影响检查后提交
@@ -138,31 +146,37 @@ Task 生命周期、repository 调度权威、claim/heartbeat/fence、整理应�
 ## Acceptance Criteria
 
 - [ ] **AC-S1 — 自动化合法范围与严格发布。** 现有表单/API 仍支持 capacity 1–10000，
-  1/1025/10000 均供真实 due/Run once 准入、执行并持久化正确 Task/Result；无需创建
-  10000 个任务。0/10001/bool/小数/错误类型拒绝，保留 Active/输入，无工作/Provider/
+  1/1025/10000 均有真实自动化准入、执行与正确 Task/Result 的证明，分配到 due/Run once
+  覆盖两种消费者，无需每个值重复两条旅程或创建 10000 个任务。
+  0/10001/bool/小数/错误类型拒绝，保留 Active/输入，无工作/Provider/
   媒体效果；三个其他字段保留既有严格范围，Save 不发布无关 Draft。
 - [ ] **AC-S2 — 双向额度隔离。** 自动化容量 1 被真实 due 或定义 Run once 占用时，
   不同来源的 Files/direct CLI/API/remote-source 工作仍能准入和完成；反向多个手动
-  queued/claimed 工作不挤占自动化额度。手动仍受独立默认 100 或受信注入的适用有界
-  容量保护，不是无限准入。真满的自动化 Run once/due 和手动各自拒绝/恢复正确，
+  queued/claimed 工作不挤占自动化额度。手动仍受独立默认或受信注入的适用有界容量
+  保护，不是无限准入。真满的自动化 Run once/due 和手动各自拒绝/恢复正确，
   不新增孤儿、消费授权、推进 due 或偷偷自动续作；同请求重复满时仍精确读回原工作。
-  手动真满可用现有受信构造注入小容量验证，不要求堆满默认 100；正常入口默认值另核对。
+  手动真满可用现有受信构造注入小容量验证，不要求堆满默认容量；另核对正常入口使用
+  交接声明的独立默认及其 override。
 - [ ] **AC-S3 — 原来源与同 Task 继续。** due/Run once 不论入口 Web/API/CLI 都属于
   自动化；ordinary remote/direct CLI 不因共用 runner 变自动化。等待人工后由 Task
   Center 触发四类决定/分析/确认，仍用原来源与 pin，不因点击者/页面变换额度或刷新
   授权。覆盖两类等待重入、原子最后名额竞争、并发重复 due、unknown/伪造来源拒绝。
   来源反例基于现有入参校验和持久关联，不构造不存在的入口或正常旅程不可达的漏洞。
 - [ ] **AC-S4 — 四字段真正隔离消费。** 逐个合法改变 capacity、stale、Worker poll、
-  Scheduler poll，手动准入/确认/重入容量、实际常驻调度 deadline、观察/失败规则不变。
+  Scheduler poll，手动准入/确认/重入容量、常驻调度策略、观察/失败规则不受其控制。
   在真实 resident 中保存很长自动化 poll（如 3600s），不同来源手动仍按独立周期推进
   到实际效果；不能只调用 `run-next` 或读采用行替代常驻行为。手动短 tick/配置 recheck
   不提前触发自动化业务 poll/due。观察阈值与 lease/heartbeat 区分，不自动重放/标终态。
   采用读回只证明实际已安装的自动化范围/值，显式 override、live/stopped/pending 保真。
+  断言实际领取与推进结果，不锁定每次 wake/sleep、内部 deadline 数值或恰好第 5 秒
+  完成；正常 heartbeat/config 检查及串行在途工作造成的资源等待均允许。
 - [ ] **AC-S5 — 完整 Web。** 两个高合法容量经真实表单 Save→本次 Active→Files 单选
-  →批量整理 202→原摘要→正常确认→真实 Worker/Executor 整理，确认前零媒体变更，
+  →批量整理被持久接收→原摘要→正常确认→真实 Worker/Executor 整理，确认前零媒体变更，
   后有正确源/目标、Result/pin 和页面状态。容量 1 且自动化已满时该不同来源旅程也成功。
   保留多选/文件夹/混选实际范围和过滤；无本次 400/无效刷新提示、降值、额外确认或
   CLI 代替操作。检查桌面/窄屏关键状态；按钮回归和类型检查随受影响 Web 文件覆盖。
+  现有接收接口的 202 另作兼容检查，不能代替完整用户结果；不以固定提示全文、DOM
+  层级、CSS 数值、截图逐像素或测试名称作为本 Task 的独立阻塞条件。
 - [ ] **AC-S6 — 跨范围安全/持久化。** 自动化与手动争用同一真实来源仍只允许有效所有者；
   claim/control/fence、未知结果非重放、取消调用中不提前释放、全部人工等待占 0、独立
   Result/成功兄弟保留。设置发布和同版本 reopen/restart 不改 admitted pin、原始来源、
@@ -177,6 +191,13 @@ Task 生命周期、repository 调度权威、claim/heartbeat/fence、整理应�
 总用时 50%；优先真实关键复现与代码/结果分析，记录实际测试耗时，不空等补比例、不删
 断言/加重试/放宽超时。无法完成的验收保留 pending，不能签 PASS 或交 Developer 跑全量。
 测试使用临时 DB/媒体、fake/local Provider 和既有 harness，不用用户服务或生产数据。
+
+**覆盖分配：** 1025 检查已知故障，10000 检查合法上界，1 检查满额与双向隔离；四字段
+各有消费范围证明。真实 Web 保留上述两个高值及已满场景，due/Run once、各手动入口、
+四类继续和桌面/窄屏按共享路径与风险分配集成/native 覆盖，不要求“数值 × 入口 × 恢复
+类型 × 视口”全组合。Desktop/narrow 均核对关键操作可用和状态可读，不重复所有容量。
+下列测试文件/标题是定位与运行建议，可按现有组织做等价调整并记录实际命令；不能因此
+漏掉消费者、真实 Web/常驻执行或安全结果。只从现有可达入口准备场景，不造探测入口。
 
 ### Developer — affected tests
 
@@ -198,14 +219,17 @@ Python 改动文件跑 ruff check / ruff format --check / compileall；Web 改�
 unit 检查。Developer 不承担全仓 Python/Web/E2E、wheel/Docker 或发布矩阵。
 
 新增 Web 回归由 Developer 在 `web/` 执行（复用独立发布 harness，不是全量 E2E）：
+建议使用 `automation settings leave manual organizing independent` 作为场景标题前缀，
+以下定向命令据此给出；采用其他标题/位置时同步替换实际选择器。
 
 ```bash
 npm run build
 npm run test:e2e -- --config=playwright.python.automation.config.ts tests/e2e/automation-settings.python.spec.ts --grep 'automation settings leave manual organizing independent'
 ```
 
-命令必须实际选中高值两例和自动化已满例，零匹配不算通过；不同临时来源避免前例 MOVE
-移走文件。正常表单/导航/选择/确认都用页面动作，harness 仅驱动真实后台/读取证据。
+命令必须实际覆盖高值两例和自动化已满场景，不限定 test case 数量，零匹配不算通过；
+不同临时来源避免前例 MOVE 移走文件。正常表单/导航/选择/确认都用页面动作，harness
+仅驱动真实后台/读取证据。
 
 ### B — acceptance and full regression
 
@@ -257,4 +281,6 @@ npm run test:e2e -- --config=playwright.python.automation.config.ts tests/e2e/au
 
 本轮决策：按 committed settings-scope amendment **重规划同一 Task47.6**；原数字统一
 方案已替换，ID/Base 与缺陷事实保留。当前无实现候选，Task PLANNED、Slice FIX REQUIRED。
+本次按用户反馈收松固定默认数字、内部循环/时刻、UI 形态和测试组织的约束，以范围隔离、
+完整操作结果及安全边界验收；不降低真实入口/常驻/Web、T4 与全部 Slice 结果的要求。
 下一步 Developer 仅按此新范围实施，随后 B 独立审完整原 Task Base..Head 并按 AC-S7 收尾。
