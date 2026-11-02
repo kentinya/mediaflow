@@ -36,6 +36,12 @@ Blocking finding: A-P1-2 — published legal capacity exceeds Task kernel range
 - 规划检查：governance、`git diff --check` PASS；
   `.venv/bin/python -m unittest tests.test_release_security` **8 tests OK / 0.022s**。
   关键复现与该测试合计约 0.50s，连同短检查远低于本轮总用时 50%；未跑全仓验收。
+- Web 补充修订起点：branch `main`，HEAD
+  `b1aacbe6c9b4573df85ce104e8993f4fa96b79c0`；governance PASS，无 tracked 修改，
+  上述未跟踪项仍保留。已读该 committed Slice 的 A Web follow-up 及实际脚本/请求证据；
+  这是同一 A-P1-2 的入口补证，继续 Task47.6，保留原 Base/Goal/Medium/T4。
+  本轮仅更新 Task；governance、`git diff --check` 及文档消费者
+  `tests.test_release_security`（8 tests / 0.022s）通过，测试耗时低于本轮 50%。
 
 ## Goal / complete journey
 
@@ -43,6 +49,11 @@ Blocking finding: A-P1-2 — published legal capacity exceeds Task kernel range
 Active 值；之后从既有资源库 Files、运行一次、定时或普通 CLI/remote 发起已授权的
 整理，实际消费者接受同一个合法范围，少量正常媒体能完成真实整理并保留 Task/Result。
 容量是同时占用共享准入名额的 Task 数，不是文件数、Worker 数或新并行度。
+
+Web 的完整主旅程是：自动化 → 全局设置 → 输入并保存 1025/10000 → 确认该次新 Active
+读回 → Files → 选择一个真实文件 → 批量整理 → 原计划摘要 → 确认整理 → Worker 完成
+配置的 MOVE/COPY → 页面与实际源/目标/持久结果一致。合法配置不应再使发现申请失败，
+不能把接口单独成功或 CLI 成功当作这条 Web 旅程完成。
 
 异常输入仍在发布/消费边界被拒绝，保留原 Active 且没有新增工作/效果。真正队满时，
 保持已有任务、选择、摘要、结果和授权；用户看到队满原因，可以在名额释放后主动重试
@@ -59,6 +70,18 @@ GET Active 1025 → PUT 1024 201 → 原 CLI exit 0 / 实际 COPY 目标 1`。
 本轮原始日志：`.git/validation-evidence/c8657032/b-planning-47.6/capacity-settings-journey.log`
 （本地 ignored），脚本位于 `.git/validation-evidence/5c808d4a/a-final-review/`；
 这是缺陷复现成功，不是修复验收通过，执行用时约 0.48s。
+
+A 在 `b1aacbe6:SLICE.md` 补充的真实 Web 证据：通过现有表单保存 1025 返回 201、
+Active 1025；Files 选中 `One.2001.mkv` 点击“批量整理”，现有
+`POST /api/v1/resource-libraries/source/files/discoveries` 返回 400 `invalid_request`，
+包含内核 1–1024 错误。页面只显示“无法开始整理发现，请刷新后重试。”，但刷新不修复
+已发布容量；此时源仍在、目标为空。同一表单保存 1024 后，该入口返回 202，正常摘要/
+明确确认后，真实 Worker/OrganizerExecutor 完成 MOVE（源消失、目标存在）。
+原始脚本与 `proof.json`/截图位于
+`.git/validation-evidence/5c808d4a/a-final-review/web-capacity/` 的
+`capacity-web.spec.mjs`、`test-output-final/capacity-web-existing-Web--2811c-4-restores-actual-execution/`。
+A 记录 1 个真实 Python Chromium 旅程通过/4.0s，断言的是缺陷及降值恢复；B 本轮核读
+脚本和请求/文件证据，没有声称重新运行浏览器或已修复。
 
 实际不一致：
 
@@ -81,6 +104,12 @@ GET Active 1025 → PUT 1024 201 → 原 CLI exit 0 / 实际 COPY 目标 1`。
    与 `tests/test_automation_settings_management.py` 的真实 WSGI GET/PUT/helper，在同一
    managed DB 保存 1025/10000 后运行真实 CLI，断言 Active、Task/pin、Result、COPY
    文件效果及终态容量，而非只断言常量/函数接受整数。修改前应复现现有消费失败。
+   同时在现有 `web/tests/e2e/automation-settings.python.spec.ts` 中补
+   `published capacity reaches Files organizing` 旅程，参数化 1025/10000，复用 A 已验证的
+   页面动作与现有 Python harness。每例用独立临时源/新实例，避免上一例 MOVE 移走来源。
+   设置必须由表单保存；等待该次 PUT 和最新 Active/输入读回，再导航 Files 点击批量
+   整理、摘要确认。禁止 route mock、API 代点正常按钮、改存 1024 或重启来让用例通过。
+   现有 harness 只推进真实后台 Worker/读取临时文件状态；修复前应在合法值准入处失败。
 2. **最小统一合法边界。** 保持所有公开设置/配置路径的整数 1–10000 契约，让 kernel
    及 repository 的同一验证覆盖此范围。优先复用一个无依赖循环的 domain 容量上界，
    必要时在现有 domain 模块中共享；各边界的输入错误语义可以保留。无需为一个数建立
@@ -89,6 +118,9 @@ GET Active 1025 → PUT 1024 201 → 原 CLI exit 0 / 实际 COPY 目标 1`。
    Worker 效果、Run once、due→Worker、普通 CLI 和已支持 remote ticket。可以跨场景
    分配 1025/10000；所有入口不必重复完整数值矩阵，但不能只 mock 参数传递。
    不改其权限、选取范围、itemLimit、Run once `min(itemLimit,100)`、定义 due/一次意图。
+   重点修复已证实的 Files 真实准入，确认合法容量不再落入
+   `StorageFilesPage.tsx` 的通用刷新提示；仅改提示、吞掉 400 或假建成功页面不算修复。
+   此问题由容量一致性消除，不要求另做全局错误分类/文案体系。
 4. **保留容量/持久化安全。** 沿用现有 count 与事务，不改 queue-full/authority/source
    检查顺序或 slot 语义。用容量 1 的既有少量工作证明满/释放/重试、并发重复准入及
    人工等待重入；无须塞满 10000。高合法配置发布后同版本 reopen/消费者重新装载仍能
@@ -102,6 +134,10 @@ GET Active 1025 → PUT 1024 201 → 原 CLI exit 0 / 实际 COPY 目标 1`。
 - [ ] **AC-CAP1 — 合法设置可用。** 既有全局设置 GET 仍发布 1–10000；Save/readback
   1025、10000 后，同一部署的普通 CLI 完成实际 COPY；1/1024 的已有能力保持。
   每次成功有正确 Task、对应 Result、确切配置 pin 和文件效果，结束占用 0。
+  **Web 必须同样完成：** 两个高合法值均经真实表单 Save→最新 Active→Files 选单文件→
+  批量整理准入 202→原摘要→确认→真实 Worker/Executor 整理。确认前无媒体变更，确认后
+  页面状态/Task/Result/配置 pin 与 MOVE/COPY 实际源/目标一致，无重复执行；不出现本次
+  400/误导刷新提示，不靠降低容量或绕开正常确认恢复。截图保留桌面/窄屏关键状态。
 - [ ] **AC-CAP2 — 各入口一致。** Files 的原摘要/确认、Run once、due 和支持的
   remote-ticket 工作在高合法容量下经真实消费者推进并产生真实结果；没有 Job/第二队列，
   无参数绕过或入口专用 clamp。定时/Run once/手动各自授权、范围和限额不变。
@@ -137,6 +173,17 @@ GET Active 1025 → PUT 1024 201 → 原 CLI exit 0 / 实际 COPY 目标 1`。
 git diff --check
 ```
 
+新增 Web 回归属于本 Task 的直接受影响测试，Developer 在 `web/` 执行（不是全量 E2E）：
+
+```bash
+npm run build
+npm run test:e2e -- --config=playwright.python.automation.config.ts tests/e2e/automation-settings.python.spec.ts --grep 'published capacity reaches Files organizing'
+```
+
+该命令必须实际选中并执行 1025/10000 两例，零匹配不算通过。复用已有独立发布 harness，
+不与其他 native 测试并行共享 Active。失败时保留本次请求、截图与文件事实；不复制 A 的
+“1025 失败→降低值恢复”断言冒充修复通过。若修改 Web 文件，另跑相关 changed-file 检查。
+
 对实际新增/修改的 Python 文件执行 `.venv/bin/ruff check <files>`、
 `.venv/bin/ruff format --check <files>`、`.venv/bin/python -m compileall -q <files>`。
 若修改 runtime/Scheduler/authorization 等共享验证，追加其直接受影响模块
@@ -149,12 +196,19 @@ Provider。Developer 不承担完整 Python/Web/E2E、wheel 或容器矩阵。
 - 先审 `c8657032dae768d93b12387a5e58db502e23a7ee..candidate` 全部变更；独立通过现有
   settings GET/PUT→真实 CLI 验证 AC-CAP1/3/5，再查 AC-CAP2/4 的实际结果。不复用仍然
   断言 bug 存在的 A 脚本作为“修复通过”；用正确效果断言独立验证。
+  同时独立复核上述真实 Web Save→Files→摘要/确认→实际效果；A 的缺陷浏览器证据只能
+  证明问题已存在，不能替代候选在高合法值的成功验收，也不能用 fake E2E 或纯 API 代替。
 - 执行 [shared full T4 gates](docs/development-workflow.md#shared-full-regression-commands)：
   新候选全 Python、静态质量/示例/禁依赖、适用 Web/unit/fake E2E、native、安全/持久化、
   干净 wheel/source-external installed consumers 和 Docker fresh/security/同版本 restart。
   安装包也验证合法高容量的真实 CLI 准入/效果，不以 help 或源码测试代替。
 - native 复用真实 Python harness（cwd `web/`，先 `npm run build`）：
-  `npm run test:e2e -- --config=playwright.python.config.ts tests/e2e/automation-settings.python.spec.ts tests/e2e/automation-run-once.python.spec.ts tests/e2e/automation-workspace.python.spec.ts`。
+  设置及新 Web 回归用
+  `npm run test:e2e -- --config=playwright.python.automation.config.ts tests/e2e/automation-settings.python.spec.ts`；
+  其他受影响自动化旅程另开新 harness：
+  `npm run test:e2e -- --config=playwright.python.automation.config.ts tests/e2e/automation-run-once.python.spec.ts tests/e2e/automation-workspace.python.spec.ts`。
+  不让设置发布改变其他 fixture 已固定的 Active/pin，不凭旧 Published 提示断定本次 Save
+  读回已完成；沿用正常最新值/请求读回等待，不加 sleep/retry 或放宽断言。
   对实际全局设置 Save→读回→整理结果检查桌面/窄屏；原 Files、四类续作、历史提醒与
   普通文件操作等全 Slice 必需 native 依据现有最终包补齐/匹配复用，不写新的测试平台。
 - 如输入完全未变，按 workflow 的明确 source/tests/harness/dependencies/config/artifact
@@ -176,10 +230,10 @@ Provider。Developer 不承担完整 Python/Web/E2E、wheel 或容器矩阵。
 | 结果 | 当前判断 |
 |---|---|
 | RO-1 — Task 调度/执行 | 已有统一 Task/claim/slot；合法配置不能准入，A-P1-2 阻塞。 |
-| RO-2 — 所有入口共用引擎 | 共享链路已存在；CLI 已证实受阻，其他实际消费者须验证高合法值。 |
+| RO-2 — 所有入口共用引擎 | 共享链路已存在；CLI 与 Web Files 均已证实受阻，各真实消费者须验证高合法值。 |
 | RO-3 — 同 Task 四类续作 | 前序已通过；本轮不新增恢复，修复验收保留等待重入/授权/独立结果。 |
 | RO-4 — Job 退出/配置持久化 | fresh/同版本证据保留；AC-12 的支持配置意义因容量不一致未满足。旧任务/跨版本排除。 |
-| RO-5 — 完整操作入口 | Settings 显示合法 Active 而普通整理失败，仍未完成。其他既有表面不扩展。 |
+| RO-5 — 完整操作入口 | Web Settings 已发布合法 Active，Files 批量整理却 400 并提示无效刷新；该完整旅程仍未完成。其他既有表面不扩展。 |
 | RO-6 — 来源历史/新整理 | Task47.5 接受与 A 验证保留；本轮验收防止共享准入调整破坏其行为。 |
 
 仅此兼容缺口支持本轮修正；没有证据要求重做四类恢复、历史或队列架构。
