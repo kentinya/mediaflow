@@ -15,13 +15,14 @@ V2-AUTO-001/007/008 已同步，不能把旧隔离验收标成新方案 PASS。
 Task ID: 47.6
 Task Type: SLICE
 Parent Slice: 47
-Status: FIX REQUIRED
+Status: READY FOR B REVIEW
+B Review Decision: PASS
 Task Base: c8657032dae768d93b12387a5e58db502e23a7ee
 Difficulty: High
 Test Level: T4
 Planner / Reviewer: B
 Current correction: Three system-owned runtime settings, shared organizing capacity, retire stale-age parameter
-Implementation gate: B FIX REQUIRED AT 43d3fdeb; CURRENT CAPACITY MUST APPLY TO WAITING-SUMMARY CONFIRMATION
+Implementation gate: B PASS AT 5134c78b; NO NEXT IMPLEMENTATION TASK; SLICE READY FOR A REVIEW
 ```
 
 ## Replanning decision / preflight
@@ -144,11 +145,12 @@ Active/快照可保留原始旧字段并兼容读取、忽略其值，不批量�
    只在已有入口造临时任务，不直接 INSERT 队列或构造不可达“漏洞”。交受影响结果及
    READY FOR B REVIEW，B 再独立审完整 Task Base..candidate 和执行 T4。
 
-## B correction guidance — current capacity at confirmation
+## B correction guidance — current capacity at confirmation (resolved)
 
 本轮 B 审查 `c8657032dae768d93b12387a5e58db502e23a7ee..43d3fdeb9ea1143856474c14df688e3218a32ffe`
 （产品实现 `bf6968c11e1f40890454bad2c743d99d16888e4a`；后续仅 Task 报告）。
-保持 Task47.6/Base/High/T4，不新建 Task，不修改 Slice 边界。
+保持 Task47.6/Base/High/T4，不新建 Task，不修改 Slice 边界。以下为原阻塞及修复指导；
+本轮已按真实入口复验通过，B-P1-2 已解除，具体接受结果见 B Review Result。
 
 **B-P1-2：旧摘要确认绕过当前系统整理额度。** 系统页保存额度 1025 → Files 选择
 `Three.2003.mkv` 整理并生成摘要（人工等待不占名额）→ 系统页降为 1，已有自动化工作
@@ -181,22 +183,22 @@ harness 推进 Worker，没有 INSERT 队列、伪造状态或新增产品入口
 
 ## Acceptance Criteria
 
-- [ ] **AC-S1 — 位置和发布完整。** 系统设置三项可读/可编辑/可 checked Save，自动化不再
+- [x] **AC-S1 — 位置和发布完整。** 系统设置三项可读/可编辑/可 checked Save，自动化不再
   提供独立设置 tab/form；旧链接安全到达系统入口，不发布、不丢认证返回。仅三项 Save
   不发布无关 Draft；invalid/stale/denied/unknown 分阶段解释并保留输入/原 Active。
   真实消费者采用与发布区分，不能用 generic API binding “consumed”替代真实证据。
-- [ ] **AC-S2 — 合法范围与所有整理消费者。** 容量 1/1025/10000 均有实际整理消费证明，
+- [x] **AC-S2 — 合法范围与所有整理消费者。** 容量 1/1025/10000 均有实际整理消费证明，
   分配覆盖 due/Run once、Files 和普通 CLI/API/remote；0/10001/bool/小数/错误类型拒绝。
   poll 有限正数校验保持严格；不静默截断/限幅。无需 10000 个任务或全组合。
-- [ ] **AC-S3 — 统一容量和恢复。** 手动占最后名额会限制新自动化，反向亦然；不是保留两套
+- [x] **AC-S3 — 统一容量和恢复。** 手动占最后名额会限制新自动化，反向亦然；不是保留两套
   来源额度。满额新建及同 Task 重入保持原等待/摘要/选择/结果，消费授权和写库原子；
   due 不推进，已准入重复请求精确读回。释放后通过正常重试/下一 due 检查成功。
   等待/稳定/在途取消计数正确；四类继续保留 Task、来源、pin 及合法授权。
-- [ ] **AC-S4 — 真实周期。** 实际 resident 安全采用两个周期，包括 idle/长等待/override/
+- [x] **AC-S4 — 真实周期。** 实际 resident 安全采用两个周期，包括 idle/长等待/override/
   stopped/pending/同版本 restart；共享 Worker 的手动、自动化及普通文件操作符合其说明。
   Scheduler 只检查 due；不改定义计划或通知周期。配置/心跳 wake 不冒充业务检查。
   验收领取/推进结果，不要求每个任务固定等待/完成秒数，也不把正常串行等待当故障。
-- [ ] **AC-S5 — 参数删除且现有判断不变。** 系统/自动化设置及其字段元数据、有效运行
+- [x] **AC-S5 — 参数删除且现有判断不变。** 系统/自动化设置及其字段元数据、有效运行
   设置/采用读回不再把旧参数列为可配置或生效字段；focused/general 字段编辑提交它时
   明确拒绝且零发布。新默认配置无该键亦能启动/保存/执行；既有 Active 带旧键仍能
   读取、保存三项并同版本重启，旧快照 digest/pin 不变。原文 JSON/历史中出现该键不算
@@ -204,16 +206,16 @@ harness 推进 Worker，没有 INSERT 队列、伪造状态或新增产品入口
   心跳失联、租约到期/续约、调用超时和未知效果不重放保持原语义；不新增无进展提醒、
   总运行超时、自动失败/取消/释放额度/重排/重放。使用受信测试时钟或本地受控失败，
   不为此实等分钟级超时或扩建通用超时测试平台。
-- [ ] **AC-S6 — 完整 Web 和普通操作。** 系统页 Save→本次 Active→Files 选择→持久接收
+- [x] **AC-S6 — 完整 Web 和普通操作。** 系统页 Save→本次 Active→Files 选择→持久接收
   →摘要→正常确认→真实 Worker/Executor→正确文件/Result/pin；1025/10000 都覆盖。
   多选/文件夹/混选范围及过滤保留；确认前零变更。两类库普通复制/移动/删除的本地
   状态与实际效果保留。桌面/窄屏关键操作可读可用，
   不锁定 DOM/CSS/截图像素、测试名称或文案全文。现有 HTTP 兼容检查不替代用户结果。
-- [ ] **AC-S7 — 安全/持久化。** 同源互斥、原子最后名额竞争、due 并发唯一、RBAC、
+- [x] **AC-S7 — 安全/持久化。** 同源互斥、原子最后名额竞争、due 并发唯一、RBAC、
   claim/fence、在途取消、成功兄弟保留、未知非重放及 A-P1-1/B-P1-1 不回归。
   设置迁页/发布/同版本 restart 不改旧配置 digest、已准入执行 pin、来源或结果。
   新系统额度可影响机器重入准入，但不改执行快照或赋予新权限。
-- [ ] **AC-S8 — 独立接受和停止。** A 新合同已 checkpoint；B 审完整原 Task Base..candidate，
+- [x] **AC-S8 — 独立接受和停止。** A 新合同已 checkpoint；B 审完整原 Task Base..candidate，
   执行适用 T4，重评全部修订后 Slice 结果/必需表面。全部满足交 fresh Closure Packet 给 A，
   否则同 Task FIX REQUIRED；B 不关闭 Slice，不以计划/停工改动代替接受。
 
@@ -293,16 +295,13 @@ npm run test:e2e -- --config=playwright.python.automation.config.ts tests/e2e/au
 
 ## Current whole-Slice reassessment
 
-| 结果 | 新方案下当前判断（不是产品接受） |
-|---|---|
-| RO-1 | 统一 Task/claim/fence 基础保留；共享额度合同已同步，实际有界准入和合法上界仍待验收。 |
-| RO-2 | 共享引擎保留；所有整理入口及继续必须使用统一系统运行策略。 |
-| RO-3 | 四类同 Task 恢复事实保留；统一满额恢复/授权/pin 需要新验收。 |
-| RO-4 | 同版本/pin/digest 安全保留；三项真实消费、参数删除/既有配置读取与 restart 待验收；现有失联/租约/调用超时判断不变。 |
-| RO-5 | 系统页迁移、自动化 tab/导航调整、常驻普通操作及明确错误/恢复待完成。 |
-| RO-6 | Task47.5 与 A 验证事实保留；历史结果、原始来源、同源互斥和失败提示不回归。 |
+六项结果已按修订后合同完成 B 重评；完整交接包见文末。Task47.6 PASS，停止规划，
+SLICE READY FOR A REVIEW。A 仍须独立审查 Slice Base..Head，B 不关闭 Slice。
 
 ## Developer Completion Report
+
+本节保留 Developer 交接时的结果及 pending 清单；其后 B 执行与最终决定见下节，
+不把交接时 pending 误作当前仍未完成。
 
 Status: READY FOR B REVIEW. B-P1-2 correction candidate:
 `dc513d7f749a8f5bee41676925318af162e81aaf` on `main`, parent
@@ -359,41 +358,109 @@ Known risks / remaining work for B:
 
 ## B Review Result
 
-**Decision: FIX REQUIRED — B-P1-2**, reviewed on 2026-11-03 (Asia/Shanghai).
-Reviewed full Task range: `c8657032dae768d93b12387a5e58db502e23a7ee..43d3fdeb9ea1143856474c14df688e3218a32ffe`.
-Product candidate: `bf6968c11e1f40890454bad2c743d99d16888e4a`; the two successors change
-only `TASK.md`, verified by diff. Governance preflight PASS. Branch `main`; pre-existing
-untracked OS/log/reference/output files preserved; no pre-existing tracked edits. This B round
-changes only Task guidance/review, with no product implementation or Slice closure.
+```text
+Decision: PASS
+Task Base: c8657032dae768d93b12387a5e58db502e23a7ee
+Reviewed Head: 5134c78b22057781d472e6ebf61a1799d9e40324
+Product implementation: dc513d7f749a8f5bee41676925318af162e81aaf
+Developer handoff: 05772d667724db1d984ba273db10e2bc7cee0f97
+Branch: main
+Blocking findings: NONE — B-P1-2 resolved
+Next: SLICE READY FOR A REVIEW; no next implementation Task
+```
 
-阻塞与完整用户旅程见上方 B correction guidance。违反 AC-S2/S3/S7、Slice AC-2/12/26
-及 V2-TASK-011：用户已经看到系统队列已满，旧摘要确认却仍成功准入。根因是混用了
-“执行应保留的旧快照”和“重新进入队列应遵循的当前系统额度”。相关 fallback 于
-`b5a21ea39315e4e742e8ff2079216c31b8043fc6`（2026-10-31 07:30 +08:00）引入；
-本候选 `bf6968c1`（2026-11-03 01:54 +08:00）仅为 resident Worker 增加动态额度读取，
-没有修正 Web 确认链路。因此这是当前 Task 必须修复的已有缺口，不误称该提交新引入。
+B 独立复核完整原 Task Base..Head；结合上轮范围审查，核对当前完整清单和本轮修复增量，
+没有改 Base 或以 Developer 报告代签。起始 tracked 工作区干净；预存 OS/log/图片/output
+未跟踪文件保持原状。治理检查通过，无 push/部署、历史重写或用户媒体/数据库访问。
 
-全部 Slice 结果重评：RO-1 的当前额度重入未完成；RO-2 共享引擎事实保留，但确认的系统
-额度消费不完整；RO-3 同 Task 恢复基础保留，同类确认链路需修复后验收；RO-4 旧 pin/
-同版本持久化基础保留，本候选完整 restart/安装包验证 pending；RO-5 三项系统表单和旧
-链接已有实现，但满额→旧摘要确认的用户旅程不满足；RO-6 无本轮新增阻塞，Task47.5
-历史事实保留，最终全 Slice 回归仍 pending。不能提交 SLICE READY FOR A REVIEW，
-不新规划其他 Task，不修改 A 的已审实现头或 Roadmap/Progress 历史接受记录。
+### 用户结果与修复接受
 
-本轮独立验证（cwd repository root，Web 命令使用 `npm --prefix web`）：
-- governance PASS；production Web build PASS。
-- `.venv/bin/python -m unittest tests.test_task_scheduling tests.test_system_settings_management tests.test_automation_settings_management`
-  — **120 tests OK / 4.304s**。
-- 真实浏览器当前额度复现：保留原断言，期望 409，实际 **202 admitted / 1 failed / 1.2s**。
-  截图已人工查看，页面明确显示“整理执行情况 / 已准入”，不是仅 API 回显。
-- 前两次 B 临时脚本未到业务断言：一次对初始同值 100 点击 disabled Save，另一次整页
-  返回未重新连接内存凭据；分别修正为保存 1025、正常 Connect 后得到上述业务失败。
-  原日志保留，不将测试脚本问题归为产品缺陷，也未加重试或放宽超时。
-- 现有 native `system runtime settings` **4 passed / 9.1s**，覆盖迁页、旧链接、1025/10000
-  的真实 Files 效果及自动化占满→Files 拒绝→释放→显式重试。昂贵全 T4、
-  wheel/installed consumer、Docker、完整 native/安全矩阵依 workflow §6 在已证实阻塞后
-  保持 pending，未复用 Developer 报告冒充独立接受。
+- **旧摘要确认遵循当前额度。** 原 B 浏览器复现现在返回 **409 capacity_full**，仍停留
+  摘要；源码中的相同链路覆盖普通确认、直接授权确认及任务中心恢复确认。额度从
+  1025 降到 1 后，竞争任务占满，原 Task 保持人工等待，没有执行记录或已消费授权，
+  源文件和摘要 pin/digest 不变；竞争者到人工边界释放后，显式再确认能完成真实 MOVE。
+  反向从 1 提升到 2，旧摘要也能使用新额度，不被旧快照限制。
+- **三项设置完整工作。** 系统页是唯一常用表单，自动化旧链接安全跳转；非法/陈旧/
+  未知保存的纠正和核对保留。真实系统页保存 1025、10000 后，Files 的选择→摘要→
+  正常确认→Worker/Executor→真实目标效果通过。容量 1 的自动化占用→Files 拒绝→
+  释放→显式重试，以及反向手动占用阻止 due 的证据齐全。
+- **周期与普通操作保留。** 实际 Worker/Scheduler 进程的空闲/长周期/覆盖值/多实例/
+  重启采用测试通过；配置检查和心跳不成为业务轮询。源码核对同一个 Worker 业务 step
+  依次消费整理和两类库普通 runner，Scheduler 只 tick due。两类库真实复制/跨 Storage
+  移动/删除、独立结果/取消/状态恢复和本地效果通过，不纳入整理额度或新增并行度。
+- **旧参数退出并兼容读取。** 默认配置及有效/可编辑/采用字段不再包含 stale-age；
+  focused/general 字段编辑明确拒绝且零发布。安装产物的真实 Worker 读取含旧键的
+  immutable Active，重启后仍采用剩余设置，原 digest 和原文旧键保留；不新增观察器、
+  总超时或自动重放。现有心跳、租约/续约、调用超时及未知效果保护回归通过。
 
-证据：`.git/validation-evidence/43d3fdeb/b-review-47.6/`，含完整复现脚本、三次日志、
-真实响应、截图/trace、focused/build/native 日志和 summary；仅本机 ignored 证据，未推送。
-本轮测试占比低于 50%，没有空等补比例。下一步由 Developer 按同一 Task 修复并交新候选。
+### 实际验收与证据
+
+本机 ignored 根：`.git/validation-evidence/05772d66/b-review-47.6/`。
+原始命令、cwd、日志、分组清单/时间、截图/trace、产物身份及初始失败保留；不宣称远程可访问。
+Python/包装命令 cwd 为 repository root；Web 命令 cwd `web/` 或等价 `npm --prefix web`。
+
+| 门禁 | 实际结果 |
+|---|---|
+| 全 Python | 四组模块清单与 unittest discover 的总数一致，无重漏：637+637+637+636 = **2547 tests OK**，7 项可选外部服务/耐久环境 skip；含并发、授权、pin、租约、未知非重放、C→A 身份和前序 A-P1-1/B-P1-1。`python-full-plan.json`、`python-full-{0..3}.log`。 |
+| Web 质量/单元 | typecheck/lint/format/build PASS；**88 files / 1268 tests PASS**。B 修改验收脚本后补 typecheck、相关 ESLint/Prettier 和 whitespace 检查。 |
+| Fake E2E 全范围 | 初始 254 项中 251 通过；2 个展示用例仍点已移除的 settings tab，1 个真实 Python 用例误入 fake runner。B 按合同修正原导航、窄屏正常打开菜单、断言旧 tab 不存在，保留所有原业务/视觉/零写入断言，2 项通过；真实用例只从 fake runner 排除并在原生运行中通过。最终 fake 适用 **253 项覆盖通过（251+2）**，不是伪称原单次全绿。 |
+| Native 设置 | `playwright.python.automation.config.ts` + `automation-settings.python.spec.ts` **15 passed / 22.4s**；另保留原 B 精确复现 **1 passed / 2.3s**。 |
+| Native 自动化/恢复 | Run once + workspace 全范围先 **12 passed / 1 failed**，失败为同一个旧 settings-tab 断言；修正原测试的设置入口后该用例 **1 passed / 1.9s**。合计 **13 项覆盖通过**；含成功兄弟保留、真实冲突恢复和原记录。 |
+| Native Files/普通操作/历史 | `playwright.python.config.ts` 下 live Files、Task Center visual、source history **8 passed**；`playwright.direct-files.python.config.ts` 下两类库普通操作 **22 passed / 40.2s**，含实际 Move/Delete、批量及失败/取消恢复。 |
+| 视觉 | 实看系统页 1536/390px、真实 Files 整理 380px、普通跨 Storage Move 结果截图；三字段/保存/采用状态可读可达，普通操作各项结果可读，无页面横向溢出。实例诊断表在自己的滚动区域内。 |
+| clean wheel | 从 `git archive 05772d66` 重建；169 个 Python 模块与提交逐字节相同，无缺失/多余。wheel smoke PASS，SHA-256 **987b9056a1d147c51ae88f9160e3278286122d9d2f42019c19ccf1997d507b72**。 |
+| 源码外 installed consumers | 新 venv、cwd 在源码之外、确认 import 来自 site-packages；补齐声明的 TMDB 可选依赖后 **53 tests OK / 48.462s**。额外经系统保存→实际 CLI COPY 1025/10000、API Run once→实际 MOVE 1025/10000，以及含旧键 Active→实际 Worker→同版本重启→digest 不变均通过。 |
+| Docker fresh/security | `scripts/docker_release_security_smoke_test.py --image mediaflow:task47-6-05772d66` PASS；四服务、RBAC/零效果拒绝、真实 Files 整理、non-root、秘密隔离及生产静态产物。 |
+| Docker 同版本 restart/fault | `scripts/docker_restart_fault_smoke_test.py --image mediaflow:task47-6-05772d66` PASS；真实 due/COPY、四服务重启、pin/身份、旧 owner fence 和未知效果非重放。image 为 **sha256:f79c1de40cec65c921f7c89526ba0905d8552740fffd76c4c93ab1150309669c**；image 已安装 CLI 的退役 retry-failed 正常 exit 2。 |
+| 公共质量 | governance、Ruff 全仓 check/format、compileall、pip check、两份公开配置 validate、源码/pyproject 禁用依赖检查及 diff whitespace PASS。 |
+
+当前治理脚本拒绝 active Task 的 `Status: PASS`，且 committed Slice 仍为 FIX REQUIRED
+时拒绝 NO ACTIVE notice。本次按 workflow §7 在本节记录正式 PASS，保留上方 Developer
+交接状态元数据并明确 B Review Decision，不改治理工具、不擅改 A-owned Slice 状态；
+本 Task 已无进一步实施授权。首次文档检查的状态格式拒绝已纠正，不是产品失败。
+
+B 在 `5134c78b` 仅提交了三份验收文件的上述导航/runner 修正，没有做产品修复。
+`production-reuse-input-diff.txt` 为空：与 05772d66 相比，Python、Web 产品源码、锁文件、
+harness、配置与构建输入均未改变，当前 wheel/image 与产品实现对应。未受影响的完整
+Python/unit/安装包/容器验收保持有效；改变的浏览器用例已用原业务断言重新执行。
+
+**初始失败及 B 处置：** 源码外 no-deps 环境缺少配置所需的 TMDB/httpx 可选依赖，导致
+一个空 Task 的 Worker 用例等待超时；补齐依赖后原 53 项全部通过。额外旧键重启探针
+曾误写既有 helper 名，改成实际 `wait_adoption` 后通过。首次普通 Files native 使用了
+不含其既有控制入口的 inventory harness，22 项失败；使用该文件注释指定的
+`playwright.direct-files.python.config.ts` 后 22 项全过。一次 B 导航修正漏开窄屏菜单，
+补正常 Open menu 操作后通过。均保留日志，不归咎产品，不改超时/重试/删除断言。
+
+可选真实远端/耐久环境未运行；旧任务/跨版本升级及 V1 仍按用户边界排除。数据库
+ResourceWarning、jsdom scrollTo 未实现提示不影响断言；不为这些非阻塞项另造 Task。
+本轮测试时间分配的实际记录见 evidence `timing.json`：完整回归及 B 验收环境纠正使
+已计时区间的测试占比超过用户要求的 50%，这是本轮执行偏差；没有空等补比例或
+隐瞒初始失败，也不把它包装为产品阻塞。后续不得沿用此偏差作为测试预算豁免。
+
+## Entire Slice reassessment / Closure Packet for A
+
+```text
+Slice: 47 — Unified Task Scheduling and Organizing Execution
+Slice Base: 5144ab1fc2344b06194969cc2c496835729664c0
+Implementation / Reviewed Head: 5134c78b22057781d472e6ebf61a1799d9e40324
+Product head: dc513d7f749a8f5bee41676925318af162e81aaf
+Required Outcomes and Surfaces: COMPLETE under committed user amendments
+Tasks completed: 47.1–47.5 accepted facts retained; 47.6 B PASS
+Blocking findings: NONE
+Decision: SLICE READY FOR A REVIEW — stop planning
+```
+
+| 全部结果/验收 | 当前重评与完整用户旅程 |
+|---|---|
+| RO-1 / AC-1–3 | 完成。手动或自动化提交→同一 Task→机器阶段占一个名额→全人工等待释放名额→确认/继续按当前额度原子重入；精确重复读回、同源互斥、due 并发唯一、在途取消及 fence 保留。 |
+| RO-2 / AC-4–6 | 完成。Files、due/Run once、普通 CLI/remote 用共享引擎；1025/10000 已有 Web/installed 实际效果。目录/混选/过滤/完整边界/稳定等待/附件与入口权限差异由当前全量和 native 覆盖，原解析/CLI 修复保留。 |
+| RO-3 / AC-7–8 | 完成。四类决定→分析→原 Task 摘要→明确确认；满额保留选择/结果/授权、释放后显式成功。已有成功兄弟、旧 pin、原 Automation 结果及未知效果不重放由 full/native/installed/restart 共同覆盖。 |
+| RO-4 / AC-9–12 | 完成适用 fresh→新工作→同版本 reopen/restart；无独立 Job 执行系统。旧配置原文含退役键仍可读取/保存三项并重启，digest/pin 不改；源码、clean wheel 和 image 身份一致。 |
+| RO-5 / AC-13–19 | 完成。系统设置新入口与旧链接、八视图/Attention、Files 本地普通操作、Automation 原记录、Dashboard/日志/导出/API/CLI/健康及 Pause 退出基础保留；实际新入口/窄屏/状态恢复已验收。A 独立终审仍待进行，B 不代签关闭。 |
+| RO-6 / AC-20–25 | 完成。最新 failed/partial 历史→自动排除/自由兄弟、手动提醒→正常确认→新真实效果；原始结果/未知证据/时间/pin 不改，CLI retry-failed 退役。Task47.5 与 A 已核对的事实保留，当前全量/native/installed/restart 覆盖其共享链路。 |
+| 三项系统设置 / AC-26 | 完成。三字段保存/真实采用、统一额度双向满额/释放/重入、普通操作共享 Worker 周期、due-only Scheduler、旧参数退出与可读历史均有上述代码及行为证据，无第二队列或新超时机制。 |
+
+**Documentation Reconciliation Needed：** A 独立复核完整 Slice Base..Head 后维护 A-owned
+`SLICE.md` 的候选/Next Action 与 Roadmap/Progress 现有 PLANNED/STOPPED 旧指针；
+保留旧 A review/Base/accepted ledger。A PASS 后再统一 CURRENT/TARGET 与正式关闭记录。
+本 B checkpoint 只交包，不关闭 Slice、不更新旧接受事实、不启动下一 Task。
