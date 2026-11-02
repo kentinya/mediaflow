@@ -61,7 +61,8 @@ Implementation authorization: USER-AUTHORIZED THIS ROUND — IMPLEMENTED, CANDID
   CLI organize/batch 与受限 remote organizing 的既有权限/来源边界。
 - **可见状态：** 自动排除有逐项原因/计数；手动原准备/摘要中有服务端生成的历史提醒，
   显示适用结果及可用的来源/目标/完成步骤/未知效果，复用现有摘要而非强制增加完整
-  历史面板。未知不是“系统已核验”。
+  历史面板。普通提醒用简短人话；可用目标和已知影响放在现有条目详情，内部步骤代码、
+  claim/lock/token 不成为必读内容或用户操作。未知不是“系统已核验”。
 - **动作：** 用户核对实际文件效果后，仍使用原“确认整理 N 项”选中确认；无需新的
   核查页、例行 checkbox、token 或技术恢复按钮。已有目录、目标和复制残留走正常策略。
 - **成功：** 新 Task 使用新请求准入时当前 Active 的不可变 pin 和当前已核对来源；
@@ -382,59 +383,91 @@ READY FOR B REVIEW），Task Base 不变，未重定范围。
   SQLite、LocalStorage 和 SyntheticMetadataProvider；通过现有 Files discovery → Preview
   GET → execute POST → Task Worker 入口，故障注入到真实 Storage.write，未手填失败状态。
 
-### 必须修复的交付缺口（均为 P1）
+### 阻塞清单与用户影响（均为 P1）
 
-1. **用户重新整理失败文件时，实际 Web 摘要收不到历史提醒。**
-   用户在 Files 选中 `Movies/One.2001.mkv` 整理，目标目录建立后写入失败；再次选中
-   整理。持久摘要已有 `plan.history`，但真实
-   `GET /api/v1/operations/organize/previews/{previewId}` 返回的 plan 没有 history；普通
-   确认仍返回 202，Worker 最终 COPY 成功。`operations_lifecycle.py::_bounded_preview_plan`
-   的字段投影未接入 history，所以 Web normalizer 得到 null，新增 banner 不会显示。
-   **AC-T2/T7、Slice AC-21/25 不满足。**
+本次重整保留原三项阻塞，不增加 Task 或扩大合同。第 1、2 项是同一提醒旅程的传输和
+事实依据两个缺口；第 3 项是新旧工作的交接。用户不需要阅读或操作内部锁、令牌和执行步骤。
 
-2. **真实手动 Result 的“已做什么、哪些效果未知”在历史查询中丢失。**
-   同一旅程真实 Result 用 UUID result_id，status 为 `PARTIAL`，记录
-   `completed_operations=('CREATE_DIRECTORY',)`、
-   `effect_certainty='attempted_unverified'`、`uncertain_effects=('mutation_outcome',)`。
-   `sqlite_runtime.py::latest_organize_source_outcome` 却只关联
-   `result_id = item_id || ':' || attempts`，因此退回 item：已完成步骤/未知效果变空，
-   effectCertainty 为 null。即使修复 API 投影，用户仍看不到实际存在的未知效果提醒。
-   **AC-T2/T3/T5、Slice AC-21/22 不满足。** 新查询还在版本筛选前 `LIMIT 400`，没有
-   实现合同要求的完整匹配总体；此项为代码审查发现，未另造超过 400 次运行的产品复现。
+1. **页面没有告知用户“这个文件上次整理未完成”。**
+   用户从 Files 整理电影，目标目录建好后写文件失败；再次选中该电影整理。后端摘要里
+   虽然有提醒，返回页面时却漏掉了，用户仍可直接确认并执行成功。
+   原因是 `operations_lifecycle.py::_bounded_preview_plan` 未投影 `plan.history`；真实
+   Preview GET 缺此字段，Web 得到 null。**AC-T2/T7、Slice AC-21/25 未满足。**
 
-3. **新手动工作完成后，没有收束已被替代的旧应用所有者和容量。**
-   上述失败真实留下旧 scheduling `claimed + mutation_in_flight`。新请求正常执行成功后，
-   使用旧 Worker 原 claim 调用现有 scheduling heartbeat 仍被接受，容量计数仍为 1。
-   本次改动只将 PARTIAL 加入 settled 集合，未完成新确认需要的旧所有者交接；不能把
-   “现在允许进入”视为已经完成 fencing/容量结算。历史未知证据应继续保留，不能靠删除
-   marker 或把 unknown 改成 none 修复。**AC-T4、Slice AC-23 不满足。** 本复现未声称
-   旧远端调用仍在运行，也未声称已证明一次旧后续媒体调用实际发生。
+2. **后台没有正确读到上次实际做了什么，提醒依据不完整。**
+   同一操作已经记录“建过目录、写入效果尚未确认”，历史查询却漏读真实 Result，退回
+   一个缺少效果信息的文件状态。即使修好第 1 项，仍会漏掉“上次部分结果无法确认”的提醒。
+   后台必须保留完整事实，普通提醒只展示用户需要知道的结论。
+   原因是 `sqlite_runtime.py::latest_organize_source_outcome` 只按
+   `result_id = item_id || ':' || attempts` 关联；真实手动 Result 用 UUID，记录的
+   `PARTIAL / CREATE_DIRECTORY / attempted_unverified / mutation_outcome` 均未被正确读取。
+   **AC-T2/T3/T5、Slice AC-21/22 未满足。** 同一查询在版本筛选前 `LIMIT 400` 也不符合
+   完整匹配总体要求；这是代码审查发现，未声称跑过超过 400 次产品操作。
+
+3. **重新整理后，旧工作没有按文件交接好，处理名额也没有正确结算。**
+   单文件实测：一次整理失败后，经 Files 再次确认的新整理已成功，旧任务却仍保留原
+   Worker 资格并占一个处理名额。当前只把 PARTIAL 视作历史，没有实现合同要求的交接。
+   **AC-T4、Slice AC-23 未满足。** 已证实旧 heartbeat 被接受和名额仍为 1；没有证实
+   重复复制/移动，也没有证明旧远端调用仍在运行。
+
+   批量和定时必须按下面的完整旅程验收，不能把单文件观察直接扩成“整批必须关闭”：
+
+   | 用户旅程 | 交接后的正确结果 |
+   |---|---|
+   | 一批 A 失败、B 成功、C 仍在排队/处理；用户核对后在 Files 重新整理 A | A 的新请求获得自己的计划和权限；旧工作不能再以被替代的资格处理 A 或改写其结果。B 不重做，C 的合法进度、来源占用和权限保留。 |
+   | 上述旧批次仍有 C 在处理 | 旧批次可继续占一个名额；按 Task 计算容量，不按文件各占一份。不能因 A 被接手就释放整批锁或名额。 |
+   | 旧批次已没有其他需保留的机器工作，A 的旧执行已按新确认完成收束 | 保留失败/未知效果记录，释放旧工作已不再需要的处理名额；未知历史不能单独永久占住名额。其他真正未结束的调用仍按原安全边界处理。 |
+   | 昨晚定时整理 A 失败、B 成功；今天定时或“运行一次”发现 A 和新文件 C | 同版本 A 逐项排除，C 正常处理；自动入口不接手 A、不重启旧 A。排除原因和数量可读，不制造成功整理结果。 |
+   | 用户随后从 Files 核对并重新整理 A 成功，再到下一次定时/“运行一次” | 完成 A 的旧执行交接；后来成功解除早期失败造成的排除，之后仍走正常筛选/冲突规则。昨晚失败和时间保留，旧批次其他文件不受影响。 |
+
+   以上批量/定时交接是待验收要求，未声称已实测通过。整批仍合法处理 C 时，同 Task
+   的心跳继续有效可以是正常行为；验收必须证明**被替代的 A 的旧执行权限失效**，不能
+   单靠父 Task running、旧 marker 或 heartbeat 判断整个批次是否应结束。
 
 ### Developer 修复指导（同一 Task，按顺序实施）
 
-1. **先修真实历史关联。** 复用 manual_execution_items.result_id、TaskItem/attempt/Result
-   已有持久关系，同时兼容自动/CLI 的既有结果写法；统一真实状态枚举的大小写。不得把
-   UUID Result 猜成缺失或凭发布时间覆盖较新的尝试。保留无 Result 的持久失败回退。
-   在完整匹配总体中比较版本后确定最新适用结果，可分批读取，不能用 400 代替 32/100
-   页限制。用真实 Executor/Storage 故障结果断言完成步骤、未知效果和原 Result 不变。
-2. **补齐服务端到 Web 的有界投影。** 在现有 operator projection 中显式投影 history，
-   复用路径/文本限界与脱敏；跨 principal 不泄漏不可读任务/私有目标。不要透传 raw plan。
-   对实际 API 响应断言 history，再让现有 typed normalizer/component 消费它；保持普通
-   选中确认，无新增 checkbox/核查页。不能只在 mock fetch 文档里手工补 history。
-3. **实现精确的新手动确认交接。** 在现有 kernel/repository 中原子核对选中来源、计划、
-   当前相关历史、权限、请求和容量；对已记录 failed/partial 的确切文件收束旧应用 owner，
-   完成所需来源/目标/附件锁交接及容量结算。保留原结果、pin、完成步骤、unknown 和
-   原 Automation 时间/结果；未结束兄弟项不解锁/重放。确认后旧 owner 的心跳、状态写入
-   和新步骤准入必须被拒绝。无需远端停止证明，不承诺撤销已发出的调用。
-4. **用原 Files 旅程交接修复。** 复用 `tests.test_manual_task_engine` 的现有真实 API /
-   Worker fixture 和本轮 probe。覆盖目录成功后写失败、已有父目录时写失败、Copy 完成
-   而 Move 删源失败；均走 Files 再选择 → 真实摘要提示 → 正常确认 → 实际新结果，
-   不把最后执行改走 CLI。加入未终态兄弟互斥、并发重复确认、相关/无关历史变化与
-   reopen 的直接受影响断言；保留 due/Run once 失败排除→手动成功→解除排除链路。
-   跑原 Developer affected plan 中新增/修改和直接受影响的测试即可，提交新 checkpoint
-   并回到 READY FOR B REVIEW。全量、包装、Docker 和最终原生验收仍由 B 负责。
+1. **修好历史事实读取。** 复用 `manual_execution_items.result_id`、TaskItem/attempt/Result
+   的已有持久关系，兼容自动/CLI 结果写法，统一状态大小写；保留无 Result 的持久失败回退。
+   不猜 UUID、不凭迟到发布时间替换较新的尝试。在完整匹配总体中比较版本后确定最新结果，
+   可分批查询，不能用 400 代替 32/100 的任意截断。真实故障后断言目标、完成步骤、
+   效果确定性和未知证据都读得到，原 Result 不改写。
+2. **打通实际 API 到页面，并控制提醒复杂度。** 在现有 operator projection 中显式投影
+   有界 history，复用路径/文本限界、权限和脱敏，不透传 raw plan。真实 API 响应要能被
+   现有 typed normalizer/component 消费；不能只在 mock fetch 文档里手工加 history。
+   普通提醒可写成“该文件上次整理未完成，目标位置可能已有部分文件。请核对后再确认整理。”
+   只有确实存在未知效果时，再补“上次操作的部分结果无法确认。”文案随实际证据调整，
+   零效果失败不暗示已产生部分文件。可用目标、已知影响放在现有条目详情，用人话表达；
+   无须新增完整历史面板、技术步骤清单或重复堆叠提醒。保留普通选中确认，不加核查页、
+   例行 checkbox 或 token 操作；未知效果不描述为“已核验安全”。
+3. **在现有确认事务中完成逐文件交接。** 复用 kernel/repository，原子核对选中来源、
+   当前相关历史、计划、权限、请求和容量，处理确切来源/目标/附件锁及旧执行资格。
+   只交接已有 failed/partial 结果且本次明确确认的文件，排队/处理且无终态的文件仍互斥。
+   被替代的旧执行不得启动后续文件操作或改写旧结果；按实际作用域检验步骤准入和发布拒绝。
+   若现有实现需要轮换整个 Task owner，应保留兄弟项及其合法剩余工作，按现有机制由
+   有效 owner 继续，不能删除整批锁、重置兄弟状态或扩大权限。旧 owner 仍合法处理其他
+   文件时不要求整批 heartbeat 失败；已完全被替代的单文件 owner 不应再维持旧执行资格。
+   容量按 Task 的剩余工作结算，仍处理 C 就保留一份，无剩余工作且旧执行已收束才释放。
+   原 Result/pin/完成步骤/unknown/原 Automation 时间和结果均保留；不靠把 unknown 改成
+   none、删除历史或证明远端停止放行，不承诺撤销已派发调用。
+4. **从现有入口补直接受影响的验收。** 复用 `tests.test_manual_task_engine` 的真实 API /
+   SQLite/LocalStorage/Worker fixture 和 B probe，不建立新执行/恢复系统。覆盖目录成功后
+   写失败、已有父目录时写失败、Copy 完成但 Move 删源失败；均走 Files 再选择 → 真实
+   摘要提醒 → 普通确认 → 实际新结果，最后一步不改走 CLI。重点断言以下结果：
 
-### 本轮实际验证与停止位置
+   - 真实 API 和页面均有简短提醒；unknown 另有说明，普通确认不增加操作步骤。
+   - 批量 A 交接、B 不重放、C 保留互斥/合法执行；分别验证仍有 C 和整批无剩余工作
+     的容量，旧 A 的状态写入/步骤准入被拒绝，历史未知证据仍保留。
+   - due 与 Run once 都完成同版本失败排除、自由 C 实际处理、手动 A 成功后解除排除；
+     自动排除不执行交接、不改写原 Automation 记录，也不重放成功兄弟项。
+   - 并发重复确认、拒权/队满回滚、相关/无关历史变化和同版本 reopen，仍遵守原 Task
+     受影响测试计划；仅显示或刷新提醒不新增 Provider/媒体效果。
+
+   Developer 运行原 affected plan 的新增/修改和直接受影响测试，记录命令、实际结果及
+   剩余限制，提交同一 Task 新 checkpoint 后回到 READY FOR B REVIEW。B 在修复候选上
+   独立复核上述旅程并完成原 T4/浏览器/包装/Docker 门禁。测试时间仍须小于本轮总用时
+   50%；发现确定阻塞时先修复，不靠重复全量运行消耗时间，也不为比例豁免必要验收。
+
+### 候选 368d9e86 已执行的验证与停止位置
 
 - `.venv/bin/python -m unittest tests.test_organize_source_history tests.test_task_retry`：
   **15 tests OK，1.483 秒**；出现 ResourceWarning，原日志保留。通过这些测试不等于
@@ -459,3 +492,9 @@ READY FOR B REVIEW），Task Base 不变，未重定范围。
 
 AC-T1/T6 有部分证据，AC-T2–T5/T7 有失败或待验收项，均不整体勾选通过。Slice 保持
 ACTIVE；不提交新的 SLICE READY FOR A REVIEW，不创建后续 Task，不由 B 关闭 Slice。
+
+2026-11-02 B 指导澄清：用户要求重整阻塞并补充批量/定时说明。本轮开始于 `main` /
+`49462ac6654b49c151983ccd1b2cee3a3f5f11cb`，无预存 tracked 修改，预存 untracked 全部
+保留未暂存。仅更新本 Task 的说明和开发指导，候选实现、原 Base、FIX REQUIRED 结论及
+已有证据不变。本轮未运行产品测试或新增故障探测；只做治理、范围一致性和 diff 检查，
+不把批量/定时的待验收要求写成已复现事实。
