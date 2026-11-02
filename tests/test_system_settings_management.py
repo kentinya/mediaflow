@@ -153,6 +153,33 @@ class SystemSettingsManagementTests(unittest.TestCase):
         self.assertEqual(len(errors), 1)
         self.assertEqual(errors[0]["code"], "unknown_field")
 
+    def test_validation_rejects_retired_stale_age_field(self) -> None:
+        edits = (SystemSettingsEdit("automation.staleJobAgeSeconds", 7200),)
+        errors = validate_settings_edit(edits, bootstrap_database_path=None)
+        self.assertEqual(len(errors), 1)
+        self.assertEqual(errors[0]["code"], "field_retired")
+        self.assertEqual(errors[0]["field"], "automation.staleJobAgeSeconds")
+
+    def test_api_retired_field_edit_is_refused_with_zero_publication(self) -> None:
+        with tempfile.TemporaryDirectory() as directory:
+            api, service, active, repo = setup_test_api(directory)
+            revisions_before = len(repo.list_revisions(limit=100))
+            body = json.dumps(
+                {
+                    "expectedActiveRevisionId": active.revision_id,
+                    "expectedActiveVersion": active.version,
+                    "expectedActiveDigest": active.digest,
+                    "edits": [{"fieldPath": "automation.staleJobAgeSeconds", "value": 7200}],
+                }
+            ).encode("utf-8")
+            status, data = request(api, "/api/v1/system/settings", method="PUT", body=body)
+            self.assertEqual(status, 422, data)
+            self.assertEqual(data["error"]["code"], "system_settings_invalid")
+            errors = data["error"]["details"]["errors"]
+            self.assertEqual(errors[0]["code"], "field_retired")
+            self.assertEqual(service.active().revision_id, active.revision_id)
+            self.assertEqual(len(repo.list_revisions(limit=100)), revisions_before)
+
     def test_validation_bounds_and_cross_field(self) -> None:
         # Out of bounds active jobs
         edits = (SystemSettingsEdit("automation.maximumActiveJobs", 99999),)
@@ -269,7 +296,7 @@ class SystemSettingsManagementTests(unittest.TestCase):
                 {
                     "expectedVersion": draft.version,
                     "settings": {
-                        "automation.staleJobAgeSeconds": 7200,
+                        "workflowRetry.maxAttempts": 7,
                     },
                 }
             ).encode("utf-8")
@@ -281,13 +308,11 @@ class SystemSettingsManagementTests(unittest.TestCase):
             )
             self.assertEqual(status, 200)
             self.assertEqual(data["revisionId"], draft.revision_id)
-            self.assertEqual(data["settings"]["automation.staleJobAgeSeconds"], 7200)
+            self.assertEqual(data["settings"]["workflowRetry.maxAttempts"], 7)
 
             # Re-read Draft from repo
             updated_draft = service.require(draft.revision_id)
-            self.assertEqual(
-                updated_draft.document.get("automation", {}).get("staleJobAgeSeconds"), 7200
-            )
+            self.assertEqual(updated_draft.document.get("workflowRetry", {}).get("maxAttempts"), 7)
             self.assertEqual(updated_draft.version, draft.version + 1)
 
     def test_api_edit_response_can_continue_draft_journey(self) -> None:
@@ -360,7 +385,7 @@ class SystemSettingsManagementTests(unittest.TestCase):
                 {
                     "expectedVersion": draft.version + 99,
                     "settings": {
-                        "automation.staleJobAgeSeconds": 7200,
+                        "workflowRetry.maxAttempts": 7,
                     },
                 }
             ).encode("utf-8")
@@ -679,7 +704,7 @@ class SystemSettingsManagementTests(unittest.TestCase):
                     {
                         "revisionId": draft_id,
                         "expectedVersion": updated["draftVersion"],
-                        "edits": [{"fieldPath": "automation.staleJobAgeSeconds", "value": 7200}],
+                        "edits": [{"fieldPath": "workflowRetry.maxAttempts", "value": 7}],
                     }
                 ).encode("utf-8"),
             )
@@ -709,7 +734,7 @@ class SystemSettingsManagementTests(unittest.TestCase):
             self.assertEqual(status, 200)
             self.assertEqual(recovered["settings"]["automation.maximumActiveJobs"], 90)
             # The stale writer's independent edit is preserved, not overwritten.
-            self.assertEqual(recovered["settings"]["automation.staleJobAgeSeconds"], 7200)
+            self.assertEqual(recovered["settings"]["workflowRetry.maxAttempts"], 7)
 
             # Prior Active, its values and the revision set remain intact; the
             # whole journey created exactly one settings Draft and started no

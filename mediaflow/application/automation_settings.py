@@ -4,7 +4,7 @@ This is the application boundary the native `自动化 → 全局设置` form an
 System Settings Automation section both submit to.  It reuses the existing
 authorities instead of adding a second settings store:
 
-* validation and normalization of the four fields happen in
+* validation and normalization of the three fields happen in
   :mod:`mediaflow.domain.automation_settings`, before any Draft exists;
 * the successor Draft is seeded from the *observed immutable Active*, never from
   an unrelated open Draft, and every other field/object is preserved
@@ -103,7 +103,7 @@ SETTINGS_PUBLICATION_ACTION = "automation_engine_settings_publish"
 
 #: Durable, bounded terminal-outcome records for one identified focused Save.
 #:
-#: A submission can terminate *without* ever owning a revision: a four-field
+#: A submission can terminate *without* ever owning a revision: a three-field
 #: input rejection happens before normalisation succeeds, a stale refusal happens
 #: before a Draft exists, a no-op publishes nothing, and a persist/validate/
 #: prepare/activate fault leaves the successor unpublished.  Without a durable
@@ -234,7 +234,7 @@ class AutomationSettingsPublicationError(RuntimeError):
 
 
 class AutomationSettingsService:
-    """Read the four-field projection and publish one checked successor."""
+    """Read the three-field projection and publish one checked successor."""
 
     def __init__(
         self,
@@ -254,7 +254,7 @@ class AutomationSettingsService:
     # ------------------------------------------------------------------
 
     def read(self) -> dict[str, object]:
-        """The published target, the four field metadata and consumer adoption."""
+        """The published target, the three field metadata and consumer adoption."""
 
         target = self._published_target(required=False)
         now = self._clock()
@@ -371,17 +371,17 @@ class AutomationSettingsService:
         submission_id: str | None = None,
         before_publish: Callable[[ManagedConfigurationRevision], object] | None = None,
     ) -> dict[str, object]:
-        """Publish exactly these four fields from the checked Active.
+        """Publish exactly these three fields from the checked Active.
 
         The command is deliberately narrow: it validates the submitted values,
-        creates a successor Draft from the observed Active, applies only the four
+        creates a successor Draft from the observed Active, applies only the three
         fields, validates the whole candidate, prepares the runtime binding and
         only then lets the existing activation boundary publish it atomically.  A
         preparation failure therefore cannot leave the persisted Active ahead of
         the process binding.  A no-op submission publishes nothing and reports
         the unchanged target.
 
-        A request refused by the four-field *input* validation still terminates,
+        A request refused by the three-field *input* validation still terminates,
         and it terminates without ever owning a revision.  Its bounded content
         fingerprint is recorded before the refusal is returned, so a lost
         rejection response can be reconciled by the exact same identity without
@@ -613,7 +613,7 @@ class AutomationSettingsService:
         target: PublishedEngineTarget,
         edited: ManagedConfigurationRevision,
     ) -> None:
-        """Fail closed unless only the four engine fields changed."""
+        """Fail closed unless only the three runtime fields changed."""
 
         active = self._config.active()
         if active is None or active.revision_id != target.revision_id:
@@ -636,12 +636,12 @@ class AutomationSettingsService:
         if _canonical(before_document) != _canonical(after_document):
             raise AutomationSettingsPublicationError(
                 "automation_settings_out_of_scope",
-                "the successor changes configuration outside the four engine settings; "
+                "the successor changes configuration outside the three runtime settings; "
                 "nothing was published",
                 stage="compose",
                 durable_state="active_preserved",
                 next_action=(
-                    "save only the four Automation engine settings; other settings keep their "
+                    "save only the three system runtime settings; other settings keep their "
                     "own configuration journey"
                 ),
             )
@@ -755,7 +755,7 @@ class AutomationSettingsService:
     ) -> None:
         """Persist the terminal refusal of a submission that never normalised.
 
-        The exact four values cannot be persisted here: they may be booleans,
+        The exact three values cannot be persisted here: they may be booleans,
         strings, fractional integers, non-finite numbers or an out-of-scope key,
         and copying them would either fail the bounded-ledger contract or store
         arbitrary operator input.  What is durable instead is a bounded,
@@ -806,7 +806,7 @@ class AutomationSettingsService:
         """Persist the terminal, non-publication outcome of one submission.
 
         This is *evidence about this request*, not a setting and not authority:
-        it carries only the submission identity, the four values that were
+        it carries only the submission identity, the three values that were
         submitted, the stage that ended the request and a bounded next action.
         It is written best-effort — a failure to record it must never change the
         answer the operator receives — and it can only ever resolve the one
@@ -889,7 +889,7 @@ class AutomationSettingsService:
           revision this request edited, and that revision's own status decides
           whether *it* published;
         * a persisted terminal-outcome record proves a termination that never
-          owned a revision at all (a four-field input refusal, a stale refusal
+          owned a revision at all (a three-field input refusal, a stale refusal
           before any Draft, a no-op, or a persist/validate/prepare/activate
           fault).
 
@@ -899,7 +899,7 @@ class AutomationSettingsService:
         permission to submit again.
 
         Looking the outcome up is deliberately *separate* from publishing: a
-        request refused by four-field input validation (for example the text
+        request refused by three-field input validation (for example the text
         ``3.5`` for an integer field) is precisely the request whose outcome the
         operator most needs proven, so this read must identify it without
         requiring its payload to pass publication validation again.  Strict
@@ -1082,7 +1082,7 @@ class AutomationSettingsService:
                 # A terminal-outcome record proves the content it recorded.  An
                 # input refusal can only record a fingerprint (the values were
                 # never normalised), while every other outcome records the
-                # normalised four values.
+                # normalised three values.
                 recorded_fingerprint = change.get("requestFingerprint")
                 if isinstance(recorded_fingerprint, str):
                     if recorded_fingerprint != fingerprint:
@@ -1275,7 +1275,7 @@ class AutomationSettingsService:
             "instanceCount": 0,
             "instances": [],
             "explanation": (
-                "容量与失效判定由准入/观察边界各自读取当前 Active,不是常驻进程轮询值;"
+                "整理任务队列上限由各准入/重入边界读取当前 Active,不是常驻进程轮询值;"
                 "本页只显示发布目标,不声称某个进程已采用。"
             ),
         }
@@ -1457,7 +1457,7 @@ def submission_request_fingerprint(request: object) -> str | None:
     distinguishable from each other and from an accepted submission.
 
     The fingerprint is therefore taken over a canonical encoding of the raw
-    request, restricted to the bounded four-field surface so an oversized or
+    request, restricted to the bounded three-field surface so an oversized or
     hostile payload cannot be persisted through the audit ledger.  Arbitrary
     values are never copied into durable evidence or into the response: only this
     digest and the bounded rejection code/field are kept.

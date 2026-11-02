@@ -1337,7 +1337,6 @@ class MediaLibraryTransferTests(unittest.TestCase):
                 maximum_active_jobs=1,
                 remote_execution_enabled=False,
                 remote_execution_maximum_ttl_seconds=900,
-                stale_job_age_seconds=3600,
                 system_status=None,
                 schedules=(),
                 metadata_policies=(),

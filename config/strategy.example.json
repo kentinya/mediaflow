@@ -12,7 +12,6 @@
   },
   "automation": {
     "maximumActiveJobs": 100,
-    "staleJobAgeSeconds": 3600,
     "workerPollSeconds": 2,
     "schedulerPollSeconds": 5,
     "schedules": [

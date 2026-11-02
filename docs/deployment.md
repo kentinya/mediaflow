@@ -220,14 +220,14 @@ New admission uses Active; intact older admitted pins stay valid, broken pins bl
 
 ### Engine poll cadence adoption (Slice43 PASS / CLOSED)
 
-**Slice47 TARGET — 2026-11-03:** the remaining three runtime fields move to the existing System
-Settings page. Shared organizing capacity covers manual/due/Run once and machine-work re-entry;
-the Worker's idle cadence covers organizing plus both library kinds' ordinary asynchronous file
-work, whose admission rules stay unchanged. Scheduler cadence checks only due Automation definitions.
-Delete the unused `automation.staleJobAgeSeconds` parameter; keep current heartbeat/lease/renewal
-and Provider/Storage call timeouts. Existing immutable documents may retain the ignored key without
-digest/pin rewriting. No no-progress observer or total-runtime timeout is selected. This is a pending
-Contract/Task change, not a deployment instruction or evidence that stopped implementation is accepted.
+**Slice47 implemented candidate — pending B/A acceptance:** the remaining three runtime fields use
+the existing System Settings page. Shared organizing capacity covers manual/due/Run once and
+machine-work re-entry; the Worker's idle cadence covers organizing plus both library kinds' ordinary
+asynchronous file work, whose admission rules stay unchanged. Scheduler cadence checks only due
+Automation definitions. The unused `automation.staleJobAgeSeconds` parameter is retired; current
+heartbeat/lease/renewal and Provider/Storage call timeouts remain unchanged. Existing immutable
+documents may retain the ignored key without digest/pin rewriting. No no-progress observer or
+total-runtime timeout is selected. This candidate still requires independent B and A acceptance.
 
 `automation.workerPollSeconds` and `automation.schedulerPollSeconds` are the real resident loop
 cadences. A running Worker or Scheduler resolves the current managed Active at each safe loop
@@ -246,10 +246,9 @@ requeued or replayed by a settings publication.
 the published value. Such a process reports its effective value as an *override*, never as adoption,
 and the Web Save cannot rewrite it. To adopt the published cadence, remove the explicit override from
 the Compose command/CLI and restart that service once. `automation.maximumActiveJobs` is read at
-admission/re-entry and is not a resident cadence. The current API also reports the stale-age field
-with an API-local basis, but that readback does not prove an actual Task observation consumer;
-investigation found none. Slice47 retires it rather than introducing a new observer. Existing Worker
-heartbeat staleness, execution claims and adapter call timeouts remain separate mechanisms.
+admission/re-entry and is not a resident cadence. The retired stale-age field is neither reported
+nor consumed; existing Worker heartbeat staleness, execution claims and adapter call timeouts remain
+separate mechanisms.
 
 The settings page evaluates every fresh live registration, so a second live instance with an
 override, missing report or older publication still blocks collective adoption. Normal service stop

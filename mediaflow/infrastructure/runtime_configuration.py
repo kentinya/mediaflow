@@ -78,7 +78,6 @@ class RuntimeConfiguration:
     operational_logging_retention_days: int = 30
     operational_logging_maximum_records: int = 10_000
     automation_maximum_active_jobs: int = 100
-    automation_stale_job_age_seconds: int = 3600
     workflow_retry_policy: WorkflowRetryPolicy = WorkflowRetryPolicy()
     # Configuration authority is explicit so a managed Active snapshot can never
     # be mistaken for the JSON compatibility bootstrap.
@@ -437,6 +436,8 @@ def load_runtime_configuration(document: Any) -> RuntimeConfiguration:
         "workerPollSeconds",
         "schedulerPollSeconds",
         "maximumActiveJobs",
+        # Retired compatibility key: an immutable historical document may still
+        # carry it, but it is ignored and never becomes an effective setting.
         "staleJobAgeSeconds",
         "schedules",
         "taskDefinitions",
@@ -451,14 +452,6 @@ def load_runtime_configuration(document: Any) -> RuntimeConfiguration:
         or maximum_active_jobs > 10_000
     ):
         raise ValueError("automation maximumActiveJobs must be between 1 and 10000")
-    stale_job_age_seconds = automation.get("staleJobAgeSeconds", 3600)
-    if (
-        isinstance(stale_job_age_seconds, bool)
-        or not isinstance(stale_job_age_seconds, int)
-        or stale_job_age_seconds < 60
-        or stale_job_age_seconds > 604_800
-    ):
-        raise ValueError("automation staleJobAgeSeconds must be between 60 and 604800")
     worker_poll = _positive_number(automation.get("workerPollSeconds", 2), "workerPollSeconds")
     scheduler_poll = _positive_number(
         automation.get("schedulerPollSeconds", 5), "schedulerPollSeconds"
@@ -570,7 +563,6 @@ def load_runtime_configuration(document: Any) -> RuntimeConfiguration:
         retention_days,
         maximum_records,
         maximum_active_jobs,
-        stale_job_age_seconds,
         retry,
         automation_task_definitions=automation_task_definitions,
         **extended_settings,

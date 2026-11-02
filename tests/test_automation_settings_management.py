@@ -57,11 +57,14 @@ def request(api, path, *, method="GET", body=b"", token="admin-token", query="")
 class SettingsFixture:
     """One isolated managed deployment with a real Active configuration."""
 
-    def __init__(self, directory: str) -> None:
+    def __init__(self, directory: str, *, legacy_stale_key: bool = False) -> None:
         self.directory = Path(directory)
         self.database = str(self.directory / "runtime.sqlite3")
         self.document = example_document()
         self.document["persistence"]["databasePath"] = self.database
+        if legacy_stale_key:
+            # An immutable historical Active may still carry the retired key.
+            self.document["automation"]["staleJobAgeSeconds"] = 3600
         self.config_repository = SQLiteConfigurationRepository(
             self.directory / "configuration.sqlite3"
         )
@@ -115,7 +118,6 @@ class SettingsFixture:
         current = self.values()
         values = {
             "automation.maximumActiveJobs": current["maximumActiveJobs"],
-            "automation.staleJobAgeSeconds": current["staleJobAgeSeconds"],
             "automation.workerPollSeconds": current["workerPollSeconds"],
             "automation.schedulerPollSeconds": current["schedulerPollSeconds"],
         }
@@ -130,7 +132,7 @@ class AutomationSettingsReadTests(unittest.TestCase):
         self.fixture = SettingsFixture(self._temporary.name)
         self.addCleanup(self.fixture.close)
 
-    def test_read_reports_the_published_target_and_the_four_fields(self) -> None:
+    def test_read_reports_the_published_target_and_the_three_fields(self) -> None:
         status, data = request(self.fixture.api, SETTINGS)
         self.assertEqual(status, 200)
         self.assertEqual(data["sideEffects"], "none")
@@ -169,8 +171,8 @@ class AutomationSettingsReadTests(unittest.TestCase):
         worker = data["consumers"]["worker"]
         self.assertEqual(worker["instances"], [])
         self.assertFalse(worker["adopted"])
-        # The two capacity fields are API-local evidence, never a claim that a
-        # resident process consumed them.
+        # The shared capacity field is API-local evidence, never a claim that a
+        # resident process consumed it.
         self.assertEqual(data["consumers"]["api"]["basis"], "api_local")
         self.assertFalse(data["consumers"]["api"]["adopted"])
 
@@ -182,7 +184,7 @@ class AutomationSettingsSaveTests(unittest.TestCase):
         self.fixture = SettingsFixture(self._temporary.name)
         self.addCleanup(self.fixture.close)
 
-    def test_checked_save_publishes_only_the_four_fields(self) -> None:
+    def test_checked_save_publishes_only_the_three_fields(self) -> None:
         before = self.fixture.configuration.active()
         status, data = self.fixture.submit(
             self.fixture.full(
@@ -259,6 +261,40 @@ class AutomationSettingsSaveTests(unittest.TestCase):
                     self.fixture.configuration.active().revision_id, before.revision_id
                 )
 
+    def test_existing_active_with_retired_key_remains_readable_and_saves_three_fields(
+        self,
+    ) -> None:
+        temporary = tempfile.TemporaryDirectory()
+        self.addCleanup(temporary.cleanup)
+        legacy = SettingsFixture(temporary.name, legacy_stale_key=True)
+        self.addCleanup(legacy.close)
+        before = legacy.active
+
+        status, data = request(legacy.api, SETTINGS)
+        self.assertEqual(status, 200, data)
+        self.assertNotIn("automation.staleJobAgeSeconds", data["target"]["values"])
+
+        status, saved = legacy.submit(legacy.full(**{"automation.maximumActiveJobs": 55}))
+        self.assertEqual(status, 201, saved)
+        active = legacy.configuration.active()
+        self.assertEqual(active.document["automation"]["maximumActiveJobs"], 55)
+        # The retired key is preserved byte-for-byte in the raw immutable
+        # document, never promoted into the effective values or a new default.
+        self.assertEqual(active.document["automation"]["staleJobAgeSeconds"], 3600)
+        self.assertNotIn("automation.staleJobAgeSeconds", saved["publishedValues"])
+        self.assertEqual(legacy.configuration.require(before.revision_id).digest, before.digest)
+
+    def test_retired_stale_age_field_is_rejected_with_zero_publication(self) -> None:
+        before = self.fixture.configuration.active()
+        status, data = self.fixture.submit(
+            {**self.fixture.full(), "automation.staleJobAgeSeconds": 7200}
+        )
+        self.assertEqual(status, 422, data)
+        self.assertEqual(data["error"]["code"], "settings_field_unsupported")
+        self.assertEqual(data["error"]["details"]["field"], "automation.staleJobAgeSeconds")
+        self.assertEqual(data["error"]["details"]["sideEffects"], "none")
+        self.assertEqual(self.fixture.configuration.active().revision_id, before.revision_id)
+
     def test_missing_field_is_rejected(self) -> None:
         values = self.fixture.full()
         values.pop("automation.workerPollSeconds")
@@ -273,15 +309,12 @@ class AutomationSettingsSaveTests(unittest.TestCase):
             "settings_out_of_range": [
                 {"automation.maximumActiveJobs": 0},
                 {"automation.maximumActiveJobs": 10_001},
-                {"automation.staleJobAgeSeconds": 59},
-                {"automation.staleJobAgeSeconds": 604_801},
                 {"automation.workerPollSeconds": 0},
                 {"automation.workerPollSeconds": -3},
                 {"automation.schedulerPollSeconds": 0},
             ],
             "settings_fractional_integer": [
                 {"automation.maximumActiveJobs": 3.5},
-                {"automation.staleJobAgeSeconds": 90.25},
             ],
             "settings_boolean_not_number": [
                 {"automation.maximumActiveJobs": True},
@@ -435,9 +468,10 @@ class AutomationSettingsSaveTests(unittest.TestCase):
             self.fixture.full(**{"automation.maximumActiveJobs": 33})
         )
         self.assertEqual(status, 201, data)
-        self.assertEqual(self.fixture.api._runtime_binding.maximum_active_jobs, 33)
+        binding = self.fixture.api._runtime_binding
+        self.assertEqual(binding.maximum_active_jobs, 33)
         self.assertEqual(
-            self.fixture.api._runtime_binding.snapshot_id,
+            binding.snapshot_id,
             self.fixture.configuration.active().revision_id,
         )
 
@@ -930,7 +964,7 @@ class AutomationSettingsReconcileTests(unittest.TestCase):
     ) -> None:
         cases = {
             "settings_out_of_range": {"automation.maximumActiveJobs": 0},
-            "settings_fractional_integer": {"automation.staleJobAgeSeconds": 90.25},
+            "settings_fractional_integer": {"automation.maximumActiveJobs": 3.5},
             "settings_boolean_not_number": {"automation.maximumActiveJobs": True},
             "settings_invalid_type": {"automation.workerPollSeconds": "2"},
             "settings_not_finite": {"automation.maximumActiveJobs": float("inf")},
@@ -1053,7 +1087,6 @@ def _target(digest: str = "digest-1"):
         digest=digest,
         values=AutomationEngineValues(
             maximum_active_jobs=100,
-            stale_job_age_seconds=3600,
             worker_poll_seconds=2.0,
             scheduler_poll_seconds=5.0,
         ),

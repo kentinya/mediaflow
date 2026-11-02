@@ -1131,7 +1131,6 @@ def build_first_setup_starter_document(bootstrap) -> dict[str, object]:
             "workerPollSeconds": 2,
             "schedulerPollSeconds": 5,
             "maximumActiveJobs": 100,
-            "staleJobAgeSeconds": 3600,
             "schedules": [],
         },
         "notifications": {

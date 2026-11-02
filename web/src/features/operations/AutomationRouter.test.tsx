@@ -597,11 +597,13 @@ describe("V2 Automation journey", () => {
     expect(screen.getAllByText("暂无可比数据").length).toBeGreaterThan(0);
     // The backend advertises creation for this principal.
     expect(screen.getByRole("link", { name: "新建自动化任务" })).toBeVisible();
-    // The three sibling tabs are real navigation, labelled as in the
-    // reference composition.
+    // The two sibling tabs are real navigation; runtime settings live in the
+    // existing System Settings page instead of a third Automation tab.
     expect(screen.getByRole("button", { name: "任务列表" })).toBeVisible();
     expect(screen.getByRole("button", { name: "执行记录" })).toBeVisible();
-    expect(screen.getByRole("button", { name: "全局设置" })).toBeVisible();
+    expect(
+      screen.queryByRole("button", { name: "全局设置" }),
+    ).not.toBeInTheDocument();
   });
 
   it("renders an explicit unavailable card value instead of a fabricated zero", async () => {

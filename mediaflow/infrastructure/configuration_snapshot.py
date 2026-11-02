@@ -42,7 +42,6 @@ def build_configuration_snapshot(configuration: RuntimeConfiguration) -> Configu
             "configuration_snapshot_id": configuration.configuration_snapshot_id,
             "configuration_snapshot_digest": configuration.configuration_snapshot_digest,
             "maximum_active_jobs": configuration.automation_maximum_active_jobs,
-            "stale_job_age_seconds": configuration.automation_stale_job_age_seconds,
         },
         "storages": _section(
             configuration.storage_definitions,

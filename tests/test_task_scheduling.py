@@ -365,6 +365,60 @@ class AdmissionTests(SchedulingKernelTestCase):
             self.assertIs(admission.state.admission_trigger, trigger)
 
 
+class SharedCapacityTests(SchedulingKernelTestCase):
+    """One system-owned allowance is shared by every organizing origin."""
+
+    def test_manual_and_automation_work_share_one_capacity_and_claim_queue(self) -> None:
+        service = self.service(capacity=2)
+        manual = _admit(service, request_id="manual-1")
+        automation = _admit(
+            service,
+            request_id="automation-1",
+            trigger=TaskTrigger.SCHEDULE,
+            principal="automation-scheduler",
+        )
+
+        self.assertEqual(service.capacity_use(), 2)
+        with self.assertRaises(TaskQueueFull):
+            _admit(
+                service,
+                request_id="manual-2",
+            )
+        self.assertEqual(service.capacity_use(), 2)
+        self.assertIs(service.state(manual.task.task_id).queue_state, TaskQueueState.QUEUED)
+        self.assertIs(service.state(automation.task.task_id).queue_state, TaskQueueState.QUEUED)
+
+        # One claim queue: the oldest admitted work is claimed regardless of the
+        # origin label, and releasing it frees the shared slot for new work.
+        claim = service.claim_next(worker_id="worker-1", now=NOW)
+        self.assertIsNotNone(claim)
+        assert claim is not None
+        self.assertEqual(claim.task_id, manual.task.task_id)
+
+    def test_requeue_uses_the_current_shared_allowance(self) -> None:
+        service = self.service(capacity=1)
+        first = _admit(service, request_id="manual-1")
+        claim = self.claimed(service)
+        service.defer_to_human(
+            claim,
+            task=replace(
+                self.repository.get_task(first.task.task_id),
+                status=PersistentTaskStatus.RUNNING,
+                updated_at=NOW + timedelta(seconds=2),
+            ),
+            now=NOW + timedelta(seconds=2),
+        )
+        _admit(service, request_id="manual-2")
+        with self.assertRaises(TaskQueueFull):
+            service.requeue(
+                first.task.task_id,
+                expected_snapshot_id="snapshot-1",
+                expected_snapshot_digest="digest-1",
+                now=NOW + timedelta(seconds=3),
+            )
+        self.assertIs(service.state(first.task.task_id).queue_state, TaskQueueState.WAITING_HUMAN)
+
+
 class CapacityTransitionTests(SchedulingKernelTestCase):
     def test_wholly_human_waiting_releases_the_slot_but_keeps_the_work(self) -> None:
         service = self.service(capacity=1)

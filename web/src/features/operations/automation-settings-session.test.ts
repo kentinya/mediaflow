@@ -24,13 +24,11 @@ function context(overrides: Partial<PendingEngineSettingsSubmission> = {}) {
     submissionId: "submission-1",
     input: {
       "automation.maximumActiveJobs": "80",
-      "automation.staleJobAgeSeconds": "3600",
       "automation.workerPollSeconds": "2",
       "automation.schedulerPollSeconds": "5",
     },
     submittedValues: {
       "automation.maximumActiveJobs": 80,
-      "automation.staleJobAgeSeconds": 3600,
       "automation.workerPollSeconds": 2,
       "automation.schedulerPollSeconds": 5,
     },
@@ -95,7 +93,6 @@ describe("retained engine-settings submission", () => {
     // writer's change. They are stored as text so a rejected entry survives.
     const baselineValues = {
       "automation.maximumActiveJobs": "3.5",
-      "automation.staleJobAgeSeconds": "3600",
       "automation.workerPollSeconds": "2",
       "automation.schedulerPollSeconds": "5",
     };

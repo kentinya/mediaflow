@@ -454,6 +454,12 @@ function discoveryAdmissionFailureMessage(
       return "请选择至少一个文件夹或文件。";
     case "selection_over_limit":
       return "所选范围过大，请缩小选择后重试。";
+    case "capacity_full":
+    case "queue_full":
+      return (
+        "系统整理队列已满，本次没有创建整理工作；已选择的范围和摘要未改变。" +
+        "请等待其他整理完成或进入人工等待，然后显式重新提交这次选择。"
+      );
     case "resource_library_not_found":
       return "所选资源库不可用，请刷新后重新选择。";
     case "forbidden":

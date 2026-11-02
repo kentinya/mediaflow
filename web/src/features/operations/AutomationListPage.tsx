@@ -1,11 +1,12 @@
 /**
  * V2 Automation workspace — reference-aligned inventory.
  *
- * Three sibling tabs share one shell: `任务列表` (the bounded definition
- * inventory), `执行记录` (read-only admitted-run records) and `全局设置` (the
- * focused four-field Automation engine settings form and its per-consumer
- * adoption readback). Every number and row comes from a backend read; nothing
- * is filtered, aggregated or authorized in the browser.
+ * Two sibling tabs share one shell: `任务列表` (the bounded definition
+ * inventory) and `执行记录` (read-only admitted-run records). The three shared
+ * runtime settings live in System Settings; an old `?tab=settings` link is
+ * redirected there without publishing or admitting work. Every number and row
+ * comes from a backend read; nothing is filtered, aggregated or authorized in
+ * the browser.
  *
  * The submitted tab, filters, sort, time window and server page cursor live in
  * the route search, so a reload, a reconnect and a return from a definition or
@@ -39,7 +40,6 @@ import {
   type AutomationTab,
 } from "./AutomationInventory";
 import { AuthorizedReadBoundary } from "../../shared/auth/AuthorizedReadBoundary";
-import { AutomationSettingsPanel } from "./AutomationSettingsPanel";
 import { RefreshControl } from "../../shared/ui/RefreshControl";
 import { StatusBanner } from "../../shared/ui/StatusBanner";
 import type {
@@ -141,6 +141,16 @@ export function AutomationListPage() {
     // Restore only on the transition into a context-bearing URL.
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [searchParams[AUTOMATION_RETURN_KEY]]);
+  // The Automation settings tab was retired in favour of the existing System
+  // Settings page.  A bookmarked/deep old link reaches that page directly and
+  // produces no publication, admission or media effect here.
+  const legacySettingsTab = searchText(searchParams, "tab") === "settings";
+  useEffect(() => {
+    if (!legacySettingsTab) {
+      return;
+    }
+    void navigate({ to: "/configuration", replace: true });
+  }, [legacySettingsTab, navigate]);
   const tab = tabFromSearch(searchText(searchParams, "tab"));
   const cursor = searchText(searchParams, "cursor") || null;
   const direction =
@@ -359,7 +369,7 @@ export function AutomationListPage() {
         </div>
       </header>
 
-      {definitionsPage !== null && tab !== "settings" && (
+      {definitionsPage !== null && (
         <section className="mf-automation-metrics" aria-label="自动化统计">
           <AutomationMetricCards
             metrics={definitionsPage.metrics}
@@ -387,8 +397,6 @@ export function AutomationListPage() {
           </button>
         ))}
       </nav>
-
-      {tab === "settings" && <AutomationSettingsPanel />}
 
       {tab === "definitions" && (
         <AuthorizedReadBoundary

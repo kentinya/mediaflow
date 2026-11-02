@@ -2,7 +2,7 @@
 
 Two truths are kept apart here on purpose:
 
-* the **published target** — the exact four Automation engine values in the
+* the **published target** — the exact three system runtime values in the
   immutable Active configuration, identified by revision id/version/digest; and
 * the **adopted values** — what each relevant live resident process actually
   installed in its own loop after adopting a publication at a safe boundary.
@@ -27,10 +27,9 @@ from enum import StrEnum
 
 
 class AutomationEngineField(StrEnum):
-    """The four engine settings one focused checked Save owns."""
+    """The three shared runtime settings one focused checked Save owns."""
 
     MAXIMUM_ACTIVE_JOBS = "automation.maximumActiveJobs"
-    STALE_JOB_AGE_SECONDS = "automation.staleJobAgeSeconds"
     WORKER_POLL_SECONDS = "automation.workerPollSeconds"
     SCHEDULER_POLL_SECONDS = "automation.schedulerPollSeconds"
 
@@ -49,13 +48,10 @@ CONSUMER_POLLING_FIELDS: dict[str, str] = {
     "scheduler": AutomationEngineField.SCHEDULER_POLL_SECONDS.value,
 }
 
-#: The two admission/capacity fields are consumed by whichever boundary admits
-#: or observes Jobs.  They are reported as *engine* settings with an API-local
-#: basis, never as a resident process's adopted cadence.
-CAPACITY_FIELD_PATHS: tuple[str, ...] = (
-    AutomationEngineField.MAXIMUM_ACTIVE_JOBS.value,
-    AutomationEngineField.STALE_JOB_AGE_SECONDS.value,
-)
+#: The admission/capacity field is consumed by every boundary that admits or
+#: re-enters organizing work.  It is reported with an API-local basis, never as a
+#: resident process's adopted cadence.
+CAPACITY_FIELD_PATHS: tuple[str, ...] = (AutomationEngineField.MAXIMUM_ACTIVE_JOBS.value,)
 
 #: An explicit, deployment-owned poll override retains precedence over the
 #: published value.  It is never silently overwritten by a Web Save.
@@ -78,7 +74,7 @@ CONFIG_RECHECK_SECONDS = 5.0
 #: existing bounded wake, never an extra business poll.
 ADOPTION_REPORT_REFRESH_SECONDS = 5.0
 
-MAX_ENGINE_EFFECTIVE_REPORT_FIELDS = 4
+MAX_ENGINE_EFFECTIVE_REPORT_FIELDS = 3
 
 
 @dataclass(frozen=True)
@@ -100,24 +96,15 @@ class EngineFieldSpec:
 ENGINE_FIELD_SPECS: dict[str, EngineFieldSpec] = {
     AutomationEngineField.MAXIMUM_ACTIVE_JOBS.value: EngineFieldSpec(
         AutomationEngineField.MAXIMUM_ACTIVE_JOBS.value,
-        "并行任务上限",
+        "整理任务队列上限",
         "个任务",
         "integer",
         1,
         10_000,
-        "共享准入池中同时处于等待与运行状态的 Job 数量上限。",
-        "不是 Worker/线程数,也不是同时整理的媒体文件数。降低上限只阻止新的超额准入,"
-        "已准入的工作保留。",
-    ),
-    AutomationEngineField.STALE_JOB_AGE_SECONDS.value: EngineFieldSpec(
-        AutomationEngineField.STALE_JOB_AGE_SECONDS.value,
-        "任务失效判定时间",
-        "秒",
-        "integer",
-        60,
-        604_800,
-        "运行中的 Job 多久没有持久化更新就被观察为失效。",
-        "不是总运行时长上限,不授权取消、重排或重放任何 Job。",
+        "系统整理队列中同时处于等待与运行状态的整理 Task 数量上限。Files、命令行/API/远程、"
+        "定时与运行一次整理以及同一 Task 的继续都共享这个额度。",
+        "不是 Worker/线程数,也不是同时整理的媒体文件数;普通复制/移动/删除保留原有独立"
+        "准入规则。降低上限只阻止新的超额准入,已准入的工作保留。",
     ),
     AutomationEngineField.WORKER_POLL_SECONDS.value: EngineFieldSpec(
         AutomationEngineField.WORKER_POLL_SECONDS.value,
@@ -194,17 +181,15 @@ class ResidentCadence:
 
 @dataclass(frozen=True)
 class AutomationEngineValues:
-    """The four typed engine values of one configuration document."""
+    """The three typed runtime values of one configuration document."""
 
     maximum_active_jobs: int
-    stale_job_age_seconds: int
     worker_poll_seconds: float
     scheduler_poll_seconds: float
 
     def as_field_map(self) -> dict[str, float | int]:
         return {
             AutomationEngineField.MAXIMUM_ACTIVE_JOBS.value: self.maximum_active_jobs,
-            AutomationEngineField.STALE_JOB_AGE_SECONDS.value: self.stale_job_age_seconds,
             AutomationEngineField.WORKER_POLL_SECONDS.value: self.worker_poll_seconds,
             AutomationEngineField.SCHEDULER_POLL_SECONDS.value: self.scheduler_poll_seconds,
         }
@@ -214,7 +199,7 @@ class AutomationEngineValues:
 
 
 def engine_values_from_document(document: object) -> AutomationEngineValues | None:
-    """Read the four engine values from a runtime/managed document.
+    """Read the three runtime values from a runtime/managed document.
 
     ``None`` is returned when the section is absent or malformed, so a caller
     can distinguish "not published" from "published as 0".
@@ -226,14 +211,14 @@ def engine_values_from_document(document: object) -> AutomationEngineValues | No
     if not isinstance(automation, Mapping):
         return None
     maximum = automation.get("maximumActiveJobs")
-    stale = automation.get("staleJobAgeSeconds")
     worker_poll = automation.get("workerPollSeconds")
     scheduler_poll = automation.get("schedulerPollSeconds")
+    # ``staleJobAgeSeconds`` may still be present in an immutable historical
+    # document.  It is intentionally ignored here: it is no longer an editable,
+    # validated or effective runtime setting.
     if (
         isinstance(maximum, bool)
         or not isinstance(maximum, int)
-        or isinstance(stale, bool)
-        or not isinstance(stale, int)
         or isinstance(worker_poll, bool)
         or not isinstance(worker_poll, (int, float))
         or isinstance(scheduler_poll, bool)
@@ -244,53 +229,53 @@ def engine_values_from_document(document: object) -> AutomationEngineValues | No
         return None
     return AutomationEngineValues(
         maximum_active_jobs=int(maximum),
-        stale_job_age_seconds=int(stale),
         worker_poll_seconds=float(worker_poll),
         scheduler_poll_seconds=float(scheduler_poll),
     )
 
 
 def normalize_engine_setting_edits(payload: object) -> dict[str, float | int]:
-    """Strictly normalize one focused four-field submission.
+    """Strictly normalize one focused three-field submission.
 
     The submitted document must be a flat ``{fieldPath: value}`` (or ``settings``
-    wrapper) map naming exactly the four supported fields.  Unknown, missing,
+    wrapper) map naming exactly the three supported fields.  Unknown, missing,
     out-of-scope, boolean, fractional-integer and non-finite values are rejected
     before any Draft is created, so a browser can never narrow the publication to
     a partially validated subset or smuggle an unrelated setting into a save.
+    A submitted retired field is reported as unsupported and publishes nothing.
     """
 
     if not isinstance(payload, Mapping):
         raise AutomationEngineSettingsError(
             "settings_payload_invalid",
             "the settings submission must be a JSON object",
-            next_action="submit the four Automation engine fields as an object",
+            next_action="submit the three system runtime fields as an object",
         )
     raw = payload.get("settings", payload)
     if not isinstance(raw, Mapping):
         raise AutomationEngineSettingsError(
             "settings_payload_invalid",
             "the settings values must be a JSON object",
-            next_action="submit the four Automation engine fields as an object",
+            next_action="submit the three system runtime fields as an object",
         )
     unsupported = sorted(str(key) for key in raw if key not in ENGINE_FIELD_SPECS)
     if unsupported:
         raise AutomationEngineSettingsError(
             "settings_field_unsupported",
-            "this form only publishes the four Automation engine settings",
+            "this form only publishes the three system runtime settings",
             field=unsupported[0][:120],
             next_action=(
-                "edit only maximumActiveJobs, staleJobAgeSeconds, workerPollSeconds and "
-                "schedulerPollSeconds; other settings keep their own configuration journey"
+                "edit only maximumActiveJobs, workerPollSeconds and schedulerPollSeconds; "
+                "staleJobAgeSeconds is retired and other settings keep their own journey"
             ),
         )
     missing = [path for path in ENGINE_FIELD_PATHS if path not in raw]
     if missing:
         raise AutomationEngineSettingsError(
             "settings_field_missing",
-            "every one of the four Automation engine settings is required",
+            "every one of the three system runtime settings is required",
             field=missing[0],
-            next_action="read the current published values, then submit all four fields",
+            next_action="read the current published values, then submit all three fields",
         )
     normalized: dict[str, float | int] = {}
     for path in ENGINE_FIELD_PATHS:
@@ -360,7 +345,7 @@ def _normalize_field(field_path: str, value: object) -> float | int:
 
 @dataclass(frozen=True)
 class PublishedEngineTarget:
-    """The exact published Active identity and its four engine values."""
+    """The exact published Active identity and its three runtime values."""
 
     revision_id: str
     revision_version: int | None

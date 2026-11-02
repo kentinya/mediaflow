@@ -249,6 +249,10 @@ function settingFields(
       if (!raw || typeof raw !== "object" || Array.isArray(raw)) continue;
       const meta = raw as Record<string, unknown>;
       if (meta.boundary === "bootstrap_immutable") continue;
+      // The three shared runtime settings have one focused checked-Save form
+      // above; the generic Draft editor must not present a second editor for
+      // them (or the retired stale-age field).
+      if (path.startsWith("automation.")) continue;
       fields.push({
         path,
         label: text(meta.label, path),

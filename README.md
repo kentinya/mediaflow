@@ -57,7 +57,7 @@ description and refresh in the content header. Overview has no inventory search;
 families keeps one local search and state filter. Settings retains configuration diagnostics/recovery.
 
 The [Automation workspace](docs/product-experience.md#current--complete-native-automation-workspace-accepted43-amended46)
-contains `任务列表 / 执行记录 / 全局设置`. Execution-record rows offer only `查看详情 / 收起详情`;
+contains `任务列表 / 执行记录`; the three shared runtime settings live in System Settings. Execution-record rows offer only `查看详情 / 收起详情`;
 details show only this run’s result and actual times, a concise Chinese failure reason when failed,
 and a short next step. Finished admitted work (including attachments) must all succeed to show 成功;
 partial/skipped/cancelled/uncertain work shows 失败, and the same server-side result filter applies

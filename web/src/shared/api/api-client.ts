@@ -2782,7 +2782,7 @@ function normalizeAutomationMutationFailureDetails(
     Number.isSafeInteger(record.currentVersion)
       ? { currentVersion: record.currentVersion }
       : {}),
-    // The four-field settings boundary reports which field it refused, so the
+    // The three-field settings boundary reports which field it refused, so the
     // form can point at it instead of showing a generic rejection.
     ...(typeof record.field === "string" && record.field.length <= 128
       ? { field: record.field }
@@ -5261,7 +5261,7 @@ export type AutomationSettingsReconcile =
       readonly nextAction: string | null;
       readonly evidenceRevisionId: string | null;
       /**
-       * For a submission refused by four-field input validation: the bounded
+       * For a submission refused by three-field input validation: the bounded
        * rejection code and the offending field, so the form can state a readable
        * error and let the operator correct that value. It is never a licence to
        * publish the rejected value.

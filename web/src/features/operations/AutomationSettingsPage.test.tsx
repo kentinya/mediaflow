@@ -54,6 +54,26 @@ function recordingFetch(respond: (call: Call) => Response | undefined): {
       if (call.url === "/api/v1/auth/principal") {
         return jsonResponse({ principal_id: "automation-settings-admin" });
       }
+      if (call.url === "/api/v1/configuration/status") {
+        // The System Settings page owns the form now, so its own status read
+        // must succeed before the shared panel can render.
+        return jsonResponse({
+          authority: "MANAGED",
+          setupRequired: false,
+          emptyActive: false,
+          active: {
+            revisionId: TARGET_REVISION,
+            version: 7,
+            revisionSequence: 7,
+            digest: "digest-published-1",
+          },
+          setupDraft: null,
+          nextAction: "review the active settings",
+          canManageConfiguration: true,
+          canActivateConfiguration: true,
+          commandReadiness: {},
+        });
+      }
       return jsonResponse({ error: { code: "not_found" } }, 404);
     }),
   );
@@ -104,7 +124,6 @@ function instance(status: string, overrides: Json = {}): Json {
 function settingsDocument(overrides: Json = {}): Json {
   const values = {
     "automation.maximumActiveJobs": 100,
-    "automation.staleJobAgeSeconds": 3600,
     "automation.workerPollSeconds": 2,
     "automation.schedulerPollSeconds": 5,
   };
@@ -121,12 +140,6 @@ function settingsDocument(overrides: Json = {}): Json {
         minimum: 1,
         maximum: 10000,
         unit: "个任务",
-      }),
-      field("automation.staleJobAgeSeconds", "任务失效判定时间", {
-        valueType: "integer",
-        integer: true,
-        minimum: 60,
-        maximum: 604800,
       }),
       field("automation.workerPollSeconds", "Worker 轮询间隔", {
         consumer: "worker",
@@ -161,23 +174,38 @@ function settingsDocument(overrides: Json = {}): Json {
       api: {
         service: "api",
         field: "automation.maximumActiveJobs",
-        fields: [
-          "automation.maximumActiveJobs",
-          "automation.staleJobAgeSeconds",
-        ],
+        fields: ["automation.maximumActiveJobs"],
         publishedValues: {
           "automation.maximumActiveJobs": 100,
-          "automation.staleJobAgeSeconds": 3600,
         },
         adopted: false,
         basis: "api_local",
         instanceCount: 0,
         instances: [],
-        explanation: "容量与失效判定由准入/观察边界读取当前 Active。",
+        explanation: "整理任务队列上限由各准入/重入边界读取当前 Active。",
       },
     },
     adoption: { consumers: 2, adoptedConsumers: 0, allAdopted: false },
     ...overrides,
+  };
+}
+
+function configurationStatus(): Json {
+  return {
+    authority: "MANAGED",
+    setupRequired: false,
+    emptyActive: false,
+    active: {
+      revisionId: TARGET_REVISION,
+      version: 7,
+      revisionSequence: 7,
+      digest: "digest-published-1",
+    },
+    setupDraft: null,
+    nextAction: "review the active settings",
+    canManageConfiguration: true,
+    canActivateConfiguration: true,
+    commandReadiness: {},
   };
 }
 
@@ -188,7 +216,6 @@ function otherWriterTarget(): Json {
     digest: "digest-published-2",
     values: {
       "automation.maximumActiveJobs": 100,
-      "automation.staleJobAgeSeconds": 3600,
       "automation.workerPollSeconds": 2,
       "automation.schedulerPollSeconds": 9,
     },
@@ -217,6 +244,25 @@ async function connect(pagePath: string) {
 }
 
 describe("Automation engine settings surface", () => {
+  it("redirects the retired Automation settings tab to System Settings without a write", async () => {
+    const { calls } = recordingFetch((call) => {
+      if (call.url.includes("/operations/automation/settings")) {
+        return jsonResponse(settingsDocument());
+      }
+      return undefined;
+    });
+    const { router } = (() => {
+      authStore.setToken(TOKEN);
+      return renderApp("/ui-v2/operations/automation?tab=settings");
+    })();
+    const panel = await screen.findByRole("region", { name: "系统运行设置" });
+    expect(panel).toBeTruthy();
+    await waitFor(() => {
+      expect(router.state.location.pathname).toBe("/configuration");
+    });
+    expect(calls.filter((call) => call.method !== "GET")).toHaveLength(0);
+  });
+
   it("separates the published target from per-consumer adoption", async () => {
     recordingFetch((call) => {
       if (call.url.includes("/operations/automation/settings")) {
@@ -233,9 +279,9 @@ describe("Automation engine settings surface", () => {
       }
       return undefined;
     });
-    await connect("/ui-v2/operations/automation?tab=settings");
+    await connect("/ui-v2/configuration");
 
-    const panel = await screen.findByRole("region", { name: "自动化引擎设置" });
+    const panel = await screen.findByRole("region", { name: "系统运行设置" });
     // The published target is stated as such, with its exact identity.
     expect(within(panel).getByText(TARGET_REVISION)).toBeTruthy();
     expect(within(panel).getAllByText(/尚未整体采用/).length).toBeGreaterThan(
@@ -275,7 +321,6 @@ describe("Automation engine settings surface", () => {
                   digest: "digest-published-2",
                   values: {
                     "automation.maximumActiveJobs": 42,
-                    "automation.staleJobAgeSeconds": 3600,
                     "automation.workerPollSeconds": 1.5,
                     "automation.schedulerPollSeconds": 5,
                   },
@@ -298,9 +343,9 @@ describe("Automation engine settings surface", () => {
       }
       return undefined;
     });
-    await connect("/ui-v2/operations/automation?tab=settings");
+    await connect("/ui-v2/configuration");
 
-    const panel = await screen.findByRole("region", { name: "自动化引擎设置" });
+    const panel = await screen.findByRole("region", { name: "系统运行设置" });
     const jobs = within(panel).getByLabelText(
       /并行任务上限/,
     ) as HTMLInputElement;
@@ -331,7 +376,6 @@ describe("Automation engine settings surface", () => {
     expect(body["expectedDigest"]).toBe("digest-published-1");
     expect(body["settings"]).toEqual({
       "automation.maximumActiveJobs": 42,
-      "automation.staleJobAgeSeconds": 3600,
       "automation.workerPollSeconds": 1.5,
       "automation.schedulerPollSeconds": 5,
     });
@@ -375,8 +419,8 @@ describe("Automation engine settings surface", () => {
       }
       return undefined;
     });
-    await connect("/ui-v2/operations/automation?tab=settings");
-    const panel = await screen.findByRole("region", { name: "自动化引擎设置" });
+    await connect("/ui-v2/configuration");
+    const panel = await screen.findByRole("region", { name: "系统运行设置" });
     const jobs = within(panel).getByLabelText(
       /并行任务上限/,
     ) as HTMLInputElement;
@@ -434,9 +478,9 @@ describe("Automation engine settings surface", () => {
       }
       return undefined;
     });
-    await connect("/ui-v2/operations/automation?tab=settings");
+    await connect("/ui-v2/configuration");
 
-    const panel = await screen.findByRole("region", { name: "自动化引擎设置" });
+    const panel = await screen.findByRole("region", { name: "系统运行设置" });
     const jobs = within(panel).getByLabelText(
       /并行任务上限/,
     ) as HTMLInputElement;
@@ -504,8 +548,8 @@ describe("Automation engine settings surface", () => {
       }
       return undefined;
     });
-    await connect("/ui-v2/operations/automation?tab=settings");
-    const panel = await screen.findByRole("region", { name: "自动化引擎设置" });
+    await connect("/ui-v2/configuration");
+    const panel = await screen.findByRole("region", { name: "系统运行设置" });
     const jobs = within(panel).getByLabelText(
       /并行任务上限/,
     ) as HTMLInputElement;
@@ -559,9 +603,9 @@ describe("Automation engine settings surface", () => {
       }
       return undefined;
     });
-    await connect("/ui-v2/operations/automation?tab=settings");
+    await connect("/ui-v2/configuration");
 
-    const panel = await screen.findByRole("region", { name: "自动化引擎设置" });
+    const panel = await screen.findByRole("region", { name: "系统运行设置" });
     const jobs = within(panel).getByLabelText(
       /并行任务上限/,
     ) as HTMLInputElement;
@@ -617,6 +661,9 @@ describe("Automation engine settings surface", () => {
         if (url === "/api/v1/auth/principal") {
           return jsonResponse({ principal_id: "automation-settings-admin" });
         }
+        if (url === "/api/v1/configuration/status") {
+          return jsonResponse(configurationStatus());
+        }
         if (url.includes("/operations/automation/settings")) {
           if (method === "PUT") {
             await pending;
@@ -634,7 +681,6 @@ describe("Automation engine settings surface", () => {
                     digest: "digest-published-4",
                     values: {
                       "automation.maximumActiveJobs": 41,
-                      "automation.staleJobAgeSeconds": 3600,
                       "automation.workerPollSeconds": 2,
                       "automation.schedulerPollSeconds": 5,
                     },
@@ -654,7 +700,6 @@ describe("Automation engine settings surface", () => {
                       digest: "digest-published-4",
                       values: {
                         "automation.maximumActiveJobs": 41,
-                        "automation.staleJobAgeSeconds": 3600,
                         "automation.workerPollSeconds": 2,
                         "automation.schedulerPollSeconds": 5,
                       },
@@ -676,8 +721,8 @@ describe("Automation engine settings surface", () => {
         return jsonResponse({ error: { code: "not_found" } }, 404);
       }),
     );
-    await connect("/ui-v2/operations/automation?tab=settings");
-    const panel = await screen.findByRole("region", { name: "自动化引擎设置" });
+    await connect("/ui-v2/configuration");
+    const panel = await screen.findByRole("region", { name: "系统运行设置" });
     const jobs = within(panel).getByLabelText(
       /并行任务上限/,
     ) as HTMLInputElement;
@@ -723,6 +768,9 @@ describe("Automation engine settings surface", () => {
         if (url === "/api/v1/auth/principal") {
           return jsonResponse({ principal_id: "automation-settings-admin" });
         }
+        if (url === "/api/v1/configuration/status") {
+          return jsonResponse(configurationStatus());
+        }
         if (url.includes("/operations/automation/settings")) {
           if (method === "PUT") {
             putBodies.push(JSON.parse(String(init?.body ?? "{}")) as Json);
@@ -742,7 +790,6 @@ describe("Automation engine settings surface", () => {
                       digest: "digest-published-5",
                       values: {
                         "automation.maximumActiveJobs": 41,
-                        "automation.staleJobAgeSeconds": 3600,
                         "automation.workerPollSeconds": 3,
                         "automation.schedulerPollSeconds": 5,
                       },
@@ -765,7 +812,6 @@ describe("Automation engine settings surface", () => {
                     digest: "digest-published-6",
                     values: {
                       "automation.maximumActiveJobs": 41,
-                      "automation.staleJobAgeSeconds": 3600,
                       "automation.workerPollSeconds": 4,
                       "automation.schedulerPollSeconds": 5,
                     },
@@ -786,7 +832,6 @@ describe("Automation engine settings surface", () => {
                       digest: "digest-published-5",
                       values: {
                         "automation.maximumActiveJobs": 41,
-                        "automation.staleJobAgeSeconds": 3600,
                         "automation.workerPollSeconds": 3,
                         "automation.schedulerPollSeconds": 5,
                       },
@@ -808,8 +853,8 @@ describe("Automation engine settings surface", () => {
         return jsonResponse({ error: { code: "not_found" } }, 404);
       }),
     );
-    await connect("/ui-v2/operations/automation?tab=settings");
-    const panel = await screen.findByRole("region", { name: "自动化引擎设置" });
+    await connect("/ui-v2/configuration");
+    const panel = await screen.findByRole("region", { name: "系统运行设置" });
     const jobs = within(panel).getByLabelText(
       /并行任务上限/,
     ) as HTMLInputElement;
@@ -847,13 +892,11 @@ describe("Automation engine settings surface", () => {
       submissionId: "submission-lost-rejection-1",
       input: {
         "automation.maximumActiveJobs": "61",
-        "automation.staleJobAgeSeconds": "3600",
         "automation.workerPollSeconds": "2",
         "automation.schedulerPollSeconds": "5",
       },
       submittedValues: {
         "automation.maximumActiveJobs": 61,
-        "automation.staleJobAgeSeconds": 3600,
         "automation.workerPollSeconds": 2,
         "automation.schedulerPollSeconds": 5,
       },
@@ -892,7 +935,6 @@ describe("Automation engine settings surface", () => {
               digest: "digest-published-2",
               values: {
                 "automation.maximumActiveJobs": 41,
-                "automation.staleJobAgeSeconds": 3600,
                 "automation.workerPollSeconds": 2,
                 "automation.schedulerPollSeconds": 5,
               },
@@ -912,8 +954,8 @@ describe("Automation engine settings surface", () => {
       return undefined;
     });
     authStore.setToken(TOKEN);
-    renderApp("/ui-v2/operations/automation?tab=settings");
-    let panel = await screen.findByRole("region", { name: "自动化引擎设置" });
+    renderApp("/ui-v2/configuration");
+    let panel = await screen.findByRole("region", { name: "系统运行设置" });
     expect(await within(panel).findByText(/上一次保存结果未知/)).toBeTruthy();
     await userEvent.click(
       within(panel).getByRole("button", { name: "核实上次提交" }),
@@ -948,8 +990,8 @@ describe("Automation engine settings surface", () => {
     cleanup();
     authStore.setToken(TOKEN);
     window.sessionStorage.setItem(storageKey, JSON.stringify(retained));
-    renderApp("/ui-v2/operations/automation?tab=settings");
-    panel = await screen.findByRole("region", { name: "自动化引擎设置" });
+    renderApp("/ui-v2/configuration");
+    panel = await screen.findByRole("region", { name: "系统运行设置" });
     expect(await within(panel).findByText(/上一次保存结果未知/)).toBeTruthy();
     expect(
       (
@@ -970,13 +1012,11 @@ describe("Automation engine settings surface", () => {
       submissionId: "submission-invalid-3-5",
       input: {
         "automation.maximumActiveJobs": "3.5",
-        "automation.staleJobAgeSeconds": "3600",
         "automation.workerPollSeconds": "2",
         "automation.schedulerPollSeconds": "5",
       },
       submittedValues: {
         "automation.maximumActiveJobs": 3.5,
-        "automation.staleJobAgeSeconds": 3600,
         "automation.workerPollSeconds": 2,
         "automation.schedulerPollSeconds": 5,
       },
@@ -985,7 +1025,6 @@ describe("Automation engine settings surface", () => {
       baselineDigest: "digest-published-1",
       baselineValues: {
         "automation.maximumActiveJobs": "100",
-        "automation.staleJobAgeSeconds": "3600",
         "automation.workerPollSeconds": "2",
         "automation.schedulerPollSeconds": "5",
       },
@@ -1034,7 +1073,6 @@ describe("Automation engine settings surface", () => {
                   digest: "digest-published-9",
                   values: {
                     "automation.maximumActiveJobs": 4,
-                    "automation.staleJobAgeSeconds": 3600,
                     "automation.workerPollSeconds": 2,
                     "automation.schedulerPollSeconds": 9,
                   },
@@ -1050,7 +1088,6 @@ describe("Automation engine settings surface", () => {
               ...otherWriterTarget(),
               values: {
                 "automation.maximumActiveJobs": 100,
-                "automation.staleJobAgeSeconds": 3600,
                 "automation.workerPollSeconds": 2,
                 "automation.schedulerPollSeconds": 9,
               },
@@ -1069,8 +1106,8 @@ describe("Automation engine settings surface", () => {
       }
       return undefined;
     });
-    await connect("/ui-v2/operations/automation?tab=settings");
-    const panel = await screen.findByRole("region", { name: "自动化引擎设置" });
+    await connect("/ui-v2/configuration");
+    const panel = await screen.findByRole("region", { name: "系统运行设置" });
     expect(await within(panel).findByText(/上一次保存结果未知/)).toBeTruthy();
     await userEvent.click(
       within(panel).getByRole("button", { name: "核实上次提交" }),
@@ -1112,7 +1149,6 @@ describe("Automation engine settings surface", () => {
     expect(submitted["expectedRevisionId"]).toBe("revision-published-2");
     expect(submitted["settings"]).toEqual({
       "automation.maximumActiveJobs": 4,
-      "automation.staleJobAgeSeconds": 3600,
       "automation.workerPollSeconds": 2,
       "automation.schedulerPollSeconds": 9,
     });
@@ -1146,7 +1182,7 @@ describe("Automation engine settings surface", () => {
       }
       return undefined;
     });
-    await connect("/ui-v2/operations/automation?tab=settings");
+    await connect("/ui-v2/configuration");
 
     const workerAdoption = await screen.findByRole("region", {
       name: "Worker 轮询采用情况",
@@ -1199,9 +1235,9 @@ describe("Automation engine settings surface", () => {
       }
       return undefined;
     });
-    await connect("/ui-v2/operations/automation?tab=settings");
+    await connect("/ui-v2/configuration");
 
-    const panel = await screen.findByRole("region", { name: "自动化引擎设置" });
+    const panel = await screen.findByRole("region", { name: "系统运行设置" });
     // The fabricated collective flag is refused: the page still says this is
     // not a deployment-wide adoption.
     expect(within(panel).getAllByText(/尚未整体采用/).length).toBeGreaterThan(
@@ -1243,7 +1279,7 @@ describe("Automation engine settings surface", () => {
       }
       return undefined;
     });
-    await connect("/ui-v2/operations/automation?tab=settings");
+    await connect("/ui-v2/configuration");
 
     expect(
       await screen.findByText(
@@ -1285,7 +1321,6 @@ describe("Automation engine settings surface", () => {
                     digest: "digest-published-3",
                     values: {
                       "automation.maximumActiveJobs": 70,
-                      "automation.staleJobAgeSeconds": 3600,
                       "automation.workerPollSeconds": 2,
                       "automation.schedulerPollSeconds": 9,
                     },
@@ -1314,9 +1349,9 @@ describe("Automation engine settings surface", () => {
         }
         return undefined;
       });
-      await connect("/ui-v2/operations/automation?tab=settings");
+      await connect("/ui-v2/configuration");
       const panel = await screen.findByRole("region", {
-        name: "自动化引擎设置",
+        name: "系统运行设置",
       });
       const jobs = within(panel).getByLabelText(
         /并行任务上限/,
@@ -1360,7 +1395,6 @@ describe("Automation engine settings surface", () => {
       expect(putBody!["expectedDigest"]).toBe("digest-published-2");
       expect(putBody!["settings"]).toEqual({
         "automation.maximumActiveJobs": 70,
-        "automation.staleJobAgeSeconds": 3600,
         "automation.workerPollSeconds": 2,
         "automation.schedulerPollSeconds": 9,
       });
@@ -1393,7 +1427,6 @@ describe("Automation engine settings surface", () => {
                     digest: "digest-published-4",
                     values: {
                       "automation.maximumActiveJobs": 70,
-                      "automation.staleJobAgeSeconds": 3600,
                       "automation.workerPollSeconds": 2,
                       "automation.schedulerPollSeconds": 5,
                     },
@@ -1413,7 +1446,6 @@ describe("Automation engine settings surface", () => {
                 digest: "digest-published-2b",
                 values: {
                   "automation.maximumActiveJobs": 90,
-                  "automation.staleJobAgeSeconds": 3600,
                   "automation.workerPollSeconds": 2,
                   "automation.schedulerPollSeconds": 5,
                 },
@@ -1432,9 +1464,9 @@ describe("Automation engine settings surface", () => {
         }
         return undefined;
       });
-      await connect("/ui-v2/operations/automation?tab=settings");
+      await connect("/ui-v2/configuration");
       const panel = await screen.findByRole("region", {
-        name: "自动化引擎设置",
+        name: "系统运行设置",
       });
       const jobs = within(panel).getByLabelText(
         /并行任务上限/,
@@ -1511,7 +1543,6 @@ describe("Automation engine settings surface", () => {
                 digest: "digest-published-2c",
                 values: {
                   "automation.maximumActiveJobs": 90,
-                  "automation.staleJobAgeSeconds": 3600,
                   "automation.workerPollSeconds": 2,
                   "automation.schedulerPollSeconds": 5,
                 },
@@ -1530,9 +1561,9 @@ describe("Automation engine settings surface", () => {
         }
         return undefined;
       });
-      await connect("/ui-v2/operations/automation?tab=settings");
+      await connect("/ui-v2/configuration");
       const panel = await screen.findByRole("region", {
-        name: "自动化引擎设置",
+        name: "系统运行设置",
       });
       const jobs = within(panel).getByLabelText(
         /并行任务上限/,
@@ -1574,13 +1605,11 @@ describe("Automation engine settings surface", () => {
         submissionId: "submission-same-field-lost-409",
         input: {
           "automation.maximumActiveJobs": "61",
-          "automation.staleJobAgeSeconds": "3600",
           "automation.workerPollSeconds": "2",
           "automation.schedulerPollSeconds": "5",
         },
         submittedValues: {
           "automation.maximumActiveJobs": 61,
-          "automation.staleJobAgeSeconds": 3600,
           "automation.workerPollSeconds": 2,
           "automation.schedulerPollSeconds": 5,
         },
@@ -1590,7 +1619,6 @@ describe("Automation engine settings surface", () => {
         // Original 4: the value both writers started from.
         baselineValues: {
           "automation.maximumActiveJobs": "4",
-          "automation.staleJobAgeSeconds": "3600",
           "automation.workerPollSeconds": "2",
           "automation.schedulerPollSeconds": "5",
         },
@@ -1604,7 +1632,6 @@ describe("Automation engine settings surface", () => {
         digest: "digest-published-71",
         values: {
           "automation.maximumActiveJobs": 71,
-          "automation.staleJobAgeSeconds": 3600,
           "automation.workerPollSeconds": 2,
           "automation.schedulerPollSeconds": 5,
         },
@@ -1648,7 +1675,6 @@ describe("Automation engine settings surface", () => {
                       digest: "digest-published-61",
                       values: {
                         "automation.maximumActiveJobs": 61,
-                        "automation.staleJobAgeSeconds": 3600,
                         "automation.workerPollSeconds": 2,
                         "automation.schedulerPollSeconds": 5,
                       },
@@ -1671,8 +1697,8 @@ describe("Automation engine settings surface", () => {
           }
           return undefined;
         });
-        await connect("/ui-v2/operations/automation?tab=settings");
-        return screen.findByRole("region", { name: "自动化引擎设置" });
+        await connect("/ui-v2/configuration");
+        return screen.findByRole("region", { name: "系统运行设置" });
       };
 
       // --- First choice: keep mine. The decision itself writes nothing. ---
@@ -1772,7 +1798,6 @@ describe("Automation engine settings surface", () => {
       const currentValues = () => ({
         "automation.maximumActiveJobs":
           revision === 0 ? 100 : revision === 1 ? 62 : 63,
-        "automation.staleJobAgeSeconds": 3600,
         "automation.workerPollSeconds": 2,
         "automation.schedulerPollSeconds": 9,
       });
@@ -1814,7 +1839,6 @@ describe("Automation engine settings surface", () => {
                   digest: "digest-published-1",
                   values: {
                     "automation.maximumActiveJobs": 100,
-                    "automation.staleJobAgeSeconds": 3600,
                     "automation.workerPollSeconds": 2,
                     "automation.schedulerPollSeconds": 5,
                   },
@@ -1838,7 +1862,6 @@ describe("Automation engine settings surface", () => {
                   revision === 0
                     ? {
                         "automation.maximumActiveJobs": 100,
-                        "automation.staleJobAgeSeconds": 3600,
                         "automation.workerPollSeconds": 2,
                         "automation.schedulerPollSeconds": 9,
                       }
@@ -1858,9 +1881,9 @@ describe("Automation engine settings surface", () => {
         }
         return undefined;
       });
-      await connect("/ui-v2/operations/automation?tab=settings");
+      await connect("/ui-v2/configuration");
       const panel = await screen.findByRole("region", {
-        name: "自动化引擎设置",
+        name: "系统运行设置",
       });
       const jobs = within(panel).getByLabelText(
         /并行任务上限/,
@@ -1895,7 +1918,6 @@ describe("Automation engine settings surface", () => {
       });
       expect(putBodies[0]["settings"] as Json).toEqual({
         "automation.maximumActiveJobs": 62,
-        "automation.staleJobAgeSeconds": 3600,
         "automation.workerPollSeconds": 2,
         "automation.schedulerPollSeconds": 9,
       });
@@ -1933,7 +1955,6 @@ describe("Automation engine settings surface", () => {
       });
       expect(putBodies[1]["settings"] as Json).toEqual({
         "automation.maximumActiveJobs": 63,
-        "automation.staleJobAgeSeconds": 3600,
         "automation.workerPollSeconds": 2,
         "automation.schedulerPollSeconds": 9,
       });
@@ -1951,13 +1972,11 @@ describe("Automation engine settings surface", () => {
         submissionId: "submission-current-read-fails",
         input: {
           "automation.maximumActiveJobs": "61",
-          "automation.staleJobAgeSeconds": "3600",
           "automation.workerPollSeconds": "2",
           "automation.schedulerPollSeconds": "5",
         },
         submittedValues: {
           "automation.maximumActiveJobs": 61,
-          "automation.staleJobAgeSeconds": 3600,
           "automation.workerPollSeconds": 2,
           "automation.schedulerPollSeconds": 5,
         },
@@ -1966,7 +1985,6 @@ describe("Automation engine settings surface", () => {
         baselineDigest: "digest-published-1",
         baselineValues: {
           "automation.maximumActiveJobs": "100",
-          "automation.staleJobAgeSeconds": "3600",
           "automation.workerPollSeconds": "2",
           "automation.schedulerPollSeconds": "5",
         },
@@ -2010,9 +2028,9 @@ describe("Automation engine settings surface", () => {
         }
         return undefined;
       });
-      await connect("/ui-v2/operations/automation?tab=settings");
+      await connect("/ui-v2/configuration");
       const panel = await screen.findByRole("region", {
-        name: "自动化引擎设置",
+        name: "系统运行设置",
       });
       expect(await within(panel).findByText(/上一次保存结果未知/)).toBeTruthy();
       // From here on, reading the current publication fails.
@@ -2031,7 +2049,7 @@ describe("Automation engine settings surface", () => {
       failReads = false;
       const recovered = await screen.findByRole(
         "region",
-        { name: "自动化引擎设置" },
+        { name: "系统运行设置" },
         { timeout: 9_000 },
       );
       const jobs = within(recovered).getByLabelText(
@@ -2070,7 +2088,6 @@ describe("Automation engine settings surface", () => {
         digest,
         values: {
           "automation.maximumActiveJobs": capacity,
-          "automation.staleJobAgeSeconds": 3600,
           "automation.workerPollSeconds": 2,
           "automation.schedulerPollSeconds": 5,
         },
@@ -2127,9 +2144,9 @@ describe("Automation engine settings surface", () => {
         }
         return undefined;
       });
-      await connect("/ui-v2/operations/automation?tab=settings");
+      await connect("/ui-v2/configuration");
       const panel = await screen.findByRole("region", {
-        name: "自动化引擎设置",
+        name: "系统运行设置",
       });
       const jobs = within(panel).getByLabelText(
         /并行任务上限/,
@@ -2183,13 +2200,11 @@ describe("Automation engine settings surface", () => {
       submissionId: "submission-reload-1",
       input: {
         "automation.maximumActiveJobs": "80",
-        "automation.staleJobAgeSeconds": "3600",
         "automation.workerPollSeconds": "2",
         "automation.schedulerPollSeconds": "5",
       },
       submittedValues: {
         "automation.maximumActiveJobs": 80,
-        "automation.staleJobAgeSeconds": 3600,
         "automation.workerPollSeconds": 2,
         "automation.schedulerPollSeconds": 5,
       },
@@ -2228,8 +2243,8 @@ describe("Automation engine settings surface", () => {
       }
       return undefined;
     });
-    renderApp("/ui-v2/operations/automation?tab=settings");
-    const panel = await screen.findByRole("region", { name: "自动化引擎设置" });
+    renderApp("/ui-v2/configuration");
+    const panel = await screen.findByRole("region", { name: "系统运行设置" });
     // The unknown submission survived the reload and still blocks a new Save.
     expect(await within(panel).findByText(/上一次保存结果未知/)).toBeTruthy();
     const jobs = within(panel).getByLabelText(
@@ -2293,13 +2308,9 @@ describe("Automation engine settings surface", () => {
               api: {
                 service: "api",
                 field: "automation.maximumActiveJobs",
-                fields: [
-                  "automation.maximumActiveJobs",
-                  "automation.staleJobAgeSeconds",
-                ],
+                fields: ["automation.maximumActiveJobs"],
                 publishedValues: {
                   "automation.maximumActiveJobs": 100,
-                  "automation.staleJobAgeSeconds": 3600,
                 },
                 adopted: false,
                 basis: "api_local",
@@ -2321,8 +2332,8 @@ describe("Automation engine settings surface", () => {
       }
       return undefined;
     });
-    await connect("/ui-v2/operations/automation?tab=settings");
-    const panel = await screen.findByRole("region", { name: "自动化引擎设置" });
+    await connect("/ui-v2/configuration");
+    const panel = await screen.findByRole("region", { name: "系统运行设置" });
     expect(
       within(panel).getByText("全部相关常驻进程都已采用当前发布值"),
     ).toBeTruthy();
@@ -2390,8 +2401,8 @@ describe("Automation engine settings surface", () => {
       }
       return undefined;
     });
-    await connect("/ui-v2/operations/automation?tab=settings");
-    const panel = await screen.findByRole("region", { name: "自动化引擎设置" });
+    await connect("/ui-v2/configuration");
+    const panel = await screen.findByRole("region", { name: "系统运行设置" });
     const workerAdoption = screen.getByRole("region", {
       name: "Worker 轮询采用情况",
     });
@@ -2461,8 +2472,8 @@ describe("Automation engine settings surface", () => {
       }
       return undefined;
     });
-    await connect("/ui-v2/operations/automation?tab=settings");
-    const panel = await screen.findByRole("region", { name: "自动化引擎设置" });
+    await connect("/ui-v2/configuration");
+    const panel = await screen.findByRole("region", { name: "系统运行设置" });
     // Contradictory populations never become a collective success claim.
     expect(within(panel).getAllByText(/尚未整体采用/).length).toBeGreaterThan(
       0,
@@ -2515,7 +2526,7 @@ describe("Automation engine settings surface", () => {
       }
       return undefined;
     });
-    await connect("/ui-v2/operations/automation?tab=settings");
+    await connect("/ui-v2/configuration");
     const workerAdoption = await screen.findByRole("region", {
       name: "Worker 轮询采用情况",
     });
@@ -2552,9 +2563,9 @@ describe("Automation engine settings surface", () => {
       }
       return undefined;
     });
-    await connect("/ui-v2/operations/automation?tab=settings");
+    await connect("/ui-v2/configuration");
 
-    const panel = await screen.findByRole("region", { name: "自动化引擎设置" });
+    const panel = await screen.findByRole("region", { name: "系统运行设置" });
     expect(within(panel).getByText(/当前账号没有管理配置的权限/)).toBeTruthy();
     const jobs = within(panel).getByLabelText(
       /并行任务上限/,

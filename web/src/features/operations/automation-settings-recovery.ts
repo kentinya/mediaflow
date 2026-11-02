@@ -69,9 +69,7 @@ export function sameTypedValue(
 function fieldLabel(field: AutomationEngineField): string {
   switch (field) {
     case "automation.maximumActiveJobs":
-      return "并行任务上限";
-    case "automation.staleJobAgeSeconds":
-      return "任务失效判定时间";
+      return "整理任务队列上限";
     case "automation.workerPollSeconds":
       return "Worker 轮询间隔";
     case "automation.schedulerPollSeconds":

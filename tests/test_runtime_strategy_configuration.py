@@ -51,6 +51,7 @@ class RuntimeStrategyConfigurationTests(unittest.TestCase):
         self.assertEqual(runtime.storage_definitions, ())
         self.assertEqual(runtime.resource_libraries, ())
         self.assertEqual(runtime.media_libraries, ())
+        self.assertNotIn("staleJobAgeSeconds", starter["automation"])
 
     def test_empty_collections_still_require_array_shape(self) -> None:
         invalid = copy.deepcopy(self.document)

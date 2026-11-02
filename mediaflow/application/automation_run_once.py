@@ -240,7 +240,7 @@ class AutomationRunOnceService:
             )
         except TaskQueueFull as error:
             raise AutomationRunOnceError(
-                "the processing queue is full; no work was admitted",
+                str(error),
                 code="queue_full",
                 status=409,
             ) from error

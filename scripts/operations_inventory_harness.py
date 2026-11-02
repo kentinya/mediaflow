@@ -1107,7 +1107,9 @@ def state_authorization_service(
     active = managed.active if managed is not None else None
     return ExecutionAuthorizationService(
         repository,
-        maximum_active_jobs=100,
+        maximum_active_jobs=(
+            managed.runtime.automation_maximum_active_jobs if managed is not None else 100
+        ),
         configuration_snapshot_id=getattr(active, "revision_id", None),
         configuration_snapshot_digest=getattr(active, "digest", None),
     )
@@ -4832,7 +4834,8 @@ def run_automation_definition_worker_once(
     if task is None:
         return {"ran": False, "reason": "the occurrence Task is unavailable"}
     scheduling = TaskSchedulingService(
-        state.repository, capacity=state.managed.runtime.automation_maximum_active_jobs
+        state.repository,
+        capacity=state.managed.runtime.automation_maximum_active_jobs,
     )
     worker_id = "harness-automation-definition-worker"
     state.repository.register_worker(

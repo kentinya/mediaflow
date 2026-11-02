@@ -26,6 +26,7 @@ it yet.
 from __future__ import annotations
 
 import secrets
+from collections.abc import Callable
 from dataclasses import replace
 from datetime import UTC, datetime
 from uuid import NAMESPACE_URL, uuid4, uuid5
@@ -170,12 +171,16 @@ class TaskSchedulingService:
         self,
         repository: TaskSchedulingRepository,
         *,
-        capacity: int,
+        capacity: int | Callable[[], int],
         locks: FileOperationLockRepository | None = None,
         lease_seconds: float = DEFAULT_TASK_LEASE_SECONDS,
     ) -> None:
         self._repository = repository
-        self._capacity = require_capacity(capacity)
+        # A resident composition may resolve the current published allowance at
+        # each admission/re-entry, so a new System Settings value applies to new
+        # work without restarting the process.  A fixed integer is still the
+        # ordinary composition used by direct CLI/API paths and tests.
+        self._capacity = capacity if callable(capacity) else require_capacity(capacity)
         # Kept for callers that already pass their lock port.  Retiring one
         # round's short-lived execution locks is part of the repository's
         # claim-validated release transaction, never a separate Task-level
@@ -188,7 +193,7 @@ class TaskSchedulingService:
 
     @property
     def capacity(self) -> int:
-        return self._capacity
+        return self._current_capacity()
 
     @property
     def lease_seconds(self) -> float:
@@ -254,7 +259,10 @@ class TaskSchedulingService:
             now=current,
         )
         return self._repository.admit_scheduled_task(
-            task, state, capacity=self._capacity, display=display
+            task,
+            state,
+            capacity=self._current_capacity(),
+            display=display,
         )
 
     # -- Claim, heartbeat and the running boundary ---------------------------
@@ -599,7 +607,7 @@ class TaskSchedulingService:
             expected_snapshot_id=expected_snapshot_id,
             expected_snapshot_digest=expected_snapshot_digest,
             expected_control_revision=expected_control_revision,
-            capacity=self._capacity,
+            capacity=self._current_capacity(),
             now=self._now(now),
             stage=stage,
             queue_eligible_at=eligible_at,
@@ -1042,6 +1050,12 @@ class TaskSchedulingService:
         # source ownership stays with the items themselves, so giving the slot
         # back never frees a source for competing work.
         return released
+
+    def _current_capacity(self) -> int:
+        """The one system-owned organizing allowance currently in force."""
+
+        value = self._capacity() if callable(self._capacity) else self._capacity
+        return require_capacity(value)
 
     @staticmethod
     def _require_task_matches_claim(claim: ScheduledTaskClaim, task: PersistentTask) -> None:

@@ -1083,11 +1083,11 @@ longer causes the unchanged strict Web decoder to reject a readable mixed page. 
 Task item evidence still reports `unavailable=true`, and actual denied/malformed/read failures remain
 distinct. Records refresh uses the same bounded GET and grants no work, retry or execution authority.
 
-The CURRENT settings surface exposes four fields; `staleJobAgeSeconds` is validated, passed and
-reported but has no actual Task no-progress observer in the current code. It is not evidence of
-implemented timeout detection. Slice47's TARGET above removes it and relocates the remaining three
-fields; this section describes the existing publication/adoption foundation, not that pending change.
-Capacity bounds pending+running Jobs in the accepted Base. Polling adoption must be proved by
+The implemented candidate exposes the three shared runtime fields in System Settings;
+`staleJobAgeSeconds` is retired from editable/effective/default/runtime contracts while existing
+immutable documents remain readable with it ignored. Independent B and A acceptance is still
+pending; this section describes the implemented publication/adoption foundation, not an accepted
+deployment claim. Capacity bounds queued+claimed organizing Tasks in the shared pool. Polling adoption must be proved by
 fresh actual consumer values/version at safe resident-loop boundaries, independently of each Job's
 media pin. API runtime binding alone is not proof of another process's cadence. Idle/long waits,
 heartbeat/lease ownership and CLI/deployment overrides retain meaning; unavailable Active cannot
@@ -1099,16 +1099,16 @@ resident adoption below are accepted parts of the same Slice.
 
 ```text
 GET /api/v1/operations/automation/settings   READ
-  → published target (Active revision id/version/digest + the four values)
+  → published target (Active revision id/version/digest + the three values)
   → per-consumer adoption (each *current* resident instance's own report)
   → bounded retained stopped/stale history as diagnostics only
 
 PUT /api/v1/operations/automation/settings   MANAGE_CONFIGURATION
-  → strict four-field normalization (no other key, no bool/fractional/non-finite)
+  → strict three-field normalization (no other key, no bool/fractional/non-finite)
   → observed Active captured, no-op detected (publishes nothing)
   → successor Draft from that exact Active
-  → only automation.{maximumActiveJobs,staleJobAgeSeconds,
-                     workerPollSeconds,schedulerPollSeconds} applied
+  → only automation.{maximumActiveJobs,workerPollSeconds,
+                     schedulerPollSeconds} applied
   → whole-candidate validation → runtime preparation → atomic activation
 
 resident Worker/Scheduler loop
@@ -1133,7 +1133,7 @@ reconciled against that exact submission's own durable evidence
 (`committed` / `superseded` / `not_committed` / `unresolved`); equal values,
 another writer's equal publication, or a still-Draft failed revision can never
 certify it. A submission that terminates without ever owning a revision — a
-four-field input refusal, a stale/no-op refusal, or a
+three-field input refusal, a stale/no-op refusal, or a
 persist/validate/prepare/activate fault — records its own bounded terminal
 outcome under the same actor + submission identity, so a lost failure response
 reconciles into a *terminal, correctable* state instead of a permanently blocked
@@ -1181,7 +1181,7 @@ keystroke and restore its old value after a successful Save.
 `/api/v1/system/settings` semantics unchanged; the focused command is a distinct
 contract, not a replacement. Shared validation stays in
 `mediaflow.domain.system_settings` (now including finite-number rejection) and the
-four-field subset/bounds/meanings live in `mediaflow.domain.automation_settings`.
+three-field subset/bounds/meanings live in `mediaflow.domain.automation_settings`.
 `AutomationSettingsService` composes the existing `ManagedConfigurationService`
 activation and `_document_evidence` audit rather than duplicating them.
 

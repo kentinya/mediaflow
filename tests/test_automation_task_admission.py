@@ -110,11 +110,11 @@ class SchedulerTaskAdmissionTests(unittest.TestCase):
         ]
         self.assertEqual(len(states), 1)
 
-    def test_full_capacity_leaves_the_occurrence_due_without_a_task(self) -> None:
+    def test_full_shared_capacity_leaves_the_occurrence_due_without_a_task(self) -> None:
         active = _snapshot((_definition(),), maximum_active_jobs=1)
         from mediaflow.application.task_scheduling import TaskSchedulingService
 
-        # Occupy the one shared slot with a different admitted Task.
+        # Occupy the one shared system slot with a different admitted Task.
         occupied = TaskSchedulingService(self.repository, capacity=1).admit(
             "organize",
             execute_authorized=True,
@@ -134,6 +134,37 @@ class SchedulerTaskAdmissionTests(unittest.TestCase):
             self.repository.get_task_scheduling(occupied.task.task_id).queue_state,
             TaskQueueState.QUEUED,
         )
+
+    def test_manual_work_consumes_the_same_allowance_as_automation(self) -> None:
+        """Task47.6 / AC-S3: one system allowance, not two source budgets.
+
+        A manual Task holding the only slot leaves the due occurrence unadmitted
+        and due, and the manual Task keeps its own queue state.  Releasing the
+        manual work allows the next normal due check to admit it.
+        """
+
+        active = _snapshot((_definition(),), maximum_active_jobs=1)
+        from mediaflow.application.task_scheduling import TaskSchedulingService
+
+        occupied = TaskSchedulingService(self.repository, capacity=1).admit(
+            "organize",
+            execute_authorized=True,
+            trigger=TaskTrigger.MANUAL,
+            principal="operator",
+            request_id="occupied",
+            configuration_snapshot_id="snapshot",
+            configuration_snapshot_digest="digest",
+        )
+        emitted = self._scheduler(active, capacity=1).tick(NOW)
+
+        self.assertEqual(emitted, ())
+        self.assertEqual(_rows(self.repository, "task_scheduling"), 1)
+        self.assertEqual(self.repository.count_scheduled_capacity_use(), 1)
+        self.assertEqual(
+            self.repository.get_task_scheduling(occupied.task.task_id).queue_state,
+            TaskQueueState.QUEUED,
+        )
+        self.assertIsNone(self.repository.get_latest_automation_definition_occurrence("definition"))
 
     def test_disabled_definition_is_not_admitted(self) -> None:
         active = _snapshot((_definition(enabled=False),))

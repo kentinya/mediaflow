@@ -363,7 +363,6 @@ class MediaFlowApi:
         remote_execution_enabled: bool = False,
         remote_execution_maximum_ttl_seconds: int = 900,
         maximum_active_jobs: int | None = None,
-        stale_job_age_seconds: int = 3600,
         system_status=None,
         metadata_policies=(),
         configuration_service: ManagedConfigurationService | None = None,
@@ -396,13 +395,6 @@ class MediaFlowApi:
         self._repository = repository
         self._principals = principals
         self._runtime_snapshot_validator = recovery_snapshot_validator
-        if (
-            isinstance(stale_job_age_seconds, bool)
-            or not isinstance(stale_job_age_seconds, int)
-            or stale_job_age_seconds < 60
-            or stale_job_age_seconds > 604_800
-        ):
-            raise ValueError("stale Job age must be between 60 and 604800 seconds")
         self._storage_adapters = dict(storage_adapters or {})
         self._configuration_service = configuration_service
         self._attach_task_terminal_notifications()
@@ -698,7 +690,6 @@ class MediaFlowApi:
             maximum_active_jobs=100 if maximum_active_jobs is None else maximum_active_jobs,
             remote_execution_enabled=remote_execution_enabled,
             remote_execution_maximum_ttl_seconds=remote_execution_maximum_ttl_seconds,
-            stale_job_age_seconds=stale_job_age_seconds,
             system_status=system_status,
             schedules=tuple(schedules),
             metadata_policies=tuple(metadata_policies),
@@ -8913,7 +8904,6 @@ class MediaFlowApi:
                 maximum_active_jobs=maximum_active_jobs,
                 remote_execution_enabled=runtime.remote_execution_enabled,
                 remote_execution_maximum_ttl_seconds=(runtime.remote_execution_maximum_ttl_seconds),
-                stale_job_age_seconds=runtime.automation_stale_job_age_seconds,
                 system_status=system_status,
                 schedules=runtime.automation_schedules,
                 metadata_policies=runtime.strategy.metadata_policies,
@@ -9101,7 +9091,6 @@ class MediaFlowApi:
             ),
             remote_execution_enabled=runtime.remote_execution_enabled,
             remote_execution_maximum_ttl_seconds=(runtime.remote_execution_maximum_ttl_seconds),
-            stale_job_age_seconds=runtime.automation_stale_job_age_seconds,
             system_status=refreshed_status,
             schedules=runtime.automation_schedules,
             metadata_policies=runtime.strategy.metadata_policies,
@@ -9125,7 +9114,6 @@ class MediaFlowApi:
         maximum_active_jobs: int,
         remote_execution_enabled: bool,
         remote_execution_maximum_ttl_seconds: int,
-        stale_job_age_seconds: int,
         system_status,
         schedules: tuple,
         metadata_policies: tuple,
@@ -9184,9 +9172,6 @@ class MediaFlowApi:
                     ),
                     "automation.maximumActiveJobs": (
                         runtime_configuration.automation_maximum_active_jobs
-                    ),
-                    "automation.staleJobAgeSeconds": (
-                        runtime_configuration.automation_stale_job_age_seconds
                     ),
                     "operationalLogging.enabled": runtime_configuration.operational_logging_enabled,
                     "operationalLogging.minimumLevel": (

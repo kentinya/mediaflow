@@ -17,14 +17,13 @@ import type {
   AutomationRecordModel,
 } from "../../entities/operations/automation";
 
-/** The three sibling Automation tabs. */
-export const AUTOMATION_TABS = ["definitions", "records", "settings"] as const;
+/** The two sibling Automation tabs.  Runtime settings live in System Settings. */
+export const AUTOMATION_TABS = ["definitions", "records"] as const;
 export type AutomationTab = (typeof AUTOMATION_TABS)[number];
 
 export const AUTOMATION_TAB_LABELS: Readonly<Record<AutomationTab, string>> = {
   definitions: "任务列表",
   records: "执行记录",
-  settings: "全局设置",
 };
 
 /** The documented no-comparable-data marker (never a fabricated 0%). */

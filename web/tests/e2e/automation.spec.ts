@@ -96,12 +96,12 @@ test("the Operations landing links the Automation workspace with cards, tabs and
   ).toBeVisible();
   await expect(metrics.getByText("成功率", { exact: true })).toBeVisible();
   await expect(metrics.getByText("较上月", { exact: true })).toBeVisible();
-  // The three sibling tabs share one shell and the settings shortcut exists.
+  // The two sibling tabs share one shell; runtime settings live in System
+  // Settings and are not a third Automation tab.
   const tabs = page.getByRole("navigation", { name: "自动化分区" });
   await expect(tabs.getByRole("button", { name: "任务列表" })).toBeVisible();
   await expect(tabs.getByRole("button", { name: "执行记录" })).toBeVisible();
-  await expect(tabs.getByRole("button", { name: "全局设置" })).toBeVisible();
-  await expect(page.getByRole("button", { name: "全局设置" })).toBeVisible();
+  await expect(tabs.getByRole("button", { name: "全局设置" })).toHaveCount(0);
 
   // The table is the reference-aligned inventory: one row per definition with
   // its source, schedule, limit, next run and latest result.
@@ -172,18 +172,12 @@ test("the read-only execution records tab reads an honest empty history", async 
   );
 });
 
-test("the settings tab renders the four-field form and an honest adoption readback", async ({
+test("system runtime settings render three fields and an honest adoption readback", async ({
   page,
 }) => {
-  await connect(page);
-  await openAutomation(page);
-  // The global-settings tab is the single in-place settings entry.
-  await page.getByRole("button", { name: "全局设置" }).click();
-  await expect(page).toHaveURL(
-    /\/ui-v2\/operations\/automation\?tab=settings$/,
-  );
+  await connectOn(page, "/ui-v2/configuration");
 
-  const panel = page.getByRole("region", { name: "自动化引擎设置" });
+  const panel = page.getByRole("region", { name: "系统运行设置" });
   await expect(panel).toBeVisible();
   // The published target is labelled as such; it is never presented as adopted.
   await expect(panel.getByText("已发布目标")).toBeVisible();
@@ -191,15 +185,15 @@ test("the settings tab renders the four-field form and an honest adoption readba
   await expect(
     panel.getByText(/全部相关常驻进程都已采用当前发布值/),
   ).toHaveCount(0);
-  // All four engine fields are the only editable values.
+  // The three shared runtime fields are the only editable values in this form.
   for (const label of [
-    /并行任务上限/,
-    /任务失效判定时间/,
+    /整理任务队列上限|并行任务上限/,
     /Worker 轮询间隔/,
     /调度器轮询间隔/,
   ]) {
     await expect(panel.getByLabel(label)).toBeVisible();
   }
+  await expect(panel.getByLabel(/任务失效判定时间/)).toHaveCount(0);
   // An unreported consumer is stated as unreported, never as adopted.
   const workerAdoption = page.getByRole("region", {
     name: "Worker 轮询采用情况",
@@ -213,16 +207,11 @@ test("the settings tab renders the four-field form and an honest adoption readba
   );
 });
 
-test("the settings form publishes exactly the four fields once", async ({
+test("the system runtime settings form publishes exactly the three fields once", async ({
   page,
 }) => {
-  await connect(page);
-  await openAutomation(page);
-  await page
-    .getByRole("navigation", { name: "自动化分区" })
-    .getByRole("button", { name: "全局设置" })
-    .click();
-  const panel = page.getByRole("region", { name: "自动化引擎设置" });
+  await connectOn(page, "/ui-v2/configuration");
+  const panel = page.getByRole("region", { name: "系统运行设置" });
   await expect(panel).toBeVisible();
 
   const worker = panel.getByLabel(/Worker 轮询间隔/);
@@ -234,19 +223,23 @@ test("the settings form publishes exactly the four fields once", async ({
   const writes = evidence.items.filter((item) => item.method === "PUT");
   expect(writes).toHaveLength(1);
   expect(writes[0].objectType).toBe("automation_engine_settings_save");
+  expect(
+    (writes[0].body?.["settings"] as Record<string, unknown> | undefined)
+      ? Object.keys(writes[0].body?.["settings"] as Record<string, unknown>)
+      : [],
+  ).toEqual([
+    "automation.maximumActiveJobs",
+    "automation.workerPollSeconds",
+    "automation.schedulerPollSeconds",
+  ]);
 });
 
 test("a fractional integer is sent as-is and rejected without coercion", async ({
   page,
 }) => {
-  await connect(page);
-  await openAutomation(page);
-  await page
-    .getByRole("navigation", { name: "自动化分区" })
-    .getByRole("button", { name: "全局设置" })
-    .click();
-  const panel = page.getByRole("region", { name: "自动化引擎设置" });
-  const jobs = panel.getByLabel(/并行任务上限/);
+  await connectOn(page, "/ui-v2/configuration");
+  const panel = page.getByRole("region", { name: "系统运行设置" });
+  const jobs = panel.getByLabel(/整理任务队列上限|并行任务上限/);
   await jobs.fill("3.5");
   await panel.getByRole("button", { name: "保存设置" }).click();
   // The backend's real rejection reaches the operator and the input stays

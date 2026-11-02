@@ -230,6 +230,7 @@ from mediaflow.domain.task_persistence import (
 from mediaflow.domain.task_retry import TaskRetryBatchRequest, TaskRetryRequestDecision
 from mediaflow.domain.task_scheduling import (
     MAX_MUTATION_ACTION_LENGTH,
+    SHARED_TASK_CAPACITY_FULL_MESSAGE,
     TASK_MUTATION_IN_FLIGHT,
     ScheduledTaskAdmission,
     ScheduledTaskClaim,
@@ -5129,7 +5130,7 @@ class SQLiteTaskRepository:
         )
 
     def _has_task_capacity(self, maximum_active_tasks: int) -> bool:
-        """Whether one more distinct organizing Task may hold a shared slot."""
+        """Whether one more distinct organizing Task may hold the shared slot."""
 
         return self._scheduled_capacity_use_locked() < maximum_active_tasks
 
@@ -9529,9 +9530,7 @@ class SQLiteTaskRepository:
                 if task.item_limit is None or task.item_limit > value.max_items:
                     raise ValueError("remote organize limit exceeds execution authorization")
                 if self._scheduled_capacity_use_locked() >= capacity:
-                    raise TaskQueueFull(
-                        "the shared Task scheduling capacity is in use by other admitted work"
-                    )
+                    raise TaskQueueFull(SHARED_TASK_CAPACITY_FULL_MESSAGE)
                 cursor = self._connection.execute(
                     "UPDATE execution_authorizations SET status=?, consumed_at=?, "
                     "consumed_task_id=? WHERE authorization_id=? AND status=?",
@@ -11668,17 +11667,14 @@ class SQLiteTaskRepository:
                             )
                         if scheduling_capacity is None:
                             raise ManualExecutionError(
-                                "the shared Task scheduling capacity is unavailable",
+                                "the system Task scheduling capacity is unavailable",
                                 code="execution_unavailable",
                                 status=503,
                                 next_action="restore the configured Worker capacity and retry",
                             )
                         require_capacity(scheduling_capacity)
                         if self._scheduled_capacity_use_locked() >= scheduling_capacity:
-                            raise TaskQueueFull(
-                                "the shared Task scheduling capacity is in use by other "
-                                "admitted work"
-                            )
+                            raise TaskQueueFull(SHARED_TASK_CAPACITY_FULL_MESSAGE)
                         self._connection.execute(
                             """UPDATE task_scheduling
                             SET queue_state=?, machine_stage=?, queue_eligible_at=?,
@@ -12660,9 +12656,7 @@ class SQLiteTaskRepository:
                                 details={"taskId": existing[0].task_id},
                             )
                     if self._scheduled_capacity_use_locked() >= capacity:
-                        raise TaskQueueFull(
-                            "the shared Task scheduling capacity is in use by other admitted work"
-                        )
+                        raise TaskQueueFull(SHARED_TASK_CAPACITY_FULL_MESSAGE)
                 refused_sources = self._reserve_admitted_sources_locked(
                     discovery, reserve_sources=reserve_sources
                 )
@@ -17593,9 +17587,7 @@ class SQLiteTaskRepository:
                         return ScheduledTaskAdmission(existing[0], existing[1], True)
                 if self._scheduled_capacity_use_locked() >= capacity:
                     self._connection.rollback()
-                    raise TaskQueueFull(
-                        "the shared Task scheduling capacity is in use by other admitted work"
-                    )
+                    raise TaskQueueFull(SHARED_TASK_CAPACITY_FULL_MESSAGE)
                 self._connection.execute(_TASK_INSERT, self._task_values(task))
                 if display is not None:
                     self._insert_run_display_locked(task.task_id, display, task.created_at)
@@ -18818,9 +18810,7 @@ class SQLiteTaskRepository:
                     )
                 if self._scheduled_capacity_use_locked() >= capacity:
                     self._connection.rollback()
-                    raise TaskQueueFull(
-                        "the shared Task scheduling capacity is in use by other admitted work"
-                    )
+                    raise TaskQueueFull(SHARED_TASK_CAPACITY_FULL_MESSAGE)
                 self._connection.execute(
                     """UPDATE tasks SET status=?, updated_at=?, completed_at=NULL, error=NULL,
                         pause_requested=0
@@ -18916,9 +18906,7 @@ class SQLiteTaskRepository:
                     )
                 if self._scheduled_capacity_use_locked() >= capacity:
                     self._connection.rollback()
-                    raise TaskQueueFull(
-                        "the shared Task scheduling capacity is in use by other admitted work"
-                    )
+                    raise TaskQueueFull(SHARED_TASK_CAPACITY_FULL_MESSAGE)
                 cursor = self._connection.execute(
                     "UPDATE media_discoveries SET status=?, version=?, progress_json=?, "
                     "preview_id=?, error=?, updated_at=?, pause_requested=0, "
@@ -19554,7 +19542,11 @@ class SQLiteTaskRepository:
         return worker
 
     def _claimable_scheduled_task_locked(
-        self, worker: ProcessingWorker, now: datetime, *, task_id: str | None = None
+        self,
+        worker: ProcessingWorker,
+        now: datetime,
+        *,
+        task_id: str | None = None,
     ) -> sqlite3.Row | None:
         placeholders = ", ".join("?" for _ in worker.supported_commands)
         parameters: list[object] = [now.isoformat(), now.isoformat()]

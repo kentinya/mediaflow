@@ -18,19 +18,28 @@ BOOTSTRAP_IMMUTABLE_FIELDS: frozenset[str] = frozenset(
     }
 )
 
-# The exact four Automation engine settings one focused checked Save owns.
+# The exact three shared runtime settings one focused checked Save owns.
 #
 # This is deliberately a *subset* of the editable System Settings surface: the
 # generic Draft editor keeps its own whole-document authority, while the native
-# Automation settings form publishes only these scalar fields.  Every value here
-# must already be a supported ``HOT_CONSUMED_FIELDS`` member, so the focused
+# System Settings runtime form publishes only these scalar fields.  Every value
+# here must already be a supported ``HOT_CONSUMED_FIELDS`` member, so the focused
 # command can never invent a setting boundary of its own.
 FOCUSED_AUTOMATION_SETTING_FIELDS: tuple[str, ...] = (
     "automation.maximumActiveJobs",
-    "automation.staleJobAgeSeconds",
     "automation.workerPollSeconds",
     "automation.schedulerPollSeconds",
 )
+
+#: A field that was once editable/effective but is now retired.  It stays
+#: readable in an immutable historical document but can never be published or
+#: made effective again through a settings edit.
+RETIRED_SETTING_FIELDS: dict[str, str] = {
+    "automation.staleJobAgeSeconds": (
+        "this parameter is retired; existing immutable configurations remain readable with it "
+        "ignored, but it cannot be edited or published"
+    ),
+}
 
 # Fields that require a restart/deployment to take effect.
 RESTART_REQUIRED_FIELDS: frozenset[str] = frozenset(
@@ -50,7 +59,6 @@ HOT_CONSUMED_FIELDS: frozenset[str] = frozenset(
         "automation.workerPollSeconds",
         "automation.schedulerPollSeconds",
         "automation.maximumActiveJobs",
-        "automation.staleJobAgeSeconds",
         "operationalLogging.enabled",
         "operationalLogging.minimumLevel",
         "operationalLogging.retentionDays",
@@ -159,14 +167,7 @@ SYSTEM_SETTINGS_FIELDS: tuple[SystemSettingsField, ...] = tuple(
             ),
             SystemSettingsField(
                 "automation.maximumActiveJobs",
-                "Maximum active jobs",
-                "Automation",
-                SystemSettingsBoundary.HOT_CONSUMED,
-                "integer",
-            ),
-            SystemSettingsField(
-                "automation.staleJobAgeSeconds",
-                "Stale job age (seconds)",
+                "Organizing queue limit",
                 "Automation",
                 SystemSettingsBoundary.HOT_CONSUMED,
                 "integer",
@@ -307,7 +308,6 @@ class SystemSettings:
     worker_poll_seconds: float | None = None
     scheduler_poll_seconds: float | None = None
     maximum_active_jobs: int | None = None
-    stale_job_age_seconds: int | None = None
 
     # Operational logging
     operational_logging_enabled: bool | None = None
@@ -383,7 +383,6 @@ class SystemSettings:
             worker_poll_seconds=_float_or_none(automation.get("workerPollSeconds")),
             scheduler_poll_seconds=_float_or_none(automation.get("schedulerPollSeconds")),
             maximum_active_jobs=_int_or_none(automation.get("maximumActiveJobs")),
-            stale_job_age_seconds=_int_or_none(automation.get("staleJobAgeSeconds")),
             operational_logging_enabled=_bool_or_none(logging_cfg.get("enabled")),
             operational_logging_minimum_level=level,
             operational_logging_retention_days=_int_or_none(logging_cfg.get("retentionDays")),
@@ -455,7 +454,6 @@ class SystemSettings:
             "automation.workerPollSeconds": self.worker_poll_seconds,
             "automation.schedulerPollSeconds": self.scheduler_poll_seconds,
             "automation.maximumActiveJobs": self.maximum_active_jobs,
-            "automation.staleJobAgeSeconds": self.stale_job_age_seconds,
             "operationalLogging.enabled": self.operational_logging_enabled,
             "operationalLogging.minimumLevel": (
                 self.operational_logging_minimum_level.name
@@ -522,6 +520,18 @@ def validate_settings_edit(
             continue
         seen.add(edit.field_path)
         edits_by_path[edit.field_path] = edit.value
+
+        retired = RETIRED_SETTING_FIELDS.get(edit.field_path)
+        if retired is not None:
+            errors.append(
+                {
+                    "code": "field_retired",
+                    "message": retired,
+                    "field": edit.field_path,
+                    "nextAction": "remove this field; it no longer has any effect",
+                }
+            )
+            continue
 
         field = FIELD_INDEX.get(edit.field_path)
         if field is None:
@@ -668,7 +678,6 @@ def _validate_field_value(
 def _validate_integer_bounds(field_path: str, value: int) -> dict[str, str] | None:
     bounds = {
         "automation.maximumActiveJobs": (1, 10_000),
-        "automation.staleJobAgeSeconds": (60, 604_800),
         "operationalLogging.retentionDays": (1, 3_650),
         "operationalLogging.maximumRecords": (1, 1_000_000),
         "workflowRetry.maxAttempts": (1, 100),

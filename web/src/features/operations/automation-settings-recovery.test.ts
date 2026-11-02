@@ -13,14 +13,12 @@ import { planRecovery, sameTypedValue } from "./automation-settings-recovery";
 
 const BASELINE = {
   "automation.maximumActiveJobs": "100",
-  "automation.staleJobAgeSeconds": "3600",
   "automation.workerPollSeconds": "2",
   "automation.schedulerPollSeconds": "5",
 };
 
 const CURRENT = {
   "automation.maximumActiveJobs": "100",
-  "automation.staleJobAgeSeconds": "3600",
   "automation.workerPollSeconds": "2",
   "automation.schedulerPollSeconds": "9",
 };
@@ -118,10 +116,10 @@ describe("planRecovery", () => {
 
   it("keeps an invalid entry verbatim for correction", () => {
     const plan = planRecovery({
-      typed: { ...BASELINE, "automation.staleJobAgeSeconds": "90.25" },
+      typed: { ...BASELINE, "automation.maximumActiveJobs": "90.25" },
       baseline: BASELINE,
       current: CURRENT,
     });
-    expect(plan.input["automation.staleJobAgeSeconds"]).toBe("90.25");
+    expect(plan.input["automation.maximumActiveJobs"]).toBe("90.25");
   });
 });

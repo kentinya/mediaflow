@@ -2983,6 +2983,7 @@ const MANUAL_REQUEST_BODY_FIELDS = [
   "organizePolicyId",
   "resourceLibraryId",
   "scopeKind",
+  "settings",
   "action",
   "deliveryId",
   "expectedStatus",
@@ -4711,7 +4712,6 @@ function automationState(session) {
 
 const AUTOMATION_ENGINE_SETTING_FIELDS = new Set([
   "automation.maximumActiveJobs",
-  "automation.staleJobAgeSeconds",
   "automation.workerPollSeconds",
   "automation.schedulerPollSeconds",
 ]);
@@ -4722,7 +4722,6 @@ function automationSettingsValues(session) {
   const state = automationState(session);
   return {
     "automation.maximumActiveJobs": 100,
-    "automation.staleJobAgeSeconds": 3600,
     "automation.workerPollSeconds": state.workerPollSeconds,
     "automation.schedulerPollSeconds": 5,
   };
@@ -4745,7 +4744,7 @@ function automationSettingsField(fieldPath, overrides = {}) {
 }
 
 /**
- * The focused four-field engine settings document.
+ * The focused three-field system runtime settings document.
  *
  * It mirrors the real Python projection (proved by
  * tests/test_automation_settings_management.py): the published target is stated
@@ -4778,19 +4777,12 @@ function automationSettingsDocument(session) {
     canManage: true,
     fields: [
       automationSettingsField("automation.maximumActiveJobs", {
-        label: "并行任务上限",
+        label: "整理任务队列上限",
         valueType: "integer",
         integer: true,
         minimum: 1,
         maximum: 10000,
         unit: "个任务",
-      }),
-      automationSettingsField("automation.staleJobAgeSeconds", {
-        label: "任务失效判定时间",
-        valueType: "integer",
-        integer: true,
-        minimum: 60,
-        maximum: 604800,
       }),
       automationSettingsField("automation.workerPollSeconds", {
         label: "Worker 轮询间隔",
@@ -4827,20 +4819,16 @@ function automationSettingsDocument(session) {
       api: {
         service: "api",
         field: "automation.maximumActiveJobs",
-        fields: [
-          "automation.maximumActiveJobs",
-          "automation.staleJobAgeSeconds",
-        ],
+        fields: ["automation.maximumActiveJobs"],
         publishedValues: {
           "automation.maximumActiveJobs": 100,
-          "automation.staleJobAgeSeconds": 3600,
         },
         adopted: false,
         basis: "api_local",
         instanceCount: 0,
         instances: [],
         explanation:
-          "容量与失效判定由准入/观察边界各自读取当前 Active,不是常驻进程轮询值。",
+          "整理任务队列上限由各准入/重入边界读取当前 Active,不是常驻进程轮询值。",
       },
     },
     adoption: { consumers: 2, adoptedConsumers: 0, allAdopted: false },
@@ -15176,7 +15164,7 @@ const server = createServer(async (req, res) => {
               durableState: "active_unchanged",
               sideEffects: "none",
               retrySafe: true,
-              nextAction: "submit the four fields",
+              nextAction: "submit the three fields",
             },
           },
         });
@@ -15195,7 +15183,7 @@ const server = createServer(async (req, res) => {
               durableState: "active_unchanged",
               sideEffects: "none",
               retrySafe: true,
-              nextAction: "edit only the four engine settings",
+              nextAction: "edit only the three system runtime settings",
             },
           },
         });
@@ -15203,7 +15191,6 @@ const server = createServer(async (req, res) => {
       }
       const invalidInteger = Object.entries({
         "automation.maximumActiveJobs": [1, 10000],
-        "automation.staleJobAgeSeconds": [60, 604800],
       }).find(([field, [low, high]]) => {
         const value = settings[field];
         return (

@@ -5,8 +5,8 @@
  * `/api/v1/operations/automation/settings`. Two truths are kept strictly apart
  * here, exactly as the API states them:
  *
- * - the **published target** — the four engine values of the current immutable
- *   Active snapshot, with its revision identity; and
+ * - the **published target** — the three shared runtime values of the current
+ *   immutable Active snapshot, with its revision identity; and
  * - the **adoption** — what each relevant live resident process actually
  *   installed, reported by that consumer after it adopted the values.
  *
@@ -24,10 +24,9 @@ import {
   readRecord,
 } from "../shared/normalize";
 
-/** The exact four fields this form publishes, in operator order. */
+/** The exact three fields this form publishes, in operator order. */
 export const AUTOMATION_ENGINE_FIELDS = [
   "automation.maximumActiveJobs",
-  "automation.staleJobAgeSeconds",
   "automation.workerPollSeconds",
   "automation.schedulerPollSeconds",
 ] as const;

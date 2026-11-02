@@ -1712,13 +1712,12 @@ class ManagedConfigurationSnapshotTests(unittest.TestCase):
                     [item["schedule_id"] for item in schedules["items"]],
                     ["replacement-preview"],
                 )
-                # The stale-age key remains a supported bounded Task
-                # observation setting even though the Job projection is retired.
-                self.assertEqual(
-                    api._runtime_binding.runtime_settings["settings"][
-                        "automation.staleJobAgeSeconds"
-                    ],
-                    7200,
+                # An immutable Active may still carry the retired stale-age key;
+                # it is readable with the value ignored and never appears in the
+                # effective runtime settings projection.
+                self.assertNotIn(
+                    "automation.staleJobAgeSeconds",
+                    api._runtime_binding.runtime_settings["settings"],
                 )
                 status, retired = request(api, "/api/v1/jobs/stale")
                 self.assertEqual(status, 404)

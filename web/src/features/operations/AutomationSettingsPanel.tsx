@@ -1,10 +1,9 @@
 /**
- * Shared native Automation engine settings form and adoption readback.
+ * Shared native system runtime settings form and adoption readback.
  *
- * One component serves both entrances — the `自动化 → 全局设置` tab and the
- * Automation section reached from System Settings — so the same four fields,
- * the same backend authority and the same readback can never diverge into two
- * stores or two validation paths.
+ * The existing System Settings page is the one ordinary editor for the three
+ * shared runtime fields, so the same values, backend authority and readback can
+ * never diverge into a second store or a second validation path.
  *
  * The panel keeps three truths visually separate and never promotes one into
  * another:
@@ -77,11 +76,11 @@ const FAILURE_STAGE_LABELS: Readonly<Record<string, string>> = {
 };
 
 const FIELD_SUMMARIES: Readonly<Record<AutomationEngineField, string>> = {
-  "automation.maximumActiveJobs": "等待与运行中的 Job 总数上限。",
-  "automation.staleJobAgeSeconds":
-    "运行中的 Job 持续无更新时，判定失效的等待时间。",
-  "automation.workerPollSeconds": "执行器检查待处理工作的间隔。",
-  "automation.schedulerPollSeconds": "调度器检查到期任务的间隔。",
+  "automation.maximumActiveJobs":
+    "系统整理队列中等待与运行中的整理 Task 总数上限，不是线程或文件并行数。",
+  "automation.workerPollSeconds":
+    "共享 Worker 检查整理与普通异步文件工作的间隔。",
+  "automation.schedulerPollSeconds": "Scheduler 检查自动化定义是否到期的间隔。",
 };
 
 type FormState = Readonly<Record<string, string>>;
@@ -196,14 +195,14 @@ function reviewedResolutions(
 }
 
 /**
- * The operator's copy for one adoption basis.  The capacity/stale fields are
- * read by the admission/observation boundary itself, so their evidence has a
- * different basis and is never folded into a resident-cadence claim.
+ * The operator's copy for one adoption basis.  The capacity field is read by
+ * the admission/re-entry boundary itself, so its evidence has a different basis
+ * and is never folded into a resident-cadence claim.
  */
 function consumerHeading(service: string): string {
   if (service === "worker") return "Worker 轮询";
   if (service === "scheduler") return "调度器轮询";
-  if (service === "api") return "准入上限与失效判定";
+  if (service === "api") return "系统整理队列上限";
   return service;
 }
 
@@ -399,7 +398,7 @@ export function AutomationSettingsPanel() {
     readonly stage: string;
     readonly durableState: string;
     readonly nextAction: string;
-    /** A readable four-field input rejection, when that is what happened. */
+    /** A readable three-field input rejection, when that is what happened. */
     readonly fieldError: string | null;
   } | null>(null);
   const [submitting, setSubmitting] = useState(false);
@@ -819,10 +818,7 @@ export function AutomationSettingsPanel() {
   };
 
   return (
-    <AuthorizedReadBoundary
-      query={query}
-      unavailableTitle="自动化引擎设置不可用"
-    >
+    <AuthorizedReadBoundary query={query} unavailableTitle="系统运行设置不可用">
       {({ isFetching, refresh }) => {
         if (query.isPending) {
           return (
@@ -846,7 +842,7 @@ export function AutomationSettingsPanel() {
         if (model.target === null) {
           return (
             <section className="mf-panel">
-              <h2>自动化引擎设置</h2>
+              <h2>系统运行设置</h2>
               <StatusBanner variant="info" title="尚无已发布的设置">
                 <p>
                   {model.unavailable?.nextAction ??
@@ -863,10 +859,10 @@ export function AutomationSettingsPanel() {
         return (
           <div className="mf-automation-settings">
             <div className="mf-automation-settings-grid">
-              <section className="mf-panel" aria-label="自动化引擎设置">
+              <section className="mf-panel" aria-label="系统运行设置">
                 <header className="mf-panel-header">
                   <div>
-                    <h2>自动化引擎设置</h2>
+                    <h2>系统运行设置</h2>
                   </div>
                   <span className="mf-automation-settings-refresh">
                     <RefreshControl

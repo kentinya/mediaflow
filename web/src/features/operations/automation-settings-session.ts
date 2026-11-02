@@ -117,7 +117,7 @@ function isValid(value: unknown): value is PendingEngineSettingsSubmission {
     value["baselineDigest"].length > 0 &&
     // Absent is valid: a context retained by an older build keeps working, with
     // the conservative explicit-difference recovery instead of a guessed
-    // baseline. Present must be a complete, bounded four-field value map.
+    // baseline. Present must be a complete, bounded three-field value map.
     (value["baselineValues"] === undefined ||
       isStringMap(value["baselineValues"], 8)) &&
     typeof value["submittedAt"] === "string" &&

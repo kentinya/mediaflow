@@ -3072,9 +3072,20 @@ def _run_worker(
                     )
                     from mediaflow.application.task_scheduling import TaskSchedulingService
 
+                    def current_scheduling_capacity() -> int:
+                        # The resident Worker re-resolves the published allowance
+                        # for each admission/re-entry, so a new System Settings
+                        # value applies to new work without a restart.
+                        resolved = _resolve_resident_configuration(configured_path)
+                        return getattr(
+                            resolved or configuration,
+                            "automation_maximum_active_jobs",
+                            100,
+                        )
+
                     scheduling_service = TaskSchedulingService(
                         repository,
-                        capacity=getattr(configuration, "automation_maximum_active_jobs", 100),
+                        capacity=current_scheduling_capacity,
                         locks=repository,
                     )
                     manual_task_worker = ManualTaskEngineWorker(
@@ -3677,7 +3688,6 @@ def _serve_api(configuration, arguments, *, stdout: TextIO, stderr: TextIO) -> N
                 configuration, "remote_execution_maximum_ttl_seconds", 900
             ),
             maximum_active_jobs=getattr(configuration, "automation_maximum_active_jobs", 100),
-            stale_job_age_seconds=getattr(configuration, "automation_stale_job_age_seconds", 3600),
             system_status=(
                 None if management_only else build_configuration_snapshot(configuration)
             ),

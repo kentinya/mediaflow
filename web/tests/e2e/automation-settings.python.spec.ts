@@ -1,4 +1,9 @@
-import { expect, test, type Page } from "@playwright/test";
+import {
+  expect,
+  test,
+  type APIRequestContext,
+  type Page,
+} from "@playwright/test";
 
 /**
  * Real-Python browser proof for the native Automation engine settings journey
@@ -81,12 +86,12 @@ function recordApiCalls(page: Page): { method: string; path: string }[] {
   return api;
 }
 
-test("the settings tab renders the four fields and states publication apart from adoption", async ({
+test("system runtime settings render the three fields and states publication apart from adoption", async ({
   page,
 }) => {
   const api = recordApiCalls(page);
-  await connectOn(page, "/ui-v2/operations/automation?tab=settings");
-  const panel = page.getByRole("region", { name: "自动化引擎设置" });
+  await connectOn(page, "/ui-v2/configuration");
+  const panel = page.getByRole("region", { name: "系统运行设置" });
   await expect(panel).toBeVisible();
 
   const before = await settingsDocument(page);
@@ -109,8 +114,7 @@ test("the settings tab renders the four fields and states publication apart from
   ).toHaveCount(0);
 
   for (const label of [
-    /并行任务上限/,
-    /任务失效判定时间/,
+    /整理任务队列上限|并行任务上限/,
     /Worker 轮询间隔/,
     /调度器轮询间隔/,
   ]) {
@@ -132,8 +136,8 @@ test("a live resident consumer adopts the published cadence without a restart", 
   );
   expect(started.ok()).toBe(true);
 
-  await connectOn(page, "/ui-v2/operations/automation?tab=settings");
-  const panel = page.getByRole("region", { name: "自动化引擎设置" });
+  await connectOn(page, "/ui-v2/configuration");
+  const panel = page.getByRole("region", { name: "系统运行设置" });
   await expect(panel).toBeVisible();
 
   const before = await settingsDocument(page);
@@ -282,8 +286,8 @@ test("a graceful resident restart restores current adoption and keeps the predec
   // The page shows the same truth: the live replacement adopted, and the
   // retained identity is folded into history rather than presented as a
   // current consumer to "start up".
-  await connectOn(page, "/ui-v2/operations/automation?tab=settings");
-  const panel = page.getByRole("region", { name: "自动化引擎设置" });
+  await connectOn(page, "/ui-v2/configuration");
+  const panel = page.getByRole("region", { name: "系统运行设置" });
   await expect(panel).toBeVisible();
   const schedulerAdoption = page.getByRole("region", {
     name: "调度器轮询采用情况",
@@ -314,8 +318,8 @@ test("a graceful resident restart restores current adoption and keeps the predec
 test("a stale form is refused and the published Active is preserved", async ({
   page,
 }) => {
-  await connectOn(page, "/ui-v2/operations/automation?tab=settings");
-  const panel = page.getByRole("region", { name: "自动化引擎设置" });
+  await connectOn(page, "/ui-v2/configuration");
+  const panel = page.getByRole("region", { name: "系统运行设置" });
   await expect(panel).toBeVisible();
   const before = await settingsDocument(page);
 
@@ -343,8 +347,8 @@ test("a stale form is refused and the published Active is preserved", async ({
 test("out-of-scope, non-finite and out-of-range values never publish", async ({
   page,
 }) => {
-  await connectOn(page, "/ui-v2/operations/automation?tab=settings");
-  const panel = page.getByRole("region", { name: "自动化引擎设置" });
+  await connectOn(page, "/ui-v2/configuration");
+  const panel = page.getByRole("region", { name: "系统运行设置" });
   await expect(panel).toBeVisible();
   const before = await settingsDocument(page);
   const values = { ...before.target!.values };
@@ -388,8 +392,8 @@ test("out-of-scope, non-finite and out-of-range values never publish", async ({
 test("a checked Save from the form publishes once and keeps adoption separate", async ({
   page,
 }) => {
-  await connectOn(page, "/ui-v2/operations/automation?tab=settings");
-  const panel = page.getByRole("region", { name: "自动化引擎设置" });
+  await connectOn(page, "/ui-v2/configuration");
+  const panel = page.getByRole("region", { name: "系统运行设置" });
   await expect(panel).toBeVisible();
   const before = await settingsDocument(page);
 
@@ -397,7 +401,7 @@ test("a checked Save from the form publishes once and keeps adoption separate", 
   // one submission identity and the checked Active identity it was edited on.
   const target = before.target!.values["automation.maximumActiveJobs"];
   const nextCapacity = target === 90 ? 91 : 90;
-  const jobs = panel.getByLabel(/并行任务上限/);
+  const jobs = panel.getByLabel(/整理任务队列上限|并行任务上限/);
   await jobs.fill(String(nextCapacity));
   const requests: string[] = [];
   page.on("request", (request) => {
@@ -433,13 +437,13 @@ test("a checked Save from the form publishes once and keeps adoption separate", 
 test("a concurrent writer makes the ordinary background readback refuse the stale Save", async ({
   page,
 }) => {
-  await connectOn(page, "/ui-v2/operations/automation?tab=settings");
-  const panel = page.getByRole("region", { name: "自动化引擎设置" });
+  await connectOn(page, "/ui-v2/configuration");
+  const panel = page.getByRole("region", { name: "系统运行设置" });
   await expect(panel).toBeVisible();
   const before = await settingsDocument(page);
 
   // The operator starts editing the capacity field.
-  const jobs = panel.getByLabel(/并行任务上限/);
+  const jobs = panel.getByLabel(/整理任务队列上限|并行任务上限/);
   await jobs.fill("77");
 
   // Another writer publishes a different field while this form is open.
@@ -463,7 +467,7 @@ test("a concurrent writer makes the ordinary background readback refuse the stal
   expect(other.status()).toBe(201);
 
   // The panel's ordinary bounded readback (~5s) delivers that publication. The
-  // old four-field input is never re-armed against the new identity, and the
+  // old three-field input is never re-armed against the new identity, and the
   // operator is not simply blocked either: only the field they actually edited
   // is merged onto the latest publication.
   await expect(panel.getByText(/你改过的字段已合并到最新发布值上/)).toBeVisible(
@@ -533,8 +537,8 @@ test("a lost same-field conflict stays an explicit choice until the operator sav
   // must stay a conflict: each choice writes nothing, and only the explicit Save
   // publishes the operator's value — while an older context without baseline
   // values needs the same explicit choice.
-  await connectOn(page, "/ui-v2/operations/automation?tab=settings");
-  const panel = page.getByRole("region", { name: "自动化引擎设置" });
+  await connectOn(page, "/ui-v2/configuration");
+  const panel = page.getByRole("region", { name: "系统运行设置" });
   await expect(panel).toBeVisible();
   const before = await settingsDocument(page);
   const original = before.target!.values["automation.maximumActiveJobs"];
@@ -544,7 +548,7 @@ test("a lost same-field conflict stays an explicit choice until the operator sav
   const current = 71;
 
   // The operator types a capacity the other writer will also change.
-  const jobs = panel.getByLabel(/并行任务上限/);
+  const jobs = panel.getByLabel(/整理任务队列上限|并行任务上限/);
   await jobs.fill(String(mine));
   const other = await page.request.put(SETTINGS_PATH, {
     headers: {
@@ -590,7 +594,7 @@ test("a lost same-field conflict stays an explicit choice until the operator sav
   await page.reload();
   await page.getByLabel("API token").fill(ADMIN_TOKEN);
   await page.getByRole("button", { name: "Connect" }).click();
-  const reloaded = page.getByRole("region", { name: "自动化引擎设置" });
+  const reloaded = page.getByRole("region", { name: "系统运行设置" });
   await reloaded.getByRole("button", { name: "核实上次提交" }).click();
   await expect(reloaded.getByText(/本次提交没有发布/)).toBeVisible({
     timeout: 20_000,
@@ -613,9 +617,9 @@ test("a lost same-field conflict stays an explicit choice until the operator sav
 
   // Adopting the current value publishes nothing and leaves nothing to save.
   await reloaded.getByRole("button", { name: "采用当前值" }).click();
-  await expect(reloaded.getByLabel(/并行任务上限/)).toHaveValue(
-    String(current),
-  );
+  await expect(
+    reloaded.getByLabel(/整理任务队列上限|并行任务上限/),
+  ).toHaveValue(String(current));
   await expect(
     reloaded.getByRole("button", { name: "保存设置" }),
   ).toBeDisabled();
@@ -625,7 +629,7 @@ test("a lost same-field conflict stays an explicit choice until the operator sav
 
   // Keeping the operator's value also publishes nothing; only the explicit Save
   // does, and it is checked against the current identity.
-  await reloaded.getByLabel(/并行任务上限/).fill(String(mine));
+  await reloaded.getByLabel(/整理任务队列上限|并行任务上限/).fill(String(mine));
   await expect(reloaded.getByText(conflictCopy)).toBeVisible();
   await reloaded.getByRole("button", { name: "保留我的修改" }).click();
   await expect(
@@ -645,8 +649,8 @@ test("a lost same-field conflict stays an explicit choice until the operator sav
 test("an unknown submission is reconciled from its own durable evidence, never by value equality", async ({
   page,
 }) => {
-  await connectOn(page, "/ui-v2/operations/automation?tab=settings");
-  const panel = page.getByRole("region", { name: "自动化引擎设置" });
+  await connectOn(page, "/ui-v2/configuration");
+  const panel = page.getByRole("region", { name: "系统运行设置" });
   await expect(panel).toBeVisible();
   const before = await settingsDocument(page);
   const values = { ...before.target!.values };
@@ -720,13 +724,13 @@ test("an unknown submission is reconciled from its own durable evidence, never b
 test("a lost rejection response reconciles into a correctable form, across a reload", async ({
   page,
 }) => {
-  await connectOn(page, "/ui-v2/operations/automation?tab=settings");
-  const panel = page.getByRole("region", { name: "自动化引擎设置" });
+  await connectOn(page, "/ui-v2/configuration");
+  const panel = page.getByRole("region", { name: "系统运行设置" });
   await expect(panel).toBeVisible();
   const before = await settingsDocument(page);
 
   // The operator starts editing, then another writer publishes first.
-  const jobs = panel.getByLabel(/并行任务上限/);
+  const jobs = panel.getByLabel(/整理任务队列上限|并行任务上限/);
   const submittedCapacity =
     before.target!.values["automation.maximumActiveJobs"] === 61 ? 62 : 61;
   await jobs.fill(String(submittedCapacity));
@@ -779,7 +783,7 @@ test("a lost rejection response reconciles into a correctable form, across a rel
   await page.reload();
   await page.getByLabel("API token").fill(ADMIN_TOKEN);
   await page.getByRole("button", { name: "Connect" }).click();
-  const reloaded = page.getByRole("region", { name: "自动化引擎设置" });
+  const reloaded = page.getByRole("region", { name: "系统运行设置" });
   await expect(reloaded.getByText(/上一次保存结果未知/)).toBeVisible({
     timeout: 20_000,
   });
@@ -792,9 +796,9 @@ test("a lost rejection response reconciles into a correctable form, across a rel
   });
   // The typed value is retained, and the other writer's untouched scheduler
   // change is *shown* rather than silently reverted to the value this form read.
-  await expect(reloaded.getByLabel(/并行任务上限/)).toHaveValue(
-    String(submittedCapacity),
-  );
+  await expect(
+    reloaded.getByLabel(/整理任务队列上限|并行任务上限/),
+  ).toHaveValue(String(submittedCapacity));
   await expect(reloaded.getByLabel(/调度器轮询间隔/)).toHaveValue(
     String(otherPoll),
   );
@@ -825,8 +829,8 @@ test("a lost rejection response reconciles into a correctable form, across a rel
 test("a lost invalid-input rejection reconciles into a correctable integer", async ({
   page,
 }) => {
-  await connectOn(page, "/ui-v2/operations/automation?tab=settings");
-  const panel = page.getByRole("region", { name: "自动化引擎设置" });
+  await connectOn(page, "/ui-v2/configuration");
+  const panel = page.getByRole("region", { name: "系统运行设置" });
   await expect(panel).toBeVisible();
   const before = await settingsDocument(page);
   const otherPoll =
@@ -853,7 +857,7 @@ test("a lost invalid-input rejection reconciles into a correctable integer", asy
 
   // The real form accepts the text `3.5` for the integer capacity and the real
   // API refuses it 422/settings_fractional_integer; only that response is lost.
-  const jobs = panel.getByLabel(/并行任务上限/);
+  const jobs = panel.getByLabel(/整理任务队列上限|并行任务上限/);
   await jobs.fill("3.5");
   let serverStatus: number | null = null;
   let serverCode: string | null = null;
@@ -885,7 +889,7 @@ test("a lost invalid-input rejection reconciles into a correctable integer", asy
   await page.reload();
   await page.getByLabel("API token").fill(ADMIN_TOKEN);
   await page.getByRole("button", { name: "Connect" }).click();
-  const reloaded = page.getByRole("region", { name: "自动化引擎设置" });
+  const reloaded = page.getByRole("region", { name: "系统运行设置" });
   await expect(reloaded.getByText(/上一次保存结果未知/)).toBeVisible({
     timeout: 20_000,
   });
@@ -908,14 +912,18 @@ test("a lost invalid-input rejection reconciles into a correctable integer", asy
 
   // The invalid text is retained and editable; the other writer's scheduler
   // value is preserved in the form.
-  await expect(reloaded.getByLabel(/并行任务上限/)).toHaveValue("3.5");
-  await expect(reloaded.getByLabel(/并行任务上限/)).toBeEditable();
+  await expect(
+    reloaded.getByLabel(/整理任务队列上限|并行任务上限/),
+  ).toHaveValue("3.5");
+  await expect(
+    reloaded.getByLabel(/整理任务队列上限|并行任务上限/),
+  ).toBeEditable();
   await expect(reloaded.getByLabel(/调度器轮询间隔/)).toHaveValue(
     String(otherPoll),
   );
 
   // Correcting it and saving publishes only the corrected value.
-  await reloaded.getByLabel(/并行任务上限/).fill("4");
+  await reloaded.getByLabel(/整理任务队列上限|并行任务上限/).fill("4");
   await reloaded.getByRole("button", { name: "保存设置" }).click();
   await expect(reloaded.getByText(/已发布新的目标值/)).toBeVisible({
     timeout: 20_000,
@@ -927,11 +935,11 @@ test("a lost invalid-input rejection reconciles into a correctable integer", asy
   );
 });
 
-test("the System Settings Automation section reaches the same form and authority", async ({
+test("system runtime settings use the System Settings page as the one ordinary editor", async ({
   page,
 }) => {
   await connectOn(page, "/ui-v2/configuration");
-  const panel = page.getByRole("region", { name: "自动化引擎设置" });
+  const panel = page.getByRole("region", { name: "系统运行设置" });
   await expect(panel).toBeVisible();
   const document = await settingsDocument(page);
   await expect(panel.getByText(/版本 \d+ · Active/)).toBeVisible();
@@ -939,7 +947,204 @@ test("the System Settings Automation section reaches the same form and authority
   await expect(
     panel.getByText(new RegExp(document.target!.revisionId)),
   ).toBeVisible();
-  // It is the same four-field form, not a second settings store.
-  await expect(panel.getByLabel(/并行任务上限/)).toBeVisible();
+  // It is the same three-field form, not a second settings store.
+  await expect(panel.getByLabel(/整理任务队列上限|并行任务上限/)).toBeVisible();
   await expect(panel.getByLabel(/调度器轮询间隔/)).toBeVisible();
+});
+
+/**
+ * Task47.6 / AC-S1, AC-S2, AC-S3, AC-S6: three shared runtime settings in the
+ * existing System Settings page and one shared organizing allowance.
+ *
+ * The journeys below publish the two high legal capacities through the real
+ * form and run an ordinary Files single-selection organizing end to end
+ * (bounded discovery Worker → exact summary → explicit confirmation → real
+ * Processing Worker → real MOVE), then fill the allowance to 1 and prove an
+ * Automation Run once Task and a Files request share it: the second request is
+ * refused, and the same explicit selection succeeds after the slot is released.
+ * Every product command is a page action; the harness routes only advance the
+ * real background Workers and read isolated temporary file facts.
+ */
+async function saveAutomationCapacity(
+  page: Page,
+  capacity: number,
+): Promise<void> {
+  const panel = page.getByRole("region", { name: "系统运行设置" });
+  await expect(panel).toBeVisible();
+  await panel
+    .getByLabel(/整理任务队列上限|并行任务上限/)
+    .fill(String(capacity));
+  await panel.getByRole("button", { name: "保存设置" }).click();
+  await expect(panel.getByText(/已发布新的目标值/)).toBeVisible();
+  const document = await settingsDocument(page);
+  expect(document.target!.values["automation.maximumActiveJobs"]).toBe(
+    capacity,
+  );
+}
+
+async function organizeOneFileThroughFiles(
+  page: Page,
+  request: APIRequestContext,
+  file: string,
+): Promise<void> {
+  await page.getByRole("link", { name: "Files", exact: true }).click();
+  await expect(page).toHaveURL(/\/ui-v2\/resourcelib\/files/);
+  await page
+    .getByRole("button", { name: /source/ })
+    .first()
+    .click();
+  await expect(page.getByLabel("目录", { exact: true })).toBeVisible();
+  await page.getByRole("checkbox", { name: `选择 ${file}` }).check();
+  await page.getByRole("button", { name: "批量整理" }).click();
+  await expect(
+    page.getByRole("heading", { name: "新建整理任务", exact: true }),
+  ).toBeVisible();
+  await expect(page).toHaveURL(/discoveryId=/);
+  for (let step = 0; step < 24; step += 1) {
+    const advanced = await request.post("/__harness__/run-discovery-worker");
+    const body = (await advanced.json()) as {
+      readonly advanced: boolean;
+      readonly previewId?: string | null;
+    };
+    if (body.advanced && body.previewId != null) break;
+  }
+  await expect(
+    page.getByRole("heading", { name: "计划摘要", exact: true }),
+  ).toBeVisible({ timeout: 30_000 });
+  // Nothing was mutated before the explicit confirmation.
+  const before = await (
+    await request.get(`/__harness__/manual-file-state?file=${file}`)
+  ).json();
+  expect(before).toEqual({ sourceExists: true, destinationTargets: [] });
+  await page.getByRole("button", { name: /^确认整理 1 项$/ }).click();
+  await expect(page.getByRole("heading", { name: "整理执行情况" })).toBeVisible(
+    { timeout: 20_000 },
+  );
+  // The real Processing Worker performs the admitted work; the browser only
+  // reads the same durable result afterwards.
+  await expect
+    .poll(
+      async () => {
+        await request.post("/__harness__/run-manual-worker");
+        const state = await (
+          await request.get(`/__harness__/manual-file-state?file=${file}`)
+        ).json();
+        return state.sourceExists;
+      },
+      { timeout: 30_000 },
+    )
+    .toBe(false);
+  const after = await (
+    await request.get(`/__harness__/manual-file-state?file=${file}`)
+  ).json();
+  expect(after.destinationTargets.length).toBeGreaterThan(0);
+}
+
+test("system runtime settings publish 1025 and 10000 and Files organizing really completes", async ({
+  page,
+  request,
+}, testInfo) => {
+  for (const [capacity, file] of [
+    [1025, "Three.2003.mkv"],
+    [10000, "Four.2004.mkv"],
+  ] as const) {
+    await connectOn(page, "/ui-v2/configuration");
+    await saveAutomationCapacity(page, capacity);
+    await organizeOneFileThroughFiles(page, request, file);
+    // The same page still reports the published high value (no clamping).
+    const published = await settingsDocument(page);
+    expect(published.target!.values["automation.maximumActiveJobs"]).toBe(
+      capacity,
+    );
+  }
+  await page.setViewportSize({ width: 380, height: 844 });
+  await page.evaluate(() => window.scrollTo(0, 0));
+  await page.screenshot({
+    path: testInfo.outputPath("manual-independent-narrow.png"),
+    fullPage: true,
+  });
+  expect(
+    await page.evaluate(
+      () => document.documentElement.scrollWidth <= window.innerWidth,
+    ),
+  ).toBe(true);
+});
+
+test("system runtime settings share one organizing allowance across automation and Files", async ({
+  page,
+  request,
+}) => {
+  await request.post("/__harness__/restore-source-media");
+  await connectOn(page, "/ui-v2/configuration");
+  await saveAutomationCapacity(page, 1);
+
+  // The harness seeded one real due Automation occurrence at startup; it holds
+  // the only shared organizing slot as a queued Task.
+  await connectOn(page, "/ui-v2/resourcelib/files");
+  await page
+    .getByRole("button", { name: /source/ })
+    .first()
+    .click();
+  await expect(page.getByLabel("目录", { exact: true })).toBeVisible();
+  await page.getByRole("checkbox", { name: "选择 Two.2002.mkv" }).check();
+  await page.getByRole("button", { name: "批量整理" }).click();
+  await expect(page.getByText(/系统整理队列已满/)).toBeVisible({
+    timeout: 20_000,
+  });
+  await expect(page).not.toHaveURL(/discoveryId=/);
+  const refusedState = await (
+    await request.get("/__harness__/manual-file-state?file=Two.2002.mkv")
+  ).json();
+  expect(refusedState).toEqual({ sourceExists: true, destinationTargets: [] });
+
+  // Release the slot by advancing the real Automation Task engine, then the
+  // operator's explicit retry of the same selection reaches the ordinary
+  // summary and executes with the real Worker.
+  await expect
+    .poll(
+      async () => {
+        const advanced = await request.post("/__harness__/run-worker");
+        const body = (await advanced.json()) as {
+          readonly ran?: boolean;
+          readonly status?: string;
+        };
+        return body.ran === true ? body.status : "idle";
+      },
+      { timeout: 30_000 },
+    )
+    .toBe("idle");
+  await page.getByRole("button", { name: "批量整理" }).click();
+  await expect(
+    page.getByRole("heading", { name: "新建整理任务", exact: true }),
+  ).toBeVisible();
+  await expect(page).toHaveURL(/discoveryId=/);
+  for (let step = 0; step < 24; step += 1) {
+    const advanced = await request.post("/__harness__/run-discovery-worker");
+    const body = (await advanced.json()) as {
+      readonly advanced: boolean;
+      readonly previewId?: string | null;
+    };
+    if (body.advanced && body.previewId != null) break;
+  }
+  await expect(
+    page.getByRole("heading", { name: "计划摘要", exact: true }),
+  ).toBeVisible({ timeout: 30_000 });
+  await page.getByRole("button", { name: /^确认整理 1 项$/ }).click();
+  await expect(page.getByRole("heading", { name: "整理执行情况" })).toBeVisible(
+    {
+      timeout: 20_000,
+    },
+  );
+  await expect
+    .poll(
+      async () => {
+        await request.post("/__harness__/run-manual-worker");
+        const state = await (
+          await request.get("/__harness__/manual-file-state?file=Two.2002.mkv")
+        ).json();
+        return state.sourceExists;
+      },
+      { timeout: 30_000 },
+    )
+    .toBe(false);
 });

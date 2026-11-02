@@ -54,8 +54,15 @@ MAX_TASK_REQUEST_ID_LENGTH = 128
 MAX_MACHINE_STAGE_LENGTH = 64
 MAX_MUTATION_ACTION_LENGTH = 128
 MAX_CLAIM_TOKEN_LENGTH = 512
-MAX_TASK_CAPACITY = 1024
+MAX_TASK_CAPACITY = 10_000
 MAX_TASK_LEASE_SECONDS = 86_400.0
+
+#: One refusal text names the one system-owned allowance every organizing
+#: entrance shares.  A source label never selects a different capacity.
+SHARED_TASK_CAPACITY_FULL_MESSAGE = (
+    "the system organizing queue is full; other admitted organizing work holds "
+    "the configured capacity"
+)
 
 
 class TaskQueueState(StrEnum):

@@ -14,7 +14,6 @@ import { normalizeAutomationSettings } from "./automation-settings";
 
 const FIELDS = [
   "automation.maximumActiveJobs",
-  "automation.staleJobAgeSeconds",
   "automation.workerPollSeconds",
   "automation.schedulerPollSeconds",
 ] as const;
@@ -39,7 +38,6 @@ function document(overrides: Record<string, unknown> = {}) {
       digest: "digest-1",
       values: {
         "automation.maximumActiveJobs": 100,
-        "automation.staleJobAgeSeconds": 3600,
         "automation.workerPollSeconds": 2,
         "automation.schedulerPollSeconds": 5,
       },
