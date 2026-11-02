@@ -204,6 +204,7 @@ from mediaflow.domain.task_persistence import (
     COMPLETED_ITEM_STATUSES,
     FAILED_ITEM_STATUSES,
     MEDIA_LIBRARY_TASK_COMMAND_PREFIX,
+    NON_ORGANIZING_ITEM_STAGES,
     SETTLED_ITEM_STATUSES,
     TRANSFER_MUTATION_IN_FLIGHT,
     ConfirmationStatus,
@@ -13159,6 +13160,154 @@ class SQLiteTaskRepository:
             return row["source_fingerprint"] != source_fingerprint
         stored = self._linked_task_source_version_locked(row["task_id"], storage_path)
         return source_version_is_known_different(source_version, stored)
+
+    def latest_organize_source_outcome(
+        self,
+        *,
+        storage_id: str,
+        source_path: str,
+        storage_path: str | None = None,
+        resource_library_id: str | None = None,
+        source_fingerprint: str | None = None,
+        source_version: SourceVersionEvidence | None = None,
+        exclude_task_id: str | None = None,
+    ) -> dict[str, object] | None:
+        """The latest *formal organizing outcome* of one concrete source version.
+
+        Slice 47 RO-6: shared per-source admission asks one question — "what did
+        the last real organizing attempt of *this* file version record?" — from
+        the complete matching durable population, never from a bounded display
+        page, an enclosing Task aggregate or an arbitrary recent Result.
+
+        The population is every settled organizing TaskItem of the same verified
+        source identity (exact Storage plus its Storage-relative path, with the
+        library-relative path plus its exact binding as the conservative legacy
+        identity) whose command belongs to an organizing family.  A row applies
+        to the observed version under the same comparable-evidence rule as
+        verified ownership: inside one binding an unequal fingerprint digest
+        proves a replaced file, across bindings the Task's own discovery-recorded
+        version evidence decides, and anything incomparable answers "may
+        apply" instead of inventing a new file.  The rows are ordered by their
+        durable admission/attempt order (not publication time), so a late
+        publication of an older attempt can never masquerade as the newest
+        attempt, and the newest applicable row is returned.
+
+        Analysis-only DRY_RUN rows, ignored/uncancelled operator decisions and
+        the pass's own exclusion records (``history_excluded``/
+        ``history_unavailable``) are not formal organizing outcomes, so none of
+        them can create, mask or overwrite the history this query reports.  The
+        scan is bounded far above the display page size but never by it.
+
+        Returns a bounded, secret-free outcome document, or ``None`` when no
+        applicable formal outcome exists.  A read failure raises: callers must
+        fail closed instead of treating history as absent.
+        """
+
+        if not isinstance(storage_id, str) or not storage_id.strip():
+            raise ValueError("Storage identity is required")
+        if not isinstance(source_path, str) or not source_path.strip():
+            raise ValueError("source path is required")
+        if exclude_task_id is not None and not isinstance(exclude_task_id, str):
+            raise ValueError("excluded Task identity is invalid")
+        canonical = storage_path if storage_path is not None else source_path
+        excluded_stages = ", ".join("?" for _ in sorted(NON_ORGANIZING_ITEM_STAGES))
+        with self._lock:
+            rows = self._connection.execute(
+                "SELECT i.item_id, i.task_id, i.status AS item_status, i.stage, i.attempts, "
+                "i.created_at AS admitted_at, i.updated_at AS item_updated_at, "
+                "i.source_fingerprint, i.resource_library_id, "
+                "i.destination_storage_id, i.destination_path, i.error AS item_error, "
+                "t.command, t.status AS task_status, "
+                "r.status AS result_status, r.created_at AS result_created_at, "
+                "r.effect_certainty, r.uncertain_effects, r.completed_operations, "
+                "r.primary_completed, r.operation, r.error AS result_error "
+                "FROM task_items i "
+                "JOIN tasks t ON t.task_id = i.task_id "
+                "LEFT JOIN task_results r ON r.item_id = i.item_id "
+                "AND r.result_id = i.item_id || ':' || i.attempts "
+                "WHERE i.storage_id=? "
+                "AND (i.source_storage_path=? OR (i.source_storage_path IS NULL "
+                "AND i.source_path=? AND i.resource_library_id=?)) "
+                "AND (t.command='organize' OR t.command='manual_organize' "
+                "OR t.command LIKE 'retry:%' OR t.command LIKE 'retry-failed:%') "
+                "AND i.status IN ('success','failed','partial','skipped','cancelled') "
+                f"AND i.stage NOT IN ({excluded_stages}) "
+                "AND i.task_id != ? "
+                "ORDER BY i.created_at DESC, i.attempts DESC, r.created_at DESC, i.item_id DESC "
+                "LIMIT 400",
+                (
+                    storage_id,
+                    canonical,
+                    source_path,
+                    resource_library_id or "",
+                    *sorted(NON_ORGANIZING_ITEM_STAGES),
+                    exclude_task_id or "",
+                ),
+            ).fetchall()
+            for row in rows:
+                applicable, comparable = self._outcome_applies_to_observed_version_locked(
+                    row,
+                    storage_path=canonical,
+                    resource_library_id=resource_library_id,
+                    source_fingerprint=source_fingerprint,
+                    source_version=source_version,
+                )
+                if not applicable:
+                    continue
+                return {
+                    "kind": "result" if row["result_status"] is not None else "item",
+                    "taskId": row["task_id"],
+                    "itemId": row["item_id"],
+                    "taskCommand": row["command"],
+                    "taskStatus": row["task_status"],
+                    "itemStatus": row["item_status"],
+                    "itemStage": row["stage"],
+                    "status": row["result_status"] or row["item_status"],
+                    "admittedAt": row["admitted_at"],
+                    "outcomeAt": row["result_created_at"] or row["item_updated_at"],
+                    "attempts": row["attempts"],
+                    "effectCertainty": row["effect_certainty"],
+                    "uncertainEffects": tuple(json.loads(row["uncertain_effects"] or "[]")),
+                    "completedOperations": tuple(json.loads(row["completed_operations"] or "[]")),
+                    "primaryCompleted": bool(row["primary_completed"]),
+                    "operation": row["operation"],
+                    "destinationStorageId": row["destination_storage_id"],
+                    "destinationPath": row["destination_path"],
+                    "error": row["result_error"] or row["item_error"],
+                    "versionComparable": comparable,
+                }
+            return None
+
+    def _outcome_applies_to_observed_version_locked(
+        self,
+        row: sqlite3.Row,
+        *,
+        storage_path: str,
+        resource_library_id: str | None,
+        source_fingerprint: str | None,
+        source_version: SourceVersionEvidence | None,
+    ) -> tuple[bool, bool]:
+        """Whether one historical organizing row describes the observed version.
+
+        Exactly the comparable-evidence rule verified ownership uses: inside the
+        same binding both fingerprint digests decide, otherwise the row's own
+        Task-recorded version evidence decides, and an incomparable side never
+        claims "replaced" — the history may apply instead.  Returns
+        ``(applies, comparable)``: a row that cannot be compared at all applies
+        with an honest "possibly" instead of an invented certainty.
+        """
+
+        binding = row["resource_library_id"]
+        if (
+            source_fingerprint is not None
+            and isinstance(row["source_fingerprint"], str)
+            and binding == (resource_library_id or "")
+        ):
+            return row["source_fingerprint"] == source_fingerprint, True
+        stored = self._linked_task_source_version_locked(row["task_id"], storage_path)
+        if source_version is None or stored is None:
+            return True, False
+        return not source_version_is_known_different(source_version, stored), True
 
     def _linked_task_source_version_locked(
         self, task_id: str, storage_path: str

@@ -27,6 +27,7 @@ from mediaflow.application.conflict_resolution import ConflictResolver
 from mediaflow.application.duplicates import apply_hash_duplicate_detection
 from mediaflow.application.media_parser import MediaParserService
 from mediaflow.application.metadata import MetadataProviderRegistry
+from mediaflow.application.organize_source_history import latest_applicable_outcome
 from mediaflow.application.organizer import OrganizePlanner, OrganizerExecutor
 from mediaflow.application.read_only_storage import (
     ReadOnlyStorageGuard,
@@ -85,6 +86,7 @@ from mediaflow.domain.source_evidence import (
     OccurrenceState,
     occurrence_id_for,
     source_fingerprint,
+    stored_source_version_evidence,
 )
 from mediaflow.domain.storage import Storage, StorageEntry, StorageEntryType, StorageError
 
@@ -354,6 +356,22 @@ class ManualOrganizePreviewService:
                         total_items=len(selected),
                         problem_task_id=problem_task_id,
                     )
+                    # Slice 47 RO-6: a deliberate new manual request is never
+                    # excluded by prior failed/partial history, so the exact
+                    # summary itself carries the bounded server-generated
+                    # history warning.  Read-only: zero Provider calls and zero
+                    # mutation.  A read failure fails the item closed — it can
+                    # never claim "no history" — and is retried by asking for
+                    # a fresh Preview.
+                    if outcome.plan is not None:
+                        history = self._source_history_document(item.source)
+                        if history is not None:
+                            documented = {**outcome.plan, "history": history}
+                            outcome = replace(
+                                outcome,
+                                plan=documented,
+                                plan_fingerprint=_fingerprint(documented),
+                            )
             except PreviewAnalysisControlRequested:
                 raise
             except ManualPreviewUnavailable as error:
@@ -1257,6 +1275,54 @@ class ManualOrganizePreviewService:
                 value, f"expectedItemVersions[{item_id}]"
             )
         return values
+
+    def _source_history_document(self, source) -> dict[str, object] | None:
+        """The bounded server-generated history warning for one selected source.
+
+        Slice 47 RO-6: the applicable latest formal organizing outcome of this
+        exact source version is projected into the existing summary when it is
+        ``failed``/``partial`` — its result facts (recorded time, possible
+        target, completed steps, uncertain effects) stay bounded and
+        secret-free, and an unknown effect says so instead of claiming the
+        system has verified anything.  A history read failure is fail-closed:
+        the item is refused with a retry next action instead of silently
+        treating the source as history-free.  This projection is read-only:
+        zero Provider calls, zero Storage mutation, and it never creates or
+        overwrites a formal organizing outcome.
+        """
+
+        try:
+            history = latest_applicable_outcome(
+                self._repository,
+                storage_id=source.storage_id,
+                source_path=source.path,
+                storage_path=source.path,
+                resource_library_id=source.resource_library_id,
+                source_fingerprint=source.fingerprint,
+                source_version=stored_source_version_evidence(source.fingerprint_evidence),
+            )
+        except Exception as error:  # noqa: BLE001 - one bounded fail-closed refusal
+            raise ManualPreviewUnavailable(
+                "this source's organizing history could not be read",
+                next_action=(
+                    "retry the Preview after the runtime database is readable again; "
+                    "the source is never processed on an unreadable history"
+                ),
+                details={"storageId": source.storage_id, "reason": type(error).__name__},
+            ) from error
+        if history is None or not history.excludes_automatically:
+            return None
+        return {
+            "status": history.status,
+            "recordedAt": history.recorded_at,
+            "destinationStorageId": history.destination_storage_id,
+            "destinationPath": history.destination_path,
+            "completedOperations": list(history.completed_operations),
+            "uncertainEffects": list(history.uncertain_effects),
+            "effectCertainty": history.effect_certainty,
+            "versionApplicable": history.version_applicable,
+            "warning": history.warning(),
+        }
 
     def _source_admission_outcome(self, item, error: ManualPreviewError) -> _PreviewOutcome:
         stale_codes = {"source_missing", "source_stale", "source_not_ready", "source_unverified"}

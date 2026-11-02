@@ -422,6 +422,39 @@ class PersistentTaskCoordinator:
             owner_token=token,
         )
 
+    def publish_history_gate_item(
+        self,
+        item: PersistentTaskItem,
+        *,
+        stage: str,
+        reason: str,
+        now: datetime | None = None,
+    ) -> PersistentTaskItem:
+        """Publish one RO-6 not-processed item outcome and release its lock.
+
+        An automatic history gate (the same source version's latest formal
+        organizing outcome is failed/partial, or the history could not be
+        read) records its own honest per-item outcome: zero Provider calls,
+        zero execution right and zero Storage mutation.  It deliberately
+        publishes *no Result* — nothing was organized, so no formal organizing
+        outcome is created or overwritten and a later run re-asks the question
+        instead of replaying this row as history.
+        """
+
+        current = now or datetime.now(UTC)
+        completed = replace(
+            item,
+            status=TaskItemStatus.SKIPPED,
+            stage=stage,
+            updated_at=current,
+            execution_status=None,
+            error=reason,
+            progress=None,
+        )
+        self.repository.upsert_item(completed)
+        self.release_item_lock(item)
+        return completed
+
     def cancel(self, task_id: str) -> PersistentTask:
         task = self.require(task_id)
         now = datetime.now(UTC)
@@ -988,6 +1021,16 @@ class PersistentTaskCoordinator:
         return final
 
     def retryable_items(self, task_id: str, *, failed_only: bool) -> tuple[PersistentTaskItem, ...]:
+        """The TaskItems a legal continuation of this Task may still work on.
+
+        Slice 47 RO-6 retired the independent ``tasks retry-failed`` CLI
+        entrance; what remains is the shared admission/continuation view the
+        four-type decision, ignore and recovery boundaries use.  A file whose
+        own recorded outcome is a completed success/dry-run/skip is never a
+        candidate; an item already failed/partial is that file's history, and
+        new work for it starts from a deliberate new organizing request.
+        """
+
         original = self.require(task_id)
         require_retryable_task_command(original.command)
         statuses = (
@@ -1017,103 +1060,6 @@ class PersistentTaskCoordinator:
             for item in self.repository.list_items(task_id)
             if item.status in statuses and item.item_id not in successful_results
         )
-
-    def execution_retry_items(
-        self, task_id: str, *, failed_only: bool
-    ) -> tuple[tuple[PersistentTaskItem, ...], tuple[tuple[PersistentTaskItem, str], ...]]:
-        """Split retry candidates into re-executable and effect-blocked items.
-
-        An explicit retry may re-execute a source only when the original work's
-        own evidence proves the last attempt had zero effect — the same proof
-        the repository requires before this Task's own item restarts.  A
-        failed/partial status, a still-present source file, a valid pin or the
-        explicit execute intent is never that proof: an unknown or
-        attempted-unverified certainty, any recorded uncertain effect, any
-        completed operation, a completed primary, an already-terminal recorded
-        result or the original Task's in-flight mutation boundary keeps the
-        file execution-blocked.  A blocked file keeps its original record, its
-        source occupation and the original Task's mutation marker exactly as
-        they are; a successor Task must never turn it back into executable
-        work.
-        """
-
-        original = self.require(task_id)
-        require_retryable_task_command(original.command)
-        candidates = self.retryable_items(task_id, failed_only=failed_only)
-        if not candidates:
-            return (), ()
-        results_by_item: dict[str, list[PersistentResultRecord]] = {}
-        for result in self.repository.list_results(task_id):
-            results_by_item.setdefault(result.item_id, []).append(result)
-        state = None
-        reader = getattr(self.repository, "get_task_scheduling", None)
-        if callable(reader):
-            state = reader(task_id)
-        mutation_item_id = (
-            state.mutation_item_id if state is not None and state.mutation_in_flight else None
-        )
-        eligible: list[PersistentTaskItem] = []
-        blocked: list[tuple[PersistentTaskItem, str]] = []
-        for item in candidates:
-            reason = self._execution_effect_block(
-                item,
-                tuple(results_by_item.get(item.item_id, ())),
-                mutation_item_id,
-                task_id,
-            )
-            if reason is None:
-                eligible.append(item)
-            else:
-                blocked.append((item, reason))
-        return tuple(eligible), tuple(blocked)
-
-    def _execution_effect_block(
-        self,
-        item: PersistentTaskItem,
-        results: tuple[PersistentResultRecord, ...],
-        mutation_item_id: str | None,
-        task_id: str,
-    ) -> str | None:
-        """Why one candidate file may not be re-executed, or ``None`` when it may.
-
-        Every refusal names the evidence kind in bounded, secret-free words;
-        the operator-facing next step is always the recorded result of the
-        original work, never a new mutation.
-        """
-
-        if item.item_id == mutation_item_id:
-            return (
-                "the original task still records this file's in-flight mutation; "
-                "its effect was never verified"
-            )
-        if results:
-            for result in results:
-                certainty = str(getattr(result.effect_certainty, "value", result.effect_certainty))
-                if certainty != "none":
-                    return "the recorded result's effect certainty is not verified"
-                if result.uncertain_effects:
-                    return "the recorded result's effect certainty is not verified"
-                if result.primary_completed:
-                    return (
-                        "the recorded result already completed the primary operation; "
-                        "attachments are not resolved by replaying it"
-                    )
-                if result.completed_operations:
-                    return "the recorded result lists completed operations"
-                if str(result.status).strip().lower() in {"success", "partial"}:
-                    return "the recorded result is already terminal"
-            return None
-        # A candidate without any recorded Result is decided by the existing
-        # checkpoint determination: only its proven ``none`` certainty (for
-        # example the durable failure envelope of an interrupted analysis)
-        # counts as a zero effect; everything else fails closed.
-        from mediaflow.application.processing_checkpoint import ProcessingCheckpointService
-        from mediaflow.domain.processing_checkpoint import EffectCertainty
-
-        checkpoint = ProcessingCheckpointService(self.repository).get(item.item_id, task_id=task_id)
-        if checkpoint.effect_certainty is EffectCertainty.NONE:
-            return None
-        return "no recorded result proves the file's last attempt had zero effect"
 
     @staticmethod
     def _result(
@@ -1350,6 +1296,37 @@ class KernelTaskCoordinator(PersistentTaskCoordinator):
         """
 
         return
+
+    def publish_history_gate_item(
+        self,
+        item: PersistentTaskItem,
+        *,
+        stage: str,
+        reason: str,
+        now: datetime | None = None,
+    ) -> PersistentTaskItem:
+        """Publish the RO-6 not-processed outcome under the live claim fence.
+
+        The same no-Result rule as the generic coordinator: an exclusion or
+        fail-closed gate records its own SKIPPED item with its bounded reason,
+        releases exactly this frame's lock and creates no formal organizing
+        outcome that a later run could mistake for history.
+        """
+
+        self._keepalive()
+        current = now or self._clock()
+        completed = replace(
+            item,
+            status=TaskItemStatus.SKIPPED,
+            stage=stage,
+            updated_at=current,
+            execution_status=None,
+            error=reason,
+            progress=None,
+        )
+        recorded = self._scheduling.record_item(self._claim, completed, now=current)
+        self.release_item_lock(item)
+        return recorded
 
     def cancel(self, task_id: str) -> PersistentTask:
         """The accepted Task control owns cancellation; this is a read-only view."""

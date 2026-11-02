@@ -578,6 +578,25 @@ function PlanBody(props: PlanBodyProps) {
           <p className="mf-dashboard-meta">{props.preview.worker.nextAction}</p>
         )}
       </section>
+      {props.preview.items.some((item) => item.history !== null) && (
+        <StatusBanner variant="warning" title="部分文件上次整理未完全成功">
+          <p>
+            以下条目的同一文件版本存在最近一次正式整理结果为失败或部分成功的记录。
+            这不是系统核验过的安全结论；请在确认前核对来源文件、目标位置与存储中的实际效果。
+            确认后仍按当前摘要执行一次新的正常整理；旧记录不会被改写或重放。
+          </p>
+          <ul>
+            {props.preview.items
+              .filter((item) => item.history !== null)
+              .map((item) => (
+                <li key={`history-${item.itemId}`}>
+                  <strong>{item.sourceFilename ?? item.itemId}</strong>：
+                  {item.history?.warning ?? ""}
+                </li>
+              ))}
+          </ul>
+        </StatusBanner>
+      )}
       {props.preview.items.map((item) => {
         const isExecutable = props.executableIds.includes(item.itemId);
         return (
@@ -588,6 +607,22 @@ function PlanBody(props: PlanBodyProps) {
                 {isExecutable ? "可执行" : "不可执行"}
               </span>
             </h5>
+            {item.history !== null && (
+              <StatusBanner
+                variant="warning"
+                title={`该文件上次整理${
+                  item.history.status === "partial" ? "部分成功" : "失败"
+                }，请核对后确认`}
+              >
+                <p>{item.history.warning}</p>
+                {item.history.uncertainEffects.length > 0 && (
+                  <p className="mf-dashboard-meta">
+                    未确认效果：{item.history.uncertainEffects.join("、")}
+                    。已发出的远端调用无法由本页停止或证明已完成；原记录保持原样。
+                  </p>
+                )}
+              </StatusBanner>
+            )}
             <label className="mf-list-choice">
               <input
                 type="checkbox"

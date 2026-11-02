@@ -306,6 +306,27 @@ export interface ManualPreviewItemModel {
   readonly conflicts: readonly ManualPreviewConflictModel[];
   readonly warnings: readonly string[];
   readonly capabilities: ManualPreviewCapabilitiesModel | null;
+  readonly history: ManualPreviewHistoryModel | null;
+}
+
+/** The server-generated prior-outcome warning of one item (Slice 47 RO-6).
+ *
+ *  A deliberate new manual request is never excluded by prior failed/partial
+ *  history; instead the backend projects the applicable latest formal
+ *  organizing outcome into the exact summary so the operator can check the
+ *  source, target and Storage effects before the ordinary confirmation.
+ *  `null` means this source has no applicable prior outcome — never that the
+ *  system has verified anything. */
+export interface ManualPreviewHistoryModel {
+  readonly status: string | null;
+  readonly recordedAt: string | null;
+  readonly destinationStorageId: string | null;
+  readonly destinationPath: string | null;
+  readonly completedOperations: readonly string[];
+  readonly uncertainEffects: readonly string[];
+  readonly effectCertainty: string | null;
+  readonly versionApplicable: boolean;
+  readonly warning: string | null;
 }
 
 /** The durable selection state of one Preview. */
@@ -935,6 +956,32 @@ export interface ManualPreviewPlanModel {
   readonly conflicts: readonly ManualPreviewConflictModel[];
   readonly warnings: readonly string[];
   readonly capabilities: ManualPreviewCapabilitiesModel | null;
+  readonly history: ManualPreviewHistoryModel | null;
+}
+
+function normalizeHistory(value: unknown): ManualPreviewHistoryModel | null {
+  if (value === null || value === undefined) {
+    return null;
+  }
+  const source = readRecord(value, "plan.history");
+  try {
+    return {
+      status: optionalText(source, "status"),
+      recordedAt: optionalText(source, "recordedAt"),
+      destinationStorageId: optionalText(source, "destinationStorageId"),
+      destinationPath: optionalText(source, "destinationPath"),
+      completedOperations: optionalStringList(source, "completedOperations"),
+      uncertainEffects: optionalStringList(source, "uncertainEffects"),
+      effectCertainty: optionalText(source, "effectCertainty"),
+      versionApplicable: normalizeBoolean(
+        source["versionApplicable"],
+        "plan.history.versionApplicable",
+      ),
+      warning: optionalText(source, "warning"),
+    };
+  } catch {
+    return fail();
+  }
 }
 
 function normalizePlanFields(
@@ -984,6 +1031,7 @@ function normalizePlanFields(
       normalizeBoundedText(item, `plan.warnings[${index}]`),
     ),
     capabilities: normalizeCapabilities(plan?.["capabilities"] ?? null),
+    history: normalizeHistory(plan?.["history"] ?? null),
   };
 }
 

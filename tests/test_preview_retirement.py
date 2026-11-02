@@ -663,29 +663,27 @@ class SharedAnalysisCliTests(unittest.TestCase):
             with SQLiteTaskRepository(environment.database) as repository:
                 task = repository.list_tasks()[0]
             out_buffer, err_buffer = io.StringIO(), io.StringIO()
-            with patch(
-                "mediaflow.final_cli.metadata_provider_registry_from_environment",
-                return_value=MetadataProviderRegistry(
-                    (SyntheticMetadataProvider(_candidates("Film")),)
-                ),
-            ):
-                code = final_main(
-                    [
-                        "--config",
-                        str(environment.config),
-                        "tasks",
-                        "retry-failed",
-                        task.task_id,
-                        "--execute",
-                    ],
-                    stdout=out_buffer,
-                    stderr=err_buffer,
-                )
-            err = err_buffer.getvalue()
-            # The analysis Task holds no execution authority, so retrying it
-            # with --execute is refused before any Storage or Provider work.
-            self.assertEqual(2, code)
-            self.assertIn("not execute-authorized", err)
+            with redirect_stderr(err_buffer):
+                # Slice 47 RO-6 retired the independent retry-failed entrance:
+                # an analysis Task is not promotable by any surviving command,
+                # and the old command is an ordinary parse error with zero
+                # effects (no Storage, no Provider, no new authority).
+                with self.assertRaises(SystemExit) as exited:
+                    final_main(
+                        [
+                            "--config",
+                            str(environment.config),
+                            "tasks",
+                            "retry-failed",
+                            task.task_id,
+                            "--execute",
+                        ],
+                        stdout=out_buffer,
+                        stderr=err_buffer,
+                    )
+            self.assertEqual(2, exited.exception.code)
+            self.assertIn("invalid choice", err_buffer.getvalue())
+            self.assertEqual("", out_buffer.getvalue())
             with SQLiteTaskRepository(environment.database) as repository:
                 self.assertEqual(1, len(repository.list_tasks()))
                 self.assertEqual((), repository.list_confirmations())

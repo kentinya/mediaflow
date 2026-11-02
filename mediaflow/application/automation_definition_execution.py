@@ -480,6 +480,11 @@ class DefinitionScopedExecutionService:
             # that is genuinely free still runs exactly as before, and the
             # refused sibling is published as its own per-item outcome.
             enforce_source_ownership=True,
+            # Slice 47 RO-6: a definition due/Run once pass excludes a file whose
+            # same-version latest formal organizing outcome is failed/partial —
+            # per file, before any Provider call.  A deliberate manual request is
+            # never excluded by that history; it reaches its own summary instead.
+            exclude_failed_history=True,
             mutation_authority=(
                 (
                     lambda _plan, _boundary: self._unattended_grants.assert_live_task(
@@ -626,6 +631,10 @@ class DefinitionScopedExecutionService:
             secret_free_errors=True,
             persist_failure_explanations=True,
             enforce_source_ownership=True,
+            # RO-6: a legacy interval/Cron occurrence is the same automatic
+            # entrance as a managed due occurrence and excludes per file whose
+            # same-version latest formal organizing outcome is failed/partial.
+            exclude_failed_history=True,
         )
         summary = service.process_all_libraries(
             self._configuration.resource_libraries,

@@ -219,9 +219,15 @@ class TaskItemStatus(StrEnum):
 #: same verified source cannot start the same work again.
 #:
 #: ``FAILED`` and ``PARTIAL`` are settled on purpose: their own recorded failure
-#: and per-item next action are the durable truth, and an operator's explicit retry
-#: is the only way that source becomes work again.  ``CANCELLED`` is the operator's
-#: own completed intent.  A finished history row is therefore never a perpetual lock.
+#: and per-item next action are the durable truth, and an operator's explicit
+#: new organizing request is the only way that source becomes work again.
+#: Slice 47 RO-6: a recorded failed/partial file item is *history* for the
+#: manual rule — neither its parent Task's running status nor a historical
+#: unknown marker alone reclassifies it as an active file, so it never
+#: permanently vetoes a later deliberate manual organizing request.  A queued
+#: or processing source without its own terminal outcome is not affected.
+#: ``CANCELLED`` is the operator's own completed intent.  A finished history
+#: row is therefore never a perpetual lock.
 SETTLED_ITEM_STATUSES = frozenset(
     {
         TaskItemStatus.DRY_RUN,
@@ -229,6 +235,7 @@ SETTLED_ITEM_STATUSES = frozenset(
         TaskItemStatus.SKIPPED,
         TaskItemStatus.CANCELLED,
         TaskItemStatus.FAILED,
+        TaskItemStatus.PARTIAL,
         TaskItemStatus.IGNORED,
     }
 )
@@ -242,6 +249,26 @@ COMPLETED_ITEM_STATUSES = frozenset(
 
 #: The item outcomes that count as a failed/partial source of one Task.
 FAILED_ITEM_STATUSES = frozenset({TaskItemStatus.PARTIAL, TaskItemStatus.FAILED})
+
+#: TaskItem stage of one automatic pass that recorded a same-version prior
+#: failed/partial organizing outcome instead of processing the file again.
+#: Slice 47 RO-6: the exclusion itself is *not* a formal organizing outcome —
+#: it consumes no execution right, queries no Provider and mutates nothing —
+#: so a stage marker keeps it out of the formal-outcome history query and it
+#: can never become the very history that excludes or admits a later run.
+#: The per-item reason stays on the item's own bounded error text.
+HISTORY_EXCLUDED_ITEM_STAGE = "history_excluded"
+
+#: TaskItem stage of one automatic pass that could not read the source's
+#: organizing history at all.  Fail-closed: the file was not processed and the
+#: next run re-checks, instead of silently treating the source as history-free.
+HISTORY_UNAVAILABLE_ITEM_STAGE = "history_unavailable"
+
+#: The stages that record *why nothing was processed* rather than an organizing
+#: outcome of the media itself.
+NON_ORGANIZING_ITEM_STAGES = frozenset(
+    {HISTORY_EXCLUDED_ITEM_STAGE, HISTORY_UNAVAILABLE_ITEM_STAGE}
+)
 
 
 def task_item_counts(items) -> tuple[int, int, int]:

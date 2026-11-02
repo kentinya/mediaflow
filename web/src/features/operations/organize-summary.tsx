@@ -227,6 +227,37 @@ export function ItemFindings({
               .map((value) => displayEnum(value.type ?? "冲突"))
               .join("、")}
       </dd>
+      {item.history !== null && (
+        <>
+          <dt>上次整理记录（同一文件版本）</dt>
+          <dd>
+            {displayEnum(item.history.status ?? "")}
+            {item.history.recordedAt ? ` · ${item.history.recordedAt}` : ""}
+            {item.history.destinationPath !== null && (
+              <span className="mf-exact-identity">
+                {" "}
+                目标：{safeValue(item.history.destinationStorageId)}:
+                {item.history.destinationPath}
+              </span>
+            )}
+            {item.history.completedOperations.length > 0 && (
+              <>
+                <br />
+                已完成步骤：{item.history.completedOperations.join("、")}
+              </>
+            )}
+            {item.history.uncertainEffects.length > 0 && (
+              <>
+                <br />
+                未确认效果：{item.history.uncertainEffects.join("、")}
+                （未知≠已核验）
+              </>
+            )}
+            <br />
+            {item.history.warning}
+          </dd>
+        </>
+      )}
       <dt>提示</dt>
       <dd>{item.warnings.length === 0 ? "无" : item.warnings.join("；")}</dd>
       <dt>破坏性影响</dt>

@@ -24,6 +24,7 @@ from mediaflow.domain.manual_execution import (
 )
 from mediaflow.domain.media_discovery import DiscoveryStatus, MediaDiscovery
 from mediaflow.domain.task_persistence import (
+    NON_ORGANIZING_ITEM_STAGES,
     SETTLED_ITEM_STATUSES,
     PersistentTask,
     PersistentTaskStatus,
@@ -564,7 +565,29 @@ class ManualTaskEngineWorker:
             )
             return self._task(claim.task_id)
         status = task_work_status(items) if items else PersistentTaskStatus.COMPLETED
-        updated = self._with_counts(self._with_status(task, status, now, task.error))
+        error = task.error
+        # Slice 47 RO-6: the pass's history-gate items are not organized media.
+        # A pass that only excluded (or fail-closed its history reads) is an
+        # honest "nothing was processed because of recorded history", never a
+        # healthy completed run — and its own reason stays visible.
+        gated = tuple(value for value in items if value.stage in NON_ORGANIZING_ITEM_STAGES)
+        if gated:
+            excluded = sum(value.stage == "history_excluded" for value in gated)
+            unavailable = len(gated) - excluded
+            summary = (
+                f"{len(gated)} source(s) not processed by the automatic history gate: "
+                f"{excluded} excluded (this source version's latest formal organizing "
+                f"outcome is failed/partial)"
+                + (
+                    f", {unavailable} fail-closed (organizing history unreadable)"
+                    if unavailable
+                    else ""
+                )
+            )
+            if status is PersistentTaskStatus.COMPLETED:
+                status = PersistentTaskStatus.PARTIAL_SUCCESS
+            error = f"{error}; {summary}" if error else summary
+        updated = self._with_counts(self._with_status(task, status, now, error))
         self._scheduling.settle(
             claim,
             task=updated,

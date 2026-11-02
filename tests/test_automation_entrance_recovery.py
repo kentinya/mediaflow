@@ -26,7 +26,7 @@ import json
 import os
 import tempfile
 import unittest
-from contextlib import contextmanager
+from contextlib import contextmanager, redirect_stderr
 from datetime import UTC, datetime, timedelta
 from pathlib import Path
 from types import SimpleNamespace
@@ -619,23 +619,21 @@ class EntranceRecoveryJourneyTests(unittest.TestCase):
             self.assertEqual(0, value.repository.count_scheduled_capacity_use())
             self.assertEqual(1, len(value.repository.list_tasks()))
 
-    def test_retry_failed_execute_shares_the_kernel_queue_and_capacity(self):
-        """The CLI failure retry enters the shared queue; a full queue refuses it.
+    def test_retired_retry_failed_entrance_is_an_ordinary_parse_error(self):
+        """The retired ``tasks retry-failed`` entrance stays retired, zero effects.
 
-        The real gap this pins: the failure retry used to create its Task with
-        the generic coordinator and move files directly, bypassing the shared
-        capacity every other entrance honors.  Now the retried execution is
-        admitted by the same kernel — refused at full capacity before any new
-        Task row, source-lock release or file effect — and a later explicit
-        retry with free capacity runs under the live kernel claim and moves the
-        file exactly once, while the original work keeps its own failed facts.
+        Slice 47 RO-6 removed the independent CLI failure-retry entrance: new
+        organizing starts from Files/``organize`` and an existing Task's own
+        four-type continuation.  The old command is an ordinary unrecognized
+        argument error reached before any runtime construction — no Task, no
+        lock release, no Provider, no Storage effect — and the original failed
+        work keeps every one of its durable facts.
         """
 
         source = self.media("One.2001.mkv")
         with entrance_journey(
             self,
             movie_rule=True,
-            capacity=1,
             candidates=(MediaCandidate("tmdb", "1", MediaType.MOVIE, "One", year=2001),),
         ) as value:
             from mediaflow.application.organizer import OrganizerExecutor
@@ -644,52 +642,14 @@ class EntranceRecoveryJourneyTests(unittest.TestCase):
                 def execute(self, plan, storages, **kwargs):
                     raise RuntimeError("injected executor failure before any mutation")
 
-            def with_provider():
-                return patch(
-                    "mediaflow.final_cli.metadata_provider_registry_from_environment",
-                    return_value=value.provider_registry,
-                )
-
-            def organize_execute():
-                output, errors = io.StringIO(), io.StringIO()
-                with with_provider():
-                    code = final_main(
-                        [
-                            "--config",
-                            str(value.config),
-                            "organize",
-                            str(source),
-                            "--execute",
-                            "--limit",
-                            "5",
-                        ],
-                        stdout=output,
-                        stderr=errors,
-                    )
-                return code, output.getvalue(), errors.getvalue()
-
-            def retry_failed(*extra):
-                output, errors = io.StringIO(), io.StringIO()
-                with with_provider():
-                    code = final_main(
-                        [
-                            "--config",
-                            str(value.config),
-                            "tasks",
-                            "retry-failed",
-                            failed_task.task_id,
-                            *extra,
-                        ],
-                        stdout=output,
-                        stderr=errors,
-                    )
-                return code, output.getvalue(), errors.getvalue()
-
-            # 1. A real admitted execution fails before any mutation at the real
-            #    OrganizerExecutor boundary; the source stays in place.
+            # One real admitted execution fails before any mutation at the real
+            # OrganizerExecutor boundary, so a genuine failed Task exists.
             output, errors = io.StringIO(), io.StringIO()
             with (
-                with_provider(),
+                patch(
+                    "mediaflow.final_cli.metadata_provider_registry_from_environment",
+                    return_value=value.provider_registry,
+                ),
                 patch("mediaflow.final_cli.OrganizerExecutor", _ExplodingExecutor),
             ):
                 code = final_main(
@@ -710,603 +670,43 @@ class EntranceRecoveryJourneyTests(unittest.TestCase):
             (failed_item,) = value.repository.list_items(failed_task.task_id)
             self.assertEqual("failed", failed_item.status.value, failed_item)
             self.assertEqual("failed", failed_task.status.value, failed_task)
+            (failed_result,) = value.repository.list_results(failed_task.task_id)
             self.assertTrue(source.exists())
-            self.assertEqual(0, value.repository.count_scheduled_capacity_use())
-            self.assertIsNotNone(value.repository.get_task_scheduling(failed_task.task_id))
 
-            # 2. One legitimately admitted remote organize Task fills the shared
-            #    capacity of one; nothing runs it yet, so it keeps its slot.
-            issued = ExecutionAuthorizationService(
-                value.repository,
-                maximum_ttl_seconds=900,
-                token_factory=lambda: "one-time-queue-ticket",
-            ).issue(ttl_seconds=300, max_items=5, actor="admin")
-            status, admitted = self.request(
-                value,
-                "POST",
-                "/api/v1/tasks",
-                {"command": "organize", "execute": True, "limit": 5},
-                headers={"HTTP_X_MEDIAFLOW_EXECUTION_TOKEN": "one-time-queue-ticket"},
-            )
-            self.assertEqual(202, status, admitted)
-            queued_task_id = admitted["taskId"]
+            for extra in ([], ["--execute"]):
+                with self.subTest(extra=extra):
+                    out, err = io.StringIO(), io.StringIO()
+                    with redirect_stderr(err):
+                        with self.assertRaises(SystemExit) as exited:
+                            final_main(
+                                [
+                                    "--config",
+                                    str(value.config),
+                                    "tasks",
+                                    "retry-failed",
+                                    failed_task.task_id,
+                                    *extra,
+                                ],
+                                stdout=out,
+                                stderr=err,
+                            )
+                    self.assertEqual(2, exited.exception.code)
+                    self.assertIn("invalid choice", err.getvalue())
+                    self.assertEqual("", out.getvalue())
+
+            # The refusal happened at the parser: zero new work, zero effects.
+            self.assertEqual(1, len(value.repository.list_tasks()))
             self.assertEqual(
-                "consumed",
-                value.repository.get_execution_authorization(
-                    issued.authorization.authorization_id
-                ).status.value,
-            )
-            self.assertEqual(1, value.repository.count_scheduled_capacity_use())
-
-            # 3. The contrast the finding named: the ordinary direct organize
-            #    already refuses at full capacity.
-            code, _output, errors = organize_execute()
-            self.assertEqual(2, code)
-            self.assertIn("queue is full", errors)
-            self.assertEqual(1, value.repository.count_scheduled_capacity_use())
-
-            # 4. The pinned refusal: the failure retry refuses the same way,
-            #    before any new Task, lock release or file effect.
-            code, _output, errors = retry_failed("--execute")
-            self.assertEqual(2, code)
-            self.assertIn("queue is full", errors)
-            self.assertEqual(
-                2,
-                len(value.repository.list_tasks()),
-                "no retry Task may be admitted at full capacity",
-            )
-            (item_after_refusal,) = value.repository.list_items(failed_task.task_id)
-            self.assertEqual(failed_item, item_after_refusal)
-            self.assertTrue(source.exists())
-            self.assertEqual(1, value.repository.count_scheduled_capacity_use())
-
-            # 5. Free the capacity the way an operator would: cancel the queued
-            #    remote work at its own safe boundary.
-            queued = value.repository.get_task(queued_task_id)
-            status, cancelled = self.request(
-                value,
-                "POST",
-                f"/api/v1/tasks/{queued_task_id}/cancel",
-                {"expectedUpdatedAt": queued.updated_at.isoformat()},
-            )
-            self.assertEqual(200, status, cancelled)
-            self.assertEqual(0, value.repository.count_scheduled_capacity_use())
-
-            # 6. The explicit retry now enters the shared engine and completes.
-            code, output, errors = retry_failed("--execute")
-            self.assertEqual(0, code, errors)
-            self.assertIn("Moved: 1", output)
-            tasks = value.repository.list_tasks()
-            self.assertEqual(3, len(tasks), tasks)
-            (retry_task,) = (
-                task for task in tasks if task.task_id not in {failed_task.task_id, queued_task_id}
-            )
-            self.assertEqual(f"retry-failed:{failed_task.task_id}", retry_task.command)
-            self.assertEqual("completed", retry_task.status.value, retry_task.error)
-            # The original work's exact pin, scope and bound carry over unchanged.
-            self.assertEqual(
-                failed_task.configuration_snapshot_id, retry_task.configuration_snapshot_id
+                (failed_item,),
+                value.repository.list_items(failed_task.task_id),
+                "the original failed item keeps its exact recorded state",
             )
             self.assertEqual(
-                failed_task.configuration_snapshot_digest, retry_task.configuration_snapshot_digest
+                (failed_result,),
+                value.repository.list_results(failed_task.task_id),
+                "the original failure record stays exactly once",
             )
-            self.assertEqual(failed_task.scope_path, retry_task.scope_path)
-            self.assertEqual(failed_task.item_limit, retry_task.item_limit)
-            self.assertEqual(5, retry_task.item_limit)
-            self.assertTrue(retry_task.execute_authorized)
-            state = value.repository.get_task_scheduling(retry_task.task_id)
-            self.assertIsNotNone(state, "the retry must own kernel scheduling")
-            self.assertEqual("settled", state.queue_state.value)
-            self.assertEqual("manual", state.admission_trigger.value)
-            self.assertEqual("cli", state.admission_principal)
-            display = value.repository.get_run_display_context(retry_task.task_id)
-            self.assertEqual("cli-retry-failed", display.origin_kind)
-            self.assertFalse(source.exists())
-            organized = list((value.target_root / "Organized" / "Movies").rglob("*.mkv"))
-            self.assertEqual(1, len(organized), organized)
-            results = value.repository.list_results(retry_task.task_id)
-            self.assertEqual(1, len(results), results)
-            self.assertEqual("success", results[0].status)
-            # The original work keeps its own failed facts; the retry is its own
-            # execution record and the source was moved exactly once.
-            original_after = value.repository.get_task(failed_task.task_id)
-            self.assertEqual("failed", original_after.status.value)
-            original_results = value.repository.list_results(failed_task.task_id)
-            self.assertEqual(1, len(original_results), original_results)
-            self.assertEqual("failed", original_results[0].status)
-            self.assertEqual(0, value.repository.count_scheduled_capacity_use())
-            self.assertEqual(3, len(value.repository.list_tasks()))
-
-    def test_retry_failed_execute_refuses_the_original_unverified_mutation(self):
-        """A retry never re-executes a file whose last mutation is unverified.
-
-        Round 1 runs the real COPY pipeline into the real LocalStorage and
-        injects the lost write response at the actual ``LocalStorage.write``
-        boundary, so the durable partial/attempted-unverified Result and the
-        original Task's in-flight mutation marker are persisted by the
-        production path — never by a synthetic row.  Round 2 proves the
-        explicit ``retry-failed --execute`` refuses that file: no Provider or
-        Storage mutation, no executable new Task, no release of the original
-        occupation and no cleared mutation marker.
-        """
-
-        source = self.media("One.2001.mkv")
-        with entrance_journey(
-            self,
-            movie_rule=True,
-            organize_operation="COPY",
-            candidates=(MediaCandidate("tmdb", "1", MediaType.MOVIE, "One", year=2001),),
-        ) as value:
-            provider = value.provider_registry.resolve("tmdb")
-
-            def with_provider():
-                return patch(
-                    "mediaflow.final_cli.metadata_provider_registry_from_environment",
-                    return_value=value.provider_registry,
-                )
-
-            writes: list[str] = []
-            real_write = LocalStorage.write
-
-            def lost_write(storage, path, *args, **kwargs):
-                writes.append(str(path))
-                raise TimeoutError("injected Storage write response lost after dispatch")
-
-            def observed_write(storage, path, *args, **kwargs):
-                writes.append(str(path))
-                return real_write(storage, path, *args, **kwargs)
-
-            # Round 1: the real OrganizerExecutor dispatches the target write
-            # and the response is lost; the production path persists the
-            # uncertain-effect evidence itself.
-            output, errors = io.StringIO(), io.StringIO()
-            with with_provider(), patch.object(LocalStorage, "write", lost_write):
-                code = final_main(
-                    [
-                        "--config",
-                        str(value.config),
-                        "organize",
-                        str(source),
-                        "--execute",
-                        "--limit",
-                        "5",
-                    ],
-                    stdout=output,
-                    stderr=errors,
-                )
-            self.assertEqual(2, code, errors.getvalue())
-            self.assertIn("unverified in-flight mutation", errors.getvalue(), errors.getvalue())
-            self.assertTrue(writes, "the real Executor must dispatch one Storage write")
-            self.assertTrue(source.exists())
-            (original,) = value.repository.list_tasks()
-            (item,) = value.repository.list_items(original.task_id)
-            self.assertEqual("partial", item.status.value, item)
-            (result,) = value.repository.list_results(original.task_id)
-            self.assertEqual("attempted_unverified", result.effect_certainty, result)
-            self.assertTrue(result.uncertain_effects, result)
-            state = value.repository.get_task_scheduling(original.task_id)
-            self.assertTrue(state.mutation_in_flight, state)
-            self.assertEqual(item.item_id, state.mutation_item_id)
-            self.assertFalse(
-                any((value.target_root / "Organized").rglob("*.mkv")),
-                "the lost write must not have produced a target file",
-            )
-            provider_calls = provider.calls
-            original_result = result
-            original_item = item
-            writes.clear()
-
-            # Round 2: the explicit retry refuses the file with zero effects.
-            output, errors = io.StringIO(), io.StringIO()
-            with with_provider(), patch.object(LocalStorage, "write", observed_write):
-                code = final_main(
-                    [
-                        "--config",
-                        str(value.config),
-                        "tasks",
-                        "retry-failed",
-                        original.task_id,
-                        "--execute",
-                    ],
-                    stdout=output,
-                    stderr=errors,
-                )
-            self.assertEqual(2, code, errors.getvalue())
-            self.assertIn("no retry run was started", errors.getvalue(), errors.getvalue())
-            self.assertIn("could not be verified", errors.getvalue(), errors.getvalue())
-            self.assertIn("One.2001.mkv", errors.getvalue(), errors.getvalue())
-            self.assertEqual(
-                [],
-                writes,
-                "the refused retry must not dispatch any Storage write",
-            )
-            self.assertEqual(
-                provider_calls,
-                provider.calls,
-                "the refused retry must not query the metadata provider",
-            )
-            self.assertEqual(
-                1,
-                len(value.repository.list_tasks()),
-                "no executable retry Task may be admitted for the blocked file",
-            )
-            (item_after,) = value.repository.list_items(original.task_id)
-            self.assertEqual(original_item, item_after, "the original record stays as it was")
-            (result_after,) = value.repository.list_results(original.task_id)
-            self.assertEqual(
-                original_result, result_after, "the uncertain Result is never rewritten"
-            )
-            state_after = value.repository.get_task_scheduling(original.task_id)
-            self.assertTrue(
-                state_after.mutation_in_flight,
-                "the original uncertain boundary is never cleared by a refused retry",
-            )
-            self.assertEqual(original_item.item_id, state_after.mutation_item_id)
-            owner = value.repository.find_owned_source_work(
-                storage_id="source",
-                source_path="One.2001.mkv",
-                storage_path="One.2001.mkv",
-                resource_library_id="library",
-            )
-            self.assertIsNotNone(owner, "the original work keeps its source occupation")
-            self.assertEqual(original.task_id, owner["taskId"])
-            self.assertTrue(source.exists())
-            self.assertFalse(
-                any((value.target_root / "Organized").rglob("*.mkv")),
-                "the refused retry must not write the target",
-            )
-
-    def test_retry_failed_execute_retries_only_the_proven_zero_effect_sibling(self):
-        """An executed retry partitions the batch by each file's own evidence.
-
-        One run leaves One with a proven zero-effect failure (the executor
-        stopped before any mutation) and Two with an unverified target write.
-        The explicit retry then executes exactly the eligible sibling: One is
-        admitted into one kernel retry Task and really copied, while Two keeps
-        its original record, its source occupation and the Task's in-flight
-        mutation marker untouched.
-        """
-
-        self.media("One.2001.mkv")
-        self.media("Two.2002.mkv")
-        with entrance_journey(
-            self,
-            movie_rule=True,
-            organize_operation="COPY",
-            candidates=(
-                MediaCandidate("tmdb", "1", MediaType.MOVIE, "One", year=2001),
-                MediaCandidate("tmdb", "2", MediaType.MOVIE, "Two", year=2002),
-            ),
-        ) as value:
-            from mediaflow.application.organizer import OrganizerExecutor
-
-            class _OneFailsBeforeMutation(OrganizerExecutor):
-                """The real executor, stopped before any mutation for One only."""
-
-                def execute(self, plan, storages, **kwargs):
-                    if "One" in plan.source:
-                        raise RuntimeError("injected failure before any mutation for One")
-                    return super().execute(plan, storages, **kwargs)
-
-            def with_provider():
-                return patch(
-                    "mediaflow.final_cli.metadata_provider_registry_from_environment",
-                    return_value=value.provider_registry,
-                )
-
-            writes: list[str] = []
-            real_write = LocalStorage.write
-
-            def selective_write(storage, path, *args, **kwargs):
-                writes.append(str(path))
-                if "Two" in str(path):
-                    raise TimeoutError("injected Storage write response lost after dispatch")
-                return real_write(storage, path, *args, **kwargs)
-
-            # One is processed first: its pre-mutation failure publishes a
-            # proven zero-effect outcome and releases the Task's mutation
-            # boundary, then Two's real write loses its response and keeps the
-            # durable uncertain-effect boundary for the original Task.
-            output, errors = io.StringIO(), io.StringIO()
-            with (
-                with_provider(),
-                patch.object(LocalStorage, "write", selective_write),
-                patch("mediaflow.final_cli.OrganizerExecutor", _OneFailsBeforeMutation),
-            ):
-                code = final_main(
-                    [
-                        "--config",
-                        str(value.config),
-                        "organize",
-                        str(value.source_root),
-                        "--execute",
-                        "--limit",
-                        "5",
-                    ],
-                    stdout=output,
-                    stderr=errors,
-                )
-            self.assertEqual(2, code, errors.getvalue())
-            (original,) = value.repository.list_tasks()
-            items = {
-                item.source_path: item for item in value.repository.list_items(original.task_id)
-            }
-            self.assertEqual({"One.2001.mkv", "Two.2002.mkv"}, set(items), items)
-            self.assertEqual("failed", items["One.2001.mkv"].status.value, items)
-            self.assertEqual("partial", items["Two.2002.mkv"].status.value, items)
-            results = {
-                result.source_path: result
-                for result in value.repository.list_results(original.task_id)
-            }
-            self.assertEqual("none", results["One.2001.mkv"].effect_certainty)
-            self.assertFalse(results["One.2001.mkv"].completed_operations)
-            self.assertFalse(results["One.2001.mkv"].primary_completed)
-            self.assertEqual("attempted_unverified", results["Two.2002.mkv"].effect_certainty)
-            state = value.repository.get_task_scheduling(original.task_id)
-            self.assertTrue(state.mutation_in_flight, state)
-            self.assertEqual(items["Two.2002.mkv"].item_id, state.mutation_item_id)
-            two_item = items["Two.2002.mkv"]
-            two_result = results["Two.2002.mkv"]
-            writes.clear()
-
-            output, errors = io.StringIO(), io.StringIO()
-            with with_provider(), patch.object(LocalStorage, "write", selective_write):
-                code = final_main(
-                    [
-                        "--config",
-                        str(value.config),
-                        "tasks",
-                        "retry-failed",
-                        original.task_id,
-                        "--execute",
-                    ],
-                    stdout=output,
-                    stderr=errors,
-                )
-            self.assertEqual(0, code, errors.getvalue())
-            # The refused sibling is reported on the real operator output.
-            self.assertIn("NOT RETRIED", output.getvalue(), output.getvalue())
-            self.assertIn("Two.2002.mkv", output.getvalue(), output.getvalue())
-            retry_tasks = [
-                task for task in value.repository.list_tasks() if task.task_id != original.task_id
-            ]
-            self.assertEqual(1, len(retry_tasks), retry_tasks)
-            retry_items = value.repository.list_items(retry_tasks[0].task_id)
-            self.assertEqual(
-                {"One.2001.mkv"}, {item.source_path for item in retry_items}, retry_items
-            )
-            # Only the eligible sibling was written; Two's target write never ran.
-            self.assertEqual(
-                0,
-                len([path for path in writes if "Two" in path]),
-                writes,
-            )
-            organized = sorted(
-                str(path.relative_to(value.target_root))
-                for path in (value.target_root / "Organized" / "Movies").rglob("*.mkv")
-            )
-            self.assertEqual(1, len(organized), organized)
-            self.assertIn("One", organized[0], organized)
-            # Two keeps its original record, occupation and uncertain boundary.
-            self.assertTrue((value.source_root / "Two.2002.mkv").exists())
-            (two_after,) = (
-                item
-                for item in value.repository.list_items(original.task_id)
-                if item.source_path == "Two.2002.mkv"
-            )
-            self.assertEqual(two_item, two_after)
-            (two_result_after,) = (
-                result
-                for result in value.repository.list_results(original.task_id)
-                if result.source_path == "Two.2002.mkv"
-            )
-            self.assertEqual(two_result, two_result_after)
-            state_after = value.repository.get_task_scheduling(original.task_id)
-            self.assertTrue(state_after.mutation_in_flight, state_after)
-            self.assertEqual(two_item.item_id, state_after.mutation_item_id)
-            owner = value.repository.find_owned_source_work(
-                storage_id="source",
-                source_path="Two.2002.mkv",
-                storage_path="Two.2002.mkv",
-                resource_library_id="library",
-            )
-            self.assertIsNotNone(owner, "the blocked file keeps its original source occupation")
-            self.assertEqual(original.task_id, owner["taskId"])
-            # The retry Task released its own slot; the original Task keeps its
-            # documented retained slot while its unverified mutation boundary
-            # stays in flight.
-            self.assertEqual(1, value.repository.count_scheduled_capacity_use())
-
-    def test_retry_failed_without_execute_stays_zero_mutation_analysis(self):
-        """The retry without ``--execute`` keeps its analysis-only semantics."""
-
-        source = self.media("One.2001.mkv")
-        with entrance_journey(
-            self,
-            movie_rule=True,
-            candidates=(MediaCandidate("tmdb", "1", MediaType.MOVIE, "One", year=2001),),
-        ) as value:
-            from mediaflow.application.organizer import OrganizerExecutor
-
-            class _ExplodingExecutor(OrganizerExecutor):
-                def execute(self, plan, storages, **kwargs):
-                    raise RuntimeError("injected executor failure before any mutation")
-
-            with (
-                patch(
-                    "mediaflow.final_cli.metadata_provider_registry_from_environment",
-                    return_value=value.provider_registry,
-                ),
-                patch("mediaflow.final_cli.OrganizerExecutor", _ExplodingExecutor),
-            ):
-                code = final_main(
-                    [
-                        "--config",
-                        str(value.config),
-                        "organize",
-                        str(source),
-                        "--execute",
-                        "--limit",
-                        "5",
-                    ],
-                    stdout=io.StringIO(),
-                    stderr=io.StringIO(),
-                )
-            self.assertEqual(1, code)
-            (failed_task,) = value.repository.list_tasks()
-
-            output, errors = io.StringIO(), io.StringIO()
-            with patch(
-                "mediaflow.final_cli.metadata_provider_registry_from_environment",
-                return_value=value.provider_registry,
-            ):
-                code = final_main(
-                    [
-                        "--config",
-                        str(value.config),
-                        "tasks",
-                        "retry-failed",
-                        failed_task.task_id,
-                    ],
-                    stdout=output,
-                    stderr=errors,
-                )
-            self.assertEqual(0, code, errors.getvalue())
-            self.assertIn("Mode: DRY_RUN", output.getvalue())
-            self.assertIn("Moved: 0", output.getvalue())
-            self.assertTrue(source.exists())
-            self.assertEqual((), tuple((value.target_root / "Organized").rglob("*")))
-            # A zero-mutation re-analysis keeps its original analysis record and
-            # never enters the organizing execution queue or gains a slot.
-            analysis_tasks = [
-                task
-                for task in value.repository.list_tasks()
-                if task.task_id != failed_task.task_id
-            ]
-            self.assertEqual(1, len(analysis_tasks), analysis_tasks)
-            self.assertFalse(analysis_tasks[0].execute_authorized)
-            self.assertIsNone(value.repository.get_task_scheduling(analysis_tasks[0].task_id))
-            self.assertEqual(0, value.repository.count_scheduled_capacity_use())
-
-    def test_retry_failed_execute_replays_only_the_failed_sibling(self):
-        """A retried execution never replays the original work's success sibling.
-
-        Two real sources are organized together; the executor fails for exactly
-        one of them and the other really moves.  ``tasks retry-failed --execute``
-        then runs one kernel-admitted retry Task for the failed source only: the
-        already-organized sibling keeps its own original Result and is never
-        moved again.
-        """
-
-        self.media("One.2001.mkv")
-        self.media("Two.2002.mkv")
-        with entrance_journey(
-            self,
-            movie_rule=True,
-            candidates=(
-                MediaCandidate("tmdb", "1", MediaType.MOVIE, "One", year=2001),
-                MediaCandidate("tmdb", "2", MediaType.MOVIE, "Two", year=2002),
-            ),
-        ) as value:
-            from mediaflow.application.organizer import OrganizerExecutor
-
-            attempted: list[str] = []
-            fail_second = [True]
-
-            class _SelectiveFailureExecutor(OrganizerExecutor):
-                def execute(self, plan, storages, **kwargs):
-                    attempted.append(plan.source)
-                    if fail_second[0] and "Two" in plan.source:
-                        raise RuntimeError("injected failure for the second source only")
-                    return super().execute(plan, storages, **kwargs)
-
-            with (
-                patch(
-                    "mediaflow.final_cli.metadata_provider_registry_from_environment",
-                    return_value=value.provider_registry,
-                ),
-                patch("mediaflow.final_cli.OrganizerExecutor", _SelectiveFailureExecutor),
-            ):
-                code = final_main(
-                    [
-                        "--config",
-                        str(value.config),
-                        "organize",
-                        str(value.source_root),
-                        "--execute",
-                        "--limit",
-                        "5",
-                    ],
-                    stdout=io.StringIO(),
-                    stderr=io.StringIO(),
-                )
-            # The first organized source really moved, failing the run overall.
-            self.assertEqual(1, code)
-            (original,) = value.repository.list_tasks()
-            items = {
-                item.source_path: item for item in value.repository.list_items(original.task_id)
-            }
-            self.assertEqual({"One.2001.mkv", "Two.2002.mkv"}, set(items))
-            self.assertEqual("success", items["One.2001.mkv"].status.value)
-            self.assertEqual("failed", items["Two.2002.mkv"].status.value)
-            original_results = value.repository.list_results(original.task_id)
-            self.assertEqual(2, len(original_results), original_results)
-            sibling_result = next(
-                result for result in original_results if result.source_path == "One.2001.mkv"
-            )
-            self.assertTrue((value.target_root / "Organized" / "Movies").rglob("*.mkv"))
-            moved_sibling = sorted(
-                str(path.relative_to(value.target_root))
-                for path in (value.target_root / "Organized" / "Movies").rglob("*.mkv")
-            )
-            self.assertEqual(1, len(moved_sibling), moved_sibling)
-
-            attempted.clear()
-            fail_second[0] = False
-            with (
-                patch(
-                    "mediaflow.final_cli.metadata_provider_registry_from_environment",
-                    return_value=value.provider_registry,
-                ),
-                patch("mediaflow.final_cli.OrganizerExecutor", _SelectiveFailureExecutor),
-            ):
-                code = final_main(
-                    [
-                        "--config",
-                        str(value.config),
-                        "tasks",
-                        "retry-failed",
-                        original.task_id,
-                        "--execute",
-                    ],
-                    stdout=io.StringIO(),
-                    stderr=io.StringIO(),
-                )
-            self.assertEqual(0, code)
-            # Exactly the failed source was retried; the success sibling was not.
-            self.assertEqual(1, len(attempted), attempted)
-            self.assertIn("Two", attempted[0])
-            retry_tasks = [
-                task for task in value.repository.list_tasks() if task.task_id != original.task_id
-            ]
-            self.assertEqual(1, len(retry_tasks), retry_tasks)
-            retry_items = value.repository.list_items(retry_tasks[0].task_id)
-            self.assertEqual(
-                {"Two.2002.mkv"}, {item.source_path for item in retry_items}, retry_items
-            )
-            organized = sorted(
-                str(path.relative_to(value.target_root))
-                for path in (value.target_root / "Organized" / "Movies").rglob("*.mkv")
-            )
-            self.assertEqual(2, len(organized), organized)
-            self.assertEqual(moved_sibling, [path for path in organized if "One" in path])
-            # The original sibling keeps its own Result exactly once.
-            original_results = value.repository.list_results(original.task_id)
-            self.assertEqual(2, len(original_results), original_results)
-            self.assertEqual(
-                sibling_result,
-                next(result for result in original_results if result.source_path == "One.2001.mkv"),
-            )
+            self.assertTrue(source.exists(), "the source file was never touched")
             self.assertEqual(0, value.repository.count_scheduled_capacity_use())
 
     def test_manual_task_without_organizing_origin_keeps_the_bounded_refusal(self):

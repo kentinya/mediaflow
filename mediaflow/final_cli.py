@@ -65,21 +65,11 @@ from mediaflow.domain.automation import (
     SchedulerConfigurationSnapshot,
 )
 from mediaflow.domain.automation_settings import engine_values_from_document
-from mediaflow.domain.classification_review import (
-    ClassificationReviewStatus,
-    ClassificationSelection,
-)
 from mediaflow.domain.configuration_management import RuntimeSnapshotUnavailable
 from mediaflow.domain.failure import decode_failure_explanation
 from mediaflow.domain.logging import LogLevel
-from mediaflow.domain.metadata_correction import (
-    MetadataCorrectionSelection,
-    MetadataCorrectionStatus,
-)
-from mediaflow.domain.metadata_review import MetadataReviewStatus, MetadataSelection
 from mediaflow.domain.notification import NotificationDeliveryStatus
 from mediaflow.domain.organizer import ConflictStrategy
-from mediaflow.domain.recognition_review import RecognitionReviewStatus, RecognitionSelection
 from mediaflow.domain.resident_services import ResidentServiceWaiting
 from mediaflow.domain.security import ApiPermission, ApiPrincipalDefinition, ApiRole
 from mediaflow.domain.task_persistence import (
@@ -188,14 +178,11 @@ def final_main(
     task_cancel.add_argument("task_id")
     # ``pause`` and ``resume`` were retired for every media operation and are
     # deliberately absent from the command surface: invoking one is an
-    # unrecognized-command error with zero effect.  The separate
-    # ``retry-request`` booking step was retired the same way: ``retry-failed``
-    # is the one CLI retry entrance and does not resume a pause or require a
-    # prior request record.
-    for name in ("retry-failed",):
-        task_retry = task_commands.add_parser(name)
-        task_retry.add_argument("task_id")
-        task_retry.add_argument("--execute", action="store_true")
+    # unrecognized-command error with zero effect.  ``retry-request`` and the
+    # independent ``retry-failed`` entrance were retired the same way (Slice 47
+    # RO-6): new organizing starts from Files/CLI organize and an existing
+    # Task's own four-type continuation; there is no separate failure-retry
+    # command and no alias that would silently recreate one.
     confirmations = commands.add_parser("confirmations", help="persistent conflict decisions")
     confirmation_commands = confirmations.add_subparsers(dest="confirmation_command", required=True)
     confirmation_list = confirmation_commands.add_parser("list")
@@ -448,17 +435,11 @@ def final_main(
         # A resumed/retried workflow must resolve the snapshot pinned to the
         # original Task before loading the runtime strategy.  Otherwise a
         # process restart after activation could silently run the old Task
-        # against the new Active configuration.
+        # against the new Active configuration.  The standalone retry-failed
+        # entrance was retired (Slice 47 RO-6); a four-type continuation
+        # resolves its own pinned snapshot inside its admitting service.
         snapshot_id = arguments.configuration_snapshot_id
         snapshot_digest = arguments.configuration_snapshot_digest
-        if (
-            not snapshot_id
-            and arguments.command == "tasks"
-            and arguments.task_command in {"retry-failed"}
-        ):
-            pinned = _task_snapshot_identity(arguments.config, arguments.task_id)
-            if pinned is not None:
-                snapshot_id, snapshot_digest = pinned
 
         # Database backup/restore and upgrade rehearsal/preflight are
         # intentionally bootstrap-only.  Resolving managed workflow
@@ -1147,139 +1128,55 @@ def final_main(
             )
             coordinator = PersistentTaskCoordinator(repository, repository)
             kernel_context = None
-            retry_items: tuple[PersistentTaskItem, ...] | None = None
-            effect_blocked: tuple[tuple[PersistentTaskItem, str], ...] = ()
-            if arguments.command == "tasks":
-                original = coordinator.require(arguments.task_id)
-                if original.command not in {"organize"}:
-                    raise ValueError("unsupported workflow Task command")
-                if arguments.execute and not original.execute_authorized:
-                    raise ValueError(
-                        "original task was not execute-authorized; retry cannot enable execute"
-                    )
-                retry_items = coordinator.retryable_items(
-                    original.task_id,
-                    failed_only=arguments.task_command == "retry-failed",
+            # The independent ``tasks retry-failed`` entrance was retired (Slice
+            # 47 RO-6): new organizing starts from Files/``organize`` and an
+            # existing Task's own four-type continuation.  What remains here is
+            # the ordinary direct organize workflow (analysis by default, an
+            # explicitly authorized kernel execution with ``--execute``).
+            execute = arguments.command == "organize" and arguments.execute
+            if execute:
+                # RO-2: a direct CLI organize execution is the same shared
+                # Task work every other entrance runs.  The Task is admitted
+                # through the scheduling kernel — capacity, pin, claim fence
+                # and results included — and this process drives its own
+                # execution under the live claim instead of a parallel
+                # generic executor.
+                task, scheduling = _admit_direct_organize_task(
+                    repository,
+                    configuration,
+                    path=arguments.path,
+                    limit=arguments.limit,
                 )
-                execute = bool(arguments.execute and original.execute_authorized)
-                if execute and retry_items:
-                    # The original work's own effect evidence gates a retried
-                    # execution per file, BEFORE any new Task admission or
-                    # original lock release: a file whose last mutation result
-                    # is unverified is never retried, so its uncertain-effect
-                    # record, its source occupation and the original Task's
-                    # mutation marker stay exactly as they were.
-                    execution_items, effect_blocked = coordinator.execution_retry_items(
-                        original.task_id,
-                        failed_only=arguments.task_command == "retry-failed",
-                    )
-                    if not execution_items:
-                        raise ValueError(_unverified_effect_refusal(effect_blocked))
-                    retry_items = execution_items
-                    # RO-2: a retried CLI execution is the same shared Task work
-                    # every other entrance runs.  The kernel admits it — shared
-                    # capacity, the original work's pin and atomic scheduling
-                    # included — BEFORE this run releases the original work's
-                    # source locks or touches any file.  A full queue refuses
-                    # here and leaves the original failure evidence, its locks
-                    # and every file exactly as they were.
-                    #
-                    # An empty retryable set keeps its historical zero-work
-                    # answer below: it is not admitted as kernel work and
-                    # consumes no shared slot, so no empty run can stand in for
-                    # a proved execution.
-                    task, scheduling = _admit_cli_retry_task(
-                        repository,
-                        configuration,
-                        original,
-                        command=arguments.task_command,
-                    )
-                    # Only the re-executable sources release their original
-                    # exclusion.  An effect-blocked file keeps its own lock row
-                    # and its unfinished owner, so no successor Task can take
-                    # a source whose last effect was never proved.
-                    for item in execution_items:
-                        repository.release(item.storage_id, item.source_path, original.task_id)
-                    claim, direct_organize_worker_id = _drive_direct_organize_claim(
-                        repository,
-                        scheduling,
-                        task,
-                        commands=(task.command,),
-                    )
-                    kernel_context = (scheduling, claim)
-                    coordinator = KernelTaskCoordinator(
-                        repository,
-                        repository,
-                        scheduling,
-                        claim,
-                        heartbeat=lambda: (
-                            scheduling.heartbeat(
-                                claim,
-                                now=datetime.now(UTC),
-                                lease_seconds=900.0,
-                            )
-                            is not None
-                        ),
-                    )
-                else:
-                    repository.reclaim_task_locks(original.task_id)
-                    task = coordinator.create(
-                        f"{arguments.task_command}:{original.task_id}",
-                        execute_authorized=execute,
-                        scope_path=original.scope_path,
-                        item_limit=original.item_limit,
-                        configuration_snapshot_id=original.configuration_snapshot_id,
-                        configuration_snapshot_digest=original.configuration_snapshot_digest,
-                        require_configuration_snapshot=(
-                            configuration.configuration_authority == "MANAGED"
-                        ),
-                    )
+                claim, direct_organize_worker_id = _drive_direct_organize_claim(
+                    repository, scheduling, task
+                )
+                kernel_context = (scheduling, claim)
+                coordinator = KernelTaskCoordinator(
+                    repository,
+                    repository,
+                    scheduling,
+                    claim,
+                    heartbeat=lambda: (
+                        scheduling.heartbeat(
+                            claim,
+                            now=datetime.now(UTC),
+                            lease_seconds=900.0,
+                        )
+                        is not None
+                    ),
+                )
             else:
-                execute = arguments.command == "organize" and arguments.execute
-                kernel_context = None
-                if execute:
-                    # RO-2: a direct CLI organize execution is the same shared
-                    # Task work every other entrance runs.  The Task is admitted
-                    # through the scheduling kernel — capacity, pin, claim fence
-                    # and results included — and this process drives its own
-                    # execution under the live claim instead of a parallel
-                    # generic executor.
-                    task, scheduling = _admit_direct_organize_task(
-                        repository,
-                        configuration,
-                        path=arguments.path,
-                        limit=arguments.limit,
-                    )
-                    claim, direct_organize_worker_id = _drive_direct_organize_claim(
-                        repository, scheduling, task
-                    )
-                    kernel_context = (scheduling, claim)
-                    coordinator = KernelTaskCoordinator(
-                        repository,
-                        repository,
-                        scheduling,
-                        claim,
-                        heartbeat=lambda: (
-                            scheduling.heartbeat(
-                                claim,
-                                now=datetime.now(UTC),
-                                lease_seconds=900.0,
-                            )
-                            is not None
-                        ),
-                    )
-                else:
-                    task = coordinator.create(
-                        arguments.command,
-                        execute_authorized=execute,
-                        scope_path=arguments.path,
-                        item_limit=arguments.limit,
-                        configuration_snapshot_id=configuration.configuration_snapshot_id,
-                        configuration_snapshot_digest=configuration.configuration_snapshot_digest,
-                        require_configuration_snapshot=(
-                            configuration.configuration_authority == "MANAGED"
-                        ),
-                    )
+                task = coordinator.create(
+                    arguments.command,
+                    execute_authorized=execute,
+                    scope_path=arguments.path,
+                    item_limit=arguments.limit,
+                    configuration_snapshot_id=configuration.configuration_snapshot_id,
+                    configuration_snapshot_digest=configuration.configuration_snapshot_digest,
+                    require_configuration_snapshot=(
+                        configuration.configuration_authority == "MANAGED"
+                    ),
+                )
             if _task_observer is not None:
                 # The durable Task identity is handed to the application caller
                 # structurally.  Rendered CLI text remains the operator output
@@ -1311,66 +1208,11 @@ def final_main(
                 logger=operational_logger,
                 task_coordinator=coordinator,
                 task_id=task.task_id,
-                conflict_decisions={
-                    (value.source_storage_id, value.source_path): value
-                    for value in repository.list_confirmations(status=ConfirmationStatus.RESOLVED)
-                }
-                if retry_items is not None
-                else {},
-                metadata_selections={
-                    (stored.storage_id, stored.source_path): MetadataSelection(
-                        review.recognition_type,
-                        review.metadata_policy_id,
-                        review.selected_provider,
-                        review.selected_provider_id,
-                        review.selected_media_type,
-                    )
-                    for stored in (retry_items or ())
-                    if (review := repository.get_metadata_review_for_item(stored.item_id))
-                    and review.status is MetadataReviewStatus.RESOLVED
-                    and review.selected_provider is not None
-                    and review.selected_provider_id is not None
-                    and review.selected_media_type is not None
-                },
-                metadata_corrections={
-                    (stored.storage_id, stored.source_path): MetadataCorrectionSelection(
-                        review.recognition_type,
-                        review.metadata_policy_id,
-                        review.provider_id,
-                        review.corrected_query,
-                        review.corrected_year,
-                        review.corrected_media_type,
-                        review.direct_provider_id,
-                    )
-                    for stored in (retry_items or ())
-                    if (review := repository.get_metadata_correction_for_item(stored.item_id))
-                    and review.status is MetadataCorrectionStatus.RESOLVED
-                    and review.corrected_media_type is not None
-                },
-                classification_selections={
-                    (stored.storage_id, stored.source_path): ClassificationSelection(
-                        review.recognition_type,
-                        review.classification_policy_id,
-                        review.selected_rule_id,
-                        review.selected_media_library_id,
-                        review.selected_relative_path,
-                    )
-                    for stored in (retry_items or ())
-                    if (review := repository.get_classification_review_for_item(stored.item_id))
-                    and review.status is ClassificationReviewStatus.RESOLVED
-                    and review.selected_rule_id is not None
-                    and review.selected_media_library_id is not None
-                    and review.selected_relative_path is not None
-                },
-                recognition_selections={
-                    (stored.storage_id, stored.source_path): RecognitionSelection(
-                        review.selected_recognition_type
-                    )
-                    for stored in (retry_items or ())
-                    if (review := repository.get_recognition_review_for_item(stored.item_id))
-                    and review.status is RecognitionReviewStatus.RESOLVED
-                    and review.selected_recognition_type is not None
-                },
+                conflict_decisions={},
+                metadata_selections={},
+                metadata_corrections={},
+                classification_selections={},
+                recognition_selections={},
                 retry_policy=configuration.workflow_retry_policy,
                 retry_cancellation_check=workflow_stop,
                 analysis_only=analysis_only,
@@ -1378,42 +1220,10 @@ def final_main(
                 # shared durable ownership boundary.  A zero-mutation analysis
                 # (``execute`` false) creates no organizing work, gains no
                 # execution authority and mutates nothing, so it must stay
-                # readable even while another work owns the file.  A retried or
-                # resumed attempt passes the Task whose own remaining scope it
-                # continues, so it can never refuse itself.
+                # readable even while another work owns the file.
                 enforce_source_ownership=execute,
-                ownership_lineage_task_ids=(
-                    (original.task_id,) if arguments.command == "tasks" else ()
-                ),
             )
-            if retry_items is not None:
-                libraries = {item.library_id: item for item in configuration.resource_libraries}
-                retried = []
-                for stored in retry_items:
-                    resource = libraries.get(stored.resource_library_id)
-                    if resource is None:
-                        raise ValueError(
-                            f"task item references missing ResourceLibrary "
-                            f"{stored.resource_library_id!r}"
-                        )
-                    retried.append(
-                        service.process_file(
-                            stored.source_display,
-                            resource_library=resource,
-                            storage_path=stored.source_path,
-                            execute=execute,
-                            # A retry only re-validates the evidence the original
-                            # work already saved: a replacement at the same path
-                            # must never be re-bound to the old review.
-                            source_occurrence_id=stored.source_occurrence_id,
-                            source_fingerprint=stored.source_fingerprint,
-                            source_fingerprint_state=stored.source_fingerprint_state,
-                            source_observed_at=stored.source_observed_at,
-                            resolve_source_evidence=False,
-                        )
-                    )
-                summary = MediaOrganizerBatchResult(tuple(retried))
-            elif arguments.path is None:
+            if arguments.path is None:
                 summary = service.process_all_libraries(
                     configuration.resource_libraries,
                     execute=execute,
@@ -1475,8 +1285,6 @@ def final_main(
                 coordinator.finish(task.task_id, summary)
             stdout.write(f"Task ID: {task.task_id}\n")
             stdout.write(render_summary(summary, execute=execute, analysis_only=analysis_only))
-            if effect_blocked:
-                stdout.write(render_unverified_effect_refusals(effect_blocked))
             paused = coordinator.require(task.task_id).status is PersistentTaskStatus.PAUSED
             return 130 if cancelled else 75 if paused else 1 if summary.failed else 0
     except (OSError, ValueError, LookupError, RuntimeError) as error:
@@ -2592,102 +2400,6 @@ def _admit_direct_organize_task(repository, configuration, *, path, limit):
         raise ValueError(
             "the shared organizing queue is full; no organize run was started"
         ) from error
-    if admitted.duplicate:
-        task, state = admitted.task, admitted.state
-    return task, scheduling
-
-
-def _unverified_effect_refusal(blocked: tuple[tuple[PersistentTaskItem, str], ...]) -> str:
-    """The bounded refusal for a retry whose every candidate is effect-blocked.
-
-    The answer names each refused file and its evidence kind, and always sends
-    the operator to the original work's recorded result — never to a new
-    mutation, an alias or an automatic replay.
-    """
-
-    names = [item.source_display or item.source_path for item, _reason in blocked[:5]]
-    more = len(blocked) - len(names)
-    listing = ", ".join(names) + (f" (and {more} more)" if more > 0 else "")
-    return (
-        "no retry run was started: the last mutation result of "
-        f"{listing} could not be verified; inspect the recorded effects of the "
-        "original task before retrying any of these files"
-    )
-
-
-def render_unverified_effect_refusals(
-    blocked: tuple[tuple[PersistentTaskItem, str], ...],
-) -> str:
-    """Report the files an executed retry did not touch because their last
-    mutation result is unverified; the original record stays authoritative."""
-
-    lines = ["", "NOT RETRIED — the last mutation result is unverified", ""]
-    for item, reason in blocked[:5]:
-        lines.append(f"{item.source_display or item.source_path} | {reason}")
-    more = len(blocked) - min(len(blocked), 5)
-    if more > 0:
-        lines.append(f"... and {more} more")
-    lines.extend(
-        (
-            "",
-            "The original task keeps its uncertain-effect boundary and its source claim; "
-            "inspect each file's recorded result before retrying it.",
-            "",
-        )
-    )
-    return "\n".join(lines)
-
-
-def _admit_cli_retry_task(repository, configuration, original, *, command):
-    """Admit one CLI failure retry execution through the shared Task kernel.
-
-    The retry is a *new* organizing execution of the original work's remaining
-    failed scope, so it enters the same scheduling kernel every other entrance
-    uses: one atomic, capacity-checked admission carrying the original work's
-    own pin, scope and bound.  A full shared queue refuses before any Task row,
-    source-lock release or file effect, so the caller keeps the original
-    failure evidence and can retry explicitly when capacity is available.  The
-    persisted command identity still names the exact predecessor Task, so the
-    Task Center journey relation is unchanged.
-    """
-
-    from mediaflow.application.task_scheduling import (
-        TaskSchedulingService,
-        build_scheduled_task_admission,
-    )
-    from mediaflow.domain.task_persistence import RunDisplayContext
-    from mediaflow.domain.task_scheduling import TaskQueueFull, TaskTrigger
-
-    scheduling = TaskSchedulingService(
-        repository,
-        capacity=getattr(configuration, "automation_maximum_active_jobs", 100),
-        locks=repository,
-    )
-    task, state = build_scheduled_task_admission(
-        f"{command}:{original.task_id}",
-        execute_authorized=True,
-        trigger=TaskTrigger.MANUAL,
-        principal="cli",
-        scope_path=original.scope_path,
-        item_limit=original.item_limit,
-        configuration_snapshot_id=original.configuration_snapshot_id,
-        configuration_snapshot_digest=original.configuration_snapshot_digest,
-        require_configuration_snapshot=(configuration.configuration_authority == "MANAGED"),
-        now=datetime.now(UTC),
-    )
-    display = RunDisplayContext(
-        source_scope=original.scope_path,
-        origin_kind="cli-retry-failed",
-    )
-    try:
-        admitted = repository.admit_scheduled_task(
-            task,
-            state,
-            capacity=scheduling.capacity,
-            display=display,
-        )
-    except TaskQueueFull as error:
-        raise ValueError("the shared organizing queue is full; no retry run was started") from error
     if admitted.duplicate:
         task, state = admitted.task, admitted.state
     return task, scheduling
@@ -4377,11 +4089,13 @@ def _bootstrap_database_path(document: object) -> str:
 def _task_snapshot_identity(path: str | None, task_id: str) -> tuple[str, str] | None:
     """Read a persisted Task's configuration pin before workflow bootstrap.
 
-    This is deliberately limited to the two commands that continue existing
-    work.  It does not resolve strategy content or construct Storage/Provider
-    objects; it only preserves the immutable identity already recorded at the
-    Task boundary. Legacy Tasks without a pin fail closed once managed authority
-    has been activated; before activation they remain bootstrap work.
+    A bounded read-only utility: it does not resolve strategy content or
+    construct Storage/Provider objects; it only preserves the immutable
+    identity already recorded at the Task boundary. Legacy Tasks without a pin
+    fail closed once managed authority has been activated; before activation
+    they remain bootstrap work.  The standalone retry-failed entrance that
+    used to call this was retired (Slice 47 RO-6); a four-type continuation
+    resolves its own pinned snapshot inside its admitting service.
     """
     try:
         document = _configuration_document(path)
