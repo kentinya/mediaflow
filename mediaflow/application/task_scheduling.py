@@ -400,6 +400,7 @@ class TaskSchedulingService:
         execution_items: tuple[ManualExecutionItem, ...] = (),
         now: datetime | None = None,
         initial_execution_stage: str | None = None,
+        close_recorded_unknown_boundary: bool = False,
     ) -> TaskSchedulingState:
         """Acknowledge the accepted pause/cancel at the owner's safe boundary.
 
@@ -432,6 +433,7 @@ class TaskSchedulingService:
             execution=execution,
             execution_items=execution_items,
             initial_execution_stage=initial_execution_stage,
+            close_recorded_unknown_boundary=close_recorded_unknown_boundary,
         )
 
     def defer_to_human(
@@ -442,6 +444,7 @@ class TaskSchedulingService:
         items: tuple[PersistentTaskItem, ...] = (),
         now: datetime | None = None,
         initial_execution_stage: str | None = None,
+        close_recorded_unknown_boundary: bool = False,
     ) -> TaskSchedulingState:
         """Release the slot because every remaining item now waits for a human.
 
@@ -450,6 +453,10 @@ class TaskSchedulingService:
         transaction re-reads every durable sibling, so a processing/queued item
         omitted from ``items`` still keeps the slot; the Task must also be the
         exact Task named by this claim.
+
+        ``close_recorded_unknown_boundary`` names a pass whose own calls have
+        already returned: a recorded unknown-effect history then stops holding
+        the slot instead of being mistaken for live work.
 
         ``initial_execution_stage`` freezes the bounded, write-once evidence of
         an automatic Task's first execution stage in the same transaction (see
@@ -468,6 +475,7 @@ class TaskSchedulingService:
             stage=None,
             expected_control_revision=None,
             initial_execution_stage=initial_execution_stage,
+            close_recorded_unknown_boundary=close_recorded_unknown_boundary,
         )
         if released is None:
             raise TaskClaimFenceLost(f"task {claim.task_id!r} is no longer owned by this Worker")
@@ -481,6 +489,7 @@ class TaskSchedulingService:
         items: tuple[PersistentTaskItem, ...] = (),
         now: datetime | None = None,
         initial_execution_stage: str | None = None,
+        close_recorded_unknown_boundary: bool = False,
     ) -> TaskSchedulingState:
         """Publish one terminal Task outcome and release its slot.
 
@@ -491,6 +500,10 @@ class TaskSchedulingService:
         ``initial_execution_stage`` freezes the bounded, write-once evidence of
         an automatic Task's first execution stage in the same transaction (see
         :meth:`SQLiteTaskRepository.release_scheduled_claim`).
+
+        ``close_recorded_unknown_boundary`` releases the slot of a pass whose
+        calls already returned while one recorded Result's effect stays unknown;
+        the Result itself is never rewritten.
         """
 
         current = self._now(now)
@@ -503,6 +516,7 @@ class TaskSchedulingService:
             stage=None,
             expected_control_revision=None,
             initial_execution_stage=initial_execution_stage,
+            close_recorded_unknown_boundary=close_recorded_unknown_boundary,
         )
         if released is None:
             raise TaskClaimFenceLost(f"task {claim.task_id!r} is no longer owned by this Worker")
@@ -873,6 +887,7 @@ class TaskSchedulingService:
         execution: ManualExecution | None = None,
         execution_items: tuple[ManualExecutionItem, ...] = (),
         initial_execution_stage: str | None = None,
+        close_recorded_unknown_boundary: bool = False,
     ) -> TaskSchedulingState:
         control = state.control_request
         if control is None:
@@ -933,6 +948,7 @@ class TaskSchedulingService:
             manual_execution=execution,
             manual_execution_items=execution_items,
             initial_execution_stage=initial_execution_stage,
+            close_recorded_unknown_boundary=close_recorded_unknown_boundary,
         )
         if released is None:
             raise TaskClaimFenceLost(f"task {task.task_id!r} is no longer owned by this Worker")

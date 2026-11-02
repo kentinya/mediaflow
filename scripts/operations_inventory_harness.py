@@ -2260,6 +2260,133 @@ class _PreMutationFailureExecutor:
         )
 
 
+class _RecordedUnknownFailureExecutor:
+    """Local test seam: one recorded outcome whose Storage effect stays unknown.
+
+    It performs no Storage call, so the harness file and its target stay exactly
+    as reviewed.  The *real* Manual Organize publication path records the
+    partial/unknown Result, which is what makes this source's latest formal
+    organizing outcome genuinely ``partial`` with an unconfirmed effect.
+    """
+
+    def execute(self, plan, _storages, **_kwargs):
+        return ExecutionResult(
+            ExecutionStatus.PARTIAL,
+            plan.operation,
+            plan.source,
+            plan.target,
+            errors=("harness injected an outcome whose Storage effect stays unknown",),
+            plan_id=plan.plan_id,
+            resolved_destination=plan.target,
+            effect_certainty=ExecutionEffectCertainty.UNKNOWN,
+            uncertain_effects=("mutation_outcome",),
+        )
+
+
+def seed_recorded_unknown_history(state: AppState, *, filename: str) -> dict[str, object]:
+    """Record one real partial/unknown organizing outcome for one fixture file.
+
+    The whole Files admission → bounded analysis → exact summary → selected
+    confirmation → Task/Worker publication path is the production one; only the
+    executor boundary is a local seam.  The returned facts are read from durable
+    rows, so the browser spec proves the finished pass gave its single slot back
+    before the operator asks again.
+    """
+
+    if filename not in {"One.2001.mkv", "Two.2002.mkv", "Three.2003.mkv"}:
+        raise RuntimeError(f"harness: unknown source-history file {filename!r}")
+    capacity_before = state.repository.count_scheduled_capacity_use()
+    with state._manual_lock:
+        register_manual_worker(state)
+        status, admitted = wsgi_request(
+            state.api,
+            "POST",
+            "/api/v1/resource-libraries/source/files/discoveries",
+            body={
+                "paths": [filename],
+                "autoPrepare": True,
+                "requestId": str(uuid4()),
+            },
+            token=HARNESS_ADMIN_TOKEN,
+        )
+        if status != 202:
+            raise RuntimeError(f"source-history Files admission failed: {status}")
+        task_id = admitted.get("organizeTaskId")
+        if not task_id:
+            raise RuntimeError("source-history Files admission returned no Task")
+        preview_id = None
+        for _index in range(16):
+            advanced = _run_discovery_step(state)
+            if advanced is None:
+                continue
+            if advanced.terminal or advanced.preview_id is not None:
+                preview_id = advanced.preview_id
+                break
+        if not preview_id:
+            raise RuntimeError("source-history bounded analysis linked no exact summary")
+        status, preview = wsgi_request(
+            state.api,
+            "GET",
+            f"/api/v1/operations/organize/previews/{preview_id}",
+            token=HARNESS_ADMIN_TOKEN,
+        )
+        if status != 200:
+            raise RuntimeError(f"source-history plan read failed: {status}")
+        status, execution = wsgi_request(
+            state.api,
+            "POST",
+            f"/api/v1/operations/organize/previews/{preview_id}/execute",
+            body={
+                "confirmation": True,
+                "itemIds": [value["itemId"] for value in preview["items"]],
+                "expectedIntentVersion": preview["intentVersion"],
+            },
+            token=HARNESS_ADMIN_TOKEN,
+        )
+        if status != 202 or not execution.get("executionId"):
+            raise RuntimeError(f"source-history execution admission failed: {status}")
+        manual_execution = state.api._manual_execution
+        actual_executor = manual_execution._executor
+        manual_execution._executor = _RecordedUnknownFailureExecutor()
+        try:
+            # The resident Worker and the shared Task engine are the two
+            # production claim paths for one admitted execution; whichever owns
+            # this Task first still runs the same publication boundary.
+            ManualOrganizeExecutionWorker(
+                manual_execution,
+                worker_id="harness-manual-worker",
+                notice=lambda _line: None,
+            ).run_next()
+            for _index in range(4):
+                _run_manual_task_once(state, task_id=task_id)
+                scheduling = state.repository.get_task_scheduling(task_id)
+                if scheduling is None or not scheduling.holds_capacity:
+                    break
+        finally:
+            manual_execution._executor = actual_executor
+        task = state.repository.get_task(task_id)
+        scheduling = state.repository.get_task_scheduling(task_id)
+        results = state.repository.list_results(task_id)
+        if task is None or scheduling is None or not results:
+            raise RuntimeError("source-history journey lost its durable Task/Result")
+        latest = results[-1]
+        return {
+            "taskId": task_id,
+            "executionId": execution["executionId"],
+            "taskStatus": task.status.value,
+            "queueState": scheduling.queue_state.value,
+            "capacityBefore": capacity_before,
+            "capacityUse": state.repository.count_scheduled_capacity_use(),
+            "mutationRecorded": scheduling.mutation_state,
+            "resultStatus": latest.status,
+            "effectCertainty": latest.effect_certainty,
+            "uncertainEffects": list(latest.uncertain_effects),
+            "destinationPath": latest.destination_path,
+            "sourceExists": (state.managed.root / "source" / filename).is_file(),
+            "destinationTargets": manual_file_state(state, filename)["destinationTargets"],
+        }
+
+
 def seed_batch_summary_recovery(state: AppState) -> dict[str, object]:
     """Create a real two-item Manual batch recovery for the R3 browser proof.
 
@@ -5670,6 +5797,11 @@ def application(environ, start_response):
             document = run_worker_once(STATE, task_id=requested_task)
         elif path == "/__harness__/run-manual-organize" and method == "POST":
             document = run_manual_organize_once(STATE)
+        elif path == "/__harness__/seed-recorded-unknown-history" and method == "POST":
+            query = urllib.parse.parse_qs(str(environ.get("QUERY_STRING", "")))
+            document = seed_recorded_unknown_history(
+                STATE, filename=(query.get("file") or ["One.2001.mkv"])[0]
+            )
         elif path == "/__harness__/register-manual-worker" and method == "POST":
             document = register_manual_worker(STATE)
         elif path == "/__harness__/run-manual-worker" and method == "POST":

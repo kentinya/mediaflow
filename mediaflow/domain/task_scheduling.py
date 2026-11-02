@@ -729,6 +729,8 @@ class TaskSchedulingRepository(Protocol):
         discovery: object | None = None,
         manual_execution: ManualExecution | None = None,
         manual_execution_items: tuple[ManualExecutionItem, ...] = (),
+        initial_execution_stage: str | None = None,
+        close_recorded_unknown_boundary: bool = False,
     ) -> TaskSchedulingState | None:
         """Publish one queue transition (human-wait/pause/settle) atomically.
 
@@ -741,6 +743,16 @@ class TaskSchedulingRepository(Protocol):
         durable sibling still has queued/processing machine work.  The Task and
         the fence must name the same durable identity; a Worker may never
         release another Task with its own claim.
+
+        ``close_recorded_unknown_boundary`` closes that refusal for the one
+        legitimate case: the pass has already returned and the marked item's
+        attempt recorded its Result, so the boundary is finished unknown-effect
+        history rather than a call in flight.  It is still refused for a
+        processing sibling or a marker without a recorded outcome.
+
+        ``initial_execution_stage`` is the write-once bounded evidence of an
+        automatic Task's first executed stage; a later continuation never
+        rewrites it.
         """
         ...
 

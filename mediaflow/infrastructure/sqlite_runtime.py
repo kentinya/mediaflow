@@ -18295,6 +18295,7 @@ class SQLiteTaskRepository:
         manual_execution: ManualExecution | None = None,
         manual_execution_items: tuple[ManualExecutionItem, ...] = (),
         initial_execution_stage: str | None = None,
+        close_recorded_unknown_boundary: bool = False,
     ) -> TaskSchedulingState | None:
         """Publish one truthful queue transition and give the slot back.
 
@@ -18307,6 +18308,16 @@ class SQLiteTaskRepository:
         refused while the Task still carries an unverified in-flight mutation: a
         requested pause or cancel keeps its slot until that boundary is proved,
         and no control can force an in-flight effect to be forgotten.
+
+        ``close_recorded_unknown_boundary`` names the one legitimate exception
+        inside that same transaction (Slice 47 capacity rule): when the pass's
+        own runner has already returned, every durable item is terminal or
+        human-waiting, and the marked item's attempt published its Result, the
+        boundary is a *recorded* unknown effect rather than a call still in
+        flight.  The one-slot-per-Task rule then releases the slot without
+        touching that Result, its unknown effects or the Task's recorded
+        history.  A queued/processing sibling, a marker without a published
+        Result or any other unproved state still keeps the claim and the slot.
 
         ``initial_execution_stage`` freezes the bounded, write-once evidence of
         an automatic Task's FIRST execution stage in the same transaction: the
@@ -18371,7 +18382,24 @@ class SQLiteTaskRepository:
                     raise TaskControlRejected(
                         f"task {task.task_id!r} was not admitted by the Task scheduling kernel"
                     )
-                if state.mutation_in_flight:
+                if (
+                    state.mutation_in_flight
+                    and close_recorded_unknown_boundary
+                    and self._recorded_unknown_boundary_is_finished_locked(task.task_id, state)
+                ):
+                    # The calls of this finished pass all returned and the
+                    # affected attempt recorded its own outcome; the boundary
+                    # is history now, not live work.  Clearing the current
+                    # handling state never rewrites that Result.
+                    self._connection.execute(
+                        """UPDATE task_scheduling
+                        SET mutation_state=NULL, mutation_item_id=NULL, mutation_action=NULL,
+                            updated_at=?
+                        WHERE task_id=? AND mutation_item_id=?""",
+                        (now.isoformat(), task.task_id, state.mutation_item_id),
+                    )
+                    state = self._scheduled_state_locked(task.task_id)
+                if state is not None and state.mutation_in_flight:
                     raise TaskControlRejected(
                         "this Task still has an unverified in-flight mutation; its slot and "
                         "uncertain effect are retained until that boundary is proved"
@@ -18413,6 +18441,12 @@ class SQLiteTaskRepository:
                     self._scheduled_publication_values(task),
                 )
                 for item in items:
+                    if self._scheduled_item_is_superseded_locked(task.task_id, item.item_id):
+                        # Slice 47 AC-23: a newer explicitly confirmed Task owns
+                        # this source.  The recorded outcome still counts in the
+                        # aggregate this release publishes, but the previous
+                        # owner neither re-publishes the row nor starts it.
+                        continue
                     self._require_scheduled_item_locked(
                         task.task_id, item, stage=TaskItemPublication.PROGRESS
                     )
@@ -19503,6 +19537,61 @@ class SQLiteTaskRepository:
             "SELECT * FROM task_scheduling WHERE task_id=?", (task_id,)
         ).fetchone()
         return self._scheduling_state(row) if row is not None else None
+
+    def _scheduled_item_is_superseded_locked(self, task_id: str, item_id: str) -> bool:
+        """Whether a newer confirmed organizing Task owns this source now.
+
+        The previous owner's recorded outcome stays readable (and still counts
+        in that Task's own aggregate), but the row itself belongs to history and
+        is never re-published by the old owner.
+        """
+
+        row = self._connection.execute(
+            "SELECT superseded_by_task_id FROM task_items WHERE item_id=? AND task_id=?",
+            (item_id, task_id),
+        ).fetchone()
+        return bool(row is not None and row["superseded_by_task_id"])
+
+    def _recorded_unknown_boundary_is_finished_locked(
+        self, task_id: str, state: TaskSchedulingState
+    ) -> bool:
+        """Whether an in-flight marker is already a recorded, finished outcome.
+
+        Slice 47 capacity rule: one Task holds at most one execution slot, and a
+        finished batch gives it back even when one recorded Result's effect is
+        unknown.  That is not the same fact as a call still executing, so the
+        boundary is only closed when the marker names one of this Task's items
+        whose attempt already published a Result and no durable sibling is
+        queued/processing.  A missing/other Result, a processing sibling or an
+        unreadable marker keeps the slot exactly as before; closing the current
+        handling state never rewrites the Result, its unknown effects or its
+        completed steps.
+        """
+
+        item_id = state.mutation_item_id
+        if item_id is None:
+            return False
+        row = self._connection.execute(
+            "SELECT status FROM task_items WHERE item_id=? AND task_id=?",
+            (item_id, task_id),
+        ).fetchone()
+        if row is None or row["status"] in _KERNEL_MACHINE_ITEM_STATUSES:
+            return False
+        remaining = self._connection.execute(
+            "SELECT 1 FROM task_items WHERE task_id=? AND status IN (?,?) LIMIT 1",
+            (
+                task_id,
+                TaskItemStatus.PENDING.value,
+                TaskItemStatus.PROCESSING.value,
+            ),
+        ).fetchone()
+        if remaining is not None:
+            return False
+        recorded = self._connection.execute(
+            "SELECT 1 FROM task_results WHERE task_id=? AND item_id=? LIMIT 1",
+            (task_id, item_id),
+        ).fetchone()
+        return recorded is not None
 
     def _require_no_machine_items_locked(
         self, task_id: str, items: tuple[PersistentTaskItem, ...]

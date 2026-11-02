@@ -267,7 +267,13 @@ class ManualTaskEngineWorker:
             updated_task = self._with_counts(updated_task, overrides=items)
             try:
                 self._scheduling.publish_task(claim, updated_task, now=now)
-                self._scheduling.settle(claim, task=updated_task, items=items, now=now)
+                self._scheduling.settle(
+                    claim,
+                    task=updated_task,
+                    items=items,
+                    now=now,
+                    close_recorded_unknown_boundary=True,
+                )
             except TaskControlRejected:
                 pass
             return self._task(claim.task_id)
@@ -275,7 +281,13 @@ class ManualTaskEngineWorker:
             updated_task = self._task_for_discovery(task, discovery, now)
             items = self._terminal_items(task.task_id, TaskItemStatus.FAILED, now)
             updated_task = self._with_counts(updated_task, overrides=items)
-            self._scheduling.settle(claim, task=updated_task, items=items, now=now)
+            self._scheduling.settle(
+                claim,
+                task=updated_task,
+                items=items,
+                now=now,
+                close_recorded_unknown_boundary=True,
+            )
             return self._task(claim.task_id)
         # A completed/partial walk may still have a linked exact plan summary
         # waiting for the operator's confirmation.  That is human waiting, not
@@ -305,13 +317,25 @@ class ManualTaskEngineWorker:
             # source, or the only analysis result was a technical failure.  No
             # decision, confirmation or machine stage remains, so the Task's
             # honest aggregate is its factual end.  A genuinely waiting item,
-            # a queued/processing sibling, a live claim or an unproved effect
-            # never reaches this branch and keeps its slot and recovery path.
+            # a queued/processing sibling or a live claim never reaches this
+            # branch; a recorded unknown effect releases its slot here because
+            # the pass already returned and its Result stays factual.
             settled_status = task_work_status(items)
             ended = self._with_counts(
                 self._with_status(updated_task, settled_status, now, updated_task.error)
             )
-            self._scheduling.settle(claim, task=ended, items=items, now=now)
+            try:
+                self._scheduling.settle(
+                    claim,
+                    task=ended,
+                    items=items,
+                    now=now,
+                    close_recorded_unknown_boundary=True,
+                )
+            except TaskControlRejected:
+                if self._refusal_keeps_claim(claim):
+                    return self._task(claim.task_id)
+                raise
             return self._task(claim.task_id)
         waiting = tuple(
             self._replace_item(item, TaskItemStatus.WAITING_CONFIRM, "waiting_confirm", now)
@@ -325,7 +349,18 @@ class ManualTaskEngineWorker:
         self._scheduling.publish_task(claim, updated_task, now=now)
         for item in waiting:
             self._scheduling.record_item(claim, item, now=now)
-        self._scheduling.defer_to_human(claim, task=updated_task, items=(), now=now)
+        try:
+            self._scheduling.defer_to_human(
+                claim,
+                task=updated_task,
+                items=(),
+                now=now,
+                close_recorded_unknown_boundary=True,
+            )
+        except TaskControlRejected:
+            if self._refusal_keeps_claim(claim):
+                return self._task(claim.task_id)
+            raise
         return self._task(claim.task_id)
 
     @staticmethod
@@ -410,7 +445,18 @@ class ManualTaskEngineWorker:
                 self._scheduling.publish_task(claim, updated, now=now)
                 for item in waiting:
                     self._scheduling.record_item(claim, item, now=now)
-                self._scheduling.defer_to_human(claim, task=updated, items=(), now=now)
+                try:
+                    self._scheduling.defer_to_human(
+                        claim,
+                        task=updated,
+                        items=(),
+                        now=now,
+                        close_recorded_unknown_boundary=True,
+                    )
+                except TaskControlRejected:
+                    if self._refusal_keeps_claim(claim):
+                        return self._task(claim.task_id)
+                    raise
                 return self._task(claim.task_id)
             if outstanding and execution.status is not ManualExecutionStatus.CANCELLED:
                 # A still-processing sibling is genuine machine work: keep the
@@ -431,7 +477,18 @@ class ManualTaskEngineWorker:
                 else task_work_status(items)
             )
             updated = self._with_counts(self._with_status(task, status, now, execution.error))
-            self._scheduling.settle(claim, task=updated, items=items, now=now)
+            try:
+                self._scheduling.settle(
+                    claim,
+                    task=updated,
+                    items=items,
+                    now=now,
+                    close_recorded_unknown_boundary=True,
+                )
+            except TaskControlRejected:
+                if self._refusal_keeps_claim(claim):
+                    return self._task(claim.task_id)
+                raise
             return self._task(claim.task_id)
         updated = self._with_counts(
             self._with_status(
@@ -450,7 +507,18 @@ class ManualTaskEngineWorker:
         )
         if machine:
             return self._yield_until(claim, updated, now, TaskMachineStage.EXECUTION)
-        self._scheduling.defer_to_human(claim, task=updated, items=(), now=now)
+        try:
+            self._scheduling.defer_to_human(
+                claim,
+                task=updated,
+                items=(),
+                now=now,
+                close_recorded_unknown_boundary=True,
+            )
+        except TaskControlRejected:
+            if self._refusal_keeps_claim(claim):
+                return self._task(claim.task_id)
+            raise
         return self._task(claim.task_id)
 
     # -- Automatic (Scheduler due / Run once) --------------------------------
@@ -503,8 +571,16 @@ class ManualTaskEngineWorker:
         except Exception as error:  # noqa: BLE001 - a Worker must never crash the loop
             state = self._scheduling.state(claim.task_id)
             if state is not None and state.mutation_in_flight:
-                # The effect is unproved: never convert it into a retryable
-                # failure.  Keep the claim and mutation marker for inspection.
+                # The pass raised.  When every concrete item already recorded its
+                # own terminal outcome the marker is finished unknown-effect
+                # history, so the same shared settlement releases the slot
+                # instead of parking the Task forever.  A genuinely unproved
+                # boundary (no recorded outcome, or a queued/processing sibling)
+                # is never converted into a retryable failure: it keeps its claim
+                # and marker for inspection exactly as before.
+                settled = self._settle_finished_unknown_pass(claim)
+                if settled is not None:
+                    return settled
                 self._notice(self._bounded_notice(claim.task_id, error))
                 return self._task(claim.task_id)
             if state is not None and state.control_request is not None:
@@ -513,6 +589,23 @@ class ManualTaskEngineWorker:
             self._record_failure(claim, error, initial_execution_stage="failed")
             return self._task(claim.task_id)
         return self._settle_automatic(claim)
+
+    def _settle_finished_unknown_pass(self, claim) -> PersistentTask | None:
+        """Settle one raised pass whose recorded outcomes are already final.
+
+        Returns ``None`` when the boundary is still unproved (the marker did not
+        name a terminal item with its own Result, or machine work remains): the
+        caller then keeps the claim, the marker and the slot for inspection.
+        """
+
+        try:
+            settled = self._settle_automatic(claim)
+        except Exception:  # noqa: BLE001 - the caller keeps the unproved boundary
+            return None
+        state = self._scheduling.state(claim.task_id)
+        if state is not None and state.mutation_in_flight:
+            return None
+        return settled
 
     def _settle_automatic(self, claim) -> PersistentTask:
         """Publish the honest aggregate of one finished automatic pass.
@@ -528,8 +621,6 @@ class ManualTaskEngineWorker:
         if not self._heartbeat(claim):
             return self._task(claim.task_id)
         state = self._scheduling.state(claim.task_id)
-        if state is not None and state.mutation_in_flight:
-            return self._task(claim.task_id)
         if state is not None and state.control_request is not None:
             return self._settle_pending_control(claim)
         task = self._task(claim.task_id)
@@ -541,6 +632,11 @@ class ManualTaskEngineWorker:
             if value.status in {TaskItemStatus.PENDING, TaskItemStatus.PROCESSING}
         )
         if machine:
+            if state is not None and state.mutation_in_flight:
+                # An unproved boundary beside real queued/processing machine
+                # work still keeps the claim: the pass is not finished.  Only
+                # a completed pass releases a recorded unknown outcome.
+                return self._task(claim.task_id)
             updated = self._with_counts(
                 self._with_status(task, PersistentTaskStatus.RUNNING, now, task.error)
             )
@@ -556,13 +652,19 @@ class ManualTaskEngineWorker:
             # operator.  Freeze that stage's own bounded evidence once, so the
             # Automation record keeps expressing it even after the same Task's
             # later recovery completes the remaining work.
-            self._scheduling.defer_to_human(
-                claim,
-                task=updated,
-                items=(),
-                now=now,
-                initial_execution_stage="waiting_human",
-            )
+            try:
+                self._scheduling.defer_to_human(
+                    claim,
+                    task=updated,
+                    items=(),
+                    now=now,
+                    initial_execution_stage="waiting_human",
+                    close_recorded_unknown_boundary=True,
+                )
+            except TaskControlRejected:
+                if self._refusal_keeps_claim(claim):
+                    return self._task(claim.task_id)
+                raise
             return self._task(claim.task_id)
         status = task_work_status(items) if items else PersistentTaskStatus.COMPLETED
         error = task.error
@@ -588,13 +690,24 @@ class ManualTaskEngineWorker:
                 status = PersistentTaskStatus.PARTIAL_SUCCESS
             error = f"{error}; {summary}" if error else summary
         updated = self._with_counts(self._with_status(task, status, now, error))
-        self._scheduling.settle(
-            claim,
-            task=updated,
-            items=items,
-            now=now,
-            initial_execution_stage=status.value,
-        )
+        try:
+            self._scheduling.settle(
+                claim,
+                task=updated,
+                items=items,
+                now=now,
+                initial_execution_stage=status.value,
+                # Every file of this pass already recorded its own outcome and
+                # all of the pass's calls returned: a recorded unknown effect is
+                # history, so the Task gives its one slot back instead of
+                # keeping it until someone re-organizes a file.  The Result,
+                # its unknown effects and the completed steps stay untouched.
+                close_recorded_unknown_boundary=True,
+            )
+        except TaskControlRejected:
+            if self._refusal_keeps_claim(claim):
+                return self._task(claim.task_id)
+            raise
         return self._task(claim.task_id)
 
     def _settle_pending_control(self, claim) -> PersistentTask:
@@ -611,9 +724,9 @@ class ManualTaskEngineWorker:
         state = self._scheduling.state(claim.task_id)
         if state is None or state.control_request is None:
             return self._task(claim.task_id)
-        if state.mutation_in_flight:
-            return self._task(claim.task_id)
         if state.control_request is not TaskControl.CANCEL:
+            if state.mutation_in_flight:
+                return self._task(claim.task_id)
             self._scheduling.acknowledge_control(
                 claim,
                 discovery=self._linked_discovery(claim.task_id),
@@ -635,15 +748,36 @@ class ManualTaskEngineWorker:
         # that stage's bounded evidence freezes with the settlement.  A Files
         # Task's cancellation keeps its existing read semantics.
         automatic_cancel = execution is None and self._linked_discovery(claim.task_id) is None
-        self._scheduling.acknowledge_control(
-            claim,
-            discovery=self._linked_discovery(claim.task_id),
-            execution=settlement.execution if settlement is not None else None,
-            execution_items=settlement.items if settlement is not None else (),
-            now=self._clock(),
-            initial_execution_stage="cancelled" if automatic_cancel else None,
-        )
+        try:
+            self._scheduling.acknowledge_control(
+                claim,
+                discovery=self._linked_discovery(claim.task_id),
+                execution=settlement.execution if settlement is not None else None,
+                execution_items=settlement.items if settlement is not None else (),
+                now=self._clock(),
+                initial_execution_stage="cancelled" if automatic_cancel else None,
+                # A cancel arriving after every file already recorded its
+                # outcome releases the slot under the same rule as a normal
+                # settlement: recorded history is not a live call.
+                close_recorded_unknown_boundary=True,
+            )
+        except TaskControlRejected:
+            if self._refusal_keeps_claim(claim):
+                return self._task(claim.task_id)
+            raise
         return self._task(claim.task_id)
+
+    def _refusal_keeps_claim(self, claim) -> bool:
+        """Whether a refused release is an unproved boundary, not a defect.
+
+        A marker whose affected attempt has not yet recorded its own outcome, an
+        accepted control that changed under the same boundary, or a genuinely
+        processing sibling keeps the claim and its one slot for the next safe
+        boundary instead of turning into a technical Task failure.
+        """
+
+        state = self._scheduling.state(claim.task_id)
+        return state is not None and (state.mutation_in_flight or state.control_request is not None)
 
     # -- Failure / helpers ---------------------------------------------------
 

@@ -2440,7 +2440,9 @@ class RunOnceApiTests(unittest.TestCase):
             self.assertEqual("running", task.status.value)
             self.assertTrue((self.source_root / "Movies" / "One.2001.mkv").exists())
 
-    def test_interrupted_dispatch_keeps_the_nonreplayable_marker(self) -> None:
+    def test_interrupted_dispatch_settles_its_slot_but_never_replays(self) -> None:
+        """One finished pass with a recorded unknown effect: the slot goes back
+        while the non-replayable Result, its steps and its uncertainty stay."""
         from mediaflow.application.strategy_test import SyntheticMetadataProvider
         from mediaflow.domain.metadata import MediaCandidate, MediaType
         from mediaflow.domain.storage import StorageError, StorageErrorCode
@@ -2463,17 +2465,22 @@ class RunOnceApiTests(unittest.TestCase):
 
             task = value.repository.get_task(task_id)
             state = value.repository.get_task_scheduling(task_id)
-            self.assertEqual("running", task.status.value)
-            self.assertTrue(state.mutation_in_flight)
+            self.assertEqual("failed", task.status.value)
+            self.assertIsNone(state.mutation_state)
+            self.assertEqual("settled", state.queue_state.value)
+            self.assertEqual(0, value.repository.count_scheduled_capacity_use())
             (result,) = value.repository.list_results(task_id)
             self.assertEqual("attempted_unverified", result.effect_certainty)
             self.assertIn("mutation_outcome", result.uncertain_effects)
             self.assertTrue((self.source_root / "Movies" / "One.2001.mkv").exists())
             effects_before = tuple(value.target.mutations)
-            # A second claim/pass cannot replay the unproved effect.
+            # A second claim/pass cannot replay the unproved effect; the slot is
+            # already released and the recorded evidence stays identical.
             self.assertIsNone(worker.run_next())
             self.assertEqual(effects_before, tuple(value.target.mutations))
-            self.assertTrue(value.repository.get_task_scheduling(task_id).mutation_in_flight)
+            (kept,) = value.repository.list_results(task_id)
+            self.assertEqual(result, kept)
+            self.assertIsNone(value.repository.get_task_scheduling(task_id).mutation_state)
 
     def test_legacy_interval_and_cron_schedules_run_as_kernel_tasks(self) -> None:
         from mediaflow.application.automation import IntervalScheduler

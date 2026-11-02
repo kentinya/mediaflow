@@ -79,7 +79,15 @@ class OrganizeSourceHistory:
         return self.status in EXCLUDING_OUTCOME_STATUSES
 
     def warning(self) -> str:
-        """The operator-facing, secret-free summary of this history."""
+        """The short operator-facing, secret-free reminder of this history.
+
+        Slice 47 RO-6 keeps the ordinary reminder to the two facts the operator
+        must act on: the previous attempt did not finish, and its target may
+        already hold files.  Effect uncertainty is named only when the recorded
+        Result really carries an unverified effect; the recorded step codes,
+        instants, targets and effect identifiers stay in the item's existing
+        detail instead of becoming mandatory reading.
+        """
 
         label = (
             "上次整理失败"
@@ -88,20 +96,13 @@ class OrganizeSourceHistory:
             if self.status == "partial"
             else f"上次整理记录为 {self.status}"
         )
-        parts = [label]
-        if self.recorded_at:
-            parts.append(f"记录时间 {self.recorded_at}")
-        if self.destination_path:
-            parts.append(f"目标可能已有文件（{self.destination_path}）")
-        if self.completed_operations:
-            parts.append(f"已完成步骤：{'、'.join(self.completed_operations[:8])}")
-        if self.uncertain_effects:
-            parts.append(
-                "存在未确认效果（远端操作可能已发生，是否完成无法由本页证明）："
-                + "、".join(self.uncertain_effects[:8])
-            )
-        elif self.effect_certainty not in (None, "none", "verified_complete"):
-            parts.append("效果未确认")
+        parts = [f"{label}，目标位置可能已有文件"]
+        if self.uncertain_effects or self.effect_certainty not in (
+            None,
+            "none",
+            "verified_complete",
+        ):
+            parts.append("部分存储效果未确认（远端操作可能已发生，无法由本页证明是否完成）")
         if not self.version_applicable:
             parts.append("来源版本与该记录不完全可比，此历史可能适用")
         parts.append("请核对来源、目标与存储实际效果后再确认本次整理")

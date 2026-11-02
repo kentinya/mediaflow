@@ -9,6 +9,73 @@
  */
 
 import type { ManualPreviewItemModel } from "../../entities/operations/preview";
+import { StatusBanner } from "../../shared/ui/StatusBanner";
+
+/** Operator wording for the recorded step/effect identifiers.
+ *
+ * The persisted Result keeps the exact identifiers for diagnosis, but the
+ * ordinary reminder must not make the operator read internal step codes. Known
+ * steps get a plain-language phrase; an unknown identifier is still shown
+ * verbatim because hiding the only recorded name would be less honest than
+ * naming it. */
+const HISTORY_STEP_LABELS: Readonly<Record<string, string>> = {
+  CREATE_DIRECTORY: "创建目标目录",
+  COPY: "复制主文件",
+  MOVE: "移动主文件",
+  copy_primary: "复制主文件",
+  source_delete: "删除源文件",
+  source_cleanup: "清理源目录",
+  mutation_outcome: "存储写入结果",
+  executor_invocation: "执行器调用",
+  process_interruption: "执行中断",
+};
+
+function describeHistoryStep(value: string): string {
+  const trimmed = value.trim();
+  if (trimmed.length === 0) return trimmed;
+  if (trimmed.startsWith("ATTACHMENT:")) return "复制附件";
+  return (
+    HISTORY_STEP_LABELS[trimmed] ??
+    HISTORY_STEP_LABELS[trimmed.toLowerCase()] ??
+    trimmed
+  );
+}
+
+/** The conspicuous reminder shared by every summary that can show history.
+ *
+ * Slice 47 RO-6: the server projects the applicable latest formal outcome of
+ * each source; this banner names the affected files and the one check the
+ * operator makes. It never claims a verification and adds no confirmation
+ * product of its own. */
+export function OrganizeHistoryReminder({
+  items,
+}: {
+  readonly items: readonly ManualPreviewItemModel[];
+}) {
+  const affected = items.filter((item) => item.history !== null);
+  if (affected.length === 0) return null;
+  return (
+    <StatusBanner variant="warning" title="部分文件上次整理未完成">
+      <p>
+        这些文件的同一版本上次整理失败或部分成功；确认前请核对来源、目标与存储中的实际效果。
+        确认后按当前摘要执行一次新的正常整理，旧记录不会被改写或重放。
+      </p>
+      <ul>
+        {affected.map((item) => (
+          <li key={`history-${item.itemId}`}>
+            {item.sourceFilename ?? item.itemId}：
+            {item.history?.status === "partial"
+              ? "上次整理部分成功"
+              : "上次整理失败"}
+            {item.history?.uncertainEffects.length
+              ? "，效果未确认"
+              : "，目标可能已有文件"}
+          </li>
+        ))}
+      </ul>
+    </StatusBanner>
+  );
+}
 
 export function displayEnum(value: string): string {
   const labels: Readonly<Record<string, string>> = {
@@ -243,13 +310,19 @@ export function ItemFindings({
             {item.history.completedOperations.length > 0 && (
               <>
                 <br />
-                已完成步骤：{item.history.completedOperations.join("、")}
+                已完成步骤：
+                {item.history.completedOperations
+                  .map(describeHistoryStep)
+                  .join("、")}
               </>
             )}
             {item.history.uncertainEffects.length > 0 && (
               <>
                 <br />
-                未确认效果：{item.history.uncertainEffects.join("、")}
+                未确认效果：
+                {item.history.uncertainEffects
+                  .map(describeHistoryStep)
+                  .join("、")}
                 （未知≠已核验）
               </>
             )}

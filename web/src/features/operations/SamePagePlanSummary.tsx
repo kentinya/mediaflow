@@ -15,7 +15,11 @@
 import { useEffect, useMemo } from "react";
 import { useQuery } from "@tanstack/react-query";
 import { organizePreviewQueryOptions } from "./organize-query";
-import { ItemFindings, displayEnum } from "./organize-summary";
+import {
+  ItemFindings,
+  OrganizeHistoryReminder,
+  displayEnum,
+} from "./organize-summary";
 import { TaskRefreshControl as RefreshControl } from "./TaskRefreshControl";
 import { StatusBanner } from "../../shared/ui/StatusBanner";
 
@@ -107,6 +111,7 @@ export function SamePagePlanSummary(props: SamePagePlanSummaryProps) {
           {preview.nextAction && (
             <p className="mf-dashboard-meta">{preview.nextAction}</p>
           )}
+          <OrganizeHistoryReminder items={preview.items} />
           {preview.items.map((item) => {
             const isExecutable = executableIds.includes(item.itemId);
             return (

@@ -1310,9 +1310,10 @@ class _SupersededHandoffFixture(_DiscoveryFixture):
 
 
 class SupersededSingleFileOwnerHandoffTests(_SupersededHandoffFixture):
-    def test_new_manual_organize_takes_over_the_wholly_superseded_owner(self):
-        """One failed file, then a confirmed re-organize: the old owner's slot,
-        claim and qualification are resolved; its recorded facts stay exact."""
+    def test_finished_failed_batch_releases_its_slot_before_any_new_manual_work(self):
+        """One failed file ends the batch: the recorded unknown effect is
+        history, so the slot is released at once and a later manual organize
+        starts new work without rewriting a single recorded fact."""
 
         self.media("Movies/One.2001.mkv")
         provider = SyntheticMetadataProvider(
@@ -1343,10 +1344,31 @@ class SupersededSingleFileOwnerHandoffTests(_SupersededHandoffFixture):
             self.assertEqual(("CREATE_DIRECTORY",), old_result.completed_operations)
             self.assertEqual("attempted_unverified", old_result.effect_certainty)
             old_state = value.repository.get_task_scheduling(old_id)
-            self.assertEqual(TaskQueueState.CLAIMED, old_state.queue_state)
-            self.assertIsNotNone(old_state.mutation_state, "the unknown boundary is retained")
-            self.assertEqual(1, value.repository.count_scheduled_capacity_use())
-            old_claim = ScheduledTaskClaim(old_task, old_state)
+            # Every file of the pass is terminal and its own call returned, so
+            # the batch no longer occupies a slot merely because the recorded
+            # effect is unknown.  The Result, its steps and its uncertainty are
+            # the only facts that stay.
+            self.assertEqual(TaskQueueState.SETTLED, old_state.queue_state)
+            self.assertIsNone(old_state.mutation_state)
+            self.assertFalse(old_state.holds_capacity)
+            self.assertEqual(0, value.repository.count_scheduled_capacity_use())
+            # The old execution eligibility is closed: the released state owns
+            # no claim, so a stale owner frame can only be rejected.
+            self.assertIsNone(old_state.claim_token)
+            stale_claim = ScheduledTaskClaim(
+                old_task,
+                replace(
+                    old_state,
+                    queue_state=TaskQueueState.CLAIMED,
+                    claim_worker_id="old-worker",
+                    claim_token="old-token",
+                    claimed_at=self.clock.now,
+                    claim_expires_at=self.clock.now + timedelta(seconds=30),
+                    heartbeat_at=self.clock.now,
+                ),
+            )
+            with self.assertRaises(TaskClaimFenceLost):
+                self.scheduling(value).heartbeat(stale_claim, now=self.clock.now)
 
             # The deliberate new Files organize of the same file reaches the
             # real summary with the server-generated history warning.
@@ -1375,15 +1397,14 @@ class SupersededSingleFileOwnerHandoffTests(_SupersededHandoffFixture):
                 any(path.name == "One (2001).mkv" for path in self.target_root.rglob("*.mkv"))
             )
 
-            # The wholly superseded owner: marker recorded, slot released,
-            # claim dead — unknown history alone holds no capacity.
-            self.assertEqual(_new_id, self.superseded_marker(value, old_item.item_id))
+            # A settled owner is pure history: no hand-off marker is needed to
+            # release anything, and the old batch was already off the slot
+            # before the operator asked again.
+            self.assertIsNone(self.superseded_marker(value, old_item.item_id))
             settled_state = value.repository.get_task_scheduling(old_id)
             self.assertEqual(TaskQueueState.SETTLED, settled_state.queue_state)
             self.assertIsNone(settled_state.mutation_state)
             self.assertEqual(0, value.repository.count_scheduled_capacity_use())
-            with self.assertRaises(TaskClaimFenceLost):
-                self.scheduling(value).heartbeat(old_claim, now=self.clock.now)
             # Every recorded fact of the old run is untouched.
             (kept_result,) = value.repository.list_results(old_id)
             self.assertEqual(old_result, kept_result)
@@ -1535,6 +1556,194 @@ class SupersededOwnerWithRemainingWorkTests(_SupersededHandoffFixture):
                 {path.name for path in self.target_root.rglob("*.mkv")},
                 "only the new confirmed organize produced media",
             )
+
+
+class FinishedBatchCapacityTests(_SupersededHandoffFixture):
+    """Slice 47 capacity rule: one Task holds at most one slot, and a finished
+    batch gives it back even when a recorded effect stays unknown.
+
+    Every journey goes through the real Files admission → analysis → selected
+    confirmation → Task engine → LocalStorage boundary; failures are injected at
+    the real Storage call, never by hand-writing Task/Result rows.  A batch that
+    still owns queued/processing machine work is covered by
+    ``SupersededOwnerWithRemainingWorkTests``.
+    """
+
+    def _confirmed_batch(self, value, paths, request_id):
+        task_id, preview = self.summary(value, paths, request_id)
+        return (
+            task_id,
+            preview,
+            [item["itemId"] for item in preview["items"] if item["status"] == "previewed"],
+        )
+
+    def _drive_until_terminal(self, value, task_id):
+        for _ in range(8):
+            value.task_engine.run_next()
+            task = value.repository.get_task(task_id)
+            if task.status in {
+                PersistentTaskStatus.COMPLETED,
+                PersistentTaskStatus.PARTIAL_SUCCESS,
+                PersistentTaskStatus.FAILED,
+                PersistentTaskStatus.CANCELLED,
+            }:
+                return task
+        return value.repository.get_task(task_id)
+
+    def test_all_success_batch_releases_its_single_slot(self):
+        self.media("Movies/One.2001.mkv")
+        self.media("Movies/Two.2002.mkv")
+        provider = SyntheticMetadataProvider(
+            (
+                MediaCandidate("tmdb", "301", MediaType.MOVIE, "One", year=2001),
+                MediaCandidate("tmdb", "302", MediaType.MOVIE, "Two", year=2002),
+            )
+        )
+        with self.journey(provider=provider, task_scheduling=True, attachments=True) as value:
+            task_id, preview, selected = self._confirmed_batch(
+                value,
+                ["Movies/One.2001.mkv", "Movies/Two.2002.mkv"],
+                "33333333-3333-4333-8333-333333333333",
+            )
+            self.assertEqual(2, len(selected))
+            observed = []
+            original_write = value.target.write
+
+            def one_slot_per_task(path, data, **kwargs):
+                observed.append(value.repository.count_scheduled_capacity_use())
+                return original_write(path, data, **kwargs)
+
+            with patch.object(value.target, "write", one_slot_per_task):
+                self.confirm(value, preview)
+                task = self._drive_until_terminal(value, task_id)
+            self.assertEqual(PersistentTaskStatus.COMPLETED, task.status)
+            # Two files of one Task never occupy two slots.
+            self.assertEqual({1}, set(observed))
+            state = value.repository.get_task_scheduling(task_id)
+            self.assertEqual(TaskQueueState.SETTLED, state.queue_state)
+            self.assertIsNone(state.claim_token)
+            self.assertEqual(0, value.repository.count_scheduled_capacity_use())
+            self.assertEqual(
+                {TaskItemStatus.SUCCESS},
+                {item.status for item in value.repository.list_items(task_id)},
+            )
+
+    def test_failure_before_any_effect_releases_its_single_slot(self):
+        self.media("Movies/One.2001.mkv")
+        self.media("Movies/Two.2002.mkv")
+        provider = SyntheticMetadataProvider(
+            (
+                MediaCandidate("tmdb", "311", MediaType.MOVIE, "One", year=2001),
+                MediaCandidate("tmdb", "312", MediaType.MOVIE, "Two", year=2002),
+            )
+        )
+        with self.journey(provider=provider, task_scheduling=True, attachments=True) as value:
+            task_id, preview, _selected = self._confirmed_batch(
+                value,
+                ["Movies/One.2001.mkv", "Movies/Two.2002.mkv"],
+                "44444444-4444-4444-8444-444444444444",
+            )
+            # A zero-effect failure injected at the real executor boundary: the
+            # last item's own call returns a definite ``none`` outcome, so no
+            # mutation boundary is ever left behind and the finished batch must
+            # give its one slot back.
+            from mediaflow.domain.organizer import (
+                ExecutionEffectCertainty,
+                ExecutionResult,
+                ExecutionStatus,
+            )
+
+            original_execute = value.executions._execute_plan
+
+            def fail_two_without_effect(plan, storages):
+                if "Two" in plan.source:
+                    return ExecutionResult(
+                        ExecutionStatus.FAILED,
+                        plan.operation,
+                        plan.source,
+                        plan.target,
+                        plan_id=plan.plan_id,
+                        resolved_destination=plan.target,
+                        errors=("injected zero-effect executor failure",),
+                        effect_certainty=ExecutionEffectCertainty.NONE,
+                    )
+                return original_execute(plan, storages)
+
+            with patch.object(value.executions, "_execute_plan", fail_two_without_effect):
+                self.confirm(value, preview)
+                task = self._drive_until_terminal(value, task_id)
+            self.assertEqual(PersistentTaskStatus.PARTIAL_SUCCESS, task.status)
+            state = value.repository.get_task_scheduling(task_id)
+            self.assertEqual(TaskQueueState.SETTLED, state.queue_state)
+            self.assertEqual(0, value.repository.count_scheduled_capacity_use())
+            statuses = {
+                item.source_path: item.status for item in value.repository.list_items(task_id)
+            }
+            self.assertEqual(TaskItemStatus.SUCCESS, statuses["Movies/One.2001.mkv"])
+            self.assertEqual(TaskItemStatus.FAILED, statuses["Movies/Two.2002.mkv"])
+            (failed,) = [
+                result
+                for result in value.repository.list_results(task_id)
+                if result.source_path == "Movies/Two.2002.mkv"
+            ]
+            self.assertEqual("none", failed.effect_certainty)
+            self.assertEqual((), failed.uncertain_effects)
+
+    def test_terminal_partial_unknown_batch_releases_and_keeps_its_evidence(self):
+        self.media("Movies/One.2001.mkv")
+        self.media("Movies/Two.2002.mkv")
+        provider = SyntheticMetadataProvider(
+            (
+                MediaCandidate("tmdb", "321", MediaType.MOVIE, "One", year=2001),
+                MediaCandidate("tmdb", "322", MediaType.MOVIE, "Two", year=2002),
+            )
+        )
+        with self.journey(provider=provider, task_scheduling=True, attachments=True) as value:
+            task_id, preview, _selected = self._confirmed_batch(
+                value,
+                ["Movies/One.2001.mkv", "Movies/Two.2002.mkv"],
+                "55555555-5555-4555-8555-555555555555",
+            )
+            original_write = value.target.write
+
+            def fail_two_write(path, data, **kwargs):
+                if "Two" in path:
+                    raise StorageError(
+                        StorageErrorCode.IO_ERROR,
+                        "write",
+                        path,
+                        "injected write failure",
+                    )
+                return original_write(path, data, **kwargs)
+
+            with patch.object(value.target, "write", fail_two_write):
+                self.confirm(value, preview)
+                task = self._drive_until_terminal(value, task_id)
+            self.assertEqual(PersistentTaskStatus.PARTIAL_SUCCESS, task.status)
+            state = value.repository.get_task_scheduling(task_id)
+            # All files of the batch are terminal and the pass returned: the
+            # recorded unknown effect no longer occupies the Task's one slot.
+            self.assertEqual(TaskQueueState.SETTLED, state.queue_state)
+            self.assertIsNone(state.mutation_state)
+            self.assertFalse(state.holds_capacity)
+            self.assertEqual(0, value.repository.count_scheduled_capacity_use())
+            (uncertain,) = [
+                result
+                for result in value.repository.list_results(task_id)
+                if result.source_path == "Movies/Two.2002.mkv"
+            ]
+            # The evidence itself is never rewritten into a certainty.
+            self.assertEqual("attempted_unverified", uncertain.effect_certainty)
+            self.assertIn("mutation_outcome", uncertain.uncertain_effects)
+            self.assertEqual(("CREATE_DIRECTORY",), uncertain.completed_operations)
+            # The successful sibling keeps its own result and effect.
+            (successful,) = [
+                result
+                for result in value.repository.list_results(task_id)
+                if result.source_path == "Movies/One.2001.mkv"
+            ]
+            self.assertEqual("SUCCESS", successful.status)
+            self.assertEqual("verified_complete", successful.effect_certainty)
 
 
 if __name__ == "__main__":

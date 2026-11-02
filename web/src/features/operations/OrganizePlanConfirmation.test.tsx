@@ -221,7 +221,7 @@ function failedHistory(): Json {
     effectCertainty: "attempted_unverified",
     versionApplicable: true,
     warning:
-      "上次整理失败；记录时间 2026-11-01T10:00:00+00:00；目标可能已有文件（Movies/The Matrix (1999)/The Matrix (1999).mkv）；已完成步骤：copy_primary；存在未确认效果（远端操作可能已发生，是否完成无法由本页证明）：source_delete；请核对来源、目标与存储实际效果后再确认本次整理",
+      "上次整理失败，目标位置可能已有文件；部分存储效果未确认（远端操作可能已发生，无法由本页证明是否完成）；请核对来源、目标与存储实际效果后再确认本次整理",
   };
 }
 
@@ -276,16 +276,22 @@ describe("organize plan confirmation history warning", () => {
     await screen.findByRole("heading", { name: "本次运行计划的零变更摘要" });
     // The conspicuous aggregate banner names the affected file and the check
     // the operator must make; unknown effects are never presented as verified.
-    await screen.findByText("部分文件上次整理未完全成功");
+    await screen.findByText("部分文件上次整理未完成");
     // The affected file is named in the aggregate banner; its own bounded
     // warning text and the unknown-effect wording are visible.
     const banner = screen
-      .getByText("部分文件上次整理未完全成功")
+      .getByText("部分文件上次整理未完成")
       .closest("section, div");
     expect(banner).not.toBeNull();
     expect(banner?.textContent ?? "").toContain("One.2001.mkv");
     expect(banner?.textContent ?? "").toContain("上次整理失败");
-    await screen.findAllByText(/存在未确认效果/);
+    // The affected file names its own recorded facts in plain language: the
+    // unknown effect is stated once, and internal step codes are not the
+    // ordinary reminder.
+    await screen.findAllByText(/部分存储效果未确认/);
+    await screen.findAllByText(/目标：target:Movies\/The Matrix \(1999\)/);
+    await screen.findAllByText(/已完成步骤：\s*复制主文件/);
+    await screen.findAllByText(/未确认效果：\s*删除源文件/);
     await screen.findAllByText(
       /请核对来源、目标与存储实际效果后再确认本次整理/,
     );
@@ -330,7 +336,7 @@ describe("organize plan confirmation history warning", () => {
                 effectCertainty: "partial_effects",
                 versionApplicable: false,
                 warning:
-                  "上次整理部分成功；目标可能已有文件（Movies/One (2001)/One (2001).mkv）；来源版本与该记录不完全可比，此历史可能适用；请核对来源、目标与存储实际效果后再确认本次整理",
+                  "上次整理部分成功，目标位置可能已有文件；来源版本与该记录不完全可比，此历史可能适用；请核对来源、目标与存储实际效果后再确认本次整理",
               },
             }),
           );
@@ -354,7 +360,7 @@ describe("organize plan confirmation history warning", () => {
 
     await screen.findByRole("heading", { name: "本次运行计划的零变更摘要" });
     const partialBanner = (
-      await screen.findByText("部分文件上次整理未完全成功")
+      await screen.findByText("部分文件上次整理未完成")
     ).closest("section, div");
     expect(partialBanner?.textContent ?? "").toContain("One.2001.mkv");
     expect(partialBanner?.textContent ?? "").toContain("上次整理部分成功");
@@ -397,7 +403,7 @@ describe("organize plan confirmation history warning", () => {
 
     await screen.findByRole("heading", { name: "本次运行计划的零变更摘要" });
     await screen.findByText("One.2001.mkv");
-    expect(screen.queryByText("部分文件上次整理未完全成功")).toBeNull();
+    expect(screen.queryByText("部分文件上次整理未完成")).toBeNull();
     expect(
       screen.queryByText(/该文件上次整理(失败|部分成功)，请核对后确认/),
     ).toBeNull();

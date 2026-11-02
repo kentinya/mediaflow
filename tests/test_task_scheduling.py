@@ -160,6 +160,12 @@ class SchedulingKernelTestCase(unittest.TestCase):
         self.addCleanup(self.repository.close)
         return self.repository
 
+    def superseded_marker(self, item_id: str) -> str | None:
+        row = self.repository._connection.execute(
+            "SELECT superseded_by_task_id FROM task_items WHERE item_id=?", (item_id,)
+        ).fetchone()
+        return None if row is None else row["superseded_by_task_id"]
+
     def row_counts(self) -> dict[str, int]:
         names = ("tasks", "task_items", "task_results", "task_scheduling")
         with sqlite3.connect(self.database) as connection:
@@ -396,6 +402,109 @@ class CapacityTransitionTests(SchedulingKernelTestCase):
         # The freed slot admits a genuinely different work.
         _admit(service, request_id="request-2")
         self.assertEqual(service.capacity_use(), 1)
+
+    def test_finished_settlement_counts_a_superseded_item_without_republishing_it(self):
+        """A batch whose failed file was handed to newer work still settles.
+
+        The old owner must include that file's recorded outcome in its honest
+        aggregate, but it may never re-publish the handed-off row; reading the
+        old terminal state and writing a new one are different acts.
+        """
+
+        service = self.service(capacity=1)
+        _admit(service)
+        claim = self.claimed(service)
+        superseded = self.item(service, claim, "媒体/电影/A.mkv")
+        sibling = self.item(service, claim, "媒体/电影/B.mkv", now=NOW + timedelta(seconds=3))
+        service.begin_mutation(claim, superseded, "COPY", now=NOW + timedelta(seconds=3))
+        superseded = replace(
+            superseded,
+            status=TaskItemStatus.FAILED,
+            stage="failed",
+            updated_at=NOW + timedelta(seconds=4),
+        )
+        service.complete_item(
+            claim,
+            superseded,
+            result=_result(
+                superseded,
+                status="failed",
+                certainty="attempted_unverified",
+                uncertain_effects=("mutation_outcome",),
+            ),
+            now=NOW + timedelta(seconds=4),
+        )
+        self.assertTrue(self.repository.get_task_scheduling(claim.task_id).mutation_in_flight)
+        handoff = self.repository.hand_off_superseded_source_owner(
+            storage_id=superseded.storage_id,
+            source_path=superseded.source_path,
+            storage_path=superseded.source_storage_path,
+            resource_library_id=superseded.resource_library_id,
+            successor_task_id="newer-confirmed-task",
+            now=NOW + timedelta(seconds=5),
+        )
+        self.assertIsNotNone(handoff)
+        # The sibling is real remaining work: the old batch keeps its claim and
+        # its one slot while the handed-off file is fenced per file.
+        kept = self.repository.get_task_scheduling(claim.task_id)
+        self.assertEqual(TaskQueueState.CLAIMED, kept.queue_state)
+        self.assertEqual(service.capacity_use(), 1)
+        self.assertIsNone(kept.mutation_state)
+        self.assertEqual("newer-confirmed-task", self.superseded_marker(superseded.item_id))
+
+        # The remaining sibling finishes normally.
+        finished_sibling = service.complete_item(
+            claim,
+            replace(
+                sibling,
+                status=TaskItemStatus.SUCCESS,
+                stage="completed",
+                updated_at=NOW + timedelta(seconds=6),
+            ),
+            result=_result(sibling),
+            now=NOW + timedelta(seconds=6),
+        )
+        items = self.repository.list_items(claim.task_id)
+        kept_superseded = self.repository.get_item(superseded.item_id)
+        self.assertEqual("newer-confirmed-task", self.superseded_marker(superseded.item_id))
+        self.assertIs(kept_superseded.status, TaskItemStatus.FAILED)
+        (kept_result,) = tuple(
+            result
+            for result in self.repository.list_results(claim.task_id)
+            if result.item_id == superseded.item_id
+        )
+        self.assertEqual("attempted_unverified", kept_result.effect_certainty)
+        self.assertEqual(("mutation_outcome",), kept_result.uncertain_effects)
+
+        final = replace(
+            self.repository.get_task(claim.task_id),
+            status=PersistentTaskStatus.PARTIAL_SUCCESS,
+            completed_at=NOW + timedelta(seconds=7),
+        )
+        settled = service.settle(
+            claim,
+            task=final,
+            items=items,
+            now=NOW + timedelta(seconds=7),
+        )
+        self.assertEqual(TaskQueueState.SETTLED, settled.queue_state)
+        self.assertEqual(service.capacity_use(), 0)
+        # The handed-off row and its Result were read for the aggregate, never
+        # rewritten by the old owner.
+        after = self.repository.get_item(superseded.item_id)
+        self.assertEqual(kept_superseded, after)
+        self.assertEqual(
+            (kept_result,),
+            tuple(
+                result
+                for result in self.repository.list_results(claim.task_id)
+                if result.item_id == superseded.item_id
+            ),
+        )
+        self.assertIs(
+            self.repository.get_item(finished_sibling.item_id).status,
+            TaskItemStatus.SUCCESS,
+        )
 
     def test_claimed_work_keeps_its_slot_until_the_owner_acknowledges_pause(self) -> None:
         service = self.service(capacity=1)

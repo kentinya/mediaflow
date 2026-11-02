@@ -41,7 +41,11 @@ import {
   organizeIntentQueryOptions,
   organizePreviewQueryOptions,
 } from "./organize-query";
-import { ItemFindings, displayEnum } from "./organize-summary";
+import {
+  ItemFindings,
+  OrganizeHistoryReminder,
+  displayEnum,
+} from "./organize-summary";
 import {
   filesReturnHref,
   filesReturnSearch,
@@ -872,6 +876,7 @@ export function OrganizeCreationPage() {
               {preview.nextAction && (
                 <p className="mf-dashboard-meta">{preview.nextAction}</p>
               )}
+              <OrganizeHistoryReminder items={preview.items} />
               {executionHistory !== undefined && admittedItemIds.size > 0 && (
                 <StatusBanner variant="info" title="已有受理的兄弟项">
                   <p>
