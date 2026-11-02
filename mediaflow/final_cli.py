@@ -1268,8 +1268,15 @@ def final_main(
                 if state is not None and state.control_request is not None:
                     # The operator's accepted control owns the outcome at this
                     # safe boundary: finished items keep their recorded results,
-                    # the unfinished tail settles with the control.
-                    scheduling.acknowledge_control(claim, now=datetime.now(UTC))
+                    # the unfinished tail settles with the control.  This CLI
+                    # pass has returned, so a recorded unknown outcome is
+                    # history rather than a call still in flight; the shared
+                    # kernel still refuses a missing Result or machine sibling.
+                    scheduling.acknowledge_control(
+                        claim,
+                        now=datetime.now(UTC),
+                        close_recorded_unknown_boundary=True,
+                    )
                 else:
                     _settle_direct_organize(repository, scheduling, claim, task)
             elif cancelled:
@@ -2545,7 +2552,16 @@ def _settle_direct_organize(repository, scheduling, claim, task):
         return
     if waiting:
         scheduling.publish_task(claim, updated, now=now)
-        scheduling.defer_to_human(claim, task=updated, items=(), now=now)
+        # Every source of this direct pass already recorded its own outcome or
+        # is waiting for the operator; the process is done making calls, so a
+        # recorded unknown effect no longer holds the shared slot.
+        scheduling.defer_to_human(
+            claim,
+            task=updated,
+            items=(),
+            now=now,
+            close_recorded_unknown_boundary=True,
+        )
         return
     status = task_work_status(items) if items else PersistentTaskStatus.COMPLETED
     settled = replace(
@@ -2553,7 +2569,16 @@ def _settle_direct_organize(repository, scheduling, claim, task):
         status=status,
         completed_at=now,
     )
-    scheduling.settle(claim, task=settled, items=items, now=now)
+    # The direct CLI pass has returned and every durable item is terminal.  A
+    # recorded unknown effect remains factual history; releasing its slot does
+    # not rewrite the Result, its completed steps or the source protection.
+    scheduling.settle(
+        claim,
+        task=settled,
+        items=items,
+        now=now,
+        close_recorded_unknown_boundary=True,
+    )
 
 
 def _task_configuration_unavailable(

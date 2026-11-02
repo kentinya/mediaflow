@@ -403,6 +403,53 @@ class CapacityTransitionTests(SchedulingKernelTestCase):
         _admit(service, request_id="request-2")
         self.assertEqual(service.capacity_use(), 1)
 
+    def test_finished_boundary_does_not_release_a_processing_sibling(self) -> None:
+        """The CLI's finished-pass flag never hides real remaining machine work."""
+
+        service = self.service(capacity=1)
+        _admit(service)
+        claim = self.claimed(service)
+        failed = self.item(service, claim, "媒体/电影/A.mkv")
+        self.item(service, claim, "媒体/电影/B.mkv", now=NOW + timedelta(seconds=3))
+        service.begin_mutation(claim, failed, "COPY", now=NOW + timedelta(seconds=3))
+        service.complete_item(
+            claim,
+            replace(
+                failed,
+                status=TaskItemStatus.PARTIAL,
+                stage="failed",
+                updated_at=NOW + timedelta(seconds=4),
+            ),
+            result=_result(
+                failed,
+                status="partial",
+                certainty="attempted_unverified",
+                uncertain_effects=("mutation_outcome",),
+            ),
+            now=NOW + timedelta(seconds=4),
+        )
+        items = self.repository.list_items(claim.task_id)
+        with self.assertRaises(TaskControlRejected):
+            service.settle(
+                claim,
+                task=replace(
+                    self.repository.get_task(claim.task_id),
+                    status=PersistentTaskStatus.PARTIAL_SUCCESS,
+                    completed_at=NOW + timedelta(seconds=5),
+                ),
+                items=items,
+                now=NOW + timedelta(seconds=5),
+                close_recorded_unknown_boundary=True,
+            )
+        state = self.repository.get_task_scheduling(claim.task_id)
+        self.assertEqual(TaskQueueState.CLAIMED, state.queue_state)
+        self.assertTrue(state.mutation_in_flight)
+        self.assertEqual(1, service.capacity_use())
+        self.assertIs(
+            self.repository.get_item(failed.item_id).status,
+            TaskItemStatus.PARTIAL,
+        )
+
     def test_finished_settlement_counts_a_superseded_item_without_republishing_it(self):
         """A batch whose failed file was handed to newer work still settles.
 

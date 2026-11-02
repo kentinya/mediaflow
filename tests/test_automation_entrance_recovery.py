@@ -21,6 +21,7 @@ the confirmed execution.  No synthetic route, no second engine, no user media.
 
 from __future__ import annotations
 
+import errno
 import io
 import json
 import os
@@ -46,6 +47,7 @@ from mediaflow.domain.security import (
     ApiRole,
     ResolvedApiPrincipal,
 )
+from mediaflow.domain.task_scheduling import TaskControl
 from mediaflow.final_cli import final_main
 from mediaflow.infrastructure.local_storage import LocalStorage
 from mediaflow.infrastructure.sqlite_configuration_management import (
@@ -284,6 +286,49 @@ class EntranceRecoveryJourneyTests(unittest.TestCase):
         stamp = (self.clock.now - timedelta(hours=1)).timestamp()
         os.utime(path, (stamp, stamp))
         return path
+
+    def _run_cli(
+        self,
+        value,
+        *arguments: str,
+        cancellation_check=None,
+    ) -> tuple[int, str, str]:
+        """Run the real production CLI with the journey's fake Provider only."""
+
+        output, errors = io.StringIO(), io.StringIO()
+        with patch(
+            "mediaflow.final_cli.metadata_provider_registry_from_environment",
+            return_value=value.provider_registry,
+        ):
+            code = final_main(
+                ["--config", str(value.config), *arguments],
+                stdout=output,
+                stderr=errors,
+                cancellation_check=cancellation_check,
+            )
+        return code, output.getvalue(), errors.getvalue()
+
+    def _target_disk_full(
+        self, target_root: Path, *, contains: str | None = None, on_disk_full=None
+    ):
+        """Inject one real ENOSPC at a target Storage write, never at business state."""
+
+        original_open = Path.open
+        root = target_root.resolve()
+
+        def disk_full(path, mode="r", *args, **kwargs):
+            candidate = Path(path)
+            if (
+                "w" in mode
+                and candidate.resolve().is_relative_to(root)
+                and (contains is None or contains in str(candidate))
+            ):
+                if on_disk_full is not None:
+                    on_disk_full()
+                raise OSError(errno.ENOSPC, "No space left on device", str(candidate))
+            return original_open(path, mode, *args, **kwargs)
+
+        return disk_full
 
     def request(self, value, method, path, body=None, *, token=ADMIN_TOKEN, headers=None):
         payload = b"" if body is None else json.dumps(body).encode("utf-8")
@@ -526,6 +571,248 @@ class EntranceRecoveryJourneyTests(unittest.TestCase):
             self.assertIsNotNone(confirmed_summary, detail)
             self.assertEqual("confirmed", confirmed_summary["status"])
             self.assertEqual(confirmed["executionId"], confirmed_summary["execution_id"])
+
+    def test_cli_disk_full_settles_partial_and_next_distinct_file_releases_slot(self):
+        """A finished CLI pass gives its slot back without rewriting its unknown Result."""
+
+        first = self.media("One.2001.mkv")
+        candidates = (
+            MediaCandidate("tmdb", "1", MediaType.MOVIE, "One", year=2001),
+            MediaCandidate("tmdb", "2", MediaType.MOVIE, "Two", year=2002),
+        )
+        with entrance_journey(
+            self,
+            movie_rule=True,
+            organize_operation="COPY",
+            capacity=1,
+            candidates=candidates,
+        ) as value:
+            with patch.object(Path, "open", self._target_disk_full(value.target_root)):
+                code, output, errors = self._run_cli(
+                    value, "organize", str(first), "--execute", "--limit", "1"
+                )
+
+            # The real target write failed, but the process finished cleanly:
+            # the CLI reports the durable Task and its business failure instead
+            # of a settlement exception.
+            self.assertEqual(1, code, errors)
+            self.assertEqual("", errors, errors)
+            self.assertIn("Task ID:", output)
+            self.assertIn("SUMMARY", output)
+            self.assertIn("PARTIAL", output)
+            self.assertIn("Failed: 1", output)
+            self.assertIn("No space left on device", output)
+
+            (first_task,) = value.repository.list_tasks()
+            (first_item,) = value.repository.list_items(first_task.task_id)
+            (first_result,) = value.repository.list_results(first_task.task_id)
+            self.assertEqual("failed", first_task.status.value, first_task.error)
+            self.assertEqual("partial", first_item.status.value)
+            self.assertEqual("failed", first_item.stage)
+            self.assertTrue(first_item.error)
+            self.assertEqual("partial", first_result.status)
+            self.assertEqual("attempted_unverified", first_result.effect_certainty)
+            self.assertEqual(("CREATE_DIRECTORY",), first_result.completed_operations)
+            self.assertEqual(("mutation_outcome",), first_result.uncertain_effects)
+            first_state = value.repository.get_task_scheduling(first_task.task_id)
+            self.assertEqual("settled", first_state.queue_state.value)
+            self.assertFalse(first_state.mutation_in_flight)
+            self.assertEqual(0, value.repository.count_scheduled_capacity_use())
+            self.assertTrue(first.exists())
+            self.assertEqual([], list(value.target_root.rglob("*.mkv")))
+            self.assertEqual(
+                {"stopped"},
+                {worker.status.value for worker in value.repository.list_workers()},
+            )
+
+            # Removing the fault lets a genuinely different file through the
+            # same CLI and shared capacity; it is a new Task, not a replay of A.
+            second = self.media("Two.2002.mkv")
+            code, output, errors = self._run_cli(
+                value, "organize", str(second), "--execute", "--limit", "1"
+            )
+            self.assertEqual(0, code, errors)
+            self.assertIn("Task ID:", output)
+            tasks = value.repository.list_tasks()
+            self.assertEqual(2, len(tasks))
+            second_task = next(task for task in tasks if task.task_id != first_task.task_id)
+            self.assertEqual("completed", second_task.status.value, second_task.error)
+            self.assertEqual(0, value.repository.count_scheduled_capacity_use())
+            self.assertTrue(second.exists())
+            self.assertEqual(
+                1, len(list((value.target_root / "Organized" / "Movies").rglob("*.mkv")))
+            )
+            self.assertEqual((first_item,), value.repository.list_items(first_task.task_id))
+            self.assertEqual((first_result,), value.repository.list_results(first_task.task_id))
+
+            # Same-version reopen keeps the honest A/B endings and capacity.
+            with SQLiteTaskRepository(value.runtime.database_path) as reopened:
+                self.assertEqual("failed", reopened.get_task(first_task.task_id).status.value)
+                self.assertEqual((first_item,), reopened.list_items(first_task.task_id))
+                self.assertEqual((first_result,), reopened.list_results(first_task.task_id))
+                self.assertEqual(
+                    "settled",
+                    reopened.get_task_scheduling(first_task.task_id).queue_state.value,
+                )
+                self.assertFalse(
+                    reopened.get_task_scheduling(first_task.task_id).mutation_in_flight
+                )
+                self.assertEqual("completed", reopened.get_task(second_task.task_id).status.value)
+                self.assertEqual(0, reopened.count_scheduled_capacity_use())
+
+    def test_cli_folder_mixed_terminal_outcomes_settle_one_task(self):
+        """One failed and one successful folder sibling settle independently at zero slots."""
+
+        self.media("One.2001.mkv")
+        self.media("Two.2002.mkv")
+        candidates = (
+            MediaCandidate("tmdb", "1", MediaType.MOVIE, "One", year=2001),
+            MediaCandidate("tmdb", "2", MediaType.MOVIE, "Two", year=2002),
+        )
+        with entrance_journey(
+            self, movie_rule=True, organize_operation="COPY", capacity=1, candidates=candidates
+        ) as value:
+            with patch.object(
+                Path,
+                "open",
+                self._target_disk_full(value.target_root, contains="Two (2002)"),
+            ):
+                code, output, errors = self._run_cli(
+                    value, "organize", str(value.source_root), "--execute", "--limit", "5"
+                )
+
+            self.assertEqual(1, code, errors)
+            self.assertEqual("", errors, errors)
+            self.assertIn("Task ID:", output)
+            self.assertIn("PARTIAL", output)
+            self.assertIn("SUCCESS", output)
+            (task,) = value.repository.list_tasks()
+            self.assertEqual("partial_success", task.status.value, task.error)
+            items = {
+                Path(item.source_path).name: item
+                for item in value.repository.list_items(task.task_id)
+            }
+            self.assertEqual("success", items["One.2001.mkv"].status.value)
+            self.assertEqual("partial", items["Two.2002.mkv"].status.value)
+            results = {
+                Path(result.source_path).name: result
+                for result in value.repository.list_results(task.task_id)
+            }
+            self.assertEqual("verified_complete", results["One.2001.mkv"].effect_certainty)
+            self.assertEqual("attempted_unverified", results["Two.2002.mkv"].effect_certainty)
+            state = value.repository.get_task_scheduling(task.task_id)
+            self.assertEqual("settled", state.queue_state.value)
+            self.assertFalse(state.mutation_in_flight)
+            self.assertEqual(0, value.repository.count_scheduled_capacity_use())
+            self.assertTrue((value.source_root / "One.2001.mkv").exists())
+            self.assertTrue((value.source_root / "Two.2002.mkv").exists())
+            self.assertEqual(
+                1, len(list((value.target_root / "Organized" / "Movies").rglob("*.mkv")))
+            )
+            self.assertEqual(
+                {"stopped"},
+                {worker.status.value for worker in value.repository.list_workers()},
+            )
+
+    def test_cli_finished_pass_with_human_waiting_sibling_releases_the_slot(self):
+        """A completed CLI pass waits for its operator without keeping a queue slot."""
+
+        self.media("One.2001.mkv")
+        self.media("Two.2002.mkv")
+        with entrance_journey(
+            self,
+            movie_rule=True,
+            organize_operation="COPY",
+            capacity=1,
+            candidates=(MediaCandidate("tmdb", "1", MediaType.MOVIE, "One", year=2001),),
+        ) as value:
+            with patch.object(
+                Path,
+                "open",
+                self._target_disk_full(value.target_root, contains="One (2001)"),
+            ):
+                code, output, errors = self._run_cli(
+                    value, "organize", str(value.source_root), "--execute", "--limit", "5"
+                )
+
+            self.assertEqual(1, code, errors)
+            self.assertEqual("", errors, errors)
+            self.assertIn("Task ID:", output)
+            (task,) = value.repository.list_tasks()
+            items = {
+                Path(item.source_path).name: item
+                for item in value.repository.list_items(task.task_id)
+            }
+            self.assertEqual("partial", items["One.2001.mkv"].status.value)
+            self.assertTrue(items["Two.2002.mkv"].status.value.startswith("waiting_"))
+            self.assertEqual(
+                ("waiting_metadata_correction",),
+                tuple(
+                    item.status.value
+                    for item in items.values()
+                    if item.status.value.startswith("waiting_")
+                ),
+            )
+            state = value.repository.get_task_scheduling(task.task_id)
+            self.assertEqual("waiting_human", state.queue_state.value)
+            self.assertFalse(state.mutation_in_flight)
+            self.assertEqual(0, value.repository.count_scheduled_capacity_use())
+            (result,) = value.repository.list_results(task.task_id)
+            self.assertEqual("attempted_unverified", result.effect_certainty)
+            self.assertEqual([], list(value.target_root.rglob("*.mkv")))
+            self.assertEqual(
+                {"stopped"},
+                {worker.status.value for worker in value.repository.list_workers()},
+            )
+
+    def test_cli_cancel_after_disk_failure_settles_without_rewriting_partial(self):
+        """A cancel at the returned pass boundary keeps the recorded partial Result."""
+
+        source = self.media("One.2001.mkv")
+        cancel = {"requested": False}
+        with entrance_journey(
+            self,
+            movie_rule=True,
+            organize_operation="COPY",
+            capacity=1,
+            candidates=(MediaCandidate("tmdb", "1", MediaType.MOVIE, "One", year=2001),),
+        ) as value:
+            disk_full = self._target_disk_full(
+                value.target_root, on_disk_full=lambda: cancel.update(requested=True)
+            )
+            with patch.object(Path, "open", disk_full):
+                code, output, errors = self._run_cli(
+                    value,
+                    "organize",
+                    str(source),
+                    "--execute",
+                    "--limit",
+                    "1",
+                    cancellation_check=lambda: cancel["requested"],
+                )
+
+            self.assertEqual(130, code, errors)
+            self.assertEqual("", errors, errors)
+            self.assertIn("Task ID:", output)
+            (task,) = value.repository.list_tasks()
+            (item,) = value.repository.list_items(task.task_id)
+            (result,) = value.repository.list_results(task.task_id)
+            self.assertEqual("cancelled", task.status.value, task.error)
+            self.assertEqual("partial", item.status.value)
+            self.assertEqual("partial", result.status)
+            self.assertEqual("attempted_unverified", result.effect_certainty)
+            self.assertEqual(("mutation_outcome",), result.uncertain_effects)
+            state = value.repository.get_task_scheduling(task.task_id)
+            self.assertEqual("settled", state.queue_state.value)
+            self.assertIs(state.control_request, TaskControl.CANCEL)
+            self.assertFalse(state.mutation_in_flight)
+            self.assertEqual(0, value.repository.count_scheduled_capacity_use())
+            self.assertTrue(source.exists())
+            self.assertEqual([], list(value.target_root.rglob("*.mkv")))
+            self.assertEqual(
+                {"stopped"},
+                {worker.status.value for worker in value.repository.list_workers()},
+            )
 
     def test_remote_ticket_decision_completes_the_same_recovery_on_one_task(self):
         """The remote-ticket Task's saved decision finishes on the same Task."""
