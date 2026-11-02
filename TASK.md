@@ -304,44 +304,57 @@ npm run test:e2e -- --config=playwright.python.automation.config.ts tests/e2e/au
 
 ## Developer Completion Report
 
-Status: READY FOR B REVIEW. Implementation candidate:
-`bf6968c11e1f40890454bad2c743d99d16888e4a` on `main`, parent
-`fba4e8e8e3d823c33992ce571202eada8da50592` (Task Base
-`c8657032dae768d93b12387a5e58db502e23a7ee` unchanged). The candidate contains the
-implementation, affected tests and factual configuration/architecture/deployment notes; this
-report-only commit follows it. No push, deployment or independent PASS.
+Status: READY FOR B REVIEW. B-P1-2 correction candidate:
+`dc513d7f749a8f5bee41676925318af162e81aaf` on `main`, parent
+`1678a498...` (previous review checkpoint `43d3fdeb...`; Task Base
+`c8657032dae768d93b12387a5e58db502e23a7ee` unchanged). This report-only commit follows
+the product candidate. No push, deployment or independent PASS.
 
-What was delivered:
-- Removed the stopped dual manual/Automation capacity/cadence design. One system-owned
-  `automation.maximumActiveJobs` allowance (1–10000) is used by Files, direct CLI/API/remote,
-  due/Run once and same-Task re-entry; claim queue and capacity counts are shared. The resident
-  Worker resolves the current Active allowance per admission/re-entry; Scheduler uses its resolved
-  Active value. Ordinary transfer/delete keep their existing queues.
-- Reverted the dual resident cadence. The shared Worker business poll still drives organizing and
-  ordinary asynchronous file runners; Scheduler polling remains the due-check cadence only.
-- Retired `automation.staleJobAgeSeconds` from editable/effective/default/runtime/API/Web
-  contracts. Existing immutable Active documents containing it remain readable with the value
-  ignored; saving the three fields preserves the raw key without changing the old revision digest.
-  Generic and focused edits of the retired field are refused with zero publication.
-- System Settings is the one ordinary three-field editor; the Automation settings tab/form and
-  old links redirect to `/ui-v2/configuration` without publishing or admitting work. Capacity-full
-  Files admission now explains the system queue, preserves selection, and supports explicit retry.
-- New defaults/examples contain no stale-age key. Docs record the implemented candidate while
-  leaving independent acceptance pending.
+What was delivered for B-P1-2:
+- `ManualOrganizeExecutionService` now accepts a current-capacity resolver bound by the API
+  composition root to its refreshed runtime binding. Normal summary confirmation
+  (`/operations/organize/previews/{id}/execute`), direct execution-authorization/Preview
+  execution, and all Task Center recovery confirmations share that one execution service and
+  therefore read the current Active allowance when re-entering the shared queue.
+- Confirmation keeps the reviewed Preview's immutable pin for policies, Storage authority, saved
+  selection and the Task. Only the scheduling allowance is current. The old pinned
+  `automation_maximum_active_jobs` is no longer used as the confirmation allowance.
+- Missing, unreadable or invalid current capacity fails closed with an explicit next action; an
+  adopted kernel Task cannot silently fall back to its old pin. Atomic admission still performs
+  the capacity count, waiting→queued transition, authority consumption and writes in the same
+  SQLite transaction (unchanged).
+- No second queue, setting store, automatic retry, timeout or replay behavior was added.
+
+New/updated regression coverage (real API routes, real SQLite, real Task engine and real Local
+Storage over temporary roots; no direct `scheduling_capacity` injection):
+- `test_lowered_system_capacity_applies_to_an_already_prepared_summary`: summary prepared at
+  1025, successor Active set to 1, a real competing Files Task takes the slot, old summary
+  confirmation returns 409 `capacity_full`; Task stays waiting, no execution or consumed
+  authority, Preview pin/digest unchanged; after release the same explicit confirmation succeeds
+  and the real Worker completes the MOVE.
+- `test_raised_system_capacity_applies_to_an_already_prepared_summary`: summary prepared at 1,
+  a competitor fills the old slot, successor Active raises the allowance to 2; the old summary is
+  admitted, proving the current value rather than the old pin.
+- `test_recovery_summary_confirmation_uses_current_system_capacity`: a native Task Center
+  four-type recovery summary prepared at 1025 is refused with 409 after the current allowance is
+  lowered and a competitor fills it; release then admits the same recovery confirmation.
+- Native browser scenario `system runtime settings keep an old summary at the current organizing
+  capacity`: real System Settings Save 1025 → real Files summary → Save 1 → competing Files
+  request → return to the old summary → real confirm response is 409, no execution page, source
+  unchanged.
 
 Actual affected verification (cwd `/Users/songzhidong/mediaflow` unless noted):
-- `.venv/bin/python -m unittest tests.test_system_settings_management tests.test_automation_settings_management tests.test_automation_settings_resident tests.test_resident_services tests.test_configuration_snapshot` — **177 tests OK / 56.110s**.
-- `.venv/bin/python -m unittest tests.test_task_scheduling tests.test_task_scheduling_fencing tests.test_task_source_ownership_race tests.test_automation_task_admission tests.test_automation_run_once tests.test_automation_entrance_recovery tests.test_execution_authorization` — **152 tests OK / 6.246s**.
-- `.venv/bin/python -m unittest tests.test_media_discovery tests.test_manual_organize_execution tests.test_manual_task_engine tests.test_operations_task_center tests.test_direct_file_transfers tests.test_direct_file_operations` — **414 tests OK / 83.223s**.
-- `.venv/bin/python -m unittest tests.test_media_library_transfers tests.test_runtime_strategy_configuration` — **38 tests OK / 1.433s**.
-- `.venv/bin/ruff format --check` and `ruff check` on all changed Python files — PASS; `compileall -q mediaflow tests scripts` — PASS; `scripts/check_governance.py` — PASS; `git diff --check` — PASS; both example `config validate` commands — exit 0.
-- `web/`: `npm run typecheck` PASS, `npm run lint` PASS, `npm run format:check` PASS, `npm run build` PASS, full unit run **88 files / 1268 tests PASS**, real-Python E2E `automation-settings.python.spec.ts` **14 tests PASS / 19.0s**, fake-server `automation.spec.ts` **13 tests PASS / 4.6s**.
-- E2E covers real System Settings Save/readback, 1025/10000 capacities through Files, and one shared capacity 1 refusal/release/explicit retry between an admitted Automation Task and Files. Browser evidence is under Playwright test-results/trace paths; no product PASS claimed.
+- `.venv/bin/python -m unittest tests.test_system_settings_management tests.test_automation_settings_management tests.test_automation_settings_resident tests.test_resident_services tests.test_configuration_snapshot` — **177 tests OK / 55.609s**.
+- `.venv/bin/python -m unittest tests.test_task_scheduling tests.test_task_scheduling_fencing tests.test_task_source_ownership_race tests.test_automation_task_admission tests.test_automation_run_once tests.test_automation_entrance_recovery tests.test_execution_authorization` — **152 tests OK / 6.184s**.
+- `.venv/bin/python -m unittest tests.test_media_discovery tests.test_manual_organize_execution tests.test_manual_task_engine tests.test_operations_task_center tests.test_direct_file_transfers tests.test_direct_file_operations` — **417 tests OK / 83.929s**.
+- Additional affected integrations: `.venv/bin/python -m unittest tests.test_v2_automation_run_once tests.test_organize_preparation tests.test_v2_manual_organize tests.test_manual_operations_contract` — **111 tests OK / 9.746s**; `tests.test_manual_task_engine` alone — **35 tests OK / 5.317s**.
+- `.venv/bin/ruff check` and `ruff format --check` on changed Python files — PASS; `compileall -q mediaflow tests scripts` — PASS; `scripts/check_governance.py` — PASS; `git diff --check` — PASS; both example `config validate` commands — exit 0.
+- `web/`: `npm run typecheck` PASS, `npm run lint` PASS, `npm run format:check` PASS, `npm run build` PASS. Real-Python E2E `automation-settings.python.spec.ts --grep 'system runtime settings'` — **5 tests PASS / 10.2s**, including the new old-summary capacity scenario.
 
 Known risks / remaining work for B:
-- Full T4 regression, packaging/wheel/installed-consumer, Docker, restart and all other native E2E gates remain B-owned and pending.
-- The focused API path retains its historical `/api/v1/operations/automation/settings` name; it is an internal compatibility name, not a second user editor.
-- Existing immutable documents keep the retired key in raw JSON by design; acceptance must judge effective/runtime readback rather than a global string-zero assertion.
+- Full T4 regression, packaging/wheel/installed-consumer, Docker, restart, full native E2E and the rest of the prior candidate's acceptance remain B-owned and pending.
+- The correction intentionally leaves already-admitted execution pins, policies, source and results
+  unchanged; only new queue re-entry uses the current allowance.
 - No independent A/B acceptance, Slice closure, push or deployment was performed.
 
 ## B Review Result
