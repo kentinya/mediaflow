@@ -21,7 +21,8 @@ Next Action: TASK47.6 PLANNED FOR THREE SYSTEM SETTINGS AND STALE-AGE REMOVAL; D
 roles, checkpoints, testing and closure. The user requested Job removal and unified Task execution,
 then explicitly authorized A scope authority on 2026-10-30. This checkpoint selects the new Slice;
 it is neither implementation nor final acceptance. On 2026-11-03 the user explicitly authorizes
-the agent acting as B to exercise A authority for the settings Contract and related documents.
+the agent acting as B to exercise A authority for the Contract and related documents, including
+settings and the confirmed exclusion of old-task and cross-version upgrade support.
 This role exception covers scope/document checkpoints only, not independent A Final Review,
 implementation, acceptance or delegation.
 
@@ -164,10 +165,14 @@ must be delivered before the enlarged Slice can become READY FOR A REVIEW.
   authorization semantics; add no CLI warning requirement, new remote category, consent field or
   history-refusal rule. The conspicuous new warning is required in Web Files only.
 
-The user's intervening explicit boundaries also remain: no old tasks/cross-version upgrade scope,
-and V1 is unsupported. Fresh initialization and same-version reopen/restart, existing new-work
-history, permissions, pins, audit and data integrity remain required. This supersedes the obsolete
-upgrade/V1 obligations in RO-4/AC-9/10/11/17 only within that stated scope; none are claimed tested.
+The user confirms that old tasks and cross-version upgrades remain excluded; V1 is unsupported.
+The supported persistence journey is fresh initialization → submit new work → same-version
+reopen/restart → inspect or safely continue that work. Preserve its history, permissions, pins,
+audit and data integrity, including failed/partial source history used by RO-6. No old-Job/old-task
+migration, import, takeover, cross-version upgrade/rollback or mixed-version writer interoperability
+is required. Existing immutable configuration containing retired fields remains readable as specified
+above; this does not select old-task upgrade support. The outcomes, surfaces and acceptance below
+apply this exclusion directly; no product validation is claimed by this scope clarification.
 Accepted43–46 and Task47.4 are not retroactively re-reviewed or relabelled by this amendment.
 
 The user's planning correction confirms latest formal outcome, not any-ever failure, as the
@@ -308,8 +313,8 @@ and pin. Internal TaskItem IDs may be reused or versioned; unchanged IDs are not
 requirement. If an implementation creates a successor item ID, it must preserve the prior ID/history
 and an explicit durable relation, keep affected-file counts and supported links truthful, and prevent
 duplicate source ownership/effects. An ID change cannot widen scope, substitute source content or
-grant authority. No new mapping/recovery subsystem is required. Pre-upgrade child Task identities
-remain traceable historical evidence rather than being destroyed or silently merged.
+grant authority. No new mapping/recovery subsystem is required. Earlier attempts inside supported
+same-version work retain their identities, relations and original outcomes.
 
 Continuation after restart/claim loss is conditional on the existing supported control/recovery
 boundary and durable proof that the remaining stage/step is safe to run, plus the normal pin/source/
@@ -321,38 +326,27 @@ continuation at every possible crash point is promised; this Slice adds no new t
 or attachment-only replay path. No fifth business recovery type, generic technical-failure Web recovery,
 cross-Task bulk mutation, arbitrary historical Reprocess or universal rollback is introduced.
 
-### RO-4 — preserve data and safely remove the Job schema
+### RO-4 — preserve same-version work and remove the live Job schema
 
-Provide a versioned, repeatable, failure-atomic migration from the actual schema53 Base, covering
-fresh initialization, reopen and the supported upgrade path. Preserve every supported historical
-Task/TaskItem/Result, plan/attachment/effect/checkpoint, definition/occurrence, control/decision,
-request identity, pin, authorization consumption, audit/log and relevant relation. Retired
-Scan/Preview/FileIndex products receive no restored execution/compatibility layer.
+Fresh initialization creates the Task-owned runtime schema without an independent Job table/index
+or redundant Job-only identity column/foreign key. Same-version reopen/restart preserves newly
+admitted Task/TaskItem/Result, plan/attachment/effect/checkpoint, definition/occurrence,
+control/decision, request identity, pin, authorization consumption, audit/log and relevant relation.
+Queued/pre-start, human-waiting, active/interrupted and terminal work retain their actual state
+and evidence. Retired Scan/Preview/FileIndex products receive no execution/compatibility layer.
 
-No existing persisted Job row is discarded merely because its command is unknown or retired.
-Preserve such residual rows as non-executable historical evidence with original kind/state and
-provenance; never relabel them as organizing or recreate a retired product to display them.
+Readback and permitted continuation use exact durable Task/item/attempt relationships, not guessed
+names/timestamps/current Active. Pending work retains its original intent/pin under existing safe
+restart rules; entered, completed, partial or uncertain work is never blindly reset to Pending.
+Keep existing schema-readiness and claim/fence checks. Initialization/reopen failure must not
+present an incomplete database as ready, change existing durable work or grant execution authority.
+Use isolated fresh/same-version databases, never user databases/media, for these checks.
 
-Use exact durable relationships: an explicitly linked Job migrates into its existing work; an
-unlinked queued or pre-start historical Job must remain represented by a Task with its actual
-admission/failure evidence and no invented per-item effects. Preserve old identifiers as bounded
-migration provenance/references where needed. Multiple historical Tasks/attempts retain their own
-identities and original outcomes. Missing, conflicting or unprovable links cannot be guessed from
-names/timestamps/current Active, silently dropped or converted into execute authority.
-
-Supported provably unstarted work remains runnable with its original intent/pin after migration.
-Previously entered, completed, partial or uncertain work retains safe controls/inspection and is
-never blindly reset to Pending. Upgrade must use the deployment's safe service-quiescence/fencing
-boundary; mixed incompatible old/new writers cannot claim, publish or start new effects against
-the migrated authority. Do not interrupt an in-flight Storage call or pretend migration undoes it.
-Failure leaves the previous durable authority usable/intact, without a half migration or premature
-schema marker. Prove backup/upgrade/reopen behavior on isolated copies, never user databases/media.
-
-After verified migration, remove the independent Job table/indexes, redundant Job-only identity
-columns/foreign keys, repositories/models/services/dispatch, APIs/CLI commands and frontend models.
-No live Job compatibility executor, dual queue/write or renamed Job store may remain. Necessary
-legacy configuration parsing and bounded read-only identifier resolution are allowed solely to
-preserve supported pins/history; they cannot create Jobs, introduce work or widen authority.
+Remove live Job repositories/models/services/dispatch, APIs/CLI commands and frontend models as
+well as the redundant schema. No Job compatibility executor, dual queue/write or renamed Job store
+may remain. Read existing immutable configuration without rewriting revisions/digests/pins; this
+does not require converting old Job rows, restoring old tasks or proving an old-schema upgrade.
+The exclusion does not authorize clearing user data or rewriting prior accepted implementation facts.
 
 ### RO-5 — complete operator and administrative journeys without loss
 
@@ -366,9 +360,10 @@ Automation keeps definitions, due/calendar/latest metrics, enablement/Run once a
 execution records. System Settings owns the three runtime settings; Automation's former settings
 links navigate there without publication. Records preserve original outcome filtering, actual times,
 concise failure/next-step presentation and no later-handling controls. Dashboard, task-scoped logs,
-JSON exports, health/readiness, CLI and API use Task identities/behavior. Retained old deep links or
-identifiers resolve read-only to proved Task/history or bounded unavailable/denied evidence; they
-never execute, infer a new identity or require the removed Job collections. Remove Job collection,
+JSON exports, health/readiness, CLI and API use Task identities/behavior. Retained links or
+identifiers resolve read-only to proved same-version Task/history or bounded unavailable/denied
+evidence; no old-Job mapping layer is required. They never execute, infer a new identity or require
+the removed Job collections. Remove Job collection,
 submission, cancellation and stale-requeue APIs/commands; retained capabilities use Task equivalents
 with unchanged permissions and safe-repeatability limits.
 
@@ -391,15 +386,17 @@ or new queue/recovery product. Remove CLI retry-failed without dropping shared f
 ## Required surfaces and boundaries
 
 Domain Task/TaskItem/Result/queue ports; application admission/engine/Worker/Scheduler and four-type
-recovery; runtime SQLite/schema migration, source locks and claims; authorization/audit/log/outbox
-relations; managed setting parsing/publication/adoption; API/CLI/Web projections and consumers;
+recovery; runtime SQLite fresh initialization/same-version persistence, source locks and claims;
+authorization/audit/log/outbox relations; managed setting parsing/publication/adoption;
+API/CLI/Web projections and consumers;
 Task Center/Files/Automation/System Settings/Dashboard/health/export; source-external wheel and Docker
-startup/restart/upgrade/security proofs and operator upgrade documentation.
+fresh startup/same-version restart/security proofs and applicable startup/restart operator guidance.
 
 Out of scope: new providers or Storage/media commands, distributed scheduling/database, process
 supervision redesign, new parallelism/overlap/backfill policies, unbounded discovery, MediaLibrary
 organizing, new auth/Secret Store, wholesale UI redesign/V1 cutover, retired product restoration,
-history deletion/retention, new recovery types, automatic uncertain replay and universal rollback.
+history deletion/retention, new recovery types, automatic uncertain replay and universal rollback;
+old-task/Job migration or takeover, cross-version upgrade/rollback and mixed-version interoperability.
 Necessary integration in existing ordinary-file/notification consumers preserves their behavior except
 for the explicitly authorized ordinary-file Pause/Resume retirement and shared Worker idle cadence;
 it does not authorize a new global operation/recovery center or unrelated refactors.
@@ -424,15 +421,15 @@ RecognitionType C remains C with NamingPolicy A and ClassificationPolicy A. No F
 | AC-6 | Filtering, primary/attachment identity, configured limits, complete bounds and real stability are preserved; ready/unstable/empty/unreadable/overflow outcomes remain distinct, with no first-N execution or fabricated success. |
 | AC-7 | Four business decision → analysis → exact summary → selected continuation journeys finish inside the same newly admitted Task after refresh/restart. Assert exact per-file source/version/pin and durable item/attempt/result lineage, accurate counts and supported links, rather than mandatory equality of internal TaskItem IDs. Mixed batches keep independent accepted/refused results and no fifth recovery type. |
 | AC-8 | At supported cancel/restart/claim-loss and four-type continuation boundaries, prove safe remaining stages can continue only with durable safety evidence and normal authority/fence checks. Inject interruption before mutation dispatch and after dispatch before durable outcome proof: the latter remains uncertain and cannot replay, even after timeout/lease expiry/restart. Preserve completed/ignored siblings, pins and consumed authority; technical history stays read-only in V2. Do not require seamless automatic continuation at every crash point or add a new recovery path. |
-| AC-9 | Genuine Base schema53 fixtures migrate/reopen with linked/unlinked Jobs, every supported status, pre-start failures, old continuation chains, request/due uniqueness, consumed/revoked authority and exact audit/log/attachment/result identity intact. Residual unknown/retired Job rows survive as non-executable history with their original meaning. |
-| AC-10 | Failure injection proves migration rollback, unchanged prior authority/schema marker and safe repeat/reopen; quiescence/schema/fence checks reject incompatible writers and never restart entered uncertain work automatically. |
-| AC-11 | Fresh and upgraded databases have no live Job table/index/FK/queue; source/wheel/container expose no redundant Job domain/repository/dispatch/API/CLI/Web path. Provenance/parser exceptions are bounded/read-only, not a compatibility executor. |
+| AC-9 | Fresh initialization → new-work admission/processing → same-version reopen/restart preserves Task/item/attempt identity and relations, pre-start failures, four-type waiting/continuation, request/due uniqueness, consumed/revoked authority and exact pins/audit/log/attachment/results. Failed/partial history remains usable by RO-6. No old-task or Base schema53 Job migration proof is required. |
+| AC-10 | Applicable initialization/reopen failure checks preserve existing durable state and do not authorize work from an unavailable or incomplete database. Existing schema/claim fences remain effective; restart never automatically replays an entered uncertain effect. No cross-version upgrade/rollback or mixed-version interoperability proof is required. |
+| AC-11 | Fresh and same-version reopened databases have no live Job table/index/FK/queue; source/wheel/container expose no redundant Job domain/repository/dispatch/API/CLI/Web path. Immutable configuration readability does not retain a Job executor or require old-task conversion. |
 | AC-12 | Supported configuration and immutable pins remain readable without changing stored revisions/digests. Under V2-TASK-011, System Settings owns the three runtime fields: shared organizing capacity 1–10000, shared Worker idle poll and Automation-due Scheduler poll. Remove staleJobAgeSeconds from editable/effective/default contracts; existing immutable documents containing it remain readable with the value ignored. Keep invalid-input refusal, explicit overrides, truthful actual consumption, current heartbeat/lease/call-timeout logic and uncertain-effect protection. |
 | AC-13 | Eight-view Task Center counts, filters, cursors, detail, four-type union and recovery-complete projection remain consistent across all pages/restart; ordinary work/analysis-only preparation remains outside its organizing population. |
 | AC-14 | Automation definitions/Run once/metrics/latest and original records retain independent truth; old failures/times/known effects survive later recovery, filtering and paging. Original execution counts once and recovered work creates no second original run. |
-| AC-15 | Files exact task/preparation/unknown readback, ordinary local operations on both library kinds, Dashboard, scoped logs/audit/JSON, API/CLI/health and proved old-link resolution work without Job collections or new authority. |
+| AC-15 | Files exact task/preparation/unknown readback, ordinary local operations on both library kinds, Dashboard, scoped logs/audit/JSON, API/CLI/health and supported links work without Job collections or new authority. Retained links use proved same-version Task/history or bounded unavailable/denied evidence, without an old-Job mapping requirement. |
 | AC-16 | RBAC, source ownership/confinement, zero-mutation reads/analysis, C→A identity, explicit destructive permission, immutable pins, attachments and completed/uncertain non-replay pass automated coverage. |
-| AC-17 | Real Python/API/SQLite/Worker/Scheduler browser journeys using built assets, desktop/narrow inspection, installed wheel and Docker fresh/restart/upgrade/security gates establish the same Task lifecycle and preserved records. |
+| AC-17 | Real Python/API/SQLite/Worker/Scheduler browser journeys using built assets, desktop/narrow inspection, installed wheel and Docker fresh/same-version restart/security gates establish the same Task lifecycle and preserved new-work records. Old-task migration and cross-version upgrade gates are excluded. |
 | AC-18 | B supplies applicable full T4 results and exact Base..Head evidence; unavailable gates remain pending/disclosed. A independently reviews the whole Slice before PASS / CLOSED and CURRENT reconciliation. |
 | AC-19 | Organizing and ordinary-file operations expose no Pause/resume-from-pause in Web/API/CLI or dedicated live dispatch. Old requests are refused without effects; safe cancellation and four-type organizing continuation still work. No paused-organizing migration/restoration system is required; preserve existing readable history and non-replay. |
 | AC-20 | Due and definition Run once use shared per-source admission: exclude only when the same version's latest formal organizing outcome is failed/partial, including zero-effect failure and after restart. Later manual success removes this failure-based exclusion; earlier results remain. Free siblings proceed. Exclusions are durable/readable and do not fabricate new media success, Attention problems or first-N scope completeness. |
@@ -449,9 +446,10 @@ B plans coherent architecture/user-behavior units from actual code; this Contrac
 breakdown. Developer runs new/changed/directly affected tests and hands off coherent checkpoints;
 B owns full regression/acceptance and the final Closure Packet under workflow §6. Required T4
 coverage includes its shared Python/Web/static/examples/package/security gates plus AC-specific
-migration/concurrency/authority/restart/native proofs. Reuse existing test infrastructure and temporary
-roots/fakes/local servers; meaningful migration/reopen/effect assertions cannot be replaced by string
-searches or mock-only UI tests. Do not weaken tests to permit Job removal.
+fresh initialization, concurrency, authority, same-version restart and native proofs. Reuse existing
+test infrastructure and temporary roots/fakes/local servers; meaningful persistence/reopen/effect
+assertions cannot be replaced by string searches or mock-only UI tests. Do not weaken tests to
+permit Job removal.
 
 Use the explicit capacity-state/queue-full cases and supported interruption boundaries above as
 acceptance scenarios. File lineage/history/counts and non-replay are the result obligations; keeping

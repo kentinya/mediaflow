@@ -45,8 +45,8 @@ outcome are different facts; a later aggregate transition cannot erase original 
 The Task identity is fixed; the physical TaskItem ID is not prescribed. Reused or versioned item IDs
 must preserve prior IDs/history and explicit durable same-Task/source-version/pin lineage, accurate
 file counts and supported links, without duplicate source ownership or widened content/authority.
-Reuse existing evidence/relations; no new mapping or recovery subsystem is required. Pre-upgrade
-child Task identities/relations remain traceable historical evidence.
+Reuse existing evidence/relations; no new mapping or recovery subsystem is required. Earlier attempts
+inside supported same-version work retain their identities, relations and original outcomes.
 
 Task owns atomic bounded admission, ready/queued eligibility, current Worker claim generation,
 heartbeat/staleness and cooperative controls. Every item/result/aggregate publication observes the
@@ -131,35 +131,35 @@ no-work/pre-start failures and attachment evidence. A recovery neither creates a
 execution nor changes the original records-only result. Immutable attempt evidence stays inside
 the Task/Result responsibility; no independent history execution engine is created.
 
-### Migration and removal boundary
+### Fresh initialization, same-version persistence and Job removal
 
-Runtime Base schema53 carries Job identity columns in 12 tables. Migration must account for
-`automation_jobs`, definition due/occurrences, legacy schedule/audit, execution authorization
-consumption/audit, recovery/metadata/scope continuations, recovery batch items and operational logs,
-plus embedded event/export/request/link evidence. Exact persisted links determine migration;
-names/timestamps/current Active never do. Reuse existing linked work, preserve every historical Task,
-and represent formerly unlinked admissions/pre-start failures as Task evidence without fabricated
-items/effects. Keep bounded old-identifier provenance where needed to resolve supported history.
-Residual unknown/retired-command Job rows also retain original kind/state as non-executable history;
-removing their table cannot silently discard them or convert them into organizing authority.
+The supported journey is fresh initialization → submit new work → same-version reopen/restart →
+inspect or safely continue that work. Runtime schema, source, installed package and container have
+no independent Job table/index, redundant Job-only columns/FKs, repository/domain/service/dispatch
+or API/CLI/frontend surface. No compatibility executor, second queue or dual write remains.
 
-Versioned migration supports fresh/reopen and actual Base upgrade, is repeatable/failure-atomic,
-and preserves pins, original results/times, control/decision/request state, authority consumption,
-occurrence uniqueness and all known/uncertain effects. Unstarted valid work retains its original
-safe eligibility; entered/partial/uncertain work is never blindly requeued. Use the deployment's
-safe service-quiescence/schema/fence boundary and reject incompatible writers; migration cannot
-interrupt an in-flight Storage call or be an opportunity to replay it. Failed migration leaves the
-previous authority intact without half-updated data or schema marker. Validation uses isolated copies.
+Same-version persistence preserves Task/item/attempt relations, admission/pre-start failure,
+definition due/occurrences, authorization consumption/audit, decisions/continuations, operational
+logs, requests, immutable pins and primary/attachment effects. Exact durable links support readback
+and safe continuation; names/timestamps/current Active never reconstruct authority. Retained links
+resolve read-only to proved same-version Task/history or bounded unavailable/denied evidence.
+Existing schema-readiness and claim/fence checks remain effective. Initialization/reopen failure
+does not present an incomplete database as ready or change existing durable work. Pending work
+retains its legitimate intent/pin under existing restart rules; entered/partial/uncertain effects
+are never blindly requeued. Validation uses isolated fresh/same-version databases and existing
+test infrastructure, never user databases/media.
 
-After verified migration remove Job tables/indexes, redundant Job-only columns/FKs, domain/repository/
-service/dispatch and API/CLI/frontend surfaces. There is no live compatibility executor, second queue
-or dual write. Necessary legacy configuration parsing and read-only exact identifier resolution may
-preserve supported pins/history without recreating Jobs or execution authority. Historical published
-JSON/digests are immutable: three-field system runtime publication and actual consumer adoption
-must preserve those pins and explicit overrides; the retired stale-age key may remain in raw
-historical documents without runtime meaning. Ordinary-file/transfer consumers share Worker idle
-cadence but retain their own admission rules; notifications retain their own policy. Integration
-does not authorize an unrelated queue/supervisor rewrite.
+Old-task/Job conversion, old-identifier mapping layers, cross-version upgrade/rollback and
+mixed-version writer interoperability are excluded. No actual Base schema53 upgrade fixture or
+old-image/new-image upgrade proof is required. This does not authorize clearing user data or
+rewriting accepted implementation/history. The accepted CURRENT baseline contracts below are not
+rewritten; their upgrade descriptions do not add a Slice47 acceptance gate.
+
+Historical published JSON/digests are immutable: read existing configuration and preserve legitimate
+pins and explicit overrides during three-field publication/adoption. The retired stale-age key may
+remain in raw historical documents without runtime meaning; this is not old-task upgrade support.
+Ordinary-file/transfer consumers share Worker idle cadence but retain their own admission rules;
+notifications retain their own policy. Integration does not authorize an unrelated queue/supervisor rewrite.
 
 ## TARGET — Source-history gate for new organizing (Slice47, 2026-11-02)
 

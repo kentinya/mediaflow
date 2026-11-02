@@ -91,13 +91,13 @@ replacing Job/Task handoffs with one Task identity.
   was not recorded reliably, preserve that step as uncertain for factual inspection and prevent
   replay. A timeout, expired claim or missing result does not mean the operation never happened.
   No promise of seamless automatic continuation at every interruption or new recovery flow is added.
-- **History and upgrade:** original Automation records keep this execution's actual outcome/time,
+- **History and same-version restart:** original Automation records keep this execution's actual outcome/time,
   concise failure/next step and server outcome filtering. Later recovery does not rewrite a failed
   original record or count as another original run. Existing Task/Result/attempt/decision/audit/log
-  identities and supported history survive Job migration, including old child attempts and
-  pre-start failures. Proven old links resolve read-only into the exact Task/history or explain
-  unavailability/denial; they never start work. Ambiguous/interrupted/uncertain history cannot gain
-  execution permission merely because the database upgraded.
+  identities and new-work history survive same-version reopen/restart, including pre-start failures
+  and four-type continuation. Retained links resolve read-only into proved same-version Task/history
+  or explain unavailability/denial; they never start work or require an old-Job mapping layer.
+  Restart grants no new authority and never automatically replays an uncertain file operation.
 - **Existing surfaces:** Task Center retains eight organizing views and the four-type Attention
   union; Files retains initial confirmation and exact task/preparation readback. Both library
   kinds keep ordinary-operation progress/recovery locally. Automation keeps definition lifecycle,
@@ -106,8 +106,12 @@ replacing Job/Task handoffs with one Task identity.
   bounded queued/claimed executable work, not new parallelism; immutable old configurations and
   explicit runtime overrides retain their meaning.
 
-Full migration, compatibility limits and evidence requirements live in the Contract/Architecture.
-There is no history clearing, new recovery system, arbitrary historical Reprocess or rollback.
+The supported persistence journey is fresh initialization → submit new work → same-version
+reopen/restart → inspect results or safely continue. Old-task migration/import/takeover and
+cross-version upgrade/rollback are excluded, as is V1 support. Failed/partial history from supported
+work and existing immutable configuration readability remain required. Full boundaries and evidence
+requirements live in the Contract/Architecture; no history clearing, new recovery system or arbitrary
+historical Reprocess is selected.
 
 ## TARGET — New organizing after failed/partial history (Slice47, 2026-11-02)
 
