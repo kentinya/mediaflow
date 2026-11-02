@@ -6,7 +6,7 @@ B 已独立复核候选 `46f44be43a39a81cf17146aa5db2c077bcde97ee`。A-P1-1 的�
 混入媒体标题，错误转为人工元数据修正；同文件目录入口成功。该问题在原 Task Base 也
 存在，不是 `2e1e293e` 引入；它属于原 AC-C3 与 RO-2/AC-4/24 明确包含的普通批量入口。
 继续同一 Task ID/Base/Goal，按末尾当前修复指导完成；无新 Task、无 Slice 范围变更。
-本轮 B 仅审查及维护 Task，未实施修复；尚未重新提交 Slice 就绪或关闭。
+Developer 已按该指导完成修正并交 B 复核；本轮未声明 PASS、SLICE READY FOR A REVIEW 或关闭。
 
 Authority: committed [SLICE.md](SLICE.md#a-final-review--fix-required--2026-11-02)，
 RO-1/2、AC-2/4/15/24 及原 RO-6/AC-20–25；
@@ -18,13 +18,13 @@ REQ-RECOVERY-006/009、REQ-RESULT-001–003、REQ-SAFE-*；按用户已提交修
 Task ID: 47.5
 Task Type: SLICE
 Parent Slice: 47
-Status: FIX REQUIRED
+Status: READY FOR B REVIEW
 Task Base: 75ddff55f8d5b2b1206c81804bfb5cbe9ed279a1
 Difficulty: High
 Test Level: T4
 Planner / Reviewer: B
 Current correction: B-P1-1 — batch root-file parsing; A-P1-1 verified fixed
-This turn: B REVIEW FIX REQUIRED; same Task correction guidance below
+This turn: DEVELOPER B-P1-1 CORRECTION — READY FOR B REVIEW
 ```
 
 ## Preflight / checkpoint / prior facts
@@ -33,6 +33,8 @@ This turn: B REVIEW FIX REQUIRED; same Task correction guidance below
   `python3 scripts/check_governance.py` PASS，无预存 tracked 修改，工作区/Git 可写。
   原有 OS/log、`15`、docs 参考图片、output 参考目录/ZIP/HTML 等未跟踪内容全部保留、不暂存；
   不访问用户数据库、媒体或私密配置。
+- B 在 `46f44be43a39a81cf17146aa5db2c077bcde97ee` 确认 A-P1-1 已修复、仅余 B-P1-1；
+  Developer 从 `245b2a7b` 继续同一 Task，修正 checkpoint 为 `32db236e`，未 rebase/重写历史。
 - Slice Base 保留 `5144ab1fc2344b06194969cc2c496835729664c0`；committed Slice 为
   FIX REQUIRED、Roadmap ACTIVE。A 的候选 `3cf1b6b4b59dbea0bbd2159c404e760f7bcd9417`
   未接受；本轮修正的比较起点为 `001ff5ba`，不是重设 Task/Slice Base。
@@ -204,58 +206,57 @@ queue claimed、容量 1；下一不同文件 queue-full；reopen 后仍占 1。
 `.git/validation-evidence/001ff5bae318656709e02d4f47443a63882f4237/b-correction-plan/`。
 详细 A 证据与前序 B 验收留在对应 Git/ignored 目录；未重写历史 PASS，也未交新的就绪 packet。
 
-## Developer Completion Report — READY FOR B REVIEW
+## Developer Completion Report — B-P1-1 correction — READY FOR B REVIEW
 
 ```text
-Task: 47.5 (same ID/Base/Goal; A-P1-1 correction only)
-Implementation checkpoint: 2e1e293ed7901b897ac316209c26c4ae4cd29556
+Task: 47.5 (same ID/Base/Goal; B-P1-1 correction only)
+Implementation checkpoint: 32db236e5534b15bd4b92aa12c5b9ab18511e96a
 Task Base: 75ddff55f8d5b2b1206c81804bfb5cbe9ed279a1
-Correction start: 001ff5bae318656709e02d4f47443a63882f4237
+Correction start: 245b2a7b (B review checkpoint 46f44be4; no rebase)
 Status: READY FOR B REVIEW
 ```
 
 ### 实际改动
 
-- `mediaflow/final_cli.py`：仅在普通 CLI pass 已返回的安全边界启用已有
-  `close_recorded_unknown_boundary=True`：
-  `_settle_direct_organize` 的终态 `settle`、人工等待 `defer_to_human`，以及
-  `final_main` 的取消/控制 `acknowledge_control`。`_drive_direct_organize_claim` 的
-  begin_work 失败路径未加该标志；默认安全拒绝、容量定义和内核检查未改。
-- `tests/test_automation_entrance_recovery.py`：复用现有 managed fixture、真实
-  `final_main`、SQLite/LocalStorage/Executor 和 fake Provider，只在目标 Storage 写入
-  处注入真实 `OSError(ENOSPC)`。新增真实 CLI 磁盘满→partial/unknown→exit 1/摘要/
-  settled/容量 0→另一文件正常准入→同版本 reopen；目录成功+失败混合批次；partial+
-  人工等待混合；故障后取消。均断言 Task/item/Result/容量/文件效果，不只 mock 调用。
-- `tests/test_task_scheduling.py`：新增 close-boundary 反例，证明 pass 标志不会在
-  仍有 processing 兄弟项时释放 claim/容量。
-- 未改 schema、队列、Storage/Provider、权限、pin、Web 或 A-owned 文档；未 push。
+- `mediaflow/application/media_organizer.py`：`_run_read_only_strategy` 不再把展示用
+  `source` 交给 Parser；解析使用 `process_file` 已持有的确切 `storage_path`
+  （`storage_path or source` 仅作无路径兜底）。`source` 仍用于 TaskItem/Result 展示身份、
+  日志、来源所有权、pin/授权；未按冒号切割字符串、未改 Parser/Provider/RecognitionRule/
+  Storage/Executor/容量或 schema。目录/子目录、root 文件、NFO 上下文和来源锁继续使用同一
+  Storage-relative 证据。
+- `tests/test_automation_entrance_recovery.py`：复用 managed fixture、真实 CLI/SQLite/
+  LocalStorage/Executor 和 fake Provider，新增两个真实 `batch organize` 旅程：
+  1. 根目录 `One`/`Two` 的 Provider 查询记录为 `One`/`Two`，一项真实 COPY 成功、另一项目标
+     写入 `ENOSPC`；断言 `partial_success`、独立 item/Result/unknown、exit 1+摘要、
+     queue settled/容量 0、reopen 不重放。
+  2. `Movies/With: Colon.2003.mkv` 由 directory RecognitionRule 命中，证明子目录证据来自
+     Storage-relative path、真实冒号文件名未被裁剪，来源/Result/展示身份分别正确。
+  fixture 仅增加可选 `recognition_rules`，不改变既有旅程的默认配置。
+- 未修改 A-owned 文档、Web、Worker/内核默认拒绝；未 push/部署。
 
 ### 实际验证（本机，临时隔离媒体/SQLite/fake Provider）
 
 | 命令 | 实际结果 |
 |---|---|
-| 新增 4 条真实 CLI 旅程 + 1 条 kernel 反例（定向） | 5 tests OK，0.314s |
-| `.venv/bin/python -m unittest tests.test_automation_entrance_recovery tests.test_task_scheduling tests.test_task_scheduling_fencing tests.test_batch_cli tests.test_task_retry tests.test_organize_source_history` | **97 tests OK**，6.312s；有既有 SQLite/SSL ResourceWarning，无失败 |
-| `.venv/bin/python -m unittest tests.test_task_persistence tests.test_manual_organize_execution tests.test_task_source_ownership_race` | **68 tests OK**，2.760s |
-| `ruff check` + `ruff format --check`（final_cli、两个测试模块、fencing） | 全部通过 |
-| `compileall`（final_cli、两个修改测试模块）、`check_governance.py`、`git diff --check` | 全部通过 |
+| 修复前复跑两条新回归（临时还原旧解析输入，已恢复） | 2 tests FAILED，分别 `1 != 0` 与 Provider 查询 `[]`，确认测试命中 B-P1-1 |
+| 两条新真实 `batch organize` 旅程定向 | 2 tests OK，0.160s |
+| `.venv/bin/python -m unittest tests.test_automation_entrance_recovery tests.test_resource_library_pipeline tests.test_final_integration tests.test_media_parser tests.test_organize_source_history tests.test_task_scheduling tests.test_task_scheduling_fencing tests.test_recognition tests.test_nfo_parser tests.test_manual_task_engine tests.test_task_source_ownership_race tests.test_manual_organize_execution tests.test_task_persistence tests.test_batch_cli tests.test_task_retry tests.test_manual_organize_preview` | **256 tests OK**，15.546s；仅既有 SQLite/SSL ResourceWarning，无失败/skip |
+| `ruff check` + `ruff format --check`（media_organizer、entrance tests） | 全部通过 |
+| `compileall`（两个修改模块）、`check_governance.py`、`git diff --check` | 全部通过 |
 
-本轮实际测试执行约 10 秒，远低于本轮用时的 30%。A 的旧探针断言的是修复前 bug，
-修复后其旧断言必然失败；实际输出已变为 exit 1、Task ID+SUMMARY、partial/unknown
-Result 保留、queue settled、容量 0，随后另一文件 exit 0，reopen 后容量仍 0。未把
-该旧断言失败误报为产品回归。
+本轮测试执行约 16 秒，低于本轮用时的 30%。证据（本地 ignored）：
+`.git/validation-evidence/developer-b-p1-1/`（`affected-tests.log`、
+`static-checks.log`、`pre-fix-regression.log`）。
 
 ### 已知失败 / 剩余风险
 
-- 未运行 B-owned 的完整 Python/Web/native/wheel/Docker/restart 验收；没有自称 PASS、
+- 未运行 B-owned 的完整 Python/Web/native/wheel/Docker/restart T4 验收；没有自称 PASS、
   SLICE READY FOR A REVIEW 或关闭 Slice。
-- 尝试用 fixture 的多候选 `batch organize` 做端到端混合批次时，`process_all_libraries`
-  的 `storage:path` source 被 parser 当作标题，两个候选进入 waiting_metadata_correction，
-  未到达结算。该链路本轮未修改；本修正以目录入口覆盖同一 `final_cli` 结算分支，
-  batch 端到端证据留给 B 判断是否需要另案处理。
-- 人工等待场景的 Task aggregate 仍沿用现有 direct CLI 语义（queue waiting_human、
-  Task pending），本轮只修正容量结算，未扩大为状态重设计。
-
+- 共享 `_run_read_only_strategy` 现在对所有 `process_file` 入口使用 Storage-relative
+  path 解析；这是本 Task 要求的解析输入修正，已用 recognition/NFO/manual/CLI 回归覆盖。
+  B 仍应按 T4 复核现有规则若依赖展示根绝对前缀时的实际配置语义。
+- 未新增不同 Storage ID 的多资源库 batch 专属旅程；既有 multi-storage pipeline 测试通过，
+  修复未触碰 Storage/source ownership 代码。B 的独立验收仍应覆盖其清单。
 
 ## B Review Result — FIX REQUIRED（当前）
 
