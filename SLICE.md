@@ -12,7 +12,7 @@ Working Branch: main
 Development Authorization: USER-REQUESTED REFACTOR; A SCOPE AUTHORITY — 2026-10-30
 Risk: High
 Final Test Level: T4
-Next Action: B PLANS BOUNDED CAPACITY-COMPATIBILITY CORRECTION FOR A-P1-2; NO SLICE CLOSURE
+Next Action: B REASSESSES TASK47.6 FOR AUTOMATION-ONLY SETTINGS SCOPE AND A-P1-2; NO SLICE CLOSURE
 ```
 
 ## Authority and accepted baseline
@@ -38,6 +38,56 @@ integration only as required below; it does not reopen or rewrite earlier accept
 - 将队列、Worker 领取、心跳、控制和状态职责整合进 Task；恢复续作复用现有四类流程。
 - 删除冗余 Job 代码、数据库结构和接口，保留现有功能、数据、安全机制及执行记录。
 - 先分析依赖，再实施迁移和重构，完成适用测试；不创建第二套执行或恢复系统。
+- 自动化页的全局设置只影响自动化工作；手动整理不受这些设置限制。
+
+## User-authorized settings-scope amendment — 2026-11-02
+
+The user explicitly confirms: **自动化页的设置应该只管自动化，手动整理不应受它限制。**
+This corrects A's earlier choice to promote the Automation capacity setting into an all-entrance
+Task bound. One Task engine does not require one configuration scope. This amendment supersedes
+the shared-capacity interpretation in RO-1, AC-2/12 and A-P1-2's earlier numeric-only correction
+direction. The observed CLI/Web failures and prior review evidence remain factual; changing
+1024 to 10000 alone cannot satisfy the amended outcome.
+
+- **Automation scope:** saved-definition due and Run once, whether started through Web/API/CLI.
+  Run once remains Automation work despite its explicit button click. All four existing fields
+  (`maximumActiveJobs`, `staleJobAgeSeconds`, `workerPollSeconds`, `schedulerPollSeconds`) apply
+  only to their Automation admission/observation/processing/scheduling consumers. Capacity counts
+  only eligible Automation-origin Tasks; manual Tasks neither consume that allowance nor become
+  blocked when it is full. Keep the published integer capacity range **1–10000** for Automation.
+- **Manual scope:** Files single/multiple/folder/mixed organizing and ordinary direct CLI/API/
+  remote-source organizing keep their own bounded admission and execution behavior. Changing any
+  legal Automation setting cannot change manual eligibility, scheduling cadence, staleness/failure
+  policy or confirmation/continuation capacity. Manual runtime defaults and explicit operational
+  overrides must be independent of the Automation form; B identifies their actual source in its
+  revised plan. No new manual/global settings page or knob is selected.
+- **One engine, scoped policy:** keep one Task lifecycle, repository scheduling authority, claim/
+  heartbeat/fence protocol, organizing application engine and OrganizerExecutor. Apply scoped
+  eligibility/counting/cadence using backend-proven admission origin and definition provenance;
+  never caller-supplied labels or the page from which a later action was clicked. Same-Task
+  confirmation/four-type continuation retains its original scope and pin. A shared Worker must
+  not use Automation polling/staleness values as manual-work policy. Resource contention and
+  cooperative safe boundaries remain; no new parallelism, preemption, second queue or engine.
+- **Preserved safety and UX:** distinct-source manual work can enter while the Automation
+  allowance is full; source ownership still prevents simultaneous work on the same concrete file.
+  Keep atomic scoped capacity/authority checks, due uniqueness, waiting/cancellation settlement,
+  safe non-replay, existing confirmation and truthful scoped refusal/adoption readback. Legal
+  settings Save preserves unrelated settings/Drafts and old immutable snapshots/digests. Invalid
+  values still fail before publication. Do not move/rename the form to justify keeping its
+  unintended manual effect, clamp legal values, add an operator bypass or remove bounded safety.
+
+`V2-TASK-011` records this TARGET boundary; implementation is still pending. Original Slice Base
+`5144ab1fc2344b06194969cc2c496835729664c0` and reviewed candidate
+`5c808d4a67bedfbafb71d88a1ffa8d3480ef5316` remain unchanged. This A scope checkpoint starts from
+`main` / `abbbd5afb6cd86da53e3118c4ee3d3f3e83bf840`, with no tracked dirty files; existing
+untracked/private files are preserved. No implementation, new candidate acceptance or closure occurs.
+
+**Handoff:** Task47.6 is still PLANNED with no implementation candidate. Its current all-consumers
+numeric-unification guidance is superseded and must not be implemented as written. B must explicitly
+reassess/amend the same Task against this committed Contract before Developer work, retaining its
+ID, true Base `c8657032dae768d93b12387a5e58db502e23a7ee` and earlier factual planning evidence;
+update its goal/scope/Difficulty/affected-test plan as needed. Final Slice T4 and independent A review
+remain required. A does not edit B's Task plan or start its implementation.
 
 ## User-authorized scope amendment — 2026-10-31
 
@@ -134,7 +184,7 @@ authorized work from accepted CURRENT delivery.
 
 ## Requirements and journeys
 
-- Authorized TARGET amendment `V2-TASK-001–007` in [V2 Requirements](docs/v2-requirements.md).
+- Authorized TARGET amendments `V2-TASK-001–011` in [V2 Requirements](docs/v2-requirements.md).
   It supersedes the V2 Job-object requirement in `REQ-TASK-008`, Job-emitting `REQ-SCHED-003`,
   Job-specific queue/readiness wording and Job/Task merging in the affected V2 Operations/Automation
   contracts. Frozen V1 meaning and accepted historical facts remain in Git/current baseline sections.
@@ -143,7 +193,8 @@ authorized work from accepted CURRENT delivery.
   interpreted through accepted V2 amendments including `V2-OPS-014–017`, `V2-FILES-007`,
   `V2-AUTO-006/010/011`.
 - [Product Experience](docs/product-experience.md) owns complete manual, scheduled, Run once,
-  result and four-type recovery journeys; its Slice47 TARGET changes work identity/dispatch only.
+  result and four-type recovery journeys; its Slice47 TARGET includes the explicit settings-scope,
+  history and control amendments above.
 - [Architecture](docs/architecture.md) owns CURRENT versus TARGET contracts;
   [Task Center specification](docs/task-center-page-spec.md) retains its eight-view/page semantics.
 
@@ -187,9 +238,11 @@ its own competing lifecycle. Internal per-attempt/decision/plan evidence may rem
 it is not another operator work or scheduler. Existing safe evidence/authority records are not
 redundant merely because Job is removed.
 
-The shared scheduling capacity counts distinct organizing Tasks with admitted pending machine work
-or a running Worker stage, including discovery, analysis and execution. Each Task uses at most one
-slot across manual/due/Run once and permitted continuation, regardless of its item/attempt count.
+Within its applicable scheduling policy, capacity counts distinct organizing Tasks with admitted
+pending machine work or a running Worker stage, including discovery, analysis and execution.
+Each Task uses at most one applicable slot across its stages and permitted continuation,
+regardless of its item/attempt count. Automation's configured allowance counts only Automation
+work as defined in the settings-scope amendment; manual admission is independent of that allowance.
 Machine-timed stability waiting remains queued work. The counting boundary is:
 
 | Situation | Capacity use |
@@ -210,8 +263,9 @@ authority checks; refusal does not register an automatic continuation. Decision 
 queue slot and grants no effects. An exact duplicate of already admitted work reconciles to it even
 when full, without another slot. Slot release never releases durable source ownership or makes
 uncertain effects replayable. Capacity remains admission control, not new worker/thread parallelism.
-Move current capacity/staleness settings and actual resident adoption to the Task meaning, preserving
-supported configurations, explicit overrides and immutable historical pins. Staleness is evidence,
+Move current Automation capacity/staleness settings and actual resident adoption to Automation-origin
+Task meaning only, preserving supported configurations, explicit overrides and immutable historical
+pins. Automation polling must not govern manual scheduling. Staleness is evidence,
 never automatic permission to replay an effect. Ordinary operations retain their existing scope,
 controls and safe runners; adapt shared integration without redesigning their queues.
 
@@ -308,7 +362,7 @@ truthful. Files keeps exact request reconciliation/return, initial confirmation 
 local progress on both library kinds; no extra work picker/global monitoring block is added.
 
 Automation keeps definitions, due/calendar/latest metrics, enablement/Run once, read-only original
-execution records and consumed settings. Records preserve original outcome filtering, actual times,
+execution records and Automation-only consumed settings. Records preserve original outcome filtering, actual times,
 concise failure/next-step presentation and no later-handling controls. Dashboard, task-scoped logs,
 JSON exports, health/readiness, CLI and API use Task identities/behavior. Retained old deep links or
 identifiers resolve read-only to proved Task/history or bounded unavailable/denied evidence; they
@@ -361,7 +415,7 @@ RecognitionType C remains C with NamingPolicy A and ClassificationPolicy A. No F
 | ID | Required proof |
 |---|---|
 | AC-1 | Manual file/folder/mixed submission, due occurrence and Run once each admit exactly one stable organizing Task before business readiness and preserve source scope/limits/pins and exact request readback. |
-| AC-2 | Manual/due/Run once and permitted continuation share one distinct-Task bound under concurrency; simultaneous Scheduler ticks admit one Task per occurrence with atomic due advance. Prove one slot across multiple items/attempts, zero for wholly human-waiting work, one while other machine work or an unacknowledged active call remains, and atomic re-entry. Full capacity preserves existing waiting work and saved choices/results without authority consumption or automatic continuation; new admission has no orphan, an existing duplicate still reconciles, and a refused due tick leaves its occurrence/due state unchanged. |
+| AC-2 | One Task scheduling authority enforces the applicable origin-scoped bound atomically under concurrency; Automation capacity counts only due/definition Run once work and its same-Task continuation. Manual work neither consumes that allowance nor is refused because it is full. Simultaneous Scheduler ticks admit one Task per occurrence with atomic due advance. Prove one applicable slot across multiple items/attempts, zero for wholly human-waiting work, one while other machine work or an unacknowledged active call remains, and atomic re-entry. Full applicable capacity preserves waiting work/choices/results without authority consumption or automatic continuation; no orphan, duplicate still reconciles, refused due remains due. |
 | AC-3 | Concurrent Workers claim at most one effective owner; stale-owner heartbeats/item/result/aggregate writes and controls cannot defeat current ownership. Capacity release follows the documented safe boundary; human waiting is not busy-loop claimed or used to release source ownership. Readiness is Task-based and read-only. |
 | AC-4 | All organizing entrances use the shared application engine and production pipeline/Executor; no Job queue, CLI-output Task extraction or second engine remains. |
 | AC-5 | Files manual exact summary/selected confirmation, scheduled enable intent and disabled Run once follow existing distinct authority semantics; denied/stale/unknown requests, disable/remove/permission-loss races fail safely. |
@@ -371,7 +425,7 @@ RecognitionType C remains C with NamingPolicy A and ClassificationPolicy A. No F
 | AC-9 | Genuine Base schema53 fixtures migrate/reopen with linked/unlinked Jobs, every supported status, pre-start failures, old continuation chains, request/due uniqueness, consumed/revoked authority and exact audit/log/attachment/result identity intact. Residual unknown/retired Job rows survive as non-executable history with their original meaning. |
 | AC-10 | Failure injection proves migration rollback, unchanged prior authority/schema marker and safe repeat/reopen; quiescence/schema/fence checks reject incompatible writers and never restart entered uncertain work automatically. |
 | AC-11 | Fresh and upgraded databases have no live Job table/index/FK/queue; source/wheel/container expose no redundant Job domain/repository/dispatch/API/CLI/Web path. Provenance/parser exceptions are bounded/read-only, not a compatibility executor. |
-| AC-12 | Existing supported configuration and immutable pins remain readable with unchanged meaning/digests; Task capacity/staleness and Worker/Scheduler cadence/override/adoption semantics are truthful. |
+| AC-12 | Supported configuration and immutable pins remain readable without changing stored revisions/digests. Under V2-TASK-011, Automation capacity/staleness/polling/adoption apply only to Automation-origin work; manual runtime policy is independent. Retain legal capacity 1–10000, invalid-input refusal, explicit overrides and truthful consumer scope. |
 | AC-13 | Eight-view Task Center counts, filters, cursors, detail, four-type union and recovery-complete projection remain consistent across all pages/restart; ordinary work/analysis-only preparation remains outside its organizing population. |
 | AC-14 | Automation definitions/Run once/metrics/latest and original records retain independent truth; old failures/times/known effects survive later recovery, filtering and paging. Original execution counts once and recovered work creates no second original run. |
 | AC-15 | Files exact task/preparation/unknown readback, ordinary local operations on both library kinds, Dashboard, scoped logs/audit/JSON, API/CLI/health and proved old-link resolution work without Job collections or new authority. |
@@ -385,6 +439,7 @@ RecognitionType C remains C with NamingPolicy A and ClassificationPolicy A. No F
 | AC-23 | Backend source checks distinguish file items with no terminal outcome from items already failed/partial; parent Task running or historical unknown markers alone cannot block the latter's new manual request. Necessary atomic application fencing/lock/current-state changes preserve old outcomes/Results/pins/steps/unknown evidence and siblings, and do not claim a remote call stopped. Normal source/plan/permission/queue/request checks remain; an unrelated history append alone adds no re-confirmation chore. |
 | AC-24 | No live retry-failed parser/help/dispatch/exclusive helpers remain in source, clean wheel or image; documentation and negative-test literals may remain. Old input stops without Task/Provider/Storage/authority effects. Normal CLI/remote source/authority semantics, organize/analysis and same-Task four-type continuation/ignore remain; no new CLI warning or remote history gate is required. |
 | AC-25 | Real V2 Files/API/SQLite/Worker desktop/narrow journeys prove warning → normal confirmation → actual new organize effects; scheduled and Run once probes prove exclusion/free siblings/no-work truth. Old Results/pins/unknown effects and original Automation time/outcome stay immutable. B supplies applicable T4/native/packaging/restart validation for RO-6 before whole-Slice A review. |
+| AC-26 | Existing Automation settings Save/readback at 1/1025/10000 remains valid for real due/Run once consumers. With its allowance full on other source files, Files manual and normal CLI/API/remote-source work can admit and complete through their normal authority/summary paths without consuming the Automation allowance; manual occupancy cannot fill that allowance either. Same-Task waiting/re-entry preserves backend-proven origin and atomic authority checks. Change each of the four legal Automation settings and prove it cannot govern manual capacity/cadence/staleness, including actual resident adoption and same-version restart. Keep bounded manual scheduling, same-source fencing, invalid-input/queue-full safety, records/pins and real Storage effects. Include a real Web Save → Files → normal summary/confirmation → execution journey; B supplies affected/T4/package evidence without a second queue or new settings UI. |
 
 ## Validation and handoff
 
@@ -491,6 +546,10 @@ unchanged. Pre-existing untracked files remain unstaged; no product/test edits o
 
 ## A Final Review — FIX REQUIRED — capacity compatibility — 2026-11-02
 
+The settings-scope amendment above supersedes this review's original numeric-only correction
+direction. Its reproduced failures and validation evidence remain factual; acceptance now also
+requires Automation/manual isolation under V2-TASK-011 and AC-26.
+
 ```text
 Slice Base: 5144ab1fc2344b06194969cc2c496835729664c0
 Reviewed Implementation Head: 5c808d4a67bedfbafb71d88a1ffa8d3480ef5316
@@ -539,17 +598,14 @@ It is an in-Slice P1 compatibility gap, not an independent minor bug, a capacity
 user feature. Reproduction needs one file and an ordinary legal Save, with no fabricated endpoint,
 repository state, exhausted queue, Provider fault or thousands of admitted Tasks.
 
-**Correction boundary for B:** preserve the existing published 1–10000 capacity contract across
-the Task kernel and real consumers. Reuse one consistent validated bound where practical; do not
-silently clamp, lower the accepted setting, rewrite old snapshots/digests or add a second queue.
-Prove the existing settings Save/readback → actual organizing admission/execution at the relevant
-boundary values, including 1025 and 10000, plus invalid bounds and unchanged queue-full atomicity,
-source ownership, authority consumption and waiting/terminal capacity semantics. No need to admit
-10000 tasks to prove that a legal configured ceiling works. Include affected Files/Run once/due/
-CLI/remote consumption as appropriate, then B's applicable T4/whole-Slice reassessment and fresh
-Closure Packet. B owns the coherent correction Task and its real pre-implementation Base; preserve
-Task47.5's passed history/CLI fixes rather than changing its goal or erasing its results. A implements
-no fix and does not close or reconcile CURRENT on this rejection.
+**Current correction boundary for B:** follow the user-authorized settings-scope amendment,
+V2-TASK-011 and AC-26. Preserve Automation's legal 1–10000 range in its real consumers and remove
+the Automation settings' control over manual admission/processing. Reassess Task47.6 before
+implementation; numeric range alignment alone is insufficient. Keep atomic applicable capacity,
+source/authority/fence/waiting semantics, immutable pins and a single Task engine. No need to admit
+10000 tasks to prove a legal ceiling. B owns affected/T4 acceptance, whole-Slice reassessment and a
+fresh Closure Packet. Preserve Task47.5's passed fixes/history; A implements no product fix and does
+not close or reconcile CURRENT on this rejection.
 
 **Independent evidence:** local ignored root
 `.git/validation-evidence/5c808d4a/a-final-review/` (local only).

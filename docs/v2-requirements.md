@@ -54,8 +54,14 @@ data-preservation obligations remain. Frozen V1 and prior accepted implementatio
 | V2-TASK-005 | Operator and administrative capabilities consume Tasks without redundant Job surfaces. | Task Center keeps its eight organizing views/four-type union and consistent server paging/counts; Files keeps exact readback/confirmation and local ordinary work. Automation definitions, records/metrics/settings, Dashboard, logs/export and readiness remain complete. Original execution outcomes/times stay distinct from later handling. Remove Job collections/submission/control/stale-requeue APIs/CLI/frontend; existing capabilities use safe Task equivalents. Proven old identifiers may resolve read-only to Task/history, never execution. |
 | V2-TASK-006 | The refactor completely removes the live Job model/schema/queue while preserving execution safety. | Fresh/upgraded runtime, source, installed package and container contain no redundant Job table/index/FK/domain/repository/dispatch or parallel writer. Bounded migration provenance and legacy configuration parsing may preserve supported history/pins without retaining a Job executor. RBAC, explicit effect intent, immutable pins, source ownership/confinement, claim/lease/fences, zero-mutation analysis, C→A identity and OrganizerExecutor-only mutation remain; test real native journeys and migration/restart, not only renamed models. |
 | V2-TASK-007 | Retire Pause and resume-from-pause for organizing and ordinary-file operations under the user scope change. | No Web/API/CLI action or dedicated live dispatch remains; old commands are refused without effects. Keep safe cancellation, four-type organizing continuation and readable history. No dedicated paused-organizing migration/restoration system is required. |
+| V2-TASK-011 | Automation global settings affect only Automation work, independently of manual organizing. | The four existing Automation capacity/staleness/Worker-poll/Scheduler-poll settings govern saved-definition due/Run once work only. Backend-proven admission origin remains through same-Task continuation. Manual Files and normal direct CLI/API/remote-source work neither consume Automation capacity nor become subject to its fullness, polling or staleness policy. Keep one Task engine/scheduling authority, bounded manual runtime policy, atomic applicable limits, source/authority/fence safety and truthful scoped adoption. Preserve Automation capacity 1–10000 and invalid-input refusal; no second queue, new settings page or relabelling the form to retain cross-scope effects. |
 
-The shared scheduling bound counts each organizing Task with pending machine work or an active
+**2026-11-02 settings-scope amendment:** `V2-TASK-011` supersedes the earlier all-entrance
+shared-capacity interpretation of this TARGET and affected `V2-AUTO-007/008` consumer wording.
+The user explicitly requires Automation-page settings to affect Automation only; a shared engine
+does not expand configuration scope. This is required work, not accepted delivery.
+
+Each applicable scheduling bound counts a Task with pending machine work or an active
 Worker stage once, including discovery/analysis/execution and machine-timed stability waiting.
 Wholly human-waiting work with no queued/claimed machine work uses zero slots;
 a cancellation request alone does not release a slot while work/a call remains active. Re-entry is
@@ -63,9 +69,10 @@ capacity-checked atomically. A queue-full refusal preserves an existing Task's w
 choices/summary/results, consumes no authority and registers no automatic continuation; an explicit
 later retry rechecks normal authority/freshness. A full due tick does not create an occurrence or
 advance due state. Decision Save needs no slot; exact admitted duplicates reconcile without another
-slot. Source ownership and uncertainty protections survive slot release. Capacity is not Worker/thread
-parallelism. Job-named settings in historical published snapshots must
-remain reproducible; adopt Task terminology/semantics through compatible parsing or explicit checked
+slot. Automation's allowance counts only Automation-origin work; manual work retains independent
+bounded policy without a new configuration product. Source ownership and uncertainty protections
+survive slot release. Capacity is not Worker/thread parallelism. Job-named settings in historical
+published snapshots must remain reproducible; adopt Task terminology/semantics through compatible parsing or explicit checked
 successors, never by changing an old revision/digest. No unrelated ordinary-file queue, notification
 delivery or supervision redesign is selected. Full outcomes/evidence are in the committed Contract.
 

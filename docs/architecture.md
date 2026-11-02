@@ -51,9 +51,9 @@ child Task identities/relations remain traceable historical evidence.
 Task owns atomic bounded admission, ready/queued eligibility, current Worker claim generation,
 heartbeat/staleness and cooperative controls. Every item/result/aggregate publication observes the
 same effective fence. Source ownership spans human waiting work; an execution lease is not
-its substitute. Human-waiting work does not busy-loop in claim selection. Shared capacity counts
-distinct Tasks with pending machine work or a running Worker stage once, including discovery,
-analysis, execution and machine-timed stability waiting. Wholly human-waiting
+its substitute. Human-waiting work does not busy-loop in claim selection. Each applicable
+origin-scoped capacity counts distinct Tasks with pending machine work or a running Worker stage
+once, including discovery, analysis, execution and machine-timed stability waiting. Wholly human-waiting
 Tasks with no queued/claimed machine work use zero slots. Cancellation requests keep the slot until
 active work/calls reach the acknowledged safe boundary. Re-entry and authority consumption share
 the capacity transaction: full capacity preserves the existing waiting Task and choices/
@@ -72,6 +72,33 @@ Four-type recovery retains explicit safe continuation in every case. Scheduler a
 occurrence/due-state idempotency atomically; it never chooses media policy or invokes Storage mutation.
 Worker consumes Task/pin directly; no CLI-output parsing or separate Job execution bridge remains.
 Only OrganizerExecutor mutates, with current permission/effect/scope/capability/source/fence checks.
+
+### Automation settings scope — user amendment, 2026-11-02
+
+`V2-TASK-011` replaces the earlier all-entrance interpretation of Automation capacity. The existing
+Automation form's four fields govern saved-definition due and Run once work only. Files/direct
+CLI/API/remote-source manual organizing uses bounded runtime policy independent of these values;
+it neither consumes Automation capacity nor is gated by its fullness. Legal Automation Save must
+not change manual scheduling cadence, staleness/failure policy or confirmation/continuation capacity.
+Keep the existing form and published capacity 1–10000; moving it to System Settings is not the
+selected correction. No new manual/global-capacity setting is selected.
+
+One Task repository/scheduling authority and shared organizing engine/Executor remain. Resolve
+policy from backend-proven admission origin and definition provenance; same-Task continuation
+retains that scope/pin even when a human clicks a recovery action. Callers cannot relabel work to
+bypass limits. Apply scoped counting/eligibility and authority consumption atomically at admission
+and machine-work re-entry. Shared source ownership/fences, waiting/cancellation settlement and
+uncertain-effect non-replay still apply across both origins. A full Automation allowance must not
+block distinct-source manual admission, and manual occupancy cannot fill the Automation allowance.
+
+Resident integration must scope Automation polling/staleness to Automation consumers without
+using them as manual-work defaults or process-wide failure rules. Adoption evidence identifies
+the actual eligible scope and installed values. Keep independent manual runtime defaults/explicit
+operational overrides, one claim/heartbeat/fence protocol, safe bounded scheduling and no new
+parallelism, second queue, supervisor or execution engine. Shared physical resource contention is
+not a promise of immediate/preemptive manual execution. Immutable configuration documents/digests,
+existing admitted pins, permissions and original results remain intact. This is TARGET work pending
+Task47.6 reassessment, implementation and whole-Slice acceptance, not CURRENT reconciliation.
 
 ### Recovery, queries and original execution records
 

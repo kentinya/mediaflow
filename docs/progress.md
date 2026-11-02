@@ -11,17 +11,21 @@ workflow authority. Closure rules live only in
 Slice47 — **Unified Task Scheduling and Organizing Execution** — is **FIX REQUIRED** after A's
 latest 2026-11-02 independent review; its Roadmap remains ACTIVE. Immutable Base:
 `5144ab1fc2344b06194969cc2c496835729664c0`; reviewed candidate (not accepted):
-`5c808d4a67bedfbafb71d88a1ffa8d3480ef5316`. [SLICE.md](../SLICE.md) records **A-P1-2**:
-existing global settings publish legal capacity 1025, then ordinary CLI organizing fails because
-the new Task kernel accepts only 1–1024 instead of the published 1–10000. A reproduced the exact
-Save → CLI failure → Save 1024 → actual COPY recovery in one isolated managed deployment.
+`5c808d4a67bedfbafb71d88a1ffa8d3480ef5316`. [SLICE.md](../SLICE.md) records **A-P1-2** and the
+user's explicit Automation-only settings amendment (`V2-TASK-011`). Automation's four settings
+govern saved-definition due/Run once only; manual Files/direct CLI/API/remote-source work remains
+independent. A's real CLI/Web Save 1025 → failure → Save 1024 → execution evidence remains factual.
+Its numeric-only correction direction is superseded; no implementation has been accepted.
 
-Next: **B plans one bounded in-Slice compatibility correction**, retains the published range and
-queue/authority safety, then supplies fresh acceptance and a Closure Packet. A independently
+Next: **B reassesses/amends PLANNED Task47.6 before implementation**, retaining its ID/true Base
+and factual planning evidence. Preserve Automation's 1–10000 range, one engine and scoped atomic
+safety; prove a full Automation allowance cannot block distinct-source manual work, manual work
+does not consume that allowance, and all four settings keep their scope. B then supplies applicable
+T4/whole-Slice acceptance and a fresh Closure Packet. A independently
 verified A-P1-1 CLI settlement and B-P1-1 batch parsing fixed, ran 141 focused tests and 3 real
 browser journeys (all OK), and checked B's raw acceptance/artifact evidence. Task47.5's PASS and
 latest six-outcome packet remain at `7ac253dd:TASK.md`; no previous acceptance is rewritten.
-The six outcomes/AC-1–25 and user amendments remain, including no old-task/cross-version upgrade
+The six outcomes/AC-1–26 and user amendments remain, including no old-task/cross-version upgrade
 or V1 support. This review implements no fix and performs no CURRENT reconciliation or closure;
 the accepted large-Slice ledger below is unchanged.
 

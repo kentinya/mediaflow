@@ -39,6 +39,19 @@ replacing Job/Task handoffs with one Task identity.
   Automation definition run when due, or explicitly Run once on its saved scope. These entrances
   admit the same kind of durable organizing Task before rule/metadata/target/conflict readiness.
   Disabled Run once stays schedule-independent; browsing/analysis creates no execution authority.
+- **Automation settings scope — 2026-11-02 user amendment (`V2-TASK-011`):** `自动化 → 全局设置`
+  governs saved-definition due/Run once work only. All four capacity/staleness/polling values keep
+  that scope; they cannot limit manual Files or ordinary direct CLI/API/remote-source organizing.
+  Saving any legal capacity, including 1025/10000, must leave manual selection → admission → exact
+  summary → normal confirmation → real execution usable without lowering the value or restarting.
+  With Automation capacity 1 already occupied by another source, manual work can still enter;
+  manual work does not use that Automation allowance. The same concrete source remains protected
+  from simultaneous organizing. Same-Task confirmation/recovery keeps its original admission scope.
+  Publication/adoption/refusal explain the real Automation scope. Invalid Save preserves Active/input;
+  actual Automation fullness retains normal due/Run once recovery without consuming authority.
+  Shared execution code and ordinary resource contention remain; no second engine, new manual
+  settings page, extra confirmation or promise of immediate execution is introduced. This supersedes
+  the earlier all-entrance capacity interpretation, not prior accepted closure facts.
 - **Visible state:** the exact Task shows queued/discovery/analysis/waiting/execution stage,
   independent files, bounded explanations, real completed/partial/uncertain effects and current
   allowed actions. Queued and pre-start failures are Task evidence rather than a separate Job to

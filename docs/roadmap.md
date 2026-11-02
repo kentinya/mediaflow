@@ -40,14 +40,18 @@ Slice47 — **Unified Task Scheduling and Organizing Execution** — remains **A
 Roadmap; A's latest independent review on 2026-11-02 returned **FIX REQUIRED**. Immutable Base:
 `5144ab1fc2344b06194969cc2c496835729664c0`; reviewed candidate (not accepted):
 `5c808d4a67bedfbafb71d88a1ffa8d3480ef5316`. [SLICE.md](../SLICE.md) retains six outcomes,
-AC-1–25, explicit user amendments and the current **A-P1-2** finding. B's latest Closure Packet is
+AC-1–26, explicit user amendments and the current **A-P1-2** finding. B's latest Closure Packet is
 preserved at `7ac253dd11ab3453f36cd40500c79c72b4f888de:TASK.md`.
 
-**Next: B plans one bounded capacity-compatibility correction in Slice47.** Existing Automation
-settings successfully publish a legal capacity of 1025 (advertised range 1–10000), but ordinary
-CLI organizing then fails because the new Task kernel accepts only 1–1024. A reproduced the Save
-and failure in one isolated managed deployment; saving 1024 restores actual execution. Keep the
-published range and align consumers without clamping, repinning or weakening queue safety.
+**Next: B reassesses Task47.6 against the user's Automation-only settings amendment.** The four
+settings in Automation affect saved-definition due/Run once work only; manual Files/direct CLI/API/
+remote-source organizing is independent. Keep one Task engine and scoped atomic safety, preserving
+Automation's legal capacity 1–10000. A's existing CLI/Web 1025 failure evidence remains factual,
+but raising the kernel bound alone no longer satisfies acceptance. The current PLANNED Task's
+all-consumer numeric-unification guidance must be amended by B before implementation, retaining
+its ID/true Base and factual history. `V2-TASK-011` / AC-26 require proof that manual work remains
+independent when Automation is full, and that all four settings retain their scope, without a
+second queue or new settings page.
 Prior A-P1-1 CLI settlement and B-P1-1 batch parsing are independently verified fixed; Task47.5's
 PASS history remains factual. No product fix, new Slice selection, CURRENT reconciliation or
 closure is conducted here. Old-task/cross-version upgrade and V1 support remain excluded.
