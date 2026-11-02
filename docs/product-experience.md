@@ -39,19 +39,25 @@ replacing Job/Task handoffs with one Task identity.
   Automation definition run when due, or explicitly Run once on its saved scope. These entrances
   admit the same kind of durable organizing Task before rule/metadata/target/conflict readiness.
   Disabled Run once stays schedule-independent; browsing/analysis creates no execution authority.
-- **Automation settings scope — 2026-11-02 user amendment (`V2-TASK-011`):** `自动化 → 全局设置`
-  governs saved-definition due/Run once work only. All four capacity/staleness/polling values keep
-  that scope; they cannot limit manual Files or ordinary direct CLI/API/remote-source organizing.
-  Saving any legal capacity, including 1025/10000, must leave manual selection → admission → exact
-  summary → normal confirmation → real execution usable without lowering the value or restarting.
-  With Automation capacity 1 already occupied by another source, manual work can still enter;
-  manual work does not use that Automation allowance. The same concrete source remains protected
-  from simultaneous organizing. Same-Task confirmation/recovery keeps its original admission scope.
-  Publication/adoption/refusal explain the real Automation scope. Invalid Save preserves Active/input;
-  actual Automation fullness retains normal due/Run once recovery without consuming authority.
-  Shared execution code and ordinary resource contention remain; no second engine, new manual
-  settings page, extra confirmation or promise of immediate execution is introduced. This supersedes
-  the earlier all-entrance capacity interpretation, not prior accepted closure facts.
+- **System runtime settings — 2026-11-03 user amendment (`V2-TASK-011`):** open `系统设置`
+  → inspect the three published runtime values and their scope → edit and Save → distinguish this
+  publication from actual consumer adoption/pending/override. Automation keeps definitions and
+  records; its old settings links navigate here, without a second ordinary form. Invalid/stale/denied
+  Save preserves Active/input; unknown publication is reconciled before another submission.
+  Save 1025/10000 → Files selection → task admission → exact summary → normal confirmation → actual
+  result works without lowering the legal value or routine restart. With capacity 1 occupied by
+  either manual or automatic organizing, a distinct new organizing request explains the full system
+  queue; after safe release, explicitly retry it or let due work reach its next normal check.
+  Same-Task re-entry preserves choices/results/authority if full. No source-label bypass or extra
+  routine confirmation is added. Ordinary asynchronous copy/move/delete keep their own admission
+  rules and local state, while sharing the Worker's idle cadence. Scheduler cadence only affects
+  when Automation due definitions are checked; it does not control manual/Run once submissions,
+  individual task duration or definition schedules. Publication/heartbeats are not business polls.
+  Users no longer see or set “失效判定时间”; no replacement no-progress prompt or total-runtime
+  timeout is added. Current heartbeat, lease/renewal and individual call timeouts still apply, with
+  the same safe controls and uncertain-effect non-replay. Existing snapshots containing the old key
+  remain readable without changing their identity or requiring manual cleanup. This replaces the
+  prior Automation-only scope and intermediate four-setting plan, not historical acceptance.
 - **Visible state:** the exact Task shows queued/discovery/analysis/waiting/execution stage,
   independent files, bounded explanations, real completed/partial/uncertain effects and current
   allowed actions. Queued and pre-start failures are Task evidence rather than a separate Job to
@@ -95,7 +101,7 @@ replacing Job/Task handoffs with one Task identity.
 - **Existing surfaces:** Task Center retains eight organizing views and the four-type Attention
   union; Files retains initial confirmation and exact task/preparation readback. Both library
   kinds keep ordinary-operation progress/recovery locally. Automation keeps definition lifecycle,
-  records/metrics and consumed settings; Dashboard, scoped logs/export, API/CLI and health retain
+  records/metrics; System Settings owns the three runtime fields. Dashboard, scoped logs/export, API/CLI and health retain
   their capabilities through Tasks. No Job management page/API/CLI command remains. Capacity is
   bounded queued/claimed executable work, not new parallelism; immutable old configurations and
   explicit runtime overrides retain their meaning.
@@ -540,6 +546,10 @@ normal runs use normal scope/checks; no failed-item selection or cross-run obser
 
 ### CURRENT — Complete native Automation workspace (accepted43, amended46)
 
+The settings tab/four-field form described in this CURRENT baseline is replaced only by the
+pending Slice47 TARGET above. Its historical acceptance is unchanged; the new location/parameter
+removal is not yet implemented or accepted.
+
 - **Entry/state:** shared-shell `自动化` opens the real definition inventory; name/打开/direct links
   read saved definitions before/after enablement, including truthful disabled/unavailable states.
   Malformed/denied/not-found/read errors remain bounded; no grant-eligibility dependency returns.
@@ -594,7 +604,9 @@ normal runs use normal scope/checks; no failed-item selection or cross-run obser
   tutorials, schedule/timezone lessons and JSON examples are omitted. Healthy instance details and
   diagnostic identities start folded; pending/unavailable/overridden states and concrete next actions
   remain visible. One Save preserves unrelated Draft/configuration. Capacity is pending+
-  running Job count, stale age is no-update observation, and Worker/Scheduler polling must be
+  running Job count. The current stale-age field is configuration/readback only, with no actual
+  Task no-progress observer; it must not be presented as working timeout detection.
+  Worker/Scheduler polling must be
   adopted by actual resident loops without routine restart. Published/adopted/pending/override/
   stale or unavailable consumers have truthful readback and concrete repair guidance.
   Each fresh live instance must prove its own adoption. Stopped/expired predecessors remain folded

@@ -32,7 +32,7 @@ only in [the development workflow](development-workflow.md).
 | 44 — Existing V2 Pages Functional Improvements | Improve existing V2 pages: consistent ResourceLibrary/MediaLibrary ordinary file operations with optional fingerprints; reference-aligned Rules presentation; classification destinations using MediaLibrary plus path with explicit legacy conversion and preserved historical authority; object-scoped Rules tests and separate complete-flow checks; usable long-name paths/toolbars on both library pages; bounded ResourceLibrary folder/mixed-selection organization through exact Preview and confirmed execution | PASS / CLOSED | Accepted existing V2 pages through 42; explicit user priority change before 43 closure |
 | 45 — V2 Task Center, Recovery and Scan/Preview/FileIndex Retirement | Deliver nine authoritative task/recovery lists, in-context exact plan-summary confirmation, durable per-item results/controls, first-deployment absence of Scan and standalone Preview products/compatibility layers, complete FileIndex retirement, and shared CLI/Files/MediaLibrary live lists without catalog recording | PASS / CLOSED | Accepted Slice44 baseline; existing Operations/Files/Task/Worker/recovery foundations; explicit user priority change and required retirement-coupling exceptions before Slice43 closure |
 | 46 — V2 Organizing Task Center and Readable Actions | Repair V2 action readability; start manual organizing only from ResourceLibrary Files and admit tasks before business-rule readiness, retaining folder media-type filtering, same-source unfinished-work/explicit-extension checks and task-native four-type recovery; keep ordinary-file progress/results/recovery on each library page; restrict Task Center to organizing work with eight views and four business types in Attention/pending counts, removing Failure Recovery, other failures' separate statistics/guidance and creation/global Worker/discovery/manual-operation blocks; fix Automation detail opening/continued Save editing, make checked Enabled authorize scheduled execution without independent grants, and make Run once execute a real task before rule readiness with four-type recovery | PASS / CLOSED | Accepted43–45 baseline and existing shared action, live Files, durable direct-command/transfer/Delete, organizing/recovery and Automation publication/grant/Scheduler foundations |
-| 47 — Unified Task Scheduling and Organizing Execution | Remove independent Job; unify organizing Task/Worker and four-type recovery; add source-dependent failed/partial history filtering, warned new manual organizing and CLI retry-failed retirement under the 2026-11-02 scope amendment | ACTIVE | Accepted43–46 and subsequent accepted corrections at `5144ab1fc2344b06194969cc2c496835729664c0`; explicit user refactor/A scope authorization, amended 2026-11-02 |
+| 47 — Unified Task Scheduling and Organizing Execution | Remove independent Job; unify organizing Task/Worker and four-type recovery; add source-dependent failed/partial history handling and CLI retry-failed retirement; move three shared runtime settings into System Settings and delete the unused stale-age parameter | ACTIVE | Accepted43–46 and subsequent accepted corrections at `5144ab1fc2344b06194969cc2c496835729664c0`; explicit user refactor/A scope authorization, amended 2026-11-03 |
 
 ## Current boundary
 
@@ -43,15 +43,17 @@ Roadmap; A's latest independent review on 2026-11-02 returned **FIX REQUIRED**. 
 AC-1–26, explicit user amendments and the current **A-P1-2** finding. B's latest Closure Packet is
 preserved at `7ac253dd11ab3453f36cd40500c79c72b4f888de:TASK.md`.
 
-**Next: B reassesses Task47.6 against the user's Automation-only settings amendment.** The four
-settings in Automation affect saved-definition due/Run once work only; manual Files/direct CLI/API/
-remote-source organizing is independent. Keep one Task engine and scoped atomic safety, preserving
-Automation's legal capacity 1–10000. A's existing CLI/Web 1025 failure evidence remains factual,
-but raising the kernel bound alone no longer satisfies acceptance. The current PLANNED Task's
-all-consumer numeric-unification guidance must be amended by B before implementation, retaining
-its ID/true Base and factual history. `V2-TASK-011` / AC-26 require proof that manual work remains
-independent when Automation is full, and that all four settings retain their scope, without a
-second queue or new settings page.
+**Current plan: Task47.6 remains PLANNED for the user's 2026-11-03 system-settings decision.**
+Three fields move to the existing System Settings page: shared organizing capacity 1–10000,
+shared Worker idle cadence (including ordinary asynchronous file work), and Automation-due-only
+Scheduler cadence. Delete the unused stale-age parameter; keep current heartbeat/lease/call-timeout
+logic and readable immutable snapshots, without a new no-progress observer. Automation retains
+definitions/records and safe old-link navigation. One Task engine and atomic safety remain; ordinary
+file queues are not moved into organizing capacity. `V2-TASK-011` / AC-12/26 replace the prior
+Automation-only/four-field boundary. A's CLI/Web 1025 failure evidence remains factual; actual
+three-field Save → normal Files summary/confirmation → effects and affected/T4/package evidence
+remain required. B retains Task ID/true Base and aligns it to the committed Contract. Developer
+remains stopped by the user; this scope/document action does not start implementation.
 Prior A-P1-1 CLI settlement and B-P1-1 batch parsing are independently verified fixed; Task47.5's
 PASS history remains factual. No product fix, new Slice selection, CURRENT reconciliation or
 closure is conducted here. Old-task/cross-version upgrade and V1 support remain excluded.

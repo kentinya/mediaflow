@@ -163,6 +163,33 @@ runtime authority. Empty/partial graphs explain missing dependencies without gen
 
 ## Automation engine settings (native, focused)
 
+### TARGET — Three system runtime settings (Slice47, 2026-11-03)
+
+Under `V2-TASK-011`, use the existing `/ui-v2/configuration` System Settings page as the ordinary
+editor for the remaining three fields. Remove Automation's settings tab/form and duplicate ordinary
+editors; its old settings links navigate to System Settings. Reuse the focused settings API and
+checked publication; the historical API/key names do not make these Automation-only settings.
+
+| Field | Selected meaning |
+|---|---|
+| `automation.maximumActiveJobs` | Integer 1–10000; shared organizing Task capacity across Files/direct CLI/API/remote, due/Run once and same-Task machine-work re-entry, not thread/file parallelism. Ordinary asynchronous copy/move/delete keep their existing admission rules. |
+| `automation.workerPollSeconds` | Finite positive seconds; shared Worker's idle checks for organizing and both library kinds' ordinary asynchronous file work. |
+| `automation.schedulerPollSeconds` | Finite positive seconds; checks for due Automation definitions only, not manual/Run once submission, definition Cron/interval/timezone or notifications. |
+
+One Save publishes only these three fields from the exact observed Active, preserving unrelated
+Drafts/settings, runtime preparation, atomic activation, submission reconciliation and truthful
+actual adoption/override evidence. Capacity-full preserves existing work/choices/authority; release
+allows an explicit retry or the next due check. Save itself starts no media operation.
+
+Delete `automation.staleJobAgeSeconds` from editable/effective/default settings and runtime arguments.
+Reject explicit field edits to it without publication; existing immutable documents may retain it
+and remain readable with the value ignored, without rewriting digest/pins or requiring manual JSON
+cleanup. Keep current Worker heartbeat, per-runner claim expiry/renewal and individual Provider/Storage
+timeouts. No no-progress observer, whole-Task timeout or automatic uncertain replay is selected.
+This TARGET replaces the Automation-only/four-field plan; implementation and acceptance are pending.
+
+### CURRENT — Existing four-field publication foundation
+
 `/ui-v2/operations/automation?tab=settings` and the Automation section of `/ui-v2/configuration`
 render the *same* four-field form and readback (`AutomationSettingsPanel`); no second store or
 editor exists. `GET/PUT /api/v1/operations/automation/settings` serves the projection and the
@@ -372,11 +399,14 @@ Stopped/expired registrations remain bounded diagnostic history with a true tota
 replacement can complete adoption without deleting history. Absent live consumers, unreadable
 evidence and live overridden/pending instances keep collective adoption unproven with recovery guidance.
 
-| Setting | Implemented meaning |
+The table below describes the CURRENT foundation. The Slice47 TARGET above supersedes its
+location/four-field contract only after implementation and acceptance; it is not already deployed.
+
+| Setting | Current code / accepted baseline meaning |
 |---|---|
 | `workflowRetry` | `enabled` defaults false; `baseDelaySeconds`/`maxDelaySeconds` bound backoff. Read-only retry covers normalized timeout/connection/rate-limit/temporary-provider failures before planning/execution. `maxAttempts` 1–10, `maxDelaySeconds` ≤300, `jitterRatio` 0–1; never retries mutation/uncertain effects or grants execute authority. |
 | `automation.maximumActiveJobs` | Default 100, range 1–10000; atomic shared Pending+Running backlog bound, not worker parallelism. Terminal Jobs release capacity. Lowering it blocks new excess admissions and preserves already admitted work. Published through the four-field `自动化 → 全局设置` Save; the API's admission boundary reads the current Active. |
-| `automation.staleJobAgeSeconds` | Default 3600, range 60–604800; no-update diagnostic, not total-runtime timeout or death/replay authority. Stale lists are bounded 100; inspect Worker and effects before permitted explicit recovery. Published through the same focused Save and read by the observation boundary. |
+| `automation.staleJobAgeSeconds` | Currently defaulted/validated (3600, range 60–604800), passed and displayed; investigation found no actual Task no-progress observer consuming it. It does not implement task timeout or grant replay authority. Slice47 TARGET deletes this editable/effective/default parameter while preserving readable immutable documents and current heartbeat/lease/call-timeout logic. |
 | `automation.workerPollSeconds` | Finite positive seconds; the real resident Worker loop cadence, independent of heartbeat/lease and of any Job's media pin. A running Worker adopts a new value at its next safe loop boundary without a restart. Configuration/heartbeat/report wakes are bounded to at most 5s so a previously long value cannot defer adoption, while the business claim cadence itself stays at the selected value — a recheck never claims early. `--poll-seconds`/deployment overrides keep precedence and are reported as overrides. |
 | `automation.schedulerPollSeconds` | Finite positive seconds; the real resident Scheduler due-check cadence. It never changes any definition's interval, Cron expression or timezone, and adopts without restart under the same boundary/recheck rules and override precedence. Bounded configuration wakes do not tick the interval/due check early. |
 | Focused engine-settings Save | One checked Save publishes only these four fields from the observed Active, after whole-candidate validation and runtime preparation. A no-op Save publishes nothing. While the Save is outstanding the four inputs are read-only; a value that still races the response is retained and re-based onto the just-published identity. An unknown outcome blocks further saves until its own durable evidence resolves it; a submission that terminates without publishing (a four-field input refusal, a stale/no-op refusal or a persist/validate/prepare/activate fault) records a bounded terminal outcome, so reconciliation ends in a correctable state with the typed input kept. Recovery merges **only the fields the operator changed** into the latest published values, so another writer's change to an untouched field is preserved; a genuine same-field overlap shows both values with units and needs an explicit "use current" / "keep mine" choice before Save is enabled. The next Save is always checked against the latest published identity. An input refusal (for example `3.5` for an integer field) keeps its invalid text correctable and is proven from a bounded content fingerprint rather than by re-validating an unpublishable payload. |

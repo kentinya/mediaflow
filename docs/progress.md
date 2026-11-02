@@ -12,16 +12,20 @@ Slice47 — **Unified Task Scheduling and Organizing Execution** — is **FIX RE
 latest 2026-11-02 independent review; its Roadmap remains ACTIVE. Immutable Base:
 `5144ab1fc2344b06194969cc2c496835729664c0`; reviewed candidate (not accepted):
 `5c808d4a67bedfbafb71d88a1ffa8d3480ef5316`. [SLICE.md](../SLICE.md) records **A-P1-2** and the
-user's explicit Automation-only settings amendment (`V2-TASK-011`). Automation's four settings
-govern saved-definition due/Run once only; manual Files/direct CLI/API/remote-source work remains
-independent. A's real CLI/Web Save 1025 → failure → Save 1024 → execution evidence remains factual.
-Its numeric-only correction direction is superseded; no implementation has been accepted.
+user's 2026-11-03 decision (`V2-TASK-011`): three runtime fields in System Settings, with shared
+organizing capacity 1–10000, shared Worker idle polling and Automation-due-only Scheduler polling.
+Delete the unused stale-age parameter; preserve current heartbeat/lease/call-timeout judgments and
+readable immutable snapshots. No no-progress observer is selected. This replaces the prior
+Automation-only/four-field plan. A's real CLI/Web Save 1025 → failure → Save 1024 → execution
+evidence remains factual; no new implementation has been accepted.
 
-Next: **B reassesses/amends PLANNED Task47.6 before implementation**, retaining its ID/true Base
-and factual planning evidence. Preserve Automation's 1–10000 range, one engine and scoped atomic
-safety; prove a full Automation allowance cannot block distinct-source manual work, manual work
-does not consume that allowance, and all four settings keep their scope. B then supplies applicable
-T4/whole-Slice acceptance and a fresh Closure Packet. A independently
+**Task47.6 remains PLANNED**, retaining ID/true Base and factual evidence. The user explicitly
+authorizes the B agent to adjust A-owned scope/documents only; this is not independent A Final
+Review or Task acceptance. B aligns the Task against the committed Contract, with Developer still
+stopped by the user. Actual three-field publication/consumption, shared fullness/release/recovery,
+parameter removal, native journeys and applicable T4/whole-Slice acceptance remain pending before
+a fresh Closure Packet. Ordinary-file admission rules, one engine, atomic safety and pins remain.
+A independently
 verified A-P1-1 CLI settlement and B-P1-1 batch parsing fixed, ran 141 focused tests and 3 real
 browser journeys (all OK), and checked B's raw acceptance/artifact evidence. Task47.5's PASS and
 latest six-outcome packet remain at `7ac253dd:TASK.md`; no previous acceptance is rewritten.

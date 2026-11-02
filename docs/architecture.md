@@ -51,8 +51,8 @@ child Task identities/relations remain traceable historical evidence.
 Task owns atomic bounded admission, ready/queued eligibility, current Worker claim generation,
 heartbeat/staleness and cooperative controls. Every item/result/aggregate publication observes the
 same effective fence. Source ownership spans human waiting work; an execution lease is not
-its substitute. Human-waiting work does not busy-loop in claim selection. Each applicable
-origin-scoped capacity counts distinct Tasks with pending machine work or a running Worker stage
+its substitute. Human-waiting work does not busy-loop in claim selection. One system organizing
+capacity counts distinct Tasks across manual/due/Run once with pending machine work or a running Worker stage
 once, including discovery, analysis, execution and machine-timed stability waiting. Wholly human-waiting
 Tasks with no queued/claimed machine work use zero slots. Cancellation requests keep the slot until
 active work/calls reach the acknowledged safe boundary. Re-entry and authority consumption share
@@ -73,32 +73,40 @@ occurrence/due-state idempotency atomically; it never chooses media policy or in
 Worker consumes Task/pin directly; no CLI-output parsing or separate Job execution bridge remains.
 Only OrganizerExecutor mutates, with current permission/effect/scope/capability/source/fence checks.
 
-### Automation settings scope — user amendment, 2026-11-02
+### System runtime settings — user amendment, 2026-11-03
 
-`V2-TASK-011` replaces the earlier all-entrance interpretation of Automation capacity. The existing
-Automation form's four fields govern saved-definition due and Run once work only. Files/direct
-CLI/API/remote-source manual organizing uses bounded runtime policy independent of these values;
-it neither consumes Automation capacity nor is gated by its fullness. Legal Automation Save must
-not change manual scheduling cadence, staleness/failure policy or confirmation/continuation capacity.
-Keep the existing form and published capacity 1–10000; moving it to System Settings is not the
-selected correction. No new manual/global-capacity setting is selected.
+`V2-TASK-011` replaces the Automation-only boundary with three fields in the existing System
+Settings page. Remove Automation's settings tab/form and duplicate ordinary editors; old links
+navigate to System Settings. Reuse the existing focused API and managed checked publication,
+validation, submission reconciliation and per-instance adoption evidence; no new store or endpoint
+is required. Only the three intended fields change, preserving unrelated Drafts/configuration.
 
-One Task repository/scheduling authority and shared organizing engine/Executor remain. Resolve
-policy from backend-proven admission origin and definition provenance; same-Task continuation
-retains that scope/pin even when a human clicks a recovery action. Callers cannot relabel work to
-bypass limits. Apply scoped counting/eligibility and authority consumption atomically at admission
-and machine-work re-entry. Shared source ownership/fences, waiting/cancellation settlement and
-uncertain-effect non-replay still apply across both origins. A full Automation allowance must not
-block distinct-source manual admission, and manual occupancy cannot fill the Automation allowance.
+| Existing key | TARGET consumer |
+|---|---|
+| `automation.maximumActiveJobs` | One atomic organizing Task allowance, integer 1–10000, shared by Files/direct CLI/API/remote, due/Run once and same-Task machine-work re-entry. It is not execution parallelism; ordinary asynchronous file work retains its existing admission rules. |
+| `automation.workerPollSeconds` | Shared resident Worker idle-work cadence for organizing and both library kinds' ordinary asynchronous copy/move/delete. No per-origin cadence or new parallelism. |
+| `automation.schedulerPollSeconds` | Scheduler checks for due Automation definitions only; not manual/Run once submission, Worker polling, Cron/interval/timezone or notification cadence. |
 
-Resident integration must scope Automation polling/staleness to Automation consumers without
-using them as manual-work defaults or process-wide failure rules. Adoption evidence identifies
-the actual eligible scope and installed values. Keep independent manual runtime defaults/explicit
-operational overrides, one claim/heartbeat/fence protocol, safe bounded scheduling and no new
-parallelism, second queue, supervisor or execution engine. Shared physical resource contention is
-not a promise of immediate/preemptive manual execution. Immutable configuration documents/digests,
-existing admitted pins, permissions and original results remain intact. This is TARGET work pending
-Task47.6 reassessment, implementation and whole-Slice acceptance, not CURRENT reconciliation.
+Backend-proven origin/definition provenance still determines intent, audit and trigger semantics,
+not separate allowances. Apply capacity/eligibility/authority checks in the same repository
+transaction at admission/re-entry. Preserve source ownership/fences, full/waiting/cancellation
+settlement, exact duplicate reconciliation and current execution pins. Refusal preserves choices,
+summary/results and authority; full due work remains due. Explicit runtime overrides and truthful
+consumer adoption remain. Configuration/heartbeat rechecks do not become early business polls.
+
+Remove `automation.staleJobAgeSeconds` from editable fields, typed effective values, runtime/API/CLI
+arguments, effective/adoption readback and new defaults. Read existing immutable documents with
+the old key ignored, preserving raw JSON/digests and legitimate admitted pins; field-edit commands
+reject the retired parameter without publication. This does not select old-task/cross-version
+upgrade support. Do not add a no-progress observer or Task runtime deadline.
+
+Current Worker heartbeat staleness uses `max(3 × heartbeat interval, 10s)`; claim validity compares
+expiry to current service time and each runner renews under its own existing lease. Provider/Storage
+adapters retain their individual call timeouts. Preserve these judgments and effect uncertainty:
+heartbeat freshness is not business progress, lease expiry is not proof of task failure, and a call
+timeout does not prove no mutation. No automatic uncertain replay, forced cancellation or new
+supervision is selected. This is TARGET work pending Task47.6 implementation/T4 and whole-Slice
+independent acceptance, not CURRENT reconciliation.
 
 ### Recovery, queries and original execution records
 
@@ -147,9 +155,11 @@ After verified migration remove Job tables/indexes, redundant Job-only columns/F
 service/dispatch and API/CLI/frontend surfaces. There is no live compatibility executor, second queue
 or dual write. Necessary legacy configuration parsing and read-only exact identifier resolution may
 preserve supported pins/history without recreating Jobs or execution authority. Historical published
-JSON/digests are immutable: Task-oriented capacity/staleness publication and actual consumer adoption
-must support those pins and retain explicit overrides. Existing ordinary-file/transfer/notification
-consumers retain their behavior; integration does not authorize an unrelated queue/supervisor rewrite.
+JSON/digests are immutable: three-field system runtime publication and actual consumer adoption
+must preserve those pins and explicit overrides; the retired stale-age key may remain in raw
+historical documents without runtime meaning. Ordinary-file/transfer consumers share Worker idle
+cadence but retain their own admission rules; notifications retain their own policy. Integration
+does not authorize an unrelated queue/supervisor rewrite.
 
 ## TARGET — Source-history gate for new organizing (Slice47, 2026-11-02)
 
@@ -1073,7 +1083,11 @@ longer causes the unchanged strict Web decoder to reject a readable mixed page. 
 Task item evidence still reports `unavailable=true`, and actual denied/malformed/read failures remain
 distinct. Records refresh uses the same bounded GET and grants no work, retry or execution authority.
 
-Capacity bounds pending+running Jobs; stale age observes updates. Polling adoption must be proved by
+The CURRENT settings surface exposes four fields; `staleJobAgeSeconds` is validated, passed and
+reported but has no actual Task no-progress observer in the current code. It is not evidence of
+implemented timeout detection. Slice47's TARGET above removes it and relocates the remaining three
+fields; this section describes the existing publication/adoption foundation, not that pending change.
+Capacity bounds pending+running Jobs in the accepted Base. Polling adoption must be proved by
 fresh actual consumer values/version at safe resident-loop boundaries, independently of each Job's
 media pin. API runtime binding alone is not proof of another process's cadence. Idle/long waits,
 heartbeat/lease ownership and CLI/deployment overrides retain meaning; unavailable Active cannot
