@@ -30,10 +30,12 @@ import os
 import tempfile
 import unittest
 from contextlib import contextmanager
+from dataclasses import replace
 from datetime import UTC, datetime, timedelta
 from pathlib import Path
 from types import SimpleNamespace
 from unittest.mock import patch
+from uuid import uuid4
 
 from mediaflow.application.automation_run_once import AutomationRunOnceService
 from mediaflow.application.configuration_snapshot import ManagedConfigurationService
@@ -43,6 +45,7 @@ from mediaflow.application.media_discovery import MediaDiscoveryService
 from mediaflow.application.organize_source_history import (
     latest_applicable_outcome,
 )
+from mediaflow.application.strategy_test import SyntheticMetadataProvider
 from mediaflow.application.task_runtime import PersistentTaskCoordinator
 from mediaflow.application.task_scheduling import TaskSchedulingService
 from mediaflow.domain.manual_organize_preview import ManualPreviewItemStatus
@@ -53,13 +56,21 @@ from mediaflow.domain.security import (
     ApiRole,
     ResolvedApiPrincipal,
 )
+from mediaflow.domain.storage import StorageError, StorageErrorCode
 from mediaflow.domain.task_persistence import (
     HISTORY_EXCLUDED_ITEM_STAGE,
     HISTORY_UNAVAILABLE_ITEM_STAGE,
     PersistentResultRecord,
     PersistentTask,
     PersistentTaskItem,
+    PersistentTaskStatus,
     TaskItemStatus,
+)
+from mediaflow.domain.task_scheduling import (
+    ScheduledTaskClaim,
+    TaskClaimFenceLost,
+    TaskQueueState,
+    TaskSchedulingError,
 )
 from mediaflow.final_cli import final_main
 from mediaflow.infrastructure.local_storage import LocalStorage
@@ -69,6 +80,7 @@ from mediaflow.infrastructure.sqlite_configuration_management import (
 from mediaflow.infrastructure.sqlite_runtime import SCHEMA_VERSION, SQLiteTaskRepository
 from mediaflow.interfaces.service_api import MediaFlowApi
 from tests.source_fixtures import source_identity_from_storage
+from tests.test_media_discovery import _DiscoveryFixture
 
 ADMIN_TOKEN = "source-history-admin"
 OPERATOR_TOKEN = "source-history-operator"
@@ -515,6 +527,145 @@ class OrganizeSourceOutcomeRepositoryTests(unittest.TestCase):
                 source_fingerprint="f" * 64,
             )
 
+    def _seed_manual_outcome(
+        self,
+        *,
+        created_at: datetime,
+        result_status: str = "PARTIAL",
+        completed_operations: tuple[str, ...] = ("CREATE_DIRECTORY",),
+        effect_certainty: str = "attempted_unverified",
+        uncertain_effects: tuple[str, ...] = ("mutation_outcome",),
+        fingerprint: str | None = "f" * 64,
+    ) -> tuple[PersistentTask, PersistentTaskItem, PersistentResultRecord]:
+        """One real manual-organize outcome: a UUID Result linked through the
+        durable ``manual_execution_items.result_id`` edge, exactly like the
+        production Files execution writes it."""
+
+        coordinator = PersistentTaskCoordinator(self.repository, self.repository)
+        task = coordinator.create("manual_organize", execute_authorized=True)
+        item = PersistentTaskItem(
+            f"manual-item-{created_at.timestamp()}",
+            task.task_id,
+            "source",
+            "library",
+            "One.2001.mkv",
+            "One.2001.mkv",
+            TaskItemStatus.PARTIAL,
+            "uncertain_effects",
+            1,
+            created_at,
+            created_at,
+            source_storage_path="One.2001.mkv",
+            source_fingerprint=fingerprint,
+            source_fingerprint_state="verified" if fingerprint else "unverified",
+        )
+        self.repository.upsert_item(item)
+        result = PersistentResultRecord(
+            str(uuid4()),
+            task.task_id,
+            item.item_id,
+            "source",
+            "One.2001.mkv",
+            "target",
+            "Organized/One (2001)/One (2001).mkv",
+            None,
+            None,
+            None,
+            None,
+            None,
+            None,
+            None,
+            "COPY",
+            result_status,
+            created_at,
+            error="injected mid-write failure",
+            completed_operations=completed_operations,
+            effect_certainty=effect_certainty,
+            uncertain_effects=uncertain_effects,
+        )
+        self.repository.append_result(result)
+        self.repository._connection.execute(
+            "INSERT INTO manual_execution_items ("
+            "execution_item_id, execution_id, preview_id, preview_item_id, intent_id, "
+            "item_id, task_id, task_item_id, item_version, source_fingerprint, "
+            "plan_fingerprint, source_json, choice_json, plan_json, status, stage, "
+            "result_id, effect_certainty, completed_operations, uncertain_effects, "
+            "error, next_action, created_at, updated_at"
+            ") VALUES (?, 'execution', 'preview', 'preview-item', 'intent', 'intent-item', "
+            "?, ?, 1, ?, 'plan-fingerprint', '{}', '{}', '{}', 'failed', "
+            "'uncertain_effects', ?, ?, ?, ?, ?, 'inspect the recorded effects', ?, ?)",
+            (
+                f"exec-item-{created_at.timestamp()}",
+                task.task_id,
+                item.item_id,
+                fingerprint or "",
+                result.result_id,
+                effect_certainty,
+                json.dumps(list(completed_operations)),
+                json.dumps(list(uncertain_effects)),
+                "injected mid-write failure",
+                created_at.isoformat(),
+                created_at.isoformat(),
+            ),
+        )
+        return task, item, result
+
+    def test_manual_uuid_result_evidence_is_read_not_dropped(self):
+        """The manual Result edge carries the real effect facts (AC-T3/T5)."""
+
+        base = datetime(2026, 1, 1, tzinfo=UTC)
+        _task, item, _result = self._seed_manual_outcome(created_at=base)
+        outcome = self._query_outcome()
+        self.assertIsNotNone(outcome)
+        self.assertEqual("result", outcome.outcome_kind)
+        self.assertEqual("partial", outcome.status, "status case is unified")
+        self.assertTrue(outcome.excludes_automatically)
+        self.assertEqual(item.item_id, outcome.outcome_id)
+        self.assertEqual(("CREATE_DIRECTORY",), outcome.completed_operations)
+        self.assertEqual("attempted_unverified", outcome.effect_certainty)
+        self.assertEqual(("mutation_outcome",), outcome.uncertain_effects)
+        self.assertEqual("target", outcome.destination_storage_id)
+
+    def test_population_beyond_400_rows_still_reaches_the_latest_applicable(self):
+        """No display-page or single-batch bound replaces the real population."""
+
+        base = datetime(2026, 1, 1, tzinfo=UTC)
+        # 449 newer attempts of genuinely replaced versions...
+        for index in range(449):
+            self._seed_outcome(
+                item_status=TaskItemStatus.SUCCESS,
+                result_status="success",
+                fingerprint=f"{index:064x}",
+                created_at=base + timedelta(minutes=1000 + index),
+            )
+        # ...and the only applicable failed outcome, older than every one.
+        self._seed_outcome(
+            item_status=TaskItemStatus.FAILED,
+            result_status="failed",
+            created_at=base,
+        )
+        outcome = self._query_outcome()
+        self.assertIsNotNone(outcome, "the complete matching population is read across batches")
+        self.assertEqual("failed", outcome.status)
+
+    def test_manual_result_beyond_the_first_batch_is_still_found(self):
+        """Keyset pagination reaches a manual UUID outcome past row 400."""
+
+        base = datetime(2026, 1, 1, tzinfo=UTC)
+        for index in range(405):
+            self._seed_outcome(
+                item_status=TaskItemStatus.SUCCESS,
+                result_status="success",
+                fingerprint=f"{index:064x}",
+                created_at=base + timedelta(minutes=1000 + index),
+            )
+        _task, item, _result = self._seed_manual_outcome(created_at=base)
+        outcome = self._query_outcome()
+        self.assertIsNotNone(outcome)
+        self.assertEqual("result", outcome.outcome_kind)
+        self.assertEqual(item.item_id, outcome.outcome_id)
+        self.assertEqual(("CREATE_DIRECTORY",), outcome.completed_operations)
+
 
 class _SourceHistoryJourneyTests(unittest.TestCase):
     """Shared fixture for the real-entrance journeys."""
@@ -903,6 +1054,21 @@ class ManualHistoryWarningJourneyTests(_SourceHistoryJourneyTests):
             self.assertIn("请核对来源、目标与存储实际效果后再确认本次整理", history["warning"])
             self.assertEqual(failed_result.created_at.isoformat(), history["recordedAt"])
 
+            # The same facts reach the operator through the real authenticated
+            # Preview GET: the bounded projection publishes them, so the Web
+            # summary banner is fed by the actual API, not by client invention.
+            status, document = self.request(
+                value, "GET", f"/api/v1/operations/organize/previews/{preview.preview_id}"
+            )
+            self.assertEqual(200, status, document)
+            (api_item,) = document["items"]
+            api_history = (api_item.get("plan") or {}).get("history")
+            self.assertIsInstance(api_history, dict, api_item.get("plan"))
+            self.assertEqual("failed", api_history["status"])
+            self.assertEqual(failed_result.created_at.isoformat(), api_history["recordedAt"])
+            self.assertIn("请核对来源", api_history["warning"])
+            self.assertTrue(api_history["versionApplicable"])
+
             # A file without applicable history carries no history document.
             self.media("Two.2002.mkv")
             identity_two = identity_from(value.source, "Two.2002.mkv")
@@ -1042,6 +1208,333 @@ class PartialItemIsHistoryNotOwnerTests(_SourceHistoryJourneyTests):
             self.assertEqual("partial", history.status)
             self.assertTrue(history.excludes_automatically)
             self.assertEqual(("source_cleanup",), history.uncertain_effects)
+
+
+class _SupersededHandoffFixture(_DiscoveryFixture):
+    """The real Files → Task engine fixture with COPY policies, shared by the
+    per-file hand-off journeys (AC-T4/AC-23).  The admission/summary/execute
+    helpers are the production entrance helpers of the Files manual journeys.
+    """
+
+    def document(self, **kwargs):
+        doc = super().document(**kwargs)
+        for policy in doc["organizePolicies"]:
+            policy["operation"] = "COPY"
+        return doc
+
+    def _admit(self, value, paths, *, auto_prepare=True, request_id="handoff-request"):
+        return self.request(
+            value,
+            "/api/v1/resource-libraries/library/files/discoveries",
+            "POST",
+            {"paths": list(paths), "autoPrepare": auto_prepare, "requestId": request_id},
+        )
+
+    def _drive(self, value, task_id, *, steps=12):
+        from mediaflow.domain.task_scheduling import TaskQueueState as _TQS
+
+        for _ in range(steps):
+            value.task_engine.run_next()
+            discovery = value.repository.get_media_discovery_for_task(task_id)
+            state = value.repository.get_task_scheduling(task_id)
+            if discovery is None or state is None:
+                continue
+            if state.queue_state in {
+                _TQS.WAITING_HUMAN,
+                _TQS.PAUSED,
+                _TQS.SETTLED,
+            }:
+                return discovery
+        return value.repository.get_media_discovery_for_task(task_id)
+
+    def _execute(self, value, task_id, preview, item_ids, *, steps=8):
+        from mediaflow.domain.task_persistence import PersistentTaskStatus as _PTS
+
+        self.confirm(value, preview, item_ids)
+        for _ in range(steps):
+            value.task_engine.run_next()
+            task = value.repository.get_task(task_id)
+            if task.status in {
+                _PTS.COMPLETED,
+                _PTS.PARTIAL_SUCCESS,
+                _PTS.FAILED,
+                _PTS.CANCELLED,
+            }:
+                break
+        return value.repository.get_task(task_id)
+
+    def confirm(self, value, preview, item_ids=None):
+        """The ordinary selected confirmation through the real authenticated API."""
+
+        selected = item_ids or [
+            item["itemId"] for item in preview["items"] if item["status"] == "previewed"
+        ]
+        status, reply = self.request(
+            value,
+            f"/api/v1/operations/organize/previews/{preview['previewId']}/execute",
+            "POST",
+            {
+                "confirmation": True,
+                "itemIds": selected,
+                "expectedIntentVersion": preview["intentVersion"],
+                "allowOverwrite": False,
+                "allowSourceCleanup": False,
+            },
+        )
+        self.assertIn(status, (200, 202), reply)
+        return reply
+
+    def summary(self, value, paths, request_id):
+        """One real Files admission through its analysis to the exact summary."""
+
+        status, admitted = self._admit(value, paths, request_id=request_id)
+        self.assertEqual(202, status, admitted)
+        task_id = admitted["organizeTaskId"]
+        discovery = self._drive(value, task_id)
+        status, preview = self.request(
+            value, f"/api/v1/operations/organize/previews/{discovery.preview_id}"
+        )
+        self.assertEqual(200, status, preview)
+        return task_id, preview
+
+    def scheduling(self, value):
+        from mediaflow.application.task_scheduling import TaskSchedulingService
+
+        return TaskSchedulingService(value.repository, capacity=100, locks=value.repository)
+
+    def superseded_marker(self, value, item_id):
+        row = value.repository._connection.execute(
+            "SELECT superseded_by_task_id FROM task_items WHERE item_id=?", (item_id,)
+        ).fetchone()
+        return None if row is None else row["superseded_by_task_id"]
+
+
+class SupersededSingleFileOwnerHandoffTests(_SupersededHandoffFixture):
+    def test_new_manual_organize_takes_over_the_wholly_superseded_owner(self):
+        """One failed file, then a confirmed re-organize: the old owner's slot,
+        claim and qualification are resolved; its recorded facts stay exact."""
+
+        self.media("Movies/One.2001.mkv")
+        provider = SyntheticMetadataProvider(
+            (MediaCandidate("tmdb", "201", MediaType.MOVIE, "One", year=2001),)
+        )
+        with self.journey(provider=provider, task_scheduling=True, attachments=True) as value:
+            old_id, _preview = self.summary(
+                value, ["Movies/One.2001.mkv"], "11111111-1111-4111-8111-111111111111"
+            )
+
+            def fail_write(path, *args, **kwargs):
+                raise StorageError(
+                    StorageErrorCode.PERMISSION_DENIED, "write", path, "injected write failure"
+                )
+
+            with patch.object(value.target, "write", side_effect=fail_write):
+                self._execute(
+                    value,
+                    old_id,
+                    _preview,
+                    [item["itemId"] for item in _preview["items"] if item["status"] == "previewed"],
+                )
+            old_task = value.repository.get_task(old_id)
+            self.assertEqual(PersistentTaskStatus.FAILED, old_task.status)
+            (old_item,) = value.repository.list_items(old_id)
+            (old_result,) = value.repository.list_results(old_id)
+            self.assertEqual("PARTIAL", old_result.status)
+            self.assertEqual(("CREATE_DIRECTORY",), old_result.completed_operations)
+            self.assertEqual("attempted_unverified", old_result.effect_certainty)
+            old_state = value.repository.get_task_scheduling(old_id)
+            self.assertEqual(TaskQueueState.CLAIMED, old_state.queue_state)
+            self.assertIsNotNone(old_state.mutation_state, "the unknown boundary is retained")
+            self.assertEqual(1, value.repository.count_scheduled_capacity_use())
+            old_claim = ScheduledTaskClaim(old_task, old_state)
+
+            # The deliberate new Files organize of the same file reaches the
+            # real summary with the server-generated history warning.
+            _new_id, fresh = self.summary(
+                value, ["Movies/One.2001.mkv"], "22222222-2222-4222-8222-222222222222"
+            )
+            (fresh_item,) = fresh["items"]
+            history = (fresh_item.get("plan") or {}).get("history")
+            self.assertIsInstance(history, dict, fresh_item.get("plan"))
+            self.assertEqual("partial", history["status"])
+            self.assertEqual(("CREATE_DIRECTORY",), tuple(history["completedOperations"]))
+            self.assertEqual(("mutation_outcome",), tuple(history["uncertainEffects"]))
+            self.assertIn("请核对", history["warning"])
+
+            # The ordinary selected confirmation starts genuinely new work.
+            self.confirm(value, fresh)
+            for _ in range(4):
+                value.task_engine.run_next()
+            new_state = value.repository.get_task_scheduling(_new_id)
+            self.assertIsNotNone(new_state)
+            self.assertEqual(
+                PersistentTaskStatus.COMPLETED,
+                value.repository.get_task(_new_id).status.value,
+            )
+            self.assertTrue(
+                any(path.name == "One (2001).mkv" for path in self.target_root.rglob("*.mkv"))
+            )
+
+            # The wholly superseded owner: marker recorded, slot released,
+            # claim dead — unknown history alone holds no capacity.
+            self.assertEqual(_new_id, self.superseded_marker(value, old_item.item_id))
+            settled_state = value.repository.get_task_scheduling(old_id)
+            self.assertEqual(TaskQueueState.SETTLED, settled_state.queue_state)
+            self.assertIsNone(settled_state.mutation_state)
+            self.assertEqual(0, value.repository.count_scheduled_capacity_use())
+            with self.assertRaises(TaskClaimFenceLost):
+                self.scheduling(value).heartbeat(old_claim, now=self.clock.now)
+            # Every recorded fact of the old run is untouched.
+            (kept_result,) = value.repository.list_results(old_id)
+            self.assertEqual(old_result, kept_result)
+            (kept_item,) = value.repository.list_items(old_id)
+            self.assertEqual(
+                (TaskItemStatus.PARTIAL, "uncertain_effects", 1),
+                (kept_item.status, kept_item.stage, kept_item.attempts),
+            )
+
+
+class SupersededOwnerWithRemainingWorkTests(_SupersededHandoffFixture):
+    def test_owner_with_remaining_machine_work_keeps_its_slot_and_is_fenced_per_file(self):
+        """A batch [One, Two] with One failed and Two still undecided: the new
+        organize of One hands the file over, the old owner keeps its one slot
+        and its live claim, its late One-publication is refused, and Two's
+        legitimate work continues on the same Task."""
+
+        self.media("Movies/One.2001.mkv")
+        self.media("Movies/Two.2002.mkv")
+        provider = SyntheticMetadataProvider(
+            (
+                MediaCandidate("tmdb", "201", MediaType.MOVIE, "One", year=2001),
+                MediaCandidate("tmdb", "202", MediaType.MOVIE, "Two", year=2002),
+            )
+        )
+        with self.journey(provider=provider, task_scheduling=True, attachments=True) as value:
+            old_id, preview = self.summary(
+                value,
+                ["Movies/One.2001.mkv", "Movies/Two.2002.mkv"],
+                "11111111-1111-4111-8111-111111111111",
+            )
+            items_by_name = {
+                item["source"]["filename"]: item["itemId"] for item in preview["items"]
+            }
+
+            def fail_write(path, *args, **kwargs):
+                raise StorageError(
+                    StorageErrorCode.PERMISSION_DENIED, "write", path, "injected write failure"
+                )
+
+            with patch.object(value.target, "write", side_effect=fail_write):
+                # Both sources are confirmed in one execution: One's mid-write
+                # failure records its terminal uncertain outcome, and Two's
+                # own write then fails mid-mutation, leaving its unverified
+                # boundary retained — the batch's genuinely unfinished call.
+                self._execute(
+                    value,
+                    old_id,
+                    preview,
+                    [items_by_name["One.2001.mkv"], items_by_name["Two.2002.mkv"]],
+                )
+            (old_one,) = [
+                item
+                for item in value.repository.list_items(old_id)
+                if item.stage == "uncertain_effects"
+            ]
+            # Two is the batch's still-queued machine work: it never recorded
+            # its own terminal outcome, so the hand-off must not touch it.
+            (old_two,) = [
+                item
+                for item in value.repository.list_items(old_id)
+                if item.status is TaskItemStatus.PROCESSING
+            ]
+            self.assertEqual("Movies/Two.2002.mkv", old_two.source_path)
+            (old_one_result,) = value.repository.list_results(old_id)
+            old_state = value.repository.get_task_scheduling(old_id)
+            self.assertEqual(TaskQueueState.CLAIMED, old_state.queue_state)
+            self.assertIsNotNone(old_state.mutation_state)
+            self.assertEqual(1, value.repository.count_scheduled_capacity_use())
+            old_claim = ScheduledTaskClaim(value.repository.get_task(old_id), old_state)
+
+            # The new Files organize of One: warned summary, ordinary confirm.
+            _new_id, fresh = self.summary(
+                value, ["Movies/One.2001.mkv"], "22222222-2222-4222-8222-222222222222"
+            )
+            (fresh_item,) = fresh["items"]
+            self.assertIsInstance((fresh_item.get("plan") or {}).get("history"), dict)
+            self.confirm(value, fresh)
+
+            # Immediately at the hand-off instant, before any further engine
+            # pass: the old owner keeps its one slot and its live claim (the
+            # second slot is the new Task's own queued execution).
+            kept_state = value.repository.get_task_scheduling(old_id)
+            self.assertEqual(TaskQueueState.CLAIMED, kept_state.queue_state)
+            self.assertIsNone(kept_state.mutation_state, "One's boundary is resolved")
+            self.assertIsNotNone(kept_state.claim_token)
+            self.assertEqual(2, value.repository.count_scheduled_capacity_use())
+            self.assertEqual(_new_id, self.superseded_marker(value, old_one.item_id))
+            # The old owner's heartbeat stays valid: it still legitimately
+            # owns its remaining work, so the whole batch is never fenced.
+            self.scheduling(value).heartbeat(old_claim, now=self.clock.now)
+
+            # The old owner's live claim cannot publish One any more: the
+            # per-file fence refuses the late outcome while the claim itself
+            # is still valid.
+            late_frame = replace(
+                old_one,
+                status=TaskItemStatus.PROCESSING,
+                stage="organizing",
+            )
+            with self.assertRaises(TaskSchedulingError) as refused:
+                self.scheduling(value).complete_item(
+                    ScheduledTaskClaim(value.repository.get_task(old_id), kept_state),
+                    late_frame,
+                    result=PersistentResultRecord(
+                        f"{old_one.item_id}:{old_one.attempts}",
+                        old_id,
+                        old_one.item_id,
+                        "source",
+                        old_one.source_path,
+                        None,
+                        None,
+                        None,
+                        None,
+                        None,
+                        None,
+                        None,
+                        None,
+                        None,
+                        "COPY",
+                        "FAILED",
+                        self.clock.now,
+                    ),
+                    now=self.clock.now,
+                )
+            self.assertIn("handed off", str(refused.exception))
+
+            # The new work itself completed.
+            for _ in range(4):
+                value.task_engine.run_next()
+            self.assertEqual(
+                PersistentTaskStatus.COMPLETED, value.repository.get_task(_new_id).status.value
+            )
+
+            # Two's unfinished call keeps the original safety boundary: the
+            # old batch still holds its own slot (its takeover/recovery is the
+            # existing interrupted-execution path, untouched here), and One is
+            # never replayed by the old owner.
+            after = value.repository.get_task_scheduling(old_id)
+            self.assertEqual(TaskQueueState.CLAIMED, after.queue_state)
+            self.assertEqual(1, value.repository.count_scheduled_capacity_use())
+            self.assertEqual(
+                (old_one_result,),
+                value.repository.list_results(old_id)[:1],
+                "One's original failure Result stays first and unchanged",
+            )
+            self.assertEqual(
+                {"One (2001).mkv"},
+                {path.name for path in self.target_root.rglob("*.mkv")},
+                "only the new confirmed organize produced media",
+            )
 
 
 if __name__ == "__main__":

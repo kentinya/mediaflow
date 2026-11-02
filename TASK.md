@@ -26,7 +26,7 @@ REQ-RESULT-* 与 REQ-SAFE-* 中未被明确修订的身份、授权、历史及�
 Task ID: 47.5
 Task Type: SLICE
 Parent Slice: 47
-Status: FIX REQUIRED
+Status: READY FOR B REVIEW
 Task Base: 75ddff55f8d5b2b1206c81804bfb5cbe9ed279a1
 Difficulty: High
 Test Level: T4
@@ -271,103 +271,98 @@ npm run test:e2e -- --config=playwright.python.config.ts tests/e2e/organize-sour
 扩成自动排除、改变 Run once 初次一键意图；旧 Task/跨版本升级/V1 支持；更改权限、
 源边界、稳定性/完整遍历或静默覆盖/删除；恢复 Pause/resume/retry-request/Job。
 
-## Developer Completion Report
+## Developer Completion Report — FIX ROUND（候选 2）
 
-用户本轮明确授权按本草案实施；Developer 原地激活本 Task（状态 PLANNED →
-READY FOR B REVIEW），Task Base 不变，未重定范围。
+按 B Review 的三项阻塞在同一 Task 内修复；Task ID/Goal/Base 与 Slice 边界不变，
+未扩大范围。工作区 `main`，本轮起始 HEAD `76598900`（B 指导澄清提交），无预存 tracked
+修改；预存未跟踪文件（OS/log、`15`、docs 图片、`output/*` 等）原样保留、未暂存。
+未触碰用户数据库/媒体/私密配置；未 push、未部署、未自判 PASS。
 
-**Checkpoint：** 提交候选（本提交）；branch `main`，Task Base
-`75ddff55f8d5b2b1206c81804bfb5cbe9ed279a1`。预存未跟踪文件（OS/log、`15`、docs 图片、
-`output/*` 等）原样保留、未暂存；未触碰用户数据库/媒体/私密配置。
+**Changes（对应 B 修复指导 1–3）**
 
-**Changes（与 Implementation Scope 对应）**
-
-1. 共享逐来源历史判断：`mediaflow/infrastructure/sqlite_runtime.py::
-   latest_organize_source_outcome`（完整匹配总体：exact Storage + canonical
-   Storage-relative path（含 legacy 库内 identity）、organizing command 族、
-   terminal 正式整理结果、admission/attempt 顺序（迟到发布不冒充最新）、版本可比
-   规则与 ownership 相同（同库指纹/跨库 discovery version evidence/不可比→可能
-   适用），扫描上限 400 行（远大于 32/100 展示页）；`application/
-   organize_source_history.py` 输出有界、无密、只读的 `OrganizeSourceHistory`
-   （含 warning 文案）；读取失败向上抛出，不当作无历史。
-2. 自动排除（AC-20/V2-TASK-008）：`media_organizer.py` 新增
-   `exclude_failed_history`；due/Run once（`automation_definition_execution.py`
-   的 `_run_scan_and_plan` 与 `run_legacy_schedule`）接入；`process_file` 在任何
-   Provider 调用前逐文件闸门：同版本最近正式结果 failed/partial → 经
-   `begin_item`（事务内占用复核）+ `publish_history_gate_item` 记录
-   SKIPPED/`history_excluded` 项（无 Result、零执行权、零 Storage 效果）；历史
-   读取失败 → fail-closed `history_unavailable` 项；`manual_task_engine.py::
-   _settle_automatic` 把含 gate 项的运行呈现为 PARTIAL_SUCCESS + 有界排除计数
-   文案，全排除不伪称成功。CLI organize（manual trigger）不排除，语义不变。
-3. 手动提醒（AC-21/V2-TASK-009）：`manual_organize_preview.py` 在 Preview item
-   plan 文档投影服务端 `history`（status/recordedAt/目标/完成步骤/未知效果/
-   版本可比性/有界文案）；未知效果明确表示未被核验；读取失败该 item 拒绝
-   （fail-closed）。Web：`preview.ts` 新增 `ManualPreviewHistoryModel` 解析；
-   `OrganizePlanConfirmation.tsx` 汇总显著 banner + 每文件 banner；
-   `organize-summary.tsx` 每条目“上次整理记录”行；无新增核查页/例行 checkbox。
-4. PARTIAL 属历史不属活动占用（AC-23）：`SETTLED_ITEM_STATUSES` 纳入
-   `TaskItemStatus.PARTIAL`（域注释本就声明此意图）；`find_owned_source_work`
-   因此不再把已记录 partial 文件项当作永久 veto；queued/processing 无终态项互斥
-   不变。kernel 锁/claim/fence 复用现有边界；旧 Result/pin/未知证据不改写。
-5. CLI retry-failed 退出（AC-24/V2-TASK-010）：删除 parser/help、专属 snapshot
-   bootstrap 分支、`_admit_cli_retry_task`、专属输出与
-   `execution_retry_items`/`_execution_effect_block`/两个渲染 helper；旧命令在
-   argparse 处拒绝、零效果；保留 `retryable_items`（四类继续/recovery 共用）、
-   历史行展示 membership、`RETRYABLE_TASK_COMMANDS`（历史 retry-failed Task 的
-   checkpoint/继续仍合法）、四类继续、ignore、cancel、只读与正常 organize。
+1. **历史事实读取（阻塞 2）**：`sqlite_runtime.py` 重写
+   `latest_organize_source_outcome`：
+   - Result 关联改走真实持久边界：`LEFT JOIN manual_execution_items mei ON
+     mei.task_item_id = i.item_id`，`r.result_id = COALESCE(mei.result_id,
+     i.item_id || ':' || i.attempts)`——手动 UUID Result 与自动/CLI/继续
+     `item:attempts` Result 各按其真实写法命中，无 Result 的持久失败项仍回退
+     item 行；目标/完成步骤/效果确定性/未知证据按 Result 优先读取（COALESCE）。
+   - 状态大小写统一为小写（手动 `PARTIAL` → `partial`），排除/提醒判断
+     不再漏判。
+   - `LIMIT 400` 撤销：新共享迭代器 `_iter_organize_source_outcome_rows_locked`
+     以 keyset 分批（每批 400）按 admission/attempt 顺序读取**完整匹配总体**，
+     最新可适用行胜出；迟到发布不冒充最新尝试的语义不变。
+2. **真实 API → 页面（阻塞 1）**：`operations_lifecycle.py::_bounded_preview_plan`
+   新增 `history` 投影与 `_bounded_preview_history`（字段级边界与脱敏：status/
+   recordedAt/destinationStorageId/destinationPath/completedOperations/
+   uncertainEffects/effectCertainty/versionApplicable/warning），不透传 raw plan。
+   真实 Preview GET 现已携带 history，现有 Web typed normalizer
+   （`preview.ts::normalizeHistory`）与 `OrganizePlanConfirmation.tsx` banner 直接
+   消费，无需前端改动；无新增核查页/例行 checkbox。
+3. **逐文件交接与容量结算（阻塞 3）**：
+   - 新增迁移列 `task_items.superseded_by_task_id`（additive，fresh 与同版本
+     reopen 均安全；`_TASK_ITEM_UPSERT` 不触碰该列）。
+   - `admit_manual_execution` 确认事务内新增：被替代源守卫（adopted Task 的
+     已交接来源以 `source_superseded` 拒绝）+ 每个确认项的
+     `_hand_off_superseded_source_owner_locked`——在同版本最近正式结果为
+     failed/partial、旧 owner 为未完成 kernel Task 时：标记旧 item（guarded
+     UPDATE，不覆盖已有标记）、仅当变异边界属于被交接项时收束该边界（其他项的
+     未验证边界绝不触碰）、无剩余机器工作且无待处理控制时释放名额
+     （全部 settled → SETTLED，含诚实聚合修正；仅剩人工决定 → WAITING_HUMAN），
+     仍有机器工作则保留原 claim 与 1 个名额。排程/处理中且无终态的来源完全不触碰，
+     file_locks 互斥保持原样。
+   - `_require_scheduled_item_locked`：已交接 item 的 START/PROGRESS/OUTCOME
+     发布一律拒绝（旧 owner 不能再启动后续步骤或改写旧结果）；旧 Result/pin/
+     完成步骤/unknown 证据与原 Automation 时间不改写。
+   - 公开包装 `hand_off_superseded_source_owner`（独立事务）供仓库级旅程复用。
 
 **Developer affected tests（实际命令与结果）**
 
-- `python -m unittest tests.test_organize_source_history`：新增模块 13 tests OK
-  （完整总体/迟到发布/替换文件/DRY_RUN与非整理行/排除行不入历史/无 Result 失败
-  项/legacy identity/读取失败 fail-closed；Run once 真实 COPY 旅程：真实失败→
-  排除+自由兄弟+honest PARTIAL_SUCCESS+零 Result 零 Provider（patch 断言）→
-  手动成功解除排除；due（legacy interval）排除；Preview 提醒 + 手动执行；PARTIAL
-  项生产发布后不再占用、processing 仍互斥）。
+- `python -m unittest tests.test_organize_source_history`：18 tests OK（新增：
+  手动 UUID Result 完整证据读取 + 大小写统一；>400 行完整总体跨批找到最新可适用；
+  手动 Result 越批；真实 Files→引擎旅程两例——单文件 uncertain 失败后新整理
+  交接：旧 Task SETTLED、旧 claim 心跳 REJECTED、容量 0、旧 Result/证据逐字段
+  不变、标记=新 Task；批 [One,Two] One 失败 Two 未完成：交接后旧 Task 保留
+  名额与有效心跳、One 迟到发布被拒（"handed off"）、新 Task 完成、旧 Result 不变）。
+  失败注入位于真实 Storage.write/`_ExplodingExecutor` 边界，非手填状态。
+- `ManualHistoryWarningJourneyTests` 新增真实 Preview GET 断言（阻塞 1 的 API
+  级回归；经突变校验确认真实执行）。
 - `python -m unittest tests.test_organize_preparation tests.test_manual_task_engine
   tests.test_manual_organize_execution tests.test_task_scheduling
-  tests.test_task_scheduling_fencing`：161 tests OK。
-- `python -m unittest tests.test_automation_run_once tests.test_automation_task_admission
-  tests.test_task_source_ownership_race tests.test_preview_retirement
-  tests.test_task_retry tests.test_automation_entrance_recovery`：79 tests OK。
-- `python -m unittest tests.test_operations_task_center
-  tests.test_operations_run_detail_log_isolation tests.test_operations_run_detail_plan_evidence
-  tests.test_v2_automation_operations`：58 tests OK。
-- `python -m unittest tests.test_task_persistence tests.test_task_pause_resume
-  tests.test_workflow_retry tests.test_manual_ignore tests.test_manual_ignore_batch
-  tests.test_processing_recovery_admission`：60 tests OK。
-- `python -m unittest tests.test_direct_file_operations tests.test_direct_file_transfers
-  tests.test_batch_cli tests.test_conflict_resolution tests.test_recognition_review
-  tests.test_metadata_review tests.test_classification_review`：126+65+1 tests OK。
-- `python -m unittest tests.test_manual_operations tests.test_manual_operations_contract
-  tests.test_media_discovery tests.test_task_scope`：189 tests OK。
-- `ruff check .` PASS；`ruff format --check .` PASS；`compileall` PASS；
+  tests.test_task_scheduling_fencing tests.test_task_retry
+  tests.test_automation_entrance_recovery`：167 tests OK。
+- `tests.test_automation_run_once tests.test_automation_task_admission
+  tests.test_task_source_ownership_race tests.test_preview_retirement`：73 OK；
+  `tests.test_operations_task_center tests.test_operations_run_detail_log_isolation
+  tests.test_operations_run_detail_plan_evidence tests.test_v2_automation_operations`：
+  58 OK；`tests.test_task_persistence tests.test_workflow_retry
+  tests.test_manual_ignore tests.test_manual_ignore_batch
+  tests.test_processing_recovery_admission tests.test_manual_operations_contract`：
+  55 OK；`tests.test_direct_file_operations tests.test_batch_cli
+  tests.test_conflict_resolution`：74 OK；`tests.test_manual_operations
+  tests.test_media_discovery tests.test_task_scope`：185 OK。
+- `python -m unittest discover -s tests`：**2518 tests OK（skipped=7，既有 skip）**。
+- `ruff check .` / `ruff format --check .` PASS；`compileall` PASS；
   `scripts/check_governance.py` PASS；`git diff --check` PASS；
-  `rg -n -i 'ffprobe|ffmpeg' mediaflow pyproject.toml` 无匹配。
-- Web：`npm run typecheck` / `lint` / `format:check` PASS；`npm run build` PASS；
-  新增 `OrganizePlanConfirmation.test.tsx`（3 tests：提醒绑定正确文件、unknown
-  文案、无额外 chore、普通确认绑定选择并真实提交、无历史不出提醒）；
-  `npm run test -- run`（全部 88 文件 / 1267 tests）PASS。
-
-**已更新测试**：`test_task_retry.py`（retry-failed/retry-request/retry 解析拒绝 +
-零效果 negative test）；`test_automation_entrance_recovery.py`（5 个 retry-failed
-执行旅程测试替换为“解析拒绝 + 原失败事实不动”的 negative test）；
-`test_preview_retirement.py`（分析任务不可提升改由退役入口 negative test 证明）。
+  `rg -n -i 'ffprobe|ffmpeg' mediaflow pyproject.toml` 无匹配（exit 1）。
+- Web（cwd `web/`）：`npm run typecheck`、`lint`、`format:check` PASS
+  （prettier 对既有 `OrganizePlanConfirmation.test.tsx` 的格式修正 3 行）；
+  `npm run test -- run` 88 文件 / 1267 tests PASS；`npm run build` PASS。
+- 契约夹具按测试官方路径再生
+  （`MEDIAFLOW_UPDATE_FIXTURES=1`）：`manual-operations.json` 仅新增两处
+  `"history": null` 字段（真实 API 投影的体现）。
 
 **Deviations / remaining risks（如实披露）**
 
-1. Task 计划中列出的 `tests/e2e/organize-source-history.python.spec.ts` 本轮未由
-   Developer 创建/运行；等价真实 Python 旅程覆盖由
-   `tests/test_organize_source_history.py`（真实 API/SQLite/LocalStorage/Worker
-   引擎，含 patch-assert 的零 Provider 断言）提供。浏览器级旅程（桌面/窄屏截图）
-   属 AC-T7，留给 B 的验收门禁按计划执行。
-2. 排除项复用 `TaskItemStatus.SKIPPED` + 专属 stage（无新增状态枚举）；Result 故
-   意不发布（“排除不制造正式整理结果”），汇总状态由 `_settle_automatic` 呈现。
-3. `latest_organize_source_outcome` 的跨库版本比较依赖该 Task 自身 discovery 记录
-   （与占用边界同一来源）；无 discovery 的历史行（legacy CLI 行）在同绑定时用指
-   纹比较，跨绑定且无 discovery 证据时按“可能适用”处理（保守、不伪造新文件）。
-4. 文档协调（requirements/architecture/product-experience 中 retry-failed 的 CURRENT
-   描述、RO-6 交付标记）留待 Slice 收尾核对，本轮未改 A-owned 文档。
+1. 批量场景中 Two 为"排队机器工作"（PROCESSING、无自身终态）时的**最终收束**
+   走既有中断执行恢复路径（reconcile/租约接管），属既有机制；本 Task 只断言
+   交接不触碰其边界且名额保留（B 验收表第 2 行要求），未新增恢复能力。
+2. 浏览器级旅程（桌面/窄屏截图，AC-T7）未由 Developer 执行，与上轮相同留给
+   B 的验收门禁；Web 组件测试经既有 typed normalizer 消费真实 API 形状。
+3. 文档协调（requirements/architecture/product-experience 的 CURRENT 描述、
+   RO-6 交付标记）仍留待 Slice 收尾核对，未改 A-owned 文档。
+4. 交接目标的版本可比性沿用与历史判定/占用边界同一证据链；无可比版本时按
+   "可能适用"处理（保守，不伪造新文件）。
 
 ## B Review Result
 

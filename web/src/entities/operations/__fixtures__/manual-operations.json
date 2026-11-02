@@ -1125,6 +1125,7 @@
           },
           "deterministic": true,
           "executionState": "ready_for_explicit_authorization",
+          "history": null,
           "mediaIdentity": {
             "countries": ["JP"],
             "episode": null,
@@ -1378,6 +1379,7 @@
           },
           "deterministic": true,
           "executionState": "ready_for_explicit_authorization",
+          "history": null,
           "mediaIdentity": {
             "countries": ["JP"],
             "episode": null,

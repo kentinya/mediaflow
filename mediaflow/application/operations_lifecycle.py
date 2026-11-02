@@ -1349,6 +1349,7 @@ def _bounded_preview_plan(
         "warnings": _bounded_text_list(plan.get("warnings")),
         "planStatus": _bounded_evidence_text(plan.get("planStatus"), limit=64),
         "destructiveImplications": _bounded_destructive_implications(plan),
+        "history": _bounded_preview_history(plan.get("history")),
         "zeroMutation": True,
         "executionState": _bounded_preview_execution_state(plan.get("executionState")),
         "bounded": True,
@@ -1358,6 +1359,35 @@ def _bounded_preview_plan(
             if include_cleanup_projection
             else {}
         ),
+    }
+
+
+def _bounded_preview_history(value: object) -> dict[str, object] | None:
+    """The bounded server-generated prior-outcome warning of one exact source.
+
+    Slice 47 RO-6/AC-21: the persisted plan carries the applicable latest
+    formal organizing outcome's bounded facts (status, recorded instant,
+    possible target, completed steps, uncertain effects, version comparability
+    and the ready-to-show warning line).  Only those named operator-facing
+    fields are published — the raw history/plan payload never reaches the
+    document, and ``None`` means no applicable prior outcome, never that the
+    system has verified anything.
+    """
+
+    if not isinstance(value, dict):
+        return None
+    return {
+        "status": _bounded_evidence_text(value.get("status"), limit=32),
+        "recordedAt": _bounded_evidence_text(value.get("recordedAt"), limit=64),
+        "destinationStorageId": _bounded_identifier(value.get("destinationStorageId")),
+        "destinationPath": _bounded_identity_path(value.get("destinationPath")),
+        "completedOperations": _bounded_identifier_list(
+            value.get("completedOperations"), maximum=16
+        ),
+        "uncertainEffects": _bounded_identifier_list(value.get("uncertainEffects"), maximum=16),
+        "effectCertainty": _bounded_evidence_text(value.get("effectCertainty"), limit=32),
+        "versionApplicable": value.get("versionApplicable") is True,
+        "warning": _bounded_evidence_text(value.get("warning"), limit=1024),
     }
 
 

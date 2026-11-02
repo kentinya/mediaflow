@@ -279,9 +279,9 @@ describe("organize plan confirmation history warning", () => {
     await screen.findByText("部分文件上次整理未完全成功");
     // The affected file is named in the aggregate banner; its own bounded
     // warning text and the unknown-effect wording are visible.
-    const banner = screen.getByText("部分文件上次整理未完全成功").closest(
-      "section, div",
-    );
+    const banner = screen
+      .getByText("部分文件上次整理未完全成功")
+      .closest("section, div");
     expect(banner).not.toBeNull();
     expect(banner?.textContent ?? "").toContain("One.2001.mkv");
     expect(banner?.textContent ?? "").toContain("上次整理失败");

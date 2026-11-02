@@ -9,6 +9,7 @@ from collections.abc import Callable, Iterable, Mapping
 from dataclasses import dataclass, replace
 from datetime import UTC, datetime, timedelta
 from pathlib import Path
+from types import SimpleNamespace
 from uuid import NAMESPACE_URL, UUID, uuid4, uuid5
 
 from mediaflow.domain.automation import (
@@ -11487,6 +11488,49 @@ class SQLiteTaskRepository:
                             next_action="inspect the existing durable execution",
                             details={"itemId": item.item_id},
                         )
+                    if adopt_task_id is not None:
+                        # A previous explicit confirmation of this same Task may
+                        # already have been superseded by newer confirmed work
+                        # on this exact source (AC-23).  The older owner never
+                        # re-admits the handed-off source: its recorded
+                        # outcome stays, and the newer Task keeps the file.
+                        superseded = self._connection.execute(
+                            "SELECT superseded_by_task_id FROM task_items "
+                            "WHERE task_id=? AND storage_id=? AND source_path=?",
+                            (adopt_task_id, item.source.storage_id, item.source.path),
+                        ).fetchone()
+                        if superseded is not None and superseded["superseded_by_task_id"]:
+                            raise ManualExecutionError(
+                                "this source was handed off to a newer confirmed "
+                                "organizing request and is no longer this Task's work",
+                                code="source_superseded",
+                                next_action=(
+                                    "inspect the newer Task that took over this source; "
+                                    "this recorded outcome stays unchanged"
+                                ),
+                                details={"itemId": item.item_id},
+                            )
+
+                # Slice 47 AC-23: every explicitly confirmed source whose latest
+                # applicable formal outcome is failed/partial takes the file
+                # over from its unfinished previous owner inside this same
+                # transaction — before the slot check below, so a released slot
+                # is immediately usable by this very confirmation.  Sources
+                # still queued/processing without a terminal outcome are never
+                # touched; their exact file locks below keep the mutex.
+                for item in items:
+                    self._hand_off_superseded_source_owner_locked(
+                        item.source.storage_id,
+                        item.source.path,
+                        item.source.path,
+                        item.source.resource_library_id,
+                        source_fingerprint=item.source.fingerprint,
+                        source_version=stored_source_version_evidence(
+                            item.source.fingerprint_evidence
+                        ),
+                        successor_task_id=execution.task_id,
+                        now=now,
+                    )
 
                 for storage_id, path in lock_values:
                     try:
@@ -13196,7 +13240,8 @@ class SQLiteTaskRepository:
         the pass's own exclusion records (``history_excluded``/
         ``history_unavailable``) are not formal organizing outcomes, so none of
         them can create, mask or overwrite the history this query reports.  The
-        scan is bounded far above the display page size but never by it.
+        scan is the complete matching population, read in bounded keyset
+        batches, never a display-page window.
 
         Returns a bounded, secret-free outcome document, or ``None`` when no
         applicable formal outcome exists.  A read failure raises: callers must
@@ -13210,41 +13255,19 @@ class SQLiteTaskRepository:
         if exclude_task_id is not None and not isinstance(exclude_task_id, str):
             raise ValueError("excluded Task identity is invalid")
         canonical = storage_path if storage_path is not None else source_path
-        excluded_stages = ", ".join("?" for _ in sorted(NON_ORGANIZING_ITEM_STAGES))
         with self._lock:
-            rows = self._connection.execute(
-                "SELECT i.item_id, i.task_id, i.status AS item_status, i.stage, i.attempts, "
-                "i.created_at AS admitted_at, i.updated_at AS item_updated_at, "
-                "i.source_fingerprint, i.resource_library_id, "
-                "i.destination_storage_id, i.destination_path, i.error AS item_error, "
-                "t.command, t.status AS task_status, "
-                "r.status AS result_status, r.created_at AS result_created_at, "
-                "r.effect_certainty, r.uncertain_effects, r.completed_operations, "
-                "r.primary_completed, r.operation, r.error AS result_error "
-                "FROM task_items i "
-                "JOIN tasks t ON t.task_id = i.task_id "
-                "LEFT JOIN task_results r ON r.item_id = i.item_id "
-                "AND r.result_id = i.item_id || ':' || i.attempts "
-                "WHERE i.storage_id=? "
-                "AND (i.source_storage_path=? OR (i.source_storage_path IS NULL "
-                "AND i.source_path=? AND i.resource_library_id=?)) "
-                "AND (t.command='organize' OR t.command='manual_organize' "
-                "OR t.command LIKE 'retry:%' OR t.command LIKE 'retry-failed:%') "
-                "AND i.status IN ('success','failed','partial','skipped','cancelled') "
-                f"AND i.stage NOT IN ({excluded_stages}) "
-                "AND i.task_id != ? "
-                "ORDER BY i.created_at DESC, i.attempts DESC, r.created_at DESC, i.item_id DESC "
-                "LIMIT 400",
-                (
-                    storage_id,
-                    canonical,
-                    source_path,
-                    resource_library_id or "",
-                    *sorted(NON_ORGANIZING_ITEM_STAGES),
-                    exclude_task_id or "",
-                ),
-            ).fetchall()
-            for row in rows:
+            # The complete matching population is read newest-admission first,
+            # in keyset batches, and the newest *applicable* row wins.  No
+            # display-page bound (32/100) and no arbitrary scan cap replaces
+            # the real population: a source organized many times still finds
+            # its true latest formal outcome.
+            for row in self._iter_organize_source_outcome_rows_locked(
+                storage_id,
+                canonical,
+                source_path,
+                resource_library_id,
+                exclude_task_id=exclude_task_id,
+            ):
                 applicable, comparable = self._outcome_applies_to_observed_version_locked(
                     row,
                     storage_path=canonical,
@@ -13254,6 +13277,7 @@ class SQLiteTaskRepository:
                 )
                 if not applicable:
                     continue
+                recorded = str(row["result_status"] or row["item_status"])
                 return {
                     "kind": "result" if row["result_status"] is not None else "item",
                     "taskId": row["task_id"],
@@ -13262,7 +13286,7 @@ class SQLiteTaskRepository:
                     "taskStatus": row["task_status"],
                     "itemStatus": row["item_status"],
                     "itemStage": row["stage"],
-                    "status": row["result_status"] or row["item_status"],
+                    "status": recorded.lower(),
                     "admittedAt": row["admitted_at"],
                     "outcomeAt": row["result_created_at"] or row["item_updated_at"],
                     "attempts": row["attempts"],
@@ -13277,6 +13301,293 @@ class SQLiteTaskRepository:
                     "versionComparable": comparable,
                 }
             return None
+
+    def _iter_organize_source_outcome_rows_locked(
+        self,
+        storage_id: str,
+        canonical: str,
+        source_path: str,
+        resource_library_id: str | None,
+        *,
+        exclude_task_id: str | None,
+        statuses: tuple[str, ...] = ("success", "failed", "partial", "skipped", "cancelled"),
+        batch_size: int = 400,
+    ):
+        """Yield one source's organizing-outcome rows newest admission first.
+
+        The shared read behind the history decision and the per-file hand-off:
+        every settled organizing TaskItem of the exact same verified source
+        identity, joined to its own formal Result.  The Result link is the
+        item's *durable* one: a manual execution's Result is named by its
+        ``manual_execution_items.result_id`` (a fresh UUID), while automatic,
+        CLI and continuation results carry the exact attempt id
+        ``item_id:attempts`` — neither format guesses the other, and a missing
+        Result honestly degrades to the item row instead of inventing one.
+        Rows are read in keyset batches so the complete matching population is
+        reachable no matter how many times this source was organized.
+        """
+
+        excluded_stages = ", ".join("?" for _ in sorted(NON_ORGANIZING_ITEM_STAGES))
+        base = (
+            "SELECT i.item_id, i.task_id, i.status AS item_status, i.stage, i.attempts, "
+            "i.created_at AS admitted_at, i.updated_at AS item_updated_at, "
+            "i.source_fingerprint, i.resource_library_id, "
+            "COALESCE(r.destination_storage_id, i.destination_storage_id) "
+            "AS destination_storage_id, "
+            "COALESCE(r.destination_path, i.destination_path) AS destination_path, "
+            "i.error AS item_error, "
+            "t.command, t.status AS task_status, "
+            "r.status AS result_status, r.created_at AS result_created_at, "
+            "r.effect_certainty, r.uncertain_effects, r.completed_operations, "
+            "r.primary_completed, r.operation, r.error AS result_error "
+            "FROM task_items i "
+            "JOIN tasks t ON t.task_id = i.task_id "
+            "LEFT JOIN manual_execution_items mei ON mei.task_item_id = i.item_id "
+            "LEFT JOIN task_results r ON r.result_id = "
+            "COALESCE(mei.result_id, i.item_id || ':' || i.attempts) "
+            "WHERE i.storage_id=? "
+            "AND (i.source_storage_path=? OR (i.source_storage_path IS NULL "
+            "AND i.source_path=? AND i.resource_library_id=?)) "
+            "AND (t.command='organize' OR t.command='manual_organize' "
+            "OR t.command LIKE 'retry:%' OR t.command LIKE 'retry-failed:%') "
+            f"AND i.status IN ({', '.join('?' for _ in statuses)}) "
+            f"AND i.stage NOT IN ({excluded_stages}) "
+            "AND i.task_id != ? "
+        )
+        constants: list[object] = [
+            storage_id,
+            canonical,
+            source_path,
+            resource_library_id or "",
+            *statuses,
+            *sorted(NON_ORGANIZING_ITEM_STAGES),
+            exclude_task_id or "",
+        ]
+        order = "ORDER BY i.created_at DESC, i.attempts DESC, i.item_id DESC"
+        cursor_created: str | None = None
+        cursor_attempts: int | None = None
+        cursor_item: str | None = None
+        while True:
+            parameters = [*constants]
+            query = base
+            if cursor_created is not None:
+                query += "AND (i.created_at < ? OR (i.created_at = ? AND (i.attempts < ? "
+                query += "OR (i.attempts = ? AND i.item_id < ?)))) "
+                parameters.extend(
+                    [cursor_created, cursor_created, cursor_attempts, cursor_attempts, cursor_item]
+                )
+            query += order + f" LIMIT {int(batch_size)}"
+            rows = self._connection.execute(query, parameters).fetchall()
+            if not rows:
+                return
+            yield from rows
+            last = rows[-1]
+            cursor_created = last["admitted_at"]
+            cursor_attempts = int(last["attempts"])
+            cursor_item = last["item_id"]
+
+    def hand_off_superseded_source_owner(
+        self,
+        *,
+        storage_id: str,
+        source_path: str,
+        storage_path: str | None = None,
+        resource_library_id: str | None = None,
+        source_fingerprint: str | None = None,
+        source_version: SourceVersionEvidence | None = None,
+        successor_task_id: str,
+        now: datetime,
+    ) -> dict[str, object] | None:
+        """Hand one confirmed source's previous failed/partial owner over.
+
+        The explicit-confirmation admission transaction calls the locked form;
+        this public wrapper runs the identical decision in its own transaction
+        so focused repository journeys exercise exactly the same scope.
+        Returns the bounded hand-off evidence, or ``None`` when no unfinished
+        same-version failed/partial owner exists.
+        """
+
+        if not isinstance(storage_id, str) or not storage_id.strip():
+            raise ValueError("Storage identity is required")
+        if not isinstance(source_path, str) or not source_path.strip():
+            raise ValueError("source path is required")
+        if not isinstance(successor_task_id, str) or not successor_task_id.strip():
+            raise ValueError("successor Task identity is required")
+        if not isinstance(now, datetime) or now.tzinfo is None:
+            raise ValueError("hand-off timestamp needs timezone")
+        canonical = storage_path if storage_path is not None else source_path
+        with self._lock, self._connection:
+            self._connection.execute("BEGIN IMMEDIATE")
+            try:
+                handoff = self._hand_off_superseded_source_owner_locked(
+                    storage_id,
+                    canonical,
+                    source_path,
+                    resource_library_id,
+                    source_fingerprint=source_fingerprint,
+                    source_version=source_version,
+                    successor_task_id=successor_task_id,
+                    now=now,
+                )
+                self._connection.commit()
+            except BaseException:
+                self._connection.rollback()
+                raise
+        return handoff
+
+    def _hand_off_superseded_source_owner_locked(
+        self,
+        storage_id: str,
+        canonical: str,
+        source_path: str,
+        resource_library_id: str | None,
+        *,
+        source_fingerprint: str | None,
+        source_version: SourceVersionEvidence | None,
+        successor_task_id: str,
+        now: datetime,
+    ) -> dict[str, object] | None:
+        """The atomic per-file hand-off inside the caller's open transaction.
+
+        Slice 47 AC-23: a deliberate new manual organize of a source whose
+        latest applicable formal outcome is ``failed``/``partial`` takes the
+        file over from every *unfinished* previous owner that recorded that
+        outcome.  Inside this same transaction each such owner's TaskItem is
+        marked with the successor Task identity, and the owner's own further
+        qualification is resolved:
+
+        * the marked item can no longer be started, advanced or published by
+          the previous owner (see ``_require_scheduled_item_locked``), while
+          its recorded Result, pin, completed steps and uncertain evidence
+          stay exactly as they were;
+        * an in-flight mutation boundary that names the handed-off item is
+          resolved — the boundary's own protective purpose is superseded by
+          the durable marker, and the unknown evidence it guarded stays
+          readable — so unknown history alone cannot hold a slot forever;
+        * when the previous owner has no remaining machine work left, its
+          slot is released (a wholly human-waiting Task waits, a fully
+          settled one settles); when genuine machine work remains, the owner
+          keeps exactly one slot and its claim stays valid.
+
+        A queued/processing source without its own terminal outcome is never
+        touched here: normal source ownership and the exact file locks keep
+        their mutual exclusion.
+        """
+
+        handed_off: dict[str, object] | None = None
+        for row in self._iter_organize_source_outcome_rows_locked(
+            storage_id,
+            canonical,
+            source_path,
+            resource_library_id,
+            exclude_task_id=successor_task_id,
+            statuses=("failed", "partial"),
+        ):
+            applicable, _comparable = self._outcome_applies_to_observed_version_locked(
+                row,
+                storage_path=canonical,
+                resource_library_id=resource_library_id,
+                source_fingerprint=source_fingerprint,
+                source_version=source_version,
+            )
+            if not applicable:
+                continue
+            owner_task_id = row["task_id"]
+            state = self._scheduled_state_locked(owner_task_id)
+            if state is None or state.queue_state not in {
+                TaskQueueState.QUEUED,
+                TaskQueueState.CLAIMED,
+                TaskQueueState.WAITING_HUMAN,
+                TaskQueueState.PAUSED,
+            }:
+                # A finished or non-kernel owner holds no slot and no live
+                # claim: its recorded outcome stays pure history.
+                continue
+            marked = self._connection.execute(
+                "UPDATE task_items SET superseded_by_task_id=?, updated_at=? "
+                "WHERE item_id=? AND status IN ('failed','partial') "
+                "AND superseded_by_task_id IS NULL",
+                (successor_task_id, now.isoformat(), row["item_id"]),
+            )
+            if marked.rowcount != 1:
+                # A concurrent hand-off or outcome change got there first;
+                # never overwrite an existing marker.
+                continue
+            queue_state = self._resolve_superseded_owner_queue_locked(
+                owner_task_id, (row["item_id"],), now
+            )
+            handed_off = {
+                "kind": "item",
+                "taskId": owner_task_id,
+                "itemId": row["item_id"],
+                "itemStatus": row["item_status"],
+                "successorTaskId": successor_task_id,
+                "ownerQueueState": queue_state,
+            }
+        return handed_off
+
+    def _resolve_superseded_owner_queue_locked(
+        self, task_id: str, handed_off_item_ids: tuple[str, ...], now: datetime
+    ) -> str:
+        """Resolve one handed-off owner's claim/marker/slot for its remaining work.
+
+        The mutation boundary is cleared only when it names a handed-off item;
+        a genuinely in-flight effect of other work is never touched.  The slot
+        is released only when no durable machine work remains and no control
+        request is pending; remaining human decisions keep the Task on
+        human-waiting, remaining machine work keeps the claim and the slot.
+        """
+
+        state = self._scheduled_state_locked(task_id)
+        if state is None:
+            return "missing"
+        if state.mutation_item_id in handed_off_item_ids:
+            self._connection.execute(
+                "UPDATE task_scheduling SET mutation_state=NULL, mutation_item_id=NULL, "
+                "mutation_action=NULL, updated_at=? WHERE task_id=? AND mutation_item_id=?",
+                (now.isoformat(), task_id, state.mutation_item_id),
+            )
+        rows = self._connection.execute(
+            "SELECT status FROM task_items WHERE task_id=?", (task_id,)
+        ).fetchall()
+        statuses = [row["status"] for row in rows]
+        if any(status in _KERNEL_MACHINE_ITEM_STATUSES for status in statuses):
+            # Real machine work remains: the owner keeps its one slot and its
+            # live claim (capacity is counted per Task, never per file).
+            return state.queue_state.value
+        if state.control_request is not None:
+            # A pending pause/cancel belongs to its own acknowledgement path.
+            return state.queue_state.value
+        all_settled = all(status in _SETTLED_ITEM_STATUS_VALUES for status in statuses)
+        target = TaskQueueState.SETTLED if all_settled else TaskQueueState.WAITING_HUMAN
+        if all_settled:
+            item_rows = self._connection.execute(
+                "SELECT item_id, status FROM task_items WHERE task_id=?", (task_id,)
+            ).fetchall()
+            honest = task_work_status(
+                tuple(SimpleNamespace(status=TaskItemStatus(row["status"])) for row in item_rows)
+            )
+            current = self._connection.execute(
+                "SELECT status FROM tasks WHERE task_id=?", (task_id,)
+            ).fetchone()
+            if current is not None and current["status"] != honest.value:
+                # The honest aggregate of the same settled outcomes: never a
+                # rewritten Result, only the Task's own factual sum.
+                self._connection.execute(
+                    "UPDATE tasks SET status=?, updated_at=? WHERE task_id=?",
+                    (honest.value, now.isoformat(), task_id),
+                )
+        self._connection.execute(
+            "UPDATE task_scheduling SET queue_state=?, machine_stage=NULL, claim_token=NULL, "
+            "claim_worker_id=NULL, claimed_at=NULL, claim_expires_at=NULL, heartbeat_at=NULL, "
+            "updated_at=? WHERE task_id=?",
+            (target.value, now.isoformat(), task_id),
+        )
+        # The owner has no machine work left, so its short-lived execution
+        # locks are retired exactly like a claim release; durable ownership
+        # evidence stays on the items.
+        self._connection.execute("DELETE FROM file_locks WHERE task_id=?", (task_id,))
+        return target.value
 
     def _outcome_applies_to_observed_version_locked(
         self,
@@ -19317,6 +19628,15 @@ class SQLiteTaskRepository:
                     "this TaskItem identity is bound to a different source; a publication "
                     "cannot re-point it"
                 )
+            if row["superseded_by_task_id"]:
+                # Slice 47 AC-23: the source was handed off to a newer
+                # explicitly confirmed organizing Task.  The previous owner can
+                # neither start a further step nor publish another outcome for
+                # it; its recorded Result and evidence stay untouched.
+                raise TaskSchedulingError(
+                    "this TaskItem's source was handed off to a newer confirmed "
+                    "organizing Task; the previous owner cannot start it or publish it"
+                )
             stored = self._item(row)
             # Every start/progress/outcome is compared with the durable row, not
             # just with the caller's projection: a caller that swaps the item
@@ -19527,6 +19847,7 @@ class SQLiteTaskRepository:
                     plan_id TEXT, destination_storage_id TEXT, destination_path TEXT,
                     execution_status TEXT, error TEXT, progress TEXT,
                     source_observed_at TEXT, source_storage_path TEXT,
+                    superseded_by_task_id TEXT,
                     UNIQUE(task_id, storage_id, source_path),
                     FOREIGN KEY(task_id) REFERENCES tasks(task_id)
                 );
@@ -20526,6 +20847,16 @@ class SQLiteTaskRepository:
             }
             if "progress" not in item_columns:
                 self._connection.execute("ALTER TABLE task_items ADD COLUMN progress TEXT")
+            if "superseded_by_task_id" not in item_columns:
+                # Slice 47 RO-6/AC-23: the durable per-file hand-off marker.  A
+                # failed/partial TaskItem whose source was re-organized by a
+                # newer explicitly confirmed manual Task keeps the marker, so
+                # the previous owner can neither start a further step nor
+                # publish another outcome for it while every recorded Result,
+                # pin and uncertain effect stays exactly as it was.
+                self._connection.execute(
+                    "ALTER TABLE task_items ADD COLUMN superseded_by_task_id TEXT"
+                )
             # Schema 42: the selected-run detail reads page/filter items by
             # (task, created_at, item_id), page task results and exactly-linked
             # operation records by task/plan/time, and counts dispositions per
