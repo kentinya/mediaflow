@@ -1,7 +1,8 @@
-# Task47.5 — FIX REQUIRED
+# Task47.5 — READY FOR B REVIEW
 
-最新候选 `f3fcace35371bc7aa3f56ce6e5698261faab5e52` 经 B 复核，单文件交接及提醒数据已修复，
-仍有一项批量交接 P1，需在同一个 Task 内修复，详见末尾 B Review Result / Developer 修复指导。
+最新候选 `f3fcace35371bc7aa3f56ce6e5698261faab5e52` 的提醒数据和单文件交接已有修复证据。
+B 撤回此前“失败且效果未知就必须继续占容量”的批量 P1 判断；原复现未证明仍有在途工作，
+不能用该假设要求 Developer 返工。剩余产品与 T4 验收尚未完成，不代表 Task PASS。
 Task ID、Goal、Base 和 Slice 边界不变；不授权派生代理、push、部署或 Slice 关闭。
 用户已选择：“运行一次”和定时一样排除历史 failed / partial，保留一键执行，不新增初始确认。
 本次规划一致性核对后按用户选择改为**同一来源版本最近一次正式整理结果**判断；后来手动整理
@@ -26,7 +27,7 @@ REQ-RESULT-* 与 REQ-SAFE-* 中未被明确修订的身份、授权、历史及�
 Task ID: 47.5
 Task Type: SLICE
 Parent Slice: 47
-Status: FIX REQUIRED
+Status: READY FOR B REVIEW
 Task Base: 75ddff55f8d5b2b1206c81804bfb5cbe9ed279a1
 Difficulty: High
 Test Level: T4
@@ -366,100 +367,67 @@ npm run test:e2e -- --config=playwright.python.config.ts tests/e2e/organize-sour
 
 ## B Review Result
 
-**Decision: FIX REQUIRED — 候选 f3fcace3，2026-11-02，B 独立复核；同一 Task 继续。**
+**当前状态：READY FOR B REVIEW，验收未完成；撤回上一轮证据不足的批量 P1。**
 
-- 完整审查范围：`75ddff55f8d5b2b1206c81804bfb5cbe9ed279a1..f3fcace35371bc7aa3f56ce6e5698261faab5e52`。
-  本轮在前次完整审查基础上重新核对全部变更清单，逐项检查
-  `76598900..f3fcace3` 的生产修复、持久关系、API 投影和测试，未只接受 Developer 报告。
-- 工作区：`main`，本轮起始 HEAD 为上述候选，无预存 tracked 修改；预存未跟踪 OS/log、
-  `15`、docs 图片及 output 产物全部保留未暂存。工作区/Git 可写，治理预检 PASS。
-- 证据目录（本机保留）：`.git/validation-evidence/f3fcace35371bc7aa3f56ce6e5698261faab5e52/b-review/`。
-  `manual.log` 为前次单文件 probe 在新候选的实际结果；`focused.log` 为本轮聚焦测试；
-  `automatic_probe.py` / `automatic.log` 为 Run once 故障后经 Files 手动整理的实际旅程；
-  `sibling-unknown.log` 为下述仍失败的批量断言。不声称这些本地产物远端可访问。
+候选：`f3fcace35371bc7aa3f56ce6e5698261faab5e52`；审查范围仍为
+`75ddff55f8d5b2b1206c81804bfb5cbe9ed279a1..f3fcace35371bc7aa3f56ce6e5698261faab5e52`。
+本次仅纠正 B 的判断，不改变候选代码、原 Task/合同、安全规则或旧接受事实，不宣告 PASS。
 
-### 三项原阻塞的复核结果
+### 判断纠正：失败历史与当前仍在执行是两件事
 
-| 原问题 | 当前结果 |
+用户指出“A 已经失败，为什么还要占任务”。B 回查现有证据后纠正：
+
+- 原 Run once 复现中，A 的 Storage.write 已抛错返回，并形成 partial/未知效果 Result；
+  B 随后 failed、效果为 none，原 runner 已返回。没有证明还有实际在途调用或合法待执行
+  工作。历史效果未知或旧 `mutation_in_flight` 标记单独存在，不能代替这项证明。
+- 用户后来只重新整理 B，B 实际成功，旧批次 settled、容量为 0，是观察事实。此前私有
+  probe 强制断言“容量必须为 1”，依赖未经证明的占位前提；该断言失败不能据此定性为
+  产品容量回归、A 的安全保护被破坏或多放了执行任务。
+- **撤回 `2dce1ae3:TASK.md` 中的唯一 P1 及据此要求保留旧 claim/名额的修复步骤。**
+  不要求 Developer 为满足这个断言增加永久占位、恢复旧 claim、阻止新整理或改写生产行为。
+  原 probe、失败日志和 Git 历史全部保留，标明是 B 预期依据不足，不删除或伪装为通过。
+
+用户旅程应按真实工作判断：一批 A 失败、B 成功、C 仍在执行，C 的合法工作和必要容量应
+保留；若整批都已结束、没有需保留的在途/待执行工作，保留 A 的失败及未知效果历史并不
+要求永久占用执行名额。A 的同版本失败仍按定时/Run once 历史规则排除；用户手动选择 A
+时仍走提醒与正常确认。不得把“效果未知”改写成“已验证无效果”，也不得自动重放 A。
+
+这不是放宽真实在途调用、剩余机器工作、逐文件锁或旧 owner fencing 的安全义务。当前
+未证明这些义务在该复现中受到破坏；后续应由正常入口的真实在途/剩余工作旅程验收。
+
+### 已取得的候选证据与待验收项
+
+| 项目 | 已取得的结果 / 限制 |
 |---|---|
-| API 漏掉页面提醒 | 真实 Preview GET 已包含 history、目标和未知效果字段，传输缺口修复；生产浏览器/桌面窄屏最终验收待后续候选。 |
-| 历史查询漏读真实手动 Result | B 实测能读到 UUID Result 的 CREATE_DIRECTORY、attempted_unverified、mutation_outcome；18 项聚焦测试含跨 400 行总体读取通过，原缺口修复。 |
-| 新旧工作交接及容量 | 单文件已修：新整理成功后旧 claim 拒绝、名额为 0。批量仍会错误释放未被接手文件的保护，见唯一 P1。 |
+| 提醒传输与真实 Result | 真实 Preview GET 已含 history；UUID Result 的目标、完成步骤与未知效果可读。 |
+| 单文件交接 | 实际失败 → Files 再次确认 → 新 COPY 成功；旧 heartbeat 拒绝，容量为 0。 |
+| 聚焦测试 | B 执行 `tests.test_organize_source_history`，18 tests OK，2.723 秒；不等同于完整验收。 |
+| 批量/定时 | Run once 故障后从 Files 重新整理 A 或 B 均实际成功；“只整理 B 后必须占 1 名额”的旧判据撤回，不能据此给 PASS 或 FIX REQUIRED。 |
+| 简短提醒 | 用户已明确的简化尚未落实：当前文案仍有内部步骤代码和多处长文重复。保留原交付要求，普通提醒简短、确有 unknown 再说明，详情保留有用事实，不新增操作步骤。 |
+| 完整验收 | 生产浏览器桌面/窄屏、其他适用 T4/Web/包装/Docker/restart/security 验收仍待 B 完成；不能用 Developer 的全量报告代替最终判断。 |
 
-### 唯一 P1：只重新整理 B，却提前释放仍有 A 未确认操作的旧批次
+证据在本机 `.git/validation-evidence/f3fcace35371bc7aa3f56ce6e5698261faab5e52/b-review/`：
+`manual.log`、`focused.log`、`automatic_probe.py`、`automatic.log`、`sibling-unknown.log`。
+其中 sibling-unknown 的 exit 1 记录保留，**其容量=1 的预期已撤回**；不声称远端可访问。
 
-**用户完整旅程与已复现结果：**
+### 后续开发指导与 B 验收边界
 
-1. 在 Automation 对已保存定义点击“运行一次”，本批包含 A=`One.2001.mkv`、
-   B=`Two.2002.mkv`。A 的目标目录创建成功，随后真实 Storage.write 故障；A 记录 partial
-   和未知效果。受同一批尚未解除的操作边界影响，B 随后记录 failed、效果为 none。
-2. 用户只在 Files 选中 B，看到其失败提醒，按普通摘要确认重新整理 B。B 的新 Task 实际
-   COPY 成功。用户没有选中或确认接手 A。
-3. **应有结果：** B 完成自己的交接；旧批次保留 A 的未收束边界和一个处理名额。A 的
-   失败/未知证据保持原样；用户后来明确选择并确认 A 时才按 A 的实际范围处理。
-4. **实际结果：** 确认 B 后，旧批次变为 `settled`、claim 被清掉，A 的
-   `mutation_in_flight` 标记却仍在。此刻总容量为 1（仅新 B）；B 完成后变成 0，应保留的
-   旧批次一份容量被提前释放。独立断言 `expected capacity 1, actual 0` 失败。
+1. 撤回项不产生新的实现任务；Developer 不应照旧结论为已失败、无实际剩余工作的文件
+   保留名额。保持已有结果、未知证据、非重放和已实现的逐文件交接。
+2. 落实用户已确认的简短提醒：普通提醒说明上次整理未完成及核对来源/目标；未知效果
+   才补一句。原始 CREATE_DIRECTORY / mutation_outcome 等代码无需作为普通必读文案，
+   可用目标和已知影响放现有详情，以人话表达；不加核查页、checkbox 或令牌操作。
+3. B 后续从已有入口完成批量中真实剩余工作/在途调用、失败历史与执行资格分离、拒权/
+   队满/并发确认、同版本 reopen 等原计划验收；区分实际在途工作与纯历史 unknown，
+   不把私有 probe 的内部 marker/计数预期当作新增产品要求。原 T4 门禁与测试时间小于
+   本轮总用时 50% 的要求继续有效。
 
-这是正常 Run once → Files 现有入口触发的问题，未手填 Task/Result，也未构造产品不存在的
-入口。只用临时 SQLite/LocalStorage、SyntheticMetadataProvider 和真实写入故障。
-没有证实重复复制/移动或远端调用仍在运行；已证实的是**未选中 A 的执行保护被 B 的确认
-连带收束**。不要求用户提供远端停止证明。
+### 工作区与 Slice 状态
 
-**原因与定位：** `sqlite_runtime.py::_resolve_superseded_owner_queue_locked` 仅检查
-pending/processing 等 item 状态与待处理控制，没有在容量/claim/锁结算前保留**不属于本次
-交接项的未收束 mutation 边界**。A 虽已有 partial 结果，仍可能合法保留该边界；不能仅凭
-所有 item 都属 settled 集合就把整个 Task 收束。当前分支还会执行 task-wide
-`DELETE FROM file_locks WHERE task_id=?`；不能连带释放未交接项所需的锁。
+本次纠正开始于 `main` / `2dce1ae33de525695f4ad3ccae7311a07ddc143e`，无预存 tracked
+修改，预存未跟踪 OS/log、图片、`15` 和 output 产物全部保留未暂存。仅更新 TASK.md，
+治理预检 PASS；未改产品、未运行新产品测试，既有观察与原始日志不变。
 
-此问题违反 AC-T4/T5、Slice AC-2/3/23 和逐文件范围/兄弟项保护要求。原“C 仍 processing”
-测试未覆盖“A 已有 partial 结果但其未知边界尚未收束”的真实批量状态。
-
-### Developer 修复指导（仍在 Task47.5）
-
-1. **修准确切文件与剩余边界的判断。** 在现有确认事务内，处理完本次选中项的交接后，
-   重新读取当前 scheduling 状态。若仍有未收束 mutation 边界且属于本次未交接的文件，
-   保留它的 claim/名额和所需锁；不得落入 SETTLED/WAITING_HUMAN 的释放分支。只在本次
-   明确确认的来源范围内收束旧执行资格和必要锁，不通过删除标记、unknown→none 或改写
-   Result 放行。保留已修复的单文件释放行为及“仍有 C 机器工作只占一份容量”行为。
-2. **补当前真实旅程的回归，再交接。** 复用现有 Run once / Files / Worker fixture 和 B
-   `automatic_probe.py`，把“A partial+unknown、B failed+none，仅重新整理 B”的断言纳入
-   `tests/test_organize_source_history.py`。确认后旧 A 标记/资格保护和一份名额保留；新 B
-   另占一份，B 成功后旧批仍占一份。再经正常 Files 选择并确认 A，证明只处理 A 的交接，
-   最终无剩余机器工作/未交接边界时才释放。原 A/B Result、pin、未知证据和 Automation
-   原结果/时间保持事实；成功兄弟不重放，队满/拒权回滚不留下半交接。
-3. **落地此前已明确的简短提醒。** 当前 `OrganizeSourceHistory.warning()` 和 Web banner
-   仍展示原始 CREATE_DIRECTORY / mutation_outcome 等内部代码，并在汇总、逐项和详情
-   重复长文；用户要求的简化尚未落实。普通提醒只需说明上次未完成及核对来源/目标，确有
-   未知效果再补一句。可用目标、已知影响保留在现有详情，用人话展示；后台证据保持完整，
-   不增加核查页、checkbox 或技术操作。本项是原 Task 的交付修正，不另设 Task 或扩大范围。
-4. **受影响测试与交接。** 先跑新增失败旅程及直接受影响的历史、手动确认、排程/fencing
-   测试；不要把所有全量门禁再交给 Developer。Python 命令沿用原 affected plan，可先执行：
-
-   ```bash
-   .venv/bin/python -m unittest tests.test_organize_source_history tests.test_manual_task_engine tests.test_manual_organize_execution tests.test_task_scheduling tests.test_task_scheduling_fencing
-   ```
-
-   文案改动跑直接受影响的 Web normalizer/确认组件测试、typecheck/build 和相应静态检查。
-   记录真实结果、提交新 checkpoint 后回到 READY FOR B REVIEW；B 完成原 T4 和生产浏览器/
-   包装/Docker 等待验收项。优先解决产品阻塞，测试时间继续小于本轮总用时 50%。
-
-### 本轮 B 实际验证与限制
-
-- `.venv/bin/python -m unittest tests.test_organize_source_history`：**18 tests OK，2.723 秒**。
-- 前次真实单文件 probe 在新候选通过：实际写入失败 → 带完整效果证据的 API 摘要 →
-  普通确认 → 新 COPY 成功；旧 heartbeat 拒绝、总容量为 0。
-- Run once 实际写失败后，经 Files 手动重新整理 A 成功；同一入口只重新整理 B 时，
-  上述兄弟保护断言失败（exit 1）。没有把现有单元测试通过等同于全部旅程通过。
-- 产品测试与故障复现合计不足 10 秒，低于本轮阅读、审查及记录总时间的 50%。
-- 治理预检和候选完整范围 `git diff --check` PASS。
-- 已证明 P1，按 workflow §6 提前 FIX REQUIRED；本轮未运行全量 Python/Web/E2E、生产
-  桌面/窄屏、wheel/installed、Docker/restart/security 门禁。Developer 报告的全量结果
-  未替代 B 的最终验收；缺少 B 全量结果本身不构成 Developer 返工原因。
-
-### Slice 结果重评
-
-RO-1–5 原 Task47.1–47.4 接受事实保留，但当前改动对共享容量/边界有已复现回归；不能据
-旧 packet 宣布本候选全量通过。RO-6 的提醒数据和单文件交接有新证据，批量交接尚未完成。
-全部 RO/AC 的最终验收仍待修复候选；Slice 保持 ACTIVE，不交新的 READY FOR A REVIEW
-packet，不创建下个 Task，不由 B 关闭 Slice。本轮仅更新 TASK.md 的 B 结论及修复指导。
+RO-1–5 原接受事实保留；本候选的 RO-6 和整体回归尚未最终验收。没有基于当前复现证明
+新的容量回归，不再以该项阻断开发。Slice 保持 ACTIVE，Task 留在 READY FOR B REVIEW，
+不关闭 Slice、不创建后续 Task、不提交 READY FOR A REVIEW packet。
