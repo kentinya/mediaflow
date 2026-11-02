@@ -584,3 +584,107 @@ AC-24 的 installed/image 专项负例仍由 B 在最终候选补齐，不作为
 
 Task 保持 FIX REQUIRED，Scope/Base 不变；不规划下一 Task，不交 SLICE READY FOR A REVIEW，
 不由 B 关闭 Slice。下一步只修本 Task 的历史判断/逐文件准入原子性，再由 B 验收。
+
+## Developer Completion Report — FIX ROUND（候选 4：自动准入原子复核源历史）
+
+按 B Review 唯一 P1 与修复指导 1–4 在同一 Task 内修复；Task ID/Goal/Base 与 Slice 边界
+不变，未扩大范围。工作区 `main`，本轮起始 HEAD `bb6c08aa`（B 审查/指导提交），无预存
+tracked 修改；预存未跟踪 OS/log、`15`、docs 图片、`output/*` 等原样保留、未暂存。
+未触碰用户数据库/媒体/私密配置；未 push、部署、未自判 PASS。
+
+**候选：** `2332105ac46127ba572ada4b02f3e09f4b24e6d3`（实现 + 测试单一 checkpoint；
+本报告另提交）。范围 `bb6c08aa..2332105a`。原候选 `3fb10500` 的容量结算、旧批次收尾和
+简短提醒修复保留，未重做。
+
+**Changes（对应修复指导 1–4）**
+
+1. **决策下沉到最终逐文件准入事务（指导 1、2、3）**
+   - `SQLiteTaskRepository.begin_scheduled_item_with_ownership` 新增
+     `exclude_failed_history`（默认关闭）。同一 `BEGIN IMMEDIATE` 事务里依次解析：
+     claim fence → 共享来源占用 → 该 canonical Storage/path/可比版本的最新正式整理
+     结果 → TaskItem 写入。最新结果为 failed/partial 时不再写 PROCESSING/执行 attempt，
+     而是直接提交一条终态 `SKIPPED` + `history_excluded` 行（沿用原有 bounded reason），
+     零 Provider、零 Storage、零 Result；历史读取抛错时在同一事务写
+     `history_unavailable` fail-closed 行，绝不当作“无历史”继续。
+   - 服务层删除准入前的 `_automatic_history_gate` 只读判断（不是“服务再读一次、仍分开
+     写”），`MediaOrganizerService.process_file` 只按准入返回行的 stage 判定“本次未处理”，
+     不再二次发布；删除旧两阶段 `publish_history_gate_item`（generic/kernel 各一份），
+     排除记录与准入同一次 commit。
+   - 该事务回答的是**最终适用结果**：间隙中写入手动 partial/failed → 排除；间隙中手动
+     成功 → 正常处理；真替换版本（可比证据不同）→ 正常处理；占用核对仍在本项历史判断
+     之前，排队/处理中的来源继续互斥；显式手工/CLI/remote/四类继续不带该标志，语义不变。
+   - 附带行为变化（同一安全方向）：同来源已被活动工作占用且历史为 failed/partial 时，
+     旧实现会在门禁项的 `begin_item` 处抛出未捕获的 `TaskSourceOwnedError`；现按“占用
+     优先”返回既有的 `source_already_organizing` 有界失败项，不再中断整趟自动 pass。
+2. **来源范围仅自动入口**：`exclude_failed_history=True` 只由
+   `automation_definition_execution` 的 due/Run once 两处设置。`TaskSchedulingService`
+   要求该标志必须同时启用原子来源占用边界，否则 fail-closed 报错；没有该组合边界的
+   测试/适配 repository 退回只读历史判断 + claim-fenced 写入（生产不走）。
+   `PersistentTaskCoordinator` 明确拒绝该标志，防止通用协调器伪称历史为空。
+3. **历史规则单一来源**：排除状态集与 excluded/unavailable 的 per-item bounded reason
+   移入 `domain/task_persistence.py`，应用层 re-export，避免应用/仓库两份状态集合
+   漂移；完整总体 + 版本可比语义仍由唯一 `latest_organize_source_outcome` 提供，事务内
+   直接调用同一实现（Storage/Provider I/O 仍在事务外）。
+4. **真实回归（指导 4）**
+   - `AutomaticAdmissionHistoryRaceTests`（真实 Run once + 真实 Files API/Worker 交错）：
+     在**最终准入事务之前**挂起自动 pass；主线程经真实 Files 准入 → 分析 → 精确摘要 →
+     选中确认，用真实 `target.write` 故障落 `PARTIAL/attempted_unverified`；恢复后自动
+     准入必须排除同版本，One 零 Provider/零 Result/零媒体，兄弟 Two 正常 COPY，旧 manual
+     结果与 Task 逐字段不变，自动 Task 诚实 `partial_success`。
+   - `test_unreadable_history_fails_closed_and_processes_nothing`：事务内历史读取失败 →
+     仅 `history_unavailable` 行，零 Provider/Result/媒体，汇总明确 fail-closed。
+   - `BeginScheduledItemOwnershipBoundaryTests` 新增 6 项事务边界断言：排除行与准入同一
+     commit、旧 Result 不改写；活动占用优先且不写行；读取失败行；成功历史照常准入；
+     替换版本不被旧失败拦住；不带标志的手工/CLI 来源保持原语义。
+   - 变异核对：临时关闭准入门（`exclude_failed_history` 不生效）时两个真实旅程均失败
+     （One 变 success 且目标出现；读取失败变 processing/FAILED），证明断言确实覆盖该
+     原子判断，而不是只适配新字段。
+
+**与 B 旧 probe 的同步点变化（重要交接）**
+
+旧 `admission_history_race.py` 把同步点挂在服务层只读 `latest_organize_source_outcome`
+上；该只读判断已按要求并入准入事务。现在该 patch 会在事务内被调用，若它阻塞/抛错会被
+fail-closed 记录（实跑旧 probe 得到 `history_unavailable` 而非 `history_excluded`），
+因此该 harness 需要把同步点移到最终准入边界。新测试的 `held_admission` 就挂在该真实
+边界（`begin_scheduled_item_with_ownership`）上，覆盖同一“自动已开始 → 手动 partial
+落库 → 自动准入”交错；建议 B 后续 probe 复用该同步点。未修改 B 的证据文件。
+
+**Developer affected tests（实际命令与结果）**
+
+- `.venv/bin/python -m unittest tests.test_organize_source_history
+  tests.test_task_source_ownership_race tests.test_task_scheduling
+  tests.test_task_scheduling_fencing tests.test_automation_run_once
+  tests.test_automation_task_admission tests.test_manual_task_engine`
+  → **181 tests OK**（13.4s）。
+- 直接受影响回归（同命令追加模块）：`tests.test_organize_preparation
+  tests.test_manual_organize_execution tests.test_task_retry
+  tests.test_automation_entrance_recovery tests.test_v2_automation_run_once
+  tests.test_preview_retirement tests.test_processing_recovery_admission
+  tests.test_task_persistence tests.test_workflow_retry
+  tests.test_direct_file_operations tests.test_batch_cli tests.test_conflict_resolution
+  tests.test_manual_operations tests.test_media_discovery tests.test_task_scope
+  tests.test_operations_task_center tests.test_operations_run_detail_log_isolation
+  tests.test_operations_run_detail_plan_evidence tests.test_v2_automation_operations
+  tests.test_manual_ignore tests.test_manual_ignore_batch tests.test_manual_operations_contract`
+  → **494 tests OK**（37.0s）。
+- `tests.test_strategy_cli tests.test_naming_preview_cli` → 29 OK（CLI 分析/显式 execute
+  入口未受协调器签名影响）。
+- 新旅程单独重复 3 次均 2 tests OK（无 flaky）。
+- 静态：`ruff check .`、`ruff format --check .`、`compileall`、`scripts/check_governance.py`、
+  `git diff --check` PASS。
+
+**未执行 / 剩余风险**
+
+1. 按分工未跑全量 Python/Web/E2E/wheel/installed/Docker/restart/窄屏门禁；B 在修复
+   候选上执行适用 T4 验收。本次无 API/投影/前端形状变化（stage、原因文案、Result 字段
+   不变），未改 Web 或 e2e，既有 Web/原生断言仍有效。
+2. 历史读取失败旅程以仓库端口注入异常（真实 SQLite/API/Worker，仅读端口抛错），
+   未伪造磁盘故障；fail-closed 行为与旧实现一致。
+3. 事务内历史查询是本地 SQLite 读，仍持写事务；查询沿用单来源 keyset 完整总体读取，
+   未新增全局索引/队列。超大有历史来源的锁持有时间为既有查询成本，不是本次新增阈值。
+4. 旧 B probe 同步点需按上文调整；不修改 B 的证据文件。
+5. 未改 `latest_organize_source_outcome` 的总体、版本可比与脱敏语义；未新增远端完成
+   探测、CLI 提醒、remote 类别或额外确认步骤。
+
+**测试时间占比**：本轮实际产品测试执行（unittest，含变异复跑）约 60 秒，静态检查约
+4 秒；本轮总用时约 55 分钟，测试占比约 2%，低于 30% 上限。没有为凑比例削减断言或等待。
