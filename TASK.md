@@ -300,7 +300,7 @@ Actual affected verification (cwd `/Users/songzhidong/mediaflow` unless noted):
 - `.venv/bin/python -m unittest tests.test_media_discovery tests.test_manual_organize_execution tests.test_manual_task_engine tests.test_operations_task_center tests.test_direct_file_transfers tests.test_direct_file_operations` — **414 tests OK / 83.223s**.
 - `.venv/bin/python -m unittest tests.test_media_library_transfers tests.test_runtime_strategy_configuration` — **38 tests OK / 1.433s**.
 - `.venv/bin/ruff format --check` and `ruff check` on all changed Python files — PASS; `compileall -q mediaflow tests scripts` — PASS; `scripts/check_governance.py` — PASS; `git diff --check` — PASS; both example `config validate` commands — exit 0.
-- `web/`: `npm run typecheck` PASS, `npm run lint` PASS, `npm run format:check` PASS, `npm run build` PASS, full unit run **88 files / 1268 tests PASS**, real-Python E2E `automation-settings.python.spec.ts` **14 tests PASS / 19.0s**, fake-server Automation settings subset **3 tests PASS**.
+- `web/`: `npm run typecheck` PASS, `npm run lint` PASS, `npm run format:check` PASS, `npm run build` PASS, full unit run **88 files / 1268 tests PASS**, real-Python E2E `automation-settings.python.spec.ts` **14 tests PASS / 19.0s**, fake-server `automation.spec.ts` **13 tests PASS / 4.6s**.
 - E2E covers real System Settings Save/readback, 1025/10000 capacities through Files, and one shared capacity 1 refusal/release/explicit retry between an admitted Automation Task and Files. Browser evidence is under Playwright test-results/trace paths; no product PASS claimed.
 
 Known risks / remaining work for B:
