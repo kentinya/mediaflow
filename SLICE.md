@@ -519,6 +519,16 @@ that value as Active. In the same isolated managed deployment/SQLite database, t
 the queue is empty. GET still truthfully shows Active 1025. Saving **1024** through the same settings
 entry returns 201, after which the same CLI command succeeds with one actual COPY target.
 
+**A Web follow-up — 2026-11-02:** the existing `自动化 → 全局设置` form also saves
+**1025** with HTTP 201 and shows the new published Active value. From Files, selecting one real
+fixture file and clicking `批量整理` then sends the existing `/files/discoveries` command, which
+returns HTTP 400 `invalid_request` with the same 1–1024 kernel error. The page shows only
+`无法开始整理发现，请刷新后重试。`; refreshing cannot correct the published capacity mismatch.
+The source remains present and no target is created. Through the same Web form, saving **1024**
+restores admission; the same file reaches its normal plan summary and explicit confirmation, then
+the real Worker/OrganizerExecutor performs its configured MOVE. This confirms A-P1-2 affects the
+ordinary Web journey as well; B's correction/acceptance must cover that existing journey.
+
 The new `domain/task_scheduling.py::MAX_TASK_CAPACITY = 1024` / `require_capacity` conflicts with
 the retained settings/configuration/Scheduler range of 1–10000. `TaskSchedulingService` and
 repository admission enforce the smaller limit. The bound entered in `e53e38999459f81da65f625ee3b73d39e9ff793e`
@@ -549,6 +559,12 @@ MetadataProvider is synthetic; all configuration activation, Task admission and 
 production behavior. The 1024 recovery is verified, not proposed. No user database, media or private
 configuration is accessed.
 
+- `web-capacity/capacity-web.spec.mjs` and `web-capacity/test-output-final/` (`proof.json`/PNGs):
+  **1 real-Python Chromium journey passed**, 4.0s, using the existing repository harness and built
+  V2 artifact. Settings Save, navigation, Files selection/admission, summary and confirmation are
+  actual page actions; existing harness controls only step the real background workers and read
+  fixture Storage state. A inspected the failure screenshot. This adds one focused journey;
+  it does not claim a new full-suite run.
 - `focused.log`: six scheduling/fencing/source-race/manual-engine/history/entrance modules,
   **141 tests OK**, 13.948s. This set does not cover the published-capacity mismatch.
 - `cli-capacity.log`: independent rerun of the prior A real CLI ENOSPC probe with corrected success
