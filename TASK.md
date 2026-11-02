@@ -6,7 +6,8 @@ Authority: 用户于 2026-11-03 先选择“全部放到系统设置”，并已
 用户进一步授权本代理行使 A 权限调整相关文档；已在
 `390a1a012495ad705f766bc4d568168a10b9dd4b:SLICE.md` 提交范围合同及相关需求/旅程/架构，
 B 已核对并对齐本 Task。该角色例外仅用于范围/文档，不构成独立 A 终审或产品接受。
-原“合同未同步”阻塞已解除；Developer 仍按用户停工状态保留，本轮不启动实现。
+原“合同未同步”阻塞已解除。用户于 2026-11-03 明确恢复 Developer 实施；本轮已完成
+实现并交 B 审查，未自签 PASS、未关闭 Slice、未推送。
 保持 RO-1–6、已有安全要求及 A-P1-1/B-P1-1 已修复事实；AC-2/12/26、V2-TASK-011 和
 V2-AUTO-001/007/008 已同步，不能把旧隔离验收标成新方案 PASS。
 
@@ -14,13 +15,13 @@ V2-AUTO-001/007/008 已同步，不能把旧隔离验收标成新方案 PASS。
 Task ID: 47.6
 Task Type: SLICE
 Parent Slice: 47
-Status: PLANNED
+Status: READY FOR B REVIEW
 Task Base: c8657032dae768d93b12387a5e58db502e23a7ee
 Difficulty: High
 Test Level: T4
 Planner / Reviewer: B
 Current correction: Three system-owned runtime settings, shared organizing capacity, retire stale-age parameter
-Implementation gate: CONTRACT ALIGNED AT 390a1a01; Developer remains stopped by user
+Implementation gate: CONTRACT ALIGNED AT 390a1a01; USER RESUMED; CANDIDATE bf6968c1 READY FOR B REVIEW
 ```
 
 ## Replanning decision / preflight
@@ -268,9 +269,45 @@ npm run test:e2e -- --config=playwright.python.automation.config.ts tests/e2e/au
 
 ## Developer Completion Report
 
-Developer 已由用户叫停，预存实现未提交/未接受。Contract gate 已满足，本轮不恢复实现。
-之后交完整 checkpoint SHA / READY FOR B REVIEW、最终行为/文件/关键决策、
-受影响测试实际命令结果与耗时、失败/风险/剩余工作；full acceptance pending B。
+Status: READY FOR B REVIEW. Implementation candidate:
+`bf6968c11e1f40890454bad2c743d99d16888e4a` on `main`, parent
+`fba4e8e8e3d823c33992ce571202eada8da50592` (Task Base
+`c8657032dae768d93b12387a5e58db502e23a7ee` unchanged). The candidate contains the
+implementation, affected tests and factual configuration/architecture/deployment notes; this
+report-only commit follows it. No push, deployment or independent PASS.
+
+What was delivered:
+- Removed the stopped dual manual/Automation capacity/cadence design. One system-owned
+  `automation.maximumActiveJobs` allowance (1–10000) is used by Files, direct CLI/API/remote,
+  due/Run once and same-Task re-entry; claim queue and capacity counts are shared. The resident
+  Worker resolves the current Active allowance per admission/re-entry; Scheduler uses its resolved
+  Active value. Ordinary transfer/delete keep their existing queues.
+- Reverted the dual resident cadence. The shared Worker business poll still drives organizing and
+  ordinary asynchronous file runners; Scheduler polling remains the due-check cadence only.
+- Retired `automation.staleJobAgeSeconds` from editable/effective/default/runtime/API/Web
+  contracts. Existing immutable Active documents containing it remain readable with the value
+  ignored; saving the three fields preserves the raw key without changing the old revision digest.
+  Generic and focused edits of the retired field are refused with zero publication.
+- System Settings is the one ordinary three-field editor; the Automation settings tab/form and
+  old links redirect to `/ui-v2/configuration` without publishing or admitting work. Capacity-full
+  Files admission now explains the system queue, preserves selection, and supports explicit retry.
+- New defaults/examples contain no stale-age key. Docs record the implemented candidate while
+  leaving independent acceptance pending.
+
+Actual affected verification (cwd `/Users/songzhidong/mediaflow` unless noted):
+- `.venv/bin/python -m unittest tests.test_system_settings_management tests.test_automation_settings_management tests.test_automation_settings_resident tests.test_resident_services tests.test_configuration_snapshot` — **177 tests OK / 56.110s**.
+- `.venv/bin/python -m unittest tests.test_task_scheduling tests.test_task_scheduling_fencing tests.test_task_source_ownership_race tests.test_automation_task_admission tests.test_automation_run_once tests.test_automation_entrance_recovery tests.test_execution_authorization` — **152 tests OK / 6.246s**.
+- `.venv/bin/python -m unittest tests.test_media_discovery tests.test_manual_organize_execution tests.test_manual_task_engine tests.test_operations_task_center tests.test_direct_file_transfers tests.test_direct_file_operations` — **414 tests OK / 83.223s**.
+- `.venv/bin/python -m unittest tests.test_media_library_transfers tests.test_runtime_strategy_configuration` — **38 tests OK / 1.433s**.
+- `.venv/bin/ruff format --check` and `ruff check` on all changed Python files — PASS; `compileall -q mediaflow tests scripts` — PASS; `scripts/check_governance.py` — PASS; `git diff --check` — PASS; both example `config validate` commands — exit 0.
+- `web/`: `npm run typecheck` PASS, `npm run lint` PASS, `npm run format:check` PASS, `npm run build` PASS, full unit run **88 files / 1268 tests PASS**, real-Python E2E `automation-settings.python.spec.ts` **14 tests PASS / 19.0s**, fake-server Automation settings subset **3 tests PASS**.
+- E2E covers real System Settings Save/readback, 1025/10000 capacities through Files, and one shared capacity 1 refusal/release/explicit retry between an admitted Automation Task and Files. Browser evidence is under Playwright test-results/trace paths; no product PASS claimed.
+
+Known risks / remaining work for B:
+- Full T4 regression, packaging/wheel/installed-consumer, Docker, restart and all other native E2E gates remain B-owned and pending.
+- The focused API path retains its historical `/api/v1/operations/automation/settings` name; it is an internal compatibility name, not a second user editor.
+- Existing immutable documents keep the retired key in raw JSON by design; acceptance must judge effective/runtime readback rather than a global string-zero assertion.
+- No independent A/B acceptance, Slice closure, push or deployment was performed.
 
 ## B Review Result
 
