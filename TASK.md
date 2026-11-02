@@ -1,8 +1,9 @@
 # Task47.5 — FIX REQUIRED：补齐普通 CLI 的安全结束结算
 
-A 的完整 Slice 终审以 **A-P1-1** 退回；B 已从现有 CLI 独立复现并完成本修正计划。
-继续同一个 Task47.5，保留原 ID/Base/Goal，不另建 Task47.6 或独立小 bug，不改 Slice 边界。
-本轮用户只要求规划：B 不实施产品修复，不声明 PASS、SLICE READY FOR A REVIEW 或关闭。
+A 的完整 Slice 终审以 **A-P1-1** 退回；B 已从现有 CLI 独立复现并完成本修正计划；
+Developer 已按该计划完成修正并交 B 复核。继续同一个 Task47.5，保留原 ID/Base/Goal，
+不另建 Task47.6 或独立小 bug，不改 Slice 边界。B 的规划未实施产品修复，也未声明 PASS、
+SLICE READY FOR A REVIEW 或关闭。
 
 Authority: committed [SLICE.md](SLICE.md#a-final-review--fix-required--2026-11-02)，
 RO-1/2、AC-2/4/15/24 及原 RO-6/AC-20–25；
@@ -14,13 +15,13 @@ REQ-RECOVERY-006/009、REQ-RESULT-001–003、REQ-SAFE-*；按用户已提交修
 Task ID: 47.5
 Task Type: SLICE
 Parent Slice: 47
-Status: FIX REQUIRED
+Status: READY FOR B REVIEW
 Task Base: 75ddff55f8d5b2b1206c81804bfb5cbe9ed279a1
 Difficulty: High
 Test Level: T4
 Planner / Reviewer: B
 Current correction: A-P1-1 — ordinary CLI finished-pass capacity settlement
-This turn: PLANNING ONLY; no implementation by B
+This turn: DEVELOPER CORRECTION IMPLEMENTED — READY FOR B REVIEW
 ```
 
 ## Preflight / checkpoint / prior facts
@@ -200,7 +201,54 @@ queue claimed、容量 1；下一不同文件 queue-full；reopen 后仍占 1。
 `.git/validation-evidence/001ff5bae318656709e02d4f47443a63882f4237/b-correction-plan/`。
 详细 A 证据与前序 B 验收留在对应 Git/ignored 目录；未重写历史 PASS，也未交新的就绪 packet。
 
-## Developer Completion Report — pending
+## Developer Completion Report — READY FOR B REVIEW
 
-尚未实施。交接填写实现 checkpoint 完整 SHA、实际改动/受影响测试结果、已知失败或风险，
-状态 READY FOR B REVIEW；B 的全量验收与 Slice 六结果重评待修复候选提交后执行。
+```text
+Task: 47.5 (same ID/Base/Goal; A-P1-1 correction only)
+Implementation checkpoint: 2e1e293ed7901b897ac316209c26c4ae4cd29556
+Task Base: 75ddff55f8d5b2b1206c81804bfb5cbe9ed279a1
+Correction start: 001ff5bae318656709e02d4f47443a63882f4237
+Status: READY FOR B REVIEW
+```
+
+### 实际改动
+
+- `mediaflow/final_cli.py`：仅在普通 CLI pass 已返回的安全边界启用已有
+  `close_recorded_unknown_boundary=True`：
+  `_settle_direct_organize` 的终态 `settle`、人工等待 `defer_to_human`，以及
+  `final_main` 的取消/控制 `acknowledge_control`。`_drive_direct_organize_claim` 的
+  begin_work 失败路径未加该标志；默认安全拒绝、容量定义和内核检查未改。
+- `tests/test_automation_entrance_recovery.py`：复用现有 managed fixture、真实
+  `final_main`、SQLite/LocalStorage/Executor 和 fake Provider，只在目标 Storage 写入
+  处注入真实 `OSError(ENOSPC)`。新增真实 CLI 磁盘满→partial/unknown→exit 1/摘要/
+  settled/容量 0→另一文件正常准入→同版本 reopen；目录成功+失败混合批次；partial+
+  人工等待混合；故障后取消。均断言 Task/item/Result/容量/文件效果，不只 mock 调用。
+- `tests/test_task_scheduling.py`：新增 close-boundary 反例，证明 pass 标志不会在
+  仍有 processing 兄弟项时释放 claim/容量。
+- 未改 schema、队列、Storage/Provider、权限、pin、Web 或 A-owned 文档；未 push。
+
+### 实际验证（本机，临时隔离媒体/SQLite/fake Provider）
+
+| 命令 | 实际结果 |
+|---|---|
+| 新增 4 条真实 CLI 旅程 + 1 条 kernel 反例（定向） | 5 tests OK，0.314s |
+| `.venv/bin/python -m unittest tests.test_automation_entrance_recovery tests.test_task_scheduling tests.test_task_scheduling_fencing tests.test_batch_cli tests.test_task_retry tests.test_organize_source_history` | **97 tests OK**，6.312s；有既有 SQLite/SSL ResourceWarning，无失败 |
+| `.venv/bin/python -m unittest tests.test_task_persistence tests.test_manual_organize_execution tests.test_task_source_ownership_race` | **68 tests OK**，2.760s |
+| `ruff check` + `ruff format --check`（final_cli、两个测试模块、fencing） | 全部通过 |
+| `compileall`（final_cli、两个修改测试模块）、`check_governance.py`、`git diff --check` | 全部通过 |
+
+本轮实际测试执行约 10 秒，远低于本轮用时的 30%。A 的旧探针断言的是修复前 bug，
+修复后其旧断言必然失败；实际输出已变为 exit 1、Task ID+SUMMARY、partial/unknown
+Result 保留、queue settled、容量 0，随后另一文件 exit 0，reopen 后容量仍 0。未把
+该旧断言失败误报为产品回归。
+
+### 已知失败 / 剩余风险
+
+- 未运行 B-owned 的完整 Python/Web/native/wheel/Docker/restart 验收；没有自称 PASS、
+  SLICE READY FOR A REVIEW 或关闭 Slice。
+- 尝试用 fixture 的多候选 `batch organize` 做端到端混合批次时，`process_all_libraries`
+  的 `storage:path` source 被 parser 当作标题，两个候选进入 waiting_metadata_correction，
+  未到达结算。该链路本轮未修改；本修正以目录入口覆盖同一 `final_cli` 结算分支，
+  batch 端到端证据留给 B 判断是否需要另案处理。
+- 人工等待场景的 Task aggregate 仍沿用现有 direct CLI 语义（queue waiting_human、
+  Task pending），本轮只修正容量结算，未扩大为状态重设计。
