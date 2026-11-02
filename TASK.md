@@ -1,9 +1,12 @@
-# Task47.5 — FIX REQUIRED：补齐普通 CLI 的安全结束结算
+# Task47.5 — FIX REQUIRED：批量根目录文件的解析输入
 
-A 的完整 Slice 终审以 **A-P1-1** 退回；B 已从现有 CLI 独立复现并完成本修正计划；
-Developer 已按该计划完成修正并交 B 复核。继续同一个 Task47.5，保留原 ID/Base/Goal，
-不另建 Task47.6 或独立小 bug，不改 Slice 边界。B 的规划未实施产品修复，也未声明 PASS、
-SLICE READY FOR A REVIEW 或关闭。
+B 已独立复核候选 `46f44be43a39a81cf17146aa5db2c077bcde97ee`。A-P1-1 的普通 CLI
+名额结算修复通过，终态/人工等待/取消三处接通已有安全规则，不要求重做。
+当前唯一 P1 为 **B-P1-1**：真实 `batch organize` 对资源库根目录文件把 Storage 展示前缀
+混入媒体标题，错误转为人工元数据修正；同文件目录入口成功。该问题在原 Task Base 也
+存在，不是 `2e1e293e` 引入；它属于原 AC-C3 与 RO-2/AC-4/24 明确包含的普通批量入口。
+继续同一 Task ID/Base/Goal，按末尾当前修复指导完成；无新 Task、无 Slice 范围变更。
+本轮 B 仅审查及维护 Task，未实施修复；尚未重新提交 Slice 就绪或关闭。
 
 Authority: committed [SLICE.md](SLICE.md#a-final-review--fix-required--2026-11-02)，
 RO-1/2、AC-2/4/15/24 及原 RO-6/AC-20–25；
@@ -15,13 +18,13 @@ REQ-RECOVERY-006/009、REQ-RESULT-001–003、REQ-SAFE-*；按用户已提交修
 Task ID: 47.5
 Task Type: SLICE
 Parent Slice: 47
-Status: READY FOR B REVIEW
+Status: FIX REQUIRED
 Task Base: 75ddff55f8d5b2b1206c81804bfb5cbe9ed279a1
 Difficulty: High
 Test Level: T4
 Planner / Reviewer: B
-Current correction: A-P1-1 — ordinary CLI finished-pass capacity settlement
-This turn: DEVELOPER CORRECTION IMPLEMENTED — READY FOR B REVIEW
+Current correction: B-P1-1 — batch root-file parsing; A-P1-1 verified fixed
+This turn: B REVIEW FIX REQUIRED; same Task correction guidance below
 ```
 
 ## Preflight / checkpoint / prior facts
@@ -59,7 +62,7 @@ CLI 失败重试，不建立远端核验或附件恢复系统。
    结果、未知证据和容量仍一致。对原失败 A 的后续新请求沿用原手动/自动入口规则，
    释放名额本身不重放 A，不把未知效果改成已验证。
 
-## Actual-code gap / bounded scope
+## A-P1-1 planning gap / bounded scope（本轮修复已通过）
 
 B 对照实际调用链核对 A 的结论，并独立复跑其真实入口探针：
 
@@ -80,7 +83,7 @@ B 对照实际调用链核对 A 的结论，并独立复跑其真实入口探针
   满足本修正时，才最小调整 application/kernel；保留默认拒绝及原有安全检查。没有新增
   schema、队列、Web 页面、恢复类型、远端探测或整个 CLI/Worker 统一重构的授权。
 
-## Developer guidance — 简单实施顺序
+## A-P1-1 Developer guidance（保留；本轮不重做）
 
 1. **先固化真实失败回归。** 复用
    `tests/test_automation_entrance_recovery.py::entrance_journey` 的 managed 配置、临时
@@ -106,11 +109,11 @@ B 对照实际调用链核对 A 的结论，并独立复跑其真实入口探针
 
 ## Acceptance Criteria
 
-- [ ] **AC-C1 — 真实 CLI 磁盘满结束。** 上述单文件 COPY 产生 partial 与真实已知步骤/
+- [x] **AC-C1 — 真实 CLI 磁盘满结束。** 上述单文件 COPY 产生 partial 与真实已知步骤/
   attempted_unverified/uncertainEffects；源保留、无虚构目标成功。CLI 输出 Task ID 和失败
   摘要，返回业务失败 1；Task aggregate 与项目结果一致，queue settled、容量 0，临时
   Worker 已停止。旧 Result、步骤、未知证据和 pin 不因结算被清空/改写。
-- [ ] **AC-C2 — 后续准入与同版本持久化。** 容量为 1；移除故障后，另一独立文件 B
+- [x] **AC-C2 — 后续准入与同版本持久化。** 容量为 1；移除故障后，另一独立文件 B
   经真实 CLI 正常准入、实际整理并再次释放名额。重开同一 DB，A 的失败和未知记录不变，
   A/B 结束状态与容量 0 保留；不靠重开、读页面或清库才释放，不产生 A 的新执行。
 - [ ] **AC-C3 — 批量/人工等待。** `batch organize`/目录同一路径保留成功、失败与等待
@@ -118,7 +121,7 @@ B 对照实际调用链核对 A 的结论，并独立复跑其真实入口探针
   均返回后为 waiting_human、占 0，待决定文件仍不能被另一任务抢占。原四类决定→分析→
   摘要→确认可在同 Task 继续；本次不替失败/未知兄弟项续作。已有正常单文件成功、零效果
   失败、四类继续与零变更分析不退化。
-- [ ] **AC-C4 — 取消与活动保护。** CLI pass 在目标故障后收到取消，安全确认能完成并
+- [x] **AC-C4 — 取消与活动保护。** CLI pass 在目标故障后收到取消，安全确认能完成并
   释放名额，保留 partial Result；已完成/失败兄弟结果不被改成 cancelled。真正调用仍
   在进行或项目仍 processing 时占 1，取消请求本身不能提前归还；返回并完成允许的结果/
   取消结算后占 0。原 claim/fence/控制版本和没有结果的未知边界仍不能被此调整绕过。
@@ -184,7 +187,7 @@ compileall 对实际修改的模块执行。若修改共享 application/reposito
 不改变入口权限、pin、计划/冲突/覆盖/删源授权；不修改 Storage/Provider、不做旧任务/
 跨版本升级/V1 支持；不改 A-owned 合同、Roadmap/Progress 或关闭 Slice。
 
-## B planning assessment / current decision
+## Prior planning assessment — 001ff5ba（历史结论）
 
 ```text
 Inspected checkpoint: 001ff5bae318656709e02d4f47443a63882f4237
@@ -252,3 +255,125 @@ Result 保留、queue settled、容量 0，随后另一文件 exit 0，reopen �
   batch 端到端证据留给 B 判断是否需要另案处理。
 - 人工等待场景的 Task aggregate 仍沿用现有 direct CLI 语义（queue waiting_human、
   Task pending），本轮只修正容量结算，未扩大为状态重设计。
+
+
+## B Review Result — FIX REQUIRED（当前）
+
+```text
+Task Base: 75ddff55f8d5b2b1206c81804bfb5cbe9ed279a1
+Reviewed Head: 46f44be43a39a81cf17146aa5db2c077bcde97ee
+Implementation checkpoint: 2e1e293ed7901b897ac316209c26c4ae4cd29556
+Correction comparison: 5d56e9ec..46f44be4
+Branch / entry state: main; no tracked edits; pre-existing untracked files preserved
+Decision: FIX REQUIRED
+A-P1-1: FIX VERIFIED
+Remaining Task blocker: B-P1-1 — batch root-file parsing uses display identity as media path
+Next: SAME TASK FIX LOOP; no new Task or Slice closure
+```
+
+已核对完整原 Task Base..Head 的 36 文件清单，结合此前完整范围审查重评现存结果，
+逐行复核本轮 3 个执行/测试文件的增量及真实调用链；另 1 文件为交接报告。
+产品改动只有 CLI 三个安全结算调用，没有修改内核默认拒绝、schema、Web 或 Provider。
+未把 Developer 报告或之前的全量 PASS 当作当前候选的接受结论。
+
+### 已通过的交付结果
+
+- **原 A 复现改为正确结果断言后通过。** 单文件真实目标写入 ENOSPC → partial/
+  attempted_unverified/CREATE_DIRECTORY/mutation_outcome 保留 → CLI exit 1、Task ID +
+  SUMMARY → queue settled、容量 0；另一独立文件随后 exit 0，reopen 后容量仍 0。
+- **混合终态和人工等待通过。** Developer 的目录成功/部分失败、部分失败/人工等待及
+  取消旅程由 B 重新执行；71 项 scheduling/fencing/entrance 组合全部通过（3.018s）。
+  等待人工时 queue 为 waiting_human、容量 0，记录未知效果不再被当作活跃调用。
+- **真实活动调用与取消通过。** B 在实际目标 Storage 写入处暂停，通过现有
+  `tasks cancel <taskId>` 发出取消；调用仍阻塞时容量 1、无 Result，未提前释放。
+  放行调用使真实写入返回 ENOSPC，随后 Task cancelled、容量 0，partial/unknown Result
+  保留，CLI 输出正常。内核仍拒绝用完成标志释放 processing 兄弟项。
+
+### 唯一 P1 — 批量根目录文件被错误识别为需要人工修正
+
+**完整操作旅程：** 临时资源库根目录放 `One.2001.mkv`、`Two.2002.mkv`，配置合法
+电影规则、COPY 策略和明确可匹配的本地 Provider 候选，执行已有命令
+`mediaflow --config <bootstrap> batch organize --execute --limit 5`。实际 Provider 搜索
+标题为 `source:One` / `source:Two`，两个文件进入 waiting_metadata_correction、无 Result、
+无目标媒体。用户本来提交正常批量整理，却被要求人工修正本可自动识别的文件。
+相同配置/内容使用 `organize <source-directory>`，查询为 One / Two、两个真实 COPY 成功；
+使用 batch 处理 `Movies/` 子目录中的同名文件也成功，定位到根目录文件路径差异。
+
+**真实原因：** `MediaOrganizerService.process_all_libraries` 构造展示用
+`StorageID:relative/path` 并传给 `process_file`；`_run_read_only_strategy` 再把这个展示
+字符串当作真实解析路径传给 `StrategyTestRunner.run_path`。根目录文件没有目录分隔符，
+`file_context_from_path` 的 filename 因而含 `source:`，随后污染标题和 Provider 查询。
+这不是 fixture 未提供候选，也不是要求解析真实媒体内部流。
+
+**来源与范围：** B 在干净 `git archive 75ddff55` 上用同一真实入口重新执行，现象一致，
+没有虚构 Base 故障。展示字符串构造在历史 `7d957971`（2026-08-21）已存在，当前策略
+接缝可追溯 `ae18b208e`（2026-08-23）；未独立确定最早哪次组合开始触发此 bug，不归因
+于本轮三处结算修改。Task 的 AC-C3 明确要求 batch/目录，Slice RO-2/AC-4/24 保留普通
+CLI/batch 能力；因此本次不能用“目录测试已过”或“旧链路未改”豁免该缺口。只修现有
+路径输入，不扩展 Parser/Provider 功能，不另建独立 bug 或新 Slice。
+
+### Developer 当前修复指导（仅 B-P1-1）
+
+1. 在现有 `test_automation_entrance_recovery.py` 固化真实 batch 根目录回归。复用现有
+   managed fixture，两个普通根目录文件、正确候选、真实 CLI/SQLite/Storage/Executor；
+   记录实际 Provider 查询，断言标题 One/Two、实际结果/唯一目标媒体、Task/容量一致。
+   同配置保留目录/子目录对照，不能给假 Provider 增加 `source:` 候选、宽松忽略前缀、
+   手工选 metadata identity 或换用目录命令来绕过。
+2. 在 `process_all_libraries → process_file → _run_read_only_strategy → run_path` 的
+   实际接缝，区分展示身份和真实解析路径/上下文，使用已有确切 Storage-relative path
+   等来源证据构造正确 filename/目录。保留显示/日志/结果的 Storage 身份与授权/版本绑定。
+   不把 Storage 展示协议塞进 Parser，不全局按冒号切割用户路径，不直接改 Provider 搜索
+   来掩盖输入污染。具体最小实现由 Developer 选择，不重构整条处理管线。
+3. 保留 RecognitionRule 的路径语义、目录/NFO/多集/标签证据、跨库来源身份、命名/分类、
+   source ownership、历史 gate、只由 Executor 写入和原 pin。若调整共享 StrategyTestRunner
+   或上下文构造，补其直接受影响回归；无需新增路由、schema、Storage 能力或处理引擎。
+4. 让真正 `batch organize` 到达已修好的结算：一项实际 COPY 成功、另一项目标写 ENOSPC，
+   断言 partial_success/独立 Result/未知证据、exit 1 和正常摘要、结束容量 0、reopen 不重放。
+   保留已通过的 A-P1-1 单文件/等待人工/取消保护。完成后交 READY FOR B REVIEW，B 再做
+   新候选全量验收和全部 Slice 结果重评；不要提前判断 PASS 或扩大为其他缺口清理。
+
+**补充验收（原 AC-C3 内的必需结果）：**
+
+- [ ] 实际 root-file batch 使用正确文件名/目录证据查询 One/Two，正常 COPY 与目录入口
+  一致；不制造人工元数据问题，不因改为宽松 Provider 或硬编码身份获得通过。
+- [ ] root 与子目录、不同 Storage ID 的实际来源/Result/锁保持准确，无冒号字符串裁剪
+  对真实文件名的误伤；若调整共享上下文，原 recognition/NFO/目录/标签等适用回归通过。
+- [ ] root-file batch 的成功/真实写失败混合到达结算，保留每项事实并释放共享容量；
+  单文件、真实取消/活动调用和原 AC-C1–6/AC-T1–7 不退化。
+
+**Developer 受影响命令：**
+
+```bash
+.venv/bin/python -m unittest tests.test_automation_entrance_recovery tests.test_resource_library_pipeline tests.test_final_integration tests.test_media_parser tests.test_organize_source_history tests.test_task_scheduling tests.test_task_scheduling_fencing
+```
+
+若改变 Recognition 或共享上下文，追加 `tests.test_recognition`、`tests.test_nfo_parser`
+及实际受影响模块；对实际改动文件跑 Ruff format/check、compileall、governance 和
+`git diff --check`。只跑受影响测试；B 原 T4/native/干净 installed/容器计划继续有效。
+
+### 实际结果、证据与 Slice 重评
+
+本轮证据根：`.git/validation-evidence/46f44be4/b-review/`（本地 ignored）。
+`cli-capacity-fixed.log`、`active-cancel.log` 为通过的原阻塞/实际活动保护；
+`focused.log` 71 OK；`batch-entry.log` 保存三种真实入口对照；
+`batch-entry-task-base.log` 是原 Task Base 干净上下文对照；
+`batch-root-acceptance.log` 正确期望断言失败，明确指出 Storage 前缀进入真实查询。
+相关 probe 只暂停/注入真实依赖处故障，不造端点或手填 Task 业务状态。
+
+按 workflow 的已证实阻塞提前退回规则，本轮未运行昂贵完整 Python/Web/wheel/Docker
+矩阵；没有宣称通过。修复后的候选仍须 B 完成原 T4 计划，不能仅凭 71 项通过接受。
+B 本轮只编辑 TASK.md、保留原未跟踪文件，不改 A-owned 合同/指针或产品/测试代码。
+
+| 全部 Slice 结果 | 当前重评 |
+|---|---|
+| RO-1 | A 的 CLI 容量结算缺口已在本候选修正；原共享容量/活跃调用/取消规则保持。 |
+| RO-2 | **未完成**：普通根目录 batch 的解析输入错误，未完成现有正常整理旅程。 |
+| RO-3 | 原四类同 Task 继续接受基线保留；本轮不能把错误解析制造的人工修正当正常恢复。 |
+| RO-4 | Job 退出/fresh/同版本安全接受事实保留；本轮未改 schema，未声称新产物/重启验收。 |
+| RO-5 | 原 Web/管理接受基线保留，普通 CLI batch 表面有命令但不能完成上述正常旅程。 |
+| RO-6 | 自动历史 gate/Files 提醒/手动新整理/CLI retry-failed 退役的既有结果保留；没有新增历史规则，最终整体回归仍待修复候选。 |
+
+Task 保持 FIX REQUIRED，不规划下一 Task，不交新的 SLICE READY FOR A REVIEW，不关闭 Slice。
+
+本轮日志执行区间合并并为短检查预留 1s，测试上界 6.5s；保守总用时 413.6s，
+测试占比上界 1.6%，小于 50%；见证据目录 `timing.json`。
