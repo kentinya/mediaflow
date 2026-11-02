@@ -1,8 +1,9 @@
-# Task47.5 — READY FOR B REVIEW
+# Task47.5 — FIX REQUIRED
 
 最新候选 `f3fcace35371bc7aa3f56ce6e5698261faab5e52` 的提醒数据和单文件交接已有修复证据。
 B 撤回此前“失败且效果未知就必须继续占容量”的批量 P1 判断；原复现未证明仍有在途工作，
-不能用该假设要求 Developer 返工。剩余产品与 T4 验收尚未完成，不代表 Task PASS。
+不能用该假设要求 Developer 返工。进一步实际验证发现相反问题：所有文件已结束，旧批次
+仍占名额；这是本轮有效阻塞，见末尾最新容量核对。其余 T4 验收仍未完成。
 Task ID、Goal、Base 和 Slice 边界不变；不授权派生代理、push、部署或 Slice 关闭。
 用户已选择：“运行一次”和定时一样排除历史 failed / partial，保留一键执行，不新增初始确认。
 本次规划一致性核对后按用户选择改为**同一来源版本最近一次正式整理结果**判断；后来手动整理
@@ -27,7 +28,7 @@ REQ-RESULT-* 与 REQ-SAFE-* 中未被明确修订的身份、授权、历史及�
 Task ID: 47.5
 Task Type: SLICE
 Parent Slice: 47
-Status: READY FOR B REVIEW
+Status: FIX REQUIRED
 Task Base: 75ddff55f8d5b2b1206c81804bfb5cbe9ed279a1
 Difficulty: High
 Test Level: T4
@@ -367,11 +368,61 @@ npm run test:e2e -- --config=playwright.python.config.ts tests/e2e/organize-sour
 
 ## B Review Result
 
-**当前状态：READY FOR B REVIEW，验收未完成；撤回上一轮证据不足的批量 P1。**
+**当前状态：FIX REQUIRED。此前“过早释放名额”的 P1 仍撤回；本轮实际证明“全部结束后未释放名额”，需按下述准确方向修复。**
 
 候选：`f3fcace35371bc7aa3f56ce6e5698261faab5e52`；审查范围仍为
 `75ddff55f8d5b2b1206c81804bfb5cbe9ed279a1..f3fcace35371bc7aa3f56ce6e5698261faab5e52`。
 本次仅纠正 B 的判断，不改变候选代码、原 Task/合同、安全规则或旧接受事实，不宣告 PASS。
+
+### 最新容量核对：批次全部结束后仍可能占一个名额（P1）
+
+用户明确的口径：一个 Task 最多占一份容量；成功 8/失败 2 全部结束应占 0，成功 2/失败
+5/进行中 3 应占 1，全成功占 0，成功 8/部分成功 2 全部结束也应占 0。历史未知效果本身
+不等于当前还有工作。此规则与保留真实在途调用、逐文件结果和非重放要求同时成立。
+
+本轮从 `main` / `373705e00ba7159ca12b4a171ff2fe0589d21ff6` 开始，无预存 tracked 修改，
+预存 untracked 保留未暂存。产品代码仍为 f3fcace3。通过已有 Run once API → definition
+pipeline → Worker / SQLite / LocalStorage，使用 10 个临时文件与 SyntheticMetadataProvider，
+实际执行结果如下（未手填 Task/Result）：
+
+| 实际旅程 | 未结束文件数 | Worker 调用返回后的实际容量 |
+|---|---:|---:|
+| 10 个全部成功 | 0 | 0，符合 |
+| 8 成功、2 个在效果发生前失败 | 0 | 0，符合 |
+| 8 成功、目标写入故障造成 1 partial/unknown、随后 1 failed/none | 0 | **1，不符合** |
+
+第三种所有 Storage 调用和本轮 runner 均已返回，无 pending/processing 文件项；原 Task
+仍 running、调度仍 claimed，未知效果记录继续存在。此时正确行为是保留失败/partial/
+unknown 历史并结束本批次执行占位，不要求先重新整理任意文件才能释放容量。
+
+因此不能回答“现在已经完全按四种规则实现”。本轮没有构造出恰好 8 成功/2 partial，
+也没有把“3 个进行中”的计数表当作已执行测试；但第三种真实反例足以证明全部结束后
+不占位的规则尚未完全实现。各次真实文件写入期间均实测占 1，不按 10 个文件占 10 份。
+
+**根因与范围：** `manual_task_engine.py::_settle_automatic` 在 runner 返回后仍仅凭
+`mutation_in_flight` 标记直接返回，未区分该标记代表已经结束后的未知效果历史，还是实际
+尚未结束的调用；容量查询只按 queued/claimed 计数，因而已终态的文件仍把整批留在 claimed。
+这与此前已撤回的“释放得太早”方向相反，不能恢复旧建议或要求 unknown 永久占位。
+
+**Developer 修复指导（仍在同一 Task）：**
+
+1. 在共享引擎/kernel 的合法结算边界区分真实在途/待执行工作和已终态的效果未知历史。
+   当前调用已返回、文件项全部终态、无其他机器工作时，应更新诚实 Task 聚合并释放该 Task
+   的执行名额、收束旧执行资格；真正仍在执行的调用或剩余机器工作继续占一份。避免只改
+   容量 SQL 忽略 claimed Task、仅靠超时认定结束，或仅按页面状态跳过实际安全边界。
+2. 原 Result、partial/unknown、完成步骤、配置 pin 及 Automation 原执行结果/时间保持事实；
+   不把 unknown 改成 none，不重放旧文件/成功兄弟。定时同版本失败排除及 Files 警告后新
+   整理仍按本 Task 规则执行，不能要求手动重新整理来清理已结束批次的占位。
+3. 复用本轮 probe 和既有 fixture，将实际反例纳入受影响测试；同时覆盖普通失败释放、全
+   成功释放、批量仍有真实进行中工作占一份、全部 terminal partial 释放。手动及定时/
+   Run once 共用结算行为一并核对；真实仍未返回的调用不得被误释放。Developer 运行新增/
+   修改与直接受影响测试，B 负责剩余原 T4 门禁。
+4. 简短提醒的原交付要求继续有效；此修复不增加核查页、用户技术操作或新的恢复系统。
+
+证据：本机 `.git/validation-evidence/373705e00ba7159ca12b4a171ff2fe0589d21ff6/capacity-current/`
+的 `probe.py` / `probe.log`。3 个真实旅程合计运行不足 1 秒；治理预检和 `git diff --check`
+通过，未执行全量/浏览器/包装门禁，测试时间低于本轮总用时 50%。Task 保持原 ID/Base，
+本轮只提交 Task 复核结果及开发指导，不实施产品，不改 A-owned 合同或 Slice 状态。
 
 ### 判断纠正：失败历史与当前仍在执行是两件事
 
@@ -429,5 +480,6 @@ npm run test:e2e -- --config=playwright.python.config.ts tests/e2e/organize-sour
 治理预检 PASS；未改产品、未运行新产品测试，既有观察与原始日志不变。
 
 RO-1–5 原接受事实保留；本候选的 RO-6 和整体回归尚未最终验收。没有基于当前复现证明
-新的容量回归，不再以该项阻断开发。Slice 保持 ACTIVE，Task 留在 READY FOR B REVIEW，
+“过早释放”的容量回归，原阻塞不恢复；最新真实反例见上方“最新容量核对”。Slice 保持
+ACTIVE，Task 因全部结束后仍占位而为 FIX REQUIRED，
 不关闭 Slice、不创建后续 Task、不提交 READY FOR A REVIEW packet。
