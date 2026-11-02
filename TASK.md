@@ -367,6 +367,95 @@ npm run test:e2e -- --config=playwright.python.config.ts tests/e2e/organize-sour
 4. 交接目标的版本可比性沿用与历史判定/占用边界同一证据链；无可比版本时按
    "可能适用"处理（保守，不伪造新文件）。
 
+## Developer Completion Report — FIX ROUND（候选 3）
+
+针对 B 本轮两条已实测阻塞（批次全部结束后仍占一个名额；批次进行中接手已失败文件后旧批次
+结算误报技术失败）及用户确认的简短提醒要求，在同一 Task 内修复；Task ID/Goal/Base 与
+Slice 边界不变，未扩大范围。工作区 `main`，本轮起始 HEAD `ccd4781c`，无预存 tracked
+修改；预存未跟踪 OS/log、`15`、docs 图片、`output/*` 等原样保留、未暂存。未触碰用户数据库/
+媒体/私密配置；未 push、部署、自判 PASS。
+
+**候选：** `13d6d4f487d92e3a9b4b93683c938be139b5decd`（实现 + 测试 + Web + 真实 e2e 的
+单一 checkpoint；报告另提交）。范围 `ccd4781c..13d6d4f4`。
+
+**Changes**
+
+1. **结算边界区分“已记录未知效果”与“仍在执行”（阻塞 1）**：
+   `sqlite_runtime.release_scheduled_claim` 新增同事务参数
+   `close_recorded_unknown_boundary`。仅当（a）marker 指向本 Task 的一个 item，(b) 该 item
+   已非 pending/processing，(c) 本 Task 无任何 pending/processing 兄弟，(d) 该 item 的
+   attempt 已发布 Result 时，才在同一 release 事务内清除 marker 并照常结算；否则仍以原
+   `TaskControlRejected` 保留 claim/名额。Result、unknown effects、completed steps 与
+   Automation 记录一律不重写。
+2. **共享引擎接入**：`manual_task_engine` 的自动结算（runner 返回）、自动异常路径、手动
+   执行结算、discovery/等待人工边界与 cancel 确认均以该标志结算；真实 unproved 边界
+   或并发 control 变化仍保留 claim 与名额，不会变成技术失败（`_refusal_keeps_claim`）。
+   有 machine work 时自动路径行为不变（不释放）。
+3. **旧批次结算不再重发已交接 item（阻塞 2）**：`release_scheduled_claim` 对
+   `superseded_by_task_id` 非空的 item 只读其旧终态参与调用方聚合，不再次 PROGRESS 发布，
+   因此不会触发 per-file fence 的 `TaskSchedulingError`；旧 Result/行保持原样。
+4. **简短提醒（用户已确认）**：`OrganizeSourceHistory.warning()` 收短为“上次整理未完成/
+   目标可能已有文件 +（确有 unknown 时）部分存储效果未确认 + 请核对…”，不再把
+   CREATE_DIRECTORY/mutation_outcome 等代码或时间戳塞进普通提醒；时间、目标、已完成/
+   未确认效果改在既有条目详情以人话展示（`organize-summary.tsx` 映射；未知标识符仍如实
+   保留）。聚合提醒抽为共享 `OrganizeHistoryReminder`，Run once 摘要、Files 创建摘要
+   与共享 `SamePagePlanSummary` 一致显示；无新增核查页/例行 checkbox/令牌操作。
+5. **真实浏览器旅程**：新增 `web/tests/e2e/organize-source-history.python.spec.ts` 与
+   harness 控制路由 `seed-recorded-unknown-history`（真实 Files 准入→分析→精确摘要→
+   选中确认→Task/Worker 发布，仅 executor 边界注入真实 `PARTIAL`/unknown 结果）。旅程
+   实测：种子批次 settled、marker 空、容量与 seed 前相同；Files 提醒与条目详情可见且无
+   额外确认物；确认前零效果；普通确认后 Worker 实际 MOVE，来源消失、目标真实存在。
+
+**Developer affected tests（实际命令与结果）**
+
+- `.venv/bin/python -m unittest tests.test_organize_source_history tests.test_task_scheduling
+  tests.test_task_scheduling_fencing tests.test_manual_task_engine
+  tests.test_v2_automation_run_once`：148 tests OK。
+- `tests.test_organize_source_history`（单独，多次）：21 tests OK。新增/改写覆盖：
+  批次全成功占 1 名额后释放 0；零效果失败（executor 边界注入 none）结算 0；末项
+  partial/unknown 批次 settled、marker 空、容量 0、旧 Result 逐字段不变、成功兄弟独立；
+  失败单文件批次**未做任何新整理前**即释放名额，随后 Files 提醒→确认→真实成功；
+  接手旧 owner 的 remaining work 仍占 1（原断言保留）。
+- `tests.test_task_scheduling.CapacityTransitionTests`：新增
+  `test_finished_settlement_counts_a_superseded_item_without_republishing_it`
+  （真实 begin_mutation→unknown Result→public hand-off→兄弟成功→旧批次 settle 成功、
+  capacity 0、superseded 行/Result 不变）；10 tests OK。
+- 直接受影响回归：`tests.test_organize_preparation tests.test_manual_organize_execution
+  tests.test_task_retry tests.test_automation_entrance_recovery`（167→188 tests OK）；
+  `tests.test_automation_run_once tests.test_automation_task_admission
+  tests.test_task_source_ownership_race tests.test_preview_retirement`（106 OK）；
+  `tests.test_operations_task_center tests.test_operations_run_detail_log_isolation
+  tests.test_operations_run_detail_plan_evidence tests.test_v2_automation_operations
+  tests.test_task_persistence tests.test_workflow_retry tests.test_manual_ignore
+  tests.test_manual_ignore_batch tests.test_processing_recovery_admission
+  tests.test_manual_operations_contract`（113 OK）；
+  `tests.test_direct_file_operations tests.test_batch_cli tests.test_conflict_resolution
+  tests.test_manual_operations tests.test_media_discovery tests.test_task_scope`（259 OK）。
+- 静态：`ruff check .`、`ruff format --check .`、`compileall`、`scripts/check_governance.py`、
+  `git diff --check` PASS；`rg -n -i 'ffprobe|ffmpeg' mediaflow pyproject.toml` 无匹配（exit 1）。
+- Web（cwd `web/`）：`npm run typecheck`、`lint`、`format:check` PASS；
+  `npm run test -- run src/features/operations` 23 文件 / 245 tests PASS；
+  `OrganizePlanConfirmation/OrganizeCreationPage/organize/preview` 45 tests PASS；
+  `npm run build` PASS。
+- 真实 e2e：`npm run test:e2e -- --config=playwright.python.config.ts
+  tests/e2e/organize-source-history.python.spec.ts` **1 passed（Chromium，生产 build +
+  real API/SQLite/Worker/LocalStorage）**，覆盖上述容量、提醒、确认、真实 MOVE。
+
+**Deviations / remaining risks（如实披露）**
+
+1. B 的原始 10 文件 Run once 反例以同共享结算边界的真实 Files 批次 + 单文件自动旅程覆盖；
+   未再写 10 文件专用 harness 断言，批次在途情形沿用既有 `SupersededOwnerWithRemainingWorkTests`
+   的 1 名额断言（未做真实线程暂停写法）。
+2. 浏览器旅程覆盖 Files 桌面宽度与提醒/确认/真实效果；窄屏截图、Docker/wheel/installed/
+   restart/安全门禁仍是 B 的 T4 验收项，未由 Developer 执行。
+3. 未知效果的历史仅按既有 Result 证据展示（humanized），未新增远端完成探测/取消；
+   “远端调用可能已发生、无法由本页证明是否完成”仍在 warning 中明示。
+4. 文档协调（requirements/architecture/product-experience CURRENT、RO-6 交付标记）
+   仍留待 Slice 收尾，未改 A-owned 文档。
+
+**测试时间占比**：本轮实际测试执行（unittest + vitest + Playwright e2e，不含 build/静态检查）
+约 4–5 分钟，为本轮总用时（约 30 分钟）的约 15%，低于 30% 上限。
+
 ## B Review Result
 
 **当前状态：FIX REQUIRED。此前“过早释放名额”的 P1 仍撤回；本轮实际证明“全部结束后未释放名额”，需按下述准确方向修复。**
