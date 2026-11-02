@@ -3,11 +3,12 @@
 Authority: 用户于 2026-11-03 先选择“全部放到系统设置”，并已让 Developer 停工，随后明确
 “把失效判定时间这个参数删掉，保留现在的判断逻辑”。本计划因此仅迁移剩余三项，删除
 失效判定参数并撤销新增无进展观察。[Development Workflow](docs/development-workflow.md) 管理生命周期。
-已提交 `c443a769d5bcdd8dfa61b08f4655ed219b6c167b:SLICE.md` 仍要求自动化专用且禁止迁页，
-因此本次只提交 B-owned 修订计划；实施前必须由 A 提交对应 Contract 修订，B 核对后继续。
-不要求用户再次确认已选择的方案，不由 B 修改 A-owned 文档或自行恢复 Developer 工作。
-保持 RO-1–6、已有安全要求及 A-P1-1/B-P1-1 已修复事实；AC-12/26 和 V2-TASK-011、
-V2-AUTO-001/007/008 的冲突内容由 A 按新决定调整，不能把旧隔离验收标成新方案 PASS。
+用户进一步授权本代理行使 A 权限调整相关文档；已在
+`390a1a012495ad705f766bc4d568168a10b9dd4b:SLICE.md` 提交范围合同及相关需求/旅程/架构，
+B 已核对并对齐本 Task。该角色例外仅用于范围/文档，不构成独立 A 终审或产品接受。
+原“合同未同步”阻塞已解除；Developer 仍按用户停工状态保留，本轮不启动实现。
+保持 RO-1–6、已有安全要求及 A-P1-1/B-P1-1 已修复事实；AC-2/12/26、V2-TASK-011 和
+V2-AUTO-001/007/008 已同步，不能把旧隔离验收标成新方案 PASS。
 
 ```text
 Task ID: 47.6
@@ -19,14 +20,16 @@ Difficulty: High
 Test Level: T4
 Planner / Reviewer: B
 Current correction: Three system-owned runtime settings, shared organizing capacity, retire stale-age parameter
-Implementation gate: WAITING FOR A CONTRACT CHECKPOINT; Developer remains stopped
+Implementation gate: CONTRACT ALIGNED AT 390a1a01; Developer remains stopped by user
 ```
 
 ## Replanning decision / preflight
 
 - 本轮起点：`/Users/songzhidong/mediaflow`，branch `main`，HEAD
-  `f53321282af65b9ee3fcbb436dbe2eeaed671959`；governance PASS，workspace/Git 可写。
-  Task ID/真实 Base/High/T4 不变。本次修改计划，不实施、接受或提交停工中的产品改动。
+  `d2669f237e3576704da071354e428983c2b28793`；governance PASS，workspace/Git 可写。
+  A 文档合同提交为 `390a1a012495ad705f766bc4d568168a10b9dd4b`，提交后 governance PASS，
+  B 核对 committed Contract 后对齐 Task。ID/真实 Base/High/T4 不变，不实施、接受或提交
+  停工中的产品改动。
 - 预存 tracked 修改共 21 个文件：application 的 `automation.py`、
   `automation_run_once.py`、`execution_authorization.py`、`manual_organize_execution.py`、
   `manual_task_engine.py`、`media_discovery.py`、`resident_runtime.py`、`task_scheduling.py`；
@@ -45,11 +48,11 @@ Implementation gate: WAITING FOR A CONTRACT CHECKPOINT; Developer remains stoppe
   证据在 `.git/validation-evidence/c8657032/b-planning-47.6/` 和
   `.git/validation-evidence/5c808d4a/a-final-review/web-capacity/`。
   旧“只让自动化消费、手动独立 100/5s、双范围计数/周期”的指导及测试预期被本计划取代。
-- A 的合同 checkpoint 应明确：剩余三项由系统设置统一管理；整理额度由各整理入口共享；
+- 已提交合同明确：剩余三项由系统设置统一管理；整理额度由各整理入口共享；
   Worker 轮询作用于共享后台工作；Scheduler 仅负责到期检查；删除失效判定参数，不新增
   无更新观察。现有 Worker 心跳、任务租约及 Provider/Storage 调用超时判断保持原语义。
-  在 A 提交并消除上述文档冲突前，本计划可审阅但不授权按新范围实施。
-- 本轮仅修订 Task；计划检查结果见 B Review Result。未运行或宣称通过产品验收，
+  B 核对后解除合同阻塞；Developer 停工状态及本轮仅文档边界保持。
+- 本轮完成 A 合同/相关文档与 B Task 对齐；计划检查结果见 B Review Result。未运行或宣称通过产品验收，
   预存实现仍未接受；此前三项迁页/容量方向保留，旧四字段及观察验收不再适用。
 
 ## Goal / complete journeys
@@ -111,8 +114,8 @@ Active/快照可保留原始旧字段并兼容读取、忽略其值，不批量�
 
 ## Implementation Scope / Developer guidance
 
-1. **先核对新合同与停工差异。** A 提交新范围后，B 核对并更新本 Task 的 Authority/gate，
-   保持 ID/Base。Developer 在原停工差异上整理出一套一致方案；先列实际保留/调整文件，
+1. **先核对合同与停工差异。** 本 Task 已对齐上述 committed Contract，保持 ID/Base。
+   Developer 恢复工作时，在原停工差异上整理出一套一致方案；先列实际保留/调整文件，
    不启动第二套队列，不把旧实现或旧测试标签直接当成已接受。
 2. **先完成系统页旅程。** 把剩余三项 focused 表单及读回放在系统设置中作为唯一常用入口，
    去掉自动化 settings tab 和重复编辑项；同步已存在的导航/旧 deep link/auth 返回。
@@ -256,7 +259,7 @@ npm run test:e2e -- --config=playwright.python.automation.config.ts tests/e2e/au
 
 | 结果 | 新方案下当前判断（不是产品接受） |
 |---|---|
-| RO-1 | 统一 Task/claim/fence 基础保留；共享有界额度和合法上界待验收，旧范围合同待 A 修订。 |
+| RO-1 | 统一 Task/claim/fence 基础保留；共享额度合同已同步，实际有界准入和合法上界仍待验收。 |
 | RO-2 | 共享引擎保留；所有整理入口及继续必须使用统一系统运行策略。 |
 | RO-3 | 四类同 Task 恢复事实保留；统一满额恢复/授权/pin 需要新验收。 |
 | RO-4 | 同版本/pin/digest 安全保留；三项真实消费、参数删除/既有配置读取与 restart 待验收；现有失联/租约/调用超时判断不变。 |
@@ -265,7 +268,7 @@ npm run test:e2e -- --config=playwright.python.automation.config.ts tests/e2e/au
 
 ## Developer Completion Report
 
-Developer 已由用户叫停，预存实现未提交/未接受。恢复前先满足 Contract gate。
+Developer 已由用户叫停，预存实现未提交/未接受。Contract gate 已满足，本轮不恢复实现。
 之后交完整 checkpoint SHA / READY FOR B REVIEW、最终行为/文件/关键决策、
 受影响测试实际命令结果与耗时、失败/风险/剩余工作；full acceptance pending B。
 
@@ -273,10 +276,10 @@ Developer 已由用户叫停，预存实现未提交/未接受。恢复前先满
 
 决策：同一 Task47.6 按用户最新指示删除失效判定参数，剩余三项迁入系统设置；取消新增
 无进展观察，保留现有心跳、租约/续约及调用超时判断。旧隔离开发指导不恢复。
-本轮仅修改 Task，保持 PLANNED；没有新实现候选，不签产品 PASS，不关闭 Slice。
-计划检查：governance、`git diff --check -- TASK.md` PASS；
-`.venv/bin/python -B -m unittest tests.test_release_security` 为 **8 tests OK / 0.022s**，
-测试耗时小于本轮总用时 50%。仅验证文档约束，不代表产品验收通过。
-实施前置项：A 将当前仍禁止迁页/要求来源隔离及保留四项/失效阈值的 Contract 和相关
-TARGET 要求按用户新决定 checkpoint，B 核对后解除 gate。该项源于 workflow §4 的合同
-职责，不是要求用户重选方案。
+本轮先按用户授权提交 A 范围/文档，再以 B 身份核对 committed Contract 并对齐本 Task，
+保持 PLANNED。没有新实现候选，不签产品 PASS，不关闭 Slice，也不以本次角色例外代替
+今后的独立 A 终审。合同未同步阻塞已解除，无需再等 A 调整同一范围。
+文档检查 PASS：governance、相关 diff whitespace、九份文档 126 个本地链接及原 Slice
+身份/验收 ID/已接受 ledger 保持检查；`.venv/bin/python -B -m unittest tests.test_release_security`
+为 **8 tests OK / 0.021s**，测试耗时小于本轮总用时 50%。产品验收仍 pending，
+Developer 停工状态保留。
