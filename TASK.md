@@ -215,7 +215,10 @@ git diff --check
 `tests/test_organize_source_history.py` 为本 Task 新的临时 DB/Storage 成功、无效输入、
 冲突、故障及边界测试；其余是直接受影响的真实准入、手动执行、claim/fence、CLI 与
 自动入口。复制/删除实际故障从 Executor/Storage 注入，不能全用手填状态或假前端。
-明确验证未知状态原来存在的跨新 Task 放行缺口，不因删除 CLI 而失去安全证据。
+分别验证入口规则：定时/运行一次按同一来源版本最近正式结果排除 failed/partial；
+手动入口对包含未知效果的 failed/partial 文件，先展示 Web 提醒，再经正常选中确认
+允许新整理，不能沿用“未知效果一律拒绝所有新 Task”的旧断言。原失败/未知效果记录
+保留，旧文件项不自动重放；删除 CLI 不得丢掉这些区别的测试覆盖。
 
 `web/`：
 
