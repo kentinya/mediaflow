@@ -1,10 +1,12 @@
-# Task47.6 — 自动化设置只影响自动化工作，手动整理保持独立
+# Task47.6 — 四项运行设置迁入系统设置，统一消费与真实观察
 
-Authority: committed `c443a769d5bcdd8dfa61b08f4655ed219b6c167b:SLICE.md`
-的 settings-scope amendment、RO-1–5、AC-2/3/4/12/15/16/18/26，及
-[Development Workflow](docs/development-workflow.md)。要求依据：V2-TASK-001–006/011、
-V2-AUTO-007/008（按新修订解释）、REQ-TASK-005/006、REQ-SCHED-001/004/005、
-REQ-SAFE-001–009。保留 RO-6/AC-20–25 和全部既有用户修订。
+Authority: 用户于 2026-11-03 明确选择“四项全放到系统设置”，并已让 Developer 停工；
+本计划按该新决定替换旧方案。[Development Workflow](docs/development-workflow.md) 管理生命周期。
+已提交 `c443a769d5bcdd8dfa61b08f4655ed219b6c167b:SLICE.md` 仍要求自动化专用且禁止迁页，
+因此本次只提交 B-owned 修订计划；实施前必须由 A 提交对应 Contract 修订，B 核对后继续。
+不要求用户再次确认已选择的方案，不由 B 修改 A-owned 文档或自行恢复 Developer 工作。
+保持 RO-1–6、已有安全要求及 A-P1-1/B-P1-1 已修复事实；AC-12/26 和 V2-TASK-011、
+V2-AUTO-001/007/008 的冲突内容由 A 按新决定调整，不能把旧隔离验收标成新方案 PASS。
 
 ```text
 Task ID: 47.6
@@ -15,272 +17,245 @@ Task Base: c8657032dae768d93b12387a5e58db502e23a7ee
 Difficulty: High
 Test Level: T4
 Planner / Reviewer: B
-Current correction: Automation-only settings scope (V2-TASK-011 / AC-26) and A-P1-2
+Current correction: System-owned runtime settings, shared organizing capacity and truthful consumption
+Implementation gate: WAITING FOR A CONTRACT CHECKPOINT; Developer remains stopped
 ```
 
 ## Replanning decision / preflight
 
-**明确采用最新合同，重规划同一 Task。** 原“把所有入口统一到自动化容量 1–10000”的
-指导已被覆盖，不能按旧计划实施；本轮不是单独改数字，也不是新 Task 或独立 minor bug。
-Task ID/真实 Base 不变；目前没有实现候选，不签产品 PASS，不改 A-owned 合同或关闭 Slice。
-
-- 重规划起点 `/Users/songzhidong/mediaflow`，branch `main`，HEAD
-  `c443a769d5bcdd8dfa61b08f4655ed219b6c167b`。governance PASS，无预存 tracked 修改；
-  workspace/Git 可写。原有 `.DS_Store`、`.mgmt.log`、`.t.log`、`.t_test_*.log`、`15`、
-  docs 参考图/OS 文件、output 参考目录/ZIP/HTML、testdata/web OS 文件全部保留不暂存。
-  不读取用户媒体、数据库或私密配置；不派生代理、push 或部署。
+- 本轮起点：`/Users/songzhidong/mediaflow`，branch `main`，HEAD
+  `5c7d8ba5be1a7cf1131470ff6acbdb3af5a8a171`；governance PASS，workspace/Git 可写。
+  Task ID/真实 Base/High/T4 不变。本次修改计划，不实施、接受或提交停工中的产品改动。
+- 预存 tracked 修改共 21 个文件：application 的 `automation.py`、
+  `automation_run_once.py`、`execution_authorization.py`、`manual_organize_execution.py`、
+  `manual_task_engine.py`、`media_discovery.py`、`resident_runtime.py`、`task_scheduling.py`；
+  `domain/task_scheduling.py`、`final_cli.py`、`infrastructure/sqlite_runtime.py`、
+  `interfaces/service_api.py`；`scripts/operations_inventory_harness.py`；
+  tests 的 `test_automation_settings_management.py`、`test_automation_settings_resident.py`、
+  `test_automation_task_admission.py`、`test_configuration_snapshot.py`、
+  `test_manual_task_engine.py`、`test_media_discovery.py`、`test_task_scheduling.py`；
+  `web/tests/e2e/automation-settings.python.spec.ts`。全部保留，不暂存、不重置、不冒充候选。
+  原有 OS 文件、日志、`15`、docs 参考图、output 参考目录/ZIP/HTML 全部保持原状。
 - Slice Base 保留 `5144ab1fc2344b06194969cc2c496835729664c0`；Slice FIX REQUIRED，
-  Roadmap ACTIVE。A 最后审查候选仍为 `5c808d4a67bedfbafb71d88a1ffa8d3480ef5316`。
-  Task47.1–47.5 接受历史不变，Task47.5 packet 留在 `7ac253dd:TASK.md`；CLI 收尾
-  A-P1-1 和批量路径 B-P1-1 已验证修复，本 Task 不重开其原 Goal/Base。
-- 前序本 Task 规划/补充证据保留在 `d0c071c8:TASK.md`、`abbbd5af:TASK.md`。B 已独立
-  复现“设置 Save 1025 成功 → 普通 CLI 被 1024 拒绝 → Save 1024 → 实际 COPY”；
-  A 补证“Web Save 1025 → Files 批量整理 400/无效刷新提示 → Save 1024 → 原摘要/确认
-  → 实际 MOVE”。证据在 `.git/validation-evidence/c8657032/b-planning-47.6/` 及
-  `.git/validation-evidence/5c808d4a/a-final-review/web-capacity/`，均为本地 ignored。
-  这些缺陷事实保留，但旧的全入口共享额度解释不再有效；本轮未重跑旧浏览器缺陷脚本。
-- 本次断言修订起点 branch `main`、HEAD `8168878af1bed382a54d884090e65e5ee903b4fc`，
-  无预存 tracked 修改，以上 untracked 文件保留。仅改 B-owned Task，ID/Base/High/T4 不变。
-  governance、`git diff --check` PASS；
-  `.venv/bin/python -m unittest tests.test_release_security` 为 **8 tests OK / 0.022s**。
-  本轮测试耗时远低于总用时 50%；未实施产品修改或宣称完成新合同验收。
+  Roadmap ACTIVE。A 最后审查候选仍为 `5c808d4a67bedfbafb71d88a1ffa8d3480ef5316`；
+  Task47.1–47.5 历史与 `7ac253dd:TASK.md` packet 不变，不重新包装成当前方案接受。
+- 旧规划在 `d0c071c8:TASK.md`、`abbbd5af:TASK.md`、`8168878a:TASK.md`、
+  `5c7d8ba5:TASK.md`。已复现的 Save 1025 → CLI/Web 拒绝、Save 1024 → 实际效果事实保留，
+  证据在 `.git/validation-evidence/c8657032/b-planning-47.6/` 和
+  `.git/validation-evidence/5c808d4a/a-final-review/web-capacity/`。
+  旧“只让自动化消费、手动独立 100/5s、双范围计数/周期”的指导及测试预期被本计划取代。
+- A 的合同 checkpoint 应明确：四项由系统设置统一管理；整理额度由各整理入口共享；
+  Worker 轮询作用于共享后台工作；Scheduler 仅负责到期检查；失效阈值仅作无更新观察。
+  在 A 提交并消除上述文档冲突前，本计划可审阅但不授权按新范围实施。
+- 本轮计划检查：governance、`git diff --check -- TASK.md` PASS；
+  `.venv/bin/python -B -m unittest tests.test_release_security` 为 **8 tests OK / 0.022s**，
+  测试耗时小于本轮总用时 50%。未运行或宣称通过产品验收；预存实现仍未接受。
 
 ## Goal / complete journeys
 
-**自动化设置仅控制自动化，手动整理不受它的额度、轮询或失效判定限制。** 保留一个
-Task 生命周期、repository 调度权威、claim/heartbeat/fence、整理应用引擎和 Executor。
-不新增队列、运行身份、Worker 并行度或配置页面。
+**在现有系统设置页统一管理四项运行参数，移除自动化页的重复设置表面，并使每项设置
+有明确、真实的消费行为。** 共用现有 Task/调度权威/Worker/Executor，不引入第二队列、
+并行度、抢占或新的运行身份。保留已有配置键及不可变旧快照，不为迁页批量改写配置。
 
-1. **正常设置与手动整理：** 自动化 → 全局设置 → 保存合法 1/1025/10000 与其他三个
-   字段 → 看见本次 Active 与真实自动化消费范围。然后 Files 单选/多选/文件夹/混选 →
-   批量整理 → 同 Task 的原摘要 → 正常明确确认 → Worker 产生实际 MOVE/COPY 与独立
-   Results。普通直接 CLI/API/remote-source 整理也可按原授权完成。无需降低自动化设置、
-   重启、绕过确认或手填内部信息。
-2. **自动化额度已满：** 设置自动化容量 1；定义 due/Run once 的来源 A 已占用该额度。
-   用户对另一个来源 B 发起 Files 手动整理或普通直接 CLI/API/remote 整理，可以准入并
-   完成，不增加自动化占用。反向先存在手动工作，也不占用自动化的 1 个名额。
-   同一具体来源仍有跨入口所有权保护；独立额度不是重复整理同一文件的许可。
-3. **自动化保持原约束：** Run once 虽由用户点击，仍属于定义自动化工作。额度真的满时，
-   新 Run once 拒绝而不创建孤儿/消耗授权，due 保持待调度；等待人工的自动化 Task 在
-   Task Center 决定/分析/确认后仍用原自动化范围重入。用户等自动化名额释放后主动重试
-   原允许操作，不因换页面、换点击者或人工恢复而变成手动工作。
-4. **消费、失败与恢复：** 改变自动化 Worker/Scheduler 轮询或观察阈值后，实际常驻
-   消费者在安全边界采用并如实回报自动化范围；手动工作自己的调度周期、心跳/lease/
-   失败规则不随之改变。配置非法则不发布，原 Active/输入保留；未知发布按现有精确
-   读回核对。真满的是哪类额度要说清，现有工作/选择/摘要/结果不丢。取消、未知效果
-   和同版本 restart 沿用安全边界，不新增自动重放、自动标失败或抢占承诺。
+1. **设置与正常整理：** 用户进入“系统设置” → 查看四项当前发布值及作用范围 →
+   修改并保存 → 看见本次发布成功，以及各实际消费者已采用/等待采用/显式覆盖状态。
+   随后 Files 单选/多选/文件夹/混选 → 整理 → 原摘要 → 明确确认 → 实际文件效果和 Result。
+   普通 CLI/API/远程整理及自动化 due/Run once 均能使用合法容量，无需降值或重启。
+2. **统一额度已满：** 系统整理额度设为 1，文件 A 的手动或自动化任务占用该名额；
+   对另一个文件 B 发起任一整理入口时，明确说明“系统整理队列已满”、现有工作状态和
+   下一步。等名额释放后显式重试原操作即可；due 保留到期状态供后续正常检查。
+   不创建孤儿、不消耗授权、不丢摘要/选择/结果，不通过改入口或来源标签绕过额度。
+3. **后台检查周期：** 调整 Worker 轮询后，真实常驻 Worker 在安全边界采用；手动和
+   自动化整理、两类库的普通复制/移动/删除均遵守共享的空闲检查周期。调度器轮询只影响
+   发现“定义已到期”的时机，不改变 Cron/间隔定义、并行数或单次处理速度。
+   心跳和配置检查继续独立；已有工作处理完可以继续领取，不承诺固定秒数完成。
+4. **无更新观察：** 对已领取执行的后台 Task，超过阈值没有可证明的持久业务进展时，
+   在该任务已有详情/本地操作状态中提示“长时间无进展”，说明最后进展时间、已知效果、
+   Worker/任务证据和检查方向。仍保留真实生命周期及结果；正常进展后提示更新。
+   排队、人工等待、已结束任务不因此被判失败。活着的心跳不等于业务有进展。
+5. **失败与恢复：** 非法/过期/无权限 Save 不发布，原 Active 与输入保留；未知 Save
+   按同一提交证据核对。进程停止/未上报/覆盖值如实展示。同版本重启后仍能读取已发布
+   设置、原 Task/pin/Result；旧自动化设置链接仅导航到系统设置，不产生发布或媒体效果。
 
-## Actual-code gap / sources of independent manual policy
+## Four settings / precise consumer boundary
 
-当前代码仍把这些设置提升成所有整理的策略，尚未实现上述范围：
-
-| 当前真实出处 | 本 Task 的具体处理 |
+| 沿用的配置键 | 系统页含义及消费边界 |
 |---|---|
-| `domain/task_scheduling.py::MAX_TASK_CAPACITY=1024` / `require_capacity`；settings/runtime/Scheduler 支持 1–10000 | 自动化消费接受原整数 1–10000；通用上界可复用，但不得等同于所有入口的实际额度来源。 |
-| `sqlite_runtime.py::_scheduled_capacity_use_locked` 无来源过滤，所有 queued/claimed 都计数；各 admit/requeue/确认事务复用 | 在同一 repository/事务中按持久来源选适用范围并计数；手动与自动化各有有界名额，不再共用自动化设置额度。总量诊断若保留须与额度计数区分。 |
-| `media_discovery.py::_shared_capacity`、`manual_organize_execution.py`、`service_api.py` 的 continuation factory、`final_cli.py::_admit_direct_organize_task` 都读自动化值；remote `ExecutionAuthorizationService` 也接收该值 | 每个准入/确认/重新分析/继续/remote 消耗路径均使用可信原工作范围解析策略；不能只改新建 Files 或 CLI。 |
-| `final_cli.py::_run_worker` 把自动化 Worker poll 装进进程级 `ResidentLoop`，step 再调用混合 `ResidentProcessingWorker.run_next` | 同一常驻进程按范围选择可运行候选和下次检查时刻；自动化 poll 只驱动自动化，手动周期独立。选择 pending pin、注册和 claim 必须对齐候选，防止队头自动化长轮询挡住手动。 |
-| `TaskTrigger`、Task scheduling 原始准入记录、定义 occurrence/Run once origin 及 display/intent 关联已存在；`ManualTaskEngineWorker._is_automatic` 也会运行 CLI/remote | 复用持久关联证明来源；不能靠 runner 名、是否点击按钮、恢复动作发起页面或客户端字段来分类。不要把共用 automatic runner 的 CLI/remote 算进自动化。 |
-| `automation_settings.py` 逐实例 cadence evidence 和 API-local capacity/stale 发布说明；`service_api.py` 传递 stale 参数 | 读回必须如实说明自动化范围和真正使用的值。现有 stale 参数并不等于已运行观察器；核对实际消费者，不能用参数/Active 回显伪造采用。 |
+| `automation.maximumActiveJobs` | 显示为“整理任务队列上限”或等价清晰名称。1–10000 的整数；所有进入同一整理内核的 Files、direct CLI/API/remote、due、Run once 及同 Task 机器工作重入共享一个额度。普通复制/移动/删除保留原有独立准入规则，不因迁页改造它们的队列或计数。页面说明额度是整理 Task 数，不是线程/文件并行数。 |
+| `automation.workerPollSeconds` | 共享处理 Worker 的空闲工作检查间隔，覆盖其整理与普通异步文件操作 runner；不是心跳、lease、处理耗时或并行度。沿用合法有限正数及显式运行 override。 |
+| `automation.schedulerPollSeconds` | 共享 Scheduler 检查自动化定义到期的间隔；不控制手动准入、Worker 领取或通知投递，不修改定义的 Cron/时区/周期。 |
+| `automation.staleJobAgeSeconds` | 60–604800 的整数，可用“任务无更新提示阈值”解释。对共享 Worker 中已领取执行的整理及普通异步文件操作做只读业务进展观察。不是总运行时限、心跳失联阈值或自动恢复许可；不自动改终态、释放额度、取消、重排或重放。 |
 
-**手动运行策略的代码依据与建议（内部默认，非新产品设置）：**
+配置键的历史名称属于兼容实现，不要求用户理解 Job 或填写内部字段；不为位置变化
+新增一组同义配置、每来源默认额度或手动独立周期。通知服务保留自己的轮询/lease；
+同步浏览、重命名、新建目录等不因迁页变成后台调度任务。
 
-- 手动容量建议集中沿用 **100**，取自现有 `TaskSchedulingService` 各组合路径、API
-  与 `ExecutionAuthorizationService` 的默认/回退值 100；将其独立成手动默认，
-  不再从 Active 的 `automation.maximumActiveJobs` 派生。保留现有受信构造注入能力
-  供运行组合/测试使用；`MediaFlowApi.maximum_active_jobs` 现有自动化 override 不可
-  再经共享 binding 泄漏成手动策略。不添加手动 CLI flag、环境变量或表单。
-- 手动常驻调度建议沿用默认 **5.0s**，来自 `final_cli.py::_resident_infrastructure_defaults()`
-  的现有 poll fallback。既有 `worker run --poll-seconds` 是显式运行 override，保持
-  高于默认/自动化表单；其实际适用范围与回报必须明确，不能因表单 Save 被覆盖。
-  自动化自己的 cadence 继续按其配置/已有 override 消费；不把手动 tick 变成提前
-  自动化 poll，也不让很长的自动化 poll 阻止手动 tick。
-- 手动 claim/失联安全沿用现有值与来源：Task service 默认 lease 30s、
-  `ManualTaskEngineWorker.DEFAULT_LEASE_SECONDS=300s`、注册 heartbeat 5s 及
-  `domain/automation.py::worker_stale_threshold_seconds`。不是本轮要统一的数值，
-  各原路径保持原规则，均不得读取 `automation.staleJobAgeSeconds`。失联仍不证明无效果。
-  自动化 stale 只用于其已有无更新观察语义；若 Job 退出后丢失有效消费，在现有 Task
-  观察/读回边界最小补齐，不能新增超时取消、强制终态、重排或恢复产品。
+## Actual-code gaps and stopped implementation
 
-100/5.0s 是基于真实代码的默认方案，不是 Slice 新增的固定产品数字。Developer 应集中
-表达独立策略并在交接说明最终默认、来源和 override 范围；若现有组合需要等价的有界
-方案，说明理由及影响即可，不新增调参入口。验收检查策略独立、有界和实际行为，不检查
-字面量、常量名称或对象数量；lease/heartbeat 的既有差异也不是本轮统一目标。
+| 实际代码依据 | 本 Task 开发指导 |
+|---|---|
+| `ConfigurationPage.tsx` 的 `/ui-v2/configuration` 已嵌入 `AutomationSettingsPanel`；`AutomationInventory.tsx` 仍有 settings tab，系统 generic editor 也列出四键 | 复用系统页现有表单，采用系统运行设置含义；自动化保留定义/记录表面。四项不要出现重复的普通编辑入口，不重做整个系统页。 |
+| `domain/system_settings.py` 已 allowlist 四键；`application/automation_settings.py` 的 focused Save 已有四字段 checked publication、submission 核对和逐实例 cadence 证据 | 复用一套 managed authority、验证及精确提交核对。focused 命令可继续使用已有 API 路径；名字不决定作用范围。无需为迁页另建设置存储或猜造新 endpoint。通用 System Settings Draft 编辑语义不变。 |
+| 已提交 `domain/task_scheduling.py` 上界 1024；SQLite 全体 queued/claimed 计数；Files/CLI/API/remote 与继续路径读相同自动化值 | 统一修到合法 1–10000，并明确从当前系统运行策略取额度。各入口和所有重入都使用同一权威、同一原子计数；不能只改新建 Files。 |
+| 已提交 `_run_worker` 的一个业务轮询驱动混合 `ResidentProcessingWorker.run_next`；`_files_transfer_worker_context` 包括两类库 transfer/delete | 保持共享检查周期及现有串行调度；核对普通操作也真实采用。pin 候选、注册、claim 必须一致，不把当前 Active 当成已准入工作的执行 pin。 |
+| `stale_job_age_seconds` 传入 API `_build_runtime_binding` 后未使用，只有配置/参数/展示，无实际 Task 观察器 | 必须接通上述只读观察。复用 Task/TaskItem/Result、普通 transfer 的既有持久进展和详情投影；按受信服务时间评估，不能从配置回显或 Worker 心跳宣称消费。缺失进展证据要显示未知，不能捏造失败。 |
+| 停工修改已加入独立 manual/automation capacity、scope count、dual cadence、API binding 及相应测试 | Developer 恢复前逐项对照本计划，仅保留符合新目标的改动，改写不适用的隔离测试与组合。B 本轮不回退这些文件；Developer 也不得用全仓 reset/restore 覆盖其他工作。上界修复、源互斥等有效安全改动可复用。 |
 
 ## Implementation Scope / Developer guidance
 
-1. **先固化真实入口回归。** 复用 `entrance_journey`、既有 settings WSGI helpers、
-   Scheduler/Run once/Files fixtures 和真实 resident subprocess。保存自动化容量 1 后
-   从真实定义准入 A，占住自动化名额；经真实 Files/CLI 对不同文件 B 准入并完成。
-   反向验证已有 manual 不吃自动化名额，再验证真正第二个自动化工作拒绝。禁止直接
-   INSERT 队列、伪造 Task 状态或 mock count 来代替主要集成证明。
-2. **在共享 domain/application 表达范围策略。** 复用后端写入的 trigger 与定义 provenance
-   建立单一可信范围解析，供 admission、count、claim eligibility、continuation 共用。
-   只在真实入口决定新工作来源；已存在 Task 从自己的持久记录解析，冲突/无法证明的
-   自动化关联不能默认降成手动绕限。保持原 pin、request idempotency 和授权语义。
-   尽量利用已有列/关系；不建立第二队列或独立状态机，不为此建设历史迁移系统。
-3. **改全事务边界。** 在 SQLite 同一事务内核对来源、适用容量、来源所有权、due 唯一性、
-   具体操作授权/消费与工作重入。覆盖 due、Run once、Files、direct CLI、remote ticket，
-   以及等待人工后的分析/摘要确认/四类继续。Task 全部人工等待占 0；机器工作/稳定等待
-   占本范围 1；在途取消仍占原范围，安全结束才释放。不要先在应用层 count 再写库。
-   范围隔离不能放松跨范围的同文件互斥、fence 或历史未知非重放。
-4. **分离消费周期而非执行引擎。** 保留共享 Worker、一个调度权威和既有 claim 协议。
-   推荐在既有 `ResidentLoop` 的 step/候选查询区分范围资格和业务检查时刻，物理 wake
-   可取各范围/heartbeat/config-recheck 的最早时刻；内部 helper/对象划分不作为验收条件。
-   手动检查不能提前领取尚未到自动化业务检查时刻的工作；自动化 Save 不能改变手动
-   调度策略。保持现有串行执行，不增加 Worker/线程并行度，不抢占 Storage 调用。
-   `pending_snapshot` 和真实 claim 选择应一致，避免用不合适 pin 注册后饿死另一范围。
-   手动无需“立刻执行”保证；正在处理的其他工作带来的资源等待保持诚实。
-5. **四字段与 UX 一起闭环。** Scheduler poll 仅管自动化 due；Worker poll 仅管自动化
-   候选；stale 观察仅作用于自动化；capacity 只算自动化原始工作及其继续。API/Web 的
-   简短意义、队满拒绝和逐实例采用证据须讲清自动化范围，移除误称所有整理共享的含义，
-   不换表单位置、不添加新控件/额外确认。不能用旧 Published 提示证明本次 Save，等待
-   本次 PUT 与新 Active/采用读回。保留 Save 对无关 Draft/设置的隔离和不可变 digest。
-6. **补真实 Web 与交接。** 优先在 `web/tests/e2e/automation-settings.python.spec.ts` 增加
-   设置与手动整理隔离场景（建议统一测试标题前缀，便于定向运行）：表单 Save 1025/10000
-   后 Files 正常摘要/确认/真实效果；另以容量 1 的真实自动化占用验证不同来源手动仍可
-   完成。既有 harness 只推进真实 Worker/读取隔离文件事实，不代替正常页面命令。
-   改前应暴露错误，改后不能靠降值/重启/route mock/吞 400 通过。跑受影响检查后提交
-   READY FOR B REVIEW，B 再做 T4 与整个 Slice 重评，不自判 PASS。
+1. **先核对新合同与停工差异。** A 提交新范围后，B 核对并更新本 Task 的 Authority/gate，
+   保持 ID/Base。Developer 在原停工差异上整理出一套一致方案；先列实际保留/调整文件，
+   不启动第二套队列，不把旧实现或旧测试标签直接当成已接受。
+2. **先完成系统页旅程。** 把现有四项 focused 表单及读回放在系统设置中作为唯一常用入口，
+   去掉自动化 settings tab 和重复编辑项；同步已存在的导航/旧 deep link/auth 返回。
+   四字段 Save 仍从精确 Active 创建 checked successor，只发布四项，不夹带其他 Draft。
+   不要求用户手填 revision/claim。已有 focused API 可沿用，后台和页面不继续误称自动化专用。
+3. **统一额度与事务。** 修正上界和全部 admission/确认/重新分析/四类继续/remote 消耗路径。
+   同一 repository 事务核对当前额度、源所有权、due 唯一性和授权，不能先 count 再写库。
+   pending machine/active/stability waiting 每个整理 Task 占 1；全部人工等待占 0；
+   在途取消不提前释放。重复请求满时仍读回原工作，拒绝不续授权、不自动登记继续。
+   原始 trigger/provenance 继续用于身份、审计、定义语义和幂等，不用来分配两套额度。
+4. **接好常驻实际消费。** 使用共享 Worker 业务周期、Scheduler 自己的到期检查周期，
+   复用安全边界采用、空闲配置重查、逐实例证据和显式 override。取消旧方案要求的来源
+   独立周期及默认 100/5s；保留启动无 Active 时必要的既有基础默认。
+   不以固定对象个数/wake 次数/deadline 数值验收，不新增 Worker/线程并行度或抢占。
+5. **补齐无更新观察与可操作解释。** 在现有任务及普通异步文件操作投影共用最小观察逻辑，
+   使用真实业务进展证据和适用的当前系统阈值。时间变化只影响观察提示，不写 Task 状态、
+   Result、claim、授权或源锁；业务进展恢复可清除提示。说明“可能仍在执行，先检查当前
+   操作/日志和源目标；未知效果不可直接重试”，保留后端原本允许的控制/恢复动作。
+   不新增全局告警中心、扫描守护程序、超时终态或通用自动恢复产品。
+6. **补真实回归并交接。** 从系统页保存 1025/10000，再经 Files 摘要/确认产生真实效果；
+   经真实入口准备容量 1，占满/释放/显式重试，双向验证手动与自动化共享额度。
+   验证常驻空闲轮询、普通 transfer/delete 的推进，以及当前阈值对无更新观察的实际作用。
+   只在已有入口造临时任务，不直接 INSERT 队列或构造不可达“漏洞”。交受影响结果及
+   READY FOR B REVIEW，B 再独立审完整 Task Base..candidate 和执行 T4。
 
 ## Acceptance Criteria
 
-- [ ] **AC-S1 — 自动化合法范围与严格发布。** 现有表单/API 仍支持 capacity 1–10000，
-  1/1025/10000 均有真实自动化准入、执行与正确 Task/Result 的证明，分配到 due/Run once
-  覆盖两种消费者，无需每个值重复两条旅程或创建 10000 个任务。
-  0/10001/bool/小数/错误类型拒绝，保留 Active/输入，无工作/Provider/
-  媒体效果；三个其他字段保留既有严格范围，Save 不发布无关 Draft。
-- [ ] **AC-S2 — 双向额度隔离。** 自动化容量 1 被真实 due 或定义 Run once 占用时，
-  不同来源的 Files/direct CLI/API/remote-source 工作仍能准入和完成；反向多个手动
-  queued/claimed 工作不挤占自动化额度。手动仍受独立默认或受信注入的适用有界容量
-  保护，不是无限准入。真满的自动化 Run once/due 和手动各自拒绝/恢复正确，
-  不新增孤儿、消费授权、推进 due 或偷偷自动续作；同请求重复满时仍精确读回原工作。
-  手动真满可用现有受信构造注入小容量验证，不要求堆满默认容量；另核对正常入口使用
-  交接声明的独立默认及其 override。
-- [ ] **AC-S3 — 原来源与同 Task 继续。** due/Run once 不论入口 Web/API/CLI 都属于
-  自动化；ordinary remote/direct CLI 不因共用 runner 变自动化。等待人工后由 Task
-  Center 触发四类决定/分析/确认，仍用原来源与 pin，不因点击者/页面变换额度或刷新
-  授权。覆盖两类等待重入、原子最后名额竞争、并发重复 due、unknown/伪造来源拒绝。
-  来源反例基于现有入参校验和持久关联，不构造不存在的入口或正常旅程不可达的漏洞。
-- [ ] **AC-S4 — 四字段真正隔离消费。** 逐个合法改变 capacity、stale、Worker poll、
-  Scheduler poll，手动准入/确认/重入容量、常驻调度策略、观察/失败规则不受其控制。
-  在真实 resident 中保存很长自动化 poll（如 3600s），不同来源手动仍按独立周期推进
-  到实际效果；不能只调用 `run-next` 或读采用行替代常驻行为。手动短 tick/配置 recheck
-  不提前触发自动化业务 poll/due。观察阈值与 lease/heartbeat 区分，不自动重放/标终态。
-  采用读回只证明实际已安装的自动化范围/值，显式 override、live/stopped/pending 保真。
-  断言实际领取与推进结果，不锁定每次 wake/sleep、内部 deadline 数值或恰好第 5 秒
-  完成；正常 heartbeat/config 检查及串行在途工作造成的资源等待均允许。
-- [ ] **AC-S5 — 完整 Web。** 两个高合法容量经真实表单 Save→本次 Active→Files 单选
-  →批量整理被持久接收→原摘要→正常确认→真实 Worker/Executor 整理，确认前零媒体变更，
-  后有正确源/目标、Result/pin 和页面状态。容量 1 且自动化已满时该不同来源旅程也成功。
-  保留多选/文件夹/混选实际范围和过滤；无本次 400/无效刷新提示、降值、额外确认或
-  CLI 代替操作。检查桌面/窄屏关键状态；按钮回归和类型检查随受影响 Web 文件覆盖。
-  现有接收接口的 202 另作兼容检查，不能代替完整用户结果；不以固定提示全文、DOM
-  层级、CSS 数值、截图逐像素或测试名称作为本 Task 的独立阻塞条件。
-- [ ] **AC-S6 — 跨范围安全/持久化。** 自动化与手动争用同一真实来源仍只允许有效所有者；
-  claim/control/fence、未知结果非重放、取消调用中不提前释放、全部人工等待占 0、独立
-  Result/成功兄弟保留。设置发布和同版本 reopen/restart 不改 admitted pin、原始来源、
-  结果/digest；重启后自动化采用/手动独立周期与额度仍真实。A-P1-1/B-P1-1 不回归。
-- [ ] **AC-S7 — 独立接受与停止。** B 审完整原 Task Base..candidate 并执行适用 T4；
-  重评全部 Slice RO-1–6/AC-1–26，满足后提交 fresh Closure Packet 交 A 终审整个 Slice
-  Base..Head。未执行门禁不能算 PASS；无必需缺口即停止规划，不由 B 关闭 Slice。
+- [ ] **AC-S1 — 位置和发布完整。** 系统设置四项可读/可编辑/可 checked Save，自动化不再
+  提供独立设置 tab/form；旧链接安全到达系统入口，不发布、不丢认证返回。仅四项 Save
+  不发布无关 Draft；invalid/stale/denied/unknown 分阶段解释并保留输入/原 Active。
+  真实消费者采用与发布区分，不能用 generic API binding “consumed”替代真实证据。
+- [ ] **AC-S2 — 合法范围与所有整理消费者。** 容量 1/1025/10000 均有实际整理消费证明，
+  分配覆盖 due/Run once、Files 和普通 CLI/API/remote；0/10001/bool/小数/错误类型拒绝。
+  stale 整数范围、poll 有限正数校验保持严格；不静默截断/限幅。无需 10000 个任务或全组合。
+- [ ] **AC-S3 — 统一容量和恢复。** 手动占最后名额会限制新自动化，反向亦然；不是保留两套
+  来源额度。满额新建及同 Task 重入保持原等待/摘要/选择/结果，消费授权和写库原子；
+  due 不推进，已准入重复请求精确读回。释放后通过正常重试/下一 due 检查成功。
+  等待/稳定/在途取消计数正确；四类继续保留 Task、来源、pin 及合法授权。
+- [ ] **AC-S4 — 真实周期。** 实际 resident 安全采用两个周期，包括 idle/长等待/override/
+  stopped/pending/同版本 restart；共享 Worker 的手动、自动化及普通文件操作符合其说明。
+  Scheduler 只检查 due；不改定义计划或通知周期。配置/心跳 wake 不冒充业务检查。
+  验收领取/推进结果，不要求每个任务固定等待/完成秒数，也不把正常串行等待当故障。
+- [ ] **AC-S5 — 阈值实际生效且无副作用。** 通过真实准入任务及受控本地 Provider/Storage
+  等待，证明已执行任务无业务更新超过阈值时出现只读提醒，进展后更新；调整阈值确实
+  改变观察。覆盖整理及普通异步文件操作；排队/人工等待/终态不误报成执行失败。
+  心跳、lease、无更新观察区分；缺证据明确未知。观察计算不写业务状态、不触发 Storage
+  效果，已有安全审计保留；
+  不自动释放额度、取消、改终态、重排或重放。可用受信测试时钟，不实等 60 秒。
+- [ ] **AC-S6 — 完整 Web 和普通操作。** 系统页 Save→本次 Active→Files 选择→持久接收
+  →摘要→正常确认→真实 Worker/Executor→正确文件/Result/pin；1025/10000 都覆盖。
+  多选/文件夹/混选范围及过滤保留；确认前零变更。两类库普通复制/移动/删除的本地
+  状态与实际效果保留，并能读到适用无更新提示。桌面/窄屏关键操作可读可用，
+  不锁定 DOM/CSS/截图像素、测试名称或文案全文。现有 HTTP 兼容检查不替代用户结果。
+- [ ] **AC-S7 — 安全/持久化。** 同源互斥、原子最后名额竞争、due 并发唯一、RBAC、
+  claim/fence、在途取消、成功兄弟保留、未知非重放及 A-P1-1/B-P1-1 不回归。
+  设置迁页/发布/同版本 restart 不改旧配置 digest、已准入执行 pin、来源或结果。
+  新系统额度可影响机器重入准入，但不改执行快照或赋予新权限。
+- [ ] **AC-S8 — 独立接受和停止。** A 新合同已 checkpoint；B 审完整原 Task Base..candidate，
+  执行适用 T4，重评全部修订后 Slice 结果/必需表面。全部满足交 fresh Closure Packet 给 A，
+  否则同 Task FIX REQUIRED；B 不关闭 Slice，不以计划/停工改动代替接受。
 
 ## Required Tests
 
 遵守 [workflow §6](docs/development-workflow.md#6-test-levels)。每轮测试时间小于本轮
-总用时 50%；优先真实关键复现与代码/结果分析，记录实际测试耗时，不空等补比例、不删
-断言/加重试/放宽超时。无法完成的验收保留 pending，不能签 PASS 或交 Developer 跑全量。
-测试使用临时 DB/媒体、fake/local Provider 和既有 harness，不用用户服务或生产数据。
+总用时 50%；不空等补比例、不删业务断言/加重试/放宽超时。用临时根/DB、本地 fake
+Provider/Storage、受信时钟和既有 harness，不用用户服务/媒体。未跑门禁保持 pending。
 
-**覆盖分配：** 1025 检查已知故障，10000 检查合法上界，1 检查满额与双向隔离；四字段
-各有消费范围证明。真实 Web 保留上述两个高值及已满场景，due/Run once、各手动入口、
-四类继续和桌面/窄屏按共享路径与风险分配集成/native 覆盖，不要求“数值 × 入口 × 恢复
-类型 × 视口”全组合。Desktop/narrow 均核对关键操作可用和状态可读，不重复所有容量。
-下列测试文件/标题是定位与运行建议，可按现有组织做等价调整并记录实际命令；不能因此
-漏掉消费者、真实 Web/常驻执行或安全结果。只从现有可达入口准备场景，不造探测入口。
+覆盖按风险分配：1025 为已知回归，10000 为上界，1 为满额/释放；各入口、四类继续、
+普通文件操作、两个视口和两个轮询均有行为证据，无需数值 × 入口 × 视口全组合。
+旧隔离断言应改成统一额度/周期结果，不机械删除；测试文件/标题可按现有组织调整，
+交接实际选中命令与覆盖，零匹配不算通过。
 
 ### Developer — affected tests
 
-在现有模块补成功/非法输入/真满/来源冲突/失败/并发和实际 resident 隔离回归：
+按真实改动补成功/非法输入/满额/冲突/失败/竞争/无更新观察，运行以下直接受影响模块：
 
 ```bash
-.venv/bin/python -m unittest tests.test_task_scheduling tests.test_task_scheduling_fencing tests.test_task_source_ownership_race tests.test_automation_task_admission tests.test_automation_run_once tests.test_automation_entrance_recovery tests.test_execution_authorization tests.test_media_discovery tests.test_manual_organize_execution tests.test_manual_task_engine
-.venv/bin/python -m unittest tests.test_automation_settings_management tests.test_automation_settings_resident tests.test_resident_services
+.venv/bin/python -m unittest tests.test_system_settings_management tests.test_automation_settings_management tests.test_automation_settings_resident tests.test_resident_services
+.venv/bin/python -m unittest tests.test_task_scheduling tests.test_task_scheduling_fencing tests.test_task_source_ownership_race tests.test_automation_task_admission tests.test_automation_run_once tests.test_automation_entrance_recovery tests.test_execution_authorization
+.venv/bin/python -m unittest tests.test_media_discovery tests.test_manual_organize_execution tests.test_manual_task_engine tests.test_operations_task_center tests.test_direct_file_transfers tests.test_direct_file_operations
 .venv/bin/python scripts/check_governance.py
 git diff --check
 ```
 
-第一组覆盖来源/事务/各入口/授权/四类继续/安全结束，第二组覆盖四字段 Save/readback、
-真实子进程 cadence/override/heartbeat/restart。需要重新评估旧断言的业务含义：旧“手动
-占满自动化”或进程级 poll 断言按新合同改为双向隔离的效果断言，不只删除测试。
-按实际改动追加直接受影响的 `tests.test_operations_task_center`、
-`tests.test_automation_definition_occurrence`、`tests.test_automation_execution_intent` 等模块。
-Python 改动文件跑 ruff check / ruff format --check / compileall；Web 改动跑相关静态/
-unit 检查。Developer 不承担全仓 Python/Web/E2E、wheel/Docker 或发布矩阵。
+第一组覆盖系统页权威/四字段发布/实际采用，第二组覆盖统一额度/授权/原子性/各入口，
+第三组覆盖手动/恢复、只读观察及普通文件操作。新观察单元测试可放直接受影响模块，
+不新建通用验收平台。Python 改动文件跑 ruff check、ruff format --check、compileall。
 
-新增 Web 回归由 Developer 在 `web/` 执行（复用独立发布 harness，不是全量 E2E）：
-建议使用 `automation settings leave manual organizing independent` 作为场景标题前缀，
-以下定向命令据此给出；采用其他标题/位置时同步替换实际选择器。
+在 `web/` 对受影响组件/路由/导航跑 unit、静态检查及真实单场景回归：
 
 ```bash
+npm run typecheck
+npm run lint
+npm run test -- run src/features/configuration/ConfigurationPage.test.tsx src/features/operations/AutomationSettingsPage.test.tsx src/routes/router.test.tsx
 npm run build
-npm run test:e2e -- --config=playwright.python.automation.config.ts tests/e2e/automation-settings.python.spec.ts --grep 'automation settings leave manual organizing independent'
+npm run test:e2e -- --config=playwright.python.automation.config.ts tests/e2e/automation-settings.python.spec.ts --grep 'system runtime settings'
 ```
 
-命令必须实际覆盖高值两例和自动化已满场景，不限定 test case 数量，零匹配不算通过；
-不同临时来源避免前例 MOVE 移走文件。正常表单/导航/选择/确认都用页面动作，harness
-仅驱动真实后台/读取证据。
+建议新增/调整场景统一使用 `system runtime settings` 标题前缀；若文件移动，更新实际
+命令。真实系统表单、导航、Files 选择/确认使用页面动作，既有 harness 只推进真实后台、
+提供本地可控等待和读取事实，不 route mock 成功。补齐受影响导航/ordinary-operation
+测试，Developer 不承担全仓 Python/Web/E2E、wheel/Docker 或发布矩阵。
 
 ### B — acceptance and full regression
 
-- 审完整 `c8657032dae768d93b12387a5e58db502e23a7ee..candidate`，同时单独核对本次
-  `c443a769..candidate` 的实现增量和新合同；不 repin Base、不以改常量替代范围隔离。
-  从上述已有入口独立验证 AC-S1–6，包含实际满额双向隔离、人工重入/授权与 resident
-  长自动化 poll 下的手动真实执行。旧缺陷脚本只证明旧事实，不是新接受结果。
+- 先核对 A 新合同、精确实现 SHA 和全部预存差异的处理，审完整
+  `c8657032dae768d93b12387a5e58db502e23a7ee..candidate`；不 repin Base、不把旧
+  Automation-only 测试通过当成新方案接受。独立验证 AC-S1–7，先复现关键旅程再跑昂贵门禁。
 - 按 [shared full T4 gates](docs/development-workflow.md#shared-full-regression-commands)
-  执行新候选全 Python、适用 Web/static/unit/fake E2E、示例/禁依赖、安全/并发/持久化，
-  clean wheel/source-external installed consumers、Docker fresh/security/同版本 restart。
-  安装产物中也证明自动化容量已满/高合法值下的普通 CLI 与自动化实际结果，不以 help
-  或源码测试代替。旧任务/跨版本升级与 V1 按用户边界排除。
-- native 在 `web/` 先 build；设置及新 Web 场景：
-  `npm run test:e2e -- --config=playwright.python.automation.config.ts tests/e2e/automation-settings.python.spec.ts`。
-  其他自动化场景另开新 harness：
+  执行全 Python、适用 Web/static/unit/fake E2E、安全/并发/持久化、clean wheel/source-external
+  installed consumers 与 Docker fresh/security/同版本 restart。安装产物证明系统容量
+  1025/10000 可实际 CLI/自动化执行，满额统一拒绝，轮询及观察来自真实消费者。
+  不以 help/配置回显替代。旧任务/跨版本升级与 V1 沿用用户边界排除。
+- native 在 `web/` build 后运行：
+  `npm run test:e2e -- --config=playwright.python.automation.config.ts tests/e2e/automation-settings.python.spec.ts`；
+  自动化定义/Run once 原旅程另开新 harness 运行
   `npm run test:e2e -- --config=playwright.python.automation.config.ts tests/e2e/automation-run-once.python.spec.ts tests/e2e/automation-workspace.python.spec.ts`。
-  不并行共用可变 Active。检查真实桌面/窄屏；原 Files/四类恢复/历史提醒/两类库普通操作
-  等全 Slice 必需 native 按最终新输入补齐，不建新过程平台。
-- 仅依 workflow 的 source/tests/harness/dependencies/config/artifact 一致性证据复用 B
-  原验收；本 Task 改变 scope/repository/resident 后受影响的执行证明要重跑，不能仅凭旧
-  PASS。记录精确 SHA、命令/cwd、实际结果/skip、稳定 ignored 日志与产物身份。
-- 最后重评 Slice 原 Base `5144ab1fc2344b06194969cc2c496835729664c0..candidate` 的
-  RO-1–6/AC-1–26 与全部必需表面；符合后停止并交 A，不新增可选清理任务。
+  不并行共用可变 Active。补必要 Files、普通 transfer/delete、观察及恢复的真实桌面/窄屏证明。
+- 原始日志/截图/产物身份放稳定 ignored 路径；记录 SHA、cwd、命令、实际结果/skip/耗时。
+  仅按 workflow 的相同 source/tests/harness/dependencies/config/artifact 证据复用原验收。
+  设置范围和调度变化的执行证明必须重新覆盖；最后重评 Slice 原 Base
+  `5144ab1fc2344b06194969cc2c496835729664c0..candidate` 全部修订后结果，满足即停止。
 
 ## Non-goals
 
-新设置页/手动调参入口、表单改位置、第二队列/Worker/引擎、并行度/抢占/全新公平调度、
-容量压力或 10000 Task 测试、普通文件/通知队列重做、旧任务/跨版本迁移、V1、历史/pin
-改写、自动 unknown 重放/超时失败/强制取消、第五恢复、远端核验系统、广泛无关重构或
-验收平台、重做 Task47.5 目标、A 终审/关闭。必要调度 ports/查询/组合调整属于本 Task。
+新增系统页、第二设置存储/同义配置键、来源双额度/双周期、新队列/Worker/引擎/并行度/
+抢占/公平调度产品、普通文件操作队列容量重做、10000 Task 压测、全局告警/监控平台、
+自动 unknown 重放/超时失败/强制取消/自动续授权、第五恢复、旧任务/跨版本升级、V1、
+历史/pin/digest 改写、无关重构或过程平台、A 终审/关闭。接通共享只读观察、迁移现有
+表单与必要组合/投影调整属于本 Task。
 
 ## Current whole-Slice reassessment
 
-| 结果 | 新合同下的当前判断（不是新候选接受） |
+| 结果 | 新方案下当前判断（不是产品接受） |
 |---|---|
-| RO-1 | 一 Task/claim/fence 已交付；全局计数未按来源划分，独立额度与 AC-2/26 待本 Task。 |
-| RO-2 | 引擎已共享；必须保留共用管线并隔离入口策略，手动不能继承自动化四字段。 |
-| RO-3 | 原四类同 Task 证据保留；继续时来源/额度/cadence 不能被人工点击改变，需受影响验收。 |
-| RO-4 | fresh/同版本和 Job 退出前序事实保留；配置合法范围/不可变 pins/AC-12/26 未满足。 |
-| RO-5 | 现 Web/CLI 阻塞及误导恢复仍在；设置范围/实际消费者/说明需闭环，其他已交付表面保留。 |
-| RO-6 | Task47.5 与 A 验证事实保留；本 Task 保持最新失败历史规则、手动提示与来源互斥，防止回归。 |
+| RO-1 | 统一 Task/claim/fence 基础保留；共享有界额度和合法上界待验收，旧范围合同待 A 修订。 |
+| RO-2 | 共享引擎保留；所有整理入口及继续必须使用统一系统运行策略。 |
+| RO-3 | 四类同 Task 恢复事实保留；统一满额恢复/授权/pin 需要新验收。 |
+| RO-4 | 同版本/pin/digest 安全保留；系统字段真实消费、只读观察和 restart 待验收。 |
+| RO-5 | 系统页迁移、自动化 tab/导航调整、常驻普通操作及明确错误/恢复待完成。 |
+| RO-6 | Task47.5 与 A 验证事实保留；历史结果、原始来源、同源互斥和失败提示不回归。 |
 
 ## Developer Completion Report
 
-待实现。交接完整 checkpoint SHA / READY FOR B REVIEW、行为/文件/策略来源和关键
-决策、新改/受影响测试实际命令结果与耗时、失败/风险/剩余工作；full acceptance pending B。
+Developer 已由用户叫停，预存实现未提交/未接受。恢复前先满足 Contract gate。
+之后交完整 checkpoint SHA / READY FOR B REVIEW、最终行为/文件/关键决策、
+受影响测试实际命令结果与耗时、失败/风险/剩余工作；full acceptance pending B。
 
 ## B Review Result
 
-本轮决策：按 committed settings-scope amendment **重规划同一 Task47.6**；原数字统一
-方案已替换，ID/Base 与缺陷事实保留。当前无实现候选，Task PLANNED、Slice FIX REQUIRED。
-本次按用户反馈收松固定默认数字、内部循环/时刻、UI 形态和测试组织的约束，以范围隔离、
-完整操作结果及安全边界验收；不降低真实入口/常驻/Web、T4 与全部 Slice 结果的要求。
-下一步 Developer 仅按此新范围实施，随后 B 独立审完整原 Task Base..Head 并按 AC-S7 收尾。
+决策：同一 Task47.6 采用用户选择的“全部迁入系统设置”方案，旧隔离开发指导全部替换。
+本轮仅修改 Task，保持 PLANNED；没有新实现候选，不签产品 PASS，不关闭 Slice。
+实施前置项：A 将当前仍禁止迁页/要求来源隔离的 Contract 和相关 TARGET 要求按用户新决定
+checkpoint，B 核对后解除 gate。该项源于 workflow §4 的合同职责，不是要求用户重选方案。
