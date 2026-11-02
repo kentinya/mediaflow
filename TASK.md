@@ -15,13 +15,13 @@ V2-AUTO-001/007/008 已同步，不能把旧隔离验收标成新方案 PASS。
 Task ID: 47.6
 Task Type: SLICE
 Parent Slice: 47
-Status: READY FOR B REVIEW
+Status: FIX REQUIRED
 Task Base: c8657032dae768d93b12387a5e58db502e23a7ee
 Difficulty: High
 Test Level: T4
 Planner / Reviewer: B
 Current correction: Three system-owned runtime settings, shared organizing capacity, retire stale-age parameter
-Implementation gate: CONTRACT ALIGNED AT 390a1a01; USER RESUMED; CANDIDATE bf6968c1 READY FOR B REVIEW
+Implementation gate: B FIX REQUIRED AT 43d3fdeb; CURRENT CAPACITY MUST APPLY TO WAITING-SUMMARY CONFIRMATION
 ```
 
 ## Replanning decision / preflight
@@ -143,6 +143,41 @@ Active/快照可保留原始旧字段并兼容读取、忽略其值，不批量�
    无旧键的新配置与带旧键的既有 Active 均可正常使用，现有失联/租约/调用超时保护不回归。
    只在已有入口造临时任务，不直接 INSERT 队列或构造不可达“漏洞”。交受影响结果及
    READY FOR B REVIEW，B 再独立审完整 Task Base..candidate 和执行 T4。
+
+## B correction guidance — current capacity at confirmation
+
+本轮 B 审查 `c8657032dae768d93b12387a5e58db502e23a7ee..43d3fdeb9ea1143856474c14df688e3218a32ffe`
+（产品实现 `bf6968c11e1f40890454bad2c743d99d16888e4a`；后续仅 Task 报告）。
+保持 Task47.6/Base/High/T4，不新建 Task，不修改 Slice 边界。
+
+**B-P1-2：旧摘要确认绕过当前系统整理额度。** 系统页保存额度 1025 → Files 选择
+`Three.2003.mkv` 整理并生成摘要（人工等待不占名额）→ 系统页降为 1，已有自动化工作
+占唯一名额 → 新选 `Four.2004.mkv` 整理正确提示已满 → 返回 Three 的旧摘要并确认，
+实际仍返回 **202 / admitted**，页面进入“整理执行情况”。应保持摘要等待并返回满额，
+不能因为摘要创建时额度更大而重新占用超额名额。此旅程使用真实 Web/API/SQLite 和既有
+harness 推进 Worker，没有 INSERT 队列、伪造状态或新增产品入口。
+
+开发指导：
+1. 沿 `service_api.py` 的现有 organize preview execute → `begin_web_execution` →
+   `admit` → `execute` 修正容量来源。`manual_organize_execution.py` 目前在
+   `execute` 默认从 `_load_runtime` 取得的旧执行快照读取 `automation_maximum_active_jobs`；
+   `admit`/`begin_web_execution` 没有把当前系统额度传下去。使正常确认和四类继续的同类
+   确认读取当前权威系统额度，同时保持已准入任务的旧执行 pin、策略、来源和结果。
+   复用现有 runtime/configuration authority，不新增设置存储或队列。
+2. 保留 SQLite `admit_manual_execution` 中容量计数、等待→queued、授权消耗、锁和写入
+   的同一事务；满额拒绝不消耗权限、不改变摘要/选择/结果、不注册自动继续。当前额度
+   无法可靠取得时明确拒绝并给下一步，不回退旧 pin 的额度。已准入精确重复仍读回原工作。
+3. 补真实回归：上述降低额度的旧摘要应 409、原工作仍等待、授权未消费；释放占用者后
+   显式再确认能成功。反向从低额度生成摘要再提高额度时也用当前值；至少证明原 snapshot
+   ID/digest 和既有结果未改。初始确认与四类恢复共用修复路径时补代表性恢复证明，避免
+   仅测试直接传入 `scheduling_capacity` 的内部方法而漏掉真实页面链路。
+4. Developer 运行新增/失败回归及直接受影响的 `tests.test_manual_task_engine`、
+   `tests.test_manual_organize_execution`、`tests.test_operations_task_center`、
+   `tests.test_task_scheduling`、`tests.test_system_settings_management`、
+   `tests.test_automation_settings_management`，以及实际修改的 native settings 场景和
+   changed-file 静态检查。B 复核该阻塞后继续原 T4 门禁；全量/安装包/Docker 仍由 B 承担。
+   保持每轮测试时间低于总用时 50%。本轮复现脚本可从下述 ignored 证据目录取用，
+   应将必要业务回归融入现有测试组织，无需扩建测试平台。
 
 ## Acceptance Criteria
 
@@ -311,12 +346,41 @@ Known risks / remaining work for B:
 
 ## B Review Result
 
-决策：同一 Task47.6 按用户最新指示删除失效判定参数，剩余三项迁入系统设置；取消新增
-无进展观察，保留现有心跳、租约/续约及调用超时判断。旧隔离开发指导不恢复。
-本轮先按用户授权提交 A 范围/文档，再以 B 身份核对 committed Contract 并对齐本 Task，
-保持 PLANNED。没有新实现候选，不签产品 PASS，不关闭 Slice，也不以本次角色例外代替
-今后的独立 A 终审。合同未同步阻塞已解除，无需再等 A 调整同一范围。
-文档检查 PASS：governance、相关 diff whitespace、九份文档 126 个本地链接及原 Slice
-身份/验收 ID/已接受 ledger 保持检查；`.venv/bin/python -B -m unittest tests.test_release_security`
-为 **8 tests OK / 0.021s**，测试耗时小于本轮总用时 50%。产品验收仍 pending，
-Developer 停工状态保留。
+**Decision: FIX REQUIRED — B-P1-2**, reviewed on 2026-11-03 (Asia/Shanghai).
+Reviewed full Task range: `c8657032dae768d93b12387a5e58db502e23a7ee..43d3fdeb9ea1143856474c14df688e3218a32ffe`.
+Product candidate: `bf6968c11e1f40890454bad2c743d99d16888e4a`; the two successors change
+only `TASK.md`, verified by diff. Governance preflight PASS. Branch `main`; pre-existing
+untracked OS/log/reference/output files preserved; no pre-existing tracked edits. This B round
+changes only Task guidance/review, with no product implementation or Slice closure.
+
+阻塞与完整用户旅程见上方 B correction guidance。违反 AC-S2/S3/S7、Slice AC-2/12/26
+及 V2-TASK-011：用户已经看到系统队列已满，旧摘要确认却仍成功准入。根因是混用了
+“执行应保留的旧快照”和“重新进入队列应遵循的当前系统额度”。相关 fallback 于
+`b5a21ea39315e4e742e8ff2079216c31b8043fc6`（2026-10-31 07:30 +08:00）引入；
+本候选 `bf6968c1`（2026-11-03 01:54 +08:00）仅为 resident Worker 增加动态额度读取，
+没有修正 Web 确认链路。因此这是当前 Task 必须修复的已有缺口，不误称该提交新引入。
+
+全部 Slice 结果重评：RO-1 的当前额度重入未完成；RO-2 共享引擎事实保留，但确认的系统
+额度消费不完整；RO-3 同 Task 恢复基础保留，同类确认链路需修复后验收；RO-4 旧 pin/
+同版本持久化基础保留，本候选完整 restart/安装包验证 pending；RO-5 三项系统表单和旧
+链接已有实现，但满额→旧摘要确认的用户旅程不满足；RO-6 无本轮新增阻塞，Task47.5
+历史事实保留，最终全 Slice 回归仍 pending。不能提交 SLICE READY FOR A REVIEW，
+不新规划其他 Task，不修改 A 的已审实现头或 Roadmap/Progress 历史接受记录。
+
+本轮独立验证（cwd repository root，Web 命令使用 `npm --prefix web`）：
+- governance PASS；production Web build PASS。
+- `.venv/bin/python -m unittest tests.test_task_scheduling tests.test_system_settings_management tests.test_automation_settings_management`
+  — **120 tests OK / 4.304s**。
+- 真实浏览器当前额度复现：保留原断言，期望 409，实际 **202 admitted / 1 failed / 1.2s**。
+  截图已人工查看，页面明确显示“整理执行情况 / 已准入”，不是仅 API 回显。
+- 前两次 B 临时脚本未到业务断言：一次对初始同值 100 点击 disabled Save，另一次整页
+  返回未重新连接内存凭据；分别修正为保存 1025、正常 Connect 后得到上述业务失败。
+  原日志保留，不将测试脚本问题归为产品缺陷，也未加重试或放宽超时。
+- 现有 native `system runtime settings` **4 passed / 9.1s**，覆盖迁页、旧链接、1025/10000
+  的真实 Files 效果及自动化占满→Files 拒绝→释放→显式重试。昂贵全 T4、
+  wheel/installed consumer、Docker、完整 native/安全矩阵依 workflow §6 在已证实阻塞后
+  保持 pending，未复用 Developer 报告冒充独立接受。
+
+证据：`.git/validation-evidence/43d3fdeb/b-review-47.6/`，含完整复现脚本、三次日志、
+真实响应、截图/trace、focused/build/native 日志和 summary；仅本机 ignored 证据，未推送。
+本轮测试占比低于 50%，没有空等补比例。下一步由 Developer 按同一 Task 修复并交新候选。
