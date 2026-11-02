@@ -349,7 +349,7 @@ Actual affected verification (cwd `/Users/songzhidong/mediaflow` unless noted):
 - `.venv/bin/python -m unittest tests.test_media_discovery tests.test_manual_organize_execution tests.test_manual_task_engine tests.test_operations_task_center tests.test_direct_file_transfers tests.test_direct_file_operations` — **417 tests OK / 83.929s**.
 - Additional affected integrations: `.venv/bin/python -m unittest tests.test_v2_automation_run_once tests.test_organize_preparation tests.test_v2_manual_organize tests.test_manual_operations_contract` — **111 tests OK / 9.746s**; `tests.test_manual_task_engine` alone — **35 tests OK / 5.317s**.
 - `.venv/bin/ruff check` and `ruff format --check` on changed Python files — PASS; `compileall -q mediaflow tests scripts` — PASS; `scripts/check_governance.py` — PASS; `git diff --check` — PASS; both example `config validate` commands — exit 0.
-- `web/`: `npm run typecheck` PASS, `npm run lint` PASS, `npm run format:check` PASS, `npm run build` PASS. Real-Python E2E `automation-settings.python.spec.ts --grep 'system runtime settings'` — **5 tests PASS / 10.2s**, including the new old-summary capacity scenario.
+- `web/`: `npm run typecheck` PASS, `npm run lint` PASS, `npm run format:check` PASS, `npm run build` PASS. Real-Python E2E `automation-settings.python.spec.ts` — **15 tests PASS / 20.2s**, including the new old-summary capacity scenario (the `system runtime settings` subset is 5 tests PASS / 10.2s).
 
 Known risks / remaining work for B:
 - Full T4 regression, packaging/wheel/installed-consumer, Docker, restart, full native E2E and the rest of the prior candidate's acceptance remain B-owned and pending.
