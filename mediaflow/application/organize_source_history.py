@@ -25,14 +25,15 @@ from typing import Protocol
 
 from mediaflow.domain.source_evidence import SourceVersionEvidence
 from mediaflow.domain.task_persistence import (
+    EXCLUDING_HISTORY_OUTCOME_STATUSES,
     HISTORY_EXCLUDED_ITEM_STAGE,
     HISTORY_UNAVAILABLE_ITEM_STAGE,
 )
 
 #: The formal outcome statuses that make an automatic pass exclude the same
-#: source version.  Every other terminal state — success, skipped, cancelled,
-#: a genuine replacement — is not added to this exclusion.
-EXCLUDING_OUTCOME_STATUSES = frozenset({"failed", "partial"})
+#: source version (one canonical definition in the durable Task domain, because
+#: the decisive check runs inside the admission transaction).
+EXCLUDING_OUTCOME_STATUSES = EXCLUDING_HISTORY_OUTCOME_STATUSES
 
 
 class OrganizeSourceHistoryRepository(Protocol):

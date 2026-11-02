@@ -34,6 +34,9 @@ from mediaflow.domain.manual_execution import ManualExecution, ManualExecutionIt
 from mediaflow.domain.media_evidence import PipelineEvidence
 from mediaflow.domain.source_evidence import SourceVersionEvidence
 from mediaflow.domain.task_persistence import (
+    HISTORY_EXCLUDED_ITEM_STAGE,
+    HISTORY_UNAVAILABLE_ITEM_REASON,
+    HISTORY_UNAVAILABLE_ITEM_STAGE,
     FileOperationLockRepository,
     PersistentResultRecord,
     PersistentTask,
@@ -41,6 +44,7 @@ from mediaflow.domain.task_persistence import (
     PersistentTaskStatus,
     RunDisplayContext,
     TaskItemStatus,
+    history_excluded_item_reason,
 )
 from mediaflow.domain.task_scheduling import (
     ScheduledTaskAdmission,
@@ -620,6 +624,7 @@ class TaskSchedulingService:
         source_version: SourceVersionEvidence | None = None,
         ownership_lineage_task_ids: tuple[str, ...] = (),
         enforce_source_ownership: bool = False,
+        exclude_failed_history: bool = False,
         now: datetime | None = None,
     ) -> PersistentTaskItem:
         """Start one concrete source of this claimed Task.
@@ -639,8 +644,25 @@ class TaskSchedulingService:
         this item's start are one repository transaction: a source another
         unfinished work owns is refused with nothing written, while this Task's
         own rows and its legal lineage are never a competing owner.
+
+        With ``exclude_failed_history`` (automatic definition due / Run once
+        only) that same transaction also decides whether this exact source
+        version's latest formal organizing outcome is ``failed``/``partial``.
+        Such a source is written as one terminal not-processed item and nothing
+        else happens: no Provider call, no execution right and no Storage
+        mutation.  The returned item's stage then names the reason, so the
+        application never acts on an earlier, possibly stale read.
         """
 
+        if exclude_failed_history and not (
+            enforce_source_ownership and source_storage_path is not None
+        ):
+            # Fail closed: the automatic history decision must be part of the
+            # same transaction as the source admission it guards, never a
+            # separate pre-read that the caller could act on.
+            raise ValueError(
+                "the automatic history gate requires the atomic source ownership boundary"
+            )
         current = self._now(now)
         task = self._require_task(claim.task_id)
         if task.status is not PersistentTaskStatus.RUNNING:
@@ -682,6 +704,7 @@ class TaskSchedulingService:
                 started,
                 source_version=source_version,
                 ownership_lineage_task_ids=ownership_lineage_task_ids,
+                exclude_failed_history=exclude_failed_history,
             )
         elif not self._repository.upsert_scheduled_item(
             fence,
@@ -698,15 +721,17 @@ class TaskSchedulingService:
         *,
         source_version: SourceVersionEvidence | None,
         ownership_lineage_task_ids: tuple[str, ...],
+        exclude_failed_history: bool = False,
     ) -> None:
         """The decisive ownership boundary for one scheduled item start.
 
         The production repository answers the claim fence, the shared source
-        ownership and the item write inside one transaction.  A repository that
-        cannot make that combined decision is never treated as if the source
-        were free: it falls back to the read-only ownership answer plus the
-        claim-fenced write, which keeps every existing protection except the
-        cross-Worker atomicity only the production boundary provides.
+        ownership, the automatic history question and the item write inside one
+        transaction.  A repository that cannot make that combined decision is
+        never treated as if the source were free (or history-free): it falls
+        back to the read-only answers plus the claim-fenced write, which keeps
+        every existing protection except the atomicity only the production
+        boundary provides.
         """
 
         boundary = getattr(self._repository, "begin_scheduled_item_with_ownership", None)
@@ -716,6 +741,7 @@ class TaskSchedulingService:
                 item,
                 stage=TaskItemPublication.START,
                 source_version=source_version,
+                exclude_failed_history=exclude_failed_history,
                 exclude_lineage_task_id=(
                     ownership_lineage_task_ids[0] if ownership_lineage_task_ids else None
                 ),
@@ -740,12 +766,69 @@ class TaskSchedulingService:
             )
             if owner is not None:
                 raise TaskSourceOwnedError(owner)
+        if exclude_failed_history:
+            gated = self._read_only_history_gate_item(item, source_version=source_version)
+            if gated is not None:
+                if not self._repository.upsert_scheduled_item(
+                    fence, gated, stage=TaskItemPublication.START
+                ):
+                    raise TaskClaimFenceLost(
+                        f"task {item.task_id!r} is no longer owned by this Worker"
+                    )
+                return
         if not self._repository.upsert_scheduled_item(
             fence,
             item,
             stage=TaskItemPublication.START,
         ):
             raise TaskClaimFenceLost(f"task {item.task_id!r} is no longer owned by this Worker")
+
+    def _read_only_history_gate_item(
+        self,
+        item: PersistentTaskItem,
+        *,
+        source_version: SourceVersionEvidence | None,
+    ) -> PersistentTaskItem | None:
+        """The non-atomic fallback for a repository without the combined boundary.
+
+        Production never takes this path: the SQLite boundary decides the
+        history question and writes the not-processed row in one transaction.
+        A repository that cannot do that still gets the same read-only answer
+        before its claim-fenced write instead of silently skipping the gate.
+        """
+
+        from mediaflow.application.organize_source_history import latest_applicable_outcome
+
+        try:
+            history = latest_applicable_outcome(
+                self._repository,
+                storage_id=item.storage_id,
+                source_path=item.source_path,
+                storage_path=item.source_storage_path,
+                resource_library_id=item.resource_library_id,
+                source_fingerprint=item.source_fingerprint,
+                source_version=source_version,
+                exclude_task_id=item.task_id,
+            )
+        except Exception:  # noqa: BLE001 - one bounded fail-closed read
+            return replace(
+                item,
+                status=TaskItemStatus.SKIPPED,
+                stage=HISTORY_UNAVAILABLE_ITEM_STAGE,
+                execution_status=None,
+                error=HISTORY_UNAVAILABLE_ITEM_REASON,
+                progress=None,
+            )
+        if history is None or not history.excludes_automatically:
+            return None
+        return replace(
+            item,
+            status=TaskItemStatus.SKIPPED,
+            stage=HISTORY_EXCLUDED_ITEM_STAGE,
+            execution_status=None,
+            error=history_excluded_item_reason(history.status),
+            progress=None,
+        )
 
     def begin_existing_item(
         self,

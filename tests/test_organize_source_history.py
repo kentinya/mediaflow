@@ -28,6 +28,7 @@ import io
 import json
 import os
 import tempfile
+import threading
 import unittest
 from contextlib import contextmanager
 from dataclasses import replace
@@ -98,7 +99,13 @@ class _Clock:
 
 
 @contextmanager
-def history_journey(case, *, operation: str = "COPY", definitions: str | None = "nightly"):
+def history_journey(
+    case,
+    *,
+    operation: str = "COPY",
+    definitions: str | None = "nightly",
+    task_scheduling: bool = False,
+):
     """One production-shaped managed layout for the source-history journeys.
 
     The managed revision store and the runtime work share one SQLite file, the
@@ -244,6 +251,7 @@ def history_journey(case, *, operation: str = "COPY", definitions: str | None = 
                 runtime_resolver=lambda snapshot_id, digest: runtime,
                 storages={"source": source, "target": target},
                 clock=case.clock,
+                task_scheduling_enabled=task_scheduling,
             )
             run_once = AutomationRunOnceService(discovery, previews, clock=case.clock)
             api = MediaFlowApi(
@@ -1208,6 +1216,233 @@ class PartialItemIsHistoryNotOwnerTests(_SourceHistoryJourneyTests):
             self.assertEqual("partial", history.status)
             self.assertTrue(history.excludes_automatically)
             self.assertEqual(("source_cleanup",), history.uncertain_effects)
+
+
+class AutomaticAdmissionHistoryRaceTests(_SourceHistoryJourneyTests):
+    """The decisive automatic admission re-reads history inside its transaction.
+
+    B review of ``3fb10500`` reproduced the gap: the automatic pass read "no
+    applicable history", a deliberate Files organize of the same version then
+    recorded a real ``PARTIAL``/``attempted_unverified`` outcome, and the resumed
+    automatic pass still copied the file.  The synchronization point here is the
+    real admission boundary (``begin_scheduled_item_with_ownership``), which is
+    the only remaining gap before the decisive transaction; the manual work is a
+    real Files admission → analysis → exact summary → selected confirmation over
+    real LocalStorage whose write fails for real.
+    """
+
+    def test_manual_partial_recorded_before_the_automatic_admission_excludes_the_source(self):
+        self.media("One.2001.mkv")
+        self.media("Two.2002.mkv")
+        with history_journey(self, operation="COPY", task_scheduling=True) as value:
+            from mediaflow.application.manual_task_engine import ManualTaskEngineWorker
+
+            status, automatic = self.admit_run_once(value, "automatic-history-race")
+            self.assertEqual(202, status, automatic)
+            auto_id = automatic["taskId"]
+
+            at_admission = threading.Event()
+            resume = threading.Event()
+            errors: list[BaseException] = []
+            boundary = value.repository.begin_scheduled_item_with_ownership
+
+            def held_admission(fence, item, **kwargs):
+                if (
+                    threading.current_thread().name == "automatic-race-worker"
+                    and item.source_path == "One.2001.mkv"
+                    and not at_admission.is_set()
+                ):
+                    at_admission.set()
+                    if not resume.wait(20):
+                        raise AssertionError("the manual request never released the boundary")
+                return boundary(fence, item, **kwargs)
+
+            provider = value.provider_registry.resolve("tmdb")
+            real_search = provider.search_movie
+            searches: list[str] = []
+
+            def recording_search(query, *args, **kwargs):
+                searches.append(str(getattr(query, "title", query)))
+                return real_search(query, *args, **kwargs)
+
+            def automatic_worker():
+                try:
+                    self.execute_run_once(value)
+                except BaseException as error:  # noqa: BLE001 - reported below
+                    errors.append(error)
+
+            with (
+                patch.object(
+                    value.repository,
+                    "begin_scheduled_item_with_ownership",
+                    side_effect=held_admission,
+                ),
+                patch.object(provider, "search_movie", side_effect=recording_search),
+            ):
+                thread = threading.Thread(
+                    target=automatic_worker, name="automatic-race-worker", daemon=True
+                )
+                thread.start()
+                try:
+                    self.assertTrue(at_admission.wait(10), errors)
+                    # The automatic pass has run everything before this file's
+                    # decisive admission, but has not registered its item yet.
+                    self.assertNotIn(
+                        "One.2001.mkv",
+                        {item.source_path for item in value.repository.list_items(auto_id)},
+                    )
+
+                    # A deliberate Files request for the same version, through
+                    # the real API and the real manual Task engine.
+                    value.api._manual_execution._clock = self.clock
+                    status, admitted = self.request(
+                        value,
+                        "POST",
+                        "/api/v1/resource-libraries/library/files/discoveries",
+                        {
+                            "paths": ["One.2001.mkv"],
+                            "autoPrepare": True,
+                            "requestId": "11111111-1111-4111-8111-111111111111",
+                        },
+                    )
+                    self.assertEqual(202, status, admitted)
+                    manual_id = admitted["organizeTaskId"]
+                    value.repository.register_worker(
+                        "manual-race-worker",
+                        "manual-race-worker",
+                        60.0,
+                        ("manual_organize",),
+                        None,
+                        None,
+                        SCHEMA_VERSION,
+                        self.clock.now,
+                    )
+                    worker = ManualTaskEngineWorker(
+                        value.repository,
+                        TaskSchedulingService(
+                            value.repository, capacity=100, locks=value.repository
+                        ),
+                        value.discovery,
+                        value.api._manual_execution,
+                        worker_id="manual-race-worker",
+                        clock=self.clock,
+                        notice=lambda line: None,
+                    )
+                    for _ in range(12):
+                        worker.run_next()
+                        state = value.repository.get_task_scheduling(manual_id)
+                        if state is not None and state.queue_state in {
+                            TaskQueueState.WAITING_HUMAN,
+                            TaskQueueState.SETTLED,
+                        }:
+                            break
+                    discovery = value.repository.get_media_discovery_for_task(manual_id)
+                    self.assertIsNotNone(discovery, "the manual request reached its summary")
+                    status, preview = self.request(
+                        value,
+                        "GET",
+                        f"/api/v1/operations/organize/previews/{discovery.preview_id}",
+                    )
+                    self.assertEqual(200, status, preview)
+                    status, _confirmed = self.request(
+                        value,
+                        "POST",
+                        f"/api/v1/operations/organize/previews/{preview['previewId']}/execute",
+                        {
+                            "confirmation": True,
+                            "itemIds": [
+                                item["itemId"]
+                                for item in preview["items"]
+                                if item["status"] == "previewed"
+                            ],
+                            "expectedIntentVersion": preview["intentVersion"],
+                            "allowOverwrite": False,
+                            "allowSourceCleanup": False,
+                        },
+                    )
+                    self.assertIn(status, (200, 202))
+
+                    def fail_write(path, *args, **kwargs):
+                        raise StorageError(
+                            StorageErrorCode.PERMISSION_DENIED,
+                            "write",
+                            path,
+                            "injected write failure during the automatic admission gap",
+                        )
+
+                    with patch.object(value.target, "write", side_effect=fail_write):
+                        for _ in range(4):
+                            worker.run_next()
+                    (manual_result,) = value.repository.list_results(manual_id)
+                    self.assertEqual("PARTIAL", manual_result.status)
+                    self.assertEqual("attempted_unverified", manual_result.effect_certainty)
+                    self.assertFalse(list(value.target_root.rglob("*.mkv")))
+                    manual_task = value.repository.get_task(manual_id)
+                    searches_before_resume = tuple(searches)
+                finally:
+                    resume.set()
+                    thread.join(20)
+            self.assertFalse(thread.is_alive())
+            self.assertEqual([], errors, errors)
+
+            # The automatic admission now re-reads the same version's latest
+            # formal outcome inside its transaction: the manual PARTIAL that
+            # landed in the gap excludes the file with one terminal row.
+            by_path = {item.source_path: item for item in value.repository.list_items(auto_id)}
+            self.assertEqual({"One.2001.mkv", "Two.2002.mkv"}, set(by_path), by_path)
+            excluded = by_path["One.2001.mkv"]
+            self.assertIs(TaskItemStatus.SKIPPED, excluded.status)
+            self.assertEqual(HISTORY_EXCLUDED_ITEM_STAGE, excluded.stage)
+            self.assertIn("partial", excluded.error or "")
+            sibling = by_path["Two.2002.mkv"]
+            self.assertIs(TaskItemStatus.SUCCESS, sibling.status)
+
+            # The excluded file consumed no Provider call and produced no
+            # formal Result or media; the free sibling was processed normally.
+            new_searches = tuple(searches[len(searches_before_resume) :])
+            self.assertNotIn("One", new_searches)
+            (automatic_result,) = value.repository.list_results(auto_id)
+            self.assertEqual("Two.2002.mkv", automatic_result.source_path)
+            self.assertEqual(
+                ["Two (2002).mkv"],
+                sorted(path.name for path in value.target_root.rglob("*.mkv")),
+            )
+            automatic_task = value.repository.get_task(auto_id)
+            self.assertEqual("partial_success", automatic_task.status.value)
+            self.assertIn("not processed by the automatic history gate", automatic_task.error or "")
+
+            # The manual run's own recorded facts are untouched by the new work.
+            self.assertEqual((manual_result,), value.repository.list_results(manual_id))
+            self.assertEqual(manual_task, value.repository.get_task(manual_id))
+
+    def test_unreadable_history_fails_closed_and_processes_nothing(self):
+        self.media("One.2001.mkv")
+        with history_journey(self, operation="COPY") as value:
+            status, automatic = self.admit_run_once(value, "automatic-history-unreadable")
+            self.assertEqual(202, status, automatic)
+            auto_id = automatic["taskId"]
+            provider = value.provider_registry.resolve("tmdb")
+            with (
+                patch.object(
+                    value.repository,
+                    "latest_organize_source_outcome",
+                    side_effect=RuntimeError("injected history read failure"),
+                ),
+                patch.object(
+                    provider,
+                    "search_movie",
+                    side_effect=AssertionError("a fail-closed file must not query its Provider"),
+                ),
+            ):
+                finished = self.execute_run_once(value)
+            (item,) = value.repository.list_items(auto_id)
+            self.assertIs(TaskItemStatus.SKIPPED, item.status)
+            self.assertEqual(HISTORY_UNAVAILABLE_ITEM_STAGE, item.stage)
+            self.assertIn("fail-closed", item.error or "")
+            self.assertEqual((), value.repository.list_results(auto_id))
+            self.assertFalse(list(value.target_root.rglob("*.mkv")))
+            self.assertEqual("partial_success", finished.status.value)
+            self.assertIn("not processed by the automatic history gate", finished.error or "")
 
 
 class _SupersededHandoffFixture(_DiscoveryFixture):

@@ -20,11 +20,6 @@ from mediaflow.application.failure_explanation import (
     sanitize_execution_errors,
 )
 from mediaflow.application.library_pipeline import MediaLibraryResolver
-from mediaflow.application.organize_source_history import (
-    HISTORY_EXCLUDED_ITEM_STAGE,
-    HISTORY_UNAVAILABLE_ITEM_STAGE,
-    latest_applicable_outcome,
-)
 from mediaflow.application.organizer import OrganizePlanner, OrganizerExecutor
 from mediaflow.application.scan_filters import (
     ObservedSource,
@@ -81,6 +76,7 @@ from mediaflow.domain.storage import (
     StorageError,
     StorageErrorCode,
 )
+from mediaflow.domain.task_persistence import NON_ORGANIZING_ITEM_STAGES
 from mediaflow.domain.workflow_retry import RetryEvent, WorkflowRetryPolicy
 
 if TYPE_CHECKING:
@@ -357,19 +353,6 @@ class MediaOrganizerService:
                 # ownership boundary (and, for automatic entrances, the history
                 # gate) compares.  It never substitutes for a first observation.
                 source_version = self._source_version_evidence(resource_library, storage_path)
-                if self._exclude_failed_history:
-                    gate = self._automatic_history_gate(
-                        resource_library,
-                        storage_path,
-                        source,
-                        source_occurrence_id=source_occurrence_id,
-                        source_fingerprint=source_fingerprint,
-                        source_fingerprint_state=source_fingerprint_state,
-                        source_observed_at=source_observed_at,
-                        source_version=source_version,
-                    )
-                    if gate is not None:
-                        return gate
                 try:
                     tracked_item = self._task_coordinator.begin_item(
                         self._task_id,
@@ -394,7 +377,23 @@ class MediaOrganizerService:
                         source_version=source_version,
                         ownership_lineage_task_ids=self._ownership_lineage_task_ids,
                         enforce_source_ownership=self._enforce_source_ownership,
+                        # Slice 47 RO-6: an automatic pass asks this exact
+                        # source version's history question inside the same
+                        # admission transaction that decides the item, so a
+                        # manual failure recorded after any earlier read can
+                        # never slip through.  A deliberate manual request
+                        # never sets this flag.
+                        exclude_failed_history=self._exclude_failed_history,
                     )
+                    if (
+                        self._exclude_failed_history
+                        and tracked_item is not None
+                        and tracked_item.stage in NON_ORGANIZING_ITEM_STAGES
+                    ):
+                        # The admission transaction already wrote this pass's
+                        # one honest not-processed row.  Nothing else happens:
+                        # no Provider call, no execution right, no mutation.
+                        return self._history_gate_result(source, tracked_item)
                 except Exception as error:  # noqa: BLE001 - one bounded refusal
                     from mediaflow.application.task_runtime import TaskSourceOwnedError
 
@@ -968,123 +967,25 @@ class MediaOrganizerService:
             return None
         return source_version_evidence(entry)
 
-    def _automatic_history_gate(
-        self,
-        resource_library: ResourceLibrary,
-        storage_path: str,
-        source: str,
-        *,
-        source_occurrence_id: str | None,
-        source_fingerprint: str | None,
-        source_fingerprint_state: str,
-        source_observed_at: datetime | None,
-        source_version,
-    ) -> MediaOrganizerItemResult | None:
-        """The automatic RO-6 history gate for one concrete ready source.
+    def _history_gate_result(
+        self, source: str, tracked: PersistentTaskItem
+    ) -> MediaOrganizerItemResult:
+        """Report one not-processed automatic item the admission already wrote.
 
-        An automatic pass (definition due / Run once) excludes the file when its
-        same-version latest formal organizing outcome is failed/partial —
-        including a zero-effect failure — with one honest not-processed item:
-        no Provider call, no execution right and no Storage mutation.  A
-        deliberate manual request never reaches this gate.  A history read
-        failure is fail-closed: the file is not processed and the next run
-        re-checks instead of silently treating history as absent.
+        Slice 47 RO-6 keeps the automatic history decision inside the decisive
+        per-source admission transaction, so by the time this returns the
+        terminal row (and its bounded reason) is already durable.  The pass only
+        reports it: no Provider call, no execution right and no Storage
+        mutation follow.
         """
 
-        repository = getattr(self._task_coordinator, "repository", None)
-        try:
-            history = latest_applicable_outcome(
-                repository,
-                storage_id=resource_library.storage_id,
-                source_path=storage_path,
-                storage_path=storage_path,
-                resource_library_id=resource_library.library_id,
-                source_fingerprint=source_fingerprint,
-                source_version=source_version,
-                exclude_task_id=self._task_id,
-            )
-        except Exception as error:  # noqa: BLE001 - one bounded fail-closed gate
-            return self._history_gate_item(
-                resource_library,
-                storage_path,
-                source,
-                stage=HISTORY_UNAVAILABLE_ITEM_STAGE,
-                reason=(
-                    "history gate: this source's organizing history could not be read, "
-                    "so nothing was processed (fail-closed)"
-                ),
-                occurrence=source_occurrence_id,
-                fingerprint=source_fingerprint,
-                state=source_fingerprint_state,
-                observed_at=source_observed_at,
-                source_version=source_version,
-                debug=type(error).__name__,
-            )
-        if history is None or not history.excludes_automatically:
-            return None
-        return self._history_gate_item(
-            resource_library,
-            storage_path,
-            source,
-            stage=HISTORY_EXCLUDED_ITEM_STAGE,
-            reason=(
-                f"history gate: this source version's latest formal organizing outcome "
-                f"is {history.status}, so nothing was processed; a manual organize may "
-                f"still include it explicitly"
-            ),
-            occurrence=source_occurrence_id,
-            fingerprint=source_fingerprint,
-            state=source_fingerprint_state,
-            observed_at=source_observed_at,
-            source_version=source_version,
-            debug=None,
-        )
-
-    def _history_gate_item(
-        self,
-        resource_library: ResourceLibrary,
-        storage_path: str,
-        source: str,
-        *,
-        stage: str,
-        reason: str,
-        occurrence: str | None,
-        fingerprint: str | None,
-        state: str,
-        observed_at: datetime | None,
-        source_version,
-        debug: str | None,
-    ) -> MediaOrganizerItemResult:
-        """Begin and publish one not-processed gate item under the live claim."""
-
-        assert self._task_coordinator is not None and self._task_id is not None
-        tracked = self._task_coordinator.begin_item(
-            self._task_id,
-            resource_library.storage_id,
-            resource_library.library_id,
-            storage_path,
-            source,
-            source_occurrence_id=occurrence,
-            source_fingerprint=fingerprint,
-            source_fingerprint_state=state,
-            source_observed_at=observed_at,
-            source_storage_path=storage_path,
-            source_version=source_version,
-            ownership_lineage_task_ids=self._ownership_lineage_task_ids,
-            enforce_source_ownership=self._enforce_source_ownership,
-        )
-        publish = getattr(self._task_coordinator, "publish_history_gate_item", None)
-        if not callable(publish):
-            return MediaOrganizerItemResult(source)
-        publisher = publish(tracked, stage=stage, reason=reason)
         self._log(
             LogLevel.INFO,
             "organize history gate recorded",
             source=source,
-            stage=stage,
-            reason=reason,
-            publisher=getattr(publisher, "status", None) and publisher.status.value,
-            error_type=debug,
+            stage=tracked.stage,
+            reason=tracked.error,
+            publisher=tracked.status.value,
         )
         return MediaOrganizerItemResult(source)
 

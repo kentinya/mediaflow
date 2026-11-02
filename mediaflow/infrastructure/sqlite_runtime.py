@@ -203,7 +203,11 @@ from mediaflow.domain.source_evidence import (
 from mediaflow.domain.source_reviews import FileReviewLink
 from mediaflow.domain.task_persistence import (
     COMPLETED_ITEM_STATUSES,
+    EXCLUDING_HISTORY_OUTCOME_STATUSES,
     FAILED_ITEM_STATUSES,
+    HISTORY_EXCLUDED_ITEM_STAGE,
+    HISTORY_UNAVAILABLE_ITEM_REASON,
+    HISTORY_UNAVAILABLE_ITEM_STAGE,
     MEDIA_LIBRARY_TASK_COMMAND_PREFIX,
     NON_ORGANIZING_ITEM_STAGES,
     SETTLED_ITEM_STATUSES,
@@ -219,6 +223,7 @@ from mediaflow.domain.task_persistence import (
     PersistentTaskStatus,
     RunDisplayContext,
     TaskItemStatus,
+    history_excluded_item_reason,
     redact_persistent_result,
     task_work_status,
 )
@@ -19102,6 +19107,7 @@ class SQLiteTaskRepository:
         source_version: SourceVersionEvidence | None = None,
         exclude_lineage_task_id: str | None = None,
         stage: TaskItemPublication = TaskItemPublication.START,
+        exclude_failed_history: bool = False,
     ) -> tuple[bool, dict[str, object] | None]:
         """Start one scheduled TaskItem only while its source is still free.
 
@@ -19115,6 +19121,17 @@ class SQLiteTaskRepository:
         version, discovery-reservation and legal-lineage rules of
         ``claim_task_item_with_ownership`` plus the scheduled attempt/outcome
         protections of ``_require_scheduled_item_locked``.
+
+        Task47.5 P1: with ``exclude_failed_history`` this same transaction also
+        answers the automatic entrance's per-source history question.  Reading
+        that history earlier — in the application service, before this write —
+        left a gap in which a deliberate manual organize could record a new
+        ``PARTIAL``/``FAILED`` outcome for the very same version; this pass then
+        went on to process and mutate a file its own rule had to exclude.  Here
+        the ownership decision, the latest applicable formal outcome and the
+        terminal not-processed row are one commit: the exclusion consumes no
+        attempt for execution, calls no Provider and mutates no Storage, and an
+        unreadable history records the fail-closed row instead of proceeding.
 
         Returns ``(True, None)`` after the item row is committed, ``(False,
         owner)`` when another unfinished work owns the source (nothing written)
@@ -19147,14 +19164,71 @@ class SQLiteTaskRepository:
                 if owner is not None:
                     self._connection.rollback()
                     return False, owner
-                self._require_scheduled_item_locked(fence.task_id, item, stage=stage)
-                bound = self._bind_item_to_current_occurrence(item)
+                gated = (
+                    self._scheduled_history_gate_item_locked(
+                        item,
+                        source_version=source_version,
+                    )
+                    if exclude_failed_history
+                    else None
+                )
+                written_item = gated if gated is not None else item
+                self._require_scheduled_item_locked(fence.task_id, written_item, stage=stage)
+                bound = self._bind_item_to_current_occurrence(written_item)
                 self._connection.execute(_TASK_ITEM_UPSERT, self._item_values(bound))
             except BaseException:
                 self._connection.rollback()
                 raise
             self._connection.commit()
         return True, None
+
+    def _scheduled_history_gate_item_locked(
+        self,
+        item: PersistentTaskItem,
+        *,
+        source_version: SourceVersionEvidence | None,
+    ) -> PersistentTaskItem | None:
+        """The terminal not-processed row this automatic admission must write.
+
+        Called inside ``begin_scheduled_item_with_ownership``'s open
+        transaction, so the answer and its durable record commit together.  A
+        read failure is fail-closed: the row says the history was unreadable and
+        the file was not processed.  ``None`` means the latest applicable formal
+        outcome does not exclude this source, so the ordinary start proceeds.
+        """
+
+        try:
+            outcome = self.latest_organize_source_outcome(
+                storage_id=item.storage_id,
+                source_path=item.source_path,
+                storage_path=item.source_storage_path,
+                resource_library_id=item.resource_library_id,
+                source_fingerprint=item.source_fingerprint,
+                source_version=source_version,
+                exclude_task_id=item.task_id,
+            )
+        except Exception:  # noqa: BLE001 - one bounded fail-closed read
+            return replace(
+                item,
+                status=TaskItemStatus.SKIPPED,
+                stage=HISTORY_UNAVAILABLE_ITEM_STAGE,
+                execution_status=None,
+                error=HISTORY_UNAVAILABLE_ITEM_REASON,
+                progress=None,
+            )
+        if outcome is None:
+            return None
+        status = str(outcome.get("status") or "")
+        if status not in EXCLUDING_HISTORY_OUTCOME_STATUSES:
+            return None
+        return replace(
+            item,
+            status=TaskItemStatus.SKIPPED,
+            stage=HISTORY_EXCLUDED_ITEM_STAGE,
+            execution_status=None,
+            error=history_excluded_item_reason(status),
+            progress=None,
+        )
 
     def begin_scheduled_mutation(self, fence: TaskClaimFence, *, item_id: str, action: str) -> bool:
         """Record the durable boundary immediately before one Storage mutation.

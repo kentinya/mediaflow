@@ -32,8 +32,15 @@ from uuid import NAMESPACE_URL, uuid5
 from mediaflow.application.manual_task_engine import ManualTaskEngineWorker
 from mediaflow.application.metadata import MetadataProviderRegistry
 from mediaflow.application.strategy_test import SyntheticMetadataProvider
+from mediaflow.application.task_runtime import PersistentTaskCoordinator
 from mediaflow.application.task_scheduling import TaskSchedulingService
-from mediaflow.domain.task_persistence import PersistentTaskItem, TaskItemStatus
+from mediaflow.domain.task_persistence import (
+    HISTORY_EXCLUDED_ITEM_STAGE,
+    HISTORY_UNAVAILABLE_ITEM_STAGE,
+    PersistentResultRecord,
+    PersistentTaskItem,
+    TaskItemStatus,
+)
 from mediaflow.domain.task_scheduling import (
     TaskItemPublication,
     TaskQueueState,
@@ -528,6 +535,170 @@ class BeginScheduledItemOwnershipBoundaryTests(unittest.TestCase):
         stored = self.repository.get_item(started.item_id)
         self.assertEqual(1, stored.attempts)
         self.assertIs(TaskItemStatus.SUCCESS, stored.status)
+
+    def _seed_formal_outcome(
+        self,
+        *,
+        status: str = "failed",
+        fingerprint: str | None = None,
+    ) -> PersistentResultRecord:
+        """One earlier formal organizing outcome of the same concrete source."""
+
+        coordinator = PersistentTaskCoordinator(self.repository, self.repository)
+        task = coordinator.create("organize", execute_authorized=True)
+        created = self.now - timedelta(minutes=5)
+        item = PersistentTaskItem(
+            str(uuid5(NAMESPACE_URL, f"{task.task_id}:local:A.mkv")),
+            task.task_id,
+            "local",
+            "library",
+            "A.mkv",
+            "A.mkv",
+            TaskItemStatus.FAILED if status == "failed" else TaskItemStatus.SUCCESS,
+            "completed",
+            1,
+            created,
+            created,
+            source_storage_path="A.mkv",
+            source_fingerprint=fingerprint,
+            source_fingerprint_state="verified" if fingerprint else "unverified",
+        )
+        self.repository.upsert_item(item)
+        result = PersistentResultRecord(
+            f"{item.item_id}:1",
+            task.task_id,
+            item.item_id,
+            "local",
+            "A.mkv",
+            None,
+            None,
+            None,
+            None,
+            None,
+            None,
+            None,
+            None,
+            None,
+            "MOVE",
+            status,
+            created,
+        )
+        self.repository.append_result(result)
+        return result
+
+    def test_history_gate_is_decided_and_recorded_in_the_admission_transaction(self) -> None:
+        """The latest failed outcome and the not-processed row are one commit."""
+
+        failed = self._seed_formal_outcome(status="failed")
+        task_id, claim = self._admit_and_begin("worker-1")
+        written, owner = self.repository.begin_scheduled_item_with_ownership(
+            claim.fence(self.now),
+            self._item(task_id, "A.mkv"),
+            exclude_failed_history=True,
+        )
+        self.assertTrue(written)
+        self.assertIsNone(owner)
+        (item,) = self.repository.list_items(task_id)
+        self.assertIs(TaskItemStatus.SKIPPED, item.status)
+        self.assertEqual(HISTORY_EXCLUDED_ITEM_STAGE, item.stage)
+        self.assertIn("history gate", item.error or "")
+        self.assertIn("failed", item.error or "")
+        self.assertEqual((), self.repository.list_results(task_id))
+        (kept,) = self.repository.list_results(failed.task_id)
+        self.assertEqual(failed, kept, "the earlier formal outcome is never rewritten")
+
+    def test_history_gate_never_takes_over_an_actively_owned_source(self) -> None:
+        """A queued/processing file keeps the normal mutual exclusion."""
+
+        self._seed_formal_outcome(status="failed")
+        first_id, first_claim = self._admit_and_begin("worker-1")
+        self.scheduling.begin_item(
+            first_claim,
+            storage_id="local",
+            resource_library_id="library",
+            source_path="A.mkv",
+            source_display="A.mkv",
+            source_storage_path="A.mkv",
+            now=self.now,
+        )
+        second_id, second_claim = self._admit_and_begin("worker-2")
+        written, owner = self.repository.begin_scheduled_item_with_ownership(
+            second_claim.fence(self.now),
+            self._item(second_id, "A.mkv"),
+            exclude_failed_history=True,
+        )
+        self.assertFalse(written)
+        self.assertIsNotNone(owner)
+        self.assertEqual(first_id, owner["taskId"])
+        self.assertEqual((), self.repository.list_items(second_id))
+
+    def test_unreadable_history_records_the_fail_closed_row(self) -> None:
+        """A history read failure never becomes an admitted processing item."""
+
+        task_id, claim = self._admit_and_begin("worker-1")
+        with patch.object(
+            self.repository,
+            "latest_organize_source_outcome",
+            side_effect=RuntimeError("injected history read failure"),
+        ):
+            written, owner = self.repository.begin_scheduled_item_with_ownership(
+                claim.fence(self.now),
+                self._item(task_id, "A.mkv"),
+                exclude_failed_history=True,
+            )
+        self.assertTrue(written)
+        self.assertIsNone(owner)
+        (item,) = self.repository.list_items(task_id)
+        self.assertIs(TaskItemStatus.SKIPPED, item.status)
+        self.assertEqual(HISTORY_UNAVAILABLE_ITEM_STAGE, item.stage)
+        self.assertIn("fail-closed", item.error or "")
+        self.assertEqual((), self.repository.list_results(task_id))
+
+    def test_non_excluding_history_still_admits_the_source(self) -> None:
+        self._seed_formal_outcome(status="success")
+        task_id, claim = self._admit_and_begin("worker-1")
+        written, owner = self.repository.begin_scheduled_item_with_ownership(
+            claim.fence(self.now),
+            self._item(task_id, "A.mkv"),
+            exclude_failed_history=True,
+        )
+        self.assertTrue(written)
+        self.assertIsNone(owner)
+        (item,) = self.repository.list_items(task_id)
+        self.assertIs(TaskItemStatus.PROCESSING, item.status)
+        self.assertEqual("pipeline", item.stage)
+
+    def test_a_replaced_version_is_not_excluded_by_the_old_failure(self) -> None:
+        self._seed_formal_outcome(status="failed", fingerprint="a" * 64)
+        task_id, claim = self._admit_and_begin("worker-1")
+        written, owner = self.repository.begin_scheduled_item_with_ownership(
+            claim.fence(self.now),
+            replace(
+                self._item(task_id, "A.mkv"),
+                source_fingerprint="b" * 64,
+                source_fingerprint_state="verified",
+            ),
+            exclude_failed_history=True,
+        )
+        self.assertTrue(written)
+        self.assertIsNone(owner)
+        (item,) = self.repository.list_items(task_id)
+        self.assertIs(TaskItemStatus.PROCESSING, item.status)
+
+    def test_the_gate_is_off_for_manual_and_cli_sources(self) -> None:
+        """Only the automatic entrance opts in; other sources keep their rules."""
+
+        self._seed_formal_outcome(status="failed")
+        task_id, claim = self._admit_and_begin("worker-1")
+        written, owner = self.repository.begin_scheduled_item_with_ownership(
+            claim.fence(self.now),
+            self._item(task_id, "A.mkv"),
+        )
+        self.assertTrue(written)
+        self.assertIsNone(owner)
+        (item,) = self.repository.list_items(task_id)
+        self.assertIs(TaskItemStatus.PROCESSING, item.status)
+        self.assertEqual("pipeline", item.stage)
 
 
 if __name__ == "__main__":

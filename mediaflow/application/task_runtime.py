@@ -176,7 +176,13 @@ class PersistentTaskCoordinator:
         source_version: object | None = None,
         ownership_lineage_task_ids: tuple[str, ...] = (),
         enforce_source_ownership: bool = False,
+        exclude_failed_history: bool = False,
     ) -> PersistentTaskItem:
+        if exclude_failed_history:
+            # Fail closed: the automatic entrance's per-source history decision
+            # is only available inside the kernel scheduling transaction.  A
+            # generic coordinator can never pretend the source was history-free.
+            raise RuntimeError("the automatic history gate requires the kernel scheduling boundary")
         task = self.require(task_id)
         if task.status is not PersistentTaskStatus.RUNNING:
             raise RuntimeError(f"task {task_id!r} is not running")
@@ -421,39 +427,6 @@ class PersistentTaskCoordinator:
             item.task_id,
             owner_token=token,
         )
-
-    def publish_history_gate_item(
-        self,
-        item: PersistentTaskItem,
-        *,
-        stage: str,
-        reason: str,
-        now: datetime | None = None,
-    ) -> PersistentTaskItem:
-        """Publish one RO-6 not-processed item outcome and release its lock.
-
-        An automatic history gate (the same source version's latest formal
-        organizing outcome is failed/partial, or the history could not be
-        read) records its own honest per-item outcome: zero Provider calls,
-        zero execution right and zero Storage mutation.  It deliberately
-        publishes *no Result* — nothing was organized, so no formal organizing
-        outcome is created or overwritten and a later run re-asks the question
-        instead of replaying this row as history.
-        """
-
-        current = now or datetime.now(UTC)
-        completed = replace(
-            item,
-            status=TaskItemStatus.SKIPPED,
-            stage=stage,
-            updated_at=current,
-            execution_status=None,
-            error=reason,
-            progress=None,
-        )
-        self.repository.upsert_item(completed)
-        self.release_item_lock(item)
-        return completed
 
     def cancel(self, task_id: str) -> PersistentTask:
         task = self.require(task_id)
@@ -1199,6 +1172,7 @@ class KernelTaskCoordinator(PersistentTaskCoordinator):
         source_version: object | None = None,
         ownership_lineage_task_ids: tuple[str, ...] = (),
         enforce_source_ownership: bool = False,
+        exclude_failed_history: bool = False,
     ) -> PersistentTaskItem:
         """Start one concrete source under the live Task claim.
 
@@ -1242,6 +1216,7 @@ class KernelTaskCoordinator(PersistentTaskCoordinator):
             source_version=source_version,
             ownership_lineage_task_ids=ownership_lineage_task_ids,
             enforce_source_ownership=enforce_source_ownership,
+            exclude_failed_history=exclude_failed_history,
             now=self._clock(),
         )
 
@@ -1296,37 +1271,6 @@ class KernelTaskCoordinator(PersistentTaskCoordinator):
         """
 
         return
-
-    def publish_history_gate_item(
-        self,
-        item: PersistentTaskItem,
-        *,
-        stage: str,
-        reason: str,
-        now: datetime | None = None,
-    ) -> PersistentTaskItem:
-        """Publish the RO-6 not-processed outcome under the live claim fence.
-
-        The same no-Result rule as the generic coordinator: an exclusion or
-        fail-closed gate records its own SKIPPED item with its bounded reason,
-        releases exactly this frame's lock and creates no formal organizing
-        outcome that a later run could mistake for history.
-        """
-
-        self._keepalive()
-        current = now or self._clock()
-        completed = replace(
-            item,
-            status=TaskItemStatus.SKIPPED,
-            stage=stage,
-            updated_at=current,
-            execution_status=None,
-            error=reason,
-            progress=None,
-        )
-        recorded = self._scheduling.record_item(self._claim, completed, now=current)
-        self.release_item_lock(item)
-        return recorded
 
     def cancel(self, task_id: str) -> PersistentTask:
         """The accepted Task control owns cancellation; this is a read-only view."""

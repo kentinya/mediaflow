@@ -270,6 +270,34 @@ NON_ORGANIZING_ITEM_STAGES = frozenset(
     {HISTORY_EXCLUDED_ITEM_STAGE, HISTORY_UNAVAILABLE_ITEM_STAGE}
 )
 
+#: The formal organizing-outcome statuses that make an automatic pass exclude
+#: the same source version.  Every other terminal state — success, skipped,
+#: cancelled, a genuine replacement — does not cause this exclusion.
+EXCLUDING_HISTORY_OUTCOME_STATUSES = frozenset({"failed", "partial"})
+
+#: The bounded, secret-free per-item reason one automatic pass records when this
+#: source's organizing history could not be read at all.  The pass fails closed:
+#: the file is not processed and the next run re-asks the question.
+HISTORY_UNAVAILABLE_ITEM_REASON = (
+    "history gate: this source's organizing history could not be read, "
+    "so nothing was processed (fail-closed)"
+)
+
+
+def history_excluded_item_reason(status: str) -> str:
+    """The per-item reason recorded when recorded history excludes a source.
+
+    The decision and this record are one atomic admission write, so the text is
+    composed here for that single durable boundary.  It never includes a raw
+    exception, a secret or another principal's Task identity.
+    """
+
+    return (
+        "history gate: this source version's latest formal organizing outcome "
+        f"is {status}, so nothing was processed; a manual organize may still "
+        "include it explicitly"
+    )
+
 
 def task_item_counts(items) -> tuple[int, int, int]:
     """``(total, completed, failed)`` over one Task's durable concrete sources.
