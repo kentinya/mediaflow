@@ -1,9 +1,9 @@
-# NO ACTIVE IMPLEMENTATION TASK
+# Task47.5 — FIX REQUIRED
 
-用户本轮只要求“合入当前 Slice，并规划 Task”。以下 Task47.5 为 **PLANNED 草案**，
-不授权实施、派生代理、push、部署或 Slice 关闭。后续明确授权开发时原地激活，并核对
-中间变更；不静默重定 Task Base。用户已选择：“运行一次”和定时一样排除历史
-failed / partial，保留一键执行，不新增初始确认。
+Developer 已提交候选 `368d9e86646e4ccafd5509e9c860aa2dd8fa5a1d`；B 独立审查后要求在
+同一个 Task 内修复，详见末尾 B Review Result / Developer 修复指导。Task ID、Goal、Base
+和 Slice 边界不变；不授权派生代理、push、部署或 Slice 关闭。
+用户已选择：“运行一次”和定时一样排除历史 failed / partial，保留一键执行，不新增初始确认。
 本次规划一致性核对后按用户选择改为**同一来源版本最近一次正式整理结果**判断；后来手动整理
 成功，不再因更早失败排除。普通 CLI/remote 不新增提醒或放行契约，Web 提醒要求保留。
 
@@ -26,7 +26,7 @@ REQ-RESULT-* 与 REQ-SAFE-* 中未被明确修订的身份、授权、历史及�
 Task ID: 47.5
 Task Type: SLICE
 Parent Slice: 47
-Status: READY FOR B REVIEW
+Status: FIX REQUIRED
 Task Base: 75ddff55f8d5b2b1206c81804bfb5cbe9ed279a1
 Difficulty: High
 Test Level: T4
@@ -370,4 +370,92 @@ READY FOR B REVIEW），Task Base 不变，未重定范围。
 
 ## B Review Result
 
-尚未审查。候选已提交，等待 B 按验收计划（含 AC-T1–T7 与 T4 全量门禁）审查。
+**Decision: FIX REQUIRED — 2026-11-02，B 独立审查；不新增 Task。**
+
+- 审查范围：`75ddff55f8d5b2b1206c81804bfb5cbe9ed279a1..368d9e86646e4ccafd5509e9c860aa2dd8fa5a1d`
+  的完整变更清单、合同修订、生产实现、API 消费边界和新增/删除测试；没有只检查最后一次提交。
+- 工作区：`main`，起始 HEAD 为上述候选；无预存 tracked 修改。预存未跟踪 OS/log、`15`、
+  docs 图片与 output 产物全部保留、未暂存。工作区/Git 可写，governance preflight PASS。
+  本轮只修改本 Task 的 B 结论与指导，不实施产品，不改变 A-owned 合同或既有接受事实。
+- 证据：本机 `.git/validation-evidence/368d9e86646e4ccafd5509e9c860aa2dd8fa5a1d/b-review/`
+  的 `probe.py`、`probe.log`、`focused.log`；本地保留，不声称远端可访问。复现只用临时
+  SQLite、LocalStorage 和 SyntheticMetadataProvider；通过现有 Files discovery → Preview
+  GET → execute POST → Task Worker 入口，故障注入到真实 Storage.write，未手填失败状态。
+
+### 必须修复的交付缺口（均为 P1）
+
+1. **用户重新整理失败文件时，实际 Web 摘要收不到历史提醒。**
+   用户在 Files 选中 `Movies/One.2001.mkv` 整理，目标目录建立后写入失败；再次选中
+   整理。持久摘要已有 `plan.history`，但真实
+   `GET /api/v1/operations/organize/previews/{previewId}` 返回的 plan 没有 history；普通
+   确认仍返回 202，Worker 最终 COPY 成功。`operations_lifecycle.py::_bounded_preview_plan`
+   的字段投影未接入 history，所以 Web normalizer 得到 null，新增 banner 不会显示。
+   **AC-T2/T7、Slice AC-21/25 不满足。**
+
+2. **真实手动 Result 的“已做什么、哪些效果未知”在历史查询中丢失。**
+   同一旅程真实 Result 用 UUID result_id，status 为 `PARTIAL`，记录
+   `completed_operations=('CREATE_DIRECTORY',)`、
+   `effect_certainty='attempted_unverified'`、`uncertain_effects=('mutation_outcome',)`。
+   `sqlite_runtime.py::latest_organize_source_outcome` 却只关联
+   `result_id = item_id || ':' || attempts`，因此退回 item：已完成步骤/未知效果变空，
+   effectCertainty 为 null。即使修复 API 投影，用户仍看不到实际存在的未知效果提醒。
+   **AC-T2/T3/T5、Slice AC-21/22 不满足。** 新查询还在版本筛选前 `LIMIT 400`，没有
+   实现合同要求的完整匹配总体；此项为代码审查发现，未另造超过 400 次运行的产品复现。
+
+3. **新手动工作完成后，没有收束已被替代的旧应用所有者和容量。**
+   上述失败真实留下旧 scheduling `claimed + mutation_in_flight`。新请求正常执行成功后，
+   使用旧 Worker 原 claim 调用现有 scheduling heartbeat 仍被接受，容量计数仍为 1。
+   本次改动只将 PARTIAL 加入 settled 集合，未完成新确认需要的旧所有者交接；不能把
+   “现在允许进入”视为已经完成 fencing/容量结算。历史未知证据应继续保留，不能靠删除
+   marker 或把 unknown 改成 none 修复。**AC-T4、Slice AC-23 不满足。** 本复现未声称
+   旧远端调用仍在运行，也未声称已证明一次旧后续媒体调用实际发生。
+
+### Developer 修复指导（同一 Task，按顺序实施）
+
+1. **先修真实历史关联。** 复用 manual_execution_items.result_id、TaskItem/attempt/Result
+   已有持久关系，同时兼容自动/CLI 的既有结果写法；统一真实状态枚举的大小写。不得把
+   UUID Result 猜成缺失或凭发布时间覆盖较新的尝试。保留无 Result 的持久失败回退。
+   在完整匹配总体中比较版本后确定最新适用结果，可分批读取，不能用 400 代替 32/100
+   页限制。用真实 Executor/Storage 故障结果断言完成步骤、未知效果和原 Result 不变。
+2. **补齐服务端到 Web 的有界投影。** 在现有 operator projection 中显式投影 history，
+   复用路径/文本限界与脱敏；跨 principal 不泄漏不可读任务/私有目标。不要透传 raw plan。
+   对实际 API 响应断言 history，再让现有 typed normalizer/component 消费它；保持普通
+   选中确认，无新增 checkbox/核查页。不能只在 mock fetch 文档里手工补 history。
+3. **实现精确的新手动确认交接。** 在现有 kernel/repository 中原子核对选中来源、计划、
+   当前相关历史、权限、请求和容量；对已记录 failed/partial 的确切文件收束旧应用 owner，
+   完成所需来源/目标/附件锁交接及容量结算。保留原结果、pin、完成步骤、unknown 和
+   原 Automation 时间/结果；未结束兄弟项不解锁/重放。确认后旧 owner 的心跳、状态写入
+   和新步骤准入必须被拒绝。无需远端停止证明，不承诺撤销已发出的调用。
+4. **用原 Files 旅程交接修复。** 复用 `tests.test_manual_task_engine` 的现有真实 API /
+   Worker fixture 和本轮 probe。覆盖目录成功后写失败、已有父目录时写失败、Copy 完成
+   而 Move 删源失败；均走 Files 再选择 → 真实摘要提示 → 正常确认 → 实际新结果，
+   不把最后执行改走 CLI。加入未终态兄弟互斥、并发重复确认、相关/无关历史变化与
+   reopen 的直接受影响断言；保留 due/Run once 失败排除→手动成功→解除排除链路。
+   跑原 Developer affected plan 中新增/修改和直接受影响的测试即可，提交新 checkpoint
+   并回到 READY FOR B REVIEW。全量、包装、Docker 和最终原生验收仍由 B 负责。
+
+### 本轮实际验证与停止位置
+
+- `.venv/bin/python -m unittest tests.test_organize_source_history tests.test_task_retry`：
+  **15 tests OK，1.483 秒**；出现 ResourceWarning，原日志保留。通过这些测试不等于
+  真实 Web 旅程通过：当前手动提醒测试最后调用 `cli_organize_execute`，前端测试则
+  自行给 mock 响应添加 history，无法发现上述生产投影/真实 Result 缺口。
+- 本地 probe：实际失败 → 新摘要 → 确认 202 → 新 COPY 完成；同时观察到 API history
+  缺失、Result 效果证据丢失、旧 heartbeat 被接受且容量仍为 1。复现迭代仅调整观察/输出，
+  未改变产品代码或失败条件；累计运行不足 2 秒。
+- `python3 scripts/check_governance.py`、候选 `git diff --check`：PASS。
+- 产品测试/故障复现合计不足 10 秒，阅读、代码审查及结论编写用时明显超过测试用时，
+  满足本轮测试时间小于总用时 50%。
+- 已证实产品阻塞，依 workflow §6 提前 FIX REQUIRED；未运行全量 Python/Web/E2E、
+  桌面/窄屏浏览器、wheel/installed/Docker/restart/security 门禁。它们仍待修复候选由 B
+  执行，未豁免、未判 PASS，也不因 Developer 缺少全量报告而返工。
+
+### Slice 交付核对
+
+| Required Outcome | 本候选结论 |
+|---|---|
+| RO-1–5：统一 Task/引擎、四类继续、数据/Job 退出、已有操作面 | Task47.1–47.4 原接受事实保留；本次新候选的共享安全/回归门禁尚未完成，不能直接沿用旧 packet 宣布当前通过。 |
+| RO-6：自动排除、带提醒的新手动整理、CLI retry-failed 退出 | 自动排除与 CLI 退出有实现及聚焦证据；真实 Web 提醒、效果证据与旧 owner 交接有上述 P1，结果未完成。 |
+
+AC-T1/T6 有部分证据，AC-T2–T5/T7 有失败或待验收项，均不整体勾选通过。Slice 保持
+ACTIVE；不提交新的 SLICE READY FOR A REVIEW，不创建后续 Task，不由 B 关闭 Slice。
