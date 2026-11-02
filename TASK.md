@@ -1,11 +1,10 @@
 # Task47.5 — FIX REQUIRED
 
-最新候选 `f3fcace35371bc7aa3f56ce6e5698261faab5e52` 的提醒数据和单文件交接已有修复证据。
-B 撤回此前“失败且效果未知就必须继续占容量”的批量 P1 判断；原复现未证明仍有在途工作，
-不能用该假设要求 Developer 返工。进一步实际验证发现相反问题：所有文件已结束，旧批次
-仍占名额；此外，批次进行中接手已失败文件后，旧批次最终结算会误报技术失败。
-这两项为已实测阻塞，见末尾容量核对及补充旅程。其余 T4 验收仍未完成。
-Task ID、Goal、Base 和 Slice 边界不变；不授权派生代理、push、部署或 Slice 关闭。
+最新候选 `3fb1050065e2e32802e2a03a6da925d15019fdaa`（实现 `13d6d4f4`）经 B 复核，
+容量结算、旧批次收尾和简短提醒三项已通过。当前仅有一项 P1：自动入口读取历史与真正
+逐文件准入之间存在并发间隙，可能继续整理此时已产生最新失败结果的同版本文件。
+详见末尾 B Review Result / Developer 修复指导；不重做已通过的三项修复。
+Task ID/Goal/Base 与 Slice 边界不变；不授权派生代理、push、部署或 Slice 关闭。
 用户已选择：“运行一次”和定时一样排除历史 failed / partial，保留一键执行，不新增初始确认。
 本次规划一致性核对后按用户选择改为**同一来源版本最近一次正式整理结果**判断；后来手动整理
 成功，不再因更早失败排除。普通 CLI/remote 不新增提醒或放行契约，Web 提醒要求保留。
@@ -458,173 +457,130 @@ Slice 边界不变，未扩大范围。工作区 `main`，本轮起始 HEAD `ccd
 
 ## B Review Result
 
-**当前状态：FIX REQUIRED。此前“过早释放名额”的 P1 仍撤回；本轮实际证明“全部结束后未释放名额”，需按下述准确方向修复。**
+**Decision: FIX REQUIRED — 候选 3fb10500；原三项修复通过，仅剩下述一项 P1。**
 
-候选：`f3fcace35371bc7aa3f56ce6e5698261faab5e52`；审查范围仍为
-`75ddff55f8d5b2b1206c81804bfb5cbe9ed279a1..f3fcace35371bc7aa3f56ce6e5698261faab5e52`。
-本次仅纠正 B 的判断，不改变候选代码、原 Task/合同、安全规则或旧接受事实，不宣告 PASS。
+- 完整 Task 范围：`75ddff55f8d5b2b1206c81804bfb5cbe9ed279a1..3fb1050065e2e32802e2a03a6da925d15019fdaa`。
+  本轮核对完整 manifest 及此前审查事实，逐项审查 `ccd4781c..13d6d4f4` 的生产、测试、
+  Web 与 harness 改动；`13d6d4f4..3fb10500` 只改 TASK.md，执行输入相同。
+- 本轮开始 `main` / `3fb1050065e2e32802e2a03a6da925d15019fdaa`，无预存 tracked 修改，
+  预存 OS/log、`15`、docs 图片、output 等 untracked 全部保留未暂存。工作区/Git 可写，
+  治理预检 PASS；没有实施产品、push、部署、派生代理或 A Final Review。
+- 本机证据目录：`.git/validation-evidence/3fb1050065e2e32802e2a03a6da925d15019fdaa/b-review/`。
+  其中 `artifact-manifest.json` 记录日志/图片/wheel 摘要，`timing.json` 记录测试窗口；
+  原始失败和已适配的成功结果均保留，不声称这些产物远端可访问。
 
-### 最新容量核对：批次全部结束后仍可能占一个名额（P1）
+### 原三项修复的实测结论：通过，不再作为阻塞
 
-用户明确的口径：一个 Task 最多占一份容量；成功 8/失败 2 全部结束应占 0，成功 2/失败
-5/进行中 3 应占 1，全成功占 0，成功 8/部分成功 2 全部结束也应占 0。历史未知效果本身
-不等于当前还有工作。此规则与保留真实在途调用、逐文件结果和非重放要求同时成立。
-
-本轮从 `main` / `373705e00ba7159ca12b4a171ff2fe0589d21ff6` 开始，无预存 tracked 修改，
-预存 untracked 保留未暂存。产品代码仍为 f3fcace3。通过已有 Run once API → definition
-pipeline → Worker / SQLite / LocalStorage，使用 10 个临时文件与 SyntheticMetadataProvider，
-实际执行结果如下（未手填 Task/Result）：
-
-| 实际旅程 | 未结束文件数 | Worker 调用返回后的实际容量 |
-|---|---:|---:|
-| 10 个全部成功 | 0 | 0，符合 |
-| 8 成功、2 个在效果发生前失败 | 0 | 0，符合 |
-| 8 成功、目标写入故障造成 1 partial/unknown、随后 1 failed/none | 0 | **1，不符合** |
-
-第三种所有 Storage 调用和本轮 runner 均已返回，无 pending/processing 文件项；原 Task
-仍 running、调度仍 claimed，未知效果记录继续存在。此时正确行为是保留失败/partial/
-unknown 历史并结束本批次执行占位，不要求先重新整理任意文件才能释放容量。
-
-因此不能回答“现在已经完全按四种规则实现”。本轮没有构造出恰好 8 成功/2 partial，
-也没有把“3 个进行中”的计数表当作已执行测试；但第三种真实反例足以证明全部结束后
-不占位的规则尚未完全实现。各次真实文件写入期间均实测占 1，不按 10 个文件占 10 份。
-
-**根因与范围：** `manual_task_engine.py::_settle_automatic` 在 runner 返回后仍仅凭
-`mutation_in_flight` 标记直接返回，未区分该标记代表已经结束后的未知效果历史，还是实际
-尚未结束的调用；容量查询只按 queued/claimed 计数，因而已终态的文件仍把整批留在 claimed。
-这与此前已撤回的“释放得太早”方向相反，不能恢复旧建议或要求 unknown 永久占位。
-
-**Developer 修复指导（仍在同一 Task）：**
-
-1. 在共享引擎/kernel 的合法结算边界区分真实在途/待执行工作和已终态的效果未知历史。
-   当前调用已返回、文件项全部终态、无其他机器工作时，应更新诚实 Task 聚合并释放该 Task
-   的执行名额、收束旧执行资格；真正仍在执行的调用或剩余机器工作继续占一份。避免只改
-   容量 SQL 忽略 claimed Task、仅靠超时认定结束，或仅按页面状态跳过实际安全边界。
-2. 原 Result、partial/unknown、完成步骤、配置 pin 及 Automation 原执行结果/时间保持事实；
-   不把 unknown 改成 none，不重放旧文件/成功兄弟。定时同版本失败排除及 Files 警告后新
-   整理仍按本 Task 规则执行，不能要求手动重新整理来清理已结束批次的占位。
-3. 复用本轮 probe 和既有 fixture，将实际反例纳入受影响测试；同时覆盖普通失败释放、全
-   成功释放、批量仍有真实进行中工作占一份、全部 terminal partial 释放。手动及定时/
-   Run once 共用结算行为一并核对；真实仍未返回的调用不得被误释放。Developer 运行新增/
-   修改与直接受影响测试，B 负责剩余原 T4 门禁。
-4. 简短提醒的原交付要求继续有效；此修复不增加核查页、用户技术操作或新的恢复系统。
-
-证据：本机 `.git/validation-evidence/373705e00ba7159ca12b4a171ff2fe0589d21ff6/capacity-current/`
-的 `probe.py` / `probe.log`。3 个真实旅程合计运行不足 1 秒；治理预检和 `git diff --check`
-通过，未执行全量/浏览器/包装门禁，测试时间低于本轮总用时 50%。Task 保持原 ID/Base，
-本轮只提交 Task 复核结果及开发指导，不实施产品，不改 A-owned 合同或 Slice 状态。
-
-### 补充旅程：旧批次运行中重新整理失败文件、单文件与四类决定
-
-本轮起始 `main` / `1b33f1936e8f2c933faf3a762f3589916a2baba4`；无预存 tracked 修改，
-预存 untracked 保留。候选产品代码不变；仅补充 B 证据与同 Task 修复指导。
-
-**旧批次仍在执行时重新整理失败文件：前半程通过，旧批次结算失败（第二项 P1）。**
-
-从现有 Run once API 建立含 A/B 的旧批次；A 在 Provider 阶段真实失败、无媒体效果；
-B 的真实 LocalStorage 写入用 Event 暂停，使 B 的调用确实仍在执行。此时通过第二个
-已注册 Worker 消费现有 Files 请求，用户选择 A → 失败提醒 → 普通确认 → 新 A COPY
-实际成功。未手填 Task/Result，不用 PROCESSING 字段假设一个调用仍在运行。
-
-实测过程：旧 A failed、B processing，旧批次占 1；新 A 确认后总计 2；新 A 成功后总计
-1，B 的在途边界保留，旧 A Result 原样不变。这段符合逐文件接手要求。
-
-释放 Event 让 B 真正写完后，B Result 记录 success，旧 A Result 仍 failed，旧批次却在
-正常汇总结算时抛出 TaskSchedulingError，最终被异常处理标为 failed，error 为
-`manual Task engine could not advance this stage (TaskSchedulingError)`。正确应按旧批次
-自己的 A failed / B success 汇总为 partial_success；新 A 的独立成功不改写旧 A。
-最后容量为 0，**本次问题不是名额卡住或提前释放**，没有复现文件重复执行/丢失。
-
-定位：`_settle_automatic` 把旧批次全部 item 传给结算；
-`SQLiteTaskRepository.release_scheduled_claim` 在 PROGRESS 阶段重新发布这些 item；
-`_require_scheduled_item_locked` 对已被新 A 接手的旧 A 一律拒绝，连本次只想读取旧终态来
-汇总批次的结算也拒绝。该 guard 是 f3fcace3 的新接入，阻止旧 A 实际重启/改写仍必须保留。
-
-Developer 指导：在现有结算事务中分开“读取旧终态参加批次汇总”和“再次发布旧 item”。
-旧 A 的事实可以参与汇总，结算不应向已交接 item 重发 PROGRESS/OUTCOME 写入；不得
-通过删除 superseded 标记、放宽旧 owner 启动/结果发布或覆盖旧结果来修复。补完整并行
-回归：A 原失败 → B 真实仍在写 → 新 A 成功 → B 写完 → 旧批次诚实 partial_success，
-无技术收尾错误，最终名额 0。原手动批次也按同一共享结算边界补直接受影响覆盖；本轮
-新增并行探测的原批次入口是 Run once，不能据此宣称手动/due 的全部矩阵已通过。
-
-**单文件与四类决定的针对性复验：9 tests OK，1.367 秒。**
-
-- 单文件：`SupersededSingleFileOwnerHandoffTests` 与
-  `ManualTaskDiscoveryTests.test_confirmation_adopts_the_same_task_and_executes`，覆盖正常
-  Files 确认到结果、真实失败后提醒/再次确认/实际 COPY、旧 Result 保留、旧资格拒绝及
-  新工作完成后的容量释放。失败后尚未重新整理就占位的问题仍按上一节修复。
-- 批量阶段性检查：`SupersededOwnerWithRemainingWorkTests` 通过，但它未跑完旧兄弟项，
-  不能替代上面新增的真实在途调用和旧批次最终结算；其阶段性通过与新 P1 不矛盾。
-- 识别/元数据：`ManualTaskDiscoveryTests` 的 partial_recognition、
-  task_center_continue、native_metadata_candidate 三项真实 API/Worker 旅程通过，覆盖
-  保存决定 → 分析 → 精确摘要 → 选中确认 → 同 Task 实际结果及兄弟项独立处理。
-- 分类/冲突：`RunOnceApiTests.test_recognition_decision_reaching_classification_stays_a_business_problem`
-  与 `test_conflict_recovery_keeps_the_original_automation_record` 通过，完成各自决定到真实
-  整理结果，保留原执行记录；队满时保留已保存决定与等待状态的测试也通过。
-- 以上是现有 Python API/SQLite/Worker/LocalStorage 旅程，不是生产浏览器桌面/窄屏验收，
-  不把 9 项通过等同于全部四类入口/并发/重启矩阵均完成。
-
-本机证据：`.git/validation-evidence/1b33f1936e8f2c933faf3a762f3589916a2baba4/scenario-review/`
-的 `journeys.log`、`live_sibling_probe.py`、`live_sibling.log`。独立旧批次最终状态断言
-`partial_success != failed` 失败。所有产品测试与并行复现合计不足 10 秒，低于本轮总用时
-50%；Task 保持 FIX REQUIRED，在同一 Task 修上述两个产品缺口，不新增 Task/执行系统。
-
-### 判断纠正：失败历史与当前仍在执行是两件事
-
-用户指出“A 已经失败，为什么还要占任务”。B 回查现有证据后纠正：
-
-- 原 Run once 复现中，A 的 Storage.write 已抛错返回，并形成 partial/未知效果 Result；
-  B 随后 failed、效果为 none，原 runner 已返回。没有证明还有实际在途调用或合法待执行
-  工作。历史效果未知或旧 `mutation_in_flight` 标记单独存在，不能代替这项证明。
-- 用户后来只重新整理 B，B 实际成功，旧批次 settled、容量为 0，是观察事实。此前私有
-  probe 强制断言“容量必须为 1”，依赖未经证明的占位前提；该断言失败不能据此定性为
-  产品容量回归、A 的安全保护被破坏或多放了执行任务。
-- **撤回 `2dce1ae3:TASK.md` 中的唯一 P1 及据此要求保留旧 claim/名额的修复步骤。**
-  不要求 Developer 为满足这个断言增加永久占位、恢复旧 claim、阻止新整理或改写生产行为。
-  原 probe、失败日志和 Git 历史全部保留，标明是 B 预期依据不足，不删除或伪装为通过。
-
-用户旅程应按真实工作判断：一批 A 失败、B 成功、C 仍在执行，C 的合法工作和必要容量应
-保留；若整批都已结束、没有需保留的在途/待执行工作，保留 A 的失败及未知效果历史并不
-要求永久占用执行名额。A 的同版本失败仍按定时/Run once 历史规则排除；用户手动选择 A
-时仍走提醒与正常确认。不得把“效果未知”改写成“已验证无效果”，也不得自动重放 A。
-
-这不是放宽真实在途调用、剩余机器工作、逐文件锁或旧 owner fencing 的安全义务。当前
-未证明这些义务在该复现中受到破坏；后续应由正常入口的真实在途/剩余工作旅程验收。
-
-### 已取得的候选证据与待验收项
-
-| 项目 | 已取得的结果 / 限制 |
+| 用户结果 | B 独立证据 |
 |---|---|
-| 提醒传输与真实 Result | 真实 Preview GET 已含 history；UUID Result 的目标、完成步骤与未知效果可读。 |
-| 单文件交接 | 实际失败 → Files 再次确认 → 新 COPY 成功；旧 heartbeat 拒绝，容量为 0。 |
-| 聚焦测试 | B 执行 `tests.test_organize_source_history`，18 tests OK，2.723 秒；不等同于完整验收。 |
-| 批量/定时 | Run once 故障后从 Files 重新整理 A 或 B 均实际成功；“只整理 B 后必须占 1 名额”的旧判据撤回，不能据此给 PASS 或 FIX REQUIRED。 |
-| 简短提醒 | 用户已明确的简化尚未落实：当前文案仍有内部步骤代码和多处长文重复。保留原交付要求，普通提醒简短、确有 unknown 再说明，详情保留有用事实，不新增操作步骤。 |
-| 完整验收 | 生产浏览器桌面/窄屏、其他适用 T4/Web/包装/Docker/restart/security 验收仍待 B 完成；不能用 Developer 的全量报告代替最终判断。 |
+| 整批全部结束后不占名额 | 原 10 文件 Run once probe 重跑：全成功 0；8 成功/2 零效果失败 0；8 成功/1 partial+unknown/1 failed 全部结束后也为 0。实际写入期间整批占 1，Result/unknown 保留。 |
+| 旧批次运行中重新整理已失败 A，旧 B 仍可完成并正常收尾 | 原真实线程 probe 重跑：B 的 LocalStorage 写入确实未返回时，新 A 走 Files 提醒/确认后成功；容量 1→2→1。B 返回后旧批次诚实 partial_success、无技术结算错误，最终 0；旧 A Result 不改写。 |
+| 简短提醒可见，正常确认可达 | 生产 build 上真实 API/SQLite/Worker 浏览器旅程通过；390×844 窄屏按“Open menu→Files→更多资源库→source”真实入口完成提醒→普通确认→实际 MOVE，截图人工检查，页面无横向溢出、无额外 checkbox/核查页。 |
+| 已有目录与 Copy 残留仍能正常新整理 | `residual_probe.py`：已有目标父目录时写入失败（FAILED+unknown）后新 MOVE 成功；COPY 验证完成但 Move 删源失败（PARTIAL+COPY+unknown）后，经现有冲突 Rename 决定→分析→摘要→确认，新 MOVE 成功，原 Result 保留。 |
 
-证据在本机 `.git/validation-evidence/f3fcace35371bc7aa3f56ce6e5698261faab5e52/b-review/`：
-`manual.log`、`focused.log`、`automatic_probe.py`、`automatic.log`、`sibling-unknown.log`。
-其中 sibling-unknown 的 exit 1 记录保留，**其容量=1 的预期已撤回**；不声称远端可访问。
+单文件、识别/元数据/分类/冲突决定与剩余兄弟项的既有旅程进入本轮全量；source-external
+已安装 wheel 另跑 6 项真实 API/Worker 旅程通过。等待人工且没有机器工作的 Task 不占槽，
+但对应文件仍由原工作保留；processing 文件同样不能另开整理。此前“unknown 就必须永久
+占名额”“只重新整理 B 后旧 Task 必须占 1”两项错误前提保持撤回，不恢复旧建议。
 
-### 后续开发指导与 B 验收边界
+### 唯一 P1：自动入口可能使用过期的失败历史判断而误处理文件
 
-1. 撤回项不产生新的实现任务；Developer 不应照旧结论为已失败、无实际剩余工作的文件
-   保留名额。保持已有结果、未知证据、非重放和已实现的逐文件交接。
-2. 落实用户已确认的简短提醒：普通提醒说明上次整理未完成及核对来源/目标；未知效果
-   才补一句。原始 CREATE_DIRECTORY / mutation_outcome 等代码无需作为普通必读文案，
-   可用目标和已知影响放现有详情，以人话表达；不加核查页、checkbox 或令牌操作。
-3. B 后续从已有入口完成批量中真实剩余工作/在途调用、失败历史与执行资格分离、拒权/
-   队满/并发确认、同版本 reopen 等原计划验收；区分实际在途工作与纯历史 unknown，
-   不把私有 probe 的内部 marker/计数预期当作新增产品要求。原 T4 门禁与测试时间小于
-   本轮总用时 50% 的要求继续有效。
+**真实用户旅程（Run once 与 Files 两个已有入口并发）：**
 
-### 工作区与 Slice 状态
+1. 自动 Task 已建立，在准备某个文件 A 时读到“没有适用的失败历史”。此时还没有为 A
+   建立具体 TaskItem/取得来源占用；外层 Task 不等于已接手目录中的每个文件。
+2. 在自动任务真正接手 A 前，用户从 Files 选择同一版本 A，经正常摘要确认执行；真实
+   Storage.write 失败，持久记录 `PARTIAL / attempted_unverified`。来源文件没有改变，
+   目标目录虽创建，目标媒体文件尚不存在；这个手动工作已经结束。
+3. 自动入口应在本次逐文件准入时读到最新 partial 并排除 A，零该项 Provider/媒体效果。
+   实际却继续使用第 1 步的旧判断，最终发布 success/COPY，目标媒体文件真实出现。
 
-本次纠正开始于 `main` / `2dce1ae33de525695f4ad3ccae7311a07ddc143e`，无预存 tracked
-修改，预存未跟踪 OS/log、图片、`15` 和 output 产物全部保留未暂存。仅更新 TASK.md，
-治理预检 PASS；未改产品、未运行新产品测试，既有观察与原始日志不变。
+`admission_history_race.py` 从实际 Run once / Files API 与 Worker 驱动临时 SQLite、
+LocalStorage、SyntheticMetadataProvider。只在已有只读历史查询返回与 item 准入之间用
+Event 排定交错，不改变查询结果、不手填状态、不构造新产品入口；手动失败通过真实
+Storage 写入故障形成。复现断言 `history_excluded != completed` 失败（exit 1），日志明确
+记录手动 PARTIAL 在自动文件准入前已落库，随后自动 COPY 成功，新增目标文件数为 1。
 
-RO-1–5 原接受事实保留；本候选的 RO-6 和整体回归尚未最终验收。没有基于当前复现证明
-“过早释放”的容量回归，原阻塞不恢复；最新真实反例见上方“最新容量核对”。Slice 保持
-ACTIVE，Task 因全部结束后仍占位而为 FIX REQUIRED，
-不关闭 Slice、不创建后续 Task、不提交 READY FOR A REVIEW packet。
+**原因与定位：** `MediaOrganizerService.process_file` 先执行 `_automatic_history_gate`
+（只读），之后才调用 `KernelTaskCoordinator.begin_item`。后者经
+`TaskSchedulingService._begin_item_with_ownership` /
+`SQLiteTaskRepository.begin_scheduled_item_with_ownership` 的事务只重新核对当前来源占用，
+没有原子复核最新适用正式整理结果；已终态 partial 不再是活动占用，因此旧历史判断可以
+穿过这个间隙。due 与 Run once 共用该自动源 gate；本次并发复现使用 Run once，未声称
+单独重跑了 due 的同一交错。此缺口属于 AC-T1/T3、Slice RO-6 / AC-20/22 及原计划中
+“准入事务内新鲜历史/占用检查”，不是新增产品范围。
+
+### Developer 修复指导（同一个 Task47.5）
+
+1. **在最终逐文件准入事务里复核历史。** 复用现有 kernel/repository 的来源准入边界，
+   将服务端自动来源语义、canonical Storage/path、当前可比版本的最新正式结果判断，与
+   活动占用核对、该项执行/排除登记原子完成。保留当前历史查询语义，不仅在 Service 里
+   再多读一次后仍分开写入；Storage/Provider I/O 仍在事务外，不新建队列或全局 FileIndex。
+2. **历史在间隙中变化时，按最终适用结果处理。** 最新 failed/partial 应生成现有有界
+   history_excluded 原因/计数，该项不调 Provider、不变更媒体、不制造新的正式整理成功
+   Result、不消费该项效果授权；自由兄弟照常处理。历史读失败保持 fail-closed。新的
+   真替换版本可正常处理，后来手动成功可解除早期失败排除；旧 Result/unknown/步骤/pin
+   和原 Automation 时间/结果不改写。不要靠整库锁或外层目录 Task 抢占所有尚未发现的
+   文件，去拒绝当时仍空闲且合法的 Files 请求。
+3. **只作用于既定自动入口。** 使用后端已验证的 due/Run once 初次逐文件上下文，不让
+   浏览器自报豁免；Files 新整理、普通 CLI/remote 的原有语义与原 Task 四类继续仍按
+   原合同处理，不因把检查下沉而新增历史拒绝或确认步骤。保留刚通过的容量、旧批次
+   收尾和简短提醒修复；正在处理/待四类决定的文件继续互斥，等待人工不占机器槽。
+4. **补真实并发回归并交接。** 将本轮 probe 的同步点纳入现有受影响测试，至少覆盖
+   due/Run once 与手动请求的同来源交错：自动旧读后手动 partial/failed 已落库，再让
+   自动准入，应排除；证明该项零后续 Provider/Storage 效果，兄弟独立处理，旧结果保留。
+   补正常先后顺序、手动后成功/版本替换、历史读取失败及来源已被活动项占用的直接
+   影响断言。先跑失败复现及下列直接受影响模块，不交回全量矩阵：
+
+   ```bash
+   .venv/bin/python -m unittest tests.test_organize_source_history tests.test_task_source_ownership_race tests.test_task_scheduling tests.test_task_scheduling_fencing tests.test_automation_run_once tests.test_automation_task_admission tests.test_manual_task_engine
+   ```
+
+   如接口/投影发生实际变化再补相应 Web 测试。提交新 checkpoint 和实际结果，回到
+   READY FOR B REVIEW；B 对修复候选独立执行适用验收与最终 T4 门禁。
+
+### B 已执行的回归与门禁
+
+| 范围 / 命令 | 实际结果 / 日志 |
+|---|---|
+| `.venv/bin/python -m unittest discover -s tests` | 2522 tests OK，skipped=7，319.418 秒；`python-full.log`。有 ResourceWarning，原样保留，不把 skip 当通过。 |
+| Python 静态/依赖/示例 | ruff check/format、compileall、pip check、两份 example config validate、governance、完整 Base..candidate diff check 通过；FFmpeg/FFprobe 搜索无匹配。 |
+| Web 质量与全量单测 | typecheck/lint/format/build 通过；88 files / 1267 tests 通过；`web-*.log`。 |
+| fake 浏览器与真实历史浏览器 | 默认套件混入新 Python spec 导致端口错误，原 `default-e2e.log` 保留。按下面明确分组，253 fake tests 通过（`fake-full.log`）；原 Python spec 在指定 real config 上 1 passed（`native-e2e.log`），没有删除/减弱断言或漏跑该项。 |
+| 真实 Automation / Task Center | automation lifecycle + Run once 指定 `playwright.python.automation.config.ts`：17 passed；Task Center 八视图/同页摘要 production harness：2 passed；`automation-native.log` / `task-center-native.log`。 |
+| 窄屏视觉 | B 的只读证据用 spec 保留原断言，补实际移动导航及截图，390×844：1 passed；`narrow-adapted-final.log`、`narrow-summary.png`、`narrow-confirm.png`，人工已检查。 |
+| clean wheel / source-external | wheel smoke 通过，外部独立 venv 从 site-packages 导入、当前 6 个真实决定/整理旅程通过；`wheel-smoke.log` / `installed-current.log`。wheel SHA-256 `9c9a8b62279f8e4aface4e499052c4ab216cee5a1f6600b429cc0b82de2d57f0`。 |
+| Docker fresh/security | exact committed context、四服务、实际手动整理、挂载/non-root/RBAC/脱敏检查通过；`docker-security.log`。系统临时目录 bind 最初不可见，改用已验证可挂载的 `.git/.../docker-tmp` 后通过；初始失败日志保留。 |
+| Docker 同版本 restart/faults | API/Worker/Scheduler/Notification Worker 重启、真实 COPY、旧 owner 拒写和 uncertain 非重放通过；`docker-restart.log`。候选 tag `mediaflow:task47-5-3fb10500`，最后 restart build image `sha256:802ccda31fa8e3ae2db76cfb544923d2167c9e8239603401f8ba865b41038813`。 |
+| 关键补充复现 | capacity、live-sibling、residual 三类复现通过；仅 `admission-history-race.log` 为上述产品 P1 失败。 |
+
+fake 全量实际命令（cwd `web/`）为：
+
+```bash
+npm run test:e2e -- --grep-invert 'a recorded partial history warns, then the confirmed new organize takes effect' --output=<本轮独立fake产物目录>
+npm run test:e2e -- --config=playwright.python.config.ts tests/e2e/organize-source-history.python.spec.ts --trace=on --output=<本轮独立native产物目录>
+```
+
+新 Python case 在正确 real backend 上完整执行，未作为 skip 隐藏失败。默认 config 的
+发现分组问题属于测试路由 P2，可随本 Task 修正，不单独建工具 Task，也不把它当新产品阻塞。
+旧 `installed_recovery_smoke_test.py` 引用了已不存在的历史测试文件，未声称它通过；B 改用
+当前真实测试复制到 source-external venv，实际 installed-package 6 tests OK，不要求
+Developer 为历史脚本重建旧产品。原桌面步骤直接用于窄屏时导航超时，B 按实际菜单适配后
+通过；相关初始失败保留。另一个 B 桌面截图适配尝试未成功，不替代已通过的原桌面 native
+case；不把证据脚本的导航选择问题冒充产品故障。未执行旧任务/跨版本升级/V1 产品门禁。
+`image-retired-cli.log` 是未挂载配置时的容器 preflight 拒绝，不计为退役 CLI parser 负例；
+AC-24 的 installed/image 专项负例仍由 B 在最终候选补齐，不作为 Developer 的新返工项。
+
+截至 `timing.json` 记录点，按测试日志实际运行区间合并（包含失败的证据准备运行）约
+519 秒，本轮审查时长保守下限约 1471 秒，测试占比上界约 35.3%；原始每命令 real 时间
+与日志保留，满足测试时间小于本轮总用时 50%。没有为凑比例等待或削减产品断言。
+
+### Slice 结果重评与下一步
+
+| Required Outcome | 本候选评估 |
+|---|---|
+| RO-1–5 | 原 Task47.1–47.4 接受事实保留；本轮新跑全量、真实 native、installed wheel、Docker fresh/restart/security，未发现新的共享容量/四类继续/旧批次结果故障。A-owned CURRENT/接受文档仍在正式 Slice 关闭时协调。 |
+| RO-6 / AC-20–25 | 正常先后顺序下的历史判断、手动提醒/确认与实际效果、结果保留、CLI 入口退役有实现及证据；逐文件自动准入的新鲜历史存在上述 P1，结果未完成。 |
+
+Task 保持 FIX REQUIRED，Scope/Base 不变；不规划下一 Task，不交 SLICE READY FOR A REVIEW，
+不由 B 关闭 Slice。下一步只修本 Task 的历史判断/逐文件准入原子性，再由 B 验收。
