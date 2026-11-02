@@ -70,7 +70,7 @@ from mediaflow.domain.task_persistence import (
     task_item_counts,
     task_work_status,
 )
-from mediaflow.domain.task_scheduling import TaskQueueFull
+from mediaflow.domain.task_scheduling import TaskQueueFull, require_capacity
 
 _MAX_TEXT = 512
 _MAX_TTL_SECONDS = 900
@@ -213,10 +213,65 @@ class ManualOrganizeExecutionService:
         self._clock = clock
         self._maximum_ttl_seconds = maximum_ttl_seconds
         self._max_items = max_items
+        self._scheduling_capacity_resolver: Callable[[], int] | None = None
 
     @property
     def repository(self):
         return self._repository
+
+    def bind_scheduling_capacity(self, resolver: Callable[[], int]) -> None:
+        """Bind the current system-owned organizing allowance.
+
+        The execution keeps the reviewed Preview's immutable runtime pin for
+        policies, Storage authority and the admitted Task.  Re-entering the
+        shared scheduling queue, however, is new machine work: it must use the
+        *current* Active system setting rather than the allowance that happened
+        to be published when the summary was prepared.  The API composition
+        root binds this to its refreshed runtime binding, so every normal
+        confirmation and every same-Task continuation uses one authority.
+        """
+
+        if not callable(resolver):
+            raise ValueError("scheduling capacity resolver must be callable")
+        self._scheduling_capacity_resolver = resolver
+
+    def _current_scheduling_capacity(self) -> int | None:
+        """The current Active allowance, or ``None`` when no authority is bound.
+
+        A missing resolver is never replaced with the reviewed Preview's pinned
+        value: an adopted kernel Task then refuses admission through the
+        repository's existing unavailable-capacity answer.  A bound resolver
+        that fails or returns an invalid value is likewise a fail-closed
+        refusal with an explicit next action, never a silent fallback.
+        """
+
+        resolver = self._scheduling_capacity_resolver
+        if resolver is None:
+            return None
+        try:
+            value = resolver()
+        except Exception as error:  # noqa: BLE001 - fail closed on unreadable authority
+            raise ManualExecutionError(
+                "the current system Task scheduling capacity is unavailable",
+                code="capacity_unavailable",
+                status=503,
+                next_action=(
+                    "restore the current Active system runtime settings, then confirm "
+                    "this same summary again"
+                ),
+            ) from error
+        try:
+            return require_capacity(value)
+        except ValueError as error:
+            raise ManualExecutionError(
+                "the current system Task scheduling capacity is invalid",
+                code="capacity_unavailable",
+                status=503,
+                next_action=(
+                    "correct the current Active system runtime settings, then confirm "
+                    "this same summary again"
+                ),
+            ) from error
 
     def authorize(
         self,
@@ -1108,7 +1163,7 @@ class ManualOrganizeExecutionService:
                 scheduling_capacity=(
                     scheduling_capacity
                     if scheduling_capacity is not None
-                    else getattr(runtime, "automation_maximum_active_jobs", 100)
+                    else self._current_scheduling_capacity()
                 ),
             )
         except TaskQueueFull as full:

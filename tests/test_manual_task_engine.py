@@ -59,6 +59,51 @@ class ManualTaskDiscoveryTests(_DiscoveryFixture):
                 return discovery
         return value.repository.get_media_discovery_for_task(task_id)
 
+    def _publish_capacity(self, value, capacity: int):
+        """Publish one real Active successor with a new shared allowance.
+
+        The exact revision is loaded back through the production managed
+        authority and the harness resolves each pin to its own runtime, so the
+        already-prepared summary keeps its old pin while the next Files request
+        uses the successor.
+        """
+
+        from mediaflow.application.configuration_snapshot import ManagedConfigurationService
+        from mediaflow.infrastructure.runtime_configuration import (
+            load_managed_runtime_configuration,
+            with_managed_snapshot,
+        )
+        from mediaflow.infrastructure.sqlite_configuration_management import (
+            SQLiteConfigurationRepository,
+        )
+        from tests.test_media_discovery import _activate
+
+        document = self.document()
+        document["automation"]["maximumActiveJobs"] = capacity
+        with SQLiteConfigurationRepository(self.database) as configuration_repository:
+            managed = ManagedConfigurationService(
+                configuration_repository,
+                bootstrap_database_path=str(self.database),
+            )
+            revision = _activate(managed, document)
+        runtime = with_managed_snapshot(
+            load_managed_runtime_configuration(
+                revision.document, bootstrap_database_path=str(self.database)
+            ),
+            snapshot_id=revision.revision_id,
+            digest=revision.digest,
+            version=revision.version,
+        )
+        initial = value.configuration
+
+        def resolve(snapshot_id, _digest):
+            return runtime if snapshot_id == revision.revision_id else initial
+
+        value.discovery._runtime_resolver = resolve
+        value.intents._runtime_resolver = resolve
+        value.previews._runtime_resolver = resolve
+        return revision, runtime
+
     def test_new_files_discovery_runs_as_one_task_until_human_confirmation(self) -> None:
         self.media("Movies/One.2001.mkv")
         with self.journey(task_scheduling=True) as value:
@@ -1417,6 +1462,346 @@ class ManualTaskDiscoveryTests(_DiscoveryFixture):
                 TaskQueueState.WAITING_HUMAN,
             )
             self.assertEqual([], value.source.mutations)
+
+    def test_lowered_system_capacity_applies_to_an_already_prepared_summary(self) -> None:
+        """B-P1-2: the current allowance applies when an old summary is confirmed.
+
+        The first file's exact summary was prepared while the published
+        allowance was 1025 and is now waiting for the operator.  The system
+        setting is lowered to 1 and a separate request for the second file takes
+        that only slot.  Confirming the old summary must be refused by the
+        *current* allowance even though its immutable execution pin still names
+        1025.  The summary, Task, source and one-shot authority stay unconsumed;
+        after the competing Task reaches its own human boundary the same
+        explicit confirmation succeeds and the real Worker performs the effect.
+        """
+
+        for name in ("One.2001.mkv", "Two.2002.mkv"):
+            self.media(f"Movies/{name}")
+        provider = SyntheticMetadataProvider(
+            (
+                MediaCandidate(
+                    "tmdb",
+                    "201",
+                    MediaType.MOVIE,
+                    "One",
+                    year=2001,
+                    genres=("Animation",),
+                ),
+                MediaCandidate(
+                    "tmdb",
+                    "202",
+                    MediaType.MOVIE,
+                    "Two",
+                    year=2002,
+                    genres=("Animation",),
+                ),
+            )
+        )
+        original_document = self.document
+
+        def high_capacity(**kwargs):
+            document = original_document(**kwargs)
+            document["automation"]["maximumActiveJobs"] = 1025
+            return document
+
+        with (
+            mock.patch.object(self, "document", side_effect=high_capacity),
+            self.journey(provider=provider, task_scheduling=True, attachments=True) as value,
+        ):
+            status, admitted = self._admit(value, ["Movies/One.2001.mkv"])
+            self.assertEqual(202, status, admitted)
+            task_id = admitted["organizeTaskId"]
+            discovery = self._drive(value, task_id)
+            self.assertIsNotNone(discovery.preview_id)
+            preview = value.repository.get_manual_preview(discovery.preview_id)
+            old_pin = (preview.configuration_snapshot_id, preview.configuration_snapshot_digest)
+            status, preview_document = self.request(
+                value, f"/api/v1/operations/organize/previews/{preview.preview_id}"
+            )
+            self.assertEqual(200, status, preview_document)
+            ready = [
+                item["itemId"]
+                for item in preview_document["items"]
+                if item["status"] == "previewed"
+            ]
+            self.assertEqual(1, len(ready), preview_document)
+            confirmation = {
+                "confirmation": True,
+                "itemIds": ready,
+                "expectedIntentVersion": preview_document["intentVersion"],
+                "allowOverwrite": False,
+                "allowSourceCleanup": False,
+            }
+
+            # Lower the system allowance and admit a second deliberate Files
+            # request under it.  The second Task holds the only shared slot.
+            self._publish_capacity(value, 1)
+            status, competitor = self._admit(
+                value,
+                ["Movies/Two.2002.mkv"],
+                request_id="22222222-2222-4222-8222-222222222222",
+            )
+            self.assertEqual(202, status, competitor)
+            competitor_task_id = competitor["organizeTaskId"]
+            self.assertEqual(1, value.repository.count_scheduled_capacity_use())
+
+            # The old summary is still itself current; only the current shared
+            # capacity refuses it.  Nothing is consumed or mutated.
+            status, refused = self.request(
+                value,
+                f"/api/v1/operations/organize/previews/{preview.preview_id}/execute",
+                "POST",
+                confirmation,
+            )
+            self.assertEqual(409, status, refused)
+            self.assertEqual("capacity_full", refused["error"]["code"])
+            self.assertEqual("none", refused["error"]["details"]["sideEffects"])
+            self.assertIs(
+                value.repository.get_task_scheduling(task_id).queue_state,
+                TaskQueueState.WAITING_HUMAN,
+            )
+            self.assertEqual(
+                (), value.repository.list_manual_executions_for_preview(preview.preview_id)
+            )
+            self.assertEqual(
+                [],
+                [
+                    authorization
+                    for authorization in (
+                        value.repository.list_manual_execution_authorizations_for_preview(
+                            preview.preview_id
+                        )
+                    )
+                    if authorization.status.value == "consumed"
+                ],
+            )
+            self.assertEqual(
+                old_pin,
+                (
+                    value.repository.get_manual_preview(
+                        preview.preview_id
+                    ).configuration_snapshot_id,
+                    value.repository.get_manual_preview(
+                        preview.preview_id
+                    ).configuration_snapshot_digest,
+                ),
+            )
+            self.assertEqual([], value.source.mutations)
+            self.assertEqual([], value.target.mutations)
+
+            # The competing Task reaches its own human boundary and releases the only slot;
+            # the operator's explicit retry of the same summary now succeeds.
+            self._drive(value, competitor_task_id)
+            self.assertEqual(0, value.repository.count_scheduled_capacity_use())
+            status, accepted = self.request(
+                value,
+                f"/api/v1/operations/organize/previews/{preview.preview_id}/execute",
+                "POST",
+                confirmation,
+            )
+            self.assertIn(status, (200, 202), accepted)
+            self.assertEqual(task_id, accepted["taskId"])
+            self.assertEqual(
+                old_pin,
+                (
+                    value.repository.get_manual_preview(
+                        preview.preview_id
+                    ).configuration_snapshot_id,
+                    value.repository.get_manual_preview(
+                        preview.preview_id
+                    ).configuration_snapshot_digest,
+                ),
+            )
+            for _ in range(8):
+                value.task_engine.run_next()
+                task = value.repository.get_task(task_id)
+                if task.status in {
+                    PersistentTaskStatus.COMPLETED,
+                    PersistentTaskStatus.PARTIAL_SUCCESS,
+                    PersistentTaskStatus.FAILED,
+                    PersistentTaskStatus.CANCELLED,
+                }:
+                    break
+            self.assertIs(value.repository.get_task(task_id).status, PersistentTaskStatus.COMPLETED)
+            self.assertFalse((self.source_root / "Movies/One.2001.mkv").exists())
+            self.assertTrue((self.source_root / "Movies/Two.2002.mkv").exists())
+
+    def test_recovery_summary_confirmation_uses_current_system_capacity(self) -> None:
+        """A four-type recovery summary shares the same current-capacity boundary.
+
+        The native Task Center summary was prepared under 1025.  A successor
+        allowance of 1 and a competing Files Task then fill the shared queue;
+        confirming the prepared recovery summary must refuse without consuming
+        it.  Releasing the competitor lets the same explicit confirmation
+        re-register the original Task.
+        """
+
+        provider = self._two_file_recognition_journey()
+        original_document = self.document
+
+        def high_capacity(**kwargs):
+            document = original_document(**kwargs)
+            document["automation"]["maximumActiveJobs"] = 1025
+            return document
+
+        with (
+            mock.patch.object(self, "document", side_effect=high_capacity),
+            self.journey(provider=provider, task_scheduling=True) as value,
+        ):
+            status, admitted = self._admit(value, ["Movies/One.2001.mkv"])
+            self.assertEqual(202, status, admitted)
+            task_id = admitted["organizeTaskId"]
+            self._drive(value, task_id)
+            item = value.repository.list_items(task_id)[0]
+            saved = self._decide_recognition(value, task_id, item)
+            status, accepted = self._continue_from_task_center(value, task_id, item.item_id, saved)
+            self.assertEqual(202, status, accepted)
+            self._drive(value, task_id)
+            status, detail = self.request(
+                value, f"/api/v1/tasks/{task_id}/items/{item.item_id}/recovery"
+            )
+            self.assertEqual(200, status, detail)
+            self.assertEqual("business_problem", detail["recoveryKind"])
+            status, prepared = self.request(
+                value,
+                f"/api/v1/tasks/{task_id}/items/{item.item_id}/recovery/prepare-summary",
+                "POST",
+                {"expectedCheckpointVersion": detail["checkpoint"]["checkpoint_version"]},
+            )
+            self.assertEqual(201, status, prepared)
+            status, preview = self.request(
+                value,
+                f"/api/v1/operations/organize/previews/{prepared['preview_id']}",
+            )
+            self.assertEqual(200, status, preview)
+            ready = [
+                entry["itemId"] for entry in preview["items"] if entry["status"] == "previewed"
+            ]
+            self.assertEqual(1, len(ready), preview)
+
+            # Lower the allowance and take the only slot with a different
+            # deliberate Files request.
+            self._publish_capacity(value, 1)
+            status, competitor = self._admit(
+                value,
+                ["Movies/Two.2002.mkv"],
+                request_id="44444444-4444-4444-8444-444444444444",
+            )
+            self.assertEqual(202, status, competitor)
+            competitor_task_id = competitor["organizeTaskId"]
+            self.assertEqual(1, value.repository.count_scheduled_capacity_use())
+
+            confirmation = {
+                "itemIds": ready,
+                "confirmation": True,
+                "allowOverwrite": False,
+                "allowSourceCleanup": False,
+            }
+            status, refused = self.request(
+                value,
+                f"/api/v1/manual-recovery-preparations/{prepared['preparation_id']}/confirm",
+                "POST",
+                confirmation,
+            )
+            self.assertEqual(409, status, refused)
+            self.assertEqual("capacity_full", refused["error"]["code"])
+            self.assertIs(
+                value.repository.get_task_scheduling(task_id).queue_state,
+                TaskQueueState.WAITING_HUMAN,
+            )
+            self.assertEqual([], value.source.mutations)
+            self.assertEqual([], value.target.mutations)
+
+            # The competing Task reaches its own human boundary and releases
+            # the only slot; the same recovery confirmation now succeeds.
+            self._drive(value, competitor_task_id)
+            self.assertEqual(0, value.repository.count_scheduled_capacity_use())
+            status, confirmed = self.request(
+                value,
+                f"/api/v1/manual-recovery-preparations/{prepared['preparation_id']}/confirm",
+                "POST",
+                confirmation,
+            )
+            self.assertIn(status, (200, 202), confirmed)
+            self.assertEqual(task_id, confirmed["taskId"])
+
+    def test_raised_system_capacity_applies_to_an_already_prepared_summary(self) -> None:
+        """The reverse direction also uses the current allowance, not the old pin."""
+
+        for name in ("One.2001.mkv", "Two.2002.mkv"):
+            self.media(f"Movies/{name}")
+        provider = SyntheticMetadataProvider(
+            (
+                MediaCandidate(
+                    "tmdb",
+                    "201",
+                    MediaType.MOVIE,
+                    "One",
+                    year=2001,
+                    genres=("Animation",),
+                ),
+                MediaCandidate(
+                    "tmdb",
+                    "202",
+                    MediaType.MOVIE,
+                    "Two",
+                    year=2002,
+                    genres=("Animation",),
+                ),
+            )
+        )
+        original_document = self.document
+
+        def one_slot(**kwargs):
+            document = original_document(**kwargs)
+            document["automation"]["maximumActiveJobs"] = 1
+            return document
+
+        with (
+            mock.patch.object(self, "document", side_effect=one_slot),
+            self.journey(provider=provider, task_scheduling=True, attachments=True) as value,
+        ):
+            status, admitted = self._admit(value, ["Movies/One.2001.mkv"])
+            self.assertEqual(202, status, admitted)
+            task_id = admitted["organizeTaskId"]
+            discovery = self._drive(value, task_id)
+            status, preview_document = self.request(
+                value, f"/api/v1/operations/organize/previews/{discovery.preview_id}"
+            )
+            self.assertEqual(200, status, preview_document)
+            ready = [
+                item["itemId"]
+                for item in preview_document["items"]
+                if item["status"] == "previewed"
+            ]
+            confirmation = {
+                "confirmation": True,
+                "itemIds": ready,
+                "expectedIntentVersion": preview_document["intentVersion"],
+                "allowOverwrite": False,
+                "allowSourceCleanup": False,
+            }
+            # A competing File holds the old one-slot allowance.
+            status, six = self._admit(
+                value,
+                ["Movies/Two.2002.mkv"],
+                request_id="33333333-3333-4333-8333-333333333333",
+            )
+            self.assertEqual(202, status, six)
+            self.assertEqual(1, value.repository.count_scheduled_capacity_use())
+
+            # Raising the published allowance to 2 makes room for the same old
+            # summary; using the old pin would still refuse it at 1.
+            self._publish_capacity(value, 2)
+            status, accepted = self.request(
+                value,
+                f"/api/v1/operations/organize/previews/{discovery.preview_id}/execute",
+                "POST",
+                confirmation,
+            )
+            self.assertIn(status, (200, 202), accepted)
+            self.assertEqual(task_id, accepted["taskId"])
 
     def test_cancelled_human_waiting_work_frees_its_source_for_a_new_request(self) -> None:
         """A safe cancel settles the admission too, so a new intent is admitted.

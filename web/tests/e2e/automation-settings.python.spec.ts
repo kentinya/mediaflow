@@ -1148,3 +1148,82 @@ test("system runtime settings share one organizing allowance across automation a
     )
     .toBe(false);
 });
+
+test("system runtime settings keep an old summary at the current organizing capacity", async ({
+  page,
+  request,
+}) => {
+  await request.post("/__harness__/restore-source-media");
+  await connectOn(page, "/ui-v2/configuration");
+  await saveAutomationCapacity(page, 1025);
+
+  // Prepare Three's exact summary under the high allowance and remember the
+  // real page the operator will return to.
+  await page.getByRole("link", { name: "Files", exact: true }).click();
+  await expect(page).toHaveURL(/\/ui-v2\/resourcelib\/files/);
+  await page
+    .getByRole("button", { name: /source/ })
+    .first()
+    .click();
+  await expect(page.getByLabel("目录", { exact: true })).toBeVisible();
+  await page.getByRole("checkbox", { name: "选择 Three.2003.mkv" }).check();
+  await page.getByRole("button", { name: "批量整理" }).click();
+  await expect(page).toHaveURL(/discoveryId=/);
+  const oldSummaryUrl = page.url();
+  for (let step = 0; step < 24; step += 1) {
+    const advanced = await request.post("/__harness__/run-discovery-worker");
+    const body = (await advanced.json()) as {
+      readonly advanced: boolean;
+      readonly previewId?: string | null;
+    };
+    if (body.advanced && body.previewId != null) break;
+  }
+  await expect(
+    page.getByRole("heading", { name: "计划摘要", exact: true }),
+  ).toBeVisible({ timeout: 30_000 });
+
+  // Lower the published allowance to 1.  A fresh Four request is a real
+  // competing admission: it either takes the only slot or, when the harness's
+  // due Automation work already holds it, is truthfully refused.  Either way
+  // the old summary must no longer be confirmable at its old 1025 pin.
+  await connectOn(page, "/ui-v2/configuration");
+  await saveAutomationCapacity(page, 1);
+  await page.getByRole("link", { name: "Files", exact: true }).click();
+  await expect(page).toHaveURL(/\/ui-v2\/resourcelib\/files/);
+  await page
+    .getByRole("button", { name: /source/ })
+    .first()
+    .click();
+  await expect(page.getByLabel("目录", { exact: true })).toBeVisible();
+  await page.getByRole("checkbox", { name: "选择 Four.2004.mkv" }).check();
+  const competitor = page.waitForResponse(
+    (response) =>
+      response.request().method() === "POST" &&
+      response.url().includes("/discoveries"),
+  );
+  await page.getByRole("button", { name: "批量整理" }).click();
+  const competitorStatus = (await competitor).status();
+  expect([202, 409]).toContain(competitorStatus);
+
+  // Return to the exact old summary.  Its confirmation is a new re-entry into
+  // the shared queue, so the current allowance refuses it with no admission.
+  await connectOn(page, oldSummaryUrl);
+  await expect(
+    page.getByRole("heading", { name: "计划摘要", exact: true }),
+  ).toBeVisible({ timeout: 30_000 });
+  const confirmation = page.waitForResponse(
+    (response) =>
+      response.request().method() === "POST" &&
+      response.url().includes("/previews/") &&
+      response.url().endsWith("/execute"),
+  );
+  await page.getByRole("button", { name: /^确认整理 1 项$/ }).click();
+  expect((await confirmation).status()).toBe(409);
+  await expect(
+    page.getByRole("heading", { name: "整理执行情况", exact: true }),
+  ).toHaveCount(0);
+  const state = await (
+    await request.get("/__harness__/manual-file-state?file=Three.2003.mkv")
+  ).json();
+  expect(state).toEqual({ sourceExists: true, destinationTargets: [] });
+});

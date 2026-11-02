@@ -590,6 +590,13 @@ class MediaFlowApi:
                 self._manual_intents,
                 checkpoint_service=self._checkpoint_service,
             )
+        if self._manual_execution is not None:
+            # A summary was prepared under its own immutable pin.  Confirming it
+            # re-enters today's shared organizing queue, so admission must read
+            # the current refreshed system allowance rather than that old pin.
+            binder = getattr(self._manual_execution, "bind_scheduling_capacity", None)
+            if callable(binder):
+                binder(lambda: self._runtime_binding.maximum_active_jobs)
         self._manual_recovery = manual_recovery_service
         if (
             self._manual_recovery is None
