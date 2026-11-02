@@ -80,6 +80,7 @@ def entrance_journey(
     capacity: int | None = None,
     candidates: tuple | None = None,
     organize_operation: str | None = None,
+    recognition_rules: list[dict] | None = None,
 ):
     """One production-shaped managed layout for one entrance recovery journey.
 
@@ -151,7 +152,9 @@ def entrance_journey(
         # specific real OrganizerExecutor operation (for example COPY to prove
         # an unverified target write).
         document["organizePolicies"][0]["operation"] = organize_operation
-    if movie_rule:
+    if recognition_rules is not None:
+        document["recognitionRules"] = recognition_rules
+    elif movie_rule:
         # One legal movie rule over the whole library, so an organized run can
         # reach the real planning/execution boundary instead of stopping at a
         # waiting-recognition problem.
@@ -712,6 +715,134 @@ class EntranceRecoveryJourneyTests(unittest.TestCase):
             self.assertEqual(
                 {"stopped"},
                 {worker.status.value for worker in value.repository.list_workers()},
+            )
+
+    def test_batch_root_files_parse_real_names_and_settle_mixed_outcomes(self):
+        """The real all-library batch parses Storage-relative names, not display identity."""
+
+        self.media("One.2001.mkv")
+        self.media("Two.2002.mkv")
+        candidates = (
+            MediaCandidate("tmdb", "1", MediaType.MOVIE, "One", year=2001),
+            MediaCandidate("tmdb", "2", MediaType.MOVIE, "Two", year=2002),
+        )
+
+        class _RecordingProvider(SyntheticMetadataProvider):
+            def __init__(self) -> None:
+                super().__init__(candidates)
+                self.queries: list[str] = []
+
+            def search_movie(self, query, policy=None, **kwargs):
+                self.queries.append(query.title_candidate)
+                return super().search_movie(query, policy, **kwargs)
+
+        with entrance_journey(
+            self, movie_rule=True, organize_operation="COPY", capacity=1, candidates=candidates
+        ) as value:
+            provider = _RecordingProvider()
+            value.provider_registry = MetadataProviderRegistry((provider,))
+            with patch.object(
+                Path,
+                "open",
+                self._target_disk_full(value.target_root, contains="Two (2002)"),
+            ):
+                code, output, errors = self._run_cli(
+                    value, "batch", "organize", "--execute", "--limit", "5"
+                )
+
+            self.assertEqual(1, code, errors)
+            self.assertEqual("", errors, errors)
+            self.assertEqual(["One", "Two"], provider.queries)
+            self.assertIn("Task ID:", output)
+            self.assertIn("PARTIAL", output)
+            self.assertIn("SUCCESS", output)
+            (task,) = value.repository.list_tasks()
+            self.assertEqual("partial_success", task.status.value, task.error)
+            items = {
+                Path(item.source_path).name: item
+                for item in value.repository.list_items(task.task_id)
+            }
+            self.assertEqual("success", items["One.2001.mkv"].status.value)
+            self.assertEqual("partial", items["Two.2002.mkv"].status.value)
+            results = {
+                Path(result.source_path).name: result
+                for result in value.repository.list_results(task.task_id)
+            }
+            self.assertEqual("source", results["One.2001.mkv"].source_storage_id)
+            self.assertEqual("source", results["Two.2002.mkv"].source_storage_id)
+            self.assertEqual("verified_complete", results["One.2001.mkv"].effect_certainty)
+            self.assertEqual("attempted_unverified", results["Two.2002.mkv"].effect_certainty)
+            state = value.repository.get_task_scheduling(task.task_id)
+            self.assertEqual("settled", state.queue_state.value)
+            self.assertFalse(state.mutation_in_flight)
+            self.assertEqual(0, value.repository.count_scheduled_capacity_use())
+            self.assertTrue((value.source_root / "One.2001.mkv").exists())
+            self.assertTrue((value.source_root / "Two.2002.mkv").exists())
+            self.assertEqual(
+                1, len(list((value.target_root / "Organized" / "Movies").rglob("*.mkv")))
+            )
+
+            with SQLiteTaskRepository(value.runtime.database_path) as reopened:
+                self.assertEqual(1, len(reopened.list_tasks()))
+                self.assertEqual(2, len(reopened.list_items(task.task_id)))
+                self.assertEqual(2, len(reopened.list_results(task.task_id)))
+                self.assertEqual(0, reopened.count_scheduled_capacity_use())
+
+    def test_batch_nested_colon_file_keeps_exact_storage_path_for_recognition(self):
+        """A subdirectory file is parsed by exact Storage-relative path, not a split display id."""
+
+        self.media("Movies/With: Colon.2003.mkv")
+        candidates = (MediaCandidate("tmdb", "3", MediaType.MOVIE, "With: Colon", year=2003),)
+        directory_rule = [
+            {
+                "id": "movies-directory",
+                "name": "Movies directory",
+                "priority": 100,
+                "score": 100,
+                "stopOnMatch": True,
+                "condition": {"field": "directory", "operator": "contains", "value": "Movies"},
+                "outputRecognitionType": "A",
+            }
+        ]
+
+        class _RecordingProvider(SyntheticMetadataProvider):
+            def __init__(self) -> None:
+                super().__init__(candidates)
+                self.queries: list[str] = []
+
+            def search_movie(self, query, policy=None, **kwargs):
+                self.queries.append(query.title_candidate)
+                return super().search_movie(query, policy, **kwargs)
+
+        with entrance_journey(
+            self,
+            organize_operation="COPY",
+            capacity=1,
+            candidates=candidates,
+            recognition_rules=directory_rule,
+        ) as value:
+            provider = _RecordingProvider()
+            value.provider_registry = MetadataProviderRegistry((provider,))
+            code, output, errors = self._run_cli(
+                value, "batch", "organize", "--execute", "--limit", "5"
+            )
+
+            self.assertEqual(0, code, errors)
+            self.assertEqual("", errors, errors)
+            self.assertEqual(["With: Colon"], provider.queries)
+            self.assertIn("SUCCESS", output)
+            (task,) = value.repository.list_tasks()
+            (item,) = value.repository.list_items(task.task_id)
+            self.assertEqual("success", item.status.value, item.error)
+            self.assertEqual("Movies/With: Colon.2003.mkv", item.source_path)
+            self.assertEqual("Movies/With: Colon.2003.mkv", item.source_storage_path)
+            self.assertEqual("source:Movies/With: Colon.2003.mkv", item.source_display)
+            (result,) = value.repository.list_results(task.task_id)
+            self.assertEqual("source", result.source_storage_id)
+            self.assertEqual("Movies/With: Colon.2003.mkv", result.source_path)
+            self.assertEqual(0, value.repository.count_scheduled_capacity_use())
+            self.assertEqual(
+                1, len(list((value.target_root / "Organized" / "Movies").rglob("*.mkv")))
             )
 
     def test_cli_finished_pass_with_human_waiting_sibling_releases_the_slot(self):

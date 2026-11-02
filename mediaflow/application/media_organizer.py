@@ -1112,8 +1112,16 @@ class MediaOrganizerService:
     def _run_read_only_strategy(
         self, source: str, *, resource_library: ResourceLibrary, storage_path: str
     ) -> StrategyTestResult:
+        # ``source`` is the operator/display identity.  The all-library batch
+        # entrance renders it as ``StorageID:path``, which is not a media path:
+        # feeding that string to the Parser turns the display prefix into the
+        # filename/title.  Parsing therefore consumes the exact
+        # Storage-relative path already persisted on the TaskItem/Result; this
+        # is the same identity NFO lookup and source ownership use.  Never
+        # split the display string or teach the Parser a Storage syntax.
+        parse_path = storage_path or source
         strategy = self._strategy.run_path(
-            source,
+            parse_path,
             live_metadata=True,
             show_naming=True,
             show_classification=True,
