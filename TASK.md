@@ -1,18 +1,24 @@
-# Task47.5 — FIX REQUIRED：批量根目录文件的解析输入
+# Task47.5 — B Review PASS；交 A 终审
 
-B 已独立复核候选 `46f44be43a39a81cf17146aa5db2c077bcde97ee`。A-P1-1 的普通 CLI
-名额结算修复通过，终态/人工等待/取消三处接通已有安全规则，不要求重做。
-当前唯一 P1 为 **B-P1-1**：真实 `batch organize` 对资源库根目录文件把 Storage 展示前缀
-混入媒体标题，错误转为人工元数据修正；同文件目录入口成功。该问题在原 Task Base 也
-存在，不是 `2e1e293e` 引入；它属于原 AC-C3 与 RO-2/AC-4/24 明确包含的普通批量入口。
-继续同一 Task ID/Base/Goal，按末尾当前修复指导完成；无新 Task、无 Slice 范围变更。
-Developer 已按该指导完成修正并交 B 复核；本轮未声明 PASS、SLICE READY FOR A REVIEW 或关闭。
+完整审查范围：`75ddff55f8d5b2b1206c81804bfb5cbe9ed279a1..5c808d4a67bedfbafb71d88a1ffa8d3480ef5316`。
+A-P1-1（CLI 结束名额）与 B-P1-1（批量根目录解析）均已验证修复，无剩余 P0/P1。
+全部 Slice RO-1–6/适用 AC-1–25 已重评完成，**SLICE READY FOR A REVIEW**，不再规划实施。
+原 Base/Goal 与用户边界不变；A-owned Slice 的上次 FIX REQUIRED 结论/状态由 A 复核新候选
+后更新，B 不代 A 终审、改写合同或关闭 Slice。下方保留最后 Developer 交接元数据；
+本次 B 的接受结论与新 Closure Packet 在末尾，未授权继续开发。
+
+前序计划/修正历史见 `5d56e9ec:TASK.md`、`245b2a7b:TASK.md`、`5c808d4a:TASK.md`；
+上一完整 packet 见 `62a566f9:TASK.md`，Task47.4 接受事实见 `980ce42a:TASK.md`。
 
 Authority: committed [SLICE.md](SLICE.md#a-final-review--fix-required--2026-11-02)，
 RO-1/2、AC-2/4/15/24 及原 RO-6/AC-20–25；
 [Development Workflow](docs/development-workflow.md) 管修正、测试、审查和收尾。
 要求依据：V2-TASK-001/002/003/005/006/008–010、REQ-TASK-005/006/007、
 REQ-RECOVERY-006/009、REQ-RESULT-001–003、REQ-SAFE-*；按用户已提交修订解释。
+
+## Latest Developer submission metadata
+
+以下保留实现交接记录；当前 B 结论见文首和末尾 Review Result，已无待开发内容。
 
 ```text
 Task ID: 47.5
@@ -24,10 +30,10 @@ Difficulty: High
 Test Level: T4
 Planner / Reviewer: B
 Current correction: B-P1-1 — batch root-file parsing; A-P1-1 verified fixed
-This turn: DEVELOPER B-P1-1 CORRECTION — READY FOR B REVIEW
+Current handoff: B ACCEPTANCE COMPLETE — A REVIEW PENDING
 ```
 
-## Preflight / checkpoint / prior facts
+## Original planning preflight / prior facts
 
 - 本轮起始 branch `main`，HEAD `001ff5bae318656709e02d4f47443a63882f4237`；
   `python3 scripts/check_governance.py` PASS，无预存 tracked 修改，工作区/Git 可写。
@@ -118,7 +124,7 @@ B 对照实际调用链核对 A 的结论，并独立复跑其真实入口探针
 - [x] **AC-C2 — 后续准入与同版本持久化。** 容量为 1；移除故障后，另一独立文件 B
   经真实 CLI 正常准入、实际整理并再次释放名额。重开同一 DB，A 的失败和未知记录不变，
   A/B 结束状态与容量 0 保留；不靠重开、读页面或清库才释放，不产生 A 的新执行。
-- [ ] **AC-C3 — 批量/人工等待。** `batch organize`/目录同一路径保留成功、失败与等待
+- [x] **AC-C3 — 批量/人工等待。** `batch organize`/目录同一路径保留成功、失败与等待
   决定的独立结果。全终态混合批次结束占 0；partial/unknown 与人工等待混合、机器工作
   均返回后为 waiting_human、占 0，待决定文件仍不能被另一任务抢占。原四类决定→分析→
   摘要→确认可在同 Task 继续；本次不替失败/未知兄弟项续作。已有正常单文件成功、零效果
@@ -127,11 +133,11 @@ B 对照实际调用链核对 A 的结论，并独立复跑其真实入口探针
   释放名额，保留 partial Result；已完成/失败兄弟结果不被改成 cancelled。真正调用仍
   在进行或项目仍 processing 时占 1，取消请求本身不能提前归还；返回并完成允许的结果/
   取消结算后占 0。原 claim/fence/控制版本和没有结果的未知边界仍不能被此调整绕过。
-- [ ] **AC-C5 — 原 Task/Slice 行为保留。** 原 AC-T1–7 / Slice AC-20–25 保持：最新同版本
+- [x] **AC-C5 — 原 Task/Slice 行为保留。** 原 AC-T1–7 / Slice AC-20–25 保持：最新同版本
   failed/partial 自动排除、后来手动成功解除旧排除、Files 简短提醒与正常确认、原历史/
   pin/兄弟项不改写、活动来源互斥、四类同 Task 继续、CLI retry-failed 退役和普通 CLI/
   remote 的原有来源/授权规则。不得靠新恢复页、自动重放或放宽内核完成本修正。
-- [ ] **AC-C6 — 独立复核。** B 在完整原 Task Base..新候选上给出 PASS/FIX REQUIRED，
+- [x] **AC-C6 — 独立复核。** B 在完整原 Task Base..新候选上给出 PASS/FIX REQUIRED，
   完成适用 T4 验收，重评全部 Slice RO-1–6/AC-1–25；满足后更新 Closure Packet 交 A，
   不由 B 关闭 Slice，不将前序已通过范围作为新的任意扩展任务。
 
@@ -141,7 +147,7 @@ B 对照实际调用链核对 A 的结论，并独立复跑其真实入口探针
 用时 50%，优先真实关键复现，不用空等/删断言/重试/放宽超时凑比例。只用隔离临时媒体、
 SQLite 和 fake/local Provider；不读取生产配置或真实远端。
 
-### Developer — new / changed / directly affected
+### Developer — affected tests
 
 在现有 `test_automation_entrance_recovery.py` 增加真实 CLI 结算旅程，复用已有 fixture；
 必要的边界反例放现有 `test_task_scheduling.py` / fencing 测试，避免新造过程工具。
@@ -161,7 +167,7 @@ compileall 对实际修改的模块执行。若修改共享 application/reposito
 不能只有“函数收到 True”或 mock 调用断言；非法/队满/冲突/失败与重要边界由这组直接
 受影响测试保留。本计划不把全 Python/Web/E2E、容器与发布矩阵交给 Developer。
 
-### B — independent acceptance / T4
+### B — independent acceptance / full regression
 
 - 在新候选上独立重现 A 的原命令和 AC-C1–4，重点检查“命令已失败退出 → 别的文件
   能准入 → reopen 后仍诚实”，以及真实活动调用/取消不提前释放。A 的旧探针断言
@@ -189,192 +195,113 @@ compileall 对实际修改的模块执行。若修改共享 application/reposito
 不改变入口权限、pin、计划/冲突/覆盖/删源授权；不修改 Storage/Provider、不做旧任务/
 跨版本升级/V1 支持；不改 A-owned 合同、Roadmap/Progress 或关闭 Slice。
 
-## Prior planning assessment — 001ff5ba（历史结论）
+## B Review Result — PASS
 
 ```text
-Inspected checkpoint: 001ff5bae318656709e02d4f47443a63882f4237
-Decision: FIX REQUIRED — A-P1-1 independently reproduced; correction plan complete
-Implementation this turn: NONE
-Task/Slice remaining outcome: ordinary CLI finished-pass settlement and required acceptance
-Next: Developer implements this same Task correction; B reviews fresh candidate
-```
-
-B 本轮实际复现与 A 一致：partial Result 已持久化，但 CLI exit 2、无摘要、Task running /
-queue claimed、容量 1；下一不同文件 queue-full；reopen 后仍占 1。探针只在真实目标写入
-处注入 ENOSPC，不造路由/手填业务状态。用时约 0.33 秒，远低于本轮用时 50%；没有跑
-产品全量或宣称修复通过。证据：
-`.git/validation-evidence/001ff5bae318656709e02d4f47443a63882f4237/b-correction-plan/`。
-详细 A 证据与前序 B 验收留在对应 Git/ignored 目录；未重写历史 PASS，也未交新的就绪 packet。
-
-## Developer Completion Report — B-P1-1 correction — READY FOR B REVIEW
-
-```text
-Task: 47.5 (same ID/Base/Goal; B-P1-1 correction only)
-Implementation checkpoint: 32db236e5534b15bd4b92aa12c5b9ab18511e96a
+Decision: PASS
 Task Base: 75ddff55f8d5b2b1206c81804bfb5cbe9ed279a1
-Correction start: 245b2a7b (B review checkpoint 46f44be4; no rebase)
-Status: READY FOR B REVIEW
+Reviewed Head: 5c808d4a67bedfbafb71d88a1ffa8d3480ef5316
+Latest executable checkpoint: 32db236e5534b15bd4b92aa12c5b9ab18511e96a
+Previous CLI correction: 2e1e293ed7901b897ac316209c26c4ae4cd29556
+Branch / starting state: main; no tracked edits; pre-existing untracked files preserved
+Blocking findings: NONE
+Next: SLICE READY FOR A REVIEW — no further implementation Task
 ```
 
-### 实际改动
+独立核对整个原 Task Base..Head 的 36 文件清单与既有完整范围审查结果，逐行检查本轮
+解析接缝和测试增量，重新验证前序 CLI 收尾修复；没有只凭 Developer 报告接受。
+`32db236e..5c808d4a` 只改交接文档。本轮 B 只维护 TASK.md，未改产品/测试、A-owned
+合同/指针，未派生代理、push、部署或访问用户数据库/媒体/私密配置。
 
-- `mediaflow/application/media_organizer.py`：`_run_read_only_strategy` 不再把展示用
-  `source` 交给 Parser；解析使用 `process_file` 已持有的确切 `storage_path`
-  （`storage_path or source` 仅作无路径兜底）。`source` 仍用于 TaskItem/Result 展示身份、
-  日志、来源所有权、pin/授权；未按冒号切割字符串、未改 Parser/Provider/RecognitionRule/
-  Storage/Executor/容量或 schema。目录/子目录、root 文件、NFO 上下文和来源锁继续使用同一
-  Storage-relative 证据。
-- `tests/test_automation_entrance_recovery.py`：复用 managed fixture、真实 CLI/SQLite/
-  LocalStorage/Executor 和 fake Provider，新增两个真实 `batch organize` 旅程：
-  1. 根目录 `One`/`Two` 的 Provider 查询记录为 `One`/`Two`，一项真实 COPY 成功、另一项目标
-     写入 `ENOSPC`；断言 `partial_success`、独立 item/Result/unknown、exit 1+摘要、
-     queue settled/容量 0、reopen 不重放。
-  2. `Movies/With: Colon.2003.mkv` 由 directory RecognitionRule 命中，证明子目录证据来自
-     Storage-relative path、真实冒号文件名未被裁剪，来源/Result/展示身份分别正确。
-  fixture 仅增加可选 `recognition_rules`，不改变既有旅程的默认配置。
-- 未修改 A-owned 文档、Web、Worker/内核默认拒绝；未 push/部署。
+### 用户旅程与阻塞处置
 
-### 实际验证（本机，临时隔离媒体/SQLite/fake Provider）
+- **批量根目录正常整理已完成。** 原独立失败探针现在查询 One/Two、真实 COPY 两项；
+  与目录/子目录入口一致。新增实际 batch 成功/ENOSPC 混合旅程到达执行和结算，
+  保留独立 success/partial Result 与未知效果，partial_success、exit 1/摘要、容量 0，
+  reopen 不重放。真实冒号文件名未被拆分，目录规则仍命中。
+- **跨 Storage 实际结果正确。** B 通过现有 managed import/validate/activate 发布双
+  ResourceLibrary 配置，再执行真实 batch；新 Task 绑定该 Active pin，两种 Storage ID/
+  相对路径/展示身份/Result 均保持正确，生成两个实际目标媒体，结束容量 0。没有只在
+  fake Provider 添加带 Storage 前缀的候选来让测试通过。
+- **原 CLI 名额和取消修复保留。** 磁盘满产生 partial/unknown → 正常 Task ID/失败摘要、
+  exit 1、settled/容量 0；另一文件随后成功，reopen 仍占 0。真实写入暂停期间经现有
+  tasks cancel 请求取消，仍占 1；调用返回 ENOSPC 后 cancelled、占 0，旧未知 Result
+  保留。机器名额释放不等于清空文件所有权或重放原尝试。
+- **原历史规则与人工继续保留。** 当前全量和原生覆盖 due/Run once 最新同版本失败
+  排除、后来手动成功解除旧排除、自由兄弟项、Files 提醒→原确认→实际 MOVE、四类在同
+  Task 分析/摘要/确认、当前 pin、原 Automation 结果/时间及未知效果不改写。
+- **共享解析路径的影响已复核。** Parser/规则消费真实 Storage-relative 路径，展示
+  身份仍保留在 Task/Result/日志；未修改 Parser 规则、Provider 查询容错或 Storage 协议。
+  当前 recognition/path/directory、NFO、标签/剧集、普通 CLI/manual/remote 及四类回归
+  通过，不把 `StorageID:path` 展示文本当媒体文件名，也未做全局冒号裁剪。
 
-| 命令 | 实际结果 |
+### 当前验收与证据
+
+本地 ignored 证据根：`.git/validation-evidence/5c808d4a/b-review/`。
+命令脚本、原始日志、截图、分组清单/计数、产物源码核对及 SHA 保留于此，不宣称远程可访问。
+
+| 验证 | 实际结果 / 原始证据 |
 |---|---|
-| 修复前复跑两条新回归（临时还原旧解析输入，已恢复） | 2 tests FAILED，分别 `1 != 0` 与 Provider 查询 `[]`，确认测试命中 B-P1-1 |
-| 两条新真实 `batch organize` 旅程定向 | 2 tests OK，0.160s |
-| `.venv/bin/python -m unittest tests.test_automation_entrance_recovery tests.test_resource_library_pipeline tests.test_final_integration tests.test_media_parser tests.test_organize_source_history tests.test_task_scheduling tests.test_task_scheduling_fencing tests.test_recognition tests.test_nfo_parser tests.test_manual_task_engine tests.test_task_source_ownership_race tests.test_manual_organize_execution tests.test_task_persistence tests.test_batch_cli tests.test_task_retry tests.test_manual_organize_preview` | **256 tests OK**，15.546s；仅既有 SQLite/SSL ResourceWarning，无失败/skip |
-| `ruff check` + `ruff format --check`（media_organizer、entrance tests） | 全部通过 |
-| `compileall`（两个修改模块）、`check_governance.py`、`git diff --check` | 全部通过 |
+| 全量 Python | 145 个模块四组无重漏执行，635+634+634+634 = **2537 tests**；7 项可选远端/耐久环境 skip。唯一失败是 B-owned Task 的测试分工标题与既有文档检查要求不同，已就地修正文档标题，并重跑该模块 **8 tests OK**；产品/测试执行输入未改，无剩余失败。`python-full-{0..3}.log`、`python-full-plan.json`、`release-doc-after-fix.log`。 |
+| 独立真实入口 | `batch_root_acceptance.py` 的正确期望通过；`multi-storage.log`、`cli-capacity.log`、`active-cancel.log` 实际结果如上。新增真实 batch 混合/冒号旅程包含在全量与 clean installed 验证中。 |
+| 当前 native | 源历史 1、Task Center 八视图/摘要 2、Automation lifecycle/Run once 17、桌面及 390px 窄屏源历史各 1，合计 **22 passed**。使用正式 build + real API/SQLite/Worker/临时 Storage。`native-e2e.log`、`task-center-native.log`、`automation-synchronized.log`、`desktop.log`、`narrow.log`。 |
+| 视觉 | 实看 `desktop-summary.png`、`narrow-summary.png`、`narrow-confirm.png`：提醒、逐项旧效果和原确认可达，长路径换行，无横向溢出或新增知晓框/核查页。 |
+| 质量/公开示例 | Ruff check/format、compileall、pip check、两份公开示例 validate、governance 与完整 Task diff whitespace 通过；生产源码/pyproject 无 FFmpeg/FFprobe。`quality.log/json`。 |
+| Web 全量复用 | 复用 B 对 `3fb10500` 的 **88 files / 1267 unit passed、253 fake E2E passed** 及 typecheck/lint/format/build。`web-reuse-input-diff.txt` 为空，证明当前 Web 源码/测试/锁文件/配置、browser harness 和 pyproject 未变；依赖未重装，原 build 未替换。Python 输入改变的 native/full/installed/container 均重跑，未用旧 PASS 代替。 |
+| clean wheel / installed | 从 `git archive 5c808d4a` 干净上下文重建，169 个 Python 模块与源码逐字节相同、无多余/缺失。wheel smoke、源码外安装后 **9 tests OK**，包括真实 CLI ENOSPC→下一准入→reopen、root batch 混合写失败、冒号路径及四类/原 Task 交接；退役 retry-failed exit 2、help 无入口、普通 organize 保留。`wheel-*.log`、`installed.log`、`artifact-source-proof.json`。 |
+| Docker fresh/security | **PASS**；真实四服务健康、Files 手动整理、权限/拒绝零效果、non-root/秘密扫描；`docker-security.log`。 |
+| Docker 同版本 restart/fault | **PASS**；真实调度/COPY、各服务重启、幂等、原记录/pin/旧 owner fencing、未知效果非重放；`docker-restart.log`。最终 image `sha256:16d9bfff29901279c0b4988dc6069dbbc3759663b2940f355200fb3ae0ca0b42`。 |
+| image CLI 入口 | image 已安装 CLI 的 retry-failed exit 2，help 无入口，正常 organize help 通过；`image-retired-cli.log`。容器正式启动预检另由安全门禁覆盖。 |
 
-本轮测试执行约 16 秒，低于本轮用时的 30%。证据（本地 ignored）：
-`.git/validation-evidence/developer-b-p1-1/`（`affected-tests.log`、
-`static-checks.log`、`pre-fix-regression.log`）。
+clean wheel SHA-256：`7f75e4ed89ee0fd492228a302cb0d3f12644df04344473049e307fa54afee05d`。
+7 项 skip 为未配置专用 SMB/S3/OpenList 和耐久 profile；未改这些适配器、未使用用户端点，
+不把未执行的真实远端验证写成通过。旧任务/跨版本升级、V1 产品功能按用户边界排除。
 
-### 已知失败 / 剩余风险
+**原始失败与 B 的处置均保留：**
 
-- 未运行 B-owned 的完整 Python/Web/native/wheel/Docker/restart T4 验收；没有自称 PASS、
-  SLICE READY FOR A REVIEW 或关闭 Slice。
-- 共享 `_run_read_only_strategy` 现在对所有 `process_file` 入口使用 Storage-relative
-  path 解析；这是本 Task 要求的解析输入修正，已用 recognition/NFO/manual/CLI 回归覆盖。
-  B 仍应按 T4 复核现有规则若依赖展示根绝对前缀时的实际配置语义。
-- 未新增不同 Storage ID 的多资源库 batch 专属旅程；既有 multi-storage pipeline 测试通过，
-  修复未触碰 Storage/source ownership 代码。B 的独立验收仍应覆盖其清单。
+- 全量里的 Task 标题检查属于 B 文档维护，已修为既有 Developer/B 分工标题；没有改测试
+  或要求 Developer 返工。分组运行前的本地 runner 导入路径问题由 B 修正，最终计数与
+  unittest discover 的 2537 一致，没有把加载失败算作业务失败或跳过。
+- 原 Automation native 为 16 passed/1 failed：旧 Published 提示不能证明第二次 Save
+  的最新定义读回完成。trace 证明 PUT 已发布 itemLimit 150，但 Run once 在其 GET 返回前
+  2ms 发出旧 fingerprint；后端以 definition_changed/409、零效果拒绝。验收副本仅增加
+  等待真实 GET 的新 itemLimit 和 Active revision 呈现，保留全部效果/数量/权限断言，
+  17 项通过；无页面刷新、额外确认、sleep、retry 或放宽超时。原日志/trace 及副本保留。
+  Save 后极快点击可遇到有界陈旧定义拒绝作为已有 P2 记录，不新增开发 Task 或弱化后端
+  准入安全。
 
-## B Review Result — FIX REQUIRED（当前）
+## Entire Slice reassessment / Closure Packet for A
 
 ```text
-Task Base: 75ddff55f8d5b2b1206c81804bfb5cbe9ed279a1
-Reviewed Head: 46f44be43a39a81cf17146aa5db2c077bcde97ee
-Implementation checkpoint: 2e1e293ed7901b897ac316209c26c4ae4cd29556
-Correction comparison: 5d56e9ec..46f44be4
-Branch / entry state: main; no tracked edits; pre-existing untracked files preserved
-Decision: FIX REQUIRED
-A-P1-1: FIX VERIFIED
-Remaining Task blocker: B-P1-1 — batch root-file parsing uses display identity as media path
-Next: SAME TASK FIX LOOP; no new Task or Slice closure
+Slice: 47 — Unified Task scheduling and organizing execution
+Slice Base: 5144ab1fc2344b06194969cc2c496835729664c0
+Implementation Head: 5c808d4a67bedfbafb71d88a1ffa8d3480ef5316
+Required Outcomes and Surfaces: COMPLETE under explicit user amendments
+Tasks completed: 47.1–47.4 accepted baseline; 47.5 B review PASS
+Blocking findings: NONE
+Decision: SLICE READY FOR A REVIEW — no next implementation Task
 ```
 
-已核对完整原 Task Base..Head 的 36 文件清单，结合此前完整范围审查重评现存结果，
-逐行复核本轮 3 个执行/测试文件的增量及真实调用链；另 1 文件为交接报告。
-产品改动只有 CLI 三个安全结算调用，没有修改内核默认拒绝、schema、Web 或 Provider。
-未把 Developer 报告或之前的全量 PASS 当作当前候选的接受结论。
-
-### 已通过的交付结果
-
-- **原 A 复现改为正确结果断言后通过。** 单文件真实目标写入 ENOSPC → partial/
-  attempted_unverified/CREATE_DIRECTORY/mutation_outcome 保留 → CLI exit 1、Task ID +
-  SUMMARY → queue settled、容量 0；另一独立文件随后 exit 0，reopen 后容量仍 0。
-- **混合终态和人工等待通过。** Developer 的目录成功/部分失败、部分失败/人工等待及
-  取消旅程由 B 重新执行；71 项 scheduling/fencing/entrance 组合全部通过（3.018s）。
-  等待人工时 queue 为 waiting_human、容量 0，记录未知效果不再被当作活跃调用。
-- **真实活动调用与取消通过。** B 在实际目标 Storage 写入处暂停，通过现有
-  `tasks cancel <taskId>` 发出取消；调用仍阻塞时容量 1、无 Result，未提前释放。
-  放行调用使真实写入返回 ENOSPC，随后 Task cancelled、容量 0，partial/unknown Result
-  保留，CLI 输出正常。内核仍拒绝用完成标志释放 processing 兄弟项。
-
-### 唯一 P1 — 批量根目录文件被错误识别为需要人工修正
-
-**完整操作旅程：** 临时资源库根目录放 `One.2001.mkv`、`Two.2002.mkv`，配置合法
-电影规则、COPY 策略和明确可匹配的本地 Provider 候选，执行已有命令
-`mediaflow --config <bootstrap> batch organize --execute --limit 5`。实际 Provider 搜索
-标题为 `source:One` / `source:Two`，两个文件进入 waiting_metadata_correction、无 Result、
-无目标媒体。用户本来提交正常批量整理，却被要求人工修正本可自动识别的文件。
-相同配置/内容使用 `organize <source-directory>`，查询为 One / Two、两个真实 COPY 成功；
-使用 batch 处理 `Movies/` 子目录中的同名文件也成功，定位到根目录文件路径差异。
-
-**真实原因：** `MediaOrganizerService.process_all_libraries` 构造展示用
-`StorageID:relative/path` 并传给 `process_file`；`_run_read_only_strategy` 再把这个展示
-字符串当作真实解析路径传给 `StrategyTestRunner.run_path`。根目录文件没有目录分隔符，
-`file_context_from_path` 的 filename 因而含 `source:`，随后污染标题和 Provider 查询。
-这不是 fixture 未提供候选，也不是要求解析真实媒体内部流。
-
-**来源与范围：** B 在干净 `git archive 75ddff55` 上用同一真实入口重新执行，现象一致，
-没有虚构 Base 故障。展示字符串构造在历史 `7d957971`（2026-08-21）已存在，当前策略
-接缝可追溯 `ae18b208e`（2026-08-23）；未独立确定最早哪次组合开始触发此 bug，不归因
-于本轮三处结算修改。Task 的 AC-C3 明确要求 batch/目录，Slice RO-2/AC-4/24 保留普通
-CLI/batch 能力；因此本次不能用“目录测试已过”或“旧链路未改”豁免该缺口。只修现有
-路径输入，不扩展 Parser/Provider 功能，不另建独立 bug 或新 Slice。
-
-### Developer 当前修复指导（仅 B-P1-1）
-
-1. 在现有 `test_automation_entrance_recovery.py` 固化真实 batch 根目录回归。复用现有
-   managed fixture，两个普通根目录文件、正确候选、真实 CLI/SQLite/Storage/Executor；
-   记录实际 Provider 查询，断言标题 One/Two、实际结果/唯一目标媒体、Task/容量一致。
-   同配置保留目录/子目录对照，不能给假 Provider 增加 `source:` 候选、宽松忽略前缀、
-   手工选 metadata identity 或换用目录命令来绕过。
-2. 在 `process_all_libraries → process_file → _run_read_only_strategy → run_path` 的
-   实际接缝，区分展示身份和真实解析路径/上下文，使用已有确切 Storage-relative path
-   等来源证据构造正确 filename/目录。保留显示/日志/结果的 Storage 身份与授权/版本绑定。
-   不把 Storage 展示协议塞进 Parser，不全局按冒号切割用户路径，不直接改 Provider 搜索
-   来掩盖输入污染。具体最小实现由 Developer 选择，不重构整条处理管线。
-3. 保留 RecognitionRule 的路径语义、目录/NFO/多集/标签证据、跨库来源身份、命名/分类、
-   source ownership、历史 gate、只由 Executor 写入和原 pin。若调整共享 StrategyTestRunner
-   或上下文构造，补其直接受影响回归；无需新增路由、schema、Storage 能力或处理引擎。
-4. 让真正 `batch organize` 到达已修好的结算：一项实际 COPY 成功、另一项目标写 ENOSPC，
-   断言 partial_success/独立 Result/未知证据、exit 1 和正常摘要、结束容量 0、reopen 不重放。
-   保留已通过的 A-P1-1 单文件/等待人工/取消保护。完成后交 READY FOR B REVIEW，B 再做
-   新候选全量验收和全部 Slice 结果重评；不要提前判断 PASS 或扩大为其他缺口清理。
-
-**补充验收（原 AC-C3 内的必需结果）：**
-
-- [ ] 实际 root-file batch 使用正确文件名/目录证据查询 One/Two，正常 COPY 与目录入口
-  一致；不制造人工元数据问题，不因改为宽松 Provider 或硬编码身份获得通过。
-- [ ] root 与子目录、不同 Storage ID 的实际来源/Result/锁保持准确，无冒号字符串裁剪
-  对真实文件名的误伤；若调整共享上下文，原 recognition/NFO/目录/标签等适用回归通过。
-- [ ] root-file batch 的成功/真实写失败混合到达结算，保留每项事实并释放共享容量；
-  单文件、真实取消/活动调用和原 AC-C1–6/AC-T1–7 不退化。
-
-**Developer 受影响命令：**
-
-```bash
-.venv/bin/python -m unittest tests.test_automation_entrance_recovery tests.test_resource_library_pipeline tests.test_final_integration tests.test_media_parser tests.test_organize_source_history tests.test_task_scheduling tests.test_task_scheduling_fencing
-```
-
-若改变 Recognition 或共享上下文，追加 `tests.test_recognition`、`tests.test_nfo_parser`
-及实际受影响模块；对实际改动文件跑 Ruff format/check、compileall、governance 和
-`git diff --check`。只跑受影响测试；B 原 T4/native/干净 installed/容器计划继续有效。
-
-### 实际结果、证据与 Slice 重评
-
-本轮证据根：`.git/validation-evidence/46f44be4/b-review/`（本地 ignored）。
-`cli-capacity-fixed.log`、`active-cancel.log` 为通过的原阻塞/实际活动保护；
-`focused.log` 71 OK；`batch-entry.log` 保存三种真实入口对照；
-`batch-entry-task-base.log` 是原 Task Base 干净上下文对照；
-`batch-root-acceptance.log` 正确期望断言失败，明确指出 Storage 前缀进入真实查询。
-相关 probe 只暂停/注入真实依赖处故障，不造端点或手填 Task 业务状态。
-
-按 workflow 的已证实阻塞提前退回规则，本轮未运行昂贵完整 Python/Web/wheel/Docker
-矩阵；没有宣称通过。修复后的候选仍须 B 完成原 T4 计划，不能仅凭 71 项通过接受。
-B 本轮只编辑 TASK.md、保留原未跟踪文件，不改 A-owned 合同/指针或产品/测试代码。
-
-| 全部 Slice 结果 | 当前重评 |
+| 全部结果/验收 | 重评 |
 |---|---|
-| RO-1 | A 的 CLI 容量结算缺口已在本候选修正；原共享容量/活跃调用/取消规则保持。 |
-| RO-2 | **未完成**：普通根目录 batch 的解析输入错误，未完成现有正常整理旅程。 |
-| RO-3 | 原四类同 Task 继续接受基线保留；本轮不能把错误解析制造的人工修正当正常恢复。 |
-| RO-4 | Job 退出/fresh/同版本安全接受事实保留；本轮未改 schema，未声称新产物/重启验收。 |
-| RO-5 | 原 Web/管理接受基线保留，普通 CLI batch 表面有命令但不能完成上述正常旅程。 |
-| RO-6 | 自动历史 gate/Files 提醒/手动新整理/CLI retry-failed 退役的既有结果保留；没有新增历史规则，最终整体回归仍待修复候选。 |
+| RO-1 / AC-1–3 | 完成：同一 Task、全入口共享容量、机器工作/人工等待区分、原子准入/claim/control/fence；CLI 真实故障及活动取消补足此前漏项。 |
+| RO-2 / AC-4–6 | 完成：Files/due/Run once/普通 CLI/remote 共用管线，root batch/目录/跨 Storage 实际效果闭环；保留入口意图、限制、稳定性/完整遍历/附件与明确授权。 |
+| RO-3 / AC-7–8 | 完成：四类在同 Task 决定/分析/摘要/确认、合法旧 pin 和独立结果，成功/未知旧尝试不重放，当前 full/native/installed/restart 覆盖。 |
+| RO-4 / AC-9–12 | 完成适用范围：Job 退出/fresh/配置和新数据同版本 reopen/restart 的接受事实保留，当前源码/clean wheel/image 复核；旧任务与跨版本迁移按用户排除，不声称已验证。 |
+| RO-5 / AC-13–19 | 完成：八视图/Attention、Files、Automation 原记录/设置、Dashboard/通知/日志/导出/API/CLI/健康与 Pause 退出保留；AC-18 的 A 独立整个 Slice 终审尚待进行，B 不代签关闭。 |
+| RO-6 / AC-20–25 | 完成：最新同版本历史、自动原子排除/自由兄弟/无工作真相、手动可见提醒和新效果、历史/pin/未知证据不改写、来源互斥/接管及 CLI 退役，当前适用 T4/native/产物证明完整。 |
 
-Task 保持 FIX REQUIRED，不规划下一 Task，不交新的 SLICE READY FOR A REVIEW，不关闭 Slice。
+**Documentation Reconciliation Needed：** A 复核新完整 Slice Base..Head 后更新 A-owned
+Slice 的候选/上次 FIX REQUIRED 状态与 Next Action、Roadmap/Progress 指针；A PASS 后再
+统一 CURRENT/TARGET、requirements/journey/architecture 和根 Task 的正式关闭衔接。
+B 保留最后实施交接元数据和上次 A 审核历史，不用本次 B PASS 冒充 A 已接受/关闭。
 
-本轮日志执行区间合并并为短检查预留 1s，测试上界 6.5s；保守总用时 413.6s，
-测试占比上界 1.6%，小于 50%；见证据目录 `timing.json`。
+**Known non-blocking / deferred：** 上述有界 Save/readback 点击时序 P2，以及未运行的
+可选真实远端/耐久 profile。前序默认 E2E fake/native 路由和旧安装恢复脚本的证据维护
+问题已由 B 使用对应上下文覆盖，不新增过程工具或后续 Task。没有新功能延期或新恢复承诺。
+
+**Stop rule：** 六项结果已满足，停止规划，交 A 独立终审；本 Task 无进一步实施授权。
+
+本轮并行日志区间合并 265.2s，另计人工图评/短检查预留 30s，测试上界
+295.2s；保守总用时 789.1s，占比上界 37.4%，小于 50%。
+无空等补时；精确区间见本轮证据 `timing.json`。
