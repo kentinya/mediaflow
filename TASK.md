@@ -1,8 +1,14 @@
-# NO ACTIVE IMPLEMENTATION TASK
+# Task47.5 — FIX REQUIRED（A 整 Slice 终审退回）
 
-Task47.5 B Review: **PASS**。Next action: **SLICE READY FOR A REVIEW**；交 A 独立终审，未关闭 Slice。
+A 对完整 Slice Base..`3cf1b6b4` 的独立终审发现 **A-P1-1**：普通 CLI
+`organize --execute` 在真实目标写入磁盘满后已有终态 partial Result，却因结束结算仍拒绝
+未知标记而保留 running/claimed 和机器名额；容量 1 时下一独立请求队满，reopen 后不变。
+详见 [SLICE.md 的 A Final Review](SLICE.md#a-final-review--fix-required--2026-11-02)。
+**下一步由 B 在同一 Task47.5 原 ID/Base/Goal 下重评并补充修正与验收计划**，再交 Developer；
+A 本轮未规划下一 Task、未实施修复，Slice 不关闭。下述 B PASS 是此前检查点的历史事实，
+不再表示当前 SLICE READY FOR A REVIEW；完整原 packet 保留于 `62a566f9:TASK.md`。
 
-# Task47.5 — PASS
+# Task47.5 — prior B PASS / Closure Packet（待 A-P1-1 修正后重评）
 
 B 独立审查完整 `75ddff55f8d5b2b1206c81804bfb5cbe9ed279a1..3cf1b6b4b59dbea0bbd2159c404e760f7bcd9417`，
 原容量、旧批次收尾、提醒及自动历史准入并发问题均已通过。无剩余 P0/P1。
@@ -24,12 +30,12 @@ REQ-RESULT-* 与 REQ-SAFE-* 中未被明确修订的身份、授权、历史及�
 Task ID: 47.5
 Task Type: SLICE
 Parent Slice: 47
-Status: PASS
+Status: FIX REQUIRED
 Task Base: 75ddff55f8d5b2b1206c81804bfb5cbe9ed279a1
 Difficulty: High
 Test Level: T4
 Planner / Reviewer: B
-Implementation authorization: USER-AUTHORIZED — IMPLEMENTED, B REVIEW PASS
+Implementation authorization: USER-AUTHORIZED — A FINAL REVIEW RETURNED; B CORRECTION PLAN REQUIRED
 ```
 
 ## Planning preflight / workspace / role

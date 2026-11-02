@@ -4,14 +4,15 @@
 Slice ID: 47
 Name: Unified Task Scheduling and Organizing Execution
 Owner: A — Slice Owner / Architect / Final Reviewer
-Status: ACTIVE
+Status: FIX REQUIRED
 Base SHA: 5144ab1fc2344b06194969cc2c496835729664c0
-Implementation Head: NOT SET
+Implementation Head: 3cf1b6b4b59dbea0bbd2159c404e760f7bcd9417
+Implementation Head Acceptance: REVIEWED CANDIDATE — NOT ACCEPTED
 Working Branch: main
 Development Authorization: USER-REQUESTED REFACTOR; A SCOPE AUTHORITY — 2026-10-30
 Risk: High
 Final Test Level: T4
-Next Action: TASK47.5 PLANNED — AWAITS EXPLICIT IMPLEMENTATION AUTHORIZATION
+Next Action: B REOPENS TASK47.5 FOR A-P1-1; NO SLICE CLOSURE
 ```
 
 ## Authority and accepted baseline
@@ -403,7 +404,8 @@ The preceding investigation ran 138 core Task/Automation/authority/recovery test
 original-record/log-isolation tests on the Base: 183 passed, with database ResourceWarnings in the
 first run. These are pre-refactor observations, not final acceptance; no full/Web/container result
 is claimed. A scope checkpoint runs relevant document/link/governance checks only. Implementation
-Head, Closure Packet and A Final Review are not yet available.
+Head and Closure Packet were subsequently supplied by B; the A Final Review below supersedes
+this original planning-stage availability statement.
 
 ## Workspace and role record
 
@@ -422,3 +424,67 @@ until B plans against the committed Contract. No original closed Slice fact is c
 OS/log/reference files, `15` and output artifacts are preserved unstaged. Governance preflight PASS.
 The same root agent acts as A for this scope checkpoint and subsequently as B planner, with no
 delegation, implementation, final review, push or change to prior acceptance facts.
+
+## A Final Review — FIX REQUIRED — 2026-11-02
+
+```text
+Slice Base: 5144ab1fc2344b06194969cc2c496835729664c0
+Reviewed Implementation Head: 3cf1b6b4b59dbea0bbd2159c404e760f7bcd9417
+Review starting HEAD: 62a566f9c7395fae14b5ee5df9dae987bb4bb201
+Decision: FIX REQUIRED
+Blocking finding: A-P1-1 — direct CLI terminal unknown-effect work retains shared capacity
+Next action: B reopens/reassesses Task47.5 with its original Base and correction/test plan
+```
+
+This independent A review uses the entire original Slice range (225 changed files), not only
+Task47.5: Task scheduling/claims/source ownership, manual and automatic entry/completion paths,
+four-type continuation, Job removal/fresh persistence, API/CLI/Web consumers and B's actual
+validation evidence. `3cf1b6b4..62a566f9` changes only B's `TASK.md` report. The review applies the
+user's scope amendments: no old-task/cross-version upgrade or V1 acceptance is claimed. Original
+Slice Base, accepted43–46 and previous B Task review checkpoints remain unchanged. This A instance
+has not implemented or B-reviewed this Slice and has spawned no agents.
+
+**A-P1-1 — ordinary CLI does not settle a finished unknown-effect attempt.** Existing entry:
+`mediaflow --config <isolated-bootstrap> organize <source> --execute --limit 1`, under a legal
+COPY policy. The real LocalStorage adapter encounters `ENOSPC` opening its target staging file;
+the pipeline records a terminal `partial` TaskItem and Result (`CREATE_DIRECTORY` completed,
+`attempted_unverified`, `mutation_outcome`). All calls have returned and the CLI exits, but
+`final_cli.py::_settle_direct_organize` calls `scheduling.settle` without the finished-pass boundary
+used by `ManualTaskEngineWorker`. Settlement refuses the recorded unknown marker; the Task stays
+`running`, queue `claimed`, capacity **1**, including after same-version reopen. With capacity 1,
+a second distinct ordinary CLI request is rejected as queue-full after the disk fault is removed.
+CLI exits 2 with the settlement exception and omits the normal Task/result summary.
+
+The direct settlement call was introduced in `1e46e5baa` (2026-11-01 00:25:11 +08:00).
+Task47.5's finished-pass capacity correction covers the resident path but leaves this existing CLI
+caller unchanged. This is an unmet RO-1/RO-2 and AC-2/4/15/24 invariant in the unclosed Slice,
+not a standalone minor bug or a new scope request. Unknown Result evidence must remain unknown;
+retaining it does not mean the finished process still has machine work or needs a queue slot.
+
+**Correction boundary for B:** keep Task47.5 ID/Base/goal and the shared kernel; make ordinary
+CLI completion and applicable control/human-wait settlement use the same supported finished-pass
+rules as the resident path. Release capacity only when the pass's calls returned and durable
+items/results prove no remaining machine work; preserve the original Result, effects, source
+protection, siblings and fences. Return the honest Task/result summary. Add real CLI-entry
+regression for this failure, subsequent distinct admission and reopen, plus directly affected
+control/mixed-item cases. Do not clear uncertainty, auto-replay, add recovery/remote detection or
+broaden the Contract. B owns the correction plan and fresh assigned acceptance before another
+Closure Packet; A does not implement or self-approve it.
+
+**Actual evidence:** local ignored root
+`.git/validation-evidence/3cf1b6b4b59dbea0bbd2159c404e760f7bcd9417/a-final-review/`.
+`cli_capacity_probe.py` invokes the existing production CLI with the existing isolated managed
+fixture, fake Provider and real SQLite/LocalStorage/Executor. Only target `Path.open('wb')` receives
+the OS disk-full error; no synthetic endpoint, repository mutation or fabricated Task state is used.
+`cli-capacity.log` records the terminal item/Result, retained slot, next admission refusal and reopen.
+`focused.log`: A independently ran six Task scheduling/fencing/source race/manual engine/history/
+entrance-recovery modules: **134 tests OK**, 11.343s. That passing set misses this CLI disk-failure
+settlement. The reproduced blocker is not waived by passing suites.
+
+B's retained packet at `62a566f9:TASK.md` includes 2530 Python tests (7 optional remote/endurance
+skips), 1267 Web unit tests and 253 fake E2E, native journeys, clean wheel/source proof and Docker
+fresh/security/same-version restart. A inspected raw logs and the report-only/Web reuse diffs;
+these remain valid evidence for their covered cases, not proof of the missing CLI outcome. A did
+not mechanically rerun full suites or claim new wheel/container acceptance. No CURRENT/closure
+reconciliation is performed on FIX REQUIRED. Roadmap stays ACTIVE; Progress's closure ledger is
+unchanged. Pre-existing untracked files remain unstaged; no product/test edits or push occurred.

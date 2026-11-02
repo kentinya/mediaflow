@@ -36,20 +36,20 @@ only in [the development workflow](development-workflow.md).
 
 ## Current boundary
 
-Slice47 — **Unified Task Scheduling and Organizing Execution** — is **ACTIVE**, selected by A
-under explicit user authorization on 2026-10-30. Immutable Base:
-`5144ab1fc2344b06194969cc2c496835729664c0`; Implementation Head: **NOT SET**.
-[SLICE.md](../SLICE.md) now owns six outcomes, AC-1–25 and T4 validation. Task47.4 passed B at
-`dd3f1c25126cd574d8df293d0163131bc6cb9ad6`; its packet remains in
-`980ce42a977b5bc20cf8426dbaf5a232f46cf22b:TASK.md`. The user explicitly adds
-`V2-TASK-008–010` on 2026-11-02: definition due/Run once excludes prior failed/partial versions;
-new manual organizing warns before normal confirmation; independent CLI retry-failed exits.
-The user's planning correction uses the latest formal outcome: later manual success removes the
-earlier failure-based exclusion, without rewriting history or adding CLI/remote product rules.
-Next: **TASK47.5 PLANNED — AWAITS EXPLICIT IMPLEMENTATION AUTHORIZATION**; [TASK.md](../TASK.md)
-contains the draft against the committed amendment. The enlarged Slice remains ACTIVE;
-the earlier readiness packet does not cover the new outcome. No implementation or A final acceptance
-is conducted by this scope/planning action. No old-task/cross-version upgrade or V1 support is selected.
+Slice47 — **Unified Task Scheduling and Organizing Execution** — remains **ACTIVE** in this
+Roadmap; A Final Review on 2026-11-02 returned **FIX REQUIRED**. Immutable Base:
+`5144ab1fc2344b06194969cc2c496835729664c0`; reviewed candidate (not accepted):
+`3cf1b6b4b59dbea0bbd2159c404e760f7bcd9417`. [SLICE.md](../SLICE.md) retains six outcomes,
+AC-1–25 and the explicit user amendments. B's original Closure Packet is preserved at
+`62a566f9c7395fae14b5ee5df9dae987bb4bb201:TASK.md`.
+
+**Next: B reopens/reassesses Task47.5 for A-P1-1**, preserving its Task Base/goal. The existing
+ordinary CLI `organize --execute` records a terminal partial/unknown Result after a disk-full write,
+but keeps the shared machine slot and blocks later admission; same-version reopen does not settle
+it. A's real-entry reproduction and correction boundary are in the Contract's Final Review.
+No product fix, new Slice selection, CURRENT reconciliation or closure is conducted by this review.
+No old-task/cross-version upgrade or V1 support is selected. Earlier B PASS checkpoints and the
+user's latest-formal-outcome/history-warning/CLI-retirement amendments remain factual.
 
 Slice46 remains **PASS / CLOSED** with original Base `e9f1a8dc607cfc6d5ea02141b058da8ce849cd70`
 and reviewed implementation `6469f45811ee59c875cfd10107d3aed129e9d489`. Its Contract/A review is at
