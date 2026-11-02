@@ -3,7 +3,8 @@
 最新候选 `f3fcace35371bc7aa3f56ce6e5698261faab5e52` 的提醒数据和单文件交接已有修复证据。
 B 撤回此前“失败且效果未知就必须继续占容量”的批量 P1 判断；原复现未证明仍有在途工作，
 不能用该假设要求 Developer 返工。进一步实际验证发现相反问题：所有文件已结束，旧批次
-仍占名额；这是本轮有效阻塞，见末尾最新容量核对。其余 T4 验收仍未完成。
+仍占名额；此外，批次进行中接手已失败文件后，旧批次最终结算会误报技术失败。
+这两项为已实测阻塞，见末尾容量核对及补充旅程。其余 T4 验收仍未完成。
 Task ID、Goal、Base 和 Slice 边界不变；不授权派生代理、push、部署或 Slice 关闭。
 用户已选择：“运行一次”和定时一样排除历史 failed / partial，保留一键执行，不新增初始确认。
 本次规划一致性核对后按用户选择改为**同一来源版本最近一次正式整理结果**判断；后来手动整理
@@ -423,6 +424,61 @@ unknown 历史并结束本批次执行占位，不要求先重新整理任意文
 的 `probe.py` / `probe.log`。3 个真实旅程合计运行不足 1 秒；治理预检和 `git diff --check`
 通过，未执行全量/浏览器/包装门禁，测试时间低于本轮总用时 50%。Task 保持原 ID/Base，
 本轮只提交 Task 复核结果及开发指导，不实施产品，不改 A-owned 合同或 Slice 状态。
+
+### 补充旅程：旧批次运行中重新整理失败文件、单文件与四类决定
+
+本轮起始 `main` / `1b33f1936e8f2c933faf3a762f3589916a2baba4`；无预存 tracked 修改，
+预存 untracked 保留。候选产品代码不变；仅补充 B 证据与同 Task 修复指导。
+
+**旧批次仍在执行时重新整理失败文件：前半程通过，旧批次结算失败（第二项 P1）。**
+
+从现有 Run once API 建立含 A/B 的旧批次；A 在 Provider 阶段真实失败、无媒体效果；
+B 的真实 LocalStorage 写入用 Event 暂停，使 B 的调用确实仍在执行。此时通过第二个
+已注册 Worker 消费现有 Files 请求，用户选择 A → 失败提醒 → 普通确认 → 新 A COPY
+实际成功。未手填 Task/Result，不用 PROCESSING 字段假设一个调用仍在运行。
+
+实测过程：旧 A failed、B processing，旧批次占 1；新 A 确认后总计 2；新 A 成功后总计
+1，B 的在途边界保留，旧 A Result 原样不变。这段符合逐文件接手要求。
+
+释放 Event 让 B 真正写完后，B Result 记录 success，旧 A Result 仍 failed，旧批次却在
+正常汇总结算时抛出 TaskSchedulingError，最终被异常处理标为 failed，error 为
+`manual Task engine could not advance this stage (TaskSchedulingError)`。正确应按旧批次
+自己的 A failed / B success 汇总为 partial_success；新 A 的独立成功不改写旧 A。
+最后容量为 0，**本次问题不是名额卡住或提前释放**，没有复现文件重复执行/丢失。
+
+定位：`_settle_automatic` 把旧批次全部 item 传给结算；
+`SQLiteTaskRepository.release_scheduled_claim` 在 PROGRESS 阶段重新发布这些 item；
+`_require_scheduled_item_locked` 对已被新 A 接手的旧 A 一律拒绝，连本次只想读取旧终态来
+汇总批次的结算也拒绝。该 guard 是 f3fcace3 的新接入，阻止旧 A 实际重启/改写仍必须保留。
+
+Developer 指导：在现有结算事务中分开“读取旧终态参加批次汇总”和“再次发布旧 item”。
+旧 A 的事实可以参与汇总，结算不应向已交接 item 重发 PROGRESS/OUTCOME 写入；不得
+通过删除 superseded 标记、放宽旧 owner 启动/结果发布或覆盖旧结果来修复。补完整并行
+回归：A 原失败 → B 真实仍在写 → 新 A 成功 → B 写完 → 旧批次诚实 partial_success，
+无技术收尾错误，最终名额 0。原手动批次也按同一共享结算边界补直接受影响覆盖；本轮
+新增并行探测的原批次入口是 Run once，不能据此宣称手动/due 的全部矩阵已通过。
+
+**单文件与四类决定的针对性复验：9 tests OK，1.367 秒。**
+
+- 单文件：`SupersededSingleFileOwnerHandoffTests` 与
+  `ManualTaskDiscoveryTests.test_confirmation_adopts_the_same_task_and_executes`，覆盖正常
+  Files 确认到结果、真实失败后提醒/再次确认/实际 COPY、旧 Result 保留、旧资格拒绝及
+  新工作完成后的容量释放。失败后尚未重新整理就占位的问题仍按上一节修复。
+- 批量阶段性检查：`SupersededOwnerWithRemainingWorkTests` 通过，但它未跑完旧兄弟项，
+  不能替代上面新增的真实在途调用和旧批次最终结算；其阶段性通过与新 P1 不矛盾。
+- 识别/元数据：`ManualTaskDiscoveryTests` 的 partial_recognition、
+  task_center_continue、native_metadata_candidate 三项真实 API/Worker 旅程通过，覆盖
+  保存决定 → 分析 → 精确摘要 → 选中确认 → 同 Task 实际结果及兄弟项独立处理。
+- 分类/冲突：`RunOnceApiTests.test_recognition_decision_reaching_classification_stays_a_business_problem`
+  与 `test_conflict_recovery_keeps_the_original_automation_record` 通过，完成各自决定到真实
+  整理结果，保留原执行记录；队满时保留已保存决定与等待状态的测试也通过。
+- 以上是现有 Python API/SQLite/Worker/LocalStorage 旅程，不是生产浏览器桌面/窄屏验收，
+  不把 9 项通过等同于全部四类入口/并发/重启矩阵均完成。
+
+本机证据：`.git/validation-evidence/1b33f1936e8f2c933faf3a762f3589916a2baba4/scenario-review/`
+的 `journeys.log`、`live_sibling_probe.py`、`live_sibling.log`。独立旧批次最终状态断言
+`partial_success != failed` 失败。所有产品测试与并行复现合计不足 10 秒，低于本轮总用时
+50%；Task 保持 FIX REQUIRED，在同一 Task 修上述两个产品缺口，不新增 Task/执行系统。
 
 ### 判断纠正：失败历史与当前仍在执行是两件事
 
