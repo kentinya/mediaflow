@@ -160,8 +160,18 @@ for (const width of [1536, 390]) {
     await expect(evidence).toBeHidden();
     expect(writes).toEqual([]);
 
-    await page.getByRole("button", { name: "全局设置", exact: true }).click();
-    const settings = page.getByRole("region", { name: "自动化引擎设置" });
+    await expect(
+      main.getByRole("button", { name: "全局设置", exact: true }),
+    ).toHaveCount(0);
+    if (width === 390) {
+      await page
+        .getByRole("button", { name: "Open menu", exact: true })
+        .click();
+    }
+    await page
+      .getByRole("link", { name: "Configuration", exact: true })
+      .click();
+    const settings = page.getByRole("region", { name: "系统运行设置" });
     await expect(settings.getByLabel(/Worker 轮询间隔/)).toBeVisible();
     await expect(
       settings.getByRole("button", { name: "保存设置" }),

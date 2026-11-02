@@ -779,19 +779,16 @@ test("the workspace keeps narrow and wide layouts usable", async ({
     path: testInfo.outputPath("automation-workspace-wide.png"),
   });
 
-  // The settings tab renders the shared four-field engine-settings surface in
-  // place (Task 43.4) rather than a placeholder that hands off elsewhere: the
-  // published target and the per-consumer adoption readback are both visible
-  // without leaving the workspace.
-  await page.getByRole("button", { name: "全局设置" }).click();
-  const settingsPanel = page.getByRole("region", { name: "自动化引擎设置" });
+  // Slice47 moves the shared three-field form into System Settings; the
+  // published target and actual consumer adoption remain visible there.
+  await expect(page.getByRole("button", { name: "全局设置" })).toHaveCount(0);
+  await page.getByRole("link", { name: "Configuration", exact: true }).click();
+  const settingsPanel = page.getByRole("region", { name: "系统运行设置" });
   await expect(settingsPanel).toBeVisible();
   await expect(settingsPanel.getByText("已发布目标")).toBeVisible();
   await expect(settingsPanel.getByLabel(/Worker 轮询间隔/)).toBeVisible();
   await expect(
     page.getByRole("region", { name: "Worker 轮询采用情况" }),
   ).toBeVisible();
-  await expect(page).toHaveURL(
-    /\/ui-v2\/operations\/automation\?tab=settings$/,
-  );
+  await expect(page).toHaveURL(/\/ui-v2\/configuration$/);
 });
