@@ -6,13 +6,13 @@ Name: Unified Task Scheduling and Organizing Execution
 Owner: A — Slice Owner / Architect / Final Reviewer
 Status: FIX REQUIRED
 Base SHA: 5144ab1fc2344b06194969cc2c496835729664c0
-Implementation Head: 3cf1b6b4b59dbea0bbd2159c404e760f7bcd9417
+Implementation Head: 5c808d4a67bedfbafb71d88a1ffa8d3480ef5316
 Implementation Head Acceptance: REVIEWED CANDIDATE — NOT ACCEPTED
 Working Branch: main
 Development Authorization: USER-REQUESTED REFACTOR; A SCOPE AUTHORITY — 2026-10-30
 Risk: High
 Final Test Level: T4
-Next Action: B REOPENS TASK47.5 FOR A-P1-1; NO SLICE CLOSURE
+Next Action: B PLANS BOUNDED CAPACITY-COMPATIBILITY CORRECTION FOR A-P1-2; NO SLICE CLOSURE
 ```
 
 ## Authority and accepted baseline
@@ -488,3 +488,89 @@ these remain valid evidence for their covered cases, not proof of the missing CL
 not mechanically rerun full suites or claim new wheel/container acceptance. No CURRENT/closure
 reconciliation is performed on FIX REQUIRED. Roadmap stays ACTIVE; Progress's closure ledger is
 unchanged. Pre-existing untracked files remain unstaged; no product/test edits or push occurred.
+
+## A Final Review — FIX REQUIRED — capacity compatibility — 2026-11-02
+
+```text
+Slice Base: 5144ab1fc2344b06194969cc2c496835729664c0
+Reviewed Implementation Head: 5c808d4a67bedfbafb71d88a1ffa8d3480ef5316
+Review starting HEAD: 7ac253dd11ab3453f36cd40500c79c72b4f888de
+Decision: FIX REQUIRED
+Resolved: A-P1-1 — direct CLI finished-pass capacity settlement; B-P1-1 — batch parsing
+Blocking finding: A-P1-2 — published legal capacity exceeds the new Task kernel's accepted range
+Next action: B plans one bounded in-Slice compatibility correction and fresh acceptance
+```
+
+A independently reviewed the original Slice Base..candidate (225 changed files): Task scheduling,
+claims/source ownership and fences, all organizing entrances, same-Task four-type continuation,
+Job removal/fresh persistence, history admission/warnings, API/CLI/Web consumers and actual B evidence.
+`5c808d4a..7ac253dd` changes only B's Task report; executable inputs are the reviewed candidate's.
+The six outcomes and user amendments remain authoritative; old-task/cross-version upgrade and V1
+support remain excluded. This A instance neither implemented nor B-reviewed the Slice, and used no
+sub-agents. The preceding rejected candidate/review stays historical; this review supersedes its
+current blocker assessment without rewriting the original Base or any prior acceptance.
+
+**A-P1-2 — legal global capacity publication breaks organizing admission.** From the existing
+Automation global-settings API, GET advertises `automation.maximumActiveJobs` as an integer in
+**1–10000**. An authenticated ordinary PUT changing 100 to **1025** returns **201** and publishes
+that value as Active. In the same isolated managed deployment/SQLite database, the existing command
+`mediaflow --config <bootstrap> organize <source> --execute --limit 1` then returns **2**:
+`Task scheduling capacity must be between 1 and 1024 Tasks`. It creates no Task or media effect;
+the queue is empty. GET still truthfully shows Active 1025. Saving **1024** through the same settings
+entry returns 201, after which the same CLI command succeeds with one actual COPY target.
+
+The new `domain/task_scheduling.py::MAX_TASK_CAPACITY = 1024` / `require_capacity` conflicts with
+the retained settings/configuration/Scheduler range of 1–10000. `TaskSchedulingService` and
+repository admission enforce the smaller limit. The bound entered in `e53e38999459f81da65f625ee3b73d39e9ff793e`
+(2026-10-30 19:27:53 +08:00); ordinary CLI consumption of the kernel entered in
+`1e46e5baa0ea1dc1d3400ef42bf80d80b8a954cb` (2026-11-01 00:25:11 +08:00).
+This violates RO-1/RO-5 and AC-4/12/15: supported settings must retain their operational meaning.
+It is an in-Slice P1 compatibility gap, not an independent minor bug, a capacity-load test or a new
+user feature. Reproduction needs one file and an ordinary legal Save, with no fabricated endpoint,
+repository state, exhausted queue, Provider fault or thousands of admitted Tasks.
+
+**Correction boundary for B:** preserve the existing published 1–10000 capacity contract across
+the Task kernel and real consumers. Reuse one consistent validated bound where practical; do not
+silently clamp, lower the accepted setting, rewrite old snapshots/digests or add a second queue.
+Prove the existing settings Save/readback → actual organizing admission/execution at the relevant
+boundary values, including 1025 and 10000, plus invalid bounds and unchanged queue-full atomicity,
+source ownership, authority consumption and waiting/terminal capacity semantics. No need to admit
+10000 tasks to prove that a legal configured ceiling works. Include affected Files/Run once/due/
+CLI/remote consumption as appropriate, then B's applicable T4/whole-Slice reassessment and fresh
+Closure Packet. B owns the coherent correction Task and its real pre-implementation Base; preserve
+Task47.5's passed history/CLI fixes rather than changing its goal or erasing its results. A implements
+no fix and does not close or reconcile CURRENT on this rejection.
+
+**Independent evidence:** local ignored root
+`.git/validation-evidence/5c808d4a/a-final-review/` (local only).
+`capacity_settings_journey.py` / `capacity-settings-journey.log` drive the existing production WSGI
+settings GET/PUT and real CLI against one managed temporary SQLite/LocalStorage deployment. Only
+MetadataProvider is synthetic; all configuration activation, Task admission and actual COPY use
+production behavior. The 1024 recovery is verified, not proposed. No user database, media or private
+configuration is accessed.
+
+- `focused.log`: six scheduling/fencing/source-race/manual-engine/history/entrance modules,
+  **141 tests OK**, 13.948s. This set does not cover the published-capacity mismatch.
+- `cli-capacity.log`: independent rerun of the prior A real CLI ENOSPC probe with corrected success
+  expectations; terminal partial/unknown evidence stays, exit 1/normal summary, capacity 0, next
+  distinct file succeeds and same-version reopen stays settled. `active-cancel.log` proves the slot
+  remains while a real write is blocked, then releases after cancellation and returned ENOSPC.
+  `batch-root.log` and `multi-storage.log` independently prove actual root batch/cross-Storage COPY.
+- `native.log`: **3 real Python/API/SQLite/Worker Chromium journeys passed** (history warning →
+  ordinary confirmation → actual new organize, eight center views and in-context summary), 10.4s.
+  A also inspected B's desktop and 390px summary/confirmation screenshots; the warning and original
+  confirmation remain visible with readable wrapping and no new acknowledgement checkbox.
+- `artifact-proof.json`: A independently compared all **169** wheel Python modules byte-for-byte
+  with candidate source; no extra/missing modules. SHA-256 matches B's clean wheel:
+  `7f75e4ed89ee0fd492228a302cb0d3f12644df04344473049e307fa54afee05d`.
+
+B's packet at `7ac253dd:TASK.md` and raw logs at
+`.git/validation-evidence/5c808d4a/b-review/` were checked: 2537 Python tests with 7 optional remote/
+endurance skips (the one Task-document heading failure was corrected and its 8-test module rerun),
+22 current native journeys, quality/examples, clean installed consumers and Docker fresh/security/
+same-version restart passed. The explicit unchanged-input diff supports reuse of 1267 Web unit and
+253 fake E2E results; A independently verified that diff. The synchronized Automation native copy
+waits for the actual new definition readback; its initial stale-fingerprint refusal remains disclosed
+as P2. These results establish their covered behavior but do not waive A-P1-2. A did not rerun or
+claim new full Python/Web/container acceptance. Pre-existing untracked files remain unstaged;
+this review changes only A-owned review/status documents, with no product/test edits or push.

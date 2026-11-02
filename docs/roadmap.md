@@ -37,19 +37,20 @@ only in [the development workflow](development-workflow.md).
 ## Current boundary
 
 Slice47 — **Unified Task Scheduling and Organizing Execution** — remains **ACTIVE** in this
-Roadmap; A Final Review on 2026-11-02 returned **FIX REQUIRED**. Immutable Base:
+Roadmap; A's latest independent review on 2026-11-02 returned **FIX REQUIRED**. Immutable Base:
 `5144ab1fc2344b06194969cc2c496835729664c0`; reviewed candidate (not accepted):
-`3cf1b6b4b59dbea0bbd2159c404e760f7bcd9417`. [SLICE.md](../SLICE.md) retains six outcomes,
-AC-1–25 and the explicit user amendments. B's original Closure Packet is preserved at
-`62a566f9c7395fae14b5ee5df9dae987bb4bb201:TASK.md`.
+`5c808d4a67bedfbafb71d88a1ffa8d3480ef5316`. [SLICE.md](../SLICE.md) retains six outcomes,
+AC-1–25, explicit user amendments and the current **A-P1-2** finding. B's latest Closure Packet is
+preserved at `7ac253dd11ab3453f36cd40500c79c72b4f888de:TASK.md`.
 
-**Next: B reopens/reassesses Task47.5 for A-P1-1**, preserving its Task Base/goal. The existing
-ordinary CLI `organize --execute` records a terminal partial/unknown Result after a disk-full write,
-but keeps the shared machine slot and blocks later admission; same-version reopen does not settle
-it. A's real-entry reproduction and correction boundary are in the Contract's Final Review.
-No product fix, new Slice selection, CURRENT reconciliation or closure is conducted by this review.
-No old-task/cross-version upgrade or V1 support is selected. Earlier B PASS checkpoints and the
-user's latest-formal-outcome/history-warning/CLI-retirement amendments remain factual.
+**Next: B plans one bounded capacity-compatibility correction in Slice47.** Existing Automation
+settings successfully publish a legal capacity of 1025 (advertised range 1–10000), but ordinary
+CLI organizing then fails because the new Task kernel accepts only 1–1024. A reproduced the Save
+and failure in one isolated managed deployment; saving 1024 restores actual execution. Keep the
+published range and align consumers without clamping, repinning or weakening queue safety.
+Prior A-P1-1 CLI settlement and B-P1-1 batch parsing are independently verified fixed; Task47.5's
+PASS history remains factual. No product fix, new Slice selection, CURRENT reconciliation or
+closure is conducted here. Old-task/cross-version upgrade and V1 support remain excluded.
 
 Slice46 remains **PASS / CLOSED** with original Base `e9f1a8dc607cfc6d5ea02141b058da8ce849cd70`
 and reviewed implementation `6469f45811ee59c875cfd10107d3aed129e9d489`. Its Contract/A review is at

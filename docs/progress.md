@@ -9,19 +9,20 @@ workflow authority. Closure rules live only in
 ## Current development pointer
 
 Slice47 — **Unified Task Scheduling and Organizing Execution** — is **FIX REQUIRED** after A's
-2026-11-02 independent review; its Roadmap remains ACTIVE. Immutable Base:
+latest 2026-11-02 independent review; its Roadmap remains ACTIVE. Immutable Base:
 `5144ab1fc2344b06194969cc2c496835729664c0`; reviewed candidate (not accepted):
-`3cf1b6b4b59dbea0bbd2159c404e760f7bcd9417`. [SLICE.md](../SLICE.md) records **A-P1-1**:
-a finished ordinary CLI disk-failure attempt retains running/claimed capacity despite a terminal
-partial/unknown Result, blocking subsequent work and persisting across reopen. A reproduced it from
-the existing CLI with isolated real SQLite/LocalStorage/Executor, and independently ran 134 focused
-tests (OK). Evidence and correction boundary are in the A Final Review.
+`5c808d4a67bedfbafb71d88a1ffa8d3480ef5316`. [SLICE.md](../SLICE.md) records **A-P1-2**:
+existing global settings publish legal capacity 1025, then ordinary CLI organizing fails because
+the new Task kernel accepts only 1–1024 instead of the published 1–10000. A reproduced the exact
+Save → CLI failure → Save 1024 → actual COPY recovery in one isolated managed deployment.
 
-Next: **B reopens/reassesses Task47.5 with its original Base/goal**, adds the bounded correction
-and acceptance plan, and returns a fresh Closure Packet after independent review. B's prior PASS
-and six-outcome packet remain at `62a566f9:TASK.md`; no previous acceptance is rewritten. The six
-Slice outcomes/AC-1–25 and user amendments remain, including no old-task/cross-version upgrade or
-V1 support. This review implements no fix and performs no CURRENT reconciliation or Slice closure;
+Next: **B plans one bounded in-Slice compatibility correction**, retains the published range and
+queue/authority safety, then supplies fresh acceptance and a Closure Packet. A independently
+verified A-P1-1 CLI settlement and B-P1-1 batch parsing fixed, ran 141 focused tests and 3 real
+browser journeys (all OK), and checked B's raw acceptance/artifact evidence. Task47.5's PASS and
+latest six-outcome packet remain at `7ac253dd:TASK.md`; no previous acceptance is rewritten.
+The six outcomes/AC-1–25 and user amendments remain, including no old-task/cross-version upgrade
+or V1 support. This review implements no fix and performs no CURRENT reconciliation or closure;
 the accepted large-Slice ledger below is unchanged.
 
 The latest large-Slice acceptance remains Slice46, **PASS / CLOSED** by A on 2026-10-29, with
