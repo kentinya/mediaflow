@@ -20,11 +20,11 @@ remain in [Progress](progress.md) and their Git Contracts; they are not addition
 Files owns new manual selection and ordinary-file progress; Task Center owns admitted organizing
 progress and four business recovery types; Automation owns saved-definition scheduled/one-run intent.
 
-## TARGET — Task flow status and Automation success rate (Slice48 PLANNED)
+## TARGET — Task flow status and Automation success rate (Slice48 ACTIVE)
 
 The user selected `V2-TASK-012–014` / `V2-AUTO-012` on 2026-11-03.
-[Slice48](../SLICE.md) is planning only; the CURRENT journeys below describe accepted behavior
-until this amendment is implemented and independently accepted.
+[Slice48](../SLICE.md) is ACTIVE with implementation limited to the active Task. The CURRENT
+journeys below describe accepted behavior until this amendment is implemented and independently accepted.
 
 - **Goal/entry:** organize from the existing ResourceLibrary Files/manual API/CLI, due Automation
   or saved-definition Run once, then distinguish whether the Task flow finished from what happened

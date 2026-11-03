@@ -10,9 +10,10 @@ Slice47 is PASS / CLOSED after independent A Final Review on 2026-11-03. Its Tas
 scheduling/settings/history contracts below supersede the affected earlier foundations.
 Detailed former delivery notes remain at `865ebdce47b0b323064fd8e05fbfaa54546e6269:docs/architecture.md`.
 
-## TARGET — Task flow status and Automation success rate (Slice48 PLANNED)
+## TARGET — Task flow status and Automation success rate (Slice48 ACTIVE)
 
-`V2-TASK-012–014` / `V2-AUTO-012` select this TARGET under [Slice48](../SLICE.md), planning only.
+`V2-TASK-012–014` / `V2-AUTO-012` select this TARGET under ACTIVE [Slice48](../SLICE.md);
+implementation is limited to the active Task.
 The accepted CURRENT contracts below remain delivery facts until implementation and acceptance.
 This amends Task aggregate settlement, Automation rate predicates and execution-record Task result/
 status filtering under `V2-AUTO-006`. The processing pipeline, Task ownership/queue engine,

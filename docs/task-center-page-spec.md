@@ -13,7 +13,7 @@ Slice46 于 2026-10-29 通过 A 完整范围审查。本文是现行页面/交�
 结果保持；取消仍安全协作，Pause/resume-from-pause 已退出。系统设置和源历史处理见完整
 Product Experience 旅程，原 Slice46 接受身份不变。
 
-### TARGET — Slice48 Task 流程状态（PLANNED，尚未实施）
+### TARGET — Slice48 Task 流程状态（ACTIVE，尚未实施）
 
 [Slice48](../SLICE.md) / `V2-TASK-012–014` 选择五种 Task 流程状态：pending、running、
 completed、failed、cancelled。流程正常收尾，或文件处理因技术失败而结束本轮尝试时，均可
@@ -28,7 +28,7 @@ completed 不能冒充文件复制/移动/删除成功。自动化成功率统�
 Files/CLI 手动整理及普通文件操作。成功率为 completed/(completed+failed)，已取消及未结束
 均不参与；没有 completed/failed 时显示暂无统计。已取消仍保留在执行记录及已结束数量中。
 完整 TARGET 旅程/失败边界见
-[Product Experience](product-experience.md#target--task-flow-status-and-automation-success-rate-slice48-planned)。
+[Product Experience](product-experience.md#target--task-flow-status-and-automation-success-rate-slice48-active)。
 下方 CURRENT 页面行为在新实现通过验收前保持现行交付事实。
 
 ### 页面归属与入口

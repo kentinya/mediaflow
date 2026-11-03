@@ -8,8 +8,8 @@ workflow authority. Closure rules live only in
 
 ## Current development pointer
 
-Slice48 — **Task Flow Status and Automation Success Rate** — is **PLANNED** on the user's
-2026-11-03 planning request, Base `ba84272721961c970f1eb85d616a0d129523ab92`, Implementation Head
+Slice48 — **Task Flow Status and Automation Success Rate** — is **ACTIVE** on the user's
+2026-11-03 Task48.1 activation request, Base `ba84272721961c970f1eb85d616a0d129523ab92`, Implementation Head
 NOT SET. [SLICE.md](../SLICE.md) selects five-state Task flow independent of file outcomes and a
 Task-only Automation success rate; execution records use the same Task flow result as Task Center,
 with independent file results and factual original times/attempts/effects. Ended file-processing
@@ -20,8 +20,9 @@ operations. Rate is completed/(completed+failed); cancelled/unfinished Tasks are
 cancelled records and admitted/ended counts remain. No completed/failed Tasks yields no percentage.
 Task closure itself must be saved; live work, human waiting and Task flow failures remain
 distinct. Requirements/journey/architecture label the amendment TARGET.
-Root Task is NO ACTIVE IMPLEMENTATION TASK. Next action is implementation authorization, then A
-checkpoints ACTIVE and B plans the first Task. No product implementation or acceptance is claimed.
+B promotes the existing Task48.1 draft after the ACTIVE Contract checkpoint. Implementation is
+limited to that Task; Automation metric calculation remains a later in-Slice outcome. No product
+implementation or acceptance is claimed by activation.
 
 ## Latest accepted closure
 
@@ -36,7 +37,7 @@ process deviations remain in that Contract/packet. Seven optional external-servi
 are disclosed; old-task/cross-version upgrade and V1 support remain excluded. No remote validation
 or production deployment is claimed by closure or document governance.
 
-The next Slice48 is selected for planning above, without reopening Slice47 or adding a closure
+Slice48 is active above, without reopening Slice47 or adding a closure
 ledger entry. Prior43–46 acceptance identities/deferrals remain unchanged. Slice46's
 Contract/A review remains at `5144ab1fc2344b06194969cc2c496835729664c0:SLICE.md`; its complete
 B packet remains at `85696ab160e8ec1d1e29dcdfc046d426e2cc214c:TASK.md`.

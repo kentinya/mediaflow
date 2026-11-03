@@ -25,10 +25,10 @@ Slice47 is PASS / CLOSED after independent A Final Review on 2026-11-03. The Tas
 requirements below are CURRENT, superseding the affected Job-based foundation wording. Prior
 acceptance facts remain in Git and Progress; no old-task/cross-version upgrade or V1 support is added.
 
-## Task flow status and Automation success rate — TARGET (Slice48 PLANNED)
+## Task flow status and Automation success rate — TARGET (Slice48 ACTIVE)
 
-The user selected this amendment and requested Slice planning on 2026-11-03.
-[Slice48](../SLICE.md) is PLANNED, with no active implementation Task. These are TARGET
+The user selected this amendment and authorized Task48.1 activation on 2026-11-03.
+[Slice48](../SLICE.md) is ACTIVE; implementation is limited to the active Task. These are TARGET
 requirements, not delivered CURRENT behavior. They amend the V2 aggregate realization of
 `REQ-TASK-002/003`, affected completed/recovered wording in `V2-OPS-016`, and the rate portion of
 `V2-AUTO-005`. They also amend `V2-AUTO-006` so execution-record Task results/status filters use
@@ -44,8 +44,8 @@ file/effect history and all unchanged safety remain.
 
 Fresh initialization/new work/same-version restart must preserve the new flow and independent
 results. Old-task/status conversion, cross-version upgrade/rollback, data clearing and history
-relabelling are not selected. The [TARGET journey](product-experience.md#target--task-flow-status-and-automation-success-rate-slice48-planned)
-and [TARGET architecture](architecture.md#target--task-flow-status-and-automation-success-rate-slice48-planned)
+relabelling are not selected. The [TARGET journey](product-experience.md#target--task-flow-status-and-automation-success-rate-slice48-active)
+and [TARGET architecture](architecture.md#target--task-flow-status-and-automation-success-rate-slice48-active)
 define completion/failure boundaries; the committed Slice owns scope and proof.
 
 ## Unified Task scheduling and organizing — CURRENT (Slice47 PASS / CLOSED)

@@ -7,23 +7,21 @@ B Decision: PASS
 Reviewed Task Base: c8657032dae768d93b12387a5e58db502e23a7ee
 Reviewed Implementation Head: 5134c78b22057781d472e6ebf61a1799d9e40324
 Slice Decision: 47 — PASS / CLOSED by independent A Final Review, 2026-11-03
-Selected Slice: 48 — Task Flow Status and Automation Success Rate — PLANNED
-Next Action: USER AUTHORIZES IMPLEMENTATION; A ACTIVATES SLICE; B REVALIDATES AND ACTIVATES TASK 48.1 DRAFT
+Selected Slice: 48 — Task Flow Status and Automation Success Rate — ACTIVE
+Next Action: B REVALIDATES AND PROMOTES AUTHORIZED TASK 48.1 DRAFT AFTER ACTIVE CONTRACT CHECKPOINT
 ```
 
 The complete B review, actual T4 results/limits and six-outcome Closure Packet remain at
 `749507ca9000329484bdc9fb7ad5c44e0efc0cd0:TASK.md`. Slice47's whole-range A review, immutable
 Base and accepted Head remain at `ba84272721961c970f1eb85d616a0d129523ab92:SLICE.md`.
-[SLICE.md](SLICE.md) now selects Slice48 for planning only. No implementation Task is active;
-planning does not authorize implementation. Independent minor bugs retain their separate workflow.
+[SLICE.md](SLICE.md) is being activated at the user's request. This draft remains inactive until
+the ACTIVE Contract is committed and B promotes it. Independent minor bugs retain their separate workflow.
 
 ## Task 48.1 草案 — 任务流程结束与文件结果分开
 
-本节是用户要求 Codex 代替 B 编写的第一版计划。Slice48 仍为 PLANNED，本文保留上方
-NO ACTIVE IMPLEMENTATION TASK；不启动开发，也不修改 A 所有的 Slice/Roadmap/Progress。
-依据 [工作流 §3.1](docs/development-workflow.md#31-independent-minor-bugs) 和
-[Task 模板](Task/TEMPLATE.md)，规划请求可以先留下这种草案。实施前由 A 提交 ACTIVE
-Contract，再由 B 核对实际基线、重新运行治理检查并启用本 Task；不能直接拿草案开始实现。
+本节是用户要求 Codex 代替 B 编写的第一版计划。用户现已要求激活，先提交 A 所有的 ACTIVE
+Contract，再由 B 核对原基线、重新运行治理检查并启用本 Task；此检查点仍保留上方
+NO ACTIVE IMPLEMENTATION TASK，不开始开发。范围与验收不变。
 
 Authority: committed [Slice48](SLICE.md) RO-1–3，以及 RO-4 中执行记录与 Task 状态一致的部分；
 [Development Workflow](docs/development-workflow.md) 负责生命周期、测试和检查点。
@@ -56,8 +54,8 @@ Development Authorization: DRAFT / PLANNING ONLY
 需求追踪：`V2-TASK-012–014`、`V2-AUTO-012` 的执行记录部分；Slice AC-1–8、11–15 的
 相应行为。保留 `UX-001–007/010`、`REQ-TASK-005–010`、`REQ-RESULT-*`、`REQ-SAFE-*`，
 及 `V2-OPS-014–017`、`V2-FILES-007`、`V2-AUTO-010/011` 未被 Slice 明确修订的要求。
-阅读 [TARGET 旅程](docs/product-experience.md#target--task-flow-status-and-automation-success-rate-slice48-planned)、
-[TARGET 架构](docs/architecture.md#target--task-flow-status-and-automation-success-rate-slice48-planned)、
+阅读 [TARGET 旅程](docs/product-experience.md#target--task-flow-status-and-automation-success-rate-slice48-active)、
+[TARGET 架构](docs/architecture.md#target--task-flow-status-and-automation-success-rate-slice48-active)、
 完整手动整理/普通维护/四类恢复/自动化旅程，以及被修订的 CURRENT 结算、源历史和记录契约。
 
 ### Actual gaps and implementation scope
