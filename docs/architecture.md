@@ -14,17 +14,18 @@ Detailed former delivery notes remain at `865ebdce47b0b323064fd8e05fbfaa54546e62
 
 `V2-TASK-012–014` / `V2-AUTO-012` select this TARGET under [Slice48](../SLICE.md), planning only.
 The accepted CURRENT contracts below remain delivery facts until implementation and acceptance.
-This amends Task aggregate settlement and Automation rate predicates, not the processing pipeline,
-Task ownership/queue engine, media execution authority or original records-only file-result semantics.
+This amends Task aggregate settlement, Automation rate predicates and execution-record Task result/
+status filtering under `V2-AUTO-006`. The processing pipeline, Task ownership/queue engine,
+media execution authority and original times/attempts/file-effect history retain their boundaries.
 
 ```text
 existing admitted Task + flow stage/completeness/control/fatal-flow evidence
   -> shared application flow settlement -> five-state durable Task
-  -> Task/run projections + Automation Task-only success-rate query
+  -> Task/run projections + Automation Task-only success rate and execution-record Task results
 
 TaskItem / Result / attachment / operation / effect certainty
   -> independent file results, processed progress, history gate and safe recovery
-  -> original Automation records-only file-result projection
+  -> independent file-result counts/detail in Automation execution records
 ```
 
 **Settlement contract:** current persistent Task and ordinary Task projections use pending, running,
@@ -35,8 +36,11 @@ The older TaskStatus/pipeline vocabulary cannot become a second durable lifecycl
 flow policy at the existing application boundary, with fenced repository enforcement; no parallel
 engine or file-count heuristic may overwrite a Task-level failure or acknowledged cancellation.
 
-Normal scope completion plus safely durable accounting can finish Task even with all file outcomes
-failed/partial/skipped/ignored/individually cancelled/recorded uncertain or healthy zero work.
+Completion requires a normally finished complete scope, durable per-item accounting and safe
+finalization with no Task-level flow failure or acknowledged Task cancellation. Under those conditions,
+all failed/partial/skipped/ignored/individually cancelled/recorded-uncertain files or healthy zero work
+still yield completed. File outcomes alone do not prove those conditions; terminal results for all
+known files cannot turn an unfinished or failed flow into completed.
 Task-level root/incomplete traversal, unavailable required pin/relations or orchestration errors may
 fail the flow if they prevent normal completion. Distinguish bounded isolated file errors from
 failure to prove scope completeness. Missing Worker/claim expiry/loss alone is not failure; a database
@@ -57,11 +61,21 @@ operation results/queues. Reads/analysis remain mutation-free.
 Automation due/Run once admitted cohort/local-month window: completed Tasks divided by
 completed+failed+cancelled Tasks. Pending/running are excluded; zero-ended/unavailable evidence yields
 no rate. Count stable Task identities once before paging. Remove primary/attachment success/effect
-certainty and records-only outcome predicates from the rate. Current lifecycle changes under legal
-continuation can change the contribution but cannot create another admitted run. Keep all actual file
-counts/effects and no-work reasons distinct: zero successful files does not prove no work. Preserve
-original record-result filtering/times and append-only attempt truth; do not rewrite those records to
-match a current Task success rate. No second history/metric execution store is required.
+certainty and frozen file-derived stage-outcome predicates from the rate. Current lifecycle changes
+under legal continuation can change the contribution but cannot create another admitted run. Keep all
+actual file counts/effects and no-work reasons distinct: zero successful files does not prove no work.
+
+**Execution-record contract:** Task Center and Automation execution-record Task results use the
+same current durable Task flow state on a consistent read basis. Each surface applies that flow-state
+meaning within its own authorized population. Record status filtering/counts/paging use that flow
+state before page limits, with independent bounded file-result counts/causes/effects.
+A completed flow with ten failed files displays completed flow plus ten file failures and counts as
+Task success; a file-derived initial-stage failure cannot replace the Task's execution result.
+Missing Task truth stays unavailable, without guessing from file results. Current lifecycle changes
+under permitted continuation update the displayed Task flow state and rate contribution; they do not
+rewrite original execution times, append-only attempts or file/effect evidence. Keep records compact,
+read-only and free of new execution/recovery controls. No second history/metric execution store is
+required. This amends `V2-AUTO-006` result/filter semantics while retaining scoped zero-write reads.
 
 **Consumers/persistence:** audit Task settlement producers, Task/run API/CLI/Web models/filters,
 Task Center views/counts/progress, Files local ordinary status, Automation metrics/readback and existing

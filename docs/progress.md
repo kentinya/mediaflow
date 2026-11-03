@@ -11,7 +11,10 @@ workflow authority. Closure rules live only in
 Slice48 — **Task Flow Status and Automation Success Rate** — is **PLANNED** on the user's
 2026-11-03 planning request, Base `ba84272721961c970f1eb85d616a0d129523ab92`, Implementation Head
 NOT SET. [SLICE.md](../SLICE.md) selects five-state Task flow independent of file outcomes and a
-Task-only Automation success rate; requirements/journey/architecture label the amendment TARGET.
+Task-only Automation success rate; execution records use the same Task flow result as Task Center,
+with independent file results and factual original times/attempts/effects. Completion requires a normal
+complete-scope flow and safe durable accounting, regardless of file mix. Requirements/journey/
+architecture label the amendment TARGET.
 Root Task is NO ACTIVE IMPLEMENTATION TASK. Next action is implementation authorization, then A
 checkpoints ACTIVE and B plans the first Task. No product implementation or acceptance is claimed.
 

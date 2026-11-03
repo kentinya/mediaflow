@@ -38,11 +38,14 @@ until this amendment is implemented and independently accepted.
   use existing backend-permitted cancel or four-type decision → analysis → exact summary → explicit
   continuation. Saving/reading does not execute. Required waiting keeps the flow unfinished, and
   only explicit legal continuation can re-enter a terminal Task with its existing identity/pin.
-- **Success:** a normally finished scope displays “流程已完成；成功 7、部分成功 2、失败 1”, or
-  completed flow with all file attempts failed. Processed progress can reach 100% without implying
-  file success. All skipped/ignored/individually cancelled, safely recorded uncertain outcomes,
-  healthy empty and complete history exclusions can also finish the flow. File results/warnings
-  and true no-work/exclusion reasons remain visible; none becomes successful organization by label.
+- **Success:** when the flow normally finished its complete scope, durably accounted for every item
+  and reached safe finalization without Task-level failure or acknowledged cancellation, it displays
+  “流程已完成；成功 7、部分成功 2、失败 1”, or completed flow with all file attempts failed.
+  These same conditions apply to all skipped/ignored/individually cancelled files, safely recorded
+  uncertain outcomes, healthy empty and complete history exclusions. File outcomes alone cannot
+  establish completion; an unfinished or failed Task flow does not become completed because all known
+  files have terminal results. Processed progress/file warnings/true no-work reasons remain distinct
+  from successful media effects.
 - **Failure:** Task scope enumeration/root failure, unusable required execution context/relations or
   orchestration error preventing normal completion shows a Task flow failure with bounded stage,
   durable state, known effects and the existing allowed next action. A safely isolated file error
@@ -60,17 +63,24 @@ until this amendment is implemented and independently accepted.
   or the scope was healthy empty/history-excluded. File outcomes never gate this metric. Legal
   continuation may change that Task's current lifecycle-based rate contribution without creating a
   second run. Unknown metrics offer existing refresh/read recovery, never fabricated 0% or 100%.
-- **Records and other surfaces:** original Automation records keep their independent original
-  file-result classification/filter/times and concise reasons, without being rewritten by later
-  Task handling. A file-result failure and a completed Task flow may coexist and must be labelled
-  distinctly where needed. All-failed is not empty/no-work. Files local ordinary-operation status,
-  Task Center, Dashboard, API/CLI, export/logs and existing Task-status notifications distinguish
-  flow state from per-file effects, without adding a page or control.
+- **Execution records:** 自动化 → 执行记录 → 查看详情 shows the same current Task flow result as
+  Task Center. For a normally completed Task with ten failed files, both show “流程已完成” plus
+  “文件失败 10 个”; the success rate counts that Task as successful. File failures do not relabel
+  the Task's execution result as failed. Status filters/counts/paging follow Task flow state over the
+  authorized population; required human waiting stays unfinished, and actual Task-level flow failure
+  stays failed regardless of file mix. Original execution times, attempts and file/effect history
+  remain factual when legal continuation changes the current Task status. Records stay compact and
+  read-only with no new execution/recovery control. All-failed is not empty/no-work or successful
+  media organization. This TARGET amends the result/filter meaning of `V2-AUTO-006`.
+- **Other surfaces:** Files local ordinary-operation status, Task Center, Dashboard, API/CLI,
+  export/logs and existing Task-status notifications distinguish flow state from per-file effects,
+  without adding a page or control.
 
 Fresh/new-work/same-version restart retains the same Task and independent results. The source-history
 gate still uses actual latest formal file failure/partial even inside a completed Task; a new manual
 request keeps its warning/normal confirmation. Old-task/status conversion and cross-version upgrade
-remain excluded. This TARGET changes flow aggregate/rate meaning, not recorded file facts or safety.
+remain excluded. This TARGET changes flow aggregate/rate and execution-record Task result/filter
+meaning while preserving recorded file facts and safety.
 
 ## CURRENT — One organizing Task across triggers and recovery (Slice47 PASS / CLOSED)
 

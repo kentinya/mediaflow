@@ -47,7 +47,10 @@ Task's five flow states are pending/running/completed/failed/cancelled. File out
 determine flow success/failure; unfinished human/machine work stays unfinished. Automation rate is
 completed/(completed+failed+cancelled), over the same admitted Automation Task cohort; file success,
 partial/uncertain/attachment outcomes and nonempty work do not gate it. Independent results,
-records-only original file outcomes/times, four-type recovery and safety remain.
+original execution times/attempts/file effects, four-type recovery and safety remain. Execution-record
+Task results/status filters agree with Task Center's current flow state, with file outcomes separate.
+Completion requires normal complete-scope flow and safe durable accounting; file outcomes alone
+never establish it, including when every known file failed or succeeded.
 
 Root Task is NO ACTIVE IMPLEMENTATION TASK. Next action is implementation authorization, then A
 checkpoints ACTIVE and B plans the first coherent Task. This planning action does not start product

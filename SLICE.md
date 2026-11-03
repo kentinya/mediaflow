@@ -42,11 +42,14 @@ Earlier accepted identities, safety and deferrals in [Progress](docs/progress.md
 The planned amendments are `V2-TASK-012–014` and `V2-AUTO-012` in
 [V2 Requirements](docs/v2-requirements.md). They amend the V2 realization of `REQ-TASK-002/003`,
 affected aggregate/recovered-success wording in `V2-OPS-016`, and the success-rate realization of
-`V2-AUTO-005`. They do not alter the frozen V1 baseline or declare the new behavior CURRENT.
+`V2-AUTO-005`. They also amend `V2-AUTO-006` so execution records show the same Task flow result
+as Task Center, with independent file results. They do not alter the frozen V1 baseline or declare
+the new behavior CURRENT.
 Preserve `UX-001–007/010`, applicable `REQ-TASK-005–010`, `REQ-RESULT-*`, `REQ-RECOVERY-*`,
 `REQ-SAFE-*`, `V2-TASK-001–011`, entry/authority boundaries in `V2-OPS-014/015/017`,
-`V2-FILES-007` and `V2-AUTO-010/011`, except for the explicit aggregate/metric amendments above.
-Original records-only file-result semantics under `V2-AUTO-006` remain separate.
+`V2-FILES-007` and `V2-AUTO-010/011`, except for the explicit aggregate/metric/record amendments above.
+Original execution times, attempts and file/effect history remain factual; their preservation does
+not require retaining a file-derived failure label as the Task's execution result.
 
 Baseline investigation found file-derived settlement in
 [task_persistence.py](mediaflow/domain/task_persistence.py) (`task_work_status`),
@@ -54,9 +57,10 @@ Baseline investigation found file-derived settlement in
 [manual_task_engine.py](mediaflow/application/manual_task_engine.py). The current Task/run models
 retain partial-success/paused values. Automation's metric query in
 [sqlite_runtime.py](mediaflow/infrastructure/sqlite_runtime.py) additionally requires successful
-primary-file evidence and no uncertain success item; its separate records-only projection is
-intentionally file-sensitive. These are implementation gaps for the selected TARGET, not proof of
-delivered new behavior; B must trace all affected producers and consumers before Task planning.
+primary-file evidence and no uncertain success item; its separate records-only projection also
+classifies execution results by file outcomes. Both must adopt Task flow meaning for the selected
+TARGET. These are implementation gaps, not proof of delivered new behavior; B must trace all affected
+producers and consumers before Task planning.
 
 Complete TARGET journeys and technical contracts are in
 [Product Experience](docs/product-experience.md#target--task-flow-status-and-automation-success-rate-slice48-planned)
@@ -82,10 +86,13 @@ these five values. Audit the older twelve-value `mediaflow/domain/tasks.py` voca
 so it cannot remain a competing durable Task lifecycle; shared scanning/pipeline stages may remain
 as stages without a broad scanner rewrite.
 
-Normal completion includes all files failed/partial, mixed results, all skipped/ignored, individually
-cancelled items, recorded uncertain outcomes, healthy empty scope and complete history-excluded
-scope. None is proof of successful media organization. Only actual Task cancellation yields
-`cancelled`; counting cancelled file items must not infer that intent. No failed-item threshold,
+When the flow has normally finished its complete admitted scope and durably accounted for every
+item at a safe boundary, Task is completed regardless of all files failed/partial, mixed results,
+all skipped/ignored, individually cancelled items, recorded uncertain outcomes, healthy empty scope
+or complete history-excluded scope. These file outcomes alone never establish flow completion;
+an actual Task-level flow failure still yields failed. None is proof of successful media organization.
+Only actual Task cancellation yields `cancelled`; counting cancelled file items must not infer that
+intent. No failed-item threshold,
 success ratio, attachment failure or absence of successful files determines Task flow failure.
 
 Scope completeness and durable/safe finalization still matter. An unfinished item, required human
@@ -148,13 +155,14 @@ API/CLI, JSON export and existing Task-status notification/log consumers disting
 results. Ordinary operation result vocabularies and notification policy remain intact. No global
 ordinary-operation center, extra control or replacement UI is selected.
 
-## RO-4 — Automation success rate is calculated from Task flow alone
+## RO-4 — Automation success rate and execution records use Task flow results
 
 Keep the current authorized Automation-only population, local-month/timezone boundaries and admitted
 cohort selection: due and definition Run once Tasks count once by durable Task identity. Ordinary
 manual work, rejected admission, analysis-only/preparation work and later continuation are not extra
 Automation runs. Compute the numerator/denominator server-side over the complete same read basis,
-before page limits, independently of the file-sensitive records-only outcome projection.
+before page limits. Execution-record Task results and their server-side status filters use the same
+current durable Task flow state as Task Center; file outcomes are separate detail/counts.
 
 ```text
 successful = count(Task.status == completed)
@@ -173,18 +181,28 @@ Task status is completed. They do not acquire successful file effects. Rates/Tas
 current durable Task if permitted continuation changes its lifecycle; continuation never increases
 the admitted Task count. Original attempt results/times remain immutable and independently readable.
 
-Keep actual file counts, unknown effects, no-work/exclusion reasons and original Automation execution
-records honest. In particular, zero successful files is not proof of zero work: an all-failed Task
-must not become a healthy empty/no-work record. Original records-only file-result classification,
-filtering, paging and times keep `V2-AUTO-006` semantics; clearly distinguish those original file
-results from current Task flow success where needed. Do not use a file-sensitive record outcome as
-a hidden replacement for Task.status in the success-rate query. Unavailable metrics remain unavailable.
+For the same Task and consistent read basis, Task Center and Automation execution records show the
+same flow result. If a normally completed Task has ten failed files, both show “流程已完成” and
+records independently show “文件失败 10 个”; that Task counts as successful in the rate. Do not
+retain a file-derived “执行失败” label for a completed Task. Record status filtering/counts/paging
+use Task flow state over the authorized population, while bounded file counts/causes/effects remain
+independent. Required human waiting remains unfinished in both surfaces.
+
+Keep actual file counts, unknown effects and no-work/exclusion reasons honest: zero successful files
+is not proof of zero work, and an all-failed Task is not a healthy empty/no-work record. Original
+execution times, append-only attempts and file/effect history remain factual and are not overwritten
+by a current Task status or later continuation. Records remain read-only and compact without new
+execution/recovery controls. This explicitly amends the file-derived result/filter realization of
+`V2-AUTO-006`, retaining scoped zero-write reads. No file-derived original-stage outcome may substitute
+for Task.status in records or the success-rate query. Unavailable Task/metric evidence remains
+unavailable; it is not reconstructed from file success/failure.
 
 ## Required surfaces, exclusions and persistence boundary
 
 Required: Task domain/settlement, actual producers/runners and claim-fenced SQLite writes/reads;
 API/CLI/Web Task and run models; Task Center, Files ordinary-operation status and existing Task
-consumers; Automation metric service/API/cards and records separation; applicable installed artifacts.
+consumers; Automation metric service/API/cards, execution-record Task results/filters and independent
+file detail; applicable installed artifacts.
 Fresh initialization → new work → same-version reopen/restart preserves five-state Tasks, file
 outcomes, waiting/continuation, errors, results, pins, request/occurrence identities and fences.
 
@@ -201,16 +219,16 @@ attachment-only retry, automatic uncertain replay and universal rollback. No unr
 | ID | Required proof |
 |---|---|
 | AC-1 | Supported Task producers/readers expose pending/running/completed/failed/cancelled only as current flow statuses; retired paused/partial-success aggregate branches are removed or confined to honest read-only historical evidence. Stages and per-file/operation results retain distinct meanings. |
-| AC-2 | Automated settlement matrix proves normal completion for all-success, mixed success/partial/failure, all-failed, all-partial, all-skipped/ignored, individual file cancellations, recorded uncertainty, healthy empty and complete history exclusions. File effects/results are unchanged. |
+| AC-2 | Given a normally finished complete scope, durable per-item accounting and safe finalization with no Task-level flow failure or acknowledged Task cancellation, the settlement matrix yields completed for all-success, mixed success/partial/failure, all-failed, all-partial, all-skipped/ignored, individual file cancellations, recorded uncertainty, healthy empty and complete history exclusions. File outcomes alone never establish completion; effects/results are unchanged. |
 | AC-3 | Waiting decision/analysis/summary/confirmation, pending machine work and active/unacknowledged calls do not complete early. Existing human/stability waiting and queue-capacity behavior remain correct without introducing a sixth Task status. |
-| AC-4 | Task-level scope/pin/relation/orchestration failures remain failed even with successful files; file-local failures alone never make Task failed. Incomplete traversal/overflow is not empty success or first-N execution. Persistence refusal preserves last durable truth. |
+| AC-4 | Task-level scope/pin/relation/orchestration failures preventing normal completion remain failed with all-success, mixed or all-failed file populations; file-local failures alone never make Task failed. An unfinished flow cannot become completed merely because all known files have terminal results. Incomplete traversal/overflow is not empty success or first-N execution. Persistence refusal preserves last durable truth. |
 | AC-5 | Files direct/folder/mixed, direct supported API/CLI/remote, due, Run once and same-Task four-type continuation use the same flow settlement behavior. Both library kinds' ordinary-file Task producers adopt it without changing operation-result semantics or queue rules. |
 | AC-6 | Concurrent cancel/finalize, stale claim/result publication, restart before/after mutation dispatch and recorded uncertain-file settlement preserve source ownership, capacity, pins, results, authority and completed/uncertain non-replay. Cancellation is explicit acknowledged Task intent, never inferred from file counts. |
 | AC-7 | Real Task Center All/Running/Attention/Ended and four problem lists have consistent authorized counts/membership/paging; mixed/all-failed completed flows retain truthful file counts, causes, effects and readable progress. Waiting remains unfinished. Flow completion never falsely displays file recovery success. |
 | AC-8 | Existing four-type decision → analysis → summary → explicit continuation works in the same Task through refresh/restart, preserving independent siblings and original attempts. No new technical/attachment replay or generic failure-recovery flow appears. |
-| AC-9 | Automation population/rate uses completed/(completed+failed+cancelled), never file/attachment/record-outcome predicates. Pending/running are excluded, cancellation is counted once and zero ended Tasks produce no percentage, not fabricated 0%/100%. |
+| AC-9 | Automation population/rate uses completed/(completed+failed+cancelled), never file/attachment or frozen file-derived stage-outcome predicates. Pending/running are excluded, cancellation is counted once and zero ended Tasks produce no percentage, not fabricated 0%/100%. |
 | AC-10 | With completed Tasks containing only failed/partial/skipped/ignored/uncertain or zero-work files, rates remain Task-based. A cohort of 8 completed, 1 failed and 1 cancelled is 80% regardless of file mix. Verify due/Run once deduplication, full-population counts beyond pages, local-month boundaries and denied/unavailable reads. |
-| AC-11 | Legal current-Task continuation updates its lifecycle-based statistics without adding a run. Original records-only result/times/filter/paging remain independent and immutable; all-failed completed flow is not mislabelled empty/no-work or successful media organization. |
+| AC-11 | For the same Task and consistent read basis, Task Center and Automation records agree on the current flow result. Each surface applies that flow-state meaning to server-side status filters/counts/paging within its own authorized population. A normally completed Task with ten failed files shows completed flow and ten independent file failures on both surfaces and counts as Task success; Task-level failure remains failed regardless of file mix. Required waiting remains unfinished. Legal continuation updates current status/statistics without another run or rewriting original execution times/attempts/file effects. All-failed is neither empty/no-work nor successful media organization; records retain read-only/compact boundaries. |
 | AC-12 | Source-history admission still uses latest formal file outcome: a failed/partial item in a completed Task is excluded by due/Run once and warned for new Files manual confirmation, with old effects/history preserved. |
 | AC-13 | Files local modals/readback on both library kinds, Dashboard, API/CLI, scoped logs/export and applicable notification consumers consistently distinguish Task flow status, per-file result and effect certainty. No unavailable truth is coerced to a valid Task outcome. |
 | AC-14 | Fresh/same-version persistence and affected source-external wheel/container startup/restart consumers prove the five-state lifecycle, waiting, file evidence and original records survive; old-task/cross-version conversion is not required. |
