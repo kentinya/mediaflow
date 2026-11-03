@@ -16,13 +16,16 @@ Product Experience 旅程，原 Slice46 接受身份不变。
 ### TARGET — Slice48 Task 流程状态（PLANNED，尚未实施）
 
 [Slice48](../SLICE.md) / `V2-TASK-012–014` 选择五种 Task 流程状态：pending、running、
-completed、failed、cancelled。只有流程正常结束、范围完整、每项结果安全持久化且没有 Task
-流程失败或已确认取消时，才可显示 completed；此时文件可以全部失败/部分成功/跳过/忽略/
-已记录不确定结果。文件结果本身不证明流程完成；Task 流程自身无法正常完成仍是 failed。
+completed、failed、cancelled。流程正常收尾，或文件处理因技术失败而结束本轮尝试时，均可
+显示 completed；不要求查明实际文件效果或补齐正式 Result。文件可以全部失败/部分成功/
+跳过/忽略/效果未知/结果未记录，仍照实显示，不能编造成功。Task 自身的范围、必要上下文/
+调度关系失败仍是 failed；真正尚在处理或必须人工确认时保持未结束。Task 收尾本身必须保存。
 自动化执行记录与任务中心使用同一 Task 流程结果及状态筛选口径。文件结果继续独立显示，
 不改写为成功。等待人工/确认仍是未完成的 running，并显示等待阶段；不新增等待状态或恢复页。
 八视图/四类问题并集不变；“流程已完成”不能冒充文件全部成功、清除未解决问题或证明恢复成功。
-普通文件操作仍留在原库页面。完整 TARGET 旅程/失败边界见
+普通复制/移动/删除本来就使用 Task，采用同样结算规则，操作结果仍留在原库页面；Task
+completed 不能冒充文件复制/移动/删除成功。自动化成功率统计定时和定义“运行一次”，不统计
+Files/CLI 手动整理及普通文件操作。完整 TARGET 旅程/失败边界见
 [Product Experience](product-experience.md#target--task-flow-status-and-automation-success-rate-slice48-planned)。
 下方 CURRENT 页面行为在新实现通过验收前保持现行交付事实。
 

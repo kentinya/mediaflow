@@ -33,7 +33,7 @@ only in [the development workflow](development-workflow.md).
 | 45 — V2 Task Center, Recovery and Scan/Preview/FileIndex Retirement | Deliver nine authoritative task/recovery lists, in-context exact plan-summary confirmation, durable per-item results/controls, first-deployment absence of Scan and standalone Preview products/compatibility layers, complete FileIndex retirement, and shared CLI/Files/MediaLibrary live lists without catalog recording | PASS / CLOSED | Accepted Slice44 baseline; existing Operations/Files/Task/Worker/recovery foundations; explicit user priority change and required retirement-coupling exceptions before Slice43 closure |
 | 46 — V2 Organizing Task Center and Readable Actions | Repair V2 action readability; start manual organizing only from ResourceLibrary Files and admit tasks before business-rule readiness, retaining folder media-type filtering, same-source unfinished-work/explicit-extension checks and task-native four-type recovery; keep ordinary-file progress/results/recovery on each library page; restrict Task Center to organizing work with eight views and four business types in Attention/pending counts, removing Failure Recovery, other failures' separate statistics/guidance and creation/global Worker/discovery/manual-operation blocks; fix Automation detail opening/continued Save editing, make checked Enabled authorize scheduled execution without independent grants, and make Run once execute a real task before rule readiness with four-type recovery | PASS / CLOSED | Accepted43–45 baseline and existing shared action, live Files, durable direct-command/transfer/Delete, organizing/recovery and Automation publication/grant/Scheduler foundations |
 | 47 — Unified Task Scheduling and Organizing Execution | Remove independent Job; unify organizing Task/Worker and four-type recovery; add source-dependent failed/partial history handling and CLI retry-failed retirement; move three shared runtime settings into System Settings and delete the unused stale-age parameter | PASS / CLOSED | Accepted43–46 and subsequent accepted corrections at `5144ab1fc2344b06194969cc2c496835729664c0`; explicit user refactor/A scope authorization, amended 2026-11-03 |
-| 48 — Task Flow Status and Automation Success Rate | Separate five-state Task flow from independent file outcomes; fail Task only for flow failure; calculate Automation success rate from completed/ended Tasks without file-result predicates, preserving waiting, cancellation, recovery, history and execution safety | PLANNED | Accepted47/current baseline `ba84272721961c970f1eb85d616a0d129523ab92`; user-authorized Slice planning on 2026-11-03, no implementation authorization |
+| 48 — Task Flow Status and Automation Success Rate | Separate five-state Task flow from file outcomes, including completed technical failure with absent file results; calculate success rate from due/definition Run once Task completion, excluding manual organizing/ordinary work; preserve waiting, cancellation, truthful file evidence and execution safety | PLANNED | Accepted47/current baseline `ba84272721961c970f1eb85d616a0d129523ab92`; user-authorized Slice planning on 2026-11-03, no implementation authorization |
 
 ## Current boundary
 
@@ -49,8 +49,11 @@ completed/(completed+failed+cancelled), over the same admitted Automation Task c
 partial/uncertain/attachment outcomes and nonempty work do not gate it. Independent results,
 original execution times/attempts/file effects, four-type recovery and safety remain. Execution-record
 Task results/status filters agree with Task Center's current flow state, with file outcomes separate.
-Completion requires normal complete-scope flow and safe durable accounting; file outcomes alone
-never establish it, including when every known file failed or succeeded.
+Ended file-processing technical failures count as completed even with unknown effects or no formal
+file Result. Do not wait for actual file results; Task closure itself must be saved, and genuine live
+work/human waiting and Task-level flow failures remain distinct. Ordinary Copy/Move/Delete already
+use Tasks with independent operation results on their library page. Automation counts due AND
+definition Run once, excluding Files/CLI manual organizing and ordinary file operations.
 
 Root Task is NO ACTIVE IMPLEMENTATION TASK. Next action is implementation authorization, then A
 checkpoints ACTIVE and B plans the first coherent Task. This planning action does not start product

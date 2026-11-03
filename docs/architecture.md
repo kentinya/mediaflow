@@ -36,11 +36,13 @@ The older TaskStatus/pipeline vocabulary cannot become a second durable lifecycl
 flow policy at the existing application boundary, with fenced repository enforcement; no parallel
 engine or file-count heuristic may overwrite a Task-level failure or acknowledged cancellation.
 
-Completion requires a normally finished complete scope, durable per-item accounting and safe
-finalization with no Task-level flow failure or acknowledged Task cancellation. Under those conditions,
-all failed/partial/skipped/ignored/individually cancelled/recorded-uncertain files or healthy zero work
-still yield completed. File outcomes alone do not prove those conditions; terminal results for all
-known files cannot turn an unfinished or failed flow into completed.
+Completed includes normal closure and file-processing attempts ended by technical failure, including
+timeout/interruption, missing formal file Results and unknown Storage effects. Do not require actual
+file results, effect verification or remote-stop proof to close such an attempt. Preserve known
+steps/failure evidence and explicitly retain missing-result/unknown-effect truth. Genuine remaining
+machine work, a currently executing local call and required human decisions stay unfinished; an old
+processing marker from the ended technical attempt does not itself prove live work. Task closure must
+be persisted under the current owner fence, without a Task-level flow failure or acknowledged cancel.
 Task-level root/incomplete traversal, unavailable required pin/relations or orchestration errors may
 fail the flow if they prevent normal completion. Distinguish bounded isolated file errors from
 failure to prove scope completeness. Missing Worker/claim expiry/loss alone is not failure; a database
@@ -48,22 +50,29 @@ write failure is not proof that a terminal state was persisted. Stage, error ori
 successful file counts and effect certainty stay explicit and backend-authoritative.
 
 **Safety and continuation:** retain same Task identity, admission/claim/capacity/source transactions,
-immutable pins, cancellation precedence, safe publication and uncertain non-replay. A live/unproved
-mutation cannot release its claim/capacity/source merely because a new status rule exists. Once an
-uncertain file result is safely recorded, its uncertainty does not itself make normal flow completion
-fail or authorize replay. Existing four-type continuation may explicitly re-enter eligible work;
+immutable pins, cancellation precedence, safe publication and uncertain non-replay. Retire/fence an
+ended technical attempt without waiting for a missing file Result; do not keep its ordinary Task slot
+solely for that missing result. Task completed never grants replay or clears protection for a genuinely
+live mutation. Any still-needed protection against uncertain effects stays authoritative, and known
+Results/steps are not overwritten or invented. No new remote-stop detector or verification gate is
+selected. Existing four-type continuation may explicitly re-enter eligible work;
 no status grants execution or clears a business problem. Recovered file success remains evidence-based.
 Automatic history exclusion/new-manual warning uses actual latest formal file outcomes, never parent
 Task flow status. Shared ordinary-file Task aggregates adopt this meaning without redesigning their
-operation results/queues. Reads/analysis remain mutation-free.
+operation results/queues. Copy/Move/Delete already use Tasks; their operation projections must derive
+success/failure/partial/unknown from operation evidence rather than map Task completed to successful
+file mutation. Their status remains on the originating library page. Reads/analysis remain mutation-free.
 
 **Metrics contract:** the server uses current durable Task status over the existing authorized
-Automation due/Run once admitted cohort/local-month window: completed Tasks divided by
+Automation due/definition Run once admitted cohort/local-month window: completed Tasks divided by
 completed+failed+cancelled Tasks. Pending/running are excluded; zero-ended/unavailable evidence yields
-no rate. Count stable Task identities once before paging. Remove primary/attachment success/effect
-certainty and frozen file-derived stage-outcome predicates from the rate. Current lifecycle changes
-under legal continuation can change the contribution but cannot create another admitted run. Keep all
-actual file counts/effects and no-work reasons distinct: zero successful files does not prove no work.
+no rate. Both automatic due and the definition's Run once count; Files/CLI manual organizing and
+ordinary file operations do not. Explicit continuation keeps the original cohort identity without
+another admission. Count stable Task identities once before paging. Remove primary/attachment
+success/effect-certainty and frozen file-derived stage-outcome predicates from the rate. Current
+lifecycle changes under legal continuation can change the contribution but cannot create another
+admitted run. Actual file counts/effects and no-work reasons remain distinct: zero successful files or
+absent file Results do not prove no work. Formal per-file Result presence is not a success-rate predicate.
 
 **Execution-record contract:** Task Center and Automation execution-record Task results use the
 same current durable Task flow state on a consistent read basis. Each surface applies that flow-state

@@ -38,14 +38,16 @@ until this amendment is implemented and independently accepted.
   use existing backend-permitted cancel or four-type decision → analysis → exact summary → explicit
   continuation. Saving/reading does not execute. Required waiting keeps the flow unfinished, and
   only explicit legal continuation can re-enter a terminal Task with its existing identity/pin.
-- **Success:** when the flow normally finished its complete scope, durably accounted for every item
-  and reached safe finalization without Task-level failure or acknowledged cancellation, it displays
-  “流程已完成；成功 7、部分成功 2、失败 1”, or completed flow with all file attempts failed.
-  These same conditions apply to all skipped/ignored/individually cancelled files, safely recorded
-  uncertain outcomes, healthy empty and complete history exclusions. File outcomes alone cannot
-  establish completion; an unfinished or failed Task flow does not become completed because all known
-  files have terminal results. Processed progress/file warnings/true no-work reasons remain distinct
-  from successful media effects.
+- **Success:** a normally closed flow displays “流程已完成；成功 7、部分成功 2、失败 1”.
+  File-processing attempts ended by technical failure also close as completed, including timeout,
+  interrupted file work, unknown effects and no formal file Result. Do not wait to establish actual
+  file results before this technical closure. Show “流程已完成；文件处理发生技术失败，实际结果未记录/效果未知”
+  where applicable; retain known failures/steps without inventing file success or empty work.
+  All skipped/ignored/individually cancelled, healthy empty and complete history exclusions can also
+  close normally. Required human decisions, genuine remaining machine work and a locally executing
+  call stay unfinished. An old processing marker left by the ended technical failure alone does not
+  keep Task running. Task-level flow failure/cancellation remains distinct; Task closure itself must
+  be saved. The [Slice scenario table](../SLICE.md#场景与统计口径--slice48-target) defines each case.
 - **Failure:** Task scope enumeration/root failure, unusable required execution context/relations or
   orchestration error preventing normal completion shows a Task flow failure with bounded stage,
   durable state, known effects and the existing allowed next action. A safely isolated file error
@@ -54,15 +56,20 @@ until this amendment is implemented and independently accepted.
 - **Recovery/cancellation:** existing four business flows and actual recovery-success evidence
   remain separate from flow completion. Unresolved human work is not completed; successful or
   uncertain effects cannot replay. Cancel is acknowledged only at a safe boundary; a request or
-  file-level cancellation does not itself make the Task cancelled. Restart/read/publication failures
-  preserve last durable truth; no new generic retry, pause restoration or universal rollback.
+  file-level cancellation does not itself make the Task cancelled. Ended file technical attempts can
+  close without a formal Result; preserve known evidence, absent-result warnings and non-replay.
+  Task-status read/publication failures preserve last durable truth. No new generic retry, remote-stop
+  verification gate, pause restoration or universal rollback.
 - **Automation success rate:** in the existing local-month Automation cohort, each admitted due/Run
-  once Task counts once. The rate is completed/(completed+failed+cancelled); pending/running human
-  waiting are excluded, cancellation is not success, and zero ended/unavailable data shows no rate.
-  A completed Task counts even if every file failed/was partial/skipped/ignored/recorded uncertain,
-  or the scope was healthy empty/history-excluded. File outcomes never gate this metric. Legal
-  continuation may change that Task's current lifecycle-based rate contribution without creating a
-  second run. Unknown metrics offer existing refresh/read recovery, never fabricated 0% or 100%.
+  once Task counts once. Run once means the Automation definition button; manual Files/CLI organizing
+  and ordinary Copy/Move/Delete do not enter this statistic. The rate is
+  completed/(completed+failed+cancelled); pending/running human waiting are excluded, cancellation is
+  not success, and zero ended/unavailable data shows no rate.
+  A completed Task counts even if every file failed/was partial/skipped/ignored, effects are unknown,
+  formal file results are absent, or the scope was healthy empty/history-excluded. File outcomes and
+  Result presence never gate this metric. Legal continuation may change that Task's current
+  lifecycle-based rate contribution without creating a second run. Unknown metrics offer existing
+  refresh/read recovery, never fabricated 0% or 100%.
 - **Execution records:** 自动化 → 执行记录 → 查看详情 shows the same current Task flow result as
   Task Center. For a normally completed Task with ten failed files, both show “流程已完成” plus
   “文件失败 10 个”; the success rate counts that Task as successful. File failures do not relabel
@@ -74,7 +81,10 @@ until this amendment is implemented and independently accepted.
   media organization. This TARGET amends the result/filter meaning of `V2-AUTO-006`.
 - **Other surfaces:** Files local ordinary-operation status, Task Center, Dashboard, API/CLI,
   export/logs and existing Task-status notifications distinguish flow state from per-file effects,
-  without adding a page or control.
+  without adding a page or control. Ordinary Copy/Move/Delete already have Tasks and use the same
+  technical-failure completion rule on their originating library page. The operation still shows
+  failure/partial/unknown/missing results; Task completed alone cannot say the file was copied,
+  moved or deleted successfully. Known successful or uncertain operations are never replayed.
 
 Fresh/new-work/same-version restart retains the same Task and independent results. The source-history
 gate still uses actual latest formal file failure/partial even inside a completed Task; a new manual
