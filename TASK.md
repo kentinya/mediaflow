@@ -3,7 +3,8 @@
 用户于 2026-11-03 要求激活本 Task。父 Slice48 已在
 `802b6ae4145f30da79751388fca285d5752b47b9` 提交为 ACTIVE。B 核对原 Task Base 至该检查点
 只有文档变更，保留原基线、目标、范围、验收和验证计划，现正式启用本 Task。
-Developer 可按本文开始实现；PLANNED 表示已授权、待开始，实际开始开发时改为 IN PROGRESS。
+候选 `2450680f646f6d45e3dfc2180863775bbebb4b5c` 已交 B 复核，结论为 FIX REQUIRED。
+Developer 按文末修正指导在同一 Task 继续；原 Task Base、目标、授权和范围不变。
 
 Authority: committed [Slice48](SLICE.md) RO-1–3，以及 RO-4 中执行记录与 Task 状态一致的部分；
 [Development Workflow](docs/development-workflow.md) 负责生命周期、测试和检查点。
@@ -13,13 +14,13 @@ Authority: committed [Slice48](SLICE.md) RO-1–3，以及 RO-4 中执行记录�
 Task ID: 48.1
 Task Type: SLICE
 Parent Slice: 48
-Status: IN PROGRESS
+Status: FIX REQUIRED
 Task Base: 4f11762d617d50555f3b106357e8f41988f7c2f9
 Difficulty: High
 Test Level: T4
-Planner / Reviewer: B — Codex performs planning at user request; review NOT STARTED
+Planner / Reviewer: B — Codex; independent candidate review completed, FIX REQUIRED
 Development Authorization: AUTHORIZED — USER REQUEST, 2026-11-03 — TASK 48.1 SCOPE ONLY
-Next Action: DEVELOPER IMPLEMENTS TASK 48.1
+Next Action: DEVELOPER FIXES TASK 48.1 BLOCKERS; SAME TASK BASE
 ```
 
 ### Goal
@@ -343,9 +344,103 @@ READY FOR B REVIEW。Developer 按本 Task 范围实现并交出一个检查点�
 
 ### B review result
 
-NOT STARTED。Task 已启用，尚无候选实现、验收或 PASS 决定。
-正式提交候选后按模板填写 Reviewed Base..Head、PASS/FIX REQUIRED、真实验收和阻塞项。
-Task PASS 时重新核对整个 Slice；本计划不预设 Slice 已完成，也不代替 A Final Review。
+```text
+Reviewed Base: 4f11762d617d50555f3b106357e8f41988f7c2f9
+Reviewed Head: 2450680f646f6d45e3dfc2180863775bbebb4b5c
+Decision: FIX REQUIRED — 2026-11-04
+Review scope: complete Task Base..Head manifest/diff and existing entry call chains
+Slice Required Outcomes / Surfaces all satisfied: NO
+Next: SAME TASK FIX LOOP
+```
+
+已实现共享流程规则、自动通道技术结束处理及大部分读回调整；本轮独立验收仍发现以下
+两个 P1 阻塞。候选的 Developer 完成报告保留为交接事实，不等同于 B 的验收结果。
+
+**B48.1-01 — 文件结果重复计数，直接 API 的处理进度仍使用旧含义。**
+
+- 真实旅程：发布定义 → POST 现有定义 Run once → 真实 Worker/组织服务处理两个文件，
+  本地执行边界分别返回 partial 和 failed → GET 任务中心已结束列表及自动化执行记录。
+  Task 正确 completed，但任务中心返回 `total_items=2, partial_items=1, failed_items=2`，
+  现有列表会显示“部分成功 1，失败 2”；同一 Task 的自动化记录显示“部分成功 1，失败 1”。
+  `failed_items` 仍包含 partial，列表把它当成独立失败数，与单独列出的 partial 重叠。
+- 现有直接 API 的授权 → 明确 execute → GET Task 也复现：唯一文件失败后返回
+  `completed, total_items=1, completed_items=0, failed_items=1`。该入口仍把成功数当
+  已处理数，与本 Task 已启用的 Web `failedItems <= completedItems` 校验不一致。
+- 对应原验收：独立文件计数、处理进度、支持的直接 API，以及 Slice RO-3 / AC-5/7/13。
+
+**B48.1-02 — 源目录无法读取，却保存成无错误的已完成任务。**
+
+- 真实旅程：使用临时配置运行现有 `organize <source-directory> --execute`，Storage 的
+  源目录 list/list_page 返回权限拒绝 → CLI 正确退出 1 并输出 `Failed: 1` → 读取持久 Task。
+  实际保存为 `completed, total_items=0, error=None`，无法从任务历史找回源目录读取失败。
+  这不是健康空目录，也不是已经证明范围完整的单文件失败。
+- 直接 CLI 收尾没有接收本次扫描的范围/错误事实，只按文件列表（空列表直接 completed）
+  收尾；`PersistentTaskCoordinator.finish` 同样把 `scope_proven_complete` 固定为 True。
+  共享规则的纯函数测试并不能证明真实入口传入了正确的范围事实。
+- 对应原验收：根目录/完整遍历失败仍为流程失败，以及 Slice RO-1/2 / AC-4/5/13。
+
+#### Developer 修正指导（同一 Task）
+
+1. **统一计数含义并接通现有入口。** 保留 `failed_items` 已有的失败/部分成功汇总兼容含义，
+   列表展示独立“失败 N”时使用仅 failed 的文件事实；可复用现有 partial 计数作明确推导，
+   或增加必要的最少只读字段，同步 API/解码。不要通过改文案掩盖重复，也不要悄悄改变旧字段
+   的不同消费者。同步修正 `ManualOrganizeExecutionService._task_after_item` 的非 kernel
+   当前入口（含其现有中断收尾调用）：已处理数应含所有已结束项，成功数另计。
+   核对任务中心列表/详情、直接 Task API、自动化记录对同一文件总体的结果一致。
+2. **让范围事实到达收尾边界。** 从现有 CLI 调用的真实扫描结果传递“范围可证完整/范围失败”
+   及有界原因，接入共享流程规则；同步核对 coordinator 的 finish。根目录或子树无法完整
+   枚举时保存 failed 和可读原因，不能保存成健康 0 项完成，不能执行尚未证明完整的前缀。
+   已证明范围完整的单文件技术失败仍 completed；合法空范围仍 completed。
+   保留已有 CLI 明确选择的范围/limit 语义，不把修正扩大为新扫描或恢复系统。
+3. **补真实入口回归。** 在现有 Run once 集成测试和任务中心组件/浏览器旅程中补
+   “1 partial + 1 failed”及“7 success + 2 partial + 1 failed”；同 Task 两处分别显示
+   正确独立计数，已处理数等于总量，未知效果提醒保留。现有直接 API 的授权/execute/readback
+   补单项失败与混合结果；不要仅调用 `_task_after_item` 或手工种 completed 行。
+   CLI 补根目录拒读、子树拒读、正常空目录，并断言持久状态/原因、零不当媒体变更和
+   既有 owner/取消保护；实际 file-local 故障仍 completed。
+4. **受影响验证后交新检查点。** 建议在原有模块中补回归，运行下列精确受影响命令；
+   实际修改其他消费者时追加对应测试及 changed-file Ruff/ESLint/Prettier 检查。
+   修正轮测试耗时须小于该轮总耗时的 50%；全量/产物门禁继续由 B 负责，不交回 Developer。
+
+```sh
+.venv/bin/python -m unittest tests.test_v2_automation_run_once tests.test_manual_organize_execution tests.test_automation_entrance_recovery tests.test_task_flow_status tests.test_final_integration tests.test_task_persistence tests.test_task_scheduling_fencing
+```
+
+`web/` 下：
+
+```sh
+npm run test -- run src/entities/operations/task.test.ts src/entities/operations/run.test.ts src/features/operations/OperationsInventory.test.tsx src/features/operations/AutomationWorkspaceReadModel.test.tsx
+npm run typecheck
+npm run build
+npm run test:e2e -- --config=playwright.python.config.ts tests/e2e/task-flow.python.spec.ts
+```
+
+不得删除/放宽 decoder 校验来接受旧进度数据，不把 partial 改成 failed，不改变文件 Result、
+未知效果、不重放或源历史规则；不修改 Slice/Roadmap/Progress、预先实现成功率或规划下一 Task。
+
+#### B 实际验证和剩余门禁
+
+- 仓库/分支：`/Users/songzhidong/mediaflow` / `main`；开始 HEAD 即 Reviewed Head，tracked 干净，
+  工作区/Git 可写。原有未跟踪 OS/log/reference/output 文件及 `15` 全部保留、不纳入检查点。
+- 根目录运行 `.venv/bin/python -m unittest tests.test_task_flow_status tests.test_final_integration`：
+  **26 通过，0 skip，0 失败，0.508 秒**。这验证已有规则/集成用例通过，但未覆盖上述阻塞。
+- 根目录运行 `PYTHONPATH=. .venv/bin/python .git/validation-evidence/2450680f646f6d45e3dfc2180863775bbebb4b5c/b-review-20261104/reproduce.py`：
+  实际从 Run once、注册的 CLI organize、直接 API authorize/execute/readback 三条现有链路
+  复现上述数据；最终运行 0.219 秒。仅使用临时 SQLite/Storage、fake Provider 和本地故障注入，
+  没有读取用户数据库/媒体或调用真实外部服务。
+- `python3 scripts/check_governance.py`、`git diff --check` 及对 Reviewed Base..Head 的
+  `git diff --check` 均通过；本轮 tracked 变更仅 `TASK.md`。
+- 原始脚本/输出和 focused-unittest 日志保存在本机忽略目录
+  `.git/validation-evidence/2450680f646f6d45e3dfc2180863775bbebb4b5c/b-review-20261104/`。
+  不声称远程可访问。产品测试和复现（含接线试跑）累计不足 3 秒，低于本轮审查耗时的 50%。
+- 按工作流 §6 的已证实阻塞提前返工规则，**完整 Python/Web/E2E、桌面/窄屏截图、wheel、
+  Docker/restart/security 门禁本轮未执行，保持待验收**；Developer 自报全量结果不替代 B 的
+  匹配验收。修正候选仍须按原 T4 计划完成 B 门禁，当前不授予 Task PASS。
+
+全部 Slice 结果重评：RO-1 的大部分正常/技术结束规则已有实现，但上述真实入口仍有缺口；
+RO-2 的目录范围失败未满足；RO-3 的独立计数/处理进度未满足；RO-4 的记录流程状态已改但
+本 Task 验收未完成，成功率计算仍明确留在后续范围。故本轮保持当前 Task 返工，
+不规划下一 Task，也不提交 Slice Closure Packet 或宣布 Slice 完成。
 
 ### Workspace and activation validation
 
