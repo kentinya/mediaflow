@@ -6,9 +6,11 @@ owns scope. Slice45 is PASS / CLOSED: Task Center/typed recovery, shared live li
 Scan/Preview/FileIndex retirement below are CURRENT. Slice43 is also PASS / CLOSED; its Automation
 workspace/settings foundation remains accepted. Slice46 is PASS / CLOSED; its current amendments
 below replace selected entry/query/intent behavior without changing prior acceptance or deferrals.
+Slice47 is PASS / CLOSED after independent A Final Review on 2026-11-03. Its Task-only
+scheduling/settings/history contracts below supersede the affected earlier foundations.
 Detailed former delivery notes remain at `865ebdce47b0b323064fd8e05fbfaa54546e6269:docs/architecture.md`.
 
-## TARGET — Unified Task scheduling and organizing execution (Slice47 ACTIVE)
+## CURRENT — Unified Task scheduling and organizing execution (Slice47 PASS / CLOSED)
 
 **2026-10-31 user amendment:** Organizing AND ordinary-file operations (including Copy/Move)
 retire Pause and resume-from-pause across Web/API/CLI and live dedicated dispatch. This supersedes
@@ -17,11 +19,11 @@ cooperative and preserves completed/uncertain effects. Four-type organizing deci
 summary/explicit continuation, human/stability waiting and fences remain. The user confirms no
 currently paused organizing Tasks: do not build a pause migration, restoration or compatibility
 executor. Existing history stays readable without deletion, false relabelling or automatic replay.
-Implementation/final acceptance remain pending under Slice47 AC-19 / V2-TASK-007.
+The retirement is accepted under Slice47 AC-19 / V2-TASK-007.
 
 `V2-TASK-001–006` and committed [Slice47](../SLICE.md) select removal of the independent Job system.
-This section is the authorized target; the CURRENT Job/Task contracts below describe the accepted
-Base until implementation/final review. Slice46's Contract/A review remains at
+This section is CURRENT; affected Job-based contracts are superseded by one Task-owned
+scheduling/claim/execution lifecycle. Slice46's Contract/A review remains at
 `5144ab1fc2344b06194969cc2c496835729664c0:SLICE.md`; no old acceptance is rewritten.
 
 ```text
@@ -81,7 +83,7 @@ navigate to System Settings. Reuse the existing focused API and managed checked 
 validation, submission reconciliation and per-instance adoption evidence; no new store or endpoint
 is required. Only the three intended fields change, preserving unrelated Drafts/configuration.
 
-| Existing key | TARGET consumer |
+| Existing key | CURRENT consumer |
 |---|---|
 | `automation.maximumActiveJobs` | One atomic organizing Task allowance, integer 1–10000, shared by Files/direct CLI/API/remote, due/Run once and same-Task machine-work re-entry. It is not execution parallelism; ordinary asynchronous file work retains its existing admission rules. |
 | `automation.workerPollSeconds` | Shared resident Worker idle-work cadence for organizing and both library kinds' ordinary asynchronous copy/move/delete. No per-origin cadence or new parallelism. |
@@ -105,8 +107,8 @@ expiry to current service time and each runner renews under its own existing lea
 adapters retain their individual call timeouts. Preserve these judgments and effect uncertainty:
 heartbeat freshness is not business progress, lease expiry is not proof of task failure, and a call
 timeout does not prove no mutation. No automatic uncertain replay, forced cancellation or new
-supervision is selected. This is TARGET work pending Task47.6 implementation/T4 and whole-Slice
-independent acceptance, not CURRENT reconciliation.
+supervision is selected. Task47.6 passed B T4 acceptance and the complete original Slice
+Base..Head passed independent A Final Review; the accepted Head is recorded in the Contract.
 
 ### Recovery, queries and original execution records
 
@@ -152,8 +154,8 @@ test infrastructure, never user databases/media.
 Old-task/Job conversion, old-identifier mapping layers, cross-version upgrade/rollback and
 mixed-version writer interoperability are excluded. No actual Base schema53 upgrade fixture or
 old-image/new-image upgrade proof is required. This does not authorize clearing user data or
-rewriting accepted implementation/history. The accepted CURRENT baseline contracts below are not
-rewritten; their upgrade descriptions do not add a Slice47 acceptance gate.
+rewriting accepted implementation/history. Prior acceptance facts remain historical in Git. Earlier upgrade descriptions do not add a
+current support promise or Slice47 acceptance gate.
 
 Historical published JSON/digests are immutable: read existing configuration and preserve legitimate
 pins and explicit overrides during three-field publication/adoption. The retired stale-age key may
@@ -161,7 +163,7 @@ remain in raw historical documents without runtime meaning; this is not old-task
 Ordinary-file/transfer consumers share Worker idle cadence but retain their own admission rules;
 notifications retain their own policy. Integration does not authorize an unrelated queue/supervisor rewrite.
 
-## TARGET — Source-history gate for new organizing (Slice47, 2026-11-02)
+## CURRENT — Source-history gate for new organizing (Slice47)
 
 `V2-TASK-008–010` adds one shared per-source admission decision to the existing Task engine.
 Server-proven trigger/admission context distinguishes definition due/Run once from deliberate new
@@ -202,7 +204,7 @@ four-type code. Keep ordinary CLI/remote source and authorization semantics; add
 warning obligation or new remote history/consent category. Existing backend origin/permission checks
 are retained.
 
-This is TARGET scope only. No old-task/cross-version migration or V1 support is added; fresh and
+This is accepted CURRENT behavior. No old-task/cross-version migration or V1 support is added; fresh and
 same-version persistence, audit, idempotency, pins and permission checks remain applicable.
 
 ## CURRENT — Slice46 presentation and work-query ownership
@@ -227,7 +229,7 @@ Unchanged foundation contracts below remain current; this section owns the affec
   enable/enabled-successor publication supplies scheduled intent and Run once supplies one-run intent.
   Remove independent-grant dependencies and the normal initial Automation confirmation. Backend
   plans, pins, source/capability/permission checks, destructive intent and fences still govern effects.
-- **Work queries:** scope supported organizing commands and durable Job/Task links before grouping,
+- **Work queries:** scope supported organizing admissions and durable Task links before grouping,
   paging, counts or detail. All eight views and pending counts share that authorized population;
   browsers cannot filter mixed pages locally. Attention is the distinct four-type union and its
   required human recovery steps. Normal manual WaitingConfirm stays in Running/All, not Attention.
@@ -326,7 +328,7 @@ execution authorization token. The operator or automation issues it through the 
 the raw value once and supplies it to an authenticated API request through the
 `X-MediaFlow-Execution-Token` header. The digest is persisted, admission and consumption are atomic,
 and the normal API-principal Bearer token alone is insufficient mutation authority. The current V1
-Jobs Web UI does not expose this remote-execution token journey as a complete operator flow. This
+The V2 Web does not expose this remote-execution token journey as its ordinary organizing flow. This
 mechanism may continue to support API automation, local administration, debugging, compatibility
 and emergency/support workflows.
 
@@ -447,10 +449,10 @@ earlier Local-only setup check remains available as a Local diagnostic but is no
 activation authority. The previous Active remains available when replacement fails.
 
 After activation, `ManagedConfigurationService` verifies the digest/schema/runtime load and builds an
-immutable runtime binding containing revision ID, version and digest. API requests, Workers, Jobs and
+immutable runtime binding containing revision ID, version and digest. API requests, Workers, Tasks and
 scheduled occurrences use that binding or their persisted snapshot identity. A missing, corrupt,
 schema-incompatible or runtime-invalid Active fails media work closed and never falls back to JSON.
-Activation itself starts no scan, Job, Task, schedule occurrence or media mutation.
+Activation itself starts no Task, schedule occurrence or media mutation.
 
 The Files-page `+ 添加资源库` action is a bounded convenience over this same authority. Its final
 `保存` command uses the save-time Active snapshot as the candidate base and composes successor
@@ -579,7 +581,7 @@ missing prerequisites and labels supplied offline synthetic identity; explicit l
 intent remains separate. Necessary destination observations are bounded read-only Storage calls.
 Save still independently validates the whole successor and applicable publication evidence before
 atomic activation. Local evidence grants neither publication nor execution. Historical full-test
-API behavior/evidence, immutable snapshots and admitted Task/Job/Automation pins retain their
+API behavior/evidence, immutable snapshots and admitted Task/Automation pins retain their
 original scope. No alternate domain evaluator, runtime authority or Storage mutator is introduced.
 
 The Rules workspace owns its content title/description and read-only refresh; its shared topbar
@@ -597,7 +599,7 @@ shell navigation/authentication and other business routes retain their behavior.
 
 The runtime SQLite repository persists Tasks, TaskItems, Results, locks, review queues,
 organizing intents/plans/executions, work-scoped discovery/stability/source evidence,
-Automation Definitions/Jobs/occurrences, notification delivery,
+Automation Definitions/Task scheduling/occurrences, notification delivery,
 execution authority, security audit and operational logs. The configuration SQLite repository
 persists managed revisions, object/reference state, activation/test evidence and configuration audits.
 Compatibility versions are declared by the runtime/configuration repositories and managed-document
@@ -636,10 +638,12 @@ rule whose explicit `mediaLibraryId` is missing is never resolved from its displ
 
 ## Tasks, Results and processing recovery
 
-Long-running work is represented by persisted Task and TaskItem records. Jobs are queue/admission
-records; Tasks represent actual processing; Results and history record outcomes. Pause is cooperative
-at media-item boundaries. Cancellation, retry and recovery are explicit and do not interrupt an
-in-flight provider/Storage call or claim an unknown mutation was undone.
+Long-running organizing work is represented by one persisted Task and its TaskItems/Results.
+The Task owns queue admission, claim/heartbeat/fence, processing stage and settlement. Cancellation
+is cooperative and does not interrupt an in-flight Provider/Storage call or undo recorded effects.
+Pause/resume-from-pause and the independent CLI retry-failed entrance are retired.
+Four-type recovery uses explicit decision → analysis → exact summary → confirmation in that Task;
+new deliberate organizing is distinct work governed by the source-history contract above.
 
 Each item has an independently persisted Processing Checkpoint with stage, pinned configuration
 identity, known effects, effect certainty, failure category and next action. Safe recovery can
@@ -652,26 +656,25 @@ operator from a resolved conflict or review through exact-source re-analysis, co
 and the original Organize outcome. Successful siblings remain terminal and uncertain effects remain
 investigation-only.
 
-## Accepted foundation — V2 Operations and Tasks Workspace (Slice 42)
+## CURRENT — V2 Operations projection (foundations42, amended47)
 
-The existing Job/Task/TaskItem/Result, manual execution and recovery services remain execution
-authority. A shared Python application projection joins only explicit durable links into one
-operator-visible run. Pre-Task queued/failed admission and standalone Tasks stay visible; linked
-Job/Task is counted once, while separate Automation occurrences and recovery attempts retain their
-history. Queue completion cannot override Task/item outcome. This is a read model, not a new domain
-Task object, queue or lifecycle state machine.
+Task/TaskItem/Result, manual execution and four-type recovery services retain execution authority.
+The Python application projection reads exact Task-owned admission/discovery/analysis/execution links
+into one operator-visible work. Admission/pre-start failures stay visible in that Task. Original
+Automation outcome/time is write-once evidence separate from later handling. Queue settlement never
+overrides item/Result truth or counts continuation as another original execution.
 
 ```text
 V2 Operations inventory / selected detail / records / task-linked recovery
   -> typed authenticated query and command boundary
-  -> Python run projection + existing lifecycle / review / recovery admission
-  -> existing Job / Task / TaskItem / Result / audit / log repositories
+  -> Python Task projection + existing lifecycle / review / recovery admission
+  -> Task / TaskItem / Result / audit / log repositories
   -> explicit safe continuation -> resident Worker -> OrganizerExecutor
 ```
 
 Repositories supply bounded deterministic text/safe-scope/status/kind/time queries and aggregate
 counts from the same authorized population and consistent read basis. Cursors bind query and
-authorization context. No browser merge of independently paged Tasks/Jobs, page-only counts or
+authorization context. No browser merge of independently paged work, page-only counts or
 reading global logs to find one task. SQLite reads the page and aggregates in the same read
 transaction. Additive schema40–42 indexes and `operations_run_display` retain bounded admission
 display context without rewriting legacy rows or creating authority. Names and scopes derive from
@@ -687,17 +690,17 @@ The existing secret-free result-package service remains export authority.
 Creation reuses live ResourceLibrary Files selection, exact intent/Preview and existing explicit
 manual execution admission, preserving contextual return to the selected run. FileIndex is not
 physical source authority; MediaLibrary is not a new organizing source. Slice45 supersedes the
-separate Preview product and its routes; supported Task/Job links and authentication stay intact.
+separate Preview product and its routes; supported Task links and authentication stay intact.
 
-`ScopeContinuationService` durably admits supported safely paused asynchronous work to the
-existing queue. Schema43 `scope_continuations` links the original Task, exact admitted command,
-remaining scope, budget and immutable pin to one continuation Job and its eventual Task. The
-resident Worker reuses existing source revalidation, locks/leases/fences and checkpoint accounting;
-HTTP does not run the long work or shell out to CLI. Continue excludes successful/ignored/uncertain
-effects and rechecks applicable current authority. Persisted `execute_authorized` cannot reissue
-consumed one-shot authority or bypass withdrawn scheduled intent/current permission checks. A changed plan or insufficient
-authority returns to native exact Preview and explicit execution intent. Schema44's nullable manual
-Preview origin-Task link preserves that continuation history without granting execution authority.
+`scope_continuation` retains shared source/lineage/remaining-scope eligibility helpers; its
+standalone admission/Worker services are removed. Retired scope-control commands refuse without
+work; no Job, successor organizing Task or pause restoration path is created.
+`ManualTaskContinuationService` routes four-type analysis to the Task's linked discovery or automatic
+continuation. Exact summary confirmation re-enters that Task atomically with current capacity and
+authority checks while retaining the reviewed immutable execution pin. HTTP does not perform long
+media work. Successful/ignored/uncertain effects cannot replay, and consumed authority or withdrawn
+scheduled intent cannot be restored by continuation. Internal item versions retain explicit durable
+source/attempt/result lineage. Legacy schema43/44 Job continuation details remain in Git.
 
 `TaskItemRecoveryService` composes existing checkpoint/review/recovery boundaries for the native
 task-linked Recognition/Metadata/Classification/conflict forms.
@@ -711,8 +714,8 @@ Bounded active-work polling and manual refresh are read-only; unknown mutation o
 before another explicit command. API/Web share permission/version/duplicate checks, redaction,
 readiness and safe recovery behavior. No additional scheduler, Worker supervisor, Provider, global
 Review inbox, history cleanup, universal rollback or automatic uncertain replay was introduced by42.
-Slice45 adds the typed cross-Task lists below. These are accepted foundation facts at Implementation Head
-`ce3fc2a3e70d40279fa725b5d7dc838d11123980`, reviewed by A on 2026-10-06.
+Slice45 adds the typed cross-Task lists below. The original42 acceptance at `ce3fc2a3e70d40279fa725b5d7dc838d11123980` remains historical;
+this section applies the accepted47 Task-owned continuation and query amendments.
 
 ## CURRENT — Task Center query, summary confirmation and typed recovery (Slice45)
 
@@ -721,7 +724,7 @@ Contract own complete page/journey acceptance. Compose existing authorities:
 
 ```text
 eight organizing views → typed query/command boundary
-→ authorized admitted-organizing Task/Job/item/problem/checkpoint projection
+→ authorized admitted-organizing Task/item/problem/checkpoint projection
 → bounded preparation → exact in-context summary → separate confirmation
 → atomic admission → resident Worker → OrganizerExecutor
 ```
@@ -739,7 +742,7 @@ authoritative boundary.
 
 Query before grouping/paging; bind cursors/counts to the authorized consistent population. Group each
 problem by durable Task/run links; current problems, effects and lifecycle remain distinct. Never
-infer links from labels/times, count pending automatically as human attention, or hide pre-Task failures.
+infer links from labels/times, count pending automatically as human attention, or hide admission/pre-start failures.
 Recovery uses existing decisions/checkpoints/continuations, retaining siblings/history and immutable
 pins. Save/analysis grants no mutation; confirmation binds exact sources/plans/subset/effect scope.
 Material change needs a fresh summary. Unknown submissions reconcile, never automatically resubmit.
@@ -747,20 +750,17 @@ No second queue, lifecycle, configuration or recovery engine. Exact internal org
 records remain under their real responsibilities; the standalone Preview product exits under
 V2-OPS-013 below. Organizing DryRun and shared Rules/configuration checks stay supported.
 
-Slice46 narrows this CURRENT population and surface: center membership is proven by persisted admission
-or a durable lineage/retry relation (an admitted Files Task or organize execution intent in its
-discovery/analysis/confirmation stages, a supported organizing Job, and every continuation it really
-owns), so a standalone analysis-only CLI DryRun and its analysis successors are administrative history
-rather than center work. A continuation Job joins only through the exact persisted relation whose
-source Task is itself in the admitted organizing population; its command family or produced Task alone
-is never membership proof. The four types keep a first-attempt responsibility until the exact chain
-reaches a confirmed follow-up; a technical failure leaves them and stays a read-only factual entry, and
-the overall recovery-complete projection appears only when every necessary item carries its own
-verified follow-up. Each run item publishes that same four-type/technical-history decision, so batch
-selection and a reopened saved batch never turn a sibling's business problem into a generic technical
-recovery entry. The retired mixed Task/Job collections keep their management APIs but no V2 list;
-their deep links resolve an organizing identity into the exact center run and an ordinary identity into
-its proven library page.
+Slice46 narrows this CURRENT population to admitted organizing work, retained by Slice47:
+center membership is proved by persisted organizing admission, not a command label or a DryRun.
+A Task counts once across its own discovery/analysis/confirmation/execution. Analysis-only CLI
+DryRun stays administrative history outside the center. Four-type lineage remains until the
+required decision/analysis/summary/confirmation is resolved; plain queued/running is not human
+Attention. A technical failure leaves four-type Attention and stays factual read-only All/Ended
+history. Completed/recovered requires verified success of every necessary item, preserving original
+attempts/results. Saved batches apply the same per-item classification. Task management reads remain;
+Job collections/submission/control/stale-requeue are removed. Legacy UI links resolve a proved
+same-version organizing Task to the center or ordinary work to its originating library, otherwise
+bounded unavailable/denied evidence, with no execution or old-Job identity mapping.
 
 Scan is absent on first deployment, including definition modes and dedicated compatibility guards:
 ordinary route/argument/shared type validation rejects before discovery/admission/authority. Shared
@@ -843,8 +843,8 @@ flow atomically admits an exact plan selection
 with server-held one-shot authority, returns a durable execution/Task identity, and lets the
 resident processing Worker claim it under a persisted fence before any mutation. V2 ResourceLibrary
 Files uses live Storage for exact preparation and explicit manual Organize admission; indexed
-compatibility entry points are removed. The general Jobs API admits only supported `organize`
-submissions with its explicit execute/permission/one-shot-authority boundary. CLI organize without
+compatibility entry points are removed. Supported direct API/CLI organizing enters the same Task
+kernel with its existing explicit execute/permission/one-shot-authority boundary; no Jobs API remains. CLI organize without
 --execute and Web preparation remain zero-mutation analysis. Execution requires explicit confirmation
 and the relevant destructive-effect permissions; revalidation, RBAC, conflict and capability gates
 remain in force, and only `OrganizerExecutor` mutates Storage.
@@ -896,15 +896,15 @@ atomically creates one linked intent with its discovery transition; repeated/con
 cannot orphan or duplicate authority. Legal long source paths retain exact identity through the
 manual handoff while run/search projections remain bounded.
 
-Normal acknowledged Pause/Continue and cancellation are supported. If a crash/control race or
+Cancellation remains cooperative; Pause/resume-from-pause is retired. If a crash/control race or
 incompatible old record prevents provable continuation of unfrozen discovery, native recovery
 preserves history/findings, settles/fences that attempt and offers deliberate distinct new
 discovery. Lost admission responses recover a proved original request or remain unresolved with
 Operations inspection; they never guess a newer root/pin or automatically resubmit. Guaranteed
 seamless continuity across activation changes, every legacy duplicate and arbitrary crash/control
 combinations remains deferred. Frozen pins and completed/uncertain media effects are never repinned
-or automatically replayed. Actual schema-38→45 and old schema-45 migration/reopen evidence retains
-frozen/file-only/discovery history; unsupported unfinished work has the safe-stop/new-discovery path.
+or automatically replayed. Historical schema-38→45 evidence stays in Git; current support covers fresh new work and
+same-version reopen/restart, not old-task takeover or cross-version migration.
 
 ### CURRENT — Files-admitted organizing Task and verified source ownership (Slice46)
 
@@ -938,7 +938,7 @@ Source ownership is independent of short-lived execution leases:
   A proven replacement is new content. Missing/incomparable evidence is unknown and cannot release
   a live claim. Pre-change rows use only their own persisted pin/binding/progress fallback; a proven
   different canonical path never matches by a coincidental relative name.
-- Queued/running/paused/four-type decision and saved-decision work keeps ownership. Settled
+- Queued/running/four-type decision and saved-decision work keeps ownership. Settled
   `dry_run/success/skipped/cancelled/failed/ignored` items do not create perpetual history locks;
   partial/uncertain effects retain their non-replay protections. Legal continuations exclude their
   own persisted lineage, without exempting other work of the same library.
@@ -950,7 +950,7 @@ Source ownership is independent of short-lived execution leases:
   decide that a source is free. No global source catalog or unbounded history load is introduced.
 - A refused source is removed by its exact Storage-relative manifest key, while the operator sees
   its library-relative path. Prune the source/observation/finding/counters together, preserving distinct
-  free siblings. Control/reconcile settlement repeats that same reservation/prune decision so pause,
+  free siblings. Control/reconcile settlement repeats that same reservation/prune decision so
   cancellation or lease loss cannot restore the rejected source through a fallback publication.
 
 `GET /api/v1/resource-libraries/{id}/files/organize-work` provides principal/library-scoped paged
@@ -967,9 +967,9 @@ credential-shaped/oversized keys. Detailed Task46.3 repair history remains at
 ## Automation and unattended execution
 
 The current Automation Task Definition model is scoped to a configured ResourceLibrary and bounded
-source path. Scheduler emits durable occurrences and AutomationJobs idempotently. Each Job pins the
-Active snapshot at creation; the Worker runs the existing pipeline and records linked Task/TaskItem/
-Result evidence.
+source path. Scheduler atomically admits one Task with durable occurrence/due-state evidence. Each Task pins
+the Active snapshot at creation; the Worker consumes that Task through the shared engine/pipeline
+and records independent TaskItem/Result evidence.
 
 The current implementation accepts automatic-organization only; removed Scan modes have no
 compatible executor or dedicated history layer. The complete native Automation workspace below is
@@ -1001,19 +1001,19 @@ publication records the invoking OS uid; `--actor` cannot impersonate remote aut
 require that same trusted uid or the real configured principal's current capability.
 
 The existing Scheduler checks current authority before normal due admission; enable itself admits
-nothing. Jobs keep immutable revision/definition/scope pins. Worker/Executor checks current permission
+nothing. Tasks keep immutable revision/definition/scope pins. Worker/Executor checks current permission
 and Enabled/presence before each remaining effect, including attachments/cleanup. Activation ancestry
 also proves no intervening disable/removal: re-enabling cannot resurrect an old queued occurrence.
 An enabled successor may preserve legitimately admitted work without repinning. Completed effects
 and ongoing Storage calls are not rolled back. Legacy grants/revocations remain history, not gates.
 
 Run once requires `EXECUTE_MANUAL_ORGANIZE` and an exact principal/request/observed-publication fence.
-One SQLite transaction inserts its Pending organizing Task, explicit-origin Job and display context;
+One SQLite transaction inserts its Pending organizing Task, scheduling state and explicit-origin display context;
 request uniqueness and capacity checks leave neither duplicate work nor orphan Tasks. Disabled
 schedules remain runnable without changing due state. Worker consumes the pinned snapshot through
 the same organizing pipeline, without an initial picker/Preview/confirmation. A previously started
 Task is never rescanned after claim recovery; uncertain/completed effects require investigation.
-Pending Job cancellation settles its precreated Task in the same transaction.
+Pending cancellation settles the unstarted Task in the same transaction.
 
 Before any Run once effect, configured-scope enumeration must be readable and complete within
 `min(itemLimit,100)`, 10,000 visited entries, 1,000 directory reads, 2,000 pages (100 entries/page), depth 32 and 600 aggregate list-read seconds.
@@ -1026,7 +1026,7 @@ failures outside four-type Attention. Healthy empty alone is no-work.
 Recognition/metadata/classification/conflict blockers retain independent native Task Center recovery.
 Completed linked analysis is not resolution: definition Tasks reuse the existing exact one-item
 intent, source validation, summary and explicit continuation, preserving original pin and sibling
-results. Job/Task linkage and explicit manual origin deduplicate runs; original attempts and recovery
+results. Durable Task links and explicit origin count each work once; original attempts and recovery
 progress remain distinct. Historical analysis records retain their old read/explicit-confirm semantics
 and receive no automatic execute authority. Only OrganizerExecutor mutates media via Storage.
 
@@ -1077,18 +1077,16 @@ entry and safe authority; a missing Task link never proves non-execution or auth
 The records API publishes one complete `failureStage` envelope across proven pre-start and formal
 Task failures. A settled pre-start failure retains its durable stage/category/nextAction/statement,
 with `items=[]`, all four `effects` counts zero, `itemsTruncated=false` and `unavailable=false`:
-there is no formal Task or per-item effect evidence, not an unreadable history. Existing historical
-rows receive this projection without migration or execution. The complete pre-start envelope no
+there is no admitted item/Result evidence yet; the durable Task and failure remain readable. Supported same-version
+records receive this projection without execution. The complete pre-start envelope no
 longer causes the unchanged strict Web decoder to reject a readable mixed page. Unavailable formal
 Task item evidence still reports `unavailable=true`, and actual denied/malformed/read failures remain
 distinct. Records refresh uses the same bounded GET and grants no work, retry or execution authority.
 
-The implemented candidate exposes the three shared runtime fields in System Settings;
+The accepted implementation exposes the three shared runtime fields in System Settings;
 `staleJobAgeSeconds` is retired from editable/effective/default/runtime contracts while existing
-immutable documents remain readable with it ignored. Independent B and A acceptance is still
-pending; this section describes the implemented publication/adoption foundation, not an accepted
-deployment claim. Capacity bounds queued+claimed organizing Tasks in the shared pool. Polling adoption must be proved by
-fresh actual consumer values/version at safe resident-loop boundaries, independently of each Job's
+immutable documents remain readable with it ignored. Task47.6 passed independent B acceptance and Slice47 passed independent A whole-range review. Capacity bounds queued+claimed organizing Tasks in the shared pool. Polling adoption must be proved by
+fresh actual consumer values/version at safe resident-loop boundaries, independently of each Task's
 media pin. API runtime binding alone is not proof of another process's cadence. Idle/long waits,
 heartbeat/lease ownership and CLI/deployment overrides retain meaning; unavailable Active cannot
 schedule from cache. Preserve supported history/schema/pins and non-replay; no process supervisor
@@ -1168,7 +1166,7 @@ making a stale merge publishable. An explicit choice is remembered together with
 the published value it reviewed, so a further change to that field reopens the
 conflict rather than inheriting the old decision.
 
-While a Save is outstanding the four inputs are read-only, so a keystroke can
+While a Save is outstanding the three inputs are read-only, so a keystroke can
 never belong to a request that already left the browser. A value that still
 races the response is retained and explicitly re-based onto the just-published
 identity rather than being cleared or silently attached to the old one. That
@@ -1185,12 +1183,11 @@ three-field subset/bounds/meanings live in `mediaflow.domain.automation_settings
 `AutomationSettingsService` composes the existing `ManagedConfigurationService`
 activation and `_document_evidence` audit rather than duplicating them.
 
-Adoption evidence is additive durable state (`resident_settings_adoption`, runtime
-schema 50) written only by the owning process *after* it installed the cadence.
+Adoption evidence is durable state (`resident_settings_adoption`) written only by the owning process *after* it installed the cadence.
 Registration and heartbeat cannot write it, so an unreported consumer is reported
 as unreported, and a later publication is never mistaken for an older adoption
 because the row carries the publication identity it adopted. The collective claim
-covers only the two resident cadence consumers; the API-local capacity/stale
+covers only the two resident cadence consumers; the API-local capacity
 basis is projected separately and never inflates a polling-adoption statement.
 
 Current consumer membership is derived at read time from the existing
@@ -1213,23 +1210,22 @@ normalizer refuses a document whose collective flag contradicts its instance
 evidence, whose `instanceCount` disagrees with the rows it carries, or that mixes
 a live row into history.
 
-Explicit non-goals that this delivery does not change: the admission pool is not
-replaced, no new concurrency control or process supervisor is added, a poll
-override is never rewritten by Web Save, and `maximumActiveJobs` remains
-pending+running Jobs in the shared pool rather than worker/thread parallelism.
+The shared Task kernel owns organizing capacity; ordinary-file queues retain their admission rules.
+No process supervisor or execution parallelism is added. A poll override is never rewritten by Web
+Save, and `maximumActiveJobs` counts queued/claimed organizing Tasks rather than threads or files.
 
 ## API and Operator Web
 
 The API is a versioned WSGI application over shared application/repository services. It provides
-authenticated configuration, files, tasks, jobs, reviews, manual organize, recovery, automation,
+authenticated configuration, files, tasks, reviews, manual organize, recovery, automation,
 schedules, notifications, logs, dashboard, security audit and system status routes. RBAC is applied
 at the shared service boundary; 401/403 behavior and Web/API projections are tested together.
 
 The embedded V1 Operator Web and the React/TypeScript V2 SPA are static UIs served by the same
 Python application. V2 currently exposes Dashboard, ResourceLibrary Files, MediaLibrary, Storage,
-Settings, Rules and the Operations route family for Tasks, Jobs and Organize,
+Settings, Rules and the Operations route family for Tasks and Organize,
 Automation and Notifications. The unified Operations task center provides native task-linked
-decision/recovery, cross-Task problem-type lists and supported paused-scope continuation. Cross-Task
+decision/recovery, cross-Task problem-type lists and same-Task four-type analysis/summary/confirmation. Cross-Task
 bulk mutation and arbitrary historical Reprocess remain deferred; Advanced JSON and the general configuration
 lifecycle retain their support/compatibility surfaces alongside native V2 Settings. Both UIs use the
 shared `/api/v1/*` application
@@ -1277,17 +1273,18 @@ logging boundaries.
 - Overwrite and delete require explicit policy/authority; they are never silent.
 - HardLink and SoftLink never fall back to Copy or Move.
 - Local and logical remote paths are normalized and confined before access.
-- API/Web reads and status pages do not create Jobs, invoke Providers or mutate Storage unless an
+- API/Web reads and status pages do not create Tasks, invoke Providers or mutate Storage unless an
   explicit action says so.
 - Secret references are allowed; secret values are not persisted in managed documents or evidence.
 
 ## Backup, restore and migration
 
 SQLite backup uses online snapshot semantics and integrity verification. Restore is an explicit
-non-overwriting operation into a controlled destination. Upgrade preflight and migration rehearsal
-validate Python support, backup integrity, schema agreement and representative state without
-changing the live database. Migration failure must leave the live authority untouched and fail
-closed before work resumes.
+non-overwriting same-version operation into a controlled destination. Fresh initialization and
+same-version reopen/restart preserve supported work. Schema incompatibility fails closed without
+changing durable state or authorizing media work; old-task/Job conversion, cross-version upgrade/
+rollback and mixed-version writers are outside current support. Prior upgrade tooling and evidence
+remain historical and do not establish a current migration promise.
 
 ## Delivery references
 
@@ -1396,9 +1393,8 @@ without overlapping entries. Display truncation never rewrites path authority.
 Long and batch Delete persists the exact flattened confirmed scope, one TaskItem per entry and its
 effect certainty in the existing `files_transfers` claim/lease/mutation-fence table. The resident
 Files Worker reconstructs the pinned kind and immutable revision, removes children before
-directories, and invokes mutation only through `OrganizerExecutor`. The existing Task pause,
-cancel and safe-continuation controls are available through the originating library's local status
-readback; an uncertain delete is read back and recorded for investigation, never replayed. Existing transfer rows without a
+directories, and invokes mutation only through `OrganizerExecutor`. Safe cancellation and existing permitted recovery are available through the originating
+library's local status readback; Pause/resume-from-pause is retired; an uncertain delete is read back and recorded for investigation, never replayed. Existing transfer rows without a
 `direct_delete` authority discriminator remain Copy/Move work and keep their historical format.
 
 The native Delete pages create a request ID before submitting and retain only that ID, the exact

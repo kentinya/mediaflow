@@ -108,7 +108,7 @@ Imported packages/JSON are inactive Drafts, never implicit Active replacements.
 
 ## Immutable runtime snapshot
 
-The runtime binding records the Active revision ID, version and SHA-256 digest. Every new Job and
+The runtime binding records the Active revision ID, version and SHA-256 digest. Every new Task and
 every scheduled occurrence records the snapshot identity it consumes. Queued or running work does
 not change behavior merely because a later revision becomes Active. API request handling refreshes
 the binding from the current Active revision and fails closed if integrity, schema or runtime
@@ -116,7 +116,7 @@ loading cannot be proven.
 
 The UI's Active identity is derived from the same managed revision used to build the runtime binding.
 It must not display a Draft, an arbitrary database row or a stale process snapshot as Active. A
-checked activation publishes no scan, Job, Task, Automation occurrence or media mutation; a later
+checked activation publishes no Task or Automation occurrence or media mutation; a later
 explicit organizing analysis or execution request is required.
 
 ## Current managed object families
@@ -163,7 +163,7 @@ runtime authority. Empty/partial graphs explain missing dependencies without gen
 
 ## Automation engine settings (native, focused)
 
-### TARGET — Three system runtime settings (Slice47, 2026-11-03)
+### CURRENT — Three system runtime settings (Slice47 PASS / CLOSED)
 
 Under `V2-TASK-011`, use the existing `/ui-v2/configuration` System Settings page as the ordinary
 editor for the remaining three fields. Remove Automation's settings tab/form and duplicate ordinary
@@ -186,9 +186,9 @@ Reject explicit field edits to it without publication; existing immutable docume
 and remain readable with the value ignored, without rewriting digest/pins or requiring manual JSON
 cleanup. Keep current Worker heartbeat, per-runner claim expiry/renewal and individual Provider/Storage
 timeouts. No no-progress observer, whole-Task timeout or automatic uncertain replay is selected.
-This TARGET replaces the Automation-only/four-field plan; an implementation candidate now exists and awaits independent acceptance.
+This accepted contract replaces the Automation-only/four-field plan; prior acceptance remains in Git.
 
-### IMPLEMENTED CANDIDATE — Three-field system runtime settings (pending acceptance)
+### Checked publication and actual adoption
 
 The existing `/ui-v2/configuration` System Settings page renders the one three-field form and
 readback (`AutomationSettingsPanel`); the Automation workspace no longer has a settings tab, and an
@@ -299,7 +299,7 @@ missing or failed evidence cannot silently authorize checked activation.
 ### Read-only checks and previews
 
 Naming, Classification, Organize authority and composed destination preview construct no Storage,
-Provider, Planner, Executor, Task or Job. They calculate or explain behavior only. Per-Storage setup
+Provider, Planner, Executor or Task. They calculate or explain behavior only. Per-Storage setup
 checks and the provider-neutral destination precheck construct a read-only Storage view and use
 bounded read-only operations such as `List`/`Exists`/`Stat`; they do not create directories, write
 files, move, copy, delete, scan recursively or grant execute authority. The older Local setup check
@@ -327,7 +327,7 @@ that the guided safety checks passed.
 
 Authenticated surfaces share application behavior/RBAC/audit: exact Active/successor lifecycle,
 objects/reference impact, versioned secret-free configuration/result exchange, Settings and Rules,
-bounded tests/checks/organizing analysis, library Save, live Files/maintenance, Task/Job/results, review/recovery,
+bounded tests/checks/organizing analysis, library Save, live Files/maintenance, Task/TaskItem/results, review/recovery,
 Worker readiness, Automation execution intent/occurrences and Webhook delivery recovery.
 [Product Experience](product-experience.md) owns complete ordinary journeys; [Architecture](architecture.md)
 owns execution and [Deployment](deployment.md) runtime administration. Configuration reads/tests/
@@ -376,8 +376,9 @@ authority and does not replace checked activation evidence.
 Compatibility versions are declared in `mediaflow/infrastructure/sqlite_runtime.py`,
 `mediaflow/infrastructure/sqlite_configuration_management.py` and
 `mediaflow/application/configuration_snapshot.py`. These are compatibility markers, not feature
-statuses. Repositories reject newer unsupported schemas; supported upgrades/restore follow the
-explicit [deployment maintenance procedure](deployment.md#backup-upgrade-and-migration-recovery).
+statuses. Repositories reject newer unsupported schemas; same-version restore follows the
+explicit [deployment maintenance procedure](deployment.md#backup-and-same-version-recovery).
+Old-task/Job conversion and cross-version upgrade/rollback are outside current support.
 Do not infer a feature or permission to rebuild user data from an old schema number.
 
 ## Current limitations and post-V1 / V2 boundaries
@@ -400,15 +401,15 @@ Stopped/expired registrations remain bounded diagnostic history with a true tota
 replacement can complete adoption without deleting history. Absent live consumers, unreadable
 evidence and live overridden/pending instances keep collective adoption unproven with recovery guidance.
 
-The table below describes the implemented candidate. The Slice47 contract still requires B and A
-acceptance before these facts become an accepted deployment claim.
+The table below describes accepted CURRENT behavior. Slice47 records the independent B/A
+acceptance, actual artifact evidence and validation limits; no production deployment is claimed.
 
 | Setting | Current code / accepted baseline meaning |
 |---|---|
 | `workflowRetry` | `enabled` defaults false; `baseDelaySeconds`/`maxDelaySeconds` bound backoff. Read-only retry covers normalized timeout/connection/rate-limit/temporary-provider failures before planning/execution. `maxAttempts` 1–10, `maxDelaySeconds` ≤300, `jitterRatio` 0–1; never retries mutation/uncertain effects or grants execute authority. |
 | `automation.maximumActiveJobs` | Default 100, range 1–10000; one atomic shared organizing Task allowance, not worker parallelism. Files/direct CLI/API/remote, due/Run once and same-Task machine-work re-entry share it; ordinary asynchronous copy/move/delete keep their own admission rules. Terminal or wholly human-waiting work releases its slot. Lowering it blocks new excess admissions and preserves already admitted work. Published through the three-field System Settings Save; admission/re-entry reads the current Active. |
 | `automation.staleJobAgeSeconds` | Retired: not editable, validated, effective or generated in new defaults. An existing immutable document may retain the key and remain readable with the value ignored; field edits to it are refused with zero publication. Current heartbeat, lease/renewal and Provider/Storage call timeouts remain unchanged. |
-| `automation.workerPollSeconds` | Finite positive seconds; the real resident Worker loop cadence, independent of heartbeat/lease and of any Job's media pin. A running Worker adopts a new value at its next safe loop boundary without a restart. Configuration/heartbeat/report wakes are bounded to at most 5s so a previously long value cannot defer adoption, while the business claim cadence itself stays at the selected value — a recheck never claims early. `--poll-seconds`/deployment overrides keep precedence and are reported as overrides. |
+| `automation.workerPollSeconds` | Finite positive seconds; the real resident Worker loop cadence, independent of heartbeat/lease and of any Task's media pin. A running Worker adopts a new value at its next safe loop boundary without a restart. Configuration/heartbeat/report wakes are bounded to at most 5s so a previously long value cannot defer adoption, while the business claim cadence itself stays at the selected value — a recheck never claims early. `--poll-seconds`/deployment overrides keep precedence and are reported as overrides. |
 | `automation.schedulerPollSeconds` | Finite positive seconds; the real resident Scheduler due-check cadence. It never changes any definition's interval, Cron expression or timezone, and adopts without restart under the same boundary/recheck rules and override precedence. Bounded configuration wakes do not tick the interval/due check early. |
 | Focused engine-settings Save | One checked Save publishes only these three fields from the observed Active, after whole-candidate validation and runtime preparation. A no-op Save publishes nothing. While the Save is outstanding the three inputs are read-only; a value that still races the response is retained and re-based onto the just-published identity. An unknown outcome blocks further saves until its own durable evidence resolves it; a submission that terminates without publishing (a three-field input refusal, a stale/no-op refusal or a persist/validate/prepare/activate fault) records a bounded terminal outcome, so reconciliation ends in a correctable state with the typed input kept. Recovery merges **only the fields the operator changed** into the latest published values, so another writer's change to an untouched field is preserved; a genuine same-field overlap shows both values with units and needs an explicit "use current" / "keep mine" choice before Save is enabled. The next Save is always checked against the latest published identity. An input refusal (for example `3.5` for an integer field) keeps its invalid text correctable and is proven from a bounded content fingerprint rather than by re-validating an unpublishable payload. |
 | Organizing Cron schedules | Validated five numeric fields with IANA timezone; `*`, lists, inclusive ranges and positive steps, no seconds/names/macros/shell/catch-up backlog. Missing DST wall times skip; ambiguous wall time fires once. For managed Automation Task Definitions, checked Enabled publication supplies scoped scheduled intent under V2-AUTO-010; live permissions and full plans/checks still precede effects. Legacy `automation.schedules` does not acquire definition intent or bypass its existing execution boundary. Run once is a separate explicit command and never advances due state. Independent Preview schedules are unsupported. |

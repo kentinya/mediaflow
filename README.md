@@ -149,7 +149,7 @@ remains available for local development diagnostics.
 |---|---|
 | Recognition/Metadata/Classification review | Resolve only backend-offered type/candidate/rule choices; saving never executes. Continue through the Task's same-page analysis, summary and explicit confirmation. No arbitrary target or Provider DTO injection. |
 | Conflict decision | Persist an allowed decision, re-analyze and separately authorize execution. Successful/uncertain items are never replayed. Retired direct re-recognition/re-match/re-plan/review-retry surfaces stay absent. |
-| Pause/resume/retry | Organizing and ordinary-file Pause/resume are retired; cancellation stops unperformed work at a safe boundary, and a failed-scope retry keeps its own durable evidence. A continuation cannot upgrade analysis-only work or regain consumed authority. |
+| Pause/resume/retry | Organizing and ordinary-file Pause/resume are retired; cancellation stops unperformed work at a safe boundary, and four-type recovery continues the same Task through analysis, summary and explicit confirmation. A continuation cannot upgrade analysis-only work or regain consumed authority. |
 | Stalled Task | Inspect the Worker and Storage effects before explicit permitted recovery; staleness is no-update evidence, not proof of death or permission to replay an uncertain mutation. |
 | Notifications | Signed HTTPS Webhook Outbox; bounded transport/429/5xx retry, other 4xx dead-letter, stable delivery identity for at-least-once deduplication. Recovery is delivery-scoped and never changes media results. |
 | Policy options | Read-only retry is bounded/default-off and excludes mutations. Hash defaults NONE, FAST is prefix evidence, failed/unknown comparison never authorizes overwrite. Attachments and source cleanup are opt-in. Rollback compensates only verified effects of the same failed invocation, never changed targets/reappeared sources/older work. |
@@ -195,9 +195,10 @@ another attempt, and uncertain effects require investigation.
 
 Operational logs and security audit are bounded/redacted; reads expose no credentials, raw request
 bodies or Provider payloads. Log pruning touches neither media nor Tasks/Results/security audit.
-Backup/restore/upgrade are separate maintenance operations, with non-overwrite/verified backup,
+Backup and same-version restore are separate maintenance operations, with non-overwrite/verified backup,
 all-process stop, destination/sidecar absence and advisory-lease rules in
-[offline restore](docs/release.md#offline-restore-procedure).
+[offline restore](docs/release.md#offline-restore-procedure). Old-task/Job migration or takeover,
+cross-version upgrade/rollback and mixed-version writers are outside current support.
 
 ## Persistent runtime state
 
@@ -220,7 +221,7 @@ refresh and review again after writers are quiescent. No claim of atomic externa
 | [Configuration](docs/configuration.md) | Bootstrap, exact Active, library/policy forms, secret references and checked publication |
 | [Product Experience](docs/product-experience.md) | Current and target journeys, visible results, failure and recovery |
 | [Architecture](docs/architecture.md) | Pipeline, application authority, Storage, persistence and execution boundaries |
-| [Deployment](docs/deployment.md) | Start/health, mounts/secrets, restart, backup, migration and production artifacts |
+| [Deployment](docs/deployment.md) | Start/health, mounts/secrets, restart, backup, same-version recovery and production artifacts |
 | [Requirements](docs/requirements.md) / [V2 requirements](docs/v2-requirements.md) | Stable product scope/IDs and explicit amendments |
 | [Release](docs/release.md) / [Storage acceptance](docs/storage-acceptance.md) | Release gates and bounded real-service evidence |
 

@@ -7,19 +7,20 @@ The committed [Slice](../SLICE.md) owns current scope. Accepted live-list/retire
 workspace/settings foundations remain; current journeys include the accepted46 entry, readability,
 work-ownership and execution-intent amendments and subsequent accepted presentation/record-result
 corrections. Original Slice acceptance identities remain in Progress and Git; [TASK.md](../TASK.md)
-points to the latest standalone review.
+points to the current implementation state and immutable review packet.
 Detailed superseded delivery notes are retained at
 `865ebdce47b0b323064fd8e05fbfaa54546e6269:docs/product-experience.md`.
 
 ## Current journey boundary
 
-Current journeys below incorporate accepted Slice46 amendments: `V2-UX-004`, `V2-OPS-014–017`,
+Current journeys incorporate accepted Slice47 Task-only scheduling/settings/history amendments
+`V2-TASK-001–011` and retained Slice46 amendments: `V2-UX-004`, `V2-OPS-014–017`,
 `V2-FILES-007` and `V2-AUTO-010/011`. Historical43/45/46 acceptance facts and original deferrals
 remain in [Progress](progress.md) and their Git Contracts; they are not additional operator steps.
 Files owns new manual selection and ordinary-file progress; Task Center owns admitted organizing
 progress and four business recovery types; Automation owns saved-definition scheduled/one-run intent.
 
-## TARGET — One organizing Task across triggers and recovery (Slice47 ACTIVE)
+## CURRENT — One organizing Task across triggers and recovery (Slice47 PASS / CLOSED)
 
 **2026-10-31 user amendment:** Organizing AND ordinary-file operations (including Copy/Move)
 retire Pause and resume-from-pause across Web/API/CLI and live dedicated dispatch. This supersedes
@@ -28,12 +29,12 @@ cooperative and preserves completed/uncertain effects. Four-type organizing deci
 summary/explicit continuation, human/stability waiting and fences remain. The user confirms no
 currently paused organizing Tasks: do not build a pause migration, restoration or compatibility
 executor. Existing history stays readable without deletion, false relabelling or automatic replay.
-Implementation/final acceptance remain pending under Slice47 AC-19 / V2-TASK-007.
+This retirement passed Slice47 AC-19 / V2-TASK-007 acceptance.
 
-The user-authorized `V2-TASK-001–006` refactor is selected by [Slice47](../SLICE.md), not yet
-delivered. The CURRENT journeys below stay the accepted baseline; this target preserves their
-entries, authority, bounded scope, failure/recovery and original execution-record semantics while
-replacing Job/Task handoffs with one Task identity.
+The user-authorized `V2-TASK-001–011` refactor passed independent A Final Review on 2026-11-03.
+[Slice47](../SLICE.md) records the original Base and accepted Head. The journeys below preserve
+entry-specific intent, bounded scope, failure/recovery and original execution-record semantics
+through one Task identity; historical Job-based acceptance remains in Git.
 
 - **Goal/entry:** organize live ResourceLibrary selections from Files, let an enabled saved
   Automation definition run when due, or explicitly Run once on its saved scope. These entrances
@@ -113,9 +114,9 @@ work and existing immutable configuration readability remain required. Full boun
 requirements live in the Contract/Architecture; no history clearing, new recovery system or arbitrary
 historical Reprocess is selected.
 
-## TARGET — New organizing after failed/partial history (Slice47, 2026-11-02)
+## CURRENT — New organizing after failed/partial history (Slice47)
 
-This is the user-authorized `V2-TASK-008–010` extension, not a claim of delivered behavior.
+The accepted `V2-TASK-008–010` extension uses the ordinary Files and Automation entrances.
 
 - **Goal/entry:** use normal ResourceLibrary Files 整理 for a failed/partial file. Definition
   due/Run once excludes a version only while its latest formal organizing outcome is failed/partial;
@@ -185,7 +186,7 @@ are reconciled from durable identity before another explicit attempt; reads neve
   validate/test and checked-activate. Advanced whole-document JSON/import/export is a labelled support
   path; imports create inactive Drafts. Business-page Save bundles shared validation and activation.
 - **Success:** one immutable candidate becomes runtime Active atomically; old work keeps its pin.
-  Publication starts no media Task/Job, scheduled occurrence, notification or Storage mutation.
+  Publication starts no media Task, scheduled occurrence, notification or Storage mutation.
 - **Failure/recovery:** stale/concurrent or invalid reference/evidence/runtime, denied permission or
   unknown Save is actionable. Known rejection preserves prior Active and correctable input. Refresh
   stale authority, repair named blockers, rerun relevant checks; verify unknown publication before
@@ -453,7 +454,7 @@ eligible siblings remain independent and a finished history row is not a perpetu
 Matching enabled trailers attach to the retained main even in explicit mixed selection. Exact legal
 long names survive handoff; first stat/old mtime/lost observation is not a stable-size interval.
 
-Normal Pause/Continue/cancel is cooperative. If safe unfrozen continuation cannot be proved, retain
+Cancellation is cooperative; Pause/resume-from-pause is retired. If safe unfrozen continuation cannot be proved, retain
 stage/findings/zero media effects, settle/fence the old attempt and offer visibly distinct explicit
 new discovery. No automatic restart on read. Unknown admission recovers the proved original request
 or stays unresolved with native inspection, never another root/pin or a guessed newer attempt.
@@ -482,17 +483,17 @@ never become all-success just because the business problems cleared. Provider tr
 not Metadata decisions, and other terminal failures have no separate failure statistics or generic
 center recovery guidance/actions. Administrative API/CLI recovery remains outside this V2 UX.
 
-- **Goal/entry:** find one admitted run from Task Center, Files, Dashboard, Automation or a Task/Job
+- **Goal/entry:** find one admitted run from Task Center, Files, Dashboard, Automation or a Task
   deep link, then understand and safely resolve its actual files. Default list has no open detail.
 - **State:** All eight views expose only creation-date range selection and clear; clearing restores
   the current view's complete authorized population. This applies to the page-level task list;
   detail and problem-handling inputs retain their own scope. Time, valid paging and counts use
   the complete server-authorized population, alongside historical name/scope/trigger;
-  queue/Task stage/item outcome/problem/effect certainty are distinct. Only durable Job→Task links
-  deduplicate runs; pre-Task failures and independent occurrences/continuations remain visible.
+  queue/Task stage/item outcome/problem/effect certainty are distinct. One admitted Task counts once across its durable discovery/analysis/execution links;
+  admission/pre-start failures and original occurrences/attempts remain visible.
   Task and file counts differ; attention overlaps and ordinary queued state is not a human blocker.
 - **Action:** inspect detail, source/target/policies, completed primary/attachment steps, relevant
-  audit/logs and bounded secret-free JSON; use backend-advertised pause/cancel/continue or enter the
+  audit/logs and bounded secret-free JSON; use backend-advertised cancel or four-type continuation or enter the
   current task/type's recognition, Metadata, classification or conflict handling. Other technical/
   uncertain failures remain factual read-only All/Ended history, with no generic center recovery.
 - **Success:** durable per-file Results and linked recovery attempts survive reload/reconnect/restart.
@@ -528,7 +529,7 @@ preparation and do not fabricate execution recovery work.
 - **State/action:** disabled-first create/copy; checked publication validates current execution and
   configuration permissions. Enabled supplies scheduled intent without an independent grant or
   mandatory pre-analysis. Enablement creates no immediate work; due occurrences need no per-run click.
-- **Success:** Scheduler emits one immutable pinned Job; Worker/Task/Result and OrganizerExecutor
+- **Success:** Scheduler admits one immutable pinned Task; Worker/TaskItem/Result and OrganizerExecutor
   perform full planning/source/capability/conflict/authority checks and preserve independent results.
 - **Failure/recovery:** disable/removal/current permission loss stops future admission and remaining
   scheduled effects at safe boundaries, with no rollback or historical replay. Four business problems
@@ -550,14 +551,13 @@ normal runs use normal scope/checks; no failed-item selection or cross-run obser
 
 ### CURRENT — Complete native Automation workspace (accepted43, amended46)
 
-The settings tab/four-field form described in this CURRENT baseline is replaced only by the
-pending Slice47 TARGET above. Its historical acceptance is unchanged; the new location/parameter
-removal is not yet implemented or accepted.
+Slice47 replaces the former settings tab/four-field form with three System Settings fields.
+Historical43/46 acceptance remains unchanged; the current journeys include accepted47.
 
 - **Entry/state:** shared-shell `自动化` opens the real definition inventory; name/打开/direct links
   read saved definitions before/after enablement, including truthful disabled/unavailable states.
   Malformed/denied/not-found/read errors remain bounded; no grant-eligibility dependency returns.
-  Inventory provides `任务列表 / 执行记录 / 全局设置`, population metrics,
+  Inventory provides `任务列表 / 执行记录`, population metrics,
   source/scope/schedule/timezone/limit, next/latest outcome and distinct
   published/enabled/execution-readiness states. No editor opens automatically or sample data appears.
   One Chinese content title, flat tabs and readable controls align with Task Center/Files on desktop
@@ -604,15 +604,12 @@ removal is not yet implemented or accepted.
   independent recovery evidence, latest outcomes and metrics retain their own existing semantics.
 - **Read/save safety:** stale/failed Save retains Active/input; reads/refresh/paging create no work or
   Provider/media effects. Preparation-only findings remain distinct from execution failures.
-- **Settings:** a compact four-field form keeps concise meanings and backend constraints; engine
-  tutorials, schedule/timezone lessons and JSON examples are omitted. Healthy instance details and
-  diagnostic identities start folded; pending/unavailable/overridden states and concrete next actions
-  remain visible. One Save preserves unrelated Draft/configuration. Capacity is pending+
-  running Job count. The current stale-age field is configuration/readback only, with no actual
-  Task no-progress observer; it must not be presented as working timeout detection.
-  Worker/Scheduler polling must be
-  adopted by actual resident loops without routine restart. Published/adopted/pending/override/
-  stale or unavailable consumers have truthful readback and concrete repair guidance.
+- **Settings:** open System Settings for the one compact three-field form and checked Save. Capacity
+  counts queued/claimed organizing Tasks across all triggers; wholly human-waiting work uses zero.
+  It is not thread/file parallelism. Worker/Scheduler polling is adopted by the actual resident
+  consumers without routine restart, with published/adopted/pending/override/unavailable readback
+  and concrete repair guidance. The retired stale-age key has no runtime meaning; immutable
+  documents containing it remain readable. Current heartbeat/lease/call-timeout judgments remain.
   Each fresh live instance must prove its own adoption. Stopped/expired predecessors remain folded
   diagnostic history with a bounded display and real total; they neither veto nor prove current
   adoption. A healthy replacement restores completion, while missing services, unreadable evidence
@@ -633,7 +630,7 @@ must not be confused with a resident consumer's actual adopted value.
 
 ## Docker self-hosted operation
 
-Start/inspect/restart/backup/preflight/upgrade from [Deployment](deployment.md); verified non-overwriting
+Start/inspect/restart/backup and same-version recovery from [Deployment](deployment.md); verified non-overwriting
 offline restore is in [Release](release.md#offline-restore-procedure). Four independent services,
 local `/data`, explicit Local media mounts and non-root permissions retain process isolation.
 TLS/certificates/proxy/public exposure and environment-secret injection are deployment-owned.
@@ -645,7 +642,8 @@ independently of new-admission Active; broken pins fail before mutation. Process
 registration/heartbeat and command/pin readiness are separate; no-Active waiting is not a dead process.
 Recoverable DB/config faults retain processes/work with bounded reasons. No API process supervision.
 Adding mounts may recreate containers; publication alone does not. Schema/mount/permission/secret/
-upgrade failures explain the fix, preserve backup/previous artifact and never replay uncertain media.
+schema-readiness failures preserve durable work/backup and never replay uncertain media.
+Old-task/Job conversion and cross-version upgrade/rollback remain outside current support.
 
 ## V2 Operator Web migration
 
@@ -661,7 +659,7 @@ production service, replacement identity model or implicit V1 cutover is introdu
 
 [Tasks, results and per-item recovery](#tasks-results-and-per-item-recovery) owns the organizing
 journey; [Task Center specification](task-center-page-spec.md) owns eight-view interactions, exact
-summary/confirmation and native four-type forms. Supported legacy Task/Job links resolve into that
+summary/confirmation and native four-type forms. Supported same-version Task links resolve into that
 exact organizing context or the proven ordinary-operation library page; missing/denied/unavailable
 identity stays a bounded read-only explanation, with no generic failure recovery or guessed work.
 
@@ -672,7 +670,7 @@ views share a compact 创建日期 group with independently named native 开始�
 apply either or both sides without a search submission, and clear back to the current view’s
 complete authorized population. The toolbar's low-emphasis 清除 appears when a date is set;
 existing empty/read-error recovery entries remain available in their applicable states.
-The summary's routine population/pagination/Job-Task explanation is omitted, as are the 本地时区
+The summary's routine population/pagination/deduplication explanation is omitted, as are the 本地时区
 label and 时区说明 control/content. Local-calendar filtering, full end-day inclusion, explicit
 list/detail time offsets and authoritative statistics/deduplication retain their existing behavior.
 Filters and table align, and controls wrap without clipped text or page overflow when narrow or

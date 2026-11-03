@@ -4,23 +4,23 @@
 Slice ID: 47
 Name: Unified Task Scheduling and Organizing Execution
 Owner: A — Slice Owner / Architect / Final Reviewer
-Status: FIX REQUIRED
+Status: PASS / CLOSED
 Base SHA: 5144ab1fc2344b06194969cc2c496835729664c0
-Implementation Head: 5c808d4a67bedfbafb71d88a1ffa8d3480ef5316
-Implementation Head Acceptance: REVIEWED CANDIDATE — NOT ACCEPTED
+Implementation Head: 5134c78b22057781d472e6ebf61a1799d9e40324
+Implementation Head Acceptance: ACCEPTED BY INDEPENDENT A FINAL REVIEW
 Working Branch: main
 Development Authorization: USER-REQUESTED REFACTOR; A SCOPE AUTHORITY — 2026-10-30
 Risk: High
 Final Test Level: T4
-Next Action: TASK47.6 PLANNED FOR THREE SYSTEM SETTINGS AND STALE-AGE REMOVAL; DEVELOPER STOPPED; FRESH ACCEPTANCE PENDING
+Next Action: A SELECTS THE NEXT LARGE SLICE — NO ACTIVE IMPLEMENTATION TASK
 ```
 
 ## Authority and accepted baseline
 
 [AGENTS.md](AGENTS.md) and [Development Workflow](docs/development-workflow.md) govern scope,
 roles, checkpoints, testing and closure. The user requested Job removal and unified Task execution,
-then explicitly authorized A scope authority on 2026-10-30. This checkpoint selects the new Slice;
-it is neither implementation nor final acceptance. On 2026-11-03 the user explicitly authorizes
+then explicitly authorized A scope authority on 2026-10-30. The original planning checkpoint selected the Slice;
+final acceptance is recorded below. On 2026-11-03 the user explicitly authorizes
 the agent acting as B to exercise A authority for the Contract and related documents, including
 settings and the confirmed exclusion of old-task and cross-version upgrade support.
 This role exception covers scope/document checkpoints only, not independent A Final Review,
@@ -84,12 +84,10 @@ factual. Range correction alone does not complete the new settings journey.
   confirmation, immutable execution pins, independent results and non-replay. Notification policy,
   synchronous browsing/rename/mkdir and ordinary queues are not redesigned.
 
-`V2-TASK-011` and AC-12/26 record this TARGET, not delivered or accepted behavior. Slice Base and
-reviewed Implementation Head remain unchanged. Task47.6 keeps ID and true Base
-`c8657032dae768d93b12387a5e58db502e23a7ee`; B must align its existing three-setting plan with this
-committed Contract and recheck all outcomes. Developer remains stopped by the user; this document
-checkpoint does not start implementation or accept the stopped work. Final T4 and an independent
-A Final Review remain required.
+`V2-TASK-011` and AC-12/26 define the accepted settings outcome. Task47.6 retained its true Base
+`c8657032dae768d93b12387a5e58db502e23a7ee`; the user subsequently resumed Developer, and B
+completed T4 acceptance before this independent A review. Earlier stopped/draft checkpoints remain
+in Git; they were not implementation authorization or acceptance.
 
 ## User-authorized scope amendment — 2026-10-31
 
@@ -123,7 +121,7 @@ disclosed here. It is no implementation, independent Task review or A Final Revi
 Slice Base and Tasks47.1–47.4 acceptance remain unchanged. Task47.4 passed B at
 `383d8834787674675183f4b251d9dfd26a5dc511..dd3f1c25126cd574d8df293d0163131bc6cb9ad6`;
 its packet is preserved in `980ce42a977b5bc20cf8426dbaf5a232f46cf22b:TASK.md`. The new outcome
-must be delivered before the enlarged Slice can become READY FOR A REVIEW.
+was required before the enlarged Slice could become READY FOR A REVIEW.
 
 - Shared per-source TaskItem admission uses backend-proven trigger/context and the latest formal
   organizing outcome for the same observed source version. Definition due work excludes that
@@ -175,9 +173,9 @@ above; this does not select old-task upgrade support. The outcomes, surfaces and
 apply this exclusion directly; no product validation is claimed by this scope clarification.
 Accepted43–46 and Task47.4 are not retroactively re-reviewed or relabelled by this amendment.
 
-The user's planning correction confirms latest formal outcome, not any-ever failure, as the
-criterion. Task47.5 stays PLANNED with the same immutable Task Base; A checkpoints these narrower
-terms before B updates its draft. This correction adds no implementation or review acceptance.
+The user's planning correction selected latest formal outcome, not any-ever failure, as the
+criterion. Task47.5 retained its immutable Base; its scope/planning checkpoints were not implementation
+or review acceptance. B's subsequent PASS is retained in the Closure Packet.
 
 ### Amendment traceability
 
@@ -185,12 +183,11 @@ terms before B updates its draft. This correction adds no implementation or revi
 This section and RO-6 supersede affected blanket history-refusal/CLI retry wording in RO-1/2/3/5,
 the Safety invariants and AC-6/8/15/16 only for deliberate new manual work. Automatic replay of an
 unresolved old attempt and same-Task uncertain replay remain forbidden; new automatic admission
-uses the latest-formal-outcome rule above. The new TARGET journey/architecture sections distinguish this
-authorized work from accepted CURRENT delivery.
+uses the latest-formal-outcome rule above. The CURRENT journey/architecture sections now describe this accepted amendment.
 
 ## Requirements and journeys
 
-- Authorized TARGET amendments `V2-TASK-001–011` in [V2 Requirements](docs/v2-requirements.md).
+- Accepted CURRENT amendments `V2-TASK-001–011` in [V2 Requirements](docs/v2-requirements.md).
   It supersedes the V2 Job-object requirement in `REQ-TASK-008`, Job-emitting `REQ-SCHED-003`,
   Job-specific queue/readiness wording and Job/Task merging in the affected V2 Operations/Automation
   contracts. Frozen V1 meaning and accepted historical facts remain in Git/current baseline sections.
@@ -199,7 +196,7 @@ authorized work from accepted CURRENT delivery.
   interpreted through accepted V2 amendments including `V2-OPS-014–017`, `V2-FILES-007`,
   `V2-AUTO-006/010/011`.
 - [Product Experience](docs/product-experience.md) owns complete manual, scheduled, Run once,
-  result and four-type recovery journeys; its Slice47 TARGET includes the explicit settings-scope,
+  result and four-type recovery journeys; its Slice47 CURRENT journey includes the explicit settings-scope,
   history and control amendments above.
 - [Architecture](docs/architecture.md) owns CURRENT versus TARGET contracts;
   [Task Center specification](docs/task-center-page-spec.md) retains its eight-view/page semantics.
@@ -440,218 +437,100 @@ RecognitionType C remains C with NamingPolicy A and ClassificationPolicy A. No F
 | AC-25 | Real V2 Files/API/SQLite/Worker desktop/narrow journeys prove warning → normal confirmation → actual new organize effects; scheduled and Run once probes prove exclusion/free siblings/no-work truth. Old Results/pins/unknown effects and original Automation time/outcome stay immutable. B supplies applicable T4/native/packaging/restart validation for RO-6 before whole-Slice A review. |
 | AC-26 | System Settings three-field Save/readback at capacity 1/1025/10000 reaches actual consumers; Automation no longer has a settings tab/form and old links safely navigate to System Settings. Prove shared organizing allowance in both directions between manual and due/Run once, with atomic full/refusal/release/explicit retry and same-Task re-entry preserving choices/results/pins/authority. Prove the shared Worker poll also advances both library kinds' ordinary asynchronous copy/move/delete without moving them into organizing capacity; Scheduler poll only checks Automation due definitions. Prove retired-parameter absence from editable/effective/default settings, zero-publication refusal of its field edits, readable unchanged existing snapshots and preserved heartbeat/lease/call-timeout/non-replay behavior. Use real System Settings Save → Files → exact summary/normal confirmation → Storage effects, actual resident adoption/override and same-version restart; B supplies affected/T4/package evidence. No 10000-task load test, fixed timing/DOM/internal layout assertion, no-progress observer, second queue or new settings page. |
 
-## Validation and handoff
+## Final validation and Closure Packet
 
-B plans coherent architecture/user-behavior units from actual code; this Contract is not a Task
-breakdown. Developer runs new/changed/directly affected tests and hands off coherent checkpoints;
-B owns full regression/acceptance and the final Closure Packet under workflow §6. Required T4
-coverage includes its shared Python/Web/static/examples/package/security gates plus AC-specific
-fresh initialization, concurrency, authority, same-version restart and native proofs. Reuse existing
-test infrastructure and temporary roots/fakes/local servers; meaningful persistence/reopen/effect
-assertions cannot be replaced by string searches or mock-only UI tests. Do not weaken tests to
-permit Job removal.
+B's complete Closure Packet and Task47.6 independent review are retained at
+`749507ca9000329484bdc9fb7ad5c44e0efc0cd0:TASK.md`. Task47.1–47.5 history remains in Git;
+Task47.6 passed B at the original Task Base `c8657032dae768d93b12387a5e58db502e23a7ee`
+through candidate `5134c78b22057781d472e6ebf61a1799d9e40324`. The product implementation is
+`dc513d7f749a8f5bee41676925318af162e81aaf`; later checkpoints change acceptance tests/reports.
+All six outcomes and required surfaces are complete under the explicit user amendments.
 
-Use the explicit capacity-state/queue-full cases and supported interruption boundaries above as
-acceptance scenarios. File lineage/history/counts and non-replay are the result obligations; keeping
-all internal item IDs equal or enumerating every theoretical crash point is not a separate gate.
+B's local raw evidence is `.git/validation-evidence/05772d66/b-review-47.6/`:
+2547 Python tests OK (7 optional external-service/endurance skips), 1268 Web unit tests,
+253 applicable fake E2E cases (251 initial passes plus 2 corrected navigation cases),
+15 native settings, 13 native Automation/recovery, 8 native Files/center/history and 22 native
+ordinary-file cases covered successfully. Static/quality/examples, clean wheel smoke,
+53 source-external installed-consumer tests, installed 1025/10000 CLI/Run once effects,
+old-key immutable snapshot/restart proof, Docker fresh/security and same-version restart/fault
+passed. Initial environment/navigation/runner failures and their successful reruns stay disclosed
+in that packet; no single all-green fake/native run is claimed. Optional real remote/endurance
+validation was not run. B's test-time allocation exceeded the requested 50% in its measured
+interval; this process deviation is disclosed, not a waived product gate or precedent.
 
-The preceding investigation ran 138 core Task/Automation/authority/recovery tests and 45
-original-record/log-isolation tests on the Base: 183 passed, with database ResourceWarnings in the
-first run. These are pre-refactor observations, not final acceptance; no full/Web/container result
-is claimed. A scope checkpoint runs relevant document/link/governance checks only. Implementation
-Head and Closure Packet were subsequently supplied by B; the A Final Review below supersedes
-this original planning-stage availability statement.
+A verified the unchanged production-input diff from `05772d66` to candidate `5134c78b`;
+`5134c78b..749507ca` contains only the B Task report. B's matching artifact/full-suite evidence
+therefore applies without mechanically repeating it. Wheel SHA-256:
+`987b9056a1d147c51ae88f9160e3278286122d9d2f42019c19ccf1997d507b72`.
+Docker image: `sha256:f79c1de40cec65c921f7c89526ba0905d8552740fffd76c4c93ab1150309669c`.
+These are local evidence identities, not a deployment or remote CI claim.
 
-## Workspace and role record
-
-Repository `/Users/songzhidong/mediaflow`, branch `main`, starting HEAD equals the immutable Base.
-No pre-existing tracked edits; pre-existing untracked OS/log/reference/image/archive artifacts remain
-unrelated and unstaged. Workspace/Git are writable. Private runtime/configuration/media are not read
-or used for validation. No push/history rewrite is authorized or performed.
-
-The user grants A scope authority; earlier B investigation is disclosed. No implementation,
-Task review or A Final Review is conducted by this scope action. Roles remain separate under the
-workflow; no sub-agents are requested or spawned. `TASK.md` remains NO ACTIVE IMPLEMENTATION TASK
-until B plans against the committed Contract. No original closed Slice fact is changed.
-
-2026-11-02 scope/planning workspace: branch `main`, starting HEAD
-`980ce42a977b5bc20cf8426dbaf5a232f46cf22b`; no pre-existing tracked edits. Pre-existing untracked
-OS/log/reference files, `15` and output artifacts are preserved unstaged. Governance preflight PASS.
-The same root agent acts as A for this scope checkpoint and subsequently as B planner, with no
-delegation, implementation, final review, push or change to prior acceptance facts.
-
-2026-11-03 settings document checkpoint: branch `main`, starting HEAD
-`d2669f237e3576704da071354e428983c2b28793`; governance preflight PASS. The same B agent uses
-the user's explicit A document authority, then returns to B for Task alignment. Twenty-one
-pre-existing tracked implementation/test/harness edits and all untracked/private artifacts are
-preserved unstaged; no product changes, push, candidate acceptance or independent final review.
-Document checks pass: whitespace, 126 local links across nine affected documents, unchanged
-Slice identity/acceptance IDs and accepted closure ledger. Product/T4 acceptance remains pending.
-
-## A Final Review — FIX REQUIRED — 2026-11-02
+## A Final Review — PASS / CLOSED — 2026-11-03
 
 ```text
 Slice Base: 5144ab1fc2344b06194969cc2c496835729664c0
-Reviewed Implementation Head: 3cf1b6b4b59dbea0bbd2159c404e760f7bcd9417
-Review starting HEAD: 62a566f9c7395fae14b5ee5df9dae987bb4bb201
-Decision: FIX REQUIRED
-Blocking finding: A-P1-1 — direct CLI terminal unknown-effect work retains shared capacity
-Next action: B reopens/reassesses Task47.5 with its original Base and correction/test plan
+Reviewed Implementation Head: 5134c78b22057781d472e6ebf61a1799d9e40324
+Review starting HEAD: 749507ca9000329484bdc9fb7ad5c44e0efc0cd0
+Decision: PASS / CLOSED
+Blocking findings: NONE
+Resolved: A-P1-1, A-P1-2 and B-P1-1/B-P1-2
+Next action: A SELECTS THE NEXT LARGE SLICE — separate action, no implementation authorized
 ```
 
-This independent A review uses the entire original Slice range (225 changed files), not only
-Task47.5: Task scheduling/claims/source ownership, manual and automatic entry/completion paths,
-four-type continuation, Job removal/fresh persistence, API/CLI/Web consumers and B's actual
-validation evidence. `3cf1b6b4..62a566f9` changes only B's `TASK.md` report. The review applies the
-user's scope amendments: no old-task/cross-version upgrade or V1 acceptance is claimed. Original
-Slice Base, accepted43–46 and previous B Task review checkpoints remain unchanged. This A instance
-has not implemented or B-reviewed this Slice and has spawned no agents.
+This A instance independently reviewed the complete original Base..Implementation Head (252 changed
+files), including the shared scheduling/domain/repository, all organizing entrances, Worker/Scheduler,
+manual/automatic same-Task continuation, history/ownership, fresh persistence/Job retirement,
+authorization/audit/notification/log relations, Web/API/CLI consumers and acceptance evidence.
+It neither implemented nor B-reviewed this Slice and spawned no agents. Prior scope-role exceptions
+remain disclosed above and do not substitute for this final review.
 
-**A-P1-1 — ordinary CLI does not settle a finished unknown-effect attempt.** Existing entry:
-`mediaflow --config <isolated-bootstrap> organize <source> --execute --limit 1`, under a legal
-COPY policy. The real LocalStorage adapter encounters `ENOSPC` opening its target staging file;
-the pipeline records a terminal `partial` TaskItem and Result (`CREATE_DIRECTORY` completed,
-`attempted_unverified`, `mutation_outcome`). All calls have returned and the CLI exits, but
-`final_cli.py::_settle_direct_organize` calls `scheduling.settle` without the finished-pass boundary
-used by `ManualTaskEngineWorker`. Settlement refuses the recorded unknown marker; the Task stays
-`running`, queue `claimed`, capacity **1**, including after same-version reopen. With capacity 1,
-a second distinct ordinary CLI request is rejected as queue-full after the disk fault is removed.
-CLI exits 2 with the settlement exception and omits the normal Task/result summary.
+| Contract coverage | Independent conclusion |
+|---|---|
+| RO-1 / AC-1–3 | One Task owns machine-work admission, claims and settlement. Atomic count/source/authority/due checks preserve duplicates and waiting work. Human waiting releases capacity; active calls and unacknowledged cancellation retain it. |
+| RO-2 / AC-4–6 | Files, direct CLI/API/remote, due and Run once enter the shared kernel/pipeline/Executor, preserving entry-specific intent, bounds, complete discovery, stability and attachments. No Job/CLI-output execution bridge remains. |
+| RO-3 / AC-7–8 | Four-type decision/analysis/summary/confirmation continues the same Task with durable item/attempt/result links, original pins, independent siblings and completed/uncertain non-replay. |
+| RO-4 / AC-9–12 | Fresh/new-work/same-version reopen retains records and fences. No live Job schema/model/dispatch survives; immutable configuration with the retired key remains readable without rewriting identity. Old-task/cross-version upgrade is excluded. |
+| RO-5 / AC-13–19 | Eight-view center, Files local ordinary operations, original Automation outcomes/times, Dashboard/log/export/health/API/CLI and safe links retain their journeys. Pause/resume-from-pause is retired; cancellation and four-type continuation remain. |
+| RO-6 / AC-20–25 | Latest formal source-version history drives automatic exclusion and manual Web warnings. New deliberate confirmation preserves old results/unknown evidence and per-file fencing. CLI retry-failed is absent. |
+| V2-TASK-011 / AC-26 | System Settings owns three fields. All organizing entry/re-entry uses the shared current allowance; reviewed execution keeps its immutable media pin. Worker idle cadence includes ordinary async work; Scheduler cadence checks due definitions only. No stale-age runtime parameter or replacement observer remains. |
 
-The direct settlement call was introduced in `1e46e5baa` (2026-11-01 00:25:11 +08:00).
-Task47.5's finished-pass capacity correction covers the resident path but leaves this existing CLI
-caller unchanged. This is an unmet RO-1/RO-2 and AC-2/4/15/24 invariant in the unclosed Slice,
-not a standalone minor bug or a new scope request. Unknown Result evidence must remain unknown;
-retaining it does not mean the finished process still has machine work or needs a queue slot.
+**A's actual independent validation:** local ignored root
+`.git/validation-evidence/5134c78b/a-final-review/`.
 
-**Correction boundary for B:** keep Task47.5 ID/Base/goal and the shared kernel; make ordinary
-CLI completion and applicable control/human-wait settlement use the same supported finished-pass
-rules as the resident path. Release capacity only when the pass's calls returned and durable
-items/results prove no remaining machine work; preserve the original Result, effects, source
-protection, siblings and fences. Return the honest Task/result summary. Add real CLI-entry
-regression for this failure, subsequent distinct admission and reopen, plus directly affected
-control/mixed-item cases. Do not clear uncertainty, auto-replay, add recovery/remote detection or
-broaden the Contract. B owns the correction plan and fresh assigned acceptance before another
-Closure Packet; A does not implement or self-approve it.
+- Six scheduling/fencing/source-race/manual-engine/history/entrance modules: **146 tests OK**, 13.240s.
+  These include current-capacity lower/raise/recovery confirmation, CLI disk-full settlement,
+  in-flight cancellation, source handoff and unknown-effect non-replay.
+- System-settings/engine-settings/runtime-configuration contracts: **91 tests OK**, 2.803s.
+- Production V2 build and **5 real Python/API/SQLite/Worker Chromium journeys passed**, 11.0s:
+  three-field state/entry/old-link behavior; legal 1025/10000 Save → Files summary → normal
+  confirmation → actual MOVE; shared capacity full/release/retry; old-summary refusal under current
+  capacity. Commands are existing page actions; harness only advances real background workers and
+  reads isolated fixture Storage. No invented product route or direct queue-state construction.
+- Fresh runtime schema58 and same-version reopen: 135 schema objects, **no Job objects/columns**.
+  All **169 wheel Python modules** independently compared byte-for-byte with candidate source:
+  no missing/extra/different modules; SHA-256 matches B's wheel.
+- A inspected desktop/390px System Settings and its adoption state, plus actual 380px Files execution
+  screenshots. The three inputs/actions/status remain readable and reachable with bounded internal
+  diagnostic-table scrolling. Prior history-warning/summary and center visual evidence was checked.
+- B's raw full-suite/native/installed/container logs, actual failures/reruns and source/artifact reuse
+  were inspected. A does not claim a second full-suite/container run. Closure-only checks are recorded
+  with the closure checkpoint; executable inputs are unchanged.
 
-**Actual evidence:** local ignored root
-`.git/validation-evidence/3cf1b6b4b59dbea0bbd2159c404e760f7bcd9417/a-final-review/`.
-`cli_capacity_probe.py` invokes the existing production CLI with the existing isolated managed
-fixture, fake Provider and real SQLite/LocalStorage/Executor. Only target `Path.open('wb')` receives
-the OS disk-full error; no synthetic endpoint, repository mutation or fabricated Task state is used.
-`cli-capacity.log` records the terminal item/Result, retained slot, next admission refusal and reopen.
-`focused.log`: A independently ran six Task scheduling/fencing/source race/manual engine/history/
-entrance-recovery modules: **134 tests OK**, 11.343s. That passing set misses this CLI disk-failure
-settlement. The reproduced blocker is not waived by passing suites.
+Earlier A rejections remain historical at `7ac253dd11ab3453f36cd40500c79c72b4f888de:SLICE.md`
+(A-P1-1) and `c8657032dae768d93b12387a5e58db502e23a7ee:SLICE.md` (A-P1-2).
+Their real CLI/Web failure evidence remains under the prior `.git/validation-evidence/` roots;
+this acceptance follows the corrected implementation and amended scope, not a rewritten Base.
+No P2 cleanup or optional proof creates another Task. Deferrals and validation limits above remain.
 
-B's retained packet at `62a566f9:TASK.md` includes 2530 Python tests (7 optional remote/endurance
-skips), 1267 Web unit tests and 253 fake E2E, native journeys, clean wheel/source proof and Docker
-fresh/security/same-version restart. A inspected raw logs and the report-only/Web reuse diffs;
-these remain valid evidence for their covered cases, not proof of the missing CLI outcome. A did
-not mechanically rerun full suites or claim new wheel/container acceptance. No CURRENT/closure
-reconciliation is performed on FIX REQUIRED. Roadmap stays ACTIVE; Progress's closure ledger is
-unchanged. Pre-existing untracked files remain unstaged; no product/test edits or push occurred.
+## Closure workspace and documentation
 
-## A Final Review — FIX REQUIRED — capacity compatibility — 2026-11-02
-
-The 2026-11-03 settings amendment above supersedes this review's original numeric-only direction
-and the later Automation-only correction. Reproduced failures and evidence remain factual;
-acceptance now requires the three-setting System Settings journey and parameter removal under
-V2-TASK-011 and AC-26.
-
-```text
-Slice Base: 5144ab1fc2344b06194969cc2c496835729664c0
-Reviewed Implementation Head: 5c808d4a67bedfbafb71d88a1ffa8d3480ef5316
-Review starting HEAD: 7ac253dd11ab3453f36cd40500c79c72b4f888de
-Decision: FIX REQUIRED
-Resolved: A-P1-1 — direct CLI finished-pass capacity settlement; B-P1-1 — batch parsing
-Blocking finding: A-P1-2 — published legal capacity exceeds the new Task kernel's accepted range
-Next action: B plans one bounded in-Slice compatibility correction and fresh acceptance
-```
-
-A independently reviewed the original Slice Base..candidate (225 changed files): Task scheduling,
-claims/source ownership and fences, all organizing entrances, same-Task four-type continuation,
-Job removal/fresh persistence, history admission/warnings, API/CLI/Web consumers and actual B evidence.
-`5c808d4a..7ac253dd` changes only B's Task report; executable inputs are the reviewed candidate's.
-The six outcomes and user amendments remain authoritative; old-task/cross-version upgrade and V1
-support remain excluded. This A instance neither implemented nor B-reviewed the Slice, and used no
-sub-agents. The preceding rejected candidate/review stays historical; this review supersedes its
-current blocker assessment without rewriting the original Base or any prior acceptance.
-
-**A-P1-2 — legal global capacity publication breaks organizing admission.** From the existing
-Automation global-settings API, GET advertises `automation.maximumActiveJobs` as an integer in
-**1–10000**. An authenticated ordinary PUT changing 100 to **1025** returns **201** and publishes
-that value as Active. In the same isolated managed deployment/SQLite database, the existing command
-`mediaflow --config <bootstrap> organize <source> --execute --limit 1` then returns **2**:
-`Task scheduling capacity must be between 1 and 1024 Tasks`. It creates no Task or media effect;
-the queue is empty. GET still truthfully shows Active 1025. Saving **1024** through the same settings
-entry returns 201, after which the same CLI command succeeds with one actual COPY target.
-
-**A Web follow-up — 2026-11-02:** the existing `自动化 → 全局设置` form also saves
-**1025** with HTTP 201 and shows the new published Active value. From Files, selecting one real
-fixture file and clicking `批量整理` then sends the existing `/files/discoveries` command, which
-returns HTTP 400 `invalid_request` with the same 1–1024 kernel error. The page shows only
-`无法开始整理发现，请刷新后重试。`; refreshing cannot correct the published capacity mismatch.
-The source remains present and no target is created. Through the same Web form, saving **1024**
-restores admission; the same file reaches its normal plan summary and explicit confirmation, then
-the real Worker/OrganizerExecutor performs its configured MOVE. This confirms A-P1-2 affects the
-ordinary Web journey as well; B's correction/acceptance must cover that existing journey.
-
-The new `domain/task_scheduling.py::MAX_TASK_CAPACITY = 1024` / `require_capacity` conflicts with
-the retained settings/configuration/Scheduler range of 1–10000. `TaskSchedulingService` and
-repository admission enforce the smaller limit. The bound entered in `e53e38999459f81da65f625ee3b73d39e9ff793e`
-(2026-10-30 19:27:53 +08:00); ordinary CLI consumption of the kernel entered in
-`1e46e5baa0ea1dc1d3400ef42bf80d80b8a954cb` (2026-11-01 00:25:11 +08:00).
-This violates RO-1/RO-5 and AC-4/12/15: supported settings must retain their operational meaning.
-It is an in-Slice P1 compatibility gap, not an independent minor bug, a capacity-load test or a new
-user feature. Reproduction needs one file and an ordinary legal Save, with no fabricated endpoint,
-repository state, exhausted queue, Provider fault or thousands of admitted Tasks.
-
-**Current correction boundary for B:** follow the user-authorized settings-scope amendment,
-V2-TASK-011 and AC-26. Preserve legal capacity 1–10000 for all shared organizing consumers,
-move the remaining three fields into System Settings and remove the unused stale-age parameter.
-Align Task47.6 before implementation; numeric range alignment alone is insufficient. Keep atomic capacity,
-source/authority/fence/waiting semantics, immutable pins and a single Task engine. No need to admit
-10000 tasks to prove a legal ceiling. B owns affected/T4 acceptance, whole-Slice reassessment and a
-fresh Closure Packet. Preserve Task47.5's passed fixes/history; A implements no product fix and does
-not close or reconcile CURRENT on this rejection.
-
-**Independent evidence:** local ignored root
-`.git/validation-evidence/5c808d4a/a-final-review/` (local only).
-`capacity_settings_journey.py` / `capacity-settings-journey.log` drive the existing production WSGI
-settings GET/PUT and real CLI against one managed temporary SQLite/LocalStorage deployment. Only
-MetadataProvider is synthetic; all configuration activation, Task admission and actual COPY use
-production behavior. The 1024 recovery is verified, not proposed. No user database, media or private
-configuration is accessed.
-
-- `web-capacity/capacity-web.spec.mjs` and `web-capacity/test-output-final/` (`proof.json`/PNGs):
-  **1 real-Python Chromium journey passed**, 4.0s, using the existing repository harness and built
-  V2 artifact. Settings Save, navigation, Files selection/admission, summary and confirmation are
-  actual page actions; existing harness controls only step the real background workers and read
-  fixture Storage state. A inspected the failure screenshot. This adds one focused journey;
-  it does not claim a new full-suite run.
-- `focused.log`: six scheduling/fencing/source-race/manual-engine/history/entrance modules,
-  **141 tests OK**, 13.948s. This set does not cover the published-capacity mismatch.
-- `cli-capacity.log`: independent rerun of the prior A real CLI ENOSPC probe with corrected success
-  expectations; terminal partial/unknown evidence stays, exit 1/normal summary, capacity 0, next
-  distinct file succeeds and same-version reopen stays settled. `active-cancel.log` proves the slot
-  remains while a real write is blocked, then releases after cancellation and returned ENOSPC.
-  `batch-root.log` and `multi-storage.log` independently prove actual root batch/cross-Storage COPY.
-- `native.log`: **3 real Python/API/SQLite/Worker Chromium journeys passed** (history warning →
-  ordinary confirmation → actual new organize, eight center views and in-context summary), 10.4s.
-  A also inspected B's desktop and 390px summary/confirmation screenshots; the warning and original
-  confirmation remain visible with readable wrapping and no new acknowledgement checkbox.
-- `artifact-proof.json`: A independently compared all **169** wheel Python modules byte-for-byte
-  with candidate source; no extra/missing modules. SHA-256 matches B's clean wheel:
-  `7f75e4ed89ee0fd492228a302cb0d3f12644df04344473049e307fa54afee05d`.
-
-B's packet at `7ac253dd:TASK.md` and raw logs at
-`.git/validation-evidence/5c808d4a/b-review/` were checked: 2537 Python tests with 7 optional remote/
-endurance skips (the one Task-document heading failure was corrected and its 8-test module rerun),
-22 current native journeys, quality/examples, clean installed consumers and Docker fresh/security/
-same-version restart passed. The explicit unchanged-input diff supports reuse of 1267 Web unit and
-253 fake E2E results; A independently verified that diff. The synchronized Automation native copy
-waits for the actual new definition readback; its initial stale-fingerprint refusal remains disclosed
-as P2. These results establish their covered behavior but do not waive A-P1-2. A did not rerun or
-claim new full Python/Web/container acceptance. Pre-existing untracked files remain unstaged;
-this review changes only A-owned review/status documents, with no product/test edits or push.
+Repository `/Users/songzhidong/mediaflow`, branch `main`, review started at the SHA above with no
+tracked edits. All pre-existing untracked OS/log/reference/output files and `15` are preserved
+unstaged; private configuration/databases/media were not read or used. Workspace/Git are writable;
+governance preflight passed. This checkpoint changes only closure/CURRENT documents and role lessons,
+with no product implementation, push, deployment, history rewrite or next-Slice selection.
+Roadmap/Progress and requirements/journey/architecture/operator guidance now describe accepted47;
+root Task is NO ACTIVE IMPLEMENTATION TASK and points to B's immutable packet. Closure text checks
+passed whitespace, 176 local file links/anchors, unchanged AC/RO and requirement IDs, and unchanged
+prior closure-ledger rows. The committed-Contract governance gate is run after this checkpoint. Original43–46
+Bases, accepted Heads and ledger facts remain unchanged.

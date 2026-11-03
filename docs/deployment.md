@@ -17,7 +17,7 @@ installation, health, restart, backup/upgrade/restore and failure-recovery proce
   which uses Waitress. The standard-library `wsgiref.simple_server` path remains
   `api serve` and is development/trusted-loopback only.
 - A local named volume is mounted at `/data`. SQLite, history, managed
-  configuration evidence, Task/Job/Result state, notifications, audit and logs
+  configuration evidence, Task/TaskItem/Result state, notifications, audit and logs
   must be configured under `/data`.
 - **No media mount is required to install or start MediaFlow.** The default
   `compose.yaml` declares only the application configuration file, the
@@ -137,7 +137,7 @@ verifies the config file and `/data` are present and writable, checks that every
 configured Local Storage root is a mounted directory with the intended
 read-only/read-write access, rejects host-root and Docker-socket paths, and only
 for the API command verifies that the referenced API token environment value is
-present. Preflight never scans media, calls a Provider, creates a Job or Task,
+present. Preflight never scans media, calls a Provider, creates a Task,
 sends a notification, or mutates Storage.
 
 Each Compose service also declares a bounded healthcheck. The healthcheck runs
@@ -192,7 +192,7 @@ The production artifact flow is one image, two stages, one Python runtime:
   `Referrer-Policy` and `Permissions-Policy` headers. Requests are GET-only;
   unknown, traversal-like or missing assets fail closed with 404 without
   exposing paths, credentials or raw exceptions. Static requests never access
-  repositories, Providers, Tasks/Jobs or Storage and never create work.
+  repositories, Providers, Tasks or Storage and never create work.
 - The V1 `/ui`, `/ui/`, `/ui/app.js` and `/ui/style.css` remain available from
   the same Python process and port, and `/api/v1/*` Bearer authentication and
   RBAC behavior are unchanged beside V2 static serving.
@@ -220,14 +220,14 @@ New admission uses Active; intact older admitted pins stay valid, broken pins bl
 
 ### Engine poll cadence adoption (Slice43 PASS / CLOSED)
 
-**Slice47 implemented candidate — pending B/A acceptance:** the remaining three runtime fields use
+**Slice47 CURRENT — PASS / CLOSED:** the remaining three runtime fields use
 the existing System Settings page. Shared organizing capacity covers manual/due/Run once and
 machine-work re-entry; the Worker's idle cadence covers organizing plus both library kinds' ordinary
 asynchronous file work, whose admission rules stay unchanged. Scheduler cadence checks only due
 Automation definitions. The unused `automation.staleJobAgeSeconds` parameter is retired; current
 heartbeat/lease/renewal and Provider/Storage call timeouts remain unchanged. Existing immutable
 documents may retain the ignored key without digest/pin rewriting. No no-progress observer or
-total-runtime timeout is selected. This candidate still requires independent B and A acceptance.
+total-runtime timeout is selected. Independent B acceptance and whole-Slice A review are complete.
 
 `automation.workerPollSeconds` and `automation.schedulerPollSeconds` are the real resident loop
 cadences. A running Worker or Scheduler resolves the current managed Active at each safe loop
@@ -314,20 +314,20 @@ implies the other signals.
 The Operator Web's **System** view shows all three signals and their bounded
 diagnostics; **Workers** and **Configuration** show the same Worker and
 management readiness projections. Viewing readiness performs no Storage scan,
-Provider call, Job/Task creation, notification or media mutation.
+Provider call, Task creation, notification or media mutation.
 
 ## Restart and fault matrix
 
 Every durable MediaFlow state lives under `/data`. Stopping or restarting the
 API, Worker, Scheduler or Notification Worker service must therefore preserve
-the exact managed Active identity, work-scoped source/plan evidence, Jobs,
+the exact managed Active identity, work-scoped source/plan evidence, Task scheduling,
 Tasks/TaskItems/Results, schedule states and occurrence history, notification
 deliveries, security audits and operational logs. The application restart
 contract is:
 
 - The Scheduler advances one durable due slot at most once. A restart or a
   concurrent second tick around the same occurrence cannot create a second
-  occurrence or a second linked Job for that occurrence identity.
+  occurrence or a second Task for that occurrence identity.
 - The Worker claim boundary remains authoritative across process stop/start. A
   newer Worker owner can heartbeat and commit; an older owner's heartbeat and
   terminal commit are rejected and the current owner/result is preserved.
@@ -352,69 +352,32 @@ python3 scripts/docker_restart_fault_smoke_test.py
 It prints `SKIP` when no Docker engine is available and never reads production
 paths, credentials, Storage or Providers.
 
-## Backup, upgrade and migration recovery
+## Backup and same-version recovery
 
-Before changing the MediaFlow image, stop the stack and retain a verified
-backup under the `/data` volume. The backup command is read-only with respect
-to live media and never overwrites an existing destination:
+Current support is fresh initialization → new work → same-version reopen/restart. Old-task/Job
+migration or takeover, cross-version upgrade/rollback and mixed-version writers are excluded by the
+accepted Slice47 boundary. An incompatible schema fails closed; do not clear or rewrite the database
+to bypass it. Earlier image-to-image migration procedures/evidence remain historical in Git and do
+not establish current upgrade support.
+
+Stop the stack and retain a verified backup under `/data` before maintenance. Backup is read-only
+with respect to live media and never overwrites an existing destination:
 
 ```bash
 docker compose stop
 docker compose run --rm --no-deps api \
-  mediaflow database backup --output /data/upgrade-backup.sqlite3
+  mediaflow database backup --output /data/runtime-backup.sqlite3
 docker compose run --rm --no-deps api \
-  mediaflow database verify /data/upgrade-backup.sqlite3
+  mediaflow database verify /data/runtime-backup.sqlite3
 ```
 
-Record the backup's schema, SHA-256 digest and age from the verify output.
-Upgrade preflight and migration rehearsal are read-only and operate only on a
-disposable copy of that backup. Run them with the candidate image identity
-before recreating services:
-
-```bash
-MEDIAFLOW_IMAGE=mediaflow:candidate \
-  docker compose run --rm --no-deps api \
-  mediaflow upgrade check --backup /data/upgrade-backup.sqlite3
-MEDIAFLOW_IMAGE=mediaflow:candidate \
-  docker compose run --rm --no-deps api \
-  mediaflow upgrade rehearse --backup /data/upgrade-backup.sqlite3
-```
-
-`upgrade check` reports `READY` when the live runtime and backup are current or
-`MIGRATION_REQUIRED` for an older mutually matching supported schema. `upgrade
-rehearse` copies the verified backup into a temporary database, runs the
-candidate image's real repository migration path on that copy, preserves
-representative record counts and removes the temporary file. Neither command
-changes the live `/data` database, the verified backup, configuration Active,
-notifications or execution authority.
-
-Only after the compatibility gate passes, recreate the project with the
-candidate image:
-
-```bash
-MEDIAFLOW_IMAGE=mediaflow:candidate docker compose up -d --force-recreate
-docker compose ps
-```
-
-Migration failure fails closed: the live database, prior image/artifact and
-verified backup remain available and no candidate service resumes media work.
-Recovery uses the documented non-overwriting restore procedure: the destination
-must be empty and sidecar-free and the command requires
-`--confirm-empty-destination`. Never delete the failed live database or backup
-until the restored authority is independently verified.
-
-The isolated acceptance harness builds a local old-schema image (runtime marker
-32) and the current candidate image (runtime marker 34), seeds representative
-durable state, verifies a backup, exercises preflight/rehearsal, injects a
-migration failure, probes restore rejection and performs a successful candidate
-upgrade:
-
-```bash
-python3 scripts/docker_upgrade_recovery_smoke_test.py
-```
-
-It prints `SKIP` when no Docker engine is available and never contacts a
-registry, remote Storage/Provider service or production path.
+Record the backup's schema, SHA-256 digest and age. Same-version offline restore is an explicit,
+non-overwriting operation: all processes must be stopped, the destination empty and sidecar-free,
+and `--confirm-empty-destination` supplied. Follow the
+[offline restore procedure](release.md#offline-restore-procedure). Keep the existing database and
+verified backup until restored authority is verified. Restore/restart never grants new execution
+permission or proves an uncertain mutation did not occur; supported work retains pins/results/fences
+and only permitted safe remaining stages may continue.
 
 ## Release security and artifact validation
 
@@ -534,8 +497,8 @@ verify their events with the original recipient rather than silently assigning t
 Delivery detail explains this state without exposing endpoints or secret values.
 
 Container probes open the existing SQLite database read-only. An absent or incompatible schema is
-not ready; probes never create a database or install tables. Use the backup, upgrade check/rehearsal
-and recovery workflow above for schema transitions. Temporary database contention makes readiness
+not ready; probes never create a database or install tables. Use the backup and same-version recovery workflow above; cross-version schema transitions
+are outside current support. Temporary database contention makes readiness
 unavailable while resident processes keep polling safely; it does not requeue uncertain media work.
 The V2 Operations service-status section separates infrastructure health from configuration waiting
 and links to Settings for configuration recovery.
@@ -571,7 +534,7 @@ It runs two isolated stacks. The first uses the **default** topology: all four
 services start with only the bootstrap file, the environment file and `/data`;
 the resident services register and heartbeat; Scheduler and Notification Worker
 report themselves waiting with a bounded reason; an empty baseline is activated
-through the authenticated API and creates no Job, Task, delivery or mutation; an
+through the authenticated API and creates no Task, delivery or mutation; an
 eligible schedule and Webhook are then published and the **same** container
 identities produce an eligible occurrence and a signed delivery to a controlled
 local HTTPS receiver. The second stack is a separate project with the optional
@@ -599,23 +562,14 @@ The restart harness verifies durable restart and fault behavior:
 python3 scripts/docker_restart_fault_smoke_test.py
 ```
 
-It records managed configuration, work-scoped source/plan evidence, Job/Task/TaskItem/Result,
+It records managed configuration, work-scoped source/plan evidence, Task/TaskItem/Result,
 schedule/occurrence, notification, audit and operational-log evidence, restarts
 each service, and verifies scheduler idempotence, stale-owner fencing,
 uncertain-mutation refusal and notification at-least-once behavior on temporary
 isolated paths.
 
-The upgrade harness verifies the image-to-image backup/migration journey:
-
-```bash
-python3 scripts/docker_upgrade_recovery_smoke_test.py
-```
-
-It builds an old-schema and candidate image locally, seeds representative
-durable state, creates and verifies a backup, runs read-only preflight and
-rehearsal, injects a migration failure, proves restore/recovery boundaries and
-successfully upgrades the four-service Compose project on temporary isolated
-paths.
+The old-schema upgrade harness is historical and is not an accepted/current Slice47 gate.
+Fresh startup, new-work durability and same-version restart/fault proofs above define current support.
 
 The release-security harness verifies image/build-context,
 Compose-topology, non-root/mount, API-token/RBAC and canary redaction
