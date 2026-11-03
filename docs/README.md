@@ -14,9 +14,10 @@
 | 完整用户旅程 | [Product Experience](product-experience.md) |
 | 组件、数据流与运行边界 | [Architecture](architecture.md) |
 | 配置操作 / 自托管部署 | [Configuration](configuration.md) / [Deployment](deployment.md) |
-| 发布、升级与验证边界 | [Release](release.md) / [Storage Acceptance](storage-acceptance.md)；开发关闭不等于发布 |
+| 发布与验证边界 | [Release](release.md) / [Storage Acceptance](storage-acceptance.md)；当前支持 fresh 新工作及同版本恢复，旧任务迁移/跨版本升级和 V1 不在支持范围；开发关闭和 Git 推送不等于发布 |
 | 页面组成与交互 | [Files](file-page-visual-spec.md)、[MediaLibrary](media-library-page-visual-spec.md)、[Task Center](task-center-page-spec.md)；图片是视觉参考，不是运行数据或权限 |
-| 自动化任务、执行记录与全局设置 | [完整旅程](product-experience.md#current--complete-native-automation-workspace-accepted43-amended46)、[现行要求](v2-requirements.md#automation-workspace-requirements--current-slice-43-pass--closed)、[设置字段与保存/采用](configuration.md#automation-engine-settings-native-focused)；记录只读展示本次结果和时间、失败原因、下一步，无后续处理状态或恢复入口；定义管理和整理恢复从各自工作区进入 |
+| 自动化定义与执行记录 | [完整旅程](product-experience.md#current--complete-native-automation-workspace-accepted43-amended46)、[现行要求](v2-requirements.md#automation-workspace-requirements--current-slice-43-pass--closed)；记录只读展示本次结果和时间、失败原因、下一步，无后续处理状态或恢复入口；定义管理和整理恢复从各自工作区进入 |
+| 三项系统运行设置 | [字段、保存与实际采用](configuration.md#current--three-system-runtime-settings-slice47-pass--closed)；系统设置是唯一常用入口，整理额度由各入口共享，Worker 空闲轮询覆盖共享异步工作，Scheduler 轮询只检查自动化到期；发布与实际采用分开呈现 |
 | 已退役能力的现行边界 | [FileIndex](file-index-retirement-spec.md) / [Preview](preview-retirement-spec.md)；不恢复旧入口或兼容执行器 |
 | 角色经验 / Task 模板 | [A](agent-experience/slice-owner-architect-final-reviewer.md)、[B](agent-experience/task-planner-reviewer.md)、[Developer](agent-experience/developer-implementation-role.md) / [Task Template](../Task/TEMPLATE.md) |
 

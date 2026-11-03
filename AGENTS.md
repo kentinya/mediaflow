@@ -122,7 +122,10 @@ still produce RecognitionType C. Cover this in automated tests.
 
 - Long operations use durable Tasks with observable stages: Pending, Scanning, Parsing, Recognizing,
   FetchingMetadata, Planning, WaitingConfirm, Organizing, Completed, PartialSuccess, Failed, Cancelled.
-  Support pause/resume/cancel/retry/failed-item retry with independent outcomes and safe recovery.
+  Support cooperative cancellation and per-item decision → analysis → exact summary → explicit
+  continuation with independent outcomes and safe recovery. Under accepted `V2-TASK-003/007/010`,
+  organizing and ordinary-file Pause/resume-from-pause and the independent CLI `tasks retry-failed`
+  entrance are retired. Preserve completed/uncertain effects, original pins and result history.
 - Persist each organize result: source, recognitionType, provider/providerId, namingPolicy,
   classificationPolicy, organizePolicy, target, status and error. Support JSON export.
 - Log levels: TRACE/DEBUG/INFO/WARN/ERROR; normal mode INFO, debug mode useful processing details.

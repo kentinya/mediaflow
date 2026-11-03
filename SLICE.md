@@ -19,12 +19,11 @@ Next Action: A SELECTS THE NEXT LARGE SLICE — NO ACTIVE IMPLEMENTATION TASK
 
 [AGENTS.md](AGENTS.md) and [Development Workflow](docs/development-workflow.md) govern scope,
 roles, checkpoints, testing and closure. The user requested Job removal and unified Task execution,
-then explicitly authorized A scope authority on 2026-10-30. The original planning checkpoint selected the Slice;
-final acceptance is recorded below. On 2026-11-03 the user explicitly authorizes
-the agent acting as B to exercise A authority for the Contract and related documents, including
-settings and the confirmed exclusion of old-task and cross-version upgrade support.
-This role exception covers scope/document checkpoints only, not independent A Final Review,
-implementation, acceptance or delegation.
+then authorized A scope authority on 2026-10-30. The prior B agent also exercised explicitly
+authorized A scope/document authority for the 2026-10-31 control, 2026-11-02 source-history and
+2026-11-03 settings amendments. Those disclosed role exceptions covered scope/planning only;
+they were not independent implementation acceptance or A Final Review. The independent final
+review and closure are recorded below.
 
 The immutable Base includes accepted43–46 and subsequent accepted corrections, including original
 Automation execution-result presentation. Slice46 remains PASS / CLOSED with original Base
@@ -48,10 +47,9 @@ integration only as required below; it does not reopen or rewrite earlier accept
 
 ## User-authorized settings-scope amendment — 2026-11-03
 
-The user chooses **全部放到系统设置**, then **把失效判定时间这个参数删掉，保留现在的判断逻辑**,
-and authorizes this A document action. This replaces the 2026-11-02 Automation-only scope and the
-intermediate four-setting/no-progress-observer plan. The earlier CLI/Web Save 1025 failures remain
-factual. Range correction alone does not complete the new settings journey.
+Accepted `V2-TASK-011` places the remaining three fields in System Settings and removes the
+stale-age parameter while retaining current heartbeat/lease/call-timeout judgments. This supersedes
+the former Automation-only and four-field/no-progress-observer variants.
 
 - **System entry and publication:** use the existing System Settings page as the ordinary editor
   for three runtime settings. Remove Automation's settings tab/form and duplicate ordinary editors;
@@ -84,18 +82,10 @@ factual. Range correction alone does not complete the new settings journey.
   confirmation, immutable execution pins, independent results and non-replay. Notification policy,
   synchronous browsing/rename/mkdir and ordinary queues are not redesigned.
 
-`V2-TASK-011` and AC-12/26 define the accepted settings outcome. Task47.6 retained its true Base
-`c8657032dae768d93b12387a5e58db502e23a7ee`; the user subsequently resumed Developer, and B
-completed T4 acceptance before this independent A review. Earlier stopped/draft checkpoints remain
-in Git; they were not implementation authorization or acceptance.
+## User-authorized control boundary — 2026-10-31
 
-## User-authorized scope amendment — 2026-10-31
-
-The user explicitly removed Pause and resume-from-pause from organizing AND ordinary-file
-operations, and confirmed there are no currently paused organizing Tasks. This scope action uses
-the previously granted A scope authority; the same agent acts as B, disclosed here. It is a Contract
-amendment, not implementation, Task PASS or A Final Review. Original Slice Base/history stay intact.
-No A Final Review of this Slice is performed by this agent.
+The accepted amendment retires Pause/resume-from-pause for organizing and ordinary-file operations.
+The user's confirmation that no organizing Task was paused excluded a dedicated migration path.
 
 Manual/due/Run once/API/CLI organizing and ordinary-file operations (including Copy/Move) expose
 cancellation, not Pause or resume-from-pause. Remove their Web/API/CLI actions, availability projections
@@ -114,14 +104,9 @@ all other permissions, cancellation, authority, confinement and evidence guarant
 
 ## User-authorized scope amendment — 2026-11-02
 
-The user explicitly adds source-dependent handling of prior `failed` / `partial` organizing
-items and retirement of the independent CLI `tasks retry-failed` entrance to this Slice, and
-requests Task planning only. This is A's scope checkpoint; the same agent then acts as B planner,
-disclosed here. It is no implementation, independent Task review or A Final Review. The original
-Slice Base and Tasks47.1–47.4 acceptance remain unchanged. Task47.4 passed B at
-`383d8834787674675183f4b251d9dfd26a5dc511..dd3f1c25126cd574d8df293d0163131bc6cb9ad6`;
-its packet is preserved in `980ce42a977b5bc20cf8426dbaf5a232f46cf22b:TASK.md`. The new outcome
-was required before the enlarged Slice could become READY FOR A REVIEW.
+The accepted `V2-TASK-008–010` amendment adds source-dependent failed/partial history handling
+and retires the independent CLI retry entrance. Original Slice Base and earlier accepted Task
+checkpoints remain unchanged; detailed scope/planning history is retained in Git.
 
 - Shared per-source TaskItem admission uses backend-proven trigger/context and the latest formal
   organizing outcome for the same observed source version. Definition due work excludes that
@@ -170,12 +155,8 @@ audit and data integrity, including failed/partial source history used by RO-6. 
 migration, import, takeover, cross-version upgrade/rollback or mixed-version writer interoperability
 is required. Existing immutable configuration containing retired fields remains readable as specified
 above; this does not select old-task upgrade support. The outcomes, surfaces and acceptance below
-apply this exclusion directly; no product validation is claimed by this scope clarification.
-Accepted43–46 and Task47.4 are not retroactively re-reviewed or relabelled by this amendment.
-
-The user's planning correction selected latest formal outcome, not any-ever failure, as the
-criterion. Task47.5 retained its immutable Base; its scope/planning checkpoints were not implementation
-or review acceptance. B's subsequent PASS is retained in the Closure Packet.
+apply this exclusion directly. Accepted43–46 and earlier Task acceptance are not retroactively
+re-reviewed or relabelled; the Closure Packet records the final reviewed implementation.
 
 ### Amendment traceability
 
@@ -201,28 +182,12 @@ uses the latest-formal-outcome rule above. The CURRENT journey/architecture sect
 - [Architecture](docs/architecture.md) owns CURRENT versus TARGET contracts;
   [Task Center specification](docs/task-center-page-spec.md) retains its eight-view/page semantics.
 
-## Actual-code baseline and dependencies
+## Original planning evidence
 
-Investigation at the immutable Base found:
-
-- `AutomationJob` carries admission capacity, claims/heartbeats, cancellation, worker identity,
-  immutable configuration/definition pins, trigger/principal/request evidence and pre-Task failures.
-  `PersistentTask` owns processing/items/results but has no equivalent complete queue ownership.
-- Scheduled work emits a Job and creates its Task later; real Run once atomically creates both.
-  Files manual work already admits a Task early and can adopt it for confirmed execution.
-- The resident Worker consumes Job, discovery, manual execution and ordinary transfer runners.
-  Strategies/planners/OrganizerExecutor are shared; outer orchestration and claims are still split.
-  Legacy queued organizing also re-enters CLI orchestration and extracts the Task ID from output.
-- Four-type recovery already owns decisions/checkpoints/summaries. Existing recovery, metadata and
-  scope continuation relations still queue Jobs and may reference later Task attempts.
-- Runtime schema53 has Job identity columns in 12 tables, including due/occurrence state,
-  continuation/batch relations, authorization consumption/audit, schedule audit and operational logs.
-  Run queries, original-record outcomes, metrics, Dashboard, API/CLI/Web and release proofs depend on them.
-- Configuration contains Job-named capacity/staleness keys. Published snapshots, digests and supported
-  admitted pins must stay reproducible; deleting their parser support by search-and-replace is unsafe.
-
-B must turn this dependency analysis into coherent Tasks and inspect any additional serialized,
-notification, export or packaging references. This list is evidence, not a closed allowlist of files.
+The initial dependency investigation and scope Contract are retained at
+`d222b6a96b282c4d1d73a17ea3d428d068f1aedf:SLICE.md`. Later scope amendments and rejected
+checkpoints remain in Git. The outcomes/acceptance below define the final accepted boundary;
+original Base and accepted Implementation Head are unchanged by document consolidation.
 
 ## Required outcomes
 
@@ -514,7 +479,8 @@ remain disclosed above and do not substitute for this final review.
   diagnostic-table scrolling. Prior history-warning/summary and center visual evidence was checked.
 - B's raw full-suite/native/installed/container logs, actual failures/reruns and source/artifact reuse
   were inspected. A does not claim a second full-suite/container run. Closure-only checks are recorded
-  with the closure checkpoint; executable inputs are unchanged.
+  with the closure checkpoint; executable inputs are unchanged. The post-checkpoint governance and
+  retirement/document-consumer run passed **53 tests**, 10.020s; raw log: `closure-consumers.log`.
 
 Earlier A rejections remain historical at `7ac253dd11ab3453f36cd40500c79c72b4f888de:SLICE.md`
 (A-P1-1) and `c8657032dae768d93b12387a5e58db502e23a7ee:SLICE.md` (A-P1-2).
@@ -527,10 +493,12 @@ No P2 cleanup or optional proof creates another Task. Deferrals and validation l
 Repository `/Users/songzhidong/mediaflow`, branch `main`, review started at the SHA above with no
 tracked edits. All pre-existing untracked OS/log/reference/output files and `15` are preserved
 unstaged; private configuration/databases/media were not read or used. Workspace/Git are writable;
-governance preflight passed. This checkpoint changes only closure/CURRENT documents and role lessons,
-with no product implementation, push, deployment, history rewrite or next-Slice selection.
+governance preflight passed. Closure commit `65c608186500a0790c94174aeac0fe37655f79b3` changed
+only closure/CURRENT documents and role lessons; no product implementation, push, deployment,
+history rewrite or next-Slice selection occurred in that closure action.
 Roadmap/Progress and requirements/journey/architecture/operator guidance now describe accepted47;
 root Task is NO ACTIVE IMPLEMENTATION TASK and points to B's immutable packet. Closure text checks
 passed whitespace, 176 local file links/anchors, unchanged AC/RO and requirement IDs, and unchanged
-prior closure-ledger rows. The committed-Contract governance gate is run after this checkpoint. Original43–46
-Bases, accepted Heads and ledger facts remain unchanged.
+prior closure-ledger rows. The committed-Contract governance gate passed after that checkpoint.
+Original43–46 Bases, accepted Heads and ledger facts remain unchanged. Subsequent factual
+document governance does not re-review or change this accepted implementation.

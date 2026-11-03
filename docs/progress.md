@@ -14,14 +14,10 @@ through accepted implementation `5134c78b22057781d472e6ebf61a1799d9e40324`. [SLI
 records the six-outcome/AC-1–26 review, prior rejection pointers and actual independent checks.
 B's final Closure Packet remains at `749507ca9000329484bdc9fb7ad5c44e0efc0cd0:TASK.md`.
 
-A independently ran 146 core scheduling/fencing/source/history/entrance tests, 91 settings/runtime
-contract tests and 5 production-Python browser journeys, all passing; verified schema58 fresh/reopen
-has no Job schema and all 169 wheel modules match candidate source; inspected desktop/narrow
-screenshots and B's raw full/native/installed/Docker evidence. B's final coverage includes 2547
-Python tests (7 optional remote/endurance skips), 1268 Web unit tests, 253 applicable fake E2E and
-58 native cases. Initial environment/navigation/runner failures, corrected reruns and test-time
-allocation deviation remain disclosed in the packet. Old-task/cross-version upgrades and V1 are
-excluded. No new remote-service or production-deployment validation is claimed.
+Actual independent checks, B's full/native/artifact evidence, corrected initial failures, skips and
+process deviations remain in that Contract/packet. Seven optional external-service/endurance skips
+are disclosed; old-task/cross-version upgrade and V1 support remain excluded. No remote validation
+or production deployment is claimed by closure or document governance.
 
 Root Task is NO ACTIVE IMPLEMENTATION TASK; next action is A SELECTS THE NEXT LARGE SLICE.
 No next Slice is selected. Prior43–46 acceptance identities/deferrals remain unchanged. Slice46's

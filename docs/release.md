@@ -5,7 +5,7 @@ release explicitly.
 
 ## Release lines
 
-`v1.0.0` is the released V1 baseline at `6386e704fa90a1ae3bf90f7d6a3ef62d4e5d2752`, maintained on
+`v1.0.0` is the historical released V1 baseline at `6386e704fa90a1ae3bf90f7d6a3ef62d4e5d2752`, retained on
 `release/v1`. The `main` branch is the V2 development trunk and carries package version
 `2.0.0.dev0`. Its V2 frontend implementation is active and substantial across the current
 Dashboard, Library and Operations journeys, but this development line is not a V1 release and has
@@ -16,7 +16,20 @@ The user-authorized 2026-10-24 Git attribution update maps the original release 
 tree. The original annotated tag and release history remain in owner-local backups; release
 version, code and artifacts retain their existing meaning.
 
-## V1 Docker release
+## Current V2 validation boundary
+
+Slice47 is PASS / CLOSED; [Progress](progress.md) retains the accepted Base/Head and validation
+limits. This is development acceptance, not a V2 release. Current support is fresh initialization
+→ submit new work → same-version reopen/restart and permitted safe continuation. Old-task/Job
+migration or takeover, cross-version upgrade/rollback, mixed-version writers and V1 support are
+excluded. Readable immutable configuration containing retired fields does not add an upgrade promise.
+
+Use [Deployment](deployment.md) for current executable startup, health, backup and same-version
+recovery. Earlier V1 upgrade acceptance below remains historical; it is not a current `main` gate
+or permission to run an old database with a different artifact. Git push does not publish an image,
+tag, GitHub Release or deployment.
+
+## V1 Docker release — historical acceptance
 
 Release version: `1.0.0`.
 
@@ -27,14 +40,14 @@ process failure/restart boundaries while sharing one local persistent `/data` vo
 `wsgiref.simple_server` API listener remains development/trusted-loopback only; production Compose
 serving uses the explicitly selected Waitress adapter with a documented TLS/reverse-proxy or LAN
 boundary. The Slice health/readiness, restart/fault and upgrade/backup/migration
-recovery Tasks and the Task 29.6 release-security/artifact validation are complete at the
-repository implementation head. A Final Review marked Slice 29 `PASS / CLOSED` on 2026-09-08.
+recovery Tasks and the Task 29.6 release-security/artifact validation were complete at the
+accepted Slice29 implementation Head retained in Progress. A Final Review marked Slice 29 `PASS / CLOSED` on 2026-09-08.
 This document is not a publication claim; publication, signing and direct deployment remain
 explicit maintainer actions.
 
 See [docs/deployment.md](deployment.md) for the current executable image/Compose journey.
 
-The Docker acceptance contract includes:
+The historical V1 Docker acceptance contract included:
 
 - fresh-volume bootstrap from only a database locator and environment-owned API-principal references;
 - explicit media bind mounts and container-visible Local Storage paths;
@@ -47,11 +60,11 @@ The Docker acceptance contract includes:
 - no duplicate scheduled occurrence, no stale-owner overwrite and no automatic uncertain-mutation
   replay after restart.
 
-This release does not claim direct Internet exposure, built-in user/password/OIDC identity, SQLite on
+That historical release did not claim direct Internet exposure, built-in user/password/OIDC identity, SQLite on
 remote Storage, Docker Secrets-specific ingestion, Provider switching, additional Metadata Providers,
 or external-service compatibility that the validation environment cannot run. Those boundaries remain
-explicitly documented as unsupported, post-V1 or `SKIP / UNAVAILABLE` as applicable. The current
-release is validated for the documented isolated Docker journey; publication, signing and direct
+explicitly documented as unsupported, post-V1 or `SKIP / UNAVAILABLE` as applicable. That
+release was validated for its documented isolated Docker journey; publication, signing and direct
 production deployment remain explicit maintainer actions.
 
 ## Quality gate
@@ -67,8 +80,9 @@ Compatibility markers belong to the target artifact and release line. Released V
 [`SCHEMA_VERSION`](../mediaflow/infrastructure/sqlite_runtime.py),
 [`CONFIGURATION_SCHEMA_VERSION`](../mediaflow/infrastructure/sqlite_configuration_management.py)
 and the [managed document validator](../mediaflow/application/configuration_snapshot.py).
-Use the installed target's read-only `upgrade check` and actual migration/upgrade evidence rather
-than copying a mutable development schema number into a release claim.
+Read compatibility markers from the installed target rather than copying a mutable development
+schema number into a release claim. Current `main` acceptance covers fresh and same-version work;
+read-only compatibility tooling does not establish support for older task/schema conversion.
 
 Build and validate the exact installable artifact in a new isolated environment:
 
@@ -82,17 +96,19 @@ The smoke validator checks wheel contents, installs without runtime extras in a 
 checkout, validates both canonical example configurations, and performs a temporary SQLite database
 backup/verify round trip. It never reads configured production Storage or credentials.
 
-Docker release acceptance also includes the restart/fault and upgrade/recovery journeys:
+Current Docker artifact validation includes fresh/security and same-version restart/fault journeys:
 
 ```bash
 python3 scripts/docker_restart_fault_smoke_test.py
-python3 scripts/docker_upgrade_recovery_smoke_test.py
 python3 scripts/docker_release_security_smoke_test.py
 ```
 
 Each harness builds local images only, uses temporary media and a throwaway named
 volume, injects only harmless canary/private material, and records `SKIP` when no
 Docker engine is available.
+
+The old-image/new-image `scripts/docker_upgrade_recovery_smoke_test.py` belongs to historical V1
+upgrade evidence. It is not a required or accepted current V2 gate under the boundary above.
 
 ## Maintainer review
 
@@ -107,17 +123,11 @@ Docker engine is available.
 - Review the version and release notes/changelog for the intended compatibility statement.
 - Confirm all GitHub Actions matrix jobs and the isolated wheel job passed.
 - Validate production configuration with the target version before deployment.
-- Create and verify a new runtime database backup before upgrading a running deployment.
-- Run the installed target artifact's read-only compatibility check before starting it:
-
-  ```bash
-  mediaflow --config /path/to/strategy.json upgrade check \
-    --backup /safe/backups/mediaflow-before-upgrade.sqlite3
-  mediaflow --config /path/to/strategy.json upgrade rehearse \
-    --backup /safe/backups/mediaflow-before-upgrade.sqlite3
-  ```
-
-- Review schema compatibility and retain the previous application artifact and database backup.
+- Create and verify a database backup before maintenance; use the same artifact version for
+  supported restore/restart and retain the existing database and artifact until verification ends.
+- Review the target's schema/readiness and the supported persistence boundary. An unavailable or
+  incompatible database does not authorize work or data clearing. Cross-version deployment is
+  outside current support; historical upgrade commands are not the recovery path for `main`.
 - Publish/tag only through a separate explicit maintainer action. This repository has no automatic
   upload, deployment, restore, migration rollback, signing, or container publication workflow.
 
@@ -128,35 +138,30 @@ production secrets. Network storage and TMDB tests remain optional/skipped. CI v
 example configuration only; it is not evidence that a particular SMB/OpenList/S3/TMDB deployment is
 reachable or correctly authorized.
 
-Upgrade preflight accepts only a configured runtime database and explicit local backup. It reports
-`READY` for the current schema or `MIGRATION_REQUIRED` for an older mutually matching supported
-schema, but performs no migration. A PASS does not stop running services or authorize restore.
-
-Migration rehearsal copies the verified backup to a private temporary SQLite database and opens only
-that copy through the artifact's real repository migration path. PASS confirms the tested copy reached
-the current Schema with representative record counts preserved; it is not an automatic production
-migration or rollback guarantee.
+Compatibility and rehearsal tools are read-only with respect to the live database. Their reports
+do not stop running services, authorize restore or expand current version support. Historical V1
+preflight/rehearsal details and successful image-to-image migration evidence remain in Git.
 
 ## Offline restore procedure
 
-Restore is recovery-only and never overwrites:
+Current restore is same-version recovery-only and never overwrites:
 
 1. Stop every MediaFlow CLI worker, scheduler, API, and notification process.
 2. Verify the selected backup with `mediaflow database verify BACKUP`.
 3. Manually preserve/move the configured runtime database and its `-wal`, `-shm`, and `-journal`
    sidecars. Do not delete them until recovery is independently confirmed.
 4. Run `mediaflow database restore BACKUP --confirm-empty-destination`.
-5. Verify the restored configured path, then start one MediaFlow process. If restore reported an old
-   supported schema, the normal repository open may perform the existing forward migration.
+5. Verify the restored configured path, then start one process using the same artifact version that
+   created the supported backup. Other versions/schemas are outside current support; do not rely
+   on historical forward-migration examples or clear state to bypass readiness failures.
 
 The command refuses any occupied destination or sidecar and does not detect process liveness. Never
 use it as an in-place replacement mechanism.
 
-Automation Job claims are fenced by the current runtime persistence model and cooperative workflow
-boundaries refresh their age. This prevents an old Worker from committing over a requeued/later claim,
-but it does not prove that an in-flight provider or Storage operation stopped. Before `jobs requeue`,
-stop and inspect the Worker, Job/Task history, source, and destination. Never infer safe replay solely
-from stale age.
+Task claims and per-effect boundaries remain fenced. Heartbeat freshness, lease expiry, a timeout
+or restart never proves an in-flight Provider/Storage operation stopped or had no effects. Inspect
+the original Task/item/results and source/target; preserve completed/uncertain evidence. Only the
+existing permitted safe continuation can run remaining work. No Job requeue entrance remains.
 
 On POSIX, every production runtime command holds a shared kernel advisory lease for its lifetime and
 restore requires the exclusive lease. Contention is evidence that a cooperating MediaFlow process is

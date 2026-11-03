@@ -36,7 +36,8 @@ AWS/R2, other OpenList drivers, remote atomic publication, power loss or multi-h
 ## V2 development status
 
 `main` is the unreleased `2.0.0.dev0` Operator Web development trunk. Python `/api/v1/*` remains the
-business authority and V1 `/ui` remains available. [Documentation](docs/README.md) maps document
+business authority. The retained V1 `/ui` is a historical surface; V1 is unsupported on this line.
+[Documentation](docs/README.md) maps document
 responsibilities. [Roadmap](docs/roadmap.md) records priority/status,
 [Progress](docs/progress.md) accepted closures, and [SLICE.md](SLICE.md)/[TASK.md](TASK.md) current work.
 Slice43 is PASS / CLOSED: native Automation lifecycle, bounded Run once, read-only records/statistics
@@ -44,8 +45,12 @@ and engine settings with actual resident adoption are accepted. Slice45's Task C
 Scan/Preview/FileIndex boundaries remain intact; V2 is still unreleased and V1 cutover is not selected.
 Slice46 is PASS / CLOSED: readable V2 actions, Files-first admitted organizing, library-local ordinary
 operation status, organizing-only eight-view/four-type Task Center and checked Enabled/real Run once
-are accepted. No active implementation Task remains; [TASK.md](TASK.md) records the latest
-standalone correction and B review. A selects the next large Slice separately.
+are accepted. Slice47 is PASS / CLOSED: one organizing Task owns admission, scheduling and execution
+across manual/due/Run once and same-Task four-type recovery. Live Job, Pause/resume-from-pause and
+CLI `tasks retry-failed` are retired. Latest failed/partial source history controls automatic
+exclusion and manual Web warnings; three shared runtime settings live in System Settings.
+No active implementation Task remains; [TASK.md](TASK.md) points to the final B Closure Packet,
+and [SLICE.md](SLICE.md) records A's whole-range acceptance. A selects the next large Slice separately.
 
 The current [Task Center](docs/task-center-page-spec.md) has no shared top search. All eight views
 offer only the local creation-date range and clear. Clearing restores the current view’s complete
