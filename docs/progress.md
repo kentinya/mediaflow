@@ -20,9 +20,10 @@ operations. Rate is completed/(completed+failed); cancelled/unfinished Tasks are
 cancelled records and admitted/ended counts remain. No completed/failed Tasks yields no percentage.
 Task closure itself must be saved; live work, human waiting and Task flow failures remain
 distinct. Requirements/journey/architecture label the amendment TARGET.
-B promotes the existing Task48.1 draft after the ACTIVE Contract checkpoint. Implementation is
-limited to that Task; Automation metric calculation remains a later in-Slice outcome. No product
-implementation or acceptance is claimed by activation.
+Root [Task48.1](../TASK.md) is formally authorized and PLANNED, awaiting Developer implementation
+after the ACTIVE Contract checkpoint. Implementation is limited to that Task; Automation metric
+calculation remains a later in-Slice outcome. No product implementation or acceptance is claimed
+by activation.
 
 ## Latest accepted closure
 

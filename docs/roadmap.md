@@ -56,8 +56,9 @@ work/human waiting and Task-level flow failures remain distinct. Ordinary Copy/M
 use Tasks with independent operation results on their library page. Automation counts due AND
 definition Run once, excluding Files/CLI manual organizing and ordinary file operations.
 
-B promotes the existing Task48.1 draft after the ACTIVE Contract checkpoint. Only that Task is
-authorized for implementation; Automation metric calculation remains a later in-Slice outcome.
+Root [Task48.1](../TASK.md) is formally authorized and PLANNED, awaiting Developer implementation
+after the ACTIVE Contract checkpoint. Only that Task is authorized; Automation metric calculation
+remains a later in-Slice outcome.
 Activation does not claim product implementation, B acceptance or A Final Review.
 
 ## Latest accepted boundary

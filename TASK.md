@@ -1,27 +1,9 @@
-# NO ACTIVE IMPLEMENTATION TASK
+# Task 48.1 — 任务流程结束与文件结果分开
 
-```text
-Status: NO ACTIVE IMPLEMENTATION TASK
-Last Task: 47.6 — Three system runtime settings and stale-age removal
-B Decision: PASS
-Reviewed Task Base: c8657032dae768d93b12387a5e58db502e23a7ee
-Reviewed Implementation Head: 5134c78b22057781d472e6ebf61a1799d9e40324
-Slice Decision: 47 — PASS / CLOSED by independent A Final Review, 2026-11-03
-Selected Slice: 48 — Task Flow Status and Automation Success Rate — ACTIVE
-Next Action: B REVALIDATES AND PROMOTES AUTHORIZED TASK 48.1 DRAFT AFTER ACTIVE CONTRACT CHECKPOINT
-```
-
-The complete B review, actual T4 results/limits and six-outcome Closure Packet remain at
-`749507ca9000329484bdc9fb7ad5c44e0efc0cd0:TASK.md`. Slice47's whole-range A review, immutable
-Base and accepted Head remain at `ba84272721961c970f1eb85d616a0d129523ab92:SLICE.md`.
-[SLICE.md](SLICE.md) is being activated at the user's request. This draft remains inactive until
-the ACTIVE Contract is committed and B promotes it. Independent minor bugs retain their separate workflow.
-
-## Task 48.1 草案 — 任务流程结束与文件结果分开
-
-本节是用户要求 Codex 代替 B 编写的第一版计划。用户现已要求激活，先提交 A 所有的 ACTIVE
-Contract，再由 B 核对原基线、重新运行治理检查并启用本 Task；此检查点仍保留上方
-NO ACTIVE IMPLEMENTATION TASK，不开始开发。范围与验收不变。
+用户于 2026-11-03 要求激活本 Task。父 Slice48 已在
+`802b6ae4145f30da79751388fca285d5752b47b9` 提交为 ACTIVE。B 核对原 Task Base 至该检查点
+只有文档变更，保留原基线、目标、范围、验收和验证计划，现正式启用本 Task。
+Developer 可按本文开始实现；PLANNED 表示已授权、待开始，实际开始开发时改为 IN PROGRESS。
 
 Authority: committed [Slice48](SLICE.md) RO-1–3，以及 RO-4 中执行记录与 Task 状态一致的部分；
 [Development Workflow](docs/development-workflow.md) 负责生命周期、测试和检查点。
@@ -36,7 +18,8 @@ Task Base: 4f11762d617d50555f3b106357e8f41988f7c2f9
 Difficulty: High
 Test Level: T4
 Planner / Reviewer: B — Codex performs planning at user request; review NOT STARTED
-Development Authorization: DRAFT / PLANNING ONLY
+Development Authorization: AUTHORIZED — USER REQUEST, 2026-11-03 — TASK 48.1 SCOPE ONLY
+Next Action: DEVELOPER IMPLEMENTS TASK 48.1
 ```
 
 ### Goal
@@ -60,7 +43,7 @@ Development Authorization: DRAFT / PLANNING ONLY
 
 ### Actual gaps and implementation scope
 
-以下是本草案基线的实际缺口；实现时沿这些真实调用关系接入共享规则，不按文件拆交付。
+以下是本 Task 基线的实际缺口；实现时沿这些真实调用关系接入共享规则，不按文件拆交付。
 
 | 位置 | 当前缺口与本 Task 要处理的行为 |
 |---|---|
@@ -163,7 +146,7 @@ Development Authorization: DRAFT / PLANNING ONLY
 
 遵守 [工作流 §6](docs/development-workflow.md#6-test-levels)：Developer 只跑本轮新增/修改和
 直接受影响测试、相关静态检查；B 负责 T4 完整回归、原生和产物验收。以下均是未来执行计划，
-草案本身不声称产品测试通过。使用临时 SQLite/Storage、fake/本地 Provider 和确定性故障注入。
+Task 启用本身不声称产品测试通过。使用临时 SQLite/Storage、fake/本地 Provider 和确定性故障注入。
 
 #### Developer — affected tests
 
@@ -245,20 +228,22 @@ npm run test:e2e -- --config=playwright.direct-files.python.config.ts tests/e2e/
 
 ### Developer completion report
 
-NOT STARTED。正式启用并完成实现后，填写实际检查点、READY FOR B REVIEW、改动和关键选择、
+NOT STARTED。完成实现后，填写实际检查点、READY FOR B REVIEW、改动和关键选择、
 受影响测试命令/结果、已知风险和本 Task 剩余工作；完整验收留给 B，不自批 PASS。
 
 ### B review result
 
-NOT STARTED。当前只有规划，没有候选实现、验收或 PASS 决定。
+NOT STARTED。Task 已启用，尚无候选实现、验收或 PASS 决定。
 正式提交候选后按模板填写 Reviewed Base..Head、PASS/FIX REQUIRED、真实验收和阻塞项。
 Task PASS 时重新核对整个 Slice；本计划不预设 Slice 已完成，也不代替 A Final Review。
 
-### Planning workspace and validation
+### Workspace and activation validation
 
-规划仓库 `/Users/songzhidong/mediaflow`，分支 `main`，检查基线为上述 Task Base；
-治理预检 PASS，开始时 tracked 文件干净。预存未跟踪 OS/log/reference/output 文件及 `15`
-保留且不加入检查点；私有配置、用户数据库/媒体不读取或修改。
-本次只写 `TASK.md`；草案本地链接/锚点、命令引用的现有路径（明确标出的新增测试除外）、
-`python3 scripts/check_governance.py` 和 `git diff --check` 均通过。
-规划未执行产品测试，没有产品改动、push 或部署。
+仓库 `/Users/songzhidong/mediaflow`，分支 `main`；激活开始 HEAD 为
+`037efb20280310f5c2f8d69624cf0449a191b3b6`，已提交 ACTIVE Contract 为上述检查点。
+原 Task Base 不变；其后到启用前没有代码/测试变更，实际代码缺口和计划仍适用。
+治理预检及 ACTIVE Contract 提交后检查 PASS，开始时 tracked 文件干净。预存未跟踪
+OS/log/reference/output 文件及 `15` 保留且不加入检查点；私有配置、用户数据库/媒体不读取或修改。
+激活只更新文档状态、TARGET 标签/链接及当前指针；本地链接/锚点、命令引用的现有路径
+（明确标出的新增测试除外）、`python3 scripts/check_governance.py` 和 `git diff --check` 均通过。
+本次未开始产品实现，未执行产品测试、push 或部署；Developer/B 的上述测试计划保持待执行。
