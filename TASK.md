@@ -3,7 +3,7 @@
 用户于 2026-11-03 要求激活本 Task。父 Slice48 已在
 `802b6ae4145f30da79751388fca285d5752b47b9` 提交为 ACTIVE。B 核对原 Task Base 至该检查点
 只有文档变更，保留原基线、目标、范围、验收和验证计划，现正式启用本 Task。
-候选 `2450680f646f6d45e3dfc2180863775bbebb4b5c` 已交 B 复核，结论为 FIX REQUIRED。
+最新候选 `695b96926526b02d0a0c3f535ac790af9b9096f0` 已交 B 复核，结论为 FIX REQUIRED。
 Developer 按文末修正指导在同一 Task 继续；原 Task Base、目标、授权和范围不变。
 
 Authority: committed [Slice48](SLICE.md) RO-1–3，以及 RO-4 中执行记录与 Task 状态一致的部分；
@@ -14,13 +14,13 @@ Authority: committed [Slice48](SLICE.md) RO-1–3，以及 RO-4 中执行记录�
 Task ID: 48.1
 Task Type: SLICE
 Parent Slice: 48
-Status: READY FOR B REVIEW
+Status: FIX REQUIRED
 Task Base: 4f11762d617d50555f3b106357e8f41988f7c2f9
 Difficulty: High
 Test Level: T4
 Planner / Reviewer: B — Codex; independent candidate review completed, FIX REQUIRED
 Development Authorization: AUTHORIZED — USER REQUEST, 2026-11-03 — TASK 48.1 SCOPE ONLY
-Next Action: B REVIEWS THE TASK 48.1 FIX CANDIDATE ON THE SAME TASK BASE
+Next Action: DEVELOPER FIXES B48.1-03 ON THE SAME TASK BASE
 ```
 
 ### Goal
@@ -538,3 +538,84 @@ READY FOR B REVIEW。修正轮保持原 Task Base
   classifier 读取，未做迁移。
 - 未运行全量 Python/Web/E2E、wheel、Docker/restart/security 门禁，不声称它们通过或
   Task/Slice PASS。
+
+### B re-review — 695b9692
+
+```text
+Reviewed Base: 4f11762d617d50555f3b106357e8f41988f7c2f9
+Reviewed Head: 695b96926526b02d0a0c3f535ac790af9b9096f0
+Decision: FIX REQUIRED — 2026-11-04
+Previous blockers B48.1-01 / B48.1-02: RESOLVED
+Current blocker: B48.1-03 (P1)
+Slice Required Outcomes / Surfaces all satisfied: NO
+Next: SAME TASK FIX LOOP
+```
+
+本轮核对完整 Base..Head，重点独立检查新增修正及原有生产链路。原先两处修正有效：
+Run once 的 partial/failed 独立展示已明确派生；直接 API 单项失败读回进度为 1/1；
+CLI 根目录读取拒绝后保存 failed、0 文件及明确的权限原因。原先的两处不再要求返工。
+
+**B48.1-03 — Files 整理调用已结束，文件结果保存失败却一直占着队列。**
+
+真实旅程：Files 选中 `Movies/One.2001.mkv` → 任务中心处理识别问题 → 在原 Task 内
+重新分析 → 查看精确摘要并确认整理 → Worker 实际移动文件 → 最后一次文件结果发布出错。
+本轮仅在现有 `complete_manual_execution_item` 发布边界注入本地异常，Storage 调用已返回，
+其他数据库操作正常。未手工种 Task 终态、未调用不存在的产品入口。
+
+实际结果：源文件已移动，正式文件 Result 为 0，TaskItem 仍 processing，Task 仍 running，
+`mutation_in_flight` 保留，普通队列占用为 1。故障撤除后再运行三次 Worker 检查仍为 running、
+占用 1，且没有新媒体操作。保留不重放是正确的，但不能把“本次已经结束、结果未保存”
+无限当成真正还在执行的调用。单槽配置下，这个任务会阻止其他正常工作进入队列。
+
+原因：手动执行的结果发布异常直接向上抛出；engine 的 `_record_failure` 遇到变更标记就返回。
+本 Task 已加入的“已结束且缺结果”处理只接了自动通道，Files 的 `_run_execution` 未接入。
+对应原验收中“已技术结束但缺 Result 不独占名额”和 Slice RO-1/2、AC-2/3/5/6/14。
+这是当前 Task 必须交付的同一行为，保留原 Base/范围，不新增 Task 或恢复产品。
+
+#### Developer 修正指导
+
+1. 从 Files 的实际 `run_admitted` 返回/异常边界接入已有的技术结束处理。只有当前 owner
+   能证明本次应用调用已退出时，才按原事务/围栏退休该已结束尝试；核对关联的手动执行、
+   TaskItem 和调度状态，不能仅把 Task.status 改成 completed 或清空所有变更标记。
+2. 文件 Result 未保存时保留“结果未记录/效果未知”、已知步骤、原 pin 和不重放；不补造
+   正式 Result，不靠重新执行、远端核查或新增用户确认结束任务。无其他待办时完成 Task
+   并释放普通名额；仍有人工或真正机器工作时保留其独立状态和合法后续动作。
+3. 区分文件结果发布失败与整个数据库不可用：后者不能假称终态已保存。保留取消优先、
+   stale owner 拒绝写入和真正本地调用仍在执行时的保护；不改已完成/未知效果和源历史。
+4. 在现有 Files API → 识别决定 → 分析 → 摘要确认 → Worker 链路补此故障回归，验证
+   调用返回后能收尾、名额可用、重开数据库后事实仍在、后续 Worker 不重放；覆盖有待办
+   兄弟、取消竞态和真正未返回的本地调用。复用已有 fixtures/fencing 接缝，不新增产品 API。
+
+Developer 运行新增/修改及直接受影响测试，测试耗时低于修正轮总耗时 50%；参考：
+
+```sh
+.venv/bin/python -m unittest tests.test_manual_task_engine tests.test_manual_organize_execution tests.test_task_flow_status tests.test_task_scheduling_fencing tests.test_organize_source_history
+```
+
+实际改到 Web 提示才追加对应组件测试、类型检查和构建；Python 修改文件执行 Ruff 检查。
+修正后交新检查点，完整 T4/native/产物门禁继续由 B 承担。
+
+#### 本轮实际证据
+
+- 分支 main，开始 HEAD 即 Reviewed Head；tracked 干净，原有未跟踪文件全部保留。
+- 根目录复用原 `reproduce.py`，独立确认先前 CLI 和直接 API 反例已消除。
+- 根目录运行 `PYTHONPATH=. .venv/bin/python .git/validation-evidence/695b96926526b02d0a0c3f535ac790af9b9096f0/b-review/manual-missing-result.py`，
+  从现有 Files/Task API 旅程复现 B48.1-03：`running / processing / Results 0 / slot 1`，
+  故障撤除后仍不收尾；没有重放。使用临时库/Storage、fake Provider、本地发布故障，
+  没有用户媒体/数据库或外部服务。首次 fixture 缺识别决定未到达执行边界；补齐正常决定、
+  分析和确认后才将上述结果作为产品证据。
+- 本机原始证据目录：`.git/validation-evidence/695b96926526b02d0a0c3f535ac790af9b9096f0/b-review/`，
+  含 prior-repro、manual-missing-result、全量 Python/Web 日志；不声称远程可访问。
+- `web/` 执行 `npm run test -- run`：**88 文件、1270 测试通过**，97.61 秒。
+- 根目录执行 `.venv/bin/python -m unittest discover -s tests`：运行约 3 分多钟后，
+  因已独立证实产品阻塞主动 SIGINT 停止（退出 130），没有完整结论，不计 PASS。
+  中断前日志无 unittest FAIL/ERROR；ResourceWarning 仍保留。两套全量并行执行，
+  未在确认阻塞后追加昂贵测试，后续 B 必须重跑完整 Python。
+- `python3 scripts/check_governance.py`、本轮文档 `git diff --check` 以及完整 Base..Head
+  的 `git diff --check` 通过。仅更新 TASK.md，原有未跟踪工作保留，不 push。
+- 已证实产品阻塞，按工作流 §6 提前返工；其余 E2E/视觉/wheel/Docker/restart/security
+  本轮未执行，仍待修正候选验收，不能据此授予 PASS。
+
+Slice 全部结果重评：RO-1/2 在 Files 缺结果的结束处理仍未满足；RO-3 的旧计数阻塞已修复，
+其余端到端验收待完成；RO-4 的记录状态已改，成功率计算仍在本 Task 之外。当前不规划下一 Task、
+不关闭 Slice，不改 Roadmap/Progress。
