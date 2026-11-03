@@ -16,7 +16,9 @@ with independent file results and factual original times/attempts/effects. Ended
 technical failures count as completed even with unknown effects or missing formal Results; actual
 file results do not gate completion. Ordinary Copy/Move/Delete Tasks share that meaning. Success
 rate counts due AND definition Run once, excluding Files/CLI manual organizing and ordinary file
-operations. Task closure itself must be saved; live work, human waiting and Task flow failures remain
+operations. Rate is completed/(completed+failed); cancelled/unfinished Tasks are excluded, while
+cancelled records and admitted/ended counts remain. No completed/failed Tasks yields no percentage.
+Task closure itself must be saved; live work, human waiting and Task flow failures remain
 distinct. Requirements/journey/architecture label the amendment TARGET.
 Root Task is NO ACTIVE IMPLEMENTATION TASK. Next action is implementation authorization, then A
 checkpoints ACTIVE and B plans the first Task. No product implementation or acceptance is claimed.

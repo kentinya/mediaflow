@@ -63,8 +63,10 @@ until this amendment is implemented and independently accepted.
 - **Automation success rate:** in the existing local-month Automation cohort, each admitted due/Run
   once Task counts once. Run once means the Automation definition button; manual Files/CLI organizing
   and ordinary Copy/Move/Delete do not enter this statistic. The rate is
-  completed/(completed+failed+cancelled); pending/running human waiting are excluded, cancellation is
-  not success, and zero ended/unavailable data shows no rate.
+  completed/(completed+failed); cancelled and pending/running human waiting are excluded from both
+  numerator and denominator. No completed/failed Tasks or unavailable data shows no rate, even if
+  every run was cancelled. Cancelled runs remain in records and execution/ended counts, outside
+  active counts; the displayed rate explanation uses its own completed-plus-failed denominator.
   A completed Task counts even if every file failed/was partial/skipped/ignored, effects are unknown,
   formal file results are absent, or the scope was healthy empty/history-excluded. File outcomes and
   Result presence never gate this metric. Legal continuation may change that Task's current

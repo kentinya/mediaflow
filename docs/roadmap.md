@@ -45,7 +45,8 @@ the selected semantics without claiming current delivery.
 
 Task's five flow states are pending/running/completed/failed/cancelled. File outcomes no longer
 determine flow success/failure; unfinished human/machine work stays unfinished. Automation rate is
-completed/(completed+failed+cancelled), over the same admitted Automation Task cohort; file success,
+completed/(completed+failed), excluding cancelled and unfinished Tasks from the rate while retaining
+cancelled records and admitted/ended counts, over the same Automation cohort; file success,
 partial/uncertain/attachment outcomes and nonempty work do not gate it. Independent results,
 original execution times/attempts/file effects, four-type recovery and safety remain. Execution-record
 Task results/status filters agree with Task Center's current flow state, with file outcomes separate.

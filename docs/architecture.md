@@ -65,8 +65,11 @@ file mutation. Their status remains on the originating library page. Reads/analy
 
 **Metrics contract:** the server uses current durable Task status over the existing authorized
 Automation due/definition Run once admitted cohort/local-month window: completed Tasks divided by
-completed+failed+cancelled Tasks. Pending/running are excluded; zero-ended/unavailable evidence yields
-no rate. Both automatic due and the definition's Run once count; Files/CLI manual organizing and
+completed+failed Tasks. Cancelled and pending/running are excluded from numerator and denominator;
+no completed/failed Tasks or unavailable evidence yields no rate. Cancelled Tasks remain in records,
+admitted totals and all-ended counts, outside active counts. Server/API/Web denominator explanations
+and validation must not reuse the all-ended count (which includes cancellation) as the rate denominator.
+Both automatic due and the definition's Run once count; Files/CLI manual organizing and
 ordinary file operations do not. Explicit continuation keeps the original cohort identity without
 another admission. Count stable Task identities once before paging. Remove primary/attachment
 success/effect-certainty and frozen file-derived stage-outcome predicates from the rate. Current

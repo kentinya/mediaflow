@@ -25,7 +25,9 @@ completed、failed、cancelled。流程正常收尾，或文件处理因技术�
 八视图/四类问题并集不变；“流程已完成”不能冒充文件全部成功、清除未解决问题或证明恢复成功。
 普通复制/移动/删除本来就使用 Task，采用同样结算规则，操作结果仍留在原库页面；Task
 completed 不能冒充文件复制/移动/删除成功。自动化成功率统计定时和定义“运行一次”，不统计
-Files/CLI 手动整理及普通文件操作。完整 TARGET 旅程/失败边界见
+Files/CLI 手动整理及普通文件操作。成功率为 completed/(completed+failed)，已取消及未结束
+均不参与；没有 completed/failed 时显示暂无统计。已取消仍保留在执行记录及已结束数量中。
+完整 TARGET 旅程/失败边界见
 [Product Experience](product-experience.md#target--task-flow-status-and-automation-success-rate-slice48-planned)。
 下方 CURRENT 页面行为在新实现通过验收前保持现行交付事实。
 

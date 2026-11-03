@@ -182,13 +182,18 @@ Files/CLI organizing entrance, not Run once merely because an operator clicked i
 ```text
 automation = authorized original due or definition Run once Tasks, in the local-month window
 successful = count(automation where Task.status == completed)
+evaluated = count(automation where Task.status in {completed, failed})
 ended = count(automation where Task.status in {completed, failed, cancelled})
-successRate = successful / ended, or unavailable/no-ended-data when ended == 0
+successRate = successful / evaluated, or unavailable/no-evaluated-data when evaluated == 0
 ```
 
-Cancellation remains in the ended denominator and is not successful. Pending/running, including
-required human waiting, are outside that denominator. No ended Automation Tasks yields no percentage,
-even if unrelated Files/manual/ordinary Tasks completed. This adds no cancellation policy/configuration.
+Cancelled Tasks are excluded from both rate numerator and denominator, as are pending/running Tasks,
+including required human waiting. Only completed/failed Automation Tasks participate in the rate.
+If none exist, show no percentage, including when the cohort contains only cancelled/unfinished Tasks
+or unrelated Files/manual/ordinary Tasks completed. Cancelled Tasks remain in execution records,
+monthly admitted totals and all-ended counts; they do not become active or disappear from history.
+The all-ended count includes cancellation and must not be reused as the success-rate denominator.
+Server/API/Web rate explanations and validation use the completed-plus-failed denominator.
 
 Execution records and existing monthly execution/active counts retain the due-plus-Run-once basis.
 Execution-record Task results/filters use the same current durable Task flow state as Task Center;
@@ -229,7 +234,7 @@ unavailable; it is not reconstructed from file success/failure.
 
 | 场景 | Task 和后续流程 | 文件/操作结果 | 自动化成功率（定时 + 运行一次） |
 |---|---|---|---|
-| 全部文件成功 | completed，流程结束 | 成功照实显示 | 成功数、已结束数各加 1 |
+| 全部文件成功 | completed，流程结束 | 成功照实显示 | 成功数、计算分母各加 1 |
 | 有识别、元数据、分类或冲突人工待办 | running；在同一 Task 决定、分析、确认并继续；没有机器工作时释放普通队列名额 | 已完成文件保留，待办独立处理 | 等待期间不进入分母，正常收尾后计成功 |
 | 文件技术失败，实际效果明确 | 当前尝试结束后 completed；其他独立文件按既有规则处理 | 保留失败、部分完成和已完成步骤 | 正常收尾后计成功 |
 | 文件技术失败，实际效果未知 | 当前尝试技术终止后 completed，不等待查明文件实际效果 | 保留未知警告，不自动重放 | 计成功 |
@@ -237,7 +242,7 @@ unavailable; it is not reconstructed from file success/failure.
 | 文件部分成功，或文件全部失败/跳过/忽略 | 没有其他待办且正常收尾后 completed | 各文件按真实结果独立显示 | 计成功 |
 | 仍在正常处理、排队、稳定性等待或等待首次执行确认 | pending/running，不提前完成 | 显示当前阶段；普通首次确认不计四类人工待办 | 暂不进入分母 |
 | Task 自身无法完成范围发现、必要上下文/关系或流程调度 | failed；若终态保存失败，保留最后可读状态并提示未保存 | 不改写已有文件结果 | 仅成功保存的 failed 进入分母，不进入成功数 |
-| 用户明确取消且已经确认取消 | cancelled，保留已完成和未知效果 | 不回滚、不重放 | 进入分母，不进入成功数 |
+| 用户明确取消且已经确认取消 | cancelled，保留已完成和未知效果 | 不回滚、不重放 | 不参与成功率，仍保留执行记录及已结束数量 |
 
 这些 Task 结算规则同样适用于普通复制/移动/删除，但普通操作和 Files/CLI 手动整理均不进入
 上表的自动化成功率；自动化页“运行一次”计入。普通操作不能因 Task completed 显示
@@ -248,6 +253,8 @@ unavailable; it is not reconstructed from file success/failure.
 统计示例：5 个自动化 Task（定时或运行一次）中，全部成功、未知效果技术失败、缺失结果技术失败、
 文件部分成功各 1 个均已收尾，另 1 个等待人工处理，则成功率为 4/4 = 100%，已结束 4 个、进行中 1 个。
 新增 Files/CLI 手动整理或普通操作不改变该成功率；新增自动化“运行一次”按它自己的 Task 状态参与统计。
+另一个独立例子：8 个 completed、1 个 failed、1 个 cancelled 的自动化 Task，成功率为 8/9 ≈ 88.9%，
+已结束数量仍是 10。若自动化 Task 全部取消，成功率显示暂无统计，不能显示 0% 或 100%。
 
 ## Required surfaces, exclusions and persistence boundary
 
@@ -278,8 +285,8 @@ attachment-only retry, automatic uncertain replay and universal rollback. No unr
 | AC-6 | Concurrent cancel/finalize, stale claim/result publication and restart before/after mutation dispatch preserve pins, authority and completed/uncertain non-replay. An ended file technical attempt can close without a formal Result; retire/fence its application owner and preserve missing-result/unknown-effect evidence. Task completed cannot clear a genuinely live call or grant replay; a missing file Result alone cannot retain an ended Task's ordinary queue slot. Cancellation remains acknowledged Task intent. |
 | AC-7 | Real Task Center All/Running/Attention/Ended and four problem lists have consistent authorized counts/membership/paging; mixed/all-failed completed flows retain truthful file counts, causes, effects and readable progress. Waiting remains unfinished. Flow completion never falsely displays file recovery success. |
 | AC-8 | Existing four-type decision → analysis → summary → explicit continuation works in the same Task through refresh/restart, preserving independent siblings and original attempts. No new technical/attachment replay or generic failure-recovery flow appears. |
-| AC-9 | Automation success rate and its explanatory ended count use original Scheduler-due and definition Run once admissions: completed/(completed+failed+cancelled), with no file-result/Result-presence/effect predicates. Files/CLI manual organizing and ordinary operations are excluded from numerator and denominator; pending/running are excluded, cancellation counts once and zero ended Automation Tasks produce no percentage. |
-| AC-10 | Due/Run once completed Tasks with failed/partial/skipped/ignored/unknown/missing-result or zero-work files count as success. Automation 8 completed, 1 failed and 1 cancelled yields 80%, unchanged by Files/CLI manual or ordinary Tasks; Run once contributes by its own status. Only unfinished Automation plus completed unrelated manual Tasks yields no percentage. Verify original admission/continuation deduplication, pagination-independent counts, local-month bounds and unavailable reads; records/monthly execution/active counts retain due-plus-Run-once populations. |
+| AC-9 | Automation success rate uses original Scheduler-due and definition Run once admissions: completed/(completed+failed), with no file-result/Result-presence/effect predicates. Cancelled and pending/running Tasks, Files/CLI manual organizing and ordinary operations are excluded from numerator and denominator. No completed/failed Automation Tasks yields no percentage. Cancelled Tasks remain in records/admitted/all-ended counts, never active; server/API/Web denominator explanations and validation distinguish all-ended counts from the rate denominator. |
+| AC-10 | Due/Run once completed Tasks with failed/partial/skipped/ignored/unknown/missing-result or zero-work files count as success. Automation 8 completed, 1 failed and 1 cancelled yields 8/9 (about 88.9%) with 10 ended, unchanged by extra cancelled, Files/CLI manual or ordinary Tasks; Run once contributes by its own status. All-cancelled, cancelled-plus-unfinished and only unfinished Automation plus completed unrelated manual Tasks yield no percentage. Verify original admission/continuation deduplication, pagination-independent counts, local-month bounds and unavailable reads; records/monthly execution/active counts retain due-plus-Run-once populations. |
 | AC-11 | For the same Task and consistent read basis, Task Center and Automation records agree on the current flow result. Each surface applies that flow-state meaning to server-side status filters/counts/paging within its own authorized population. A normally completed Task with ten failed files shows completed flow and ten independent file failures on both surfaces and counts as Task success; Task-level failure remains failed regardless of file mix. Required waiting remains unfinished. Legal continuation updates current status/statistics without another run or rewriting original execution times/attempts/file effects. All-failed is neither empty/no-work nor successful media organization; records retain read-only/compact boundaries. |
 | AC-12 | Source-history admission still uses latest formal file outcome: a failed/partial item in a completed Task is excluded by due/Run once and warned for new Files manual confirmation, with old effects/history preserved. |
 | AC-13 | Files local modals/readback on both library kinds, Dashboard, API/CLI, scoped logs/export and applicable notification consumers distinguish Task flow status, per-file result and effect certainty. Missing file results do not block technical completion or invent file success; unavailable Task-state truth is not coerced to a valid Task outcome. |
