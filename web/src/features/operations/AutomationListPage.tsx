@@ -59,8 +59,12 @@ const SORT_OPTIONS = [
 
 const RECORD_STATUS_OPTIONS = [
   ["", "全部结果"],
-  ["completed", "成功"],
+  // Slice 48 RO-4: the outcome is the Task flow status — "已完成" says the
+  // flow ended, never that every file succeeded; a cancellation is its own
+  // flow outcome in the records.
+  ["completed", "已完成"],
   ["failed", "失败"],
+  ["cancelled", "已取消"],
   ["running", "进行中"],
   ["pending", "等待执行"],
   ["paused", "已暂停"],

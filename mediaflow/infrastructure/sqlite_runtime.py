@@ -597,8 +597,10 @@ _TASK_ITEM_STAGE_EVIDENCE_SELECT = """
                              json_array_length(r.uncertain_effects) > 0)
                          THEN 1 ELSE 0 END AS uncertain,
                     CASE WHEN r.effect_certainty = 'partial' THEN 1 ELSE 0 END AS partial_effect,
-                    CASE WHEN r.result_id IS NULL OR
-                         r.effect_certainty NOT IN ('none', 'verified_complete', 'partial',
+                    CASE WHEN r.result_id IS NULL
+                         THEN 1 ELSE 0 END AS missing_result,
+                    CASE WHEN r.result_id IS NULL
+                         OR r.effect_certainty NOT IN ('none', 'verified_complete', 'partial',
                                                    'unknown', 'attempted_unverified')
                          OR NOT json_valid(r.attachment_results)
                          OR NOT json_valid(r.uncertain_effects)
@@ -5791,6 +5793,50 @@ class SQLiteTaskRepository:
                         LIMIT 1
                     ), 'unknown') IN ('attempted_unverified', 'unknown')
                    ) AS uncertain_success_items,
+                   -- Slice 48 RO-3: the ended list's honest per-file outcome
+                   -- summary reads the durable item statuses, independently of
+                   -- the Task flow status.  A completed flow with ten failed
+                   -- files keeps both facts readable.
+                   (SELECT COUNT(*) FROM task_items summary_items
+                    WHERE summary_items.task_id = {task_identity}
+                    AND summary_items.status = 'success'
+                   ) AS success_items,
+                   (SELECT COUNT(*) FROM task_items summary_partial
+                    WHERE summary_partial.task_id = {task_identity}
+                    AND summary_partial.status = 'partial'
+                   ) AS partial_items,
+                   -- The two independent caveat facets: a file whose latest
+                   -- Result still declares an unknown/unverified effect, and a
+                   -- settled file whose attempt ended without any Result row.
+                   (SELECT COUNT(*) FROM task_items effect_items
+                    LEFT JOIN task_results effect_results
+                        ON effect_results.item_id = effect_items.item_id
+                        AND effect_results.task_id = effect_items.task_id
+                    WHERE effect_items.task_id = {task_identity}
+                    AND effect_items.status IN (
+                        'success', 'partial', 'failed'
+                    )
+                    AND effect_results.result_id = (
+                        SELECT latest_effects.result_id FROM task_results latest_effects
+                        WHERE latest_effects.item_id = effect_items.item_id
+                          AND latest_effects.task_id = effect_items.task_id
+                        ORDER BY latest_effects.created_at DESC,
+                                 latest_effects.result_id DESC LIMIT 1
+                    )
+                    AND COALESCE(effect_results.effect_certainty, 'unknown') IN (
+                        'unknown', 'attempted_unverified'
+                    )
+                   ) AS uncertain_effect_items,
+                   (SELECT COUNT(*) FROM task_items missing_items
+                    LEFT JOIN task_results missing_results
+                        ON missing_results.item_id = missing_items.item_id
+                        AND missing_results.task_id = missing_items.task_id
+                    WHERE missing_items.task_id = {task_identity}
+                    AND missing_items.status IN (
+                        'success', 'partial', 'failed'
+                    )
+                    AND missing_results.result_id IS NULL
+                   ) AS missing_result_items,
                    CASE
                        -- Task Center RO-4 (B46.4-02): once *every* necessary
                        -- item of this exact run carries its own persisted
@@ -6003,12 +6049,20 @@ class SQLiteTaskRepository:
                 SELECT task_id, COUNT(*) AS item_count,
                     SUM(succeeded) AS success_count, SUM(uncertain) AS uncertain_count,
                     SUM(partial_effect) AS partial_effect_count,
+                    SUM(CASE WHEN disposition = 'success' THEN 1 ELSE 0 END)
+                        AS success_status_count,
+                    SUM(CASE WHEN disposition = 'partial' THEN 1 ELSE 0 END)
+                        AS partial_count,
+                    SUM(CASE WHEN disposition = 'failed' THEN 1 ELSE 0 END)
+                        AS failed_status_count,
                     SUM(CASE WHEN disposition IN ('skipped', 'ignored') THEN 1 ELSE 0 END)
                         AS skipped_count,
                     SUM(CASE WHEN disposition = 'cancelled' THEN 1 ELSE 0 END) AS cancelled_count,
-                    SUM(CASE WHEN disposition IN ('failed', 'partial') THEN 1 ELSE 0 END)
+                    SUM(CASE WHEN disposition = 'failed' THEN 1 ELSE 0 END)
                         AS failed_count,
                     SUM(attachment_failed) AS attachment_failed_count,
+                    SUM(CASE WHEN missing_result AND disposition IN {settled_dispositions}
+                        THEN 1 ELSE 0 END) AS missing_result_count,
                     SUM(CASE WHEN unreadable OR attachment_unreadable OR disposition NOT IN
                         {settled_dispositions}
                         THEN 1 ELSE 0 END) AS unreadable_count,
@@ -6022,25 +6076,49 @@ class SQLiteTaskRepository:
                     COALESCE(frozen.uncertain_count, e.uncertain_count) AS uncertain_count,
                     COALESCE(frozen.partial_effect_count, e.partial_effect_count)
                         AS partial_effect_count,
+                    e.success_status_count AS success_status_count,
+                    e.partial_count AS partial_count,
+                    e.failed_status_count AS failed_status_count,
                     COALESCE(frozen.skipped_count, e.skipped_count) AS skipped_count,
                     COALESCE(frozen.cancelled_count, e.cancelled_count) AS cancelled_count,
                     COALESCE(frozen.failed_count, e.failed_count) AS failed_count,
                     COALESCE(frozen.attachment_failed_count, e.attachment_failed_count)
                         AS attachment_failed_count,
+                    COALESCE(e.missing_result_count, 0) AS missing_result_count,
                     COALESCE(frozen.unreadable_count, e.unreadable_count) AS unreadable_count,
                     COALESCE(frozen.waiting_count, e.waiting_count) AS waiting_count,
                     frozen.started_at AS record_started_at,
                     frozen.finished_at AS record_finished_at,
-                    CASE WHEN frozen.task_id IS NOT NULL
-                         THEN CASE frozen.stage_status
-                                  WHEN 'waiting_human' THEN 'failed'
-                                  ELSE frozen.stage_status END
-                         ELSE CASE WHEN linked_task_status = 'paused' THEN 'paused'
-                              WHEN linked_task_status = 'pending' THEN 'pending'
-                              WHEN linked_task_status = 'running' THEN 'running'
-                              WHEN linked_task_status IN ('completed', 'partial_success', 'failed',
-                                                          'cancelled') THEN linked_task_status
-                              ELSE 'unknown' END
+                    -- Slice 48 RO-4: the record's own outcome is the exact
+                    -- current durable Task flow status the Task Center reads —
+                    -- never a file-derived aggregate and never a relabelled
+                    -- legacy value for current work.  A completed Task with ten
+                    -- failed files reads completed here, with those file facts
+                    -- staying in the independent item evidence.  A legacy row
+                    -- without a linked Task keeps its anchor/Job evidence, and
+                    -- a legacy partial_success/paused aggregate keeps its
+                    -- honest historical label instead of being silently
+                    -- promoted into a current flow success.
+                    CASE WHEN linked_task_status = 'pending' THEN 'pending'
+                         WHEN linked_task_status = 'running' THEN 'running'
+                         WHEN linked_task_status = 'completed' THEN 'completed'
+                         WHEN linked_task_status = 'failed' THEN 'failed'
+                         WHEN linked_task_status = 'cancelled' THEN 'cancelled'
+                         WHEN linked_task_status = 'partial_success' THEN 'failed'
+                         WHEN linked_task_status = 'paused' THEN 'paused'
+                         WHEN linked_task_status IS NULL AND anchor_status IS NOT NULL
+                              AND run_kind = 'discovery' THEN
+                              CASE anchor_status
+                                  WHEN 'queued' THEN 'pending'
+                                  WHEN 'running' THEN 'running'
+                                  WHEN 'waiting_stability' THEN 'waiting'
+                                  WHEN 'paused' THEN 'paused'
+                                  WHEN 'completed' THEN 'completed'
+                                  WHEN 'partial_success' THEN 'partial_success'
+                                  WHEN 'failed' THEN 'failed'
+                                  ELSE 'cancelled'
+                              END
+                         ELSE 'unknown'
                     END AS original_status
                 FROM ({document}) population LEFT JOIN evidence e
                     ON e.task_id = COALESCE(linked_task_id, transfer_task_id, anchor_id)
@@ -6049,17 +6127,9 @@ class SQLiteTaskRepository:
             ) SELECT original.*,
                 CASE WHEN original_status IN ('pending', 'running', 'paused', 'waiting')
                          THEN original_status
-                     WHEN original_status IN ('failed', 'partial_success', 'cancelled')
-                         THEN 'failed'
-                     WHEN original_status <> 'completed' THEN 'unknown'
-                     WHEN COALESCE(failed_count, 0) + COALESCE(skipped_count, 0)
-                        + COALESCE(cancelled_count, 0) + COALESCE(uncertain_count, 0)
-                        + COALESCE(partial_effect_count, 0)
-                        + COALESCE(attachment_failed_count, 0) > 0 THEN 'failed'
-                     WHEN total_items IS NULL OR total_items <> COALESCE(item_count, 0)
-                        OR COALESCE(unreadable_count, 0) > 0 THEN 'unknown'
-                     WHEN total_items = 0 THEN 'completed'
-                     WHEN success_count = item_count THEN 'completed'
+                     WHEN original_status IN ('completed', 'failed', 'cancelled')
+                         THEN original_status
+                     WHEN original_status = 'partial_success' THEN 'failed'
                      ELSE 'unknown' END AS record_outcome
             FROM original
         """
@@ -6118,6 +6188,7 @@ class SQLiteTaskRepository:
             "running",
             "paused",
             "waiting",
+            "cancelled",
             "unknown",
         }:
             raise ValueError("automation record outcome is invalid")
@@ -8488,6 +8559,18 @@ class SQLiteTaskRepository:
                 if run_kind != "discovery"
                 else 0
             ),
+            success_items=(
+                _bounded_item_count(row["success_items"]) if run_kind != "discovery" else 0
+            ),
+            partial_items=(
+                _bounded_item_count(row["partial_items"]) if run_kind != "discovery" else 0
+            ),
+            uncertain_effect_items=(
+                _bounded_item_count(row["uncertain_effect_items"]) if run_kind != "discovery" else 0
+            ),
+            missing_result_items=(
+                _bounded_item_count(row["missing_result_items"]) if run_kind != "discovery" else 0
+            ),
             uncertain_success_items=(
                 _bounded_item_count(row["uncertain_success_items"])
                 if run_kind != "discovery"
@@ -8509,6 +8592,10 @@ class SQLiteTaskRepository:
                         "success_count",
                         "uncertain_count",
                         "partial_effect_count",
+                        "success_status_count",
+                        "partial_count",
+                        "failed_status_count",
+                        "missing_result_count",
                         "skipped_count",
                         "cancelled_count",
                         "failed_count",
@@ -18114,9 +18201,13 @@ class SQLiteTaskRepository:
         from dataclasses import replace
 
         if control is TaskControl.PAUSE:
+            # Slice 48 RO-1: ``paused`` is a retired aggregate value.  The
+            # suspended flow is unfinished work, so the acknowledged pause
+            # keeps the Task ``running`` while the queue row carries the pause
+            # eligibility and the items record their suspended state.
             return replace(
                 task,
-                status=PersistentTaskStatus.PAUSED,
+                status=PersistentTaskStatus.RUNNING,
                 updated_at=now,
                 completed_at=None,
                 error=None,
@@ -19623,15 +19714,19 @@ class SQLiteTaskRepository:
     ) -> bool:
         """Whether an in-flight marker is already a recorded, finished outcome.
 
-        Slice 47 capacity rule: one Task holds at most one execution slot, and a
-        finished batch gives it back even when one recorded Result's effect is
-        unknown.  That is not the same fact as a call still executing, so the
-        boundary is only closed when the marker names one of this Task's items
-        whose attempt already published a Result and no durable sibling is
-        queued/processing.  A missing/other Result, a processing sibling or an
-        unreadable marker keeps the slot exactly as before; closing the current
-        handling state never rewrites the Result, its unknown effects or its
-        completed steps.
+        Slice 47 capacity rule, amended by Slice 48 RO-2: one Task holds at most
+        one execution slot, and a finished pass gives it back even when one
+        recorded Result's effect is unknown — or when the marked attempt ended
+        technically and never published a Result at all.  The boundary is only
+        closed when the marker names one of this Task's items whose attempt is
+        no longer queued/processing and no durable sibling is queued/processing
+        either.  Only the current claim owner reaches this check, and only after
+        its own pass returned, so the marker's attempt has demonstrably ended;
+        a stale marker left by another process can never pass the claim fence
+        that guards this transaction.  A processing sibling — genuine machine
+        work — still keeps the slot exactly as before; closing the current
+        handling state never rewrites any Result, its unknown effects or its
+        completed steps, and never manufactures a missing Result.
         """
 
         item_id = state.mutation_item_id
@@ -19651,13 +19746,7 @@ class SQLiteTaskRepository:
                 TaskItemStatus.PROCESSING.value,
             ),
         ).fetchone()
-        if remaining is not None:
-            return False
-        recorded = self._connection.execute(
-            "SELECT 1 FROM task_results WHERE task_id=? AND item_id=? LIMIT 1",
-            (task_id, item_id),
-        ).fetchone()
-        return recorded is not None
+        return remaining is None
 
     def _require_no_machine_items_locked(
         self, task_id: str, items: tuple[PersistentTaskItem, ...]

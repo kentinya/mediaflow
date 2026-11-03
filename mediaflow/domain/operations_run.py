@@ -397,6 +397,14 @@ class OperationsRunOverview:
     #: success, and a skipped item is not an organized item.
     organization_success_items: int = 0
     uncertain_success_items: int = 0
+    #: Slice 48 RO-3: the ended list's per-file outcome summary reads the
+    #: durable item statuses, independently from the Task flow status.  The
+    #: two caveat facets (unknown effect, missing Result) stay separate and
+    #: never overwrite a file's own recorded outcome.
+    success_items: int = 0
+    partial_items: int = 0
+    uncertain_effect_items: int = 0
+    missing_result_items: int = 0
     #: The admitted item bound the producer persisted with the run, or ``None``
     #: when this run carries no bound at all (a discovery, a legacy row, a
     #: pre-Task failure).  It is the durable admission value, never today's
@@ -433,10 +441,17 @@ class OperationsRunOverview:
 
     @property
     def no_work_completion(self) -> bool:
-        """Whether this run terminally completed without organizing any item."""
+        """Whether this run terminally completed without organizing any item.
+
+        Slice 48 RO-4: zero *successful* files is not proof of zero work, and
+        an all-failed/all-partial/all-skipped Task is not a healthy empty
+        record — only a completed flow whose whole admitted population is
+        empty is a no-work completion.
+        """
 
         return (
             self.status is OperationsRunStatus.COMPLETED
+            and self.total_items == 0
             and self.organization_success_items == 0
             and self.uncertain_success_items == 0
         )

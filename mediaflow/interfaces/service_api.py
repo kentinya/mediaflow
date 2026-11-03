@@ -14249,6 +14249,14 @@ class MediaFlowApi:
             "completed_items": overview.completed_items,
             "failed_items": overview.failed_items,
             "processed_items": overview.processed_items,
+            # Slice 48 RO-3: the ended list's honest per-file outcome summary.
+            # The file counts read the durable item statuses, independently of
+            # the Task flow status; the two caveat facets (unknown effect,
+            # missing Result) stay separate and never overwrite an outcome.
+            "success_items": overview.success_items,
+            "partial_items": overview.partial_items,
+            "uncertain_effect_items": overview.uncertain_effect_items,
+            "missing_result_items": overview.missing_result_items,
             "current_stage": overview.current_stage,
             "pause_requested": overview.pause_requested,
             "attention": overview.attention,
@@ -14759,6 +14767,7 @@ class MediaFlowApi:
             "running",
             "paused",
             "waiting",
+            "cancelled",
             "unknown",
         }:
             raise ValueError("automation record outcome filter is invalid")
@@ -15126,6 +15135,19 @@ class MediaFlowApi:
             if status == "completed":
                 return "本次执行已完成，但没有产生已整理的条目（无工作完成）"
             return "本次执行尚未产生已整理的条目"
+        if overview.status.value == "completed":
+            # Slice 48 RO-4: a completed flow with zero proven success (all
+            # failed/partial/skipped files) is neither no-work nor execution
+            # failure — the file facts stay independently readable.
+            return (
+                f"本次已结束；已整理 {overview.organization_success_items} 个条目"
+                + (
+                    f"（另有 {overview.uncertain_success_items} 个条目效果不确定）"
+                    if overview.uncertain_success_items
+                    else ""
+                )
+                + "；逐项结果在任务中心查看"
+            )
         if overview.uncertain_success_items:
             return (
                 f"有 {overview.uncertain_success_items} 个条目效果不确定，"

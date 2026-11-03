@@ -630,7 +630,11 @@ class CapacityTransitionTests(SchedulingKernelTestCase):
         self.assertIsNotNone(acknowledged.control_acknowledged_at)
         self.assertEqual(service.capacity_use(), 0)
         paused_task = self.repository.get_task(claim.task_id)
-        self.assertIs(paused_task.status, PersistentTaskStatus.PAUSED)
+        # Slice 48 RO-1: ``paused`` is a retired aggregate value.  The
+        # acknowledged pause keeps the flow unfinished (running) while the
+        # queue row and the items carry the suspension.
+        self.assertIs(paused_task.status, PersistentTaskStatus.RUNNING)
+        self.assertIsNone(paused_task.completed_at)
         self.assertFalse(paused_task.pause_requested)
         self.assertEqual(
             [value.status for value in self.repository.list_items(claim.task_id)],
@@ -694,8 +698,11 @@ class CapacityTransitionTests(SchedulingKernelTestCase):
         self.assertIs(state.queue_state, TaskQueueState.PAUSED)
         self.assertEqual(service.capacity_use(), 0)
         self.assertIsNone(service.claim_next(worker_id="worker-1", now=NOW + timedelta(seconds=1)))
+        # Slice 48 RO-1: the retired pause keeps the flow value ``running``;
+        # only the queue row carries the suspension.
         self.assertIs(
-            self.repository.get_task(admission.task.task_id).status, PersistentTaskStatus.PAUSED
+            self.repository.get_task(admission.task.task_id).status,
+            PersistentTaskStatus.RUNNING,
         )
 
     def test_requeue_reuses_the_same_task_and_rechecks_capacity(self) -> None:
@@ -735,9 +742,10 @@ class CapacityTransitionTests(SchedulingKernelTestCase):
         refused = self.repository.get_task_scheduling(admission.task.task_id)
         self.assertIs(refused.queue_state, TaskQueueState.PAUSED)
         self.assertEqual(self.repository.list_results(admission.task.task_id), results_before)
+        # Slice 48 RO-1: the retired pause keeps the flow value ``running``.
         self.assertIs(
             self.repository.get_task(admission.task.task_id).status,
-            PersistentTaskStatus.PAUSED,
+            PersistentTaskStatus.RUNNING,
         )
 
         # Once capacity is free again the *same* Task is re-admitted.
@@ -1046,7 +1054,13 @@ class PublicationTests(SchedulingKernelTestCase):
         self.assertIs(item.status, TaskItemStatus.PROCESSING)
         coordinator.request_pause(legacy.task_id)
         paused = coordinator.acknowledge_pause(legacy.task_id)
-        self.assertIs(paused.status, PersistentTaskStatus.PAUSED)
+        # Slice 48 RO-1: the retired pause keeps the flow value ``running``;
+        # the suspension stays on the items.
+        self.assertIs(paused.status, PersistentTaskStatus.RUNNING)
+        self.assertEqual(
+            [value.status for value in self.repository.list_items(legacy.task_id)],
+            [TaskItemStatus.PAUSED],
+        )
         # A legacy pending Task is never silently adopted by the kernel.
         service = self.service()
         self.assertIsNone(service.claim_next(worker_id="worker-1", now=NOW))

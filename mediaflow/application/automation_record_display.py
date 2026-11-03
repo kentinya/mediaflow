@@ -1,4 +1,12 @@
-"""Concise records-only read projection; never grants recovery or execution."""
+"""Concise records-only read projection; never grants recovery or execution.
+
+Slice 48 RO-4: the record's outcome is the exact current durable Task flow
+status the Task Center reads; the per-file counts, causes and effect caveats
+are independent evidence under it.  A completed flow with failed files reads
+completed here with those file facts shown beside it — never relabelled as an
+execution failure.  Page wording stays short and uses everyday language; the
+technical vocabulary (settlement, fences, owners, pins) never appears.
+"""
 
 from mediaflow.application.operations_lifecycle import bounded_failure_document
 
@@ -38,6 +46,40 @@ _REASONS = {
 }
 
 
+def _file_summary(evidence: dict) -> tuple[str, list[str]]:
+    """One short per-file outcome summary plus its caveat reminders.
+
+    The counts read the durable item evidence only; unknown effects and
+    missing results are separate reminders that never overwrite an outcome.
+    """
+
+    reminders: list[str] = []
+    uncertain = int(evidence.get("uncertain_count") or 0)
+    missing = int(evidence.get("missing_result_count") or 0)
+    if uncertain:
+        reminders.append(f"有 {uncertain} 个文件效果尚不清楚")
+    if missing:
+        reminders.append(f"有 {missing} 个文件的结果未记录")
+    success = int(evidence.get("success_status_count") or 0)
+    partial = int(evidence.get("partial_count") or 0)
+    failed = int(evidence.get("failed_status_count") or 0)
+    parts = []
+    if success:
+        parts.append(f"成功 {success}")
+    if partial:
+        parts.append(f"部分成功 {partial}")
+    if failed:
+        parts.append(f"失败 {failed}")
+    skipped = int(evidence.get("skipped_count") or 0)
+    if skipped:
+        parts.append(f"跳过/忽略 {skipped}")
+    cancelled = int(evidence.get("cancelled_count") or 0)
+    if cancelled:
+        parts.append(f"已取消 {cancelled}")
+    summary = "；".join(parts) if parts else None
+    return summary, reminders
+
+
 def automation_record_display(
     overview, failure_evidence: dict | None, *, fallback_category: str | None = None
 ) -> dict[str, object]:
@@ -55,30 +97,58 @@ def automation_record_display(
         "nextStep": "刷新记录以核对结果；核对前勿重复执行",
     }
     if status == "completed":
+        # Slice 48 RO-4: a completed flow keeps its own file facts readable —
+        # zero successful files with real file failures is neither "no work"
+        # nor an execution failure.
+        summary, reminders = _file_summary(evidence)
+        if no_work:
+            statement = "本次已结束：没有需要处理的文件"
+        elif summary:
+            statement = f"本次已结束。{summary}。"
+        else:
+            statement = "本次已结束。"
+        failed = int(evidence.get("failed_status_count") or 0)
+        if failed and not no_work:
+            reminders.append(f"有 {failed} 个文件未整理成功，具体原因在该任务的文件详情中")
+        if reminders:
+            statement = statement + "（" + "；".join(reminders) + "）"
         result.update(
-            statement="本次成功：无工作完成" if no_work else f"本次成功，已整理 {success} 个文件",
-            nextStep="本次无需修复；不代表来源文件已全部处理",
+            statement=statement,
+            nextStep="本次无需修复；文件结果不代表来源文件已全部处理"
+            if not no_work
+            else "本次无需修复；不代表来源文件已全部处理",
+        )
+    elif status == "cancelled":
+        summary, reminders = _file_summary(evidence)
+        statement = "本次已取消；已完成的操作保留"
+        if summary:
+            statement += f"（{summary}）"
+        if reminders:
+            statement += "（" + "；".join(reminders) + "）"
+        result.update(
+            statement=statement,
+            nextStep="本次已取消，不会自动继续；如需处理请重新发起",
         )
     elif status in {"pending", "running", "paused", "waiting"}:
-        result.update(
-            statement={
-                "pending": "本次正在等待执行",
-                "running": "本次正在执行",
-                "paused": "本次已暂停，尚未结束",
-                "waiting": "本次正在等待，尚未结束",
-            }[status],
-            nextStep="等待本次运行结束后刷新查看结果"
+        waiting = int(evidence.get("waiting_count") or 0)
+        statement = {
+            "pending": "本次正在等待执行",
+            "running": "本次正在等待人工处理" if waiting else "本次正在执行",
+            "paused": "本次已暂停，尚未结束",
+            "waiting": "本次正在等待，尚未结束",
+        }[status]
+        next_step = (
+            "等待本次运行结束后刷新查看结果"
             if status != "paused"
-            else "本次仍处于暂停状态，结束后再查看结果",
+            else "本次仍处于暂停状态，结束后再查看结果"
         )
+        if status == "running" and waiting:
+            next_step = "在任务中心处理等待的文件并明确继续"
+        result.update(statement=statement, nextStep=next_step)
     elif status == "failed":
         reasons, steps = [], []
-        cancelled = evidence.get("original_status") == "cancelled"
-        if cancelled:
-            reasons.append("本次运行已取消")
-            steps.append("本次已取消；已完成的操作保留")
         waiting = int(evidence.get("waiting_count") or 0)
-        if waiting and not cancelled:
+        if waiting:
             # The frozen first automatic stage ended by handing unresolved
             # sources to the operator: that handoff is the stage's own real
             # end, and the frozen record says so instead of claiming success.
@@ -88,7 +158,7 @@ def automation_record_display(
         if skipped:
             reasons.append(f"按策略跳过或忽略了 {skipped} 个文件")
             steps.append("检查对应文件和跳过、同名文件处理设置")
-        if evidence.get("cancelled_count") and not cancelled:
+        if evidence.get("cancelled_count"):
             reasons.append("部分文件处理已取消")
             steps.append("检查已取消的文件；已完成的操作保留")
         if evidence.get("attachment_failed_count"):

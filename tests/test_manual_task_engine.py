@@ -2057,10 +2057,11 @@ class ManualTaskDiscoveryTests(_DiscoveryFixture):
             self.assertEqual(1, len(second_ready), preview)
             final = self._execute(value, task_id, preview, second_ready)
             # The completed second sibling cannot overwrite the recorded first
-            # failure: the Task aggregates both independent outcomes.
-            self.assertIs(final.status, PersistentTaskStatus.PARTIAL_SUCCESS, final.error)
+            # failure: both file facts stay independent.  Slice 48 RO-1: the
+            # flow itself completed — file outcomes are never the flow status.
+            self.assertIs(final.status, PersistentTaskStatus.COMPLETED, final.error)
             self.assertEqual(
-                (2, 1, 1),
+                (2, 2, 1),
                 (final.total_items, final.completed_items, final.failed_items),
             )
             results = value.repository.list_results(task_id)
@@ -2710,9 +2711,11 @@ class ManualTaskDiscoveryTests(_DiscoveryFixture):
 
             ready = [entry["itemId"] for entry in fresh["items"] if entry["status"] == "previewed"]
             final = self._execute(value, task_id, fresh, ready)
-            self.assertIs(final.status, PersistentTaskStatus.PARTIAL_SUCCESS, final.error)
+            # Slice 48 RO-1: the ignored sibling is a settled file fact; the
+            # flow completed with both facts readable.
+            self.assertIs(final.status, PersistentTaskStatus.COMPLETED, final.error)
             self.assertEqual(
-                (2, 1, 0), (final.total_items, final.completed_items, final.failed_items)
+                (2, 2, 0), (final.total_items, final.completed_items, final.failed_items)
             )
             self.assertIs(
                 value.repository.get_item(ignored_item.item_id).status, TaskItemStatus.IGNORED
@@ -2727,9 +2730,7 @@ class ManualTaskDiscoveryTests(_DiscoveryFixture):
                 self.assertIs(
                     reopened.get_item(ignored_item.item_id).status, TaskItemStatus.IGNORED
                 )
-                self.assertIs(
-                    reopened.get_task(task_id).status, PersistentTaskStatus.PARTIAL_SUCCESS
-                )
+                self.assertIs(reopened.get_task(task_id).status, PersistentTaskStatus.COMPLETED)
                 self.assertTrue((self.source_root / "Movies/One.2001.mkv").exists())
 
     def test_last_ignored_item_settles_the_task(self) -> None:
@@ -2763,7 +2764,9 @@ class ManualTaskDiscoveryTests(_DiscoveryFixture):
             self._ignore(value, task_id, item)
 
             task = value.repository.get_task(task_id)
-            self.assertIs(task.status, PersistentTaskStatus.PARTIAL_SUCCESS, task.error)
+            # Slice 48 RO-1: an ignored source is a settled file fact; the
+            # flow completed and the ignored outcome stays on the item.
+            self.assertIs(task.status, PersistentTaskStatus.COMPLETED, task.error)
             state = value.repository.get_task_scheduling(task_id)
             self.assertIs(state.queue_state, TaskQueueState.SETTLED)
             self.assertFalse(state.holds_capacity)
@@ -2773,17 +2776,13 @@ class ManualTaskDiscoveryTests(_DiscoveryFixture):
             status, run = self.request(value, f"/api/v1/operations/runs/{task_id}")
             self.assertEqual(200, status, run)
             self.assertTrue(run["lifecycle"]["terminal"])
-            self.assertEqual("partial_success", run["status"])
+            self.assertEqual("completed", run["status"])
             # Further Worker passes add nothing: the work is already final.
             for _ in range(5):
                 value.task_engine.run_next()
-            self.assertIs(
-                value.repository.get_task(task_id).status, PersistentTaskStatus.PARTIAL_SUCCESS
-            )
+            self.assertIs(value.repository.get_task(task_id).status, PersistentTaskStatus.COMPLETED)
             with SQLiteTaskRepository(self.database) as reopened:
-                self.assertIs(
-                    reopened.get_task(task_id).status, PersistentTaskStatus.PARTIAL_SUCCESS
-                )
+                self.assertIs(reopened.get_task(task_id).status, PersistentTaskStatus.COMPLETED)
                 self.assertIs(reopened.get_item(item.item_id).status, TaskItemStatus.IGNORED)
                 self.assertIs(
                     reopened.get_task_scheduling(task_id).queue_state, TaskQueueState.SETTLED
@@ -2814,7 +2813,9 @@ class ManualTaskDiscoveryTests(_DiscoveryFixture):
             self.assertIs(item.status, TaskItemStatus.FAILED)
 
             task = value.repository.get_task(task_id)
-            self.assertIs(task.status, PersistentTaskStatus.FAILED, task.error)
+            # Slice 48 RO-2: a solely technical analysis failure is file-local
+            # evidence; the flow completed without demanding a formal Result.
+            self.assertIs(task.status, PersistentTaskStatus.COMPLETED, task.error)
             state = value.repository.get_task_scheduling(task_id)
             self.assertIs(state.queue_state, TaskQueueState.SETTLED)
             self.assertFalse(state.holds_capacity)
@@ -2823,10 +2824,10 @@ class ManualTaskDiscoveryTests(_DiscoveryFixture):
             status, run = self.request(value, f"/api/v1/operations/runs/{task_id}")
             self.assertEqual(200, status, run)
             self.assertTrue(run["lifecycle"]["terminal"])
-            self.assertEqual("failed", run["status"])
+            self.assertEqual("completed", run["status"])
             self.assertEqual((), value.repository.list_results(task_id))
             with SQLiteTaskRepository(self.database) as reopened:
-                self.assertIs(reopened.get_task(task_id).status, PersistentTaskStatus.FAILED)
+                self.assertIs(reopened.get_task(task_id).status, PersistentTaskStatus.COMPLETED)
 
     def test_reanalysis_failure_settles_the_reused_items_task(self) -> None:
         """A failed re-analysis of a ready source ends its own Task honestly.
@@ -2876,26 +2877,29 @@ class ManualTaskDiscoveryTests(_DiscoveryFixture):
             self.assertEqual("analysis_failed", stored.stage)
             self.assertIn("synthetic upstream timeout", stored.error or "")
             task = value.repository.get_task(task_id)
-            self.assertIs(task.status, PersistentTaskStatus.FAILED, task.error)
-            self.assertEqual((1, 0, 1), (task.total_items, task.completed_items, task.failed_items))
+            # Slice 48 RO-2/RO-3: the ended technical attempt is ended progress
+            # (1 of 1), the file failure stays on the item, and the flow
+            # completed without a formal Result.
+            self.assertIs(task.status, PersistentTaskStatus.COMPLETED, task.error)
+            self.assertEqual((1, 1, 1), (task.total_items, task.completed_items, task.failed_items))
             state = value.repository.get_task_scheduling(task_id)
             self.assertIs(state.queue_state, TaskQueueState.SETTLED)
             self.assertFalse(state.holds_capacity)
             self.assertEqual(0, value.repository.count_scheduled_capacity_use())
             counts, run_counts = self._task_api_counts(value, task_id)
-            self.assertEqual((1, 0, 1), counts)
-            self.assertEqual((1, 0, 1), run_counts)
+            self.assertEqual((1, 1, 1), counts)
+            self.assertEqual((1, 1, 1), run_counts)
             status, run = self.request(value, f"/api/v1/operations/runs/{task_id}")
             self.assertEqual(200, status, run)
             self.assertTrue(run["lifecycle"]["terminal"])
-            self.assertEqual("failed", run["status"])
+            self.assertEqual("completed", run["status"])
             self.assertEqual((), value.repository.list_results(task_id))
             # Idle Worker passes never change the settled factual end.
             for _ in range(5):
                 value.task_engine.run_next()
-            self.assertIs(value.repository.get_task(task_id).status, PersistentTaskStatus.FAILED)
+            self.assertIs(value.repository.get_task(task_id).status, PersistentTaskStatus.COMPLETED)
             with SQLiteTaskRepository(self.database) as reopened:
-                self.assertIs(reopened.get_task(task_id).status, PersistentTaskStatus.FAILED)
+                self.assertIs(reopened.get_task(task_id).status, PersistentTaskStatus.COMPLETED)
                 self.assertIs(reopened.get_item(item.item_id).status, TaskItemStatus.FAILED)
                 self.assertIs(
                     reopened.get_task_scheduling(task_id).queue_state, TaskQueueState.SETTLED
@@ -2975,16 +2979,17 @@ class ManualTaskDiscoveryTests(_DiscoveryFixture):
                 TaskItemStatus.SUCCESS,
             )
             task = value.repository.get_task(task_id)
-            self.assertIs(task.status, PersistentTaskStatus.PARTIAL_SUCCESS, task.error)
-            self.assertEqual((2, 1, 1), (task.total_items, task.completed_items, task.failed_items))
+            # Slice 48 RO-1: the flow completed; both file facts stay readable.
+            self.assertIs(task.status, PersistentTaskStatus.COMPLETED, task.error)
+            self.assertEqual((2, 2, 1), (task.total_items, task.completed_items, task.failed_items))
             self.assertIs(
                 value.repository.get_task_scheduling(task_id).queue_state,
                 TaskQueueState.SETTLED,
             )
             self.assertEqual(0, value.repository.count_scheduled_capacity_use())
             counts, run_counts = self._task_api_counts(value, task_id)
-            self.assertEqual((2, 1, 1), counts)
-            self.assertEqual((2, 1, 1), run_counts)
+            self.assertEqual((2, 2, 1), counts)
+            self.assertEqual((2, 2, 1), run_counts)
             results = value.repository.list_results(task_id)
             self.assertEqual(1, len(results), results)
             self.assertEqual(first_result.result_id, results[0].result_id)
@@ -2993,9 +2998,7 @@ class ManualTaskDiscoveryTests(_DiscoveryFixture):
             self.assertTrue((self.source_root / "Movies/Two.2002.mkv").exists())
             self.assertEqual(1, len(value.repository.list_tasks()))
             with SQLiteTaskRepository(self.database) as reopened:
-                self.assertIs(
-                    reopened.get_task(task_id).status, PersistentTaskStatus.PARTIAL_SUCCESS
-                )
+                self.assertIs(reopened.get_task(task_id).status, PersistentTaskStatus.COMPLETED)
                 self.assertEqual(1, len(reopened.list_results(task_id)))
                 self.assertIs(
                     reopened.get_item(items["Movies/Two.2002.mkv"].item_id).status,

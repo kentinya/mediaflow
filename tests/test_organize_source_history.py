@@ -848,7 +848,7 @@ class RunOnceHistoryExclusionJourneyTests(_SourceHistoryJourneyTests):
                 _ExplodingExecutor,
             ):
                 failed = self.execute_run_once(value)
-            self.assertEqual("failed", failed.status.value, failed.error)
+            self.assertEqual("completed", failed.status.value, failed.error)
             failed_items = value.repository.list_items(failed.task_id)
             self.assertEqual(
                 {TaskItemStatus.FAILED},
@@ -869,7 +869,7 @@ class RunOnceHistoryExclusionJourneyTests(_SourceHistoryJourneyTests):
             ) as provider_calls:
                 excluded_run = self.execute_run_once(value)
             provider_calls.assert_not_called()
-            self.assertEqual("partial_success", excluded_run.status.value, excluded_run.error)
+            self.assertEqual("completed", excluded_run.status.value, excluded_run.error)
             self.assertIn(
                 "not processed by the automatic history gate",
                 excluded_run.error or "",
@@ -914,8 +914,10 @@ class RunOnceHistoryExclusionJourneyTests(_SourceHistoryJourneyTests):
                 by_path["Two.2002.mkv"],
             )
             # The original failure record was never rewritten by any of this.
+            # Slice 48: the flow value is completed (a file-level failure),
+            # while the two formal failed Results stay the recorded history.
             original = value.repository.get_task(failed.task_id)
-            self.assertEqual("failed", original.status.value)
+            self.assertEqual("completed", original.status.value)
             self.assertEqual(
                 2,
                 len(value.repository.list_results(failed.task_id)),
@@ -980,7 +982,7 @@ class DueOccurrenceHistoryExclusionJourneyTests(_SourceHistoryJourneyTests):
                 for task in value.repository.list_tasks()
                 if task.command == "organize" and task.item_limit == 5
             ]
-            self.assertEqual("failed", failed_task.status.value, failed_task.error)
+            self.assertEqual("completed", failed_task.status.value, failed_task.error)
             (failed_item,) = value.repository.list_items(failed_task.task_id)
             self.assertEqual(TaskItemStatus.FAILED, failed_item.status)
 
@@ -996,7 +998,7 @@ class DueOccurrenceHistoryExclusionJourneyTests(_SourceHistoryJourneyTests):
                 for task in value.repository.list_tasks()
                 if task.task_id not in {failed_task.task_id} and task.command == "organize"
             ]
-            self.assertEqual("partial_success", excluded_task.status.value, excluded_task.error)
+            self.assertEqual("completed", excluded_task.status.value, excluded_task.error)
             self.assertIn("not processed by the automatic history gate", excluded_task.error or "")
             (excluded_item,) = value.repository.list_items(excluded_task.task_id)
             self.assertEqual(TaskItemStatus.SKIPPED, excluded_item.status, excluded_item)
@@ -1112,7 +1114,9 @@ class ManualHistoryWarningJourneyTests(_SourceHistoryJourneyTests):
                 value.repository.list_results(failed_task.task_id),
                 "the original failure Result is never rewritten or replayed",
             )
-            self.assertEqual("failed", value.repository.get_task(failed_task.task_id).status.value)
+            self.assertEqual(
+                "completed", value.repository.get_task(failed_task.task_id).status.value
+            )
 
 
 class PartialItemIsHistoryNotOwnerTests(_SourceHistoryJourneyTests):
@@ -1408,7 +1412,7 @@ class AutomaticAdmissionHistoryRaceTests(_SourceHistoryJourneyTests):
                 sorted(path.name for path in value.target_root.rglob("*.mkv")),
             )
             automatic_task = value.repository.get_task(auto_id)
-            self.assertEqual("partial_success", automatic_task.status.value)
+            self.assertEqual("completed", automatic_task.status.value)
             self.assertIn("not processed by the automatic history gate", automatic_task.error or "")
 
             # The manual run's own recorded facts are untouched by the new work.
@@ -1441,7 +1445,7 @@ class AutomaticAdmissionHistoryRaceTests(_SourceHistoryJourneyTests):
             self.assertIn("fail-closed", item.error or "")
             self.assertEqual((), value.repository.list_results(auto_id))
             self.assertFalse(list(value.target_root.rglob("*.mkv")))
-            self.assertEqual("partial_success", finished.status.value)
+            self.assertEqual("completed", finished.status.value)
             self.assertIn("not processed by the automatic history gate", finished.error or "")
 
 
@@ -1572,7 +1576,7 @@ class SupersededSingleFileOwnerHandoffTests(_SupersededHandoffFixture):
                     [item["itemId"] for item in _preview["items"] if item["status"] == "previewed"],
                 )
             old_task = value.repository.get_task(old_id)
-            self.assertEqual(PersistentTaskStatus.FAILED, old_task.status)
+            self.assertEqual(PersistentTaskStatus.COMPLETED, old_task.status)
             (old_item,) = value.repository.list_items(old_id)
             (old_result,) = value.repository.list_results(old_id)
             self.assertEqual("PARTIAL", old_result.status)
@@ -1907,7 +1911,9 @@ class FinishedBatchCapacityTests(_SupersededHandoffFixture):
             with patch.object(value.executions, "_execute_plan", fail_two_without_effect):
                 self.confirm(value, preview)
                 task = self._drive_until_terminal(value, task_id)
-            self.assertEqual(PersistentTaskStatus.PARTIAL_SUCCESS, task.status)
+            # Slice 48 RO-1: the failed files are file-level facts; the flow
+            # itself completed.
+            self.assertEqual(PersistentTaskStatus.COMPLETED, task.status)
             state = value.repository.get_task_scheduling(task_id)
             self.assertEqual(TaskQueueState.SETTLED, state.queue_state)
             self.assertEqual(0, value.repository.count_scheduled_capacity_use())
@@ -1954,7 +1960,9 @@ class FinishedBatchCapacityTests(_SupersededHandoffFixture):
             with patch.object(value.target, "write", fail_two_write):
                 self.confirm(value, preview)
                 task = self._drive_until_terminal(value, task_id)
-            self.assertEqual(PersistentTaskStatus.PARTIAL_SUCCESS, task.status)
+            # Slice 48 RO-1: the partial file outcome is a file fact; the
+            # flow completed.
+            self.assertEqual(PersistentTaskStatus.COMPLETED, task.status)
             state = value.repository.get_task_scheduling(task_id)
             # All files of the batch are terminal and the pass returned: the
             # recorded unknown effect no longer occupies the Task's one slot.

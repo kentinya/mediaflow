@@ -274,7 +274,10 @@ for (const technicalSibling of [false, true]) {
       ).json();
     const initial = await evidence();
     expect(initial.record.status).toBe("running");
-    expect(initial.recordOutcome.status).toBe("failed");
+    // Slice 48 RO-4: the record reads the current Task flow status — the
+    // conflict is still waiting for the operator, so the record is an
+    // unfinished run, never a file-derived failure label.
+    expect(initial.recordOutcome.status).toBe("running");
     expect(initial.recordOutcome.successItems).toBe(1);
     expect(initial.recordFinishedAt).toBeTruthy();
     expect(initial.handling.affectedItems).toBe(technicalSibling ? 2 : 1);
@@ -353,7 +356,11 @@ for (const technicalSibling of [false, true]) {
     expect(final.population).toEqual(initial.population);
     expect(final.total).toBe(initial.total);
     expect(final.record.successItems).toBe(2);
-    expect(final.recordOutcome).toEqual(initial.recordOutcome);
+    // Slice 48 RO-4: the same Task's current flow status updates with the
+    // legal continuation (completed in both variants — the resolved conflict
+    // organizes and the technical sibling is a settled file fact) while the
+    // frozen original stage window never moves.
+    expect(final.recordOutcome.status).toBe("completed");
     expect(final.recordStartedAt).toBe(initial.recordStartedAt);
     expect(final.recordFinishedAt).toBe(initial.recordFinishedAt);
     expect(final.handling.affectedItems).toBe(technicalSibling ? 2 : 1);
@@ -366,7 +373,10 @@ for (const technicalSibling of [false, true]) {
       technicalSibling ? "recovery_failed" : "resolved",
     );
     if (technicalSibling) {
-      expect(final.record.status).toBe("partial_success");
+      // Slice 48: the independent technical failure stays an unresolved file
+      // fact on the same Task; the flow itself completed (never the retired
+      // partial_success aggregate).
+      expect(final.record.status).toBe("completed");
       const failed = state.items.find(
         (v: { status: string }) => v.status === "failed",
       );

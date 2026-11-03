@@ -220,10 +220,21 @@ export interface RunSummary {
   readonly targetScope: string | null;
   readonly libraryKind: RunLibraryKind | null;
   readonly totalItems: number | null;
+  /** Slice 48 RO-3: ended processing attempts (failures, partial results,
+   * skips, ignores and individual cancellations included) — never only the
+   * successful files. */
   readonly completedItems: number | null;
   readonly failedItems: number | null;
   /** Distinct terminal TaskItems observed in the same bounded read. */
   readonly processedItems: number | null;
+  /** The ended list's per-file outcome summary (durable item statuses):
+   * recorded successes, partial results and the two caveat facets — a latest
+   * Result with an unknown effect, and a settled file whose attempt ended
+   * without any Result. Each facet is independent evidence. */
+  readonly successItems: number | null;
+  readonly partialItems: number | null;
+  readonly uncertainEffectItems: number | null;
+  readonly missingResultItems: number | null;
   /** Allowlisted current stage bucket; null means the backend has none. */
   readonly currentStage: RunCurrentStage | null;
   readonly pauseRequested: boolean;
@@ -530,6 +541,15 @@ export function normalizeRunSummary(payload: unknown): RunSummary {
   const completedItems = optionalCount(source, "completed_items");
   const failedItems = optionalCount(source, "failed_items");
   const processedItems = optionalCount(source, "processed_items");
+  // Slice 48 RO-3: the aggregate's completed count is *ended processing
+  // attempts* (failures, partial results, skips, ignores and individual
+  // cancellations included) — never only the successful files.  The failed
+  // count is a subset of the ended count, so `failed <= completed` replaces
+  // the old disjoint-sum rule.
+  const successItems = optionalCount(source, "success_items");
+  const partialItems = optionalCount(source, "partial_items");
+  const uncertainEffectItems = optionalCount(source, "uncertain_effect_items");
+  const missingResultItems = optionalCount(source, "missing_result_items");
   let currentStage: RunCurrentStage | null;
   try {
     currentStage =
@@ -566,15 +586,18 @@ export function normalizeRunSummary(payload: unknown): RunSummary {
   ) {
     fail();
   }
-  // R4: only an exact-partition command must fit inside its total. Pipeline
-  // runs may carry independent discovery errors beyond the known items,
-  // so their sum is display evidence, never a malformedness claim.
+  // R4 (Slice 48 RO-3): `completed_items` counts ended processing attempts.
+  // For an exact-partition command every failure is one of its own items, so
+  // the failed count must be a subset of the ended count.  A pipeline run may
+  // additionally carry independent scan errors beyond its items, so its
+  // failed count may exceed the ended count without being malformed.
   const family = commandFamily(command);
   if (
-    totalItems !== null &&
+    completedItems !== null &&
+    failedItems !== null &&
     family !== null &&
     EXACT_PARTITION_COMMAND_FAMILIES.has(family) &&
-    (completedItems ?? 0) + (failedItems ?? 0) > totalItems
+    failedItems > completedItems
   ) {
     fail();
   }
@@ -614,6 +637,10 @@ export function normalizeRunSummary(payload: unknown): RunSummary {
     completedItems,
     failedItems,
     processedItems,
+    successItems,
+    partialItems,
+    uncertainEffectItems,
+    missingResultItems,
     currentStage,
     pauseRequested: flag(source, "pause_requested"),
     attention,

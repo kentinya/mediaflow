@@ -2312,7 +2312,9 @@ class ManagedConfigurationSnapshotTests(unittest.TestCase):
                     )
                 self.assertEqual(status, 0, (output.getvalue(), error.getvalue()))
                 task = repository.get_task(emitted[0].task_id)
-                self.assertEqual(task.status, PersistentTaskStatus.PARTIAL_SUCCESS)
+                # Slice 48 RO-1: the file failure stays on its item; the
+                # flow completed.
+                self.assertEqual(task.status, PersistentTaskStatus.COMPLETED)
                 items = {
                     Path(item.source_path).name: item
                     for item in repository.list_items(task.task_id)

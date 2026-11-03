@@ -153,7 +153,8 @@ class ClassificationReviewTests(unittest.TestCase):
                 self.assertEqual(coordinator.retryable_items(task.task_id, failed_only=False), ())
                 coordinator.locks.release(item.storage_id, item.source_path, item.task_id)
                 final = coordinator.finish(task.task_id, MediaOrganizerBatchResult(()))
-                self.assertEqual(final.status, PersistentTaskStatus.PARTIAL_SUCCESS)
+                # Slice 48 RO-1: the waiting decision keeps the flow unfinished.
+                self.assertEqual(final.status, PersistentTaskStatus.RUNNING)
                 dashboard = DashboardService(
                     repository, resource_library_count=1, media_library_count=1
                 ).snapshot()

@@ -4104,16 +4104,11 @@ class ManualOrganizeExecutionService:
             value.status in {ManualExecutionItemStatus.FAILED, ManualExecutionItemStatus.PARTIAL}
             for value in items
         )
-        if not terminal:
-            status = PersistentTaskStatus.RUNNING
-        elif failed_items == 0:
-            status = PersistentTaskStatus.COMPLETED
-        elif any(value.status is ManualExecutionItemStatus.PARTIAL for value in items):
-            status = PersistentTaskStatus.PARTIAL_SUCCESS
-        elif failed_items == len(items):
-            status = PersistentTaskStatus.FAILED
-        else:
-            status = PersistentTaskStatus.PARTIAL_SUCCESS
+        # Slice 48 RO-1: the flow outcome is never the files' sum.  Once every
+        # item of this execution recorded its own outcome the flow completed —
+        # including all-failed/partial/cancelled populations — while each
+        # file's own result stays on its record.
+        status = PersistentTaskStatus.RUNNING if not terminal else PersistentTaskStatus.COMPLETED
         return replace(
             task,
             status=status,

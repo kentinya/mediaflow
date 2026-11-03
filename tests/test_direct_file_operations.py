@@ -2334,7 +2334,11 @@ class DirectFileOperationsTests(unittest.TestCase):
                 )
             self.assertEqual(outcome["failedItems"], 2)
             self.assertEqual(outcome["succeededItems"], 1)
-            self.assertEqual(outcome["taskStatus"], "partial_success")
+            # Slice 48 RO-1/RO-3: the Delete flow completed while the two file
+            # failures stay on their own items — taskStatus is the flow value,
+            # never the files' sum.
+            self.assertEqual(outcome["taskStatus"], "completed")
+            self.assertEqual(outcome["status"], "PARTIAL")
             self.assertFalse((root / "source" / "batch" / "two.txt").exists())
             self.assertTrue((root / "source" / "batch" / "one.txt").exists())
             self.assertTrue((root / "source" / "batch").is_dir())

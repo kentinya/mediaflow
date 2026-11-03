@@ -1734,17 +1734,35 @@ def project_direct_delete(
         PersistentTaskStatus.FAILED,
         PersistentTaskStatus.CANCELLED,
     }
-    status = {
-        PersistentTaskStatus.PENDING: "QUEUED",
-        PersistentTaskStatus.RUNNING: "RUNNING",
-        PersistentTaskStatus.PAUSED: "PAUSED",
-        PersistentTaskStatus.CANCELLED: "CANCELLED",
-        PersistentTaskStatus.COMPLETED: "SUCCESS",
-        PersistentTaskStatus.PARTIAL_SUCCESS: "PARTIAL",
-        PersistentTaskStatus.FAILED: "FAILED",
-    }[task.status]
-    if uncertain:
+    states = set(outcome_by_path.values())
+    if task.status is PersistentTaskStatus.PENDING:
+        status = "QUEUED"
+    elif (
+        task.status is PersistentTaskStatus.RUNNING
+        and transfer is not None
+        and transfer.status is FilesTransferStatus.PAUSED
+    ):
+        # The retired Files pause is carried by the transfer row: the flow is
+        # unfinished (running) while the operation itself is suspended.
+        status = "PAUSED"
+    elif task.status is PersistentTaskStatus.RUNNING:
+        status = "RUNNING"
+    elif task.status is PersistentTaskStatus.PAUSED:
+        # Legacy historical rows only: pause is retired (Slice 48 RO-1).
+        status = "PAUSED"
+    elif task.status is PersistentTaskStatus.CANCELLED:
+        status = "CANCELLED"
+    elif uncertain or "UNCERTAIN" in states:
+        # Slice 48 RO-3: the operation status reads the per-item operation
+        # evidence — never the Task flow status.  A completed Delete flow with
+        # an unproved effect still reports UNCERTAIN here.
         status = "UNCERTAIN"
+    elif states == {"SUCCESS"} and outcomes:
+        status = "SUCCESS"
+    elif "SUCCESS" in states:
+        status = "PARTIAL"
+    else:
+        status = "FAILED"
     document: dict[str, object] = {
         "operation": DirectFileOperation.DELETE.value,
         "status": status,

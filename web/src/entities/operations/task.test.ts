@@ -116,9 +116,17 @@ describe("normalizeTaskRecord", () => {
   });
 
   it("rejects contradictory progress and terminal state", () => {
+    // Slice 48 RO-3: the ended count bounds the failed subset — a failure
+    // count above the ended count cannot describe one Task, and neither can
+    // an ended count above the total.
     expect(() =>
       normalizeTaskRecord(
-        task({ total_items: 1, completed_items: 1, failed_items: 1 }),
+        task({ total_items: 2, completed_items: 1, failed_items: 2 }),
+      ),
+    ).toThrow();
+    expect(() =>
+      normalizeTaskRecord(
+        task({ total_items: 1, completed_items: 2, failed_items: 0 }),
       ),
     ).toThrow();
     expect(() =>

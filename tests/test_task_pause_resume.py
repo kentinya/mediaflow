@@ -39,10 +39,15 @@ class TaskPauseResumeTest(unittest.TestCase):
                 paused = PersistentTaskCoordinator(reopened, reopened).acknowledge_pause(
                     task.task_id
                 )
-                self.assertEqual(paused.status, PersistentTaskStatus.PAUSED)
+                # Slice 48 RO-1: the acknowledged pause keeps the flow value
+                # running; the suspension lives on the items and the queue row.
+                self.assertEqual(paused.status, PersistentTaskStatus.RUNNING)
                 self.assertFalse(paused.pause_requested)
-                with self.assertRaisesRegex(ValueError, "only a running task"):
-                    PersistentTaskCoordinator(reopened, reopened).request_pause(task.task_id)
+                # Slice 48 RO-1: the acknowledged pause keeps the flow value
+                # running, so a fresh pause request is acceptable again — the
+                # retired aggregate value is never re-entered.
+                again = PersistentTaskCoordinator(reopened, reopened).request_pause(task.task_id)
+                self.assertTrue(again.pause_requested)
 
     def test_pause_is_acknowledged_only_at_checkpoint_and_releases_item_lock(self) -> None:
         with (
@@ -59,7 +64,9 @@ class TaskPauseResumeTest(unittest.TestCase):
                 coordinator.begin_item(task.task_id, "source", "library", "next.mkv", "next")
 
             paused = coordinator.acknowledge_pause(task.task_id)
-            self.assertEqual(paused.status, PersistentTaskStatus.PAUSED)
+            # Slice 48 RO-1: the acknowledged pause keeps the flow value running;
+            # the suspension lives on the items and the queue row.
+            self.assertEqual(paused.status, PersistentTaskStatus.RUNNING)
             self.assertEqual(repository.get_item(item.item_id).status, TaskItemStatus.PAUSED)
             self.assertTrue(repository.acquire("source", "movie.mkv", "other", datetime.now(UTC)))
 
@@ -97,7 +104,9 @@ class TaskPauseResumeTest(unittest.TestCase):
             release.set()
             worker.join(2)
             paused = coordinator.acknowledge_pause(task.task_id)
-            self.assertEqual(paused.status, PersistentTaskStatus.PAUSED)
+            # Slice 48 RO-1: the acknowledged pause keeps the flow value running;
+            # the suspension lives on the items and the queue row.
+            self.assertEqual(paused.status, PersistentTaskStatus.RUNNING)
             self.assertEqual(repository.list_items(task.task_id)[0].status, TaskItemStatus.SUCCESS)
 
     def test_concurrent_pause_requests_have_one_durable_outcome(self) -> None:
@@ -178,7 +187,9 @@ class TaskPauseResumeTest(unittest.TestCase):
             task = coordinator.create("organize", execute_authorized=False)
             coordinator.request_pause(task.task_id)
             paused = coordinator.acknowledge_pause(task.task_id)
-            self.assertEqual(paused.status, PersistentTaskStatus.PAUSED)
+            # Slice 48 RO-1: the acknowledged pause keeps the flow value running;
+            # the suspension lives on the items and the queue row.
+            self.assertEqual(paused.status, PersistentTaskStatus.RUNNING)
             self.assertIsNone(paused.completed_at)
             cancelled = coordinator.cancel(task.task_id)
             self.assertEqual(cancelled.status, PersistentTaskStatus.CANCELLED)

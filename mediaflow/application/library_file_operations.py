@@ -51,6 +51,7 @@ from mediaflow.domain.task_persistence import (
     FILES_DELETE_TASK_COMMAND,
     FILES_DIRECT_COMMAND_TASK,
     FILES_TRANSFER_TASK_COMMAND,
+    FilesTransferStatus,
     TaskItemStatus,
 )
 
@@ -482,7 +483,9 @@ class LibraryFileOperationHistoryService:
             "itemLimit": limit,
             "itemTotal": total,
             "itemsTruncated": has_next,
-            "durableState": _durable_state(task, fold),
+            "durableState": _durable_state(
+                task, fold, transfer_paused=self._transfer_paused(task.task_id)
+            ),
             "effectCertainty": fold.certainty,
         }
         if outcomes and has_next:
@@ -493,6 +496,18 @@ class LibraryFileOperationHistoryService:
             }
         document["nextAction"] = _operation_next_action(task, fold, total)
         return document
+
+    def _transfer_paused(self, task_id: str) -> bool:
+        """Whether the retired Files pause is recorded on the transfer row."""
+
+        reader = getattr(self._repository, "get_files_transfer_for_task", None)
+        if not callable(reader):
+            return False
+        try:
+            transfer = reader(task_id)
+        except Exception:  # noqa: BLE001 - an unreadable row is not a pause
+            return False
+        return transfer is not None and transfer.status is FilesTransferStatus.PAUSED
 
     def _operation_fold(self, task) -> EffectCertaintyFold:
         """The effect fold of every admitted item of one operation.
@@ -737,18 +752,21 @@ def _item_next_action(disposition: str, certainty: str, has_failure: bool) -> st
     return "核实该条目当前状态后再决定下一步"
 
 
-def _durable_state(task, fold: EffectCertaintyFold) -> str:
+def _durable_state(task, fold: EffectCertaintyFold, *, transfer_paused: bool = False) -> str:
     """The bounded durable-state name of one selected operation.
 
     The state is decided over every admitted item (``fold``), so a page of
     successes can never hide an uncertain sibling elsewhere in the operation.
+    Slice 48 RO-1: ``paused`` is a retired Task aggregate value, so the
+    retired Files pause is read from the transfer row's own suspension instead
+    of the Task status.
     """
 
     if fold.any_uncertain or task.error == "mutation_outcome":
         return "mutation_effect_uncertain"
     if task.status.value in {"completed", "partial_success", "failed", "cancelled"}:
         return f"task_{task.status.value}"
-    if task.status.value == "paused":
+    if task.status.value == "paused" or transfer_paused:
         return "task_paused"
     if fold.count == 0:
         return "no_admitted_item"

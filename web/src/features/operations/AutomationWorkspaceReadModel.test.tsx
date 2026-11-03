@@ -722,7 +722,8 @@ describe("V2 Automation workspace read model", () => {
       .getAllByRole("row")
       .filter((row) => row.textContent?.includes("无工作完成"));
     expect(healthyRow).toHaveLength(1);
-    expect(within(healthyRow[0]).getByText("成功")).toBeVisible();
+    // Slice 48 RO-4: the record badge reads the flow status — "已完成".
+    expect(within(healthyRow[0]).getByText("已完成")).toBeVisible();
     expect(within(healthyRow[0]).getByText(/无工作完成/)).toBeVisible();
 
     // Records stay read-only: refresh repeats the same GET reads and never
@@ -858,7 +859,7 @@ describe("V2 Automation workspace read model", () => {
     ).toHaveValue("scheduled");
   });
   it.each([
-    ["completed", "成功", null, "本次无需修复；不代表来源文件已全部处理"],
+    ["completed", "已完成", null, "本次无需修复；不代表来源文件已全部处理"],
     [
       "failed",
       "失败",
@@ -985,7 +986,11 @@ describe("V2 Automation workspace read model", () => {
     expect(
       within(region).queryByRole("option", { name: "部分成功" }),
     ).toBeNull();
-    expect(within(region).queryByRole("option", { name: "已取消" })).toBeNull();
+    // Slice 48 RO-4: an acknowledged cancellation is its own flow outcome in
+    // the records, so the filter offers the closed "已取消" value.
+    expect(
+      within(region).getByRole("option", { name: "已取消" }),
+    ).toBeVisible();
     await user.selectOptions(
       within(region).getByLabelText("结果"),
       "completed",

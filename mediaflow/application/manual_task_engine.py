@@ -16,6 +16,10 @@ from collections.abc import Callable
 from dataclasses import replace
 from datetime import UTC, datetime
 
+from mediaflow.application.task_flow_settlement import (
+    TaskFlowSettlementInputs,
+    settle_task_flow,
+)
 from mediaflow.domain.automation import AutomationClaimLost
 from mediaflow.domain.failure import FailureExplanation
 from mediaflow.domain.manual_execution import (
@@ -40,6 +44,17 @@ from mediaflow.domain.task_scheduling import (
 )
 
 DEFAULT_LEASE_SECONDS = 300.0
+
+#: The bounded, secret-free outcome recorded when one organizing attempt ended
+#: on a technical stop (the pass raised while the item held a mutation boundary)
+#: and never published its own Result.  The wording states the honest facts —
+#: the attempt ended, no result was recorded, the actual effect is unknown —
+#: without asserting a remote Storage outcome or inviting a replay.
+TECHNICAL_STOP_ITEM_ERROR = (
+    "the organizing attempt ended on a technical stop; no result was recorded "
+    "and the actual effect is unknown"
+)
+
 #: TaskItem states that represent work still waiting for the operator's own
 #: four-type decision.  An automatic Task holding only these has no machine work
 #: left, so it gives its shared slot back while keeping its identity, source
@@ -467,14 +482,15 @@ class ManualTaskEngineWorker:
                 )
                 self._scheduling.publish_task(claim, updated, now=now)
                 return self._yield_until(claim, updated, now, TaskMachineStage.EXECUTION)
-            # Every concrete source is settled, so the Task aggregate is the
-            # independent sum of those outcomes: a later successful execution
-            # can never erase an earlier failed/partial sibling.  A genuine
-            # execution cancellation still settles as the operator's cancel.
+            # Every concrete source is settled, so the Task flow completed
+            # (Slice 48 RO-1): the files' own outcomes — success, partial,
+            # failure, skip, ignore — stay on their records and are never the
+            # flow outcome.  A genuine execution cancellation still settles as
+            # the operator's accepted cancel.
             status = (
                 PersistentTaskStatus.CANCELLED
                 if execution.status is ManualExecutionStatus.CANCELLED
-                else task_work_status(items)
+                else PersistentTaskStatus.COMPLETED
             )
             updated = self._with_counts(self._with_status(task, status, now, execution.error))
             try:
@@ -591,15 +607,22 @@ class ManualTaskEngineWorker:
         return self._settle_automatic(claim)
 
     def _settle_finished_unknown_pass(self, claim) -> PersistentTask | None:
-        """Settle one raised pass whose recorded outcomes are already final.
+        """Settle one raised pass whose marked attempt has technically ended.
 
-        Returns ``None`` when the boundary is still unproved (the marker did not
-        name a terminal item with its own Result, or machine work remains): the
-        caller then keeps the claim, the marker and the slot for inspection.
+        The runner raised, so every call of this round — including the one that
+        entered a Storage mutation — has returned.  The marked item's attempt is
+        therefore technically ended even when it never published a Result: the
+        shared settlement retires that ended attempt (a bounded technical-stop
+        outcome with unknown-effect evidence, never a fabricated Result) and
+        then publishes the flow aggregate.
+
+        Returns ``None`` only when the boundary is still unproved (genuine
+        machine work remains beside the marker): the caller then keeps the
+        claim, the marker and the slot for inspection, exactly as before.
         """
 
         try:
-            settled = self._settle_automatic(claim)
+            settled = self._settle_automatic(claim, retire_ended_attempt=True)
         except Exception:  # noqa: BLE001 - the caller keeps the unproved boundary
             return None
         state = self._scheduling.state(claim.task_id)
@@ -607,13 +630,15 @@ class ManualTaskEngineWorker:
             return None
         return settled
 
-    def _settle_automatic(self, claim) -> PersistentTask:
-        """Publish the honest aggregate of one finished automatic pass.
+    def _settle_automatic(self, claim, *, retire_ended_attempt: bool = False) -> PersistentTask:
+        """Publish the honest flow outcome of one finished automatic pass.
 
-        Every concrete source is settled independently: a four-type waiting
-        source returns the whole Task to human waiting (zero slots) while a
-        still-processing sibling keeps the slot, and completed/failed/ignored
-        siblings remain their own durable outcomes.
+        The flow decision is the one shared settlement rule (Slice 48 RO-1): a
+        four-type waiting source returns the whole Task to human waiting (zero
+        slots) while a still-processing sibling keeps the slot, and otherwise
+        the finished round completes — regardless of the files' own success,
+        failure, skip, ignore, unknown-effect or missing-Result facts, which
+        stay on their own records.
         """
 
         # The runner's last real call may have been long; renew this exact
@@ -626,6 +651,13 @@ class ManualTaskEngineWorker:
         task = self._task(claim.task_id)
         now = self._clock()
         items = self._repository.list_items(task.task_id)
+        if retire_ended_attempt and state is not None and state.mutation_item_id is not None:
+            # The pass raised, so the marked attempt's call has returned: retire
+            # that ended technical attempt under the live claim before any
+            # population check.  A missing Result never blocks this closure,
+            # never manufactures a Result, and never holds the slot by itself.
+            self._retire_ended_attempt(claim, state.mutation_item_id, now)
+            items = self._repository.list_items(task.task_id)
         machine = tuple(
             value
             for value in items
@@ -666,12 +698,30 @@ class ManualTaskEngineWorker:
                     return self._task(claim.task_id)
                 raise
             return self._task(claim.task_id)
-        status = task_work_status(items) if items else PersistentTaskStatus.COMPLETED
+        if retire_ended_attempt and state is not None and state.mutation_item_id is not None:
+            items = self._repository.list_items(task.task_id)
+        # Slice 48 RO-1: the flow completed because this round ended and no
+        # machine/human work remains.  The files' own facts — success, partial,
+        # failure, skip, ignore, unknown effects, missing Results — stay on
+        # their own items/Results and are never read back as the flow outcome.
+        decision = settle_task_flow(
+            TaskFlowSettlementInputs(
+                ended_this_round=True,
+                machine_work_remaining=False,
+                human_decision_pending=False,
+                live_local_call=False,
+                scope_proven_complete=True,
+                orchestration_error=None,
+                acknowledged_cancellation=False,
+            )
+        )
+        status = decision.status
         error = task.error
         # Slice 47 RO-6: the pass's history-gate items are not organized media.
         # A pass that only excluded (or fail-closed its history reads) is an
-        # honest "nothing was processed because of recorded history", never a
-        # healthy completed run — and its own reason stays visible.
+        # honest "nothing was processed because of recorded history" completion
+        # with its own bounded reason — never a fabricated success and never a
+        # flow failure: the scope itself was read completely.
         gated = tuple(value for value in items if value.stage in NON_ORGANIZING_ITEM_STAGES)
         if gated:
             excluded = sum(value.stage == "history_excluded" for value in gated)
@@ -686,8 +736,6 @@ class ManualTaskEngineWorker:
                     else ""
                 )
             )
-            if status is PersistentTaskStatus.COMPLETED:
-                status = PersistentTaskStatus.PARTIAL_SUCCESS
             error = f"{error}; {summary}" if error else summary
         updated = self._with_counts(self._with_status(task, status, now, error))
         try:
@@ -697,11 +745,12 @@ class ManualTaskEngineWorker:
                 items=items,
                 now=now,
                 initial_execution_stage=status.value,
-                # Every file of this pass already recorded its own outcome and
-                # all of the pass's calls returned: a recorded unknown effect is
-                # history, so the Task gives its one slot back instead of
-                # keeping it until someone re-organizes a file.  The Result,
-                # its unknown effects and the completed steps stay untouched.
+                # Every file of this pass already recorded its own outcome (or
+                # its ended attempt was retired above) and all of the pass's
+                # calls returned: a recorded unknown effect is history, so the
+                # Task gives its one slot back instead of keeping it until
+                # someone re-organizes a file.  The Result, its unknown effects
+                # and the completed steps stay untouched.
                 close_recorded_unknown_boundary=True,
             )
         except TaskControlRejected:
@@ -709,6 +758,33 @@ class ManualTaskEngineWorker:
                 return self._task(claim.task_id)
             raise
         return self._task(claim.task_id)
+
+    def _retire_ended_attempt(self, claim, item_id: str, now: datetime) -> None:
+        """Retire one technically ended attempt that never published a Result.
+
+        The pass that owned the marked mutation boundary raised, so its call has
+        returned: the attempt is closed as a bounded technical stop with unknown
+        effect evidence.  The row keeps the Task's durable attempt count and any
+        previously recorded identity; no Result is manufactured and the
+        non-replay protection stays with the recorded evidence.  A row that has
+        already recorded its own terminal outcome (or that is waiting for a
+        human) is left exactly as it is.
+        """
+
+        item = self._repository.get_item(item_id)
+        if item is None or item.task_id != claim.task_id:
+            return
+        if item.status not in {TaskItemStatus.PENDING, TaskItemStatus.PROCESSING}:
+            return
+        retired = replace(
+            item,
+            status=TaskItemStatus.FAILED,
+            stage="technical_stop",
+            updated_at=now,
+            error=TECHNICAL_STOP_ITEM_ERROR,
+            progress=None,
+        )
+        self._scheduling.record_item(claim, retired, now=now)
 
     def _settle_pending_control(self, claim) -> PersistentTask:
         """Settle one accepted control at the owner's safe boundary.
@@ -967,7 +1043,10 @@ class ManualTaskEngineWorker:
             DiscoveryStatus.RUNNING: PersistentTaskStatus.RUNNING,
             DiscoveryStatus.WAITING_STABILITY: PersistentTaskStatus.RUNNING,
             DiscoveryStatus.ANALYZING: PersistentTaskStatus.RUNNING,
-            DiscoveryStatus.PAUSED: PersistentTaskStatus.PAUSED,
+            # Pause stays retired (Slice 48 RO-1): a historically paused
+            # discovery row is unfinished flow work, never a current paused
+            # Task aggregate value.
+            DiscoveryStatus.PAUSED: PersistentTaskStatus.RUNNING,
             DiscoveryStatus.COMPLETED: PersistentTaskStatus.RUNNING,
             DiscoveryStatus.PARTIAL_SUCCESS: PersistentTaskStatus.RUNNING,
             DiscoveryStatus.FAILED: PersistentTaskStatus.FAILED,
@@ -1004,7 +1083,6 @@ class ManualTaskEngineWorker:
     ) -> PersistentTask:
         terminal = status in {
             PersistentTaskStatus.COMPLETED,
-            PersistentTaskStatus.PARTIAL_SUCCESS,
             PersistentTaskStatus.FAILED,
             PersistentTaskStatus.CANCELLED,
         }

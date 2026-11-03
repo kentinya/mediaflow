@@ -609,7 +609,7 @@ class EntranceRecoveryJourneyTests(unittest.TestCase):
             (first_task,) = value.repository.list_tasks()
             (first_item,) = value.repository.list_items(first_task.task_id)
             (first_result,) = value.repository.list_results(first_task.task_id)
-            self.assertEqual("failed", first_task.status.value, first_task.error)
+            self.assertEqual("completed", first_task.status.value, first_task.error)
             self.assertEqual("partial", first_item.status.value)
             self.assertEqual("failed", first_item.stage)
             self.assertTrue(first_item.error)
@@ -650,7 +650,9 @@ class EntranceRecoveryJourneyTests(unittest.TestCase):
 
             # Same-version reopen keeps the honest A/B endings and capacity.
             with SQLiteTaskRepository(value.runtime.database_path) as reopened:
-                self.assertEqual("failed", reopened.get_task(first_task.task_id).status.value)
+                # Slice 48: the partial file outcome is a file fact; the flow
+                # value stays completed across the reopen.
+                self.assertEqual("completed", reopened.get_task(first_task.task_id).status.value)
                 self.assertEqual((first_item,), reopened.list_items(first_task.task_id))
                 self.assertEqual((first_result,), reopened.list_results(first_task.task_id))
                 self.assertEqual(
@@ -690,7 +692,7 @@ class EntranceRecoveryJourneyTests(unittest.TestCase):
             self.assertIn("PARTIAL", output)
             self.assertIn("SUCCESS", output)
             (task,) = value.repository.list_tasks()
-            self.assertEqual("partial_success", task.status.value, task.error)
+            self.assertEqual("completed", task.status.value, task.error)
             items = {
                 Path(item.source_path).name: item
                 for item in value.repository.list_items(task.task_id)
@@ -757,7 +759,7 @@ class EntranceRecoveryJourneyTests(unittest.TestCase):
             self.assertIn("PARTIAL", output)
             self.assertIn("SUCCESS", output)
             (task,) = value.repository.list_tasks()
-            self.assertEqual("partial_success", task.status.value, task.error)
+            self.assertEqual("completed", task.status.value, task.error)
             items = {
                 Path(item.source_path).name: item
                 for item in value.repository.list_items(task.task_id)
@@ -1087,7 +1089,7 @@ class EntranceRecoveryJourneyTests(unittest.TestCase):
             (failed_task,) = value.repository.list_tasks()
             (failed_item,) = value.repository.list_items(failed_task.task_id)
             self.assertEqual("failed", failed_item.status.value, failed_item)
-            self.assertEqual("failed", failed_task.status.value, failed_task)
+            self.assertEqual("completed", failed_task.status.value, failed_task)
             (failed_result,) = value.repository.list_results(failed_task.task_id)
             self.assertTrue(source.exists())
 

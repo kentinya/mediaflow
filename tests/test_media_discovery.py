@@ -1736,7 +1736,9 @@ class AdmissionAndScopeTests(_DiscoveryFixture):
             value.repository.request_task_pause(paused.task_id, value.discovery._clock())
             coordinator.acknowledge_pause(paused.task_id)
             current = value.repository.get_task(paused.task_id)
-            self.assertEqual("paused", current.status.value)
+            # Slice 48 RO-1: the retired pause keeps the flow value running;
+            # the ancestor TaskItem really is unfinished work of that source.
+            self.assertEqual("running", current.status.value)
             # The ancestor TaskItem really is unfinished work of that source.
             self.assertIsNotNone(
                 value.repository.find_owned_source_work(

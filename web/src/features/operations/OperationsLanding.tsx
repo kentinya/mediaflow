@@ -1081,9 +1081,29 @@ function RunTable({
                   )}
                   {ended && (
                     <td>
-                      已处理 {run.processedItems ?? "不可用"} /{" "}
-                      {run.totalItems ?? "不可用"} 项；失败{" "}
-                      {run.failedItems ?? "不可用"} 项
+                      {run.status === "cancelled"
+                        ? "已取消；已完成项保留"
+                        : run.totalItems === 0
+                          ? "没有需要处理的文件"
+                          : (() => {
+                              const parts: string[] = [];
+                              if (run.successItems)
+                                parts.push(`成功 ${run.successItems}`);
+                              if (run.partialItems)
+                                parts.push(`部分成功 ${run.partialItems}`);
+                              if (run.failedItems)
+                                parts.push(`失败 ${run.failedItems}`);
+                              if (!parts.length) {
+                                parts.push(
+                                  `已处理 ${run.processedItems ?? 0} / ${run.totalItems ?? "不可用"} 项`,
+                                );
+                              }
+                              return parts.join("，");
+                            })()}
+                      {(run.uncertainEffectItems ?? 0) > 0 &&
+                        "；有文件效果尚不清楚"}
+                      {(run.missingResultItems ?? 0) > 0 &&
+                        "；有文件结果未记录"}
                     </td>
                   )}
                   {recovery && <td>{RECOVERY_VIEW_EXPLANATIONS[view]}</td>}
@@ -2010,21 +2030,13 @@ function RunDetailFacts({
         <div>
           <dt>条目</dt>
           <dd>
-            共 {run.totalItems}；已完成 {run.completedItems ?? 0}；失败{" "}
+            共 {run.totalItems}；已处理 {run.completedItems ?? 0}；失败{" "}
             {run.failedItems ?? 0}
             {run.status === "running" &&
-              "（完成数是已知持久事实，不代表最终整理成功）"}
+              "（已处理数是已结束的处理项，不代表整理成功）"}
           </dd>
         </div>
       )}
-      {run.totalItems !== null &&
-        (run.failedItems ?? 0) > run.totalItems - (run.completedItems ?? 0) && (
-          <div>
-            <dt>失败计数说明</dt>
-            {/* Display only: recorded counts are never rewritten. */}
-            <dd>失败数包含独立扫描错误,可能超过条目总数</dd>
-          </div>
-        )}
       {run.workerId !== null && (
         <div>
           <dt>Worker</dt>

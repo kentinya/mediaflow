@@ -288,29 +288,22 @@ _TRANSFER_AGGREGATE_STATUS = {
     "UNCERTAIN": FilesTransferStatus.FAILED,
 }
 
-_TASK_AGGREGATE_STATUS = {
-    "SUCCESS": PersistentTaskStatus.COMPLETED,
-    "SKIPPED": PersistentTaskStatus.COMPLETED,
-    "PARTIAL": PersistentTaskStatus.PARTIAL_SUCCESS,
-    "FAILED": PersistentTaskStatus.FAILED,
-    "UNCERTAIN": PersistentTaskStatus.FAILED,
-}
-
-#: The inverse of ``_TASK_AGGREGATE_STATUS``: the canonical aggregate a durable
-#: Task status describes.  The uncertain aggregate is stored as FAILED with the
-#: bounded ``mutation_outcome`` marker, so the transfer row itself is derived
-#: from ``task.error`` rather than from the row status alone.
-_TASK_STATUS_AGGREGATE = {
-    PersistentTaskStatus.COMPLETED: "SUCCESS",
-    PersistentTaskStatus.PARTIAL_SUCCESS: "PARTIAL",
-    PersistentTaskStatus.FAILED: "FAILED",
-    PersistentTaskStatus.CANCELLED: "FAILED",
-    PersistentTaskStatus.PENDING: "FAILED",
-    PersistentTaskStatus.RUNNING: "FAILED",
-    PersistentTaskStatus.PAUSED: "FAILED",
-}
+#: Slice 48 RO-1/RO-2: the transfer Task's *flow* outcome never reclassifies a
+#: file aggregate.  A Copy/Move transfer whose calls all returned closes its
+#: flow as ``completed`` — the per-item/aggregate operation result (SUCCESS,
+#: PARTIAL, FAILED, UNCERTAIN) stays on the transfer row and the item/Result
+#: evidence.  Only the acknowledged-cancellation and Task-own (corrupt pinned
+#: authority) boundaries produce another flow value, at their own call sites.
+_TASK_FLOW_STATUS = PersistentTaskStatus.COMPLETED
 
 _TERMINAL_STATUSES = TERMINAL_RESULT_STATUSES
+
+#: The per-item signal values that count as an *ended* processing attempt for
+#: the Task aggregate's progress counts (Slice 48 RO-3): every terminal signal,
+#: not only the successful ones.
+_ENDED_SIGNAL_STATUSES = frozenset(
+    {"SUCCESS", "SKIPPED", "DRY_RUN", "FAILED", "PARTIAL", "CANCELLED"}
+)
 
 #: The one read-only interpretation of durable direct-file work is shared with
 #: the per-library local status read (``direct_file_effects``), so a paused or
@@ -942,14 +935,19 @@ class DirectFileTransferService:
         else:
             current = repository.require_files_transfer(transfer.transfer_id)
             task = repository.get_task(task_id)
-            # The durable transfer row repeats exactly the aggregate the Task
-            # row already carries, so no surface can disagree about completion.
-            uncertain = task is not None and task.error == "mutation_outcome"
-            aggregate = _TASK_STATUS_AGGREGATE.get(
-                task.status if task is not None else PersistentTaskStatus.FAILED,
-                "FAILED",
+            # Slice 48 RO-3: the durable transfer row repeats exactly the
+            # aggregate the item/Result evidence proves — never a value read
+            # back out of the Task flow status (a completed flow with failed
+            # files must still read PARTIAL/FAILED/UNCERTAIN here).
+            items = repository.list_items(task_id)
+            records = {record.item_id: record for record in repository.list_results(task_id)}
+            signals = [_terminal_item_signal(item, records.get(item.item_id)) for item in items]
+            aggregate = _precedence_status(
+                {signal[0] for signal in signals},
+                known_mutation=any(signal[1] for signal in signals),
+                uncertain=any(signal[2] for signal in signals),
             )
-            if uncertain:
+            if task is not None and task.error == "mutation_outcome":
                 aggregate = "UNCERTAIN"
             transfer_status = _TRANSFER_AGGREGATE_STATUS.get(aggregate, FilesTransferStatus.FAILED)
             terminal = replace(
@@ -957,7 +955,7 @@ class DirectFileTransferService:
                 status=transfer_status,
                 error=(
                     "mutation_outcome"
-                    if uncertain
+                    if aggregate == "UNCERTAIN"
                     else current.error
                     if transfer_status is not FilesTransferStatus.COMPLETED
                     else None
@@ -967,7 +965,7 @@ class DirectFileTransferService:
                     "destination may both exist; MediaFlow did not retry it — refresh "
                     "both directories, inspect the files and choose an explicit "
                     "follow-up"
-                    if uncertain
+                    if aggregate == "UNCERTAIN"
                     else None
                 ),
                 completed_at=datetime.now(UTC),
@@ -1904,7 +1902,9 @@ class DirectFileTransferService:
         known_mutation = any(signal[1] for signal in signals)
         aggregate = _precedence_status(statuses, known_mutation=known_mutation, uncertain=uncertain)
         status = _TRANSFER_AGGREGATE_STATUS.get(aggregate, FilesTransferStatus.FAILED)
-        completed = sum(signal[0] in {"SUCCESS", "SKIPPED", "DRY_RUN"} for signal in signals)
+        # Slice 48 RO-3: the aggregate counts each ended item once; ``failed``
+        # stays the recorded file-failure count (a subset of the ended items).
+        completed = sum(signal[0] in _ENDED_SIGNAL_STATUSES for signal in signals)
         failed = sum(signal[0] in {"FAILED", "PARTIAL"} for signal in signals)
         terminal_task = None
         task = repository.get_task(transfer.task_id)
@@ -1914,9 +1914,22 @@ class DirectFileTransferService:
             PersistentTaskStatus.FAILED,
             PersistentTaskStatus.CANCELLED,
         }:
+            # Slice 48 RO-2: a transfer that converged after a file-level
+            # execution failure still closed its flow — the per-item outcomes
+            # and the bounded error carry the facts.  Only a Task-own boundary
+            # is a flow failure: a corrupt/unlawful pinned authority, or a
+            # claimed transfer whose execution machinery failed before any item
+            # ever started (no attempt was consumed, so the flow itself could
+            # not run).
+            started = any(item.attempts for item in items)
+            flow_status = (
+                PersistentTaskStatus.FAILED
+                if code == "files_transfer_invalid_authority" or not started
+                else _TASK_FLOW_STATUS
+            )
             terminal_task = replace(
                 task,
-                status=_TASK_AGGREGATE_STATUS.get(aggregate, PersistentTaskStatus.FAILED),
+                status=flow_status,
                 updated_at=now,
                 completed_at=now,
                 total_items=len(items),
@@ -2111,11 +2124,15 @@ class DirectFileTransferService:
             return aggregate
         if task.status is PersistentTaskStatus.CANCELLED:
             return aggregate
-        completed = sum(signal[0] in {"SUCCESS", "SKIPPED", "DRY_RUN"} for signal in signals)
+        # Slice 48 RO-3: the aggregate counts every ended item once; a recorded
+        # failure is ended work, never a flow failure.
+        completed = sum(signal[0] in _ENDED_SIGNAL_STATUSES for signal in signals)
         failed = sum(signal[0] in {"FAILED", "PARTIAL"} for signal in signals)
         final = replace(
             task,
-            status=_TASK_AGGREGATE_STATUS.get(aggregate, PersistentTaskStatus.FAILED),
+            # Slice 48 RO-2: the flow completed — the per-item operation
+            # aggregate stays on the transfer row and item/Result evidence.
+            status=_TASK_FLOW_STATUS,
             updated_at=now,
             completed_at=now,
             total_items=len(items),

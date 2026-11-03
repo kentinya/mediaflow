@@ -9,6 +9,10 @@ from mediaflow.application.media_organizer import (
     MediaOrganizerBatchResult,
     MediaOrganizerItemResult,
 )
+from mediaflow.application.task_flow_settlement import (
+    TaskFlowSettlementInputs,
+    settle_task_flow,
+)
 from mediaflow.domain.media_evidence import PipelineEvidence
 from mediaflow.domain.organizer import (
     ExecutionEffectCertainty,
@@ -17,6 +21,7 @@ from mediaflow.domain.organizer import (
     OrganizePolicy,
 )
 from mediaflow.domain.task_persistence import (
+    SETTLED_ITEM_STATUSES,
     FileOperationLockRepository,
     PersistentResultRecord,
     PersistentTask,
@@ -466,12 +471,25 @@ class PersistentTaskCoordinator:
         The queued state is only an admission state: the resident Worker later
         publishes the running boundary under its own claim fence.  No Storage
         work happens inside the caller's request.
+
+        Slice 48 RO-1: ``paused`` is a retired aggregate value, so an
+        acknowledged pause keeps the flow value ``running`` while the items
+        record their suspended state.  Re-admission is therefore legal for the
+        legacy ``paused`` rows *and* for a running Task whose every item is
+        suspended or settled — a genuinely processing item still means the
+        Worker owns live work and is never re-queued beneath it.
         """
 
         task = self.require(task_id)
         if task.status is PersistentTaskStatus.PENDING:
             return task
-        if task.status is not PersistentTaskStatus.PAUSED:
+        if task.status is PersistentTaskStatus.PAUSED:
+            pass  # A legacy row keeps its honest recorded value.
+        elif task.status is PersistentTaskStatus.RUNNING:
+            items = self.repository.list_items(task_id)
+            if any(item.status is TaskItemStatus.PROCESSING for item in items):
+                raise ValueError("only a paused task can be re-queued")
+        else:
             raise ValueError("only a paused task can be re-queued")
         now = datetime.now(UTC)
         queued = replace(
@@ -503,6 +521,7 @@ class PersistentTaskCoordinator:
     def acknowledge_pause(self, task_id: str) -> PersistentTask:
         task = self.require(task_id)
         if task.status is PersistentTaskStatus.PAUSED:
+            # A legacy row keeps its honest recorded value; nothing is re-written.
             return task
         if task.status is not PersistentTaskStatus.RUNNING or not task.pause_requested:
             raise ValueError("only a running task with a pause request can be paused")
@@ -518,9 +537,12 @@ class PersistentTaskCoordinator:
                         error=None,
                     )
                 )
+        # Slice 48 RO-1: ``paused`` is a retired aggregate value.  The
+        # suspended flow is unfinished work, so the acknowledged pause keeps
+        # the Task ``running`` while the items record their suspended state.
         paused = replace(
             task,
-            status=PersistentTaskStatus.PAUSED,
+            status=PersistentTaskStatus.RUNNING,
             updated_at=now,
             completed_at=None,
             error=None,
@@ -951,28 +973,37 @@ class PersistentTaskCoordinator:
             TaskItemStatus.WAITING_CLASSIFICATION,
         }
         waiting = sum(item.status in waiting_statuses for item in items)
-        ignored = sum(item.status is TaskItemStatus.IGNORED for item in items)
-        completed = sum(
-            not item.status.retryable
-            and item.status not in waiting_statuses
-            and item.status is not TaskItemStatus.IGNORED
-            for item in items
+        machine = sum(
+            item.status in {TaskItemStatus.PENDING, TaskItemStatus.PROCESSING} for item in items
         )
-        status = (
-            PersistentTaskStatus.PARTIAL_SUCCESS
-            if waiting or ignored or (failed and completed)
-            else PersistentTaskStatus.FAILED
-            if failed or batch.scan_errors
-            else PersistentTaskStatus.COMPLETED
+        # Slice 48 RO-3: ``completed_items`` counts ended processing attempts —
+        # never only the successful files.  Failures, partial results, skips,
+        # ignores and individual cancellations are ended work of this Task.
+        ended = sum(item.status in SETTLED_ITEM_STATUSES for item in items)
+        # The flow decision is the one shared settlement rule: the batch call
+        # returned, so this round ended; file outcomes (including scan errors,
+        # which are file-local scan failures on entrances that tolerate a
+        # partial scope) never become the flow outcome.  Only genuinely
+        # remaining machine/human work keeps the flow unfinished.
+        decision = settle_task_flow(
+            TaskFlowSettlementInputs(
+                ended_this_round=True,
+                machine_work_remaining=bool(machine),
+                human_decision_pending=bool(waiting),
+                live_local_call=False,
+                scope_proven_complete=True,
+                orchestration_error=None,
+                acknowledged_cancellation=False,
+            )
         )
         now = datetime.now(UTC)
         final = replace(
             task,
-            status=status,
+            status=decision.status,
             updated_at=now,
-            completed_at=now,
+            completed_at=now if decision.terminal else None,
             total_items=len(items),
-            completed_items=completed,
+            completed_items=ended,
             failed_items=failed + len(batch.scan_errors),
             error="scan errors occurred" if batch.scan_errors else None,
         )

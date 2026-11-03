@@ -998,9 +998,14 @@ class TaskSchedulingService:
                 for item in items
                 if item.status in _PAUSABLE_ITEM_STATUSES
             )
+            # Slice 48 RO-1: ``paused`` is a retired aggregate value — the
+            # suspended flow is unfinished work, so the Task stays ``running``
+            # while the queue row carries the pause eligibility.  No current
+            # producer writes the retired value; a historical row keeps its
+            # honest recorded state.
             settled = replace(
                 task,
-                status=PersistentTaskStatus.PAUSED,
+                status=PersistentTaskStatus.RUNNING,
                 updated_at=now,
                 completed_at=None,
                 error=None,

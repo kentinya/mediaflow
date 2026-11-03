@@ -174,13 +174,40 @@ TRANSFER_MUTATION_IN_FLIGHT = "mutation_in_flight"
 
 
 class PersistentTaskStatus(StrEnum):
+    """The durable Task aggregate lifecycle (Slice 48 RO-1).
+
+    The current flow statuses are exactly ``pending`` / ``running`` /
+    ``completed`` / ``failed`` / ``cancelled``.  They describe whether the Task
+    *flow* finished — never whether its files succeeded.  ``partial_success``
+    and ``paused`` are retired: current producers never write them and no
+    reader may present them as a current flow outcome.  A historical row that
+    still carries one keeps its honest recorded value as read-only evidence;
+    no migration relabels it.
+    """
+
     PENDING = "pending"
     RUNNING = "running"
     COMPLETED = "completed"
+    #: Retired aggregate value (Slice 48 RO-1): legacy rows only, never written
+    #: or advertised as a current flow status by current producers.
     PARTIAL_SUCCESS = "partial_success"
     FAILED = "failed"
     CANCELLED = "cancelled"
+    #: Retired aggregate value (Slice 48 RO-1): legacy rows only.  Pause stays
+    #: retired; no current producer re-enters it.
     PAUSED = "paused"
+
+
+#: The five current flow statuses (module-level so the StrEnum stays pure).
+TASK_FLOW_STATUSES = frozenset(
+    {
+        PersistentTaskStatus.PENDING,
+        PersistentTaskStatus.RUNNING,
+        PersistentTaskStatus.COMPLETED,
+        PersistentTaskStatus.FAILED,
+        PersistentTaskStatus.CANCELLED,
+    }
+)
 
 
 class TaskItemStatus(StrEnum):
@@ -300,7 +327,7 @@ def history_excluded_item_reason(status: str) -> str:
 
 
 def task_item_counts(items) -> tuple[int, int, int]:
-    """``(total, completed, failed)`` over one Task's durable concrete sources.
+    """``(total, ended, failed)`` over one Task's durable concrete sources.
 
     Slice 47 lets one admitted organizing Task own more than one explicitly
     confirmed execution.  The Task's own totals therefore describe the *whole*
@@ -308,22 +335,35 @@ def task_item_counts(items) -> tuple[int, int, int]:
     confirmation of another subset can neither shrink the total to that subset
     nor reset an earlier sibling's recorded outcome.  Attempts, attachments and
     Results are deliberately not counted here: one source is one file.
+
+    Slice 48 RO-3 separates processing progress from file success: the middle
+    value counts every source whose own attempt has *ended* (a recorded
+    outcome of any kind, including a failure, a partial result, a deliberate
+    skip/ignore/cancel and a technically ended attempt) — never only the
+    successful ones.  Finishing every admitted file can therefore reach the
+    full total while files still failed.  ``failed`` stays the count of
+    recorded file failures/partial outcomes; it is a subset of ``ended``.
     """
 
     values = tuple(items)
-    completed = sum(item.status in COMPLETED_ITEM_STATUSES for item in values)
+    ended = sum(item.status in SETTLED_ITEM_STATUSES for item in values)
     failed = sum(item.status in FAILED_ITEM_STATUSES for item in values)
-    return (len(values), completed, failed)
+    return (len(values), ended, failed)
 
 
 def task_work_status(items) -> PersistentTaskStatus:
-    """The aggregate status one Task's whole durable source population implies.
+    """The flow status one Task's whole durable source population implies.
 
-    Any source that has not recorded its own settled outcome still owes work, so
-    the Task is ``running``; a partly finished Task never advertises completion.
-    Once every source is settled the Task sums those independent outcomes, so a
-    later successful execution cannot erase an earlier failure and a deliberate
-    cancellation/ignored sibling cannot be presented as success.
+    Slice 48 RO-1: file outcomes never become the Task's flow outcome.  Any
+    source that has not recorded its own settled outcome still owes work, so
+    the Task is ``running``; once every source is settled the flow completed —
+    including when files failed, partially succeeded, were skipped, ignored or
+    individually cancelled.  A cancelled file population never derives a
+    cancelled Task, and a failed file population never derives a failed Task:
+    those flow outcomes require their own boundaries (an acknowledged Task
+    cancellation or a Task-own orchestration/scope failure), which the
+    settlement boundaries apply through
+    :func:`mediaflow.application.task_flow_settlement.settle_task_flow`.
     """
 
     values = tuple(items)
@@ -331,15 +371,6 @@ def task_work_status(items) -> PersistentTaskStatus:
         return PersistentTaskStatus.RUNNING
     if any(item.status not in SETTLED_ITEM_STATUSES for item in values):
         return PersistentTaskStatus.RUNNING
-    _total, _completed, failed = task_item_counts(values)
-    if failed == len(values):
-        return PersistentTaskStatus.FAILED
-    if failed or any(item.status is TaskItemStatus.IGNORED for item in values):
-        return PersistentTaskStatus.PARTIAL_SUCCESS
-    if all(item.status is TaskItemStatus.CANCELLED for item in values):
-        return PersistentTaskStatus.CANCELLED
-    if any(item.status is TaskItemStatus.CANCELLED for item in values):
-        return PersistentTaskStatus.PARTIAL_SUCCESS
     return PersistentTaskStatus.COMPLETED
 
 

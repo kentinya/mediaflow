@@ -140,8 +140,9 @@ class ManualIgnoreBatchTests(unittest.TestCase):
                         )
                 self.assertEqual(coordinator.retryable_items(task.task_id, failed_only=False), ())
                 summary = coordinator.finish(task.task_id, MediaOrganizerBatchResult(()))
-                self.assertEqual(summary.status, PersistentTaskStatus.PARTIAL_SUCCESS)
-                self.assertEqual(summary.completed_items, 0)
+                self.assertEqual(summary.status, PersistentTaskStatus.COMPLETED)
+                # Slice 48 RO-3: every ignored item is ended progress.
+                self.assertEqual(summary.completed_items, 3)
                 self.assertEqual(repository.schema_version, SCHEMA_VERSION)
 
     def test_limit_and_task_filter_select_only_selected_candidates(self) -> None:

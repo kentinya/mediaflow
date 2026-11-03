@@ -127,8 +127,10 @@ class ManualIgnoreTests(unittest.TestCase):
                         coordinator.retryable_items(task.task_id, failed_only=False), ()
                     )
                     summary = coordinator.finish(task.task_id, MediaOrganizerBatchResult(()))
-                    self.assertEqual(summary.status, PersistentTaskStatus.PARTIAL_SUCCESS)
-                    self.assertEqual(summary.completed_items, 0)
+                    # Slice 48 RO-1/RO-3: the ignored item is a settled file
+                    # fact; the flow completed and the ended count includes it.
+                    self.assertEqual(summary.status, PersistentTaskStatus.COMPLETED)
+                    self.assertEqual(summary.completed_items, 1)
                     with self.assertRaises(ValueError):
                         self._service(repository).ignore(
                             task.task_id, item.item_id, actor="operator"

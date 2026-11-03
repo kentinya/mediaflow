@@ -308,7 +308,9 @@ export function AutomationDefinitionRow({
 }
 
 const RECORD_RESULT_LABELS: Readonly<Record<string, string>> = {
-  completed: "成功",
+  // Slice 48 RO-4: a record's outcome is the Task flow status — "已完成"
+  // says the flow ended, never that every file succeeded.
+  completed: "已完成",
   partial_success: "部分成功",
   failed: "失败",
   cancelled: "已取消",

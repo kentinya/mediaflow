@@ -13,7 +13,7 @@ Authority: committed [Slice48](SLICE.md) RO-1–3，以及 RO-4 中执行记录�
 Task ID: 48.1
 Task Type: SLICE
 Parent Slice: 48
-Status: PLANNED
+Status: IN PROGRESS
 Task Base: 4f11762d617d50555f3b106357e8f41988f7c2f9
 Difficulty: High
 Test Level: T4
@@ -276,8 +276,70 @@ npm run test:e2e -- --config=playwright.direct-files.python.config.ts tests/e2e/
 
 ### Developer completion report
 
-NOT STARTED。完成实现后，填写实际检查点、READY FOR B REVIEW、改动和关键选择、
-受影响测试命令/结果、已知风险和本 Task 剩余工作；完整验收留给 B，不自批 PASS。
+READY FOR B REVIEW。Developer 按本 Task 范围实现并交出一个检查点（即本提交，分支 `main`）。
+
+**改动与关键选择**
+
+1. **共享结算规则**（新增 `mediaflow/application/task_flow_settlement.py`）：
+   `settle_task_flow` 以边界事实（本轮是否结束、是否仍有机器/人工工作、本地调用是否仍在执行、
+   范围是否可证完整、Task 自身编排错误、已确认取消）推导五状态之一，优先级为
+   取消 > 流程失败/范围不完整 > 未结束（running）> completed。文件结果不再是输入。
+2. **领域层**：`PersistentTaskStatus` 标注 five-state 语义（`partial_success`/`paused`
+   仅限历史行诚实读取）；`task_work_status` 重写为“全部 settle 即 completed”，
+   取消文件/全部失败不再推导取消/失败 Task；`task_item_counts` 的中间值改为
+   **已结束处理项数**（含失败/部分/跳过/忽略/单项取消），`failed_items` 保持为其中
+   的文件失败子集（Task `completed_items` 语义同步更新，Web 解码/展示跟随）。
+3. **生产者接入**：`manual_task_engine`（自动通道用共享规则结算；历史门排除通过改为
+   completed+原因；discovery 暂停映射为 running）、`task_runtime.finish`（等待人工则
+   保持 running；文件混合/全败完成收尾）、`manual_organize_execution._task_after_item`
+   （终态即 completed）、`final_cli._settle_direct_organize`、调度内核暂停确认
+   （Task 聚合不再写 paused，队列行保留暂停资格；`coordinator.requeue` 接受新表示）。
+4. **技术结束与围栏**：`_recorded_unknown_boundary_is_finished_locked` 不再要求
+   Result 存在（仅限当前 owner 在本轮返回后收尾；真正 processing 兄弟仍拒释放）；
+   自动通道 runner 抛出且带 mutation 标记时，`_settle_finished_unknown_pass` 先按
+   围栏退休该已结束尝试（item FAILED/`technical_stop`，错误文本声明结果未记录、
+   效果未知，不制造 Result），随后按共享规则收尾 completed。
+5. **普通文件操作**：传输 Task 流程终态一律 completed（文件聚合留在传输行与
+   item/Result 证据）；仅 corrupt pinned authority（`files_transfer_invalid_authority`）
+   与 Worker 启动即失败（无 item 启动）判为流程失败；传输行/投影的 SUCCESS/PARTIAL/
+   FAILED/UNCERTAIN 全部改从 item/Result 证据推导；Delete 投影同理；Files 暂停
+   （已退役）改从传输行读取暂停状态。
+6. **读回**：`_automation_record_query_document` 的 record_outcome 改为当前 Task
+   流程状态（cancelled 为独立值，legacy partial_success→failed、paused→paused
+   保留历史诚实标签），新增 per-file 证据列（success/partial/failed_status/
+   missing_result）；运行清单新增 `success_items/partial_items/uncertain_effect_items/
+   missing_result_items`；“无工作完成”要求 total_items==0；记录展示与 statement
+   按流程+文件事实重写（页面短句，无技术词汇）；通知映射注释更新（映射本身兼容）。
+7. **Web**：`task.ts`/`run.ts`/`automation.ts` 计数校验改为 failed⊆ended、
+   completed+0 成功合法、记录筛选新增/标注 cancelled；已结束列表结果摘要
+   显示“成功 X，部分成功 Y，失败 Z”及未知效果/缺结果提醒；记录徽章“已完成”；
+   Dashboard/详情/弹窗跟随既有证据读取，未新增页面/列/控件。
+
+**受影响测试（实际执行）**
+
+- 新增 `tests/test_task_flow_status.py`（21 例）：规则表、聚合推导、真实 SQLite+
+  内核+引擎的自动通道场景表、技术结束缺 Result 收尾、取消胜过收尾、流程失败反例。
+- 更新 19 个既有测试模块中按本 Task 明确变化的断言（文件失败/部分/忽略/历史门/
+  不确定效果改为流程 completed；等待人工保持 running；暂停聚合为 running+
+  队列/条目暂停；传输 Task 流程 completed；记录口径）。
+- `.venv/bin/python -m unittest discover -s tests`：**2568 通过，7 skip，0 失败**。
+- `.venv/bin/ruff format --check .`、`.venv/bin/ruff check .`、`compileall`、`pip check`、
+  `python3 scripts/check_governance.py`、`git diff --check`：全部通过。
+- `web/`：`npm run typecheck`、`npm run lint`、`npm run format:check`、
+  `npm run build` 通过；`npm run test -- run` 全量 **1267 通过**；Task 列出的 12 个
+  受影响测试文件全部通过。
+- e2e（真实 Python/API/SQLite/Worker）：`task-flow.python.spec.ts`（**新增**，混合结果
+  收尾+记录与中心一致+重启保留+已确认取消）、`operations-inventory`（43）、
+  `organize-source-history`、`operations-task-center-visual`、`direct-files`（22）、
+  `automation-run-once`（5）、`automation-workspace`（8）全部通过。
+
+**已知风险与剩余工作**
+
+- 自动化成功率计算（RO-4 分子/分母、卡片说明、AC-9/10）不在本 Task，为 Slice 内
+  下一个交付；现有指标查询未改，其 file-derived 口径需在下一 Task 处理。
+- “真实调用仍未返回”的浏览器级注入未入新 spec（引擎/内核级已由
+  `test_task_flow_status` 与既有围栏测试覆盖）；B 可在验收中决定是否补充 harness 接缝。
+- 运行清单/记录新增只读证据列，均为 additive；旧数据无迁移，历史行按原值诚实读取。
 
 ### B review result
 

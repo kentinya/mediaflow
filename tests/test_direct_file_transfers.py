@@ -2827,7 +2827,7 @@ class PauseCancelResumeTests(TransferTestCase):
                 ["paused"],
             )
             task = runtime.get_task(task_id)
-            self.assertEqual(task.status.value, "paused")
+            self.assertEqual(task.status.value, "running")
             items = runtime.list_items(task_id)
             self.assertEqual(items[0].status, TaskItemStatus.PAUSED)
             progress = json.loads(items[0].progress)
@@ -2904,7 +2904,7 @@ class PauseCancelResumeTests(TransferTestCase):
             task_id = queued["taskId"]
             self._run_worker(transfers, runtime)
             task = runtime.get_task(task_id)
-            self.assertEqual(task.status.value, "paused")
+            self.assertEqual(task.status.value, "running")
             items = runtime.list_items(task_id)
             # The pinned keep-both root stays the admission-pinned unique name
             # across the pause (the whole subtree kept its pinned identity).
@@ -3071,7 +3071,7 @@ class PauseCancelResumeTests(TransferTestCase):
             self.assertEqual(record.effect_certainty, "attempted_unverified")
             self.assertEqual(record.uncertain_effects, ("mutation_outcome",))
             task = runtime.get_task(finished.task_id)
-            self.assertEqual(task.status.value, "failed")
+            self.assertEqual(task.status.value, "completed")
             self.assertEqual(task.error, "mutation_outcome")
 
     def test_restart_at_every_compound_checkpoint_continues_or_investigates(self) -> None:
@@ -3721,7 +3721,7 @@ class InFlightMutationFenceTests(TransferTestCase):
             self.assertEqual(item.status.value, "partial")
             record = runtime.list_results(task_id)[0]
             self.assertEqual(record.effect_certainty, "attempted_unverified")
-            self.assertEqual(runtime.get_task(task_id).status.value, "failed")
+            self.assertEqual(runtime.get_task(task_id).status.value, "completed")
             source.release.set()
             thread.join(30)
             # The released owner completes its provider call but can no longer
@@ -3812,7 +3812,10 @@ class InFlightResolutionTests(TransferTestCase):
 
         status, document = request(api, f"/api/v1/operations/tasks/{task_id}")
         self.assertEqual(status, 200)
-        self.assertEqual(document["status"], "failed")
+        # Slice 48 RO-2: the resolution of an entered mutation is a file-level
+        # technical end with unknown effect — the flow completed while the
+        # item/Result evidence keeps the investigation truth.
+        self.assertEqual(document["status"], "completed")
         self.assertEqual(document["failure"]["category"], "workflow_failure")
         for item in document["items"]:
             self.assertEqual(item["status"], "partial")
@@ -3917,7 +3920,7 @@ class InFlightResolutionTests(TransferTestCase):
             self.assertEqual(record.effect_certainty, "attempted_unverified")
             self.assertEqual(record.status, "partial")
             self.assertEqual(record.error, "files_transfer_mutation_unresolved")
-            self.assertEqual(task.status.value, "failed")
+            self.assertEqual(task.status.value, "completed")
             self._operations_agreement(api, task_id)
 
             # The released owner may still create the target and return; every
@@ -3933,7 +3936,7 @@ class InFlightResolutionTests(TransferTestCase):
             reloaded = reopened.get_files_transfer(task_id)
             self.assertEqual(reloaded.status.value, transfer.status.value)
             self.assertEqual(reloaded.error, "mutation_outcome")
-            self.assertEqual(reopened.get_task(task_id).status.value, "failed")
+            self.assertEqual(reopened.get_task(task_id).status.value, "completed")
             self.assertEqual(reopened.list_items(task_id)[0].status.value, "partial")
             self.assertEqual(
                 reopened.list_results(task_id)[0].effect_certainty, "attempted_unverified"
@@ -4015,7 +4018,7 @@ class InFlightResolutionTests(TransferTestCase):
             self.assertEqual(record.error, "files_transfer_mutation_unresolved")
             item = runtime.list_items(task_id)[0]
             self.assertEqual(item.status.value, "partial")
-            self.assertEqual(runtime.get_task(task_id).status.value, "failed")
+            self.assertEqual(runtime.get_task(task_id).status.value, "completed")
             self._operations_agreement(api, task_id)
             # Release Worker A: its provider call now creates the target, yet
             # the durable investigation-only outcome must stay exactly as the
@@ -4033,7 +4036,7 @@ class InFlightResolutionTests(TransferTestCase):
             self.assertEqual(
                 reopened.list_results(task_id)[0].effect_certainty, "attempted_unverified"
             )
-            self.assertEqual(reopened.get_task(task_id).status.value, "failed")
+            self.assertEqual(reopened.get_task(task_id).status.value, "completed")
 
     def test_corrupt_authority_before_any_mutation_stays_bounded_failed(self) -> None:
         """The paired pre-mutation case keeps the zero-mutation FAILED path.
@@ -5361,7 +5364,7 @@ class TerminalPublicationFaultTests(TransferTestCase):
             # verified effect beside the interrupted second item.
             self.assertTrue(transfer.status.terminal, transfer.status)
             self.assertEqual(transfer.status.value, "partial_success")
-            self.assertEqual(task.status.value, "partial_success")
+            self.assertEqual(task.status.value, "completed")
             self.assertTrue(projection["terminal"], projection)
             self.assertEqual(projection["status"], "PARTIAL")
             for item in runtime.list_items(task_id):
@@ -5565,7 +5568,7 @@ class FailureConvergenceTests(TransferTestCase):
             self.assertEqual(projection["status"], "FAILED")
             transfer = runtime.get_files_transfer(task_id)
             self.assertEqual(transfer.status.value, "failed")
-            self.assertEqual(runtime.get_task(task_id).status.value, "failed")
+            self.assertEqual(runtime.get_task(task_id).status.value, "completed")
             item = runtime.list_items(task_id)[0]
             self.assertEqual(item.status.value, "failed")
             record = runtime.list_results(task_id)[0]
@@ -5624,7 +5627,7 @@ class FailureConvergenceTests(TransferTestCase):
             # later failure can never become a fabricated clean failure.
             self.assertEqual(projection["status"], "PARTIAL")
             self.assertEqual(transfer.status.value, "partial_success")
-            self.assertEqual(task.status.value, "partial_success")
+            self.assertEqual(task.status.value, "completed")
             results = {record.item_id: record for record in runtime.list_results(task_id)}
             items_by_id = {item.item_id: item for item in runtime.list_items(task_id)}
             succeeded = [item for item in items_by_id.values() if item.status.value == "success"]
@@ -5666,7 +5669,7 @@ class FailureConvergenceTests(TransferTestCase):
             task = runtime.get_task(task_id)
             self.assertEqual(transfer.status.value, "failed")
             self.assertEqual(transfer.error, "mutation_outcome")
-            self.assertEqual(task.status.value, "failed")
+            self.assertEqual(task.status.value, "completed")
             self.assertEqual(task.error, "mutation_outcome")
             item = runtime.list_items(task_id)[0]
             self.assertEqual(item.status.value, "partial")
@@ -5710,7 +5713,7 @@ class FailureConvergenceTests(TransferTestCase):
             projection = self._assert_converged(transfers, runtime, task_id)
             self.assertEqual(projection["status"], "PARTIAL")
             self.assertEqual(runtime.get_files_transfer(task_id).status.value, "partial_success")
-            self.assertEqual(runtime.get_task(task_id).status.value, "partial_success")
+            self.assertEqual(runtime.get_task(task_id).status.value, "completed")
             succeeded = [
                 item for item in runtime.list_items(task_id) if item.status.value == "success"
             ]

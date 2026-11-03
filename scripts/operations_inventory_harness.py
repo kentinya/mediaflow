@@ -3727,7 +3727,7 @@ def seed_authority_refusal(state: AppState, *, missing_snapshot: bool = False) -
     )
     state.repository.request_task_pause(task.task_id, datetime.now(UTC))
     paused = coordinator.acknowledge_pause(task.task_id)
-    if paused.status is not PersistentTaskStatus.PAUSED:
+    if paused.status is not PersistentTaskStatus.RUNNING:
         raise RuntimeError("authority-refusal fixture Task did not pause")
     successor = None if missing_snapshot else publish_configuration_successor(state)
     return {
@@ -3896,7 +3896,7 @@ def seed_full_budget_recovery(state: AppState) -> dict[str, object]:
     state.repository.update_task(completed_earlier)
     state.repository.request_task_pause(task.task_id, now)
     paused = coordinator.acknowledge_pause(task.task_id)
-    if paused.status is not PersistentTaskStatus.PAUSED:
+    if paused.status is not PersistentTaskStatus.RUNNING:
         raise RuntimeError("full-budget fixture Task did not pause")
     # A genuinely new source appears after the admission: it has no admitted
     # unit and must never borrow the still-undecided one.
@@ -3986,7 +3986,7 @@ def seed_mixed_scope_recovery(state: AppState) -> dict[str, object]:
         )
     state.repository.request_task_pause(task.task_id, now)
     paused = coordinator.acknowledge_pause(task.task_id)
-    if paused.status is not PersistentTaskStatus.PAUSED:
+    if paused.status is not PersistentTaskStatus.RUNNING:
         raise RuntimeError("mixed-scope fixture Task did not pause")
     # An earlier bounded attempt on each source failed *before* the mutation
     # boundary under the COPY fixture policy.  It changed nothing (so both

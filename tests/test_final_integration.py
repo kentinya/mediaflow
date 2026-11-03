@@ -228,7 +228,10 @@ class FinalIntegrationTests(unittest.TestCase):
             self.assertEqual(3, len(history.list()))
             self.assertEqual("129", history.list()[1].provider_id)
             persisted = coordinator.finish(task.task_id, batch)
-            self.assertEqual(persisted.status, PersistentTaskStatus.PARTIAL_SUCCESS)
+            # Slice 48 RO-1: the four-type waiting item keeps the flow
+            # unfinished — a waiting Task is never a terminal aggregate.
+            self.assertEqual(persisted.status, PersistentTaskStatus.RUNNING)
+            self.assertIsNone(persisted.completed_at)
             self.assertEqual(
                 {item.status for item in task_repository.list_items(task.task_id)},
                 {TaskItemStatus.SUCCESS, TaskItemStatus.WAITING_METADATA_CORRECTION},

@@ -1994,12 +1994,16 @@ export interface AutomationRecordFailureStageModel {
 }
 
 export const AUTOMATION_RECORD_OUTCOMES = [
+  // Slice 48 RO-4: the record outcome is the exact current durable Task flow
+  // status the Task Center reads.  `cancelled` is its own flow outcome;
+  // `paused` stays accepted for historical rows only.
   "completed",
   "failed",
   "pending",
   "running",
   "paused",
   "waiting",
+  "cancelled",
   "unknown",
 ] as const;
 
@@ -2024,10 +2028,12 @@ function normalizeRecordOutcome(value: unknown): AutomationRecordOutcomeModel {
   const noWork = flag(source, "noWork");
   const successItems = count(source, "successItems");
   const failureReason = optionalText(source, "failureReason");
+  // Slice 48 RO-4: a completed record with zero successful files is legal —
+  // the files may have failed, partially succeeded or been skipped/ignored;
+  // it is only "no work" when the backend says so (an empty admitted scope).
   if (
     (status === "failed") !== (failureReason !== null) ||
-    (noWork && (status !== "completed" || successItems !== 0)) ||
-    (status === "completed" && !noWork && successItems === 0)
+    (noWork && (status !== "completed" || successItems !== 0))
   ) {
     return fail("recordOutcome");
   }

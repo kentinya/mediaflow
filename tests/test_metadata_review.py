@@ -237,7 +237,8 @@ class MetadataReviewTests(unittest.TestCase):
                 self.assertEqual(stored.status, TaskItemStatus.WAITING_METADATA)
                 self.assertEqual(coordinator.retryable_items(task.task_id, failed_only=False), ())
                 final = coordinator.finish(task.task_id, MediaOrganizerBatchResult(()))
-                self.assertEqual(final.status, PersistentTaskStatus.PARTIAL_SUCCESS)
+                # Slice 48 RO-1: the waiting decision keeps the flow unfinished.
+                self.assertEqual(final.status, PersistentTaskStatus.RUNNING)
                 self.assertTrue(repository.acquire("source", "Movie.mkv", "other-task", NOW))
                 self.assertEqual(len(repository.list_metadata_reviews()), 1)
                 self.assertFalse(hasattr(repository, "list_jobs"))

@@ -1134,7 +1134,9 @@ class MediaLibraryDirectCommandTests(unittest.TestCase):
             # The durable record alone is not a resume token: reading the Task back
             # must never re-enter the executor with the uncertain mutation.
             final = runtime.get_task(outcome["taskId"])
-            self.assertIn(final.status.value, {"failed", "partial_success"})
+            # Slice 48 RO-2: the uncertain file effect keeps the bounded
+            # marker; the flow itself completed.
+            self.assertEqual(final.status.value, "completed")
             self.assertTrue(final.completed_at is not None)
 
     # ------------------------------------------------------------------

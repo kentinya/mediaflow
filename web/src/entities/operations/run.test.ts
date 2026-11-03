@@ -223,6 +223,9 @@ describe("run summary normalization", () => {
     // Every exact-partition command still partitions one item list, including
     // a MediaLibrary-owned direct command whose family is derived the same
     // way the backend derives its label.
+    // Slice 48 RO-3: for an exact-partition command every failure is one of
+    // its own items, so a failed count above the ended count is contradictory
+    // (there are no independent scan errors in that family).
     for (const command of [
       "manual_organize",
       "files_direct_command",
@@ -237,18 +240,19 @@ describe("run summary normalization", () => {
             command,
             total_items: 2,
             completed_items: 2,
-            failed_items: 1,
+            failed_items: 3,
           }),
         ),
       ).toThrow(RunNormalizationError);
     }
-    // The same exact-partition command stays valid inside its own total.
+    // A failed subset of the ended population stays valid inside its total —
+    // a completed flow with one failed file is the Slice 48 shape.
     expect(
       normalizeRunSummary(
         runDocument({
           command: "manual_organize",
           total_items: 3,
-          completed_items: 2,
+          completed_items: 3,
           failed_items: 1,
         }),
       ).failedItems,

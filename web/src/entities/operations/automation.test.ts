@@ -982,7 +982,9 @@ describe("records-only outcome decoding", () => {
     { ...recordFixture.items[1].recordOutcome, status: "running" },
     { ...recordFixture.items[1].recordOutcome, failureReason: null },
     { ...recordFixture.items[0].recordOutcome, noWork: "true" },
-    { ...recordFixture.items[0].recordOutcome, noWork: false },
+    // Slice 48 RO-4: a completed record with zero successful files is legal
+    // (the files failed/partial/skipped independently), so only a coerced
+    // no-work flag — not the zero-success shape — is contradictory now.
     { ...recordFixture.items[1].recordOutcome, successItems: -1 },
   ])("refuses missing, coerced or contradictory proof", (outcome) => {
     expect(() =>

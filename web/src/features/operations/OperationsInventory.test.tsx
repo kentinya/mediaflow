@@ -64,6 +64,10 @@ function runDocument(overrides: Record<string, unknown> = {}) {
     completed_items: 1,
     failed_items: 0,
     processed_items: 2,
+    success_items: 1,
+    partial_items: 0,
+    uncertain_effect_items: 0,
+    missing_result_items: 0,
     current_stage: "processing",
     pause_requested: false,
     attention: false,
@@ -298,6 +302,7 @@ describe("Operations run inventory landing", () => {
             status: "completed",
             processed_items: 4,
             completed_items: 4,
+            success_items: 4,
             updated_at: "2026-08-22T12:08:00+00:00",
             current_stage: null,
           }),
@@ -354,7 +359,7 @@ describe("Operations run inventory landing", () => {
     expect(
       await screen.findByRole("columnheader", { name: "结果摘要" }),
     ).toBeVisible();
-    expect(screen.getByText(/已处理 4 \/ 4 项；失败 0 项/)).toBeVisible();
+    expect(screen.getByText(/成功 4/)).toBeVisible();
 
     await user.click(within(views).getByRole("button", { name: "元数据恢复" }));
     expect(
@@ -687,7 +692,7 @@ describe("Operations run inventory landing", () => {
     expect(within(detail).getAllByText(/进行中/).length).toBeGreaterThan(0);
     // The overview shows known durable facts and labels completed items as
     // not an organize-success claim while running.
-    expect(within(detail).getByText(/不代表最终整理成功/)).toBeVisible();
+    expect(within(detail).getByText(/不代表整理成功/)).toBeVisible();
     // The historical source and target scope the projection publishes are
     // part of the visible overview (absent evidence renders explicitly).
     expect(within(detail).getByText("Movies")).toBeVisible();

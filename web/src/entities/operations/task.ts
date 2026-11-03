@@ -31,6 +31,9 @@ import {
 } from "./task-item-recovery";
 
 export const TASK_STATUSES = [
+  // Slice 48 RO-1: the five current flow statuses.  `partial_success` and
+  // `paused` are retired aggregate values — accepted here only so a historical
+  // row keeps its honest recorded state; current producers never write them.
   "pending",
   "running",
   "completed",
@@ -355,8 +358,13 @@ function normalizeTaskSummary(source: Record<string, unknown>): TaskSummary {
   const totalItems = count(source, "total_items");
   const completedItems = count(source, "completed_items");
   const failedItems = count(source, "failed_items");
-  if (completedItems + failedItems > totalItems) {
-    // Progress that cannot describe one Task is contradictory, not rounded.
+  // Slice 48 RO-3: `completed_items` counts *ended processing attempts* —
+  // recorded failures, partial results, skips, ignores and individual
+  // cancellations included — never only the successful files.  The failed
+  // count is therefore a subset of the ended count, and `failed > ended` is
+  // the contradictory shape.  A fully processed Task can legitimately reach
+  // `completedItems === totalItems` while files still failed.
+  if (failedItems > completedItems || completedItems > totalItems) {
     fail();
   }
   const startedAt = optionalText(source, "started_at");

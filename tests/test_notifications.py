@@ -480,24 +480,26 @@ class TerminalTaskNotificationTests(unittest.TestCase):
 
         task_id = self.submit_remote()
         code, output, errors = self.run_worker(_UnavailableProvider())
-        self.assertEqual(1, code, errors)
-        self.assertIn("failed", output)
+        # Slice 48 RO-2: a Provider outage is file-level technical evidence;
+        # the flow itself completed without moving any media.
+        self.assertEqual(0, code, errors)
+        self.assertIn("completed", output)
 
         with SQLiteTaskRepository(self.database) as repository:
             task = repository.get_task(task_id)
             items = repository.list_items(task_id)
             results = repository.list_results(task_id)
-        self.assertEqual("failed", task.status.value)
+        self.assertEqual("completed", task.status.value)
         self.assertEqual(["failed"], [item.status.value for item in items])
         self.assertEqual(1, len(results))
         self.assertTrue(self.source.exists(), "a failed Provider lookup must not move the source")
         self.assertFalse(list((self.target_root / "Organized").rglob("*.mkv")))
 
         (delivery,) = self.deliveries()
-        self.assertEqual(NotificationEventType.TASK_FAILED, delivery.event_type)
+        self.assertEqual(NotificationEventType.TASK_COMPLETED, delivery.event_type)
         self.assertEqual(
             json.loads(delivery.body)["data"],
-            {"taskId": task_id, "status": "failed", "command": "organize"},
+            {"taskId": task_id, "status": "completed", "command": "organize"},
         )
 
     def test_cancelled_queued_task_publishes_one_cancelled_event(self) -> None:

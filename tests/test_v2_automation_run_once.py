@@ -956,8 +956,8 @@ class RunOnceApiTests(unittest.TestCase):
             ):
                 result = self.execute(value)
             task = value.repository.get_task(result.task_id)
-            self.assertEqual("partial_success", task.status.value)
-            self.assertEqual((1, 1), (task.completed_items, task.failed_items))
+            self.assertEqual("completed", task.status.value)
+            self.assertEqual((2, 1), (task.completed_items, task.failed_items))
             self.assertTrue(fresh.exists())
             status, page = self.request(value, "GET", "/api/v1/operations/runs?view=attention")
             self.assertEqual(200, status, page)
@@ -980,7 +980,7 @@ class RunOnceApiTests(unittest.TestCase):
                 side_effect=AssertionError("over 60 seconds must not wait"),
             ):
                 result = self.execute(value)
-            self.assertEqual("failed", value.repository.get_task(result.task_id).status.value)
+            self.assertEqual("completed", value.repository.get_task(result.task_id).status.value)
             self.assertEqual([], value.source.mutations)
             self.assertEqual([], value.target.mutations)
 
@@ -1008,7 +1008,7 @@ class RunOnceApiTests(unittest.TestCase):
             ):
                 result = self.execute(value)
             self.assertEqual(1, len(calls))
-            self.assertEqual("failed", value.repository.get_task(result.task_id).status.value)
+            self.assertEqual("completed", value.repository.get_task(result.task_id).status.value)
             self.assertEqual([], value.source.mutations)
             self.assertEqual([], value.target.mutations)
 
@@ -1364,10 +1364,14 @@ class RunOnceApiTests(unittest.TestCase):
             finished_at = before["executionFinishedAt"]
             self.assertIsNotNone(finished_at)
             original_outcome = before["recordOutcome"]
-            self.assertEqual("failed", original_outcome["status"], original_outcome)
+            # Slice 48 RO-4: the record's outcome is the exact current Task
+            # flow status the Task Center reads — the conflict is still waiting
+            # for the operator, so the record reads running/unfinished.  The
+            # frozen original stage keeps its own real window above.
+            self.assertEqual("running", original_outcome["status"], original_outcome)
             self.assertFalse(original_outcome["noWork"])
             self.assertEqual(1, original_outcome["successItems"], original_outcome)
-            self.assertIn("等待人工决定", original_outcome["failureReason"], original_outcome)
+            self.assertIn("等待人工处理", original_outcome["statement"], original_outcome)
             self.assertIn("任务中心", original_outcome["nextStep"], original_outcome)
 
             # The operator returns an hour later: every later write uses the
@@ -1428,7 +1432,10 @@ class RunOnceApiTests(unittest.TestCase):
             after_confirm = original_record("immediately after confirm")
             self.assertEqual(started_at, after_confirm["executionStartedAt"])
             self.assertEqual(finished_at, after_confirm["executionFinishedAt"])
-            self.assertEqual(original_outcome, after_confirm["recordOutcome"])
+            # Slice 48 RO-4: the record's flow outcome follows the same Task's
+            # current durable state (the continued pass is running again) while
+            # the original stage's frozen window above never moves.
+            self.assertEqual("pending", after_confirm["recordOutcome"]["status"], after_confirm)
 
             worker = self._run_manual_execution_worker(value, prefix="conflict-recovery")
             settled = worker.run_next()
@@ -1483,15 +1490,18 @@ class RunOnceApiTests(unittest.TestCase):
             # outcome filter and a reopen alike.
             self.assertEqual(started_at, after["executionStartedAt"])
             self.assertEqual(finished_at, after["executionFinishedAt"])
-            self.assertEqual(original_outcome, after["recordOutcome"])
+            # Slice 48 RO-4: the record's flow outcome follows the same Task's
+            # current durable status — the legal recovery completed it — while
+            # the frozen stage window above keeps the original attempt's facts.
+            self.assertEqual("completed", after["recordOutcome"]["status"], after)
             status, failed_only = self.request(value, "GET", records_route + "&outcome=failed")
             self.assertEqual(200, status, failed_only)
-            self.assertEqual(1, failed_only["total"], failed_only["items"])
+            self.assertEqual(0, failed_only["total"], failed_only["items"])
             status, completed_only = self.request(
                 value, "GET", records_route + "&outcome=completed"
             )
             self.assertEqual(200, status, completed_only)
-            self.assertEqual(0, completed_only["total"], completed_only["items"])
+            self.assertEqual(1, completed_only["total"], completed_only["items"])
             # The run's current aggregate stays the Task's own live truth: the
             # same Task really completed both files, while the original record
             # above kept the first stage's facts and the recovery progress is
@@ -1530,8 +1540,11 @@ class RunOnceApiTests(unittest.TestCase):
             (item,) = window.page
             self.assertEqual(task_id, item.task_id)
             evidence = item.automation_record_evidence
-            self.assertEqual("failed", evidence["record_outcome"], evidence)
-            self.assertEqual("failed", evidence["original_status"], evidence)
+            # Slice 48 RO-4: the flow outcome follows the recovered Task's
+            # current status; the frozen original stage keeps its own window
+            # and its "1 success, 1 unresolved" item evidence.
+            self.assertEqual("completed", evidence["record_outcome"], evidence)
+            self.assertEqual("completed", evidence["original_status"], evidence)
             self.assertEqual(2, evidence["item_count"], evidence)
             self.assertEqual(1, evidence["success_count"], evidence)
             self.assertEqual(1, evidence["waiting_count"], evidence)
@@ -1666,9 +1679,11 @@ class RunOnceApiTests(unittest.TestCase):
             self.assertEqual(1, first_record["total"], first_record["items"])
             (first_record,) = first_record["items"]
             first_outcome = first_record["recordOutcome"]
-            self.assertEqual("failed", first_outcome["status"], first_outcome)
+            # Slice 48 RO-4: the record reads the current Task flow status —
+            # the recovery is waiting for the operator's decision.
+            self.assertEqual("running", first_outcome["status"], first_outcome)
             self.assertEqual(0, first_outcome["successItems"], first_outcome)
-            self.assertIn("等待人工决定", first_outcome["failureReason"], first_outcome)
+            self.assertIn("等待人工处理", first_outcome["statement"], first_outcome)
             first_started = first_record["executionStartedAt"]
             first_finished = first_record["executionFinishedAt"]
             self.assertIsNotNone(first_started)
@@ -1787,10 +1802,12 @@ class RunOnceApiTests(unittest.TestCase):
             self.assertEqual("completed", record["result"]["status"], record)
             self.assertTrue(record["result"]["organized"], record)
             self.assertEqual("resolved", record["handling"]["state"], record["handling"])
-            # The original record still expresses the due run's FIRST automatic
-            # stage — the handoff to the operator — with its own real window,
-            # never the later recovery's success or settlement time.
-            self.assertEqual(first_outcome, record["recordOutcome"], record)
+            # Slice 48 RO-4: the record's flow outcome is the same Task's
+            # current durable status — the legal same-Task recovery completed
+            # it, so the record reads completed now.  The original stage's
+            # frozen window below never moves, and the recovery itself is
+            # reported separately through ``handling``.
+            self.assertEqual("completed", record["recordOutcome"]["status"], record)
             self.assertEqual(first_started, record["executionStartedAt"], record)
             self.assertEqual(first_finished, record["executionFinishedAt"], record)
             status, failed_only = self.request(
@@ -1799,7 +1816,16 @@ class RunOnceApiTests(unittest.TestCase):
                 "/api/v1/operations/automation/records?limit=20&outcome=failed",
             )
             self.assertEqual(200, status, failed_only)
-            self.assertEqual(1, failed_only["total"], failed_only["items"])
+            # Slice 48 RO-4: the recovered flow outcome is completed, so the
+            # failed filter no longer matches this record.
+            self.assertEqual(0, failed_only["total"], failed_only["items"])
+            status, completed_only = self.request(
+                value,
+                "GET",
+                "/api/v1/operations/automation/records?limit=20&outcome=completed",
+            )
+            self.assertEqual(200, status, completed_only)
+            self.assertEqual(1, completed_only["total"], completed_only["items"])
             status, filtered = self.request(
                 value,
                 "GET",
@@ -2465,7 +2491,9 @@ class RunOnceApiTests(unittest.TestCase):
 
             task = value.repository.get_task(task_id)
             state = value.repository.get_task_scheduling(task_id)
-            self.assertEqual("failed", task.status.value)
+            # Slice 48 RO-2: the interrupted dispatch ended its technical
+            # attempt with unknown effect; the flow completed without replay.
+            self.assertEqual("completed", task.status.value)
             self.assertIsNone(state.mutation_state)
             self.assertEqual("settled", state.queue_state.value)
             self.assertEqual(0, value.repository.count_scheduled_capacity_use())
