@@ -8,6 +8,7 @@ from uuid import NAMESPACE_URL, uuid4, uuid5
 from mediaflow.application.media_organizer import (
     MediaOrganizerBatchResult,
     MediaOrganizerItemResult,
+    incomplete_scope_failure,
 )
 from mediaflow.application.task_flow_settlement import (
     TaskFlowSettlementInputs,
@@ -974,25 +975,32 @@ class PersistentTaskCoordinator:
         }
         waiting = sum(item.status in waiting_statuses for item in items)
         machine = sum(
-            item.status in {TaskItemStatus.PENDING, TaskItemStatus.PROCESSING} for item in items
+            item.status not in SETTLED_ITEM_STATUSES and item.status not in waiting_statuses
+            for item in items
         )
         # Slice 48 RO-3: ``completed_items`` counts ended processing attempts —
         # never only the successful files.  Failures, partial results, skips,
         # ignores and individual cancellations are ended work of this Task.
         ended = sum(item.status in SETTLED_ITEM_STATUSES for item in items)
+        # A discovery error means at least one directory of the admitted scope
+        # could not be enumerated.  The flow therefore cannot claim the scope
+        # was processed: a bounded Task-level failure, never a healthy empty
+        # completion and never a file-local failure derived from scan errors.
+        scope_failure = (
+            incomplete_scope_failure(errors=batch.scan_errors) if batch.scan_errors else None
+        )
         # The flow decision is the one shared settlement rule: the batch call
-        # returned, so this round ended; file outcomes (including scan errors,
-        # which are file-local scan failures on entrances that tolerate a
-        # partial scope) never become the flow outcome.  Only genuinely
-        # remaining machine/human work keeps the flow unfinished.
+        # returned, so this round ended; file outcomes never become the flow
+        # outcome.  Only an unproved scope, genuinely remaining machine/human
+        # work or a Task-own orchestration error keeps it unfinished/failed.
         decision = settle_task_flow(
             TaskFlowSettlementInputs(
                 ended_this_round=True,
                 machine_work_remaining=bool(machine),
                 human_decision_pending=bool(waiting),
                 live_local_call=False,
-                scope_proven_complete=True,
-                orchestration_error=None,
+                scope_proven_complete=scope_failure is None,
+                orchestration_error=scope_failure,
                 acknowledged_cancellation=False,
             )
         )
@@ -1004,8 +1012,8 @@ class PersistentTaskCoordinator:
             completed_at=now if decision.terminal else None,
             total_items=len(items),
             completed_items=ended,
-            failed_items=failed + len(batch.scan_errors),
-            error="scan errors occurred" if batch.scan_errors else None,
+            failed_items=failed,
+            error=scope_failure.encode() if scope_failure is not None else None,
         )
         if transfer_fence is not None:
             transfer_id, claim_token, claim_now = transfer_fence

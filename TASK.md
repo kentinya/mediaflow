@@ -14,13 +14,13 @@ Authority: committed [Slice48](SLICE.md) RO-1–3，以及 RO-4 中执行记录�
 Task ID: 48.1
 Task Type: SLICE
 Parent Slice: 48
-Status: FIX REQUIRED
+Status: READY FOR B REVIEW
 Task Base: 4f11762d617d50555f3b106357e8f41988f7c2f9
 Difficulty: High
 Test Level: T4
 Planner / Reviewer: B — Codex; independent candidate review completed, FIX REQUIRED
 Development Authorization: AUTHORIZED — USER REQUEST, 2026-11-03 — TASK 48.1 SCOPE ONLY
-Next Action: DEVELOPER FIXES TASK 48.1 BLOCKERS; SAME TASK BASE
+Next Action: B REVIEWS THE TASK 48.1 FIX CANDIDATE ON THE SAME TASK BASE
 ```
 
 ### Goal
@@ -452,3 +452,89 @@ OS/log/reference/output 文件及 `15` 保留且不加入检查点；私有配�
 激活只更新文档状态、TARGET 标签/链接及当前指针；本地链接/锚点、命令引用的现有路径
 （明确标出的新增测试除外）、`python3 scripts/check_governance.py` 和 `git diff --check` 均通过。
 本次未开始产品实现，未执行产品测试、push 或部署；Developer/B 的上述测试计划保持待执行。
+
+### Developer fix report — B48.1-01 / B48.1-02
+
+READY FOR B REVIEW。修正轮保持原 Task Base
+`4f11762d617d50555f3b106357e8f41988f7c2f9`，只处理上列两个 P1 blocker。候选检查点
+为本提交（分支 `main`）；以下均为本轮实际执行结果。
+
+**B48.1-01 — 独立文件计数与处理进度**
+
+- `mediaflow/application/manual_organize_execution.py` 的非 kernel
+  `_task_after_item`（含现有中断收尾调用）改用“已结束项”计算
+  `completed_items`：成功、跳过、失败、部分成功和单项取消都算已处理，
+  `failed_items` 仍是失败/部分成功子集。直接 API 授权 → execute → GET Task 的
+  单项失败现在返回 `completed, total_items=1, completed_items=1, failed_items=1`。
+- 保留 `failed_items` 的失败+部分成功兼容含义；Task 中心列表和详情的独立
+  “失败 N”由 Web 解码层用 `failed_items - partial_items` 明确推导为
+  `failedOnlyItems`，不再把 partial 同时显示成 partial 和 failure。自动化记录继续
+  使用自己的 `partial_count` / `failed_status_count`，同一 Task 的
+  “部分成功 1，失败 1”与任务中心一致。
+- 新增真实入口回归：
+  `tests.test_manual_organize_execution.ManualOrganizeExecutionTests.test_direct_api_failed_file_still_counts_as_ended_processing`
+  （单项失败 API 读回）与
+  `test_mixed_batch_and_pre_mutation_failure_keep_independent_recovery`
+  （1 成功 + 1 失败混合、Task 读回 `2/2/1`）；
+  `tests.test_v2_automation_run_once.RunOnceApiTests.test_completed_run_once_counts_partial_and_failed_files_independently`
+  用真实 Run once/Worker 产生 1 partial + 1 failed，核对任务中心
+  `success=0, partial=1, failed=2(兼容), failed-partial=1` 及自动化记录
+  “部分成功 1，失败 1”。Web 组件补充 7 success + 2 partial + 1 failed 的已结束
+  摘要，并断言不出现“失败 3”。
+
+**B48.1-02 — 源目录范围事实到达收尾边界**
+
+- `MediaOrganizerService.process_library/process_all_libraries` 新增
+  `require_readable_scope`：任何目录枚举失败都在处理第一个文件前抛出
+  `IncompleteOrganizingScope`，携带真实 `ScanError`，不再执行可读前缀。
+  CLI `organize`（文件/目录/全部库、execute 与 analysis）、自动定义 due/Run once、
+  legacy 自动执行和 direct/remote organize 都传入该范围要求；Run once 继续保留
+  `require_complete_scope` 的“完整范围且不超过上限”语义，CLI 的显式 `--limit`
+  仍保留原有限定语义。
+- CLI 捕获该拒绝后把范围失败和扫描证据交给共享结算规则：
+  kernel 路径由 `_settle_direct_organize` 以 `scope_proven_complete=False` 发布
+  `failed`，legacy 路径由 `PersistentTaskCoordinator.finish` 读取
+  `batch.scan_errors` 后同样结算。持久 `Task.error` 使用现有
+  `FailureExplanation` 不可变信封，给出“无法完整读取来源目录（原因），未处理任何文件”
+  的短句、无副作用事实和下一步；扫描错误不再被加进文件 `failed_items`。
+- 新增真实 CLI 回归（`tests.test_automation_entrance_recovery`）：根目录拒绝读取、
+  子树拒绝读取（断言可读兄弟文件未被移动、目标零变更、无 item）、正常空目录
+  completed；并新增 `test_task_flow_status.CoordinatorScopeSettlementTests` 覆盖
+  legacy coordinator 的范围失败结算。文件中止/磁盘满等既有 file-local 失败仍为
+  completed（原 `test_cli_disk_full_settles_partial_and_next_distinct_file_releases_slot`
+  继续通过）。
+
+**实际执行与结果**
+
+- 根目录：
+  `.venv/bin/python -m unittest tests.test_task_flow_status tests.test_task_persistence tests.test_task_scheduling tests.test_task_scheduling_fencing tests.test_manual_task_engine tests.test_manual_organize_execution tests.test_operations_task_center tests.test_v2_automation_run_once`
+  → **236 通过，0 失败**（17.849 秒）。
+- `.venv/bin/python -m unittest tests.test_direct_file_operations tests.test_direct_file_transfers tests.test_media_library_transfers tests.test_library_file_operation_history tests.test_organize_source_history tests.test_task_source_ownership_race`
+  → **249 通过，0 失败**（71.521 秒）。
+- `.venv/bin/python -m unittest tests.test_final_integration tests.test_batch_cli tests.test_confirmation_api tests.test_workflow_retry tests.test_recognition_review tests.test_scanner tests.test_resource_library_pipeline tests.test_dashboard tests.test_notifications tests.test_operational_logging tests.test_automation_entrance_recovery`
+  → **90 通过，0 失败**（2.244 秒）。
+- 修正后再次运行
+  `.venv/bin/python -m unittest tests.test_automation_entrance_recovery tests.test_manual_organize_execution tests.test_v2_automation_run_once tests.test_task_flow_status`
+  → **107 通过，0 失败**（8.235 秒）。
+- `.venv/bin/ruff check` / `.venv/bin/ruff format --check` 对全部改动 Python 文件通过；
+  `python3 scripts/check_governance.py`、`git diff --check` 通过。
+- `web/`：
+  `npm run test -- run src/entities/operations/task.test.ts src/entities/operations/run.test.ts src/entities/operations/run-detail.test.ts src/entities/operations/lifecycle.test.ts src/entities/operations/automation.test.ts src/entities/library/file-operations.test.ts src/features/operations/OperationsInventory.test.tsx src/features/operations/RunDetailTabs.test.tsx src/features/operations/TaskItemRecoveryPanel.test.tsx src/features/operations/AutomationWorkspaceReadModel.test.tsx src/features/library/LibraryFileOperationsDialog.test.tsx src/features/dashboard/DashboardPage.test.tsx`
+  → **240 通过，0 失败**（12 个文件）；`npm run typecheck`、`npm run build` 通过；
+  `npx eslint`/`npx prettier --check` 对 4 个实际改动 Web 文件通过。
+- `web/`：`npm run test:e2e -- --config=playwright.python.config.ts tests/e2e/task-flow.python.spec.ts`
+  → **2 通过**（真实 Python/API/SQLite/Worker harness，含混合结果与已确认取消）。
+- 测试耗时累计约 2 分钟，低于本轮开发总耗时的 30%；完整 T4 回归、wheel/容器/安全门禁
+  仍由 B 执行。
+
+**剩余风险与待 B 核对**
+
+- 自动化成功率计算（RO-4 分子/分母、AC-9/10）仍不在本 Task；本轮未实现或声称完成。
+- “真正本地调用仍未返回”的浏览器级注入未加入 spec；引擎/内核级保护由既有 fencing
+  测试和本轮回归覆盖，B 可在验收时决定是否另加 harness 接缝。
+- `failedOnlyItems` 是 Web 对兼容字段的显式派生；后端 API 的 `failed_items` 保持原
+  失败+部分成功含义，未新增 schema 字段。B 需核对其他 API/CLI 消费者是否仍只读兼容字段。
+- 范围失败使用 `FailureExplanation` 信封写入 Task.error；历史 raw error 行仍按原
+  classifier 读取，未做迁移。
+- 未运行全量 Python/Web/E2E、wheel、Docker/restart/security 门禁，不声称它们通过或
+  Task/Slice PASS。

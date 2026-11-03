@@ -4096,10 +4096,18 @@ class ManualOrganizeExecutionService:
             }
             for value in items
         )
-        completed_items = sum(
-            value.status in {ManualExecutionItemStatus.SUCCESS, ManualExecutionItemStatus.SKIPPED}
-            for value in items
-        )
+        # Slice 48 RO-3: the Task's ``completed_items`` is *ended processing
+        # attempts*, not a success count.  A failed, partial, skipped or
+        # individually cancelled file finished its own attempt, so it belongs
+        # to the processing progress while its own outcome stays on the item.
+        ended_statuses = {
+            ManualExecutionItemStatus.SUCCESS,
+            ManualExecutionItemStatus.SKIPPED,
+            ManualExecutionItemStatus.FAILED,
+            ManualExecutionItemStatus.PARTIAL,
+            ManualExecutionItemStatus.CANCELLED,
+        }
+        completed_items = sum(value.status in ended_statuses for value in items)
         failed_items = sum(
             value.status in {ManualExecutionItemStatus.FAILED, ManualExecutionItemStatus.PARTIAL}
             for value in items

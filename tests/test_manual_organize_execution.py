@@ -1668,6 +1668,33 @@ class ManualOrganizeExecutionTests(unittest.TestCase):
                 self.assertFalse(Path(fixture.source_root, "One.2001.mkv").exists())
                 self.assertTrue(Path(fixture.source_root, "Two.2001.mkv").exists())
                 self.assertEqual(2, len(repository.list_results(run.task_id)))
+                # The direct Task readback publishes processing progress over
+                # both ended attempts (one success, one failed), not a success
+                # count masquerading as progress.
+                operator = ResolvedApiPrincipal(
+                    "operator",
+                    "operator-token",
+                    frozenset({ApiPermission.READ, ApiPermission.EXECUTE_MANUAL_ORGANIZE}),
+                )
+                api = MediaFlowApi(
+                    repository,
+                    None,
+                    principals=(operator,),
+                    manual_intent_service=intents,
+                    manual_preview_service=previews,
+                    manual_execution_service=service,
+                )
+                status, task_document = request(api, f"/api/v1/tasks/{run.task_id}")
+                self.assertEqual(200, status, task_document)
+                self.assertEqual("completed", task_document["status"])
+                self.assertEqual(
+                    (2, 2, 1),
+                    (
+                        task_document["total_items"],
+                        task_document["completed_items"],
+                        task_document["failed_items"],
+                    ),
+                )
                 failed = next(item for item in run.items if item.status.value == "failed")
                 checkpoint = service._checkpoint_service.get(
                     failed.task_item_id, task_id=run.task_id
@@ -1676,6 +1703,82 @@ class ManualOrganizeExecutionTests(unittest.TestCase):
                 self.assertNotIn("investigate", checkpoint.permitted_action_ids)
                 self.assertEqual(2, len(executor.calls))
                 self.assertIn("target", storages)
+        finally:
+            fixture.cleanup()
+
+    def test_direct_api_failed_file_still_counts_as_ended_processing(self):
+        """A pre-mutation file failure is ended work, not a zero-progress Task.
+
+        The real API authorize → execute → Task readback path publishes the
+        durable Task aggregate through the non-kernel manual execution branch.
+        The file's own failure stays on its item/Result while the Task flow
+        completed and its processing progress counts the ended attempt.
+        """
+
+        fixture = self._fixture()
+        try:
+            with SQLiteTaskRepository(fixture.database) as repository:
+                intents, previews, _, _ = self._services(repository, fixture)
+                _, preview = self._intent_and_preview(intents, previews, sources=fixture.records)
+                executor = _SelectiveExecutor(failed_suffix="One.2001.mkv")
+                service = ManualOrganizeExecutionService(repository, previews, executor=executor)
+                operator = ResolvedApiPrincipal(
+                    "operator",
+                    "operator-token",
+                    frozenset(
+                        {
+                            ApiPermission.READ,
+                            ApiPermission.SUBMIT_DRY_RUN,
+                            ApiPermission.EXECUTE_MANUAL_ORGANIZE,
+                        }
+                    ),
+                )
+                api = MediaFlowApi(
+                    repository,
+                    None,
+                    principals=(operator,),
+                    manual_intent_service=intents,
+                    manual_preview_service=previews,
+                    manual_execution_service=service,
+                )
+                item = preview.items[0]
+                status, authorization = request(
+                    api,
+                    f"/api/v1/manual-previews/{preview.preview_id}/authorize",
+                    method="POST",
+                    body={
+                        "expectedVersion": preview.intent_version,
+                        "expectedItemVersions": {item.item_id: item.item_version},
+                        "itemIds": [item.item_id],
+                        "snapshotId": preview.configuration_snapshot_id,
+                        "snapshotDigest": preview.configuration_snapshot_digest,
+                        "confirmation": True,
+                    },
+                )
+                self.assertEqual(201, status, authorization)
+                status, execution_document = request(
+                    api,
+                    f"/api/v1/manual-execution-authorizations/"
+                    f"{authorization['authorizationId']}/execute",
+                    method="POST",
+                    body={"confirmation": True},
+                )
+                self.assertEqual(200, status, execution_document)
+                # The operation result is failed; that is independent of the
+                # Task flow and the file's ended processing progress.
+                self.assertEqual("failed", execution_document["status"])
+                (task,) = repository.list_tasks()
+                status, task_document = request(api, f"/api/v1/tasks/{task.task_id}")
+                self.assertEqual(200, status, task_document)
+                self.assertEqual("completed", task_document["status"])
+                self.assertEqual(1, task_document["total_items"])
+                self.assertEqual(1, task_document["completed_items"])
+                self.assertEqual(1, task_document["failed_items"])
+                self.assertTrue(Path(fixture.source_root, "One.2001.mkv").exists())
+                self.assertEqual([], list(Path(fixture.target_root).rglob("*.mkv")))
+                (stored,) = repository.list_items(task.task_id)
+                self.assertEqual("failed", stored.status.value)
+                self.assertEqual(1, len(repository.list_results(task.task_id)))
         finally:
             fixture.cleanup()
 

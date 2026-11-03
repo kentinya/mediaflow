@@ -963,6 +963,115 @@ class RunOnceApiTests(unittest.TestCase):
             self.assertEqual(200, status, page)
             self.assertEqual(0, page["total"])
 
+    def test_completed_run_once_counts_partial_and_failed_files_independently(self):
+        """One partial and one failed file keep independent facts on both reads.
+
+        The real Run once Worker/engine settles the flow as completed.  The Task
+        Center row keeps ``failed_items`` as the historical failed+partial
+        compatibility count, while the derived independent file failure count
+        (failed minus partial) is one; the Automation record separately reports
+        one partial and one failed file.
+        """
+
+        from mediaflow.application.organizer import OrganizerExecutor
+        from mediaflow.domain.organizer import (
+            ExecutionEffectCertainty,
+            ExecutionResult,
+            ExecutionStatus,
+        )
+
+        self.media("One.2001.mkv")
+        self.media("Two.2002.mkv")
+        real_executor = OrganizerExecutor()
+
+        class MixedExecutor(OrganizerExecutor):
+            def execute(self, plan, storages, **kwargs):
+                if plan.source.endswith("One.2001.mkv"):
+                    return ExecutionResult(
+                        ExecutionStatus.PARTIAL,
+                        plan.operation,
+                        plan.source,
+                        plan.target,
+                        errors=("synthetic partial file outcome",),
+                        plan_id=plan.plan_id or "",
+                        effect_certainty=ExecutionEffectCertainty.ATTEMPTED_UNVERIFIED,
+                        uncertain_effects=("mutation_outcome",),
+                    )
+                if plan.source.endswith("Two.2002.mkv"):
+                    return ExecutionResult(
+                        ExecutionStatus.FAILED,
+                        plan.operation,
+                        plan.source,
+                        plan.target,
+                        errors=("synthetic pre-mutation file failure",),
+                        plan_id=plan.plan_id or "",
+                        effect_certainty=ExecutionEffectCertainty.NONE,
+                    )
+                return real_executor.execute(plan, storages, **kwargs)
+
+        with self.journey() as value:
+            self.admit(value)
+            with patch(
+                "mediaflow.application.automation_definition_execution.OrganizerExecutor",
+                MixedExecutor,
+            ):
+                result = self.execute(value)
+            self.assertEqual("completed", result.status.value, result.error)
+            task = value.repository.get_task(result.task_id)
+            self.assertEqual("completed", task.status.value, task.error)
+            self.assertEqual((2, 2, 2), (task.total_items, task.completed_items, task.failed_items))
+            self.assertEqual(
+                {"partial", "failed"},
+                {item.status.value for item in value.repository.list_items(task.task_id)},
+            )
+
+            # The Task Center row publishes the durable per-file facts: no
+            # successful file, one partial, and the compatibility failure count
+            # that still contains both partial and failed.
+            status, run = self.request(value, "GET", f"/api/v1/operations/runs/{task.task_id}")
+            self.assertEqual(200, status, run)
+            self.assertEqual("completed", run["status"])
+            self.assertEqual(2, run["total_items"])
+            self.assertEqual(2, run["completed_items"])
+            self.assertEqual(0, run["success_items"])
+            self.assertEqual(1, run["partial_items"])
+            self.assertEqual(2, run["failed_items"])
+            # The independent display count is failed minus partial; the Web
+            # decoder derives it explicitly and must not present a double count.
+            self.assertEqual(1, run["failed_items"] - run["partial_items"])
+            self.assertEqual(1, run["uncertain_effect_items"])
+
+            status, page = self.request(value, "GET", "/api/v1/operations/runs?view=ended&limit=20")
+            self.assertEqual(200, status, page)
+            rows = [item for item in page["items"] if item["task_id"] == task.task_id]
+            self.assertEqual(1, len(rows), page)
+            self.assertEqual(
+                (0, 1, 2),
+                (
+                    rows[0]["success_items"],
+                    rows[0]["partial_items"],
+                    rows[0]["failed_items"],
+                ),
+            )
+
+            # The Automation record uses the same Task flow outcome but its own
+            # independent file counts, so it names one partial and one failed.
+            status, records = self.request(
+                value, "GET", "/api/v1/operations/automation/records?limit=20"
+            )
+            self.assertEqual(200, status, records)
+            record = next(item for item in records["items"] if item.get("task_id") == task.task_id)
+            outcome = record["recordOutcome"]
+            self.assertEqual("completed", outcome["status"], outcome)
+            self.assertIn("部分成功 1", outcome["statement"], outcome)
+            self.assertIn("失败 1", outcome["statement"], outcome)
+            self.assertNotIn("部分成功 1，失败 2", outcome["statement"], outcome)
+            # The same-version Task keeps both independent facts and no replay.
+            self.assertEqual(1, len(value.repository.list_tasks()))
+            self.assertTrue((self.source_root / "One.2001.mkv").exists())
+            self.assertTrue((self.source_root / "Two.2002.mkv").exists())
+            self.assertEqual([], value.target.mutations)
+
     def test_over_sixty_interval_has_no_wait_and_only_instability_is_failed(self):
         import time
 

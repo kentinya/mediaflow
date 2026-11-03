@@ -501,6 +501,11 @@ class DefinitionScopedExecutionService:
             limit=task.item_limit,
             cancellation_check=workflow_stop,
             require_complete_scope=run_once,
+            # A due pass and a Run once both refuse to execute a readable
+            # prefix when any admitted directory could not be enumerated.
+            # Run once additionally proves its complete saved scope fits the
+            # admitted bound (``require_complete_scope``).
+            require_readable_scope=True,
         )
         if cancellation_check():
             self._cancel_task_if_running(coordinator, task.task_id)
@@ -641,6 +646,7 @@ class DefinitionScopedExecutionService:
             execute=True,
             limit=task.item_limit,
             cancellation_check=workflow_stop,
+            require_readable_scope=True,
         )
         if cancellation_check():
             raise AutomationCancelled(task.task_id)
@@ -735,6 +741,7 @@ class DefinitionScopedExecutionService:
                 execute=True,
                 limit=task.item_limit,
                 cancellation_check=workflow_stop,
+                require_readable_scope=True,
             )
         else:
             library, display_root = self._resolve_direct_scope(scope)
@@ -756,6 +763,7 @@ class DefinitionScopedExecutionService:
                     execute=True,
                     limit=task.item_limit,
                     cancellation_check=workflow_stop,
+                    require_readable_scope=True,
                 )
         if cancellation_check():
             raise AutomationCancelled(task.task_id)

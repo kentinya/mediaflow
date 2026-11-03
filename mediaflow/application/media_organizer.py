@@ -102,15 +102,65 @@ ANALYSIS_CLASSIFICATION_NEXT_ACTION = (
 
 
 class IncompleteOrganizingScope(RuntimeError):
-    """The complete automatic scope was not proved before any effects."""
+    """The complete admitted scope was not proved before any effects.
 
-    def __init__(self, reason: str):
+    ``errors`` carries the exact discovery failures that prevented proving the
+    scope (empty for an overflow).  They are durable-adjacent evidence only:
+    the bounded operator explanation is derived from them by
+    :func:`incomplete_scope_failure`, never by echoing a raw adapter message.
+    """
+
+    def __init__(self, reason: str, errors: tuple[ScanError, ...] = ()):
         self.reason = reason
+        self.errors = tuple(errors)
         super().__init__(
             "the complete saved scope is unreadable"
             if reason == "scope_unreadable"
             else "the complete saved scope exceeds its primary limit"
         )
+
+    def explanation(self) -> FailureExplanation:
+        """The bounded, secret-free operator explanation of this refusal."""
+
+        return incomplete_scope_failure(self.reason, self.errors)
+
+
+#: Closed, secret-free Chinese explanations for the two scope refusals.  The
+#: page shows a short sentence; the storage error code only narrows the likely
+#: cause and never becomes an internal-code sentence for the operator.
+def incomplete_scope_failure(
+    reason: str = "scope_unreadable", errors: tuple[ScanError, ...] = ()
+) -> FailureExplanation:
+    """Build the one bounded flow-failure explanation for an unproved scope."""
+
+    code = errors[0].storage_error.value if errors else None
+    cause = {
+        "permission_denied": "没有读取来源目录的权限",
+        "authentication_failed": "无法验证来源存储的访问权限",
+        "not_found": "来源目录不存在",
+        "timeout": "读取来源目录超时",
+        "connection_failed": "无法连接来源存储",
+        "connection_lost": "来源存储连接中断",
+        "invalid_path": "来源目录路径无效",
+        "path_traversal": "来源目录路径无效",
+    }.get(code or "")
+    if reason == "scope_overflow":
+        message = "来源范围超过了本次允许的数量，未处理任何文件"
+        next_action = "缩小来源范围或调整数量上限，然后重新发起任务"
+    elif cause is not None:
+        message = f"无法完整读取来源目录（{cause}），未处理任何文件"
+        next_action = "检查来源目录、存储连接和读取权限，然后重新发起任务"
+    else:
+        message = "无法完整读取来源目录，未处理任何文件"
+        next_action = "检查来源目录、存储连接和读取权限，然后重新发起任务"
+    return FailureExplanation(
+        category="storage_failure",
+        message=message,
+        durable_state="任务已保存为失败；没有执行任何文件操作",
+        side_effects="none",
+        retry_safe=True,
+        next_action=next_action,
+    )
 
 
 @dataclass(frozen=True)
@@ -1172,6 +1222,7 @@ class MediaOrganizerService:
         skip_sources: set[tuple[str, str]] | None = None,
         source_display_root: str | None = None,
         require_complete_scope: bool = False,
+        require_readable_scope: bool = False,
     ) -> MediaOrganizerBatchResult:
         items: list[MediaOrganizerItemResult] = []
         selected_count = 0
@@ -1191,8 +1242,8 @@ class MediaOrganizerService:
             cancellation=cancellation,
             cancellation_check=cancellation_check,
         )
-        if require_complete_scope and scan_errors:
-            raise IncompleteOrganizingScope("scope_unreadable")
+        if (require_complete_scope or require_readable_scope) and scan_errors:
+            raise IncompleteOrganizingScope("scope_unreadable", scan_errors)
         if (
             require_complete_scope
             and limit is not None
@@ -1223,8 +1274,8 @@ class MediaOrganizerService:
                     cancellation=cancellation,
                     cancellation_check=cancellation_check,
                 )
-        if require_complete_scope and scan_errors:
-            raise IncompleteOrganizingScope("scope_unreadable")
+        if (require_complete_scope or require_readable_scope) and scan_errors:
+            raise IncompleteOrganizingScope("scope_unreadable", scan_errors)
         if (
             require_complete_scope
             and limit is not None
@@ -1398,6 +1449,7 @@ class MediaOrganizerService:
         progress: ProgressReporter | None = None,
         cancellation_check: CancellationCheck | None = None,
         skip_sources: set[tuple[str, str]] | None = None,
+        require_readable_scope: bool = False,
     ) -> MediaOrganizerBatchResult:
         """Process all enabled configured libraries without local-path assumptions."""
         items: list[MediaOrganizerItemResult] = []
@@ -1424,6 +1476,11 @@ class MediaOrganizerService:
                     libraries, cancellation_check=cancellation_check
                 )
                 errors = list(later_errors)
+        if require_readable_scope and errors:
+            # Any directory this walk could not enumerate makes the admitted
+            # multi-library scope unproved.  Stop before the first file so a
+            # readable prefix is never executed as if it were the whole scope.
+            raise IncompleteOrganizingScope("scope_unreadable", tuple(errors))
         self._previous_observations = {
             **self._previous_observations,
             **self._observation_map_multi(ready_files + waiting_files),

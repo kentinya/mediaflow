@@ -31,11 +31,16 @@ from datetime import UTC, datetime, timedelta
 from pathlib import Path
 
 from mediaflow.application.manual_task_engine import ManualTaskEngineWorker
+from mediaflow.application.media_organizer import MediaOrganizerBatchResult
 from mediaflow.application.task_flow_settlement import (
     TaskFlowSettlementInputs,
     settle_task_flow,
 )
+from mediaflow.application.task_runtime import PersistentTaskCoordinator
 from mediaflow.application.task_scheduling import TaskSchedulingService
+from mediaflow.domain.failure import decode_failure_explanation
+from mediaflow.domain.scanner import ScanError
+from mediaflow.domain.storage import StorageErrorCode
 from mediaflow.domain.task_persistence import (
     HISTORY_EXCLUDED_ITEM_STAGE,
     PersistentResultRecord,
@@ -179,6 +184,38 @@ class AggregateDerivationTests(unittest.TestCase):
         self.assertEqual(6, ended)
         self.assertEqual(2, failed)
         self.assertLessEqual(failed, ended)
+
+
+class CoordinatorScopeSettlementTests(unittest.TestCase):
+    """The legacy coordinator passes real discovery failures to the shared rule."""
+
+    def test_unreadable_scope_is_a_failed_flow_not_a_healthy_empty_completion(self):
+        with tempfile.TemporaryDirectory() as directory:
+            repository = SQLiteTaskRepository(Path(directory, "runtime.sqlite3"))
+            self.addCleanup(repository.close)
+            coordinator = PersistentTaskCoordinator(repository, repository)
+            task = coordinator.create("organize", execute_authorized=False)
+            batch = MediaOrganizerBatchResult(
+                (),
+                (
+                    ScanError(
+                        "Media",
+                        "list",
+                        StorageErrorCode.PERMISSION_DENIED,
+                        NOW,
+                    ),
+                ),
+            )
+            final = coordinator.finish(task.task_id, batch)
+            self.assertIs(PersistentTaskStatus.FAILED, final.status)
+            self.assertEqual(
+                (0, 0, 0), (final.total_items, final.completed_items, final.failed_items)
+            )
+            explanation = decode_failure_explanation(final.error)
+            self.assertIsNotNone(explanation, final.error)
+            self.assertIn("无法完整读取来源目录", explanation.message)
+            self.assertEqual("none", explanation.side_effects)
+            self.assertEqual("storage_failure", explanation.category)
 
 
 class _KernelHarness(unittest.TestCase):

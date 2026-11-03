@@ -1490,6 +1490,52 @@ describe("Operations run inventory landing", () => {
     ).toBe(true);
   });
 
+  it("shows independent success, partial and failure counts for a completed mixed run", async () => {
+    const user = userEvent.setup();
+    stubInventoryJourney(
+      pageDocument({
+        items: [
+          runDocument({
+            run_id: "task-mixed-ended",
+            task_id: "task-mixed-ended",
+            source_scope: "Movies/Mixed",
+            status: "completed",
+            total_items: 10,
+            completed_items: 10,
+            processed_items: 10,
+            success_items: 7,
+            partial_items: 2,
+            // The backend compatibility count is failed+partial; the list must
+            // show the independent failure-only count (3 - 2 = 1).
+            failed_items: 3,
+            uncertain_effect_items: 1,
+            missing_result_items: 0,
+            current_stage: null,
+          }),
+        ],
+        status_counts: { completed: 1 },
+        attention_count: 0,
+        total: 1,
+        summary: summaryDocument({
+          total: 1,
+          running: 0,
+          attention: 0,
+          ended: 1,
+        }),
+      }),
+    );
+    authStore.setToken(TOKEN);
+    renderApp("/ui-v2/operations");
+
+    const views = await screen.findByRole("navigation", {
+      name: "任务中心视图",
+    });
+    await user.click(within(views).getByRole("button", { name: "已结束" }));
+    expect(await screen.findByText(/成功 7，部分成功 2，失败 1/)).toBeVisible();
+    expect(screen.getByText(/有文件效果尚不清楚/)).toBeVisible();
+    expect(screen.queryByText(/失败 3/)).toBeNull();
+  });
+
   it("renders an honest scan-error run instead of rejecting the page", async () => {
     const requested: string[] = [];
     stubInventoryJourney(

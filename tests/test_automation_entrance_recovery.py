@@ -39,6 +39,7 @@ from mediaflow.application.manual_organize import ManualOrganizeIntentService
 from mediaflow.application.manual_organize_preview import ManualOrganizePreviewService
 from mediaflow.application.metadata import MetadataProviderRegistry
 from mediaflow.application.strategy_test import SyntheticMetadataProvider
+from mediaflow.domain.failure import decode_failure_explanation
 from mediaflow.domain.metadata import MediaCandidate, MediaType
 from mediaflow.domain.processing_checkpoint import CheckpointConfiguration, EffectCertainty
 from mediaflow.domain.security import (
@@ -47,6 +48,7 @@ from mediaflow.domain.security import (
     ApiRole,
     ResolvedApiPrincipal,
 )
+from mediaflow.domain.storage import StorageError, StorageErrorCode
 from mediaflow.domain.task_scheduling import TaskControl
 from mediaflow.final_cli import final_main
 from mediaflow.infrastructure.local_storage import LocalStorage
@@ -574,6 +576,106 @@ class EntranceRecoveryJourneyTests(unittest.TestCase):
             self.assertIsNotNone(confirmed_summary, detail)
             self.assertEqual("confirmed", confirmed_summary["status"])
             self.assertEqual(confirmed["executionId"], confirmed_summary["execution_id"])
+
+    def test_cli_unreadable_root_is_a_saved_flow_failure_without_any_file_work(self):
+        """A root that cannot be listed is a Task failure, never healthy empty.
+
+        The real CLI passes the discovery failure to the shared settlement
+        boundary, so the persisted Task carries a readable reason and no file
+        was touched even though a media file exists inside the source root.
+        """
+
+        self.media("One.2001.mkv")
+        with entrance_journey(self, movie_rule=True) as value:
+            original_list = LocalStorage.list
+
+            def denied(storage, path):
+                if path.strip("/") == "":
+                    raise StorageError(
+                        StorageErrorCode.PERMISSION_DENIED,
+                        "list",
+                        path,
+                        "synthetic root permission denial",
+                    )
+                return original_list(storage, path)
+
+            with patch.object(LocalStorage, "list", denied):
+                code, output, errors = self._run_cli(
+                    value, "organize", str(value.source_root), "--execute"
+                )
+
+            self.assertEqual(1, code, errors)
+            self.assertIn("Failed: 1", output)
+            (task,) = value.repository.list_tasks()
+            self.assertEqual("failed", task.status.value, task.error)
+            self.assertEqual((0, 0, 0), (task.total_items, task.completed_items, task.failed_items))
+            explanation = decode_failure_explanation(task.error)
+            self.assertIsNotNone(explanation, task.error)
+            self.assertIn("无法完整读取来源目录", explanation.message)
+            self.assertEqual("none", explanation.side_effects)
+            self.assertEqual((), value.repository.list_items(task.task_id))
+            self.assertTrue((value.source_root / "One.2001.mkv").exists())
+            self.assertEqual([], list(value.target_root.rglob("*.mkv")))
+            state = value.repository.get_task_scheduling(task.task_id)
+            self.assertEqual("settled", state.queue_state.value)
+            self.assertFalse(state.mutation_in_flight)
+            self.assertEqual(0, value.repository.count_scheduled_capacity_use())
+
+    def test_cli_unreadable_subtree_never_executes_the_readable_prefix(self):
+        """One unreadable subtree fails the flow before the first readable file."""
+
+        self.media("One.2001.mkv")
+        self.media("Blocked/Two.2002.mkv")
+        with entrance_journey(self, movie_rule=True) as value:
+            original_list = LocalStorage.list
+
+            def denied(storage, path):
+                if path.strip("/").startswith("Blocked"):
+                    raise StorageError(
+                        StorageErrorCode.PERMISSION_DENIED,
+                        "list",
+                        path,
+                        "synthetic subtree permission denial",
+                    )
+                return original_list(storage, path)
+
+            with patch.object(LocalStorage, "list", denied):
+                code, output, errors = self._run_cli(
+                    value, "organize", str(value.source_root), "--execute"
+                )
+
+            self.assertEqual(1, code, errors)
+            self.assertIn("Failed: 1", output)
+            (task,) = value.repository.list_tasks()
+            self.assertEqual("failed", task.status.value, task.error)
+            self.assertEqual((0, 0, 0), (task.total_items, task.completed_items, task.failed_items))
+            self.assertEqual((), value.repository.list_items(task.task_id))
+            # The readable sibling keeps its bytes: an unproved scope never
+            # executes a readable prefix as if it were the whole admission.
+            self.assertTrue((value.source_root / "One.2001.mkv").exists())
+            self.assertTrue((value.source_root / "Blocked" / "Two.2002.mkv").exists())
+            self.assertEqual([], list(value.target_root.rglob("*.mkv")))
+            state = value.repository.get_task_scheduling(task.task_id)
+            self.assertEqual("settled", state.queue_state.value)
+            self.assertEqual(0, value.repository.count_scheduled_capacity_use())
+
+    def test_cli_healthy_empty_scope_still_completes_with_no_work(self):
+        """A genuinely empty readable scope keeps its completed no-work meaning."""
+
+        with entrance_journey(self, movie_rule=True) as value:
+            code, output, errors = self._run_cli(
+                value, "organize", str(value.source_root), "--execute"
+            )
+
+            self.assertEqual(0, code, errors)
+            self.assertIn("Failed: 0", output)
+            (task,) = value.repository.list_tasks()
+            self.assertEqual("completed", task.status.value, task.error)
+            self.assertEqual((0, 0, 0), (task.total_items, task.completed_items, task.failed_items))
+            self.assertIsNone(task.error)
+            self.assertEqual((), value.repository.list_items(task.task_id))
+            self.assertEqual([], list(value.target_root.rglob("*.mkv")))
+            self.assertEqual(0, value.repository.count_scheduled_capacity_use())
 
     def test_cli_disk_full_settles_partial_and_next_distinct_file_releases_slot(self):
         """A finished CLI pass gives its slot back without rewriting its unknown Result."""

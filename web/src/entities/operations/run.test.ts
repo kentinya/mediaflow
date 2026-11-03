@@ -259,6 +259,35 @@ describe("run summary normalization", () => {
     ).toBe(1);
   });
 
+  it("derives the failure-only file count from the failed/partial compatibility count", () => {
+    const mixed = normalizeRunSummary(
+      runDocument({
+        total_items: 10,
+        completed_items: 10,
+        success_items: 7,
+        partial_items: 2,
+        failed_items: 3,
+      }),
+    );
+    expect(mixed.successItems).toBe(7);
+    expect(mixed.partialItems).toBe(2);
+    expect(mixed.failedItems).toBe(3);
+    expect(mixed.failedOnlyItems).toBe(1);
+  });
+
+  it("rejects a partial count above the compatibility failure count", () => {
+    expect(() =>
+      normalizeRunSummary(
+        runDocument({
+          total_items: 2,
+          completed_items: 2,
+          partial_items: 2,
+          failed_items: 1,
+        }),
+      ),
+    ).toThrow(RunNormalizationError);
+  });
+
   it("requires a label for a recognized command and rejects a mismatch", () => {
     expect(() =>
       normalizeRunSummary(

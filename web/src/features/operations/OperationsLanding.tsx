@@ -1091,8 +1091,12 @@ function RunTable({
                                 parts.push(`成功 ${run.successItems}`);
                               if (run.partialItems)
                                 parts.push(`部分成功 ${run.partialItems}`);
-                              if (run.failedItems)
-                                parts.push(`失败 ${run.failedItems}`);
+                              // `failedItems` is the backend's failed+partial
+                              // compatibility count; the independent file
+                              // failure line uses the derived failure-only
+                              // count so a partial file is not counted twice.
+                              if (run.failedOnlyItems)
+                                parts.push(`失败 ${run.failedOnlyItems}`);
                               if (!parts.length) {
                                 parts.push(
                                   `已处理 ${run.processedItems ?? 0} / ${run.totalItems ?? "不可用"} 项`,
@@ -2031,7 +2035,7 @@ function RunDetailFacts({
           <dt>条目</dt>
           <dd>
             共 {run.totalItems}；已处理 {run.completedItems ?? 0}；失败{" "}
-            {run.failedItems ?? 0}
+            {run.failedOnlyItems ?? 0}
             {run.status === "running" &&
               "（已处理数是已结束的处理项，不代表整理成功）"}
           </dd>

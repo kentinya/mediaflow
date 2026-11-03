@@ -41,7 +41,12 @@ from mediaflow.application.manual_organize import ManualOrganizeIntentService
 from mediaflow.application.manual_organize_execution import ManualOrganizeExecutionService
 from mediaflow.application.manual_organize_preview import ManualOrganizePreviewService
 from mediaflow.application.manual_organize_worker import ManualOrganizeExecutionWorker
-from mediaflow.application.media_organizer import MediaOrganizerBatchResult, MediaOrganizerService
+from mediaflow.application.media_organizer import (
+    IncompleteOrganizingScope,
+    MediaOrganizerBatchResult,
+    MediaOrganizerService,
+    incomplete_scope_failure,
+)
 from mediaflow.application.metadata_correction import MetadataCorrectionService
 from mediaflow.application.metadata_review import MetadataReviewService
 from mediaflow.application.notification import (
@@ -57,6 +62,10 @@ from mediaflow.application.resident_services import ResidentServiceService
 from mediaflow.application.scanner import StorageScanner
 from mediaflow.application.storage_browser import StorageBrowserError
 from mediaflow.application.strategy_test import strategy_runner_from_configuration
+from mediaflow.application.task_flow_settlement import (
+    TaskFlowSettlementInputs,
+    settle_task_flow,
+)
 from mediaflow.application.task_runtime import KernelTaskCoordinator, PersistentTaskCoordinator
 from mediaflow.application.unattended_execution import UnattendedExecutionGrantService
 from mediaflow.cli import render_strategy_result
@@ -75,6 +84,7 @@ from mediaflow.domain.security import ApiPermission, ApiPrincipalDefinition, Api
 from mediaflow.domain.task_persistence import (
     FILES_DELETE_TASK_COMMAND,
     FILES_TRANSFER_TASK_COMMAND,
+    SETTLED_ITEM_STATUSES,
     ConfirmationStatus,
     PersistentTask,
     PersistentTaskItem,
@@ -82,7 +92,6 @@ from mediaflow.domain.task_persistence import (
     TaskItemStatus,
     direct_command_task_command,
     task_item_counts,
-    task_work_status,
 )
 from mediaflow.domain.task_scheduling import TaskControl
 from mediaflow.infrastructure.json_history import JsonLinesOperationHistoryRepository
@@ -1223,41 +1232,55 @@ def final_main(
                 # readable even while another work owns the file.
                 enforce_source_ownership=execute,
             )
-            if arguments.path is None:
-                summary = service.process_all_libraries(
-                    configuration.resource_libraries,
-                    execute=execute,
-                    limit=arguments.limit,
-                    progress=lambda done, total, source: stdout.write(
-                        f"PROGRESS {done}/{total or '?'} {source}\n"
-                    ),
-                    cancellation_check=workflow_stop,
-                )
-            else:
-                assert library is not None and display_root is not None
-                path = Path(arguments.path).resolve(strict=False)
-                if path.is_dir():
-                    summary = service.process_library(
-                        library,
+            # The CLI's own source scope must be read completely before any
+            # file is processed: a root or subtree that cannot be enumerated
+            # makes the admitted scope unproved, so the run settles as a Task
+            # flow failure instead of executing a readable prefix or reporting
+            # a healthy empty completion.  An explicit --limit keeps its
+            # existing subset semantics; only unreadable/overflowed discovery
+            # is a scope failure here.
+            scope_failure = None
+            try:
+                if arguments.path is None:
+                    summary = service.process_all_libraries(
+                        configuration.resource_libraries,
                         execute=execute,
                         limit=arguments.limit,
                         progress=lambda done, total, source: stdout.write(
                             f"PROGRESS {done}/{total or '?'} {source}\n"
                         ),
                         cancellation_check=workflow_stop,
+                        require_readable_scope=True,
                     )
                 else:
-                    storage_path = path.relative_to(
-                        Path(display_root).resolve(strict=False)
-                    ).as_posix()
-                    storage_path = _storage_path(library.root_path, storage_path)
-                    item = service.process_file(
-                        path.as_posix(),
-                        resource_library=library,
-                        storage_path=storage_path,
-                        execute=execute,
-                    )
-                    summary = MediaOrganizerBatchResult((item,))
+                    assert library is not None and display_root is not None
+                    path = Path(arguments.path).resolve(strict=False)
+                    if path.is_dir():
+                        summary = service.process_library(
+                            library,
+                            execute=execute,
+                            limit=arguments.limit,
+                            progress=lambda done, total, source: stdout.write(
+                                f"PROGRESS {done}/{total or '?'} {source}\n"
+                            ),
+                            cancellation_check=workflow_stop,
+                            require_readable_scope=True,
+                        )
+                    else:
+                        storage_path = path.relative_to(
+                            Path(display_root).resolve(strict=False)
+                        ).as_posix()
+                        storage_path = _storage_path(library.root_path, storage_path)
+                        item = service.process_file(
+                            path.as_posix(),
+                            resource_library=library,
+                            storage_path=storage_path,
+                            execute=execute,
+                        )
+                        summary = MediaOrganizerBatchResult((item,))
+            except IncompleteOrganizingScope as error:
+                scope_failure = error
+                summary = MediaOrganizerBatchResult((), error.errors, False)
             cancelled = bool(cancellation_check and cancellation_check())
             if kernel_context is not None:
                 scheduling, claim = kernel_context
@@ -1278,7 +1301,14 @@ def final_main(
                         close_recorded_unknown_boundary=True,
                     )
                 else:
-                    _settle_direct_organize(repository, scheduling, claim, task)
+                    _settle_direct_organize(
+                        repository,
+                        scheduling,
+                        claim,
+                        task,
+                        batch=summary,
+                        scope_failure=scope_failure,
+                    )
             elif cancelled:
                 coordinator.cancel(task.task_id)
             elif coordinator.cancellation_observed(task.task_id):
@@ -2498,14 +2528,16 @@ def _stop_direct_organize_worker(repository, worker_id: str) -> None:
         pass
 
 
-def _settle_direct_organize(repository, scheduling, claim, task):
+def _settle_direct_organize(repository, scheduling, claim, task, *, batch, scope_failure):
     """Settle one directly driven organize Task under its live claim.
 
-    The aggregate is the independent sum of the Task's own durable item
-    outcomes — the same rule every engine settlement uses — so a failed or
-    ignored sibling is never masked by a successful one.  A source still waiting
-    for its operator's own confirmation returns the Task to human waiting with
-    zero slots instead of settling as if every source were done.
+    The flow outcome is the shared settlement rule over the facts this pass
+    actually observed: the pass returned, a discovery failure may have left the
+    admitted scope unproved, and durable items may still be waiting for the
+    operator or real machine work.  File outcomes never become the flow status.
+    An unproved source scope is a bounded Task flow failure — never a healthy
+    empty completion — while a source still waiting for the operator returns the
+    Task to human waiting with zero slots.
     """
 
     from mediaflow.domain.task_scheduling import TaskMachineStage
@@ -2513,20 +2545,32 @@ def _settle_direct_organize(repository, scheduling, claim, task):
     now = datetime.now(UTC)
     items = repository.list_items(task.task_id)
     total, completed, failed = task_item_counts(items)
-    waiting = tuple(
+    waiting_statuses = {
+        TaskItemStatus.WAITING_CONFIRM,
+        TaskItemStatus.WAITING_RECOGNITION,
+        TaskItemStatus.WAITING_METADATA,
+        TaskItemStatus.WAITING_METADATA_CORRECTION,
+        TaskItemStatus.WAITING_CLASSIFICATION,
+    }
+    waiting = tuple(item for item in items if item.status in waiting_statuses)
+    machine = tuple(
         item
         for item in items
-        if item.status
-        in {
-            TaskItemStatus.WAITING_CONFIRM,
-            TaskItemStatus.WAITING_RECOGNITION,
-            TaskItemStatus.WAITING_METADATA,
-            TaskItemStatus.WAITING_METADATA_CORRECTION,
-            TaskItemStatus.WAITING_CLASSIFICATION,
-        }
+        if item.status not in SETTLED_ITEM_STATUSES and item.status not in waiting_statuses
     )
-    machine = tuple(
-        item for item in items if item.status in {TaskItemStatus.PENDING, TaskItemStatus.PROCESSING}
+    failure = scope_failure.explanation() if scope_failure is not None else None
+    if failure is None and batch.scan_errors:
+        failure = incomplete_scope_failure(errors=batch.scan_errors)
+    decision = settle_task_flow(
+        TaskFlowSettlementInputs(
+            ended_this_round=True,
+            machine_work_remaining=bool(machine),
+            human_decision_pending=bool(waiting),
+            live_local_call=False,
+            scope_proven_complete=failure is None,
+            orchestration_error=failure,
+            acknowledged_cancellation=False,
+        )
     )
     updated = replace(
         task,
@@ -2534,9 +2578,22 @@ def _settle_direct_organize(repository, scheduling, claim, task):
         total_items=total,
         completed_items=completed,
         failed_items=failed,
-        error=None,
+        error=failure.encode() if failure is not None else None,
         pause_requested=False,
     )
+    if decision.status is PersistentTaskStatus.FAILED:
+        # The pass never proved the admitted scope; no file was processed and
+        # the reason is durable, bounded and secret-free.  Release the slot
+        # under the live owner fence like every other terminal settlement.
+        failed_task = replace(updated, status=PersistentTaskStatus.FAILED, completed_at=now)
+        scheduling.settle(
+            claim,
+            task=failed_task,
+            items=items,
+            now=now,
+            close_recorded_unknown_boundary=True,
+        )
+        return
     if machine:
         # A still-processing sibling is genuine machine work; keep the slot and
         # let the next claim finish it instead of settling under a terminal
@@ -2563,10 +2620,9 @@ def _settle_direct_organize(repository, scheduling, claim, task):
             close_recorded_unknown_boundary=True,
         )
         return
-    status = task_work_status(items) if items else PersistentTaskStatus.COMPLETED
     settled = replace(
         updated,
-        status=status,
+        status=PersistentTaskStatus.COMPLETED,
         completed_at=now,
     )
     # The direct CLI pass has returned and every durable item is terminal.  A

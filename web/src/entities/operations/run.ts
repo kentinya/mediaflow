@@ -233,6 +233,11 @@ export interface RunSummary {
    * without any Result. Each facet is independent evidence. */
   readonly successItems: number | null;
   readonly partialItems: number | null;
+  /** The failure-only file count, derived from the durable item facts:
+   * `failed_items` keeps its historical failed+partial compatibility meaning,
+   * so the independently displayed "失败 N" subtracts the partial count rather
+   * than presenting one partial file as both a partial and a failure. */
+  readonly failedOnlyItems: number | null;
   readonly uncertainEffectItems: number | null;
   readonly missingResultItems: number | null;
   /** Allowlisted current stage bucket; null means the backend has none. */
@@ -548,6 +553,13 @@ export function normalizeRunSummary(payload: unknown): RunSummary {
   // the old disjoint-sum rule.
   const successItems = optionalCount(source, "success_items");
   const partialItems = optionalCount(source, "partial_items");
+  // ``failed_items`` remains the backend's failed+partial compatibility count.
+  // The list's independent "失败 N" is the recorded non-partial failures, so
+  // a partial file is never counted twice (B48.1-01).
+  const failedOnlyItems =
+    failedItems === null
+      ? null
+      : Math.max(0, failedItems - (partialItems ?? 0));
   const uncertainEffectItems = optionalCount(source, "uncertain_effect_items");
   const missingResultItems = optionalCount(source, "missing_result_items");
   let currentStage: RunCurrentStage | null;
@@ -601,6 +613,16 @@ export function normalizeRunSummary(payload: unknown): RunSummary {
   ) {
     fail();
   }
+  // The failed/partial compatibility count must actually contain the partial
+  // subset it publishes beside it; otherwise the derived failure-only count
+  // would be meaningless.
+  if (
+    failedItems !== null &&
+    partialItems !== null &&
+    partialItems > failedItems
+  ) {
+    fail();
+  }
   const attention = flag(source, "attention");
   // Attention is exactly the union of the four business problem types: a run
   // in attention must name at least one current type, and a run that names a
@@ -639,6 +661,7 @@ export function normalizeRunSummary(payload: unknown): RunSummary {
     processedItems,
     successItems,
     partialItems,
+    failedOnlyItems,
     uncertainEffectItems,
     missingResultItems,
     currentStage,
