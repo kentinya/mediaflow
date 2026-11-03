@@ -8,9 +8,18 @@ workflow authority. Closure rules live only in
 
 ## Current development pointer
 
+Slice48 — **Task Flow Status and Automation Success Rate** — is **PLANNED** on the user's
+2026-11-03 planning request, Base `ba84272721961c970f1eb85d616a0d129523ab92`, Implementation Head
+NOT SET. [SLICE.md](../SLICE.md) selects five-state Task flow independent of file outcomes and a
+Task-only Automation success rate; requirements/journey/architecture label the amendment TARGET.
+Root Task is NO ACTIVE IMPLEMENTATION TASK. Next action is implementation authorization, then A
+checkpoints ACTIVE and B plans the first Task. No product implementation or acceptance is claimed.
+
+## Latest accepted closure
+
 Slice47 — **Unified Task Scheduling and Organizing Execution** — is **PASS / CLOSED** by
 independent A Final Review on 2026-11-03, from original Base `5144ab1fc2344b06194969cc2c496835729664c0`
-through accepted implementation `5134c78b22057781d472e6ebf61a1799d9e40324`. [SLICE.md](../SLICE.md)
+through accepted implementation `5134c78b22057781d472e6ebf61a1799d9e40324`. [Slice47 Contract](https://github.com/kentinya/mediaflow/blob/ba84272721961c970f1eb85d616a0d129523ab92/SLICE.md)
 records the six-outcome/AC-1–26 review, prior rejection pointers and actual independent checks.
 B's final Closure Packet remains at `749507ca9000329484bdc9fb7ad5c44e0efc0cd0:TASK.md`.
 
@@ -19,8 +28,8 @@ process deviations remain in that Contract/packet. Seven optional external-servi
 are disclosed; old-task/cross-version upgrade and V1 support remain excluded. No remote validation
 or production deployment is claimed by closure or document governance.
 
-Root Task is NO ACTIVE IMPLEMENTATION TASK; next action is A SELECTS THE NEXT LARGE SLICE.
-No next Slice is selected. Prior43–46 acceptance identities/deferrals remain unchanged. Slice46's
+The next Slice48 is selected for planning above, without reopening Slice47 or adding a closure
+ledger entry. Prior43–46 acceptance identities/deferrals remain unchanged. Slice46's
 Contract/A review remains at `5144ab1fc2344b06194969cc2c496835729664c0:SLICE.md`; its complete
 B packet remains at `85696ab160e8ec1d1e29dcdfc046d426e2cc214c:TASK.md`.
 

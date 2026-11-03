@@ -7,11 +7,22 @@ Slice46 于 2026-10-29 通过 A 完整范围审查。本文是现行页面/交�
 中心新建和通用失败恢复方案保留在 Git，其退役与执行安全边界继续有效。
 后续已验收的独立界面修正同步到下方现行行为；原 Slice 验收身份不变，独立审查记录留在 Task/Git。
 
-[Slice47](../SLICE.md) 已于 2026-11-03 通过独立 A 终审 PASS / CLOSED。
+[Slice47](https://github.com/kentinya/mediaflow/blob/ba84272721961c970f1eb85d616a0d129523ab92/SLICE.md) 已于 2026-11-03 通过独立 A 终审 PASS / CLOSED。
 `V2-TASK-001–011` 以同一 Task 自身的调度/状态/记录替代 Job/Task 合并；新工作准入、
 四类决定/分析/摘要/明确确认及后续执行保留同一 Task 身份。八视图、筛选/统计和只读原始
 结果保持；取消仍安全协作，Pause/resume-from-pause 已退出。系统设置和源历史处理见完整
 Product Experience 旅程，原 Slice46 接受身份不变。
+
+### TARGET — Slice48 Task 流程状态（PLANNED，尚未实施）
+
+[Slice48](../SLICE.md) / `V2-TASK-012–014` 选择五种 Task 流程状态：pending、running、
+completed、failed、cancelled。流程正常完成可以包含全部文件失败/部分成功/跳过/忽略/
+已记录不确定结果；只有 Task 流程自身无法正常完成才是 failed。文件结果继续独立显示，
+不改写为成功。等待人工/确认仍是未完成的 running，并显示等待阶段；不新增等待状态或恢复页。
+八视图/四类问题并集不变；“流程已完成”不能冒充文件全部成功、清除未解决问题或证明恢复成功。
+普通文件操作仍留在原库页面。完整 TARGET 旅程/失败边界见
+[Product Experience](product-experience.md#target--task-flow-status-and-automation-success-rate-slice48-planned)。
+下方 CURRENT 页面行为在新实现通过验收前保持现行交付事实。
 
 ### 页面归属与入口
 

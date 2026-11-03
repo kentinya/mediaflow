@@ -25,6 +25,27 @@ Slice47 is PASS / CLOSED after independent A Final Review on 2026-11-03. The Tas
 requirements below are CURRENT, superseding the affected Job-based foundation wording. Prior
 acceptance facts remain in Git and Progress; no old-task/cross-version upgrade or V1 support is added.
 
+## Task flow status and Automation success rate — TARGET (Slice48 PLANNED)
+
+The user selected this amendment and requested Slice planning on 2026-11-03.
+[Slice48](../SLICE.md) is PLANNED, with no active implementation Task. These are TARGET
+requirements, not delivered CURRENT behavior. They amend the V2 aggregate realization of
+`REQ-TASK-002/003`, affected completed/recovered wording in `V2-OPS-016`, and the rate portion of
+`V2-AUTO-005`. Original file-result records under `V2-AUTO-006` and all unchanged safety remain.
+
+| ID | Requirement | Acceptance meaning |
+|---|---|---|
+| V2-TASK-012 | Task has five current flow states: pending, running, completed, failed and cancelled. | Flow state is independent of stage, waiting reason, queue eligibility, file/attachment/operation result and read availability. Partial-success and paused are not current Task states; Pause remains retired. Required human/machine work stays unfinished, with visible waiting. Missing/unreadable truth is unavailable, not a fabricated sixth status or a guessed valid state. Shared Task consumers, including ordinary-file aggregates on both library kinds, use this vocabulary without replacing their per-operation results or queues. |
+| V2-TASK-013 | Only failure of the Task flow itself makes the Task failed. | A normally completed, safely finalized scope is completed even when all file results are failed/partial/skipped/ignored/individually cancelled or recorded uncertain, and for healthy empty/complete history-excluded scope. Incomplete scope/root discovery, broken required pinned context/relations or fatal orchestration can fail the flow; bounded file-local errors do not. No/stale Worker, claim expiry/loss or a requested cancellation alone proves neither failure nor completion. Explicit Task cancellation is acknowledged at a safe boundary and wins finalizer races. Preserve durable effects, atomic claims/source/capacity, last durable truth on publication failure and uncertain non-replay. |
+| V2-TASK-014 | All affected consumers distinguish flow completion, file outcomes and real recovery. | Task Center's eight views/counts/detail, Files local ordinary-operation status, Dashboard, API/CLI/log/export and existing Task-status consumers expose consistent flow state and independent processed/success/partial/failure counts. Completed means the flow ended, never all files succeeded or an uncertain effect was verified. Four-type waiting/decision/analysis/summary/explicit continuation remains in the same Task; completion alone neither clears a business problem nor proves recovery success. Legal explicit continuation may re-enter the current Task without replacing original outcomes/pins or creating generic technical/attachment retry. Latest formal file failure/partial still drives automatic history exclusion and new-manual warnings even when Task is completed. |
+| V2-AUTO-012 | Automation success rate measures Task flow completion only. | On the same authorized due/Run once admitted Task cohort, server-side rate is completed/(completed+failed+cancelled); waiting pending/running are excluded, cancelled is not successful, and zero ended/unavailable evidence yields no percentage. Each Task counts once, including current lifecycle changes under legal same-Task continuation, never another admitted run. Remove successful-primary/all-file/attachment/effect-certainty predicates and records-only outcome substitution. Completed all-failed/partial/skipped/ignored/recorded-uncertain/healthy-empty/complete-history-excluded flows count as Task success without successful media effects. Preserve local-month/timezone/population/paging and original records-only result/times, actual file counts, truthful no-work/exclusion evidence and unavailable states. |
+
+Fresh initialization/new work/same-version restart must preserve the new flow and independent
+results. Old-task/status conversion, cross-version upgrade/rollback, data clearing and history
+relabelling are not selected. The [TARGET journey](product-experience.md#target--task-flow-status-and-automation-success-rate-slice48-planned)
+and [TARGET architecture](architecture.md#target--task-flow-status-and-automation-success-rate-slice48-planned)
+define completion/failure boundaries; the committed Slice owns scope and proof.
+
 ## Unified Task scheduling and organizing — CURRENT (Slice47 PASS / CLOSED)
 
 **2026-10-31 user amendment:** Organizing AND ordinary-file operations (including Copy/Move)
@@ -37,7 +58,7 @@ executor. Existing history stays readable without deletion, false relabelling or
 The retirement is accepted under Slice47 AC-19 / V2-TASK-007.
 
 The user authorized removal of the independent Job system on 2026-10-30 and granted A scope
-authority. [Slice47](../SLICE.md) owns implementation boundaries, persistence and final acceptance.
+authority. [Slice47](https://github.com/kentinya/mediaflow/blob/ba84272721961c970f1eb85d616a0d129523ab92/SLICE.md) records implementation boundaries, persistence and final acceptance.
 One organizing work is one Task, its TaskItems and corresponding Results. Automation Definitions
 remain reusable configuration; occurrence records remain idempotency/history evidence, not work
 queues. These requirements replace the V2 Job-object realization of `REQ-TASK-008`, Job-emitting
@@ -94,7 +115,7 @@ explicitly warned manual organizing request without rewriting its predecessor's 
 | V2-TASK-010 | Remove the independent tasks retry-failed CLI entrance; use new organizing and existing four-type continuation. | Parser/help/dispatch/exclusive helper code and installed consumers no longer expose retry-failed or aliases. Old input fails normally before work/Provider/Storage/authority consumption. Keep scoped zero-mutation analysis, ordinary organize, shared ignore/audit, four-type decision→analysis→summary→confirmation and immutable original Results/pins/Automation records. No hidden fallback, second recovery system or automatic replay is introduced. |
 
 Explicit user boundaries carried forward: no old-task/cross-version upgrade scope and no supported
-V1 product. Fresh/new-work and same-version reopen/restart safety remain. [Slice47](../SLICE.md)
+V1 product. Fresh/new-work and same-version reopen/restart safety remain. [Slice47](https://github.com/kentinya/mediaflow/blob/ba84272721961c970f1eb85d616a0d129523ab92/SLICE.md)
 RO-6/AC-20–25 own the proof boundaries; prior accepted implementation facts remain in Git.
 
 ## Slice46 authorized amendments — CURRENT

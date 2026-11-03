@@ -1,504 +1,260 @@
-# Slice 47 — Unified Task Scheduling and Organizing Execution
+# Slice 48 — Task Flow Status and Automation Success Rate
 
 ```text
-Slice ID: 47
-Name: Unified Task Scheduling and Organizing Execution
+Slice ID: 48
+Name: Task Flow Status and Automation Success Rate
 Owner: A — Slice Owner / Architect / Final Reviewer
-Status: PASS / CLOSED
-Base SHA: 5144ab1fc2344b06194969cc2c496835729664c0
-Implementation Head: 5134c78b22057781d472e6ebf61a1799d9e40324
-Implementation Head Acceptance: ACCEPTED BY INDEPENDENT A FINAL REVIEW
+Status: PLANNED
+Base SHA: ba84272721961c970f1eb85d616a0d129523ab92
+Implementation Head: NOT SET
+Implementation Head Acceptance: NOT REVIEWED
 Working Branch: main
-Development Authorization: USER-REQUESTED REFACTOR; A SCOPE AUTHORITY — 2026-10-30
+Development Authorization: SLICE PLANNING ONLY — USER REQUEST, 2026-11-03
 Risk: High
 Final Test Level: T4
-Next Action: A SELECTS THE NEXT LARGE SLICE — NO ACTIVE IMPLEMENTATION TASK
+Next Action: USER AUTHORIZES IMPLEMENTATION; A ACTIVATES SLICE; B PLANS FIRST TASK
 ```
 
 ## Authority and accepted baseline
 
 [AGENTS.md](AGENTS.md) and [Development Workflow](docs/development-workflow.md) govern scope,
-roles, checkpoints, testing and closure. The user requested Job removal and unified Task execution,
-then authorized A scope authority on 2026-10-30. The prior B agent also exercised explicitly
-authorized A scope/document authority for the 2026-10-31 control, 2026-11-02 source-history and
-2026-11-03 settings amendments. Those disclosed role exceptions covered scope/planning only;
-they were not independent implementation acceptance or A Final Review. The independent final
-review and closure are recorded below.
+roles, checkpoints, tests and acceptance. The user requested investigation without edits, then
+selected separation of Task flow status from file outcomes, extended that meaning to Automation's
+success rate, and explicitly requested Slice planning. This checkpoint records the selected TARGET;
+it does not authorize product implementation, create an implementation Task or claim acceptance.
+A must checkpoint an ACTIVE Contract before B plans implementation under the workflow.
 
-The immutable Base includes accepted43–46 and subsequent accepted corrections, including original
-Automation execution-result presentation. Slice46 remains PASS / CLOSED with original Base
-`e9f1a8dc607cfc6d5ea02141b058da8ce849cd70` and accepted implementation
-`6469f45811ee59c875cfd10107d3aed129e9d489`; its Contract/A review is retained at
-`5144ab1fc2344b06194969cc2c496835729664c0:SLICE.md`. Earlier closure identities and limits remain
-in [Progress](docs/progress.md) and Git. This Slice selects the previously deferred queue/Worker
-integration only as required below; it does not reopen or rewrite earlier acceptance.
+Slice47 remains PASS / CLOSED, with original Base
+`5144ab1fc2344b06194969cc2c496835729664c0` and accepted implementation
+`5134c78b22057781d472e6ebf61a1799d9e40324`. Its complete Contract/A review is preserved at
+[the Slice47 checkpoint](https://github.com/kentinya/mediaflow/blob/ba84272721961c970f1eb85d616a0d129523ab92/SLICE.md);
+B's final packet remains at `749507ca9000329484bdc9fb7ad5c44e0efc0cd0:TASK.md`.
+Earlier accepted identities, safety and deferrals in [Progress](docs/progress.md) remain unchanged.
 
-## User goal
+## User goal and requirement traceability
 
-- 取消独立 Job 系统：一项整理工作 = 一个 Task + 多个 TaskItem + 对应 Result。
-- 手动整理、定时自动整理、运行一次共用整理引擎，以触发来源和执行授权区分入口。
-  自动整理根据已配置的规则和有效授权自动执行。
-- 将队列、Worker 领取、心跳、控制和状态职责整合进 Task；恢复续作复用现有四类流程。
-- 删除冗余 Job 代码、数据库结构和接口，保留现有功能、数据、安全机制及执行记录。
-- 先分析依赖，再实施迁移和重构，完成适用测试；不创建第二套执行或恢复系统。
-- 删除“失效判定时间”参数，其余三项放到现有系统设置页，按实际消费者说明作用范围。
-  所有整理入口共享系统整理额度；Worker 轮询覆盖共享后台工作，Scheduler 只检查自动化到期。
-  保留现有心跳、租约/续约和外部调用超时判断，不新增无进展提示或总运行超时。
+- Task reports whether its own processing flow completed, failed or was cancelled.
+- File success, partial success, failure, skip, ignore and effect uncertainty remain independent
+  TaskItem/Result facts; they do not turn a normally completed Task into failed/partial success.
+- Automation's success rate counts Task flow completion only, without inspecting file outcomes.
+- Keep stage/waiting explanations, per-file results and safe four-type continuation usable.
 
-## User-authorized settings-scope amendment — 2026-11-03
+The planned amendments are `V2-TASK-012–014` and `V2-AUTO-012` in
+[V2 Requirements](docs/v2-requirements.md). They amend the V2 realization of `REQ-TASK-002/003`,
+affected aggregate/recovered-success wording in `V2-OPS-016`, and the success-rate realization of
+`V2-AUTO-005`. They do not alter the frozen V1 baseline or declare the new behavior CURRENT.
+Preserve `UX-001–007/010`, applicable `REQ-TASK-005–010`, `REQ-RESULT-*`, `REQ-RECOVERY-*`,
+`REQ-SAFE-*`, `V2-TASK-001–011`, entry/authority boundaries in `V2-OPS-014/015/017`,
+`V2-FILES-007` and `V2-AUTO-010/011`, except for the explicit aggregate/metric amendments above.
+Original records-only file-result semantics under `V2-AUTO-006` remain separate.
 
-Accepted `V2-TASK-011` places the remaining three fields in System Settings and removes the
-stale-age parameter while retaining current heartbeat/lease/call-timeout judgments. This supersedes
-the former Automation-only and four-field/no-progress-observer variants.
+Baseline investigation found file-derived settlement in
+[task_persistence.py](mediaflow/domain/task_persistence.py) (`task_work_status`),
+[task_runtime.py](mediaflow/application/task_runtime.py) and
+[manual_task_engine.py](mediaflow/application/manual_task_engine.py). The current Task/run models
+retain partial-success/paused values. Automation's metric query in
+[sqlite_runtime.py](mediaflow/infrastructure/sqlite_runtime.py) additionally requires successful
+primary-file evidence and no uncertain success item; its separate records-only projection is
+intentionally file-sensitive. These are implementation gaps for the selected TARGET, not proof of
+delivered new behavior; B must trace all affected producers and consumers before Task planning.
 
-- **System entry and publication:** use the existing System Settings page as the ordinary editor
-  for three runtime settings. Remove Automation's settings tab/form and duplicate ordinary editors;
-  old settings links navigate safely to System Settings. Reuse managed checked publication and the
-  existing focused API; no second store or new settings page. A three-field Save preserves unrelated
-  Drafts/configuration, distinguishes published/adopted/pending/override, and starts no media work.
-- **Shared organizing capacity:** `automation.maximumActiveJobs` remains an integer **1–10000**,
-  labelled as the system organizing queue limit, not thread/file parallelism. Files, ordinary
-  direct CLI/API/remote-source organizing, due/Run once and same-Task machine-work re-entry share
-  one atomic allowance. Fullness refuses either origin with truthful recovery, not a source-label
-  bypass. Ordinary asynchronous copy/move/delete keep their existing admission/queue rules; they
-  do not newly consume organizing capacity.
-- **Actual polling consumers:** `automation.workerPollSeconds` controls the shared Worker's idle
-  work checks, including organizing and both library kinds' ordinary asynchronous copy/move/delete.
-  `automation.schedulerPollSeconds` controls only checks for due Automation definitions. It does not
-  gate manual/Run once submission, replace definition Cron/timezone/interval, or control notifications.
-  Keep safe-boundary adoption, truthful per-instance evidence, explicit overrides and independent
-  heartbeat/configuration rechecks. No promise of fixed task completion time or new parallelism.
-- **Remove the unused parameter:** retire `automation.staleJobAgeSeconds` from editable contracts,
-  effective runtime models/arguments/readback and new defaults. Existing immutable documents may
-  retain the old key and remain readable with it ignored; do not rewrite their digest or admitted
-  pins, or require operators to clean historical JSON before using the remaining settings.
-  Field-edit commands reject the retired parameter without publication. Preserve current Worker
-  heartbeat staleness, per-runner claim expiry/renewal and Provider/Storage call timeouts. Add no
-  no-progress observer, whole-Task timeout, automatic failure/cancellation/requeue/uncertain replay.
-- **One engine and preserved safety:** keep one Task lifecycle/repository/scheduling authority,
-  claim/fence protocol, organizing engine and Executor. Origin remains backend-proven provenance
-  for intent/audit/definition semantics, not separate capacity/cadence policy. Preserve atomic
-  capacity/authority/source checks, due uniqueness, waiting/cancellation settlement, exact manual
-  confirmation, immutable execution pins, independent results and non-replay. Notification policy,
-  synchronous browsing/rename/mkdir and ordinary queues are not redesigned.
+Complete TARGET journeys and technical contracts are in
+[Product Experience](docs/product-experience.md#target--task-flow-status-and-automation-success-rate-slice48-planned)
+and [Architecture](docs/architecture.md#target--task-flow-status-and-automation-success-rate-slice48-planned).
 
-## User-authorized control boundary — 2026-10-31
+## RO-1 — one five-state Task lifecycle, independent of file outcomes
 
-The accepted amendment retires Pause/resume-from-pause for organizing and ordinary-file operations.
-The user's confirmation that no organizing Task was paused excluded a dedicated migration path.
+The current durable Task aggregate and its ordinary Web/API/CLI projections use exactly these five
+flow states. Stages, queue eligibility, controls, file results and read availability are distinct facts.
 
-Manual/due/Run once/API/CLI organizing and ordinary-file operations (including Copy/Move) expose
-cancellation, not Pause or resume-from-pause. Remove their Web/API/CLI actions, availability projections
-and dedicated live dispatch; hiding buttons alone is insufficient. Shared routes reject retired
-commands without effects; do not leave a callable back door. Cancellation stops unperformed work
-at a safe boundary without interrupting in-flight calls or undoing completed effects.
-
-Four-type decision → analysis → summary → explicit continuation remains; it is not resume-from-pause.
-Human waiting, timed stability waiting, claim/fence safety stops, independent effects/results and
-uncertain-effect inspection/non-replay remain. No new pause migration, restoration or compatibility
-executor is required given the user's confirmed absence of paused organizing work. Existing historical
-data remains readable and is never deleted, falsely relabelled or automatically replayed by retirement.
-This narrowly authorizes removal of ordinary-file Pause/Resume, not a redesign of those operations.
-It supersedes Pause/resume obligations in REQ-TASK-004, V2-OPS-007 and affected CURRENT/TARGET prose;
-all other permissions, cancellation, authority, confinement and evidence guarantees remain.
-
-## User-authorized scope amendment — 2026-11-02
-
-The accepted `V2-TASK-008–010` amendment adds source-dependent failed/partial history handling
-and retires the independent CLI retry entrance. Original Slice Base and earlier accepted Task
-checkpoints remain unchanged; detailed scope/planning history is retained in Git.
-
-- Shared per-source TaskItem admission uses backend-proven trigger/context and the latest formal
-  organizing outcome for the same observed source version. Definition due work excludes that
-  source only when this outcome is `failed` or `partial`. A later manual organizing success means
-  an earlier failure no longer causes this exclusion; normal filtering/conflicts still apply.
-  Run once uses the same definition-derived exclusion,
-  preserving its existing one-click initial execution. Report the exclusion honestly; a scope
-  containing only historical exclusions is not a newly organized-media success or a scan failure.
-- A deliberate new manual organizing request does not exclude a file merely for prior `failed` /
-  `partial` history, including completed steps or historical unknown effects. Files direct, folder
-  and mixed selections reach the existing exact plan summary with a conspicuous per-file history
-  warning before its ordinary selected execution confirmation. The user checks source, target and
-  Storage effects and explicitly starts new work; no extra verification page, routine checkbox,
-  CLI recovery command or automatic operation-completion detector is selected.
-- This is a narrow explicit-intent amendment to the old blanket manual uncertain-history refusal,
-  not automatic replay or resumed execution of an old item. New work receives its own current
-  configuration pin, exact source/plan and authority. Old recorded outcomes, completed steps,
-  Results/pins/effect certainty and original Automation outcome/time remain factual. Necessary
-  lock/claim/fence and current handling-state changes are permitted, without rewriting that history.
-  Historical unknown effects do not become verified or
-  acquire fresh old authority merely because a new request was confirmed.
-- A concrete file still queued/processing without its own terminal outcome retains normal source
-  ownership. A file item already recorded as `failed` or `partial` is history for this manual rule:
-  neither its parent Task's running status nor a historical unknown marker alone reclassifies it
-  as an active file or permanently vetoes new manual organizing. No proof of remote completion is
-  required from this Task or the user. Necessary application-owner fencing and
-  exact per-file lock handoff preserve siblings and prevent a superseded Worker starting later
-  steps or rewriting old results. Already dispatched remote calls cannot be stopped or proved
-  finished by a Web warning; disclose that limitation and leave their factual evidence intact.
-- Existing directories, targets and copy remnants use the normal plan/capability/Hash/conflict
-  and explicit destructive-effect rules. Do not add special residual deletion, attachment-only
-  replay, historical-step restoration or universal rollback. Other old statuses are not newly
-  auto-excluded under this amendment. Four-type continuation inside its original Task is not a
-  new automatic discovery and retains its existing decision/analysis/summary/confirmation path.
-- Remove `tasks retry-failed` parser/help/dispatch and exclusive execution/analysis helpers;
-  unsupported old input fails normally with zero work/effects. Keep ordinary `organize`, scoped
-  analysis and shared four-type decisions/ignore/audit. Apart from retiring retry-failed and the
-  shared normal manual-organizing adjustment, ordinary CLI/remote keep their existing source and
-  authorization semantics; add no CLI warning requirement, new remote category, consent field or
-  history-refusal rule. The conspicuous new warning is required in Web Files only.
-
-The user confirms that old tasks and cross-version upgrades remain excluded; V1 is unsupported.
-The supported persistence journey is fresh initialization → submit new work → same-version
-reopen/restart → inspect or safely continue that work. Preserve its history, permissions, pins,
-audit and data integrity, including failed/partial source history used by RO-6. No old-Job/old-task
-migration, import, takeover, cross-version upgrade/rollback or mixed-version writer interoperability
-is required. Existing immutable configuration containing retired fields remains readable as specified
-above; this does not select old-task upgrade support. The outcomes, surfaces and acceptance below
-apply this exclusion directly. Accepted43–46 and earlier Task acceptance are not retroactively
-re-reviewed or relabelled; the Closure Packet records the final reviewed implementation.
-
-### Amendment traceability
-
-`V2-TASK-008–010` in [V2 Requirements](docs/v2-requirements.md) owns the durable new rules.
-This section and RO-6 supersede affected blanket history-refusal/CLI retry wording in RO-1/2/3/5,
-the Safety invariants and AC-6/8/15/16 only for deliberate new manual work. Automatic replay of an
-unresolved old attempt and same-Task uncertain replay remain forbidden; new automatic admission
-uses the latest-formal-outcome rule above. The CURRENT journey/architecture sections now describe this accepted amendment.
-
-## Requirements and journeys
-
-- Accepted CURRENT amendments `V2-TASK-001–011` in [V2 Requirements](docs/v2-requirements.md).
-  It supersedes the V2 Job-object requirement in `REQ-TASK-008`, Job-emitting `REQ-SCHED-003`,
-  Job-specific queue/readiness wording and Job/Task merging in the affected V2 Operations/Automation
-  contracts. Frozen V1 meaning and accepted historical facts remain in Git/current baseline sections.
-- Preserve `UX-001–007/010`, `REQ-TASK-002–010`, `REQ-SCHED-001/004/005`, applicable
-  `REQ-RECOVERY-*`, `REQ-RESULT-*`, `REQ-API-*`, `REQ-DEPLOY-*` and `REQ-SAFE-001–009`,
-  interpreted through accepted V2 amendments including `V2-OPS-014–017`, `V2-FILES-007`,
-  `V2-AUTO-006/010/011`.
-- [Product Experience](docs/product-experience.md) owns complete manual, scheduled, Run once,
-  result and four-type recovery journeys; its Slice47 CURRENT journey includes the explicit settings-scope,
-  history and control amendments above.
-- [Architecture](docs/architecture.md) owns CURRENT versus TARGET contracts;
-  [Task Center specification](docs/task-center-page-spec.md) retains its eight-view/page semantics.
-
-## Original planning evidence
-
-The initial dependency investigation and scope Contract are retained at
-`d222b6a96b282c4d1d73a17ea3d428d068f1aedf:SLICE.md`. Later scope amendments and rejected
-checkpoints remain in Git. The outcomes/acceptance below define the final accepted boundary;
-original Base and accepted Implementation Head are unchanged by document consolidation.
-
-## Required outcomes
-
-### RO-1 — one organizing Task owns scheduling and execution
-
-One newly admitted organizing work has one stable Task identity from admission through discovery,
-analysis, human waiting, execution, cooperative controls and permitted recovery. Each concrete source
-has its own TaskItem, plans/checkpoint/effect evidence and corresponding Results. Recovering or
-continuing that work must not mint a Job or a new top-level organizing Task. A deliberate distinct
-new organizing request remains new work, with existing source-ownership and non-replay checks.
-
-Task owns bounded queue eligibility/admission, Worker claim ownership, heartbeat/staleness,
-cooperative cancellation, four-type continuation and fenced publication. Keep lifecycle, processing stage and
-per-item outcome explicit and consistent; do not introduce a separately managed queue object with
-its own competing lifecycle. Internal per-attempt/decision/plan evidence may remain within the Task;
-it is not another operator work or scheduler. Existing safe evidence/authority records are not
-redundant merely because Job is removed.
-
-Within its applicable scheduling policy, capacity counts distinct organizing Tasks with admitted
-pending machine work or a running Worker stage, including discovery, analysis and execution.
-Each Task uses at most one applicable slot across its stages and permitted continuation,
-regardless of its item/attempt count. The system organizing allowance is shared by manual,
-due and Run once work and same-Task machine-work re-entry, as defined in the settings amendment.
-Machine-timed stability waiting remains queued work. The counting boundary is:
-
-| Situation | Capacity use |
+| State | Meaning |
 |---|---|
-| Pending machine work or an active Worker stage, including a Task with other human-blocked items | One slot for the Task |
-| Entire Task waiting for a human decision/initial confirmation, with no remaining queued/claimed machine work | Zero slots; retain Task/source ownership and all evidence |
-| Cancellation requested while work or an in-flight call is still active | Keep its slot until the safe boundary is acknowledged and no admitted machine work remains |
-| Terminal work with no active/queued machine work | Zero slots; retain results and any uncertainty/non-replay protection |
+| `pending` | Work is admitted and waiting to start or legally re-enter machine processing. |
+| `running` | The flow is unfinished, including processing, stability waiting and required human decision/confirmation. |
+| `completed` | The flow normally finished its admitted scope and durably accounted for every item; this says nothing about file success. |
+| `failed` | A Task-level flow failure prevented normal completion and can be truthfully persisted. |
+| `cancelled` | An explicit Task cancellation was acknowledged at the safe boundary. |
 
-New admission and every transition from non-queued waiting work back to machine work check
-capacity atomically with queue eligibility and applicable authority consumption. Full capacity refuses
-new manual/Run once work without an orphan Task or consumed authority; a due occurrence remains due,
-without occurrence creation/due advance, for a normal later Scheduler tick. A refused confirmation,
-analysis continuation of an existing Task preserves its waiting state, saved choices,
-summary and results, publishes a bounded queue-full answer and consumes no execution authority.
-The operator can explicitly retry that command when capacity is available, with normal freshness/
-authority checks; refusal does not register an automatic continuation. Decision Save alone needs no
-queue slot and grants no effects. An exact duplicate of already admitted work reconciles to it even
-when full, without another slot. Slot release never releases durable source ownership or makes
-uncertain effects replayable. Capacity remains admission control, not new worker/thread parallelism.
-Move the remaining three settings into System Settings with the consumer scopes above, preserving
-explicit overrides and immutable pins. Retire the unused stale-age parameter; preserve existing
-heartbeat/lease/call-timeout judgments and uncertain-effect protection. Ordinary operations share
-the Worker's idle cadence but retain their existing admission rules, controls and safe runners;
-do not redesign their queues or count them against organizing capacity.
+Do not publish `partial_success` or `paused` as a current Task aggregate status. Pause remains
+retired; waiting and unknown/unavailable read evidence are not additional Task lifecycle states.
+Do not collapse processing stages or TaskItem/Result/attachment/transfer-operation vocabulary into
+these five values. Audit the older twelve-value `mediaflow/domain/tasks.py` vocabulary and its actual consumers
+so it cannot remain a competing durable Task lifecycle; shared scanning/pipeline stages may remain
+as stages without a broad scanner rewrite.
 
-### RO-2 — all triggers use one organizing application engine
+Normal completion includes all files failed/partial, mixed results, all skipped/ignored, individually
+cancelled items, recorded uncertain outcomes, healthy empty scope and complete history-excluded
+scope. None is proof of successful media organization. Only actual Task cancellation yields
+`cancelled`; counting cancelled file items must not infer that intent. No failed-item threshold,
+success ratio, attachment failure or absence of successful files determines Task flow failure.
 
-Files manual submission, Scheduler due emission, saved-definition Run once and supported API/CLI
-organizing enter the same application scheduling/execution engine. Scheduler directly admits a
-pinned Task and commits occurrence/due-state idempotency atomically; it still does not choose media
-policies or mutate Storage. Definitions and occurrence/audit evidence remain, without an independent
-Job queue/state machine. Worker consumes the admitted Task and pin directly, without parsing CLI
-output or invoking a parallel processing engine.
+Scope completeness and durable/safe finalization still matter. An unfinished item, required human
+step, queued machine stage or unacknowledged in-flight call keeps the Task unfinished. Preserve a
+recorded Task-level failure even if some or all files succeeded; later item-derived aggregation cannot
+turn it into completed. No flow completion before durable outcome/safe-boundary publication.
 
-Preserve existing source-selection intent, configured filtering, attachments, stability handling,
-complete-scope requirements and each entrance's limits. Sharing the engine does not erase the
-manual direct-file/folder distinction or raise Run once's `min(definition itemLimit,100)` ceiling.
-Ready/unstable siblings and complete traversal remain truthful; no silently executable first-N
-prefix. Existing one conditional wait/re-scan in `(0,60]` seconds remains where applicable.
+## RO-2 — explicit flow-failure boundaries and preserved execution safety
 
-Manual work is admitted before business readiness and still requires exact summary/selected
-confirmation before effects. Checked Enabled publication authorizes normal scheduled execution;
-Run once's explicit command authorizes one saved-scope execution, including while disabled, without
-schedule advancement or a second initial confirmation. Preserve current permissions, scoped intent,
-live disable/removal checks and explicit overwrite/Delete/cleanup authority. No initial independent
-grant/pre-analysis gate returns. Configured rule/policy selection stays in the existing pipeline.
+Apply the same lifecycle to manual Files/file/folder/mixed work, supported direct API/CLI/remote
+organizing, scheduled due work, definition Run once and existing same-Task continuation. Ordinary-file
+Task producers on both library kinds adopt this meaning where they write/read the shared Task
+aggregate, without redesigning their per-operation results, admission, queues or controls.
 
-### RO-3 — reuse four-type recovery inside the same work
+| Situation | Required Task interpretation |
+|---|---|
+| File parsing/recognition/metadata/target/conflict/Storage/attachment failure is durably isolated and the flow can finish | Keep the file's real outcome; normal Task completion remains possible, even if every file fails. |
+| Discovery root/list failure or an incomplete/overflowed scope prevents proving the admitted scope was processed | Task flow failure; never pretend this is healthy empty completion or execute a first-N subset. A bounded file-local discovery error may remain item-local when scope completeness is still proved. |
+| A missing/corrupt required pinned context, broken work relation or orchestration error prevents the Task flow from finishing | Task flow failure with bounded stage/reason, known effects and existing permitted next action. |
+| No/stale Worker, temporary readiness waiting, claim expiry/loss or a cooperative cancellation request | Not by itself a terminal failure. Preserve real waiting/ownership and existing safe settlement rules. |
+| A dispatched Storage effect lacks durable outcome proof | Preserve uncertainty and fences; no guessed completion/failure, replay, automatic requeue or capacity/source release before the existing safe boundary. A safely recorded uncertain file outcome does not itself fail an otherwise completed flow. |
+| Database/publication failure prevents recording a terminal outcome | Preserve last durable truth and unavailable/interruption evidence; do not claim the failure or completion was saved. |
 
-Reuse Recognition, Metadata candidate/correction, Classification and Conflict decisions, checkpoints,
-source validation, exact analysis/summary and explicit continuation. Decision Save/analysis grants no
-mutation. Schedule/claim only the exact permitted TaskItems/remaining scope; retain successful,
-ignored, skipped, failed, partial and uncertain siblings independently. Completed or uncertain
-mutations never replay, consumed authority never refreshes itself, and legitimate old pins remain.
+Keep one authoritative application settlement policy for flow outcome and use it across producers
+and claim-fenced repositories. Do not rebuild a parallel flow engine or infer completion by relabelling
+an existing file aggregate. Cancellation acknowledgement wins races with normal finalizers;
+stale-owner writes cannot publish a later terminal outcome. Preserve current queue capacity,
+human-waiting slot release, current authority, immutable pins and atomic source ownership.
 
-Preserve attempt/result history when a Task continues or its current aggregate changes. Original
-execution outcomes/times/effects stay distinguishable from later handling; a successful follow-up
-cannot rewrite the original Automation record. The Task identity stays fixed. Each file's decisions,
-checkpoints, attempts and Results remain durably traceable to that Task and the exact source/version
-and pin. Internal TaskItem IDs may be reused or versioned; unchanged IDs are not an acceptance
-requirement. If an implementation creates a successor item ID, it must preserve the prior ID/history
-and an explicit durable relation, keep affected-file counts and supported links truthful, and prevent
-duplicate source ownership/effects. An ID change cannot widen scope, substitute source content or
-grant authority. No new mapping/recovery subsystem is required. Earlier attempts inside supported
-same-version work retain their identities, relations and original outcomes.
+TaskItem/Result/attempt/checkpoint/attachment results, effect certainty, completed steps, audit/logs
+and source-history gates retain their real meaning. Due/Run once still excludes a source version
+whose latest formal file outcome is failed/partial even when its enclosing Task is completed.
+New manual warning/confirmation remains. No successful/uncertain replay, implicit new authority,
+repinning, new retry product, pause restoration, fifth recovery type or universal rollback.
 
-Continuation after restart/claim loss is conditional on the existing supported control/recovery
-boundary and durable proof that the remaining stage/step is safe to run, plus the normal pin/source/
-authority/fence rechecks. If a Storage mutation was dispatched but its outcome was not durably proved,
-retain the affected step as uncertain, prevent replay and preserve factual inspection evidence.
-Timeout, lease expiry, process restart or a missing Result alone is not proof that nothing happened.
-Safe unaffected siblings retain only their existing permitted actions. No seamless automatic
-continuation at every possible crash point is promised; this Slice adds no new technical recovery
-or attachment-only replay path. No fifth business recovery type, generic technical-failure Web recovery,
-cross-Task bulk mutation, arbitrary historical Reprocess or universal rollback is introduced.
+## RO-3 — readable flow state and independent file results on all affected surfaces
 
-### RO-4 — preserve same-version work and remove the live Job schema
+Task Center keeps the same eight organizing views and four-type Attention union. Its state badges,
+ended/running membership, counts, detail, management filters, paging and links use the same five-state
+flow facts. Waiting stage/reason remains visible; waiting work is not labelled finished. Missing or
+unreadable evidence is unavailable, not a fabricated Task failure, success or zero total.
 
-Fresh initialization creates the Task-owned runtime schema without an independent Job table/index
-or redundant Job-only identity column/foreign key. Same-version reopen/restart preserves newly
-admitted Task/TaskItem/Result, plan/attachment/effect/checkpoint, definition/occurrence,
-control/decision, request identity, pin, authorization consumption, audit/log and relevant relation.
-Queued/pre-start, human-waiting, active/interrupted and terminal work retain their actual state
-and evidence. Retired Scan/Preview/FileIndex products receive no execution/compatibility layer.
+A normally completed mixed-result Task reads, for example, “流程已完成；成功 7、部分成功 2、失败 1”.
+An all-failed file population can show completed flow and truthful file failures together. File details
+keep actual cause, effects and existing actions; a completed badge must not hide warnings or mean
+“全部整理成功”. Progress counts settled/processed files independently from success counts; finishing
+all admitted file attempts can reach 100% processing progress without claiming successful effects.
+Task-level error/recovery presentation distinguishes orchestration failure from item errors.
 
-Readback and permitted continuation use exact durable Task/item/attempt relationships, not guessed
-names/timestamps/current Active. Pending work retains its original intent/pin under existing safe
-restart rules; entered, completed, partial or uncertain work is never blindly reset to Pending.
-Keep existing schema-readiness and claim/fence checks. Initialization/reopen failure must not
-present an incomplete database as ready, change existing durable work or grant execution authority.
-Use isolated fresh/same-version databases, never user databases/media, for these checks.
+Four-type human decision → analysis → exact summary → explicit continuation keeps its same Task,
+legitimate pin, independent outcomes and original attempt evidence. Human-required work remains
+unfinished. Where existing legal continuation re-enters a terminal Task, only explicit admitted
+continuation may move it back to pending/running; status alone grants no recovery or execution.
+“恢复成功” still requires actual resolution/proven file effects; flow completion alone cannot trigger
+that claim or clear an unresolved business problem. Technical/uncertain file history remains factual,
+without adding a generic failure-recovery center.
 
-Remove live Job repositories/models/services/dispatch, APIs/CLI commands and frontend models as
-well as the redundant schema. No Job compatibility executor, dual queue/write or renamed Job store
-may remain. Read existing immutable configuration without rewriting revisions/digests/pins; this
-does not require converting old Job rows, restoring old tasks or proving an old-schema upgrade.
-The exclusion does not authorize clearing user data or rewriting prior accepted implementation facts.
+Affected Files local ordinary-operation modals/readback, Automation task-state readback, Dashboard,
+API/CLI, JSON export and existing Task-status notification/log consumers distinguish flow from file
+results. Ordinary operation result vocabularies and notification policy remain intact. No global
+ordinary-operation center, extra control or replacement UI is selected.
 
-### RO-5 — complete operator and administrative journeys without loss
+## RO-4 — Automation success rate is calculated from Task flow alone
 
-Task Center keeps its eight organizing views, consistent authorized filtering/counts/paging and
-four-type Attention union. Admission/pre-start failures are now Task evidence; one organizing work
-counts once. Current work state, stage, each item's results and original execution outcomes remain
-truthful. Files keeps exact request reconciliation/return, initial confirmation and ordinary-file
-local progress on both library kinds; no extra work picker/global monitoring block is added.
+Keep the current authorized Automation-only population, local-month/timezone boundaries and admitted
+cohort selection: due and definition Run once Tasks count once by durable Task identity. Ordinary
+manual work, rejected admission, analysis-only/preparation work and later continuation are not extra
+Automation runs. Compute the numerator/denominator server-side over the complete same read basis,
+before page limits, independently of the file-sensitive records-only outcome projection.
 
-Automation keeps definitions, due/calendar/latest metrics, enablement/Run once and read-only original
-execution records. System Settings owns the three runtime settings; Automation's former settings
-links navigate there without publication. Records preserve original outcome filtering, actual times,
-concise failure/next-step presentation and no later-handling controls. Dashboard, task-scoped logs,
-JSON exports, health/readiness, CLI and API use Task identities/behavior. Retained links or
-identifiers resolve read-only to proved same-version Task/history or bounded unavailable/denied
-evidence; no old-Job mapping layer is required. They never execute, infer a new identity or require
-the removed Job collections. Remove Job collection,
-submission, cancellation and stale-requeue APIs/commands; retained capabilities use Task equivalents
-with unchanged permissions and safe-repeatability limits.
+```text
+successful = count(Task.status == completed)
+ended = count(Task.status in {completed, failed, cancelled})
+successRate = successful / ended, or unavailable/no-ended-data when ended == 0
+```
 
-### RO-6 — source-dependent history admission and one new-organizing journey
+Cancellation remains in the existing ended denominator and is not successful. Pending/running,
+including required human waiting, are outside that denominator. This carries forward the denominator
+explained in the planning conversation; it adds no cancellation policy/configuration.
 
-Apply the 2026-11-02 amendment at each concrete source's shared Task admission, including files
-found after a directory Task was created. Automation due/Run once excludes versions whose latest
-formal organizing outcome is failed/partial before Provider work or effects; a later manual success
-removes this failure-based exclusion without deleting the earlier result. Manual selection reaches
-a backend-generated exact summary containing the applicable result/effects warning and can execute
-a newly confirmed legal plan.
-Compare real Storage/path/version across library bindings, finding the latest applicable formal
-outcome from the full matching population, not names, the latest arbitrary page of Results, or the
-enclosing Task's aggregate. Recheck relevant summary evidence and ownership atomically
-at relevant admission/confirmation boundaries. A truly replaced source is new content; missing or
-incomparable version evidence cannot silently erase an applicable failed/partial history warning.
-Use existing Task/TaskItem/Result/discovery/authorization evidence, no global FileIndex replacement
-or new queue/recovery product. Remove CLI retry-failed without dropping shared four-type behavior.
+Remove requirements for a successful primary, all-file/attachment success, verified effect certainty
+or a nonempty organized-file count from rate computation. All-file failure/partial/skip/ignore,
+recorded uncertainty, healthy empty and complete history-excluded flows count as Task success when
+Task status is completed. They do not acquire successful file effects. Rates/Task status follow the
+current durable Task if permitted continuation changes its lifecycle; continuation never increases
+the admitted Task count. Original attempt results/times remain immutable and independently readable.
 
-## Required surfaces and boundaries
+Keep actual file counts, unknown effects, no-work/exclusion reasons and original Automation execution
+records honest. In particular, zero successful files is not proof of zero work: an all-failed Task
+must not become a healthy empty/no-work record. Original records-only file-result classification,
+filtering, paging and times keep `V2-AUTO-006` semantics; clearly distinguish those original file
+results from current Task flow success where needed. Do not use a file-sensitive record outcome as
+a hidden replacement for Task.status in the success-rate query. Unavailable metrics remain unavailable.
 
-Domain Task/TaskItem/Result/queue ports; application admission/engine/Worker/Scheduler and four-type
-recovery; runtime SQLite fresh initialization/same-version persistence, source locks and claims;
-authorization/audit/log/outbox relations; managed setting parsing/publication/adoption;
-API/CLI/Web projections and consumers;
-Task Center/Files/Automation/System Settings/Dashboard/health/export; source-external wheel and Docker
-fresh startup/same-version restart/security proofs and applicable startup/restart operator guidance.
+## Required surfaces, exclusions and persistence boundary
 
-Out of scope: new providers or Storage/media commands, distributed scheduling/database, process
-supervision redesign, new parallelism/overlap/backfill policies, unbounded discovery, MediaLibrary
-organizing, new auth/Secret Store, wholesale UI redesign/V1 cutover, retired product restoration,
-history deletion/retention, new recovery types, automatic uncertain replay and universal rollback;
-old-task/Job migration or takeover, cross-version upgrade/rollback and mixed-version interoperability.
-Necessary integration in existing ordinary-file/notification consumers preserves their behavior except
-for the explicitly authorized ordinary-file Pause/Resume retirement and shared Worker idle cadence;
-it does not authorize a new global operation/recovery center or unrelated refactors.
+Required: Task domain/settlement, actual producers/runners and claim-fenced SQLite writes/reads;
+API/CLI/Web Task and run models; Task Center, Files ordinary-operation status and existing Task
+consumers; Automation metric service/API/cards and records separation; applicable installed artifacts.
+Fresh initialization → new work → same-version reopen/restart preserves five-state Tasks, file
+outcomes, waiting/continuation, errors, results, pins, request/occurrence identities and fences.
 
-## Safety invariants
-
-Preserve backend RBAC, exact explicit scoped intent, bounds and Storage confinement, immutable
-admitted snapshots, atomic source ownership, capability/conflict validation, claim/lease/fences,
-current authority before each unperformed effect, only-OrganizerExecutor mutation, zero-mutation
-reads/analysis, independent results/attachments/audit/redaction and completed/uncertain non-replay.
-RecognitionType C remains C with NamingPolicy A and ClassificationPolicy A. No FFmpeg/FFprobe.
+No old-task/status migration, bulk historical relabelling, cross-version upgrade/rollback or
+mixed-version writer support is selected. Retained historical evidence must not be falsified, erased
+or used to restore paused execution; no task/data clearing. Read-only historical handling, if retained,
+must not infer a new flow success from an old partial/file-result aggregate without proof.
+Other exclusions: new Providers/Storage commands, queue/parallelism/settings/supervision redesign,
+unbounded discovery, MediaLibrary organizing, new recovery types, cross-Task bulk mutation,
+attachment-only retry, automatic uncertain replay and universal rollback. No unrelated refactors.
 
 ## Acceptance
 
 | ID | Required proof |
 |---|---|
-| AC-1 | Manual file/folder/mixed submission, due occurrence and Run once each admit exactly one stable organizing Task before business readiness and preserve source scope/limits/pins and exact request readback. |
-| AC-2 | One Task scheduling authority enforces the shared system organizing bound atomically across manual, due/definition Run once and same-Task machine-work re-entry; either origin's occupancy can fill it. Ordinary asynchronous file work keeps its existing admission rules. Simultaneous Scheduler ticks admit one Task per occurrence with atomic due advance. Prove one slot across multiple items/attempts, zero for wholly human-waiting work, one while other machine work or an unacknowledged active call remains, and atomic re-entry. Full capacity preserves waiting work/choices/results without authority consumption or automatic continuation; no orphan, duplicate still reconciles, refused due remains due. |
-| AC-3 | Concurrent Workers claim at most one effective owner; stale-owner heartbeats/item/result/aggregate writes and controls cannot defeat current ownership. Capacity release follows the documented safe boundary; human waiting is not busy-loop claimed or used to release source ownership. Readiness is Task-based and read-only. |
-| AC-4 | All organizing entrances use the shared application engine and production pipeline/Executor; no Job queue, CLI-output Task extraction or second engine remains. |
-| AC-5 | Files manual exact summary/selected confirmation, scheduled enable intent and disabled Run once follow existing distinct authority semantics; denied/stale/unknown requests, disable/remove/permission-loss races fail safely. |
-| AC-6 | Filtering, primary/attachment identity, configured limits, complete bounds and real stability are preserved; ready/unstable/empty/unreadable/overflow outcomes remain distinct, with no first-N execution or fabricated success. |
-| AC-7 | Four business decision → analysis → exact summary → selected continuation journeys finish inside the same newly admitted Task after refresh/restart. Assert exact per-file source/version/pin and durable item/attempt/result lineage, accurate counts and supported links, rather than mandatory equality of internal TaskItem IDs. Mixed batches keep independent accepted/refused results and no fifth recovery type. |
-| AC-8 | At supported cancel/restart/claim-loss and four-type continuation boundaries, prove safe remaining stages can continue only with durable safety evidence and normal authority/fence checks. Inject interruption before mutation dispatch and after dispatch before durable outcome proof: the latter remains uncertain and cannot replay, even after timeout/lease expiry/restart. Preserve completed/ignored siblings, pins and consumed authority; technical history stays read-only in V2. Do not require seamless automatic continuation at every crash point or add a new recovery path. |
-| AC-9 | Fresh initialization → new-work admission/processing → same-version reopen/restart preserves Task/item/attempt identity and relations, pre-start failures, four-type waiting/continuation, request/due uniqueness, consumed/revoked authority and exact pins/audit/log/attachment/results. Failed/partial history remains usable by RO-6. No old-task or Base schema53 Job migration proof is required. |
-| AC-10 | Applicable initialization/reopen failure checks preserve existing durable state and do not authorize work from an unavailable or incomplete database. Existing schema/claim fences remain effective; restart never automatically replays an entered uncertain effect. No cross-version upgrade/rollback or mixed-version interoperability proof is required. |
-| AC-11 | Fresh and same-version reopened databases have no live Job table/index/FK/queue; source/wheel/container expose no redundant Job domain/repository/dispatch/API/CLI/Web path. Immutable configuration readability does not retain a Job executor or require old-task conversion. |
-| AC-12 | Supported configuration and immutable pins remain readable without changing stored revisions/digests. Under V2-TASK-011, System Settings owns the three runtime fields: shared organizing capacity 1–10000, shared Worker idle poll and Automation-due Scheduler poll. Remove staleJobAgeSeconds from editable/effective/default contracts; existing immutable documents containing it remain readable with the value ignored. Keep invalid-input refusal, explicit overrides, truthful actual consumption, current heartbeat/lease/call-timeout logic and uncertain-effect protection. |
-| AC-13 | Eight-view Task Center counts, filters, cursors, detail, four-type union and recovery-complete projection remain consistent across all pages/restart; ordinary work/analysis-only preparation remains outside its organizing population. |
-| AC-14 | Automation definitions/Run once/metrics/latest and original records retain independent truth; old failures/times/known effects survive later recovery, filtering and paging. Original execution counts once and recovered work creates no second original run. |
-| AC-15 | Files exact task/preparation/unknown readback, ordinary local operations on both library kinds, Dashboard, scoped logs/audit/JSON, API/CLI/health and supported links work without Job collections or new authority. Retained links use proved same-version Task/history or bounded unavailable/denied evidence, without an old-Job mapping requirement. |
-| AC-16 | RBAC, source ownership/confinement, zero-mutation reads/analysis, C→A identity, explicit destructive permission, immutable pins, attachments and completed/uncertain non-replay pass automated coverage. |
-| AC-17 | Real Python/API/SQLite/Worker/Scheduler browser journeys using built assets, desktop/narrow inspection, installed wheel and Docker fresh/same-version restart/security gates establish the same Task lifecycle and preserved new-work records. Old-task migration and cross-version upgrade gates are excluded. |
-| AC-18 | B supplies applicable full T4 results and exact Base..Head evidence; unavailable gates remain pending/disclosed. A independently reviews the whole Slice before PASS / CLOSED and CURRENT reconciliation. |
-| AC-19 | Organizing and ordinary-file operations expose no Pause/resume-from-pause in Web/API/CLI or dedicated live dispatch. Old requests are refused without effects; safe cancellation and four-type organizing continuation still work. No paused-organizing migration/restoration system is required; preserve existing readable history and non-replay. |
-| AC-20 | Due and definition Run once use shared per-source admission: exclude only when the same version's latest formal organizing outcome is failed/partial, including zero-effect failure and after restart. Later manual success removes this failure-based exclusion; earlier results remain. Free siblings proceed. Exclusions are durable/readable and do not fabricate new media success, Attention problems or first-N scope completeness. |
-| AC-21 | Manual direct/folder/mixed selection of failed/partial sources, including partial directories/copy remnants and historical unknown effects, reaches the real existing summary with clear per-file history/effects warning before selected confirmation. Current pinned new plans execute through normal conflict/capability/destructive authority, with no new recovery page or mandatory extra operator chore. |
-| AC-22 | Find the latest applicable formal organizing outcome by canonical Storage/path and comparable version across library bindings, before limiting display. Cover matching history beyond recent pages, failed→manual success, mixed results, analysis-only/non-organizing records, genuine replacement and unknown versions. A late predecessor publication cannot masquerade as a newer organizing attempt. Reads and warnings have zero Provider/media effects. |
-| AC-23 | Backend source checks distinguish file items with no terminal outcome from items already failed/partial; parent Task running or historical unknown markers alone cannot block the latter's new manual request. Necessary atomic application fencing/lock/current-state changes preserve old outcomes/Results/pins/steps/unknown evidence and siblings, and do not claim a remote call stopped. Normal source/plan/permission/queue/request checks remain; an unrelated history append alone adds no re-confirmation chore. |
-| AC-24 | No live retry-failed parser/help/dispatch/exclusive helpers remain in source, clean wheel or image; documentation and negative-test literals may remain. Old input stops without Task/Provider/Storage/authority effects. Normal CLI/remote source/authority semantics, organize/analysis and same-Task four-type continuation/ignore remain; no new CLI warning or remote history gate is required. |
-| AC-25 | Real V2 Files/API/SQLite/Worker desktop/narrow journeys prove warning → normal confirmation → actual new organize effects; scheduled and Run once probes prove exclusion/free siblings/no-work truth. Old Results/pins/unknown effects and original Automation time/outcome stay immutable. B supplies applicable T4/native/packaging/restart validation for RO-6 before whole-Slice A review. |
-| AC-26 | System Settings three-field Save/readback at capacity 1/1025/10000 reaches actual consumers; Automation no longer has a settings tab/form and old links safely navigate to System Settings. Prove shared organizing allowance in both directions between manual and due/Run once, with atomic full/refusal/release/explicit retry and same-Task re-entry preserving choices/results/pins/authority. Prove the shared Worker poll also advances both library kinds' ordinary asynchronous copy/move/delete without moving them into organizing capacity; Scheduler poll only checks Automation due definitions. Prove retired-parameter absence from editable/effective/default settings, zero-publication refusal of its field edits, readable unchanged existing snapshots and preserved heartbeat/lease/call-timeout/non-replay behavior. Use real System Settings Save → Files → exact summary/normal confirmation → Storage effects, actual resident adoption/override and same-version restart; B supplies affected/T4/package evidence. No 10000-task load test, fixed timing/DOM/internal layout assertion, no-progress observer, second queue or new settings page. |
+| AC-1 | Supported Task producers/readers expose pending/running/completed/failed/cancelled only as current flow statuses; retired paused/partial-success aggregate branches are removed or confined to honest read-only historical evidence. Stages and per-file/operation results retain distinct meanings. |
+| AC-2 | Automated settlement matrix proves normal completion for all-success, mixed success/partial/failure, all-failed, all-partial, all-skipped/ignored, individual file cancellations, recorded uncertainty, healthy empty and complete history exclusions. File effects/results are unchanged. |
+| AC-3 | Waiting decision/analysis/summary/confirmation, pending machine work and active/unacknowledged calls do not complete early. Existing human/stability waiting and queue-capacity behavior remain correct without introducing a sixth Task status. |
+| AC-4 | Task-level scope/pin/relation/orchestration failures remain failed even with successful files; file-local failures alone never make Task failed. Incomplete traversal/overflow is not empty success or first-N execution. Persistence refusal preserves last durable truth. |
+| AC-5 | Files direct/folder/mixed, direct supported API/CLI/remote, due, Run once and same-Task four-type continuation use the same flow settlement behavior. Both library kinds' ordinary-file Task producers adopt it without changing operation-result semantics or queue rules. |
+| AC-6 | Concurrent cancel/finalize, stale claim/result publication, restart before/after mutation dispatch and recorded uncertain-file settlement preserve source ownership, capacity, pins, results, authority and completed/uncertain non-replay. Cancellation is explicit acknowledged Task intent, never inferred from file counts. |
+| AC-7 | Real Task Center All/Running/Attention/Ended and four problem lists have consistent authorized counts/membership/paging; mixed/all-failed completed flows retain truthful file counts, causes, effects and readable progress. Waiting remains unfinished. Flow completion never falsely displays file recovery success. |
+| AC-8 | Existing four-type decision → analysis → summary → explicit continuation works in the same Task through refresh/restart, preserving independent siblings and original attempts. No new technical/attachment replay or generic failure-recovery flow appears. |
+| AC-9 | Automation population/rate uses completed/(completed+failed+cancelled), never file/attachment/record-outcome predicates. Pending/running are excluded, cancellation is counted once and zero ended Tasks produce no percentage, not fabricated 0%/100%. |
+| AC-10 | With completed Tasks containing only failed/partial/skipped/ignored/uncertain or zero-work files, rates remain Task-based. A cohort of 8 completed, 1 failed and 1 cancelled is 80% regardless of file mix. Verify due/Run once deduplication, full-population counts beyond pages, local-month boundaries and denied/unavailable reads. |
+| AC-11 | Legal current-Task continuation updates its lifecycle-based statistics without adding a run. Original records-only result/times/filter/paging remain independent and immutable; all-failed completed flow is not mislabelled empty/no-work or successful media organization. |
+| AC-12 | Source-history admission still uses latest formal file outcome: a failed/partial item in a completed Task is excluded by due/Run once and warned for new Files manual confirmation, with old effects/history preserved. |
+| AC-13 | Files local modals/readback on both library kinds, Dashboard, API/CLI, scoped logs/export and applicable notification consumers consistently distinguish Task flow status, per-file result and effect certainty. No unavailable truth is coerced to a valid Task outcome. |
+| AC-14 | Fresh/same-version persistence and affected source-external wheel/container startup/restart consumers prove the five-state lifecycle, waiting, file evidence and original records survive; old-task/cross-version conversion is not required. |
+| AC-15 | RBAC, bounds/confinement, exact manual/Automation/continuation intent, immutable pins, zero-mutation reads/analysis, C using Naming A/Classification A remaining C, cancellation/fences and successful/uncertain non-replay retain automated coverage. |
+| AC-16 | B supplies applicable full T4/native/artifact results with actual failures/skips/limits; A independently reviews the complete original Base..Implementation Head before PASS / CLOSED and CURRENT document reconciliation. |
 
-## Final validation and Closure Packet
+## Implementation planning and validation allocation
 
-B's complete Closure Packet and Task47.6 independent review are retained at
-`749507ca9000329484bdc9fb7ad5c44e0efc0cd0:TASK.md`. Task47.1–47.5 history remains in Git;
-Task47.6 passed B at the original Task Base `c8657032dae768d93b12387a5e58db502e23a7ee`
-through candidate `5134c78b22057781d472e6ebf61a1799d9e40324`. The product implementation is
-`dc513d7f749a8f5bee41676925318af162e81aaf`; later checkpoints change acceptance tests/reports.
-All six outcomes and required surfaces are complete under the explicit user amendments.
+B plans coherent full-stack Tasks only after implementation authorization and an ACTIVE committed
+Contract. Lifecycle/settlement and its real consumers form one outcome; Automation metrics and its
+native readback form another. B chooses actual Task boundaries from the code, keeping necessary
+integration/tests with each behavior rather than splitting by enum, file, layer or test gate.
+No implementation Task is planned or approved by this A planning checkpoint.
 
-B's local raw evidence is `.git/validation-evidence/05772d66/b-review-47.6/`:
-2547 Python tests OK (7 optional external-service/endurance skips), 1268 Web unit tests,
-253 applicable fake E2E cases (251 initial passes plus 2 corrected navigation cases),
-15 native settings, 13 native Automation/recovery, 8 native Files/center/history and 22 native
-ordinary-file cases covered successfully. Static/quality/examples, clean wheel smoke,
-53 source-external installed-consumer tests, installed 1025/10000 CLI/Run once effects,
-old-key immutable snapshot/restart proof, Docker fresh/security and same-version restart/fault
-passed. Initial environment/navigation/runner failures and their successful reruns stay disclosed
-in that packet; no single all-green fake/native run is claimed. Optional real remote/endurance
-validation was not run. B's test-time allocation exceeded the requested 50% in its measured
-interval; this process deviation is disclosed, not a waived product gate or precedent.
+Final risk is T4 because shared durable settlement affects the core pipeline, ownership/cancellation,
+source-history gates and persistent/API/Web interpretation. Developer runs new/changed/directly
+affected tests and relevant checks; B owns full regression and acceptance under workflow §6.
+Affected areas include task persistence/scheduling/fencing, manual engine/continuations, direct
+ordinary operations and history, Operations inventory/center, Automation operations/records/metrics,
+source-history ownership and shared Web entity/API/UI tests. Use mocks/local servers/temporary
+Storage roots and real Python/API/SQLite/Worker native desktop/narrow journeys for AC-5–13.
+Applicable full/static/build/installed-wheel/container fresh/same-version restart/security gates follow
+workflow §6; scope-specific tests cover the matrix/rate/fault/race boundaries above. No live user
+media, production database, real external-service credentials or cross-version upgrade proof.
 
-A verified the unchanged production-input diff from `05772d66` to candidate `5134c78b`;
-`5134c78b..749507ca` contains only the B Task report. B's matching artifact/full-suite evidence
-therefore applies without mechanically repeating it. Wheel SHA-256:
-`987b9056a1d147c51ae88f9160e3278286122d9d2f42019c19ccf1997d507b72`.
-Docker image: `sha256:f79c1de40cec65c921f7c89526ba0905d8552740fffd76c4c93ab1150309669c`.
-These are local evidence identities, not a deployment or remote CI claim.
+This planning checkpoint verifies governance, document links/anchors, unchanged accepted closure
+ledger, source-only planning manifest and whitespace. It does not claim product tests or completed
+implementation. Unavailable required future gates remain pending, not waived or marked PASS.
 
-## A Final Review — PASS / CLOSED — 2026-11-03
+Pre-checkpoint document validation passed: nine Markdown-only changed paths; 131 local links/anchors
+and three immutable historical Git targets; unchanged prior closure-ledger/Roadmap/REQ-UX rows;
+four RO, sixteen AC and four unique TARGET requirement IDs; no active implementation Task;
+`git diff --check`. The committed-Contract governance check is run after the planning checkpoint.
 
-```text
-Slice Base: 5144ab1fc2344b06194969cc2c496835729664c0
-Reviewed Implementation Head: 5134c78b22057781d472e6ebf61a1799d9e40324
-Review starting HEAD: 749507ca9000329484bdc9fb7ad5c44e0efc0cd0
-Decision: PASS / CLOSED
-Blocking findings: NONE
-Resolved: A-P1-1, A-P1-2 and B-P1-1/B-P1-2
-Next action: A SELECTS THE NEXT LARGE SLICE — separate action, no implementation authorized
-```
+## Final validation, Closure Packet and A Final Review
 
-This A instance independently reviewed the complete original Base..Implementation Head (252 changed
-files), including the shared scheduling/domain/repository, all organizing entrances, Worker/Scheduler,
-manual/automatic same-Task continuation, history/ownership, fresh persistence/Job retirement,
-authorization/audit/notification/log relations, Web/API/CLI consumers and acceptance evidence.
-It neither implemented nor B-reviewed this Slice and spawned no agents. Prior scope-role exceptions
-remain disclosed above and do not substitute for this final review.
+NOT STARTED. Implementation Head is NOT SET. All RO/AC delivery proofs, B acceptance and
+independent whole-Slice A review remain pending. Slice47's review and actual limits are historical,
+not validation of Slice48. Do not declare implementation PASS from this planning checkpoint.
 
-| Contract coverage | Independent conclusion |
-|---|---|
-| RO-1 / AC-1–3 | One Task owns machine-work admission, claims and settlement. Atomic count/source/authority/due checks preserve duplicates and waiting work. Human waiting releases capacity; active calls and unacknowledged cancellation retain it. |
-| RO-2 / AC-4–6 | Files, direct CLI/API/remote, due and Run once enter the shared kernel/pipeline/Executor, preserving entry-specific intent, bounds, complete discovery, stability and attachments. No Job/CLI-output execution bridge remains. |
-| RO-3 / AC-7–8 | Four-type decision/analysis/summary/confirmation continues the same Task with durable item/attempt/result links, original pins, independent siblings and completed/uncertain non-replay. |
-| RO-4 / AC-9–12 | Fresh/new-work/same-version reopen retains records and fences. No live Job schema/model/dispatch survives; immutable configuration with the retired key remains readable without rewriting identity. Old-task/cross-version upgrade is excluded. |
-| RO-5 / AC-13–19 | Eight-view center, Files local ordinary operations, original Automation outcomes/times, Dashboard/log/export/health/API/CLI and safe links retain their journeys. Pause/resume-from-pause is retired; cancellation and four-type continuation remain. |
-| RO-6 / AC-20–25 | Latest formal source-version history drives automatic exclusion and manual Web warnings. New deliberate confirmation preserves old results/unknown evidence and per-file fencing. CLI retry-failed is absent. |
-| V2-TASK-011 / AC-26 | System Settings owns three fields. All organizing entry/re-entry uses the shared current allowance; reviewed execution keeps its immutable media pin. Worker idle cadence includes ordinary async work; Scheduler cadence checks due definitions only. No stale-age runtime parameter or replacement observer remains. |
+## Planning workspace
 
-**A's actual independent validation:** local ignored root
-`.git/validation-evidence/5134c78b/a-final-review/`.
-
-- Six scheduling/fencing/source-race/manual-engine/history/entrance modules: **146 tests OK**, 13.240s.
-  These include current-capacity lower/raise/recovery confirmation, CLI disk-full settlement,
-  in-flight cancellation, source handoff and unknown-effect non-replay.
-- System-settings/engine-settings/runtime-configuration contracts: **91 tests OK**, 2.803s.
-- Production V2 build and **5 real Python/API/SQLite/Worker Chromium journeys passed**, 11.0s:
-  three-field state/entry/old-link behavior; legal 1025/10000 Save → Files summary → normal
-  confirmation → actual MOVE; shared capacity full/release/retry; old-summary refusal under current
-  capacity. Commands are existing page actions; harness only advances real background workers and
-  reads isolated fixture Storage. No invented product route or direct queue-state construction.
-- Fresh runtime schema58 and same-version reopen: 135 schema objects, **no Job objects/columns**.
-  All **169 wheel Python modules** independently compared byte-for-byte with candidate source:
-  no missing/extra/different modules; SHA-256 matches B's wheel.
-- A inspected desktop/390px System Settings and its adoption state, plus actual 380px Files execution
-  screenshots. The three inputs/actions/status remain readable and reachable with bounded internal
-  diagnostic-table scrolling. Prior history-warning/summary and center visual evidence was checked.
-- B's raw full-suite/native/installed/container logs, actual failures/reruns and source/artifact reuse
-  were inspected. A does not claim a second full-suite/container run. Closure-only checks are recorded
-  with the closure checkpoint; executable inputs are unchanged. The post-checkpoint governance and
-  retirement/document-consumer run passed **53 tests**, 10.020s; raw log: `closure-consumers.log`.
-
-Earlier A rejections remain historical at `7ac253dd11ab3453f36cd40500c79c72b4f888de:SLICE.md`
-(A-P1-1) and `c8657032dae768d93b12387a5e58db502e23a7ee:SLICE.md` (A-P1-2).
-Their real CLI/Web failure evidence remains under the prior `.git/validation-evidence/` roots;
-this acceptance follows the corrected implementation and amended scope, not a rewritten Base.
-No P2 cleanup or optional proof creates another Task. Deferrals and validation limits above remain.
-
-## Closure workspace and documentation
-
-Repository `/Users/songzhidong/mediaflow`, branch `main`, review started at the SHA above with no
-tracked edits. All pre-existing untracked OS/log/reference/output files and `15` are preserved
-unstaged; private configuration/databases/media were not read or used. Workspace/Git are writable;
-governance preflight passed. Closure commit `65c608186500a0790c94174aeac0fe37655f79b3` changed
-only closure/CURRENT documents and role lessons; no product implementation, push, deployment,
-history rewrite or next-Slice selection occurred in that closure action.
-Roadmap/Progress and requirements/journey/architecture/operator guidance now describe accepted47;
-root Task is NO ACTIVE IMPLEMENTATION TASK and points to B's immutable packet. Closure text checks
-passed whitespace, 176 local file links/anchors, unchanged AC/RO and requirement IDs, and unchanged
-prior closure-ledger rows. The committed-Contract governance gate passed after that checkpoint.
-Original43–46 Bases, accepted Heads and ledger facts remain unchanged. Subsequent factual
-document governance does not re-review or change this accepted implementation.
+Repository `/Users/songzhidong/mediaflow`, branch `main`, starting HEAD/Base above. Governance
+preflight passed; tracked files were clean and workspace/Git are writable. Pre-existing untracked
+OS/log/reference/output files and `15` remain unstaged and untouched. Only planning/requirement/
+TARGET journey/architecture/pointer documents are selected for this checkpoint; no code, tests,
+private configuration, user database/media, push, deployment or history rewrite is authorized here.

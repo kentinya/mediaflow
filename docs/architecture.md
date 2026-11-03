@@ -10,6 +10,67 @@ Slice47 is PASS / CLOSED after independent A Final Review on 2026-11-03. Its Tas
 scheduling/settings/history contracts below supersede the affected earlier foundations.
 Detailed former delivery notes remain at `865ebdce47b0b323064fd8e05fbfaa54546e6269:docs/architecture.md`.
 
+## TARGET — Task flow status and Automation success rate (Slice48 PLANNED)
+
+`V2-TASK-012–014` / `V2-AUTO-012` select this TARGET under [Slice48](../SLICE.md), planning only.
+The accepted CURRENT contracts below remain delivery facts until implementation and acceptance.
+This amends Task aggregate settlement and Automation rate predicates, not the processing pipeline,
+Task ownership/queue engine, media execution authority or original records-only file-result semantics.
+
+```text
+existing admitted Task + flow stage/completeness/control/fatal-flow evidence
+  -> shared application flow settlement -> five-state durable Task
+  -> Task/run projections + Automation Task-only success-rate query
+
+TaskItem / Result / attachment / operation / effect certainty
+  -> independent file results, processed progress, history gate and safe recovery
+  -> original Automation records-only file-result projection
+```
+
+**Settlement contract:** current persistent Task and ordinary Task projections use pending, running,
+completed, failed and cancelled. Required human waiting stays running with a stage/reason; queue
+eligibility and unavailable reads are not extra lifecycle values. Partial-success/paused cease to be
+current Task statuses, while existing per-file/attachment/transfer-operation results remain distinct.
+The older TaskStatus/pipeline vocabulary cannot become a second durable lifecycle. Centralize the
+flow policy at the existing application boundary, with fenced repository enforcement; no parallel
+engine or file-count heuristic may overwrite a Task-level failure or acknowledged cancellation.
+
+Normal scope completion plus safely durable accounting can finish Task even with all file outcomes
+failed/partial/skipped/ignored/individually cancelled/recorded uncertain or healthy zero work.
+Task-level root/incomplete traversal, unavailable required pin/relations or orchestration errors may
+fail the flow if they prevent normal completion. Distinguish bounded isolated file errors from
+failure to prove scope completeness. Missing Worker/claim expiry/loss alone is not failure; a database
+write failure is not proof that a terminal state was persisted. Stage, error origin, progress,
+successful file counts and effect certainty stay explicit and backend-authoritative.
+
+**Safety and continuation:** retain same Task identity, admission/claim/capacity/source transactions,
+immutable pins, cancellation precedence, safe publication and uncertain non-replay. A live/unproved
+mutation cannot release its claim/capacity/source merely because a new status rule exists. Once an
+uncertain file result is safely recorded, its uncertainty does not itself make normal flow completion
+fail or authorize replay. Existing four-type continuation may explicitly re-enter eligible work;
+no status grants execution or clears a business problem. Recovered file success remains evidence-based.
+Automatic history exclusion/new-manual warning uses actual latest formal file outcomes, never parent
+Task flow status. Shared ordinary-file Task aggregates adopt this meaning without redesigning their
+operation results/queues. Reads/analysis remain mutation-free.
+
+**Metrics contract:** the server uses current durable Task status over the existing authorized
+Automation due/Run once admitted cohort/local-month window: completed Tasks divided by
+completed+failed+cancelled Tasks. Pending/running are excluded; zero-ended/unavailable evidence yields
+no rate. Count stable Task identities once before paging. Remove primary/attachment success/effect
+certainty and records-only outcome predicates from the rate. Current lifecycle changes under legal
+continuation can change the contribution but cannot create another admitted run. Keep all actual file
+counts/effects and no-work reasons distinct: zero successful files does not prove no work. Preserve
+original record-result filtering/times and append-only attempt truth; do not rewrite those records to
+match a current Task success rate. No second history/metric execution store is required.
+
+**Consumers/persistence:** audit Task settlement producers, Task/run API/CLI/Web models/filters,
+Task Center views/counts/progress, Files local ordinary status, Automation metrics/readback and existing
+Dashboard/export/log/notification Task-status consumers. Unavailable reads do not invent a sixth
+state or coerce corrupted facts into pending/completed/failed. Fresh/new work and same-version
+reopen/restart must preserve five-state flow, independent results and fences. Old-task/status
+conversion, bulk relabelling, cross-version upgrade/rollback and data clearing are not selected.
+Any retained historical reads preserve original evidence without restoring paused execution.
+
 ## CURRENT — Unified Task scheduling and organizing execution (Slice47 PASS / CLOSED)
 
 **2026-10-31 user amendment:** Organizing AND ordinary-file operations (including Copy/Move)
@@ -21,7 +82,7 @@ currently paused organizing Tasks: do not build a pause migration, restoration o
 executor. Existing history stays readable without deletion, false relabelling or automatic replay.
 The retirement is accepted under Slice47 AC-19 / V2-TASK-007.
 
-`V2-TASK-001–006` and committed [Slice47](../SLICE.md) select removal of the independent Job system.
+`V2-TASK-001–006` and committed [Slice47](https://github.com/kentinya/mediaflow/blob/ba84272721961c970f1eb85d616a0d129523ab92/SLICE.md) select removal of the independent Job system.
 This section is CURRENT; affected Job-based contracts are superseded by one Task-owned
 scheduling/claim/execution lifecycle. Slice46's Contract/A review remains at
 `5144ab1fc2344b06194969cc2c496835729664c0:SLICE.md`; no old acceptance is rewritten.
