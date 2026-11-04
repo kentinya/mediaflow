@@ -457,6 +457,8 @@ class TaskSchedulingService:
         now: datetime | None = None,
         initial_execution_stage: str | None = None,
         close_recorded_unknown_boundary: bool = False,
+        execution: ManualExecution | None = None,
+        execution_items: tuple[ManualExecutionItem, ...] = (),
     ) -> TaskSchedulingState:
         """Release the slot because every remaining item now waits for a human.
 
@@ -475,6 +477,11 @@ class TaskSchedulingService:
         :meth:`SQLiteTaskRepository.release_scheduled_claim`).  The manual Files
         path never passes it: its first human wait is the initial summary
         confirmation, not the end of an executed stage.
+
+        ``execution``/``execution_items`` optionally publish one settled manual
+        execution projection in the same transaction (see
+        :meth:`SQLiteTaskRepository.release_scheduled_claim` for the exact
+        guards).
         """
 
         current = self._now(now)
@@ -488,6 +495,8 @@ class TaskSchedulingService:
             expected_control_revision=None,
             initial_execution_stage=initial_execution_stage,
             close_recorded_unknown_boundary=close_recorded_unknown_boundary,
+            manual_execution=execution,
+            manual_execution_items=execution_items,
         )
         if released is None:
             raise TaskClaimFenceLost(f"task {claim.task_id!r} is no longer owned by this Worker")
@@ -502,6 +511,8 @@ class TaskSchedulingService:
         now: datetime | None = None,
         initial_execution_stage: str | None = None,
         close_recorded_unknown_boundary: bool = False,
+        execution: ManualExecution | None = None,
+        execution_items: tuple[ManualExecutionItem, ...] = (),
     ) -> TaskSchedulingState:
         """Publish one terminal Task outcome and release its slot.
 
@@ -516,6 +527,11 @@ class TaskSchedulingService:
         ``close_recorded_unknown_boundary`` releases the slot of a pass whose
         calls already returned while one recorded Result's effect stays unknown;
         the Result itself is never rewritten.
+
+        ``execution``/``execution_items`` optionally publish one settled manual
+        execution projection in the same transaction (see
+        :meth:`SQLiteTaskRepository.release_scheduled_claim` for the exact
+        guards).
         """
 
         current = self._now(now)
@@ -529,6 +545,8 @@ class TaskSchedulingService:
             expected_control_revision=None,
             initial_execution_stage=initial_execution_stage,
             close_recorded_unknown_boundary=close_recorded_unknown_boundary,
+            manual_execution=execution,
+            manual_execution_items=execution_items,
         )
         if released is None:
             raise TaskClaimFenceLost(f"task {claim.task_id!r} is no longer owned by this Worker")

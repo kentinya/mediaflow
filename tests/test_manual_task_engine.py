@@ -1231,6 +1231,354 @@ class ManualTaskDiscoveryTests(_DiscoveryFixture):
             (run["total_items"], run["completed_items"], run["failed_items"]),
         )
 
+    # -- B48.1-03: an ended Files attempt never holds the shared slot ---------
+
+    def _ready_summary(self, value, task_id, discovery, paths):
+        """Drive the real decision→analysis chain and read the fresh summary."""
+
+        items = {item.source_path: item for item in value.repository.list_items(task_id)}
+        for path in paths:
+            self._decide_recognition(value, task_id, items[path])
+        preview = self._analyze(value, task_id, discovery)
+        ready = [entry["itemId"] for entry in preview["items"] if entry["status"] == "previewed"]
+        return preview, ready
+
+    _PUBLICATION_FAULT = "local review fixture: item result publication unavailable"
+
+    def test_failed_result_publication_settles_the_ended_attempt_and_releases_the_slot(
+        self,
+    ) -> None:
+        """The call returned; a failed publication never parks the whole Task.
+
+        The real Files chain admits one file, the Worker performs the actual
+        move, and only the final item/Result publication fails persistently.
+        The ended attempt is retired with unknown-effect evidence and no
+        fabricated Result, the linked execution closes with the same evidence,
+        the flow completes, the shared slot is released, and later passes — and
+        a database reopen — keep exactly those facts without any replay.
+        """
+
+        provider = self._two_file_recognition_journey()
+        with self.journey(task_scheduling=True, provider=provider) as value:
+            status, admitted = self._admit(value, ["Movies/One.2001.mkv"])
+            self.assertEqual(202, status, admitted)
+            task_id = admitted["organizeTaskId"]
+            discovery = self._drive(value, task_id)
+            preview, ready = self._ready_summary(value, task_id, discovery, ["Movies/One.2001.mkv"])
+            self.assertEqual(1, len(ready), preview)
+            with mock.patch.object(
+                value.repository,
+                "complete_manual_execution_item",
+                side_effect=RuntimeError(self._PUBLICATION_FAULT),
+            ) as publication:
+                task = self._execute(value, task_id, preview, ready, steps=1)
+            self.assertGreaterEqual(publication.call_count, 1)
+            # The flow completed although this file's own Result was never saved.
+            self.assertIs(PersistentTaskStatus.COMPLETED, task.status, task.error)
+            state = value.repository.get_task_scheduling(task_id)
+            self.assertIs(TaskQueueState.SETTLED, state.queue_state)
+            self.assertFalse(state.mutation_in_flight)
+            self.assertEqual(0, value.repository.count_scheduled_capacity_use())
+            (stored,) = value.repository.list_items(task_id)
+            self.assertIs(TaskItemStatus.FAILED, stored.status)
+            self.assertEqual("technical_stop", stored.stage)
+            self.assertIn("unknown", stored.error or "")
+            self.assertEqual(0, len(value.repository.list_results(task_id)))
+            executions = value.repository.list_manual_executions_for_task(task_id)
+            self.assertEqual(1, len(executions))
+            self.assertIn(
+                executions[0].status,
+                {ManualExecutionStatus.PARTIAL_SUCCESS, ManualExecutionStatus.FAILED},
+            )
+            (execution_item,) = executions[0].items
+            self.assertIs(ManualExecutionItemStatus.FAILED, execution_item.status)
+            self.assertIsNone(execution_item.result_id)
+            self.assertEqual("unknown", execution_item.effect_certainty)
+            self.assertIn("result_persistence", execution_item.uncertain_effects)
+            # The real mutation happened exactly once and is never replayed.
+            self.assertFalse((self.source_root / "Movies/One.2001.mkv").exists())
+            effects = list(value.source.mutations) + list(value.target.mutations)
+            for _ in range(3):
+                value.task_engine.run_next()
+            self.assertEqual(effects, list(value.source.mutations) + list(value.target.mutations))
+            self.assertIs(PersistentTaskStatus.COMPLETED, value.repository.get_task(task_id).status)
+            with SQLiteTaskRepository(self.database) as reopened:
+                self.assertIs(PersistentTaskStatus.COMPLETED, reopened.get_task(task_id).status)
+                self.assertIs(
+                    TaskQueueState.SETTLED, reopened.get_task_scheduling(task_id).queue_state
+                )
+                self.assertEqual(0, len(reopened.list_results(task_id)))
+                (reopened_item,) = reopened.list_items(task_id)
+                self.assertEqual("technical_stop", reopened_item.stage)
+
+    def test_failed_publication_returns_the_pending_sibling_to_human_waiting(self) -> None:
+        """A confirmed subset's ended attempt settles; the sibling stays owed.
+
+        Two decided sources are analyzed but only the first is confirmed.  The
+        Worker moves it and the result publication fails.  The ended attempt is
+        retired, the sibling returns to human waiting on this same Task, the
+        slot is released, and the operator continues the sibling without
+        replaying the ended attempt or erasing its evidence.
+        """
+
+        provider = self._two_file_recognition_journey()
+        with self.journey(task_scheduling=True, provider=provider) as value:
+            status, admitted = self._admit(value, ["Movies/One.2001.mkv", "Movies/Two.2002.mkv"])
+            self.assertEqual(202, status, admitted)
+            task_id = admitted["organizeTaskId"]
+            discovery = self._drive(value, task_id)
+            preview, ready = self._ready_summary(
+                value, task_id, discovery, ["Movies/One.2001.mkv", "Movies/Two.2002.mkv"]
+            )
+            self.assertEqual(2, len(ready), preview)
+            with mock.patch.object(
+                value.repository,
+                "complete_manual_execution_item",
+                side_effect=RuntimeError(self._PUBLICATION_FAULT),
+            ):
+                task = self._execute(value, task_id, preview, ready[:1], steps=1)
+            # The ended attempt closed; the sibling's human work keeps the Task.
+            self.assertIs(PersistentTaskStatus.RUNNING, task.status)
+            state = value.repository.get_task_scheduling(task_id)
+            self.assertIs(TaskQueueState.WAITING_HUMAN, state.queue_state)
+            self.assertFalse(state.mutation_in_flight)
+            self.assertEqual(0, value.repository.count_scheduled_capacity_use())
+            items = {item.source_path: item for item in value.repository.list_items(task_id)}
+            self.assertIs(TaskItemStatus.FAILED, items["Movies/One.2001.mkv"].status)
+            self.assertEqual("technical_stop", items["Movies/One.2001.mkv"].stage)
+            self.assertIs(TaskItemStatus.WAITING_CONFIRM, items["Movies/Two.2002.mkv"].status)
+            self.assertEqual(0, len(value.repository.list_results(task_id)))
+            executions = value.repository.list_manual_executions_for_task(task_id)
+            self.assertEqual(1, len(executions))
+            (execution_item,) = executions[0].items
+            self.assertIs(ManualExecutionItemStatus.FAILED, execution_item.status)
+            self.assertEqual("unknown", execution_item.effect_certainty)
+            self.assertFalse((self.source_root / "Movies/One.2001.mkv").exists())
+            self.assertTrue((self.source_root / "Movies/Two.2002.mkv").exists())
+
+            # The operator continues the sibling on the same Task: the existing
+            # re-analysis offers it again, the explicit confirmation runs, and
+            # the flow completes with the ended attempt's evidence untouched.
+            fresh = self._analyze(value, task_id, discovery)
+            second_ready = [
+                entry["itemId"] for entry in fresh["items"] if entry["status"] == "previewed"
+            ]
+            self.assertEqual(1, len(second_ready), fresh)
+            final = self._execute(value, task_id, fresh, second_ready)
+            self.assertIs(PersistentTaskStatus.COMPLETED, final.status, final.error)
+            self.assertEqual(0, value.repository.count_scheduled_capacity_use())
+            items = {item.source_path: item for item in value.repository.list_items(task_id)}
+            self.assertIs(TaskItemStatus.FAILED, items["Movies/One.2001.mkv"].status)
+            self.assertIs(TaskItemStatus.SUCCESS, items["Movies/Two.2002.mkv"].status)
+            self.assertEqual(1, len(value.repository.list_results(task_id)))
+            self.assertFalse((self.source_root / "Movies/Two.2002.mkv").exists())
+
+    def test_accepted_cancel_settles_over_an_ended_attempt_with_its_evidence(self) -> None:
+        """The cancel keeps priority; the ended attempt is never rewritten.
+
+        The operator's cancel arrives while the real Worker is inside the only
+        mutation and the result publication then fails.  The accepted cancel
+        settles the Task; the ended attempt keeps its technical-stop evidence
+        with no fabricated Result, the never-started tail is not executed, and
+        the slot is released without any replay.
+        """
+
+        provider = self._two_file_recognition_journey()
+        with self.journey(task_scheduling=True, provider=provider) as value:
+            status, admitted = self._admit(value, ["Movies/One.2001.mkv"])
+            self.assertEqual(202, status, admitted)
+            task_id = admitted["organizeTaskId"]
+            discovery = self._drive(value, task_id)
+            preview, ready = self._ready_summary(value, task_id, discovery, ["Movies/One.2001.mkv"])
+            status, execution = self.request(
+                value,
+                f"/api/v1/operations/organize/previews/{preview['previewId']}/execute",
+                "POST",
+                {
+                    "confirmation": True,
+                    "itemIds": ready,
+                    "expectedIntentVersion": preview["intentVersion"],
+                    "allowOverwrite": False,
+                    "allowSourceCleanup": False,
+                },
+            )
+            self.assertIn(status, (200, 202), execution)
+
+            original = value.executions._execute_plan
+
+            def execute_then_cancel(plan, storages):
+                result = original(plan, storages)
+                task = value.repository.get_task(task_id)
+                code, reply = self.request(
+                    value,
+                    f"/api/v1/tasks/{task_id}/cancel",
+                    "POST",
+                    {"expectedUpdatedAt": task.updated_at.isoformat()},
+                )
+                self.assertEqual(200, code, reply)
+                return result
+
+            with (
+                mock.patch.object(
+                    value.executions, "_execute_plan", side_effect=execute_then_cancel
+                ),
+                mock.patch.object(
+                    value.repository,
+                    "complete_manual_execution_item",
+                    side_effect=RuntimeError(self._PUBLICATION_FAULT),
+                ),
+            ):
+                value.task_engine.run_next()
+            for _ in range(2):
+                value.task_engine.run_next()
+
+            task = value.repository.get_task(task_id)
+            state = value.repository.get_task_scheduling(task_id)
+            self.assertIs(PersistentTaskStatus.CANCELLED, task.status)
+            self.assertIs(TaskQueueState.SETTLED, state.queue_state)
+            self.assertFalse(state.mutation_in_flight)
+            self.assertEqual(0, value.repository.count_scheduled_capacity_use())
+            (stored,) = value.repository.list_items(task_id)
+            self.assertIs(TaskItemStatus.FAILED, stored.status)
+            self.assertEqual("technical_stop", stored.stage)
+            self.assertEqual(0, len(value.repository.list_results(task_id)))
+            executions = value.repository.list_manual_executions_for_task(task_id)
+            self.assertEqual(1, len(executions))
+            self.assertIs(ManualExecutionStatus.CANCELLED, executions[0].status)
+            (execution_item,) = executions[0].items
+            self.assertIs(ManualExecutionItemStatus.FAILED, execution_item.status)
+            self.assertEqual("unknown", execution_item.effect_certainty)
+            self.assertIn("result_persistence", execution_item.uncertain_effects)
+            self.assertIsNone(execution_item.result_id)
+            self.assertFalse((self.source_root / "Movies/One.2001.mkv").exists())
+            effects = list(value.source.mutations) + list(value.target.mutations)
+            for _ in range(2):
+                value.task_engine.run_next()
+            self.assertEqual(effects, list(value.source.mutations) + list(value.target.mutations))
+            self.assertIs(PersistentTaskStatus.CANCELLED, value.repository.get_task(task_id).status)
+
+    def test_a_call_that_never_returns_keeps_its_boundary_for_inspection(self) -> None:
+        """A live unreturned call is never settled, rewritten or replayed.
+
+        The real Worker enters the Storage mutation and the call never returns
+        (the pass is destroyed mid-flight).  No settlement is written, the
+        shared slot stays with the unproved boundary, and later passes keep
+        that exact state instead of guessing an outcome.
+        """
+
+        class NeverReturned(BaseException):
+            """The pass is destroyed while its only call is still executing."""
+
+        provider = self._two_file_recognition_journey()
+        with self.journey(task_scheduling=True, provider=provider) as value:
+            status, admitted = self._admit(value, ["Movies/One.2001.mkv"])
+            self.assertEqual(202, status, admitted)
+            task_id = admitted["organizeTaskId"]
+            discovery = self._drive(value, task_id)
+            preview, ready = self._ready_summary(value, task_id, discovery, ["Movies/One.2001.mkv"])
+            status, execution = self.request(
+                value,
+                f"/api/v1/operations/organize/previews/{preview['previewId']}/execute",
+                "POST",
+                {
+                    "confirmation": True,
+                    "itemIds": ready,
+                    "expectedIntentVersion": preview["intentVersion"],
+                    "allowOverwrite": False,
+                    "allowSourceCleanup": False,
+                },
+            )
+            self.assertIn(status, (200, 202), execution)
+
+            original = value.executions._execute_plan
+
+            def execute_and_never_return(plan, storages):
+                original(plan, storages)
+                raise NeverReturned("the local call is still executing")
+
+            with mock.patch.object(
+                value.executions, "_execute_plan", side_effect=execute_and_never_return
+            ):
+                with self.assertRaises(NeverReturned):
+                    value.task_engine.run_next()
+            state = value.repository.get_task_scheduling(task_id)
+            self.assertIs(PersistentTaskStatus.RUNNING, value.repository.get_task(task_id).status)
+            self.assertTrue(state.mutation_in_flight)
+            self.assertIs(TaskQueueState.CLAIMED, state.queue_state)
+            self.assertEqual(1, value.repository.count_scheduled_capacity_use())
+            (stored,) = value.repository.list_items(task_id)
+            self.assertIs(TaskItemStatus.PROCESSING, stored.status)
+            self.assertEqual(0, len(value.repository.list_results(task_id)))
+            self.assertFalse((self.source_root / "Movies/One.2001.mkv").exists())
+            effects = list(value.source.mutations) + list(value.target.mutations)
+            for _ in range(2):
+                self.assertIsNone(value.task_engine.run_next())
+            self.assertEqual(effects, list(value.source.mutations) + list(value.target.mutations))
+            self.assertTrue(value.repository.get_task_scheduling(task_id).mutation_in_flight)
+            self.assertEqual(1, value.repository.count_scheduled_capacity_use())
+
+    def test_unavailable_settlement_writes_neither_success_nor_failure(self) -> None:
+        """A database that cannot save the settlement preserves the last facts.
+
+        The result publication failed and the settlement boundary is unavailable
+        too: the Task keeps its last durable state — running, marker and slot —
+        instead of a fabricated terminal outcome, the retired attempt's evidence
+        stays recorded, and no pass replays the media operation.
+        """
+
+        provider = self._two_file_recognition_journey()
+        with self.journey(task_scheduling=True, provider=provider) as value:
+            status, admitted = self._admit(value, ["Movies/One.2001.mkv"])
+            self.assertEqual(202, status, admitted)
+            task_id = admitted["organizeTaskId"]
+            discovery = self._drive(value, task_id)
+            preview, ready = self._ready_summary(value, task_id, discovery, ["Movies/One.2001.mkv"])
+            status, execution = self.request(
+                value,
+                f"/api/v1/operations/organize/previews/{preview['previewId']}/execute",
+                "POST",
+                {
+                    "confirmation": True,
+                    "itemIds": ready,
+                    "expectedIntentVersion": preview["intentVersion"],
+                    "allowOverwrite": False,
+                    "allowSourceCleanup": False,
+                },
+            )
+            self.assertIn(status, (200, 202), execution)
+            with (
+                mock.patch.object(
+                    value.repository,
+                    "complete_manual_execution_item",
+                    side_effect=RuntimeError(self._PUBLICATION_FAULT),
+                ),
+                mock.patch.object(
+                    value.repository,
+                    "release_scheduled_claim",
+                    side_effect=RuntimeError(
+                        "local review fixture: settlement persistence unavailable"
+                    ),
+                ),
+            ):
+                value.task_engine.run_next()
+            task = value.repository.get_task(task_id)
+            state = value.repository.get_task_scheduling(task_id)
+            self.assertIs(PersistentTaskStatus.RUNNING, task.status)
+            self.assertIsNone(task.completed_at)
+            self.assertTrue(state.mutation_in_flight)
+            self.assertEqual(1, value.repository.count_scheduled_capacity_use())
+            (stored,) = value.repository.list_items(task_id)
+            self.assertIs(TaskItemStatus.FAILED, stored.status)
+            self.assertEqual("technical_stop", stored.stage)
+            self.assertEqual(0, len(value.repository.list_results(task_id)))
+            self.assertFalse((self.source_root / "Movies/One.2001.mkv").exists())
+            effects = list(value.source.mutations) + list(value.target.mutations)
+            for _ in range(2):
+                value.task_engine.run_next()
+            self.assertEqual(effects, list(value.source.mutations) + list(value.target.mutations))
+            self.assertIs(PersistentTaskStatus.RUNNING, value.repository.get_task(task_id).status)
+            self.assertEqual(0, len(value.repository.list_results(task_id)))
+
     def test_task_center_continue_runs_the_whole_journey_on_the_same_task(self) -> None:
         """A saved decision continues *this* Task; no recovery Job is minted.
 

@@ -619,3 +619,105 @@ Developer 运行新增/修改及直接受影响测试，测试耗时低于修正
 Slice 全部结果重评：RO-1/2 在 Files 缺结果的结束处理仍未满足；RO-3 的旧计数阻塞已修复，
 其余端到端验收待完成；RO-4 的记录状态已改，成功率计算仍在本 Task 之外。当前不规划下一 Task、
 不关闭 Slice，不改 Roadmap/Progress。
+
+### Developer fix report — B48.1-03
+
+READY FOR B REVIEW。修正轮保持原 Task Base
+`4f11762d617d50555f3b106357e8f41988f7c2f9`，只处理 B48.1-03 一个 P1 blocker。候选检查点
+为本提交（分支 `main`）；以下均为本轮实际执行结果。
+
+**改动与关键选择**
+
+1. **Files 的 `run_admitted` 异常边界接入已有技术结束处理。**
+   `manual_task_engine._run_execution` 新增 `except Exception` 分支：仅当调度状态
+   证明 `mutation_in_flight`（本次 pass 亲手越过变更边界）时，调用新增的
+   `_settle_finished_unknown_execution_pass`；无标记的异常保持原有向上传播行为。
+   该方法与自动通道 `_settle_finished_unknown_pass` 同构：先 `_heartbeat` 证明当前
+   owner，再退休已结束尝试，随后按普通 Files 结算收尾；owner 丢失、执行行不可读、
+   释放被拒或写入失败一律返回 None，caller 保留 claim/标记/名额并发出有界通知。
+2. **同一原事务/围栏内退休三处状态，不只改 Task.status。**
+   - TaskItem：复用 `_retire_ended_attempt`（FAILED/`technical_stop`，无 Result，
+     `TECHNICAL_STOP_ITEM_ERROR` 常量从 engine 移到 execution service 共享，措辞不变）。
+   - 手动执行行：`ManualOrganizeExecutionService` 新增 `technical_stop_settlement`
+     只读投影——标记 item 关闭为 FAILED/`uncertain_effects`/unknown，`uncertain_effects`
+     追加 `result_persistence`，不造 Result、不写 result_id；同 execution 内从未启动的
+     ADMITTED 兄弟按既有中断语义关闭为 FAILED/`admission_interrupted`/效果 none；投影
+     通过 `_aggregate_execution` 得出终态。意外状态（RUNNING 但不是标记 item 等）返回
+     None 保持现状。`ManualExecutionCancellation` 更名 `ManualExecutionSettlement`
+     （仅本模块 3 处使用，字段不变），docstring 覆盖两种合法投影。
+   - 调度状态：`task_scheduling.settle`/`defer_to_human` 新增可选
+     `execution`/`execution_items` 转发到既有 `release_scheduled_claim` 参数；
+     repository 守卫从"仅取消投影"放宽为"取消投影或终态技术停止投影"，运行中执行行
+     仍拒绝随 Task 释放写入（新增 `_TERMINAL_MANUAL_EXECUTION_STATUSES` 常量）。
+   退休与释放同在 claim-fenced 释放事务内提交，执行行不可能在已释放名额旁停留 running。
+3. **流程收尾按 Files 语义分流。** 无待办时用共享规则 `settle_task_flow` 收尾
+   completed 并释放名额；仍有 pending/waiting 兄弟时复用 `_finish_execution` 的既有
+   转换（PENDING→WAITING_CONFIRM、`defer_to_human`），Task 保持 running、名额归还，
+   兄弟独立状态与合法续作（同 Task 重新分析→确认）不变。
+4. **取消优先与不可用区分。** 控制为 CANCEL 时走新增 `_settle_ended_pass_cancellation`：
+   先把未启动尾部 TaskItem 记为 cancelled（释放事务的标记关闭检查要求无
+   pending/processing 兄弟），用 `cancelled=True` 投影（未启动兄弟→CANCELLED、标记
+   attempt 保留技术停止证据）经既有 `acknowledge_control` 原子释放，Task=cancelled；
+   stale owner/control 变更仍 fail-closed。数据库整体不可用（释放写入失败）不写任何
+   终态：Task 保留 running、标记与名额，退休证据已持久，后续 pass 不重放媒体操作。
+   已发布 Result 的取消、未知效果、源历史与不重放语义全部未改。
+
+**新增回归（全部走真实 Files API → 识别决定 → 分析 → 摘要确认 → Worker 链路）**
+
+`tests/test_manual_task_engine.py` 新增 5 例：
+
+- `test_failed_result_publication_settles_the_ended_attempt_and_releases_the_slot`：
+  仅在 `complete_manual_execution_item` 注入持续本地故障（B 原始复现旅程）。断言
+  Task completed、队列 SETTLED、名额 0、标记清除；item=FAILED/technical_stop 且
+  Result 为 0；执行行终态且其 item FAILED/unknown/`result_persistence`/无 result_id；
+  真实移动恰好一次、3 次 idle pass 零重放；重开数据库事实仍在。
+- `test_failed_publication_returns_the_pending_sibling_to_human_waiting`：
+  双文件仅确认其一，发布故障后 Task running/WAITING_HUMAN、名额 0，兄弟转
+  WAITING_CONFIRM；经既有 re-analyze→确认→execute 在同 Task 完成成功兄弟，已结束
+  证据不被清除。
+- `test_accepted_cancel_settles_over_an_ended_attempt_with_its_evidence`：Worker 在
+  变更内收到真取消（既有 cancel 注入接缝）叠加发布故障；Task cancelled、名额 0，
+  执行行 CANCELLED 但标记 item 保留 FAILED/unknown 证据，零重放。
+- `test_a_call_that_never_returns_keeps_its_boundary_for_inspection`：以
+  `BaseException` 模拟本地调用未返回；无任何结算写入，名额与标记保留，后续 pass
+  原样保留、不猜测结果。
+- `test_unavailable_settlement_writes_neither_success_nor_failure`：发布与释放双双
+  不可用；不写 completed/failed，保留 running+标记+名额+退休证据，零重放。
+
+**实际执行与结果**
+
+- `PYTHONPATH=. .venv/bin/python .git/validation-evidence/695b96926526b02d0a0c3f535ac790af9b9096f0/b-review/manual-missing-result.py`
+  （B 原始复现脚本原样重跑）：AFTER_RETURN
+  `{"status": "completed", "items": ["failed"], "results": 0, "slot": 0, "mutation": null,
+  "publication_calls": 1}`；AFTER_IDLE_PASSES
+  `{"status": "completed", "slot": 0, "new_mutations": 0, "source_exists": false}`。
+  阻塞行为消除：调用返回后收尾、名额归还、无重放。
+- `.venv/bin/python -m unittest tests.test_manual_task_engine tests.test_manual_organize_execution tests.test_task_flow_status tests.test_task_scheduling_fencing tests.test_organize_source_history`
+  → **148 通过，0 失败**（12.740 秒；含 5 例新增）。
+- `.venv/bin/python -m unittest tests.test_task_scheduling tests.test_task_persistence tests.test_operations_task_center tests.test_v2_automation_run_once`
+  → **116 通过，0 失败**（9.221 秒；调度/持久/任务中心/自动通道直接受影响面）。
+- `.venv/bin/python -m unittest tests.test_final_integration tests.test_workflow_retry tests.test_confirmation_api`
+  → **20 通过，0 失败**（0.344 秒）。
+- `.venv/bin/python -m unittest tests.test_direct_file_operations tests.test_direct_file_transfers tests.test_media_library_transfers tests.test_library_file_operation_history tests.test_task_source_ownership_race`
+  → **226 通过，0 失败**（69.061 秒；覆盖 `release_scheduled_claim` 既有取消投影守卫放宽后的直接受影响消费者）。
+- `.venv/bin/ruff check` 与 `.venv/bin/ruff format --check` 对 5 个实际改动文件通过；
+  `compileall` 通过；`python3 scripts/check_governance.py`、`git diff --check` 通过。
+- 本轮无 Web 改动（读回在既有证据词汇内解码，未改 decoder/校验/文案），故未追加
+  Web 组件测试/类型检查/构建，符合修正指导的触发条件。
+
+**测试耗时**：本轮累计测试（含复现重跑与静态检查）约 2.5 分钟，远低于修正轮总耗时的
+50%；完整 T4 回归、E2E/视觉、wheel/容器/安全门禁仍由 B 执行，本轮未运行也不声称通过。
+
+**剩余风险与待 B 核对**
+
+- 未启动 ADMITTED 兄弟在非取消技术停止下按既有 legacy 中断语义关闭为
+  FAILED/`admission_interrupted`/效果 none（与其 TaskItem 的 WAITING_CONFIRM 并存）；
+  执行行详情与任务中心读回分属两套既有词汇，B 验收时请核对该并置表达是否符合
+  "页面提示/改动位置"的预期。
+- 暂停（pause）控制对普通文件已退役且 API 直接拒绝，本轮未改
+  `_settle_pending_control` 的暂停分支；若 B 认为"暂停+已结束边界"也需同一收尾规则，
+  属于后续小改。
+- `_settle_finished_unknown_execution_pass` 的重试语义与自动通道一致：结算写入失败后
+  由后续 pass 幂等重试（退休已幂等），但普通 claim_next 对"已进入机器阶段"的 Task
+  不再接管，最终仍走既有文档化检查路径；本轮未新增恢复入口。
+- 自动化成功率（RO-4 分子/分母、AC-9/10）仍不在本 Task，未实现或声称完成。

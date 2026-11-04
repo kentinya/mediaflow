@@ -16,6 +16,7 @@ from collections.abc import Callable
 from dataclasses import replace
 from datetime import UTC, datetime
 
+from mediaflow.application.manual_organize_execution import TECHNICAL_STOP_ITEM_ERROR
 from mediaflow.application.task_flow_settlement import (
     TaskFlowSettlementInputs,
     settle_task_flow,
@@ -44,16 +45,6 @@ from mediaflow.domain.task_scheduling import (
 )
 
 DEFAULT_LEASE_SECONDS = 300.0
-
-#: The bounded, secret-free outcome recorded when one organizing attempt ended
-#: on a technical stop (the pass raised while the item held a mutation boundary)
-#: and never published its own Result.  The wording states the honest facts —
-#: the attempt ended, no result was recorded, the actual effect is unknown —
-#: without asserting a remote Storage outcome or inviting a replay.
-TECHNICAL_STOP_ITEM_ERROR = (
-    "the organizing attempt ended on a technical stop; no result was recorded "
-    "and the actual effect is unknown"
-)
 
 #: TaskItem states that represent work still waiting for the operator's own
 #: four-type decision.  An automatic Task holding only these has no machine work
@@ -417,7 +408,215 @@ class ManualTaskEngineWorker:
                 # instead of converting it into a technical failure.
                 return self._settle_pending_control(claim)
             raise
+        except Exception as error:  # noqa: BLE001 - a Worker must never crash the loop
+            state = self._scheduling.state(claim.task_id)
+            if state is not None and state.mutation_in_flight:
+                # The Files pass raised, so every application call of this
+                # round — including the one inside the marked Storage mutation
+                # — has returned.  The ended attempt must not hold the shared
+                # slot forever: retire it and settle the flow under the live
+                # claim exactly as the automatic channel does, instead of
+                # parking the Task behind a result that was never saved.
+                settled = self._settle_finished_unknown_execution_pass(claim, execution)
+                if settled is not None:
+                    return settled
+                self._notice(self._bounded_notice(claim.task_id, error))
+                return self._task(claim.task_id)
+            raise
         return self._finish_execution(claim, finished)
+
+    def _settle_finished_unknown_execution_pass(
+        self, claim, execution: ManualExecution
+    ) -> PersistentTask | None:
+        """Settle one raised Files pass whose marked attempt has technically ended.
+
+        The pass raised, so every call of this round — including the one that
+        entered a Storage mutation — has returned.  The shared Slice 48 rule
+        then applies to the Files channel exactly as to the automatic one: the
+        ended attempt is retired under the live claim (a bounded technical stop
+        with unknown-effect evidence, never a fabricated Result), the linked
+        manual execution closes with the same honest evidence in the release
+        transaction, and the flow follows the ordinary manual settlement.
+        Returns ``None`` only when the boundary is still unproved (ownership
+        lost, an unexpected execution state, a refused release or a write
+        failure): the caller then keeps the claim, the marker and the slot for
+        inspection, exactly as before.
+        """
+
+        try:
+            settled = self._settle_ended_execution_pass(claim, execution)
+        except Exception:  # noqa: BLE001 - the caller keeps the unproved boundary
+            return None
+        state = self._scheduling.state(claim.task_id)
+        if state is not None and state.mutation_in_flight:
+            return None
+        return settled
+
+    def _settle_ended_execution_pass(self, claim, execution: ManualExecution) -> PersistentTask:
+        """Retire the ended attempt and settle one raised Files execution pass.
+
+        Only the current owner reaches this boundary, and only after its own
+        pass returned, so the marked attempt has demonstrably ended.  The
+        retirement preserves the attempt's known steps, its pin and the
+        non-replay evidence; the linked manual execution closes in the same
+        claim-fenced release so its rows can never stay ``running`` beside a
+        settled Task; and the flow itself follows the ordinary manual
+        settlement — remaining sources return to human waiting on this same
+        Task, and a Task with no remaining work completes and releases its
+        slot.  An accepted cancel keeps priority over any of it.
+        """
+
+        if not self._heartbeat(claim):
+            return self._task(claim.task_id)
+        state = self._scheduling.state(claim.task_id)
+        if state is None or not state.mutation_in_flight:
+            return self._task(claim.task_id)
+        now = self._clock()
+        ended_item_id = state.mutation_item_id
+        if ended_item_id is not None:
+            self._retire_ended_attempt(claim, ended_item_id, now)
+        if state.control_request is TaskControl.CANCEL:
+            return self._settle_ended_pass_cancellation(claim, execution, ended_item_id, now)
+        if state.control_request is not None:
+            # A non-cancel control keeps its own settlement boundary; the
+            # retirement above already preserved the ended attempt's evidence.
+            return self._task(claim.task_id)
+        projection = None
+        if execution is not None and ended_item_id is not None:
+            try:
+                projection = self._execution.technical_stop_settlement(
+                    execution.execution_id, ended_item_id=ended_item_id, now=now
+                )
+            except Exception:  # noqa: BLE001 - an unreadable execution is never closed by guesswork
+                projection = None
+        if projection is None:
+            return self._task(claim.task_id)
+        task = self._task(claim.task_id)
+        items = self._repository.list_items(task.task_id)
+        pending = tuple(value for value in items if value.status is TaskItemStatus.PENDING)
+        waiting = tuple(value for value in items if value.status in _WAITING_ITEM_STATUSES)
+        if pending or waiting:
+            # Sources this Task still owes — undecided siblings and confirmed
+            # scopes the pass never reached — return to human waiting on this
+            # same Task; the operator decides and continues exactly as after an
+            # ordinary subset execution.  Their independent state and the ended
+            # attempt's evidence are both preserved.
+            converted = tuple(
+                self._replace_item(item, TaskItemStatus.WAITING_CONFIRM, "waiting_confirm", now)
+                for item in pending
+            )
+            updated = self._with_counts(
+                self._with_status(task, PersistentTaskStatus.RUNNING, now, task.error),
+                overrides=converted,
+            )
+            self._scheduling.publish_task(claim, updated, now=now)
+            for item in converted:
+                self._scheduling.record_item(claim, item, now=now)
+            try:
+                self._scheduling.defer_to_human(
+                    claim,
+                    task=updated,
+                    items=(),
+                    now=now,
+                    execution=projection.execution,
+                    execution_items=projection.items,
+                    close_recorded_unknown_boundary=True,
+                )
+            except TaskControlRejected:
+                if self._refusal_keeps_claim(claim):
+                    return self._task(claim.task_id)
+                raise
+            return self._task(claim.task_id)
+        # Slice 48 RO-1: the flow completed because this round ended and no
+        # machine/human work remains.  The ended attempt's facts — no recorded
+        # Result, unknown effect — stay on their own records and are never read
+        # back as the flow outcome.
+        decision = settle_task_flow(
+            TaskFlowSettlementInputs(
+                ended_this_round=True,
+                machine_work_remaining=False,
+                human_decision_pending=False,
+                live_local_call=False,
+                scope_proven_complete=True,
+                orchestration_error=None,
+                acknowledged_cancellation=False,
+            )
+        )
+        updated = self._with_counts(self._with_status(task, decision.status, now, task.error))
+        try:
+            self._scheduling.settle(
+                claim,
+                task=updated,
+                items=items,
+                now=now,
+                execution=projection.execution,
+                execution_items=projection.items,
+                close_recorded_unknown_boundary=True,
+            )
+        except TaskControlRejected:
+            if self._refusal_keeps_claim(claim):
+                return self._task(claim.task_id)
+            raise
+        return self._task(claim.task_id)
+
+    def _settle_ended_pass_cancellation(
+        self, claim, execution: ManualExecution | None, ended_item_id: str | None, now: datetime
+    ) -> PersistentTask:
+        """Settle the accepted cancel of a pass that ended technically.
+
+        The operator's cancel is the final word for the work that never
+        started; the ended attempt keeps its technical-stop evidence instead of
+        being rewritten into a cancellation.  The linked manual execution
+        closes in the same claim-fenced release with both facts, and a stale
+        owner or a changed control still refuses fail-closed.
+        """
+
+        state = self._scheduling.state(claim.task_id)
+        if state is None or state.control_request is not TaskControl.CANCEL:
+            return self._task(claim.task_id)
+        # The release's marker close re-reads durable siblings inside its own
+        # transaction, so the never-started tail must already be outside the
+        # unproved set before the cancellation is acknowledged.
+        for item in self._repository.list_items(claim.task_id):
+            if item.status is TaskItemStatus.PENDING:
+                self._scheduling.record_item(
+                    claim,
+                    replace(
+                        item,
+                        status=TaskItemStatus.CANCELLED,
+                        stage="cancelled",
+                        updated_at=now,
+                        error="task cancelled",
+                    ),
+                    now=now,
+                )
+        projection = None
+        if execution is not None and ended_item_id is not None:
+            try:
+                projection = self._execution.technical_stop_settlement(
+                    execution.execution_id,
+                    ended_item_id=ended_item_id,
+                    cancelled=True,
+                    now=now,
+                )
+            except Exception:  # noqa: BLE001 - an unreadable execution is never closed by guesswork
+                projection = None
+        if projection is None:
+            return self._task(claim.task_id)
+        try:
+            self._scheduling.acknowledge_control(
+                claim,
+                discovery=self._linked_discovery(claim.task_id),
+                execution=projection.execution,
+                execution_items=projection.items,
+                now=now,
+                close_recorded_unknown_boundary=True,
+            )
+        except TaskControlRejected:
+            if self._refusal_keeps_claim(claim):
+                return self._task(claim.task_id)
+            raise
+        return self._task(claim.task_id)
 
     def _finish_execution(self, claim, execution: ManualExecution) -> PersistentTask:
         state = self._scheduling.state(claim.task_id)

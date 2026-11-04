@@ -690,6 +690,21 @@ _SETTLED_ITEM_STATUS_VALUES = frozenset(value.value for value in SETTLED_ITEM_ST
 #: attempted_unverified, an unexpected historical value) keeps the boundary.
 _KERNEL_BOUNDARY_CLEARING_CERTAINTIES = frozenset({"none", "verified_complete"})
 
+#: The manual-execution statuses a Task release may publish beside it.  An
+#: accepted cancellation settles its own cancelled projection; the only other
+#: legitimate companion is a terminal projection of a pass whose calls already
+#: returned (the Slice 48 technical-stop close).  A running execution never
+#: settles a Task, so its row can never stay ``running`` beside a released
+#: slot.
+_TERMINAL_MANUAL_EXECUTION_STATUSES = frozenset(
+    {
+        ManualExecutionStatus.COMPLETED.value,
+        ManualExecutionStatus.PARTIAL_SUCCESS.value,
+        ManualExecutionStatus.FAILED.value,
+        ManualExecutionStatus.CANCELLED.value,
+    }
+)
+
 #: The explicit-column ``tasks`` INSERT used by the scheduling kernel.  The
 #: legacy positional INSERTs stay exactly as they are: a Task admitted here
 #: carries the same 17 columns plus its own scheduling row.
@@ -18407,6 +18422,13 @@ class SQLiteTaskRepository:
         history.  A queued/processing sibling, a marker without a published
         Result or any other unproved state still keeps the claim and the slot.
 
+        ``manual_execution``/``manual_execution_items`` publish one settled
+        manual execution projection in the same transaction: either an accepted
+        cancellation's cancelled projection, or — for a non-cancel release — a
+        terminal projection of a pass whose calls already returned (the Slice 48
+        technical-stop close).  A running execution projection is refused, so a
+        released Task can never leave its execution row claiming to be alive.
+
         ``initial_execution_stage`` freezes the bounded, write-once evidence of
         an automatic Task's FIRST execution stage in the same transaction: the
         stage's own end status, its real window and the exact item evidence it
@@ -18541,9 +18563,14 @@ class SQLiteTaskRepository:
                     bound = self._bind_item_to_current_occurrence(item)
                     self._connection.execute(_TASK_ITEM_UPSERT, self._item_values(bound))
                 if manual_execution is not None:
-                    if state.control_request is not TaskControl.CANCEL:
+                    if (
+                        state.control_request is not TaskControl.CANCEL
+                        and manual_execution.status.value not in _TERMINAL_MANUAL_EXECUTION_STATUSES
+                    ):
                         raise TaskControlRejected(
-                            "a manual execution cancellation may only settle an accepted cancel"
+                            "a released manual execution must settle an accepted cancel or "
+                            "carry a terminal technically-ended projection; a running "
+                            "execution never settles a Task"
                         )
                     cursor = self._connection.execute(
                         "UPDATE manual_executions SET status=?, next_action=?, error=?, "

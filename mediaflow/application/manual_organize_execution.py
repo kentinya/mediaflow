@@ -93,6 +93,18 @@ _TERMINAL_EXECUTION_STATUSES = frozenset(
         ManualExecutionStatus.CANCELLED,
     }
 )
+
+#: The bounded, secret-free outcome recorded when one organizing attempt ended
+#: on a technical stop (the pass raised while the item held a mutation boundary)
+#: and never published its own Result.  The wording states the honest facts —
+#: the attempt ended, no result was recorded, the actual effect is unknown —
+#: without asserting a remote Storage outcome or inviting a replay.  The Task
+#: kernel's retirement and the execution-item projection share one wording so
+#: the same attempt never carries two stories about its own end.
+TECHNICAL_STOP_ITEM_ERROR = (
+    "the organizing attempt ended on a technical stop; no result was recorded "
+    "and the actual effect is unknown"
+)
 _CONCURRENT_PREFLIGHT_ERROR_CODES = frozenset(
     {
         "attachment_source_missing",
@@ -149,13 +161,15 @@ class _AuthorityPreflight:
 
 
 @dataclass(frozen=True)
-class ManualExecutionCancellation:
-    """The exact durable projection of one accepted cancellation.
+class ManualExecutionSettlement:
+    """The exact durable projection of one settled execution boundary.
 
     ``items`` contains only the execution items whose status changes.  A
     completed/successful sibling is deliberately left out so the same Task and
     its recorded Result/attachment effects stay history; the caller publishes
-    these rows together with the Task's cancelled settlement.
+    these rows together with the Task's own settlement.  The two legitimate
+    projections are an accepted cancellation and the technical-stop close of
+    one pass whose calls already returned while its Result publication failed.
     """
 
     execution: ManualExecution
@@ -1423,7 +1437,7 @@ class ManualOrganizeExecutionService:
 
     def cancellation_settlement(
         self, execution_id: str, *, now: datetime | None = None
-    ) -> ManualExecutionCancellation | None:
+    ) -> ManualExecutionSettlement | None:
         """Project the safe cancellation of an execution that is not running.
 
         This is a zero-mutation projection, not an execution boundary.  It is
@@ -1441,7 +1455,7 @@ class ManualOrganizeExecutionService:
             raise ValueError("manual execution cancellation timestamp needs timezone")
         execution = self.get(execution_id)
         if execution.status in _TERMINAL_EXECUTION_STATUSES:
-            return ManualExecutionCancellation(execution, ())
+            return ManualExecutionSettlement(execution, ())
         changed: list[ManualExecutionItem] = []
         for item in execution.items:
             if item.status in _TERMINAL_ITEM_STATUSES:
@@ -1494,7 +1508,124 @@ class ManualOrganizeExecutionService:
             updated_at=current,
             completed_at=current,
         )
-        return ManualExecutionCancellation(cancelled, tuple(changed))
+        return ManualExecutionSettlement(cancelled, tuple(changed))
+
+    def technical_stop_settlement(
+        self,
+        execution_id: str,
+        *,
+        ended_item_id: str,
+        cancelled: bool = False,
+        now: datetime | None = None,
+    ) -> ManualExecutionSettlement | None:
+        """Project the honest close of one technically ended execution pass.
+
+        The owning pass raised, so every call of this round has returned —
+        including the marked attempt's OrganizerExecutor call — while that
+        attempt's Result publication failed.  The marked attempt closes as a
+        bounded technical stop: no Result is manufactured, the recorded effect
+        stays unknown and the non-replay evidence is preserved.  A
+        never-started sibling closes as not executed with zero effect — or, when
+        the operator's cancel was accepted, as cancelled by that accepted
+        control.  A terminal execution is returned unchanged; ``None`` means
+        this execution cannot be closed honestly (an unexpected unfinished item
+        that this projection does not own), so the caller keeps the boundary for
+        inspection instead of settling a Task beside a lying execution record.
+        """
+
+        current = now or self._clock()
+        if current.tzinfo is None:
+            raise ValueError("manual execution technical-stop timestamp needs timezone")
+        execution = self.get(execution_id)
+        if execution.status in _TERMINAL_EXECUTION_STATUSES:
+            return ManualExecutionSettlement(execution, ())
+        changed: list[ManualExecutionItem] = []
+        for item in execution.items:
+            if item.status in _TERMINAL_ITEM_STATUSES:
+                continue
+            if item.status is ManualExecutionItemStatus.RUNNING:
+                if item.task_item_id != ended_item_id:
+                    return None
+                changed.append(
+                    replace(
+                        item,
+                        status=ManualExecutionItemStatus.FAILED,
+                        stage="uncertain_effects",
+                        effect_certainty=ExecutionEffectCertainty.UNKNOWN.value,
+                        uncertain_effects=tuple(
+                            dict.fromkeys((*item.uncertain_effects, "result_persistence"))
+                        ),
+                        error=TECHNICAL_STOP_ITEM_ERROR,
+                        next_action=(
+                            "inspect the recorded completed steps and the actual Storage state; "
+                            "the unknown effect is never replayed automatically"
+                        ),
+                        updated_at=current,
+                    )
+                )
+                continue
+            if item.status is ManualExecutionItemStatus.ADMITTED:
+                changed.append(
+                    replace(
+                        item,
+                        status=(
+                            ManualExecutionItemStatus.CANCELLED
+                            if cancelled
+                            else ManualExecutionItemStatus.FAILED
+                        ),
+                        stage="cancelled" if cancelled else "admission_interrupted",
+                        effect_certainty=ExecutionEffectCertainty.NONE.value,
+                        error=(
+                            "task cancelled"
+                            if cancelled
+                            else "this item was not executed; the pass ended before its "
+                            "OrganizerExecutor call and nothing was mutated for it"
+                        ),
+                        next_action=(
+                            "the accepted cancellation stopped this item; it was not executed "
+                            "and is not replayed automatically"
+                            if cancelled
+                            else "continue the remaining sources of this Task from its Task Center"
+                        ),
+                        updated_at=current,
+                    )
+                )
+                continue
+            return None
+        if not changed:
+            return ManualExecutionSettlement(execution, ())
+        closed = tuple(
+            next(
+                (value for value in changed if value.execution_item_id == item.execution_item_id),
+                item,
+            )
+            for item in execution.items
+        )
+        if cancelled:
+            settled = replace(
+                execution,
+                items=closed,
+                status=ManualExecutionStatus.CANCELLED,
+                next_action=(
+                    "cancelled at the operator's safe boundary; the ended attempt keeps its "
+                    "unknown-effect evidence and unfinished siblings were not executed"
+                ),
+                error="task cancelled",
+                updated_at=current,
+                completed_at=current,
+            )
+            return ManualExecutionSettlement(settled, tuple(changed))
+        settled = replace(
+            execution,
+            items=closed,
+            **self._aggregate_execution(closed),
+            error=(
+                "the organizing pass ended before its durable outcomes were published; "
+                "inspect the unknown effect and continue the remaining sources on the same Task"
+            ),
+            updated_at=current,
+        )
+        return ManualExecutionSettlement(settled, tuple(changed))
 
     def list_for_preview(self, preview_id: str, *, limit: int = 100) -> tuple[ManualExecution, ...]:
         """Durable executions of one reviewed Preview, newest first (bounded)."""
