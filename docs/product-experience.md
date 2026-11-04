@@ -640,12 +640,28 @@ Historical43/46 acceptance remains unchanged; the current journeys include accep
   One Chinese content title, flat tabs and readable controls align with Task Center/Files on desktop
   and narrow screens. Routine statistics/tutorial paragraphs are omitted; unavailable metrics retain
   their correction guidance, and wide tables scroll inside the workspace rather than the page.
+- **Create:** `自动化 → 新建自动化任务` opens one Chinese card over the current list; the creation
+  deep links reach the same experience. Enter a name, choose a ResourceLibrary and its whole scope
+  or a bounded subdirectory, then set the interval/daily/weekly/advanced Cron schedule and item limit.
+  Internal ID is generated automatically. Cron timezone and backend-calculated upcoming times are
+  explicit; preview writes nothing and supplies no execution authority. One `创建任务` publishes the
+  intended disabled definition, without enabling or running it. The limit bounds the complete source
+  scope; overflow requires narrowing, never automatic batching or first-N execution.
+- **Create feedback/return:** unchanged input closes directly; edited input offers visible
+  `继续填写 / 放弃修改`. Cancellation, discard and success preserve the list's filters, page, scroll
+  and entry focus. Success refreshes authoritative rows/statistics and explains when the new row is
+  outside the current results. While submitting, `创建中…` blocks duplicate creation, premature
+  reconciliation and accidental navigation. Rejection preserves correctable input; a peer conflict
+  requires an explicit recheck before a new create. An unknown response retains the original
+  principal/ID/candidate/base identity across close/reopen/reload and offers only `核对本次创建`,
+  never an automatic repost or a replacement ID. Failures and exit choices stay visible in the card,
+  with field correction and keyboard focus; narrow screens and reduced motion retain the journey.
 - **Configure/authorize:** New/copy starts disabled without authority. One focused checked Save
   publishes only the intended definition. Checked enable/enabled-successor Save supplies scoped
   scheduled intent with current execution permission and audit; there is no independent grant or
   mandatory grant analysis. Confirmed Save reconciles the same editor's values/publication identity
   so another Enabled edit/Save works, preserving later typing. Peer conflicts preserve input. Unknown
-  Save/toggle uses “核对本次发布” to read exact principal/action/candidate/base/activation evidence
+  edit/toggle uses “核对本次发布” to read exact principal/action/candidate/base/activation evidence
   without reposting; unknown Run once reconciles only its own principal/request identity.
 - **Scheduled success:** each valid due occurrence creates one linked pinned run and executes through
   the existing Worker/OrganizerExecutor without another per-run click, with independent item results.

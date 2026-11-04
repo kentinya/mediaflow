@@ -1142,6 +1142,16 @@ one-run command intent; min(definition ceiling,100) bounds primaries, incomplete
 a first-N prefix, and schedule due state/history grants do not become manual authority.
 Durable origin/request/principal/pin links preserve deduplication and truthful historical metrics.
 
+The Web creation card is a consumer of the existing focused checked-create command. The no-ID
+`/operations/automation/lifecycle` and former `/operations/automation/new` routes share the same
+list background and form. One stable browser-generated ID and observed Active fence belong to
+the creation session; ordinary time choices compile to the existing interval/Cron fields, while
+the backend owns due-time calculation, validation and disabled-first publication. Directory selection
+uses the existing bounded ResourceLibrary-scoped read-only Files API. In-flight UI state is distinct
+from an ended unknown response; retained principal-scoped command context permits only exact
+publication reconciliation. List context and focus restoration introduce no configuration or
+execution authority, draft store or additional backend entry point.
+
 Automation execution records add a records-only `recordOutcome` envelope on the existing bounded
 GET: status, noWork, confirmed primary success count and concise Chinese statement/failureReason/
 nextStep. Under accepted Slice48, SQLite reads the current durable Task flow state and independent

@@ -67,7 +67,11 @@ description and refresh in the content header. Overview has no inventory search;
 families keeps one local search and state filter. Settings retains configuration diagnostics/recovery.
 
 The [Automation workspace](docs/product-experience.md#current--complete-native-automation-workspace-accepted43-amended46)
-contains `任务列表 / 执行记录`; the three shared runtime settings live in System Settings. Execution-record rows offer only `查看详情 / 收起详情`;
+contains `任务列表 / 执行记录`; the three shared runtime settings live in System Settings.
+`新建自动化任务` opens a Chinese card over the list for source scope, schedule and processing limit.
+Creation starts disabled and runs nothing; cancellation or success preserves the list context.
+An unknown create result is reconciled with `核对本次创建` before any further creation.
+Execution-record rows offer only `查看详情 / 收起详情`;
 details show the current Task flow result, original actual times, independent file outcomes, a concise
 Chinese failure reason when the flow failed, and a short next step. Records and Task Center read the
 same durable flow state, with server filters/counts/paging applied before page limits. Failed files,
