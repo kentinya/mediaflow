@@ -35,18 +35,23 @@ create implementation. No new behavior is claimed as shipped, and planning does 
   an explicit selection changes the primary action to communicate `创建并启用`. The note explains
   that enabling schedules future runs; it is distinct from `运行一次`. Missing enable permission
   explains that limit while allowing disabled creation when the operator has configuration rights.
-- **Create success/failure/recovery:** one checked command atomically publishes the selected disabled
-  or enabled definition. Feedback reads `已创建，未启用` or `已创建并启用` from durable truth, refreshes
-  the list and returns to its exact context. The command itself does not admit a Task; the Scheduler
-  later acts under the saved plan and live authority. Validation/permission/concurrency failure keeps
-  correctable input and the prior Active state, with no silent switch to disabled creation. Unknown
-  responses retain the exact submitted ID, enabled selection, principal, candidate and base across
-  reopen/reload; `核对本次创建` reads the original command evidence and never resubmits or adds enable.
+- **Create success/failure/recovery:** one form submission completes the selected create/enable result
+  in the normal success path; the backend may publish once or safely compose existing checked commands.
+  Feedback reads `已创建，未启用` or `已创建并启用` from durable truth, refreshes the list and returns
+  to its exact context. Publishing itself does not admit a Task; the Scheduler later follows the saved
+  plan and live authority. Each rejected command preserves its prior Active state and correctable input.
+  If composed steps create the definition but enablement fails or becomes unknown, show that actual
+  state and retain the existing ID, without duplicate creation, false full success or silent downgrade.
+  Unknown responses retain the original choice and each submitted command's principal/candidate/base
+  across reopen/reload. Reconcile the unknown step first; a proved created definition whose enable step
+  was not performed or was rejected can be explicitly enabled under current permission/version checks.
 - **Edit state/action:** a row's `编辑` or a supported saved-definition edit deep link opens the same
   card with exact saved values and the current enable state. Preserve arbitrary legal Cron and
   fractional intervals without converting them to convenience defaults. The ID is immutable and
   internal publication details do not occupy ordinary fields or introductory tutorials. One `保存`
   publishes only that intended successor under existing configuration and execution permissions.
+  After creation the operator can explicitly enable or disable the saved definition here, regardless
+  of the initial choice. Remove the edit card/page's `运行一次` button; use the list for that action.
   Existing copy/remove actions remain reachable with their present authority/confirmation boundaries.
 - **Edit success/failure/recovery:** preserve the creation card's grouping, controls, animations,
   reduced-motion, keyboard and narrow-screen behavior. Success returns to the original list with
@@ -59,21 +64,25 @@ create implementation. No new behavior is claimed as shipped, and planning does 
   preserve valid list filters, page, scroll and entry focus; filtered-out successes are explained.
   Ordinary deep-link/reload/login continuations reach the same form with a safe default list return.
 - **Run once state/action:** click the saved row's `运行一次` once. The row becomes busy in place;
-  no prerequisite navigation, picker, analysis or second initial confirmation is required. Bind the
-  exact observed published definition and current-principal execution intent. Disabled definitions
+  no prerequisite navigation, picker, manual analysis or second initial confirmation is required;
+  backend analysis, planning and safety checks still run. Bind the exact observed published definition
+  and current-principal execution intent. Disabled definitions
   can run once without enabling or changing due state; unsaved editor values are not executed.
 - **Run once success/failure/recovery:** accepted feedback keeps the list in place and identifies the
   original Task via an explicit readback link, without claiming file success or forcing navigation.
   Double clicks cannot duplicate work. Permission/queue/stale-definition refusals offer bounded
   correction and a deliberate new command after reread. Lost/5xx/malformed responses retain the
   principal/definition/request across reload/reconnect and offer exact reconciliation in the list;
-  a missing lookup is not permission to replay. Other rows keep independent feedback. Existing edit
-  Run once uses the same command and reconciliation behavior.
+  a missing lookup is not permission to replay. Other rows keep independent feedback. Pending requests
+  previously submitted from the edit page remain reconcilable from the list after its button is removed.
 - **Scope and result:** whole-library/subdirectory sources work for Storage root and nonempty/nested
   ResourceLibrary roots, including Chinese names/spaces. Internal path composition cannot reject a
-  valid whole-library source or blame the operator. Healthy empty completion says no work; missing,
-  unreadable, incomplete or overflowing scope remains truthful failure. Real stability, full pipeline,
-  limits, source ownership and non-replay remain. Task Center owns the existing four-type recovery;
+  valid whole-library source or blame the operator. Healthy empty completion says no work. A missing
+  root or directory read failure preventing complete enumeration, or an incomplete/overflowing scope,
+  remains Task failure. An individual file read/processing technical failure retains its failed file
+  outcome; an ended flow can complete when no work, human decision or real live call remains.
+  Real stability, full pipeline, limits, source ownership and non-replay remain.
+  Task Center owns the existing four-type recovery;
   flow status, file effects, original records and success-rate meanings remain unchanged.
 
 ## CURRENT — Task flow status and Automation success rate (Slice48 PASS / CLOSED)

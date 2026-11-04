@@ -25,27 +25,36 @@ or a general command framework. Existing legitimate Draft-only/history states ar
 as Active, and copy/remove authority is preserved. Any obsolete exclusive form code may be removed
 only after proving its supported consumers are covered; unrelated lifecycle cleanup is out of scope.
 
-**Atomic optional enabled create:** extend the existing focused checked-create application/API path
-to accept an explicitly chosen enabled candidate; omitted/default remains false and invalid types
-are rejected. Reuse the existing whole-document validation, focused-change assertion, current
-configuration permissions, shared activation execution-intent checks and atomic audit/Active switch.
-Enabled creation needs the same real principal's `GRANT_UNATTENDED_EXECUTION` and exact saved
-effective scope as enabled edit/publication. No second enable request, partial two-command workflow,
-silent downgrade, copied authority or generic new publication endpoint is selected. The existing
-create command's exact candidate and activation evidence include enabled for reconciliation; an
-unknown response cannot be repaired by issuing another create/enable. Copy still starts disabled.
-Publishing performs no Task admission/Storage effects; the resident Scheduler independently consumes
-the enabled definition at due boundaries using existing pins and live authority checks.
+**Optional enablement and later enable/disable:** one ordinary form submission carries the explicit
+create-time enable choice; the default remains disabled. Reuse existing focused publication and
+shared permission/validation/audit/intent authority. The backend may use a single atomic publication
+or safely compose the existing create and enable commands; command count/order is not a user outcome
+or acceptance restriction. Each publication still switches Active and its audit atomically, with
+whole-document validation and no unrelated Draft changes. Enabled publication requires the same
+real principal's `GRANT_UNATTENDED_EXECUTION` and exact saved effective scope as current enabled edit.
+No implicit enablement from omitted input or invalid truthy values is permitted. Copy stays disabled.
+
+If composed steps are selected, retain the original user choice and the actual submitted action,
+candidate and observed base for each step using bounded existing command/session evidence. A created
+definition with failed/unknown enablement is a truthful configuration outcome, not a new Task status;
+show it without duplicate creation, silent downgrade or false full success. Reconcile unknown steps
+before further effects; a confirmed existing definition may be deliberately enabled/disabled under
+current authority/version checks. Normal later enable/disable always remains available in the edit
+card, independent of its initial state. Publishing performs no Task admission/Storage effects; the
+resident Scheduler independently follows the schedule using existing pins and live authority checks.
 
 **Direct list command:** read the backend's exact saved-definition/configuration identity and action
 availability, then use the existing Run once admission and request-lookup service from the row.
 Expose any necessary bounded read identity through the existing projection rather than deriving
-authority from browser state. Share the command/session/reconciliation behavior with existing edit
-Run once. Busy/accepted/rejected/unknown UI state is scoped to the actual definition/request and
+authority from browser state. Remove Run once buttons from the edit page/card; the list is the
+ordinary Web command entry. Reuse the existing backend admission/request-lookup behavior and preserve
+list reconciliation for pending requests previously submitted from the edit entry.
+Busy/accepted/rejected/unknown UI state is scoped to the actual definition/request and
 principal, survives the required reload/reopen recovery, and never becomes another durable work
 store. One response binds one Task; double-click protection and backend idempotency cooperate.
 Keep feedback on the list; the operator explicitly opens exact Task/run readback. No other file
-selection, grant, initial Preview/summary confirmation or browser execution engine is introduced.
+selection, grant, manual pre-analysis, initial summary confirmation or browser execution engine is
+introduced; backend full analysis/planning/checks remain required.
 
 **Source composition and confinement:** validate the saved ResourceLibrary binding and optional
 definition-relative source before joining. Derive the canonical Storage-relative effective root
@@ -53,8 +62,10 @@ consistently at admission and Worker verification, including a whole library at 
 Canonicalizing trusted composition must not legitimize unsafe caller input, absolute paths or
 traversal, replace Storage identity, or expand the pinned source. Preserve strict invalid-input and
 pin-mismatch refusal. Fix the representation mismatch without rewriting admitted Task pins/history,
-rescanning old failed work or changing flow settlement. Complete enumeration, stability, budgets,
-source history/ownership, claims/fences and OrganizerExecutor-only mutation remain unchanged.
+rescanning old failed work or changing flow settlement. Directory reads preventing a complete scope
+remain flow failure; ended individual file read/processing failure does not itself fail the Task.
+Complete enumeration, stability, budgets, source history/ownership, claims/fences and
+OrganizerExecutor-only mutation remain unchanged.
 
 No new schema, configuration store, queue, engine, status or recovery product is selected. Fresh
 new work and same-version restart/readback remain required; old-task conversion, cross-version
