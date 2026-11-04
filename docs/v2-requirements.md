@@ -27,7 +27,7 @@ acceptance facts remain in Git and Progress; no old-task/cross-version upgrade o
 
 ## Task flow status and Automation success rate — TARGET (Slice48 ACTIVE)
 
-The user selected this amendment and authorized Task48.1 activation on 2026-11-03.
+The user selected this amendment on 2026-11-03 and authorized the remaining Task48.2 on 2026-11-04.
 [Slice48](../SLICE.md) is ACTIVE; implementation is limited to the active Task. These are TARGET
 requirements, not delivered CURRENT behavior. They amend the V2 aggregate realization of
 `REQ-TASK-002/003`, affected completed/recovered wording in `V2-OPS-016`, and the rate portion of

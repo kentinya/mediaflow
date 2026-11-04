@@ -33,12 +33,12 @@ only in [the development workflow](development-workflow.md).
 | 45 — V2 Task Center, Recovery and Scan/Preview/FileIndex Retirement | Deliver nine authoritative task/recovery lists, in-context exact plan-summary confirmation, durable per-item results/controls, first-deployment absence of Scan and standalone Preview products/compatibility layers, complete FileIndex retirement, and shared CLI/Files/MediaLibrary live lists without catalog recording | PASS / CLOSED | Accepted Slice44 baseline; existing Operations/Files/Task/Worker/recovery foundations; explicit user priority change and required retirement-coupling exceptions before Slice43 closure |
 | 46 — V2 Organizing Task Center and Readable Actions | Repair V2 action readability; start manual organizing only from ResourceLibrary Files and admit tasks before business-rule readiness, retaining folder media-type filtering, same-source unfinished-work/explicit-extension checks and task-native four-type recovery; keep ordinary-file progress/results/recovery on each library page; restrict Task Center to organizing work with eight views and four business types in Attention/pending counts, removing Failure Recovery, other failures' separate statistics/guidance and creation/global Worker/discovery/manual-operation blocks; fix Automation detail opening/continued Save editing, make checked Enabled authorize scheduled execution without independent grants, and make Run once execute a real task before rule readiness with four-type recovery | PASS / CLOSED | Accepted43–45 baseline and existing shared action, live Files, durable direct-command/transfer/Delete, organizing/recovery and Automation publication/grant/Scheduler foundations |
 | 47 — Unified Task Scheduling and Organizing Execution | Remove independent Job; unify organizing Task/Worker and four-type recovery; add source-dependent failed/partial history handling and CLI retry-failed retirement; move three shared runtime settings into System Settings and delete the unused stale-age parameter | PASS / CLOSED | Accepted43–46 and subsequent accepted corrections at `5144ab1fc2344b06194969cc2c496835729664c0`; explicit user refactor/A scope authorization, amended 2026-11-03 |
-| 48 — Task Flow Status and Automation Success Rate | Separate five-state Task flow from file outcomes, including completed technical failure with absent file results; calculate success rate from due/definition Run once Task completion, excluding manual organizing/ordinary work; preserve waiting, cancellation, truthful file evidence and execution safety | ACTIVE | Accepted47/current baseline `ba84272721961c970f1eb85d616a0d129523ab92`; user-authorized Task48.1 activation on 2026-11-03; implementation limited to active Task scope |
+| 48 — Task Flow Status and Automation Success Rate | Separate five-state Task flow from file outcomes, including completed technical failure with absent file results; calculate success rate from due/definition Run once Task completion, excluding manual organizing/ordinary work; preserve waiting, cancellation, truthful file evidence and execution safety | ACTIVE | Accepted47/current baseline `ba84272721961c970f1eb85d616a0d129523ab92`; user-authorized Task48.2 activation on 2026-11-04; implementation limited to active Task scope |
 
 ## Current boundary
 
-Slice48 — **Task Flow Status and Automation Success Rate** — is **ACTIVE** following the user's
-2026-11-03 Task48.1 activation request. Immutable Base: `ba84272721961c970f1eb85d616a0d129523ab92`;
+Slice48 — **Task Flow Status and Automation Success Rate** — remains **ACTIVE** with the user's
+2026-11-04 Task48.2 activation request. Immutable Base: `ba84272721961c970f1eb85d616a0d129523ab92`;
 Implementation Head is NOT SET. [SLICE.md](../SLICE.md) owns the four required outcomes and
 AC-1–16; `V2-TASK-012–014` / `V2-AUTO-012` and the journey/architecture TARGET sections record
 the selected semantics without claiming current delivery.
@@ -56,10 +56,11 @@ work/human waiting and Task-level flow failures remain distinct. Ordinary Copy/M
 use Tasks with independent operation results on their library page. Automation counts due AND
 definition Run once, excluding Files/CLI manual organizing and ordinary file operations.
 
-Root [Task48.1](../TASK.md) is formally authorized and PLANNED, awaiting Developer implementation
-after the ACTIVE Contract checkpoint. Only that Task is authorized; Automation metric calculation
-remains a later in-Slice outcome.
-Activation does not claim product implementation, B acceptance or A Final Review.
+Task48.1 has B PASS, preserved at `469ecc076c6efc660055f47277d7917a0b64a9aa:TASK.md`.
+Root [Task48.2](../TASK.md) is authorized for RO-4 Automation metrics and its API/Web readback;
+B promotes the existing draft after the committed Contract authorization update. Only that Task
+is authorized. Metrics and Slice-final validation remain pending; activation claims no new product
+implementation, Task acceptance or A Final Review.
 
 ## Latest accepted boundary
 

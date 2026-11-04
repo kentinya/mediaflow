@@ -8,8 +8,8 @@ workflow authority. Closure rules live only in
 
 ## Current development pointer
 
-Slice48 — **Task Flow Status and Automation Success Rate** — is **ACTIVE** on the user's
-2026-11-03 Task48.1 activation request, Base `ba84272721961c970f1eb85d616a0d129523ab92`, Implementation Head
+Slice48 — **Task Flow Status and Automation Success Rate** — remains **ACTIVE** with the user's
+2026-11-04 Task48.2 activation request, Base `ba84272721961c970f1eb85d616a0d129523ab92`, Implementation Head
 NOT SET. [SLICE.md](../SLICE.md) selects five-state Task flow independent of file outcomes and a
 Task-only Automation success rate; execution records use the same Task flow result as Task Center,
 with independent file results and factual original times/attempts/effects. Ended file-processing
@@ -20,10 +20,11 @@ operations. Rate is completed/(completed+failed); cancelled/unfinished Tasks are
 cancelled records and admitted/ended counts remain. No completed/failed Tasks yields no percentage.
 Task closure itself must be saved; live work, human waiting and Task flow failures remain
 distinct. Requirements/journey/architecture label the amendment TARGET.
-Root [Task48.1](../TASK.md) is formally authorized and PLANNED, awaiting Developer implementation
-after the ACTIVE Contract checkpoint. Implementation is limited to that Task; Automation metric
-calculation remains a later in-Slice outcome. No product implementation or acceptance is claimed
-by activation.
+Task48.1 B PASS and actual evidence/limits remain at `469ecc076c6efc660055f47277d7917a0b64a9aa:TASK.md`.
+Root [Task48.2](../TASK.md) is authorized for the remaining RO-4 metric calculation and API/Web
+readback; B promotes it after the committed Contract authorization update. Implementation is limited
+to that Task. Metrics and final Slice acceptance remain pending; activation adds no closure entry
+and claims no new product implementation or acceptance.
 
 ## Latest accepted closure
 

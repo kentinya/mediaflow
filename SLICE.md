@@ -9,20 +9,22 @@ Base SHA: ba84272721961c970f1eb85d616a0d129523ab92
 Implementation Head: NOT SET
 Implementation Head Acceptance: NOT REVIEWED
 Working Branch: main
-Development Authorization: USER AUTHORIZED TASK 48.1 ACTIVATION, 2026-11-03 — ACTIVE TASK SCOPE ONLY
+Development Authorization: USER AUTHORIZED TASK 48.2 ACTIVATION, 2026-11-04 — ACTIVE TASK SCOPE ONLY
 Risk: High
 Final Test Level: T4
-Next Action: IMPLEMENT TASK 48.1 AFTER B FORMAL TASK CHECKPOINT
+Next Action: IMPLEMENT TASK 48.2 AFTER B FORMAL TASK CHECKPOINT
 ```
 
 ## Authority and accepted baseline
 
 [AGENTS.md](AGENTS.md) and [Development Workflow](docs/development-workflow.md) govern scope,
-roles, checkpoints, tests and acceptance. On 2026-11-03 the user requested activation of drafted
-Task48.1. This Contract is ACTIVE; implementation authorization is limited to the active Task's
-boundary, not the whole Slice. At the user's request, Codex records the A-owned status activation
-and then the B-owned Task promotion; this is not an A Final Review or acceptance.
-B checkpoints the formal Task after this ACTIVE Contract is committed. Outcomes, acceptance,
+roles, checkpoints, tests and acceptance. The user activated Task48.1 on 2026-11-03 and now
+explicitly activates drafted Task48.2 on 2026-11-04. Task48.1's B PASS and evidence remain at
+`469ecc076c6efc660055f47277d7917a0b64a9aa:TASK.md`; the remaining unit is RO-4 Automation metrics.
+This Contract stays ACTIVE; implementation authorization is limited to Task48.2's boundary.
+Under this explicit activation instruction, B records only the factual authorization/current pointers
+before promoting the Task; no A scope decision, Final Review or acceptance is claimed.
+B checkpoints the formal Task after this authorization update is committed. Outcomes, acceptance,
 deferrals and the immutable Slice Base remain unchanged; the amendment remains TARGET.
 
 Slice47 remains PASS / CLOSED, with original Base
@@ -301,9 +303,10 @@ B plans coherent full-stack Tasks only after implementation authorization and an
 Contract. Lifecycle/settlement and its real consumers form one outcome; Automation metrics and its
 native readback form another. B chooses actual Task boundaries from the code, keeping necessary
 integration/tests with each behavior rather than splitting by enum, file, layer or test gate.
-The user-authorized first unit is Task48.1: lifecycle/settlement and its real consumers, including
-execution-record flow results. Automation metric calculation remains a later in-Slice outcome.
-B promotes the existing draft after this ACTIVE checkpoint; no additional Task is preplanned here.
+Task48.1 delivered lifecycle/settlement and its real consumers, including execution-record flow results,
+with B PASS recorded at the checkpoint above. The user now authorizes Task48.2's existing draft:
+RO-4 Task-only Automation metric calculation, API/Web readback and directly affected tests.
+B promotes it after this committed authorization update; no further Task is authorized here.
 
 Final risk is T4 because shared durable settlement affects the core pipeline, ownership/cancellation,
 source-history gates and persistent/API/Web interpretation. Developer runs new/changed/directly
@@ -318,20 +321,21 @@ media, production database, real external-service credentials or cross-version u
 
 Activation validation covers document links/anchors, unchanged outcomes/acceptance and accepted
 closure ledger, the Markdown-only manifest and whitespace. Run committed-Contract governance after
-this activation checkpoint and again when B promotes Task48.1. No product tests or completed
-implementation are claimed. Unavailable future gates remain pending, not waived or marked PASS.
+this authorization checkpoint and again when B promotes Task48.2. This activation claims no new
+product validation or completed metric implementation. Required future gates remain pending.
 
 ## Final validation, Closure Packet and A Final Review
 
-NOT STARTED. Implementation Head is NOT SET. All RO/AC delivery proofs, B acceptance and
-independent whole-Slice A review remain pending. Slice47's review and actual limits are historical,
-not validation of Slice48. Activation is not implementation PASS.
+Slice-final validation, Closure Packet and independent whole-Slice A review are NOT STARTED;
+Implementation Head is NOT SET. Task48.1 B acceptance covers RO-1/2/3 and execution-record flow
+readback, with exact evidence/limits at the checkpoint above. RO-4 metrics remain unimplemented
+and unaccepted. Prior Task checks do not establish final Slice validation; activation is not PASS.
 
 ## Activation workspace
 
 Repository `/Users/songzhidong/mediaflow`, branch `main`, activation starting HEAD
-`037efb20280310f5c2f8d69624cf0449a191b3b6`; immutable Slice Base remains as above. Governance
+`7824c2de71378ab5f69ed8e988c59689850437c1` for Task48.2 activation; immutable Slice Base remains as above. Governance
 preflight passed; tracked files were clean and workspace/Git are writable. Pre-existing untracked
 OS/log/reference/output files and `15` remain unstaged and untouched. This activation changes only
-Contract/Task status, TARGET labels/links and current pointers; it does not execute product code,
+Contract authorization, Task status and current pointers; it does not execute product code,
 touch private configuration or user database/media, push, deploy or rewrite history.
