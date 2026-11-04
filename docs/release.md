@@ -18,8 +18,10 @@ version, code and artifacts retain their existing meaning.
 
 ## Current V2 validation boundary
 
-Slice47 is PASS / CLOSED; [Progress](progress.md) retains the accepted Base/Head and validation
-limits. This is development acceptance, not a V2 release. Current support is fresh initialization
+Slice48 is PASS / CLOSED; [Progress](progress.md) retains its original Base, accepted implementation
+Head and validation limits, alongside earlier closures. The accepted flow/rate amendment keeps Task
+flow independent of file results; current execution-record status follows that same durable Task.
+This is development acceptance, not a V2 release. Current support is fresh initialization
 → submit new work → same-version reopen/restart and permitted safe continuation. Old-task/Job
 migration or takeover, cross-version upgrade/rollback, mixed-version writers and V1 support are
 excluded. Readable immutable configuration containing retired fields does not add an upgrade promise.

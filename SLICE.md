@@ -389,10 +389,13 @@ A's own local evidence:
 
 Pre-checkpoint closure document checks ran **28 tests / 27 passed / 1 guard refusal**: the current
 repository check intentionally requires SLICE.md to match committed HEAD. The raw
-`closure-doc-checks.log` retains this refusal. After the closure checkpoint, run the same
-`test_release_security test_governance` suite plus `python3 scripts/check_governance.py`; keep the
-actual result in `closure-doc-checks-postcheckpoint.log` / `governance-postcheckpoint.log`.
-Whitespace and changed CURRENT links/identities were checked before checkpoint.
+`closure-doc-checks.log` retains this refusal. After closure checkpoint
+`d845d98dcd12076e1b0c1adeb77e14f4dbb33f29`, the same
+`PYTHONPATH=tests:. .venv/bin/python -m unittest -v test_release_security test_governance` suite
+passed **28 tests**, 6.481s; `python3 scripts/check_governance.py` passed. Actual results are in
+`closure-doc-checks-postcheckpoint.log` / `governance-postcheckpoint.log` under A's evidence directory.
+Whitespace and 132 local documentation links passed before checkpoint. This factual completion
+record preserves the initial guard refusal and does not change the reviewed implementation or acceptance.
 
 A did not mechanically rerun B's full suites. All original Contract deferrals and seven optional
 external-service/endurance skips remain. CURRENT requirements, journeys, architecture, page guidance,

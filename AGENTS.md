@@ -120,8 +120,11 @@ still produce RecognitionType C. Cover this in automated tests.
 
 ### Tasks, logs and results
 
-- Long operations use durable Tasks with observable stages: Pending, Scanning, Parsing, Recognizing,
-  FetchingMetadata, Planning, WaitingConfirm, Organizing, Completed, PartialSuccess, Failed, Cancelled.
+- Long operations use durable Tasks with five current flow states: pending, running, completed,
+  failed and cancelled (`V2-TASK-012–014`). Expose scanning, parsing, recognition, metadata fetching,
+  planning, waiting confirmation and organizing as separate stages/reasons. File/attachment/operation
+  success, partial success, failure and effect certainty remain independent results; completed flow
+  never proves successful file effects, and verified file effects cannot override failed flow.
   Support cooperative cancellation and per-item decision → analysis → exact summary → explicit
   continuation with independent outcomes and safe recovery. Under accepted `V2-TASK-003/007/010`,
   organizing and ordinary-file Pause/resume-from-pause and the independent CLI `tasks retry-failed`

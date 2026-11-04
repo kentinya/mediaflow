@@ -49,6 +49,10 @@ are accepted. Slice47 is PASS / CLOSED: one organizing Task owns admission, sche
 across manual/due/Run once and same-Task four-type recovery. Live Job, Pause/resume-from-pause and
 CLI `tasks retry-failed` are retired. Latest failed/partial source history controls automatic
 exclusion and manual Web warnings; three shared runtime settings live in System Settings.
+Slice48 is PASS / CLOSED: Task flow uses pending/running/completed/failed/cancelled independently
+of file outcomes. A normally closed flow, including ended file technical failures with unknown
+effects or missing Results, is completed; Task-level flow failure remains failed. Required human
+or machine work stays unfinished. Task completion grants no replay and proves no file success.
 No active implementation Task remains; [TASK.md](TASK.md) points to the final B Closure Packet,
 and [SLICE.md](SLICE.md) records A's whole-range acceptance. A selects the next large Slice separately.
 
@@ -63,11 +67,16 @@ families keeps one local search and state filter. Settings retains configuration
 
 The [Automation workspace](docs/product-experience.md#current--complete-native-automation-workspace-accepted43-amended46)
 contains `任务列表 / 执行记录`; the three shared runtime settings live in System Settings. Execution-record rows offer only `查看详情 / 收起详情`;
-details show only this run’s result and actual times, a concise Chinese failure reason when failed,
-and a short next step. Finished admitted work (including attachments) must all succeed to show 成功;
-partial/skipped/cancelled/uncertain work shows 失败, and the same server-side result filter applies
-before paging. Proven empty no-work and live/unknown states remain distinct. Later recovery status
-is not displayed and never changes the original result; raw API status and global metrics are unchanged.
+details show the current Task flow result, original actual times, independent file outcomes, a concise
+Chinese failure reason when the flow failed, and a short next step. Records and Task Center read the
+same durable flow state, with server filters/counts/paging applied before page limits. Failed files,
+unknown effects or absent Results do not relabel a completed flow as failed; file success cannot
+override failed flow. Legal continuation can change current flow state without adding another run
+or rewriting original times/attempts/file effects. Proven no-work and unavailable evidence stay distinct.
+The local-month success rate is completed/(completed+failed) for original scheduled due and definition
+Run once Tasks. Cancelled/unfinished Tasks, Files/CLI manual organizing and ordinary file operations
+are excluded from both numerator and denominator. No evaluated Tasks means no percentage; cancelled
+Tasks remain in records and all-ended counts. See the [current flow/rate journey](docs/product-experience.md#current--task-flow-status-and-automation-success-rate-slice48-pass--closed).
 Definition management and organizing recovery use their own workspace entries.
 
 ## V2 frontend (web/)
@@ -162,13 +171,13 @@ remains available for local development diagnostics.
 Full operator journeys and failure/recovery semantics are in [Product Experience](docs/product-experience.md);
 policy fields and exact constraints are in [Requirements](docs/requirements.md) and the example config.
 
-## Development API and DryRun worker
+## Development API and execution authority
 
 API requests use `Authorization: Bearer ...` with environment-owned principal references and
 viewer/operator/executor/auditor/admin roles. `/health` is public. Executor permission alone is not
 mutation authority. Keep local API tokens, Webhook secrets and Storage credentials independent.
 
-### Current V1 / API execution-authorization mechanism
+### Remote API execution authorization
 
 For explicitly enabled remote API automation, locally issue a short-lived single-use authorization:
 
