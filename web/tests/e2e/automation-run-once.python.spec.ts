@@ -381,6 +381,96 @@ test("list feedback distinguishes a proved refusal from an unknown submission", 
   ).toBe(true);
 });
 
+test("a repeated list Run once shows its own lost reply and reconciles that Task", async ({
+  page,
+}, testInfo) => {
+  const api = recordApiCalls(page);
+  await publishRunOnceDefinition(page, { sourceScope: "电影" });
+  // The first admission is real and its success hint is still displayed when
+  // the operator explicitly submits the same row again.
+  const firstTask = await runOnceFromList(page);
+  const row = definitionRow(page);
+  await expect(row).toHaveAttribute("data-run-once-state", "admitted");
+  await expect(row.getByRole("link", { name: "查看任务" })).toHaveAttribute(
+    "href",
+    new RegExp(firstTask),
+  );
+
+  // The backend really admits the second Task; only the reply is replaced with
+  // a 503 at the browser boundary, so this is the genuine lost-response entry.
+  let secondTask = "";
+  await page.route(
+    "**/api/v1/operations/automation/definitions/*/run-once",
+    async (route) => {
+      if (route.request().method() !== "POST") {
+        await route.continue();
+        return;
+      }
+      const response = await route.fetch();
+      expect(response.status()).toBe(202);
+      secondTask = ((await response.json()) as { taskId: string }).taskId;
+      await route.fulfill({
+        status: 503,
+        contentType: "application/json",
+        body: JSON.stringify({
+          error: { code: "unavailable", message: "reply lost at the boundary" },
+        }),
+      });
+    },
+  );
+  await row.getByRole("button", { name: "运行一次" }).click();
+  await expect(row.getByText("暂未收到回复")).toBeVisible();
+  await expect(
+    row.getByText("任务可能已提交，请先查看提交结果。"),
+  ).toBeVisible();
+  // The previous admission no longer describes this attempt. The pending
+  // sentence also contains the words "已提交", so this checks the exact title.
+  await expect(row).toHaveAttribute("data-run-once-state", "pending");
+  await expect(row.getByText(/已提交$/)).toHaveCount(0);
+  await expect(row.getByRole("link", { name: "查看任务" })).toHaveCount(0);
+  await expect.poll(() => secondTask).not.toBe("");
+  expect(secondTask).not.toBe(firstTask);
+  await page.screenshot({
+    path: testInfo.outputPath("list-run-once-repeat-unknown.png"),
+    fullPage: true,
+  });
+  await page.setViewportSize({ width: 390, height: 844 });
+  await page.locator(".mf-run-table-wrap").evaluate((element) => {
+    element.scrollLeft = element.scrollWidth;
+  });
+  await page.screenshot({
+    path: testInfo.outputPath("list-run-once-repeat-unknown-narrow.png"),
+    fullPage: true,
+  });
+  expect(
+    await page.evaluate(
+      () => document.documentElement.scrollWidth <= window.innerWidth,
+    ),
+  ).toBe(true);
+  await page.setViewportSize({ width: 1280, height: 720 });
+
+  // "查看提交结果" reads the exact request of this click and finds the Task
+  // the backend actually admitted; it never resubmits.
+  await row.getByRole("button", { name: "查看提交结果" }).click();
+  await expect(row).toHaveAttribute("data-run-once-state", "admitted");
+  await expect(row.getByRole("link", { name: "查看任务" })).toHaveAttribute(
+    "href",
+    new RegExp(secondTask),
+  );
+  const state = await runOnceState(page, secondTask);
+  expect(state.found).toBe(true);
+  expect(state.discoveryId).toBe(secondTask);
+  expect(
+    api.filter(
+      (call) => call.method === "POST" && call.path.endsWith("/run-once"),
+    ),
+  ).toHaveLength(2);
+  await page.screenshot({
+    path: testInfo.outputPath("list-run-once-repeat-reconciled.png"),
+    fullPage: true,
+  });
+});
+
 test("a non-empty library root whole-scope run once executes its real media", async ({
   page,
 }) => {

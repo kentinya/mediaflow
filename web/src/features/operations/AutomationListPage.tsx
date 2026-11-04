@@ -506,6 +506,10 @@ export function AutomationListPage({
     runOnceUnknownNotes,
   ]);
 
+  // Any change to the admitted map restarts this one bounded display window, so
+  // replacing a row's feedback also cancels the timer that belonged to the
+  // previous admission. A later submission can therefore never be cleared by
+  // the earlier success hint's deadline.
   useEffect(() => {
     if (Object.keys(runOnceAdmitted).length === 0) return;
     const timer = window.setTimeout(() => setRunOnceAdmitted({}), 8_000);
@@ -541,6 +545,28 @@ export function AutomationListPage({
     refreshDefinitionRead();
   };
 
+  /** Drop only this row's displayed result before a new explicit attempt. */
+  const clearRunOnceRowFeedback = (definitionId: string) => {
+    setRunOnceAdmitted((current) => {
+      if (current[definitionId] === undefined) return current;
+      const next = { ...current };
+      delete next[definitionId];
+      return next;
+    });
+    setRunOnceRejected((current) => {
+      if (current[definitionId] === undefined) return current;
+      const next = { ...current };
+      delete next[definitionId];
+      return next;
+    });
+    setRunOnceUnknownNotes((current) => {
+      if (current[definitionId] === undefined) return current;
+      const next = { ...current };
+      delete next[definitionId];
+      return next;
+    });
+  };
+
   const submitRunOnce = async (definition: AutomationDefinitionModel) => {
     const definitionId = definition.document.id;
     if (runOnceInFlight.current.has(definitionId)) return;
@@ -551,6 +577,12 @@ export function AutomationListPage({
     ) {
       return;
     }
+    // This explicit click is a new submission for this row, so the row must
+    // stop showing the previous submission's result. Leaving the old
+    // "已提交"/Task link in place would present the earlier admission as the
+    // outcome of this attempt while it is submitting, refused or unanswered.
+    // Other rows and retained request contexts are untouched.
+    clearRunOnceRowFeedback(definitionId);
     if (!principalIdentity.resolved || token === null) {
       setRunOnceRejected((current) => ({
         ...current,
@@ -592,12 +624,6 @@ export function AutomationListPage({
 
     runOnceInFlight.current.add(definitionId);
     setRunOnceBusy((current) => new Set(current).add(definitionId));
-    setRunOnceRejected((current) => {
-      if (current[definitionId] === undefined) return current;
-      const next = { ...current };
-      delete next[definitionId];
-      return next;
-    });
     const generation = authStore.getGeneration();
     const owner = principalIdentity.principalId;
     const begin = beginRunOnceSubmission(owner, definitionId);

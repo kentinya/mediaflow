@@ -83,8 +83,11 @@ function action(overrides: Record<string, unknown> = {}) {
 function definitionDocument(
   overrides: Record<string, unknown> = {},
 ): Record<string, unknown> {
+  // Bounded action paths are verified against the definition identity, so a
+  // second list row must own paths that match its own id.
+  const id = typeof overrides.id === "string" ? overrides.id : DEFINITION_ID;
   return {
-    id: DEFINITION_ID,
+    id,
     name: "Nightly automation",
     enabled: false,
     resourceLibraryId: "source",
@@ -108,7 +111,7 @@ function definitionDocument(
       status: "none",
       active: false,
       grantId: null,
-      definitionId: DEFINITION_ID,
+      definitionId: id,
       definitionChangedSinceGrant: false,
       nextAction: "review the exact definition bounds and explicitly grant",
     },
@@ -132,30 +135,30 @@ function definitionDocument(
     actions: {
       detail: action({
         method: "GET",
-        path: `/api/v1/operations/automation/task-definitions/${DEFINITION_ID}`,
+        path: `/api/v1/operations/automation/task-definitions/${id}`,
       }),
       occurrences: action({
         method: "GET",
-        path: `/api/v1/operations/automation/task-definitions/${DEFINITION_ID}/occurrences`,
+        path: `/api/v1/operations/automation/task-definitions/${id}/occurrences`,
       }),
       runOnce: action({
         method: "POST",
-        path: `/api/v1/operations/automation/task-definitions/${DEFINITION_ID}/run-once`,
+        path: `/api/v1/operations/automation/task-definitions/${id}/run-once`,
       }),
       grantState: action({
         method: "GET",
-        path: `/api/v1/automation/task-definitions/${DEFINITION_ID}/grant-state`,
+        path: `/api/v1/automation/task-definitions/${id}/grant-state`,
       }),
       grant: action({
-        path: `/api/v1/automation/task-definitions/${DEFINITION_ID}/grant`,
+        path: `/api/v1/automation/task-definitions/${id}/grant`,
         requiresConfirmation: true,
       }),
       revoke: action({
-        path: `/api/v1/automation/task-definitions/${DEFINITION_ID}/revoke`,
+        path: `/api/v1/automation/task-definitions/${id}/revoke`,
       }),
       copy: action({
         method: "POST",
-        path: `/api/v1/automation/task-definitions/${DEFINITION_ID}/copy`,
+        path: `/api/v1/automation/task-definitions/${id}/copy`,
       }),
       draftCreate: action({
         path: `/api/v1/configuration/revisions/${ACTIVE_REVISION}/successor`,
@@ -377,6 +380,184 @@ describe("Automation list Run once", () => {
         (call) => call.method === "POST" && call.url.endsWith("/run-once"),
       ),
     ).toHaveLength(1);
+  });
+
+  it("replaces the row's previous success when the next explicit submission is refused", async () => {
+    const user = userEvent.setup();
+    let posts = 0;
+    const calls = recordingFetch((call) => {
+      if (call.method === "POST" && call.url.endsWith("/run-once")) {
+        posts += 1;
+        return posts === 1
+          ? jsonResponse(runOnceDocument("first-task"), 202)
+          : jsonResponse(
+              { error: { code: "queue_full", message: "queue is full" } },
+              409,
+            );
+      }
+      return baseResponder()(call);
+    });
+    const { table } = await renderConnected();
+    const target = within(row(table));
+    await user.click(target.getByRole("button", { name: "运行一次" }));
+    expect(await target.findByText("已提交")).toBeVisible();
+    expect(
+      target.getByRole("link", { name: "查看任务" }).getAttribute("href"),
+    ).toContain("/operations/tasks/first-task");
+
+    // The first success hint is still inside its display window. A second
+    // explicit click must present the second attempt, never the earlier Task.
+    await user.click(target.getByRole("button", { name: "运行一次" }));
+    expect(await target.findByText("未能提交")).toBeVisible();
+    expect(
+      target.getByText("当前整理任务已满，本次提交未受理。"),
+    ).toBeVisible();
+    expect(target.queryByText("已提交")).not.toBeInTheDocument();
+    expect(
+      target.queryByRole("link", { name: "查看任务" }),
+    ).not.toBeInTheDocument();
+    expect(posts).toBe(2);
+    expect(
+      calls.filter(
+        (call) => call.method === "POST" && call.url.endsWith("/run-once"),
+      ),
+    ).toHaveLength(2);
+  });
+
+  it("reconciles the current request when a repeated submission's reply is lost", async () => {
+    const user = userEvent.setup();
+    let posts = 0;
+    const calls = recordingFetch((call) => {
+      if (call.method === "POST" && call.url.endsWith("/run-once")) {
+        posts += 1;
+        return posts === 1
+          ? jsonResponse(runOnceDocument("first-task"), 202)
+          : jsonResponse(
+              {
+                error: {
+                  code: "unavailable",
+                  message: "reply lost at the boundary",
+                },
+              },
+              503,
+            );
+      }
+      if (
+        call.method === "GET" &&
+        call.url.includes("/run-once?admissionRequestId=")
+      ) {
+        return jsonResponse(runOnceDocument("second-task"));
+      }
+      return baseResponder()(call);
+    });
+    const { table } = await renderConnected();
+    const target = within(row(table));
+    await user.click(target.getByRole("button", { name: "运行一次" }));
+    expect(await target.findByText("已提交")).toBeVisible();
+    expect(
+      target.getByRole("link", { name: "查看任务" }).getAttribute("href"),
+    ).toContain("/operations/tasks/first-task");
+
+    await user.click(target.getByRole("button", { name: "运行一次" }));
+    expect(await target.findByText("暂未收到回复")).toBeVisible();
+    expect(
+      target.getByText("任务可能已提交，请先查看提交结果。"),
+    ).toBeVisible();
+    expect(target.queryByText("已提交")).not.toBeInTheDocument();
+    expect(
+      target.queryByRole("link", { name: "查看任务" }),
+    ).not.toBeInTheDocument();
+
+    const postCalls = calls.filter(
+      (call) => call.method === "POST" && call.url.endsWith("/run-once"),
+    );
+    expect(postCalls).toHaveLength(2);
+    const firstRequest = postCalls[0]?.body?.admissionRequestId;
+    const secondRequest = postCalls[1]?.body?.admissionRequestId;
+    expect(firstRequest).not.toBe(secondRequest);
+    const stored = window.sessionStorage.getItem(
+      `mediaflow.operations.automation-run-once-intents:${principalIdStorageSegment(PRINCIPAL)}:${DEFINITION_ID}`,
+    );
+    expect(JSON.parse(String(stored))).toMatchObject({
+      requestId: secondRequest,
+    });
+
+    // The recovery action reads the request of this click, not the older one.
+    await user.click(target.getByRole("button", { name: "查看提交结果" }));
+    expect(await target.findByText("已提交")).toBeVisible();
+    expect(
+      target.getByRole("link", { name: "查看任务" }).getAttribute("href"),
+    ).toContain("/operations/tasks/second-task");
+    const reconcile = calls.find(
+      (call) =>
+        call.method === "GET" &&
+        call.url.includes("/run-once?admissionRequestId="),
+    );
+    expect(reconcile?.url).toContain(
+      `admissionRequestId=${String(secondRequest)}`,
+    );
+    expect(reconcile?.url).not.toContain(String(firstRequest));
+    expect(
+      calls.filter(
+        (call) => call.method === "POST" && call.url.endsWith("/run-once"),
+      ),
+    ).toHaveLength(2);
+  });
+
+  it("links the newest admission for the row and keeps other rows' feedback", async () => {
+    const user = userEvent.setup();
+    const otherId = "other-task";
+    const list = listDocument([
+      definitionDocument(),
+      definitionDocument({ id: otherId, name: "Other automation" }),
+    ]);
+    let mainPosts = 0;
+    const calls = recordingFetch((call) => {
+      if (call.method === "POST" && call.url.endsWith("/run-once")) {
+        if (call.url.includes(`/definitions/${DEFINITION_ID}/run-once`)) {
+          mainPosts += 1;
+          return jsonResponse(
+            runOnceDocument(mainPosts === 1 ? "first-task" : "second-task"),
+            202,
+          );
+        }
+        return jsonResponse(runOnceDocument("other-task"), 202);
+      }
+      return baseResponder(list)(call);
+    });
+    const { table } = await renderConnected();
+    const target = within(row(table));
+    const other = within(table.getByRole("row", { name: /Other automation/ }));
+
+    await user.click(other.getByRole("button", { name: "运行一次" }));
+    expect(await other.findByText("已提交")).toBeVisible();
+
+    await user.click(target.getByRole("button", { name: "运行一次" }));
+    expect(await target.findByText("已提交")).toBeVisible();
+    expect(
+      target.getByRole("link", { name: "查看任务" }).getAttribute("href"),
+    ).toContain("/operations/tasks/first-task");
+
+    await user.click(target.getByRole("button", { name: "运行一次" }));
+    await waitFor(() => expect(mainPosts).toBe(2));
+    await waitFor(() =>
+      expect(
+        target.getByRole("link", { name: "查看任务" }).getAttribute("href"),
+      ).toContain("/operations/tasks/second-task"),
+    );
+    expect(
+      target.getByRole("link", { name: "查看任务" }).getAttribute("href"),
+    ).not.toContain("first-task");
+    // The other row's earlier admission is independent and still shown.
+    expect(other.getByText("已提交")).toBeVisible();
+    expect(
+      other.getByRole("link", { name: "查看任务" }).getAttribute("href"),
+    ).toContain("/operations/tasks/other-task");
+    expect(
+      calls.filter(
+        (call) => call.method === "POST" && call.url.endsWith("/run-once"),
+      ),
+    ).toHaveLength(3);
   });
 
   it("keeps a lost response unknown and reconciles the same request without a second POST", async () => {
