@@ -10,11 +10,12 @@ Slice47 is PASS / CLOSED after independent A Final Review on 2026-11-03. Its Tas
 scheduling/settings/history contracts below supersede the affected earlier foundations.
 Detailed former delivery notes remain at `865ebdce47b0b323064fd8e05fbfaa54546e6269:docs/architecture.md`.
 
-## TARGET — Task flow status and Automation success rate (Slice48 ACTIVE)
+## CURRENT — Task flow status and Automation success rate (Slice48 PASS / CLOSED)
 
-`V2-TASK-012–014` / `V2-AUTO-012` select this TARGET under ACTIVE [Slice48](../SLICE.md);
-implementation is limited to the active Task.
-The accepted CURRENT contracts below remain delivery facts until implementation and acceptance.
+`V2-TASK-012–014` / `V2-AUTO-012` passed independent A Final Review on 2026-11-04 under
+[Slice48](../SLICE.md), original Base `ba84272721961c970f1eb85d616a0d129523ab92` through
+implementation `a80015e2f7d46e3ad1b8f7b14c453d1030e62104`, including A48-01.
+This CURRENT contract supersedes the affected earlier aggregate/recovery/rate/record meanings.
 This amends Task aggregate settlement, Automation rate predicates and execution-record Task result/
 status filtering under `V2-AUTO-006`. The processing pipeline, Task ownership/queue engine,
 media execution authority and original times/attempts/file-effect history retain their boundaries.
@@ -217,8 +218,9 @@ Queries use Task identity across authoritative organizing lists/counts/cursors, 
 Automation inventory/records/metrics, Dashboard, bounded scoped logs/audit and JSON exports.
 Task Center's eight views/four-type union and technical-history restriction remain. Original
 Automation execution outcome/time/effects are retained independently of current handling, including
-no-work/pre-start failures and attachment evidence. A recovery neither creates another original
-execution nor changes the original records-only result. Immutable attempt evidence stays inside
+no-work/pre-start failures and attachment evidence. A recovery never creates another original
+execution. Under accepted Slice48, legal continuation can change the current Task flow result;
+original times/attempts/file effects stay factual. Immutable attempt evidence stays inside
 the Task/Result responsibility; no independent history execution engine is created.
 
 ### Fresh initialization, same-version persistence and Job removal
@@ -744,12 +746,12 @@ operator from a resolved conflict or review through exact-source re-analysis, co
 and the original Organize outcome. Successful siblings remain terminal and uncertain effects remain
 investigation-only.
 
-## CURRENT — V2 Operations projection (foundations42, amended47)
+## CURRENT — V2 Operations projection (foundations42, amended48)
 
 Task/TaskItem/Result, manual execution and four-type recovery services retain execution authority.
 The Python application projection reads exact Task-owned admission/discovery/analysis/execution links
 into one operator-visible work. Admission/pre-start failures stay visible in that Task. Original
-Automation outcome/time is write-once evidence separate from later handling. Queue settlement never
+Automation attempt outcome/time/effects are write-once evidence separate from current Task flow. Queue settlement never
 overrides item/Result truth or counts continuation as another original execution.
 
 ```text
@@ -803,7 +805,7 @@ before another explicit command. API/Web share permission/version/duplicate chec
 readiness and safe recovery behavior. No additional scheduler, Worker supervisor, Provider, global
 Review inbox, history cleanup, universal rollback or automatic uncertain replay was introduced by42.
 Slice45 adds the typed cross-Task lists below. The original42 acceptance at `ce3fc2a3e70d40279fa725b5d7dc838d11123980` remains historical;
-this section applies the accepted47 Task-owned continuation and query amendments.
+this section applies the accepted47 Task-owned continuation and accepted48 flow/query amendments.
 
 ## CURRENT — Task Center query, summary confirmation and typed recovery (Slice45)
 
@@ -844,8 +846,9 @@ A Task counts once across its own discovery/analysis/confirmation/execution. Ana
 DryRun stays administrative history outside the center. Four-type lineage remains until the
 required decision/analysis/summary/confirmation is resolved; plain queued/running is not human
 Attention. A technical failure leaves four-type Attention and stays factual read-only All/Ended
-history. Completed/recovered requires verified success of every necessary item, preserving original
-attempts/results. Saved batches apply the same per-item classification. Task management reads remain;
+history. Under Slice48, completed is the durable flow outcome regardless of file failures;
+recovered display additionally requires verified success of every necessary item and durable completed
+flow, preserving original attempts/results. A failed flow is never overridden by file success. Saved batches apply the same per-item classification. Task management reads remain;
 Job collections/submission/control/stale-requeue are removed. Legacy UI links resolve a proved
 same-version organizing Task to the center or ordinary work to its originating library, otherwise
 bounded unavailable/denied evidence, with no execution or old-Job identity mapping.
@@ -1141,21 +1144,23 @@ Durable origin/request/principal/pin links preserve deduplication and truthful h
 
 Automation execution records add a records-only `recordOutcome` envelope on the existing bounded
 GET: status, noWork, confirmed primary success count and concise Chinese statement/failureReason/
-nextStep. SQLite derives the original lifecycle and exact TaskItem/Result/attachment evidence without
-consuming recovery lineage, changing persisted states/schema or traversing Storage. A terminal
-failed/partial/cancelled original stays failed; completed work with skipped/ignored/failed/partial/
-uncertain admitted work (including attachments) is failed. Fully verified success and proven empty
-no-work are completed; incomplete/inconsistent proof is unknown and live/cancel-requested work stays
-unfinished. Subsequent handling and restart cannot turn original failure into success.
+nextStep. Under accepted Slice48, SQLite reads the current durable Task flow state and independent
+TaskItem/Result/attachment evidence without changing persisted states/schema or traversing Storage.
+Completed flow remains completed with failed/partial/skipped/ignored files, unknown effects or absent
+Results; failed flow and acknowledged cancellation remain failed/cancelled even with verified file
+success. Live/human-waiting work stays unfinished; unavailable Task truth stays unavailable.
+Recovered display requires both durable completed flow and exact verified file-recovery evidence.
+Frozen original-stage times/attempts/effects remain historical evidence, never a current status override.
 
 The optional `outcome` records filter consumes this same SQL classification over the mandatory
 original-Automation population, before counts, page windows and bidirectional cursors. Principal,
 definition/trigger/raw-status/outcome/time/direction scope and query keys bind the actual conditions.
-Raw `status` filtering, raw result/handling/handoff fields and other shared callers' default behavior,
-Task Center recovery, latest outcomes and metrics remain unchanged. No client-side page filtering,
+Raw `status`, records-only outcome filtering/counts/paging, the run envelope, Task Center and metrics
+share the same current Task flow authority. File results and historical handling/handoff evidence
+remain independent. No client-side page filtering,
 unbounded record loading, new history store or execution authority is introduced.
 
-The UI consumes only this original-result envelope and real execution times. Its detail toggle opens
+The UI consumes this current-flow envelope, independent file facts and original real execution times. Its detail toggle opens
 at most 执行结果和时间 / 失败原因 (failed only) / 下一步; it never renders later handling, recovery
 counts/instructions, ownership, raw categories/exceptions, Task Center/definition navigation or
 commands. Cancelled runs are named as cancelled, not program exceptions; uncertain effects require

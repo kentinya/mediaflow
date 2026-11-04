@@ -33,26 +33,27 @@ only in [the development workflow](development-workflow.md).
 | 45 — V2 Task Center, Recovery and Scan/Preview/FileIndex Retirement | Deliver nine authoritative task/recovery lists, in-context exact plan-summary confirmation, durable per-item results/controls, first-deployment absence of Scan and standalone Preview products/compatibility layers, complete FileIndex retirement, and shared CLI/Files/MediaLibrary live lists without catalog recording | PASS / CLOSED | Accepted Slice44 baseline; existing Operations/Files/Task/Worker/recovery foundations; explicit user priority change and required retirement-coupling exceptions before Slice43 closure |
 | 46 — V2 Organizing Task Center and Readable Actions | Repair V2 action readability; start manual organizing only from ResourceLibrary Files and admit tasks before business-rule readiness, retaining folder media-type filtering, same-source unfinished-work/explicit-extension checks and task-native four-type recovery; keep ordinary-file progress/results/recovery on each library page; restrict Task Center to organizing work with eight views and four business types in Attention/pending counts, removing Failure Recovery, other failures' separate statistics/guidance and creation/global Worker/discovery/manual-operation blocks; fix Automation detail opening/continued Save editing, make checked Enabled authorize scheduled execution without independent grants, and make Run once execute a real task before rule readiness with four-type recovery | PASS / CLOSED | Accepted43–45 baseline and existing shared action, live Files, durable direct-command/transfer/Delete, organizing/recovery and Automation publication/grant/Scheduler foundations |
 | 47 — Unified Task Scheduling and Organizing Execution | Remove independent Job; unify organizing Task/Worker and four-type recovery; add source-dependent failed/partial history handling and CLI retry-failed retirement; move three shared runtime settings into System Settings and delete the unused stale-age parameter | PASS / CLOSED | Accepted43–46 and subsequent accepted corrections at `5144ab1fc2344b06194969cc2c496835729664c0`; explicit user refactor/A scope authorization, amended 2026-11-03 |
-| 48 — Task Flow Status and Automation Success Rate | Separate five-state Task flow from file outcomes, including completed technical failure with absent file results; calculate success rate from due/definition Run once Task completion, excluding manual organizing/ordinary work; preserve waiting, cancellation, truthful file evidence and execution safety | ACTIVE | Accepted47/current baseline `ba84272721961c970f1eb85d616a0d129523ab92`; A Final Review FIX REQUIRED for A48-01 on 2026-11-04; B correction amendment pending |
+| 48 — Task Flow Status and Automation Success Rate | Separate five-state Task flow from file outcomes, including completed technical failure with absent file results; calculate success rate from due/definition Run once Task completion, excluding manual organizing/ordinary work; preserve waiting, cancellation, truthful file evidence and execution safety | PASS / CLOSED | Accepted47/current baseline `ba84272721961c970f1eb85d616a0d129523ab92`; A Final Review PASS / CLOSED on 2026-11-04 through `a80015e2f7d46e3ad1b8f7b14c453d1030e62104`; A48-01 corrected |
 
 ## Current boundary
 
-Slice48 — **Task Flow Status and Automation Success Rate** — is **FIX REQUIRED** after A's
-independent original-range review on 2026-11-04. Immutable Base:
-`ba84272721961c970f1eb85d616a0d129523ab92`; reviewed, unaccepted Implementation Head:
-`2d4f1ae037cc4642b7bcd4231a840cf40d70e7b6`. The table remains ACTIVE for this unclosed Slice's
-correction loop. [SLICE.md](../SLICE.md#a48-01--p1-recovered-file-proof-overrides-a-durably-failed-task-flow)
-records P1 A48-01: after an existing same-Task recovery journey and a one-time terminal SQLite
-publication failure, durable Task `failed` is projected as `completed / recovered` by Task Center,
-while Automation's nested outcome and metric read failure. File success cannot override flow truth.
+Slice48 — **Task Flow Status and Automation Success Rate** — is **PASS / CLOSED** by independent
+A Final Review on 2026-11-04. Original Base `ba84272721961c970f1eb85d616a0d129523ab92`;
+accepted implementation `a80015e2f7d46e3ad1b8f7b14c453d1030e62104`. [SLICE.md](../SLICE.md#final-validation-closure-packet-and-a-final-review)
+records the whole-range RO-1–4 / AC-1–16 assessment, corrected A48-01 and independent checks.
+The complete B Closure Packet remains at `32855b732aac079d41d16fa88ab3f5f5ec9fbd3c:TASK.md`.
 
-B's full packet is preserved at `6c39d6ecdf40cad8f06e5e97f58bf47bdc388b49:TASK.md`;
-Task48.1/48.2 prior B PASS and final evidence remain factual. Root [TASK.md](../TASK.md) returns
-Task48.1 with original Base/goal/scope for B's correction amendment before Developer work.
-Outcomes/AC-1–16/deferrals are unchanged. `V2-TASK-012–014` / `V2-AUTO-012` and the journey/
-architecture amendment remain TARGET; no CURRENT acceptance, closure entry or next Slice selection.
+Delivered: five-state durable Task flow independent of file outcomes, ended file technical closure
+with honest missing-result/unknown-effect evidence, preserved waiting/cancellation/fences/non-replay,
+consistent Task Center/Files/API/CLI/other consumers, and due/definition Run once success rate
+completed/(completed+failed) plus matching execution-record flow results. Original times/attempts/
+file effects stay factual. CURRENT documents incorporate `V2-TASK-012–014` / `V2-AUTO-012`.
+All selected deferrals and seven optional external-service/endurance skips remain disclosed.
 
-## Latest accepted boundary
+No active implementation Task. Next action: **A SELECTS THE NEXT LARGE SLICE**, as a separate scope
+action; no new Slice is selected here. Prior acceptance identities, boundaries and history remain.
+
+## Prior accepted boundary
 
 Slice47 — **Unified Task Scheduling and Organizing Execution** — is **PASS / CLOSED** after
 independent A Final Review on 2026-11-03. Immutable Base: `5144ab1fc2344b06194969cc2c496835729664c0`;
@@ -67,7 +68,7 @@ organizing capacity 1–10000, shared Worker idle polling and due-only Scheduler
 stale-age parameter is removed; immutable snapshots with that key remain readable. Current
 heartbeat/lease/call-timeout safety and completed/uncertain non-replay remain.
 
-Slice48 is in the correction loop above; Slice47 remains accepted without reopening. Existing
+Slice48 acceptance does not reopen Slice47. Existing
 deferrals, seven optional external-service/
 endurance skips and the explicit old-task/cross-version upgrade/V1 exclusions remain disclosed.
 Earlier rejected candidates/reviews remain in Git; their blockers were corrected before acceptance.

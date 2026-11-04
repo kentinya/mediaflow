@@ -8,38 +8,37 @@ workflow authority. Closure rules live only in
 
 ## Current development pointer
 
-Slice48 — **Task Flow Status and Automation Success Rate** — is **FIX REQUIRED** after independent
-A Final Review on 2026-11-04. Original Base `ba84272721961c970f1eb85d616a0d129523ab92`;
-reviewed, unaccepted implementation `2d4f1ae037cc4642b7bcd4231a840cf40d70e7b6`.
-[SLICE.md A48-01](../SLICE.md#a48-01--p1-recovered-file-proof-overrides-a-durably-failed-task-flow)
-records the existing-entry fault reproduction: a successfully saved Task flow failure is hidden by
-file-derived recovered-completion projection, contradicting the Task-based Automation record/metric.
-B must amend returned Task48.1 before Developer correction; original Task Base/goal/scope stay intact.
-
-B's submitted packet remains at `6c39d6ecdf40cad8f06e5e97f58bf47bdc388b49:TASK.md`, with prior
-Task48.1/48.2 PASS, full/native/artifact results and disclosed limitations. A independently ran
-313 focused tests and 2 real Python browser cases (passed) plus the failing publication probe;
-those normal-path passes do not cover the P1. No new closure ledger entry, CURRENT reconciliation,
-new Slice selection or reopening of an accepted Slice. Selected outcomes and deferrals remain
-unchanged; the amendment is still TARGET. Root [TASK.md](../TASK.md) is the B handoff pointer.
+Slice48 — **Task Flow Status and Automation Success Rate** — is **PASS / CLOSED** after independent
+A Final Review on 2026-11-04. No active implementation Task. Next action: **A SELECTS THE NEXT LARGE
+SLICE**, separately; no additional Slice is selected by this closure.
 
 ## Latest accepted closure
 
-Slice47 — **Unified Task Scheduling and Organizing Execution** — is **PASS / CLOSED** by
-independent A Final Review on 2026-11-03, from original Base `5144ab1fc2344b06194969cc2c496835729664c0`
-through accepted implementation `5134c78b22057781d472e6ebf61a1799d9e40324`. [Slice47 Contract](https://github.com/kentinya/mediaflow/blob/ba84272721961c970f1eb85d616a0d129523ab92/SLICE.md)
-records the six-outcome/AC-1–26 review, prior rejection pointers and actual independent checks.
-B's final Closure Packet remains at `749507ca9000329484bdc9fb7ad5c44e0efc0cd0:TASK.md`.
+Original Base `ba84272721961c970f1eb85d616a0d129523ab92` through accepted implementation
+`a80015e2f7d46e3ad1b8f7b14c453d1030e62104`. [Slice48 Contract/A review](../SLICE.md#final-validation-closure-packet-and-a-final-review)
+records RO-1–4 / AC-1–16, the original A48-01 rejection and corrected whole-range acceptance.
+B's refreshed packet is preserved at `32855b732aac079d41d16fa88ab3f5f5ec9fbd3c:TASK.md`.
 
-Actual independent checks, B's full/native/artifact evidence, corrected initial failures, skips and
-process deviations remain in that Contract/packet. Seven optional external-service/endurance skips
-are disclosed; old-task/cross-version upgrade and V1 support remain excluded. No remote validation
-or production deployment is claimed by closure or document governance.
+Delivered: five-state Task flow, independent file outcomes and processed progress, technical closure
+without requiring missing Results/effect verification, preserved waiting/cancellation/fences/non-replay,
+and consistent affected Task consumers. Automation due/definition Run once success rate is
+completed/(completed+failed), excluding cancellation/unfinished/manual/ordinary work; execution
+records use current Task flow with independent files and unchanged original times/attempts/effects.
+A48-01's file-derived recovered-status override is corrected. Requirements/journey/architecture/page
+specification are reconciled as CURRENT, with the frozen V1 baseline unchanged.
 
-Slice48 is in the correction loop above, without reopening Slice47 or adding a closure
-ledger entry. Prior43–46 acceptance identities/deferrals remain unchanged. Slice46's
-Contract/A review remains at `5144ab1fc2344b06194969cc2c496835729664c0:SLICE.md`; its complete
-B packet remains at `85696ab160e8ec1d1e29dcdfc046d426e2cc214c:TASK.md`.
+A independently ran 314 affected Python tests and 3 real Python browser cases (passed), reran the
+unchanged original existing-entry publication probe with corrected durable/API readback, inspected
+desktop/narrow screenshots and checked B's actual T4/native/artifact evidence. The initial Python
+document-consumer failure plus corrective 8-pass run, Docker mount failure plus shared-directory
+rerun, and seven optional external-service/endurance skips remain disclosed in the packet/Contract.
+No new deferral, cross-version/old-task support, remote validation or production deployment is claimed.
+
+Slice47 remains PASS / CLOSED at original Base `5144ab1fc2344b06194969cc2c496835729664c0` through
+`5134c78b22057781d472e6ebf61a1799d9e40324`; its [Contract/A review](https://github.com/kentinya/mediaflow/blob/ba84272721961c970f1eb85d616a0d129523ab92/SLICE.md)
+and B packet `749507ca9000329484bdc9fb7ad5c44e0efc0cd0:TASK.md` remain unchanged. Slice46's
+Contract/A review remains at `5144ab1fc2344b06194969cc2c496835729664c0:SLICE.md`, full B packet
+at `85696ab160e8ec1d1e29dcdfc046d426e2cc214c:TASK.md`. Prior closures are not reopened.
 
 The ledger below retains each closure's original Base/accepted Head, delivered scope and deferrals.
 Current amendments may replace behavior without rewriting an older acceptance. Detailed43
@@ -66,6 +65,7 @@ backfilled or guessed; consult Git and the legacy archive for their detailed lin
 
 | Slice | Status | Base | Implementation Head | Final Audit | Delivered | Deferred |
 |---|---|---|---|---|---|---|
+| 48 — Task Flow Status and Automation Success Rate | PASS / CLOSED | `ba84272721961c970f1eb85d616a0d129523ab92` | `a80015e2f7d46e3ad1b8f7b14c453d1030e62104` | A Final Review PASS / CLOSED — 2026-11-04 | Five-state durable Task flow independent of file outcomes; technical closure with absent Results/unknown effects; consistent Task Center/Files/API/CLI/other readback and processed progress; preserved four-type waiting/recovery/cancellation/fences/non-replay; due + definition Run once completed/(completed+failed) rate and current-flow execution records, original times/attempts/file effects retained; A48-01 corrected | New Providers/Storage commands, queue/parallelism/settings/supervision redesign, unbounded discovery/MediaLibrary organizing, new recovery types/cross-Task bulk/attachment retry, automatic uncertain replay/universal rollback, old-task/status migration, bulk relabelling, cross-version upgrade/rollback, mixed-version writers and V1; 7 existing optional external-service/endurance skips remain disclosed |
 | 47 — Unified Task Scheduling and Organizing Execution | PASS / CLOSED | `5144ab1fc2344b06194969cc2c496835729664c0` | `5134c78b22057781d472e6ebf61a1799d9e40324` | A Final Review PASS / CLOSED — 2026-11-03 | One Task-owned queue/claim/organizing engine across all triggers; same-Task four-type recovery; live Job removal and same-version persistence; latest failed/partial source exclusion for Automation and warned new manual confirmation; Pause/resume and CLI retry-failed retirement; three System Settings with shared 1–10000 capacity and real Worker/Scheduler cadence, stale-age removal with immutable-config readability | New providers/commands, distributed scheduling/supervision/parallelism, ordinary-file queue redesign, unbounded/MediaLibrary organizing, new recovery types/cross-Task bulk, automatic uncertain replay/universal rollback, old-task/Job migration or takeover, cross-version upgrade/rollback, mixed-version writers and V1; 7 optional external-service/endurance skips remain disclosed |
 | 46 — V2 Organizing Task Center and Readable Actions | PASS / CLOSED | `e9f1a8dc607cfc6d5ea02141b058da8ce849cd70` | `6469f45811ee59c875cfd10107d3aed129e9d489` | A Final Review PASS / CLOSED — 2026-10-29 | Readable V2 actions/Entry; Files-first durable organizing before business readiness with folder filtering and atomic source ownership; both library kinds’ durable local ordinary-operation status; organizing-only eight-view center and four-type recovery with truthful completion; usable Automation detail/continued Save, checked Enabled scheduled intent and real bounded Run once | New providers/commands, MediaLibrary organizing, global ordinary-operation center, cross-Task bulk recovery, arbitrary historical Reprocess, automatic uncertain replay/rollback, queue/supervision redesign, V1 cutover and unchanged Contract deferrals; 7 existing external-service/endurance skips remain disclosed |
 | 43 — V2 Automation Workspace and Engine Settings | PASS / CLOSED | `853973dbbf8289fa2ad40657033e94e870a690e4` | `97316131946bdecc483b684f6e6f6ecb98c5594d` | A Final Review PASS / CLOSED — 2026-10-24 | Native automatic-organization definition lifecycle and focused checked publication; shared exact analysis/scoped grant; bounded automatic-discovery Run once with separate intent and unchanged schedule; authoritative inventory/calendar metrics; read-only records with exact Task Center recovery links; four-field settings Save and real resident adoption including restart/history/override | New pipeline modes/providers/Storage operations; queue/overlap/backfill redesign; unbounded work; cross-Task bulk and arbitrary historical Reprocess; deployment/identity editing; automatic uncertain replay/universal rollback; V1 cutover and other Contract deferrals |

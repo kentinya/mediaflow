@@ -4,34 +4,34 @@
 Slice ID: 48
 Name: Task Flow Status and Automation Success Rate
 Owner: A — Slice Owner / Architect / Final Reviewer
-Status: READY FOR A REVIEW
+Status: PASS / CLOSED
 Base SHA: ba84272721961c970f1eb85d616a0d129523ab92
 Implementation Head: a80015e2f7d46e3ad1b8f7b14c453d1030e62104
-Implementation Head Acceptance: B PASS — A48-01 corrected; A FINAL REVIEW PENDING, 2026-11-04
+Implementation Head Acceptance: A FINAL REVIEW PASS / CLOSED — 2026-11-04
 Working Branch: main
-Development Authorization: CORRECTION COMPLETE; NO ACTIVE IMPLEMENTATION TASK
+Development Authorization: COMPLETE; NO ACTIVE IMPLEMENTATION TASK
 Risk: High
 Final Test Level: T4
-Next Action: A REVIEWS THE CORRECTED ORIGINAL BASE..IMPLEMENTATION HEAD; NO SLICE CLOSURE
+Next Action: A SELECTS THE NEXT LARGE SLICE
 ```
 
-B correction handoff (2026-11-04): Task48.1 correction independently passed; all Slice outcomes/surfaces
-reevaluated complete. Refreshed validation and Closure Packet are in [TASK.md](TASK.md). These are factual
-readiness fields, not A acceptance. The A48-01 review below retains the original rejected candidate
-`2d4f1ae037cc4642b7bcd4231a840cf40d70e7b6`; A must review the corrected original Base..Head anew.
+A independently accepted the corrected original Base..Implementation Head on 2026-11-04.
+RO-1–4 and AC-1–16 are satisfied; A48-01 is corrected. No product code was changed by A.
+The complete B correction/Closure Packet is preserved at
+`32855b732aac079d41d16fa88ab3f5f5ec9fbd3c:TASK.md`; its validation candidate
+`4824642984039c3f689059812bd903e5abbc510b` differs from the implementation only in reports.
 
 ## Authority and accepted baseline
 
 [AGENTS.md](AGENTS.md) and [Development Workflow](docs/development-workflow.md) govern scope,
-roles, checkpoints, tests and acceptance. B submitted the full Slice Closure Packet at
-`6c39d6ecdf40cad8f06e5e97f58bf47bdc388b49:TASK.md`, with Task48.1/48.2 PASS and final T4 evidence.
-A independently reviewed original Base through original Head
-`2d4f1ae037cc4642b7bcd4231a840cf40d70e7b6` and returned
-**FIX REQUIRED** for A48-01 below. B's PASS/evidence remain historical facts; they do not establish
-Slice acceptance. The returned Task48.1 keeps its original Base/goal/scope; B must checkpoint its
-correction plan before Developer work. No new capability, scope reduction or independent minor bug
-is selected. Outcomes, acceptance, deferrals and immutable Slice Base remain unchanged; the
-requirements/journey/architecture amendment remains TARGET until A accepts the corrected range.
+roles, checkpoints, tests and acceptance. This acceptance reviews the entire original Slice range,
+not just the A48-01 correction. The original rejected Head
+`2d4f1ae037cc4642b7bcd4231a840cf40d70e7b6`, A FIX REQUIRED and precise reproduction remain at
+`35e6b2dbe637ceb27625cdbf8ef63b6730e99139:SLICE.md`; the original B packet remains at
+`6c39d6ecdf40cad8f06e5e97f58bf47bdc388b49:TASK.md`. B planned the correction inside the same
+Task48.1 with its original Base/goal/scope, then independently passed the corrected candidate.
+Original outcomes, acceptance, Slice Base and deferrals are unchanged; the requirements/journey/
+architecture amendment is now CURRENT. No previously accepted Slice is reopened.
 
 Slice47 remains PASS / CLOSED, with original Base
 `5144ab1fc2344b06194969cc2c496835729664c0` and accepted implementation
@@ -51,12 +51,11 @@ Earlier accepted identities, safety and deferrals in [Progress](docs/progress.md
   Files/CLI manual organizing and ordinary file operations do not enter its numerator or denominator.
 - Keep stage/waiting explanations, per-file results and safe four-type continuation usable.
 
-The planned amendments are `V2-TASK-012–014` and `V2-AUTO-012` in
+The accepted amendments are `V2-TASK-012–014` and `V2-AUTO-012` in
 [V2 Requirements](docs/v2-requirements.md). They amend the V2 realization of `REQ-TASK-002/003`,
 affected aggregate/recovered-success wording in `V2-OPS-016`, and the success-rate realization of
 `V2-AUTO-005`. They also amend `V2-AUTO-006` so execution records show the same Task flow result
-as Task Center, with independent file results. They do not alter the frozen V1 baseline or declare
-the new behavior CURRENT.
+as Task Center, with independent file results. They do not alter the frozen V1 baseline; the selected V2 behavior is CURRENT after this acceptance.
 Preserve `UX-001–007/010`, applicable `REQ-TASK-005–010`, `REQ-RESULT-*`, `REQ-RECOVERY-*`,
 `REQ-SAFE-*`, `V2-TASK-001–011`, entry/authority boundaries in `V2-OPS-014/015/017`,
 `V2-FILES-007` and `V2-AUTO-010/011`, except for the explicit aggregate/metric/record amendments above.
@@ -66,17 +65,16 @@ not require retaining a file-derived failure label as the Task's execution resul
 Baseline investigation found file-derived settlement in
 [task_persistence.py](mediaflow/domain/task_persistence.py) (`task_work_status`),
 [task_runtime.py](mediaflow/application/task_runtime.py) and
-[manual_task_engine.py](mediaflow/application/manual_task_engine.py). The current Task/run models
-retain partial-success/paused values. Automation's metric query in
-[sqlite_runtime.py](mediaflow/infrastructure/sqlite_runtime.py) additionally requires successful
+[manual_task_engine.py](mediaflow/application/manual_task_engine.py). The Base Task/run models
+retained partial-success/paused values. Automation's metric query in
+[sqlite_runtime.py](mediaflow/infrastructure/sqlite_runtime.py) at Base additionally required successful
 primary-file evidence and no uncertain success item; its separate records-only projection also
-classifies execution results by file outcomes. Both must adopt Task flow meaning for the selected
-TARGET. These describe the original Base gaps, not current acceptance. The submitted implementation changes
-these boundaries; A48-01 records a remaining competing recovery projection in its consumers.
+classified execution results by file outcomes. These describe the original Base gaps. The accepted implementation changes
+these boundaries and corrects the competing recovery projection found in A48-01.
 
-Complete TARGET journeys and technical contracts are in
-[Product Experience](docs/product-experience.md#target--task-flow-status-and-automation-success-rate-slice48-active)
-and [Architecture](docs/architecture.md#target--task-flow-status-and-automation-success-rate-slice48-active).
+Complete CURRENT journeys and technical contracts are in
+[Product Experience](docs/product-experience.md#current--task-flow-status-and-automation-success-rate-slice48-pass--closed)
+and [Architecture](docs/architecture.md#current--task-flow-status-and-automation-success-rate-slice48-pass--closed).
 
 ## RO-1 — one five-state Task lifecycle, independent of file outcomes
 
@@ -232,7 +230,7 @@ execution/recovery controls. This explicitly amends the file-derived result/filt
 for Task.status in records or the success-rate query. Unavailable Task/metric evidence remains
 unavailable; it is not reconstructed from file success/failure.
 
-## 场景与统计口径 — Slice48 TARGET
+## 场景与统计口径 — Slice48 CURRENT
 
 普通复制、移动、删除本来就使用 Task；单项同步命令也可能在一次请求内完成其 Task。
 普通操作仍在原库的“当前页面操作状态”查看，整理 Task 仍由任务中心承载。
@@ -309,12 +307,10 @@ B plans coherent full-stack Tasks only after implementation authorization and an
 Contract. Lifecycle/settlement and its real consumers form one outcome; Automation metrics and its
 native readback form another. B chooses actual Task boundaries from the code, keeping necessary
 integration/tests with each behavior rather than splitting by enum, file, layer or test gate.
-Task48.1 and Task48.2 have B PASS at `469ecc076c6efc660055f47277d7917a0b64a9aa:TASK.md`
-and `d448ce5d392865daadccb085af61e39d98f786c8:TASK.md`. B stopped planning and submitted final
-validation at the Closure Packet above. A returns Task48.1's flow/readback boundary for A48-01;
-B owns the detailed correction plan, independent acceptance and refreshed Slice-final evidence.
-The original Task48.1 Base is `4f11762d617d50555f3b106357e8f41988f7c2f9`; do not repin it or the
-Slice Base, add unrelated improvements, or treat B's prior PASS as corrected-candidate acceptance.
+Task48.1 and Task48.2 passed B review; the corrected final packet is preserved above.
+A48-01 was corrected in returned Task48.1, preserving its original Base
+`4f11762d617d50555f3b106357e8f41988f7c2f9` and the Slice Base. B stopped planning after
+reevaluating all outcomes/surfaces complete. A's independent final decision follows.
 
 Final risk is T4 because shared durable settlement affects the core pipeline, ownership/cancellation,
 source-history gates and persistent/API/Web interpretation. Developer runs new/changed/directly
@@ -329,95 +325,89 @@ media, production database, real external-service credentials or cross-version u
 
 ## Final validation, Closure Packet and A Final Review
 
-**A decision: FIX REQUIRED — 2026-11-04.** Reviewed original Slice range
-`ba84272721961c970f1eb85d616a0d129523ab92..2d4f1ae037cc4642b7bcd4231a840cf40d70e7b6`.
-Review source HEAD `6c39d6ecdf40cad8f06e5e97f58bf47bdc388b49` differs from the implementation
-only in TASK.md reports. The full production diff, affected journeys, settlement/SQLite fences,
-ordinary-operation projections, CLI/API/Web consumers, Automation cohort/rate and actual B evidence
-were inspected. No product implementation was changed by A. One concrete P1 blocks acceptance;
-no CURRENT/closure reconciliation or new Slice selection is performed.
+**A decision: PASS / CLOSED — 2026-11-04.** Independently reviewed original range
+`ba84272721961c970f1eb85d616a0d129523ab92..a80015e2f7d46e3ad1b8f7b14c453d1030e62104`.
+Review source HEAD `32855b732aac079d41d16fa88ab3f5f5ec9fbd3c` has identical executable inputs;
+its successor diff contains only SLICE.md / TASK.md reports. Inspected the complete change manifest,
+production diff and affected contracts/real journeys: settlement, claim-fenced publication, cancellation,
+ordinary operations, CLI/API/Web projections, source-history admission, Automation cohort/rate/records,
+and B's actual final evidence. No in-Slice P0/P1 or unmet required outcome remains.
 
-### A48-01 — P1: recovered-file proof overrides a durably failed Task flow
+### Outcome and acceptance assessment
 
-**Unmet:** RO-1/3/4, AC-4/7/11/13; `V2-TASK-013/014`, `V2-AUTO-012`.
-The shared run SQL still evaluates `recovered_success` before current durable Task status
-(`mediaflow/infrastructure/sqlite_runtime.py`, `_run_query_document`, predicate near line 5612,
-`derived_status` near line 5864). A confirmed recovery summary plus verified file effects can
-therefore turn a Task's real `failed` flow into `completed` / `recovered_completion=true`.
-Automation's records-only outcome reads the durable failed status while its enclosing run uses that
-competing projection. Task Center, record fields and the Task-based metric disagree.
-
-**Existing-entry reproduction:** reuse
-`test_v2_automation_run_once.RunOnceApiTests.test_recognition_decision_continues_analysis_summary_and_execution_on_one_task`:
-real definition Run once admission → Worker Recognition wait → existing recovery decision/continue
-APIs → real analysis → exact summary confirmation → resident manual execution and successful Storage
-move. At its existing SQLite `release_scheduled_claim` terminal-completed write boundary, inject
-one `sqlite3.OperationalError("database is locked")`. The Worker then uses the unmodified repository
-to durably publish its orchestration failure. No Task/status/Result row is fabricated, no nonexistent
-route is called, and the mutation occurs exactly through the production journey. This is a fault
-injection at an actual SQLite write, not a claim that a spontaneous lock was observed in production.
-
-Actual readback after that journey:
-
-| Evidence / existing GET | Observed |
+| Outcome / acceptance | Independent assessment |
 |---|---|
-| Durable Task / file Result | `failed` / `SUCCESS` |
-| `/api/v1/operations/runs/{taskId}` | `status=completed`, `recovered_completion=true` |
-| `/api/v1/operations/automation/records?limit=20` | Top-level `completed` / recovered; nested `recordOutcome.status=failed`, with obsolete waiting-file explanation |
-| Existing metrics GET at the fixture clock | completed 0, failed 1, evaluated 1, rate 0% |
+| RO-1; AC-1–3 | Five current durable flow values; scanner/pipeline TaskStatus remains stage vocabulary rather than a second persisted lifecycle. Completed normal/file-technical closure is independent of file failure/partial/skip/ignore/cancel, missing Result and unknown effects. Genuine machine/call/human work remains unfinished; progress counts ended attempts. |
+| RO-2; AC-4–6 | Root/incomplete/overflow/context/relation/orchestration failures remain flow failures; publication refusal preserves durable truth. Manual/direct/API/CLI/due/Run once/continuation and both library kinds' ordinary operations retain independent results. Current-owner technical retirement releases the slot without fabricating a Result; cancellation, live-call protection, fences and non-replay remain. |
+| RO-3; AC-7–8/13 | Eight organizing views/four-type union, native decision/analysis/summary/confirmation and independent siblings remain. All/Ended, Files local status, Dashboard/API/CLI/export/log/notification consumers distinguish flow and files. Mixed/all-failed completion, missing-result caveats and failed flow with successful files are readable. Actual desktop/narrow screenshots inspected. |
+| RO-4; AC-9–11 | Original due/definition Run once Tasks count once: completed/(completed+failed), separate cancellation-inclusive ended count; manual/ordinary/unfinished excluded. Matrix/month bounds/deduplication/paging/unavailable evidence covered. Record status/filters/counts/envelope and Task Center agree on current Task flow; actual file effects and original times/attempts stay independent. |
+| AC-12/15 | Latest formal file failure/partial history still excludes automatic sources and warns new Files confirmation even when parent flow completed. RBAC/confinement/bounds/pins/explicit intent/zero-mutation analysis, C using A policies remaining C, cancellation and successful/uncertain non-replay retain tested coverage. |
+| AC-14/16 | Fresh/same-version reopen/restart, source-external wheel/container consumers and packaging/security/native gates have matching B evidence; A independently checked material uncertainties below. No old-task migration, cross-version upgrade, production deployment or external-service validation is claimed. |
 
-This is an unmet selected Slice48 outcome, not reopening an accepted Slice or an independent bug.
-The recovery projection predates this Slice (predicate `ea4e5346f6eb8e55b79cff43df398efc377caed8`,
-2026-10-27; verified-own-effect extension `7655377204772aaba6fbec1ad4040005bbe28140`, 2026-10-28).
-Slice48 retained it while changing records/metrics to durable flow meaning. No reproduced Base failure
-or newly introduced regression is claimed; the current ordinary continuation reaches the conflict.
+### A48-01 correction assessment
 
-**Required correction:** current supported Task flow must remain backend-authoritative across run
-status, recovery display, status filters/counts/paging, Automation record envelopes and metrics.
-Verified file/recovery effects may remain independent facts but cannot override a Task-level flow
-failure or imply saved flow completion. Reconcile the record's explanation with current Task/file
-facts while preserving original times/attempts/effects and legitimate historical evidence. Add the
-existing-entry regression above, including reopen and no replay; preserve successful recovery,
-waiting, cancellation and missing-Result technical closure. B plans/reviews this bounded correction
-inside returned Task48.1 and refreshes affected/final evidence under workflow §6. Do not add another
-recovery product, repin work or invent successful effects.
+The original existing-entry probe was rerun unchanged on this candidate: definition Run once →
+Worker Recognition wait → existing decision/continue APIs → analysis → exact-summary explicit
+confirmation → real Storage move. One injected OperationalError occurs at the actual terminal
+SQLite publication boundary; subsequent failed publication succeeds through the unmodified engine.
+This is a fault injection on an existing production boundary, not a claim of an observed spontaneous
+production lock. No route or final Task/Result state is invented.
+
+Durable Task, Task Center and both Automation record status envelopes now read **failed**;
+`recovered_completion=false`, file Result remains **SUCCESS**, rate is **0/1 = 0%**.
+The obsolete recognition-wait explanation is absent. The formal regression additionally verifies
+status partitions/filters, same-version reopen and another Worker pass without replay. The independent
+native browser follows existing Conflict recovery with a successful sibling and proves the same
+failed-flow/successful-file distinction after refresh/restart. Normal recovered completion still
+requires both durable completed flow and exact verified effects; file evidence never overrides failure.
 
 ### Evidence checked and independent validation
 
-B's full packet remains at the immutable checkpoint above. Its raw local evidence is under
-`.git/validation-evidence/2d4f1ae037cc4642b7bcd4231a840cf40d70e7b6/slice-final/`.
-Actual logs support 2581 Python tests (7 disclosed optional skips), 253 default browser tests,
-70 newly run native tests plus 14 matching reused Automation tests, matching reused Web quality/
-build/1273 unit results, clean-source wheel and installed/container 10-case proofs, and Docker
-security/restart/transfer gates. Artifact identities, the initial stale-module wheel rejection,
-rebuilds and distinct image IDs remain disclosed; A does not recast them as one immutable image or
-claim remote/production verification. Those passes do not cover A48-01 or accept a future fix.
+B's raw local evidence:
+`.git/validation-evidence/4824642984039c3f689059812bd903e5abbc510b/b-review/`.
+The immutable packet above records commands, working directories, artifacts and limitations.
+A checked actual logs: Python discovery **2582 tests**, **7 optional skips**, initial **1 documentation
+failure** followed by the corrected document-consumer **8 passed**; Web **1274 unit** / **253 default
+browser** / **85 native Python browser** passes, Python/Web quality/build/example/dependency gates,
+wheel smoke, source-external wheel/container **11 cases each**, Docker security/restart/transfer passes.
+The initial macOS Docker bind-mount failure and successful shared-TMPDIR rerun remain disclosed;
+no tests/assertions were weakened. Smoke scripts rebuild the tag, so stage images are not claimed
+as one immutable image. Seven existing real-service/endurance skips remain unexecuted, not passes.
 
-A's independent local evidence:
-`.git/validation-evidence/2d4f1ae037cc4642b7bcd4231a840cf40d70e7b6/a-review/`.
+A independently compared all **170 wheel Python modules** and the clean-source execution inputs
+with the accepted implementation: no mismatch. Wheel SHA256
+`609a37bd7299c085fc0591d06c2ad119b384aff27a839898b401a084be33c84e`;
+B's final container identity `sha256:c189744a0640832fb88ccb2a61b4c723e51ba3272dfe1f21b9fc8972244bb260`
+and module/Web equivalence evidence remain local facts in the packet, not remote verification.
 
-- `PYTHONPATH=tests:. .venv/bin/python -m unittest -v test_task_flow_status test_manual_task_engine test_v2_automation_run_once test_direct_file_operations test_direct_file_transfers test_automation_entrance_recovery test_notifications test_organize_source_history`: **313 passed**, 81.824s; `independent-python.log` and summary.
-- `web/ npm run test:e2e -- --config=playwright.python.config.ts tests/e2e/task-flow.python.spec.ts --workers=1 --output=<a-review>/native-flow`: **2 passed**, real Python/API/SQLite/Worker browser path; `native-flow.log` and summary.
-- `PYTHONPATH=tests:. .venv/bin/python <a-review>/recovery-sqlite-publication-probe.py`: reproduces
-  A48-01 through the journey above; exact script, full JSON and `blocker-summary.json` are retained.
-  Script SHA256: `5cc04f467400c124c7466be28fe9f24fd12c012c5332599f24bd932817504458`.
-  The reused success-only test's expected `settled is not None` assertion stops after the injected
-  publication failure; this is reported in the JSON, not counted as a passing test. The authoritative
-  evidence is the subsequent durable/API readback shown above.
+A's own local evidence:
+`.git/validation-evidence/a80015e2f7d46e3ad1b8f7b14c453d1030e62104/a-review/`.
 
-A did not mechanically rerun B's full suites. The seven optional real-service/endurance skips and
-all original deferrals remain. Acceptance stops at this P1; B supplies the corrected candidate and
-updated packet before another whole-range A decision.
+- `PYTHONPATH=tests:. .venv/bin/python -m unittest -v test_task_flow_status test_manual_task_engine test_v2_automation_run_once test_direct_file_operations test_direct_file_transfers test_automation_entrance_recovery test_notifications test_organize_source_history`: **314 passed**, 81.711s; `independent-python.log`.
+- `web/ npm run build`, then `npm run test:e2e -- --config=playwright.python.config.ts tests/e2e/task-flow.python.spec.ts --workers=1 --output=<a-review>/native-flow`: build PASS, **3 passed**; fresh real Python/API/SQLite/Worker, mixed outcomes/publication failure/cancellation, desktop/narrow PNGs inspected.
+- `PYTHONPATH=tests:. .venv/bin/python .git/validation-evidence/2d4f1ae037cc4642b7bcd4231a840cf40d70e7b6/a-review/recovery-sqlite-publication-probe.py`: corrected readback retained in `original-publication-probe.json`, summary and log. The reused success-only assertion intentionally stops on failed publication (`unexpectedly None`); it is disclosed, not counted as a test pass. The formal regression and independent durable/API readback establish the fix.
+
+Pre-checkpoint closure document checks ran **28 tests / 27 passed / 1 guard refusal**: the current
+repository check intentionally requires SLICE.md to match committed HEAD. The raw
+`closure-doc-checks.log` retains this refusal. After the closure checkpoint, run the same
+`test_release_security test_governance` suite plus `python3 scripts/check_governance.py`; keep the
+actual result in `closure-doc-checks-postcheckpoint.log` / `governance-postcheckpoint.log`.
+Whitespace and changed CURRENT links/identities were checked before checkpoint.
+
+A did not mechanically rerun B's full suites. All original Contract deferrals and seven optional
+external-service/endurance skips remain. CURRENT requirements, journeys, architecture, page guidance,
+Roadmap, Progress and root Task are reconciled in this closure checkpoint. No new capability or next
+Slice is selected. All three role experiences were reviewed; existing lessons cover this correction,
+so no duplicate or project-history lesson was added.
 
 ## Review workspace
 
 Repository `/Users/songzhidong/mediaflow`, branch `main`, starting HEAD
-`6c39d6ecdf40cad8f06e5e97f58bf47bdc388b49`; tracked files initially clean, workspace/Git writable,
+`32855b732aac079d41d16fa88ab3f5f5ec9fbd3c`; tracked files initially clean, workspace/Git writable,
 governance preflight PASS. All pre-existing untracked OS/log/reference/output files and `15` remain
 untouched/unstaged. Isolated fixture databases/media were used; no user runtime DB, private config,
 production media, push, deployment, reset/clean/stash or history rewrite. This checkpoint changes
-only the A decision, factual current pointers and returned-Task notice; B's packet is preserved in
-Git and below that notice. The original activation facts follow.
+only A's decision and coherent documentation reconciliation; accepted product code stays unchanged.
 
 ## Activation workspace
 

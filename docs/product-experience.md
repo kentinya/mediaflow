@@ -13,18 +13,19 @@ Detailed superseded delivery notes are retained at
 
 ## Current journey boundary
 
-Current journeys incorporate accepted Slice47 Task-only scheduling/settings/history amendments
-`V2-TASK-001–011` and retained Slice46 amendments: `V2-UX-004`, `V2-OPS-014–017`,
+Current journeys incorporate accepted Slice48 flow/rate amendments `V2-TASK-012–014` /
+`V2-AUTO-012`, Slice47 Task-only scheduling/settings/history `V2-TASK-001–011`, and retained Slice46 amendments: `V2-UX-004`, `V2-OPS-014–017`,
 `V2-FILES-007` and `V2-AUTO-010/011`. Historical43/45/46 acceptance facts and original deferrals
 remain in [Progress](progress.md) and their Git Contracts; they are not additional operator steps.
 Files owns new manual selection and ordinary-file progress; Task Center owns admitted organizing
 progress and four business recovery types; Automation owns saved-definition scheduled/one-run intent.
 
-## TARGET — Task flow status and Automation success rate (Slice48 ACTIVE)
+## CURRENT — Task flow status and Automation success rate (Slice48 PASS / CLOSED)
 
 The user selected `V2-TASK-012–014` / `V2-AUTO-012` on 2026-11-03.
-[Slice48](../SLICE.md) is ACTIVE with implementation limited to the active Task. The CURRENT
-journeys below describe accepted behavior until this amendment is implemented and independently accepted.
+[Slice48](../SLICE.md) passed independent A Final Review on 2026-11-04 through implementation
+`a80015e2f7d46e3ad1b8f7b14c453d1030e62104`. These journeys supersede the affected earlier
+aggregate, recovery-display, metric and execution-record meanings; original acceptance facts remain in Git.
 
 - **Goal/entry:** organize from the existing ResourceLibrary Files/manual API/CLI, due Automation
   or saved-definition Run once, then distinguish whether the Task flow finished from what happened
@@ -47,7 +48,7 @@ journeys below describe accepted behavior until this amendment is implemented an
   close normally. Required human decisions, genuine remaining machine work and a locally executing
   call stay unfinished. An old processing marker left by the ended technical failure alone does not
   keep Task running. Task-level flow failure/cancellation remains distinct; Task closure itself must
-  be saved. The [Slice scenario table](../SLICE.md#场景与统计口径--slice48-target) defines each case.
+  be saved. The [Slice scenario table](../SLICE.md#场景与统计口径--slice48-current) defines each case.
 - **Failure:** Task scope enumeration/root failure, unusable required execution context/relations or
   orchestration error preventing normal completion shows a Task flow failure with bounded stage,
   durable state, known effects and the existing allowed next action. A safely isolated file error
@@ -80,7 +81,7 @@ journeys below describe accepted behavior until this amendment is implemented an
   stays failed regardless of file mix. Original execution times, attempts and file/effect history
   remain factual when legal continuation changes the current Task status. Records stay compact and
   read-only with no new execution/recovery control. All-failed is not empty/no-work or successful
-  media organization. This TARGET amends the result/filter meaning of `V2-AUTO-006`.
+  media organization. This CURRENT amendment changes the result/filter meaning of `V2-AUTO-006`.
 - **Other surfaces:** Files local ordinary-operation status, Task Center, Dashboard, API/CLI,
   export/logs and existing Task-status notifications distinguish flow state from per-file effects,
   without adding a page or control. Ordinary Copy/Move/Delete already have Tasks and use the same
@@ -91,7 +92,7 @@ journeys below describe accepted behavior until this amendment is implemented an
 Fresh/new-work/same-version restart retains the same Task and independent results. The source-history
 gate still uses actual latest formal file failure/partial even inside a completed Task; a new manual
 request keeps its warning/normal confirmation. Old-task/status conversion and cross-version upgrade
-remain excluded. This TARGET changes flow aggregate/rate and execution-record Task result/filter
+remain excluded. This accepted amendment changes flow aggregate/rate and execution-record Task result/filter
 meaning while preserving recorded file facts and safety.
 
 ## CURRENT — One organizing Task across triggers and recovery (Slice47 PASS / CLOSED)
@@ -166,9 +167,10 @@ through one Task identity; historical Job-based acceptance remains in Git.
   was not recorded reliably, preserve that step as uncertain for factual inspection and prevent
   replay. A timeout, expired claim or missing result does not mean the operation never happened.
   No promise of seamless automatic continuation at every interruption or new recovery flow is added.
-- **History and same-version restart:** original Automation records keep this execution's actual outcome/time,
-  concise failure/next step and server outcome filtering. Later recovery does not rewrite a failed
-  original record or count as another original run. Existing Task/Result/attempt/decision/audit/log
+- **History and same-version restart:** Automation records use the current durable Task flow result
+  under Slice48, with concise failure/next step and server flow-state filtering. Later legal recovery
+  can change that Task result without rewriting original execution times/attempts/file effects or
+  counting another original run. Existing Task/Result/attempt/decision/audit/log
   identities and new-work history survive same-version reopen/restart, including pre-start failures
   and four-type continuation. Retained links resolve read-only into proved same-version Task/history
   or explain unavailability/denial; they never start work or require an old-Job mapping layer.
@@ -551,8 +553,9 @@ Attention/pending tasks are the distinct four-type union; type/file counts stay 
 human decision→analysis→summary/confirmation steps retain their four-type lineage, while plain
 queued/running follow-ups do not invent a human blocker. Real resolution clears the problem; a new
 business blocker changes type, a solely technical follow-up failure becomes factual All/Ended history.
-Only verified exact linked success for every necessary item permits Completed/recovered display,
-without rewriting attempts or double-counting recovery. Mixed technical/ignored/uncertain siblings
+Only a durably completed Task plus verified exact linked success for every necessary item permits
+recovered display, without rewriting attempts or double-counting recovery. A failed Task stays failed
+even if every file succeeded. Mixed technical/ignored/uncertain siblings
 never become all-success just because the business problems cleared. Provider transport failures are
 not Metadata decisions, and other terminal failures have no separate failure statistics or generic
 center recovery guidance/actions. Administrative API/CLI recovery remains outside this V2 UX.
@@ -571,7 +574,7 @@ center recovery guidance/actions. Administrative API/CLI recovery remains outsid
   current task/type's recognition, Metadata, classification or conflict handling. Other technical/
   uncertain failures remain factual read-only All/Ended history, with no generic center recovery.
 - **Success:** durable per-file Results and linked recovery attempts survive reload/reconnect/restart.
-  Queue completion cannot overwrite Task failure/partial/unknown state. Current Active cannot rename
+  File or recovery success cannot overwrite Task flow failure or unavailable state. Current Active cannot rename
   historical work or substitute its legitimate pinned context; unavailable totals never become zero.
 - **Failure/recovery:** show missing/stale Worker, pin/dependency, denied/stale decision, source change,
   known partial or uncertain effects as factual history. Four-type decisions and supported live
@@ -620,7 +623,7 @@ modified threshold; nonzero stable-size requires unchanged observations separate
 duration, never old-mtime inference. If no files are ready and unstable candidates
 remain, perform at most one wait/re-scan when the shortest remaining interval is in (0,60] seconds.
 Ready siblings proceed without waiting; longer intervals do not synchronously wait. Remaining unstable
-files fail unmodified, with Failed/PartialSuccess reflecting real outcomes outside Attention. Later
+files retain independent failures outside Attention; a normally closed Task flow is completed. Later
 normal runs use normal scope/checks; no failed-item selection or cross-run observation mechanism.
 
 ### CURRENT — Complete native Automation workspace (accepted43, amended46)
@@ -652,24 +655,26 @@ Historical43/46 acceptance remains unchanged; the current journeys include accep
   recovery still needs explicit continuation; no schedule advancement or old grant consumption.
   Overflow/incomplete scope refuses execution and explains narrowing/re-analysis, not first-N success.
 - **Execution records:** 自动化 → 执行记录 → 查看详情 reads only this execution. Compact rows
-  show its records-only result, actual local start/end times, item counts and a single
+  show its current Task flow result, original actual local start/end times, independent file counts and a single
   查看详情 / 收起详情 button. Details contain at most 执行结果和时间 / 失败原因 (failed only) /
   下一步, in concise ordinary Chinese. Missing times are `—`, never creation/update times.
-  Finished work succeeds only when every admitted primary and associated attachment has explicit
-  success proof. Partial/failed/skipped/ignored/cancelled/uncertain work is 失败; known successful
-  effects remain stated. A proven healthy empty scope is 成功 / 无工作完成, not skipped-only work.
-  Pending/running/paused/waiting remain unfinished; a requested but unsettled cancellation is not
-  failure. Unknown proof remains unknown, unreadable/truncated reasons are explicit, and uncertain
+  The record uses the same durable five-state flow as Task Center: normal closure is 已完成 even
+  with failed/partial/skipped/ignored files, unknown effects or missing Results. Actual Task flow
+  failure is 失败 and acknowledged cancellation is 已取消; file success cannot override either.
+  A proven healthy empty scope is independently labelled no work. Pending/running and required
+  waiting remain unfinished; a cancellation request is not an acknowledgement. Unavailable Task
+  truth remains unavailable, unreadable/truncated reasons are explicit, and uncertain
   effects say to check first and not repeat. Cancelling one admitted run through Task Center's
   existing controls is distinct from disabling an Automation definition.
 - **Result/reason/next step:** success says this run needs no repair, not that the source was fully
   exhausted. Unfinished work says to wait; policy skip identifies the relevant files/settings;
   cancellation says this run was cancelled and completed operations remain. Errors identify what
   to check; correcting configuration is not recovery of the old Task and never promises auto-retry.
-  No later handling, recovery status/counts, recovery tutorial, Task Center/definition links or
+  No recovery tutorial, Task Center/definition links or
   local decisions/execution controls appear in records. Those workspaces retain their independent
-  entries and responsibilities. Later recovery cannot change this original result.
-- **Read/failure recovery:** the same record-specific outcome filter is applied server-side to the
+  entries and responsibilities. Legal continuation changes current flow result and statistics without
+  adding a run or rewriting original times/attempts/file effects.
+- **Read/failure recovery:** the same Task-flow outcome filter is applied server-side to the
   whole authorized population before count/paging. Definition/trigger/time filters, clear, refresh,
   forward/backward paging and reconnect preserve exact conditions; stale/invalid filters/cursors
   are bounded read refusals. A failed read offers refresh and filtered reads can clear conditions.
