@@ -1,3 +1,8 @@
+# NO ACTIVE IMPLEMENTATION TASK
+
+本独立修正已由 B 验收 PASS。下文保留已接受 Task 的计划、交接与本次验收记录，
+仅供审查，不授权继续实施；下一步由 A 另行选择大 Slice。
+
 # Task BUG-AUTO-CREATE-UX — 自动化新建弹出卡片与完整交互修正
 
 Authority：用户已明确要求改善新建表单的人类可读性、视觉与操作体验，并指定点击新建后使用
@@ -12,7 +17,7 @@ Authority：用户已明确要求改善新建表单的人类可读性、视觉�
 Task ID: BUG-AUTO-CREATE-UX
 Task Type: STANDALONE MINOR BUG
 Parent Slice: NONE
-Status: READY FOR B REVIEW
+Status: PASS
 Task Base: 2aa791a6b66d968f473a6875fe2ebf072c5500df
 Difficulty: Medium
 Test Level: T3
@@ -125,29 +130,29 @@ Base 是本次规划前的完整 HEAD；后续规划检查点不能替换 Base�
 
 ### Acceptance Criteria
 
-- [ ] AC-1：列表点击、创建深链、刷新和登录后续转进入同一中文弹出卡片；打开/取消不发布配置，
+- [x] AC-1：列表点击、创建深链、刷新和登录后续转进入同一中文弹出卡片；打开/取消不发布配置，
   不创建 Draft、运行、执行授权或 Storage 写入；旧创建入口不再展示另一套多步骤流程。
-- [ ] AC-2：原列表筛选、分页和滚动得到保留，直接访问有确定的返回位置；前进后退和关闭一致，
+- [x] AC-2：原列表筛选、分页和滚动得到保留，直接访问有确定的返回位置；前进后退和关闭一致，
   编辑/详情/复制/删除/Run once 的现有独立行为没有回归。
-- [ ] AC-3：名称、资源库、范围、计划与上限可直接理解；常规创建不要求内部 ID、Cron 或发布机制知识；
+- [x] AC-3：名称、资源库、范围、计划与上限可直接理解；常规创建不要求内部 ID、Cron 或发布机制知识；
   内部 ID 稳定且合法，始终以 enabled=false 创建，创建后未启用的状态清楚。
-- [ ] AC-4：目录选择有界且 confined，支持根目录和子目录；换库不会误用旧路径；读取失败、无权限、
+- [x] AC-4：目录选择有界且 confined，支持根目录和子目录；换库不会误用旧路径；读取失败、无权限、
   空目录与禁用库分别可见，不将未知范围变成根目录或制造 Storage mutation。
-- [ ] AC-5：间隔单位、每日时间、每周星期/时间、Cron 和 IANA 时区正确映射现有字段；
+- [x] AC-5：间隔单位、每日时间、每周星期/时间、Cron 和 IANA 时区正确映射现有字段；
   秒/分钟/小时换算不丢精度，小数秒可用；无效值/上下限/非法路径/无库等均有就近可操作反馈。
-- [ ] AC-6：预览使用后端规则、可读时间与显式时区；修改候选立即失效，晚到旧响应不得覆盖新预览；
+- [x] AC-6：预览使用后端规则、可读时间与显式时区；修改候选立即失效，晚到旧响应不得覆盖新预览；
   非 UTC、非法 Cron/时区、切换计划、预览失败均不误导，也不新增强制预分析或执行权限。
-- [ ] AC-7：一次明确创建只发布 intended disabled definition，API 和持久化读回一致；
+- [x] AC-7：一次明确创建只发布 intended disabled definition，API 和持久化读回一致；
   无兄弟 Draft 搭车、无运行/媒体写入/隐式启用。成功关闭、提示并刷新权威列表/统计。
-- [ ] AC-8：409 并发冲突保留输入与旧 fence；结果未知时仅精确核对，不重发、不换 ID；
+- [x] AC-8：409 并发冲突保留输入与旧 fence；结果未知时仅精确核对，不重发、不换 ID；
   关闭/重开/刷新/换 principal 后仍遵循现有命令隔离与 non-replay。拒绝不虚报保存成功。
-- [ ] AC-9：快速双击、Enter、关闭/重开竞争、提交时导航和迟到响应不重复提交、不串会话，
+- [x] AC-9：快速双击、Enter、关闭/重开竞争、提交时导航和迟到响应不重复提交、不串会话，
   也不遗留遮罩、焦点约束或滚动锁。未保存退出的选择可理解且不会无故打断无修改关闭。
-- [ ] AC-10：桌面 1440×900、窄屏 390×844/320px 和放大字体下，字段可读、底栏可达、无横向溢出；
+- [x] AC-10：桌面 1440×900、窄屏 390×844/320px 和放大字体下，字段可读、底栏可达、无横向溢出；
   打开/退出、动态内容、网络慢与报错时的动画自然连续。检查实际截图与交互录屏，不只断言 CSS 数值。
-- [ ] AC-11：键盘完整操作、焦点留在卡片、关闭后焦点返回、背景不可误点/滚动；
+- [x] AC-11：键盘完整操作、焦点留在卡片、关闭后焦点返回、背景不可误点/滚动；
   减少动态效果时仍能完整创建与关闭，无动画事件缺失导致的卡死。
-- [ ] AC-12：新建 UI 及直接消费者的单元、集成、真实 Python/SQLite 浏览器验证通过，
+- [x] AC-12：新建 UI 及直接消费者的单元、集成、真实 Python/SQLite 浏览器验证通过，
   B 独立检查实际候选与视觉证据；已有 BUG-AUTO-FORM 的合法规则保存后打开/创建场景继续通过。
 
 ### Required Tests
@@ -286,74 +291,66 @@ SLICE/Roadmap/Progress，未重开任何已接受 Slice。工作树仅保留实�
   目录权限/提供方失败由既有 Files 契约覆盖，本 Task 的 Python spec 用可控 503 证明失败不会
   把未知范围改成根目录。
 
-### B Review Result — FIX REQUIRED（2026-11-04，本轮复核）
+### B Review Result — PASS（2026-11-04）
 
-B 独立审查完整范围
-`2aa791a6b66d968f473a6875fe2ebf072c5500df..e050f89f1adb9cc845b14b0f533b6008c19ca6d5`；
-最新产品实现为 `b00e1253a464eb2bc358b1e2b445e04a86e0c878`，其后仅 TASK.md 交接说明。
-上轮三个阻塞均已解决：退出选择在卡片内可见并可继续/放弃、提交中显示禁用的“创建中…”且
-浏览器返回被拦截、无效 Cron 有中文纠正摘要并定位字段。独立真实浏览器覆盖
-1440×900、390×844、320×844；慢响应放行后仍只有一条 disabled definition，无额外运行。
+B 独立复核完整范围
+`2aa791a6b66d968f473a6875fe2ebf072c5500df..ea127459ace765857ae8386c1d0df1610117185b`。
+最新产品实现 Head 为 `701600ec9dfb395668768f716094ead626984e8f`；其后仅 TASK.md 交接说明，
+没有新的执行输入。**AC-1–12 均满足；Task blockers: NONE。** 前两次拒绝记录仍分别保留在
+`cd0baf68ef720e23fe3feea2d3a6a297f1f0ecc2:TASK.md` 与
+`8a65d38bbcbba26233e0922809063c3f6b24f39f:TASK.md`。
+此前发现的问题全部解决，不把旧拒绝结论抹去或计作通过。
 
-本轮仍有一个原验收项未完成，故不能 PASS。修正留在 **BUG-AUTO-CREATE-UX**，原 Base、目标、
-范围与 T3 不变。Slice48 RO-1–4 的既有接受结论、Base/accepted Head 和延期未被本 Task 改动；
-SLICE/Roadmap/Progress 保持原样，不重开 Slice，不规划后继 Task。
+| 验收项 | B 的当前交付判断 |
+|---|---|
+| AC-1–3 | 列表主入口、无ID深链/刷新/登录续转、旧创建地址收敛为同一中文卡片；常规填写无需内部ID；默认未启用。打开/取消零发布。默认/搜索/显式默认入口都从100px恢复到100px，并保留原URL和焦点。原编辑/复制/删除/Run once旅程通过。 |
+| AC-4–6 | 目录选择复用有界、资源库内的只读Files契约，失败保留未知范围；换库清除旧路径。间隔/每日/每周/Cron、时区和上限校验及中文纠正可用；后端预览、候选失效/迟到响应由测试覆盖。真实非UTC每周计划预览后持久化为对应Cron与IANA时区。 |
+| AC-7–9 | 一次明确创建只保存目标disabled definition，无运行/媒体写入；成功刷新真实列表。真实双窗口创建冲突保留输入/ID，只有明确重新核对才更新依据；丢响应关闭/重开/刷新仍精确核对、不重发。提交中按钮/返回拦截、退出继续/放弃、重开与会话隔离通过。 |
+| AC-10–12 | 桌面1440×900、390/320px窄屏及720×450 CSS视口/DPR2（200%缩放等效布局）检查可读反馈、可达底栏、无横向溢出。普通/每周/错误/冲突/未知/关闭截图已检查，真实交互视频保留；减少动态效果、键盘焦点和背景约束通过。Rules保存后新建继续通过。 |
 
-#### 唯一阻塞：P1 — 取消新建后原列表滚动位置丢失（AC-2）
+#### 本轮独立验证（全部在复核候选上新跑）
 
-真实用户旅程：在 390×844 的自动化默认列表向下滚动 100px，新建按钮此时仍在屏内
-（按钮 y=140px），正常点击“新建自动化任务”，不填写内容，点击“取消”。
-返回列表后 scrollY 从 **100 变成 0**；带 `q=Harness&sort=name` 搜索条件也复现，搜索条件本身保留。
-这不需要隐藏入口、伪造页面高度或强制点击屏外按钮。普通点击/取消不应丢掉原浏览位置。
+- `web/` 原计划六文件Vitest命令：**86 passed**，6文件，11.89s；
+  `npm run typecheck` / `lint` / `format:check` / `build` 全部通过（共约23.54s）。
+- 根目录：`PYTHONPATH=tests:. .venv/bin/python -m unittest -v
+  test_automation_definition_publication test_automation_execution_intent test_v2_automation_operations`：
+  **81 passed**，38.36s，覆盖checked publication、disabled-first、权限/精确核对与既有业务读回。
+- `web/ npm run test:e2e -- --config=playwright.python.automation.config.ts`
+  加原计划四份automation-create-dialog/lifecycle/workspace/run-once Python spec：
+  **38 passed**，50.95s；同一个隔离实例、串行真实Python/API/SQLite/Worker旅程。
+- `web/ npm run test:e2e -- tests/e2e/automation.spec.ts tests/e2e/automation-presentation.spec.ts`：
+  **15 passed**，8.29s。fake只用于相应入口/呈现回归，不代替真实创建持久化。
+- 直接受影响的测试消费者：`web/ npm run test:e2e -- --config=playwright.python.config.ts
+  tests/e2e/task-flow.python.spec.ts tests/e2e/action-readability.python.spec.ts --workers=1`：
+  **10 passed**，31.50s。日志中的OperationalError是该用例有意注入的终态发布故障，断言通过；
+  不是未处理测试失败，也不触发生产媒体访问。
+- 独立保留原滚动复现脚本，默认/搜索/显式默认三个入口现均保留100px/原URL/焦点。
+  补充真实双窗口409、显式重新核对、非UTC每周计划、丢响应后关闭/重开核对，以及代表视口
+  的截图/键盘检查。创建与结果核对来自现有Web/API入口；故障只控制既有请求的响应。
+- 完整范围和工作树whitespace检查通过。收尾首次治理检查因根Task仍为活动标题且状态PASS
+  被拒绝；按workflow恢复NO ACTIVE IMPLEMENTATION TASK标题后重新检查通过，未修改或忽略治理规则。生产构建有既有bundle大小提示，JSDOM有
+  scrollTo未实现提示；真实滚动已由浏览器断言补足。没有削弱产品测试、隐藏跳过或使用重试。
 
-定位：`AutomationListPage.tsx` 的 `listSearchKey`（约165行）按原始 URL 字符串组成列表身份；
-`openCreateDialog` 保存该身份，而 `listReturnState` 为创建路由补入 `tab=definitions`、
-`sort=name`、`dir=next`。关闭时这些默认值被带回，`memory.key !== listKey`（约335行）使恢复被跳过。
-对照用相同页面、同一操作，但初始 URL 已显式包含上述默认值，100px 能恢复为100px，证明是
-同一列表的默认值表达不一致。原先仅核对 URL/筛选的绿色用例没有覆盖实际滚动结果。
+#### 证据与验证限度
 
-#### Developer 修正指导（同一 Task）
+稳定本地证据：
+`.git/validation-evidence/ea127459ace765857ae8386c1d0df1610117185b/b-review/`，包含
+`affected-web.log`、`python-acceptance.log`、`quality-results.json`/各质量日志、
+`native-acceptance.log`、`fake-acceptance.log`、`consumer-acceptance.log`、各自artifact输出、
+`list-return-review.mjs/.json/.log`、`visual-acceptance.mjs/.json/.log`、PNG、视频与
+`web-artifacts-sha256.json`（本轮生产资产指纹）。本地证据不宣称远程可访问。
+附加视觉脚本首次因同名“运行时间”区域/输入框的选择器歧义而终止；原脚本/日志/结果保留为
+`visual-initial-selector-error.*`，定位到实际input后重跑完成。该首次脚本失败不计为通过。
 
-1. 在打开/返回/恢复时使用一致的**有效列表上下文**：省略默认值和显式默认值应代表同一列表。
-   复用现有列表状态与有界返回能力，修正身份计算或保存/恢复衔接；不得清空筛选/分页来凑匹配，
-   不解释或改写服务器 cursor，不增加通用导航系统、本地持久化草稿或后端协议。
-2. 列表真实行恢复后保留原滚动位置，同时保持焦点返回新建按钮。若焦点调用会再次滚动，协调
-   恢复顺序或使用合适的 preventScroll；仍应防止把旧列表位置应用到另一组筛选/分页。
-   新建深链没有原列表上下文时继续使用现有确定的默认返回位置。
-3. 在现有 `automation-create-dialog.python.spec.ts` 增加实际滚动的浏览器回归：默认入口、
-   省略默认值的搜索入口、显式默认值的对照入口；从按钮仍在屏内的100px位置真实点击。
-   检查取消、填写后明确放弃以及成功关闭后的原列表条件/位置/焦点；取消与放弃仍须零发布。
-   使用现有临时数据与真实页面，不通过改 DOM 高度、强制屏外点击或无条件 sleep 制造通过。
-4. 运行原计划的新改/直接受影响测试与质量检查后交接 coherent checkpoint。原三个修正继续保留；
-   不扩展到其他页面。B 在修正候选上完成原 T3 验收，已发现的本项不能以绿色测试数量替代。
+本Task仍为T3：没有后端权限/发布/执行协议、schema或构建边界改变；不要求全仓库、wheel/容器、
+真实外部服务、生产部署或旧任务/跨版本验收，也不声称已验证这些内容。各门禁无跳过。
+产品验证命令累计约3分钟，低于本轮复核总耗时的一半。
+初始main/HEAD如Reviewed Head，已跟踪文件干净、Git/工作区可写；全部预存未跟踪文件保留。
 
-#### B 实际验证、证据与限度
-
-- 初始分支 main，HEAD `e050f89f1adb9cc845b14b0f533b6008c19ca6d5`；已跟踪文件干净，
-  工作区/Git 可写，治理 preflight PASS，预存未跟踪文件保留。完整 Base..Head manifest、生产代码、
-  新改测试、harness 与直接消费者已审查；后端 authority/执行/schema 没有变化，T3 仍适用。
-- `web/` 原 Required Tests 指定的六文件 Vitest 命令 → **86 passed**（6文件，12.98s）；
-  `npm run typecheck` / `lint` / `format:check` / `build` 全部 PASS（合计约24.93s）。
-  JSDOM scrollTo 未实现提示与生产 bundle 大小提示保留；前者不能证明真实滚动已恢复。
-- 根目录：`PYTHONPATH=tests:. .venv/bin/python -m unittest -v test_automation_definition_publication
-  test_automation_execution_intent test_v2_automation_operations` → **81 passed**，39.24s。
-- 生产构建 + 既有 `scripts/operations_inventory_harness.py --port 4185` 的临时 Python/API/SQLite：
-  独立复现上轮三个原操作场景，检查真实反馈/焦点、三种视口和慢响应后的一次实际创建；
-  同时发现本次滚动问题，并用默认/搜索/显式默认值三种真实地址对照复现。没有新增产品入口、
-  伪造最终数据库状态或访问用户运行数据库/生产媒体。
-- 已检查390px关闭选择、320px Cron纠正、桌面提交中返回提示、列表前后对照等实际截图；
-  原生交互视频保留。首次探测对单条字段错误入视区的断言未通过，原日志保留在
-  `initial-inline-visibility.*`；随后检查了固定摘要可见、字段焦点与实际截图，这些提供了
-  可读的纠正路径，不将该额外断言作为产品阻塞，也不把首次失败计为通过。
-- 依 workflow §6 在已证实 AC-2 缺口后提前 FIX REQUIRED：35例完整 Python 浏览器矩阵、
-  fake-server 两文件回归、放大字体/完整动效验收本轮未执行；Developer 的结果不计为 B 本轮结果。
-  产品验证命令累计不足2分钟，低于本轮复核耗时50%。没有全仓库/安装包/容器/外部服务验收声明。
-
-稳定本地证据（忽略目录，不宣称远程可访问）：
-`.git/validation-evidence/e050f89f1adb9cc845b14b0f533b6008c19ca6d5/b-review/`：
-`affected-web.log`、`python-acceptance.log`、`quality-results.json` 与各检查日志、
-`native-review.mjs/.json/.log`、`list-return-review.mjs/.json/.log`、`initial-inline-visibility.*`、
-PNG 与 `video/`。本轮只更新 B 决定和开发指导，不实施产品修正、不推送或部署。
+独立bug目标已完成，停止规划；随后恢复NO ACTIVE IMPLEMENTATION TASK及本验收检查点指针。
+Slice48 RO-1–4与原PASS / CLOSED、Base/accepted Head、延期/验证限度保持不变，
+SLICE/Roadmap/Progress不修改；独立修正不加入大Slice关闭账本。现有B经验已覆盖本次问题，
+不新增重复经验。本轮只记录验收，不实施产品变更、推送或部署。
 
 ### Developer Fix Report — BUG-AUTO-CREATE-UX（2026-11-04）
 
