@@ -1,4 +1,9 @@
-# Task 48.1 — A Final Review return; B correction plan pending
+# Task 48.1 — 任务流程结束与文件结果分开（A48-01 修正计划）
+
+Authority: committed [Slice48](SLICE.md) RO-1/3/4、AC-4/7/8/11/13–16 和
+[A48-01](SLICE.md#a48-01--p1-recovered-file-proof-overrides-a-durably-failed-task-flow)；
+[Development Workflow](docs/development-workflow.md) 管理生命周期、测试分工与交接。
+这是原 Task48.1 的修正，不新建 Task、不重置 Base、不缩小原目标/验收。
 
 ```text
 Task ID: 48.1
@@ -6,152 +11,206 @@ Task Type: SLICE
 Parent Slice: 48
 Status: FIX REQUIRED
 Task Base: 4f11762d617d50555f3b106357e8f41988f7c2f9
+Correction planning Head: 35e6b2dbe637ceb27625cdbf8ef63b6730e99139
 Difficulty: High
 Test Level: T4
-Planner / Reviewer: B — correction amendment and independent acceptance pending
-Next Action: B CHECKPOINTS THE A48-01 CORRECTION PLAN BEFORE DEVELOPER WORK
+Planner: Codex — user-requested B planning responsibility, 2026-11-04
+Reviewer: INDEPENDENT B REVIEW PENDING
+Development Authorization: THIS REQUEST IS PLANNING ONLY; DEVELOPER WORK NOT STARTED
+Next Action: DEVELOPER IMPLEMENTS THIS CORRECTION ONLY WHEN IMPLEMENTATION IS AUTHORIZED
 ```
 
-A returned this existing flow/readback unit for [SLICE.md A48-01](SLICE.md#a48-01--p1-recovered-file-proof-overrides-a-durably-failed-task-flow).
-Original Base/goal/scope remain; the complete B-owned plan is at
-`6f2115d1033779aa2d21a7f0b6ebd9f558f66345:TASK.md`. This is the A review return, not a new
-B implementation plan or authorization to bypass B's amendment. B supplies the concrete correction
-and validation plan within the same Task; Developer work waits for that checkpoint.
-Task48.1/48.2 prior B PASS and the submitted packet below are preserved as historical evidence,
-not corrected-candidate acceptance. Slice48 is FIX REQUIRED and is not closed. No next Slice or
-independent minor bug is selected. The original B Closure Packet remains verbatim below and at
-`6c39d6ecdf40cad8f06e5e97f58bf47bdc388b49:TASK.md`; its decision predates A's rejection.
+用户本轮要求“规划一个修复Task”。本轮按该指令仅承担 B 的规划职责；此前的 A 终审不是本计划的
+独立 B 验收。后续 Developer 实施、独立 B 验收和 A 终审分别交接，不在本轮执行或自我批准。
+父 Slice 保持 FIX REQUIRED，Roadmap 保持其未关闭修正循环；计划不构成 Slice 接受或 CURRENT 对齐。
 
-# Slice48 — B Closure Packet
+## Goal / Required Outcome
+
+保留原 Task48.1 的完整目标：从 Files、支持的 API/CLI、due 或定义“运行一次”进入整理后，
+Task 的 pending/running/completed/failed/cancelled 表示流程状态；文件成功、部分成功、失败、
+缺失结果或未知效果独立显示。人工待办/真正在途工作保持未结束，安全取消和同 Task 四类恢复保持。
+两种库的普通操作仍在原库页查看独立效果。
+
+本次只修正 A48-01：**文件已经成功，也不能把已保存的 Task 流程失败显示成“完成／恢复成功”。**
+同一 Task 的详情、任务中心列表/计数/过滤、自动化记录各状态字段和成功率必须采用一致的当前
+持久化流程状态；现有文件成功、原始执行时间和尝试历史照实保留。
+
+需求追踪：`V2-TASK-013/014`、`V2-AUTO-012`，保留 `V2-TASK-001–011`、
+`V2-OPS-014–017`、`REQ-SAFE-*` 和父 Slice 未变的安全/延期。以 Slice48 TARGET 修订解释
+[完整任务/恢复旅程](docs/product-experience.md#tasks-results-and-per-item-recovery)、
+[完整自动化旅程](docs/product-experience.md#current--complete-native-automation-workspace-accepted43-amended46)
+与 [TARGET 架构契约](docs/architecture.md#target--task-flow-status-and-automation-success-rate-slice48-active)。
+旧 CURRENT 聚合/记录措辞的最终对齐仍由 A 在接受后完成。
+
+### 本次必须走通的既有旅程
+
+1. 已保存自动化定义 → 点击“运行一次” → Worker 在识别问题等待；任务中心显示进行中及该问题。
+2. 使用现有识别决定 → 继续分析 → 查看精确摘要 → 明确确认；同一个 Task 执行，文件实际移到目标。
+3. 在真实 SQLite 终态保存边界仅注入一次 `sqlite3.OperationalError("database is locked")`；
+   后续原始 repository 成功保存流程失败。注入只模拟这个实际写操作的故障，不新建产品入口，
+   不直接植入 Task/status/Result，不声称生产中自然发生了锁错误。
+4. 查看同一 Task：任务中心/自动化记录显示“流程失败”，另行保留“文件成功 1 个”；不能显示
+   “恢复成功”、已无效的人工待办、无工作或没有发生文件操作。自动化指标为 completed 0、
+   failed 1、evaluated 1、成功率 0%。刷新/同版本重开仍一致，不重复移动已成功文件。
+5. 查看失败阶段、已保存状态和已完成效果；下一步沿既有事实查看/刷新核对，不能把旧识别决定
+   当作仍需处理的当前问题，也不能新增通用重试、附件重试或其他执行入口。
+
+若终态始终未能保存，显示最后成功保存的状态或读不可用，不编造 failed/completed。
+正常完成但文件失败的对照场景仍为 completed，并按 Task48.2 的现有口径计流程成功。
+
+## Implementation Scope / 简单实施步骤
+
+1. **将已证实旅程变成正式回归。** 在 `tests/test_v2_automation_run_once.py` 复用
+   `RunOnceApiTests.test_recognition_decision_continues_analysis_summary_and_execution_on_one_task`
+   的真实准入、决定、分析、摘要、确认及 Worker 组装；在
+   `SQLiteTaskRepository.release_scheduled_claim` 的第一次 completed 发布上注入一次 SQLite
+   写失败，其余写操作用原实现。断言注入命中、真实文件效果及后续 durable failed，随后检查
+   当前 Task、run、records、metrics；修复前应明确失败在状态矛盾，不能捕获断言后算通过。
+   原 A probe 仅作为可复现参考，不把 ignored 脚本变成测试依赖。
+2. **让共享读取先服从当前 Task 流程事实。** 修改
+   `mediaflow/infrastructure/sqlite_runtime.py::_run_query_document` 的 `derived_status` 和
+   `recovered_completion`：支持的当前 Task 状态不能被 `recovered_success` 的文件/确认摘要证据
+   覆盖。检查同一 SQL 消费者的 overview、服务端状态条件/分区/总数/游标、Automation latest/records。
+   同步核对 `domain/operations_run.py::derive_run_status` 的语义，不建立第二套流程计算器。
+   恢复成功的独立证据若保留，必须同时满足真实流程完成和必要文件恢复已证实；仅有 completed
+   或已无四类问题不能宣称文件恢复成功。保留现有合法历史只读行为，不迁移/批量改写旧状态。
+3. **对齐记录状态及当前说明，保留原始历史。** 核对
+   `::_automation_record_query_document`、`::automation_record_failure_evidence`、
+   `service_api.py::_automation_record_document / _automation_record_failure_stage` 和
+   `application/automation_record_display.py`。顶层 `status`、`result.status`、`recordOutcome.status`
+   与同 Task 的流程事实一致；当前文件计数/待办/效果说明使用适用的 durable 证据，不能把
+   `task_initial_executions` 冻结的旧 waiting/unreadable 或零成功数当成当前失败原因/文件结果。
+   流程失败但文件成功时，保留成功事实和有界、脱敏的流程失败说明；缺失的具体原因诚实显示
+   不可读，不能捏造文件失败或零效果。原始 start/end、初始阶段、append-only 尝试/Result/pin
+   保持事实；不改写它们来迎合当前状态。成功率沿用 Task48.2 的公式/人群/月份，不调整分母。
+4. **完成现有 Web 消费和防矛盾展示。** 核对 `web/src/entities/operations/run.ts`、
+   `automation.ts` 及 `OperationsLanding.tsx` / `AutomationInventory.tsx` 的真实消费者。
+   列表、详情、记录和卡片均可同时读懂流程失败与文件成功；failed/cancelled/running 不因恢复
+   字段而显示完成。对矛盾/不可用证据保持拒绝或不可用，不在浏览器自行推导成功。保留八视图、
+   四类 Attention、记录的紧凑只读结构及当前入口；只修改实际需要的类型/校验/呈现，不重做页面。
+5. **补齐同一旅程的查询、重开及原生证明后交接。** 从上述准入构造真实多 Task 人群，核对
+   status/outcome 过滤、counts、跨页与同 Task 去重；验证重开/后续 Worker 零重放和正常恢复对照。
+   原生浏览器在现有 `scripts/operations_inventory_harness.py` / `task-flow.python.spec.ts`
+   链路验证桌面/窄屏读回；如需注入，扩展已有测试 Worker seam，在准确 Task 的真实写边界
+   一次性触发，禁止增加产品路由或 seed 最终状态。完成 Developer 受影响测试后冻结一个完整
+   checkpoint，交独立 B；不得用读时修正去写回 Task 或改变结算/执行权限。
+
+## Acceptance Criteria
+
+| ID | 可核验结果 |
+|---|---|
+| F-1 | 上述真实恢复链确实执行一次文件移动；注入一次终态 completed 写失败后，后续 Task failed 成功持久化。现有 Task GET、run 详情和 records 顶层/result/recordOutcome 均为 failed；无完成/恢复成功提示。原文件 Result 仍 SUCCESS、成功数量为 1。 |
+| F-2 | 流程失败的阶段/说明与当前事实一致，不再提示已解决的识别待办或虚构文件失败；已知文件效果、缺失结果、未知效果各自诚实。不可读/未保存终态不编造状态、结果或零效果；页面不暴露原始异常/内部令牌。 |
+| F-3 | 同一已授权总体上，服务端 status/outcome=failed 查到该 Task，completed 过滤排除它；列表、详情、statusCounts、total、前后分页和 latest 一致。All/Ended 可见，Running 排除；已解决四类问题不因流程技术失败重入 Attention。非法过滤/过期游标和无权限仍按既有规则拒绝。 |
+| F-4 | 自动化该 Task 只计一次：成功 0、失败 1、评估 1、成功率 0%。同 Task 继续不新增准入；due/Run once 人群、completed/(completed+failed)、取消排除、月份边界和不可用规则不变。 |
+| F-5 | 正常四类恢复仍在同 Task 完成；待决定/分析/确认和真正本地在途工作仍未结束，确认取消仍保留取消。正常完成但全失败/partial/缺 Result/未知效果仍按现有技术结束规则 completed，不把本修正改成文件成功门槛。completed 自身不等于文件恢复成功。 |
+| F-6 | 刷新/断线重连/同版本 SQLite 重开后，当前流程状态、记录、指标仍一致；原始执行时间、首次阶段、尝试/Result、pin、权限证据不被重写。后续 Worker 不移动/复制已成功或未知效果的文件，未受影响兄弟保持独立。 |
+| F-7 | 真实 Python/API/SQLite/Worker 浏览器旅程在桌面和窄屏同时读懂“流程失败”和独立文件成功；记录仅查看结果/原因/下一步，无新增执行或恢复控件。相同响应在严格 Web decoder 下可读；矛盾/缺失证据不被转成成功。 |
+| F-8 | 原 Task48.1 已有安全/入口/四类恢复结果及 Task48.2 指标结果保留，独立 B 完成修正后的实际验收和最终适用 T4 证据。通过后重新评估全部 Slice 结果，满足即更新 Closure Packet 交 A，不继续拆可选改进 Task。 |
+
+## Required Tests
+
+按 [workflow §6](docs/development-workflow.md#6-test-levels) 分工。下面是未来实施/验收命令，
+**本规划未执行这些验收，也未宣告修正通过**。仅运行 A 原有 probe 确认当前矛盾仍可达。
+
+### Developer — 新增、修改与直接受影响测试
+
+根目录：
+
+```sh
+python3 scripts/check_governance.py
+PYTHONPATH=tests:. .venv/bin/python -m unittest -v test_v2_automation_run_once test_operations_task_center test_v2_automation_operations test_task_flow_status test_manual_task_engine test_automation_entrance_recovery
+```
+
+将 F-1/2 的正式 fault regression 与 F-3/4/6 的真实查询/重开断言放入上述对应模块；保留并运行
+原有识别同 Task 完整恢复、`test_conflict_recovery_keeps_the_original_automation_record`、
+`test_scheduled_decision_summary_belongs_to_the_continuing_operator`、文件 partial/failed 独立计数、
+8/9 分母、技术结束缺 Result、未返回调用、取消和终态不可写等直接受影响用例。此命令是受影响
+模块回归，不是全仓 discovery；若实际改动触及其他读取消费者，补充对应受影响测试即可。
+
+`web/`：
+
+```sh
+npm run test -- run src/entities/operations/run.test.ts src/entities/operations/automation.test.ts src/features/operations/OperationsInventory.test.tsx src/features/operations/AutomationWorkspaceReadModel.test.tsx src/features/operations/AutomationRouter.test.tsx
+npm run typecheck
+npm run build
+npm run test:e2e -- --config=playwright.python.config.ts tests/e2e/task-flow.python.spec.ts --workers=1
+```
+
+覆盖失败状态不能被 recovered 字段覆盖、独立成功文件、记录各状态一致、错误/不可用形状和桌面/
+窄屏实际读回。浏览器必须走原生恢复/确认/Worker 路径，不能只改 fake JSON 然后声称修正完成。
+对实际修改的 Python 文件运行 `.venv/bin/ruff check <changed-python-files>` 和
+`.venv/bin/ruff format --check <changed-python-files>`；对实际修改的 Web 文件运行
+`npx eslint <changed-web-files>`、`npx prettier --check <changed-web-files>`；根目录 `git diff --check`。
+占位符由真实本次修改清单替换，不扩大成 Developer 的全仓质量/测试验收。
+
+### B — 独立验收、完整回归和 Slice-final 证据
+
+- 审查原 Task Base..候选的完整范围，以及本修正 starting Head..候选；独立从 F-1 的真实入口
+  复现故障，确认 F-1–8。必须有自动断言的修正后用例；旧 probe 捕获的 success-only assertion
+  不能冒充通过。核对 schema/Result/初始时间未写回、源/目标实际效果和后续 Worker 零重放。
+- T4 完整门禁使用 [workflow 共享命令](docs/development-workflow.md#shared-full-regression-commands)：
+  全 Python、Web 质量/单元/默认浏览器、配置、依赖、RBAC/pin/fence/零变更/C→A/非重放，全部由 B
+  执行记录。后端 SQL/API/native 输入已变的证据不能沿用旧候选；纯文档后继或确实同输入的证据
+  复用须按 workflow 给出等价 diff 和实际身份，不把旧报告中的 PASS 当作新验收。
+- `web/` 在 `npm run build` 后分别启动全新 harness 执行下列原生 spec，避免跨 spec 共享状态：
+
+  ```sh
+  npm run test:e2e -- --config=playwright.python.config.ts tests/e2e/task-flow.python.spec.ts --workers=1
+  npm run test:e2e -- --config=playwright.python.config.ts tests/e2e/operations-inventory.python.spec.ts --workers=1
+  npm run test:e2e -- --config=playwright.python.config.ts tests/e2e/automation-workspace.python.spec.ts --workers=1
+  npm run test:e2e -- --config=playwright.python.config.ts tests/e2e/automation-run-once.python.spec.ts --workers=1
+  ```
+
+  核对 F-1 浏览器截图/交互，及八视图/四类恢复、记录过滤和成功率的正常对照；不是用历史 seed
+  的 partial/paused 行证明当前生命周期。普通操作/源历史等最终覆盖仍按父 Slice 及实际共享影响补齐。
+- 更新 wheel/容器安装消费者对 F-1/6 的同版本证明：从精确已提交候选的干净导出构建，先核对
+  包内业务模块/前端资产与源码，避免旧 build/lib 残留；源树外执行现有真实准入/确认/fault/reopen
+  用例。适用 wheel smoke、Docker security/restart/transfer 及其他最终制品门禁按共享规则由 B
+  完成。保留每个包/镜像 digest、命令/cwd/候选、实际结果与稳定忽略目录下原始日志/截图。
+- 原 7 项真实外部服务/耐久环境 skip 及初始 wheel/fake-server 失败等历史保留，不删断言、隐藏
+  skip、加重试或放宽超时；本修正没有新增延期。Developer 无需先跑这些完整门禁才交接。
+
+## Non-goals
+
+不修改 Slice48 的用户结果、Task/Slice Base 或 Task48.2 的公式/原始自动化准入人群；不对旧
+Task/status 做迁移、批量重标或跨版本升级。不新增生命周期/数据库权威/调度队列，不重做
+Worker、结算、重试、权限或 Storage 操作。不通过改变后台 failed 为 completed 掩盖读取矛盾。
+不增加第五恢复类型、通用技术失败恢复、附件自动重试、跨 Task 批量操作、未知效果重放、
+自动回滚、页面布局改版或用户额外确认。普通操作、CLI/通知及其他消费者只在该共享读取改动
+实际影响范围内修正/验证，不扩展产品。A-owned CURRENT/Closure/Roadmap 边界不由本计划修改。
+
+## Planning checkpoint / 历史和验证指针
+
+- 本轮起始：`/Users/songzhidong/mediaflow`，`main`，HEAD 为上述 Correction planning Head；
+  tracked 干净，工作区/Git 可写，治理 preflight PASS。原有未跟踪 OS/log/reference/output 和
+  `15` 均保留、不暂存；仅修改本 TASK.md。没有用户数据库/媒体、私有配置、实现、push 或部署。
+- 当前 HEAD 与已审实现 `2d4f1ae037cc4642b7bcd4231a840cf40d70e7b6` 之间仅有文档变化。
+  本轮复用且实际重新运行 A48-01 已有 SQLite probe，仍观察 durable failed、run completed、
+  recordOutcome failed、metric failed 1；命令成功执行不表示缺陷修复通过。
+- 原完整 Task48.1 计划/交接：`6f2115d1033779aa2d21a7f0b6ebd9f558f66345:TASK.md`；
+  原 B PASS：`469ecc076c6efc660055f47277d7917a0b64a9aa:TASK.md`；
+  Task48.2 PASS：`d448ce5d392865daadccb085af61e39d98f786c8:TASK.md`；
+  原 Slice Closure Packet：`6c39d6ecdf40cad8f06e5e97f58bf47bdc388b49:TASK.md`。
+  原 B 的通过/失败/跳过/制品限度保持历史事实，不代表本修正接受；本文件不复制旧证据流水账。
+- A 的 probe/完整 JSON/summary 在本机忽略目录
+  `.git/validation-evidence/2d4f1ae037cc4642b7bcd4231a840cf40d70e7b6/a-review/`；
+  `recovery-sqlite-publication-probe.py` 的 SHA256 为
+  `5cc04f467400c124c7466be28fe9f24fd12c012c5332599f24bd932817504458`。
+  正式测试必须自包含，不能依赖该本机目录或声称远程可访问。
+
+## Developer Completion Report
+
+Pending implementation. 交接时记录完整 checkpoint、READY FOR B REVIEW、实际受影响测试及
+遗留风险；保留已证实原失败，不提交全仓验收 dossier，不自行验收或关闭 Slice。
+
+## B Review Result
 
 ```text
-Slice: 48 — Task Flow Status and Automation Success Rate
-Slice Base: ba84272721961c970f1eb85d616a0d129523ab92
-Implementation Head: 2d4f1ae037cc4642b7bcd4231a840cf40d70e7b6
-Validation source Head: d448ce5d392865daadccb085af61e39d98f786c8 (TASK.md-only successor)
-Task48.1: PASS
-Task48.2: PASS
-Required Outcomes and Surfaces: COMPLETE
-Final applicable T4 gates: COMPLETE, with disclosed optional skips
-Product blockers: NONE
-Decision: SLICE READY FOR A REVIEW — 2026-11-04
-Next: A INDEPENDENT FINAL REVIEW OF ORIGINAL SLICE BASE..IMPLEMENTATION HEAD
+Reviewed: NOT SUBMITTED
+Decision: FIX REQUIRED — A48-01 REMAINS OPEN; CORRECTION ACCEPTANCE PENDING
+Acceptance runs: NOT RUN FOR A CORRECTED CANDIDATE
+Task blockers: A48-01
+Slice Required Outcomes / Surfaces all satisfied: NOT YET RE-ESTABLISHED
+Next: SAME TASK FIX LOOP; AFTER INDEPENDENT B PASS, REFRESH PACKET FOR A
 ```
-
-B 已完成 Task 独立复核和本 Slice 最终验收；停止规划 Developer Task。本决定不是 A Final Review，
-不宣告 Slice PASS / CLOSED，也不提前将 TARGET 改成 CURRENT。A 应审查原始 Slice Base..上述
-Implementation Head，连同下列真实结果、边界和限度。工作分支 main；本轮起始 HEAD 为 validation
-source Head，tracked 起始干净，工作区/Git 可写。原有未跟踪 OS/log/reference/output 文件与 `15`
-保持原样且不暂存；本轮只更新本文件，没有产品改动、推送或部署。
-
-## 已完成的 Task 与原复核指针
-
-- Task48.1：任务五态、文件结果分离、各真实生产入口/结算、记录状态及独立进度。
-  完整计划、返工与 Developer 交接见 `6f2115d1033779aa2d21a7f0b6ebd9f558f66345:TASK.md`；
-  B PASS 和既有失败/跳过/测试分配限度见 `469ecc076c6efc660055f47277d7917a0b64a9aa:TASK.md`。
-  先前 B48.1-01/02/03 已解决；不删除这些历史，也不拿旧制品代替当前最终验收。
-- Task48.2：原始 due/definition Run once 人群按当前 Task 流程计算率，SQL/API/Web 分母一致。
-  完整计划和 Developer 交接见 `e24976ab0fb84838093e60553506f874bb365e5b:TASK.md`。
-  B 独立审查完整 `469ecc076c6efc660055f47277d7917a0b64a9aa..2d4f1ae037cc4642b7bcd4231a840cf40d70e7b6`；
-  PASS 及 T3 实际证据见 `d448ce5d392865daadccb085af61e39d98f786c8:TASK.md`。
-  `2d4f1ae0` 仅由 B 对齐默认浏览器假 API 的新分母字段，未修改产品或放宽断言。
-
-## 全部 Required Outcomes / Surfaces 重评
-
-| 合同结果 | 已交付的用户可见行为 |
-|---|---|
-| RO-1 五态流程 | 当前 Task 使用 pending/running/completed/failed/cancelled；文件失败、部分完成、跳过/忽略、未知效果和缺 Result 不推导 Task 失败。旧 pipeline/ScanResult vocabulary 不承担第二套耐久 Task 生命周期；历史枚举保留只读含义。 |
-| RO-2 真实结束与安全 | 文件技术尝试已结束时可正常收尾，不等补齐 Result/查明实际效果；真正的本地在途调用、剩余机器/人工工作不提前结束。范围/必要上下文/流程自身失败和已确认取消各自保留。原 pin、权限、fence、源所有权与未知/成功不重放保持。 |
-| RO-3 可读且独立的文件事实 | 任务中心八视图、四类恢复、独立进度/结果、两种库本地普通操作、Dashboard/API/CLI/export/log/通知和自动化记录按各自职责保留真实信息。流程完成不表示文件全部成功，也不宣称业务问题已恢复。 |
-| RO-4 自动化统计与记录 | 原始 due 与定义“运行一次”按 Task 身份去重，成功率 completed/(completed+failed)；取消/未结束不进入分母。记录按同一当前 Task 状态筛选；原始时刻、尝试和文件效果不被改写。无工作、取消已结束数、不可用和没有评估数据各自独立。 |
-
-完整旅程示例：从资源库 Files 选择文件→分析→检查精确摘要→明确确认→真实 Worker/Storage
-处理。即使一个文件失败，正常收尾的 Task 仍显示已完成，成功/失败/未知效果照实保留；结果保存
-失败也不要求重放媒体来补齐结果。有人工待办时保持进行中，沿决定→分析→摘要→明确继续在同一
-Task 完成，成功兄弟不重跑。普通 Copy/Move/Delete 的实际结果仍在原库弹窗查看。
-
-自动化例子：8 个完成、1 个流程失败、1 个已取消，成功率为 8/9，已结束数量为 10；取消记录保留。
-只有取消/未结束 Task 则没有百分比。文件全失败、健康空范围或完整历史排除的 completed Task
-仍计流程成功，文件全失败不能冒充无工作。Files/CLI 手动整理和普通操作不进入自动化人群。
-
-## 最终门禁与可核验证据
-
-最终证据根目录（本机忽略存储，不声称远程可访问）：
-`.git/validation-evidence/2d4f1ae037cc4642b7bcd4231a840cf40d70e7b6/slice-final/`。
-上轮可复用 B 证据：`.git/validation-evidence/e24976ab0fb84838093e60553506f874bb365e5b/b-review/`。
-原始日志首部及 summary JSON 记录 command/cwd/返回码/耗时；未使用用户媒体、生产数据库或真实外部服务。
-
-| 门禁 | 实际结果 / 原始证据 |
-|---|---|
-| Python 完整回归 | 根目录 `.venv/bin/python -m unittest discover -s tests`，2581 项运行、7 skip、0 failure/error，约 282 秒；`python-full.log`、`python-full-summary.json`。 |
-| 全仓 Python/配置/依赖 | 治理、Ruff 全仓 format/check、compileall、pip check、两个 example config validate、原始 Slice Base..Head whitespace 均通过；禁用依赖查询无匹配（预期 exit 1）。各同名日志及 `quality-build-summary.json`。 |
-| Web 质量/构建/完整单元 | 复用上轮同输入的 typecheck/lint/format:check/build 和 88 文件、1273 项单元通过；上轮 `web-*.log`。本轮没有重复运行，输入等价证明见 `source-artifact-equivalence.json`。 |
-| 默认完整浏览器 | `web/ npm run test:e2e -- --workers=1 --output=<evidence>/e2e-default`，253 通过；`e2e-default.log`。 |
-| 真实 Python 浏览器 | 每个 spec 单独启动全新 harness：inventory 43、task-center-visual 2、source-history 1、task-flow 2、direct-files 22，共 70 通过；`native-*.log`、`browser-final-summary.json`。另复用上轮 automation-workspace 9、run-once 5；合计 84 项匹配 native 结果。 |
-| wheel / 源树外消费 | 从 committed HEAD 的干净源码目录执行 pip wheel --no-deps，构建、`scripts/wheel_smoke_test.py <exact-wheel>` 均通过；源树外新 venv 直接运行 10 个真实 Task/API/SQLite/Worker 用例通过，模块来自 wheel site-packages；`wheel-clean-build.log`、`wheel-smoke.log`、`wheel-installed-current-flow.log`。 |
-| Docker 生产/安全/重启 | 当前源码构建，release-security、restart-fault、files-transfer-lifecycle 三脚本均通过，使用相同候选源码与隔离四服务部署；`docker-build.log`、`docker-security.log`、`docker-restart.log`、`docker-transfers.log`。 |
-| 容器安装包真实流程 | network=none，仅挂载测试夹具和批准的 example config，不挂载 mediaflow 源码，10 项通过；`docker-installed-current-flow.log`。包来自 `/usr/local/lib/python3.13/site-packages/mediaflow`。 |
-
-安装包的 10 个用例覆盖：真实 Files 执行后 Result 发布失败/缺结果/不重放，独立兄弟回到人工等待，
-取消优先，真正未返回的本地调用，终态不可写，同 Task 完整恢复，以及自动化 8/9、取消、独立
-partial/failed 文件事实和恢复去重。它们分别在 wheel 与容器安装包上执行，不把源树测试冒充安装验证。
-
-AC-1–6 的真实生产入口、范围完整性、等待/取消/所有权与技术收尾，由当前全 Python 和安装包证明；
-AC-7/8/11 的八视图、四类恢复、记录一致性与时刻保全，由 full/native/安装包覆盖；
-AC-9/10 的分母、人群、月份边界、分页和不可用，由完整 Python、上轮独立入口核验和匹配 native 覆盖；
-AC-12/13 的源历史排除/手动警告、原库普通结果、通知/export/log 由 source-history、direct-files、
-inventory 和 full 覆盖；AC-14/15 的 fresh/同版本持久化、RBAC/Storage confinement/pin/fence、
-只读零写入、C 使用 A 策略仍为 C 和不重放由 full/制品门禁覆盖。AC-16 的 B 最终证据已齐，A 独立终审待做。
-
-实际检查了当前 mixed-flow 桌面/窄屏、八视图布局和问题文件清单、精确确认摘要、两种库本地操作
-结果截图。流程完成和文件失败能同时阅读；普通操作“已完成，但存在未成功项目”保留实际效果。
-截图位于 `native-flow/`、`visual-screens/`、`native-direct/`；上轮自动化卡片截图仍可复用。
-
-## 制品身份、复用与已纠正的验证问题
-
-- Implementation Head 到 validation source Head 只有 TASK.md 报告变化；Task48.2 产品之后只有
-  默认 fake-server 适配。产品/测试/native harness/依赖/config 的相应输入无变化；本轮新跑全 Python、
-  默认完整 E2E、其余 native 和所有上述制品门禁，复用的 Web/native 证据未被替换为旧 Task48.1 制品。
-- 最初直接从工作区打出的 wheel 含 build/lib 残留的 18 个已删除模块，清单核验未接受该包。
-  未清理或覆盖原工作区；改从 committed HEAD 的 pyproject/mediaflow 干净导出构建，确认包内
-  170 个 Python 模块逐一匹配源码，才执行安装验证。初始包与差异保留在 `dist/`、
-  `initial-wheel-manifest-difference.json`；接受包在 `dist-clean/`，SHA256 为
-  `73ed6f694a2de0fb4a22de30ed36dde347531a425331de5d476700a2b88be291`。
-- 最终运行镜像 `mediaflow:slice48-2d4f1ae0`，ID
-  `sha256:952e4704fd72f153f25ef6a03d5c2172d1830f54b61f1aff9826ae3b48c011a3`。
-  镜像的 170 个业务模块逐一匹配源码，前端资产逐字节匹配本地生产构建/native 使用的资产。
-  精确路径/digest/各 gate image ID 见 `artifact-identity.json`、`image-content-equivalence.json`。
-- 安全与重启脚本各自重建所给标签：安全证明对应 `4d6de64d...`，重启/transfer/安装流程对应
-  上述最终 ID；不声称所有门禁共用一个不可变 image ID。尝试事后按已被覆盖的旧 ID 检查时，本地
-  引用已不存在；此证据收集限度已记录。各脚本均对当前提交源码实际构建并验证，不冒充旧候选结果。
-- 上轮默认 fake metrics 缺字段导致的浏览器失败已由 `2d4f1ae0` 修正；原失败日志保留，本轮完整
-  253 项已重新通过。没有删除断言/skip、增加重试、放宽 timeout 或用有序共享状态重试掩盖失败。
-
-## 明示限度、延期和停止点
-
-7 项 skip 为专用真实 OpenList/SMB/S3 环境及 Local/SMB/OpenList/S3 耐久环境缺失，逐项 ID/原因
-见 `declared-skips.json`，均为既有可选项，不算通过。所有要求的隔离本地/fake/制品门禁已执行。
-保留既有 ResourceWarning、Vite bundle-size 与测试环境提示；没有已知阻塞产品问题。
-
-旧 installed_recovery 脚本引用已删除的测试文件，旧 docker task-center recovery 脚本仍走退役 Job
-continuation，本轮均不作为现行旅程证明，不记为通过；当前同 Task 路径由上述 native/安装包覆盖。
-视觉 fixture 有直接构造的历史 partial_success 行，只用于布局/历史展示；五态写入证明来自正常
-准入和真实 Worker 旅程，未据不可达 seed 状态要求产品返工或新增兼容层。
-
-原合同排除项保持：旧 Task/status/Job 迁移、跨版本升级/回滚、混合写入、V1、新队列/并行机制、
-新 Provider/Storage 操作、第五恢复类型、附件单独自动恢复、任意历史 Reprocess、自动未知效果重放
-及通用回滚。没有新增延期来缩小 Required Outcomes，功能满足后不再拆 Task。
-
-## A 终审和文档对齐需要
-
-A 独立审查原始 Base..Implementation Head 和上述证据后，才能决定 PASS / CLOSED。
-若 PASS，再按 workflow 一次性对齐 SLICE/Roadmap/Progress、需求修订、Product Experience、
-Architecture 及用户说明：五态/文件独立结果、completed/(completed+failed)、当前记录状态与原始
-时刻/效果保全转为 CURRENT，替换相应旧聚合/文件成功率措辞；保留稳定 ID、历史接受身份和明示延期。
-本轮未提前改 A-owned 合同/接受账本或 CURRENT，也未选择下一 Slice。
-
-可复用经验候选：验收安装制品前先核对包内模块与当前源码；有本地构建残留时从干净提交导出构建，
-保留初始失败和实际接受包的摘要，适用于已删除模块或退出旧产品之后的 wheel 验证。无额外 Developer Task。
-
-本轮时间统计以 `final-run-summary.json` 为准，包含构建/静态门禁在内的命令执行累计约 743 秒；
-分析、代码/旅程核对、制品核验、截图审阅及 Closure Packet 整理同属本轮实际工作，不通过等待凑比例。
