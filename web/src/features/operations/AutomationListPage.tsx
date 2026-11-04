@@ -143,14 +143,27 @@ const LIST_SEARCH_KEYS = [
 ] as const;
 
 /**
+ * Values that describe the ordinary list even when they are written into the
+ * URL. The create link publishes them explicitly while the operator may have
+ * arrived from a URL that omitted them, so both forms must identify the same
+ * list for scroll restoration.
+ */
+const DEFAULT_LIST_SEARCH: Readonly<Record<string, string>> = {
+  tab: "definitions",
+  sort: "name",
+  dir: "next",
+};
+
+/**
  * The browser keeps the list DOM while the create route is open, but the
  * route transition remounts the list component. This bounded module memory
- * restores the operator's own scroll position after the re-read; it stores no
- * form, token or draft.
+ * restores the operator's own scroll position and exact return search after
+ * the re-read; it stores no form, token or draft.
  */
 let automationListScrollMemory: {
   readonly key: string;
   readonly y: number;
+  readonly search: Record<string, string>;
 } | null = null;
 let focusCreateEntryOnNextList = false;
 
@@ -168,7 +181,8 @@ function listSearchKey(searchParams: Record<string, unknown>): string {
         ([key, value]) =>
           (LIST_SEARCH_KEYS as readonly string[]).includes(key) &&
           typeof value === "string" &&
-          value !== "",
+          value !== "" &&
+          DEFAULT_LIST_SEARCH[key] !== value,
       )
       .sort(([left], [right]) => left.localeCompare(right)),
   );
@@ -282,7 +296,9 @@ export function AutomationListPage({
     if (!focusCreateEntryOnNextList) return;
     focusCreateEntryOnNextList = false;
     const timer = window.setTimeout(() => {
-      document.getElementById("automation-create-entry")?.focus();
+      document
+        .getElementById("automation-create-entry")
+        ?.focus({ preventScroll: true });
     }, 0);
     return () => window.clearTimeout(timer);
   }, []);
@@ -435,14 +451,24 @@ export function AutomationListPage({
     automationListScrollMemory = {
       key: listKey,
       y: Number.isFinite(window.scrollY) ? window.scrollY : 0,
+      // Keep the exact URL the operator was reading. The create route adds
+      // ordinary defaults to its own search, so deriving the return address
+      // from that route would rewrite an omitted-default list into a different
+      // URL and lose the saved scroll identity.
+      search: listSearchForClose(searchParams),
     };
   }
 
   function closeCreateDialog() {
     focusCreateEntryOnNextList = true;
+    const memory = automationListScrollMemory;
+    const search =
+      memory !== null && memory.key === listKey
+        ? memory.search
+        : listSearchForClose(searchParams);
     void navigate({
       to: "/operations/automation",
-      search: listSearchForClose(searchParams),
+      search: Object.keys(search).length > 0 ? search : undefined,
       replace: true,
     });
   }

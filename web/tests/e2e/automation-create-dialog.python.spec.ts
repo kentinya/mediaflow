@@ -90,6 +90,34 @@ async function openCreateCard(page: Page): Promise<void> {
   await expect(page.getByLabel(/任务名称/)).toBeVisible();
 }
 
+async function openCreateFromScrolledList(
+  page: Page,
+  path: string,
+): Promise<void> {
+  await connectOn(page, path);
+  const entry = page.getByRole("link", { name: "新建自动化任务" });
+  await expect(entry).toBeVisible();
+  // Scroll only as far as a real operator would while the entry is still in
+  // the viewport; this is the position the return must preserve.
+  await page.evaluate(() => window.scrollTo(0, 100));
+  await expect.poll(() => page.evaluate(() => window.scrollY)).toBe(100);
+  await expect(entry).toBeInViewport();
+  await entry.click();
+  await openCreateCard(page);
+}
+
+async function expectListPositionRestored(
+  page: Page,
+  expectedPath: string,
+): Promise<void> {
+  const entry = page.getByRole("link", { name: "新建自动化任务" });
+  await expect(entry).toBeFocused();
+  await expect.poll(() => page.evaluate(() => window.scrollY)).toBe(100);
+  await expect(entry).toBeInViewport();
+  const url = new URL(page.url());
+  expect(url.pathname + url.search).toBe(expectedPath);
+}
+
 test.beforeEach(async ({ page }) => {
   await page.request.post("/__harness__/reset-automation-definitions");
   await page.request.post("/__harness__/restore-source-media");
@@ -172,6 +200,84 @@ test("creates one disabled definition from the list card and keeps the list cont
       path: "/api/v1/operations/automation/definitions",
     },
   ]);
+});
+
+test("restores the default list position after cancelling the create card", async ({
+  page,
+}) => {
+  await page.setViewportSize({ width: 390, height: 844 });
+  const before = await harnessState(page);
+  const api = recordApiCalls(page);
+  await openCreateFromScrolledList(page, "/ui-v2/operations/automation");
+
+  await page.getByRole("button", { name: "取消" }).click();
+  await expect(
+    page.getByRole("heading", { name: "新建自动化任务" }),
+  ).toHaveCount(0);
+  await expectListPositionRestored(page, "/ui-v2/operations/automation");
+
+  const after = await harnessState(page);
+  expect(after.activeRevisionId).toBe(before.activeRevisionId);
+  expect(after.definitions).toEqual(before.definitions);
+  expect(after.occurrenceTotal).toBe(before.occurrenceTotal);
+  expect(api.filter((call) => call.method !== "GET")).toEqual([]);
+});
+
+test("restores the filtered list position after discarding typed input", async ({
+  page,
+}) => {
+  await page.setViewportSize({ width: 390, height: 844 });
+  const before = await harnessState(page);
+  const api = recordApiCalls(page);
+  const path = "/ui-v2/operations/automation?q=Harness&sort=name";
+  await openCreateFromScrolledList(page, path);
+
+  await page.getByLabel(/任务名称/).fill("保留列表位置放弃");
+  await page.getByRole("button", { name: "取消" }).click();
+  await expectCloseChoiceVisible(page);
+  await page.getByRole("button", { name: "放弃修改" }).click();
+  await expect(
+    page.getByRole("heading", { name: "新建自动化任务" }),
+  ).toHaveCount(0);
+  await expectListPositionRestored(page, path);
+
+  const after = await harnessState(page);
+  expect(after.activeRevisionId).toBe(before.activeRevisionId);
+  expect(after.definitions).toEqual(before.definitions);
+  expect(after.occurrenceTotal).toBe(before.occurrenceTotal);
+  expect(api.filter((call) => call.method !== "GET")).toEqual([]);
+});
+
+test("restores an explicit-default list context after creating", async ({
+  page,
+}) => {
+  await page.setViewportSize({ width: 390, height: 844 });
+  const before = await harnessState(page);
+  const path =
+    "/ui-v2/operations/automation?tab=definitions&sort=name&dir=next";
+  await openCreateFromScrolledList(page, path);
+
+  await page.getByLabel(/任务名称/).fill("滚动位置创建任务");
+  await page.getByLabel(/资源库/).selectOption("source");
+  await page.getByRole("button", { name: "创建任务" }).click();
+  await expect(
+    page.getByRole("heading", { name: "创建成功，尚未启用" }),
+  ).toBeVisible();
+  await expect(
+    page.getByRole("heading", { name: "新建自动化任务" }),
+  ).toHaveCount(0);
+  await expectListPositionRestored(page, path);
+  const row = page.getByRole("row").filter({ hasText: "滚动位置创建任务" });
+  await expect(row).toBeVisible();
+  await expect(row.getByText("刚刚创建")).toBeVisible();
+
+  const after = await harnessState(page);
+  expect(after.definitions).toHaveLength(before.definitions.length + 1);
+  const created = after.definitions.find(
+    (definition) => definition.name === "滚动位置创建任务",
+  );
+  expect(created?.enabled).toBe(false);
+  expect(after.occurrenceTotal).toBe(before.occurrenceTotal);
 });
 
 test("opening and cancelling the canonical create deep link creates nothing", async ({
