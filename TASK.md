@@ -1,454 +1,81 @@
-# Task49.1 — 来源范围正确的列表一键运行
+# NO ACTIVE IMPLEMENTATION TASK
 
-Authority: committed ACTIVE [Slice49 Contract](SLICE.md) at
-`3cdc82678f693b4d7e4fb0b2a5efde42b47fc3d5`；
-[Development Workflow](docs/development-workflow.md) 是唯一生命周期/测试/审查依据。
-本助手按用户要求承担 **B 规划/独立审查职责**；当前结论见 B Review Result，不担任 Developer 或 A Final Review。
+Last Task: 49.1 — 来源范围正确的列表一键运行
+Decision: PASS
+Parent Slice: 49（保持ACTIVE，尚未关闭）
+Next Action: B PLANS THE REMAINING SLICE49 WORK; NO IMPLEMENTATION AUTHORIZED UNTIL A FORMAL TASK
 
-```text
-Task ID: 49.1
-Task Type: SLICE
-Parent Slice: 49
-Status: READY FOR B REVIEW
-Task Base: 129d1c060dea05a91755dbd2ed70632f09655fd4
-Difficulty: High
-Test Level: T4
-Planner / Reviewer: B
-Planning Authorization: USER REQUESTED B SUBSTITUTE; DRAFT CONFIRMED AGAINST ACTIVE CONTRACT
-Implementation Authorization: USER ACTIVATED TASK49.1; DEVELOPER MAY IMPLEMENT THIS TASK ONLY
-```
+本轮复核已完成，未创建下一实施Task。Task49.1完整计划与Developer交接保留于
+`cd955d3cff474d124d0119291e0d3ed9a8b13b31:TASK.md`；当前接受结论和证据如下。
 
-## Activation confirmation
+## Task49.1 — B Review Result
 
-用户明确要求激活 Slice 和 Task。A 已先在 `3cdc82678f693b4d7e4fb0b2a5efde42b47fc3d5` 提交 ACTIVE Contract；
-本 B 随后确认原草案 `9d70d0c211db1403bbcf536d8e619672ffd8b3d1` 的 Goal、Implementation Scope、
-12 项验收和受影响/完整测试分工均仍位于该 Contract 的 RO-1 / RO-2 内，原 Task Base 至当前
-生产代码/测试/harness 无变化。原 Task Base `129d1c060dea05a91755dbd2ed70632f09655fd4`
-与原 Slice Base `02fb77dd713bad4dd51c29b6cfc5556ddd6d5b4e` 不变；不借激活重设起点或
-扩大 Task。现转为正式 **PLANNED**，可由 Developer 按本 Task 开始，尚未进入 IN PROGRESS。
-本次只完成激活，不运行实现、验收或下一 Task。
+**PASS — 2026-11-05，B 独立审查。**
 
-## Goal
+- Task Base：`129d1c060dea05a91755dbd2ed70632f09655fd4`（不变）。
+- Reviewed Head：`cd955d3cff474d124d0119291e0d3ed9a8b13b31`。
+- 最终实现 checkpoint：`3fa0297afc69af34dd3e95f7589bd64f32c08049`。
+- 审查完整 Base..Head 的24个文件：沿用上一轮逐文件审查的未变部分，再核对本次全部修正，
+  重新评估合并后的Task结果；本轮T4基于当前候选重新执行，不以Developer报告代替B验收。
 
-完成 Slice49 **RO-1 / RO-2**：操作者从自动化列表对已保存定义点击一次“运行一次”，在原列表
-看到提交/受理/拒绝/未知反馈，实际受限来源能被 Worker 正确处理。整个资源库不再因内部尾
-斜杠拼接失败；删除编辑页运行按钮，将原未决运行请求的核对收敛到列表。停用定义仍可手动
-运行一次，计划与启用状态不变。正常空范围、Task 流程失败、独立文件失败和人工待办各自如实显示。
+### 交付结果与原阻塞
 
-追踪：`V2-AUTO-015`、相关 `V2-AUTO-004/011/012`、`V2-TASK-001–014` 的既有 V2 含义；
-Slice49 AC-1–6 为本 Task 的主要验收，AC-13–16 取本次实际影响的权限、执行、回读与验证部分。
-本 Task 不交付 RO-3 的统一编辑卡片或 RO-4 的创建可选启用，不会据此宣布 Slice 完成。
-完整适用旅程/契约已读：[TARGET journey](docs/product-experience.md#target--automation-forms-and-direct-run-once-slice49-active)、
-[TARGET architecture](docs/architecture.md#target--automation-forms-and-direct-run-once-slice49-active)、
-[CURRENT Automation journey](docs/product-experience.md#current--complete-native-automation-workspace-accepted43-amended46)。
-保留 `UX-001–007/010`、适用 `REQ-TASK-005–010`、`REQ-SCHED-004–007` 和 `REQ-SAFE-001–009`。
+操作者进入“自动化 → 任务列表”，对已保存定义点击“运行一次”，当前行提交中防连击，
+受理后留在列表并可直接查看该Task；非空资源库根的整个库运行能实际进入Worker并整理合成媒体。
+停用定义仍可运行，不改变启用状态或调度。健康空、流程失败及独立文件结果继续由现有Task回读。
 
-### Actual code and baseline gaps
+**B49.1-01 已修复**：第一次受理提示尚未消失时再次明确运行，新提交立即撤下该行旧提示；
+第二次明确拒绝就显示本次原因，第二次回复不确定就显示“暂未收到回复 / 查看提交结果”。
+查询按第二次实际提交找到第二个Task，旧链接不再冒充本次结果，其他行保持独立。
+本轮真实浏览器还验证了第二次受理后替换503→刷新页面→同一身份重新连接→精确查询，
+只发生原来的两次明确POST，核对不会再次运行。
 
-- `mediaflow/application/automation_run_once.py:admit_execution` 将库根和空子范围直接 join，
-  非空库根 `Incoming` 得到 `Incoming/`；`automation_definition_execution.py:_resolve_scope_root`
-  用严格相对路径规则拒绝该 Task 范围。已有核心 API 测试的 `storagePath` 为空，没覆盖该组合。
-- `AutomationListPage.tsx` 的 `onRunOnce={openDefinition}` 只导航详情；列表没有真实命令状态。
-  实际运行、请求生成和 principal-scoped 未决上下文都在 `AutomationLifecyclePage.tsx`，
-  而本 Slice 明确要求删除编辑页运行按钮。不能只删按钮，把未决核对能力一起遗失。
-- 列表已提供 Active `revisionId/version/revisionSequence` 和 backend action availability；
-  其 operator 投影刻意不含 digest/fingerprint。现有 Run once API 允许用 revision ID +
-  实际 sequence/version 校验所见快照，服务端另核对快照完整性；但 `api-client.ts` 在
-  提供 expectedRevisionId、未提供 digest 时会补空字符串，应按实际可选字段契约处理。
-  不需把内部证据暴露到列表，也不能省略全部版本条件或点击后读取新版再偷偷绑定。
-- 编辑页的旧 session key 为
-  `mediaflow.operations.automation-run-once-intent:<principalIdStorageSegment>`，只保存一条请求；
-  列表需能接续它，并为多行提供独立且有界的状态，不能覆盖另一行的未知请求。
-
-本轮隔离 API→SQLite→Worker 对照：非空库根/整个库 HTTP202 后 Task failed，Storage 读取0、
-变更0，记录“来源范围设置无效”；空库根/整个库 completed/noWork。同次探针只提交所见
-revision ID/version 即可准入，过期 version 为409且 Task数0。源码/测试/harness与原调查
-基线间的 diff 为空，原浏览器“列表只导航”证据仍匹配。可复现触发记录如上；原始本地材料：
-`.git/validation-evidence/129d1c060dea05a91755dbd2ed70632f09655fd4/task49.1-planning/`，
-及 Slice49 记录的先前调查目录。调查不是修复验收，不声称已核对用户运行库或远程证据。
-
-## Implementation Scope
-
-复用现有 Run once 服务、Task admission/Worker、API client、列表和局部 session 机制。
-可改必要的 `automation_run_once.py` 及实际受影响的范围消费代码；Web 列表/行组件、
-生命周期页的运行相关代码、API client/model（如确需）、命令 session/helper 与对应测试。
-仅允许必要的测试 fixture/harness 扩展，不引入产品专用测试端点或第二工作存储。
-
-1. **先固化真实入口缺陷。** 在现有 `test_v2_automation_run_once.py` 增加非空库根＋整个库
-   的 API→Task→Worker 用例和有效根/子范围矩阵；列表用例必须点击并检查真实准入，不只
-   断言按钮可见。初始失败应指向已确认的拼接/导航缺口，不能手写终态冒充 Worker。
-2. **修正来源组合，保留严格校验。** 优先在准入生产者规范化已经验证的库根＋子范围拼接
-   结果，使持久 Task 与既有 Worker 校验含义一致；只在必要时调整受影响的共享消费逻辑。
-   使用已有规范化/约束能力，不新增一套路径体系；不通过删除所有斜杠、trim文件名字符或
-   放宽 `..`/绝对路径来修复。覆盖空、非空、多层、中文空格库根，整个库/子目录及健康空
-   和有媒体来源；保留 Storage 身份、精确源路径和 immutable pin。due 做同范围对照。
-   不迁移旧 Task、不改历史失败记录、不自动重跑原失败或不确定效果。
-3. **接入所见保存定义的明确命令。** 使用列表同一次读取的 definitionId、Active revisionId
-   和 `revisionSequence`（按服务已有 sequence/version 规则），形成受控版本条件；后端仍
-   核对快照完整性和当前 `EXECUTE_MANUAL_ORGANIZE`。客户端应正确省略未提供的可选 digest，
-   不发送空字符串；已有调用明确提供的 digest/fingerprint 仍按原规则验证，不能删掉其
-   校验。优先复用既有投影/API，不新增授权 token，也不把内部 digest/fingerprint搬入列表。
-   缺少真实版本/身份时显示无法提交；禁止从表单未保存值推导、无条件提交或静默改绑最新版本。
-   这里约束列表命令的所见版本，不把原有直接API的可选条件改成新的强制字段。
-4. **把运行请求与核对从编辑页移到列表。** 提取最小局部 helper/session（建议
-   `automation-run-once-session.ts`），将生成请求、提交、确定拒绝和未知核对衔接好。
-   在 POST 前确认 principal、可用随机请求身份及可跨刷新保留的上下文；能力不可用时
-   明确阻止本次提交，不能发出随后无法核对的请求。按 principal/definition/request 隔离
-   多行忙碌/未知状态；有界保存且不覆盖/静默丢弃未决项，不建通用命令框架。
-   读取旧编辑 key 的合法记录，保留原 request/identity，只做显示和精确 GET核对，不POST；
-   校验不合法旧值并有界说明，不能把它变成新的运行请求。读取/重连/登出清理符合现有身份规则，
-   旧异步响应不得清掉新登录身份或其他行的上下文。被筛选/翻页隐藏的未决项仍有列表内
-   可达的核对提示，不强迫操作者丢失当前列表条件。移除编辑页运行按钮及其独占事件/状态，
-   保留启停、保存、复制、删除和既有未决发布的行为；已提交运行的核对入口在列表接续。
-5. **完成原列表反馈与回读。** 行按钮一次点击直接 POST，没有前置跳转、选文件或第二次
-   初始确认；后台完整遍历/分析/计划/校验不变。受理后留在列表，保留已提交筛选、页、滚动
-   与焦点，刷新真实最近运行/统计；显示“已提交”及精确本次运行/Task的主动查看链接，
-   不声称已完成或文件成功。重复点击在同步提交窗口及未决状态下不能再准入；后端继续
-   依据原 request 去重。确定拒绝用普通中文说明阶段/状态/效果和下一步，允许明确纠正后
-   新提交；旧版本拒绝先刷新所见保存值，不自动重试。status0/5xx/畸形响应或异步异常按
-   未知保留原请求并核对；“没找到”不证明未受理，不自动新建请求，不用放弃按钮掩盖安全约束。
-   “查看任务”直接打开该 Task 的现有 Task Center 详情，不新增中转页、运行详情或恢复系统；
-   既有 Run once 只读地址仍可正常读取原工作。
-   用户已明确要求反馈人类可读、好看：使用现有页面的字体、颜色、间距、圆角和按钮风格，
-   在对应行操作附近以紧凑状态文字/标记呈现，提交中用克制的忙碌提示；必要原因和下一步
-   就近清楚显示，不堆技术说明、不遮挡操作或靠截断隐藏原因。与名称/路径和相邻行对齐，
-   窄屏可自然换行且无页面横向溢出，状态变化不造成明显跳动；以清楚文字说明状态、图标辅助，
-   不只依赖颜色，键盘焦点和现有减少动效设置仍有效。具体布局由实现按实际页面决定。
-   普通界面不使用“丢响应”“原请求”“幂等”“principal/fence”等内部术语，不展示请求编号、
-   revision/digest或原始错误码，也不让用户复制/填写这些信息。建议短文案：提交中“正在提交…”，
-   已受理“已提交”配“查看任务”，确定拒绝“未能提交”配具体原因；没收到确定回复时写
-   “暂未收到回复”，说明“任务可能已提交，请先查看提交结果”，动作为“查看提交结果”，
-   查询中“正在确认…”。查询只读取刚才那次提交的结果，不再次运行；未查到不显示“未启动”。
-   文案可随页面润色，但不能把未知写成失败，或把受理写成文件整理成功。
-6. **补齐受影响验证并交候选。** 原生浏览器从真实列表启动、完成实际 Worker 和独立结果
-   回读；把原先从编辑页启动的相关测试/fixture改到列表，保留其权限/重启/四类恢复等原有
-   有效断言，不删测或改弱断言。必要注释/直接相关的过时导航说明随代码校正；TARGET不能
-   提前写成 Slice已接受的CURRENT。Developer 完成下列受影响检查后提交一致 checkpoint，
-   `READY FOR B REVIEW`；全量与产物证据由 B 负责。
-
-### 列表提交反馈与现有 Task 状态的边界
-
-“运行一次”始终接入现有 Task admission→Worker→整理→Result 链路。列表只补齐这一次点击的
-提交反馈，不新增 Task 状态、工作流、常驻状态列、独立进度条或恢复面板。
-
-| 发生的事情 | 列表显示与行为 |
+| 验收 | B结论与证据 |
 |---|---|
-| 点击后等待接口回复 | 按钮短暂显示“正在提交…”并防连击，不跳页面。 |
-| 接口确认受理并返回 Task ID | 立即结束按钮忙碌状态，给短暂“已提交”提示及“查看任务”入口，刷新现有最近结果/统计；不等 Task 执行完成才结束提交反馈。 |
-| Task 后续排队、运行、等待人工处理或结束 | 状态与结果继续读取现有 Task、列表最近结果及执行记录；不从本地提交提示推断或维护另一份运行状态。 |
-| 接口明确拒绝且本次没有准入 | 简短显示“未能提交”及具体原因/下一步，不把未创建的工作伪装成失败 Task。 |
-| 网络中断等导致没有确定回复 | 保留刚才那次提交身份，通过现有精确查询接口找回已受理 Task；必要时显示轻量提示和“查看提交结果”。查到后展示同一 Task，不再次创建；查询仍无结果时不能断言未受理。 |
+| AC1–2 来源范围/失败边界 | API→SQLite→Worker根范围矩阵、due对照、空/不可读/超限、固定上下文与权限拒绝通过；已验证组成部分的规范化不放宽输入，未改Worker严格校验或历史。 |
+| AC3–4 列表入口/所见版本 | 原生列表一击准入、停用定义及实际Incoming媒体执行通过；按该行Active ID/sequence提交，过期版本零新Task，未提供的digest不伪造。 |
+| AC5–8 本次反馈/安全核对 | 本次列表/session 19项通过，新增连续拒绝/未知/成功及其他行隔离通过；原生桌面/390px和独立刷新重连证明通过。忙碌/拒绝/未知/核对后的截图已人工检查。 |
+| AC9 编辑既有能力 | 编辑运行按钮已移除；现有生命周期13例及workspace9例通过，保存、启停、复制/删除和发布核对未被本次修正改变。 |
+| AC10–11 安全/结果回读 | 全Python包含源所有权、claim/fence、真实稳定性、四类恢复、C使用Naming/Classification A仍为C、成功/不确定不重放；原生冲突继续与记录/统计保持同一Task、原时间和独立文件结果。 |
+| AC12 同版本/完整门禁 | 本轮全Python/Web/默认浏览器、原生30+刷新1、wheel与容器安全、安装产物各15例通过；安装产物验证fresh及SQLite同版本重开，生产模块来源和哈希匹配。 |
 
-正常路径是“点击→短暂加载→提交提示”，没有每次必经的额外核对步骤。已提交不代表
-Task 已完成或文件成功；异常查询是提交层的网络恢复，不是新的整理阶段或 Task 生命周期。
+### 本轮实际门禁
 
-## Acceptance Criteria
+- Python：`.venv/bin/python -m unittest discover -s tests` → **2588 tests，OK，skipped=7，379.979秒**。
+  7项为未配置的真实OpenList/SMB/S3验收及Local/SMB/OpenList/S3耐久性专项，属于合同排除范围。
+  日志有ResourceWarning（未关闭连接/临时目录等），无测试失败；不将warning说成产品成功证据。
+- Web：完整Vitest **92文件 / 1315 passed**；默认Playwright **253 passed，2.2分钟**。
+- 原生：`playwright.python.automation.config.ts`下run-once/lifecycle/workspace三文件单worker
+  **30 passed，48.2秒**；B追加真实刷新重连探针 **1 passed，3秒**，探针源码和截图已保留，
+  临时测试文件已撤出工作树；原生UI使用本轮build的生产资源、临时SQLite/Local与合成Provider。
+- 质量：governance、ruff format/check、compileall、pip check、两份example config validate、
+  Web typecheck/lint/format/build、`git diff --check`通过；FFprobe/FFmpeg检索无匹配（预期退出1）。
+- 产物：wheel build / wheel smoke通过；source外cwd的installed probe **15 tests OK**。
+  精确镜像 `mediaflow:b-task49-1-cd955d3c` release-security smoke通过；相同probe在无网络容器内
+  **15 tests OK**，包含真实来源/权限/去重/恢复/指标和fresh→同版本重开，不导入仓库生产模块。
+  wheel SHA256与镜像ID、关键源码/lockfile哈希见证据`artifact-manifest.json`。
+- 初次wheel smoke误用了旧版本文件名，按实际构建文件名修正后通过；初次Docker门禁因Colima
+  无法挂载`/var/folders`临时目录失败，改用共享目录的TMPDIR后通过。两者是B执行环境/命令问题，
+  没有隐藏产品失败或放宽断言，首轮/重跑日志均保留。未知响应使用真实受理后的浏览器503注入，
+  不声称制造物理网络分区。未验证生产外部服务、旧失败任务迁移或跨版本升级。
 
-| ID | Required proof |
-|---|---|
-| T49.1-AC1 | 非空库根＋整个库不再保存会被自身 Worker 拒绝的来源表示；空/多层/中文空格根、整个库/子目录、空和非空来源经真实 API→Task→Worker 得到精确受限范围。due 对照不回归；不是只测字符串。 |
-| T49.1-AC2 | 绝对/穿越/越界子范围、缺失/禁用引用、篡改范围或固定上下文均拒绝；不扩大源/改变 Storage或重写旧pin。来源目录无法完整发现/真实超限仍 failed且零前缀执行；健康空 completed/noWork；文件技术失败独立保存，正常结束且无待办的流可completed。 |
-| T49.1-AC3 | 真实列表一次点击→一次POST→一个Task，无预先导航/文件重选/第二初始确认；停用定义有执行权限仍可运行，enabled/due不变，未保存编辑值不执行。正常有媒体用例证明真实规划和Storage效果，不以202冒充完成。 |
-| T49.1-AC4 | 列表提交使用该行同次读取的已发布定义/Active版本，旧revision或sequence拒绝且零新Task；不绑定后取新版。列表仍无digest/fingerprint/raw plans/secrets；原本提供内部证据的调用保留后端校验，列表缺失身份/版本不发命令，直接API的既有可选字段契约不变。Draft-only/只读/不可用状态无可执行漏洞。 |
-| T49.1-AC5 | 列表按上述提交反馈表就近显示简短中文，拿到 Task ID 即结束按钮忙碌并短暂提示，不能等 Task 完成才结束；后续运行状态复用现有 Task/最近结果/执行记录，不增常驻状态列或独立进度。主动“查看任务”直达原 Task Center 详情。风格统一、布局/窄屏/焦点可用且无明显跳动，保留筛选/页/滚动；隐藏行的未决提交仍可查询，读取不准入工作。 |
-| T49.1-AC6 | 连击/延迟响应/等价重复请求/容量竞争无重复Task或孤儿Task，其他行反馈独立；成功后后续新的明确运行仍可用。缺少随机身份、principal或可持久核对上下文时阻止POST并给可执行说明。 |
-| T49.1-AC7 | 权限不足、队列满、过期定义、不可用读取有普通中文原因与安全下一步；未知提示说明“可能已提交”，以“查看提交结果”等可理解动作查询原提交，不叫用户辨认“丢响应/原请求/幂等”等术语或复制内部编号。未知与明确拒绝不混淆，无自动POST重试、隐式权限/快照替换或原始异常/错误码暴露。 |
-| T49.1-AC8 | 丢响应/5xx/畸形响应经关闭/刷新/重连后核对同一principal/definition/request；旧编辑key记录亦接续到列表。只核对不重发，未找到仍未知，不重复Storage效果；身份切换、旧回调、多个未决行和不合法session值不串数据/清除他项。 |
-| T49.1-AC9 | 编辑页运行按钮消失；既有保存、启用/停用、复制、删除与发布核对保持现行行为。本Task不提前改造编辑卡片或创建启用；Run once状态/TaskCenter读入口仍有效。 |
-| T49.1-AC10 | 共享源所有权、固定快照、容量/claim/fence、实际稳定性、完整遍历上限和源历史过滤保持；只有OrganizerExecutor变更Storage。四类原生决定→分析→摘要→明确继续仍在同一Task；成功/不确定兄弟效果不重放，C使用Naming A/Classification A仍为C的回归通过。 |
-| T49.1-AC11 | 原运行在TaskCenter、执行记录、最近运行和成功率中计一次并保持五态流/独立文件结果；提交提示不得覆盖或推断 Task 状态。健康空completed、真实流程失败、文件失败、人工待办与取消不混淆；核对/刷新/同Task继续不新增运行或改原次数/时间/结果。 |
-| T49.1-AC12 | Fresh新任务、同版本重开/重启和原生桌面/390px窄屏完成上述真实入口、失败/未知核对及合法后续查看；无外部生产服务/用户媒体。B按T4完成匹配候选的完整与适用产物门禁并记录实际失败/skip/限度，Task PASS不等于Slice CLOSED。 |
+**测试时间分配偏差**：本轮完整Python单项约6分20秒，门禁虽与代码/契约/视觉审查并行，
+测试占比仍未满足用户要求的低于50%。这是B本轮执行安排的偏差，不能声称达标；本次没有因此
+省略必需T4或扩大Developer测试责任。后续应先为完整门禁预留审查时间预算再启动执行。
 
-## Required Tests
+本地证据：`.git/validation-evidence/cd955d3cff474d124d0119291e0d3ed9a8b13b31/b-task49.1/`。
+其中`gates.jsonl`、`web-gates.jsonl`记录命令/退出码/用时，`native.log`、`default-e2e.log`、
+`reload-native.log`、wheel/container日志及安装消费者源码/截图均保留；`review-notes.md`给出
+验收映射，`artifact-manifest.json`绑定候选。证据仅在本地，不声称远程可取。
 
-测试等级与分工仅按 [workflow §6](docs/development-workflow.md#6-test-levels)。
-下面是实施/验收计划，不是本次激活已运行的产品验证结果。新测试文件应随本Task实现建立；
-命令中的实际变更文件、候选wheel/image/证据路径在交接/验收时绑定精确值。
+### Slice全部结果重评与下一步
 
-### Developer — affected tests
+RO-1正确来源范围、RO-2列表直接运行：**本Task交付并通过**。
+RO-3统一新建/编辑卡片、RO-4创建可选启用：**尚未实施**；当前已有定义仍进入旧生命周期编辑，
+新建仍只创建停用定义。Slice49保持ACTIVE，不能提交Closure Packet或宣告关闭。
+下一步方向为NEXT TASK，继续合同剩余RO-3/RO-4；本轮只完成当前Task复核，不激活下一Task。根Task已恢复无活动实施任务，完整计划和Developer交接见Reviewed Head中的TASK.md。
 
-1. 仓库根：`python3 scripts/check_governance.py`（Developer实施前执行）；
-   `PYTHONPATH=tests:. .venv/bin/python -m unittest -v test_v2_automation_run_once test_automation_task_admission test_v2_automation_operations`。
-   在这些真实应用测试中增加 AC1–4/6/10/11 的根范围、完整性、所见版本、权限/容量/去重与
-   文件/流程独立用例，复用临时Storage/合成Provider；保留原有效覆盖。若实际修改其他
-   共享范围/consumer，再补其直接受影响用例并在报告说明，不把全仓发现当affected。
-2. `web/`：`npm run test -- run src/entities/operations/automation.test.ts src/entities/operations/run-once.test.ts src/shared/api/api-client.test.ts src/features/operations/AutomationListRunOnce.test.tsx src/features/operations/automation-run-once-session.test.ts src/features/operations/AutomationLifecyclePage.test.tsx src/features/operations/AutomationWorkspaceReadModel.test.tsx src/features/operations/AutomationRouter.test.tsx`。
-   新建的列表命令与session测试证明实际payload/版本、重复与未知响应、旧key、身份切换、
-   不可用存储、隐藏行核对和键盘/上下文；不只断言helper内部值或按钮可见。
-3. `web/`：`npm run build`，随后
-   `npm run test:e2e -- --config=playwright.python.automation.config.ts tests/e2e/automation-run-once.python.spec.ts tests/e2e/automation-lifecycle.python.spec.ts tests/e2e/automation-workspace.python.spec.ts --workers=1`；
-   `npm run test:e2e -- tests/e2e/automation.spec.ts`。
-   这些既有文件直接消费编辑运行入口/列表，迁移起点但保留原执行/恢复断言；扩展现有
-   Python harness隔离fixture，覆盖非空库根整体来源、列表真实一击、忙碌、未知响应后实际
-   核对与重启不重放。至少保留并实际检查桌面/390px窄屏列表反馈与主动查看截图。
-   原生视觉检查涵盖忙碌、受理、确定拒绝与未知反馈的实际展示/查询动作；验证短文案、
-   风格一致、排版/换行/焦点/减少动效及无明显跳动，不能只数DOM节点或断言按钮存在。
-   明确验证：已有 Task ID 而 Worker 尚未完成时，提交按钮已结束忙碌；后续状态来自现有
-   Task 回读。“查看任务”直达该 Task 现有详情，没有新增整理步骤或本地运行状态副本。
-4. `web/`：`npm run typecheck`；对实际变更的TS/TSX运行 `npx eslint <changed-web-files>` 和
-   `npx prettier --check <changed-web-files>`。仓库根对实际变更Python文件运行
-   `.venv/bin/ruff check <changed-python-files>` / `.venv/bin/ruff format --check <changed-python-files>`；
-   `git diff --check`。未改Python消费者不机械扩大测试；失败/skip如实报告。
+本轮起点main / Reviewed Head，tracked工作树干净；只改Task审查状态/结论，保留预存全部
+untracked OS文件、日志、参考图、`15`与output，不读取用户数据库/私有配置/生产媒体，不push、
+部署或改写历史。此前FIX REQUIRED详情保留在`f6912dff:TASK.md`，不复写历史结论。
 
-Developer 到此提交候选，不承担全Python/Web/E2E或wheel/container矩阵，不等B全量才交接。
-
-### B — acceptance and full regression
-
-- 先独立检查精确 Task Base..candidate、复现最关键场景：非空库根/整个库从真实列表启动后
-  执行或健康空完成，错误范围/不完整仍拒绝，丢响应不重复、编辑入口移除且启停保留。
-  可达 blocker先返回同Task FIX REQUIRED，不先浪费完整门禁。
-- 对同一候选按 [shared full gates](docs/development-workflow.md#shared-full-regression-commands)
-  完成T4：全Python/全Web单元/默认浏览器、质量与example/dependency、build、权限/范围/
-  fixed pins/fences/源历史/四类恢复/C→A/不重放，以及适用wheel/container安全/重启验证。
-  命令与所有权不重抄到Developer。原生专项沿用上列三个Python浏览器文件（单worker）；
-  补足实际根矩阵、故障/并发和所需回读证据，保留真实Storage trace、Task/result与截图。
-- 产物沿用共享的 `.venv/bin/python -m pip wheel . --no-deps -w dist`、
-  `.venv/bin/python scripts/wheel_smoke_test.py <exact-wheel>`、
-  `.venv/bin/python scripts/docker_release_security_smoke_test.py --image <exact-candidate-image>`。
-  B准备一个保存在 `.git/validation-evidence/<candidate>/b-task49.1/` 的独立installed probe，
-  用临时根和合成Provider构造与AC1–4/10/11相同的API→Worker范围/权限/去重/重开用例，
-  不导入仓库生产代码或写入伪造终态。命令形态：在source外cwd运行
-  `<wheel-venv>/bin/python <evidence>/installed-run-once-probe.py`；对精确镜像运行
-  `docker run --rm --network none --mount type=bind,src=<probe-dir>,dst=/proof,readonly --tmpfs /tmp:rw,mode=1777 --entrypoint python <exact-candidate-image> /proof/installed-run-once-probe.py`。
-  probe绑定实际打包模块身份并验证fresh和同版本重开/重启，不把source或旧dist当产物通过。
-  新probe和完整产物证据由B承担，非Developer额外功能任务；不要求生产Storage/Provider。
-- 记录候选SHA、命令/cwd、数量/skip/失败、证据路径、所见配置/产物身份和验证限度。
-  匹配运行可按workflow复用；不把调查或本轮文档检查当产品验收。Task PASS后仅重新评估
-  Slice结果，不自批Slice、本次激活不创建下一Task。
-
-## Non-goals
-
-不实现共用创建/编辑卡片、创建时可选启用、后端create/enable编排或复制/删除/详情重做；
-不改已接受五态流/文件结算、统计口径、四类恢复、源历史策略、队列/调度/设置或Storage能力。
-不增加初始确认、强制规则预检、授权token手工操作、通用命令框架、批量运行或第二工作模型；
-不恢复退役产品或自动重放历史。不为修复迁移旧失败/任务、重写pins/Result/配置digest，
-不动生产媒体/运行数据库/私有配置。A的Slice/Roadmap边界和既有接受事实不变。
-
-## Planning workspace（原规划记录）
-
-仓库 `/Users/songzhidong/mediaflow`，branch `main`，本轮起始HEAD/Task Base如上，治理预检PASS，
-tracked工作树干净。预存untracked OS/日志、`15`、自动化参考图与output等完整状态保留在
-本轮本地证据的 `workspace-before.txt`，全部保留/不入提交。工作区/Git可写；本轮仅改根
-`TASK.md` 规划草案，Slice/Roadmap/Progress及产品代码不改，不push/部署/改写历史。
-
-## Developer Completion Report
-
-**Status: READY FOR B REVIEW**
-**Implementation Head: `325b3133c6b3302da5f7a8a4f97d5b1bfeef2b32`**
-**Task Base: `129d1c060dea05a91755dbd2ed70632f09655fd4`（未改变）**
-
-Developer 已按本 Task 的授权范围完成实现和受影响验证；未推送、未部署，未改
-Slice/Roadmap/Progress，也未重开旧 Slice。工作树只保留实施前已存在的未跟踪日志、参考图、
-`output/`、`15` 与 OS 文件；未读取用户运行数据库、私有配置或生产媒体。
-
-### 实际改动
-
-- 准入生产者在持久 Task 前规范化已验证的 ResourceLibrary `storagePath` + definition
-  `sourceScope` 拼接；非空库根/整个库现在保存 `Incoming`，不再保存会被 Worker 严格范围语法拒绝
-  的 `Incoming/`。绝对路径、穿越、越界和既有 Storage/pin 校验没有被放宽；due 路径保持原语义。
-- 列表行“运行一次”改成真实命令：同一行读取的 `definitionId`、Active `revisionId` 和
-  `revisionSequence` 组成 POST fence；未提供的 digest/fingerprint 不伪造，原有显式 internal
-  evidence 调用仍由后端核对。缺少 principal、随机请求标识、可持久核对上下文或版本时不发 POST。
-- 提交前把 principal/definition/request 上下文同步写入有界 session；多行互不覆盖。受理后立即
-  结束忙碌并显示“已提交”/“查看任务”直达现有 Task Center 详情，同时刷新现有最近运行/统计；
-  Task 后续状态不复制到列表。确定拒绝清掉该请求并显示中文原因/下一步；未知响应保留原请求，
-  刷新/重连后只按同一 request GET 核对，不自动 POST 重发，“没找到”仍保持未知。
-- 旧编辑页 Run once key 仍可在列表继续精确核对；不合法旧值有界说明且不会变成新命令。
-  身份切换、旧异步响应和其他行上下文不会串用；隐藏在当前筛选/分页外的未决项在列表内仍可核对。
-- 编辑页 Run once 按钮及其独占 mutation/session 已移除；保存、启停、复制、删除和既有运行只读
-  入口保持。列表反馈沿用现有字体/颜色/间距/圆角/按钮，使用文字+图标、键盘焦点、`aria-live`
-  和 reduced-motion；窄屏自然换行且无页面横向溢出。390px 下既有任务表仍可横向滚动到操作列。
-- 扩展真实 Python harness：新增非空库根 `Incoming` 的来源、Storage check、规则和合成 Provider
-  媒体；真实列表点击经 API→Task→Worker 完成，并回读 `scopePath === "Incoming"`。相关旧编辑
-  入口浏览器用例迁到列表，保留执行、恢复、重启、拒绝/未知与统计断言。
-
-### 实际验证结果
-
-- 仓库根：`python3 scripts/check_governance.py` → PASS；`git diff --check` → 通过；
-  `python3 -m compileall -q mediaflow tests scripts` → 通过；
-  `ruff check` / `ruff format --check`（实际变更 Python 文件）→ 通过。
-- 仓库根：`PYTHONPATH=tests:. .venv/bin/python -m unittest -v test_v2_automation_run_once`
-  → **39 tests OK**，含空/非空/多层/中文空格库根、整个库/子目录、due 对照、列表形状 fence 与
-  stale sequence 零 Task。`test_automation_task_admission test_v2_automation_operations`
-  → **28 tests OK**。
-- `web/`：`npm run test -- run`（本次实际变更/直接影响的 8 个 Vitest 文件）→ **115 tests passed**；
-  `npm run typecheck` → PASS；changed-file `eslint` 与 `prettier --check` → PASS；
-  `npm run build` → PASS（仅有既有 chunk-size warning）。
-- `web/` 真实 Python 浏览器：`automation-run-once.python.spec.ts` → **7 passed**；
-  `automation-lifecycle.python.spec.ts` → **13 passed**；
-  `automation-workspace.python.spec.ts` → **9 passed**。默认浏览器
-  `automation.spec.ts` + `automation-presentation.spec.ts` → **15 passed**；
-  `task-flow.python.spec.ts` → **3 passed**。另 `automation-create-dialog.python.spec.ts`
-  在并行启动两套 Playwright 时出现 1 次 test-results trace 文件竞争，串行单独重跑该用例通过；
-  未发现产品失败。
-- 原生视觉：实际检查 1536px/380px 的忙碌、已受理、确定拒绝、未知和核对入口截图；反馈位于对应
-  行操作旁，焦点保留，状态有文字/图标，不等同于文件成功；文档宽度未超视口，页面无横向溢出。
-  截图位于本地 `web/test-results/` 对应 Playwright 输出目录，未提交。
-
-### 剩余风险与限制
-
-- Developer 不承担 B 的完整 Python/Web/E2E、wheel、container、installed probe 和 Slice-final
-  证据；全量门禁由 B 在候选 `325b3133` 上执行。
-- 未知响应场景使用真实 UI + 503 边界注入和真实精确 GET 核对验证，未制造真实网络分区；
-  畸形响应分类由 API/UI 单测覆盖；
-  “没找到”保持未知且不自动重发。
-- “已提交”是短时提交反馈，不常驻为另一份运行状态；链接消失后仍可从现有执行记录/Task Center
-  读取同一持久 Task。
-- 390px 下任务表继续沿用既有横向滚动布局；反馈本身在操作列内换行且不造成页面级横向溢出。
-- 未修改旧失败 Task/历史 pin/Result，未读取或重跑任何生产媒体、配置或数据库。
-
-测试执行用时低于本轮 30% 上限；以上均为 Developer 受影响范围结果，不构成 B PASS 或 Slice 关闭。
-
-## B Review Result
-
-**FIX REQUIRED — 2026-11-05，B 独立审查。**
-
-Reviewed Task Base: `129d1c060dea05a91755dbd2ed70632f09655fd4`
-Reviewed Head: `e82432d86abd73eee72a6c327c2176de486a36d8`
-Implementation checkpoint: `325b3133c6b3302da5f7a8a4f97d5b1bfeef2b32`。
-已逐文件审查完整 Base..Head 的24个文件（含合同激活、文档、生产实现、测试和harness），
-不是只审最新交接提交。发现下面一个本 Task 必需结果阻塞后提前返回，不运行昂贵完整门禁。
-
-### B49.1-01 — 再次运行时，上一轮“已提交”遮住本次拒绝或待核对结果（P1）
-
-用户旅程：进入“自动化 → 任务列表”，点击某行“运行一次”，看到“已提交”；在该提示消失前
-再次明确点击该行“运行一次”。第二次若队列满而被拒绝，仍暂时显示第一次的“已提交”和旧任务
-链接；第二次若后端已受理但回复未到达，仍显示旧链接，当前“暂未收到回复 / 查看提交结果”
-被遮住。旧提示约8秒后才消失，不是永久丢失；在这段时间内，操作者无法从该行正确判断或
-核对刚才这次提交。违反 T49.1-AC5/7/8 的当前提交反馈和精确核对要求。
-
-根因：`AutomationListPage.tsx` 的 `submitRunOnce` 开始新提交时清了 rejected，却没有清除
-该行旧的 `runOnceAdmitted`；`runOnceFeedback` 又先投影 admitted，再投影 rejected/pending。
-新提交结束忙碌后，旧成功提示重新占据该行，直到旧的8秒计时器清理。不是后端重复执行缺陷。
-
-已复现：组件真实路由/按钮/API-client，第一次202、第二次409(queue_full)，期望立即显示
-“未能提交”的断言失败（原6例通过，新增复现1例失败）。真实 Chromium + Python API/SQLite：
-创建停用定义，从列表连续两次明确提交；两次均经真实后端202并产生不同Task，第二次只在
-响应返回浏览器的边界替换为503。页面仍显示第一次“已提交”与旧链接；期望“暂未收到回复”
-的断言失败，截图已人工检查。没有新增产品入口，没有手写Task终态或改用户数据库。
-
-### Developer 修正指导（留在同一个 Task）
-
-1. 在该行开始新的明确提交时，撤下该行上一提交的成功提示/旧查看链接，并清理适用的旧反馈；
-   只处理该行，不影响其他行、未决请求身份或已受理Task。采用当前组件的最小状态修正即可，
-   不新增状态系统、恢复面板或后端工作流。
-2. 本次提交结束后立即按本次结果显示受理、明确拒绝或待核对；未知时立即可用“查看提交结果”，
-   按本次 request 查询并打开本次Task，不显示上一Task为本次结果。保留已有连击拦截和未知不重发。
-   检查原短时提示计时器不使后一次提示提前消失。
-3. 在现有列表测试加入“先受理→提示未消失→再明确提交”的连续旅程，覆盖第二次明确拒绝、
-   第二次未知后精确核对及第二次成功；断言当前文案/链接、本次request、POST次数和其他行隔离。
-   在原生Run once浏览器文件保留至少一个连续提交后未知的真实入口证明；可复用本轮复现。
-4. Developer 跑这两个变更测试文件及实际直接影响检查；不要求跑全量或wheel/container。
-   完成一致checkpoint后重新交 READY FOR B REVIEW。B 对修正候选负责原定完整T4门禁。
-   本轮测试执行用时小于总用时50%，后续同样遵守用户的时间分配要求。
-
-### 本轮实际验证与限度
-
-- 治理预检 PASS；受影响Python三模块 **67 tests OK，15.117秒**（包含真实根范围矩阵和due对照）。
-- `web/ npm run build` PASS，仅chunk-size提示。
-- B连续提交组件复现：**6 passed / 1 failed**；真实Python浏览器复现：**1 failed**，失败如上。
-- 本轮未执行完整Python/Web/E2E、wheel/container和installed probe；按workflow §6的已证明阻塞
-  提前FIX REQUIRED规则保留待验收，不能借Developer报告称为完整T4通过。
-- 证据为本地 `.git/validation-evidence/e82432d86abd73eee72a6c327c2176de486a36d8/b-task49.1/`：
-  `affected-python.log`、`build.log`、`repeat-feedback.log`、`native-repeat.log`、两个复现源码副本和
-  `native-repeat-artifacts/`截图/trace。证据不声称远程可取。临时探针已撤出工作树，未改产品代码。
-
-Slice全部结果重评：RO-1有67例中受限范围/实际Worker成功证据但未完成T4接受；RO-2已接入列表，
-因B49.1-01未满足；RO-3统一创建/编辑卡片、RO-4创建可选启用均尚未实施，保持后续合同范围。
-本Task仍FIX REQUIRED，不规划下一Task，不提交Slice Closure Packet，不更改A的Slice/Roadmap/Progress。
-
-本轮开始于 main / 上述Reviewed Head，tracked工作树干净；预存所有untracked OS文件、日志、
-`15`、参考图与output原样保留。只提交本Task审查结论，不push、部署或改写历史。
-
-## Developer Fix Report — B49.1-01
-
-**Status: READY FOR B REVIEW**
-**Fix Base: `f6912dff544b1a9e9f30807f504849b3fa849df6`（B Review Head）**
-**Implementation Head: `3fa0297afc69af34dd3e95f7589bd64f32c08049`**
-**Task Base: `129d1c060dea05a91755dbd2ed70632f09655fd4`（未改变）**
-
-本轮按用户明确指派以 Developer 身份在同一 Task 内修正 B49.1-01；只改列表提交反馈和对应的
-组件/真实浏览器测试。未推送、部署或改写历史，未改 Slice/Roadmap/Progress、后端、Task 流、
-持久化或生产数据；tracked 工作树在 Fix Base 干净，实施前已存在的所有 untracked OS 文件、
-日志、`15`、参考图与 `output/` 原样保留、不入提交。
-
-### 根因与修正
-
-- 根因保持 B 的诊断：第二次明确提交开始时只清了 `runOnceRejected`，该行上一次的
-  `runOnceAdmitted` 仍留在 `runOnceFeedback` 的前置投影里；在本次受理/拒绝/未知结果出现前，
-  旧成功提示和旧 Task 链接继续占据该行，直到旧的 8 秒窗口结束。
-- 新增最小 `clearRunOnceRowFeedback(definitionId)`：在新的明确提交开始、还未经本地/服务端准入前，
-  只撤下该行的 admitted、rejected 与 unknown note；随后由本次请求自己的 busy、拒绝或保留的
-  pending 状态投影。其他行、当前 pending 请求身份和已受理 Task 不变；`runOnceInFlight` 连击
-  拦截与 pending 准入拦截保持原顺序。
-- 删除原先稍后才清 rejected 的重复块（已被同一行前置清理覆盖），未新增状态机、计时器、
-  恢复面板或后端工作流。
-- 计时器检查：成功提示仍由 admitted map 的单一有界 8 秒 effect 驱动；admitted map 的每次变化
-  都会先执行旧 effect 的 cleanup 再安排新窗口。新提交开始时清除该行旧 admitted 已取消旧计时器，
-  新的受理又会重置窗口，因此旧提示的到期时间不会清掉后一次提示。已在 effect 处注明该依赖。
-
-### 新增覆盖
-
-- `web/src/features/operations/AutomationListRunOnce.test.tsx` 增加连续旅程，真实渲染路由/行按钮/
-  API client：
-  - 第一次真实 202 后提示未消失，第二次明确提交得到 409 `queue_full`：立即显示“未能提交”与
-    本次原因，旧“已提交”/旧链接消失，POST 恰为 2；
-  - 第二次提交得到 503：显示“暂未收到回复”，旧链接消失，session 保存的是第二次
-    `admissionRequestId`；点“查看提交结果”只按该 request GET，并打开第二次实际 Task，
-    POST 仍为 2；
-  - 第二次真实 202：行链接更新为第二次 Task，不残留第一次链接；另一行自己的已受理提示和
-    链接保持不变，POST 总数为 3。
-- `web/tests/e2e/automation-run-once.python.spec.ts` 增加真实入口证明：真实 Python harness 先
-  从列表受理第一次运行，再对同一行明确提交；第二次请求仍真实到达后端并返回 202/产生不同 Task，
-  只在浏览器边界把回复替换为 503。断言旧“已提交”不再描述本次提交、显示“暂未收到回复”，随后
-  “查看提交结果”只读回本次 request 对应的 Task，未再 POST。含桌面与 390px 窄屏截图及
-  页面无横向溢出检查。
-
-### 实际验证结果
-
-- 修正前复现：把 `AutomationListPage.tsx` 临时还原为 Fix Base 版本，运行上述组件测试得到
-  **2 failed / 7 passed**；失败正为“第二次拒绝仍显示旧受理”和“第二次未知仍显示旧链接”。
-  恢复修正后同文件 **9 passed / 9**。这是真实组件/API-client 路径，不是手写终态。
-- `web/` 受影响 8 个 Vitest 文件（本 Task 原列表）→ **118 tests passed，6.86s**。
-- `web/`：`npm run typecheck` → PASS；changed-file `eslint` → PASS；`prettier --check` → PASS；
-  `npm run build` → PASS（仅既有 chunk-size warning）。
-- `web/` 真实 Python 浏览器：`automation-run-once.python.spec.ts`（本次新增用例单独运行
-  **1 passed**）+ `automation-lifecycle.python.spec.ts` + `automation-workspace.python.spec.ts`
-  一次以 `--workers=1` 运行 → **30 passed，46.0s**；默认浏览器 `automation.spec.ts` →
-  **13 passed，5.2s**。
-- 原生视觉实际检查：`.git/validation-evidence/dev-task49.1-fix/native/automation-run-once.python-ae088-ly-and-reconciles-that-Task-chromium/`
-  下 `list-run-once-repeat-unknown.png`、`list-run-once-repeat-unknown-narrow.png`、
-  `list-run-once-repeat-reconciled.png`。确认未知状态只在本次行操作旁显示“暂未收到回复”与
-  “查看提交结果”，旧“已提交”/链接已撤下；核对后显示同一行“已提交”/“查看任务”；390px 下
-  反馈在操作列内自然换行，无页面级横向溢出。证据为本地 ignored 路径，不声称远程可取。
-- 仓库根：`python3 scripts/check_governance.py` → PASS；`git diff --check` → 通过。本轮未改
-  Python 文件，未重跑 Python 单元测试；真实浏览器用例已覆盖 API→SQLite→Worker 边界。
-- 原生用例初稿有两处文本断言误匹配（待核对句也含“已提交”、已受理标题带 `✓` 前缀），已分别
-  改为行 `data-run-once-state` 断言与末尾正则/属性断言；不是产品或放宽断言，修正后通过。
-
-### 剩余风险与限制
-
-- 未知路径使用真实后端受理 + 浏览器边界 503，不是真实网络分区；畸形响应分类仍由既有 API/UI
-  单测覆盖，“没找到”保持未知且不自动重发。
-- “已提交”仍是短暂的提交层反馈，不是第二份运行状态；到期后仍从现有执行记录/Task Center 读取
-  同一持久 Task。8 秒窗口本身未新增自动化时钟测试，已按 effect 依赖与实际连续提交用例检查。
-- Developer 不承担 B 的完整 T4、wheel/container、installed probe 与 Slice-final 证据；这些仍在
-  修正候选 `3fa0297a` 上由 B 执行。未读用户运行数据库/私有配置/生产媒体，未迁移或重跑旧 Task。
-
-本轮测试执行总时长约 2–3 分钟（组件复现/回归、构建、真实 Python 浏览器 30 例及默认浏览器
-13 例），低于本轮总用时的 30%。以上均为 Developer 受影响范围结果，不构成 B PASS 或 Slice 关闭。
-
-## Activation workspace
-
-本轮从 `main` / `9d70d0c211db1403bbcf536d8e619672ffd8b3d1` 开始；A先提交上述ACTIVE
-Contract，本B确认前治理检查PASS、tracked工作树干净，任务实质计划不变。预存untracked
-OS/日志/参考图/output及`15`全部保留、不入提交；本轮状态清单在该起始HEAD本地
-`slice49-task49.1-activation/workspace-before.txt`。本B只将根Task正式化，未改产品代码、
-Slice结果边界或历史接受；未读取用户数据库/私有配置/生产媒体，无push/部署/历史改写。
-
-## Accepted baseline reference
-
-上一独立修正 `BUG-AUTO-CREATE-UX` 保持 B PASS：Base
-`2aa791a6b66d968f473a6875fe2ebf072c5500df`，Reviewed Head
-`ea127459ace765857ae8386c1d0df1610117185b`；完整计划/验收保留在
-`b0bbc8125d06057d042b139469bb170c3284cc79:TASK.md`，不作为本 Task 的验收。
