@@ -25,12 +25,12 @@ Slice47 is PASS / CLOSED after independent A Final Review on 2026-11-03. The Tas
 requirements below are CURRENT, superseding the affected Job-based foundation wording. Prior
 acceptance facts remain in Git and Progress; no old-task/cross-version upgrade or V1 support is added.
 
-## Automation forms and direct Run once — TARGET (Slice49 PLANNED)
+## Automation forms and direct Run once — TARGET (Slice49 ACTIVE)
 
-The user selected planning of [Slice49](../SLICE.md) after investigating the saved-scope failure,
+The user activated [Slice49](../SLICE.md) after planning and investigating the saved-scope failure,
 the list's navigation-only Run once button, the old edit form and the absent create-time enable
-choice. These are authorized planning targets, not delivered CURRENT behavior or implementation
-authorization. `V2-AUTO-013` changes the V2 disabled-only **create** result of `V2-AUTO-002/010`
+choice. These are active scoped implementation targets, not delivered CURRENT behavior. Only the formal
+current Task under the committed ACTIVE Contract authorizes implementation. `V2-AUTO-013` changes the V2 disabled-only **create** result of `V2-AUTO-002/010`
 and the accepted creation-card journey; copy still starts disabled without inherited authority.
 `V2-AUTO-014/015` refine the existing `V2-AUTO-001/002/004/011` experience without new execution
 authority. Frozen V1 and all prior acceptance facts remain unchanged.
@@ -41,11 +41,11 @@ authority. Frozen V1 and all prior acceptance facts remain unchanged.
 | V2-AUTO-014 | Ordinary creation and saved-definition editing share the same Chinese card and form interaction in the list context. | Share field presentation/validation, bounded directory browsing, interval units, daily/weekly time choices, advanced Cron/timezone, backend upcoming times, limits, enabled state, buttons, motion/reduced-motion, keyboard focus and narrow-screen layout. Editing preserves identity and exact saved values, including arbitrary legal Cron and fractional intervals; diagnostics are not ordinary operator chores. Remove edit Run once buttons; the editor retains enable/disable after creation. Ordinary deep links reach the same experience. Cancel/discard/save/error/unknown flows preserve input and valid list context; submitting prevents duplicates, own confirmed Save allows continued editing and peer changes require explicit reread. Existing copy/remove/read-only history and Draft-only truth retain their boundaries. |
 | V2-AUTO-015 | The definition list directly admits one Run once from a single explicit click, with correct confined scope and in-context feedback. | Use the exact observed saved definition/principal/request/pin through existing Run once, not navigation to detail/edit, a picker or another initial confirmation; full backend analysis/planning/checks remain. Keep list context and per-definition busy/accepted/rejected/unknown feedback plus an exact-work readback link. Remove edit Run once; its already-submitted pending requests remain reconcilable in the list. Disabled definitions remain runnable with manual execution permission without enabling/advancing the schedule. Trusted source composition/consumption agree for whole-library/subdirectory and empty/nonempty nested roots. Unsafe scope/pin mismatch, or directory read failure preventing full enumeration/incomplete/overflow scope cannot become healthy empty or first-N execution. Individual file read/processing failures keep independent outcomes under V2-TASK-012–014. Retain stability, bounds, source ownership, authority, request deduplication, principal-scoped reconciliation after reload/reconnect, native four-type recovery and completed/uncertain non-replay. Admission is not file success. |
 
-The [TARGET journey](product-experience.md#target--automation-forms-and-direct-run-once-slice49-planned)
-and [TARGET architecture](architecture.md#target--automation-forms-and-direct-run-once-slice49-planned)
+The [TARGET journey](product-experience.md#target--automation-forms-and-direct-run-once-slice49-active)
+and [TARGET architecture](architecture.md#target--automation-forms-and-direct-run-once-slice49-active)
 define the selected behavior. Five-state flow, independent file outcomes and the due-plus-Run-once
 rate under `V2-TASK-012–014` / `V2-AUTO-012` remain unchanged. The committed Contract owns scope;
-no Task implementation begins while Slice49 is PLANNED.
+implementation follows the formal current Task; activation is not acceptance.
 
 ## Task flow status and Automation success rate — CURRENT (Slice48 PASS / CLOSED)
 

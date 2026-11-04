@@ -1,10 +1,9 @@
 # NO ACTIVE IMPLEMENTATION TASK
 
-[Slice49](SLICE.md) 当前仍为 **PLANNED**。用户要求本助手代 B 规划第一个 Task；下方为
-完整的 **Task49.1 规划草案**，不是已激活的实施任务，也不授权 Developer 开始实现。
-依据 [Task 模板](Task/TEMPLATE.md)，仅规划时草案保留在本通知下；不为通过治理而改变
-Slice/Roadmap 状态。后续启动前须有实施授权和 A checkpoint 的 ACTIVE Contract，B 再确认
-本 Task 的 Base/目标/范围与届时代码一致，转为正式 Task。当前不规划后继 Task。
+[Slice49](SLICE.md) 已获用户明确激活授权，A 正提交 ACTIVE Contract。Task49.1 的实施
+授权已具备；本检查点仍保留既有草案，待 A 的 ACTIVE Contract 成为 committed HEAD 后，
+由用户指定的 B 代行者确认原 Base/目标/范围并转为正式 PLANNED Task。草案本身不能供
+Developer 开工。本轮只做激活，不写实现代码，不规划后继 Task。
 
 上一独立修正 `BUG-AUTO-CREATE-UX` 保持 B PASS：Base
 `2aa791a6b66d968f473a6875fe2ebf072c5500df`，Reviewed Head
@@ -27,8 +26,8 @@ Task Base: 129d1c060dea05a91755dbd2ed70632f09655fd4
 Difficulty: High
 Test Level: T4
 Planner / Reviewer: B
-Planning Authorization: USER REQUESTED B SUBSTITUTE PLANNING ONLY
-Implementation Authorization: NOT GRANTED; DRAFT UNDER NO ACTIVE IMPLEMENTATION TASK
+Planning Authorization: USER REQUESTED B SUBSTITUTE PLANNING; ACTIVATION REQUESTED
+Implementation Authorization: USER AUTHORIZED ACTIVATION; FORMAL TASK CONFIRMATION PENDING
 ```
 
 ## Goal
@@ -41,8 +40,8 @@ Implementation Authorization: NOT GRANTED; DRAFT UNDER NO ACTIVE IMPLEMENTATION 
 追踪：`V2-AUTO-015`、相关 `V2-AUTO-004/011/012`、`V2-TASK-001–014` 的既有 V2 含义；
 Slice49 AC-1–6 为本 Task 的主要验收，AC-13–16 取本次实际影响的权限、执行、回读与验证部分。
 本 Task 不交付 RO-3 的统一编辑卡片或 RO-4 的创建可选启用，不会据此宣布 Slice 完成。
-完整适用旅程/契约已读：[TARGET journey](docs/product-experience.md#target--automation-forms-and-direct-run-once-slice49-planned)、
-[TARGET architecture](docs/architecture.md#target--automation-forms-and-direct-run-once-slice49-planned)、
+完整适用旅程/契约已读：[TARGET journey](docs/product-experience.md#target--automation-forms-and-direct-run-once-slice49-active)、
+[TARGET architecture](docs/architecture.md#target--automation-forms-and-direct-run-once-slice49-active)、
 [CURRENT Automation journey](docs/product-experience.md#current--complete-native-automation-workspace-accepted43-amended46)。
 保留 `UX-001–007/010`、适用 `REQ-TASK-005–010`、`REQ-SCHED-004–007` 和 `REQ-SAFE-001–009`。
 

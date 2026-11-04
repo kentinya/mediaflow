@@ -34,19 +34,20 @@ only in [the development workflow](development-workflow.md).
 | 46 — V2 Organizing Task Center and Readable Actions | Repair V2 action readability; start manual organizing only from ResourceLibrary Files and admit tasks before business-rule readiness, retaining folder media-type filtering, same-source unfinished-work/explicit-extension checks and task-native four-type recovery; keep ordinary-file progress/results/recovery on each library page; restrict Task Center to organizing work with eight views and four business types in Attention/pending counts, removing Failure Recovery, other failures' separate statistics/guidance and creation/global Worker/discovery/manual-operation blocks; fix Automation detail opening/continued Save editing, make checked Enabled authorize scheduled execution without independent grants, and make Run once execute a real task before rule readiness with four-type recovery | PASS / CLOSED | Accepted43–45 baseline and existing shared action, live Files, durable direct-command/transfer/Delete, organizing/recovery and Automation publication/grant/Scheduler foundations |
 | 47 — Unified Task Scheduling and Organizing Execution | Remove independent Job; unify organizing Task/Worker and four-type recovery; add source-dependent failed/partial history handling and CLI retry-failed retirement; move three shared runtime settings into System Settings and delete the unused stale-age parameter | PASS / CLOSED | Accepted43–46 and subsequent accepted corrections at `5144ab1fc2344b06194969cc2c496835729664c0`; explicit user refactor/A scope authorization, amended 2026-11-03 |
 | 48 — Task Flow Status and Automation Success Rate | Separate five-state Task flow from file outcomes, including completed technical failure with absent file results; calculate success rate from due/definition Run once Task completion, excluding manual organizing/ordinary work; preserve waiting, cancellation, truthful file evidence and execution safety | PASS / CLOSED | Accepted47/current baseline `ba84272721961c970f1eb85d616a0d129523ab92`; A Final Review PASS / CLOSED on 2026-11-04 through `a80015e2f7d46e3ad1b8f7b14c453d1030e62104`; A48-01 corrected |
-| 49 — Automation Task Creation, Editing and Direct Run Once | Repair saved source scope and run directly from the list; remove edit Run once, share create/edit cards, offer optional enablement at creation and preserve later enable/disable under existing checked authority | PLANNED | Accepted48 plus accepted create-dialog correction at `02fb77dd713bad4dd51c29b6cfc5556ddd6d5b4e`; user selected Slice49 after investigation |
+| 49 — Automation Task Creation, Editing and Direct Run Once | Repair saved source scope and run directly from the list; remove edit Run once, share create/edit cards, offer optional enablement at creation and preserve later enable/disable under existing checked authority | ACTIVE | Accepted48 plus accepted create-dialog correction at `02fb77dd713bad4dd51c29b6cfc5556ddd6d5b4e`; user selected Slice49 after investigation |
 
 ## Current boundary
 
-Slice49 — **Automation Task Creation, Editing and Direct Run Once** — is **PLANNED**.
-The user authorized planning only and confirmed the next number 49. [SLICE.md](../SLICE.md)
+Slice49 — **Automation Task Creation, Editing and Direct Run Once** — is **ACTIVE**.
+The user explicitly activated the Slice and Task49.1. [SLICE.md](../SLICE.md)
 fixes Base `02fb77dd713bad4dd51c29b6cfc5556ddd6d5b4e`, four Required Outcomes and T4 final risk:
 correct confined sources, direct list Run once, shared create/edit cards and explicit optional enabled
 creation. Creation stays disabled by default, later enable/disable remains available through editing,
 and edit Run once is removed. One form submission expresses optional create-time enablement; safe
 backend command composition is not restricted to a single publication.
-No implementation Task is active. Implementation authorization and an A-checkpointed ACTIVE Contract
-precede B Task planning. This planning checkpoint supplies no implementation or acceptance.
+Task49.1 is the selected first implementation unit; [TASK.md](../TASK.md) owns its exact current
+status and B confirmation after this A-checkpointed ACTIVE Contract. Only that formal current Task
+authorizes Developer work. Activation supplies no product implementation or acceptance.
 
 ## Latest accepted boundary
 
@@ -63,7 +64,7 @@ completed/(completed+failed) plus matching execution-record flow results. Origin
 file effects stay factual. CURRENT documents incorporate `V2-TASK-012–014` / `V2-AUTO-012`.
 All selected deferrals and seven optional external-service/endurance skips remain disclosed.
 
-Slice49 is now selected for planning above. Slice48 remains accepted; its original Base, reviewed
+Slice49 is now active above. Slice48 remains accepted; its original Base, reviewed
 Head, boundaries, deferrals and history are unchanged. No Slice48 work is reopened.
 
 ## Prior accepted boundary

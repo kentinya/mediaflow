@@ -53,9 +53,10 @@ Slice48 is PASS / CLOSED: Task flow uses pending/running/completed/failed/cancel
 of file outcomes. A normally closed flow, including ended file technical failures with unknown
 effects or missing Results, is completed; Task-level flow failure remains failed. Required human
 or machine work stays unfinished. Task completion grants no replay and proves no file success.
-[Slice49](SLICE.md) is PLANNED: correct saved Automation source scope, direct Run once from the
-list, shared create/edit cards and optional explicit enabled creation. This is planning only;
-[TASK.md](TASK.md) retains no active implementation Task and the latest independent bug review.
+[Slice49](SLICE.md) is ACTIVE: correct saved Automation source scope, direct Run once from the
+list, shared create/edit cards and optional explicit enabled creation. The user activated the Slice
+and selected Task49.1 first; [TASK.md](TASK.md) owns its formal status, scoped implementation plan
+and review state. Activation itself changes no product code or acceptance facts.
 [Slice48's preserved Contract](https://github.com/kentinya/mediaflow/blob/02fb77dd713bad4dd51c29b6cfc5556ddd6d5b4e/SLICE.md)
 retains its B Closure Packet pointer and A whole-range acceptance. Current shipped behavior is
 unchanged; the new requirements/journey/architecture sections are TARGET until accepted.

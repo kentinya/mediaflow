@@ -20,11 +20,12 @@ remain in [Progress](progress.md) and their Git Contracts; they are not addition
 Files owns new manual selection and ordinary-file progress; Task Center owns admitted organizing
 progress and four business recovery types; Automation owns saved-definition scheduled/one-run intent.
 
-## TARGET — Automation forms and direct Run once (Slice49 PLANNED)
+## TARGET — Automation forms and direct Run once (Slice49 ACTIVE)
 
-[Slice49](../SLICE.md) selects `V2-AUTO-013–015` for planning. The journeys below are targets;
+[Slice49](../SLICE.md) is ACTIVE and selects `V2-AUTO-013–015`. The journeys below remain targets;
 the CURRENT creation journey later in this document still describes the accepted disabled-only
-create implementation. No new behavior is claimed as shipped, and planning does not start execution.
+create implementation. Only the formal current Task authorizes implementation; activation does not
+claim new behavior as shipped or run any media work.
 
 - **Goal/entry:** from `自动化 → 任务列表`, create or edit an automatic-organization definition
   in one familiar card, explicitly choose whether its schedule is enabled, or click a saved row's

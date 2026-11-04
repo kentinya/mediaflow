@@ -4,25 +4,28 @@
 Slice ID: 49
 Name: Automation Task Creation, Editing and Direct Run Once
 Owner: A — Slice Owner / Architect / Final Reviewer
-Status: PLANNED
+Status: ACTIVE
 Base SHA: 02fb77dd713bad4dd51c29b6cfc5556ddd6d5b4e
 Implementation Head: NOT SET
 Working Branch: main
-Development Authorization: PLANNING ONLY; IMPLEMENTATION NOT AUTHORIZED
+Development Authorization: USER ACTIVATED SLICE49; IMPLEMENTATION WITHIN FORMAL CURRENT TASK ONLY
 Risk: High
 Final Test Level: T4
-Next Action: IMPLEMENTATION AUTHORIZATION, THEN A ACTIVATES CONTRACT BEFORE B PLANS TASKS
+Next Action: DEVELOPER IMPLEMENTS FORMAL TASK49.1; B REVIEWS CANDIDATE
 ```
 
 ## Authority and accepted baseline
 
 用户先要求调查来源范围失败、列表运行一次不可用、编辑体验与新建不一致和新建缺少启用选项，
 随后明确要求规划新 Slice，并确认使用下一编号 **Slice49**。用户进一步明确：删除编辑页
-“运行一次”，创建后仍可启用/停用；创建启用的内部命令顺序不作为用户硬要求。本次 A 只确定范围和目标，
-不启动 B 的正式 Task 规划、Developer 实施或产品验收。生命周期与测试责任仅遵循
+“运行一次”，创建后仍可启用/停用；创建启用的内部命令顺序不作为用户硬要求。用户现已
+明确要求激活 Slice 和 Task。A 先 checkpoint 本 ACTIVE Contract，B 随后确认既有 Task49.1
+草案并转为正式 PLANNED Task；Developer 仅可实施正式当前 Task。本轮只做激活，尚未写
+产品代码，也不构成 B 验收或 A Final Review。生命周期与测试责任仅遵循
 [Development Workflow](docs/development-workflow.md)。
 
-Base 是调查时的既有源码基线；本次及后续纯规划文档提交不另行重设 Base。
+Base 是调查时的既有源码基线；纯文档规划/激活提交不重设 Base。Task49.1 原 Task Base
+`129d1c060dea05a91755dbd2ed70632f09655fd4` 同样保留，不因激活重设。
 [Slice48 Contract / A review](https://github.com/kentinya/mediaflow/blob/02fb77dd713bad4dd51c29b6cfc5556ddd6d5b4e/SLICE.md)
 保留原 Base `ba84272721961c970f1eb85d616a0d129523ab92`、已审实现
 `a80015e2f7d46e3ad1b8f7b14c453d1030e62104` 和 **PASS / CLOSED**。
@@ -36,7 +39,7 @@ Base 是调查时的既有源码基线；本次及后续纯规划文档提交不
 启用定时运行，创建后也可通过编辑启用或停用。错误说明实际失败阶段、持久状态、已知效果和
 可执行的下一步；提交未知时核对原请求，不能误重复创建或整理。
 
-本 Slice 选择 [V2 Requirements](docs/v2-requirements.md#automation-forms-and-direct-run-once--target-slice49-planned)
+本 Slice 选择 [V2 Requirements](docs/v2-requirements.md#automation-forms-and-direct-run-once--target-slice49-active)
 的 TARGET `V2-AUTO-013–015`。其中创建可选启用明确调整 `V2-AUTO-002/010` 与
 [CURRENT 创建旅程](docs/product-experience.md#current--complete-native-automation-workspace-accepted43-amended46)
 的“新建始终关闭、另行启用”结果；复制仍默认关闭且不继承授权。
@@ -45,8 +48,8 @@ Base 是调查时的既有源码基线；本次及后续纯规划文档提交不
 `REQ-SAFE-001–009` 和 `V2-TASK-001–014` / `V2-AUTO-012` 的现行 V2 语义。
 新目标尚未交付；CURRENT 描述仍记录已接受产品，冻结 V1 含义不变。
 
-完整目标旅程见 [Product Experience TARGET](docs/product-experience.md#target--automation-forms-and-direct-run-once-slice49-planned)，
-技术边界见 [Architecture TARGET](docs/architecture.md#target--automation-forms-and-direct-run-once-slice49-planned)。
+完整目标旅程见 [Product Experience TARGET](docs/product-experience.md#target--automation-forms-and-direct-run-once-slice49-active)，
+技术边界见 [Architecture TARGET](docs/architecture.md#target--automation-forms-and-direct-run-once-slice49-active)。
 
 ## Investigated gaps
 
@@ -193,10 +196,11 @@ Classification A 后仍为 C，必须有自动化覆盖。
 
 ## Implementation planning and validation allocation
 
-目前无正式 Task。实现获得授权且 A checkpoint ACTIVE Contract 后，B 依据真实代码规划
-最大的合理完整行为单位；可围绕“正确来源与列表直接运行”“共享创建/编辑和明确启用”
-组织，具体单位/顺序/Difficulty 与命令由 B 定，不按字段、层或验收条目拆 Task。
-该建议不是已授权的 B 计划，也不固定 Task 数量。
+Task49.1“来源范围正确的列表一键运行”是首个选定实施单位，先完成 RO-1 / RO-2。
+其当前状态、原 Base、具体验收及 Developer/B 计划以 [TASK.md](TASK.md) 为准；既有草案
+须由 B 对本已提交 ACTIVE Contract 明确确认后转正式任务。RO-3 / RO-4 保持本 Slice 的
+必需结果，但不扩入 Task49.1。B 后续按完整行为规划，不按字段、层或验收条目拆 Task，
+不固定数量；本次激活不规划或实施下一 Task。
 
 最终按 **T4**：范围消费和真实执行入口、Active 发布/权限以及未知响应/并发都受影响。
 Developer 跑新增/修改/直接受影响测试与相关静态检查；B 按
@@ -213,11 +217,11 @@ container 的 fresh与同版本重启、启用/准入/范围/权限消费证明�
 
 ## Final validation, Closure Packet and A Final Review
 
-**尚未实施或接受。** Implementation Head、B Task/最终验收、Closure Packet 和 A Final
-Review 均未产生。本轮仅做规划文档/链接/治理检查；调查探针与既有测试通过不等于本 Slice
-已修复或 PASS。实施前的已知缺陷仍存在；不得提前把 TARGET 写成 CURRENT。
+**已激活，尚未实施或接受。** Implementation Head、B 实现候选/最终验收、Closure Packet
+和 A Final Review 均未产生；正式 Task 状态以根 Task 为准。本轮只检查授权/文档/链接/治理，
+调查探针与文档检查不等于缺陷已修复或本 Slice PASS。不得提前把 TARGET 写成 CURRENT。
 
-## Planning workspace
+## Planning workspace（原规划记录）
 
 仓库 `/Users/songzhidong/mediaflow`，分支 `main`，起始 HEAD 与 Base 如上。
 治理预检 PASS，tracked 工作树干净，工作区和 Git 可写。保留全部预存 untracked OS 文件、
@@ -226,3 +230,13 @@ Review 均未产生。本轮仅做规划文档/链接/治理检查；调查探�
 本次只 checkpoint 本 Contract、必要 TARGET 要求/旅程/架构及 Roadmap/Progress/Task 指针，
 并修正 README / Task Center 文档中指向旧 Slice48 的链接。
 不读取用户运行数据库/私有配置/生产媒体，不改产品代码、不 push/部署/改写历史。
+
+## Activation workspace
+
+仓库 `/Users/songzhidong/mediaflow`，branch `main`，激活起始 HEAD
+`9d70d0c211db1403bbcf536d8e619672ffd8b3d1`；原 Slice / Task Base 不变。治理预检 PASS，
+tracked 工作树干净，工作区/Git可写，预存 untracked 文件完整保留、不入提交；起始清单在
+该起始 HEAD 的本地 `slice49-task49.1-activation/workspace-before.txt`。原 Task Base 到激活
+起点的生产代码/测试/harness diff 为空。此次按用户明确指令先由 A 提交 ACTIVE Contract，
+再由用户指定的 B 代行者确认并正式激活 Task49.1；没有 Developer 实施、B 验收或 A 终审。
+只改变治理状态与事实指针，不读用户数据库/私有配置/生产媒体，不 push/部署/改写历史。

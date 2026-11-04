@@ -8,11 +8,11 @@ workflow authority. Closure rules live only in
 
 ## Current development pointer
 
-Slice49 — **Automation Task Creation, Editing and Direct Run Once** — is **PLANNED**, under
-[the new Contract](../SLICE.md), Base `02fb77dd713bad4dd51c29b6cfc5556ddd6d5b4e`. User authorization
-is planning only; no implementation Task is active. Implementation authorization and A activation
-precede B Task planning. Slice48 remains PASS / CLOSED, as recorded below; Slice49 has no closure
-entry or accepted implementation.
+Slice49 — **Automation Task Creation, Editing and Direct Run Once** — is **ACTIVE**, under
+[the Contract](../SLICE.md), unchanged Base `02fb77dd713bad4dd51c29b6cfc5556ddd6d5b4e`. The user
+explicitly activated Slice49 and its selected first unit Task49.1; [TASK.md](../TASK.md) owns the exact
+Task lifecycle/confirmation and scope. Only the formal current Task authorizes implementation.
+Slice48 remains PASS / CLOSED below; Slice49 has no closure entry or accepted implementation.
 
 ## Latest accepted closure
 

@@ -10,10 +10,11 @@ Slice47 is PASS / CLOSED after independent A Final Review on 2026-11-03. Its Tas
 scheduling/settings/history contracts below supersede the affected earlier foundations.
 Detailed former delivery notes remain at `865ebdce47b0b323064fd8e05fbfaa54546e6269:docs/architecture.md`.
 
-## TARGET — Automation forms and direct Run once (Slice49 PLANNED)
+## TARGET — Automation forms and direct Run once (Slice49 ACTIVE)
 
-[Slice49](../SLICE.md) plans `V2-AUTO-013–015`. This is the selected target, not a claim of CURRENT
-implementation or permission to begin a Task. It changes the accepted disabled-only focused create
+[Slice49](../SLICE.md) is ACTIVE with targets `V2-AUTO-013–015`. Only the formal current Task
+authorizes implementation within the committed Contract. These remain TARGET rather than a claim of
+delivered CURRENT behavior. The selected target changes the accepted disabled-only focused create
 result; the CURRENT Automation contracts below remain factual until implementation and acceptance.
 
 **Shared form and entries:** reuse the creation card's presentation, field model, directory-browser
