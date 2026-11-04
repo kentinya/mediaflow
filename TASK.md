@@ -12,7 +12,7 @@ Authority：用户已明确要求改善新建表单的人类可读性、视觉�
 Task ID: BUG-AUTO-CREATE-UX
 Task Type: STANDALONE MINOR BUG
 Parent Slice: NONE
-Status: PLANNED
+Status: READY FOR B REVIEW
 Task Base: 2aa791a6b66d968f473a6875fe2ebf072c5500df
 Difficulty: Medium
 Test Level: T3
@@ -224,8 +224,67 @@ npm run test:e2e -- tests/e2e/automation.spec.ts tests/e2e/automation-presentati
 
 ### Developer Completion Report
 
-已授权、尚未开始实现。Developer 按 workflow 记录实际 checkpoint、
-READY FOR B REVIEW、改动与受影响测试结果、剩余风险；全量验收仍由 B 负责。
+**Status: READY FOR B REVIEW**
+**Implementation Head: `128ab24bbbf390a1fe05ee92666194bfc6670548`**
+**Task Base: `2aa791a6b66d968f473a6875fe2ebf072c5500df`（未改变）**
+
+Developer 已按本 Task 的授权范围完成实现与受影响验证；未推送、未部署，未修改
+SLICE/Roadmap/Progress，未重开任何已接受 Slice。工作树仅保留实施前已存在的未跟踪日志、
+图片、输出与系统文件。
+
+#### 实际改动
+
+- 新建旅程收敛到列表上的同一中文弹层：`/operations/automation/lifecycle` 与旧
+  `/operations/automation/new` 都渲染列表背景和同一个创建卡片；删除不再有消费者的
+  `AutomationNewPage.tsx`，并移除 `AutomationLifecyclePage.tsx` 中无 ID 的创建分支。
+  列表筛选、分页和打开前滚动位置通过路由搜索与有界模块内存保留；创建成功后不跳编辑页。
+- 表单按「基本信息与来源 / 运行时间 / 处理限制」组织；名称全宽、桌面并列、窄屏单列。
+  内部 ID 使用 Web Crypto 生成并只在诊断信息展示；随机源不可用时明确阻止创建，不回退到
+  弱随机或时间戳。无启用选择器，提交始终为 `enabled=false`。
+- 来源使用后端 ResourceLibrary 选项；默认整个资源库，可切换指定子目录并复用现有
+  ResourceLibrary-scoped 只读 Files API 做单层、可遍历、可分页目录选择。切换资源库会清空
+  原子目录并显示范围变化；目录读取失败保留未知范围并给出中文恢复动作。
+- 间隔支持秒/分钟/小时与小数精确换算；每日/每周编译为现有 Cron；高级 Cron 与 IANA 时区
+  显式可见，时区预填本机 IANA 或明确回退 UTC。上限按后端 authority bounds 校验并解释
+  “缩小范围”而不是自动分批/只执行前 N 个。
+- 预览在候选满足条件后自动防抖调用既有零变更 schedule-preview；候选变化立即失效旧结果，
+  代际/候选键校验丢弃旧响应、关闭后响应和前一资源库响应。失败不新增保存门禁。
+- 创建继续使用 `createAutomationDefinitionFocused` 与观察到的 Active fence；409 保留输入并
+  提供显式重新核对；网络丢失/5xx/畸形响应保留 principal-scoped 命令身份，只通过
+  `reconcileAutomationPublicationFocused` 核对，不重发、不换 ID。会话上下文抽取到
+  `automation-publication-session.ts`，与既有编辑/启停上下文隔离。
+- 成功或精确核对成功后刷新列表/统计、短暂标出当前页可见的新行、提示“创建成功，尚未启用”，
+  不自动启用或运行；未保存关闭统一提供「继续填写 / 放弃修改」；路由离开由 blocker 统一
+  拦截；提交中防重复与防误关。弹层具备 dialog 语义、焦点约束/返回、背景 inert、滚动锁、
+  约 220ms 入场/160ms 退出动画和 `prefers-reduced-motion` 降级。
+
+#### 实际验证结果（Developer 受影响范围）
+
+- `web/`: `npm run test -- run AutomationCreateDialog.test.tsx automation-create-form.test.ts
+  AutomationLifecyclePage.test.tsx AutomationRouter.test.tsx
+  AutomationWorkspaceReadModel.test.tsx automation-lifecycle.test.ts` → **82 passed**。
+- `web/`: `npm run typecheck`、`npm run lint`、`npm run format:check`、`npm run build` → 全部通过。
+- 根目录：`test_automation_definition_publication.py` → **48 passed**；
+  `test_automation_execution_intent.py` → **14 passed**；`test_v2_automation_operations.py` →
+  **19 passed**。
+- 真实 Python/SQLite 浏览器（`playwright.python.automation.config.ts`）：
+  `automation-create-dialog`、`automation-lifecycle`、`automation-workspace`、
+  `automation-run-once` 串行 → **32 passed**。新 spec 覆盖真实创建持久化、打开/取消零写入、
+  目录 confinement 与读取失败、丢响应后 reload 核对不重发、窄屏/减少动态效果/键盘焦点。
+- fake Python 之外入口：`automation.spec.ts` + `automation-presentation.spec.ts` → **15 passed**；
+  `task-flow.python.spec.ts` → **3 passed**；`action-readability.python.spec.ts` → **7 passed**。
+- `python3 scripts/check_governance.py` → PASS；`git diff --check` → 通过。
+
+#### 剩余风险与验证限度
+
+- Developer 未执行完整仓库回归、打包/容器或真实外部服务；这些仍由 B 按 T3 验收决定。
+- 未由 Developer 人工逐张审阅桌面/窄屏截图或录屏；新 Python spec 已检查真实窄屏宽度、
+  底栏可达、无横向溢出、减少动态效果和键盘焦点，视觉证据仍请 B 独立核对。
+- 列表滚动位置恢复与“创建成功后不展示时提示”已有实现，但自动化主要断言 URL/行/提示；
+  B 可在真实浏览器补充滚动与分页边界检查。
+- fake-server 只用于旧入口收敛与既有 fake 旅程；真实创建/核对持久化由 Python harness 证明。
+  目录权限/提供方失败由既有 Files 契约覆盖，本 Task 的 Python spec 用可控 503 证明失败不会
+  把未知范围改成根目录。
 
 ### B Review Result
 
