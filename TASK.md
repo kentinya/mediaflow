@@ -78,4 +78,3 @@ RO-3统一新建/编辑卡片、RO-4创建可选启用：**尚未实施**；当�
 本轮起点main / Reviewed Head，tracked工作树干净；只改Task审查状态/结论，保留预存全部
 untracked OS文件、日志、参考图、`15`与output，不读取用户数据库/私有配置/生产媒体，不push、
 部署或改写历史。此前FIX REQUIRED详情保留在`f6912dff:TASK.md`，不复写历史结论。
-
