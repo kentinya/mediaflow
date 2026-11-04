@@ -5794,19 +5794,22 @@ function automationMetricsDocument(inventoryCounts) {
     comparisonUnavailableReason: "no_comparable_previous_period",
     monthToDateTerminal: 0,
     monthToDateActive: 0,
+    monthToDateUnavailable: 0,
     monthToDateNoWork: 0,
     monthToDatePartial: 0,
     monthToDateFailed: 0,
     monthToDateCancelled: 0,
     monthToDateUncertain: 0,
-    denominatorStatement: "no terminal admitted run in the current local month",
+    denominatorStatement:
+      "no completed or failed Task flow result in the current local month",
     successRate: null,
     completedCount: 0,
+    evaluatedCount: 0,
     noWorkStatement:
-      "skipped files are not organized files, a completed queue or " +
-      "preparation row is not organizing success, a successful no-work " +
-      "completion is labelled as such, and a reached item bound does not " +
-      "prove scope exhaustion",
+      "no work means the completed Task had no admitted source or its " +
+      "whole source population was excluded by recorded history; zero " +
+      "successful files, all-failed/all-skipped work, unknown effects and " +
+      "absent file results never prove no work",
     inventory: inventoryCounts,
     nextAction: null,
     windows: {
