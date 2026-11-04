@@ -4686,6 +4686,69 @@ const AUTOMATION_JOB_ID = "automation-job-e2e-001";
 const AUTOMATION_TASK_ID = "automation-task-e2e-001";
 const AUTOMATION_GRANT_ID = "automation-grant-e2e-001";
 
+/**
+ * The typed create-form authority the real Python API serves under
+ * /api/v1/operations/automation/definitions. The fake mirrors the bounded
+ * operator document (limits, enabled libraries and the exact Active fence) so
+ * the built create dialog can issue only the same reads and the same checked
+ * create command the real backend accepts.
+ */
+function automationFocusedFormAuthority() {
+  return {
+    active: {
+      revisionId: AUTOMATION_ACTIVE_REVISION,
+      version: 3,
+      revisionSequence: 2,
+      status: "active",
+      digest: "automation-active-digest-e2e-001",
+    },
+    fields: [
+      "id",
+      "name",
+      "enabled",
+      "resourceLibraryId",
+      "mode",
+      "itemLimit",
+      "intervalSeconds",
+      "cron",
+      "timezone",
+    ],
+    defaults: {},
+    resourceLibraries: [
+      {
+        id: "source",
+        name: "source",
+        enabled: true,
+        storageId: "source-storage",
+        storagePath: "Media",
+      },
+    ],
+    enums: {
+      modes: ["automatic-organization"],
+      scheduleTypes: ["interval", "cron"],
+    },
+    limits: {
+      id: 64,
+      name: 120,
+      sourceScope: 1024,
+      timezone: 64,
+      itemLimit: { minimum: 1, maximum: 10000 },
+      intervalSeconds: {
+        minimum: 0,
+        exclusiveMinimum: true,
+        maximum: 31536000,
+      },
+    },
+    actions: {
+      create: true,
+      edit: true,
+      copy: true,
+      toggle: true,
+      remove: true,
+    },
+  };
+}
+
 const AUTOMATION_STATES = new Map();
 
 function automationState(session) {
@@ -8829,7 +8892,10 @@ const server = createServer(async (req, res) => {
     // The focused engine-settings command is served only on its own
     // /operations/automation path, exactly as the real Python API publishes it;
     // there is no /api/v1/automation/settings alias to fall back to.
-    url.pathname !== "/api/v1/operations/automation/settings"
+    url.pathname !== "/api/v1/operations/automation/settings" &&
+    // The focused create-form authority is published only under its real
+    // /operations/automation/definitions path; it has no legacy alias.
+    url.pathname !== "/api/v1/operations/automation/definitions"
   ) {
     url.pathname = url.pathname.replace("/api/v1/operations/", "/api/v1/");
   }
@@ -15322,6 +15388,23 @@ const server = createServer(async (req, res) => {
       previous_cursor: null,
       next_cursor: null,
     });
+    return;
+  }
+  if (
+    url.pathname === "/api/v1/operations/automation/definitions" &&
+    req.method === "GET"
+  ) {
+    if (!operationsGuard(res)) {
+      return;
+    }
+    recordManualRequestForSession({
+      method: "GET",
+      objectId: null,
+      objectType: "automation_form_authority",
+      path: "/api/v1/operations/automation/definitions",
+      body: null,
+    });
+    sendJson(res, 200, automationFocusedFormAuthority());
     return;
   }
   if (

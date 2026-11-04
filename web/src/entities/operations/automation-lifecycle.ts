@@ -150,6 +150,10 @@ export interface AutomationDefinitionFormAuthorityModel {
   readonly resourceLibraries: readonly AutomationResourceLibraryOption[];
   readonly modes: readonly AutomationRunMode[];
   readonly scheduleTypes: readonly AutomationScheduleType[];
+  /** The backend-advertised command availability for this principal. */
+  readonly actions: {
+    readonly create: boolean;
+  };
   readonly limits: {
     readonly id: number;
     readonly name: number;
@@ -239,6 +243,10 @@ export function normalizeAutomationFormAuthority(
     source["executionEffects"] === undefined
       ? null
       : readRecord(source["executionEffects"], "executionEffects");
+  const actions =
+    source["actions"] === undefined || source["actions"] === null
+      ? null
+      : readRecord(source["actions"], "actions");
   const operations = effects === null ? [] : effects["operations"];
   if (
     !Array.isArray(operations) ||
@@ -276,6 +284,10 @@ export function normalizeAutomationFormAuthority(
     ),
     modes,
     scheduleTypes,
+    actions: {
+      // Fail closed: a missing or malformed action never becomes permission.
+      create: actions !== null && actions["create"] === true,
+    },
     limits: {
       id: count(limits, "id"),
       name: count(limits, "name"),

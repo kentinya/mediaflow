@@ -33,7 +33,6 @@ import {
   reconcileAutomationRunOnce,
   reconcileAutomationPublicationFocused,
   copyAutomationDefinitionFocused,
-  createAutomationDefinitionFocused,
   fetchAutomationCopyCandidate,
   fetchAutomationCopyIntent,
   fetchAutomationEditProjection,
@@ -45,10 +44,7 @@ import {
   setAutomationDefinitionEnabledFocused,
 } from "../../shared/api/api-client";
 import { automationListQueryKey } from "./automation-query";
-import {
-  AUTOMATION_AUTOMATIC_ORGANIZATION_MODE,
-  type AutomationDocumentRunMode,
-} from "../../entities/operations/automation";
+import { AUTOMATION_AUTOMATIC_ORGANIZATION_MODE } from "../../entities/operations/automation";
 import type {
   AutomationPublicationModel,
   AutomationEditProjectionModel,
@@ -58,34 +54,14 @@ import { RefreshControl } from "../../shared/ui/RefreshControl";
 import { StatusBanner } from "../../shared/ui/StatusBanner";
 import { Button } from "../../shared/ui/Button";
 import { useAutomationListReturn } from "../../shared/navigation/automation-list-return";
+import {
+  readPendingAutomationPublication,
+  writePendingAutomationPublication,
+  type AutomationPublicationFormState,
+  type PendingAutomationPublication,
+} from "./automation-publication-session";
 
-interface FormState {
-  readonly id: string;
-  readonly name: string;
-  readonly enabled: boolean;
-  readonly resourceLibraryId: string;
-  readonly mode: AutomationDocumentRunMode;
-  readonly sourceScope: string;
-  readonly itemLimit: string;
-  readonly scheduleType: "interval" | "cron";
-  readonly intervalSeconds: string;
-  readonly cron: string;
-  readonly timezone: string;
-}
-
-const NEW_FORM: FormState = {
-  id: "",
-  name: "",
-  enabled: false,
-  resourceLibraryId: "",
-  mode: AUTOMATION_AUTOMATIC_ORGANIZATION_MODE,
-  sourceScope: "",
-  itemLimit: "100",
-  scheduleType: "interval",
-  intervalSeconds: "3600",
-  cron: "",
-  timezone: "UTC",
-};
+type FormState = AutomationPublicationFormState;
 
 /**
  * The route context a form instance belongs to. Form state never outlives its
@@ -160,11 +136,11 @@ function buildCandidate(form: FormState): Record<string, unknown> {
 /** A supported interval value: any finite positive decimal number. */
 const INTERVAL_PATTERN = /^\d+(\.\d+)?$/;
 
-function formIsValid(form: FormState, editing: boolean): boolean {
+function formIsValid(form: FormState): boolean {
   const itemLimit = Number(form.itemLimit);
   const intervalValue = Number(form.intervalSeconds);
   return (
-    (editing || form.id.trim().length > 0) &&
+    form.id.trim().length > 0 &&
     form.name.trim().length > 0 &&
     form.resourceLibraryId.length > 0 &&
     /^\d+$/.test(form.itemLimit) &&
@@ -351,66 +327,12 @@ function writePendingRunOnce(
   }
 }
 
-interface PendingPublication {
-  readonly definitionId: string;
-  readonly action: "create" | "edit" | "enable" | "disable";
-  readonly form: FormState;
-  readonly authority: CandidateAuthority;
-}
-const PUBLICATION_SESSION_PREFIX =
-  "mediaflow.operations.automation-publication:";
-function publicationSessionKey(principalId: string) {
-  return PUBLICATION_SESSION_PREFIX + principalIdStorageSegment(principalId);
-}
-function readPendingPublication(
-  principalId: string | null,
-): PendingPublication | null {
-  if (principalId === null) return null;
-  try {
-    const raw = sessionStorage.getItem(publicationSessionKey(principalId));
-    if (!raw || raw.length > 16384) return null;
-    const value = JSON.parse(raw) as PendingPublication;
-    if (
-      !value ||
-      !["create", "edit", "enable", "disable"].includes(value.action) ||
-      typeof value.definitionId !== "string" ||
-      !value.authority ||
-      typeof value.authority.revisionId !== "string" ||
-      typeof value.authority.digest !== "string" ||
-      typeof value.authority.version !== "number" ||
-      !value.form ||
-      typeof value.form.enabled !== "boolean" ||
-      [
-        "id",
-        "name",
-        "resourceLibraryId",
-        "mode",
-        "sourceScope",
-        "itemLimit",
-        "scheduleType",
-        "intervalSeconds",
-        "cron",
-        "timezone",
-      ].some(
-        (key) =>
-          typeof (value.form as unknown as Record<string, unknown>)[key] !==
-          "string",
-      )
-    )
-      return null;
-    return value;
-  } catch {
-    return null;
-  }
-}
-
 registerPrincipalSessionDataCleaner(() => {
   if (typeof window === "undefined") return;
   const storage = window.sessionStorage;
   const keys: string[] = [];
   for (let index = 0; index < storage.length; index += 1) {
     const key = storage.key(index);
-    if (key?.startsWith(PUBLICATION_SESSION_PREFIX)) keys.push(key);
     if (key?.startsWith(COPY_INTENT_SESSION_PREFIX)) keys.push(key);
     if (key?.startsWith(RUN_ONCE_INTENT_SESSION_PREFIX)) keys.push(key);
   }
@@ -434,27 +356,17 @@ export function AutomationLifecyclePage() {
     : null;
   const [publicationOverride, setPublicationOverride] = useState<{
     owner: string | null;
-    value: PendingPublication | null;
+    value: PendingAutomationPublication | null;
   } | null>(null);
   const pendingPublication =
     publicationOverride?.owner === principalId
       ? publicationOverride.value
-      : readPendingPublication(principalId);
-  const setPendingPublication = (value: PendingPublication | null) => {
+      : readPendingAutomationPublication(principalId, "definition");
+  const setPendingPublication = (
+    value: PendingAutomationPublication | null,
+  ) => {
     setPublicationOverride({ owner: principalId, value });
-    if (principalId !== null) {
-      try {
-        if (value === null)
-          sessionStorage.removeItem(publicationSessionKey(principalId));
-        else
-          sessionStorage.setItem(
-            publicationSessionKey(principalId),
-            JSON.stringify(value),
-          );
-      } catch {
-        /* The live pending command remains blocked even without storage. */
-      }
-    }
+    writePendingAutomationPublication(principalId, "definition", value);
   };
   const navigate = useNavigate();
   const queryClient = useQueryClient();
@@ -557,9 +469,7 @@ export function AutomationLifecyclePage() {
             cron: loadedForRoute.cron ?? "",
             timezone: loadedForRoute.timezone ?? "UTC",
           }
-        : editing
-          ? null
-          : NEW_FORM;
+        : null;
 
   const activeIdentity = authorityModel?.active ?? null;
   const latestAuthority: CandidateAuthority | null =
@@ -672,32 +582,23 @@ export function AutomationLifecyclePage() {
       readonly authority: CandidateAuthority;
       readonly targetId: string;
     }) =>
-      editing
-        ? saveAutomationDefinitionFocused(token, {
-            // The route's definition identity is the command target. A
-            // retained form can never retarget a Save at another definition,
-            // even after Copy navigation changed the route.
-            definitionId: input.targetId,
-            object: buildCandidate({ ...input.form, id: input.targetId }),
-            authority: {
-              expectedRevisionId: input.authority.revisionId,
-              expectedVersion: input.authority.version,
-              expectedDigest: input.authority.digest,
-            },
-          })
-        : createAutomationDefinitionFocused(token, {
-            object: buildCandidate(input.form),
-            authority: {
-              expectedRevisionId: input.authority.revisionId,
-              expectedVersion: input.authority.version,
-              expectedDigest: input.authority.digest,
-            },
-          }),
+      saveAutomationDefinitionFocused(token, {
+        // The route's definition identity is the command target. A retained
+        // form can never retarget a Save at another definition, even after
+        // Copy navigation changed the route.
+        definitionId: input.targetId,
+        object: buildCandidate({ ...input.form, id: input.targetId }),
+        authority: {
+          expectedRevisionId: input.authority.revisionId,
+          expectedVersion: input.authority.version,
+          expectedDigest: input.authority.digest,
+        },
+      }),
     retry: false,
     onMutate: (input) => {
       setPendingPublication({
-        definitionId: input.targetId || input.form.id.trim(),
-        action: editing ? "edit" : "create",
+        definitionId: input.targetId,
+        action: "edit",
         form: input.form,
         authority: input.authority,
       });
@@ -711,7 +612,7 @@ export function AutomationLifecyclePage() {
           result.model,
           input.form,
           input.authority,
-          input.targetId || "__new__",
+          input.targetId,
         );
         setNotice(
           result.model.action === "remove"
@@ -805,7 +706,7 @@ export function AutomationLifecyclePage() {
   });
 
   const reconcilePublication = useMutation({
-    mutationFn: (pending: PendingPublication) =>
+    mutationFn: (pending: PendingAutomationPublication) =>
       reconcileAutomationPublicationFocused(token, pending.definitionId, {
         action: pending.action,
         object: buildCandidate(pending.form),
@@ -824,21 +725,12 @@ export function AutomationLifecyclePage() {
           result.model.publication,
           pending.form,
           pending.authority,
-          pending.action === "create" && !editing
-            ? "__new__"
-            : pending.definitionId,
+          pending.definitionId,
           pending.action === "enable" || pending.action === "disable",
         );
         setPendingPublication(null);
         setError(null);
         setNotice("已从持久审计核对本次发布；没有重发保存或启停命令。");
-        if (pending.action === "create" && !editing) {
-          void navigate({
-            to: "/operations/automation/lifecycle/$definitionId",
-            params: { definitionId: pending.definitionId },
-            search: listReturn,
-          });
-        }
         invalidate();
       } else
         setError(
@@ -1211,7 +1103,7 @@ export function AutomationLifecyclePage() {
             </StatusBanner>
           );
         }
-        const valid = formIsValid(currentForm, editing);
+        const valid = formIsValid(currentForm);
         const update = (patch: Partial<FormState>) =>
           setFormEntry({
             key: formContextKey,
@@ -1347,11 +1239,7 @@ export function AutomationLifecyclePage() {
             )}
             <header className="mf-dashboard-head">
               <div>
-                <h2>
-                  {editing
-                    ? "Edit Automation definition"
-                    : "Create Automation definition"}
-                </h2>
+                <h2>Edit Automation definition</h2>
                 <p className="mf-dashboard-meta">
                   One checked 保存 composes the focused successor from the exact
                   Active configuration, validates the whole document and
@@ -1396,19 +1284,6 @@ export function AutomationLifecyclePage() {
             )}
             <section className="mf-count-section">
               <h3>Definition</h3>
-              {!editing && (
-                <>
-                  <p className="mf-label">
-                    <label htmlFor="lifecycle-id">Definition ID</label>
-                  </p>
-                  <input
-                    id="lifecycle-id"
-                    value={currentForm.id}
-                    onChange={(event) => update({ id: event.target.value })}
-                    maxLength={64}
-                  />
-                </>
-              )}
               <p className="mf-label">
                 <label htmlFor="lifecycle-name">Name</label>
               </p>
@@ -1486,12 +1361,6 @@ export function AutomationLifecyclePage() {
                 <option value="no">disabled</option>
                 <option value="yes">enabled</option>
               </select>
-              {!editing && (
-                <p className="mf-dashboard-meta">
-                  A new definition is published disabled. Enable it as a
-                  separate explicit action after it exists.
-                </p>
-              )}
             </section>
             <section className="mf-count-section">
               <h3>Schedule</h3>

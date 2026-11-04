@@ -222,6 +222,7 @@ export function AutomationDefinitionRow({
   onEdit,
   onRunOnce,
   runOncePath,
+  highlighted = false,
 }: {
   readonly definition: AutomationDefinitionModel;
   readonly latestRun: AutomationLatestRunModel | null;
@@ -229,15 +230,23 @@ export function AutomationDefinitionRow({
   readonly onEdit: (() => void) | null;
   readonly onRunOnce: (() => void) | null;
   readonly runOncePath: string | null;
+  /** Briefly mark the row just created by this operator in this session. */
+  readonly highlighted?: boolean;
 }) {
   const draftOnly = definition.definitionState === "draft-only";
   const latest = latestRunCell(latestRun);
   return (
-    <tr>
+    <tr
+      className={highlighted ? "mf-automation-row-created" : undefined}
+      data-created={highlighted ? "true" : undefined}
+    >
       <td>
         <button type="button" className="mf-link-button" onClick={onOpen}>
           {definition.document.name}
         </button>
+        {highlighted && (
+          <span className="mf-automation-created-badge">刚刚创建</span>
+        )}
         <p className="mf-dashboard-meta">
           {definition.document.sourceScope ?? "资源库根目录"}
           {draftOnly ? " · 仅存在于草稿" : ""}

@@ -28,7 +28,6 @@ import { OrganizeDiscoveryPage } from "../features/operations/OrganizeDiscoveryP
 import { OrganizeIntentPage } from "../features/operations/OrganizeIntentPage";
 import { OrganizeExecutionPage } from "../features/operations/OrganizeExecutionPage";
 import { AutomationListPage } from "../features/operations/AutomationListPage";
-import { AutomationNewPage } from "../features/operations/AutomationNewPage";
 import { AutomationDetailPage } from "../features/operations/AutomationDetailPage";
 import { AutomationEditorPage } from "../features/operations/AutomationEditorPage";
 import { AutomationLifecyclePage } from "../features/operations/AutomationLifecyclePage";
@@ -187,10 +186,13 @@ const automationListRoute = createRoute({
   component: AutomationListPage,
 });
 
+// The legacy create address now opens the same list-overlay creation
+// experience as the canonical lifecycle address. It is kept as a bounded
+// continuation, not a second Draft form.
 const automationNewRoute = createRoute({
   getParentRoute: () => rootRoute,
   path: "operations/automation/new",
-  component: AutomationNewPage,
+  component: () => <AutomationListPage createDialogOpen />,
 });
 
 const automationDefinitionRoute = createRoute({
@@ -211,10 +213,14 @@ const automationLifecycleRoute = createRoute({
   component: AutomationLifecyclePage,
 });
 
+// The no-ID lifecycle address is the canonical creation entry: the ordinary
+// Automation list stays as the background and the create dialog is the only
+// form. A deep link, reload or post-login continuation lands in the same
+// experience with the default list context.
 const automationLifecycleNewRoute = createRoute({
   getParentRoute: () => rootRoute,
   path: "operations/automation/lifecycle",
-  component: AutomationLifecyclePage,
+  component: () => <AutomationListPage createDialogOpen />,
 });
 
 const automationOccurrencesRoute = createRoute({

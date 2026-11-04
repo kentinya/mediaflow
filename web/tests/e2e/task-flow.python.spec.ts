@@ -30,7 +30,7 @@ import {
 
 const BASE = "http://127.0.0.1:4183";
 const ADMIN_TOKEN = "harness-admin-token";
-const DEFINITION_ID = "task-flow-harness";
+let DEFINITION_ID = "task-flow-harness";
 
 interface RunOnceState {
   readonly found: boolean;
@@ -63,17 +63,38 @@ async function runOnceState(
 async function publishRunOnceDefinition(page: Page): Promise<void> {
   await connectOn(page, "/ui-v2/operations/automation/lifecycle");
   await expect(
-    page.getByRole("heading", { name: "Create Automation definition" }),
+    page.getByRole("heading", { name: "新建自动化任务" }),
   ).toBeVisible();
-  await page.getByLabel("Definition ID").fill(DEFINITION_ID);
-  await page.getByLabel("Name").fill("Task flow harness");
-  await page.getByLabel("ResourceLibrary").selectOption({ index: 1 });
-  await page.getByLabel("Relative source scope").fill("电影");
-  await page.getByLabel("Interval seconds").fill("3600");
-  await page.getByLabel("Item limit").fill("5");
-  await page.getByRole("button", { name: "保存" }).click();
+  await page.getByLabel(/任务名称/).fill("Task flow harness");
+  await page.getByLabel(/资源库/).selectOption({ index: 1 });
+  await page.getByLabel("来源范围").selectOption("subdirectory");
+  await page.getByLabel("来源子目录").fill("电影");
+  await page.getByLabel("处理上限").fill("5");
+  await page.getByRole("button", { name: "创建任务" }).click();
   await expect(
-    page.getByText(/published definition is the Active/),
+    page.getByRole("heading", { name: "创建成功，尚未启用" }),
+  ).toBeVisible();
+  await expect(
+    page.getByRole("heading", { name: "新建自动化任务" }),
+  ).toHaveCount(0);
+  const response = await page.request.get(
+    "/__harness__/automation-lifecycle-state",
+  );
+  const state = (await response.json()) as {
+    definitions: Array<{ id: string; name: string }>;
+  };
+  const created = state.definitions.find(
+    (item) => item.name === "Task flow harness",
+  );
+  if (!created)
+    throw new Error("created definition missing from harness state");
+  DEFINITION_ID = created.id;
+  await connectOn(
+    page,
+    `/ui-v2/operations/automation/lifecycle/${DEFINITION_ID}`,
+  );
+  await expect(
+    page.getByRole("heading", { name: "Edit Automation definition" }),
   ).toBeVisible();
 }
 

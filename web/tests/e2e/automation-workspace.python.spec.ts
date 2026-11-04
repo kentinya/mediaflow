@@ -27,7 +27,7 @@ const ADMIN_TOKEN = "harness-admin-token";
 // same harness publish and execute `harness-run-once`, and their durable
 // history must not be read as this spec's own "no execution yet" state. The ID
 // is per spec, so each journey's records stay independent.
-const DEFINITION_ID = "harness-workspace-definition";
+let DEFINITION_ID = "harness-workspace-definition";
 
 async function connectOn(page: Page, path: string): Promise<void> {
   await page.goto(path);
@@ -69,32 +69,51 @@ function recordApiCalls(
   return api;
 }
 
-/** Publish one automatic-organization definition through the real UI. */
+/**
+ * Publish one automatic-organization definition through the real create card
+ * and return the internal identity the backend generated and persisted.
+ */
 async function publishDefinition(
   page: Page,
   options: {
     readonly sourceScope?: string;
     readonly name?: string;
-    readonly definitionId?: string;
   } = {},
-): Promise<void> {
+): Promise<string> {
+  const name = options.name ?? "Harness workspace";
   await connectOn(page, "/ui-v2/operations/automation/lifecycle");
   await expect(
-    page.getByRole("heading", { name: "Create Automation definition" }),
+    page.getByRole("heading", { name: "新建自动化任务" }),
   ).toBeVisible();
-  await page
-    .getByLabel("Definition ID")
-    .fill(options.definitionId ?? DEFINITION_ID);
-  await page.getByLabel("Name").fill(options.name ?? "Harness workspace");
-  await page.getByLabel("ResourceLibrary").selectOption({ index: 1 });
+  await page.getByLabel(/任务名称/).fill(name);
+  await page.getByLabel(/资源库/).selectOption({ index: 1 });
   if (options.sourceScope !== undefined) {
-    await page.getByLabel("Relative source scope").fill(options.sourceScope);
+    await page.getByLabel("来源范围").selectOption("subdirectory");
+    await page.getByLabel("来源子目录").fill(options.sourceScope);
   }
-  await page.getByLabel("Interval seconds").fill("3600");
-  await page.getByLabel("Item limit").fill("5");
-  await page.getByRole("button", { name: "保存" }).click();
+  await page.getByLabel("处理上限").fill("5");
+  await page.getByRole("button", { name: "创建任务" }).click();
   await expect(
-    page.getByText(/published definition is the Active/),
+    page.getByRole("heading", { name: "创建成功，尚未启用" }),
+  ).toBeVisible();
+  await expect(
+    page.getByRole("heading", { name: "新建自动化任务" }),
+  ).toHaveCount(0);
+  const state = await lifecycleState(page);
+  const created = state.definitions.find((item) => item.name === name);
+  if (!created)
+    throw new Error("created definition missing from harness state");
+  DEFINITION_ID = created.id;
+  return created.id;
+}
+
+async function openLifecycleEdit(page: Page): Promise<void> {
+  await connectOn(
+    page,
+    `/ui-v2/operations/automation/lifecycle/${DEFINITION_ID}`,
+  );
+  await expect(
+    page.getByRole("heading", { name: "Edit Automation definition" }),
   ).toBeVisible();
 }
 
@@ -375,6 +394,7 @@ test("a technical record preserves original results without a generic retry entr
     sourceScope: "电影",
     name: "Handled records workspace",
   });
+  await openLifecycleEdit(page);
   await page.getByRole("button", { name: "运行一次" }).click();
   await expect(page).toHaveURL(
     /\/ui-v2\/operations\/automation\/run-once\/[0-9a-f-]{36}$/,
@@ -516,6 +536,7 @@ test("two technical failures retain independent evidence without false resolutio
     sourceScope: "电影",
     name: "Subset records workspace",
   });
+  await openLifecycleEdit(page);
   await page.getByRole("button", { name: "运行一次" }).click();
   await expect(page).toHaveURL(
     /\/ui-v2\/operations\/automation\/run-once\/[0-9a-f-]{36}$/,
@@ -673,8 +694,8 @@ test("the latest-result sort uses the real admitted history", async ({
   await publishDefinition(page, {
     sourceScope: "电影",
     name: "a-review-manual",
-    definitionId: "a-review-manual",
   });
+  await openLifecycleEdit(page);
   await page.getByRole("button", { name: "运行一次" }).click();
   await expect(page).toHaveURL(
     /\/ui-v2\/operations\/automation\/run-once\/[0-9a-f-]{36}$/,
@@ -691,7 +712,6 @@ test("the latest-result sort uses the real admitted history", async ({
   await publishDefinition(page, {
     sourceScope: "电影",
     name: "z-review-never",
-    definitionId: "z-review-never",
   });
 
   const api = recordApiCalls(page);
@@ -758,7 +778,6 @@ test("a healthy empty history reads as no execution, not unavailable", async ({
   await publishDefinition(page, {
     sourceScope: "电影",
     name: "Never-run workspace",
-    definitionId: "harness-empty-history",
   });
   // The reset above removed every other definition and this one has been
   // published but never executed: the durable admitted-run read succeeds and
@@ -806,6 +825,7 @@ test("the success-rate card uses the completed-plus-failed Task-flow denominator
     sourceScope: "电影",
     name: "Success-rate workspace",
   });
+  await openLifecycleEdit(page);
   await page.getByRole("button", { name: "运行一次" }).click();
   await expect(page).toHaveURL(
     /\/ui-v2\/operations\/automation\/run-once\/[0-9a-f-]{36}$/,

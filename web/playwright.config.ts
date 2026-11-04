@@ -11,6 +11,7 @@ export default defineConfig({
     "**/task-flow.python.spec.ts",
     "**/action-readability.python.spec.ts",
     "**/automation-lifecycle.python.spec.ts",
+    "**/automation-create-dialog.python.spec.ts",
     "**/automation-settings.python.spec.ts",
     "**/automation-workspace.python.spec.ts",
     "**/automation-run-once.python.spec.ts",

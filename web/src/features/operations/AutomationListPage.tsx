@@ -19,7 +19,7 @@
  */
 
 import { useEffect, useMemo, useState } from "react";
-import { useQuery } from "@tanstack/react-query";
+import { useQuery, useQueryClient } from "@tanstack/react-query";
 import { Link, useNavigate, useSearch } from "@tanstack/react-router";
 import {
   AUTOMATION_RETURN_KEY,
@@ -28,6 +28,7 @@ import {
 } from "../../shared/navigation/automation-return";
 import { useAuthToken } from "../../shared/api/auth-context";
 import {
+  automationListQueryKey,
   automationListQueryOptions,
   automationRecordsQueryOptions,
 } from "./automation-query";
@@ -42,7 +43,9 @@ import {
 import { AuthorizedReadBoundary } from "../../shared/auth/AuthorizedReadBoundary";
 import { RefreshControl } from "../../shared/ui/RefreshControl";
 import { StatusBanner } from "../../shared/ui/StatusBanner";
+import { AutomationCreateDialog } from "./AutomationCreateDialog";
 import type {
+  AutomationDefinitionDocumentModel,
   AutomationDefinitionModel,
   AutomationLatestRunModel,
   AutomationRecordModel,
@@ -122,13 +125,94 @@ function utcBoundary(value: string): string | null {
   return `${withSeconds}+00:00`;
 }
 
-export function AutomationListPage() {
+/** The list search keys a create dialog may preserve on open/close. */
+const LIST_SEARCH_KEYS = [
+  "tab",
+  "q",
+  "enabled",
+  "state",
+  "library",
+  "sort",
+  "cursor",
+  "dir",
+  "rstatus",
+  "rtrigger",
+  "rdefinition",
+  "rfrom",
+  "rto",
+] as const;
+
+/**
+ * The browser keeps the list DOM while the create route is open, but the
+ * route transition remounts the list component. This bounded module memory
+ * restores the operator's own scroll position after the re-read; it stores no
+ * form, token or draft.
+ */
+let automationListScrollMemory: {
+  readonly key: string;
+  readonly y: number;
+} | null = null;
+let focusCreateEntryOnNextList = false;
+
+/** The last create success this browser completed, across the close remount. */
+let automationCreatedDefinitionMemory: {
+  readonly id: string;
+  readonly name: string;
+  readonly createdAt: number;
+} | null = null;
+
+function listSearchKey(searchParams: Record<string, unknown>): string {
+  return JSON.stringify(
+    Object.entries(searchParams)
+      .filter(
+        ([key, value]) =>
+          (LIST_SEARCH_KEYS as readonly string[]).includes(key) &&
+          typeof value === "string" &&
+          value !== "",
+      )
+      .sort(([left], [right]) => left.localeCompare(right)),
+  );
+}
+
+function listSearchForClose(
+  searchParams: Record<string, unknown>,
+): Record<string, string> {
+  const search: Record<string, string> = {};
+  for (const key of LIST_SEARCH_KEYS) {
+    const value = searchParams[key];
+    if (typeof value === "string" && value !== "") search[key] = value;
+  }
+  return search;
+}
+
+export function AutomationListPage({
+  createDialogOpen = false,
+}: {
+  readonly createDialogOpen?: boolean;
+}) {
   const token = useAuthToken();
   const navigate = useNavigate();
   // The route search is the single source of truth for the submitted tab,
   // filters, sort, time window and server page cursor, so a deep entry, a
   // reload and a reconnect always read the same population.
   const searchParams = useSearch({ strict: false }) as Record<string, unknown>;
+  const queryClient = useQueryClient();
+  const listKey = listSearchKey(searchParams);
+  const [createdDefinition, setCreatedDefinition] = useState<{
+    readonly id: string;
+    readonly name: string;
+  } | null>(() => {
+    const memory = automationCreatedDefinitionMemory;
+    return memory === null ? null : { id: memory.id, name: memory.name };
+  });
+  const [highlightedDefinitionId, setHighlightedDefinitionId] = useState<
+    string | null
+  >(() => {
+    const memory = automationCreatedDefinitionMemory;
+    return memory !== null && Date.now() - memory.createdAt < 6_000
+      ? memory.id
+      : null;
+  });
   // A Task Center record round trip returns here with the exact `执行记录` list
   // state it left. The marker is consumed once and dropped, so the URL stays
   // the single source of truth and a later reconnect restores the same view.
@@ -194,6 +278,15 @@ export function AutomationListPage() {
     setDefinitionDraft(recordDefinition);
   }
 
+  useEffect(() => {
+    if (!focusCreateEntryOnNextList) return;
+    focusCreateEntryOnNextList = false;
+    const timer = window.setTimeout(() => {
+      document.getElementById("automation-create-entry")?.focus();
+    }, 0);
+    return () => window.clearTimeout(timer);
+  }, []);
+
   const listQuery = useQuery(
     automationListQueryOptions(
       token,
@@ -232,6 +325,43 @@ export function AutomationListPage() {
       tab === "records",
     ),
   );
+
+  // Restore the exact list scroll position saved by the create entry. The
+  // query must have produced its rows first; the restored position is then the
+  // operator's original page, not the top of a loading skeleton.
+  useEffect(() => {
+    if (!listQuery.isFetched || createDialogOpen) return;
+    const memory = automationListScrollMemory;
+    if (memory === null || memory.key !== listKey) return;
+    automationListScrollMemory = null;
+    const timer = window.setTimeout(() => {
+      if (!Number.isFinite(memory.y) || memory.y <= 0) return;
+      try {
+        window.scrollTo({ top: memory.y, left: 0 });
+      } catch {
+        // A test/DOM environment may not implement scrolling; the list itself
+        // is still rendered at its server page and filters.
+      }
+    }, 0);
+    return () => window.clearTimeout(timer);
+  }, [createDialogOpen, listKey, listQuery.isFetched]);
+
+  // The created row is marked briefly. The mount after the close route reads
+  // the same memory, so the success banner and mark survive the remount without
+  // persisting a draft, token or server state.
+  useEffect(() => {
+    if (highlightedDefinitionId === null) return;
+    const memory = automationCreatedDefinitionMemory;
+    const createdAt =
+      memory !== null && memory.id === highlightedDefinitionId
+        ? memory.createdAt
+        : Date.now();
+    const remaining = Math.max(0, 6_000 - (Date.now() - createdAt));
+    const timer = window.setTimeout(() => {
+      setHighlightedDefinitionId(null);
+    }, remaining);
+    return () => window.clearTimeout(timer);
+  }, [highlightedDefinitionId]);
 
   /**
    * Write one submitted surface state into the route search.
@@ -301,6 +431,34 @@ export function AutomationListPage() {
     return definitionState({ cursor: cursor ?? "", dir: direction });
   }
 
+  function openCreateDialog() {
+    automationListScrollMemory = {
+      key: listKey,
+      y: Number.isFinite(window.scrollY) ? window.scrollY : 0,
+    };
+  }
+
+  function closeCreateDialog() {
+    focusCreateEntryOnNextList = true;
+    void navigate({
+      to: "/operations/automation",
+      search: listSearchForClose(searchParams),
+      replace: true,
+    });
+  }
+
+  function handleCreated(definition: AutomationDefinitionDocumentModel) {
+    automationCreatedDefinitionMemory = {
+      id: definition.id,
+      name: definition.name,
+      createdAt: Date.now(),
+    };
+    setCreatedDefinition({ id: definition.id, name: definition.name });
+    setHighlightedDefinitionId(definition.id);
+    void queryClient.invalidateQueries({ queryKey: [automationListQueryKey] });
+    void listQuery.refetch();
+  }
+
   function openDefinition(definitionId: string) {
     void navigate({
       to: "/operations/automation/definition/$definitionId",
@@ -315,6 +473,15 @@ export function AutomationListPage() {
   // advertises it; the page never infers the permission.
   const createAvailable =
     definitionsPage !== null && definitionsPage.actions.create.available;
+  const createdListUnavailable =
+    listQuery.data !== undefined && !listQuery.data.ok;
+  const createdVisible =
+    createdDefinition === null || listQuery.isFetching
+      ? null
+      : definitionsPage !== null &&
+        definitionsPage.items.some(
+          (item) => item.document.id === createdDefinition.id,
+        );
 
   // The four cards read full-population backend aggregates. They are never
   // derived from the current page, and a filtered/paged read cannot change
@@ -344,228 +511,269 @@ export function AutomationListPage() {
 
   return (
     <div className="mf-dashboard mf-automation-workspace">
-      <header className="mf-dashboard-head">
-        <div>
-          <h2>自动化</h2>
-          <p className="mf-dashboard-meta">
-            配置和管理自动化任务，定时扫描、识别并整理媒体文件。
-          </p>
-        </div>
-        <div className="mf-actions">
-          {createAvailable && (
-            <Link
-              className="mf-button mf-button-primary"
-              to="/operations/automation/lifecycle"
-              search={listReturnState()}
-            >
-              新建自动化任务
-            </Link>
-          )}
-          <RefreshControl
-            label="刷新"
-            refreshingLabel="刷新中…"
-            onRefresh={() => {
-              void listQuery.refetch();
-              void recordsQuery.refetch();
-            }}
-            refreshing={listQuery.isFetching || recordsQuery.isFetching}
-          />
-        </div>
-      </header>
-
-      {definitionsPage !== null && (
-        <section className="mf-automation-metrics" aria-label="自动化统计">
-          <AutomationMetricCards
-            metrics={definitionsPage.metrics}
-            inventoryCounts={inventoryCounts}
-            onOpenDefinitions={() => selectedTab("definitions")}
-          />
-          {!definitionsPage.metrics.available && (
-            <p className="mf-dashboard-meta" role="status">
-              指标暂不可用：
-              {definitionsPage.metrics.nextAction ?? "请刷新后核对"}
+      <div className="mf-automation-create-background">
+        <header className="mf-dashboard-head">
+          <div>
+            <h2>自动化</h2>
+            <p className="mf-dashboard-meta">
+              配置和管理自动化任务，定时扫描、识别并整理媒体文件。
             </p>
-          )}
-        </section>
-      )}
+          </div>
+          <div className="mf-actions">
+            {createAvailable && (
+              <Link
+                id="automation-create-entry"
+                className="mf-button mf-button-primary"
+                to="/operations/automation/lifecycle"
+                search={listReturnState()}
+                onClick={openCreateDialog}
+              >
+                新建自动化任务
+              </Link>
+            )}
+            <RefreshControl
+              label="刷新"
+              refreshingLabel="刷新中…"
+              onRefresh={() => {
+                void listQuery.refetch();
+                void recordsQuery.refetch();
+              }}
+              refreshing={listQuery.isFetching || recordsQuery.isFetching}
+            />
+          </div>
+        </header>
 
-      <nav className="mf-run-tabs mf-view-tabs" aria-label="自动化分区">
-        {AUTOMATION_TABS.map((value) => (
-          <button
-            key={value}
-            type="button"
-            aria-current={tab === value ? "page" : undefined}
-            onClick={() => selectedTab(value)}
+        {createdDefinition !== null && (
+          <StatusBanner variant="success" title="创建成功，尚未启用">
+            <p>
+              {createdDefinition.name
+                ? `已创建「${createdDefinition.name}」，尚未启用。`
+                : "新任务已创建，尚未启用。"}
+              {createdListUnavailable
+                ? "当前任务列表暂不可用；刷新后可查看这条新任务。"
+                : createdVisible === null
+                  ? "正在刷新任务列表…"
+                  : createdVisible
+                    ? "已在本页标出，可稍后启用或运行一次。"
+                    : "当前筛选或分页下未展示该任务；可调整筛选查看。"}
+            </p>
+            <button
+              type="button"
+              className="mf-button mf-button-secondary"
+              onClick={() => {
+                automationCreatedDefinitionMemory = null;
+                setCreatedDefinition(null);
+              }}
+            >
+              关闭提示
+            </button>
+          </StatusBanner>
+        )}
+
+        {definitionsPage !== null && (
+          <section className="mf-automation-metrics" aria-label="自动化统计">
+            <AutomationMetricCards
+              metrics={definitionsPage.metrics}
+              inventoryCounts={inventoryCounts}
+              onOpenDefinitions={() => selectedTab("definitions")}
+            />
+            {!definitionsPage.metrics.available && (
+              <p className="mf-dashboard-meta" role="status">
+                指标暂不可用：
+                {definitionsPage.metrics.nextAction ?? "请刷新后核对"}
+              </p>
+            )}
+          </section>
+        )}
+
+        <nav className="mf-run-tabs mf-view-tabs" aria-label="自动化分区">
+          {AUTOMATION_TABS.map((value) => (
+            <button
+              key={value}
+              type="button"
+              aria-current={tab === value ? "page" : undefined}
+              onClick={() => selectedTab(value)}
+            >
+              {AUTOMATION_TAB_LABELS[value]}
+            </button>
+          ))}
+        </nav>
+
+        {tab === "definitions" && (
+          <AuthorizedReadBoundary
+            query={listQuery}
+            unavailableTitle="自动化不可用"
           >
-            {AUTOMATION_TAB_LABELS[value]}
-          </button>
-        ))}
-      </nav>
+            {({ data, isFetching, refresh }) => {
+              if (data === undefined) {
+                return (
+                  <StatusBanner variant="info" title="正在读取自动化任务">
+                    <p>正在读取已生效与草稿中的自动化任务。</p>
+                  </StatusBanner>
+                );
+              }
+              if (!data.ok) {
+                return (
+                  <StatusBanner variant="error" title={data.failure.title}>
+                    <p>{data.failure.nextAction}</p>
+                    <div className="mf-actions">
+                      <RefreshControl
+                        label="刷新"
+                        refreshingLabel="刷新中…"
+                        onRefresh={refresh}
+                        refreshing={isFetching}
+                      />
+                    </div>
+                  </StatusBanner>
+                );
+              }
+              return (
+                <DefinitionsTab
+                  page={data.model}
+                  latestRuns={latestRuns}
+                  search={searchDraft}
+                  enabled={enabledFilter}
+                  state={stateFilter}
+                  library={libraryDraft}
+                  sort={sort}
+                  filtered={definitionFiltered}
+                  highlightedDefinitionId={highlightedDefinitionId}
+                  onSearchChange={setSearchDraft}
+                  onSearchSubmit={(value) => {
+                    setSearchDraft(value);
+                    setLastSubmittedSearch(value);
+                    submitSearch(definitionState({ q: value }));
+                  }}
+                  onLibraryChange={setLibraryDraft}
+                  onLibrarySubmit={(value) => {
+                    setLibraryDraft(value);
+                    setLastSubmittedLibrary(value);
+                    submitSearch(definitionState({ library: value }));
+                  }}
+                  onEnabled={(value) =>
+                    submitSearch(definitionState({ enabled: value }))
+                  }
+                  onState={(value) =>
+                    submitSearch(definitionState({ state: value }))
+                  }
+                  onSort={(value) =>
+                    submitSearch(definitionState({ sort: value }))
+                  }
+                  onOpen={openDefinition}
+                  onEdit={(definitionId) =>
+                    void navigate({
+                      to: "/operations/automation/lifecycle/$definitionId",
+                      params: { definitionId },
+                      search: listReturnState(),
+                    })
+                  }
+                  onRunOnce={openDefinition}
+                  onNext={(next) =>
+                    submitSearch(
+                      definitionState({ cursor: next, dir: "next" }),
+                      false,
+                    )
+                  }
+                  onPrevious={(previous) =>
+                    submitSearch(
+                      definitionState({ cursor: previous, dir: "previous" }),
+                      false,
+                    )
+                  }
+                  onReset={() => submitSearch({ tab: "definitions" })}
+                />
+              );
+            }}
+          </AuthorizedReadBoundary>
+        )}
 
-      {tab === "definitions" && (
-        <AuthorizedReadBoundary
-          query={listQuery}
-          unavailableTitle="自动化不可用"
-        >
-          {({ data, isFetching, refresh }) => {
-            if (data === undefined) {
+        {tab === "records" && (
+          <AuthorizedReadBoundary
+            query={recordsQuery}
+            unavailableTitle="执行记录不可用"
+          >
+            {({ data, isFetching, refresh }) => {
+              if (data === undefined) {
+                return (
+                  <StatusBanner variant="info" title="正在读取执行记录">
+                    <p>正在读取已受理的自动化执行记录。</p>
+                  </StatusBanner>
+                );
+              }
+              if (!data.ok) {
+                return (
+                  <StatusBanner variant="error" title={data.failure.title}>
+                    <p>{data.failure.nextAction}</p>
+                    <div className="mf-actions">
+                      {recordFiltered && (
+                        <button
+                          type="button"
+                          className="mf-button mf-button-secondary"
+                          onClick={() => submitSearch({ tab: "records" })}
+                        >
+                          清除筛选
+                        </button>
+                      )}
+                      <RefreshControl
+                        label="刷新"
+                        refreshingLabel="刷新中…"
+                        onRefresh={refresh}
+                        refreshing={isFetching}
+                      />
+                    </div>
+                  </StatusBanner>
+                );
+              }
               return (
-                <StatusBanner variant="info" title="正在读取自动化任务">
-                  <p>正在读取已生效与草稿中的自动化任务。</p>
-                </StatusBanner>
+                <RecordsTab
+                  page={data.model}
+                  status={recordStatus}
+                  trigger={recordTrigger}
+                  definition={definitionDraft}
+                  from={recordFrom}
+                  to={recordTo}
+                  filtered={recordFiltered}
+                  onStatus={(value) =>
+                    submitSearch(recordState({ rstatus: value }))
+                  }
+                  onTrigger={(value) =>
+                    submitSearch(recordState({ rtrigger: value }))
+                  }
+                  onDefinitionChange={setDefinitionDraft}
+                  onDefinitionSubmit={(value) => {
+                    setDefinitionDraft(value);
+                    setLastSubmittedDefinition(value);
+                    submitSearch(recordState({ rdefinition: value }));
+                  }}
+                  onFrom={(value) =>
+                    submitSearch(recordState({ rfrom: value }))
+                  }
+                  onTo={(value) => submitSearch(recordState({ rto: value }))}
+                  onReset={() => submitSearch({ tab: "records" })}
+                  onNext={(next) =>
+                    submitSearch(
+                      recordState({ cursor: next, dir: "next" }),
+                      false,
+                    )
+                  }
+                  onPrevious={(previous) =>
+                    submitSearch(
+                      recordState({ cursor: previous, dir: "previous" }),
+                      false,
+                    )
+                  }
+                />
               );
-            }
-            if (!data.ok) {
-              return (
-                <StatusBanner variant="error" title={data.failure.title}>
-                  <p>{data.failure.nextAction}</p>
-                  <div className="mf-actions">
-                    <RefreshControl
-                      label="刷新"
-                      refreshingLabel="刷新中…"
-                      onRefresh={refresh}
-                      refreshing={isFetching}
-                    />
-                  </div>
-                </StatusBanner>
-              );
-            }
-            return (
-              <DefinitionsTab
-                page={data.model}
-                latestRuns={latestRuns}
-                search={searchDraft}
-                enabled={enabledFilter}
-                state={stateFilter}
-                library={libraryDraft}
-                sort={sort}
-                filtered={definitionFiltered}
-                onSearchChange={setSearchDraft}
-                onSearchSubmit={(value) => {
-                  setSearchDraft(value);
-                  setLastSubmittedSearch(value);
-                  submitSearch(definitionState({ q: value }));
-                }}
-                onLibraryChange={setLibraryDraft}
-                onLibrarySubmit={(value) => {
-                  setLibraryDraft(value);
-                  setLastSubmittedLibrary(value);
-                  submitSearch(definitionState({ library: value }));
-                }}
-                onEnabled={(value) =>
-                  submitSearch(definitionState({ enabled: value }))
-                }
-                onState={(value) =>
-                  submitSearch(definitionState({ state: value }))
-                }
-                onSort={(value) =>
-                  submitSearch(definitionState({ sort: value }))
-                }
-                onOpen={openDefinition}
-                onEdit={(definitionId) =>
-                  void navigate({
-                    to: "/operations/automation/lifecycle/$definitionId",
-                    params: { definitionId },
-                    search: listReturnState(),
-                  })
-                }
-                onRunOnce={openDefinition}
-                onNext={(next) =>
-                  submitSearch(
-                    definitionState({ cursor: next, dir: "next" }),
-                    false,
-                  )
-                }
-                onPrevious={(previous) =>
-                  submitSearch(
-                    definitionState({ cursor: previous, dir: "previous" }),
-                    false,
-                  )
-                }
-                onReset={() => submitSearch({ tab: "definitions" })}
-              />
-            );
-          }}
-        </AuthorizedReadBoundary>
-      )}
+            }}
+          </AuthorizedReadBoundary>
+        )}
+      </div>
 
-      {tab === "records" && (
-        <AuthorizedReadBoundary
-          query={recordsQuery}
-          unavailableTitle="执行记录不可用"
-        >
-          {({ data, isFetching, refresh }) => {
-            if (data === undefined) {
-              return (
-                <StatusBanner variant="info" title="正在读取执行记录">
-                  <p>正在读取已受理的自动化执行记录。</p>
-                </StatusBanner>
-              );
-            }
-            if (!data.ok) {
-              return (
-                <StatusBanner variant="error" title={data.failure.title}>
-                  <p>{data.failure.nextAction}</p>
-                  <div className="mf-actions">
-                    {recordFiltered && (
-                      <button
-                        type="button"
-                        className="mf-button mf-button-secondary"
-                        onClick={() => submitSearch({ tab: "records" })}
-                      >
-                        清除筛选
-                      </button>
-                    )}
-                    <RefreshControl
-                      label="刷新"
-                      refreshingLabel="刷新中…"
-                      onRefresh={refresh}
-                      refreshing={isFetching}
-                    />
-                  </div>
-                </StatusBanner>
-              );
-            }
-            return (
-              <RecordsTab
-                page={data.model}
-                status={recordStatus}
-                trigger={recordTrigger}
-                definition={definitionDraft}
-                from={recordFrom}
-                to={recordTo}
-                filtered={recordFiltered}
-                onStatus={(value) =>
-                  submitSearch(recordState({ rstatus: value }))
-                }
-                onTrigger={(value) =>
-                  submitSearch(recordState({ rtrigger: value }))
-                }
-                onDefinitionChange={setDefinitionDraft}
-                onDefinitionSubmit={(value) => {
-                  setDefinitionDraft(value);
-                  setLastSubmittedDefinition(value);
-                  submitSearch(recordState({ rdefinition: value }));
-                }}
-                onFrom={(value) => submitSearch(recordState({ rfrom: value }))}
-                onTo={(value) => submitSearch(recordState({ rto: value }))}
-                onReset={() => submitSearch({ tab: "records" })}
-                onNext={(next) =>
-                  submitSearch(
-                    recordState({ cursor: next, dir: "next" }),
-                    false,
-                  )
-                }
-                onPrevious={(previous) =>
-                  submitSearch(
-                    recordState({ cursor: previous, dir: "previous" }),
-                    false,
-                  )
-                }
-              />
-            );
-          }}
-        </AuthorizedReadBoundary>
+      {createDialogOpen && (
+        <AutomationCreateDialog
+          onClose={closeCreateDialog}
+          onCreated={handleCreated}
+        />
       )}
     </div>
   );
@@ -580,6 +788,7 @@ function DefinitionsTab({
   library,
   sort,
   filtered,
+  highlightedDefinitionId,
   onSearchChange,
   onSearchSubmit,
   onEnabled,
@@ -613,6 +822,7 @@ function DefinitionsTab({
   readonly library: string;
   readonly sort: string;
   readonly filtered: boolean;
+  readonly highlightedDefinitionId: string | null;
   readonly onSearchChange: (value: string) => void;
   readonly onSearchSubmit: (value: string) => void;
   readonly onEnabled: (value: string) => void;
@@ -725,7 +935,7 @@ function DefinitionsTab({
           <p>
             {filtered
               ? "当前筛选条件下没有自动化任务。清除筛选可查看全部已授权任务。"
-              : "启用已生效的配置后即可创建自动化任务；创建的任务会先保存在草稿中，验证并发布后才生效。"}
+              : "创建后任务默认停用；可在列表中启用或运行一次，创建本身不会扫描或整理媒体文件。"}
           </p>
           {!filtered && page.draftState.reason && (
             <p>{page.draftState.reason}</p>
@@ -762,6 +972,9 @@ function DefinitionsTab({
                         : null
                     }
                     runOncePath={definition.actions.runOnce.path}
+                    highlighted={
+                      highlightedDefinitionId === definition.document.id
+                    }
                   />
                 ))}
               </tbody>

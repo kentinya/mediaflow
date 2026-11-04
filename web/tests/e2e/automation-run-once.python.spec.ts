@@ -23,7 +23,7 @@ import { expect, test, type Page } from "@playwright/test";
  */
 
 const ADMIN_TOKEN = "harness-admin-token";
-const DEFINITION_ID = "harness-run-once";
+let DEFINITION_ID = "harness-run-once";
 
 async function connectOn(
   page: Page,
@@ -93,22 +93,41 @@ async function publishRunOnceDefinition(
 ): Promise<void> {
   await connectOn(page, "/ui-v2/operations/automation/lifecycle");
   await expect(
-    page.getByRole("heading", { name: "Create Automation definition" }),
+    page.getByRole("heading", { name: "新建自动化任务" }),
   ).toBeVisible();
-  await page.getByLabel("Definition ID").fill(DEFINITION_ID);
-  await page.getByLabel("Name").fill("Harness run once");
-  await page.getByLabel("ResourceLibrary").selectOption({ index: 1 });
+  await page.getByLabel(/任务名称/).fill("Harness run once");
+  await page.getByLabel(/资源库/).selectOption({ index: 1 });
   if (options.sourceScope !== undefined) {
-    await page.getByLabel("Relative source scope").fill(options.sourceScope);
+    await page.getByLabel("来源范围").selectOption("subdirectory");
+    await page.getByLabel("来源子目录").fill(options.sourceScope);
   }
   // The retained automatic-organization intent is fixed: no mode selector is
   // rendered and no removed mode can be chosen.
   await expect(page.getByLabel("Run mode")).toHaveCount(0);
-  await page.getByLabel("Interval seconds").fill("3600");
-  await page.getByLabel("Item limit").fill("5");
-  await page.getByRole("button", { name: "保存" }).click();
+  await page.getByLabel("处理上限").fill("5");
+  await page.getByRole("button", { name: "创建任务" }).click();
   await expect(
-    page.getByText(/published definition is the Active/),
+    page.getByRole("heading", { name: "创建成功，尚未启用" }),
+  ).toBeVisible();
+  await expect(
+    page.getByRole("heading", { name: "新建自动化任务" }),
+  ).toHaveCount(0);
+  const state = await lifecycleState(page);
+  const created = state.definitions.find(
+    (item) => item.name === "Harness run once",
+  );
+  if (!created)
+    throw new Error("created definition missing from harness state");
+  DEFINITION_ID = created.id;
+}
+
+async function openLifecycleEdit(page: Page): Promise<void> {
+  await connectOn(
+    page,
+    `/ui-v2/operations/automation/lifecycle/${DEFINITION_ID}`,
+  );
+  await expect(
+    page.getByRole("heading", { name: "Edit Automation definition" }),
   ).toBeVisible();
 }
 
@@ -127,6 +146,7 @@ test("a disabled published definition runs once without a file picker", async ({
 }, testInfo) => {
   const api = recordApiCalls(page);
   await publishRunOnceDefinition(page, { sourceScope: "电影" });
+  await openLifecycleEdit(page);
   const before = await lifecycleState(page);
   await page.setViewportSize({ width: 1536, height: 1024 });
   await page.evaluate(() => window.scrollTo(0, 0));
@@ -214,6 +234,7 @@ test("the exact Run once remains durable across restart without replay", async (
 }) => {
   const api = recordApiCalls(page);
   await publishRunOnceDefinition(page, { sourceScope: "电影" });
+  await openLifecycleEdit(page);
   await page.getByRole("button", { name: "运行一次" }).click();
   await expect(page).toHaveURL(/\/run-once\/[0-9a-f-]{36}$/);
   const id = new URL(page.url()).pathname.split("/").pop() ?? "";
@@ -243,6 +264,7 @@ for (const technicalSibling of [false, true]) {
       await page.request.post("/__harness__/seed-run-once-two-failure-scope");
     await page.request.post("/__harness__/seed-run-once-mixed-scope");
     await publishRunOnceDefinition(page, { sourceScope: "电影" });
+    await openLifecycleEdit(page);
     await page.getByRole("button", { name: "运行一次" }).click();
     await expect(page).toHaveURL(/\/run-once\/[0-9a-f-]{36}$/);
     const id = new URL(page.url()).pathname.split("/").pop() ?? "";
@@ -395,6 +417,7 @@ test("an over-bound ceiling runs once when the actual manifest fits the bound", 
   page,
 }) => {
   await publishRunOnceDefinition(page, { sourceScope: "电影" });
+  await openLifecycleEdit(page);
   await page.getByLabel("Item limit").fill("150");
   await page.getByRole("button", { name: "保存" }).click();
   await expect(

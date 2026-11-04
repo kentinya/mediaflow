@@ -395,15 +395,21 @@ test.describe("readable V2 actions", () => {
           page.getByRole("heading", {
             name:
               surface.label === "Automation create"
-                ? "Create Automation definition"
+                ? "新建自动化任务"
                 : "Edit Automation definition",
             exact: true,
           }),
         ).toBeVisible();
       }
       counts[surface.label] = await expectSurfaceReadable(page, surface.label);
+      // The create surface is the dialog over the inert list: its readable
+      // controls live inside the dialog, not in the background behind it.
+      const actionRoot =
+        surface.label === "Automation create"
+          ? page.getByRole("dialog")
+          : page.locator("body");
       for (const variant of [".mf-button-primary", ".mf-button-secondary"]) {
-        const action = page
+        const action = actionRoot
           .locator(`${variant}:visible:not(:disabled)`)
           .first();
         if (await action.count())

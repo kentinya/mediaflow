@@ -1045,162 +1045,101 @@ describe("V2 Automation journey", () => {
     expect(saves).toHaveLength(1);
   });
 
-  it("completes create and copy into reachable draft-only definitions", async () => {
+  it("opens the same create dialog from the legacy create deep link", async () => {
     const user = userEvent.setup();
-    // The create form's own inventory read shares the page read basis.
-    void 0;
-    const listWithDraft = listDocument({
-      draftState: {
-        present: true,
-        reason: null,
-        revisionId: DRAFT_REVISION,
-        revisionVersion: 2,
-        revisionStatus: "draft",
-        baseActiveRevisionId: ACTIVE_REVISION,
-        updatedAt: "2026-01-01T00:00:00+00:00",
-        validatedAt: null,
-        validationErrors: [],
+    const formAuthority = {
+      active: {
+        revisionId: ACTIVE_REVISION,
+        version: 3,
+        revisionSequence: 2,
+        status: "active",
+        digest: "a".repeat(64),
       },
-    });
-    const draftOnlyDetail = {
-      definition: draftOnlyDefinitionDocument(),
+      fields: [
+        "id",
+        "name",
+        "enabled",
+        "resourceLibraryId",
+        "mode",
+        "itemLimit",
+        "intervalSeconds",
+        "cron",
+        "timezone",
+      ],
+      defaults: {},
+      resourceLibraries: [
+        {
+          id: "source",
+          name: "Source",
+          enabled: true,
+          storageId: "source-storage",
+          storagePath: "Media",
+        },
+      ],
+      enums: {
+        modes: ["automatic-organization"],
+        scheduleTypes: ["interval", "cron"],
+      },
+      limits: {
+        id: 64,
+        name: 120,
+        sourceScope: 1024,
+        timezone: 64,
+        itemLimit: { minimum: 1, maximum: 10000 },
+        intervalSeconds: {
+          minimum: 0,
+          exclusiveMinimum: true,
+          maximum: 31536000,
+        },
+      },
+      actions: {
+        create: true,
+        edit: true,
+        copy: true,
+        toggle: true,
+        remove: true,
+      },
     };
     const { calls } = recordingFetch((call) => {
+      if (call.url === "/api/v1/auth/principal") {
+        return jsonResponse({ principal_id: "automation-operator" });
+      }
       if (
         call.url ===
-          "/api/v1/operations/automation/task-definitions?limit=20" &&
+          "/api/v1/operations/automation/task-definitions?sort=name&limit=20" &&
         call.method === "GET"
       ) {
-        return jsonResponse(listWithDraft);
+        return jsonResponse(listDocument());
       }
       if (
-        call.url ===
-          "/api/v1/operations/automation/task-definitions/created-task" &&
+        call.url === "/api/v1/operations/automation/definitions" &&
         call.method === "GET"
       ) {
-        return jsonResponse(draftOnlyDetail);
-      }
-      if (
-        call.url ===
-        "/api/v1/operations/automation/task-definitions/created-task/draft"
-      ) {
-        const createdDraft = draftDocument({
-          definitionId: "created-task",
-          draft: {
-            revisionId: DRAFT_REVISION,
-            revisionVersion: 2,
-            revisionStatus: "draft",
-            baseActiveRevisionId: ACTIVE_REVISION,
-            updatedAt: "2026-01-01T00:00:00+00:00",
-            validatedAt: null,
-            validationErrors: [],
-            definition: {
-              id: "created-task",
-              name: "Created automation",
-              enabled: false,
-              resourceLibraryId: "source",
-              mode: "automatic-organization",
-              itemLimit: 9,
-              sourceScope: null,
-              intervalSeconds: null,
-              cron: "0 8 * * *",
-              timezone: "UTC",
-            },
-          },
-        }) as Record<string, unknown>;
-        createdDraft.actions = {
-          ...(createdDraft.actions as Record<string, unknown>),
-          save: action({
-            method: "PUT",
-            path: `/api/v1/configuration/revisions/${DRAFT_REVISION}/objects/automationTaskDefinitions/created-task`,
-            requiresConfirmation: false,
-            durableOutcome: "the bounded form is stored in the Draft",
-            nextAction: "save the bounded form, then validate and activate",
-          }),
-          activate: action({
-            method: "POST",
-            path: "/api/v1/operations/automation/task-definitions/created-task/activate-draft",
-            requiresConfirmation: true,
-            durableOutcome:
-              "the exact Draft becomes the immutable Active configuration",
-            nextAction:
-              "confirm one explicit activation of the validated Draft",
-          }),
-        };
-        return jsonResponse(createdDraft);
-      }
-      if (
-        call.url === "/api/v1/automation/task-definitions" &&
-        call.method === "POST"
-      ) {
-        return jsonResponse({
-          revisionId: DRAFT_REVISION,
-          version: 2,
-          automationTaskDefinition: {
-            id: "created-task",
-            name: "Created automation",
-          },
-        });
-      }
-      if (
-        call.url ===
-        `/api/v1/configuration/revisions/${DRAFT_REVISION}/objects/automationTaskDefinitions/created-task`
-      ) {
-        return jsonResponse({ version: 3 }, 200);
+        return jsonResponse(formAuthority);
       }
       return undefined;
     });
     authStore.setToken(TOKEN);
-    renderApp("/ui-v2/operations/automation/new");
+    const { router } = renderApp("/ui-v2/operations/automation/new");
 
-    // Complete the bounded create form and submit it.
-    await screen.findByRole("heading", {
-      name: "Create Automation definition",
-    });
-    await user.type(screen.getByLabelText("Name"), "Created automation");
-    await user.selectOptions(
-      screen.getByLabelText("ResourceLibrary"),
-      "source",
-    );
-    // The create form has no mode selector at all: no removed mode can exist as
-    // a selectable value because no selector is rendered.
-    expect(screen.queryByLabelText("Run mode")).toBeNull();
-    expect(document.querySelector("#automation-mode")).toBeNull();
-    expect(screen.getByTestId("automation-mode-intent").textContent).toContain(
-      "automatic-organization",
-    );
-    await user.selectOptions(screen.getByLabelText("Schedule type"), "cron");
-    await user.type(screen.getByLabelText("Cron expression"), "0 8 * * *");
-    await user.type(screen.getByLabelText("Timezone"), "UTC");
-    await user.click(
-      screen.getByRole("button", { name: "Create definition in Draft" }),
-    );
+    // The legacy address no longer renders a second multi-step Draft flow:
+    // the ordinary list stays as the background and the same create card is
+    // the only form.
+    await screen.findByRole("heading", { name: "新建自动化任务" });
+    await screen.findByLabelText(/任务名称/);
+    expect(screen.getByRole("heading", { name: "自动化" })).toBeVisible();
+    expect(
+      screen.queryByRole("heading", { name: "Create Automation definition" }),
+    ).toBeNull();
+    expect(screen.queryByText("Start successor Draft")).toBeNull();
+    expect(screen.queryByLabelText("Definition ID")).toBeNull();
+    expect(screen.queryByLabelText("Enabled")).toBeNull();
 
-    // The operator lands on the exact created definition, which is
-    // reachable, marked draft-only, and editable through its open Draft.
-    await screen.findByRole("heading", {
-      name: "Automation definition Created automation",
-    });
-    expect(screen.getAllByText(/draft-only/).length).toBeGreaterThan(0);
-    expect(screen.getByText(/Open successor Draft/)).toBeVisible();
-    await user.click(
-      screen.getByRole("link", { name: "Edit successor Draft" }),
-    );
-    await screen.findByRole("heading", { name: "Edit Automation definition" });
-    const nameInput = screen.getByLabelText("Name") as HTMLInputElement;
-    expect(nameInput.value).toBe("Created automation");
-    await user.clear(nameInput);
-    await user.type(nameInput, "Renamed created automation");
-    await user.click(screen.getByRole("button", { name: "Save into Draft" }));
+    // Opening and cancelling publishes nothing.
+    await user.click(screen.getByRole("button", { name: "取消" }));
     await waitFor(() =>
-      expect(
-        calls.some(
-          (item) =>
-            item.url ===
-              `/api/v1/configuration/revisions/${DRAFT_REVISION}/objects/automationTaskDefinitions/created-task` &&
-            item.method === "PUT",
-        ),
-      ).toBe(true),
+      expect(router.state.location.pathname).toBe("/operations/automation"),
     );
+    expect(calls.filter((call) => call.method !== "GET")).toHaveLength(0);
   });
 });

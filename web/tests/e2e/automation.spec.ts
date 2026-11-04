@@ -364,60 +364,40 @@ test("the Draft journey composes successor Draft, bounded save, validation and c
   );
 });
 
-test("the legacy create deep link keeps a new definition recoverable until activation", async ({
+test("the legacy create deep link opens the same list-overlay create card", async ({
   page,
 }) => {
   await connectOn(page, "/ui-v2/operations/automation/new");
-  // No Draft exists yet in this fresh session: start one explicitly.
-  await page.getByRole("button", { name: "Start successor Draft" }).click();
-  await page.getByLabel("Name").fill("Created automation");
-  await page.getByLabel("ResourceLibrary").selectOption("source");
-  await expect(page.getByLabel("Run mode")).toHaveCount(0);
-  await page.getByLabel("Schedule type").selectOption("cron");
-  await page.getByLabel("Cron expression").fill("0 8 * * *");
-  await page.getByLabel("Timezone").fill("UTC");
-  await page
-    .getByRole("button", { name: "Create definition in Draft" })
-    .click();
 
-  // The create journey lands on the exact created definition: reachable,
-  // truthfully marked draft-only, never presented as Active.
-  await expect(page).toHaveURL(
-    /\/ui-v2\/operations\/automation\/definition\/automation-\d+$/,
-  );
+  // The old multi-step Draft form is gone: the ordinary list remains as the
+  // background and the same Chinese create card is the only form.
   await expect(
-    page.getByRole("heading", {
-      name: "Automation definition Created automation",
-    }),
+    page.getByRole("heading", { name: "新建自动化任务" }),
   ).toBeVisible();
-  await expect(page.getByText(/draft-only/).first()).toBeVisible();
-  await expect(page.getByText(/Open successor Draft/)).toBeVisible();
-
-  // The draft-only definition stays editable through its open Draft.
-  await page
-    .getByRole("link", { name: "Edit successor Draft" })
-    .first()
-    .click();
+  await expect(page.getByLabel(/任务名称/)).toBeVisible();
   await expect(
-    page.getByRole("heading", { name: "Edit Automation definition" }),
+    page.getByRole("heading", { name: "自动化", exact: true, level: 2 }),
   ).toBeVisible();
-  const nameInput = page.getByLabel("Name");
-  await expect(nameInput).toHaveValue("Created automation");
-  await nameInput.fill("Renamed created automation");
-  await page.getByRole("button", { name: "Save into Draft" }).click();
+  await expect(
+    page.getByRole("heading", { name: "Create Automation definition" }),
+  ).toHaveCount(0);
+  await expect(page.getByLabel("Definition ID")).toHaveCount(0);
+  await expect(page.getByLabel("Enabled")).toHaveCount(0);
+  await expect(
+    page.getByText("创建后未启用，可在列表中启用或运行一次。"),
+  ).toBeVisible();
 
+  // Opening and cancelling reads only: no Draft, create, enable or run was
+  // submitted, and the URL returns to the ordinary list context.
   const evidence = await automationEvidence(page);
-  const saves = evidence.items.filter(
-    (item) =>
-      item.method === "PUT" &&
-      item.path.includes("/objects/automationTaskDefinitions/"),
+  expect(evidence.items.filter((item) => item.method !== "GET")).toHaveLength(
+    0,
   );
-  expect(saves).toHaveLength(1);
-  const savedId = (saves[0]?.body as { object?: { id?: string } })?.object?.id;
-  expect(savedId).toMatch(/^automation-\d+$/);
-  expect(saves[0]?.body).toMatchObject({
-    object: { name: "Renamed created automation" },
-  });
+  await page.getByRole("button", { name: "取消" }).click();
+  await expect(page).toHaveURL(/\/ui-v2\/operations\/automation$/);
+  await expect(
+    page.getByRole("heading", { name: "自动化", exact: true, level: 2 }),
+  ).toBeVisible();
 });
 
 test("copy completes into a reachable draft-only definition", async ({

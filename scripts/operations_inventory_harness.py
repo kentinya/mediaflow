@@ -961,6 +961,33 @@ class AppState:
 
 #: The definition identity the real-Python Automation lifecycle proof drives.
 AUTOMATION_LIFECYCLE_DEFINITION_ID = "harness-automation"
+
+
+def harness_definition_id(state: AppState, requested: str | None = None) -> str | None:
+    """Resolve the definition a bounded harness control operates on.
+
+    The browser now generates a cryptographic definition ID, so legacy harness
+    proofs pass the exact created identity (or use the fixture's retained
+    constant). When neither applies, the only active definition is the
+    unambiguous target; an empty Active population returns None instead of
+    guessing.
+    """
+
+    if requested:
+        return requested
+    active = state.managed.configuration_service.active()
+    if active is None:
+        return None
+    ids = [
+        str(item.get("id"))
+        for item in active.document.get("automationTaskDefinitions", [])
+        if isinstance(item, dict) and isinstance(item.get("id"), str)
+    ]
+    if AUTOMATION_LIFECYCLE_DEFINITION_ID in ids:
+        return AUTOMATION_LIFECYCLE_DEFINITION_ID
+    return ids[0] if ids else None
+
+
 #: The unpublished name a harness successor Draft carries for the corrupt
 #: retained-history proof. It must never appear as the removed definition's
 #: published history.
@@ -4207,7 +4234,9 @@ def automation_run_once_state(state: AppState, *, discovery_id: str) -> dict[str
     }
 
 
-def automation_lifecycle_state(state: AppState) -> dict[str, object]:
+def automation_lifecycle_state(
+    state: AppState, definition_id: str | None = None
+) -> dict[str, object]:
     """Report the durable definition/authority state for the lifecycle proof.
 
     Bounded reads only: the Active definitions, the definition's live
@@ -4217,6 +4246,7 @@ def automation_lifecycle_state(state: AppState) -> dict[str, object]:
 
     configuration_service = state.managed.configuration_service
     active = configuration_service.active()
+    target_id = harness_definition_id(state, definition_id)
     definitions = (
         [
             {
@@ -4226,6 +4256,10 @@ def automation_lifecycle_state(state: AppState) -> dict[str, object]:
                 "mode": item.get("mode"),
                 "resourceLibraryId": item.get("resourceLibraryId"),
                 "itemLimit": item.get("itemLimit"),
+                "sourceScope": item.get("sourceScope"),
+                "intervalSeconds": item.get("intervalSeconds"),
+                "cron": item.get("cron"),
+                "timezone": item.get("timezone"),
             }
             for item in active.document.get("automationTaskDefinitions", [])
         ]
@@ -4237,7 +4271,7 @@ def automation_lifecycle_state(state: AppState) -> dict[str, object]:
     grant_state = None
     if grants is not None:
         try:
-            grant = grants.get_for_definition(AUTOMATION_LIFECYCLE_DEFINITION_ID)
+            grant = grants.get_for_definition(target_id)
         except Exception:
             grant = None
         if grant is not None:
@@ -4249,7 +4283,7 @@ def automation_lifecycle_state(state: AppState) -> dict[str, object]:
     occurrence_total = 0
     if occurrences is not None:
         try:
-            occurrence_total = len(occurrences.list(AUTOMATION_LIFECYCLE_DEFINITION_ID, limit=20))
+            occurrence_total = len(occurrences.list(target_id, limit=20))
         except Exception:
             occurrence_total = 0
     return {
@@ -4260,7 +4294,9 @@ def automation_lifecycle_state(state: AppState) -> dict[str, object]:
     }
 
 
-def seed_automation_definition_grant(state: AppState) -> dict[str, object]:
+def seed_automation_definition_grant(
+    state: AppState, definition_id: str | None = None
+) -> dict[str, object]:
     """Persist one real active unattended grant for the removal proof.
 
     The grant admission journey requires a persisted exact Preview; this
@@ -4274,11 +4310,12 @@ def seed_automation_definition_grant(state: AppState) -> dict[str, object]:
     active = state.managed.configuration_service.active()
     if active is None:
         return {"error": "no Active configuration"}
+    target_id = harness_definition_id(state, definition_id)
     stored = next(
         (
             item
             for item in active.document.get("automationTaskDefinitions", [])
-            if item.get("id") == AUTOMATION_LIFECYCLE_DEFINITION_ID
+            if item.get("id") == target_id
         ),
         None,
     )
@@ -4315,7 +4352,9 @@ def seed_automation_definition_grant(state: AppState) -> dict[str, object]:
     return {"grantId": grant.grant_id, "status": grant.status.value}
 
 
-def open_automation_definition_draft(state: AppState) -> dict[str, object]:
+def open_automation_definition_draft(
+    state: AppState, definition_id: str | None = None
+) -> dict[str, object]:
     """Open one real successor Draft with an unpublished definition candidate.
 
     The corrupt-history browser proof needs a same-ID Draft candidate that was
@@ -4341,11 +4380,12 @@ def open_automation_definition_draft(state: AppState) -> dict[str, object]:
         definitions = document.get("automationTaskDefinitions")
         if not isinstance(definitions, list):
             return {"error": "Active carries no Automation definition section"}
+        target_id = harness_definition_id(state, definition_id)
         candidate = next(
             (
                 item
                 for item in definitions
-                if isinstance(item, dict) and item.get("id") == AUTOMATION_LIFECYCLE_DEFINITION_ID
+                if isinstance(item, dict) and item.get("id") == target_id
             ),
             None,
         )
@@ -4780,7 +4820,9 @@ def crowd_automation_command_trail(state: AppState, *, edits: int) -> dict[str, 
     return {"published": published, "target": target}
 
 
-def run_automation_scheduler_tick(state: AppState) -> dict[str, object]:
+def run_automation_scheduler_tick(
+    state: AppState, definition_id: str | None = None
+) -> dict[str, object]:
     """Invoke the real managed-definition Scheduler once against the Active.
 
     The retained-history proof needs a real due occurrence emitted by the
@@ -4826,8 +4868,11 @@ def run_automation_scheduler_tick(state: AppState) -> dict[str, object]:
         ),
     )
     emitted = scheduler.tick()
-    occurrences = state.repository.list_automation_definition_occurrences(
-        AUTOMATION_LIFECYCLE_DEFINITION_ID, limit=20
+    target_id = harness_definition_id(state, definition_id)
+    occurrences = (
+        state.repository.list_automation_definition_occurrences(target_id, limit=20)
+        if target_id is not None
+        else []
     )
     return {
         "emitted": [
@@ -4920,7 +4965,9 @@ def run_automation_definition_worker_once(
     }
 
 
-def corrupt_automation_published_history(state: AppState) -> dict[str, object]:
+def corrupt_automation_published_history(
+    state: AppState, definition_id: str | None = None
+) -> dict[str, object]:
     """Corrupt the retained published revisions that carry the definition.
 
     The real browser journey must prove the actionable unavailable state for
@@ -4939,14 +4986,14 @@ def corrupt_automation_published_history(state: AppState) -> dict[str, object]:
     import sqlite3
 
     repository = state.managed.configuration_repository
+    requested_id = definition_id or AUTOMATION_LIFECYCLE_DEFINITION_ID
     targets = []
     for revision in repository.list_revisions(limit=500):
         if revision.status.value != "superseded":
             continue
         definitions = revision.document.get("automationTaskDefinitions")
         if isinstance(definitions, list) and any(
-            isinstance(item, dict) and item.get("id") == AUTOMATION_LIFECYCLE_DEFINITION_ID
-            for item in definitions
+            isinstance(item, dict) and item.get("id") == requested_id for item in definitions
         ):
             targets.append(revision)
     if not targets:
@@ -4965,7 +5012,7 @@ def corrupt_automation_published_history(state: AppState) -> dict[str, object]:
         connection.close()
     return {
         "corruptedRevisionIds": [target.revision_id for target in targets],
-        "definitionId": AUTOMATION_LIFECYCLE_DEFINITION_ID,
+        "definitionId": requested_id,
     }
 
 
@@ -5915,7 +5962,10 @@ def application(environ, start_response):
         elif path == "/__harness__/continuation-state" and method == "GET":
             document = continuation_journey_state(STATE)
         elif path == "/__harness__/automation-lifecycle-state" and method == "GET":
-            document = automation_lifecycle_state(STATE)
+            query = urllib.parse.parse_qs(str(environ.get("QUERY_STRING", "")))
+            document = automation_lifecycle_state(
+                STATE, definition_id=(query.get("definitionId") or [None])[0]
+            )
         elif path == "/__harness__/run-automation-run-once-worker" and method == "POST":
             query = urllib.parse.parse_qs(str(environ.get("QUERY_STRING", "")))
             discovery_id = (query.get("discoveryId") or [""])[0]
@@ -5929,7 +5979,10 @@ def application(environ, start_response):
             discovery_id = (query.get("discoveryId") or [""])[0]
             document = automation_run_once_state(STATE, discovery_id=discovery_id)
         elif path == "/__harness__/seed-automation-definition-grant" and method == "POST":
-            document = seed_automation_definition_grant(STATE)
+            query = urllib.parse.parse_qs(str(environ.get("QUERY_STRING", "")))
+            document = seed_automation_definition_grant(
+                STATE, definition_id=(query.get("definitionId") or [None])[0]
+            )
         elif path == "/__harness__/reset-automation-definitions" and method == "POST":
             document = reset_automation_definitions(STATE)
         elif path == "/__harness__/restore-source-media" and method == "POST":
@@ -5954,7 +6007,10 @@ def application(environ, start_response):
         elif path == "/__harness__/seed-run-once-two-failure-scope" and method == "POST":
             document = seed_run_once_two_failure_scope(STATE)
         elif path == "/__harness__/open-automation-definition-draft" and method == "POST":
-            document = open_automation_definition_draft(STATE)
+            query = urllib.parse.parse_qs(str(environ.get("QUERY_STRING", "")))
+            document = open_automation_definition_draft(
+                STATE, definition_id=(query.get("definitionId") or [None])[0]
+            )
         elif path == "/__harness__/automation-record-evidence" and method == "GET":
             query = urllib.parse.parse_qs(str(environ.get("QUERY_STRING", "")))
             document = automation_record_evidence(
@@ -5968,14 +6024,20 @@ def application(environ, start_response):
                 STATE, runs=int((query.get("runs") or ["26"])[0] or 26)
             )
         elif path == "/__harness__/run-automation-scheduler-tick" and method == "POST":
-            document = run_automation_scheduler_tick(STATE)
+            query = urllib.parse.parse_qs(str(environ.get("QUERY_STRING", "")))
+            document = run_automation_scheduler_tick(
+                STATE, definition_id=(query.get("definitionId") or [None])[0]
+            )
         elif path == "/__harness__/run-automation-definition-worker" and method == "POST":
             query = urllib.parse.parse_qs(str(environ.get("QUERY_STRING", "")))
             document = run_automation_definition_worker_once(
                 STATE, definition_id=(query.get("definitionId") or [None])[0]
             )
         elif path == "/__harness__/corrupt-automation-published-history" and method == "POST":
-            document = corrupt_automation_published_history(STATE)
+            query = urllib.parse.parse_qs(str(environ.get("QUERY_STRING", "")))
+            document = corrupt_automation_published_history(
+                STATE, definition_id=(query.get("definitionId") or [None])[0]
+            )
         elif path == "/__harness__/crowd-automation-command-trail" and method == "POST":
             query = urllib.parse.parse_qs(str(environ.get("QUERY_STRING", "")))
             raw_edits = (query.get("edits") or ["0"])[0]
