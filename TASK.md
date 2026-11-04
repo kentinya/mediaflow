@@ -1,18 +1,9 @@
-# NO ACTIVE IMPLEMENTATION TASK
-
-用户本轮只授权 Task 规划。下列 **BUG-AUTO-CREATE-UX** 是规划草案，不授权实现、启动其他角色、
-推送或部署。实施获授权后，B 再将此 notice 替换为正式 Task，保留草案的 ID、Base、目标和边界。
-
-上一独立修复 **BUG-AUTO-FORM** 已于 2026-11-04 由 B 复核 PASS，无阻塞项；Reviewed Head 为
-`8758913aa6c543242a2dfe5df6df4cc71a61c334`。完整验收与验证限度见
-[原验收检查点](https://github.com/kentinya/mediaflow/blob/f364a335c4ecff62e58ef889bf68847edb41b006/TASK.md)。
-[Slice48](SLICE.md) 的 PASS / CLOSED、Base、实现 Head 和全部延期保持不变；本 Task 不重开
-已接受 Slice，不改 Roadmap/Progress。下一大 Slice 仍由 A 另行选择。
-
-## Planning draft — BUG-AUTO-CREATE-UX：自动化新建弹出卡片与完整交互修正
+# Task BUG-AUTO-CREATE-UX — 自动化新建弹出卡片与完整交互修正
 
 Authority：用户已明确要求改善新建表单的人类可读性、视觉与操作体验，并指定点击新建后使用
-弹出卡片、自然连贯的动画；现阶段仅规划。生命周期及角色职责遵循
+弹出卡片、自然连贯的动画；2026-11-04 已明确授权激活本 Task。Developer 可按本计划实施，
+当前激活检查点只转换 Task 状态与授权，不包含产品实现，不授权其他角色自动启动、推送或部署。
+生命周期及角色职责遵循
 [Development Workflow](docs/development-workflow.md#31-independent-minor-bugs)，参考
 [B experience](docs/agent-experience/task-planner-reviewer.md) 与
 [Developer experience](docs/agent-experience/developer-implementation-role.md)。
@@ -26,12 +17,20 @@ Task Base: 2aa791a6b66d968f473a6875fe2ebf072c5500df
 Difficulty: Medium
 Test Level: T3
 Planner / Reviewer: B
-Implementation Authorization: NOT GRANTED — PLANNING ONLY
+Implementation Authorization: GRANTED BY USER — TASK SCOPE ONLY
 Working Branch: main
 ```
 
+上一独立修复 **BUG-AUTO-FORM** 已于 2026-11-04 由 B 复核 PASS，无阻塞项；Reviewed Head 为
+`8758913aa6c543242a2dfe5df6df4cc71a61c334`。完整验收与验证限度见
+[原验收检查点](https://github.com/kentinya/mediaflow/blob/f364a335c4ecff62e58ef889bf68847edb41b006/TASK.md)。
+[Slice48](SLICE.md) 的 PASS / CLOSED、Base、实现 Head 和全部延期保持不变；本 Task 不重开
+已接受 Slice，不改 Roadmap/Progress。下一大 Slice 仍由 A 另行选择。
+
 规划前治理检查 PASS；工作树没有已跟踪改动，预存未跟踪日志、图片、输出与系统文件全部保留。
 Base 是本次规划前的完整 HEAD；后续规划检查点不能替换 Base。
+激活前 HEAD 为 `844a3f2e002a198d799c18d2dd6140e78d8625fd`；治理检查 PASS，无已跟踪改动，
+预存未跟踪文件继续保留。Task 保持 PLANNED，待 Developer 实际开始时转 IN PROGRESS。
 
 ### Goal and actual gap
 
@@ -225,11 +224,11 @@ npm run test:e2e -- tests/e2e/automation.spec.ts tests/e2e/automation-presentati
 
 ### Developer Completion Report
 
-未开始；本草案不构成实施授权。实施获授权后，按 workflow 记录实际 checkpoint、
+已授权、尚未开始实现。Developer 按 workflow 记录实际 checkpoint、
 READY FOR B REVIEW、改动与受影响测试结果、剩余风险；全量验收仍由 B 负责。
 
 ### B Review Result
 
-未实施、未验收；不存在产品 PASS。用户后续授权实施时，B 将草案转为正式独立 Task，
-保留 ID/Base/范围；独立复核整个 Base..candidate 后记录 PASS 或 SAME TASK FIX REQUIRED。
+已从规划草案激活为正式独立 Task，保留原 ID/Base/目标/范围与验收标准；未实施、未验收，
+不存在产品 PASS。B 独立复核整个 Base..candidate 后记录 PASS 或 SAME TASK FIX REQUIRED。
 独立修正 PASS 后恢复简短 NO ACTIVE IMPLEMENTATION TASK 与精确验收检查点，不关闭 Slice。
