@@ -6,6 +6,7 @@ import {
   browserTimeZone,
   compiledSchedule,
   createFormFromPublication,
+  cronExpressionIssue,
   formatPreviewTime,
   initialCreateForm,
   intervalSecondsFromForm,
@@ -280,6 +281,48 @@ describe("automation create form", () => {
       validateCreateForm(form({ resourceLibraryId: "missing" }), AUTHORITY)[0]
         ?.message,
     ).toContain("不可用");
+  });
+
+  it("checks an advanced Cron expression with the backend field grammar", () => {
+    // Expressions the backend accepts are not rejected locally.
+    for (const value of [
+      "0 8 * * *",
+      "*/5 * * * *",
+      "0-30/5 6-9 * * 1-5",
+      "*/5 6-9 1,15 1-12 0",
+      "0 0 29 2 *",
+    ]) {
+      expect(cronExpressionIssue(value)).toBeNull();
+      expect(
+        validateCreateForm(
+          form({ schedule: "cron", cron: value, timezone: "UTC" }),
+          AUTHORITY,
+        ),
+      ).toHaveLength(0);
+    }
+
+    // A field outside its own bounds names the exact segment to correct.
+    expect(cronExpressionIssue("61 8 * * *")).toContain("第 1 段（分钟）");
+    expect(cronExpressionIssue("61 8 * * *")).toContain("0–59");
+    expect(cronExpressionIssue("0 24 * * *")).toContain("第 2 段（小时）");
+    expect(cronExpressionIssue("0 8 0 * *")).toContain("第 3 段（日期）");
+    expect(cronExpressionIssue("0 8 * 13 *")).toContain("第 4 段（月份）");
+    expect(cronExpressionIssue("0 8 * * 7")).toContain("第 5 段（星期）");
+    expect(cronExpressionIssue("0 8 * *")).toContain("5 段");
+    expect(cronExpressionIssue("0 8 * * MON")).toContain("数字、*、范围与步长");
+    expect(cronExpressionIssue("0 8 * * */0")).toContain("步长必须是正整数");
+    expect(cronExpressionIssue("0 8 * * 5-1")).toContain("起点不能大于终点");
+    expect(cronExpressionIssue(" ")).toContain("请填写 Cron 表达式");
+
+    const issues = validateCreateForm(
+      form({ schedule: "cron", cron: "61 8 * * *", timezone: "UTC" }),
+      AUTHORITY,
+    );
+    expect(issues).toHaveLength(1);
+    expect(issues[0]).toMatchObject({
+      fieldId: "automation-create-cron",
+      label: "Cron 表达式",
+    });
   });
 
   it("summarizes the schedule and formats preview instants in the chosen zone", () => {

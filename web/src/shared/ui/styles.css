@@ -6733,6 +6733,34 @@ tr[aria-selected="true"] {
   overflow: hidden;
 }
 
+/*
+ * The close choice, command outcome and validation summary stay pinned above
+ * the scrolling fields so an operator never has to hunt at the bottom of a
+ * long form. The region itself may scroll when a narrow viewport is short.
+ */
+.mf-automation-create-attention {
+  display: grid;
+  flex: 0 0 auto;
+  gap: 8px;
+  max-height: min(46dvh, 340px);
+  overflow: auto;
+  overscroll-behavior: contain;
+  padding: 10px 24px 4px;
+}
+
+.mf-automation-create-attention > * {
+  margin: 0;
+}
+
+.mf-automation-create-attention:focus-within {
+  outline: none;
+}
+
+.mf-automation-create-attention .mf-automation-create-alert:focus-visible {
+  outline: 2px solid #1268f5;
+  outline-offset: 2px;
+}
+
 .mf-automation-create-form {
   display: flex;
   flex-direction: column;
@@ -6914,6 +6942,28 @@ tr[aria-selected="true"] {
 
 .mf-automation-create-discard p {
   margin: 0 0 8px;
+}
+
+.mf-automation-create-discard .mf-automation-create-hint {
+  margin: 0 0 8px;
+  color: #6b470f;
+}
+
+.mf-automation-create-schedule-error {
+  display: grid;
+  gap: 4px;
+  margin: 0 0 12px;
+  padding: 10px 12px;
+  border: 1px solid #f3c4c4;
+  border-radius: 8px;
+  background: #fdecec;
+  color: #8c1d18;
+  font-size: 13px;
+  line-height: 1.55;
+}
+
+.mf-automation-create-schedule-error p {
+  margin: 0;
 }
 
 .mf-automation-create-preview {

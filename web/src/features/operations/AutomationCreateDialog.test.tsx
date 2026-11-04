@@ -1,5 +1,11 @@
 import { afterEach, describe, expect, it, vi } from "vitest";
-import { cleanup, screen, waitFor, within } from "@testing-library/react";
+import {
+  cleanup,
+  fireEvent,
+  screen,
+  waitFor,
+  within,
+} from "@testing-library/react";
 import userEvent from "@testing-library/user-event";
 import { authStore } from "../../shared/api/auth-store";
 import { renderWithProviders } from "../../../tests/utils";
@@ -531,6 +537,188 @@ describe("AutomationCreateDialog", () => {
     );
     await waitFor(() => expect(screen.queryByText(/2026/)).toBeNull());
     expect(screen.getByText(/2027/)).toBeVisible();
+  });
+
+  it("keeps the close choice and command outcome above the scrolling fields", async () => {
+    recordingFetch((call) => {
+      if (call.url === "/api/v1/auth/principal")
+        return jsonResponse(principal());
+      if (
+        call.url === "/api/v1/operations/automation/definitions" &&
+        call.method === "GET"
+      ) {
+        return jsonResponse(authority());
+      }
+      return undefined;
+    });
+    const { onClose } = renderDialog();
+    await expectReady();
+    const name = screen.getByLabelText(/任务名称/);
+    await userEvent.type(name, "未保存任务");
+    expect(name).toHaveFocus();
+
+    // Escape from the top of the form surfaces the same visible choice.
+    await userEvent.keyboard("{Escape}");
+    const question = screen.getByText(
+      "表单中有未保存的输入；关闭会丢弃这些修改。",
+    );
+    // The choice is not buried at the end of the scrolling field area.
+    expect(question.closest(".mf-automation-create-scroll")).toBeNull();
+    expect(
+      question.closest("[data-automation-create-attention]"),
+    ).not.toBeNull();
+    const keepEditing = screen.getByRole("button", { name: "继续填写" });
+    await waitFor(() => expect(keepEditing).toHaveFocus());
+    expect(onClose).not.toHaveBeenCalled();
+    expect(screen.getByDisplayValue("未保存任务")).toBeVisible();
+
+    // Continuing returns to the exact field and keeps the input.
+    await userEvent.click(keepEditing);
+    expect(screen.queryByText(/关闭会丢弃这些修改/)).toBeNull();
+    await waitFor(() =>
+      expect(screen.getByLabelText(/任务名称/)).toHaveFocus(),
+    );
+
+    // A second close gesture after re-arming discards only on the explicit choice.
+    await userEvent.click(screen.getByRole("button", { name: "取消" }));
+    await userEvent.click(screen.getByRole("button", { name: "放弃修改" }));
+    await waitFor(() => expect(onClose).toHaveBeenCalledTimes(1));
+  });
+
+  it("shows one in-flight creation state and does not submit or reconcile twice", async () => {
+    let releaseCreate: ((response: Response) => void) | null = null;
+    const calls = recordingFetch((call) => {
+      if (call.url === "/api/v1/auth/principal")
+        return jsonResponse(principal());
+      if (
+        call.url === "/api/v1/operations/automation/definitions" &&
+        call.method === "GET"
+      ) {
+        return jsonResponse(authority());
+      }
+      if (
+        call.url === "/api/v1/operations/automation/definitions" &&
+        call.method === "POST"
+      ) {
+        return new Promise<Response>((resolve) => {
+          releaseCreate = resolve;
+        });
+      }
+      return undefined;
+    });
+    const { onCreated } = renderDialog();
+    await expectReady();
+    await userEvent.type(screen.getByLabelText(/任务名称/), "进行中的任务");
+    await userEvent.selectOptions(screen.getByLabelText(/资源库/), "source");
+
+    await userEvent.click(screen.getByRole("button", { name: "创建任务" }));
+    await screen.findByText("正在创建…");
+    expect(screen.getByRole("button", { name: "创建中…" })).toBeDisabled();
+    expect(screen.queryByRole("button", { name: "核对本次创建" })).toBeNull();
+    expect(screen.queryByText("上次创建结果待核对")).toBeNull();
+    expect(screen.queryByText("创建结果待核对")).toBeNull();
+
+    // Enter, a second click and a duplicate submit event cannot issue another
+    // create command while the first one is still in flight.
+    await userEvent.keyboard("{Enter}");
+    const formElement = document.querySelector("form");
+    expect(formElement).not.toBeNull();
+    fireEvent.submit(formElement as HTMLFormElement);
+    fireEvent.submit(formElement as HTMLFormElement);
+    expect(
+      calls.filter(
+        (call) =>
+          call.method === "POST" &&
+          call.url === "/api/v1/operations/automation/definitions",
+      ),
+    ).toHaveLength(1);
+
+    // The response ends in an unknown outcome: only now is reconciliation
+    // offered, and it reads instead of resubmitting the create command.
+    const resolve = releaseCreate as ((response: Response) => void) | null;
+    expect(resolve).not.toBeNull();
+    (resolve as (response: Response) => void)(
+      new Response(JSON.stringify({ error: { code: "transport_lost" } }), {
+        status: 503,
+        headers: { "Content-Type": "application/json" },
+      }),
+    );
+    await screen.findByText("创建结果待核对");
+    expect(screen.getByRole("button", { name: "核对本次创建" })).toBeVisible();
+    expect(onCreated).not.toHaveBeenCalled();
+  });
+
+  it("locates a rejected time plan at its field and keeps the submitted input", async () => {
+    const calls = recordingFetch((call) => {
+      if (call.url === "/api/v1/auth/principal")
+        return jsonResponse(principal());
+      if (
+        call.url === "/api/v1/operations/automation/definitions" &&
+        call.method === "GET"
+      ) {
+        return jsonResponse(authority());
+      }
+      if (
+        call.url === "/api/v1/operations/automation/definitions" &&
+        call.method === "POST"
+      ) {
+        return jsonResponse(
+          {
+            error: {
+              code: "automation_definition_invalid_field",
+              message: "Automation Task Definition field is invalid",
+              details: {
+                stage: "compose",
+                durableState: "active_unchanged",
+                sideEffects: "none",
+                retrySafe: true,
+                nextAction:
+                  "correct the reported Automation Task Definition field, then save again",
+              },
+            },
+          },
+          400,
+        );
+      }
+      return undefined;
+    });
+    renderDialog();
+    await expectReady();
+    await userEvent.type(screen.getByLabelText(/任务名称/), "非法计划任务");
+    await userEvent.selectOptions(screen.getByLabelText(/资源库/), "source");
+    await userEvent.selectOptions(screen.getByLabelText("执行频率"), "cron");
+    const cron = screen.getByLabelText("Cron 表达式");
+    await userEvent.clear(cron);
+    await userEvent.type(cron, "0 8 * * *");
+
+    await userEvent.click(screen.getByRole("button", { name: "创建任务" }));
+    await screen.findByText("创建未生效");
+    const attention = screen.getByText(/请先检查“运行时间”中的 Cron/);
+    expect(
+      attention.closest("[data-automation-create-attention]"),
+    ).not.toBeNull();
+    expect(
+      screen.getByText(
+        "后端返回码：automation_definition_invalid_field（仅用于诊断）",
+      ),
+    ).toBeVisible();
+    expect(
+      screen
+        .getByText("后端拒绝了当前时间计划")
+        .closest(".mf-automation-create-scroll"),
+    ).not.toBeNull();
+    // The correction is located at the exact schedule control, not at a raw code.
+    await waitFor(() => expect(cron).toHaveFocus());
+    expect(screen.getByLabelText("Cron 表达式")).toHaveValue("0 8 * * *");
+    expect(screen.getByDisplayValue("非法计划任务")).toBeVisible();
+    expect(screen.queryByRole("button", { name: "核对本次创建" })).toBeNull();
+    expect(
+      calls.filter(
+        (call) =>
+          call.method === "POST" &&
+          call.url === "/api/v1/operations/automation/definitions",
+      ),
+    ).toHaveLength(1);
   });
 
   it("asks before discarding edited input and keeps editing when asked", async () => {

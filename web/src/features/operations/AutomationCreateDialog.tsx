@@ -88,6 +88,22 @@ const WEEKDAYS = [
 ] as const;
 
 const EXIT_MS = 160;
+const COMMAND_ERROR_ID = "automation-create-command-error";
+const DISCARD_CONTINUE_ID = "automation-create-discard-continue";
+
+/** The one field that owns the current schedule choice when it is rejected. */
+function scheduleFieldId(schedule: CreateScheduleKind): string {
+  switch (schedule) {
+    case "interval":
+      return "automation-create-interval";
+    case "daily":
+      return "automation-create-daily-time";
+    case "weekly":
+      return "automation-create-weekly-time";
+    case "cron":
+      return "automation-create-cron";
+  }
+}
 
 function prefersReducedMotion(): boolean {
   return (
@@ -143,14 +159,13 @@ function commandErrorMessage(error: CommandError): {
       };
     case "rejected": {
       const stage = failureStageLabel(error.details?.stage);
-      return {
-        title: `创建未生效（${error.code}）`,
-        body: `${
-          stage === null ? "后端拒绝了这次创建" : `在“${stage}”阶段被拒绝`
-        }，当前 Active 没有被这次命令改写。输入已保留，请修正后重试。${
-          error.details?.nextAction ? "" : ""
-        }`,
-      };
+      const body =
+        error.code === "automation_definition_invalid_field"
+          ? "后端在组合候选时拒绝了这次输入，当前 Active 没有被改写。请先检查“运行时间”中的 Cron 表达式与 IANA 时区；如果仍然失败，再检查名称、来源范围与处理上限。输入和内部 ID 已保留；修正后可再次明确创建。"
+          : `${
+              stage === null ? "后端拒绝了这次创建" : `在“${stage}”阶段被拒绝`
+            }，当前 Active 没有被这次命令改写。输入和内部 ID 已保留，请按提示修正后再次明确创建。`;
+      return { title: "创建未生效", body };
     }
     case "unknown":
       return {
@@ -256,6 +271,9 @@ export function AutomationCreateDialog({
   const mountedRef = useRef(true);
   const submittingRef = useRef(false);
   const bypassBlockerRef = useRef(false);
+  const blockersResetRef = useRef<(() => void) | null>(null);
+  const discardReturnFocusRef = useRef<HTMLElement | null>(null);
+  const lastFieldFocusRef = useRef<HTMLElement | null>(null);
   const exitTimerRef = useRef<number | null>(null);
   const previewGeneration = useRef(0);
   const initializedRef = useRef(false);
@@ -526,14 +544,32 @@ export function AutomationCreateDialog({
     page.ok ? page.model.entries.filter((entry) => entry.isDirectory) : [],
   );
 
+  // A submitted create command blocks route and browser-back navigation until
+  // the response arrives, so an in-flight command cannot be silently abandoned
+  // by an accidental leave. Unsaved input keeps its own discard choice.
   const blocker = useBlocker({
     shouldBlockFn: () =>
       !bypassBlockerRef.current &&
-      dirty &&
-      pendingPublication === null &&
-      !submittingRef.current,
+      (submittingRef.current || (dirty && pendingPublication === null)),
     withResolver: true,
   });
+  useEffect(() => {
+    blockersResetRef.current =
+      blocker.status === "blocked" ? blocker.reset : null;
+  }, [blocker]);
+  const submitBlocked = submitting && blocker.status === "blocked";
+
+  function releaseBlockedNavigation() {
+    const reset = blockersResetRef.current;
+    blockersResetRef.current = null;
+    if (reset !== null) reset();
+  }
+
+  function focusCommandError() {
+    window.requestAnimationFrame(() => {
+      document.getElementById(COMMAND_ERROR_ID)?.focus();
+    });
+  }
 
   const beginExit = (after: (() => void) | null) => {
     if (closing) return;
@@ -550,8 +586,10 @@ export function AutomationCreateDialog({
   };
 
   const commitClose = () => {
+    if (submittingRef.current) return;
     setDiscardArmed(false);
     setDirty(false);
+    discardReturnFocusRef.current = null;
     bypassBlockerRef.current = true;
     if (blocker.status === "blocked") {
       const proceed = blocker.proceed;
@@ -563,6 +601,12 @@ export function AutomationCreateDialog({
 
   const attemptClose = () => {
     if (submittingRef.current || closing) return;
+    if (discardArmed) {
+      // A second close gesture while the choice is open keeps the input and
+      // returns to the field the operator was editing.
+      cancelDiscard();
+      return;
+    }
     if (blocker.status === "blocked") {
       setDiscardArmed(true);
       return;
@@ -577,7 +621,43 @@ export function AutomationCreateDialog({
   useEffect(() => {
     attemptCloseRef.current = attemptClose;
   });
-  const discardPromptOpen = discardArmed || blocker.status === "blocked";
+  const discardPromptOpen =
+    !submitting && (discardArmed || blocker.status === "blocked");
+
+  // The discard choice is always visible and focusable: it is rendered above
+  // the scrolling fields, the safe "keep editing" action receives focus, and
+  // cancelling restores the exact field the operator was editing.
+  function cancelDiscard() {
+    setDiscardArmed(false);
+    if (blocker.status === "blocked") blocker.reset();
+    const previous = discardReturnFocusRef.current;
+    discardReturnFocusRef.current = null;
+    window.requestAnimationFrame(() => {
+      if (previous !== null && document.contains(previous)) {
+        previous.focus();
+        return;
+      }
+      document.getElementById("automation-create-name")?.focus();
+    });
+  }
+
+  // Any pending leave - a close gesture, a blocked route or a blocked browser
+  // back - shows the same pinned decision and moves focus to the safe action.
+  useEffect(() => {
+    if (!discardPromptOpen) return;
+    const active = document.activeElement;
+    // Prefer the last field the operator edited, so both the close button and a
+    // backdrop click return to the same input rather than to a dismissed button.
+    discardReturnFocusRef.current =
+      lastFieldFocusRef.current ??
+      (active instanceof HTMLElement && active !== document.body
+        ? active
+        : null);
+    const timer = window.requestAnimationFrame(() => {
+      document.getElementById(DISCARD_CONTINUE_ID)?.focus();
+    });
+    return () => window.cancelAnimationFrame(timer);
+  }, [discardPromptOpen]);
 
   // Escape, Tab trapping and the first focus belong to the dialog. The invoker
   // is captured at mount; focus returns to it when the dialog unmounts, or to
@@ -617,7 +697,20 @@ export function AutomationCreateDialog({
       }
     };
     document.addEventListener("keydown", handleKey, true);
-    return () => document.removeEventListener("keydown", handleKey, true);
+    const handleFocusIn = (event: FocusEvent) => {
+      const target = event.target;
+      if (
+        target instanceof HTMLElement &&
+        ["INPUT", "SELECT", "TEXTAREA"].includes(target.tagName)
+      ) {
+        lastFieldFocusRef.current = target;
+      }
+    };
+    layer?.addEventListener("focusin", handleFocusIn);
+    return () => {
+      document.removeEventListener("keydown", handleKey, true);
+      layer?.removeEventListener("focusin", handleFocusIn);
+    };
   }, []);
 
   useEffect(
@@ -718,6 +811,7 @@ export function AutomationCreateDialog({
         message:
           "当前浏览器无法提供安全的随机源，因此不能生成内部 ID。系统不会使用弱随机或时间戳代替；请刷新页面后重试。",
       });
+      focusCommandError();
       return;
     }
     setIdGenerationFailed(false);
@@ -744,6 +838,7 @@ export function AutomationCreateDialog({
         message:
           "仍无法读取当前配置，因此没有更新创建所依据的 Active。请稍后重试；输入已保留。",
       });
+      focusCommandError();
     }
   }
 
@@ -756,6 +851,11 @@ export function AutomationCreateDialog({
     window.requestAnimationFrame(() => {
       document.getElementById(first.fieldId)?.focus();
     });
+  }
+
+  function raiseLocalError(message: string) {
+    setCommandError({ kind: "local", message });
+    focusCommandError();
   }
 
   function submit() {
@@ -775,40 +875,31 @@ export function AutomationCreateDialog({
       return;
     }
     if (!principalIdentity.resolved) {
-      setCommandError({
-        kind: "local",
-        message:
-          principalIdentity.reason === "loading"
-            ? "正在确认当前登录身份；确认后才能安全保留未决创建命令。请稍后重试。"
-            : "当前登录身份暂不可用，暂时不能创建。请稍后刷新重试；输入已保留。",
-      });
+      raiseLocalError(
+        principalIdentity.reason === "loading"
+          ? "正在确认当前登录身份；确认后才能安全保留未决创建命令。请稍后重试。"
+          : "当前登录身份暂不可用，暂时不能创建。请稍后刷新重试；输入已保留。",
+      );
       return;
     }
     if (!authorityModel.actions.create) {
-      setCommandError({
-        kind: "local",
-        message:
-          "当前登录身份没有创建自动化任务的权限。没有提交任何配置修改；请使用有权限的身份重试。",
-      });
+      raiseLocalError(
+        "当前登录身份没有创建自动化任务的权限。没有提交任何配置修改；请使用有权限的身份重试。",
+      );
       return;
     }
     if (observedAuthority === null) {
-      setCommandError({
-        kind: "local",
-        message: "当前 Active 配置尚未读取完成，不能创建。请刷新后重试。",
-      });
+      raiseLocalError("当前 Active 配置尚未读取完成，不能创建。请刷新后重试。");
       return;
     }
     const candidate = buildCreateCandidate(form);
     if (candidate === null) {
-      setCommandError({
-        kind: "local",
-        message: "时间计划无法转换为现有字段，请检查后重试。",
-      });
+      raiseLocalError("时间计划无法转换为现有字段，请检查后重试。");
       return;
     }
     const submittedForm = publicationFormFromCreateForm(form);
     const submittedAuthority = observedAuthority;
+    setDiscardArmed(false);
     setPendingPublication({
       definitionId: form.id.trim(),
       action: "create",
@@ -830,6 +921,9 @@ export function AutomationCreateDialog({
       if (!mountedRef.current) return;
       submittingRef.current = false;
       setSubmitting(false);
+      // A leave attempted while the command was still in flight is released
+      // together with the result, so the operator sees the real outcome first.
+      releaseBlockedNavigation();
       if (result.ok) {
         const definition = result.model.definition;
         setPendingPublication(null);
@@ -846,6 +940,7 @@ export function AutomationCreateDialog({
         result.code === "malformed_response"
       ) {
         setCommandError({ kind: "unknown", code: result.code });
+        focusCommandError();
         return;
       }
       // A proved rejection releases the retained command; the input and ID stay
@@ -853,13 +948,25 @@ export function AutomationCreateDialog({
       setPendingPublication(null);
       if (result.status === 409) {
         setCommandError({ kind: "conflict", code: result.code });
-      } else {
-        setCommandError({
-          kind: "rejected",
-          code: result.code,
-          details: result.details,
-        });
+        focusCommandError();
+        return;
       }
+      setCommandError({
+        kind: "rejected",
+        code: result.code,
+        details: result.details,
+      });
+      if (result.code === "automation_definition_invalid_field") {
+        // The time plan is the only candidate part the ordinary controls do not
+        // fully validate for the backend, so the correction is located there.
+        const fieldId = scheduleFieldId(form.schedule);
+        window.requestAnimationFrame(() => {
+          const field = document.getElementById(fieldId);
+          (field ?? document.getElementById(COMMAND_ERROR_ID))?.focus();
+        });
+        return;
+      }
+      focusCommandError();
     });
   }
 
@@ -867,6 +974,7 @@ export function AutomationCreateDialog({
     if (
       pendingPublication === null ||
       reconciling ||
+      submittingRef.current ||
       !principalIdentity.resolved
     ) {
       return;
@@ -902,9 +1010,11 @@ export function AutomationCreateDialog({
       }
       if (result.ok) {
         setCommandError({ kind: "reconcile-unknown", code: null });
+        focusCommandError();
         return;
       }
       setCommandError({ kind: "reconcile-unknown", code: result.code });
+      focusCommandError();
     });
   }
 
@@ -915,6 +1025,7 @@ export function AutomationCreateDialog({
 
   const libraryOptions =
     authorityModel === null ? [] : enabledResourceLibraries(authorityModel);
+  const inFlight = submitting || reconciling;
   const createDisabledReason =
     authorityModel === null
       ? "正在读取当前配置权限…"
@@ -924,13 +1035,28 @@ export function AutomationCreateDialog({
           : "当前登录身份暂不可用，暂时不能创建。"
         : !authorityModel.actions.create
           ? "当前登录身份没有创建自动化任务的权限。"
-          : pendingPublication !== null
-            ? "请先核对上次创建结果；系统不会自动重发创建命令。"
-            : idGenerationFailed
-              ? "无法生成安全的内部 ID；系统不会使用弱随机或时间戳代替。"
-              : libraryOptions.length === 0
-                ? "没有已启用的资源库。请先在资源库设置中启用一个资源库。"
-                : null;
+          : submitting
+            ? "正在创建，请稍候；系统不会自动重发创建命令。"
+            : pendingPublication !== null
+              ? "请先核对上次创建结果；系统不会自动重发创建命令。"
+              : idGenerationFailed
+                ? "无法生成安全的内部 ID；系统不会使用弱随机或时间戳代替。"
+                : libraryOptions.length === 0
+                  ? "没有已启用的资源库。请先在资源库设置中启用一个资源库。"
+                  : null;
+  const scheduleRejected =
+    commandError !== null &&
+    commandError.kind === "rejected" &&
+    commandError.code === "automation_definition_invalid_field";
+  const commandErrorCopy =
+    commandError === null ? null : commandErrorMessage(commandError);
+  const hasAttention =
+    submitting ||
+    pendingPublication !== null ||
+    discardPromptOpen ||
+    commandError !== null ||
+    notice !== null ||
+    (showIssues && validationIssues.length > 0);
 
   const previewMissing = validationIssues
     .slice(0, 3)
@@ -1009,13 +1135,149 @@ export function AutomationCreateDialog({
             </p>
           )}
 
-          {pendingPublication !== null && (
-            <div className="mf-automation-create-pending" role="status">
-              <strong>上次创建结果待核对</strong>
-              <p>
-                创建命令可能已经生效。系统不会自动重发；请使用底部的“核对本次创建”读取真实持久结果。
-                关闭后再次打开会继续保留这次命令身份。
-              </p>
+          {hasAttention && (
+            <div
+              className="mf-automation-create-attention"
+              data-automation-create-attention="true"
+            >
+              {submitting && (
+                <div className="mf-automation-create-pending" role="status">
+                  <strong>正在创建…</strong>
+                  <p>
+                    创建命令已提交，正在等待后端确认。请稍候；系统不会自动重发。
+                  </p>
+                  {submitBlocked && (
+                    <p>
+                      已暂时阻止离开本页；收到结果后会在这里显示并解除这一限制。
+                    </p>
+                  )}
+                </div>
+              )}
+              {pendingPublication !== null && !submitting && (
+                <div className="mf-automation-create-pending" role="status">
+                  <strong>上次创建结果待核对</strong>
+                  <p>
+                    创建命令可能已经生效。系统不会自动重发；请使用底部的“核对本次创建”读取真实持久结果。
+                    关闭后再次打开会继续保留这次命令身份。
+                  </p>
+                </div>
+              )}
+              {discardPromptOpen && (
+                <div
+                  className="mf-automation-create-discard"
+                  role="alertdialog"
+                  aria-labelledby="automation-create-discard-question"
+                  aria-describedby="automation-create-discard-detail"
+                >
+                  <p id="automation-create-discard-question">
+                    表单中有未保存的输入；关闭会丢弃这些修改。
+                  </p>
+                  <p
+                    className="mf-automation-create-hint"
+                    id="automation-create-discard-detail"
+                  >
+                    选择「继续填写」保留当前输入并回到原字段；选择「放弃修改」返回自动化列表。
+                  </p>
+                  <div className="mf-actions">
+                    <Button
+                      type="button"
+                      variant="secondary"
+                      id={DISCARD_CONTINUE_ID}
+                      onClick={cancelDiscard}
+                    >
+                      继续填写
+                    </Button>
+                    <Button type="button" onClick={commitClose}>
+                      放弃修改
+                    </Button>
+                  </div>
+                </div>
+              )}
+              {commandError !== null && commandErrorCopy !== null && (
+                <div
+                  className="mf-automation-create-alert"
+                  id={COMMAND_ERROR_ID}
+                  role="alert"
+                  tabIndex={-1}
+                >
+                  <strong>{commandErrorCopy.title}</strong>
+                  <p>{commandErrorCopy.body}</p>
+                  {commandError.kind === "rejected" && (
+                    <p className="mf-automation-create-hint">
+                      后端返回码：{commandError.code}（仅用于诊断）
+                    </p>
+                  )}
+                  {commandError.kind === "reconcile-unknown" &&
+                    commandError.code !== null && (
+                      <p className="mf-automation-create-hint">
+                        核对返回：{commandError.code}
+                      </p>
+                    )}
+                  {scheduleRejected && form !== null && (
+                    <div className="mf-actions">
+                      <Button
+                        type="button"
+                        variant="secondary"
+                        onClick={() => {
+                          window.requestAnimationFrame(() => {
+                            document
+                              .getElementById(scheduleFieldId(form.schedule))
+                              ?.focus();
+                          });
+                        }}
+                      >
+                        检查时间计划
+                      </Button>
+                    </div>
+                  )}
+                  {commandError.kind === "conflict" &&
+                    commandError.code !== "automation_definition_duplicate" && (
+                      <div className="mf-actions">
+                        <Button
+                          type="button"
+                          variant="secondary"
+                          disabled={rechecking || closing}
+                          onClick={() => {
+                            void recheckAuthority();
+                          }}
+                        >
+                          {rechecking ? "重新核对中…" : "重新核对当前配置"}
+                        </Button>
+                      </div>
+                    )}
+                  {commandError.kind === "conflict" &&
+                    commandError.code === "automation_definition_duplicate" && (
+                      <div className="mf-actions">
+                        <Button
+                          type="button"
+                          variant="secondary"
+                          onClick={regenerateId}
+                        >
+                          重新生成内部 ID
+                        </Button>
+                      </div>
+                    )}
+                </div>
+              )}
+              {notice !== null && (
+                <p className="mf-automation-create-notice" role="status">
+                  {notice}
+                </p>
+              )}
+              {showIssues &&
+                validationIssues.length > 0 &&
+                commandError === null && (
+                  <div className="mf-automation-create-alert" role="alert">
+                    <strong>有 {validationIssues.length} 处输入需要修正</strong>
+                    <ul>
+                      {validationIssues.map((issue) => (
+                        <li key={`${issue.fieldId}:${issue.message}`}>
+                          {issue.label}：{issue.message}
+                        </li>
+                      ))}
+                    </ul>
+                  </div>
+                )}
             </div>
           )}
 
@@ -1354,9 +1616,22 @@ export function AutomationCreateDialog({
 
                 <section
                   className="mf-automation-create-section"
+                  id="automation-create-schedule-section"
                   aria-labelledby="automation-create-schedule"
                 >
                   <h3 id="automation-create-schedule">运行时间</h3>
+                  {scheduleRejected && (
+                    <div
+                      className="mf-automation-create-schedule-error"
+                      role="alert"
+                    >
+                      <strong>后端拒绝了当前时间计划</strong>
+                      <p>
+                        请检查下面“执行频率”对应的 Cron 表达式与 IANA
+                        时区；输入和内部 ID 已保留，修正后可再次明确创建。
+                      </p>
+                    </div>
+                  )}
                   <div className="mf-automation-create-grid">
                     <div className="mf-automation-create-field">
                       <label htmlFor="automation-create-schedule-kind">
@@ -1534,13 +1809,22 @@ export function AutomationCreateDialog({
                           value={form.cron}
                           placeholder="0 8 * * *"
                           aria-required="true"
+                          aria-invalid={
+                            scheduleRejected ||
+                            (showIssues &&
+                              validationIssues.some(
+                                (issue) =>
+                                  issue.fieldId === "automation-create-cron",
+                              ))
+                          }
+                          aria-describedby="automation-create-cron-error"
                           onChange={(event) =>
                             updateFields({ cron: event.target.value })
                           }
                         />
                         <p className="mf-automation-create-hint">
                           使用后端支持的五段
-                          Cron；这里不会自行计算实际触发时间。
+                          Cron；这里只检查格式与取值范围，不会自行计算实际触发时间。
                         </p>
                         {showIssues &&
                           validationIssues
@@ -1551,6 +1835,7 @@ export function AutomationCreateDialog({
                             .map((issue) => (
                               <p
                                 className="mf-automation-create-field-error"
+                                id="automation-create-cron-error"
                                 key={issue.message}
                               >
                                 {issue.message}
@@ -1753,88 +2038,6 @@ export function AutomationCreateDialog({
                     </dd>
                   </dl>
                 </details>
-
-                {showIssues && validationIssues.length > 0 && (
-                  <div className="mf-automation-create-alert" role="alert">
-                    <strong>有 {validationIssues.length} 处输入需要修正</strong>
-                    <ul>
-                      {validationIssues.map((issue) => (
-                        <li key={`${issue.fieldId}:${issue.message}`}>
-                          {issue.label}：{issue.message}
-                        </li>
-                      ))}
-                    </ul>
-                  </div>
-                )}
-
-                {commandError !== null && (
-                  <div className="mf-automation-create-alert" role="alert">
-                    <strong>{commandErrorMessage(commandError).title}</strong>
-                    <p>{commandErrorMessage(commandError).body}</p>
-                    {commandError.kind === "reconcile-unknown" &&
-                      commandError.code !== null && (
-                        <p className="mf-automation-create-hint">
-                          核对返回：{commandError.code}
-                        </p>
-                      )}
-                    {commandError.kind === "conflict" &&
-                      commandError.code !==
-                        "automation_definition_duplicate" && (
-                        <div className="mf-actions">
-                          <Button
-                            type="button"
-                            variant="secondary"
-                            disabled={rechecking || closing}
-                            onClick={() => {
-                              void recheckAuthority();
-                            }}
-                          >
-                            {rechecking ? "重新核对中…" : "重新核对当前配置"}
-                          </Button>
-                        </div>
-                      )}
-                    {commandError.kind === "conflict" &&
-                      commandError.code ===
-                        "automation_definition_duplicate" && (
-                        <div className="mf-actions">
-                          <Button
-                            type="button"
-                            variant="secondary"
-                            onClick={regenerateId}
-                          >
-                            重新生成内部 ID
-                          </Button>
-                        </div>
-                      )}
-                  </div>
-                )}
-
-                {notice !== null && (
-                  <p className="mf-automation-create-notice" role="status">
-                    {notice}
-                  </p>
-                )}
-
-                {discardPromptOpen && (
-                  <div className="mf-automation-create-discard" role="alert">
-                    <p>表单中有未保存的输入；关闭会丢弃这些修改。</p>
-                    <div className="mf-actions">
-                      <Button
-                        type="button"
-                        variant="secondary"
-                        onClick={() => {
-                          setDiscardArmed(false);
-                          if (blocker.status === "blocked") blocker.reset();
-                        }}
-                      >
-                        继续填写
-                      </Button>
-                      <Button type="button" onClick={commitClose}>
-                        放弃修改
-                      </Button>
-                    </div>
-                  </div>
-                )}
               </div>
 
               <footer className="mf-automation-create-footer">
@@ -1851,12 +2054,22 @@ export function AutomationCreateDialog({
                   <Button
                     type="button"
                     variant="secondary"
-                    disabled={submitting || closing}
+                    disabled={inFlight || closing}
                     onClick={attemptClose}
                   >
-                    {pendingPublication === null ? "取消" : "关闭"}
+                    {pendingPublication !== null && !submitting
+                      ? "关闭"
+                      : "取消"}
                   </Button>
-                  {pendingPublication !== null ? (
+                  {submitting ? (
+                    <Button
+                      type="button"
+                      data-automation-create-primary="true"
+                      disabled
+                    >
+                      创建中…
+                    </Button>
+                  ) : pendingPublication !== null ? (
                     <Button
                       type="button"
                       data-automation-create-primary="true"
@@ -1875,7 +2088,7 @@ export function AutomationCreateDialog({
                         createDisabledReason !== null || submitting || closing
                       }
                     >
-                      {submitting ? "创建中…" : "创建任务"}
+                      创建任务
                     </Button>
                   )}
                 </div>

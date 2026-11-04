@@ -50,7 +50,8 @@ export interface CreateFormIssue {
 const DEFINITION_ID_PATTERN = /^[A-Za-z0-9][A-Za-z0-9_.:@+-]{0,63}$/;
 const DECIMAL_PATTERN = /^(\d+)(?:\.(\d+))?$/;
 const TIME_PATTERN = /^([01]\d|2[0-3]):([0-5]\d)$/;
-const MAX_CRON_LENGTH = 64;
+//: The backend Cron grammar accepts at most 128 characters in the expression.
+const MAX_CRON_LENGTH = 128;
 const ID_RANDOM_BYTES = 12;
 const ID_PREFIX = "automation-";
 
@@ -163,6 +164,91 @@ function parseTime(value: string): { hour: number; minute: number } | null {
   const match = TIME_PATTERN.exec(value.trim());
   if (match === null) return null;
   return { hour: Number(match[1]), minute: Number(match[2]) };
+}
+
+/** The five canonical Cron fields, in the backend's own order and bounds. */
+const CRON_FIELDS = [
+  { label: "分钟", minimum: 0, maximum: 59 },
+  { label: "小时", minimum: 0, maximum: 23 },
+  { label: "日期", minimum: 1, maximum: 31 },
+  { label: "月份", minimum: 1, maximum: 12 },
+  { label: "星期", minimum: 0, maximum: 6 },
+] as const;
+
+function cronFieldIssue(
+  source: string,
+  minimum: number,
+  maximum: number,
+): string | null {
+  if (source.length === 0) return "列表中有空的项。";
+  const range = `${minimum}–${maximum}`;
+  for (const token of source.split(",")) {
+    if (token.length === 0) return "列表中有空的项。";
+    const parts = token.split("/");
+    if (parts.length > 2) return "步长写法无效。";
+    const base = parts[0];
+    let step = 1;
+    if (parts.length === 2) {
+      if (!/^\d+$/.test(parts[1]) || Number(parts[1]) < 1) {
+        return "步长必须是正整数。";
+      }
+      step = Number(parts[1]);
+      if (base !== "*" && !base.includes("-")) {
+        return "带步长的值必须使用 * 或范围，例如 */5 或 0-30/5。";
+      }
+    }
+    let start: number;
+    let end: number;
+    if (base === "*") {
+      start = minimum;
+      end = maximum;
+    } else if (base.includes("-")) {
+      const bounds = base.split("-");
+      if (bounds.length !== 2 || !bounds.every((item) => /^\d+$/.test(item))) {
+        return "范围写法无效，请使用例如 1-5 的形式。";
+      }
+      start = Number(bounds[0]);
+      end = Number(bounds[1]);
+      if (start > end) return "范围的起点不能大于终点。";
+    } else if (/^\d+$/.test(base)) {
+      start = Number(base);
+      end = start;
+    } else {
+      return "只支持数字、*、范围与步长。";
+    }
+    if (start < minimum || end > maximum) {
+      return `必须在 ${range} 之间。`;
+    }
+    if (!Number.isFinite(step)) return "步长必须是正整数。";
+  }
+  return null;
+}
+
+/**
+ * Check one advanced five-field Cron expression with the backend's grammar.
+ *
+ * Only the syntax and each field's bounds are checked here; actual occurrence
+ * calculation stays with the backend schedule preview and the runtime. The
+ * returned text is the operator-facing correction for the exact failing field.
+ */
+export function cronExpressionIssue(value: string): string | null {
+  const source = value.trim();
+  if (source.length === 0) return "请填写 Cron 表达式，例如 0 8 * * *。";
+  if (source.length > MAX_CRON_LENGTH) {
+    return `Cron 表达式不能超过 ${MAX_CRON_LENGTH} 个字符。`;
+  }
+  const fields = source.split(/\s+/);
+  if (fields.length !== 5) {
+    return `Cron 表达式需要 5 段（分、时、日、月、星期），当前为 ${fields.length} 段。`;
+  }
+  for (let index = 0; index < CRON_FIELDS.length; index += 1) {
+    const field = CRON_FIELDS[index];
+    const problem = cronFieldIssue(fields[index], field.minimum, field.maximum);
+    if (problem !== null) {
+      return `第 ${index + 1} 段（${field.label}）${problem}`;
+    }
+  }
+  return null;
 }
 
 function cronFromTime(time: string, weekday: number | null): string | null {
@@ -412,18 +498,17 @@ export function validateCreateForm(
         message: "请填写有效时间（00:00–23:59）。",
       });
     }
-  } else if (form.cron.trim().length === 0) {
-    issues.push({
-      fieldId: "automation-create-cron",
-      label: "Cron 表达式",
-      message: "请填写 Cron 表达式。",
-    });
-  } else if (form.cron.trim().length > MAX_CRON_LENGTH) {
-    issues.push({
-      fieldId: "automation-create-cron",
-      label: "Cron 表达式",
-      message: `Cron 表达式不能超过 ${MAX_CRON_LENGTH} 个字符。`,
-    });
+  } else {
+    // Syntax and per-field bounds are determinable here, exactly as the
+    // backend grammar defines them; the due time still comes from the backend.
+    const cronIssue = cronExpressionIssue(form.cron);
+    if (cronIssue !== null) {
+      issues.push({
+        fieldId: "automation-create-cron",
+        label: "Cron 表达式",
+        message: cronIssue,
+      });
+    }
   }
 
   const timezone = form.timezone.trim();

@@ -56,6 +56,33 @@ function recordApiCalls(page: Page): { method: string; path: string }[] {
   return api;
 }
 
+async function expectCloseChoiceVisible(page: Page): Promise<void> {
+  const continueButton = page.getByRole("button", { name: "继续填写" });
+  await expect(continueButton).toBeVisible();
+  await expect(continueButton).toBeInViewport();
+  const button = await continueButton.boundingBox();
+  const dialog = await page.getByRole("dialog").boundingBox();
+  expect(button).not.toBeNull();
+  expect(dialog).not.toBeNull();
+  const choice = button as {
+    x: number;
+    y: number;
+    width: number;
+    height: number;
+  };
+  const card = dialog as {
+    x: number;
+    y: number;
+    width: number;
+    height: number;
+  };
+  // The choice is fully inside the card's visible area, not parked below the
+  // scrolling fields where an operator would never see it.
+  expect(choice.y).toBeGreaterThanOrEqual(card.y);
+  expect(choice.y + choice.height).toBeLessThanOrEqual(card.y + card.height);
+  await expect(continueButton).toBeFocused();
+}
+
 async function openCreateCard(page: Page): Promise<void> {
   await expect(
     page.getByRole("heading", { name: "新建自动化任务" }),
@@ -318,4 +345,267 @@ test("fits narrow screens, reduced motion and keyboard focus", async ({
   await expect(
     page.getByRole("link", { name: "新建自动化任务" }),
   ).toBeFocused();
+
+  // The unsaved-close choice still fits the narrow viewport and is operable
+  // with the keyboard, including the smallest supported width.
+  await page.keyboard.press("Enter");
+  await openCreateCard(page);
+  await page.getByLabel(/任务名称/).fill("窄屏关闭");
+  await page.keyboard.press("Escape");
+  await expectCloseChoiceVisible(page);
+  await page.keyboard.press("Enter");
+  await expect(page.getByLabel(/任务名称/)).toHaveValue("窄屏关闭");
+
+  await page.setViewportSize({ width: 320, height: 844 });
+  await page.keyboard.press("Escape");
+  await expectCloseChoiceVisible(page);
+  const narrowOverflow = await page.evaluate(
+    () => document.documentElement.scrollWidth - window.innerWidth,
+  );
+  expect(narrowOverflow).toBeLessThanOrEqual(0);
+  await page.getByRole("button", { name: "放弃修改" }).click();
+  await expect(
+    page.getByRole("heading", { name: "新建自动化任务" }),
+  ).toHaveCount(0);
+  await expect(
+    page.getByRole("link", { name: "新建自动化任务" }),
+  ).toBeFocused();
+});
+
+test("keeps the close choice reachable from every close entry", async ({
+  page,
+}) => {
+  await page.setViewportSize({ width: 1440, height: 900 });
+  const before = await harnessState(page);
+  const api = recordApiCalls(page);
+  await connectOn(page, "/ui-v2/operations/automation?sort=name");
+  await page.getByRole("link", { name: "新建自动化任务" }).click();
+  await openCreateCard(page);
+  await page.getByLabel(/任务名称/).fill("未保存的关闭实验");
+
+  // The × button, Escape and the backdrop all surface the same pinned choice,
+  // fully inside the card, with focus on the safe action.
+  await page.getByRole("button", { name: "关闭新建自动化任务" }).click();
+  await expectCloseChoiceVisible(page);
+  await page.getByRole("button", { name: "继续填写" }).click();
+  await expect(page.getByLabel(/任务名称/)).toHaveValue("未保存的关闭实验");
+  await expect(page.getByLabel(/任务名称/)).toBeFocused();
+  await expect(page.getByRole("button", { name: "继续填写" })).toHaveCount(0);
+
+  await page.keyboard.press("Escape");
+  await expectCloseChoiceVisible(page);
+  await page.getByRole("button", { name: "继续填写" }).click();
+  await expect(page.getByLabel(/任务名称/)).toHaveValue("未保存的关闭实验");
+
+  await page.mouse.click(8, 8);
+  await expectCloseChoiceVisible(page);
+  await page.getByRole("button", { name: "继续填写" }).click();
+  await expect(page.getByLabel(/任务名称/)).toHaveValue("未保存的关闭实验");
+
+  // A browser back is blocked by the same decision instead of unmounting the
+  // card; continuing keeps the exact route and input.
+  await page.goBack().catch(() => null);
+  await expectCloseChoiceVisible(page);
+  await expect(page.getByLabel(/任务名称/)).toHaveValue("未保存的关闭实验");
+  await page.getByRole("button", { name: "继续填写" }).click();
+  await expect(
+    page.getByRole("heading", { name: "新建自动化任务" }),
+  ).toBeVisible();
+  await expect(page).toHaveURL(/\/ui-v2\/operations\/automation\/lifecycle/);
+
+  // Discarding returns to the original list context with the create entry
+  // focused, and nothing was published.
+  await page.getByRole("button", { name: "取消" }).click();
+  await expectCloseChoiceVisible(page);
+  await page.getByRole("button", { name: "放弃修改" }).click();
+  await expect(
+    page.getByRole("heading", { name: "新建自动化任务" }),
+  ).toHaveCount(0);
+  await expect(page).toHaveURL(/\/ui-v2\/operations\/automation\?.*sort=name/);
+  await expect(
+    page.getByRole("link", { name: "新建自动化任务" }),
+  ).toBeFocused();
+
+  const after = await harnessState(page);
+  expect(after.activeRevisionId).toBe(before.activeRevisionId);
+  expect(after.definitions).toEqual(before.definitions);
+  expect(api.filter((call) => call.method !== "GET")).toEqual([]);
+});
+
+test("keeps one in-flight create state and blocks leaving until the real result", async ({
+  page,
+}) => {
+  let release: (() => void) | null = null;
+  const gate = new Promise<void>((resolve) => {
+    release = resolve;
+  });
+  await connectOn(page, "/ui-v2/operations/automation/lifecycle");
+  await openCreateCard(page);
+  await page.getByLabel(/任务名称/).fill("进行中的真实创建");
+  await page.getByLabel(/资源库/).selectOption("source");
+  const api = recordApiCalls(page);
+
+  await page.route(
+    "**/api/v1/operations/automation/definitions",
+    async (route) => {
+      if (route.request().method() !== "POST") {
+        await route.continue();
+        return;
+      }
+      // The real command reaches the backend; only its response delivery is
+      // held so the in-flight state can be observed without a fake entry point.
+      const response = await route.fetch();
+      await gate;
+      await route.fulfill({ response });
+    },
+  );
+
+  await page.getByRole("button", { name: "创建任务" }).click();
+  await expect(page.getByText("正在创建…", { exact: true })).toBeVisible();
+  const pendingButton = page.getByRole("button", { name: "创建中…" });
+  await expect(pendingButton).toBeVisible();
+  await expect(pendingButton).toBeDisabled();
+  await expect(page.getByRole("button", { name: "核对本次创建" })).toHaveCount(
+    0,
+  );
+  await expect(page.getByText("上次创建结果待核对")).toHaveCount(0);
+  await expect(page.getByRole("button", { name: "继续填写" })).toHaveCount(0);
+
+  // Escape, the close button and a browser back cannot abandon the command
+  // while its result is still unknown to the page.
+  await page.keyboard.press("Escape");
+  await expect(page.getByRole("button", { name: "取消" })).toBeDisabled();
+  await expect(
+    page.getByRole("heading", { name: "新建自动化任务" }),
+  ).toBeVisible();
+  await page.goBack().catch(() => null);
+  await expect(page.getByText(/已暂时阻止离开本页/)).toBeVisible();
+  await expect(
+    page.getByRole("heading", { name: "新建自动化任务" }),
+  ).toBeVisible();
+
+  (release as unknown as () => void)();
+  await expect(
+    page.getByRole("heading", { name: "创建成功，尚未启用" }),
+  ).toBeVisible();
+  await expect(
+    page.getByRole("heading", { name: "新建自动化任务" }),
+  ).toHaveCount(0);
+
+  const state = await harnessState(page);
+  expect(state.definitions).toHaveLength(1);
+  expect(state.definitions[0].name).toBe("进行中的真实创建");
+  expect(state.definitions[0].enabled).toBe(false);
+  expect(state.occurrenceTotal).toBe(0);
+  expect(
+    api.filter(
+      (call) =>
+        call.method === "POST" &&
+        call.path === "/api/v1/operations/automation/definitions",
+    ),
+  ).toHaveLength(1);
+});
+
+test("explains an invalid Cron, keeps Active unchanged and creates the corrected plan", async ({
+  page,
+}) => {
+  const before = await harnessState(page);
+  const api = recordApiCalls(page);
+  await connectOn(page, "/ui-v2/operations/automation/lifecycle");
+  await openCreateCard(page);
+  await page.getByLabel(/任务名称/).fill("时间计划纠正任务");
+  await page.getByLabel(/资源库/).selectOption("source");
+  await page.getByLabel("执行频率").selectOption("cron");
+  const cron = page.getByLabel("Cron 表达式");
+  await cron.fill("61 8 * * *");
+  await page.getByRole("button", { name: "创建任务" }).click();
+
+  // The invalid minute is named in Chinese next to the field, the field is
+  // marked, and no create command or schedule preview result is fabricated.
+  const correction = page.locator("#automation-create-cron-error");
+  await expect(correction).toHaveText(/第 1 段（分钟）必须在 0–59 之间/);
+  await expect(correction).toBeVisible();
+  await expect(cron).toHaveAttribute("aria-invalid", "true");
+  await expect(cron).toBeFocused();
+  expect(
+    api.filter(
+      (call) =>
+        call.method === "POST" &&
+        call.path === "/api/v1/operations/automation/definitions",
+    ),
+  ).toHaveLength(0);
+  const rejected = await harnessState(page);
+  expect(rejected.activeRevisionId).toBe(before.activeRevisionId);
+  expect(rejected.definitions).toEqual(before.definitions);
+
+  // A backend rejection of the same time plan is explained at the schedule
+  // area with a reachable next action, never as a raw code alone.
+  await page.route(
+    "**/api/v1/operations/automation/definitions",
+    async (route) => {
+      if (route.request().method() !== "POST") {
+        await route.continue();
+        return;
+      }
+      await route.fulfill({
+        status: 400,
+        contentType: "application/json",
+        body: JSON.stringify({
+          error: {
+            code: "automation_definition_invalid_field",
+            message: "Automation Task Definition field is invalid",
+            details: {
+              stage: "compose",
+              durableState: "active_unchanged",
+              sideEffects: "none",
+              retrySafe: true,
+              nextAction:
+                "correct the reported Automation Task Definition field, then save again",
+            },
+          },
+        }),
+      });
+    },
+  );
+  await cron.fill("0 8 * * *");
+  await expect(page.getByText(/Cron 0 8 \* \* \*/)).toBeVisible();
+  await page.getByRole("button", { name: "创建任务" }).click();
+  await expect(page.getByText("创建未生效")).toBeVisible();
+  await expect(
+    page.getByText(/请先检查“运行时间”中的 Cron 表达式与 IANA 时区/),
+  ).toBeVisible();
+  await expect(page.getByText("后端拒绝了当前时间计划")).toBeVisible();
+  await expect(cron).toHaveValue("0 8 * * *");
+  await expect(cron).toBeFocused();
+  await expect(page.getByRole("button", { name: "核对本次创建" })).toHaveCount(
+    0,
+  );
+  const rejectedState = await harnessState(page);
+  expect(rejectedState.activeRevisionId).toBe(before.activeRevisionId);
+  expect(rejectedState.definitions).toEqual(before.definitions);
+
+  // The corrected plan publishes exactly one disabled definition and no run.
+  await page.unroute("**/api/v1/operations/automation/definitions");
+  await page.getByRole("button", { name: "创建任务" }).click();
+  await expect(
+    page.getByRole("heading", { name: "创建成功，尚未启用" }),
+  ).toBeVisible();
+
+  const after = await harnessState(page);
+  expect(after.definitions).toHaveLength(1);
+  const created = after.definitions[0];
+  expect(created.name).toBe("时间计划纠正任务");
+  expect(created.enabled).toBe(false);
+  expect(created.cron).toBe("0 8 * * *");
+  expect(created.intervalSeconds).toBeNull();
+  expect(created.timezone).not.toBeNull();
+  expect(after.occurrenceTotal).toBe(0);
+  expect(after.activeRevisionId).not.toBe(before.activeRevisionId);
+  expect(
+    api.filter(
+      (call) =>
+        call.method === "POST" &&
+        call.path === "/api/v1/operations/automation/definitions",
+    ),
+  ).toHaveLength(2);
 });
