@@ -8,6 +8,7 @@
  */
 
 import { useId, useState } from "react";
+import { Link } from "@tanstack/react-router";
 
 import type {
   AutomationDefinitionModel,
@@ -214,6 +215,21 @@ function latestRunCell(latest: AutomationLatestRunModel | null) {
   };
 }
 
+export type AutomationRunOnceRowFeedback =
+  | { readonly state: "submitting" }
+  | { readonly state: "checking" }
+  | { readonly state: "admitted"; readonly taskId: string }
+  | {
+      readonly state: "rejected";
+      readonly reason: string;
+      readonly nextAction: string;
+    }
+  | {
+      readonly state: "pending";
+      readonly detail: string;
+      readonly note: string | null;
+    };
+
 /** One definition row of the reference-style task table. */
 export function AutomationDefinitionRow({
   definition,
@@ -221,7 +237,8 @@ export function AutomationDefinitionRow({
   onOpen,
   onEdit,
   onRunOnce,
-  runOncePath,
+  onCheckRunOnce,
+  runOnceFeedback,
   highlighted = false,
 }: {
   readonly definition: AutomationDefinitionModel;
@@ -229,16 +246,22 @@ export function AutomationDefinitionRow({
   readonly onOpen: () => void;
   readonly onEdit: (() => void) | null;
   readonly onRunOnce: (() => void) | null;
-  readonly runOncePath: string | null;
+  readonly onCheckRunOnce: (() => void) | null;
+  readonly runOnceFeedback: AutomationRunOnceRowFeedback | null;
   /** Briefly mark the row just created by this operator in this session. */
   readonly highlighted?: boolean;
 }) {
   const draftOnly = definition.definitionState === "draft-only";
   const latest = latestRunCell(latestRun);
+  const runOncePending =
+    runOnceFeedback?.state === "pending" ||
+    runOnceFeedback?.state === "checking";
+  const runOnceSubmitting = runOnceFeedback?.state === "submitting";
   return (
     <tr
       className={highlighted ? "mf-automation-row-created" : undefined}
       data-created={highlighted ? "true" : undefined}
+      data-run-once-state={runOnceFeedback?.state ?? "idle"}
     >
       <td>
         <button type="button" className="mf-link-button" onClick={onOpen}>
@@ -296,13 +319,32 @@ export function AutomationDefinitionRow({
               编辑
             </button>
           )}
-          {onRunOnce !== null && runOncePath !== null && (
+          {onRunOnce !== null && (
             <button
               type="button"
               className="mf-button mf-button-secondary"
-              onClick={onRunOnce}
+              aria-disabled={runOnceSubmitting || runOncePending}
+              onClick={() => {
+                if (runOnceSubmitting || runOncePending) return;
+                onRunOnce();
+              }}
             >
-              运行一次
+              {runOnceSubmitting ? "正在提交…" : "运行一次"}
+            </button>
+          )}
+          {runOncePending && onCheckRunOnce !== null && (
+            <button
+              type="button"
+              className="mf-button mf-button-secondary"
+              aria-disabled={runOnceFeedback?.state === "checking"}
+              onClick={() => {
+                if (runOnceFeedback?.state === "checking") return;
+                onCheckRunOnce();
+              }}
+            >
+              {runOnceFeedback?.state === "checking"
+                ? "正在确认…"
+                : "查看提交结果"}
             </button>
           )}
         </div>
@@ -312,6 +354,61 @@ export function AutomationDefinitionRow({
               {definition.actions.runOnce.reason}
             </p>
           )}
+        <div
+          className="mf-automation-run-once-feedback"
+          role="status"
+          aria-live="polite"
+          data-run-once-state={runOnceFeedback?.state ?? "idle"}
+        >
+          {runOnceFeedback?.state === "submitting" && (
+            <p className="mf-dashboard-meta">正在提交，请稍候。</p>
+          )}
+          {runOnceFeedback?.state === "checking" && (
+            <>
+              <p className="mf-automation-run-once-title">正在确认…</p>
+              <p className="mf-dashboard-meta">
+                只读取刚才那次提交的结果，不会再次运行。
+              </p>
+            </>
+          )}
+          {runOnceFeedback?.state === "admitted" && (
+            <>
+              <p className="mf-automation-run-once-title">
+                <span aria-hidden="true">✓ </span>已提交
+              </p>
+              <p className="mf-dashboard-meta">
+                任务已受理，尚未完成；进度和结果请在任务中心查看。
+              </p>
+              <Link
+                className="mf-button mf-button-secondary"
+                to="/operations/tasks/$taskId"
+                params={{ taskId: runOnceFeedback.taskId }}
+              >
+                查看任务
+              </Link>
+            </>
+          )}
+          {runOnceFeedback?.state === "rejected" && (
+            <>
+              <p className="mf-automation-run-once-title">
+                <span aria-hidden="true">! </span>未能提交
+              </p>
+              <p className="mf-dashboard-meta">{runOnceFeedback.reason}</p>
+              <p className="mf-dashboard-meta">{runOnceFeedback.nextAction}</p>
+            </>
+          )}
+          {runOnceFeedback?.state === "pending" && (
+            <>
+              <p className="mf-automation-run-once-title">
+                <span aria-hidden="true">? </span>暂未收到回复
+              </p>
+              <p className="mf-dashboard-meta">{runOnceFeedback.detail}</p>
+              {runOnceFeedback.note !== null && (
+                <p className="mf-dashboard-meta">{runOnceFeedback.note}</p>
+              )}
+            </>
+          )}
+        </div>
       </td>
     </tr>
   );

@@ -6595,6 +6595,41 @@ tr[aria-selected="true"] {
 .mf-automation-workspace .mf-automation-table .mf-actions {
   margin-top: 0;
 }
+.mf-automation-run-once-feedback {
+  min-height: 18px;
+  margin-top: 6px;
+  max-width: 260px;
+  font-size: 0.82rem;
+  line-height: 1.4;
+  overflow-wrap: anywhere;
+}
+.mf-automation-run-once-feedback:empty {
+  min-height: 18px;
+}
+.mf-automation-run-once-feedback .mf-dashboard-meta {
+  margin: 2px 0 0;
+  color: var(--muted);
+}
+.mf-automation-run-once-title {
+  margin: 0;
+  font-weight: 600;
+  color: var(--ink);
+}
+.mf-automation-run-once-feedback .mf-button {
+  margin-top: 6px;
+}
+.mf-automation-hidden-pending {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: 8px 12px;
+  margin-top: 8px;
+  min-width: 0;
+}
+.mf-automation-hidden-pending .mf-dashboard-meta {
+  flex-basis: 100%;
+  margin: 0;
+}
 .mf-automation-workspace .mf-dashboard-head > .mf-actions {
   margin-top: 0;
 }
@@ -7323,6 +7358,10 @@ tr[aria-selected="true"] {
   }
 
   .mf-automation-row-created {
+    animation: none;
+  }
+
+  .mf-automation-run-once-feedback {
     animation: none;
   }
 }

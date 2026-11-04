@@ -60,7 +60,7 @@ async function runOnceState(
   return (await response.json()) as RunOnceState;
 }
 
-async function publishRunOnceDefinition(page: Page): Promise<void> {
+async function publishRunOnceDefinition(page: Page): Promise<string> {
   await connectOn(page, "/ui-v2/operations/automation/lifecycle");
   await expect(
     page.getByRole("heading", { name: "新建自动化任务" }),
@@ -89,13 +89,17 @@ async function publishRunOnceDefinition(page: Page): Promise<void> {
   if (!created)
     throw new Error("created definition missing from harness state");
   DEFINITION_ID = created.id;
-  await connectOn(
-    page,
-    `/ui-v2/operations/automation/lifecycle/${DEFINITION_ID}`,
-  );
-  await expect(
-    page.getByRole("heading", { name: "Edit Automation definition" }),
-  ).toBeVisible();
+  await connectOn(page, "/ui-v2/operations/automation");
+  const row = page.getByRole("row").filter({ hasText: "Task flow harness" });
+  await row.getByRole("button", { name: "运行一次" }).click();
+  await expect(row.getByText("已提交")).toBeVisible();
+  const link = row.getByRole("link", { name: "查看任务" });
+  const href = await link.getAttribute("href");
+  if (!href) throw new Error("admitted list row has no Task Center link");
+  const taskId = new URL(href, page.url()).pathname.split("/").pop();
+  if (!taskId) throw new Error("admitted list link has no Task identity");
+  expect(page.url()).toContain("/ui-v2/operations/automation");
+  return taskId;
 }
 
 test.beforeEach(async ({ page }) => {
@@ -107,12 +111,7 @@ test("a mixed file population completes the flow with independent file facts", a
   page,
 }, testInfo) => {
   await page.request.post("/__harness__/seed-run-once-mixed-scope?conflict=0");
-  await publishRunOnceDefinition(page);
-  await page.getByRole("button", { name: "运行一次" }).click();
-  await expect(page).toHaveURL(
-    /\/ui-v2\/operations\/automation\/run-once\/[0-9a-f-]{36}$/,
-  );
-  const discoveryId = new URL(page.url()).pathname.split("/").pop() ?? "";
+  const discoveryId = await publishRunOnceDefinition(page);
 
   // The real Worker runs the admitted Run once with one injected file-level
   // failure (zero Storage effect) beside one genuine successful organize.
@@ -240,12 +239,7 @@ test("a saved flow failure stays authoritative beside its real file effects", as
   // success stays visible and the organized file is never replayed.
   const headers = { Authorization: `Bearer ${ADMIN_TOKEN}` };
   await page.request.post("/__harness__/seed-run-once-mixed-scope");
-  await publishRunOnceDefinition(page);
-  await page.getByRole("button", { name: "运行一次" }).click();
-  await expect(page).toHaveURL(
-    /\/ui-v2\/operations\/automation\/run-once\/[0-9a-f-]{36}$/,
-  );
-  const discoveryId = new URL(page.url()).pathname.split("/").pop() ?? "";
+  const discoveryId = await publishRunOnceDefinition(page);
   const first = await page.request.post(
     `/__harness__/run-automation-run-once-worker?discoveryId=${discoveryId}`,
   );
@@ -494,12 +488,7 @@ test("an acknowledged cancellation is its own flow outcome in the Task Center", 
   page,
 }) => {
   await page.request.post("/__harness__/seed-run-once-mixed-scope?conflict=0");
-  await publishRunOnceDefinition(page);
-  await page.getByRole("button", { name: "运行一次" }).click();
-  await expect(page).toHaveURL(
-    /\/ui-v2\/operations\/automation\/run-once\/[0-9a-f-]{36}$/,
-  );
-  const discoveryId = new URL(page.url()).pathname.split("/").pop() ?? "";
+  const discoveryId = await publishRunOnceDefinition(page);
   // The admitted Task stays queued (the Worker never claims it), so the
   // operator's cancel settles atomically at the queue boundary.
   const state = await runOnceState(page.request, discoveryId);

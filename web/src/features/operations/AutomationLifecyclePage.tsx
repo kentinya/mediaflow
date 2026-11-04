@@ -24,13 +24,10 @@ import { useState } from "react";
 import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
 import { Link, useNavigate, useParams } from "@tanstack/react-router";
 import { useAuthToken } from "../../shared/api/auth-context";
-import { newRequestId } from "../../shared/api/request-id";
 import { registerPrincipalSessionDataCleaner } from "../../shared/auth/principal-session-data";
 import { principalIdStorageSegment } from "../../shared/auth/principal-identity";
 import { usePrincipalIdentity } from "./principal-identity-query";
 import {
-  admitAutomationRunOnce,
-  reconcileAutomationRunOnce,
   reconcileAutomationPublicationFocused,
   copyAutomationDefinitionFocused,
   fetchAutomationCopyCandidate,
@@ -241,92 +238,6 @@ function writePendingCopyIntent(
   }
 }
 
-/**
- * The submitted-but-unconfirmed Run-once admission. It carries only the
- * definition identity, the client-generated request id and the observed fence
- * — never a token or reusable execution authority — and it survives a real
- * page reload so a lost response is reconciled by its own request id instead
- * of being resubmitted blindly.
- */
-interface PendingRunOnce {
-  readonly definitionId: string;
-  readonly requestId: string;
-  readonly authority: CandidateAuthority | null;
-  readonly fingerprint: string | null;
-}
-
-const RUN_ONCE_INTENT_SESSION_PREFIX =
-  "mediaflow.operations.automation-run-once-intent:";
-
-function runOnceIntentSessionKey(principalId: string): string {
-  return `${RUN_ONCE_INTENT_SESSION_PREFIX}${principalIdStorageSegment(principalId)}`;
-}
-
-function readPendingRunOnce(principalId: string | null): PendingRunOnce | null {
-  if (principalId === null || typeof window === "undefined") return null;
-  try {
-    const raw = window.sessionStorage.getItem(
-      runOnceIntentSessionKey(principalId),
-    );
-    if (raw === null) return null;
-    const value = JSON.parse(raw) as unknown;
-    if (value === null || typeof value !== "object") return null;
-    const source = value as Record<string, unknown>;
-    if (
-      typeof source.definitionId !== "string" ||
-      typeof source.requestId !== "string" ||
-      source.requestId.length === 0
-    ) {
-      return null;
-    }
-    const rawAuthority = source.authority;
-    let authority: CandidateAuthority | null = null;
-    if (
-      rawAuthority !== null &&
-      typeof rawAuthority === "object" &&
-      typeof (rawAuthority as Record<string, unknown>).revisionId ===
-        "string" &&
-      typeof (rawAuthority as Record<string, unknown>).version === "number" &&
-      typeof (rawAuthority as Record<string, unknown>).digest === "string"
-    ) {
-      const bounded = rawAuthority as Record<string, unknown>;
-      authority = {
-        revisionId: bounded.revisionId as string,
-        version: bounded.version as number,
-        digest: bounded.digest as string,
-      };
-    }
-    return {
-      definitionId: source.definitionId,
-      requestId: source.requestId,
-      authority: authority,
-      fingerprint:
-        typeof source.fingerprint === "string" ? source.fingerprint : null,
-    };
-  } catch {
-    return null;
-  }
-}
-
-function writePendingRunOnce(
-  principalId: string | null,
-  intent: PendingRunOnce | null,
-): void {
-  if (typeof window === "undefined") return;
-  try {
-    if (principalId === null) return;
-    const key = runOnceIntentSessionKey(principalId);
-    if (intent === null) {
-      window.sessionStorage.removeItem(key);
-    } else {
-      window.sessionStorage.setItem(key, JSON.stringify(intent));
-    }
-  } catch {
-    // Persisting the reconciliation context is best-effort: the operator can
-    // always reconcile from the durable Automation history after a reconnect.
-  }
-}
-
 registerPrincipalSessionDataCleaner(() => {
   if (typeof window === "undefined") return;
   const storage = window.sessionStorage;
@@ -334,7 +245,6 @@ registerPrincipalSessionDataCleaner(() => {
   for (let index = 0; index < storage.length; index += 1) {
     const key = storage.key(index);
     if (key?.startsWith(COPY_INTENT_SESSION_PREFIX)) keys.push(key);
-    if (key?.startsWith(RUN_ONCE_INTENT_SESSION_PREFIX)) keys.push(key);
   }
   for (const key of keys) storage.removeItem(key);
 });
@@ -345,11 +255,10 @@ export function AutomationLifecyclePage() {
   // link restores the same tab/filters/page instead of the workspace default.
   const listReturn = useAutomationListReturn();
   // The principal identity the backend confirms for this token: the pending
-  // Copy/Run-once intent's session key is scoped to it, so another principal's
-  // unknown outcome can never be reconciled as this one's result. The
-  // identity is also established *before* a Run-once/copy admission POST, so
-  // an unknown outcome is always retained for this exact principal
-  // (B43.2-R5-2).
+  // Copy intent's session key is scoped to it, so another principal's unknown
+  // outcome can never be reconciled as this one's result. The identity is
+  // established before a copy admission POST, so an unknown outcome is retained
+  // for this exact principal.
   const principalIdentity = usePrincipalIdentity();
   const principalId = principalIdentity.resolved
     ? principalIdentity.principalId
@@ -498,14 +407,6 @@ export function AutomationLifecyclePage() {
     latestAuthority !== null &&
     (formEntry.authority.revisionId !== latestAuthority.revisionId ||
       formEntry.authority.digest !== latestAuthority.digest);
-  // The exact published definition/configuration this render observed, used as
-  // the Run-once admission fence. A changed definition or republished Active
-  // makes the new admission stale and the backend refuses it.
-  const observedAuthority = candidateAuthority;
-  const observedFingerprint =
-    editQueryResult !== undefined && editQueryResult.ok
-      ? editQueryResult.model.definitionFingerprint
-      : null;
   const invalidate = () => {
     void queryClient.invalidateQueries({ queryKey: [automationListQueryKey] });
     void queryClient.invalidateQueries({
@@ -873,145 +774,6 @@ export function AutomationLifecyclePage() {
     refetchOnWindowFocus: false,
   });
 
-  // Definition-bound Run once.  The published definition itself supplies the
-  // ResourceLibrary and source sub-scope, so this action sends no file
-  // selection: the backend discovers and freezes the complete bounded manifest.
-  // It never enables the schedule, grants authority or mutates Storage.
-  //
-  // The action also submits the exact published definition/configuration it
-  // observed. That is a fence: if the definition changed or Active was
-  // republished between this render and the click, the backend refuses the
-  // stale request instead of silently binding today's Active to an intent the
-  // operator never reviewed.
-  // A submitted-but-unconfirmed Run-once admission, bounded to the definition
-  // identity, the client request id and the observed fence. It survives a real
-  // page reload because a lost response is an unknown durable outcome: until it
-  // is reconciled by that same request id, no second admission is offered. The
-  // session key is principal-scoped, so another principal's unknown outcome can
-  // never be reconciled as this one's result.
-  const [pendingRunOnceOverride, setPendingRunOnceState] =
-    useState<PendingRunOnce | null>(null);
-  const pendingRunOnce =
-    pendingRunOnceOverride ?? readPendingRunOnce(principalId);
-  const setPendingRunOnce = (intent: PendingRunOnce | null) => {
-    setPendingRunOnceState(intent);
-    writePendingRunOnce(principalId, intent);
-  };
-  const runOnceMutation = useMutation({
-    mutationFn: (id: string) => {
-      // The Run-once admission context is retained principal-scoped. The
-      // identity is established before the POST, so an unknown outcome is
-      // always retained for this exact principal (B43.2-R5-2); admitting
-      // while the identity is unresolved could not prove whose request it
-      // was.
-      const identity = principalIdentity;
-      if (!identity.resolved) {
-        return Promise.reject(
-          new Error(
-            identity.reason === "loading"
-              ? "principal-identity-pending"
-              : "principal-identity-unavailable",
-          ),
-        );
-      }
-      const requestId = newRequestId();
-      const intent: PendingRunOnce = {
-        definitionId: id,
-        requestId: requestId ?? "",
-        authority: observedAuthority,
-        fingerprint: observedFingerprint,
-      };
-      if (requestId !== null) {
-        writePendingRunOnce(identity.principalId, intent);
-        setPendingRunOnceState(intent);
-      }
-      return admitAutomationRunOnce(token, {
-        definitionId: id,
-        admissionRequestId: requestId,
-        expectedDefinitionFingerprint: observedFingerprint,
-        expectedRevisionId: observedAuthority?.revisionId ?? null,
-        expectedRevisionVersion: observedAuthority?.version ?? null,
-        expectedRevisionDigest: observedAuthority?.digest ?? null,
-      }).then((result) => ({
-        result,
-        principalId: identity.principalId,
-      }));
-    },
-    retry: false,
-    onMutate: () => setError(null),
-    onSuccess: ({ result, principalId: admittedPrincipalId }) => {
-      if (!result.ok || result.model === undefined) {
-        const unknown =
-          result.status === 0 ||
-          result.status >= 500 ||
-          result.code === "malformed_response";
-        if (unknown) {
-          // The outcome is unknown, not absent: keep the retained intent so the
-          // operator can deliberately reconcile it before any resubmission.
-          setError(
-            "运行一次的响应未能送达或无法解读，无法确定后端是否已经受理。" +
-              "已受理的工作是持久的；请先使用“核对上次请求”，不要重复提交。",
-          );
-          return;
-        }
-        // A proved rejection clears the retained intent.
-        setPendingRunOnce(null);
-        writePendingRunOnce(admittedPrincipalId, null);
-        setError(
-          `Run once was rejected (${result.code ?? "unknown"}). ${result.nextAction ?? "Reload the current state and review the definition bounds."}`,
-        );
-        return;
-      }
-      setPendingRunOnce(null);
-      writePendingRunOnce(admittedPrincipalId, null);
-      void navigate({
-        to: "/operations/automation/run-once/$discoveryId",
-        params: { discoveryId: result.model.discoveryId },
-      });
-    },
-  });
-
-  // Reconcile the retained unknown Run-once admission from durable truth. This
-  // never creates work: it reads back the admission the client's own request id
-  // actually produced, or reports a bounded absence.
-  const reconcileRunOnceMutation = useMutation({
-    mutationFn: (intent: PendingRunOnce) =>
-      reconcileAutomationRunOnce(token, {
-        definitionId: intent.definitionId,
-        admissionRequestId: intent.requestId,
-      }),
-    retry: false,
-    onMutate: () => setError(null),
-    onSuccess: (result) => {
-      if (result.ok && result.model !== undefined) {
-        setPendingRunOnce(null);
-        writePendingRunOnce(principalId, null);
-        void navigate({
-          to: "/operations/automation/run-once/$discoveryId",
-          params: { discoveryId: result.model.discoveryId },
-        });
-        return;
-      }
-      if (result.code === "run_once_request_not_found") {
-        // A bounded absence cannot establish that no work was admitted: the
-        // API reports `durableState: unknown`, and an accepted concurrent
-        // equivalent request can be exactly the case that has no alias
-        // (B43.2-R4-2/R4-3).  Keep the retained intent until the operator
-        // deliberately resolves it.
-        setError(
-          "核对没有找到这次运行一次的持久工作,但这不能证明后端没有受理:" +
-            "响应可能在写入前丢失。请先查看持久历史/任务中心确认,再决定是否放弃这次请求。",
-        );
-        return;
-      }
-      setError(
-        `核对上次运行一次失败（${result.code ?? "unknown"}）。${
-          result.nextAction ?? "请稍后重试核对，不要重复提交。"
-        }`,
-      );
-    },
-  });
-
   const copyCandidateQuery = useQuery({
     queryKey: ["operations.automation-lifecycle-copy", definitionId ?? ""],
     queryFn: () => fetchAutomationCopyCandidate(token, definitionId ?? ""),
@@ -1028,14 +790,6 @@ export function AutomationLifecyclePage() {
   // The command target for this route's definition-bound commands.
   const routeTargetId = definitionId ?? "";
   const copyBlocked = pendingCopyIntent !== null;
-  // A retained Run-once intent for *this* definition blocks a second admission
-  // until it is deliberately reconciled; another definition's unknown outcome
-  // never blocks this one.
-  const pendingRunOnceForRoute =
-    pendingRunOnce !== null && pendingRunOnce.definitionId === routeTargetId
-      ? pendingRunOnce
-      : null;
-
   const convenience =
     currentForm === null ? "interval" : convenienceOf(currentForm);
 
@@ -1201,7 +955,7 @@ export function AutomationLifecyclePage() {
         return (
           <div className="mf-dashboard">
             <p className="mf-dashboard-meta">
-              启用后按保存的来源范围与上限定时整理；启用本身不启动任务。“运行一次”立即受理该保存范围的一次真实整理，禁用时也可使用。
+              启用后按保存的来源范围与上限定时整理；启用本身不启动任务。运行一次请回到任务列表，对已保存的定义直接发起。
             </p>
             {authorityModel?.executionEffects && (
               <p className="mf-dashboard-meta">
@@ -1524,53 +1278,6 @@ export function AutomationLifecyclePage() {
               <section className="mf-count-section">
                 <h3>Lifecycle actions</h3>
                 <div className="mf-actions">
-                  <Button
-                    type="button"
-                    disabled={
-                      runOnceMutation.isPending ||
-                      pendingRunOnceForRoute !== null ||
-                      !principalIdentity.resolved
-                    }
-                    onClick={() => runOnceMutation.mutate(routeTargetId)}
-                  >
-                    {runOnceMutation.isPending ? "Starting..." : "运行一次"}
-                  </Button>
-                  {!principalIdentity.resolved && (
-                    <p className="mf-dashboard-meta">
-                      {principalIdentity.reason === "loading"
-                        ? "正在确认当前登录身份；确认后才能发起运行一次，以保证未决请求能被完整保留。"
-                        : "当前登录身份暂不可用，运行一次暂不能发起；请稍后刷新重试。未决请求的核对不受影响。"}
-                    </p>
-                  )}
-                  {pendingRunOnceForRoute !== null && (
-                    <Button
-                      type="button"
-                      variant="secondary"
-                      disabled={reconcileRunOnceMutation.isPending}
-                      onClick={() =>
-                        reconcileRunOnceMutation.mutate(pendingRunOnceForRoute)
-                      }
-                    >
-                      {reconcileRunOnceMutation.isPending
-                        ? "核对中..."
-                        : "核对上次请求"}
-                    </Button>
-                  )}
-                  {pendingRunOnceForRoute !== null && (
-                    <Button
-                      type="button"
-                      variant="secondary"
-                      onClick={() => {
-                        setPendingRunOnce(null);
-                        setError(
-                          "已放弃这次未决运行一次的本地上下文。后端可能仍保留了它实际受理的工作;" +
-                            "如需继续,请重新发起运行一次并留意新请求的身份。",
-                        );
-                      }}
-                    >
-                      放弃未决请求
-                    </Button>
-                  )}
                   <Button
                     type="button"
                     disabled={!canManage || toggleMutation.isPending}

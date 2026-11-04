@@ -8410,8 +8410,18 @@ export async function admitAutomationRunOnce(
   }
   if (options.expectedRevisionId) {
     body.expectedRevisionId = options.expectedRevisionId;
-    body.expectedRevisionVersion = options.expectedRevisionVersion ?? 0;
-    body.expectedRevisionDigest = options.expectedRevisionDigest ?? "";
+    // The server treats every fence field as optional. Omit fields the caller
+    // did not actually observe instead of fabricating a version/digest that
+    // would refuse or mis-bind an otherwise valid saved definition.
+    if (
+      options.expectedRevisionVersion !== null &&
+      options.expectedRevisionVersion !== undefined
+    ) {
+      body.expectedRevisionVersion = options.expectedRevisionVersion;
+    }
+    if (options.expectedRevisionDigest) {
+      body.expectedRevisionDigest = options.expectedRevisionDigest;
+    }
   }
   let response: Response;
   try {

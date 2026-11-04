@@ -207,7 +207,32 @@ class AutomationRunOnceService:
             raise AutomationRunOnceError("the saved source library is unavailable", status=409)
         now = self._clock()
         limit = min(definition.item_limit, 100)
+        from mediaflow.application.scanner import normalize_source_path
         from mediaflow.application.task_scheduling import build_scheduled_task_admission
+
+        # The saved ResourceLibrary storagePath and the definition's already
+        # validated sub-scope are the two real parts of one Storage-relative
+        # source. Normalize their join here, at the admission producer, so the
+        # durable Task stores the same canonical path the Worker later validates.
+        # Joining without this step leaves a trailing slash for a whole-library
+        # Run once under a non-empty library root (``Incoming/``); the Worker's
+        # strict scope grammar then rejects work the operator legitimately
+        # submitted. This does not relax absolute/traversal validation: both
+        # parts were checked when the saved configuration was published, and the
+        # normalized result is still rejected if it cannot name a safe source.
+        try:
+            scope_path = normalize_source_path(
+                posixpath.join(
+                    resource.get("storagePath", resource.get("rootPath", "")),
+                    definition.source_scope or "",
+                )
+            )
+        except (TypeError, ValueError) as error:
+            raise AutomationRunOnceError(
+                "the saved source scope is invalid; no work was admitted",
+                code="scope_root_invalid",
+                status=409,
+            ) from error
 
         task, state = build_scheduled_task_admission(
             "organize",
@@ -215,10 +240,7 @@ class AutomationRunOnceService:
             trigger=TaskTrigger.RUN_ONCE,
             principal=actor,
             request_id=admission_request_id,
-            scope_path=posixpath.join(
-                resource.get("storagePath", resource.get("rootPath", "")),
-                definition.source_scope or "",
-            ),
+            scope_path=scope_path,
             item_limit=limit,
             configuration_snapshot_id=active.revision_id,
             configuration_snapshot_digest=active.digest,

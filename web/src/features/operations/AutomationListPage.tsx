@@ -18,7 +18,7 @@
  * organizing Task exists, Task Center owns execution recovery.
  */
 
-import { useEffect, useMemo, useState } from "react";
+import { useEffect, useMemo, useRef, useState } from "react";
 import { useQuery, useQueryClient } from "@tanstack/react-query";
 import { Link, useNavigate, useSearch } from "@tanstack/react-router";
 import {
@@ -26,7 +26,19 @@ import {
   automationReturnSearch,
   readAutomationReturnContext,
 } from "../../shared/navigation/automation-return";
-import { useAuthToken } from "../../shared/api/auth-context";
+import { useAuthGeneration, useAuthToken } from "../../shared/api/auth-context";
+import { authStore } from "../../shared/api/auth-store";
+import {
+  admitAutomationRunOnce,
+  reconcileAutomationRunOnce,
+} from "../../shared/api/api-client";
+import { usePrincipalIdentity } from "./principal-identity-query";
+import {
+  beginRunOnceSubmission,
+  clearRunOnceIntent,
+  readRunOnceSession,
+  type PendingRunOnceIntent,
+} from "./automation-run-once-session";
 import {
   automationListQueryKey,
   automationListQueryOptions,
@@ -199,6 +211,98 @@ function listSearchForClose(
   return search;
 }
 
+type RunOnceFeedback =
+  | { readonly state: "submitting" }
+  | { readonly state: "checking" }
+  | { readonly state: "admitted"; readonly taskId: string }
+  | {
+      readonly state: "rejected";
+      readonly reason: string;
+      readonly nextAction: string;
+    }
+  | {
+      readonly state: "pending";
+      readonly detail: string;
+      readonly note: string | null;
+    };
+
+interface RejectedRunOnceCopy {
+  readonly reason: string;
+  readonly nextAction: string;
+}
+
+/**
+ * A bounded operator explanation for a proved Run-once refusal.
+ *
+ * Backend error codes and raw exception text are diagnostic only. The list
+ * tells the operator which stage refused the command, that no run was admitted
+ * by this submission, and the one safe next action. A changed definition is
+ * always followed by a fresh read; it is never retried with a new snapshot
+ * silently bound in place of the one the operator saw.
+ */
+function rejectedRunOnceCopy(
+  status: number,
+  code: string | null,
+): RejectedRunOnceCopy {
+  if (code === "definition_changed") {
+    return {
+      reason: "保存的任务或配置已更新，本次提交未受理。",
+      nextAction: "列表已刷新；请确认最新保存内容后再运行一次。",
+    };
+  }
+  if (code === "queue_full") {
+    return {
+      reason: "当前整理任务已满，本次提交未受理。",
+      nextAction: "等待正在运行的任务结束后再试，或稍后刷新列表。",
+    };
+  }
+  if (
+    code === "scope_root_invalid" ||
+    code === "resource_library_unavailable"
+  ) {
+    return {
+      reason: "保存的来源范围或资源库当前不可用，本次提交未受理。",
+      nextAction: "先在编辑页修正来源范围或资源库并保存，再运行一次。",
+    };
+  }
+  if (status === 401) {
+    return {
+      reason: "登录身份已失效，本次提交未受理。",
+      nextAction: "重新连接后确认列表内容，再运行一次。",
+    };
+  }
+  if (status === 403) {
+    return {
+      reason: "当前身份没有运行一次的权限，本次提交未受理。",
+      nextAction: "请使用具备手动整理权限的身份，或请管理员调整权限。",
+    };
+  }
+  if (status === 404) {
+    return {
+      reason: "这个任务在当前保存配置中已不存在，本次提交未受理。",
+      nextAction: "刷新列表，确认任务仍然存在后再运行。",
+    };
+  }
+  if (status === 503) {
+    return {
+      reason: "运行一次服务暂时不可用，本次提交未受理。",
+      nextAction: "稍后刷新列表，确认任务状态后再运行。",
+    };
+  }
+  if (status === 400) {
+    return {
+      reason: "本次提交内容无效，未发送运行请求。",
+      nextAction: "刷新列表，确认任务内容后再运行。",
+    };
+  }
+  return {
+    reason: "当前保存的任务或配置不允许这次运行，本次提交未受理。",
+    nextAction: "刷新列表，确认任务状态和来源后再运行一次。",
+  };
+}
+
+const PENDING_RUN_ONCE_DETAIL = "任务可能已提交，请先查看提交结果。";
+
 export function AutomationListPage({
   createDialogOpen = false,
 }: {
@@ -323,6 +427,321 @@ export function AutomationListPage({
       tab === "definitions",
     ),
   );
+
+  // The list Run-once command is a submission layer only. It reuses the exact
+  // definition/Active snapshot this row was read from, retains the caller's
+  // request identity before POST, and after admission leaves all run status to
+  // the existing Task Center/records reads.
+  const authGeneration = useAuthGeneration();
+  const principalIdentity = usePrincipalIdentity();
+  const principalId = principalIdentity.resolved
+    ? principalIdentity.principalId
+    : null;
+  const [runOnceSession, setRunOnceSession] = useState(() =>
+    readRunOnceSession(null),
+  );
+  const [runOnceBusy, setRunOnceBusy] = useState<ReadonlySet<string>>(
+    () => new Set(),
+  );
+  const [runOnceChecking, setRunOnceChecking] = useState<string | null>(null);
+  const [runOnceAdmitted, setRunOnceAdmitted] = useState<
+    Readonly<Record<string, string>>
+  >({});
+  const [runOnceRejected, setRunOnceRejected] = useState<
+    Readonly<Record<string, RejectedRunOnceCopy>>
+  >({});
+  const [runOnceUnknownNotes, setRunOnceUnknownNotes] = useState<
+    Readonly<Record<string, string>>
+  >({});
+  const runOnceInFlight = useRef<Set<string>>(new Set());
+  // A principal change is a hard boundary: pending context is principal-scoped
+  // and the old session's async responses must not update or clear the new one.
+  // Reading sessionStorage is the external synchronization this effect owns;
+  // the state reset is the boundary, not a derived render value.
+  /* eslint-disable react-hooks/set-state-in-effect */
+  useEffect(() => {
+    setRunOnceSession(readRunOnceSession(principalId));
+    setRunOnceBusy(new Set());
+    setRunOnceChecking(null);
+    setRunOnceAdmitted({});
+    setRunOnceRejected({});
+    setRunOnceUnknownNotes({});
+    runOnceInFlight.current.clear();
+  }, [principalId, authGeneration]);
+  /* eslint-enable react-hooks/set-state-in-effect */
+
+  const runOnceFeedback = useMemo(() => {
+    const feedback: Record<string, RunOnceFeedback> = {};
+    for (const definitionId of runOnceBusy) {
+      feedback[definitionId] = { state: "submitting" };
+    }
+    if (runOnceChecking !== null && !feedback[runOnceChecking]) {
+      feedback[runOnceChecking] = { state: "checking" };
+    }
+    for (const [definitionId, taskId] of Object.entries(runOnceAdmitted)) {
+      if (!feedback[definitionId]) {
+        feedback[definitionId] = { state: "admitted", taskId };
+      }
+    }
+    for (const [definitionId, copy] of Object.entries(runOnceRejected)) {
+      if (!feedback[definitionId]) {
+        feedback[definitionId] = { state: "rejected", ...copy };
+      }
+    }
+    for (const pending of runOnceSession.pending) {
+      if (feedback[pending.definitionId]) continue;
+      feedback[pending.definitionId] = {
+        state: "pending",
+        detail: PENDING_RUN_ONCE_DETAIL,
+        note: runOnceUnknownNotes[pending.definitionId] ?? null,
+      };
+    }
+    return feedback;
+  }, [
+    runOnceAdmitted,
+    runOnceBusy,
+    runOnceChecking,
+    runOnceRejected,
+    runOnceSession,
+    runOnceUnknownNotes,
+  ]);
+
+  useEffect(() => {
+    if (Object.keys(runOnceAdmitted).length === 0) return;
+    const timer = window.setTimeout(() => setRunOnceAdmitted({}), 8_000);
+    return () => window.clearTimeout(timer);
+  }, [runOnceAdmitted]);
+
+  const refreshDefinitionRead = () => {
+    void queryClient.invalidateQueries({ queryKey: [automationListQueryKey] });
+    void listQuery.refetch();
+  };
+
+  const rememberAdmitted = (
+    owner: string,
+    definitionId: string,
+    taskId: string,
+    requestId?: string,
+  ) => {
+    clearRunOnceIntent(owner, definitionId, requestId);
+    setRunOnceSession(readRunOnceSession(owner));
+    setRunOnceUnknownNotes((current) => {
+      if (current[definitionId] === undefined) return current;
+      const next = { ...current };
+      delete next[definitionId];
+      return next;
+    });
+    setRunOnceAdmitted((current) => ({ ...current, [definitionId]: taskId }));
+    setRunOnceRejected((current) => {
+      if (current[definitionId] === undefined) return current;
+      const next = { ...current };
+      delete next[definitionId];
+      return next;
+    });
+    refreshDefinitionRead();
+  };
+
+  const submitRunOnce = async (definition: AutomationDefinitionModel) => {
+    const definitionId = definition.document.id;
+    if (runOnceInFlight.current.has(definitionId)) return;
+    if (
+      readRunOnceSession(
+        principalIdentity.resolved ? principalIdentity.principalId : null,
+      ).pending.some((pending) => pending.definitionId === definitionId)
+    ) {
+      return;
+    }
+    if (!principalIdentity.resolved || token === null) {
+      setRunOnceRejected((current) => ({
+        ...current,
+        [definitionId]: {
+          reason: principalIdentity.resolved
+            ? "当前登录状态不可用，本次提交未发送。"
+            : "正在确认当前登录身份，本次提交未发送。",
+          nextAction: "请稍后刷新列表，身份确认后再运行一次。",
+        },
+      }));
+      return;
+    }
+    if (!definition.actions.runOnce.available) {
+      setRunOnceRejected((current) => ({
+        ...current,
+        [definitionId]: {
+          reason: "当前任务状态不允许运行一次，本次提交未发送。",
+          nextAction: "刷新列表，确认任务仍已发布并可执行后再试。",
+        },
+      }));
+      return;
+    }
+    const authority = definition.activeConfiguration;
+    if (
+      authority === null ||
+      authority.revisionId.trim() === "" ||
+      !Number.isInteger(authority.revisionSequence) ||
+      authority.revisionSequence < 1
+    ) {
+      setRunOnceRejected((current) => ({
+        ...current,
+        [definitionId]: {
+          reason: "当前保存的版本信息不可用，本次提交未发送。",
+          nextAction: "刷新列表，确认任务仍已发布后再运行一次。",
+        },
+      }));
+      return;
+    }
+
+    runOnceInFlight.current.add(definitionId);
+    setRunOnceBusy((current) => new Set(current).add(definitionId));
+    setRunOnceRejected((current) => {
+      if (current[definitionId] === undefined) return current;
+      const next = { ...current };
+      delete next[definitionId];
+      return next;
+    });
+    const generation = authStore.getGeneration();
+    const owner = principalIdentity.principalId;
+    const begin = beginRunOnceSubmission(owner, definitionId);
+    if (!begin.ok) {
+      runOnceInFlight.current.delete(definitionId);
+      setRunOnceBusy((current) => {
+        const next = new Set(current);
+        next.delete(definitionId);
+        return next;
+      });
+      setRunOnceRejected((current) => ({
+        ...current,
+        [definitionId]: {
+          reason:
+            begin.reason === "request-id-unavailable"
+              ? "浏览器暂时无法生成可靠的提交标识，本次提交未发送。"
+              : begin.reason === "storage-unavailable"
+                ? "浏览器无法保存这次提交的核对信息，本次提交未发送。"
+                : begin.reason === "capacity"
+                  ? "待核对的一次运行提交过多，本次提交未发送。"
+                  : "这次提交已有待核对的结果，本次未再次发送。",
+          nextAction:
+            begin.reason === "capacity"
+              ? "先核对或等待现有待核对提交完成，再运行这个任务。"
+              : "刷新页面后确认当前任务状态，再决定是否重新运行。",
+        },
+      }));
+      return;
+    }
+    setRunOnceSession(readRunOnceSession(owner));
+
+    try {
+      const result = await admitAutomationRunOnce(token, {
+        definitionId,
+        admissionRequestId: begin.intent.requestId,
+        // Exactly the row's own read: the Active revision and its sequence.
+        // The operator projection deliberately carries no digest/fingerprint.
+        expectedRevisionId: authority.revisionId,
+        expectedRevisionVersion: authority.revisionSequence,
+      });
+      if (authStore.getGeneration() !== generation) return;
+      if (!result.ok || result.model === undefined) {
+        const unknown =
+          result.status === 0 ||
+          result.status >= 500 ||
+          result.code === "malformed_response";
+        if (unknown) {
+          // Keep the exact retained request. The operator can read it back by
+          // identity after refresh/reconnect; this is not a failed Task.
+          setRunOnceSession(readRunOnceSession(owner));
+          return;
+        }
+        clearRunOnceIntent(owner, definitionId, begin.intent.requestId);
+        setRunOnceSession(readRunOnceSession(owner));
+        setRunOnceRejected((current) => ({
+          ...current,
+          [definitionId]: rejectedRunOnceCopy(
+            result.status,
+            result.code ?? null,
+          ),
+        }));
+        refreshDefinitionRead();
+        return;
+      }
+      if (result.model.taskId === null) {
+        setRunOnceSession(readRunOnceSession(owner));
+        return;
+      }
+      rememberAdmitted(
+        owner,
+        definitionId,
+        result.model.taskId,
+        begin.intent.requestId,
+      );
+    } catch {
+      if (authStore.getGeneration() !== generation) return;
+      // A transport exception is an unknown durable outcome, never a proved
+      // refusal. Retain the exact request context for read-only reconciliation.
+      setRunOnceSession(readRunOnceSession(owner));
+    } finally {
+      // A response from the previous principal must not clear the new
+      // principal's independent in-flight marker for the same definition.
+      if (authStore.getGeneration() === generation) {
+        runOnceInFlight.current.delete(definitionId);
+        setRunOnceBusy((current) => {
+          if (!current.has(definitionId)) return current;
+          const next = new Set(current);
+          next.delete(definitionId);
+          return next;
+        });
+      }
+    }
+  };
+
+  const checkRunOnce = async (definitionId: string) => {
+    const pending = readRunOnceSession(principalId).pending.find(
+      (item) => item.definitionId === definitionId,
+    );
+    if (pending === undefined || runOnceChecking !== null) return;
+    if (principalId === null || token === null) {
+      setRunOnceUnknownNotes((current) => ({
+        ...current,
+        [definitionId]: "当前登录身份不可用，暂时无法核对；请稍后刷新再试。",
+      }));
+      return;
+    }
+    setRunOnceChecking(definitionId);
+    const generation = authStore.getGeneration();
+    try {
+      const result = await reconcileAutomationRunOnce(token, {
+        definitionId: pending.definitionId,
+        admissionRequestId: pending.requestId,
+      });
+      if (authStore.getGeneration() !== generation) return;
+      if (result.ok && result.model?.taskId) {
+        rememberAdmitted(
+          principalId,
+          pending.definitionId,
+          result.model.taskId,
+        );
+        return;
+      }
+      setRunOnceUnknownNotes((current) => ({
+        ...current,
+        [definitionId]:
+          result.code === "run_once_request_not_found"
+            ? "刚才没有查到这次提交的结果；这不表示任务没有提交。请稍后再核对，或打开执行记录确认。"
+            : "暂时无法确认这次提交的结果；任务可能已提交，请不要重复运行，稍后再核对。",
+      }));
+    } catch {
+      if (authStore.getGeneration() !== generation) return;
+      setRunOnceUnknownNotes((current) => ({
+        ...current,
+        [definitionId]:
+          "暂时无法确认这次提交的结果；任务可能已提交，请不要重复运行，稍后再核对。",
+      }));
+    } finally {
+      if (authStore.getGeneration() === generation) {
+        setRunOnceChecking((current) =>
+          current === definitionId ? null : current,
+        );
+      }
+    }
+  };
 
   const recordsQuery = useQuery(
     automationRecordsQueryOptions(
@@ -693,7 +1112,13 @@ export function AutomationListPage({
                       search: listReturnState(),
                     })
                   }
-                  onRunOnce={openDefinition}
+                  onRunOnce={(definition) => void submitRunOnce(definition)}
+                  onCheckRunOnce={(definitionId) =>
+                    void checkRunOnce(definitionId)
+                  }
+                  runOnceFeedback={runOnceFeedback}
+                  runOncePending={runOnceSession.pending}
+                  runOnceInvalidLegacy={runOnceSession.invalidLegacy}
                   onNext={(next) =>
                     submitSearch(
                       definitionState({ cursor: next, dir: "next" }),
@@ -825,6 +1250,10 @@ function DefinitionsTab({
   onOpen,
   onEdit,
   onRunOnce,
+  onCheckRunOnce,
+  runOnceFeedback,
+  runOncePending,
+  runOnceInvalidLegacy,
   onNext,
   onPrevious,
   onReset,
@@ -858,7 +1287,11 @@ function DefinitionsTab({
   readonly onSort: (value: string) => void;
   readonly onOpen: (definitionId: string) => void;
   readonly onEdit: (definitionId: string) => void;
-  readonly onRunOnce: (definitionId: string) => void;
+  readonly onRunOnce: (definition: AutomationDefinitionModel) => void;
+  readonly onCheckRunOnce: (definitionId: string) => void;
+  readonly runOnceFeedback: Readonly<Record<string, RunOnceFeedback>>;
+  readonly runOncePending: readonly PendingRunOnceIntent[];
+  readonly runOnceInvalidLegacy: boolean;
   readonly onNext: (cursor: string) => void;
   readonly onPrevious: (cursor: string) => void;
   readonly onReset: () => void;
@@ -866,6 +1299,18 @@ function DefinitionsTab({
   if (page === null) {
     return null;
   }
+  const visibleDefinitionIds = new Set(
+    page.items.map((item) => item.document.id),
+  );
+  const hiddenPending = runOncePending.filter(
+    (pending) => !visibleDefinitionIds.has(pending.definitionId),
+  );
+  const hiddenAdmitted = Object.entries(runOnceFeedback).filter(
+    ([definitionId, feedback]) =>
+      !visibleDefinitionIds.has(definitionId) && feedback.state === "admitted",
+  );
+  const hasHiddenRunOnce =
+    hiddenPending.length > 0 || hiddenAdmitted.length > 0;
   return (
     <section className="mf-count-section" aria-label="自动化任务列表">
       <div className="mf-actions mf-automation-filters">
@@ -953,6 +1398,67 @@ function DefinitionsTab({
         )}
       </div>
 
+      {hasHiddenRunOnce && (
+        <StatusBanner
+          variant="info"
+          title={hiddenPending.length > 0 ? "有提交结果待核对" : "已提交"}
+        >
+          {hiddenPending.length > 0 && (
+            <p>
+              下面的任务不在当前筛选或分页中，但那次提交的结果仍可安全核对。
+              核对只读取原提交结果，不会再次运行。
+            </p>
+          )}
+          {hiddenPending.map((pending) => {
+            const feedback = runOnceFeedback[pending.definitionId];
+            return (
+              <div
+                key={pending.definitionId}
+                className="mf-automation-hidden-pending"
+              >
+                <strong>一个自动化任务</strong>
+                {feedback?.state === "checking" ? (
+                  <span className="mf-dashboard-meta">正在确认…</span>
+                ) : (
+                  <button
+                    type="button"
+                    className="mf-button mf-button-secondary"
+                    onClick={() => onCheckRunOnce(pending.definitionId)}
+                  >
+                    查看提交结果
+                  </button>
+                )}
+                {feedback?.state === "pending" && feedback.note !== null && (
+                  <p className="mf-dashboard-meta">{feedback.note}</p>
+                )}
+              </div>
+            );
+          })}
+          {hiddenAdmitted.map(([definitionId, feedback]) => (
+            <div key={definitionId} className="mf-automation-hidden-pending">
+              <strong>一个自动化任务</strong>
+              <span className="mf-dashboard-meta">任务已受理，尚未完成。</span>
+              {feedback.state === "admitted" && (
+                <Link
+                  className="mf-button mf-button-secondary"
+                  to="/operations/tasks/$taskId"
+                  params={{ taskId: feedback.taskId }}
+                >
+                  查看任务
+                </Link>
+              )}
+            </div>
+          ))}
+        </StatusBanner>
+      )}
+      {runOnceInvalidLegacy && (
+        <StatusBanner variant="info" title="之前保存的提交信息无法识别">
+          <p>
+            编辑页留下的一次运行提交信息已损坏，无法自动核对。它不会被当成新的
+            运行请求；请打开执行记录确认实际结果，不要重复提交。
+          </p>
+        </StatusBanner>
+      )}
       {page.items.length === 0 ? (
         <StatusBanner
           variant="info"
@@ -994,10 +1500,15 @@ function DefinitionsTab({
                     onEdit={() => onEdit(definition.document.id)}
                     onRunOnce={
                       definition.actions.runOnce.available
-                        ? () => onRunOnce(definition.document.id)
+                        ? () => onRunOnce(definition)
                         : null
                     }
-                    runOncePath={definition.actions.runOnce.path}
+                    onCheckRunOnce={() =>
+                      onCheckRunOnce(definition.document.id)
+                    }
+                    runOnceFeedback={
+                      runOnceFeedback[definition.document.id] ?? null
+                    }
                     highlighted={
                       highlightedDefinitionId === definition.document.id
                     }

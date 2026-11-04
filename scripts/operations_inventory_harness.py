@@ -347,8 +347,10 @@ def build_managed_fixture(
     root.mkdir(parents=True, exist_ok=True)
     source_root = root / "source"
     destination_root = root / "destination"
+    incoming_root = root / "incoming-source"
     (destination_root / "Movies").mkdir(parents=True, exist_ok=True)
     source_root.mkdir(parents=True, exist_ok=True)
+    (incoming_root / "Incoming").mkdir(parents=True, exist_ok=True)
     source_file = source_root / "One.2001.mkv"
     source_file.write_bytes(b"synthetic browser media")
     (source_root / "Two.2002.mkv").write_bytes(b"second synthetic browser media")
@@ -381,6 +383,15 @@ def build_managed_fixture(
     document["persistence"]["databasePath"] = str(database)
     document["storages"][0]["rootPath"] = str(source_root)
     document["storages"][1]["rootPath"] = str(destination_root)
+    document["storages"].append(
+        {
+            "id": "incoming-storage",
+            "name": "Incoming storage",
+            "type": "local",
+            "rootPath": str(incoming_root),
+            "enabled": True,
+        }
+    )
     document["resourceLibraries"][0]["storagePath"] = ""
     document["resourceLibraries"][0]["displayRootPath"] = str(source_root)
     document["mediaLibraries"][0]["rootPath"] = "Movies"
@@ -426,6 +437,41 @@ def build_managed_fixture(
                 "modifiedThresholdSeconds": 0,
                 "stableSizeDurationSeconds": 3,
             },
+        }
+    )
+    # Task49.1 browser fixture: a real whole-library source whose storagePath is
+    # non-empty.  The run-once producer must persist ``Incoming`` (not
+    # ``Incoming/``) and the Worker must execute the actual file.
+    document["resourceLibraries"].append(
+        {
+            "id": "incoming",
+            "name": "Incoming library",
+            "storageId": "incoming-storage",
+            "storagePath": "Incoming",
+            "enabled": True,
+            "extensions": ["mkv"],
+            "stability": {
+                "minimumAgeSeconds": 0,
+                "modifiedThresholdSeconds": 0,
+                "stableSizeDurationSeconds": 0,
+            },
+        }
+    )
+    document["recognitionRules"].append(
+        {
+            "id": "incoming-library",
+            "name": "Incoming library video",
+            "priority": 151,
+            "score": 100,
+            "stopOnMatch": True,
+            "condition": {
+                "operator": "and",
+                "children": [
+                    {"field": "resource_library_id", "operator": "equals", "value": "incoming"},
+                    {"field": "extension", "operator": "in", "value": ["mkv"]},
+                ],
+            },
+            "outputRecognitionType": "A",
         }
     )
     # RO-2/AC-16: a Files 整理 selection resolves each source's RecognitionType
@@ -633,7 +679,7 @@ def build_managed_fixture(
     )
     draft = configuration_service.import_draft(document, actor="harness")
     validated = configuration_service.validate(draft.revision_id, actor="harness")
-    for storage_id in ("source-storage", "media-target"):
+    for storage_id in ("source-storage", "media-target", "incoming-storage"):
         checked = objects.storage_check(
             validated.revision_id,
             storage_id=storage_id,
@@ -757,6 +803,15 @@ def build_managed_fixture(
                         MediaType.MOVIE,
                         "Fourteenth",
                         year=2014,
+                        genres=("Animation",),
+                        countries=("JP",),
+                    ),
+                    MediaCandidate(
+                        "tmdb",
+                        "120",
+                        MediaType.MOVIE,
+                        "Incoming",
+                        year=2020,
                         genres=("Animation",),
                         countries=("JP",),
                     ),
@@ -4204,6 +4259,7 @@ def automation_run_once_state(state: AppState, *, discovery_id: str) -> dict[str
             "found": True,
             **document,
             "discoveryId": task.task_id,
+            "scopePath": task.scope_path,
             "sources": [item.source_path for item in items],
             "primarySourceCount": len(items),
             "items": [
@@ -4439,6 +4495,7 @@ def restore_source_media(state: AppState) -> dict[str, object]:
         ("Two", 2002, "102"),
         ("Three", 2003, "103"),
         ("Four", 2004, "104"),
+        ("Incoming", 2020, "120"),
     )
     for title, year, provider_id in fixture_outputs:
         directory_name = f"{title} ({year}) [tmdbid-{provider_id}]"
@@ -4463,6 +4520,11 @@ def restore_source_media(state: AppState) -> dict[str, object]:
         target = source_root / relative_path
         target.parent.mkdir(parents=True, exist_ok=True)
         target.write_bytes(content)
+    incoming_file = state.managed.root / "incoming-source" / "Incoming" / "Incoming.2020.mkv"
+    incoming_file.parent.mkdir(parents=True, exist_ok=True)
+    incoming_file.write_bytes(b"non-empty library root synthetic media")
+    old = time.time() - 86400
+    os.utime(incoming_file, (old, old))
     scan = StorageScanner(
         state.managed.runtime.create_storages(),
         clock=lambda: datetime.now(UTC) + timedelta(hours=2),

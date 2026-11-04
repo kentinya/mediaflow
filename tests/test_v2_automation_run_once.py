@@ -21,6 +21,7 @@ import io
 import json
 import os
 import re
+import shutil
 import tempfile
 import unittest
 from contextlib import contextmanager
@@ -194,7 +195,14 @@ class RunOnceApiTests(unittest.TestCase):
         os.utime(path, (stamp, stamp))
         return path
 
-    def document(self, *, definitions=None, item_limit: int = 10, source_scope=None) -> dict:
+    def document(
+        self,
+        *,
+        definitions=None,
+        item_limit: int = 10,
+        source_scope=None,
+        storage_path: str = "",
+    ) -> dict:
         value = json.loads(Path("config/strategy.example.json").read_text(encoding="utf-8"))
         value["persistence"]["databasePath"] = str(self.root / "runtime.sqlite3")
         value["historyPath"] = str(self.root / "history.jsonl")
@@ -219,7 +227,7 @@ class RunOnceApiTests(unittest.TestCase):
                 "id": "library",
                 "name": "Library",
                 "storageId": "source",
-                "storagePath": "",
+                "storagePath": storage_path,
                 "enabled": True,
                 "extensions": ["mkv", "mp4"],
             }
@@ -275,9 +283,19 @@ class RunOnceApiTests(unittest.TestCase):
         return value
 
     @contextmanager
-    def journey(self, *, definitions=None, item_limit: int = 10, source_scope=None):
+    def journey(
+        self,
+        *,
+        definitions=None,
+        item_limit: int = 10,
+        source_scope=None,
+        storage_path: str = "",
+    ):
         document = self.document(
-            definitions=definitions, item_limit=item_limit, source_scope=source_scope
+            definitions=definitions,
+            item_limit=item_limit,
+            source_scope=source_scope,
+            storage_path=storage_path,
         )
         source = _RecordingStorage(LocalStorage("source", self.source_root))
         target = _RecordingStorage(LocalStorage("target", self.target_root))
@@ -801,6 +819,102 @@ class RunOnceApiTests(unittest.TestCase):
             self.assertEqual(1, len(linked))
             self.assertEqual("manual", linked[0]["trigger"])
             self.assertEqual("nightly", linked[0]["definition_id"])
+
+    def test_list_run_once_persists_the_exact_normalized_source_for_valid_roots(self):
+        # The real API -> Task -> Worker path for every supported shape.  A
+        # whole-library Run once under a non-empty storagePath is the original
+        # failure: ``Incoming/`` was persisted and the Worker's strict
+        # Storage-relative grammar rejected it before any read.  The matrix also
+        # checks empty roots, nested sub-scopes and Chinese/space names so the
+        # normalization fix does not become a special case for one string.
+        cases = (
+            ("", None, "One.2001.mkv", ""),
+            ("", "Movies", "Movies/Two.2002.mkv", "Movies"),
+            ("Incoming", None, "Incoming/One.2001.mkv", "Incoming"),
+            (
+                "Incoming/Year",
+                "Movies",
+                "Incoming/Year/Movies/Two.2002.mkv",
+                "Incoming/Year/Movies",
+            ),
+            ("中文 空格库", None, "中文 空格库/One.2001.mkv", "中文 空格库"),
+            ("", "电影/剧集", "电影/剧集/Two.2002.mkv", "电影/剧集"),
+        )
+        for index, (storage_path, scope, media_path, expected_scope) in enumerate(cases):
+            with self.subTest(storage_path=storage_path, scope=scope):
+                # Each shape gets its own destination population so a real Move
+                # from an earlier shape cannot become the next one's conflict.
+                for child in self.target_root.iterdir():
+                    if child.is_dir():
+                        shutil.rmtree(child)
+                    else:
+                        child.unlink()
+                self.media(media_path)
+                with self.journey(source_scope=scope, storage_path=storage_path) as value:
+                    status, run = self.admit(value, f"root-matrix-{index}")
+                    self.assertEqual(202, status, run)
+                    task = value.repository.get_task(run["taskId"])
+                    self.assertEqual(expected_scope, task.scope_path)
+                    finished = self.execute(value)
+                    self.assertEqual("completed", finished.status.value)
+                    self.assertEqual(1, value.repository.get_task(run["taskId"]).completed_items)
+                    self.assertFalse((self.source_root / media_path).exists())
+                    self.assertTrue(value.target.mutations)
+
+    def test_nonempty_library_root_whole_scope_due_uses_the_same_source(self):
+        # The Scheduler path stores the definition-relative scope and the Worker
+        # resolves the library root itself.  The due comparison proves the
+        # Run-once producer fix does not change that existing contract.
+        self.media("Incoming/One.2001.mkv")
+        definition = {
+            "id": "nightly",
+            "name": "Nightly",
+            "resourceLibraryId": "library",
+            "mode": "automatic-organization",
+            "intervalSeconds": 3600,
+            "itemLimit": 10,
+            "enabled": True,
+        }
+        with self.journey(definitions=[definition], storage_path="Incoming") as value:
+            emitted = self.scheduled(value).tick(self.clock.now)
+            self.assertEqual(1, len(emitted))
+            finished = self.execute(value)
+            self.assertEqual("completed", finished.status.value)
+            self.assertEqual(1, value.repository.get_task(emitted[0].task_id).completed_items)
+            self.assertFalse((self.source_root / "Incoming/One.2001.mkv").exists())
+            self.assertTrue(value.target.mutations)
+
+    def test_list_shaped_fence_accepts_observed_revision_and_refuses_stale_sequence(self):
+        self.media("Root.2001.mkv")
+        with self.journey() as value:
+            active = value.managed.active()
+            body = {
+                "admissionRequestId": "list-shaped-request",
+                "expectedRevisionId": active.revision_id,
+                "expectedRevisionVersion": active.revision_sequence or active.version,
+            }
+            status, admitted = self.request(
+                value,
+                "POST",
+                "/api/v1/operations/automation/task-definitions/nightly/run-once",
+                body,
+            )
+            self.assertEqual(202, status, admitted)
+            stale = {
+                **body,
+                "admissionRequestId": "list-shaped-stale",
+                "expectedRevisionVersion": (active.revision_sequence or active.version) - 1,
+            }
+            status, refused = self.request(
+                value,
+                "POST",
+                "/api/v1/operations/automation/task-definitions/nightly/run-once",
+                stale,
+            )
+            self.assertEqual(409, status, refused)
+            self.assertEqual(1, len(value.repository.list_tasks()))
+            self.assertEqual(admitted["taskId"], value.repository.list_tasks()[0].task_id)
+            self.assertEqual([], value.source.mutations)
 
     def test_duplicate_and_exact_lost_response_reconcile_without_replay(self):
         self.media("One.2001.mkv")

@@ -107,14 +107,22 @@ async function publishDefinition(
   return created.id;
 }
 
-async function openLifecycleEdit(page: Page): Promise<void> {
-  await connectOn(
-    page,
-    `/ui-v2/operations/automation/lifecycle/${DEFINITION_ID}`,
-  );
+async function runOnceFromList(page: Page, name: string): Promise<string> {
+  await connectOn(page, "/ui-v2/operations/automation");
   await expect(
-    page.getByRole("heading", { name: "Edit Automation definition" }),
+    page.getByRole("heading", { name: "自动化", exact: true, level: 2 }),
   ).toBeVisible();
+  const row = page.getByRole("row").filter({ hasText: name });
+  await row.getByRole("button", { name: "运行一次" }).click();
+  await expect(row.getByText("已提交")).toBeVisible();
+  const link = row.getByRole("link", { name: "查看任务" });
+  await expect(link).toBeVisible();
+  const href = await link.getAttribute("href");
+  if (!href) throw new Error("admitted list row has no Task Center link");
+  const taskId = new URL(href, page.url()).pathname.split("/").pop();
+  if (!taskId) throw new Error("admitted list link has no Task identity");
+  expect(page.url()).toContain("/ui-v2/operations/automation");
+  return taskId;
 }
 
 test.beforeEach(async ({ page }) => {
@@ -394,12 +402,7 @@ test("a technical record preserves original results without a generic retry entr
     sourceScope: "电影",
     name: "Handled records workspace",
   });
-  await openLifecycleEdit(page);
-  await page.getByRole("button", { name: "运行一次" }).click();
-  await expect(page).toHaveURL(
-    /\/ui-v2\/operations\/automation\/run-once\/[0-9a-f-]{36}$/,
-  );
-  const discoveryId = new URL(page.url()).pathname.split("/").pop() ?? "";
+  const discoveryId = await runOnceFromList(page, "Handled records workspace");
   const executed = await page.request.post(
     `/__harness__/run-automation-run-once-worker?discoveryId=${discoveryId}&failureFixture=one`,
   );
@@ -536,12 +539,7 @@ test("two technical failures retain independent evidence without false resolutio
     sourceScope: "电影",
     name: "Subset records workspace",
   });
-  await openLifecycleEdit(page);
-  await page.getByRole("button", { name: "运行一次" }).click();
-  await expect(page).toHaveURL(
-    /\/ui-v2\/operations\/automation\/run-once\/[0-9a-f-]{36}$/,
-  );
-  const discoveryId = new URL(page.url()).pathname.split("/").pop() ?? "";
+  const discoveryId = await runOnceFromList(page, "Subset records workspace");
   const executed = await page.request.post(
     `/__harness__/run-automation-run-once-worker?discoveryId=${discoveryId}&failureFixture=two`,
   );
@@ -695,12 +693,7 @@ test("the latest-result sort uses the real admitted history", async ({
     sourceScope: "电影",
     name: "a-review-manual",
   });
-  await openLifecycleEdit(page);
-  await page.getByRole("button", { name: "运行一次" }).click();
-  await expect(page).toHaveURL(
-    /\/ui-v2\/operations\/automation\/run-once\/[0-9a-f-]{36}$/,
-  );
-  const discoveryId = new URL(page.url()).pathname.split("/").pop() ?? "";
+  const discoveryId = await runOnceFromList(page, "a-review-manual");
   const executed = await page.request.post(
     `/__harness__/run-automation-run-once-worker?discoveryId=${discoveryId}`,
   );
@@ -825,12 +818,7 @@ test("the success-rate card uses the completed-plus-failed Task-flow denominator
     sourceScope: "电影",
     name: "Success-rate workspace",
   });
-  await openLifecycleEdit(page);
-  await page.getByRole("button", { name: "运行一次" }).click();
-  await expect(page).toHaveURL(
-    /\/ui-v2\/operations\/automation\/run-once\/[0-9a-f-]{36}$/,
-  );
-  const discoveryId = new URL(page.url()).pathname.split("/").pop() ?? "";
+  const discoveryId = await runOnceFromList(page, "Success-rate workspace");
   const executed = await page.request.post(
     `/__harness__/run-automation-run-once-worker?discoveryId=${discoveryId}`,
   );
