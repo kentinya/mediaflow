@@ -21,8 +21,8 @@ cancelled records and admitted/ended counts remain. No completed/failed Tasks yi
 Task closure itself must be saved; live work, human waiting and Task flow failures remain
 distinct. Requirements/journey/architecture label the amendment TARGET.
 Task48.1 B PASS and actual evidence/limits remain at `469ecc076c6efc660055f47277d7917a0b64a9aa:TASK.md`.
-Root [Task48.2](../TASK.md) is authorized for the remaining RO-4 metric calculation and API/Web
-readback; B promotes it after the committed Contract authorization update. Implementation is limited
+Root [Task48.2](../TASK.md) is formally PLANNED after the committed Contract authorization update,
+for the remaining RO-4 metric calculation and API/Web readback. Implementation is limited
 to that Task. Metrics and final Slice acceptance remain pending; activation adds no closure entry
 and claims no new product implementation or acceptance.
 

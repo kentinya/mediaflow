@@ -57,9 +57,9 @@ use Tasks with independent operation results on their library page. Automation c
 definition Run once, excluding Files/CLI manual organizing and ordinary file operations.
 
 Task48.1 has B PASS, preserved at `469ecc076c6efc660055f47277d7917a0b64a9aa:TASK.md`.
-Root [Task48.2](../TASK.md) is authorized for RO-4 Automation metrics and its API/Web readback;
-B promotes the existing draft after the committed Contract authorization update. Only that Task
-is authorized. Metrics and Slice-final validation remain pending; activation claims no new product
+Root [Task48.2](../TASK.md) is formally PLANNED after the committed Contract authorization update,
+for RO-4 Automation metrics and its API/Web readback. Only that Task is authorized.
+Metrics and Slice-final validation remain pending; activation claims no new product
 implementation, Task acceptance or A Final Review.
 
 ## Latest accepted boundary
