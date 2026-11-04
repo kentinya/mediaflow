@@ -246,11 +246,11 @@ try {
   let executionTask = null;
   for (let attempt = 0; attempt < 120; attempt += 1) {
     executionTask = await api(`/api/v1/tasks/${confirmation.taskId}`);
-    if (executionTask.status === 'partial_success') break;
+    if (executionTask.status === 'completed') break;
     await new Promise((resolve) => setTimeout(resolve, 500));
   }
   require_(
-    executionTask?.status === 'partial_success',
+    executionTask?.status === 'completed',
     `the confirmed Worker execution did not complete: ${JSON.stringify(executionTask)}`,
   );
   evidence.passes.push({ case: 'worker-completed', screenshot: await shoot('worker-completed') });
