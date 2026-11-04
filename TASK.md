@@ -32,7 +32,7 @@ Task、任务中心、记录各状态均为 failed，文件 Result 仍 SUCCESS�
 
 本机原始日志/截图/构建身份：
 `.git/validation-evidence/4824642984039c3f689059812bd903e5abbc510b/b-review/`。
-这是本地忽略目录，不声称远程可访问。命令的工作目录按上面的 Required Tests 与 workflow §6；
+这是本地忽略目录，不声称远程可访问。命令及工作目录见被审候选 `4824642984039c3f689059812bd903e5abbc510b:TASK.md` 的 Required Tests 与 workflow §6；
 原生 Run once 使用 spec 实际指定的 `playwright.python.automation.config.ts`，其余使用各自原配置。
 
 - 受影响 Python 六模块：154 passed（`focused-python.log`）。包括正式 A48-01 故障回归。
@@ -89,3 +89,7 @@ Documentation reconciliation needed：A 对完整原始 Slice Base..Implementati
 统一对齐 CURRENT/requirements/journey/architecture、SLICE/Roadmap/Progress 和根 Task 通知。
 本次仅更新交 A 的事实字段，不改 A-owned 边界或历史接受记录，不把 A48-01 的旧终审结论静默抹去。
 Reusable lesson candidates：无新增必要规则；沿用既有“真实入口、完整行为、满足即停止”经验。
+
+Workspace：`/Users/songzhidong/mediaflow`，`main`，起始 HEAD 为被审候选。起始 tracked 干净，
+工作区/Git 可写；全部既有未跟踪日志、OS 文件、参考图及 output/`15` 原样保留，未暂存。
+仅提交 B 报告及 Slice 交 A 事实字段，无产品变更、push、部署或用户数据库/媒体访问。
