@@ -12,7 +12,7 @@ Authority：用户已明确要求改善新建表单的人类可读性、视觉�
 Task ID: BUG-AUTO-CREATE-UX
 Task Type: STANDALONE MINOR BUG
 Parent Slice: NONE
-Status: FIX REQUIRED
+Status: READY FOR B REVIEW
 Task Base: 2aa791a6b66d968f473a6875fe2ebf072c5500df
 Difficulty: Medium
 Test Level: T3
@@ -372,3 +372,73 @@ B 在修正候选上完成原 T3 验收；已发现阻塞不能用现有绿色�
 `build.log`、`affected-web.log`、`native-review.mjs/.json/.log`、
 `recovery-review.mjs/.json/.log`、PNG 与 `video/`。此轮只更新 B 的 Task 决定与修正指导，
 没有实现产品修复、推送、部署、改写历史或关闭 Slice。
+
+### Developer Fix Report — BUG-AUTO-CREATE-UX（2026-11-04）
+
+**Status: READY FOR B REVIEW**
+**Implementation Head: `b00e1253a464eb2bc358b1e2b445e04a86e0c878`**
+**Task Base: `2aa791a6b66d968f473a6875fe2ebf072c5500df`（未改变）**
+
+本轮只在同一 Task 内修正 B 列出的三个阻塞项；未推送、未部署，未修改 SLICE/Roadmap/Progress，
+未新增业务能力、后端协议、调度/发布/执行语义或本地持久化草稿。
+
+#### 实际改动（产品实现 Head 只含六个文件）
+
+- **P1 退出选择与失败反馈不可见 → 固定“关注区”。** `AutomationCreateDialog.tsx` 在标题下方、
+  滚动字段上方新增常驻关注区（`.mf-automation-create-attention`，见 `styles.css`）：退出选择、
+  创建命令结果、校验摘要与提示始终可见，区域自身在极窄视口内可滚动，不新增全站弹层系统。
+  关闭手势（右上×、Esc、遮罩、取消）、站内拦截与浏览器返回统一进入同一选择；出现时焦点进入
+  「继续填写」，取消后恢复到最近编辑的字段（`focusin` 记录），再次按 Esc 等同「继续填写」。
+  创建拒绝/冲突/待核对/本地错误与重新核对提示也移入该区，并在出现时聚焦可读的错误摘要；
+  时间计划被拒绝时额外显示“检查时间计划”按钮并把焦点移到对应计划字段。
+- **P1 提交中误显示为“上次结果待核对” → 区分进行中与已结束未知。** 提交前仍保留命令身份以支持
+  刷新恢复，但界面按 `submitting` 分支渲染：固定显示「正在创建…」与底栏禁用的「创建中…」，
+  不再出现「核对本次创建」或「上次创建结果待核对」；`reconcile()` 在提交中直接拒绝。
+  `useBlocker` 改为在提交中也拦截导航，底栏主体在提交中显示「取消」（禁用，不再误示为可关闭），
+  站内/浏览器返回显示“已暂时阻止离开本页”，响应到达后才解除约束并显示真实结果。
+  拒绝/未知/成功三条路径各自的焦点与下一步保持原契约：未知仍只允许精确核对，不重发、不换 ID。
+- **P1 无效 Cron 无可定位纠正 → 本地按后端语法校验并定位字段。**
+  `automation-create-form.ts` 新增 `cronExpressionIssue()`，按 `mediaflow/domain/cron.py` 的五段
+  语法与各段上下界检查（仅格式/范围，不计算触发时间），错误信息精确到“第 N 段（字段）”。
+  Cron 输入补上 `aria-invalid`/`aria-describedby`，校验失败时聚焦该字段。后端仍为最终权威：
+  `automation_definition_invalid_field` 拒绝时在“运行时间”区域给出中文纠正指引（先检查 Cron 与
+  IANA 时区，再由名称/范围/上限），错误码只作诊断行，不再作为标题；输入、内部 ID 与 authority 保留。
+
+#### 实际验证结果（Developer 受影响范围）
+
+- `web/`：`npm run test -- run AutomationCreateDialog.test.tsx automation-create-form.test.ts
+  AutomationLifecyclePage.test.tsx AutomationRouter.test.tsx AutomationWorkspaceReadModel.test.ts
+  automation-lifecycle.test.ts` → **86 passed**（新增 4 个用例：固定关注区与焦点恢复、提交中单次
+  状态与禁止提前核对/重复提交、被拒绝时间计划的定位与输入保留、Cron 语法与边界映射）。
+- `web/`：`npm run typecheck`、`npm run lint`、`npm run format:check`、`npm run build` → 全部通过。
+- 真实 Python/SQLite 浏览器（`playwright.python.automation.config.ts`，生产构建）：
+  `automation-create-dialog.python.spec.ts` → **8 passed**，新增三个真实场景：
+  各关闭入口（×/Esc/遮罩/取消/浏览器返回）选择区在卡片可视区内、键盘可操作、继续保留输入并
+  恢复字段、放弃回到原列表与焦点；可控真实 POST 下提交中仅一条创建、无提前核对、返回被挡住并
+  提示，放行后成功且只有一条 disabled definition、零 occurrence；`61 8 * * *` → 可见中文纠正、
+  Active 与定义未变、不发送创建 → 改为 `0 8 * * *` → 后端拒绝路径可见且可定位（受控真实 400 信封）
+  → 再次明确创建成功，只有 intended disabled definition、零额外运行。原窄屏/减少动态效果用例扩展
+  到 390/320px 的退出选择与键盘操作。
+- 同配置串行直接受影响回归：`automation-create-dialog` + `automation-lifecycle` + `automation-workspace`
+  + `automation-run-once` → **35 passed**。
+- fake-server 入口：`automation.spec.ts` + `automation-presentation.spec.ts` → **15 passed**。
+- 根目录：`test_automation_definition_publication.py` → **48 passed**；
+  `test_automation_execution_intent.py` → **14 passed**；`python3 scripts/check_governance.py` → PASS；
+  `git diff --check` → 通过。
+
+#### 视觉证据（本地忽略目录，不宣称远程可访问）
+
+`.git/validation-evidence/b00e1253a464eb2bc358b1e2b445e04a86e0c878/dev-auto-create-review/`：
+`desktop-close-choice.png`、`desktop-invalid-cron.png`、`desktop-in-flight.png`、
+`desktop-in-flight-blocked-back.png`、`desktop-created.png`、`narrow-390-close-choice.png`、
+`narrow-320-close-choice.png`、`narrow-320-invalid-cron.png`。均已由 Developer 目视核对：
+1440×900 与 320/390px 下选择区/失败摘要在卡片可视区内，320px 无横向溢出。
+
+#### 剩余风险与验证限度
+
+- Developer 未执行完整仓库回归、打包/容器或真实外部服务；这些仍由 B 按 T3 验收决定。
+- 浏览器证据来自隔离 harness 的临时 SQLite 与生产构建；未读取用户运行数据库或生产 Storage。
+  “后端拒绝无效 Cron”的浏览器用例使用受控的真实 400 信封（浏览器会本地先拦截同一 `61 8 * * *`），
+  后端拒绝路径的真实持久效果由 B 的 `test_v2_automation_operations.py` 与既有发布回归覆盖。
+- 关注区在极窄/极矮视口内自身可滚动，未做全高度动画调优；未新增全站动画系统。
+- 未由 Developer 录制视频；打开→填写→预览→提交→关闭→重开的手势连续性仍请 B 目视/录屏确认。
