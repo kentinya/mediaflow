@@ -209,6 +209,266 @@ test("a mixed file population completes the flow with independent file facts", a
   });
 });
 
+test("a saved flow failure stays authoritative beside its real file effects", async ({
+  page,
+}, testInfo) => {
+  // A48-01 native proof: the real same-Task recovery really organizes the
+  // file, and exactly one terminal-completed publication write fails at the
+  // real SQLite boundary.  The durable failed flow must then read as "失败"
+  // everywhere — Task Center, records, metrics — while the independent file
+  // success stays visible and the organized file is never replayed.
+  const headers = { Authorization: `Bearer ${ADMIN_TOKEN}` };
+  await page.request.post("/__harness__/seed-run-once-mixed-scope");
+  await publishRunOnceDefinition(page);
+  await page.getByRole("button", { name: "运行一次" }).click();
+  await expect(page).toHaveURL(
+    /\/ui-v2\/operations\/automation\/run-once\/[0-9a-f-]{36}$/,
+  );
+  const discoveryId = new URL(page.url()).pathname.split("/").pop() ?? "";
+  const first = await page.request.post(
+    `/__harness__/run-automation-run-once-worker?discoveryId=${discoveryId}`,
+  );
+  const firstBody = (await first.json()) as {
+    advanced: boolean;
+    taskId: string;
+    status: string;
+  };
+  expect(firstBody.advanced).toBe(true);
+  expect(firstBody.status).toBe("running");
+  const taskId = firstBody.taskId;
+  const state = await runOnceState(page.request, discoveryId);
+  const conflict = state.items?.find((v) => v.status === "waiting_confirm");
+  expect(conflict).toBeTruthy();
+
+  // The real operator recovery journey: saved decision → same-Task analysis
+  // → exact summary → explicit confirmation.
+  await connectOn(
+    page,
+    `/ui-v2/operations?run=${taskId}&item=${conflict!.itemId}`,
+  );
+  const recovery = page.getByRole("region", { name: "条目审核与恢复" });
+  await expect(
+    recovery.getByRole("heading", { name: "待处理的目标冲突决策" }),
+  ).toBeVisible();
+  await recovery
+    .getByRole("radio", { name: "重命名目标(保留现有文件)" })
+    .check();
+  const continued = page.waitForResponse(
+    (response) =>
+      response.request().method() === "POST" &&
+      response.url().endsWith("/recovery/continue"),
+  );
+  await recovery
+    .getByRole("button", { name: "保存决策并继续安全分析" })
+    .click();
+  expect((await continued).status()).toBe(202);
+  const analyzed = await page.request.post(
+    `/__harness__/run-task-item-recovery-worker?itemId=${conflict!.itemId}`,
+  );
+  expect(
+    (await analyzed.json()) as { analysisCompleted: boolean },
+  ).toMatchObject({
+    analysisCompleted: true,
+  });
+  await page.request.post("/__harness__/register-manual-worker");
+  await recovery.getByRole("button", { name: "刷新" }).click();
+  const summary = page.getByRole("region", { name: "新计划摘要" });
+  await expect(summary).toBeVisible();
+  const confirmed = page.waitForResponse(
+    (response) =>
+      response.request().method() === "POST" &&
+      /manual-recovery-preparations\/[^/]+\/confirm$/.test(
+        new URL(response.url()).pathname,
+      ),
+  );
+  await summary.getByRole("button", { name: /确认继续整理 1 项/ }).click();
+  expect((await confirmed).status()).toBe(202);
+
+  // The metric baseline before the fault: earlier tests of this spec leave
+  // their own admitted runs in the same harness process and month window,
+  // so the proof asserts the exact DELTA of this Task's failure.
+  const readMetrics = async () =>
+    (await (
+      await page.request.get(`${BASE}/api/v1/operations/automation/metrics`, {
+        headers,
+      })
+    ).json()) as {
+      monthToDateAdmitted: number;
+      completedCount: number;
+      monthToDateFailed: number;
+      evaluatedCount: number;
+      successRate: number | null;
+    };
+  const metricsBefore = await readMetrics();
+
+  // The resident engine runs the confirmed execution on the same Task; the
+  // publication fixture fails exactly ONE terminal-completed release write.
+  const failed = await page.request.post(
+    `/__harness__/run-automation-run-once-worker?discoveryId=${discoveryId}&failureFixture=publication`,
+  );
+  const failedBody = (await failed.json()) as {
+    taskId: string;
+    publicationFailures: number;
+    status: string;
+  };
+  expect(failedBody).toMatchObject({
+    taskId,
+    publicationFailures: 1,
+    status: "failed",
+  });
+
+  // The Task Center reads the durable failed flow — never a completed or
+  // recovered claim — with the real file effects beside it.  Earlier tests
+  // of this spec leave their own ended 电影 runs in the same harness
+  // process, so the exact row is selected by its durable flow status.
+  await connectOn(page, "/ui-v2/operations");
+  const table = page.getByRole("table");
+  await table.waitFor();
+  // An exact-text ``has`` filter: an earlier test's completed 电影 row whose
+  // per-file summary reads "成功 1，失败 1" must never match this selector.
+  const failedRow = table
+    .getByRole("row")
+    .filter({ hasText: "电影" })
+    .filter({ has: page.getByText("失败", { exact: true }) });
+  await expect(failedRow).toHaveCount(1);
+  await expect(failedRow.getByText("失败", { exact: true })).toBeVisible();
+  await expect(page.getByText(/已完成（恢复成功）/)).toHaveCount(0);
+  await page.getByRole("button", { name: "已结束", exact: true }).click();
+  const ended = page.getByRole("table");
+  await ended.waitFor();
+  const endedRow = ended
+    .getByRole("row")
+    .filter({ hasText: "电影" })
+    .filter({ has: page.getByText("失败", { exact: true }) });
+  await expect(endedRow).toHaveCount(1);
+  await expect(endedRow.getByText("失败", { exact: true })).toBeVisible();
+  await expect(endedRow.getByText(/成功 2/)).toBeVisible();
+  await endedRow.getByRole("button", { name: /电影/ }).click();
+  const detail = page.getByRole("region", { name: "运行详情" });
+  await detail.waitFor();
+  await expect(detail.getByText("失败", { exact: true })).toBeVisible();
+  await expect(detail.getByText(/已完成（恢复成功）/)).toHaveCount(0);
+
+  // The Automation record reads the same failed flow with the current
+  // explanation: the real file success stays visible and the resolved
+  // waiting handoff never returns as a current failure reason.
+  const evidence = (await (
+    await page.request.get(
+      `/__harness__/automation-record-evidence?definitionId=${DEFINITION_ID}&runId=${taskId}`,
+    )
+  ).json()) as {
+    record: { status: string; successItems: number };
+    recordOutcome: {
+      status: string;
+      statement: string;
+      successItems: number;
+      failureReason: string | null;
+    };
+    handling: { state: string; resolvedItems: number };
+  };
+  expect(evidence.record.status).toBe("failed");
+  expect(evidence.record.successItems).toBe(2);
+  expect(evidence.recordOutcome.status).toBe("failed");
+  expect(evidence.recordOutcome.successItems).toBe(2);
+  expect(evidence.recordOutcome.statement).toContain("已确认整理 2 个文件");
+  expect(evidence.recordOutcome.failureReason ?? "").not.toContain(
+    "等待人工决定",
+  );
+  expect(evidence.handling.state).toBe("resolved");
+
+  // The server-side outcome filters follow the same durable flow for this
+  // exact Task: failed finds it once, completed excludes it.  Earlier tests
+  // of this spec leave their own records in the same harness process, so
+  // the assertion selects this Task's identity, not the whole page.
+  const readRecords = async (outcome: string) =>
+    (await (
+      await page.request.get(
+        `${BASE}/api/v1/operations/automation/records?limit=100&outcome=${outcome}`,
+        { headers },
+      )
+    ).json()) as { total: number; items: Array<{ task_id: string | null }> };
+  const failedRecords = await readRecords("failed");
+  expect(
+    failedRecords.items.filter((item) => item.task_id === taskId),
+  ).toHaveLength(1);
+  const completedRecords = await readRecords("completed");
+  expect(
+    completedRecords.items.filter((item) => item.task_id === taskId),
+  ).toHaveLength(0);
+
+  // The Task-flow metric counts this Task as one failure, exactly once.
+  const metrics = (await (
+    await page.request.get(`${BASE}/api/v1/operations/automation/metrics`, {
+      headers,
+    })
+  ).json()) as {
+    monthToDateAdmitted: number;
+    completedCount: number;
+    monthToDateFailed: number;
+    evaluatedCount: number;
+    successRate: number | null;
+  };
+  expect(metrics.completedCount).toBe(metricsBefore.completedCount);
+  expect(metrics.monthToDateFailed).toBe(metricsBefore.monthToDateFailed + 1);
+  expect(metrics.evaluatedCount).toBe(metricsBefore.evaluatedCount + 1);
+  expect(metrics.successRate ?? 0).toBeCloseTo(
+    metrics.completedCount / metrics.evaluatedCount,
+    9,
+  );
+
+  // A further Worker pass finds nothing claimable: the organized file is
+  // never replayed and the same-version restart preserves every fact.
+  const replay = await page.request.post(
+    `/__harness__/run-automation-run-once-worker?discoveryId=${discoveryId}`,
+  );
+  expect((await replay.json()) as { advanced: boolean }).toMatchObject({
+    advanced: false,
+  });
+  const untouched = (await (
+    await page.request.get(
+      `/__harness__/task-item-recovery-state?itemId=${conflict!.itemId}`,
+    )
+  ).json()) as { sourceExists: boolean; successItemStatus: string };
+  expect(untouched.sourceExists).toBe(false);
+  expect(untouched.successItemStatus).toBe("success");
+  await page.request.post("/__harness__/restart");
+  const reopenedRecords = await page.request.get(
+    `${BASE}/api/v1/operations/automation/records?limit=20`,
+    { headers },
+  );
+  const reopenedPage = (await reopenedRecords.json()) as {
+    items: Array<{
+      task_id: string | null;
+      status: string;
+      recordOutcome: { status: string };
+    }>;
+  };
+  const reopenedRecord = reopenedPage.items.find(
+    (item) => item.task_id === taskId,
+  );
+  expect(reopenedRecord).toBeTruthy();
+  expect(reopenedRecord!.status).toBe("failed");
+  expect(reopenedRecord!.recordOutcome.status).toBe("failed");
+  await connectOn(page, `/ui-v2/operations?run=${taskId}`);
+  const reopenedDetail = page.getByRole("region", { name: "运行详情" });
+  await reopenedDetail.waitFor();
+  await expect(reopenedDetail.getByText("失败", { exact: true })).toBeVisible();
+
+  // The same readback holds on a narrow viewport.  The memory-only token is
+  // intentionally lost on reload, so the narrow pass re-connects through the
+  // same deep-link continuation journey the shell provides.
+  await page.setViewportSize({ width: 390, height: 844 });
+  await connectOn(page, `/ui-v2/operations?run=${taskId}`);
+  const narrowDetail = page.getByRole("region", { name: "运行详情" });
+  await narrowDetail.waitFor();
+  await expect(narrowDetail.getByText("失败", { exact: true })).toBeVisible();
+  await expect(narrowDetail.getByText(/已完成（恢复成功）/)).toHaveCount(0);
+  await page.screenshot({
+    fullPage: true,
+    path: testInfo.outputPath("task-flow-publication-failure-narrow.png"),
+  });
+});
+
 test("an acknowledged cancellation is its own flow outcome in the Task Center", async ({
   page,
 }) => {

@@ -83,10 +83,20 @@ def _file_summary(evidence: dict) -> tuple[str, list[str]]:
 def automation_record_display(
     overview, failure_evidence: dict | None, *, fallback_category: str | None = None
 ) -> dict[str, object]:
-    """Use the same SQL outcome consumed by server filtering, not live handling."""
+    """Use the same SQL outcome consumed by server filtering, not live handling.
+
+    A48-01: the record's CURRENT explanation reads the same Task's current
+    durable item evidence (the ``current_*`` columns).  The frozen
+    initial-stage row stays preserved history, but its old waiting/unreadable
+    or zero-success counts never become this Task's current failure reason or
+    current file result.
+    """
+
     evidence = overview.automation_record_evidence or {}
     status = evidence.get("record_outcome", "unknown")
-    success = int(evidence.get("success_count") or 0)
+    success = int(evidence.get("current_success_count") or 0)
+    waiting = int(evidence.get("current_waiting_count") or 0)
+    unreadable = int(evidence.get("current_unreadable_count") or 0)
     no_work = status == "completed" and evidence.get("item_count") in {None, 0}
     result = {
         "status": status,
@@ -130,7 +140,8 @@ def automation_record_display(
             nextStep="本次已取消，不会自动继续；如需处理请重新发起",
         )
     elif status in {"pending", "running", "paused", "waiting"}:
-        waiting = int(evidence.get("waiting_count") or 0)
+        # A48-01: the live waiting facet is the Task's current durable item
+        # evidence, never the frozen first stage's historical handoff.
         statement = {
             "pending": "本次正在等待执行",
             "running": "本次正在等待人工处理" if waiting else "本次正在执行",
@@ -147,11 +158,11 @@ def automation_record_display(
         result.update(statement=statement, nextStep=next_step)
     elif status == "failed":
         reasons, steps = [], []
-        waiting = int(evidence.get("waiting_count") or 0)
         if waiting:
-            # The frozen first automatic stage ended by handing unresolved
-            # sources to the operator: that handoff is the stage's own real
-            # end, and the frozen record says so instead of claiming success.
+            # The current durable evidence, never the frozen first stage's
+            # already-resolved waiting handoff (A48-01): a saved decision that
+            # still waits for its explicit safe continuation is the Task's
+            # live state; a resolved one is history, not a current reason.
             reasons.append(f"有 {waiting} 个文件等待人工决定")
             steps.append("在任务中心保存决定并明确继续处理该工作")
         skipped = int(evidence.get("skipped_count") or 0)
@@ -210,7 +221,7 @@ def automation_record_display(
             reasons.append("部分文件的具体失败原因当前不可读")
         if (failure_evidence or {}).get("truncated"):
             reasons.append("失败原因未全部展示")
-        if evidence.get("unreadable_count"):
+        if unreadable:
             reasons.append("部分文件结果不可核对")
         effects = f"；已确认整理 {success} 个文件，已完成的操作保留" if success else ""
         result.update(

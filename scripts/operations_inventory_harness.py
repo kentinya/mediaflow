@@ -84,6 +84,7 @@ import io
 import json
 import os
 import socketserver
+import sqlite3
 import sys
 import threading
 import time
@@ -4078,11 +4079,43 @@ def run_automation_run_once_worker(
     The named failure fixture injects a bounded pre-effect failure at the real
     Executor seam; every other sibling executes normally against the temporary
     roots.  No Job row or second engine exists on this path.
+
+    ``publication`` (A48-01) is a different, explicit fault: it fails exactly
+    ONE terminal-completed ``release_scheduled_claim`` SQLite write with
+    ``sqlite3.OperationalError("database is locked")`` — the same real
+    boundary the Python fault regression uses — so the unmodified engine
+    durably publishes its own flow failure after the confirmed execution's
+    real Storage effects.  No Task/status/Result row is fabricated here.
     """
 
     task = state.repository.get_task(discovery_id)
     scheduling = state.repository.get_task_scheduling(discovery_id)
     if task is not None and scheduling is not None:
+        if failure_fixture == "publication":
+            original_release = SQLiteTaskRepository.release_scheduled_claim
+            injection = {"count": 0}
+
+            def one_failed_publication(repository, *args, **kwargs):
+                published = kwargs.get("task")
+                if (
+                    not injection["count"]
+                    and published is not None
+                    and published.status.value == "completed"
+                ):
+                    injection["count"] += 1
+                    raise sqlite3.OperationalError("database is locked")
+                return original_release(repository, *args, **kwargs)
+
+            with patch.object(
+                SQLiteTaskRepository, "release_scheduled_claim", one_failed_publication
+            ):
+                advanced = _run_manual_task_once(state, task_id=task.task_id)
+            return {
+                "advanced": advanced is not None,
+                "taskId": task.task_id,
+                "publicationFailures": injection["count"],
+                "status": state.repository.get_task(task.task_id).status.value,
+            }
         failed_sources = {
             "one": ("Two.2002.mkv",),
             "two": ("Two.2002.mkv", "Three.2003.mkv"),

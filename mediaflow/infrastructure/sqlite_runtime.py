@@ -5583,13 +5583,21 @@ class SQLiteTaskRepository:
             for problem in RECOVERY_PROBLEM_TYPES
         }
         problem_file_sql = {problem: task_item_count(problem) for problem in RECOVERY_PROBLEM_TYPES}
-        # -- Aggregate recovered completion (B46.4-02) ------------------------
+        # -- Aggregate recovered completion (B46.4-02, amended by A48-01) -----
         #
-        # A run whose every necessary item really was organized is *completed
-        # now*, while its original Task/Result rows and this Task's own
-        # historical outcome stay exactly as they were recorded.  The whole
-        # necessary primary population is therefore enumerated and each member
-        # must prove its own organizing effect:
+        # A48-01: the current supported durable Task flow status is the
+        # backend authority.  A flow that really failed or stayed partial is
+        # NEVER relabelled completed by file/recovery evidence — verified
+        # effects stay independent item facts (``success_items`` and the
+        # record's file counts) beside the honest failed flow.  The only
+        # remaining recovered-completion projection marks a flow that *did*
+        # durably complete through an exact same-Task recovery: it requires
+        # the real completed flow status AND the proven per-item recovery
+        # evidence below, so a mere completed status or a cleared problem set
+        # can never claim "恢复成功" on its own.
+        #
+        # The whole necessary primary population is still enumerated and each
+        # member must prove its own organizing effect:
         #
         # - the item's own latest Result really organized it (verified effect
         #   certainty, no uncertain effect), or
@@ -5606,12 +5614,12 @@ class SQLiteTaskRepository:
         #
         # Nothing here is inferred from a sibling's success, a child Task's
         # totals, a single analysis or a consumed marker: an item either has its
-        # own verified effect or the run keeps its honest failed/partial state.
+        # own verified effect or the run keeps its honest flow state.
         verified_follow_up = self._verified_recovery_follow_up("recovery_items")
         verified_own_effect = self._verified_own_effect_sql("recovery_items")
         recovered_success = (
             "task_status.task_id IS NOT NULL "
-            "AND task_status.status IN ('failed', 'partial_success') "
+            "AND task_status.status = 'completed' "
             "AND NOT EXISTS (SELECT 1 FROM recognition_reviews recoverable_recognition "
             "WHERE recoverable_recognition.item_id IN ("
             "SELECT pending_item.item_id FROM task_items pending_item "
@@ -5853,15 +5861,13 @@ class SQLiteTaskRepository:
                     AND missing_results.result_id IS NULL
                    ) AS missing_result_items,
                    CASE
-                       -- Task Center RO-4 (B46.4-02): once *every* necessary
-                       -- item of this exact run carries its own persisted
-                       -- proof of a completed follow-up, the run's current
-                       -- overall state is Completed.  The original Task/Result
-                       -- rows keep their historical failed/partial facts; this
-                       -- is a read-time projection over proven effects only, and
-                       -- it can never invent a success from a sibling, a child
-                       -- total or a consumed marker.
-                       WHEN {recovered_success} THEN 'completed'
+                       -- A48-01: the durable supported Task flow status is the
+                       -- one flow authority.  A recovered completion is no
+                       -- longer a read-time status override; it only marks the
+                       -- ``recovered_completion`` facet of a flow that really
+                       -- did complete (the terminal clause below), so a
+                       -- durably failed/partial flow can never display as
+                       -- completed here or in any consumer of this document.
                        WHEN task_status.status = 'paused' THEN 'paused'
                        WHEN task_status.status = 'pending' THEN 'pending'
                        WHEN task_status.status = 'running' THEN 'running'
@@ -5887,10 +5893,13 @@ class SQLiteTaskRepository:
                            runs.anchor_status
                        ELSE 'unknown'
                    END AS derived_status,
-                   -- Whether the run is only finished because a proven recovery
-                   -- completed its outstanding work.  Published separately so
+                   -- Whether this completed run reached its completion only
+                   -- because an exact persisted recovery really finished every
+                   -- necessary item (A48-01: real flow completion AND proven
+                   -- file recovery are both required).  Published separately so
                    -- the UI can say "已完成（恢复成功）" instead of pretending
-                   -- the original attempt always succeeded.
+                   -- the original attempt always succeeded.  A failed/partial
+                   -- flow never publishes it, whatever its file effects prove.
                    CASE WHEN {recovered_success} THEN 1 ELSE 0 END
                        AS recovered_completion,
                    -- The durable trigger, derived from admission-written
@@ -6102,6 +6111,15 @@ class SQLiteTaskRepository:
                     COALESCE(e.missing_result_count, 0) AS missing_result_count,
                     COALESCE(frozen.unreadable_count, e.unreadable_count) AS unreadable_count,
                     COALESCE(frozen.waiting_count, e.waiting_count) AS waiting_count,
+                    -- A48-01: the record's CURRENT explanation must read the
+                    -- same Task's current durable item evidence.  The frozen
+                    -- initial-stage row above stays the preserved historical
+                    -- window/attempt facts, but its old waiting/unreadable or
+                    -- zero-success counts are never published as the current
+                    -- failure reason or current file result of this Task.
+                    e.waiting_count AS current_waiting_count,
+                    e.unreadable_count AS current_unreadable_count,
+                    e.success_count AS current_success_count,
                     frozen.started_at AS record_started_at,
                     frozen.finished_at AS record_finished_at,
                     -- Slice 48 RO-4: the record's own outcome is the exact
@@ -8681,6 +8699,9 @@ class SQLiteTaskRepository:
                         "attachment_failed_count",
                         "unreadable_count",
                         "waiting_count",
+                        "current_waiting_count",
+                        "current_unreadable_count",
+                        "current_success_count",
                         "record_started_at",
                         "record_finished_at",
                     )

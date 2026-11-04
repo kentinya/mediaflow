@@ -267,13 +267,14 @@ export interface RunSummary {
   readonly continuation: RunContinuation | null;
   /**
    * Whether this run's *current* overall state is Completed because an exact
-   * persisted recovery really finished every necessary item.
+   * persisted recovery really finished every necessary item, and the flow
+   * itself really completed.
    *
-   * The original Task/Result rows keep their historical failed/partial facts;
-   * this facet only lets the UI say "已完成（恢复成功）" instead of pretending the
-   * first attempt always succeeded. It can never be true for a run that still
-   * carries a four-type problem, an unsettled effect or a sibling failure
-   * without its own verified follow-up.
+   * A48-01: the durable Task flow status is the authority.  The facet only
+   * lets the UI say "已完成（恢复成功）" for a run that is durably completed;
+   * a failed/cancelled/running run never displays as completed whatever its
+   * file effects prove, and a contradictory recovery claim beside a
+   * non-completed status is refused here instead of being rendered.
    */
   readonly recoveredCompletion: boolean;
 }
@@ -679,9 +680,13 @@ export function normalizeRunSummary(payload: unknown): RunSummary {
     lifecycle,
     continuation,
     recoveredCompletion:
-      source["recovered_completion"] === undefined
+      // A48-01: the durable flow status is authoritative in the browser too.
+      // A recovery facet beside a failed/cancelled/running status is a
+      // contradiction; the decoder refuses it instead of deriving success.
+      status === "completed" &&
+      (source["recovered_completion"] === undefined
         ? false
-        : flag(source, "recovered_completion"),
+        : flag(source, "recovered_completion")),
   };
 }
 

@@ -146,6 +146,35 @@ describe("run summary normalization", () => {
     expect(run.attention).toBe(false);
   });
 
+  it("keeps the recovered-completion facet only on a durably completed flow", () => {
+    // A48-01: the durable Task flow status is the authority.  A completed
+    // run whose exact same-Task recovery really finished every necessary
+    // item publishes the facet; a failed run never becomes a completed or
+    // recovered claim in the browser, whatever recovery field it carries.
+    const completed = normalizeRunSummary(
+      runDocument({ status: "completed", recovered_completion: true }),
+    );
+    expect(completed.status).toBe("completed");
+    expect(completed.recoveredCompletion).toBe(true);
+    const failed = normalizeRunSummary(
+      runDocument({
+        status: "failed",
+        recovered_completion: true,
+        success_items: 1,
+      }),
+    );
+    expect(failed.status).toBe("failed");
+    expect(failed.recoveredCompletion).toBe(false);
+    const running = normalizeRunSummary(
+      runDocument({ status: "running", recovered_completion: true }),
+    );
+    expect(running.recoveredCompletion).toBe(false);
+    const withoutFacet = normalizeRunSummary(
+      runDocument({ status: "completed" }),
+    );
+    expect(withoutFacet.recoveredCompletion).toBe(false);
+  });
+
   it("rejects an unknown status instead of coercing it", () => {
     expect(() =>
       normalizeRunSummary(runDocument({ status: "almost_done" })),

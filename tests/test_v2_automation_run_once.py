@@ -1448,6 +1448,252 @@ class RunOnceApiTests(unittest.TestCase):
             self.assertEqual("confirmed", confirmed_summary["status"])
             self.assertEqual(confirmed["executionId"], confirmed_summary["execution_id"])
 
+    def test_publication_write_failure_keeps_the_durable_failed_flow_authoritative(self):
+        """A48-01 regression: a saved flow failure is never read back as done.
+
+        The real Run once journey (admission → Worker Recognition wait → saved
+        decision → same-Task analysis → exact summary → explicit confirmation)
+        really organizes the file; at the resident engine's real
+        terminal-completed ``release_scheduled_claim`` SQLite write boundary
+        exactly one ``sqlite3.OperationalError("database is locked")`` is
+        injected.  The unmodified engine then durably publishes its flow
+        failure.  Every read surface must keep that durable failed flow
+        authoritative while the independent file success stays visible: the
+        Task Center run detail, the status partitions/filters, the Automation
+        record with its current explanation and the Task-flow metric — across
+        a same-version reopen, with zero replay of the organized file.
+        """
+
+        import sqlite3
+
+        self.media("One.2001.mkv")
+        self.change_document = lambda document: document.update({"recognitionRules": []})
+        with self.journey() as value:
+            status, admitted = self.admit(value)
+            self.assertEqual(202, status, admitted)
+            result = self.execute(value)
+            task_id = result.task_id
+            (item,) = value.repository.list_items(task_id)
+            self.assertEqual("waiting_recognition", item.status.value)
+
+            status, detail = self.request(
+                value, "GET", f"/api/v1/tasks/{task_id}/items/{item.item_id}/recovery"
+            )
+            self.assertEqual(200, status, detail)
+            status, decided = self.request(
+                value,
+                "POST",
+                f"/api/v1/tasks/{task_id}/items/{item.item_id}/recovery/decision",
+                {
+                    "kind": "recognition",
+                    "expectedCheckpointVersion": detail["checkpoint"]["checkpoint_version"],
+                    "recognitionTypeId": "A",
+                },
+            )
+            self.assertEqual(200, status, decided)
+            status, continued = self.request(
+                value,
+                "POST",
+                f"/api/v1/tasks/{task_id}/items/{item.item_id}/recovery/continue",
+                {"expectedCheckpointVersion": decided["checkpoint"]["checkpoint_version"]},
+            )
+            self.assertEqual(202, status, continued)
+            result = self.execute(value)
+            self.assertIsNotNone(result)
+            (item,) = value.repository.list_items(task_id)
+            self.assertEqual("waiting_confirm", item.status.value, item)
+
+            status, detail = self.request(
+                value, "GET", f"/api/v1/tasks/{task_id}/items/{item.item_id}/recovery"
+            )
+            self.assertEqual(200, status, detail)
+            preparation = detail["manualRecoveryPreparation"]
+            self.assertIsNotNone(preparation, detail)
+            status, preview = self.request(
+                value, "GET", f"/api/v1/manual-previews/{preparation['preview_id']}"
+            )
+            self.assertEqual(200, status, preview)
+            ready = [
+                entry["itemId"] for entry in preview["items"] if entry["status"] == "previewed"
+            ]
+            self.assertEqual(1, len(ready), preview)
+            status, confirmed = self.request(
+                value,
+                "POST",
+                f"/api/v1/manual-recovery-preparations/{preparation['preparation_id']}/confirm",
+                {"itemIds": ready, "confirmation": True},
+            )
+            self.assertEqual(202, status, confirmed)
+
+            # The real resident Worker executes the confirmed subset on the
+            # same Task.  The fault injection hits the exact production write
+            # boundary once — the terminal-completed publication — and never
+            # fabricates a Task/status/Result row.
+            injection = {"count": 0}
+            original_release = SQLiteTaskRepository.release_scheduled_claim
+
+            def one_failed_publication(repository, *args, **kwargs):
+                published = kwargs.get("task")
+                if (
+                    not injection["count"]
+                    and published is not None
+                    and published.status.value == "completed"
+                ):
+                    injection["count"] += 1
+                    raise sqlite3.OperationalError("database is locked")
+                return original_release(repository, *args, **kwargs)
+
+            with patch.object(
+                SQLiteTaskRepository, "release_scheduled_claim", one_failed_publication
+            ):
+                settled = self._run_manual_execution_worker(
+                    value, prefix="publication-failure"
+                ).run_next()
+            self.assertIsNone(settled)
+            self.assertEqual(1, injection["count"])
+
+            # Durable truth: the flow failure persisted while the real file
+            # effect exists and its Result stays SUCCESS.
+            task = value.repository.get_task(task_id)
+            self.assertEqual("failed", task.status.value, task.error)
+            results = value.repository.list_results(task_id)
+            self.assertEqual(["SUCCESS"], [value_.status for value_ in results], results)
+            self.assertFalse((self.source_root / "One.2001.mkv").exists())
+            organized = list((self.target_root / "Organized" / "Movies").rglob("*.mkv"))
+            self.assertEqual(1, len(organized), organized)
+
+            # The Task Center run detail keeps the failed flow authoritative
+            # with the independent file success beside it; no recovered claim.
+            status, run = self.request(value, "GET", f"/api/v1/operations/runs/{task_id}")
+            self.assertEqual(200, status, run)
+            self.assertEqual("failed", run["status"], run)
+            self.assertFalse(run["recovered_completion"], run)
+            self.assertEqual(1, run["success_items"], run)
+
+            # Status partitions and filters follow the same durable flow.
+            status, all_page = self.request(
+                value, "GET", "/api/v1/operations/runs?view=all&limit=50"
+            )
+            self.assertEqual(200, status, all_page)
+            (row,) = [entry for entry in all_page["items"] if entry["task_id"] == task_id]
+            self.assertEqual("failed", row["status"], row)
+            self.assertEqual({"failed": 1}, all_page["status_counts"], all_page["status_counts"])
+            self.assertEqual(0, row["attention"], row)
+            status, failed_page = self.request(
+                value, "GET", "/api/v1/operations/runs?status=failed&limit=50"
+            )
+            self.assertEqual(200, status, failed_page)
+            self.assertEqual(1, failed_page["total"], failed_page["items"])
+            status, completed_page = self.request(
+                value, "GET", "/api/v1/operations/runs?status=completed&limit=50"
+            )
+            self.assertEqual(200, status, completed_page)
+            self.assertEqual(0, completed_page["total"], completed_page["items"])
+            status, ended_page = self.request(
+                value, "GET", "/api/v1/operations/runs?view=ended&limit=50"
+            )
+            self.assertEqual(200, status, ended_page)
+            self.assertEqual(1, ended_page["total"], ended_page["items"])
+            status, running_page = self.request(
+                value, "GET", "/api/v1/operations/runs?view=running&limit=50"
+            )
+            self.assertEqual(200, status, running_page)
+            self.assertEqual(0, running_page["total"], running_page["items"])
+
+            # The Automation record reads the same failed flow with the
+            # current file success and the current explanation: no recovered
+            # completion, no obsolete waiting reason, no fabricated failure.
+            records_route = "/api/v1/operations/automation/records?limit=20"
+            status, records = self.request(value, "GET", records_route)
+            self.assertEqual(200, status, records)
+            self.assertEqual(1, records["total"], records["items"])
+            self.assertEqual({"failed": 1}, records["statusCounts"], records["statusCounts"])
+            (record,) = records["items"]
+            self.assertEqual(task_id, record["task_id"], record)
+            self.assertEqual("failed", record["status"], record)
+            self.assertEqual("failed", record["result"]["status"], record)
+            self.assertFalse(record["recovered_completion"], record)
+            self.assertEqual("failed", record["recordOutcome"]["status"], record)
+            self.assertEqual(1, record["recordOutcome"]["successItems"], record)
+            self.assertIn("已确认整理 1 个文件", record["recordOutcome"]["statement"], record)
+            # The statement reports the flow failure, never a completion.
+            self.assertTrue(
+                record["recordOutcome"]["statement"].startswith("本次失败"),
+                record,
+            )
+            self.assertNotIn("等待人工决定", record["recordOutcome"]["failureReason"], record)
+            # The flow failure keeps a bounded stage explanation and the raw
+            # injected exception never surfaces anywhere in the document.
+            self.assertIsNotNone(record["failureStage"], record)
+            self.assertNotIn("database is locked", json.dumps(record, ensure_ascii=False))
+            status, failed_only = self.request(value, "GET", records_route + "&outcome=failed")
+            self.assertEqual(200, status, failed_only)
+            self.assertEqual(1, failed_only["total"], failed_only["items"])
+            status, completed_only = self.request(
+                value, "GET", records_route + "&outcome=completed"
+            )
+            self.assertEqual(200, status, completed_only)
+            self.assertEqual(0, completed_only["total"], completed_only["items"])
+
+            # The Task-flow metric counts this Task as one failure, once.
+            metrics = self.metric_document(value)
+            self.assertEqual(1, metrics["monthToDateAdmitted"], metrics)
+            self.assertEqual(0, metrics["completedCount"], metrics)
+            self.assertEqual(1, metrics["monthToDateFailed"], metrics)
+            self.assertEqual(1, metrics["evaluatedCount"], metrics)
+            self.assertEqual(0.0, metrics["successRate"], metrics)
+
+            # A further Worker pass finds no claimable work: the organized
+            # file is never replayed and no sibling is touched.
+            def organized_files():
+                return sorted(
+                    str(path) for path in (self.target_root / "Organized" / "Movies").rglob("*")
+                )
+
+            before_replay = (
+                organized_files(),
+                len(value.repository.list_results(task_id)),
+                len(value.repository.list_tasks()),
+            )
+            self.assertIsNone(
+                self._run_manual_execution_worker(value, prefix="no-replay").run_next()
+            )
+            self.assertEqual(
+                before_replay,
+                (
+                    organized_files(),
+                    len(value.repository.list_results(task_id)),
+                    len(value.repository.list_tasks()),
+                ),
+            )
+
+        # A same-version reopen reads the identical durable flow status,
+        # record evidence and metric contribution.
+        with SQLiteTaskRepository(str(self.root / "runtime.sqlite3")) as reopened:
+            window = reopened.operations_runs_window(
+                limit=20, automation_admissions=True, record_evidence=True
+            )
+            (persisted,) = window.page
+            self.assertEqual(task_id, persisted.task_id)
+            self.assertEqual("failed", persisted.status.value, persisted)
+            self.assertFalse(persisted.recovered_completion)
+            self.assertEqual(1, persisted.organization_success_items, persisted)
+            evidence = persisted.automation_record_evidence or {}
+            self.assertEqual("failed", evidence["record_outcome"], evidence)
+            # The frozen first stage keeps its historical waiting fact while
+            # the current explanation columns read the resolved current truth.
+            self.assertEqual(1, evidence["waiting_count"], evidence)
+            self.assertEqual(0, evidence["current_waiting_count"], evidence)
+            self.assertEqual(1, evidence["current_success_count"], evidence)
+            persisted_metrics = reopened.automation_run_metrics(
+                current_start=self.clock.now - timedelta(days=1),
+                current_end=self.clock.now + timedelta(days=1),
+                previous_start=self.clock.now - timedelta(days=2),
+                previous_end=self.clock.now - timedelta(days=1),
+            )
+            self.assertEqual(1, persisted_metrics["currentEvaluated"], persisted_metrics)
+            self.assertEqual(0, persisted_metrics["currentCompleted"], persisted_metrics)
+
     def test_conflict_recovery_keeps_the_original_automation_record(self):
         """Task47.3: same-Task recovery keeps the one original Automation run.
 
@@ -1664,7 +1910,12 @@ class RunOnceApiTests(unittest.TestCase):
             self.assertEqual("completed", after["result"]["status"])
             self.assertTrue(after["result"]["organized"])
             self.assertEqual(2, after["result"]["successItems"])
-            self.assertFalse(after["recovered_completion"])
+            # A48-01 amendment: the durable flow really completed through this
+            # exact same-Task recovery and every necessary file effect is
+            # proven, so the run publishes the recovered-completion facet —
+            # "已完成（恢复成功）".  A durably failed/partial flow can never
+            # publish it (that override is the regression the amendment removed).
+            self.assertTrue(after["recovered_completion"])
             # The recovery progress is reported separately from the outcome.
             self.assertEqual("resolved", after["handling"]["state"], after["handling"])
             self.assertEqual(1, after["handling"]["resolvedItems"], after["handling"])
