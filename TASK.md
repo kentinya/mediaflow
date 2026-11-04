@@ -9,7 +9,7 @@ Authority: committed ACTIVE [Slice49 Contract](SLICE.md) at
 Task ID: 49.1
 Task Type: SLICE
 Parent Slice: 49
-Status: PLANNED
+Status: READY FOR B REVIEW
 Task Base: 129d1c060dea05a91755dbd2ed70632f09655fd4
 Difficulty: High
 Test Level: T4
@@ -233,7 +233,71 @@ tracked工作树干净。预存untracked OS/日志、`15`、自动化参考图�
 
 ## Developer Completion Report
 
-未开始：无实现checkpoint、无受影响产品测试结果，不能宣称READY FOR B REVIEW。
+**Status: READY FOR B REVIEW**
+**Implementation Head: `325b3133c6b3302da5f7a8a4f97d5b1bfeef2b32`**
+**Task Base: `129d1c060dea05a91755dbd2ed70632f09655fd4`（未改变）**
+
+Developer 已按本 Task 的授权范围完成实现和受影响验证；未推送、未部署，未改
+Slice/Roadmap/Progress，也未重开旧 Slice。工作树只保留实施前已存在的未跟踪日志、参考图、
+`output/`、`15` 与 OS 文件；未读取用户运行数据库、私有配置或生产媒体。
+
+### 实际改动
+
+- 准入生产者在持久 Task 前规范化已验证的 ResourceLibrary `storagePath` + definition
+  `sourceScope` 拼接；非空库根/整个库现在保存 `Incoming`，不再保存会被 Worker 严格范围语法拒绝
+  的 `Incoming/`。绝对路径、穿越、越界和既有 Storage/pin 校验没有被放宽；due 路径保持原语义。
+- 列表行“运行一次”改成真实命令：同一行读取的 `definitionId`、Active `revisionId` 和
+  `revisionSequence` 组成 POST fence；未提供的 digest/fingerprint 不伪造，原有显式 internal
+  evidence 调用仍由后端核对。缺少 principal、随机请求标识、可持久核对上下文或版本时不发 POST。
+- 提交前把 principal/definition/request 上下文同步写入有界 session；多行互不覆盖。受理后立即
+  结束忙碌并显示“已提交”/“查看任务”直达现有 Task Center 详情，同时刷新现有最近运行/统计；
+  Task 后续状态不复制到列表。确定拒绝清掉该请求并显示中文原因/下一步；未知响应保留原请求，
+  刷新/重连后只按同一 request GET 核对，不自动 POST 重发，“没找到”仍保持未知。
+- 旧编辑页 Run once key 仍可在列表继续精确核对；不合法旧值有界说明且不会变成新命令。
+  身份切换、旧异步响应和其他行上下文不会串用；隐藏在当前筛选/分页外的未决项在列表内仍可核对。
+- 编辑页 Run once 按钮及其独占 mutation/session 已移除；保存、启停、复制、删除和既有运行只读
+  入口保持。列表反馈沿用现有字体/颜色/间距/圆角/按钮，使用文字+图标、键盘焦点、`aria-live`
+  和 reduced-motion；窄屏自然换行且无页面横向溢出。390px 下既有任务表仍可横向滚动到操作列。
+- 扩展真实 Python harness：新增非空库根 `Incoming` 的来源、Storage check、规则和合成 Provider
+  媒体；真实列表点击经 API→Task→Worker 完成，并回读 `scopePath === "Incoming"`。相关旧编辑
+  入口浏览器用例迁到列表，保留执行、恢复、重启、拒绝/未知与统计断言。
+
+### 实际验证结果
+
+- 仓库根：`python3 scripts/check_governance.py` → PASS；`git diff --check` → 通过；
+  `python3 -m compileall -q mediaflow tests scripts` → 通过；
+  `ruff check` / `ruff format --check`（实际变更 Python 文件）→ 通过。
+- 仓库根：`PYTHONPATH=tests:. .venv/bin/python -m unittest -v test_v2_automation_run_once`
+  → **39 tests OK**，含空/非空/多层/中文空格库根、整个库/子目录、due 对照、列表形状 fence 与
+  stale sequence 零 Task。`test_automation_task_admission test_v2_automation_operations`
+  → **28 tests OK**。
+- `web/`：`npm run test -- run`（本次实际变更/直接影响的 8 个 Vitest 文件）→ **115 tests passed**；
+  `npm run typecheck` → PASS；changed-file `eslint` 与 `prettier --check` → PASS；
+  `npm run build` → PASS（仅有既有 chunk-size warning）。
+- `web/` 真实 Python 浏览器：`automation-run-once.python.spec.ts` → **7 passed**；
+  `automation-lifecycle.python.spec.ts` → **13 passed**；
+  `automation-workspace.python.spec.ts` → **9 passed**。默认浏览器
+  `automation.spec.ts` + `automation-presentation.spec.ts` → **15 passed**；
+  `task-flow.python.spec.ts` → **3 passed**。另 `automation-create-dialog.python.spec.ts`
+  在并行启动两套 Playwright 时出现 1 次 test-results trace 文件竞争，串行单独重跑该用例通过；
+  未发现产品失败。
+- 原生视觉：实际检查 1536px/380px 的忙碌、已受理、确定拒绝、未知和核对入口截图；反馈位于对应
+  行操作旁，焦点保留，状态有文字/图标，不等同于文件成功；文档宽度未超视口，页面无横向溢出。
+  截图位于本地 `web/test-results/` 对应 Playwright 输出目录，未提交。
+
+### 剩余风险与限制
+
+- Developer 不承担 B 的完整 Python/Web/E2E、wheel、container、installed probe 和 Slice-final
+  证据；全量门禁由 B 在候选 `325b3133` 上执行。
+- 未知响应场景使用真实 UI + 503 边界注入和真实精确 GET 核对验证，未制造真实网络分区；
+  畸形响应分类由 API/UI 单测覆盖；
+  “没找到”保持未知且不自动重发。
+- “已提交”是短时提交反馈，不常驻为另一份运行状态；链接消失后仍可从现有执行记录/Task Center
+  读取同一持久 Task。
+- 390px 下任务表继续沿用既有横向滚动布局；反馈本身在操作列内换行且不造成页面级横向溢出。
+- 未修改旧失败 Task/历史 pin/Result，未读取或重跑任何生产媒体、配置或数据库。
+
+测试执行用时低于本轮 30% 上限；以上均为 Developer 受影响范围结果，不构成 B PASS 或 Slice 关闭。
 
 ## B Review Result
 
