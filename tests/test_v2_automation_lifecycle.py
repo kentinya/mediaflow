@@ -187,6 +187,86 @@ class AutomationLifecycleApiTests(unittest.TestCase):
         self.assertEqual(body["enums"]["modes"], ["automatic-organization"])
         self.assertEqual(body["actions"]["remove"], True)
 
+    def test_form_effects_after_checked_rules_save_use_canonical_operations(self) -> None:
+        for library in self.document["mediaLibraries"]:
+            (self.root / "target" / library["rootPath"]).mkdir(parents=True, exist_ok=True)
+        path = "/api/v1/operations/rules/objects/organizePolicies/A"
+        status, projection = self.request("GET", path)
+        self.assertEqual(status, 200)
+        status, _ = self.request("PUT", path, {**self.authority(), "object": projection["object"]})
+        self.assertEqual(status, 200)
+        active = self.managed.active()
+        self.assertEqual(active.document["organizePolicies"][0]["operation"], "move")
+        revisions_before = len(self.repository.list_revisions())
+
+        status, body = self.request("GET", BASE)
+        self.assertEqual(status, 200)
+        self.assertEqual(body["executionEffects"]["operations"], ["MOVE"])
+        self.assertEqual(body["active"]["revisionId"], active.revision_id)
+        self.assertEqual(len(self.repository.list_revisions()), revisions_before)
+
+    def test_form_effects_deduplicate_runtime_operation_spellings(self) -> None:
+        document = copy.deepcopy(self.document)
+        spellings = (
+            "MOVE",
+            "move",
+            "Move",
+            "COPY",
+            "copy",
+            "Copy",
+            "HARDLINK",
+            "hardlink",
+            "hard_link",
+            "HARD_LINK",
+            "HardLink",
+            "SOFTLINK",
+            "softlink",
+            "soft_link",
+            "SOFT_LINK",
+            "SoftLink",
+            "SYMLINK",
+            "symlink",
+        )
+        for index, operation in enumerate(spellings):
+            policy = copy.deepcopy(document["organizePolicies"][0])
+            policy.update(id=f"spelling-{index}", operation=operation)
+            document["organizePolicies"].append(policy)
+        document["organizePolicies"][-1].update(
+            conflictStrategy="overwrite",
+            overwrite=True,
+            sourceDirectoryCleanup={"mode": "empty"},
+        )
+        draft = self.managed.import_draft(document, actor="tester")
+        validated = self.managed.validate(draft.revision_id, actor="tester")
+        active = self.managed.activate(
+            validated.revision_id, expected_version=validated.version, actor="tester"
+        )
+        status, body = self.request("GET", BASE)
+        self.assertEqual(status, 200)
+        self.assertEqual(body["active"]["revisionId"], active.revision_id)
+        self.assertEqual(
+            body["executionEffects"],
+            {
+                "operations": ["COPY", "HARD_LINK", "MOVE", "SOFT_LINK"],
+                "overwrite": True,
+                "sourceCleanup": True,
+            },
+        )
+
+    def test_unknown_rules_operation_is_rejected_without_changing_form_authority(self) -> None:
+        path = "/api/v1/operations/rules/objects/organizePolicies/A"
+        _, before = self.request("GET", BASE)
+        _, projection = self.request("GET", path)
+        status, _ = self.request(
+            "PUT",
+            path,
+            {**self.authority(), "object": {**projection["object"], "operation": "teleport"}},
+        )
+        self.assertEqual(status, 400)
+        status, after = self.request("GET", BASE)
+        self.assertEqual(status, 200)
+        self.assertEqual(after, before)
+
     def test_edit_and_removal_projections_are_read_only(self) -> None:
         self.request("POST", BASE, {**self.authority(), "object": _definition()})
         revisions_before = len(self.repository.list_revisions())

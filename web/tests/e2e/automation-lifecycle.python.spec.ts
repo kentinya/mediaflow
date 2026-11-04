@@ -161,6 +161,51 @@ test("one checked Save publishes the definition and a reload confirms durable tr
   ).toBe(true);
 });
 
+test("a Rules save preserves the inventory New Automation entry", async ({
+  page,
+}) => {
+  // Rules publishes the domain spelling `move`, while imported policies may
+  // still use MOVE. Exercise the real publisher, API projection and list link.
+  const path = "/api/v1/operations/rules/objects/organizePolicies/A";
+  const headers = { Authorization: `Bearer ${ADMIN_TOKEN}` };
+  const projectionResponse = await page.request.get(path, { headers });
+  expect(projectionResponse.ok()).toBe(true);
+  const projection = await projectionResponse.json();
+  const save = await page.request.put(path, {
+    headers,
+    data: {
+      object: projection.object,
+      expectedRevisionId: projection.active.revisionId,
+      expectedVersion: projection.active.revisionSequence,
+      expectedDigest: projection.active.digest,
+    },
+  });
+  expect(save.ok()).toBe(true);
+  const saved = await (await page.request.get(path, { headers })).json();
+  expect(saved.object.operation).toBe("move");
+
+  const before = await harnessState(page);
+  const api = recordApiCalls(page);
+  await connectOn(page, "/ui-v2/operations/automation");
+  await page.getByRole("link", { name: "新建自动化任务" }).click();
+  await expect(
+    page.getByRole("heading", { name: "Create Automation definition" }),
+  ).toBeVisible();
+  await expect(page.getByLabel("Enabled", { exact: true })).toHaveValue("no");
+  expect(api.every((call) => call.method === "GET")).toBe(true);
+  const after = await harnessState(page);
+  expect(after.activeRevisionId).toBe(before.activeRevisionId);
+  expect(after.definitions).toEqual(before.definitions);
+  expect(after.occurrenceTotal).toBe(before.occurrenceTotal);
+
+  await fillCreateForm(page);
+  await page.getByRole("button", { name: "保存" }).click();
+  await expect(
+    page.getByText(/published definition is the Active/),
+  ).toBeVisible();
+  expect((await harnessState(page)).definitions[0]?.enabled).toBe(false);
+});
+
 test("opening the form and previewing upcoming times create nothing", async ({
   page,
 }) => {

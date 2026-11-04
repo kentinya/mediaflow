@@ -48,6 +48,7 @@ from mediaflow.domain.configuration_management import (
     RuntimeSnapshotUnavailable,
 )
 from mediaflow.domain.cron import CronExpression
+from mediaflow.infrastructure.strategy_user_configuration import parse_organize_policy
 
 MAX_DEFINITION_ID_LENGTH = 64
 MAX_DEFINITION_NAME_LENGTH = 120
@@ -302,9 +303,12 @@ class AutomationWorkspaceCommandService:
             "defaults": copy.deepcopy(AUTOMATION_DEFINITION_FORM_DEFAULTS),
             "resourceLibraries": resource_libraries,
             "executionEffects": {
+                # Managed Rules saves use domain spellings (e.g. `move`), while
+                # imports may retain aliases/casing. Project distinct runtime
+                # operations in the Web contract's uppercase vocabulary.
                 "operations": sorted(
                     {
-                        str(value.get("operation", ""))
+                        parse_organize_policy(value).operation.value.upper()
                         for value in active.document.get("organizePolicies", [])
                     }
                 ),
