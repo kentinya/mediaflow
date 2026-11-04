@@ -20,10 +20,66 @@ remain in [Progress](progress.md) and their Git Contracts; they are not addition
 Files owns new manual selection and ordinary-file progress; Task Center owns admitted organizing
 progress and four business recovery types; Automation owns saved-definition scheduled/one-run intent.
 
+## TARGET — Automation forms and direct Run once (Slice49 PLANNED)
+
+[Slice49](../SLICE.md) selects `V2-AUTO-013–015` for planning. The journeys below are targets;
+the CURRENT creation journey later in this document still describes the accepted disabled-only
+create implementation. No new behavior is claimed as shipped, and planning does not start execution.
+
+- **Goal/entry:** from `自动化 → 任务列表`, create or edit an automatic-organization definition
+  in one familiar card, explicitly choose whether its schedule is enabled, or click a saved row's
+  `运行一次` to immediately submit one real organizing Task. Opening, browsing and closing do no work.
+- **Create state/action:** `新建自动化任务` opens the current list's Chinese card. Name, library,
+  whole-library/subdirectory browser, interval value/unit, daily/weekly times, advanced Cron/timezone,
+  backend upcoming times and limit retain the accepted interaction. `启用自动化任务` defaults off;
+  an explicit selection changes the primary action to communicate `创建并启用`. The note explains
+  that enabling schedules future runs; it is distinct from `运行一次`. Missing enable permission
+  explains that limit while allowing disabled creation when the operator has configuration rights.
+- **Create success/failure/recovery:** one checked command atomically publishes the selected disabled
+  or enabled definition. Feedback reads `已创建，未启用` or `已创建并启用` from durable truth, refreshes
+  the list and returns to its exact context. The command itself does not admit a Task; the Scheduler
+  later acts under the saved plan and live authority. Validation/permission/concurrency failure keeps
+  correctable input and the prior Active state, with no silent switch to disabled creation. Unknown
+  responses retain the exact submitted ID, enabled selection, principal, candidate and base across
+  reopen/reload; `核对本次创建` reads the original command evidence and never resubmits or adds enable.
+- **Edit state/action:** a row's `编辑` or a supported saved-definition edit deep link opens the same
+  card with exact saved values and the current enable state. Preserve arbitrary legal Cron and
+  fractional intervals without converting them to convenience defaults. The ID is immutable and
+  internal publication details do not occupy ordinary fields or introductory tutorials. One `保存`
+  publishes only that intended successor under existing configuration and execution permissions.
+  Existing copy/remove actions remain reachable with their present authority/confirmation boundaries.
+- **Edit success/failure/recovery:** preserve the creation card's grouping, controls, animations,
+  reduced-motion, keyboard and narrow-screen behavior. Success returns to the original list with
+  current readback. Reopening that definition permits another edit/enable change against the confirmed publication.
+  A late response never erases later input. Peer changes retain input and require explicit reread;
+  an unknown edit retains its exact submitted candidate for `核对本次发布`, without reposting.
+- **Exit and return:** unchanged input closes directly; unsaved changes expose visible continue/discard
+  choices. During submission, repeated commands and accidental departure are prevented. An ended
+  unknown response can leave/reopen with the retained reconciliation context. Cancel/discard/success
+  preserve valid list filters, page, scroll and entry focus; filtered-out successes are explained.
+  Ordinary deep-link/reload/login continuations reach the same form with a safe default list return.
+- **Run once state/action:** click the saved row's `运行一次` once. The row becomes busy in place;
+  no prerequisite navigation, picker, analysis or second initial confirmation is required. Bind the
+  exact observed published definition and current-principal execution intent. Disabled definitions
+  can run once without enabling or changing due state; unsaved editor values are not executed.
+- **Run once success/failure/recovery:** accepted feedback keeps the list in place and identifies the
+  original Task via an explicit readback link, without claiming file success or forcing navigation.
+  Double clicks cannot duplicate work. Permission/queue/stale-definition refusals offer bounded
+  correction and a deliberate new command after reread. Lost/5xx/malformed responses retain the
+  principal/definition/request across reload/reconnect and offer exact reconciliation in the list;
+  a missing lookup is not permission to replay. Other rows keep independent feedback. Existing edit
+  Run once uses the same command and reconciliation behavior.
+- **Scope and result:** whole-library/subdirectory sources work for Storage root and nonempty/nested
+  ResourceLibrary roots, including Chinese names/spaces. Internal path composition cannot reject a
+  valid whole-library source or blame the operator. Healthy empty completion says no work; missing,
+  unreadable, incomplete or overflowing scope remains truthful failure. Real stability, full pipeline,
+  limits, source ownership and non-replay remain. Task Center owns the existing four-type recovery;
+  flow status, file effects, original records and success-rate meanings remain unchanged.
+
 ## CURRENT — Task flow status and Automation success rate (Slice48 PASS / CLOSED)
 
 The user selected `V2-TASK-012–014` / `V2-AUTO-012` on 2026-11-03.
-[Slice48](../SLICE.md) passed independent A Final Review on 2026-11-04 through implementation
+[Slice48](https://github.com/kentinya/mediaflow/blob/02fb77dd713bad4dd51c29b6cfc5556ddd6d5b4e/SLICE.md) passed independent A Final Review on 2026-11-04 through implementation
 `a80015e2f7d46e3ad1b8f7b14c453d1030e62104`. These journeys supersede the affected earlier
 aggregate, recovery-display, metric and execution-record meanings; original acceptance facts remain in Git.
 
@@ -48,7 +104,7 @@ aggregate, recovery-display, metric and execution-record meanings; original acce
   close normally. Required human decisions, genuine remaining machine work and a locally executing
   call stay unfinished. An old processing marker left by the ended technical failure alone does not
   keep Task running. Task-level flow failure/cancellation remains distinct; Task closure itself must
-  be saved. The [Slice scenario table](../SLICE.md#场景与统计口径--slice48-current) defines each case.
+  be saved. The [Slice48 scenario table](https://github.com/kentinya/mediaflow/blob/02fb77dd713bad4dd51c29b6cfc5556ddd6d5b4e/SLICE.md#场景与统计口径--slice48-current) defines each case.
 - **Failure:** Task scope enumeration/root failure, unusable required execution context/relations or
   orchestration error preventing normal completion shows a Task flow failure with bounded stage,
   durable state, known effects and the existing allowed next action. A safely isolated file error

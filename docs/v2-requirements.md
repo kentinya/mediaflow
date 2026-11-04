@@ -25,10 +25,32 @@ Slice47 is PASS / CLOSED after independent A Final Review on 2026-11-03. The Tas
 requirements below are CURRENT, superseding the affected Job-based foundation wording. Prior
 acceptance facts remain in Git and Progress; no old-task/cross-version upgrade or V1 support is added.
 
+## Automation forms and direct Run once — TARGET (Slice49 PLANNED)
+
+The user selected planning of [Slice49](../SLICE.md) after investigating the saved-scope failure,
+the list's navigation-only Run once button, the old edit form and the absent create-time enable
+choice. These are authorized planning targets, not delivered CURRENT behavior or implementation
+authorization. `V2-AUTO-013` changes the V2 disabled-only **create** result of `V2-AUTO-002/010`
+and the accepted creation-card journey; copy still starts disabled without inherited authority.
+`V2-AUTO-014/015` refine the existing `V2-AUTO-001/002/004/011` experience without new execution
+authority. Frozen V1 and all prior acceptance facts remain unchanged.
+
+| ID | Requirement | Acceptance meaning |
+|---|---|---|
+| V2-AUTO-013 | Creation offers explicit optional enablement through one checked atomic publication. | The Chinese enable control defaults off; omitted enabled remains false and invalid types cannot enable. An explicit enabled candidate uses the existing focused create and shared managed publication/intent checks, requiring current configuration management/activation and scheduled execution permission. One command atomically publishes the exact definition and scoped intent; no create-then-enable sequence, silent disabled fallback or unrelated Draft publication. Copy stays disabled. Success distinguishes created-disabled from created-enabled. Publishing itself admits no Task or Run once; Scheduler subsequently follows the saved schedule. Denied/stale/invalid requests preserve Active, and unknown responses retain the original principal/candidate/selected enabled/base identity for exact publication reconciliation without reposting or replacing the ID. |
+| V2-AUTO-014 | Ordinary creation and saved-definition editing share the same Chinese card and form interaction in the list context. | Share field presentation/validation, bounded directory browsing, interval units, daily/weekly time choices, advanced Cron/timezone, backend upcoming times, limits, enabled state, buttons, motion/reduced-motion, keyboard focus and narrow-screen layout. Editing preserves identity and exact saved values, including arbitrary legal Cron and fractional intervals; diagnostics are not ordinary operator chores. Ordinary deep links reach the same experience. Cancel/discard/save/error/unknown flows preserve input and valid list filters/page/scroll/focus; submitting prevents duplicates, own confirmed Save allows continued editing and peer changes require explicit reread. Existing copy/remove/read-only history and Draft-only truth retain their boundaries. |
+| V2-AUTO-015 | The definition list directly admits one Run once from a single explicit click, with correct confined scope and in-context feedback. | Use the exact observed saved definition/principal/request/pin through existing Run once, not a navigation to detail/edit, a file picker or another initial confirmation. Keep the list and show per-definition busy, accepted, rejected and unknown states plus an explicit exact-work readback link. Disabled definitions remain runnable with manual execution permission without enabling/advancing the schedule. Trusted source composition and consumption agree for whole-library/subdirectory and empty/nonempty nested roots; unsafe user scope, pin mismatch, unreadable/incomplete/overflow sources never become healthy empty or first-N execution. Retain real stability, bounds, source ownership, current authority, request deduplication, principal-scoped reconciliation after reload/reconnect, native four-type recovery and completed/uncertain non-replay. Admission is not file success. |
+
+The [TARGET journey](product-experience.md#target--automation-forms-and-direct-run-once-slice49-planned)
+and [TARGET architecture](architecture.md#target--automation-forms-and-direct-run-once-slice49-planned)
+define the selected behavior. Five-state flow, independent file outcomes and the due-plus-Run-once
+rate under `V2-TASK-012–014` / `V2-AUTO-012` remain unchanged. The committed Contract owns scope;
+no Task implementation begins while Slice49 is PLANNED.
+
 ## Task flow status and Automation success rate — CURRENT (Slice48 PASS / CLOSED)
 
 The user selected this amendment on 2026-11-03 and authorized the remaining Task48.2 on 2026-11-04.
-[Slice48](../SLICE.md) passed independent A Final Review on 2026-11-04, from original Base
+[Slice48](https://github.com/kentinya/mediaflow/blob/02fb77dd713bad4dd51c29b6cfc5556ddd6d5b4e/SLICE.md) passed independent A Final Review on 2026-11-04, from original Base
 `ba84272721961c970f1eb85d616a0d129523ab92` through implementation
 `a80015e2f7d46e3ad1b8f7b14c453d1030e62104`, including the A48-01 correction.
 These CURRENT requirements amend the V2 aggregate realization of

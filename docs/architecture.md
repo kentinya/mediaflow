@@ -10,10 +10,61 @@ Slice47 is PASS / CLOSED after independent A Final Review on 2026-11-03. Its Tas
 scheduling/settings/history contracts below supersede the affected earlier foundations.
 Detailed former delivery notes remain at `865ebdce47b0b323064fd8e05fbfaa54546e6269:docs/architecture.md`.
 
+## TARGET — Automation forms and direct Run once (Slice49 PLANNED)
+
+[Slice49](../SLICE.md) plans `V2-AUTO-013–015`. This is the selected target, not a claim of CURRENT
+implementation or permission to begin a Task. It changes the accepted disabled-only focused create
+result; the CURRENT Automation contracts below remain factual until implementation and acceptance.
+
+**Shared form and entries:** reuse the creation card's presentation, field model, directory-browser
+and schedule controls for saved-definition editing. Keep distinct create/edit IDs, exact candidates,
+observed Active versions and command identities. The existing creation and saved-definition edit
+routes, ordinary links and direct-entry/login continuations lead to that experience over a bounded
+list return context. Avoid parallel validators/forms, client-side policy authority, new draft stores
+or a general command framework. Existing legitimate Draft-only/history states are not relabelled
+as Active, and copy/remove authority is preserved. Any obsolete exclusive form code may be removed
+only after proving its supported consumers are covered; unrelated lifecycle cleanup is out of scope.
+
+**Atomic optional enabled create:** extend the existing focused checked-create application/API path
+to accept an explicitly chosen enabled candidate; omitted/default remains false and invalid types
+are rejected. Reuse the existing whole-document validation, focused-change assertion, current
+configuration permissions, shared activation execution-intent checks and atomic audit/Active switch.
+Enabled creation needs the same real principal's `GRANT_UNATTENDED_EXECUTION` and exact saved
+effective scope as enabled edit/publication. No second enable request, partial two-command workflow,
+silent downgrade, copied authority or generic new publication endpoint is selected. The existing
+create command's exact candidate and activation evidence include enabled for reconciliation; an
+unknown response cannot be repaired by issuing another create/enable. Copy still starts disabled.
+Publishing performs no Task admission/Storage effects; the resident Scheduler independently consumes
+the enabled definition at due boundaries using existing pins and live authority checks.
+
+**Direct list command:** read the backend's exact saved-definition/configuration identity and action
+availability, then use the existing Run once admission and request-lookup service from the row.
+Expose any necessary bounded read identity through the existing projection rather than deriving
+authority from browser state. Share the command/session/reconciliation behavior with existing edit
+Run once. Busy/accepted/rejected/unknown UI state is scoped to the actual definition/request and
+principal, survives the required reload/reopen recovery, and never becomes another durable work
+store. One response binds one Task; double-click protection and backend idempotency cooperate.
+Keep feedback on the list; the operator explicitly opens exact Task/run readback. No other file
+selection, grant, initial Preview/summary confirmation or browser execution engine is introduced.
+
+**Source composition and confinement:** validate the saved ResourceLibrary binding and optional
+definition-relative source before joining. Derive the canonical Storage-relative effective root
+consistently at admission and Worker verification, including a whole library at a nonempty root.
+Canonicalizing trusted composition must not legitimize unsafe caller input, absolute paths or
+traversal, replace Storage identity, or expand the pinned source. Preserve strict invalid-input and
+pin-mismatch refusal. Fix the representation mismatch without rewriting admitted Task pins/history,
+rescanning old failed work or changing flow settlement. Complete enumeration, stability, budgets,
+source history/ownership, claims/fences and OrganizerExecutor-only mutation remain unchanged.
+
+No new schema, configuration store, queue, engine, status or recovery product is selected. Fresh
+new work and same-version restart/readback remain required; old-task conversion, cross-version
+upgrade and production external-service validation remain excluded. A required material persistence
+or compatibility expansion returns to A for a checkpointed scope decision before implementation.
+
 ## CURRENT — Task flow status and Automation success rate (Slice48 PASS / CLOSED)
 
 `V2-TASK-012–014` / `V2-AUTO-012` passed independent A Final Review on 2026-11-04 under
-[Slice48](../SLICE.md), original Base `ba84272721961c970f1eb85d616a0d129523ab92` through
+[Slice48](https://github.com/kentinya/mediaflow/blob/02fb77dd713bad4dd51c29b6cfc5556ddd6d5b4e/SLICE.md), original Base `ba84272721961c970f1eb85d616a0d129523ab92` through
 implementation `a80015e2f7d46e3ad1b8f7b14c453d1030e62104`, including A48-01.
 This CURRENT contract supersedes the affected earlier aggregate/recovery/rate/record meanings.
 This amends Task aggregate settlement, Automation rate predicates and execution-record Task result/

@@ -15,7 +15,7 @@ Product Experience 旅程，原 Slice46 接受身份不变。
 
 ### CURRENT — Slice48 Task 流程状态（PASS / CLOSED，2026-11-04）
 
-[Slice48](../SLICE.md) / `V2-TASK-012–014` 选择五种 Task 流程状态：pending、running、
+[Slice48](https://github.com/kentinya/mediaflow/blob/02fb77dd713bad4dd51c29b6cfc5556ddd6d5b4e/SLICE.md) / `V2-TASK-012–014` 选择五种 Task 流程状态：pending、running、
 completed、failed、cancelled。流程正常收尾，或文件处理因技术失败而结束本轮尝试时，均可
 显示 completed；不要求查明实际文件效果或补齐正式 Result。文件可以全部失败/部分成功/
 跳过/忽略/效果未知/结果未记录，仍照实显示，不能编造成功。Task 自身的范围、必要上下文/
