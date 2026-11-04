@@ -12,7 +12,7 @@ Authority：用户已明确要求改善新建表单的人类可读性、视觉�
 Task ID: BUG-AUTO-CREATE-UX
 Task Type: STANDALONE MINOR BUG
 Parent Slice: NONE
-Status: FIX REQUIRED
+Status: READY FOR B REVIEW
 Task Base: 2aa791a6b66d968f473a6875fe2ebf072c5500df
 Difficulty: Medium
 Test Level: T3
@@ -424,3 +424,59 @@ PNG 与 `video/`。本轮只更新 B 决定和开发指导，不实施产品修�
   后端拒绝路径的真实持久效果由 B 的 `test_v2_automation_operations.py` 与既有发布回归覆盖。
 - 关注区在极窄/极矮视口内自身可滚动，未做全高度动画调优；未新增全站动画系统。
 - 未由 Developer 录制视频；打开→填写→预览→提交→关闭→重开的手势连续性仍请 B 目视/录屏确认。
+
+### Developer Fix Report — 列表滚动位置恢复（2026-11-04）
+
+**Status: READY FOR B REVIEW**
+**Implementation Head: `701600ec9dfb395668768f716094ead626984e8f`**
+**Task Base: `2aa791a6b66d968f473a6875fe2ebf072c5500df`（未改变）**
+
+本轮只修正 B 唯一阻塞的 AC-2 列表滚动位置丢失；实现 checkpoint 仅含
+`AutomationListPage.tsx` 与新增浏览器回归，未推送、未部署，未修改 SLICE/Roadmap/Progress，
+未重开 Slice，也未新增业务能力、后端协议、调度/发布/执行语义或本地持久化草稿。预存未跟踪
+日志、图片、输出与系统文件保留。
+
+#### 根因与修正
+
+- **有效列表身份不一致。** 列表入口保存原始 URL 身份（默认入口为空），而创建路由从
+  `listReturnState` 获得显式 `tab=definitions`、`sort=name`、`dir=next`；关闭时这些默认值被
+  带回，`memory.key !== listKey` 使滚动恢复被跳过。现在 `listSearchKey` 将这三个默认值与省略
+  形式视为同一有效列表上下文，仍保留筛选、分页 cursor/direction 等真实差异。
+- **返回地址被创建路由改写。** `openCreateDialog` 在模块内保存用户点击时的原始有界列表
+  search；关闭时仅在保存身份与当前创建背景的有效身份一致时使用该原始 search，否则回退到当前
+  创建路由的列表上下文。默认入口关闭回 `/operations/automation`，带 `q`/`sort` 的入口不再被
+  补写 `tab`/`dir`；深链仍使用既有确定默认返回位置。
+- **焦点不再与滚动抢夺位置。** 关闭后列表行恢复的同时，新建按钮通过
+  `focus({ preventScroll: true })` 取回焦点；滚动恢复仍在列表查询完成后的原位置执行。
+  旧列表位置只应用于同一有效筛选/分页，不应用到另一组结果。
+
+#### 实际验证结果（Developer 受影响范围）
+
+- `web/` 六文件 Vitest（`AutomationCreateDialog`、`automation-create-form`、
+  `AutomationLifecyclePage`、`AutomationRouter`、`AutomationWorkspaceReadModel`、
+  `automation-lifecycle`）→ **86 passed**（6 文件，9.23s）。
+- `web/`：`npm run typecheck`、`npm run lint`、`npm run format:check`、`npm run build` → 全部 PASS。
+- 真实 Python/SQLite 浏览器（`playwright.python.automation.config.ts`，生产构建）：
+  `automation-create-dialog.python.spec.ts` → **11 passed**（10.6s）。新增 3 个真实滚动场景：
+  390×844 默认入口滚到 100px 后取消 → 原 URL、scrollY=100、按钮焦点、零发布；
+  `?q=Harness&sort=name` 省略默认值入口填写后明确放弃 → 筛选条件、100px、焦点保留、零发布；
+  显式 `?tab=definitions&sort=name&dir=next` 入口创建成功关闭 → 原条件、100px、焦点、
+  当前页真实新行与“刚刚创建”标记。三个场景均从按钮仍在视口内的 100px 位置真实点击，
+  不使用屏外强制点击、DOM 高度伪造或无条件 sleep。
+- 根目录：`test_automation_definition_publication.py` → **48 passed**；
+  `test_automation_execution_intent.py` → **14 passed**；`python3 scripts/check_governance.py` →
+  PASS；`git diff --check` → 通过。
+- 稳定本地日志（忽略目录，不宣称远程可访问）：
+  `.git/validation-evidence/701600ec9dfb395668768f716094ead626984e8f/developer-scroll-fix/`
+  包含 `vitest-affected.log`、`automation-create-dialog.python.log`、两份 Python unittest 日志、
+  `typecheck.log`、`lint.log`、`format-check.log`、`build.log`、`governance.log`、`diff-check.log`。
+
+#### 剩余风险与验证限度
+
+- 未执行完整仓库回归、完整 Python 浏览器矩阵、fake-server 回归、打包/容器或真实外部服务；
+  这些仍由 B 按 T3 验收决定。
+- Developer 未人工录制滚动交互视频；新增 Python spec 已直接断言真实 `window.scrollY`、URL、
+  焦点和列表行，视觉连续性仍请 B 在验收候选上目视核对。
+- JSDOM 仍输出既有的 `window.scrollTo()` 未实现提示；单元测试不把该提示当作真实滚动证据，
+  真实滚动由上述 Python/Chromium spec 覆盖。
+- 本轮没有截图或录屏新增；B 可沿用既有证据目录并在修正候选上补充实际观察。
