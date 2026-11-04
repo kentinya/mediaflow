@@ -1,115 +1,65 @@
-# Task BUG-AUTO-FORM — Open Automation creation after a Rules save
+# NO ACTIVE IMPLEMENTATION TASK
 
-Authority: user report that 自动化 → 新建自动化任务 cannot open, with
-`Automation authority unavailable`; [Development Workflow](docs/development-workflow.md) §3.1.
+独立小版本修复 **BUG-AUTO-FORM：Rules 保存后无法打开新建自动化表单**，
+已由 B 独立复核 **PASS**（2026-11-04），无剩余阻塞项，不再规划开发任务。
 
 ```text
-Task ID: BUG-AUTO-FORM
+Completed Task: BUG-AUTO-FORM
 Task Type: STANDALONE MINOR BUG
 Parent Slice: NONE
-Status: READY FOR B REVIEW
 Task Base: 214eff9ed6ae52078a351a2b6d6d99d88f10b1ce
-Difficulty: Low
-Test Level: T3
-Planner / Reviewer: B / independent B review pending
+Reviewed Head: 8758913aa6c543242a2dfe5df6df4cc71a61c334
+Implementation Checkpoint: b5fcbd446a66a30a39efefa4434d649edf6132d1
+Decision: B PASS
+Difficulty / Test Level: Low / T3
+Task blockers: NONE
 ```
 
-## Goal
+B 审查了完整 Base..Reviewed Head 的四文件改动，包括生产代码、测试和 Task 报告。
+本收尾只修改 TASK.md；原计划、开发指导、验收条件和 Developer 交接保留在 Reviewed Head。
+Slice48 既有 PASS / CLOSED 及其全部结果保持；本 Task 不属于该 Slice，
+不更改 SLICE、Roadmap、Progress，不选择新 Slice。
 
-Restore the existing creation journey: Automation inventory → 新建自动化任务 →
-readable typed form → existing checked Save. Valid published OrganizePolicies must
-not make form authority unreadable. Actual denied/unavailable reads retain the existing
-bounded error, Back and Refresh recovery; opening the page creates no configuration or work.
+## 用户结果与独立判断
 
-Reproduction on the real isolated Python/SQLite/browser harness: save existing
-OrganizePolicy A through Rules, then click 新建自动化任务. Rules correctly stores
-`move`; Automation's form-authority GET returns 200 with raw operations
-`["COPY", "MOVE", "move"]`. The Web decoder accepts uppercase operation spellings only,
-rejects the whole document and displays the reported error. Raw spelling duplicates can
-also exceed its four-operation bound. The effects projection was introduced in
-`8968a06c0765e57e48f00f99561fe3a7fbb13470` (2026-10-28).
+现有 Rules 保存接口发布整理策略后，用户从「自动化 → 新建自动化任务」进入表单，
+填写并点击保存，可以发布默认未启用的定义。打开表单只读，不改变 Active、定义或运行数量。
+服务端复用运行时策略解析器，把合法大小写及别名统一为最多四种操作；
+覆盖/源目录清理提示和 Active 身份保留。原权限、冲突检查、发布及执行规则未改动。
+读取真正失败时，仍保留错误说明、返回和刷新；未知操作仍在保存时拒绝。
 
-Related accepted behavior: REQ-SCHED-004, V2-AUTO-001/002/010 and the complete native
-Automation journey in Product Experience. Accepted Slices and their closure records stay unchanged.
+B 将候选测试放入隔离的原始 Base 源码归档，调用已有 Rules 保存和表单 GET 接口：
+两项针对性用例均按预期失败，分别暴露 `MOVE`/`move` 重复和别名未归一问题。
+候选代码上对应用例通过。没有猜造路由、直接写库或构造不可达的运行状态。
+原生浏览器用例通过已有 Rules API 保存，再从真实列表点击新建并完成保存。
+其余原生生命周期用例验证编辑、启用、复制、删除、刷新冲突、响应丢失核对和历史读取。
 
-## Implementation Scope
+## B 实际验收证据
 
-1. Derive the form-authority effects from the existing runtime OrganizePolicy parser,
-   emitting distinct canonical uppercase operations supported by the existing Web contract.
-   Preserve overwrite/cleanup evidence and the exact Active identity.
-2. Cover all four operations, accepted aliases/casing, mixed old/managed policy spellings
-   and invalid policy rejection in focused API tests.
-3. Add a real-Python browser regression: checked Rules save → inventory → click new →
-   form opens, remains disabled-first, and opening performs only reads without changing
-   Active/definitions/occurrences. Exercise the existing checked creation Save afterwards.
+本地原始日志、完整命令/cwd/退出码/耗时：
+`.git/validation-evidence/8758913aa6c543242a2dfe5df6df4cc71a61c334/b-review/`。
+以下均由 B 在 Reviewed Head 独立执行，未借用 Developer PASS 标签：
 
-No runtime operation, policy semantics, command authority, persistence, route or schema change.
+- 根目录 `.venv/bin/python -m unittest discover -s tests -p test_v2_automation_lifecycle.py`：
+  **33 passed**，无跳过；`python.log`。
+- `web/` 的 `npm run test -- run src/entities/operations/automation-lifecycle.test.ts src/features/operations/AutomationLifecyclePage.test.tsx src/features/operations/AutomationRouter.test.tsx`：
+  **48 passed / 3 files**；`web-unit.log`。
+- `web/` 的 `npm run build`，继而 `npm run test:e2e -- --config=playwright.python.automation.config.ts tests/e2e/automation-lifecycle.python.spec.ts`：
+  构建 PASS，完整 spec **13 passed**，无跳过；`build.log`、`native.log`。
+- 两个改动 Python 文件的 ruff check / format --check，Web typecheck、改动 spec 的
+  ESLint / Prettier：全部 PASS；具体参数见 `checks.json`，原日志同目录。
+- 原始 Base 的两项预期失败见 `baseline-reproduction.log` / `baseline.json`，
+  属于修复前复现，不计为候选测试通过。
+- 治理与空白检查在收尾前后执行，见 `closure-checks.log`。
 
-## Acceptance Criteria
+验收批次并行墙钟约 29.2 秒，随后原生测试约 14.2 秒，修复前复现约 1 秒；
+测试耗时低于本轮复核总耗时的 50%。现有 bundle 大小、jsdom scrollTo 和终端颜色提示
+均为非失败警告。T3 只涉及读取投影，未改变写入、权限、schema 或并发语义，
+不要求仓库全量 T4、安装包/容器或真实外部服务验证；未声称已执行这些门禁或生产部署。
 
-- [x] Developer verified: a legitimate Rules save does not break the new Automation form.
-- [x] Developer verified: effects represent at most four distinct canonical operations; aliases/case do not
-  duplicate effects, and overwrite/cleanup remain truthful.
-- [x] Developer verified: existing checked Save, stale conflict, invalid-input and permission behavior pass
-  their directly affected regressions; unknown operations remain rejected.
-- [x] Developer verified: opening through the real list entry creates no work or publication.
+## 工作区
 
-## Required Tests
-
-### Developer — affected tests
-
-- `.venv/bin/python -m unittest discover -s tests -p test_v2_automation_lifecycle.py`.
-- `.venv/bin/ruff check mediaflow/application/automation_workspace_commands.py tests/test_v2_automation_lifecycle.py`
-  and matching `ruff format --check`.
-- In `web/`: `npm run test -- run src/entities/operations/automation-lifecycle.test.ts src/features/operations/AutomationLifecyclePage.test.tsx src/features/operations/AutomationRouter.test.tsx`.
-- In `web/`: `npm run build`, then
-  `npm run test:e2e -- --config=playwright.python.automation.config.ts tests/e2e/automation-lifecycle.python.spec.ts --grep 'Rules save|one checked Save|opening the form'`.
-- Changed Web test lint/format/typecheck; `python3 scripts/check_governance.py`; `git diff --check`.
-
-### B — acceptance
-
-Independently review the entire Task Base..candidate; reproduce the reported failure and
-run the focused Python lifecycle and whole real-Python lifecycle browser spec against
-the candidate assets, plus the directly affected Web tests and static checks above.
-T3: this is one read projection across API/Web, with no mutation/permission/schema/concurrency
-change, so repository-wide T4/release gates are not assigned.
-
-## Workspace and Non-goals
-
-Branch `main`, starting HEAD equals Task Base; governance PASS, Git/worktree writable,
-no tracked pre-existing modifications. Preserve all pre-existing untracked files:
-`.DS_Store` files, `.mgmt.log`, `.t*.log`, `15`, two Automation reference PNGs under
-`docs/pics/`, `output/database-reference-2026-11-01/`,
-`output/imagegen/slice45-task-center-v1.zip`, `output/organize-flow-2026-11-01.html`.
-No private configuration, production media, deployment, push, Slice/Roadmap/Progress
-change, UI redesign or next Task. Developer cannot self-approve; hand off READY FOR B REVIEW.
-
-## Developer Completion Report
-
-- Implementation checkpoint: `b5fcbd446a66a30a39efefa4434d649edf6132d1`;
-  review from the immutable Task Base. This handoff changes only TASK.md.
-- `form_authority()` now reuses `parse_organize_policy()` and emits the distinct
-  uppercase domain operations; the existing strict Web decoder and all command/
-  permission/Active/persistence behavior are unchanged. New tests exercise actual
-  checked Rules publication, 18 operation spellings, unknown-operation rejection and
-  the real inventory-link → disabled-first form → checked Save journey.
-- Backend command above: **33 passed**, no skips. Focused Web command above:
-  **48 passed** across 3 files. Production build plus assigned Python-harness browser
-  grep: **3 passed**, including the previously failing reported journey.
-- `ruff check` and `ruff format --check` on the two changed Python files: PASS.
-  In `web/`, `npm run typecheck`, `npx eslint tests/e2e/automation-lifecycle.python.spec.ts`,
-  `npx prettier --check tests/e2e/automation-lifecycle.python.spec.ts`, `npm run build`:
-  PASS. Existing bundle-size and jsdom scrollTo warnings remain non-failing.
-  Governance and whitespace checks: PASS.
-- Before the fix, both new effects-projection tests failed on raw operation spellings
-  and the native browser case displayed the reported error. Its original trace/error
-  context remain locally in `.git/validation-evidence/bug-auto-form/pre-fix/`.
-  The initial checked-Rules test fixture also correctly refused publication until
-  its temporary destination library directories were created; no check was bypassed.
-- All original untracked files preserved and unstaged. No deployment/push or production
-  configuration/media changes. No known remaining implementation blocker; independent
-  B review/assigned acceptance is pending. No Task PASS or Slice closure claimed.
-
-## B Review Result
-
-Pending independent review; no PASS claimed.
+`main`，复核起始 HEAD 即 Reviewed Head；治理预检 PASS，工作区/Git 可写，
+起始无 tracked 修改。所有原有 untracked 系统文件、日志、`15`、参考图片和 output
+文件保持未改动、未暂存。仅使用临时库/媒体夹具，未触碰用户运行库、私有配置或生产媒体；
+无 push、部署、历史重写或无关改动。
