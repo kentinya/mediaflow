@@ -53,8 +53,9 @@ Slice48 is PASS / CLOSED: Task flow uses pending/running/completed/failed/cancel
 of file outcomes. A normally closed flow, including ended file technical failures with unknown
 effects or missing Results, is completed; Task-level flow failure remains failed. Required human
 or machine work stays unfinished. Task completion grants no replay and proves no file success.
-No active implementation Task remains; [TASK.md](TASK.md) points to the final B Closure Packet,
-and [SLICE.md](SLICE.md) records A's whole-range acceptance. A selects the next large Slice separately.
+No active implementation Task remains. [TASK.md](TASK.md) points to the latest independent bug
+review; [SLICE.md](SLICE.md) retains Slice48's B Closure Packet pointer and A's whole-range acceptance.
+A selects the next large Slice separately.
 
 The current [Task Center](docs/task-center-page-spec.md) has no shared top search. All eight views
 offer only the local creation-date range and clear. Clearing restores the current view’s complete
@@ -90,7 +91,8 @@ npm --prefix web run build
 mediaflow api serve --host 127.0.0.1 --port 8787
 ```
 
-Open `/ui-v2/` or V1 `/ui/` and connect a configured API-principal token. Reload requires reconnecting.
+Open `/ui-v2/` and connect a configured API-principal token. Reload requires reconnecting.
+The retained `/ui/` belongs to the unsupported historical V1 surface on this development line.
 The development listener is trusted-loopback only; production exposure/TLS/proxy rules belong to
 [Deployment](docs/deployment.md). Frontend test commands and B-owned full gates are centralized in
 [Development Workflow](docs/development-workflow.md#6-test-levels); Playwright requires Chromium.
