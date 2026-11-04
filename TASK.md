@@ -9,7 +9,7 @@ Authority: committed ACTIVE [Slice49 Contract](SLICE.md) at
 Task ID: 49.1
 Task Type: SLICE
 Parent Slice: 49
-Status: FIX REQUIRED
+Status: READY FOR B REVIEW
 Task Base: 129d1c060dea05a91755dbd2ed70632f09655fd4
 Difficulty: High
 Test Level: T4
@@ -359,6 +359,84 @@ Slice全部结果重评：RO-1有67例中受限范围/实际Worker成功证据�
 
 本轮开始于 main / 上述Reviewed Head，tracked工作树干净；预存所有untracked OS文件、日志、
 `15`、参考图与output原样保留。只提交本Task审查结论，不push、部署或改写历史。
+
+## Developer Fix Report — B49.1-01
+
+**Status: READY FOR B REVIEW**
+**Fix Base: `f6912dff544b1a9e9f30807f504849b3fa849df6`（B Review Head）**
+**Implementation Head: `3fa0297afc69af34dd3e95f7589bd64f32c08049`**
+**Task Base: `129d1c060dea05a91755dbd2ed70632f09655fd4`（未改变）**
+
+本轮按用户明确指派以 Developer 身份在同一 Task 内修正 B49.1-01；只改列表提交反馈和对应的
+组件/真实浏览器测试。未推送、部署或改写历史，未改 Slice/Roadmap/Progress、后端、Task 流、
+持久化或生产数据；tracked 工作树在 Fix Base 干净，实施前已存在的所有 untracked OS 文件、
+日志、`15`、参考图与 `output/` 原样保留、不入提交。
+
+### 根因与修正
+
+- 根因保持 B 的诊断：第二次明确提交开始时只清了 `runOnceRejected`，该行上一次的
+  `runOnceAdmitted` 仍留在 `runOnceFeedback` 的前置投影里；在本次受理/拒绝/未知结果出现前，
+  旧成功提示和旧 Task 链接继续占据该行，直到旧的 8 秒窗口结束。
+- 新增最小 `clearRunOnceRowFeedback(definitionId)`：在新的明确提交开始、还未经本地/服务端准入前，
+  只撤下该行的 admitted、rejected 与 unknown note；随后由本次请求自己的 busy、拒绝或保留的
+  pending 状态投影。其他行、当前 pending 请求身份和已受理 Task 不变；`runOnceInFlight` 连击
+  拦截与 pending 准入拦截保持原顺序。
+- 删除原先稍后才清 rejected 的重复块（已被同一行前置清理覆盖），未新增状态机、计时器、
+  恢复面板或后端工作流。
+- 计时器检查：成功提示仍由 admitted map 的单一有界 8 秒 effect 驱动；admitted map 的每次变化
+  都会先执行旧 effect 的 cleanup 再安排新窗口。新提交开始时清除该行旧 admitted 已取消旧计时器，
+  新的受理又会重置窗口，因此旧提示的到期时间不会清掉后一次提示。已在 effect 处注明该依赖。
+
+### 新增覆盖
+
+- `web/src/features/operations/AutomationListRunOnce.test.tsx` 增加连续旅程，真实渲染路由/行按钮/
+  API client：
+  - 第一次真实 202 后提示未消失，第二次明确提交得到 409 `queue_full`：立即显示“未能提交”与
+    本次原因，旧“已提交”/旧链接消失，POST 恰为 2；
+  - 第二次提交得到 503：显示“暂未收到回复”，旧链接消失，session 保存的是第二次
+    `admissionRequestId`；点“查看提交结果”只按该 request GET，并打开第二次实际 Task，
+    POST 仍为 2；
+  - 第二次真实 202：行链接更新为第二次 Task，不残留第一次链接；另一行自己的已受理提示和
+    链接保持不变，POST 总数为 3。
+- `web/tests/e2e/automation-run-once.python.spec.ts` 增加真实入口证明：真实 Python harness 先
+  从列表受理第一次运行，再对同一行明确提交；第二次请求仍真实到达后端并返回 202/产生不同 Task，
+  只在浏览器边界把回复替换为 503。断言旧“已提交”不再描述本次提交、显示“暂未收到回复”，随后
+  “查看提交结果”只读回本次 request 对应的 Task，未再 POST。含桌面与 390px 窄屏截图及
+  页面无横向溢出检查。
+
+### 实际验证结果
+
+- 修正前复现：把 `AutomationListPage.tsx` 临时还原为 Fix Base 版本，运行上述组件测试得到
+  **2 failed / 7 passed**；失败正为“第二次拒绝仍显示旧受理”和“第二次未知仍显示旧链接”。
+  恢复修正后同文件 **9 passed / 9**。这是真实组件/API-client 路径，不是手写终态。
+- `web/` 受影响 8 个 Vitest 文件（本 Task 原列表）→ **118 tests passed，6.86s**。
+- `web/`：`npm run typecheck` → PASS；changed-file `eslint` → PASS；`prettier --check` → PASS；
+  `npm run build` → PASS（仅既有 chunk-size warning）。
+- `web/` 真实 Python 浏览器：`automation-run-once.python.spec.ts`（本次新增用例单独运行
+  **1 passed**）+ `automation-lifecycle.python.spec.ts` + `automation-workspace.python.spec.ts`
+  一次以 `--workers=1` 运行 → **30 passed，46.0s**；默认浏览器 `automation.spec.ts` →
+  **13 passed，5.2s**。
+- 原生视觉实际检查：`.git/validation-evidence/dev-task49.1-fix/native/automation-run-once.python-ae088-ly-and-reconciles-that-Task-chromium/`
+  下 `list-run-once-repeat-unknown.png`、`list-run-once-repeat-unknown-narrow.png`、
+  `list-run-once-repeat-reconciled.png`。确认未知状态只在本次行操作旁显示“暂未收到回复”与
+  “查看提交结果”，旧“已提交”/链接已撤下；核对后显示同一行“已提交”/“查看任务”；390px 下
+  反馈在操作列内自然换行，无页面级横向溢出。证据为本地 ignored 路径，不声称远程可取。
+- 仓库根：`python3 scripts/check_governance.py` → PASS；`git diff --check` → 通过。本轮未改
+  Python 文件，未重跑 Python 单元测试；真实浏览器用例已覆盖 API→SQLite→Worker 边界。
+- 原生用例初稿有两处文本断言误匹配（待核对句也含“已提交”、已受理标题带 `✓` 前缀），已分别
+  改为行 `data-run-once-state` 断言与末尾正则/属性断言；不是产品或放宽断言，修正后通过。
+
+### 剩余风险与限制
+
+- 未知路径使用真实后端受理 + 浏览器边界 503，不是真实网络分区；畸形响应分类仍由既有 API/UI
+  单测覆盖，“没找到”保持未知且不自动重发。
+- “已提交”仍是短暂的提交层反馈，不是第二份运行状态；到期后仍从现有执行记录/Task Center 读取
+  同一持久 Task。8 秒窗口本身未新增自动化时钟测试，已按 effect 依赖与实际连续提交用例检查。
+- Developer 不承担 B 的完整 T4、wheel/container、installed probe 与 Slice-final 证据；这些仍在
+  修正候选 `3fa0297a` 上由 B 执行。未读用户运行数据库/私有配置/生产媒体，未迁移或重跑旧 Task。
+
+本轮测试执行总时长约 2–3 分钟（组件复现/回归、构建、真实 Python 浏览器 30 例及默认浏览器
+13 例），低于本轮总用时的 30%。以上均为 Developer 受影响范围结果，不构成 B PASS 或 Slice 关闭。
 
 ## Activation workspace
 
