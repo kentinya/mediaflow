@@ -8,23 +8,20 @@ workflow authority. Closure rules live only in
 
 ## Current development pointer
 
-Slice48 — **Task Flow Status and Automation Success Rate** — remains **ACTIVE** with the user's
-2026-11-04 Task48.2 activation request, Base `ba84272721961c970f1eb85d616a0d129523ab92`, Implementation Head
-NOT SET. [SLICE.md](../SLICE.md) selects five-state Task flow independent of file outcomes and a
-Task-only Automation success rate; execution records use the same Task flow result as Task Center,
-with independent file results and factual original times/attempts/effects. Ended file-processing
-technical failures count as completed even with unknown effects or missing formal Results; actual
-file results do not gate completion. Ordinary Copy/Move/Delete Tasks share that meaning. Success
-rate counts due AND definition Run once, excluding Files/CLI manual organizing and ordinary file
-operations. Rate is completed/(completed+failed); cancelled/unfinished Tasks are excluded, while
-cancelled records and admitted/ended counts remain. No completed/failed Tasks yields no percentage.
-Task closure itself must be saved; live work, human waiting and Task flow failures remain
-distinct. Requirements/journey/architecture label the amendment TARGET.
-Task48.1 B PASS and actual evidence/limits remain at `469ecc076c6efc660055f47277d7917a0b64a9aa:TASK.md`.
-Root [Task48.2](../TASK.md) is formally PLANNED after the committed Contract authorization update,
-for the remaining RO-4 metric calculation and API/Web readback. Implementation is limited
-to that Task. Metrics and final Slice acceptance remain pending; activation adds no closure entry
-and claims no new product implementation or acceptance.
+Slice48 — **Task Flow Status and Automation Success Rate** — is **FIX REQUIRED** after independent
+A Final Review on 2026-11-04. Original Base `ba84272721961c970f1eb85d616a0d129523ab92`;
+reviewed, unaccepted implementation `2d4f1ae037cc4642b7bcd4231a840cf40d70e7b6`.
+[SLICE.md A48-01](../SLICE.md#a48-01--p1-recovered-file-proof-overrides-a-durably-failed-task-flow)
+records the existing-entry fault reproduction: a successfully saved Task flow failure is hidden by
+file-derived recovered-completion projection, contradicting the Task-based Automation record/metric.
+B must amend returned Task48.1 before Developer correction; original Task Base/goal/scope stay intact.
+
+B's submitted packet remains at `6c39d6ecdf40cad8f06e5e97f58bf47bdc388b49:TASK.md`, with prior
+Task48.1/48.2 PASS, full/native/artifact results and disclosed limitations. A independently ran
+313 focused tests and 2 real Python browser cases (passed) plus the failing publication probe;
+those normal-path passes do not cover the P1. No new closure ledger entry, CURRENT reconciliation,
+new Slice selection or reopening of an accepted Slice. Selected outcomes and deferrals remain
+unchanged; the amendment is still TARGET. Root [TASK.md](../TASK.md) is the B handoff pointer.
 
 ## Latest accepted closure
 
@@ -39,7 +36,7 @@ process deviations remain in that Contract/packet. Seven optional external-servi
 are disclosed; old-task/cross-version upgrade and V1 support remain excluded. No remote validation
 or production deployment is claimed by closure or document governance.
 
-Slice48 is active above, without reopening Slice47 or adding a closure
+Slice48 is in the correction loop above, without reopening Slice47 or adding a closure
 ledger entry. Prior43–46 acceptance identities/deferrals remain unchanged. Slice46's
 Contract/A review remains at `5144ab1fc2344b06194969cc2c496835729664c0:SLICE.md`; its complete
 B packet remains at `85696ab160e8ec1d1e29dcdfc046d426e2cc214c:TASK.md`.

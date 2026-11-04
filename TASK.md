@@ -1,4 +1,26 @@
-# NO ACTIVE IMPLEMENTATION TASK
+# Task 48.1 — A Final Review return; B correction plan pending
+
+```text
+Task ID: 48.1
+Task Type: SLICE
+Parent Slice: 48
+Status: FIX REQUIRED
+Task Base: 4f11762d617d50555f3b106357e8f41988f7c2f9
+Difficulty: High
+Test Level: T4
+Planner / Reviewer: B — correction amendment and independent acceptance pending
+Next Action: B CHECKPOINTS THE A48-01 CORRECTION PLAN BEFORE DEVELOPER WORK
+```
+
+A returned this existing flow/readback unit for [SLICE.md A48-01](SLICE.md#a48-01--p1-recovered-file-proof-overrides-a-durably-failed-task-flow).
+Original Base/goal/scope remain; the complete B-owned plan is at
+`6f2115d1033779aa2d21a7f0b6ebd9f558f66345:TASK.md`. This is the A review return, not a new
+B implementation plan or authorization to bypass B's amendment. B supplies the concrete correction
+and validation plan within the same Task; Developer work waits for that checkpoint.
+Task48.1/48.2 prior B PASS and the submitted packet below are preserved as historical evidence,
+not corrected-candidate acceptance. Slice48 is FIX REQUIRED and is not closed. No next Slice or
+independent minor bug is selected. The original B Closure Packet remains verbatim below and at
+`6c39d6ecdf40cad8f06e5e97f58bf47bdc388b49:TASK.md`; its decision predates A's rejection.
 
 # Slice48 — B Closure Packet
 
