@@ -12,7 +12,7 @@ Authority：用户已明确要求改善新建表单的人类可读性、视觉�
 Task ID: BUG-AUTO-CREATE-UX
 Task Type: STANDALONE MINOR BUG
 Parent Slice: NONE
-Status: READY FOR B REVIEW
+Status: FIX REQUIRED
 Task Base: 2aa791a6b66d968f473a6875fe2ebf072c5500df
 Difficulty: Medium
 Test Level: T3
@@ -286,92 +286,74 @@ SLICE/Roadmap/Progress，未重开任何已接受 Slice。工作树仅保留实�
   目录权限/提供方失败由既有 Files 契约覆盖，本 Task 的 Python spec 用可控 503 证明失败不会
   把未知范围改成根目录。
 
-### B Review Result — FIX REQUIRED（2026-11-04）
+### B Review Result — FIX REQUIRED（2026-11-04，本轮复核）
 
 B 独立审查完整范围
-`2aa791a6b66d968f473a6875fe2ebf072c5500df..ceb30c1492fa4ea4a3894e2a88db2898a07c0b13`；
-产品实现 Head 为 `128ab24bbbf390a1fe05ee92666194bfc6670548`，其后仅 TASK.md 交接说明。
-本次是独立小修正，不属于 Slice48；Slice48 的 RO-1–4、关闭结论、Base/accepted Head 和延期
-保持原接受结果。本范围没有修改其流程状态/指标/执行协议，亦没有修改 SLICE/Roadmap/Progress。
-不规划新 Task；修正在 **BUG-AUTO-CREATE-UX** 内继续，原 Base/Goal/Scope/AC/T3 保留。
+`2aa791a6b66d968f473a6875fe2ebf072c5500df..e050f89f1adb9cc845b14b0f533b6008c19ca6d5`；
+最新产品实现为 `b00e1253a464eb2bc358b1e2b445e04a86e0c878`，其后仅 TASK.md 交接说明。
+上轮三个阻塞均已解决：退出选择在卡片内可见并可继续/放弃、提交中显示禁用的“创建中…”且
+浏览器返回被拦截、无效 Cron 有中文纠正摘要并定位字段。独立真实浏览器覆盖
+1440×900、390×844、320×844；慢响应放行后仍只有一条 disabled definition，无额外运行。
 
-已确认的交付：新旧创建地址收敛为中文卡片，表单生成稳定 ID、编译既有时间计划字段；
-创建与核对继续调用既有接口。B 从真实列表打开卡片、明确创建、读回隔离 SQLite，确认新增
-一条 disabled definition、没有 occurrence；没有发现本轮探测中的重复创建或媒体执行。
-但退出选择、提交中状态和无效时间计划的可操作恢复尚未完成，以下三项均阻塞 Task 验收。
+本轮仍有一个原验收项未完成，故不能 PASS。修正留在 **BUG-AUTO-CREATE-UX**，原 Base、目标、
+范围与 T3 不变。Slice48 RO-1–4 的既有接受结论、Base/accepted Head 和延期未被本 Task 改动；
+SLICE/Roadmap/Progress 保持原样，不重开 Slice，不规划后继 Task。
 
-#### 阻塞项与开发指导（同一 Task）
+#### 唯一阻塞：P1 — 取消新建后原列表滚动位置丢失（AC-2）
 
-1. **P1：未保存退出和创建拒绝的提示不可见。** 对应 AC-8/9/10/11。
-   用户从列表打开卡片，只填写名称，在内容顶部点右上角 × 或按 Esc，卡片保持打开，但
-   「继续填写 / 放弃修改」位于滚动区末尾，未滚入视野、焦点也未进入选择区。
-   1440×900、390×844、320×844 均复现，提示与内容可视区的交集为 0。
-   后端拒绝创建的 alert 也位于同一不可见位置。定位：`AutomationCreateDialog.tsx`
-   的 `commandError` / `discardPromptOpen` 渲染都在 `.mf-automation-create-scroll` 末尾。
-   - 在卡片内为关闭选择提供始终可见、可聚焦的呈现；所有关闭入口和站内/浏览器返回复用
-     同一选择。出现时将焦点交给安全的「继续填写」，取消退出后恢复原字段/焦点。
-   - 明确提交后的失败也应主动呈现可见反馈和可达的下一步；可聚焦错误摘要或相应字段。
-     不依赖用户自行滚到底部寻找提示，不把普通预览更新变成强制焦点跳转。
-   - 修改限新建旅程，不建设全站弹层/动画系统。补充真实浏览器断言：从顶部触发关闭后，
-     选择按钮实际在可视区且键盘可操作；选择继续保留输入，放弃恢复列表上下文和焦点。
-     覆盖 ×、Esc、遮罩、取消与浏览器返回，并检查窄屏截图，不能只断言 DOM 的 visible。
+真实用户旅程：在 390×844 的自动化默认列表向下滚动 100px，新建按钮此时仍在屏内
+（按钮 y=140px），正常点击“新建自动化任务”，不填写内容，点击“取消”。
+返回列表后 scrollY 从 **100 变成 0**；带 `q=Harness&sort=name` 搜索条件也复现，搜索条件本身保留。
+这不需要隐藏入口、伪造页面高度或强制点击屏外按钮。普通点击/取消不应丢掉原浏览位置。
 
-2. **P1：正在创建被显示成上次结果待核对，并可提前核对、返回关闭。** 对应 AC-8/9，
-   以及 Scope §3 的「创建中…」「提交中防止误关」。用户完成表单并点击创建，网络尚未返回时，
-   页面立即显示「上次创建结果待核对」和可点击的「核对本次创建」，没有「创建中…」按钮。
-   在真实创建请求被暂缓时点击核对，会先得到「本次创建仍未证实」；释放原请求后创建成功。
-   此时按浏览器返回也直接卸载卡片。重开可以保留命令身份，故不将其描述为重复执行或数据丢失。
-   定位：`submit` 提前设置 pending；底栏优先渲染 pending 分支；`useBlocker` 在提交中返回 false。
-   - 可以在发送前保留原命令身份以支持刷新恢复，但 UI 必须区分当前请求仍在进行与请求结束后
-     的结果未知。进行中固定显示「创建中…」，创建/核对互斥，禁止提前核对和重复命令。
-   - 修正本卡片的路由阻止条件：提交中的站内/浏览器返回应有可见的等待反馈，防止误关；
-     正常响应后解除约束。真实刷新/断线/登录恢复仍沿用既有 pending 身份与 non-replay，
-     不把 auth 恢复困在卡片，不自动重发或更换 ID/fence。
-   - 用可控的真实 POST 响应覆盖提交中按钮/Enter/双击/返回，证明放行成功、明确拒绝、
-     丢响应三种结果各自到达正确状态。不要用无条件 sleep 或新增后台轮询产品。
+定位：`AutomationListPage.tsx` 的 `listSearchKey`（约165行）按原始 URL 字符串组成列表身份；
+`openCreateDialog` 保存该身份，而 `listReturnState` 为创建路由补入 `tab=definitions`、
+`sort=name`、`dir=next`。关闭时这些默认值被带回，`memory.key !== listKey`（约335行）使恢复被跳过。
+对照用相同页面、同一操作，但初始 URL 已显式包含上述默认值，100px 能恢复为100px，证明是
+同一列表的默认值表达不一致。原先仅核对 URL/筛选的绿色用例没有覆盖实际滚动结果。
 
-3. **P1：无效 Cron 没有可定位的中文纠正信息。** 对应 AC-5/6/8。
-   用户填写名称/资源库，选高级 Cron，填 `61 8 * * *` 后创建，后端返回 400
-   `automation_definition_invalid_field`，Active 保持不变。即使滚到错误位置，也只看到
-   「在组合候选阶段被拒绝，请修正后重试」和内部错误码；Cron 字段无错误标记，未说明
-   应检查时间计划，预览也只显示失败码。定位：`commandErrorMessage` 的 rejected 分支、
-   预览 error 分支和 `automation-create-form.ts` 的 Cron 校验/字段关联。
-   - 利用既有返回的有界字段/错误类型及当前计划上下文，在时间计划区域给出中文纠正指引，
-     提交失败时定位相应字段/区域；不能确定单个字段时清楚说明检查 Cron 与时区，勿假称
-     已确定某字段。保留输入、ID 与原 authority，不渲染原始异常。
-   - 不改后端调度/发布协议，不另写一套 due 计算，不把预览成功变成新增创建门禁。
-     补充从上述无效 Cron → 可见解释 → 改为有效 Cron → 明确创建成功的真实浏览器回归；
-     断言纠正前 Active 未变、纠正后只有 intended disabled definition、零额外运行。
+#### Developer 修正指导（同一 Task）
 
-Developer 按以上三个行为一起修正，再执行原 Required Tests 中的新改/直接受影响用例及检查，
-提交一个 coherent checkpoint。除新增上述真实场景外，不扩展业务功能或重构其他弹层。
-B 在修正候选上完成原 T3 验收；已发现阻塞不能用现有绿色用例数量替代。
+1. 在打开/返回/恢复时使用一致的**有效列表上下文**：省略默认值和显式默认值应代表同一列表。
+   复用现有列表状态与有界返回能力，修正身份计算或保存/恢复衔接；不得清空筛选/分页来凑匹配，
+   不解释或改写服务器 cursor，不增加通用导航系统、本地持久化草稿或后端协议。
+2. 列表真实行恢复后保留原滚动位置，同时保持焦点返回新建按钮。若焦点调用会再次滚动，协调
+   恢复顺序或使用合适的 preventScroll；仍应防止把旧列表位置应用到另一组筛选/分页。
+   新建深链没有原列表上下文时继续使用现有确定的默认返回位置。
+3. 在现有 `automation-create-dialog.python.spec.ts` 增加实际滚动的浏览器回归：默认入口、
+   省略默认值的搜索入口、显式默认值的对照入口；从按钮仍在屏内的100px位置真实点击。
+   检查取消、填写后明确放弃以及成功关闭后的原列表条件/位置/焦点；取消与放弃仍须零发布。
+   使用现有临时数据与真实页面，不通过改 DOM 高度、强制屏外点击或无条件 sleep 制造通过。
+4. 运行原计划的新改/直接受影响测试与质量检查后交接 coherent checkpoint。原三个修正继续保留；
+   不扩展到其他页面。B 在修正候选上完成原 T3 验收，已发现的本项不能以绿色测试数量替代。
 
-#### B 实际验证与限度
+#### B 实际验证、证据与限度
 
-- 治理 preflight PASS；完整范围 manifest/生产 diff/测试与 harness 变更已审查。
-  初始分支 main，HEAD `ceb30c1492fa4ea4a3894e2a88db2898a07c0b13`，已跟踪文件干净，
-  工作区/Git 可写；预存未跟踪文件原样保留。
-- `web/ npm run build` PASS；`npm run test -- run` 加原计划的六个受影响文件 → **82 passed**，
-  6 个文件、8.97 秒。JSDOM 的 scrollTo 未实现提示不等于已验证真实滚动；生产构建保留
-  bundle 大小提示，本轮不扩展为打包优化。
-- 使用该生产构建及既有 `scripts/operations_inventory_harness.py --port 4185`，
-  全程从真实 Web 列表/创建入口操作临时 Python/API/SQLite 实例。独立脚本验证三种视口的
-  退出选择、真实创建持久化、可控慢响应/提前核对、非法 Cron、提交中返回与重开核对。
-  暂缓的是既有真实请求；没有构造产品入口、伪造最终状态、读取用户数据库或调用生产 Storage。
-- 已检查桌面初始动效帧、提交/非法 Cron 与 320/390px 退出截图；其余 PNG 和视频
-  本轮未逐一验收，不宣称完整视觉验收通过。
-  原生探测首次在最后读回时因脚本没有配置 baseURL 而报 `Invalid URL`，这是探测脚本问题；
-  补齐配置后同入口重跑完成，没有修改产品代码，也未把初次脚本失败计为通过。
-- 依 workflow §6 的已证实阻塞提前 FIX REQUIRED：其余 Python、静态检查和完整 T3 浏览器矩阵
-  本轮未执行，Developer 交接中的通过数不冒充 B 本轮结果。剩余 AC 保持待最终验收。
-  产品验证命令累计不足 1 分钟，低于本轮复核耗时的一半。
+- 初始分支 main，HEAD `e050f89f1adb9cc845b14b0f533b6008c19ca6d5`；已跟踪文件干净，
+  工作区/Git 可写，治理 preflight PASS，预存未跟踪文件保留。完整 Base..Head manifest、生产代码、
+  新改测试、harness 与直接消费者已审查；后端 authority/执行/schema 没有变化，T3 仍适用。
+- `web/` 原 Required Tests 指定的六文件 Vitest 命令 → **86 passed**（6文件，12.98s）；
+  `npm run typecheck` / `lint` / `format:check` / `build` 全部 PASS（合计约24.93s）。
+  JSDOM scrollTo 未实现提示与生产 bundle 大小提示保留；前者不能证明真实滚动已恢复。
+- 根目录：`PYTHONPATH=tests:. .venv/bin/python -m unittest -v test_automation_definition_publication
+  test_automation_execution_intent test_v2_automation_operations` → **81 passed**，39.24s。
+- 生产构建 + 既有 `scripts/operations_inventory_harness.py --port 4185` 的临时 Python/API/SQLite：
+  独立复现上轮三个原操作场景，检查真实反馈/焦点、三种视口和慢响应后的一次实际创建；
+  同时发现本次滚动问题，并用默认/搜索/显式默认值三种真实地址对照复现。没有新增产品入口、
+  伪造最终数据库状态或访问用户运行数据库/生产媒体。
+- 已检查390px关闭选择、320px Cron纠正、桌面提交中返回提示、列表前后对照等实际截图；
+  原生交互视频保留。首次探测对单条字段错误入视区的断言未通过，原日志保留在
+  `initial-inline-visibility.*`；随后检查了固定摘要可见、字段焦点与实际截图，这些提供了
+  可读的纠正路径，不将该额外断言作为产品阻塞，也不把首次失败计为通过。
+- 依 workflow §6 在已证实 AC-2 缺口后提前 FIX REQUIRED：35例完整 Python 浏览器矩阵、
+  fake-server 两文件回归、放大字体/完整动效验收本轮未执行；Developer 的结果不计为 B 本轮结果。
+  产品验证命令累计不足2分钟，低于本轮复核耗时50%。没有全仓库/安装包/容器/外部服务验收声明。
 
 稳定本地证据（忽略目录，不宣称远程可访问）：
-`.git/validation-evidence/ceb30c1492fa4ea4a3894e2a88db2898a07c0b13/b-auto-create-review/`：
-`build.log`、`affected-web.log`、`native-review.mjs/.json/.log`、
-`recovery-review.mjs/.json/.log`、PNG 与 `video/`。此轮只更新 B 的 Task 决定与修正指导，
-没有实现产品修复、推送、部署、改写历史或关闭 Slice。
+`.git/validation-evidence/e050f89f1adb9cc845b14b0f533b6008c19ca6d5/b-review/`：
+`affected-web.log`、`python-acceptance.log`、`quality-results.json` 与各检查日志、
+`native-review.mjs/.json/.log`、`list-return-review.mjs/.json/.log`、`initial-inline-visibility.*`、
+PNG 与 `video/`。本轮只更新 B 决定和开发指导，不实施产品修正、不推送或部署。
 
 ### Developer Fix Report — BUG-AUTO-CREATE-UX（2026-11-04）
 
