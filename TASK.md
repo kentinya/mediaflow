@@ -7,7 +7,7 @@ Authority: user report that 自动化 → 新建自动化任务 cannot open, wit
 Task ID: BUG-AUTO-FORM
 Task Type: STANDALONE MINOR BUG
 Parent Slice: NONE
-Status: IN PROGRESS
+Status: READY FOR B REVIEW
 Task Base: 214eff9ed6ae52078a351a2b6d6d99d88f10b1ce
 Difficulty: Low
 Test Level: T3
@@ -86,8 +86,29 @@ change, UI redesign or next Task. Developer cannot self-approve; hand off READY 
 
 ## Developer Completion Report
 
-Implementation complete; checkpoint identity and affected-test results follow in the
-handoff update. Independent B acceptance remains pending.
+- Implementation checkpoint: `b5fcbd446a66a30a39efefa4434d649edf6132d1`;
+  review from the immutable Task Base. This handoff changes only TASK.md.
+- `form_authority()` now reuses `parse_organize_policy()` and emits the distinct
+  uppercase domain operations; the existing strict Web decoder and all command/
+  permission/Active/persistence behavior are unchanged. New tests exercise actual
+  checked Rules publication, 18 operation spellings, unknown-operation rejection and
+  the real inventory-link → disabled-first form → checked Save journey.
+- Backend command above: **33 passed**, no skips. Focused Web command above:
+  **48 passed** across 3 files. Production build plus assigned Python-harness browser
+  grep: **3 passed**, including the previously failing reported journey.
+- `ruff check` and `ruff format --check` on the two changed Python files: PASS.
+  In `web/`, `npm run typecheck`, `npx eslint tests/e2e/automation-lifecycle.python.spec.ts`,
+  `npx prettier --check tests/e2e/automation-lifecycle.python.spec.ts`, `npm run build`:
+  PASS. Existing bundle-size and jsdom scrollTo warnings remain non-failing.
+  Governance and whitespace checks: PASS.
+- Before the fix, both new effects-projection tests failed on raw operation spellings
+  and the native browser case displayed the reported error. Its original trace/error
+  context remain locally in `.git/validation-evidence/bug-auto-form/pre-fix/`.
+  The initial checked-Rules test fixture also correctly refused publication until
+  its temporary destination library directories were created; no check was bypassed.
+- All original untracked files preserved and unstaged. No deployment/push or production
+  configuration/media changes. No known remaining implementation blocker; independent
+  B review/assigned acceptance is pending. No Task PASS or Slice closure claimed.
 
 ## B Review Result
 
