@@ -9,15 +9,16 @@ Authority: committed [Slice48](SLICE.md) RO-1/3/4、AC-4/7/8/11/13–16 和
 Task ID: 48.1
 Task Type: SLICE
 Parent Slice: 48
-Status: FIX REQUIRED
+Status: READY FOR B REVIEW
 Task Base: 4f11762d617d50555f3b106357e8f41988f7c2f9
 Correction planning Head: 35e6b2dbe637ceb27625cdbf8ef63b6730e99139
+Implementation Head: a80015e2 (fix(task48.1): keep the durable failed flow authoritative across reads)
 Difficulty: High
 Test Level: T4
 Planner: Codex — user-requested B planning responsibility, 2026-11-04
 Reviewer: INDEPENDENT B REVIEW PENDING
-Development Authorization: THIS REQUEST IS PLANNING ONLY; DEVELOPER WORK NOT STARTED
-Next Action: DEVELOPER IMPLEMENTS THIS CORRECTION ONLY WHEN IMPLEMENTATION IS AUTHORIZED
+Development Authorization: USER-AUTHORIZED DEVELOPER IMPLEMENTATION OF THIS CORRECTION, 2026-11-04
+Next Action: INDEPENDENT B REVIEW OF THE SUBMITTED CANDIDATE (F-1–F-8)
 ```
 
 用户本轮要求“规划一个修复Task”。本轮按该指令仅承担 B 的规划职责；此前的 A 终审不是本计划的
@@ -201,8 +202,91 @@ Worker、结算、重试、权限或 Storage 操作。不通过改变后台 fail
 
 ## Developer Completion Report
 
-Pending implementation. 交接时记录完整 checkpoint、READY FOR B REVIEW、实际受影响测试及
-遗留风险；保留已证实原失败，不提交全仓验收 dossier，不自行验收或关闭 Slice。
+```text
+Reviewed: DEVELOPER CHECKPOINT SUBMITTED, INDEPENDENT B REVIEW PENDING
+Implementation Head: a80015e2f7d46e3ad1b8f7b14c453d1030e62104 — see git show --stat for the exact 7-file range
+Base..Head: 35e6b2dbe637ceb27625cdbf8ef63b6730e99139..a80015e2f7d46e3ad1b8f7b14c453d1030e62104 (only this correction; parent docs untouched)
+Decision: READY FOR B REVIEW — A48-01 corrected in the shared read basis, records display and Web decoder
+Task blockers: none known to Developer; A48-01 readback now matches durable flow at Task/run/record/metric level
+Next: INDEPENDENT B REVIEW (F-1–F-8), then refreshed Slice-final packet for A
+```
+
+### 实施内容（对齐计划步骤）
+
+1. **正式故障回归（步骤 1，F-1/2/6）。** 新增
+   `test_v2_automation_run_once.RunOnceApiTests.test_publication_write_failure_keeps_the_durable_failed_flow_authoritative`：
+   复用既有真实准入/识别等待/决定/继续/分析/摘要/确认旅程，在
+   `SQLiteTaskRepository.release_scheduled_claim` 的首次终态 completed 发布注入一次
+   `sqlite3.OperationalError("database is locked")`（仅命中一次，断言 `injection==1`），
+   随后用原 repository 断言 durable `failed`、Result `SUCCESS`、真实文件移动；再核对
+   run 详情、status=failed/completed 过滤、All/Ended/Running 分区、attention=0、records
+   顶层/result/recordOutcome/`已确认整理 1 个文件`、metrics（failed 1、evaluated 1、成功率 0）、
+   零重放（再次 Worker 无可领取工作、文件与 Result 数量不变）与同版本重开。修复前用旧谓词
+   复跑该用例确认失败于 `recovered_completion=True` 的状态矛盾（不是捕获后算通过）。
+2. **共享读取服从流程事实（步骤 2）。** `mediaflow/infrastructure/sqlite_runtime.py`
+   `_run_query_document`：`recovered_success` 由 `status IN ('failed','partial_success')`
+   改为 `status = 'completed'`，并从 `derived_status` CASE 中移除该覆盖分支——终态分支是唯一
+   流程权威；`recovered_completion` 仅在真实流程完成 + 确认恢复摘要 + 逐项已证实效果时为 1。
+   同一 SQL 的 overview、服务端 status/outcome 过滤、分区/总数/游标、Automation latest
+   全部自动对齐；`domain/operations_run.py::derive_run_status` 本就只读 durable 状态，未建第二套计算器。
+3. **记录当前说明与历史保留（步骤 3，F-2）。** `_automation_record_query_document` 新增
+   `current_waiting_count/current_unreadable_count/current_success_count`（当前 durable 证据列），
+   冻结的 `task_initial_executions` 窗口/计数列原样保留；`automation_record_display` 的
+   当前解释（recordOutcome.successItems、failed 分支等待/不可读原因、“已确认整理 X 个文件”）
+   改读当前列，pending/running 的等待说明同样改读当前列。`service_api.py` 顶层/result/
+   recordOutcome 与 failureStage 核对无需再改（其状态均来自同一 overview/record SQL）。
+   缺失具体原因诚实显示“当前不可读”，原始异常不外泄（断言 `database is locked` 不在文档中）。
+4. **Web 防矛盾展示（步骤 4，F-7）。** `web/src/entities/operations/run.ts`：解码层将
+   `recoveredCompletion` 限定为 `status === "completed"` 才可能为真，failed/cancelled/running
+   携带矛盾恢复字段时拒绝为 false，不自行推导成功；`OperationsLanding`/`AutomationInventory`
+   渲染位置核对无需改动（其展示键控于该字段）。新增 `run.test.ts` 用例覆盖
+   completed+facet、failed+矛盾 facet、running+矛盾 facet 与字段缺省形状。
+5. **原生证明（步骤 5）。** `scripts/operations_inventory_harness.py`
+   `run-automation-run-once-worker` 新增 `failureFixture=publication`：在真实引擎同一边界一次性
+   注入 SQLite 写失败（无产品路由、无最终状态 seed）。`web/tests/e2e/task-flow.python.spec.ts`
+   新增原生用例：真实 UI 冲突决策→继续→分析→摘要→确认→发布失败；桌面/窄屏读回“失败”+
+   独立“成功 2”、无“已完成（恢复成功）”，record/recordOutcome/过滤器/指标增量（+1 failed、
+   +1 evaluated、成功率=completed/evaluated）、零重放与 `/__harness__/restart` 后一致。
+
+### 实际受影响测试（本轮全部实跑）
+
+- `python3 scripts/check_governance.py` → PASS（实施前与收尾各一次）。
+- `PYTHONPATH=tests:. .venv/bin/python -m unittest -q test_v2_automation_run_once
+  test_operations_task_center test_v2_automation_operations test_task_flow_status
+  test_manual_task_engine test_automation_entrance_recovery` → **154 passed**（含新增故障回归、
+  修订后的 `test_conflict_recovery_keeps_the_original_automation_record`，修复前后各跑一次）。
+- 新故障回归对旧谓词的失败复现：临时还原旧状态条件复跑 → 失败于 `recovered_completion True`
+  矛盾；随后恢复修复代码。
+- `web/ npm run test -- run src/entities/operations/run.test.ts src/entities/operations/automation.test.ts
+  src/features/operations/OperationsInventory.test.tsx src/features/operations/AutomationWorkspaceReadModel.test.tsx
+  src/features/operations/AutomationRouter.test.tsx` → **5 files / 124 tests passed**。
+- `web/ npm run typecheck` → PASS；`npm run build` → PASS（产物已用于原生 spec）。
+- `npx eslint` / `npx prettier --check`（run.ts、run.test.ts、task-flow.python.spec.ts）→ PASS。
+- `.venv/bin/ruff check` + `ruff format --check`（sqlite_runtime.py、automation_record_display.py、
+  test_v2_automation_run_once.py、operations_inventory_harness.py）→ PASS；根目录 `git diff --check` → 干净。
+- 原生 e2e（全部实跑通过）：`tests/e2e/task-flow.python.spec.ts --workers=1` → **3 passed**
+  （含新增 A48-01 原生用例）；直接受 harness 改动影响的
+  `tests/e2e/operations-inventory.python.spec.ts --workers=1` → **43 passed**、
+  `tests/e2e/automation-run-once.python.spec.ts --workers=1`（python.automation 配置）→ **5 passed**。
+
+### 计划内既有断言的修订（1 处）
+
+- `test_conflict_recovery_keeps_the_original_automation_record` 原断言成功恢复后
+  `recovered_completion` 为 False；按 A48-01 修订语义（真实流程完成 + 必要文件恢复已证实）
+  改为 assertTrue 并注明修订依据。该旅程的其余断言（冻结窗口、冻结计数、handling、metrics、
+  重开）全部保持不变并通过；其余既有用例零改动。
+
+### 剩余风险与移交说明
+
+- 冻结证据列（`success_count/waiting_count` 等）仍保持冻结值供历史只读与 B 级检查；
+  仅当前解释改读当前列。若 B 认为 completed 记录的 `recordOutcome.successItems` 也应
+  展示冻结初值，需在 B 验收中裁决（当前实现展示当前成功数，与 F-1“成功数量为 1”一致）。
+- 记录 failed 分支的 skipped/cancelled/attachment 原因仍读冻结优先列：A48-01 观察到的矛盾
+  仅涉及 waiting/unreadable/零成功；若真实旅程中冻结与当前在这些类别上分叉，需另行评估
+  （当前无已入口可发生的分叉场景，未扩大范围）。
+- B 需按 Task 清单完成全量 Python/Web/其余原生 spec 与 wheel/容器消费者证明；
+  Developer 未运行全仓回归（按 workflow 分工）。
+- 工作区原有未跟踪文件（日志/output/`15` 等）与历史保持原样，未暂存、未清理。
 
 ## B Review Result
 
