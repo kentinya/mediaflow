@@ -3,13 +3,13 @@
 Authority: committed ACTIVE [Slice49 Contract](SLICE.md) at
 `3cdc82678f693b4d7e4fb0b2a5efde42b47fc3d5`；
 [Development Workflow](docs/development-workflow.md) 是唯一生命周期/测试/审查依据。
-本助手按用户要求代行 **B 规划/激活确认职责**；本轮不担任 Developer、不做 B 验收或 A Final Review。
+本助手按用户要求承担 **B 规划/独立审查职责**；当前结论见 B Review Result，不担任 Developer 或 A Final Review。
 
 ```text
 Task ID: 49.1
 Task Type: SLICE
 Parent Slice: 49
-Status: READY FOR B REVIEW
+Status: FIX REQUIRED
 Task Base: 129d1c060dea05a91755dbd2ed70632f09655fd4
 Difficulty: High
 Test Level: T4
@@ -301,7 +301,64 @@ Slice/Roadmap/Progress，也未重开旧 Slice。工作树只保留实施前已�
 
 ## B Review Result
 
-未开始：无已提交实现候选、无B产品验收；激活不构成PASS或Slice关闭。
+**FIX REQUIRED — 2026-11-05，B 独立审查。**
+
+Reviewed Task Base: `129d1c060dea05a91755dbd2ed70632f09655fd4`
+Reviewed Head: `e82432d86abd73eee72a6c327c2176de486a36d8`
+Implementation checkpoint: `325b3133c6b3302da5f7a8a4f97d5b1bfeef2b32`。
+已逐文件审查完整 Base..Head 的24个文件（含合同激活、文档、生产实现、测试和harness），
+不是只审最新交接提交。发现下面一个本 Task 必需结果阻塞后提前返回，不运行昂贵完整门禁。
+
+### B49.1-01 — 再次运行时，上一轮“已提交”遮住本次拒绝或待核对结果（P1）
+
+用户旅程：进入“自动化 → 任务列表”，点击某行“运行一次”，看到“已提交”；在该提示消失前
+再次明确点击该行“运行一次”。第二次若队列满而被拒绝，仍暂时显示第一次的“已提交”和旧任务
+链接；第二次若后端已受理但回复未到达，仍显示旧链接，当前“暂未收到回复 / 查看提交结果”
+被遮住。旧提示约8秒后才消失，不是永久丢失；在这段时间内，操作者无法从该行正确判断或
+核对刚才这次提交。违反 T49.1-AC5/7/8 的当前提交反馈和精确核对要求。
+
+根因：`AutomationListPage.tsx` 的 `submitRunOnce` 开始新提交时清了 rejected，却没有清除
+该行旧的 `runOnceAdmitted`；`runOnceFeedback` 又先投影 admitted，再投影 rejected/pending。
+新提交结束忙碌后，旧成功提示重新占据该行，直到旧的8秒计时器清理。不是后端重复执行缺陷。
+
+已复现：组件真实路由/按钮/API-client，第一次202、第二次409(queue_full)，期望立即显示
+“未能提交”的断言失败（原6例通过，新增复现1例失败）。真实 Chromium + Python API/SQLite：
+创建停用定义，从列表连续两次明确提交；两次均经真实后端202并产生不同Task，第二次只在
+响应返回浏览器的边界替换为503。页面仍显示第一次“已提交”与旧链接；期望“暂未收到回复”
+的断言失败，截图已人工检查。没有新增产品入口，没有手写Task终态或改用户数据库。
+
+### Developer 修正指导（留在同一个 Task）
+
+1. 在该行开始新的明确提交时，撤下该行上一提交的成功提示/旧查看链接，并清理适用的旧反馈；
+   只处理该行，不影响其他行、未决请求身份或已受理Task。采用当前组件的最小状态修正即可，
+   不新增状态系统、恢复面板或后端工作流。
+2. 本次提交结束后立即按本次结果显示受理、明确拒绝或待核对；未知时立即可用“查看提交结果”，
+   按本次 request 查询并打开本次Task，不显示上一Task为本次结果。保留已有连击拦截和未知不重发。
+   检查原短时提示计时器不使后一次提示提前消失。
+3. 在现有列表测试加入“先受理→提示未消失→再明确提交”的连续旅程，覆盖第二次明确拒绝、
+   第二次未知后精确核对及第二次成功；断言当前文案/链接、本次request、POST次数和其他行隔离。
+   在原生Run once浏览器文件保留至少一个连续提交后未知的真实入口证明；可复用本轮复现。
+4. Developer 跑这两个变更测试文件及实际直接影响检查；不要求跑全量或wheel/container。
+   完成一致checkpoint后重新交 READY FOR B REVIEW。B 对修正候选负责原定完整T4门禁。
+   本轮测试执行用时小于总用时50%，后续同样遵守用户的时间分配要求。
+
+### 本轮实际验证与限度
+
+- 治理预检 PASS；受影响Python三模块 **67 tests OK，15.117秒**（包含真实根范围矩阵和due对照）。
+- `web/ npm run build` PASS，仅chunk-size提示。
+- B连续提交组件复现：**6 passed / 1 failed**；真实Python浏览器复现：**1 failed**，失败如上。
+- 本轮未执行完整Python/Web/E2E、wheel/container和installed probe；按workflow §6的已证明阻塞
+  提前FIX REQUIRED规则保留待验收，不能借Developer报告称为完整T4通过。
+- 证据为本地 `.git/validation-evidence/e82432d86abd73eee72a6c327c2176de486a36d8/b-task49.1/`：
+  `affected-python.log`、`build.log`、`repeat-feedback.log`、`native-repeat.log`、两个复现源码副本和
+  `native-repeat-artifacts/`截图/trace。证据不声称远程可取。临时探针已撤出工作树，未改产品代码。
+
+Slice全部结果重评：RO-1有67例中受限范围/实际Worker成功证据但未完成T4接受；RO-2已接入列表，
+因B49.1-01未满足；RO-3统一创建/编辑卡片、RO-4创建可选启用均尚未实施，保持后续合同范围。
+本Task仍FIX REQUIRED，不规划下一Task，不提交Slice Closure Packet，不更改A的Slice/Roadmap/Progress。
+
+本轮开始于 main / 上述Reviewed Head，tracked工作树干净；预存所有untracked OS文件、日志、
+`15`、参考图与output原样保留。只提交本Task审查结论，不push、部署或改写历史。
 
 ## Activation workspace
 
