@@ -1605,8 +1605,11 @@ export interface AutomationMetricsModel {
   readonly denominatorStatement: string;
   readonly successRate: number | null;
   readonly completedCount: number | null;
+  /** The completed+failed Task-flow denominator behind `successRate`. */
+  readonly evaluatedCount: number | null;
   readonly monthToDateTerminal: number | null;
   readonly monthToDateActive: number | null;
+  readonly monthToDateUnavailable: number | null;
   readonly monthToDateNoWork: number | null;
   readonly monthToDatePartial: number | null;
   readonly monthToDateFailed: number | null;
@@ -1649,7 +1652,9 @@ function normalizeMetricWindow(
  *
  * An unavailable read keeps its truthful "no number" shape: a missing
  * denominator or an unusable query is never coerced into a fabricated zero or
- * a percentage. A success rate is only accepted while its denominator exists.
+ * a percentage. A success rate is only accepted while its evaluated
+ * completed-plus-failed denominator exists, matches the published counts and
+ * is not the all-ended count.
  */
 export function normalizeAutomationMetrics(
   value: unknown,
@@ -1659,11 +1664,49 @@ export function normalizeAutomationMetrics(
   const available = flag(source, "available");
   const successRate = optionalFiniteNumber(source, "successRate");
   const terminal = optionalCount(source, "monthToDateTerminal");
-  if (successRate !== null && (terminal === null || terminal <= 0)) {
-    return fail(`${field}.successRate`);
-  }
+  const completed = optionalCount(source, "completedCount");
+  const evaluated = optionalCount(source, "evaluatedCount");
+  const failed = optionalCount(source, "monthToDateFailed");
+  const cancelled = optionalCount(source, "monthToDateCancelled");
+  const noWork = optionalCount(source, "monthToDateNoWork");
   if (successRate !== null && (successRate < 0 || successRate > 1)) {
     return fail(`${field}.successRate`);
+  }
+  if (!available && successRate !== null) {
+    return fail(`${field}.successRate`);
+  }
+  if (available) {
+    // A complete available document must publish the evaluated denominator,
+    // its completed+failed parts and the separate all-ended count.  Missing or
+    // contradictory values are a malformed read, never a reason to fall back
+    // to the cancelled-inclusive ended count or a fabricated rate.
+    if (
+      completed === null ||
+      evaluated === null ||
+      failed === null ||
+      cancelled === null ||
+      terminal === null
+    ) {
+      return fail(`${field}.evaluatedCount`);
+    }
+    if (completed + failed !== evaluated) {
+      return fail(`${field}.evaluatedCount`);
+    }
+    if (completed + failed + cancelled !== terminal) {
+      return fail(`${field}.monthToDateTerminal`);
+    }
+    if (noWork !== null && noWork > completed) {
+      return fail(`${field}.monthToDateNoWork`);
+    }
+    if (evaluated === 0) {
+      if (successRate !== null) {
+        return fail(`${field}.successRate`);
+      }
+    } else if (successRate === null) {
+      return fail(`${field}.successRate`);
+    } else if (Math.abs(successRate - completed / evaluated) > 1e-9) {
+      return fail(`${field}.successRate`);
+    }
   }
   const rawWindows = source["windows"];
   let windows: AutomationMetricsModel["windows"] = null;
@@ -1692,10 +1735,12 @@ export function normalizeAutomationMetrics(
     comparisonAvailable: flag(source, "comparisonAvailable"),
     denominatorStatement: text(source, "denominatorStatement"),
     successRate,
-    completedCount: optionalCount(source, "completedCount"),
+    completedCount: completed,
+    evaluatedCount: evaluated,
     monthToDateTerminal: terminal,
     monthToDateActive: optionalCount(source, "monthToDateActive"),
-    monthToDateNoWork: optionalCount(source, "monthToDateNoWork"),
+    monthToDateUnavailable: optionalCount(source, "monthToDateUnavailable"),
+    monthToDateNoWork: noWork,
     monthToDatePartial: optionalCount(source, "monthToDatePartial"),
     monthToDateFailed: optionalCount(source, "monthToDateFailed"),
     monthToDateCancelled: optionalCount(source, "monthToDateCancelled"),

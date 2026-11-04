@@ -476,6 +476,69 @@ class AutomationOperatorJourneyTests(unittest.TestCase):
             for key in ("grant", "grantState", "revoke"):
                 self.assertNotIn(key, operator["actions"])
 
+    def test_metrics_embedded_reads_and_failure_share_the_evaluated_basis(self) -> None:
+        """The independent GET, embedded metrics and a failed read stay honest."""
+
+        from unittest.mock import patch
+
+        metrics_route = "/api/v1/operations/automation/metrics"
+        with self._journey() as value:
+            status, metrics = _request(value.api, metrics_route)
+            self.assertEqual(200, status, metrics)
+            self.assertTrue(metrics["available"])
+            self.assertEqual(0, metrics["monthToDateAdmitted"])
+            self.assertEqual(0, metrics["evaluatedCount"])
+            self.assertEqual(0, metrics["completedCount"])
+            self.assertEqual(0, metrics["monthToDateTerminal"])
+            self.assertIsNone(metrics["successRate"])
+            self.assertIn("no completed or failed Task flow", metrics["denominatorStatement"])
+            _assert_operator_document_clean(metrics)
+
+            # A READ-only viewer sees the same full-population document.
+            status, viewer_metrics = _request(value.api, metrics_route, token=VIEWER_TOKEN)
+            self.assertEqual(200, status, viewer_metrics)
+            for field in ("evaluatedCount", "completedCount", "monthToDateTerminal"):
+                self.assertEqual(metrics[field], viewer_metrics[field], field)
+
+            # The definition page embeds this exact document; a list filter or
+            # page cursor cannot become a second metric basis.
+            status, page = _request(value.api, OPERATIONS_ROUTE)
+            self.assertEqual(200, status, page)
+            embedded = page["metrics"]
+            for field in (
+                "monthToDateAdmitted",
+                "evaluatedCount",
+                "completedCount",
+                "monthToDateFailed",
+                "monthToDateCancelled",
+                "monthToDateTerminal",
+                "successRate",
+                "denominatorStatement",
+            ):
+                self.assertEqual(metrics[field], embedded[field], field)
+
+            # Extra query parameters are rejected rather than silently changing
+            # the authorized population.
+            status, rejected = _request(value.api, metrics_route, query="limit=1")
+            self.assertNotEqual(200, status, rejected)
+
+            with patch.object(
+                value.runtime,
+                "automation_run_metrics",
+                side_effect=RuntimeError("simulated runtime read failure"),
+            ):
+                status, unavailable = _request(value.api, metrics_route)
+                self.assertEqual(200, status, unavailable)
+                self.assertFalse(unavailable["available"])
+                self.assertIsNone(unavailable["successRate"])
+                self.assertEqual("unavailable", unavailable["denominatorStatement"])
+                self.assertIn("refresh", unavailable["nextAction"])
+
+                status, page = _request(value.api, OPERATIONS_ROUTE)
+                self.assertEqual(200, status, page)
+                self.assertFalse(page["metrics"]["available"])
+                self.assertIsNone(page["metrics"]["successRate"])
+
     def test_draft_journey_composes_existing_routes_atomically(self) -> None:
         with self._journey() as value:
             status, draft = _request(value.api, f"{OPERATIONS_ROUTE}/{_DEFINITION['id']}/draft")

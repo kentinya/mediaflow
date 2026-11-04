@@ -180,17 +180,19 @@ function metricsDocument(overrides: Json = {}): Json {
     previousPeriodAdmitted: 4,
     comparisonAvailable: true,
     comparisonUnavailableReason: null,
-    monthToDateTerminal: 6,
+    monthToDateTerminal: 4,
     monthToDateActive: 3,
+    monthToDateUnavailable: 0,
     monthToDateNoWork: 2,
-    monthToDatePartial: 1,
+    monthToDatePartial: 0,
     monthToDateFailed: 1,
     monthToDateCancelled: 0,
     monthToDateUncertain: 1,
     denominatorStatement:
-      "terminal admitted runs in the current local month (6)",
-    successRate: 0.5,
+      "completed plus failed Task flow results in the current local month (4)",
+    successRate: 0.75,
     completedCount: 3,
+    evaluatedCount: 4,
     noWorkStatement:
       "skipped files are not organized files, a completed queue or " +
       "preparation row is not organizing success",
@@ -498,6 +500,10 @@ describe("V2 Automation workspace read model", () => {
     // one row on this page, and Draft-only entries are labelled apart.
     expect(await screen.findByText("27")).toBeVisible();
     expect(screen.getByText(/已启用 11 · 待发布 3/)).toBeVisible();
+    // The rate explanation names its own completed-plus-failed denominator,
+    // separately from the all-ended count that also includes cancellation.
+    expect(screen.getByText(/评估 4 次 · 已结束 4 次/)).toBeVisible();
+    expect(screen.getByText("75%")).toBeVisible();
     // The latest result is the merged admitted-run evidence (manual trigger).
     expect(await screen.findByText(/已整理 2 项/)).toBeVisible();
     expect(screen.getByText("手动运行一次")).toBeVisible();

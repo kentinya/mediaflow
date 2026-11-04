@@ -387,6 +387,28 @@ class RunOnceApiTests(unittest.TestCase):
         result = b"".join(value.api(environ, lambda status, _headers: statuses.append(status)))
         return int(statuses[0].split()[0]), (json.loads(result) if result else {})
 
+    def metric_document(self, value, *, token=ADMIN_TOKEN):
+        """The real metrics API document at the fixture's own controlled clock.
+
+        The evaluation instant is a few minutes after the fixture's fixed clock
+        so every admission written in the same fixture second is inside the
+        half-open month window rather than exactly on its closing boundary.
+        """
+
+        with patch.object(
+            value.api,
+            "_automation_now",
+            return_value=value.clock.now + timedelta(minutes=5),
+        ):
+            status, document = self.request(
+                value,
+                "GET",
+                "/api/v1/operations/automation/metrics",
+                token=token,
+            )
+        self.assertEqual(200, status, document)
+        return document
+
     def drive(self, value, *, steps: int = 12):
         result = None
         for index in range(steps):
@@ -1072,6 +1094,20 @@ class RunOnceApiTests(unittest.TestCase):
             self.assertTrue((self.source_root / "Two.2002.mkv").exists())
             self.assertEqual([], value.target.mutations)
 
+            # Slice 48 RO-4: the completed flow counts as Automation success
+            # even though every file is partial/failed, its effect is unknown
+            # and no successful file exists.  It is explicitly not no-work.
+            metrics = self.metric_document(value)
+            self.assertEqual(1, metrics["monthToDateAdmitted"], metrics)
+            self.assertEqual(1, metrics["evaluatedCount"], metrics)
+            self.assertEqual(1, metrics["completedCount"], metrics)
+            self.assertEqual(0, metrics["monthToDateFailed"], metrics)
+            self.assertEqual(0, metrics["monthToDateCancelled"], metrics)
+            self.assertEqual(1, metrics["monthToDateTerminal"], metrics)
+            self.assertEqual(0, metrics["monthToDateActive"], metrics)
+            self.assertEqual(1.0, metrics["successRate"], metrics)
+            self.assertEqual(0, metrics["monthToDateNoWork"], metrics)
+
     def test_over_sixty_interval_has_no_wait_and_only_instability_is_failed(self):
         import time
 
@@ -1483,6 +1519,16 @@ class RunOnceApiTests(unittest.TestCase):
             self.assertIn("等待人工处理", original_outcome["statement"], original_outcome)
             self.assertIn("任务中心", original_outcome["nextStep"], original_outcome)
 
+            # Slice 48 RO-4: the same original admitted Task stays outside the
+            # rate while required human work is unfinished; it is not counted
+            # as a second run merely because the record was read again.
+            waiting_metrics = self.metric_document(value)
+            self.assertEqual(1, waiting_metrics["monthToDateAdmitted"], waiting_metrics)
+            self.assertEqual(0, waiting_metrics["evaluatedCount"], waiting_metrics)
+            self.assertEqual(0, waiting_metrics["monthToDateTerminal"], waiting_metrics)
+            self.assertEqual(1, waiting_metrics["monthToDateActive"], waiting_metrics)
+            self.assertIsNone(waiting_metrics["successRate"], waiting_metrics)
+
             # The operator returns an hour later: every later write uses the
             # advanced fixture clock, so the frozen original stage must stay
             # exactly as captured above across the whole recovery.
@@ -1635,12 +1681,34 @@ class RunOnceApiTests(unittest.TestCase):
             self.assertEqual(1, metrics["currentAdmitted"], metrics)
             self.assertEqual(1, metrics["currentTerminal"], metrics)
             self.assertEqual(1, metrics["currentCompleted"], metrics)
+            self.assertEqual(1, metrics["currentEvaluated"], metrics)
+            self.assertEqual(0, metrics["currentNoWork"], metrics)
+            # The same Task continuation changed only its current flow
+            # contribution: one admitted run, one evaluated Task, success.
+            completed_metrics = self.metric_document(value)
+            self.assertEqual(1, completed_metrics["monthToDateAdmitted"], completed_metrics)
+            self.assertEqual(1, completed_metrics["evaluatedCount"], completed_metrics)
+            self.assertEqual(1, completed_metrics["completedCount"], completed_metrics)
+            self.assertEqual(1, completed_metrics["monthToDateTerminal"], completed_metrics)
+            self.assertEqual(0, completed_metrics["monthToDateActive"], completed_metrics)
+            self.assertEqual(0, completed_metrics["monthToDateCancelled"], completed_metrics)
+            self.assertEqual(1.0, completed_metrics["successRate"], completed_metrics)
+            self.assertEqual(0, completed_metrics["monthToDateNoWork"], completed_metrics)
             latest = value.repository.automation_latest_admitted_runs()
             self.assertEqual(["nightly"], list(latest), latest)
             self.assertEqual(task_id, latest["nightly"]["runId"])
             self.assertEqual(task_id, latest["nightly"]["taskId"])
 
         with SQLiteTaskRepository(str(self.root / "runtime.sqlite3")) as reopened:
+            persisted_metrics = reopened.automation_run_metrics(
+                current_start=self.clock.now - timedelta(days=1),
+                current_end=self.clock.now + timedelta(days=1),
+                previous_start=self.clock.now - timedelta(days=2),
+                previous_end=self.clock.now - timedelta(days=1),
+            )
+            self.assertEqual(1, persisted_metrics["currentAdmitted"], persisted_metrics)
+            self.assertEqual(1, persisted_metrics["currentEvaluated"], persisted_metrics)
+            self.assertEqual(1, persisted_metrics["currentCompleted"], persisted_metrics)
             window = reopened.operations_runs_window(
                 limit=20, automation_admissions=True, record_evidence=True
             )
@@ -2102,6 +2170,122 @@ class RunOnceApiTests(unittest.TestCase):
             self.assertIsNotNone(task.completed_at)
             self.assertEqual("cancelled", response["task"]["status"])
             self.assertEqual([], value.source.mutations)
+            # A cancelled Task stays in the admitted/all-ended population but
+            # is excluded from the rate numerator and denominator, so an
+            # all-cancelled cohort publishes no percentage and no zero-success
+            # "0%" fabrication.
+            metrics = self.metric_document(value)
+            self.assertEqual(1, metrics["monthToDateAdmitted"], metrics)
+            self.assertEqual(0, metrics["evaluatedCount"], metrics)
+            self.assertEqual(0, metrics["completedCount"], metrics)
+            self.assertEqual(0, metrics["monthToDateFailed"], metrics)
+            self.assertEqual(1, metrics["monthToDateCancelled"], metrics)
+            self.assertEqual(1, metrics["monthToDateTerminal"], metrics)
+            self.assertEqual(0, metrics["monthToDateActive"], metrics)
+            self.assertIsNone(metrics["successRate"], metrics)
+            self.assertEqual(0, metrics["monthToDateNoWork"], metrics)
+
+            # A cancelled Task plus a genuinely unfinished one still publishes
+            # no percentage: neither is evaluated and the cancelled one is not
+            # reclassified as active.
+            status, body = self.admit(value, request_id="request-2")
+            self.assertEqual(202, status, body)
+            mixed_metrics = self.metric_document(value)
+            self.assertEqual(2, mixed_metrics["monthToDateAdmitted"], mixed_metrics)
+            self.assertEqual(1, mixed_metrics["monthToDateActive"], mixed_metrics)
+            self.assertEqual(1, mixed_metrics["monthToDateCancelled"], mixed_metrics)
+            self.assertEqual(1, mixed_metrics["monthToDateTerminal"], mixed_metrics)
+            self.assertEqual(0, mixed_metrics["evaluatedCount"], mixed_metrics)
+            self.assertIsNone(mixed_metrics["successRate"], mixed_metrics)
+
+    def test_metrics_mixed_flow_population_uses_completed_over_completed_plus_failed(self):
+        """The real API publishes 8/9 for 8 completed, 1 failed and 1 cancelled.
+
+        Every run enters through the existing definition Run once admission and
+        the existing cancel endpoint; the healthy empty source is a real
+        completed flow, the scope-read failure is a real Task flow failure, and
+        the cancelled Task is a real acknowledged cancellation.  Cancelled Tasks
+        remain in admitted/all-ended counts but never in the rate.
+        """
+
+        from mediaflow.application.automation_execution_intent import BoundedScopeReader
+
+        with self.journey() as value:
+            for index in range(8):
+                status, body = self.admit(value, request_id=f"empty-{index}")
+                self.assertEqual(202, status, body)
+                result = self.execute(value)
+                self.assertIsNotNone(result)
+                self.assertEqual("completed", result.status.value, result.error)
+
+            # A real scope-read failure is a Task flow failure, not a file
+            # outcome: the bounded reader cannot prove the admitted scope.
+            self.media("One.2001.mkv")
+            self.media("Two.2002.mkv")
+            status, body = self.admit(value, request_id="failed-scope")
+            self.assertEqual(202, status, body)
+            with patch(
+                "mediaflow.application.automation_execution_intent.BoundedScopeReader",
+                side_effect=lambda storage, **kwargs: BoundedScopeReader(
+                    storage, maximum_entries=1, **kwargs
+                ),
+            ):
+                failed = self.execute(value)
+            self.assertIsNotNone(failed)
+            self.assertEqual("failed", failed.status.value, failed.error)
+            self.assertEqual("scope_unreadable", failed.failure_category)
+
+            # An acknowledged cancellation is a real terminal Task that stays in
+            # records and all-ended totals but outside the rate.
+            status, body = self.admit(value, request_id="cancelled-first")
+            self.assertEqual(202, status, body)
+            cancelled_task_id = body["taskId"]
+            status, cancelled = self.request(
+                value, "POST", f"/api/v1/tasks/{cancelled_task_id}/cancel"
+            )
+            self.assertEqual(200, status, cancelled)
+            self.assertEqual("cancelled", cancelled["task"]["status"])
+
+            metrics = self.metric_document(value)
+            self.assertEqual(10, metrics["monthToDateAdmitted"], metrics)
+            self.assertEqual(9, metrics["evaluatedCount"], metrics)
+            self.assertEqual(8, metrics["completedCount"], metrics)
+            self.assertEqual(1, metrics["monthToDateFailed"], metrics)
+            self.assertEqual(1, metrics["monthToDateCancelled"], metrics)
+            self.assertEqual(10, metrics["monthToDateTerminal"], metrics)
+            self.assertEqual(0, metrics["monthToDateActive"], metrics)
+            self.assertEqual(0, metrics["monthToDateUnavailable"], metrics)
+            self.assertAlmostEqual(8 / 9, metrics["successRate"], places=12)
+            # The healthy empty completions are the only proven no-work facts;
+            # the failed/cancelled runs are neither no-work nor success.
+            self.assertEqual(8, metrics["monthToDateNoWork"], metrics)
+
+            # Another genuine cancellation changes the admitted/ended totals but
+            # not the completed/(completed+failed) ratio.
+            status, body = self.admit(value, request_id="cancelled-second")
+            self.assertEqual(202, status, body)
+            status, _second = self.request(value, "POST", f"/api/v1/tasks/{body['taskId']}/cancel")
+            self.assertEqual(200, status, _second)
+            after_cancel = self.metric_document(value)
+            self.assertEqual(11, after_cancel["monthToDateAdmitted"], after_cancel)
+            self.assertEqual(9, after_cancel["evaluatedCount"], after_cancel)
+            self.assertEqual(2, after_cancel["monthToDateCancelled"], after_cancel)
+            self.assertEqual(11, after_cancel["monthToDateTerminal"], after_cancel)
+            self.assertAlmostEqual(8 / 9, after_cancel["successRate"], places=12, msg=after_cancel)
+
+        with SQLiteTaskRepository(str(self.root / "runtime.sqlite3")) as reopened:
+            persisted = reopened.automation_run_metrics(
+                current_start=self.clock.now - timedelta(days=1),
+                current_end=self.clock.now + timedelta(days=1),
+                previous_start=self.clock.now - timedelta(days=2),
+                previous_end=self.clock.now - timedelta(days=1),
+            )
+            self.assertEqual(11, persisted["currentAdmitted"], persisted)
+            self.assertEqual(8, persisted["currentCompleted"], persisted)
+            self.assertEqual(1, persisted["currentFailed"], persisted)
+            self.assertEqual(2, persisted["currentCancelled"], persisted)
+            self.assertEqual(9, persisted["currentEvaluated"], persisted)
+            self.assertEqual(8, persisted["currentNoWork"], persisted)
 
     def test_complete_walk_budget_and_unsafe_entries_fail_before_effects(self):
         from dataclasses import replace
@@ -2268,6 +2452,16 @@ class RunOnceApiTests(unittest.TestCase):
             self.assertFalse(hasattr(value.repository, "list_jobs"))
             self.assertEqual([], value.source.mutations)
             self.assertEqual([], value.target.mutations)
+            # A real Scheduler due admission enters the same Automation metric
+            # cohort.  Its healthy empty scope is completed success and is the
+            # one proven no-work completion, never a failed/zero-success guess.
+            metrics = self.metric_document(value)
+            self.assertEqual(1, metrics["monthToDateAdmitted"], metrics)
+            self.assertEqual(1, metrics["evaluatedCount"], metrics)
+            self.assertEqual(1, metrics["completedCount"], metrics)
+            self.assertEqual(1, metrics["monthToDateTerminal"], metrics)
+            self.assertEqual(1, metrics["monthToDateNoWork"], metrics)
+            self.assertEqual(1.0, metrics["successRate"], metrics)
 
     def test_scheduled_definition_organizes_a_ready_file_on_one_task(self) -> None:
         from mediaflow.application.automation import IntervalScheduler

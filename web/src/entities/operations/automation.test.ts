@@ -10,6 +10,7 @@ import {
   normalizeAutomationDraftState,
   normalizeAutomationEligibility,
   normalizeAutomationGrantState,
+  normalizeAutomationMetrics,
   normalizeAutomationPreview,
   normalizeAutomationRecordsPage,
   AutomationNormalizationError,
@@ -186,6 +187,7 @@ function definitionsPagePayload(
       denominatorStatement: "no terminal admitted run in the current month",
       successRate: null,
       completedCount: 0,
+      evaluatedCount: 0,
       monthToDateTerminal: 0,
       monthToDateActive: 1,
       monthToDateNoWork: 0,
@@ -677,6 +679,95 @@ describe("normalizeAutomationPreview", () => {
         AutomationNormalizationError,
       );
     }
+  });
+});
+
+describe("normalizeAutomationMetrics", () => {
+  const metricPayload = (
+    overrides: Record<string, unknown> = {},
+  ): Record<string, unknown> => ({
+    ...(definitionsPagePayload([]).metrics as Record<string, unknown>),
+    ...overrides,
+  });
+
+  it("uses the evaluated completed-plus-failed denominator", () => {
+    const model = normalizeAutomationMetrics(
+      metricPayload({
+        completedCount: 2,
+        evaluatedCount: 3,
+        monthToDateFailed: 1,
+        monthToDateCancelled: 1,
+        monthToDateTerminal: 4,
+        monthToDateNoWork: 0,
+        successRate: 2 / 3,
+      }),
+    );
+    expect(model.completedCount).toBe(2);
+    expect(model.evaluatedCount).toBe(3);
+    expect(model.monthToDateTerminal).toBe(4);
+    expect(model.successRate).toBeCloseTo(2 / 3);
+  });
+
+  it("rejects a missing evaluated denominator or an all-ended rate", () => {
+    expect(() =>
+      normalizeAutomationMetrics(
+        metricPayload({
+          completedCount: 2,
+          evaluatedCount: null,
+          monthToDateFailed: 1,
+          monthToDateCancelled: 0,
+          monthToDateTerminal: 3,
+          successRate: 2 / 3,
+        }),
+      ),
+    ).toThrow(AutomationNormalizationError);
+    expect(() =>
+      normalizeAutomationMetrics(
+        metricPayload({
+          completedCount: 2,
+          evaluatedCount: 2,
+          monthToDateFailed: 0,
+          monthToDateCancelled: 1,
+          monthToDateTerminal: 3,
+          successRate: 2 / 3,
+        }),
+      ),
+    ).toThrow(AutomationNormalizationError);
+  });
+
+  it("rejects a zero denominator percentage and contradictory counts", () => {
+    expect(() =>
+      normalizeAutomationMetrics(
+        metricPayload({
+          completedCount: 0,
+          evaluatedCount: 0,
+          monthToDateFailed: 0,
+          monthToDateCancelled: 0,
+          monthToDateTerminal: 0,
+          successRate: 0,
+        }),
+      ),
+    ).toThrow(AutomationNormalizationError);
+    expect(() =>
+      normalizeAutomationMetrics(
+        metricPayload({
+          completedCount: 2,
+          evaluatedCount: 3,
+          monthToDateFailed: 1,
+          monthToDateCancelled: 0,
+          monthToDateTerminal: 4,
+          successRate: 2 / 3,
+        }),
+      ),
+    ).toThrow(AutomationNormalizationError);
+    expect(() =>
+      normalizeAutomationMetrics(
+        metricPayload({
+          available: false,
+          successRate: 0,
+        }),
+      ),
+    ).toThrow(AutomationNormalizationError);
   });
 });
 

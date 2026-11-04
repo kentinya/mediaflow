@@ -9,7 +9,7 @@
 Task ID: 48.2
 Task Type: SLICE
 Parent Slice: 48
-Status: PLANNED
+Status: READY FOR B REVIEW
 Task Base: 469ecc076c6efc660055f47277d7917a0b64a9aa
 Difficulty: Medium
 Test Level: T3 — INTEGRATION
@@ -163,8 +163,69 @@ Provider/Storage 操作、旧任务迁移或跨版本支持；不改 CURRENT、S
 
 ## Developer Completion Report
 
-NOT STARTED。完成后提供候选完整 SHA、Status READY FOR B REVIEW、实际变化及受影响命令的
-真实结果/失败/风险；完整验收待 B，不要求 Developer 提供全量证据包。
+READY FOR B REVIEW。候选为包含本报告的提交（分支 `main`）；完整候选 SHA 在交接回复中给出，
+完整验收与最终判定由 B 独立执行。
+
+**实际变化**
+
+1. **Metric read model**（`sqlite_runtime.py`）：保留既有原始 due + definition Run once
+   人群、Task 身份去重、本地半开月窗口和单事务快照，改用当前耐久 Task 五态状态。
+   `completed` 为成功数，`completed + failed` 为评估分母，`completed + failed + cancelled`
+   为已结束数；pending/running 只算进行中。移除 primary/attachment 成功、效果确定性和
+   Result 存在等文件条件。历史 `partial_success` 按已记录的失败计入 `failed`；
+   退役 `paused`/不可读 Task 证据进入 `unavailable`，不伪装为进行中。
+2. **无工作事实**：`currentNoWork` 只在 Task completed 且无准入来源，或全部来源均为
+   `history_excluded` 时为真。零成功、全失败、全跳过、未知效果、缺 Result 均不证明无工作；
+   definition 最近结果里的 `noWork` 同步该证据。
+3. **API**（`service_api.py`）：新增 `evaluatedCount`、`monthToDateUnavailable`，
+   `completedCount` 改为流程 completed 数，`monthToDateTerminal` 保留含取消语义，
+   `successRate = completed / evaluated`，评估为零时为 `null`。独立 metrics GET 和定义
+   清单内嵌 metrics 共用同一文档；读取失败显式 `successRate: null`、`evaluatedCount: null`、
+   `denominatorStatement: unavailable` 和既有刷新指引。
+4. **Web**（`automation.ts`、`AutomationInventory.tsx`）：解码器要求可用文档同时给出
+   completed/failed/evaluated/cancelled/terminal，校验
+   `completed + failed = evaluated`、`completed + failed + cancelled = terminal`、
+   rate 与 completed/evaluated 一致；拒绝零分母百分比、越界和以已结束数伪装分母的文档。
+   成功率卡用一行“评估 X 次 · 已结束 Y 次”区分分母与含取消的已结束数，保留既有百分比
+   精度、暂无统计、不可用刷新提示和响应布局。
+5. **测试**：扩展真实 Run once/due/cancel/同 Task 恢复/重开指标断言、全失败完成、健康空范围、
+   完整历史排除、读取失败、权限和清单内嵌 metrics；Web 增加 decoder 拒绝路径和卡片分母断言；
+   Python 原生 E2E 增加真实 Run once 后成功率增量、桌面/窄屏与截图检查。
+
+**实际执行的受影响命令与结果**
+
+均从仓库根目录或 `web/` 执行，未访问用户媒体/生产数据库/外部服务。
+
+- `.venv/bin/python -m unittest discover -s tests -p 'test_v2_automation_run_once.py'`：
+  **35 passed / 0 failed**（5.4s）。
+- `.venv/bin/python -m unittest discover -s tests -p 'test_v2_automation_operations.py'`：
+  **19 passed / 0 failed**（8.4s）。
+- `.venv/bin/python -m unittest discover -s tests -p 'test_task_flow_status.py'`：
+  **22 passed / 0 failed**（0.6s）。
+- `.venv/bin/python -m unittest discover -s tests -p 'test_organize_source_history.py'`：
+  **23 passed / 0 failed**（2.9s；含全失败非无工作、完整历史排除为无工作的新断言）。
+- `web/ npm run test -- run src/entities/operations/automation.test.ts
+  src/features/operations/AutomationWorkspaceReadModel.test.tsx
+  src/features/operations/AutomationRouter.test.tsx`：**57 passed / 0 failed**（4.2s）。
+- `web/ npm run typecheck`：通过（6.4s）；`web/ npm run build`：通过（0.3s，
+  Vite 既有 >500KB chunk 警告，无新增失败）。
+- `web/ npm run test:e2e -- --config=playwright.python.automation.config.ts
+  tests/e2e/automation-workspace.python.spec.ts --workers=1`：**9 passed / 0 failed**
+  （8.9s，含新增成功率旅程和 1536/390 宽窄屏截图）。
+- Ruff format/check、ESLint、Prettier check、`git diff --check`、
+  `python3 scripts/check_governance.py`：全部通过。
+- 本轮实际测试命令累计约 40 秒，低于本轮总工作时间的 30%；未用等待凑比例。
+
+**实际失败与已知风险**
+
+- 无已知产品失败。历史 `partial_success`/`paused` 行不做迁移：前者作为记录失败参与
+  评估，后者进入 unavailable；这是保守读取，不重新解释为成功。
+- 浏览器 E2E 使用共享 harness 的既有 Task 人群，因此断言“Run once 后各计数增量 + rate
+  等于 completed/evaluated”；精确 8/9 由真实 Python API/SQLite 旅程覆盖。
+- 未运行全量 Python/Web/E2E、wheel/container、T4 安全/打包矩阵；这些属于 B 的验收门禁，
+  不声称已通过。无关 Files/CLI 手动整理的浏览器级排除仍建议 B 在验收人群场景中确认。
+- 未新增 schema、迁移、调度准入、结算、容量、fence、pin、权限、恢复/执行入口；
+  未推送或部署。
 
 ## B Review Result
 

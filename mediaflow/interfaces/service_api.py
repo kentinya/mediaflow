@@ -14513,10 +14513,6 @@ class MediaFlowApi:
             "to",
         }
     )
-    #: The five admitted-run terminal states that form the success denominator.
-    _AUTOMATION_TERMINAL_STATUSES = frozenset(
-        {"completed", "partial_success", "failed", "cancelled"}
-    )
     #: Bounded Automation inventory orderings; each has one deterministic tie.
     _AUTOMATION_DEFINITION_SORTS = frozenset({"name", "enabled", "nextRun", "latest", "limit"})
 
@@ -14626,6 +14622,8 @@ class MediaFlowApi:
         previous = windows["previous"]
         base: dict[str, object] = {
             "available": False,
+            "successRate": None,
+            "evaluatedCount": None,
             "scope": "full_authorized_population",
             "basis": (
                 "each original admitted run counted once by its durable admission "
@@ -14680,6 +14678,11 @@ class MediaFlowApi:
         cancelled = int(values.get("currentCancelled", 0))
         uncertain = int(values.get("currentUncertain", 0))
         active = int(values.get("currentActive", 0))
+        unavailable = int(values.get("currentUnavailable", 0))
+        # Slice48 RO-4: the rate's denominator is the evaluated Task-flow
+        # population (completed + failed), never the all-ended count.  The
+        # latter stays available for the separate records/ended display.
+        evaluated = int(values.get("currentEvaluated", completed + failed))
         base.update(
             {
                 "available": True,
@@ -14691,24 +14694,27 @@ class MediaFlowApi:
                 ),
                 "monthToDateTerminal": terminal,
                 "monthToDateActive": active,
+                "monthToDateUnavailable": unavailable,
+                "evaluatedCount": evaluated,
                 "monthToDateNoWork": no_work,
                 "monthToDatePartial": partial,
                 "monthToDateFailed": failed,
                 "monthToDateCancelled": cancelled,
                 "monthToDateUncertain": uncertain,
                 "denominatorStatement": (
-                    f"terminal admitted runs in the current local month ({terminal})"
-                    if terminal > 0
-                    else "no terminal admitted run in the current local month"
+                    "completed plus failed Task flow results in the current "
+                    f"local month ({evaluated})"
+                    if evaluated > 0
+                    else "no completed or failed Task flow result in the current local month"
                 ),
-                "successRate": (completed / terminal if terminal > 0 else None),
+                "successRate": (completed / evaluated if evaluated > 0 else None),
                 "completedCount": completed,
                 "noWorkCount": no_work,
                 "noWorkStatement": (
-                    "skipped files are not organized files, a completed queue or "
-                    "preparation row is not organizing success, a successful no-work "
-                    "completion is labelled as such, and a reached item bound does not "
-                    "prove scope exhaustion"
+                    "no work means the completed Task had no admitted source or its "
+                    "whole source population was excluded by recorded history; zero "
+                    "successful files, all-failed/all-skipped work, unknown effects and "
+                    "absent file results never prove no work"
                 ),
             }
         )

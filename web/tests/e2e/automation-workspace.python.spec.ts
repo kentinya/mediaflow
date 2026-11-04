@@ -779,6 +779,93 @@ test("a healthy empty history reads as no execution, not unavailable", async ({
   await expect(page.getByText(/指标暂不可用/)).toHaveCount(0);
 });
 
+test("the success-rate card uses the completed-plus-failed Task-flow denominator", async ({
+  page,
+}, testInfo) => {
+  const metricsRequest = async () => {
+    const response = await page.request.get(
+      "/api/v1/operations/automation/metrics",
+      { headers: { Authorization: `Bearer ${ADMIN_TOKEN}` } },
+    );
+    expect(response.ok()).toBe(true);
+    return (await response.json()) as {
+      readonly available: boolean;
+      readonly monthToDateAdmitted: number;
+      readonly evaluatedCount: number;
+      readonly completedCount: number;
+      readonly monthToDateFailed: number;
+      readonly monthToDateCancelled: number;
+      readonly monthToDateTerminal: number;
+      readonly monthToDateActive: number;
+      readonly successRate: number | null;
+    };
+  };
+
+  const before = await metricsRequest();
+  await publishDefinition(page, {
+    sourceScope: "电影",
+    name: "Success-rate workspace",
+  });
+  await page.getByRole("button", { name: "运行一次" }).click();
+  await expect(page).toHaveURL(
+    /\/ui-v2\/operations\/automation\/run-once\/[0-9a-f-]{36}$/,
+  );
+  const discoveryId = new URL(page.url()).pathname.split("/").pop() ?? "";
+  const executed = await page.request.post(
+    `/__harness__/run-automation-run-once-worker?discoveryId=${discoveryId}`,
+  );
+  const executionBody = await executed.json();
+  expect(executionBody.status, JSON.stringify(executionBody)).toBe("completed");
+
+  const after = await metricsRequest();
+  // One real Run once completed.  The evaluated denominator and completed
+  // numerator both gain exactly one Task; cancelled/active work stays outside
+  // the rate.  The rate is never derived from the all-ended population.
+  expect(after.monthToDateAdmitted).toBe(before.monthToDateAdmitted + 1);
+  expect(after.evaluatedCount).toBe(before.evaluatedCount + 1);
+  expect(after.completedCount).toBe(before.completedCount + 1);
+  expect(after.monthToDateFailed).toBe(before.monthToDateFailed);
+  expect(after.monthToDateCancelled).toBe(before.monthToDateCancelled);
+  expect(after.monthToDateTerminal).toBe(before.monthToDateTerminal + 1);
+  expect(after.monthToDateActive).toBe(before.monthToDateActive);
+  expect(after.successRate).not.toBeNull();
+  expect(after.successRate as number).toBeCloseTo(
+    after.completedCount / after.evaluatedCount,
+    12,
+  );
+
+  await connectOn(page, "/ui-v2/operations/automation");
+  const statistics = page.getByRole("region", { name: "自动化统计" });
+  const denominatorText = new RegExp(
+    `评估 ${after.evaluatedCount} 次 · 已结束 ${after.monthToDateTerminal} 次`,
+  );
+  const rateText = `${Math.round((after.successRate as number) * 100)}%`;
+
+  for (const viewport of [
+    { width: 1536, height: 1024, name: "desktop" },
+    { width: 390, height: 844, name: "narrow" },
+  ]) {
+    await page.setViewportSize({
+      width: viewport.width,
+      height: viewport.height,
+    });
+    const denominator = statistics.getByText(denominatorText);
+    await expect(denominator).toBeVisible();
+    await expect(statistics.getByText(rateText, { exact: true })).toBeVisible();
+    await denominator.scrollIntoViewIfNeeded();
+    await expect(denominator).toBeInViewport();
+    expect(
+      await page.evaluate(
+        () => document.documentElement.scrollWidth <= window.innerWidth + 1,
+      ),
+    ).toBe(true);
+    await page.screenshot({
+      fullPage: true,
+      path: testInfo.outputPath(`automation-rate-${viewport.name}.png`),
+    });
+  }
+});
+
 test("the workspace keeps narrow and wide layouts usable", async ({
   page,
 }, testInfo) => {

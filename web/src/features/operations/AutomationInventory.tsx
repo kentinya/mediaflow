@@ -120,9 +120,10 @@ export function AutomationMetricCards({
           {metricValue(metrics, "success", null)}
         </span>
         <span className="mf-count-label">
-          {metrics.monthToDateTerminal === null
+          {metrics.evaluatedCount === null ||
+          metrics.monthToDateTerminal === null
             ? ""
-            : `已结束 ${metrics.monthToDateTerminal} 次`}
+            : `评估 ${metrics.evaluatedCount} 次 · 已结束 ${metrics.monthToDateTerminal} 次`}
           {metrics.monthToDateNoWork === null || metrics.monthToDateNoWork === 0
             ? ""
             : ` · 其中无工作完成 ${metrics.monthToDateNoWork}`}

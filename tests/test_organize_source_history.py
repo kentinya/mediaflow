@@ -833,6 +833,15 @@ class RunOnceHistoryExclusionJourneyTests(_SourceHistoryJourneyTests):
         one = self.media("One.2001.mkv")
         two = self.media("Two.2002.mkv")
         with history_journey(self, operation="COPY") as value:
+
+            def metrics():
+                return value.repository.automation_run_metrics(
+                    current_start=value.clock.now - timedelta(days=1),
+                    current_end=value.clock.now + timedelta(days=1),
+                    previous_start=value.clock.now - timedelta(days=2),
+                    previous_end=value.clock.now - timedelta(days=1),
+                )
+
             # 1. A real Run once fails at the real OrganizerExecutor boundary
             #    before any mutation; both files record failed attempts.
             from mediaflow.application.organizer import OrganizerExecutor
@@ -855,6 +864,12 @@ class RunOnceHistoryExclusionJourneyTests(_SourceHistoryJourneyTests):
                 {item.status for item in failed_items},
                 failed_items,
             )
+            failed_metrics = metrics()
+            self.assertEqual(1, failed_metrics["currentEvaluated"], failed_metrics)
+            self.assertEqual(1, failed_metrics["currentCompleted"], failed_metrics)
+            self.assertEqual(0, failed_metrics["currentFailed"], failed_metrics)
+            # An all-failed completed flow is success, not a no-work completion.
+            self.assertEqual(0, failed_metrics["currentNoWork"], failed_metrics)
 
             # 2. The next Run once excludes both same-version failed files with
             #    one honest not-processed item each: no Result, no destination,
@@ -885,6 +900,13 @@ class RunOnceHistoryExclusionJourneyTests(_SourceHistoryJourneyTests):
             self.assertEqual((), value.repository.list_results(excluded_run.task_id))
             self.assertTrue(one.exists())
             self.assertTrue(two.exists())
+            excluded_metrics = metrics()
+            self.assertEqual(2, excluded_metrics["currentEvaluated"], excluded_metrics)
+            self.assertEqual(2, excluded_metrics["currentCompleted"], excluded_metrics)
+            self.assertEqual(0, excluded_metrics["currentFailed"], excluded_metrics)
+            # Every source of this completed pass is a recorded history
+            # exclusion, so this alone is a proven no-work completion.
+            self.assertEqual(1, excluded_metrics["currentNoWork"], excluded_metrics)
 
             # 3. A deliberate manual CLI organize is never excluded by that
             #    history: the same file organizes normally under a new pin.

@@ -244,16 +244,18 @@ function metricsDocument(
     comparisonUnavailableReason: "no_comparable_previous_period",
     monthToDateTerminal: 3,
     monthToDateActive: 1,
+    monthToDateUnavailable: 0,
     monthToDateNoWork: 1,
     monthToDatePartial: 0,
-    monthToDateFailed: 0,
+    monthToDateFailed: 1,
     monthToDateCancelled: 0,
     monthToDateUncertain: 0,
     inventory: inventoryCountsDocument(),
     denominatorStatement:
-      "terminal admitted runs in the current local month (3)",
+      "completed plus failed Task flow results in the current local month (3)",
     successRate: 2 / 3,
     completedCount: 2,
+    evaluatedCount: 3,
     noWorkStatement:
       "skipped files are not organized files and a reached item bound does " +
       "not prove scope exhaustion",
@@ -591,6 +593,7 @@ describe("V2 Automation journey", () => {
     expect(await screen.findByText("自动化任务数")).toBeVisible();
     expect(screen.getByText("本月执行次数")).toBeVisible();
     expect(screen.getByText("成功率")).toBeVisible();
+    expect(screen.getByText(/评估 3 次 · 已结束 3 次/)).toBeVisible();
     expect(screen.getByText("较上月")).toBeVisible();
     // No comparable previous period is published as the documented marker,
     // never as a fabricated zero.

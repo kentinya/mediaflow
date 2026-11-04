@@ -6489,7 +6489,7 @@ class SQLiteTaskRepository:
         previous_start: datetime,
         previous_end: datetime,
     ) -> dict[str, object]:
-        """One snapshot of the Automation run metrics (RO-1 metric contract).
+        """One snapshot of the Automation Task-flow metrics (Slice48 RO-4).
 
         The cards cover the **whole authorized admitted-run population**, never
         the browser's current page or one definition's history, and both the
@@ -6505,23 +6505,30 @@ class SQLiteTaskRepository:
         counted exactly once.
 
         Each original admitted run counts once: the population is the same
-        deduplicated Job/Task document the inventory reads, restricted to
+        deduplicated Task/run document the inventory reads, restricted to
         *original Automation admissions* (a Scheduler-emitted occurrence or a
-        deliberate definition Run once).  A Job acquiring its Task never
-        becomes a second run, an ordinary Files/CLI run, a standalone manual
-        organize Task, a preparation-only discovery, a rejected/blocked attempt
-        and a Task Center recovery follow-up are all excluded, so the cards
-        report Automation work only.
+        deliberate definition Run once).  An ordinary Files/CLI run, a
+        standalone manual organize Task, a preparation-only discovery, a
+        rejected/blocked attempt and a Task Center recovery follow-up are all
+        excluded, so the cards report Automation work only.
 
-        The denominator is the terminal cohort only
-        (``completed``/``partial_success``/``failed``/``cancelled``); active and
-        waiting runs are reported separately and excluded from the rate, so a
-        still-running schedule never depresses or inflates success.  A
-        successful numerator requires durable proof of organized work: a
-        terminal ``completed`` run with at least one genuinely successful
-        primary item and no uncertain success item.  A completed queue or
-        preparation row, a no-work completion and a skipped-only run are
-        therefore never counted as organizing success.
+        Slice48 RO-4 makes the rate a fact about the Task *flow*, not about its
+        files.  Success is the current durable five-state Task status
+        ``completed``; evaluation is ``completed + failed``.  ``cancelled`` and
+        pending/running work stay outside the rate numerator and denominator
+        while remaining visible in the all-ended and active counts.  File
+        success, partial/failed/skipped/ignored files, unknown effects, missing
+        formal Results, a healthy empty scope and a complete history exclusion
+        can never change the flow contribution.  A legacy ``partial_success``
+        Task row is a recorded historical failure, so it participates as
+        ``failed``; a retired ``paused`` row is unavailable evidence, never
+        active work and never a fabricated terminal outcome.
+
+        ``currentNoWork`` is a separate fact, never a success condition: it
+        counts a completed flow with no admitted primary source or whose whole
+        source population was excluded by recorded history.  Zero successful
+        files, all-failed/all-skipped work, unknown effects and absent Results
+        do not prove no work.
         """
 
         for value in (current_start, current_end, previous_start, previous_end):
@@ -6530,16 +6537,39 @@ class SQLiteTaskRepository:
         if current_end < current_start or previous_end < previous_start:
             raise ValueError("automation metric window is inverted")
         document = self._run_query_document()
-        terminal = "('completed', 'partial_success', 'failed', 'cancelled')"
         admission_predicate = self._ORIGINAL_AUTOMATION_ADMISSION_WHERE
-        organized = (
-            "derived_status = 'completed' AND organization_success_items > 0 "
-            "AND uncertain_success_items = 0"
-        )
-        no_work = (
-            "derived_status = 'completed' AND organization_success_items = 0 "
-            "AND uncertain_success_items = 0"
-        )
+        # The rate reads the exact current durable Task status over the
+        # authorized original admissions.  ``task_status.status`` is joined by
+        # the shared run document; the recovered-success read projection is
+        # deliberately not consulted here.  Unknown/unreadable evidence is its
+        # own bucket instead of falling into the active cohort.
+        flow_status = """CASE
+            WHEN linked_task_status IN (
+                'pending', 'running', 'completed', 'failed', 'cancelled'
+            ) THEN linked_task_status
+            WHEN linked_task_status = 'partial_success' THEN 'failed'
+            ELSE 'unavailable'
+        END"""
+        metric_population = f"""SELECT *,
+                {flow_status} AS automation_flow_status
+            FROM ({document}) {admission_predicate}"""
+        no_work = """automation_flow_status = 'completed'
+            AND (
+                COALESCE(total_items, 0) = 0
+                OR EXISTS (
+                    SELECT 1 FROM task_items no_work_population
+                    WHERE no_work_population.task_id = COALESCE(
+                        linked_task_id, transfer_task_id, anchor_id
+                    )
+                )
+            )
+            AND NOT EXISTS (
+                SELECT 1 FROM task_items no_work_items
+                WHERE no_work_items.task_id = COALESCE(
+                    linked_task_id, transfer_task_id, anchor_id
+                )
+                AND COALESCE(no_work_items.stage, '') <> 'history_excluded'
+            )"""
         with self._lock:
             self._connection.execute("BEGIN")
             try:
@@ -6550,35 +6580,42 @@ class SQLiteTaskRepository:
                         COALESCE(SUM(CASE WHEN sort_at >= ? AND sort_at < ?
                             THEN 1 ELSE 0 END), 0) AS previous_admitted,
                         COALESCE(SUM(CASE WHEN sort_at >= ? AND sort_at < ?
-                            AND derived_status IN {terminal}
-                            THEN 1 ELSE 0 END), 0) AS current_terminal,
+                            AND automation_flow_status IN (
+                                'completed', 'failed', 'cancelled'
+                            ) THEN 1 ELSE 0 END), 0) AS current_terminal,
                         COALESCE(SUM(CASE WHEN sort_at >= ? AND sort_at < ?
-                            AND {organized}
+                            AND automation_flow_status = 'completed'
                             THEN 1 ELSE 0 END), 0) AS current_completed,
                         COALESCE(SUM(CASE WHEN sort_at >= ? AND sort_at < ?
                             AND {no_work}
                             THEN 1 ELSE 0 END), 0) AS current_no_work,
                         COALESCE(SUM(CASE WHEN sort_at >= ? AND sort_at < ?
-                            AND derived_status NOT IN {terminal}
+                            AND automation_flow_status IN ('pending', 'running')
                             THEN 1 ELSE 0 END), 0) AS current_active,
                         COALESCE(SUM(CASE WHEN sort_at >= ? AND sort_at < ?
-                            AND derived_status = 'partial_success'
+                            AND automation_flow_status = 'unavailable'
+                            THEN 1 ELSE 0 END), 0) AS current_unavailable,
+                        COALESCE(SUM(CASE WHEN sort_at >= ? AND sort_at < ?
+                            AND automation_flow_status = 'failed'
+                            AND linked_task_status = 'partial_success'
                             THEN 1 ELSE 0 END), 0) AS current_partial,
                         COALESCE(SUM(CASE WHEN sort_at >= ? AND sort_at < ?
-                            AND derived_status = 'failed'
+                            AND automation_flow_status = 'failed'
                             THEN 1 ELSE 0 END), 0) AS current_failed,
                         COALESCE(SUM(CASE WHEN sort_at >= ? AND sort_at < ?
-                            AND derived_status = 'cancelled'
+                            AND automation_flow_status = 'cancelled'
                             THEN 1 ELSE 0 END), 0) AS current_cancelled,
                         COALESCE(SUM(CASE WHEN sort_at >= ? AND sort_at < ?
                             AND uncertain_success_items > 0
                             THEN 1 ELSE 0 END), 0) AS current_uncertain
-                    FROM ({document}) {admission_predicate}""",
+                    FROM ({metric_population})""",
                     (
                         current_start.isoformat(),
                         current_end.isoformat(),
                         previous_start.isoformat(),
                         previous_end.isoformat(),
+                        current_start.isoformat(),
+                        current_end.isoformat(),
                         current_start.isoformat(),
                         current_end.isoformat(),
                         current_start.isoformat(),
@@ -6602,17 +6639,21 @@ class SQLiteTaskRepository:
                 raise
             else:
                 self._connection.execute("COMMIT")
+        completed = int(row["current_completed"] or 0)
+        failed = int(row["current_failed"] or 0)
         return {
             "currentAdmitted": int(row["current_admitted"] or 0),
             "previousAdmitted": int(row["previous_admitted"] or 0),
             "currentTerminal": int(row["current_terminal"] or 0),
-            "currentCompleted": int(row["current_completed"] or 0),
+            "currentCompleted": completed,
+            "currentEvaluated": completed + failed,
             "currentNoWork": int(row["current_no_work"] or 0),
             "currentPartial": int(row["current_partial"] or 0),
-            "currentFailed": int(row["current_failed"] or 0),
+            "currentFailed": failed,
             "currentCancelled": int(row["current_cancelled"] or 0),
             "currentUncertain": int(row["current_uncertain"] or 0),
             "currentActive": int(row["current_active"] or 0),
+            "currentUnavailable": int(row["current_unavailable"] or 0),
             "sideEffects": "none",
         }
 
@@ -6633,6 +6674,11 @@ class SQLiteTaskRepository:
         derived status the records population publishes, and ``organized``
         requires proven successful organization — a completed queue or
         preparation row never becomes ``completed`` organization.
+
+        Slice48 RO-4: ``noWork`` is the separate, proven healthy-empty or
+        complete-history-exclusion fact.  Zero successful files (including an
+        all-failed/all-skipped flow), unknown effects and missing formal
+        Results never prove no work.
         """
 
         document = self._run_query_document()
@@ -6648,6 +6694,24 @@ class SQLiteTaskRepository:
                                 CASE WHEN run_kind = 'task' THEN anchor_id END,
                                 linked_task_id, transfer_task_id
                             ) AS linked_task_key,
+                            CASE WHEN linked_task_status = 'completed'
+                                 AND (
+                                     COALESCE(total_items, 0) = 0
+                                     OR EXISTS (
+                                         SELECT 1 FROM task_items no_work_population
+                                         WHERE no_work_population.task_id = COALESCE(
+                                             linked_task_id, transfer_task_id, anchor_id
+                                         )
+                                     )
+                                 )
+                                 AND NOT EXISTS (
+                                     SELECT 1 FROM task_items no_work_items
+                                     WHERE no_work_items.task_id = COALESCE(
+                                         linked_task_id, transfer_task_id, anchor_id
+                                     )
+                                     AND COALESCE(no_work_items.stage, '') <> 'history_excluded'
+                                 )
+                                 THEN 1 ELSE 0 END AS no_work_completion,
                             origin_definition_id, origin_definition_name
                     FROM (
                         SELECT *,
@@ -6680,7 +6744,7 @@ class SQLiteTaskRepository:
                 "status": status,
                 "trigger": str(row["derived_trigger"]),
                 "organized": (status == "completed" and success_items > 0 and uncertain == 0),
-                "noWork": (status == "completed" and success_items == 0 and uncertain == 0),
+                "noWork": bool(row["no_work_completion"]),
                 "successItems": success_items,
                 "uncertainSuccessItems": uncertain,
                 "startedAt": (
