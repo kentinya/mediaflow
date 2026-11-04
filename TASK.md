@@ -1,21 +1,9 @@
-# NO ACTIVE IMPLEMENTATION TASK
+# Task49.1 — 来源范围正确的列表一键运行
 
-[Slice49](SLICE.md) 已获用户明确激活授权，A 正提交 ACTIVE Contract。Task49.1 的实施
-授权已具备；本检查点仍保留既有草案，待 A 的 ACTIVE Contract 成为 committed HEAD 后，
-由用户指定的 B 代行者确认原 Base/目标/范围并转为正式 PLANNED Task。草案本身不能供
-Developer 开工。本轮只做激活，不写实现代码，不规划后继 Task。
-
-上一独立修正 `BUG-AUTO-CREATE-UX` 保持 B PASS：Base
-`2aa791a6b66d968f473a6875fe2ebf072c5500df`，Reviewed Head
-`ea127459ace765857ae8386c1d0df1610117185b`；完整计划/验收保留在
-`b0bbc8125d06057d042b139469bb170c3284cc79:TASK.md`，不作为本 Task 的验收。
-
-## Task49.1 — 来源范围正确的列表一键运行（PLANNING DRAFT）
-
-Authority: committed [Slice49 Contract](SLICE.md) at
-`129d1c060dea05a91755dbd2ed70632f09655fd4`；
+Authority: committed ACTIVE [Slice49 Contract](SLICE.md) at
+`3cdc82678f693b4d7e4fb0b2a5efde42b47fc3d5`；
 [Development Workflow](docs/development-workflow.md) 是唯一生命周期/测试/审查依据。
-本助手应用户要求代行 **B 规划职责**；本轮不担任 Developer、不做 B 验收或 A Final Review。
+本助手按用户要求代行 **B 规划/激活确认职责**；本轮不担任 Developer、不做 B 验收或 A Final Review。
 
 ```text
 Task ID: 49.1
@@ -26,9 +14,19 @@ Task Base: 129d1c060dea05a91755dbd2ed70632f09655fd4
 Difficulty: High
 Test Level: T4
 Planner / Reviewer: B
-Planning Authorization: USER REQUESTED B SUBSTITUTE PLANNING; ACTIVATION REQUESTED
-Implementation Authorization: USER AUTHORIZED ACTIVATION; FORMAL TASK CONFIRMATION PENDING
+Planning Authorization: USER REQUESTED B SUBSTITUTE; DRAFT CONFIRMED AGAINST ACTIVE CONTRACT
+Implementation Authorization: USER ACTIVATED TASK49.1; DEVELOPER MAY IMPLEMENT THIS TASK ONLY
 ```
+
+## Activation confirmation
+
+用户明确要求激活 Slice 和 Task。A 已先在 `3cdc82678f693b4d7e4fb0b2a5efde42b47fc3d5` 提交 ACTIVE Contract；
+本 B 随后确认原草案 `9d70d0c211db1403bbcf536d8e619672ffd8b3d1` 的 Goal、Implementation Scope、
+12 项验收和受影响/完整测试分工均仍位于该 Contract 的 RO-1 / RO-2 内，原 Task Base 至当前
+生产代码/测试/harness 无变化。原 Task Base `129d1c060dea05a91755dbd2ed70632f09655fd4`
+与原 Slice Base `02fb77dd713bad4dd51c29b6cfc5556ddd6d5b4e` 不变；不借激活重设起点或
+扩大 Task。现转为正式 **PLANNED**，可由 Developer 按本 Task 开始，尚未进入 IN PROGRESS。
+本次只完成激活，不运行实现、验收或下一 Task。
 
 ## Goal
 
@@ -136,12 +134,12 @@ revision ID/version 即可准入，过期 version 为409且 Task数0。源码/�
 ## Required Tests
 
 测试等级与分工仅按 [workflow §6](docs/development-workflow.md#6-test-levels)。
-下面是未来实施/验收计划，不是本规划轮次已运行的结果。新测试文件应随本Task实现建立；
+下面是实施/验收计划，不是本次激活已运行的产品验证结果。新测试文件应随本Task实现建立；
 命令中的实际变更文件、候选wheel/image/证据路径在交接/验收时绑定精确值。
 
 ### Developer — affected tests
 
-1. 仓库根：`python3 scripts/check_governance.py`（实施前须正式激活）；
+1. 仓库根：`python3 scripts/check_governance.py`（Developer实施前执行）；
    `PYTHONPATH=tests:. .venv/bin/python -m unittest -v test_v2_automation_run_once test_automation_task_admission test_v2_automation_operations`。
    在这些真实应用测试中增加 AC1–4/6/10/11 的根范围、完整性、所见版本、权限/容量/去重与
    文件/流程独立用例，复用临时Storage/合成Provider；保留原有效覆盖。若实际修改其他
@@ -184,7 +182,7 @@ Developer 到此提交候选，不承担全Python/Web/E2E或wheel/container矩�
   新probe和完整产物证据由B承担，非Developer额外功能任务；不要求生产Storage/Provider。
 - 记录候选SHA、命令/cwd、数量/skip/失败、证据路径、所见配置/产物身份和验证限度。
   匹配运行可按workflow复用；不把调查或本轮文档检查当产品验收。Task PASS后仅重新评估
-  Slice结果，不自批Slice、不在本规划轮次创建下一Task。
+  Slice结果，不自批Slice、本次激活不创建下一Task。
 
 ## Non-goals
 
@@ -194,7 +192,7 @@ Developer 到此提交候选，不承担全Python/Web/E2E或wheel/container矩�
 不恢复退役产品或自动重放历史。不为修复迁移旧失败/任务、重写pins/Result/配置digest，
 不动生产媒体/运行数据库/私有配置。A的Slice/Roadmap边界和既有接受事实不变。
 
-## Planning workspace
+## Planning workspace（原规划记录）
 
 仓库 `/Users/songzhidong/mediaflow`，branch `main`，本轮起始HEAD/Task Base如上，治理预检PASS，
 tracked工作树干净。预存untracked OS/日志、`15`、自动化参考图与output等完整状态保留在
@@ -207,4 +205,19 @@ tracked工作树干净。预存untracked OS/日志、`15`、自动化参考图�
 
 ## B Review Result
 
-未开始：无已提交实现候选、无B产品验收；本规划不构成PASS或Slice关闭。
+未开始：无已提交实现候选、无B产品验收；激活不构成PASS或Slice关闭。
+
+## Activation workspace
+
+本轮从 `main` / `9d70d0c211db1403bbcf536d8e619672ffd8b3d1` 开始；A先提交上述ACTIVE
+Contract，本B确认前治理检查PASS、tracked工作树干净，任务实质计划不变。预存untracked
+OS/日志/参考图/output及`15`全部保留、不入提交；本轮状态清单在该起始HEAD本地
+`slice49-task49.1-activation/workspace-before.txt`。本B只将根Task正式化，未改产品代码、
+Slice结果边界或历史接受；未读取用户数据库/私有配置/生产媒体，无push/部署/历史改写。
+
+## Accepted baseline reference
+
+上一独立修正 `BUG-AUTO-CREATE-UX` 保持 B PASS：Base
+`2aa791a6b66d968f473a6875fe2ebf072c5500df`，Reviewed Head
+`ea127459ace765857ae8386c1d0df1610117185b`；完整计划/验收保留在
+`b0bbc8125d06057d042b139469bb170c3284cc79:TASK.md`，不作为本 Task 的验收。
