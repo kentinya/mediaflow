@@ -185,6 +185,35 @@ async function copyDefinitionFromList(
   return added[0] as string;
 }
 
+/**
+ * Publish one ordinary saved edit through the real Python command boundary.
+ * Used as the "other tab" concurrent publication in the Copy recovery cases.
+ */
+async function saveItemLimit(
+  page: Page,
+  definitionId: string,
+  itemLimit: number,
+): Promise<void> {
+  await openLifecycle(page, definitionId);
+  await page.getByLabel("处理上限").fill(String(itemLimit));
+  await page.getByRole("button", { name: "保存", exact: true }).click();
+  await expect(page).toHaveURL(/\/ui-v2\/operations\/automation(\?.*)?$/);
+  await expect(page.getByRole("heading", { name: /已保存/ })).toBeVisible();
+}
+
+/** Read the exact Active fence each Copy POST submitted. */
+function recordCopyBodies(page: Page): Array<Record<string, unknown>> {
+  const bodies: Array<Record<string, unknown>> = [];
+  page.on("request", (request) => {
+    if (request.method() === "POST" && request.url().endsWith("/copy")) {
+      const data = request.postData();
+      if (data !== null)
+        bodies.push(JSON.parse(data) as Record<string, unknown>);
+    }
+  });
+  return bodies;
+}
+
 test.beforeEach(async ({ page }) => {
   // Every test starts from a known definition population, reset through the
   // real managed publication boundary rather than a database edit.
@@ -835,6 +864,181 @@ test("a committed Copy beyond the audit page boundary still reconciles after rel
     DEFINITION_ID,
     `${DEFINITION_ID}-copy`,
   ]);
+});
+
+test("a second lost Copy after a successful copy shows the current unknown and reconciles the second copy", async ({
+  page,
+}) => {
+  await publishNewDefinition(page);
+  const before = await harnessState(page);
+  const copyBodies = recordCopyBodies(page);
+  await connectOn(page, "/ui-v2/operations/automation");
+  const sourceRow = () =>
+    page.getByRole("row").filter({
+      has: page.getByRole("button", {
+        name: "Harness automation",
+        exact: true,
+      }),
+    });
+  await sourceRow().getByRole("button", { name: "复制", exact: true }).click();
+  await expect(page.getByText(/已复制为停用副本/)).toBeVisible();
+  await expect(page.getByRole("button", { name: "刷新" })).toBeEnabled();
+  const afterFirst = await harnessState(page);
+  const firstCopy = afterFirst.definitions
+    .map((item) => item.id)
+    .find((id) => id !== DEFINITION_ID);
+  if (!firstCopy) throw new Error("first copy missing from harness state");
+
+  // Drop only the second Copy response: the backend still commits it.
+  await page.route("**/copy", (route) => {
+    void route.fetch().then(() => route.abort());
+  });
+  await sourceRow().getByRole("button", { name: "复制", exact: true }).click();
+  await expect(page.getByText(/复制结果待核对/)).toBeVisible();
+  // The earlier success must not stand in for this attempt's unknown result.
+  await expect(page.getByText(/已复制为停用副本/)).toHaveCount(0);
+  await expect(page.getByRole("button", { name: "编辑副本" })).toHaveCount(0);
+  await sourceRow().getByRole("button", { name: "核对复制结果" }).click();
+  await expect(page.getByText(/已从持久证据确认本次复制/)).toBeVisible();
+  const afterSecond = await harnessState(page);
+  const secondCopy = afterSecond.definitions
+    .map((item) => item.id)
+    .find((id) => id !== DEFINITION_ID && id !== firstCopy);
+  if (!secondCopy) throw new Error("second copy missing from harness state");
+  expect(secondCopy).not.toBe(firstCopy);
+  expect(
+    afterSecond.definitions.find((item) => item.id === DEFINITION_ID)
+      ?.itemLimit,
+  ).toBe(5);
+  expect(
+    afterSecond.definitions.find((item) => item.id === secondCopy)?.itemLimit,
+  ).toBe(5);
+  expect(copyBodies).toHaveLength(2);
+  expect(copyBodies[0]?.expectedRevisionId).toBe(before.activeRevisionId);
+  expect(copyBodies[1]?.expectedRevisionId).toBe(afterFirst.activeRevisionId);
+  await sourceRow().getByRole("button", { name: "编辑副本" }).click();
+  await expect(page).toHaveURL(
+    new RegExp(`/ui-v2/operations/automation/lifecycle/${secondCopy}(\\?.*)?$`),
+  );
+});
+
+test("a later authority read never pairs with an older displayed row", async ({
+  page,
+  context,
+}) => {
+  await publishNewDefinition(page);
+  const before = await harnessState(page);
+  let releaseAuthority!: () => void;
+  const authorityGate = new Promise<void>((resolve) => {
+    releaseAuthority = resolve;
+  });
+  let heldOnce = false;
+  // The list read may finish first; the authority read is held until another
+  // tab has published a newer Active.
+  await page.route(
+    "**/api/v1/operations/automation/definitions",
+    async (route) => {
+      if (route.request().method() !== "GET") {
+        await route.continue();
+        return;
+      }
+      if (!heldOnce) {
+        heldOnce = true;
+        await authorityGate;
+      }
+      await route.continue();
+    },
+  );
+  const copyBodies = recordCopyBodies(page);
+  await connectOn(page, "/ui-v2/operations/automation");
+  const sourceRow = () =>
+    page.getByRole("row").filter({
+      has: page.getByRole("button", {
+        name: "Harness automation",
+        exact: true,
+      }),
+    });
+  await expect(
+    sourceRow().getByRole("cell", { name: "5", exact: true }),
+  ).toBeVisible();
+  await expect(
+    sourceRow().getByRole("button", { name: "复制", exact: true }),
+  ).toHaveCount(0);
+
+  const otherTab = await context.newPage();
+  await saveItemLimit(otherTab, DEFINITION_ID, 9);
+  await otherTab.close();
+  const saved = await harnessState(page);
+  expect(saved.activeRevisionId).not.toBe(before.activeRevisionId);
+  releaseAuthority();
+  await expect(
+    sourceRow().getByRole("button", { name: "复制", exact: true }),
+  ).toBeVisible();
+  // The row still shows the configuration this operator read.
+  await expect(
+    sourceRow().getByRole("cell", { name: "5", exact: true }),
+  ).toBeVisible();
+
+  await sourceRow().getByRole("button", { name: "复制", exact: true }).click();
+  await expect(
+    page.getByText(/列表显示的任务配置与当前保存配置不一致/),
+  ).toBeVisible();
+  expect(copyBodies).toHaveLength(0);
+  await expect(
+    sourceRow().getByRole("cell", { name: "9", exact: true }),
+  ).toBeVisible();
+  await sourceRow().getByRole("button", { name: "复制", exact: true }).click();
+  await expect(page.getByText(/已复制为停用副本/)).toBeVisible();
+  expect(copyBodies).toHaveLength(1);
+  expect(copyBodies[0]?.expectedRevisionId).toBe(saved.activeRevisionId);
+  const afterCopy = await harnessState(page);
+  expect(
+    afterCopy.definitions.find((item) => item.id === DEFINITION_ID)?.itemLimit,
+  ).toBe(9);
+  const copy = afterCopy.definitions.find((item) => item.id !== DEFINITION_ID);
+  expect(copy?.itemLimit).toBe(9);
+});
+
+test("a conflict refresh updates the Copy authority so the next explicit copy succeeds", async ({
+  page,
+  context,
+}) => {
+  await publishNewDefinition(page);
+  const before = await harnessState(page);
+  const copyBodies = recordCopyBodies(page);
+  await connectOn(page, "/ui-v2/operations/automation");
+  const sourceRow = () =>
+    page.getByRole("row").filter({
+      has: page.getByRole("button", {
+        name: "Harness automation",
+        exact: true,
+      }),
+    });
+
+  const otherTab = await context.newPage();
+  await saveItemLimit(otherTab, DEFINITION_ID, 9);
+  await otherTab.close();
+  const saved = await harnessState(page);
+  expect(saved.activeRevisionId).not.toBe(before.activeRevisionId);
+
+  await sourceRow().getByRole("button", { name: "复制", exact: true }).click();
+  await expect(page.getByText("未能复制")).toBeVisible();
+  expect(copyBodies).toHaveLength(1);
+  expect(copyBodies[0]?.expectedRevisionId).toBe(before.activeRevisionId);
+  // The refusal's read-only refresh shows the actual saved configuration.
+  await expect(
+    sourceRow().getByRole("cell", { name: "9", exact: true }),
+  ).toBeVisible();
+  await expect(page.getByRole("button", { name: "刷新" })).toBeEnabled();
+  await page.getByRole("button", { name: "刷新" }).click();
+  await expect(page.getByRole("button", { name: "刷新" })).toBeEnabled();
+  await sourceRow().getByRole("button", { name: "复制", exact: true }).click();
+  await expect(page.getByText(/已复制为停用副本/)).toBeVisible();
+  expect(copyBodies).toHaveLength(2);
+  expect(copyBodies[1]?.expectedRevisionId).toBe(saved.activeRevisionId);
+  const afterCopy = await harnessState(page);
+  const copy = afterCopy.definitions.find((item) => item.id !== DEFINITION_ID);
+  expect(copy?.itemLimit).toBe(9);
 });
 
 test("retained history shows the published configuration, never an open Draft", async ({

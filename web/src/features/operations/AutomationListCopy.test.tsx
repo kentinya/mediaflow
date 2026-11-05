@@ -89,6 +89,13 @@ function definitionDocument(
   overrides: Record<string, unknown> = {},
 ): Record<string, unknown> {
   const id = typeof overrides.id === "string" ? overrides.id : DEFINITION_ID;
+  const activeOverride = overrides.activeConfiguration;
+  const activeRevisionId =
+    activeOverride !== null &&
+    typeof activeOverride === "object" &&
+    typeof (activeOverride as Record<string, unknown>).revisionId === "string"
+      ? ((activeOverride as Record<string, unknown>).revisionId as string)
+      : ACTIVE_REVISION;
   return {
     id,
     name: "Nightly automation",
@@ -164,7 +171,7 @@ function definitionDocument(
         path: `/api/v1/automation/task-definitions/${id}/copy`,
       }),
       draftCreate: action({
-        path: `/api/v1/configuration/revisions/${ACTIVE_REVISION}/successor`,
+        path: `/api/v1/configuration/revisions/${activeRevisionId}/successor`,
       }),
     },
     ...overrides,
@@ -482,6 +489,167 @@ describe("Automation list Copy", () => {
     ).toHaveLength(1);
   });
 
+  it("replaces a previous success with the new unknown intent and reconciles the second copy", async () => {
+    const user = userEvent.setup();
+    const secondCopyId = "auto-task-copy-2";
+    let items = [definitionDocument()];
+    let posts = 0;
+    const calls = recordingFetch((call) => {
+      if (call.method === "POST" && call.url.endsWith("/copy")) {
+        posts += 1;
+        if (posts === 1) {
+          items = [
+            definitionDocument(),
+            definitionDocument({
+              id: COPY_ID,
+              name: "Nightly automation copy",
+            }),
+          ];
+          return jsonResponse(copyPublication());
+        }
+        // The second command committed, but its response was lost.
+        items = [
+          ...items,
+          definitionDocument({
+            id: secondCopyId,
+            name: "Nightly automation copy 2",
+          }),
+        ];
+        throw new Error("network dropped");
+      }
+      if (
+        call.url.includes(
+          `/automation/definitions/${DEFINITION_ID}/copy-intent`,
+        )
+      ) {
+        return jsonResponse(
+          copyIntentDocument({
+            committed: true,
+            committedDefinitionId: secondCopyId,
+            observedCommands: 1,
+            lastObserved: {
+              auditId: "audit-2",
+              action: "copy",
+              occurredAt: "2026-01-01T00:00:01+00:00",
+              candidateId: secondCopyId,
+              published: true,
+            },
+          }),
+        );
+      }
+      if (
+        call.url.startsWith("/api/v1/operations/automation/task-definitions?")
+      )
+        return jsonResponse(listDocument(items));
+      return baseResponder()(call);
+    });
+    const { table, router } = await renderConnected();
+    await user.click(copyEntry(table));
+    expect(
+      await within(row(table)).findByText(/已复制为停用副本/),
+    ).toBeVisible();
+    await waitFor(() =>
+      expect(copyEntry(table)).toHaveAttribute("aria-disabled", "false"),
+    );
+
+    await user.click(copyEntry(table));
+    expect(await within(row(table)).findByText(/复制结果待核对/)).toBeVisible();
+    // The first success must not stand in for this attempt's unknown outcome.
+    expect(within(row(table)).queryByText(/已复制为停用副本/)).toBeNull();
+    expect(
+      within(row(table)).queryByRole("button", { name: "编辑副本" }),
+    ).toBeNull();
+    await user.click(copyEntry(table));
+    const postsBeforeCheck = calls.filter(
+      (call) => call.method === "POST" && call.url.endsWith("/copy"),
+    );
+    expect(postsBeforeCheck).toHaveLength(2);
+    expect(postsBeforeCheck[1]?.body).toMatchObject({
+      expectedRevisionId: ACTIVE_REVISION,
+      expectedVersion: 2,
+      expectedDigest: DIGEST,
+    });
+
+    await user.click(
+      within(row(table)).getByRole("button", { name: "核对复制结果" }),
+    );
+    expect(
+      await within(row(table)).findByText(/auto-task-copy-2/),
+    ).toBeVisible();
+    expect(
+      within(row(table)).getByText(/已从持久证据确认本次复制/),
+    ).toBeVisible();
+    await user.click(
+      within(row(table)).getByRole("button", { name: "编辑副本" }),
+    );
+    await waitFor(() =>
+      expect(router.state.location.pathname).toBe(
+        `/operations/automation/lifecycle/${secondCopyId}`,
+      ),
+    );
+    expect(
+      calls.filter(
+        (call) => call.method === "POST" && call.url.endsWith("/copy"),
+      ),
+    ).toHaveLength(2);
+  });
+
+  it("does not show the previous success when a later explicit copy is refused", async () => {
+    const user = userEvent.setup();
+    let items = [definitionDocument()];
+    let posts = 0;
+    const calls = recordingFetch((call) => {
+      if (call.method === "POST" && call.url.endsWith("/copy")) {
+        posts += 1;
+        if (posts === 1) {
+          items = [
+            definitionDocument(),
+            definitionDocument({
+              id: COPY_ID,
+              name: "Nightly automation copy",
+            }),
+          ];
+          return jsonResponse(copyPublication());
+        }
+        return jsonResponse(
+          { error: { code: "configuration_version_conflict" } },
+          409,
+        );
+      }
+      if (
+        call.url.startsWith("/api/v1/operations/automation/task-definitions?")
+      )
+        return jsonResponse(listDocument(items));
+      return baseResponder()(call);
+    });
+    const { table } = await renderConnected();
+    await user.click(copyEntry(table));
+    expect(
+      await within(row(table)).findByText(/已复制为停用副本/),
+    ).toBeVisible();
+    await waitFor(() =>
+      expect(copyEntry(table)).toHaveAttribute("aria-disabled", "false"),
+    );
+
+    await user.click(copyEntry(table));
+    expect(await within(row(table)).findByText("未能复制")).toBeVisible();
+    // The refused attempt must not inherit the first copy's success card.
+    expect(within(row(table)).queryByText(/已复制为停用副本/)).toBeNull();
+    expect(
+      within(row(table)).queryByRole("button", { name: "编辑副本" }),
+    ).toBeNull();
+    expect(
+      calls.filter(
+        (call) => call.method === "POST" && call.url.endsWith("/copy"),
+      ),
+    ).toHaveLength(2);
+    expect(
+      window.sessionStorage.getItem(
+        `${LIST_PREFIX}${principalIdStorageSegment(PRINCIPAL)}:${DEFINITION_ID}`,
+      ),
+    ).toBeNull();
+  });
+
   it("reports an outdated Active and re-reads the list without replaying the copy", async () => {
     const user = userEvent.setup();
     let listReads = 0;
@@ -529,6 +697,201 @@ describe("Automation list Copy", () => {
     await waitFor(() =>
       expect(copyEntry(table)).toHaveAttribute("aria-disabled", "false"),
     );
+  });
+
+  it("updates the list and its Copy authority after a conflict so the next explicit copy uses the current version", async () => {
+    const user = userEvent.setup();
+    const nextActive = {
+      revisionId: "revision-active-2",
+      version: 4,
+      revisionSequence: 3,
+      status: "active",
+    };
+    const nextDigest = "b".repeat(64);
+    let current: "old" | "new" = "old";
+    let posts = 0;
+    const oldItem = definitionDocument();
+    const newItem = definitionDocument({
+      activeConfiguration: nextActive,
+      itemLimit: 9,
+    });
+    const newTask = definitionDocument({
+      id: "another-task",
+      name: "Another automation",
+    });
+    const calls = recordingFetch((call) => {
+      if (
+        call.method === "GET" &&
+        call.url === "/api/v1/operations/automation/definitions"
+      ) {
+        return jsonResponse(
+          formAuthority({
+            active:
+              current === "new"
+                ? { ...nextActive, digest: nextDigest }
+                : {
+                    revisionId: ACTIVE_REVISION,
+                    version: 3,
+                    revisionSequence: 2,
+                    status: "active",
+                    digest: DIGEST,
+                  },
+          }),
+        );
+      }
+      if (call.method === "POST" && call.url.endsWith("/copy")) {
+        posts += 1;
+        if (posts === 1) {
+          // The other tab published a new Active after this list was read.
+          current = "new";
+          return jsonResponse(
+            { error: { code: "configuration_version_conflict" } },
+            409,
+          );
+        }
+        return jsonResponse(copyPublication());
+      }
+      if (
+        call.url.startsWith("/api/v1/operations/automation/task-definitions?")
+      ) {
+        return jsonResponse(
+          listDocument(current === "new" ? [newItem, newTask] : [oldItem]),
+        );
+      }
+      return baseResponder()(call);
+    });
+    const { table } = await renderConnected();
+    await user.click(copyEntry(table));
+    expect(await screen.findByText("未能复制")).toBeVisible();
+    // The refreshed list shows the concurrent definition, not only the
+    // rejection text.
+    expect(
+      await screen.findByRole("button", { name: "Another automation" }),
+    ).toBeVisible();
+    const refreshedTable = within(
+      screen.getByRole("table", { name: "自动化任务" }),
+    );
+    // The page's explicit refresh updates both the rows and the authority the
+    // next Copy will submit against.
+    await waitFor(() =>
+      expect(screen.getByRole("button", { name: "刷新" })).toBeEnabled(),
+    );
+    await user.click(screen.getByRole("button", { name: "刷新" }));
+    await waitFor(() =>
+      expect(screen.getByRole("button", { name: "刷新" })).toBeEnabled(),
+    );
+    expect(within(row(refreshedTable)).getByText("9")).toBeVisible();
+    await user.click(
+      within(row(refreshedTable)).getByRole("button", { name: "复制" }),
+    );
+    expect(
+      await within(row(refreshedTable)).findByText(/已复制为停用副本/),
+    ).toBeVisible();
+    const postCalls = calls.filter(
+      (call) => call.method === "POST" && call.url.endsWith("/copy"),
+    );
+    expect(postCalls).toHaveLength(2);
+    expect(postCalls[0]?.body).toMatchObject({
+      expectedRevisionId: ACTIVE_REVISION,
+      expectedVersion: 2,
+      expectedDigest: DIGEST,
+    });
+    expect(postCalls[1]?.body).toMatchObject({
+      expectedRevisionId: nextActive.revisionId,
+      expectedVersion: nextActive.revisionSequence,
+      expectedDigest: nextDigest,
+    });
+  });
+
+  it("refuses to pair a row with a newer authority the row never displayed, then submits only after both reads agree", async () => {
+    const user = userEvent.setup();
+    const nextActive = {
+      revisionId: "revision-active-2",
+      version: 4,
+      revisionSequence: 3,
+      status: "active",
+    };
+    const nextDigest = "b".repeat(64);
+    const authorityRead = deferred<Response>();
+    let authorityReads = 0;
+    let current: "old" | "new" = "old";
+    let posts = 0;
+    const calls = recordingFetch((call) => {
+      if (
+        call.method === "GET" &&
+        call.url === "/api/v1/operations/automation/definitions"
+      ) {
+        authorityReads += 1;
+        return authorityReads === 1
+          ? authorityRead.promise
+          : jsonResponse(
+              formAuthority({
+                active: { ...nextActive, digest: nextDigest },
+              }),
+            );
+      }
+      if (call.method === "POST" && call.url.endsWith("/copy")) {
+        posts += 1;
+        return jsonResponse(copyPublication());
+      }
+      if (
+        call.url.startsWith("/api/v1/operations/automation/task-definitions?")
+      ) {
+        return jsonResponse(
+          listDocument(
+            current === "new"
+              ? [
+                  definitionDocument({
+                    activeConfiguration: nextActive,
+                    itemLimit: 9,
+                  }),
+                ]
+              : [definitionDocument({ itemLimit: 5 })],
+          ),
+        );
+      }
+      return baseResponder()(call);
+    });
+    const { table } = await renderConnected();
+    expect(within(row(table)).getByText("5")).toBeVisible();
+    // The authority read is still in flight; Copy is not offered yet.
+    expect(
+      within(row(table)).queryByRole("button", { name: "复制" }),
+    ).toBeNull();
+    authorityRead.resolve(
+      jsonResponse(
+        formAuthority({ active: { ...nextActive, digest: nextDigest } }),
+      ),
+    );
+    const entry = await within(row(table)).findByRole("button", {
+      name: "复制",
+    });
+    // Another tab saved a newer configuration after this list row was read.
+    current = "new";
+    await user.click(entry);
+    expect(await screen.findByText("未能复制")).toBeVisible();
+    expect(
+      screen.getByText(/列表显示的任务配置与当前保存配置不一致/),
+    ).toBeVisible();
+    expect(posts).toBe(0);
+    // The read-only recovery shows the actual saved values before any retry.
+    expect(await screen.findByText("9")).toBeVisible();
+    const refreshedTable = within(
+      screen.getByRole("table", { name: "自动化任务" }),
+    );
+    await user.click(
+      within(row(refreshedTable)).getByRole("button", { name: "复制" }),
+    );
+    expect(await screen.findByText(/已复制为停用副本/)).toBeVisible();
+    const postCalls = calls.filter(
+      (call) => call.method === "POST" && call.url.endsWith("/copy"),
+    );
+    expect(postCalls).toHaveLength(1);
+    expect(postCalls[0]?.body).toMatchObject({
+      expectedRevisionId: nextActive.revisionId,
+      expectedVersion: nextActive.revisionSequence,
+      expectedDigest: nextDigest,
+    });
   });
 
   it("keeps a lost Copy response unknown and reconciles the exact intent before offering a second copy", async () => {

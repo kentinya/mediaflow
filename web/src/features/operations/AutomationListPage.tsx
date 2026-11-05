@@ -77,6 +77,7 @@ import type {
   AutomationLatestRunModel,
   AutomationRecordModel,
 } from "../../entities/operations/automation";
+import type { AutomationDefinitionFormAuthorityModel } from "../../entities/operations/automation-lifecycle";
 
 /** Bounded definition sort options the backend accepts. */
 const SORT_OPTIONS = [
@@ -426,6 +427,64 @@ function copyBaselineUnavailableNext(unreadable: boolean): string {
     : "请刷新列表，确认任务状态和权限后再复制。";
 }
 
+type CopyBaselineRead =
+  | { readonly ok: true; readonly baseline: CopyAuthority }
+  | {
+      readonly ok: false;
+      readonly reason:
+        | "authority-unavailable"
+        | "authority-unreadable"
+        | "copy-denied"
+        | "source-unobserved"
+        | "source-changed";
+    };
+
+/**
+ * Pair one list row with the authority read that observed the same Active.
+ *
+ * The row's configuration is the one the operator actually saw. A form
+ * authority read that completed later may name a newer Active revision; its
+ * digest then belongs to values this row never displayed. Such a pair is not a
+ * Copy command. The caller re-reads both views and waits for the next explicit
+ * click instead of silently pairing the newer authority with the older row.
+ */
+function readCopyBaseline(
+  definition: AutomationDefinitionModel,
+  authority: AutomationDefinitionFormAuthorityModel | null,
+  authorityUnreadable: boolean,
+): CopyBaselineRead {
+  if (authorityUnreadable) {
+    return { ok: false, reason: "authority-unreadable" };
+  }
+  if (authority === null) {
+    return { ok: false, reason: "authority-unavailable" };
+  }
+  if (!authority.actions.copy) {
+    return { ok: false, reason: "copy-denied" };
+  }
+  const observed = definition.activeConfiguration;
+  if (observed === null) {
+    return { ok: false, reason: "source-unobserved" };
+  }
+  const active = authority.active;
+  if (
+    observed.revisionId !== active.revisionId ||
+    observed.revisionSequence !== active.revisionSequence ||
+    observed.version !== active.version ||
+    active.digest.trim() === ""
+  ) {
+    return { ok: false, reason: "source-changed" };
+  }
+  return {
+    ok: true,
+    baseline: {
+      revisionId: active.revisionId,
+      version: active.revisionSequence,
+      digest: active.digest,
+    },
+  };
+}
+
 interface CopiedCopy {
   readonly copyDefinitionId: string;
   readonly copyName: string | null;
@@ -669,17 +728,8 @@ export function AutomationListPage({
       : null;
   const copyAuthorityFailed =
     copyAuthorityResult !== undefined && !copyAuthorityResult.ok;
-  const copyBaseline: CopyAuthority | null =
-    copyAuthority !== null &&
-    copyAuthority.actions.copy &&
-    copyAuthority.active.revisionId.trim() !== "" &&
-    copyAuthority.active.digest.trim() !== ""
-      ? {
-          revisionId: copyAuthority.active.revisionId,
-          version: copyAuthority.active.revisionSequence,
-          digest: copyAuthority.active.digest,
-        }
-      : null;
+  const copyActionAvailable =
+    copyAuthority !== null && copyAuthority.actions.copy;
 
   const [copySession, setCopySession] = useState(() => readCopySession(null));
   const [copyBusy, setCopyBusy] = useState<ReadonlySet<string>>(
@@ -804,6 +854,13 @@ export function AutomationListPage({
   const refreshDefinitionRead = () => {
     void queryClient.invalidateQueries({ queryKey: [automationListQueryKey] });
     void listQuery.refetch();
+    // A refusal or a page refresh must update the authority the next Copy
+    // submits, not only the rows. Otherwise a retry would pair the new list
+    // with the stale Active fence and be refused again.
+    void queryClient.invalidateQueries({
+      queryKey: ["operations.automation-lifecycle-authority"],
+    });
+    void copyAuthorityQuery.refetch();
   };
 
   const rememberAdmitted = (
@@ -1056,6 +1113,15 @@ export function AutomationListPage({
 
   /** Drop only this row's displayed Copy result before a new explicit attempt. */
   const clearCopyRowFeedback = (definitionId: string) => {
+    // A new explicit attempt supersedes the previous success. Leaving it in
+    // place would show the earlier copy as this attempt's outcome while the
+    // new command is submitting, refused or awaiting reconciliation.
+    setCopiedCopies((current) => {
+      if (current[definitionId] === undefined) return current;
+      const next = { ...current };
+      delete next[definitionId];
+      return next;
+    });
     setCopyRejected((current) => {
       if (current[definitionId] === undefined) return current;
       const next = { ...current };
@@ -1105,9 +1171,6 @@ export function AutomationListPage({
     setHighlightedDefinitionId(copy.copyDefinitionId);
     setHighlightedLabel("刚刚复制");
     refreshDefinitionRead();
-    void queryClient.invalidateQueries({
-      queryKey: ["operations.automation-lifecycle-authority"],
-    });
   };
 
   const submitCopy = async (definition: AutomationDefinitionModel) => {
@@ -1136,22 +1199,43 @@ export function AutomationListPage({
       }));
       return;
     }
-    const baseline = copyBaseline;
-    if (baseline === null) {
+    const observed = readCopyBaseline(
+      definition,
+      copyAuthority,
+      copyAuthorityFailed || copyAuthorityQuery.isError,
+    );
+    if (!observed.ok) {
+      if (observed.reason === "source-changed") {
+        setCopyRejected((current) => ({
+          ...current,
+          [sourceId]: {
+            reason: "列表显示的任务配置与当前保存配置不一致，本次复制未发送。",
+            nextAction:
+              "正在重新读取最新列表与配置授权；请核对最新内容后再次点击复制。不会自动重试。",
+          },
+        }));
+        refreshDefinitionRead();
+        return;
+      }
       setCopyRejected((current) => ({
         ...current,
         [sourceId]: {
           reason:
-            copyAuthorityFailed || copyAuthorityQuery.isError
+            observed.reason === "authority-unreadable"
               ? "无法读取当前配置授权，本次复制未发送。"
-              : copyAuthority === null
+              : observed.reason === "authority-unavailable"
                 ? "正在读取当前配置授权，本次复制未发送。"
-                : "当前身份或配置状态不允许复制，本次复制未发送。",
-          nextAction: copyBaselineUnavailableNext(copyAuthorityFailed),
+                : observed.reason === "copy-denied"
+                  ? "当前身份或配置状态不允许复制，本次复制未发送。"
+                  : "当前任务没有可用的已发布配置版本，本次复制未发送。",
+          nextAction: copyBaselineUnavailableNext(
+            observed.reason === "authority-unreadable",
+          ),
         },
       }));
       return;
     }
+    const baseline = observed.baseline;
 
     copyInFlight.current.add(sourceId);
     setCopyBusy((current) => new Set(current).add(sourceId));
@@ -1659,10 +1743,14 @@ export function AutomationListPage({
               label="刷新"
               refreshingLabel="刷新中…"
               onRefresh={() => {
-                void listQuery.refetch();
+                refreshDefinitionRead();
                 void recordsQuery.refetch();
               }}
-              refreshing={listQuery.isFetching || recordsQuery.isFetching}
+              refreshing={
+                listQuery.isFetching ||
+                recordsQuery.isFetching ||
+                copyAuthorityQuery.isFetching
+              }
             />
           </div>
         </header>
@@ -1875,11 +1963,13 @@ export function AutomationListPage({
                   onOpen={openDefinition}
                   onEdit={openEditDialog}
                   highlightedLabel={highlightedLabel}
-                  copyAllowed={copyBaseline !== null}
+                  copyAllowed={copyActionAvailable}
                   copyUnavailableReason={
                     copyAuthorityFailed || copyAuthorityQuery.isError
                       ? "复制暂不可用：无法读取当前配置授权；请刷新后重试。"
-                      : null
+                      : copyAuthority !== null && !copyAuthority.actions.copy
+                        ? "复制暂不可用：当前身份没有配置管理或配置激活权限。"
+                        : null
                   }
                   onCopy={(definition) => void submitCopy(definition)}
                   onCheckCopy={(definitionId) => void checkCopy(definitionId)}
