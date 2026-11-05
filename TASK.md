@@ -14,7 +14,7 @@ Authority：此前确认的三项截图需求、Task 激活及本轮 B 独立复
 Task ID: PATCH-20261105-1
 Task Type: STANDALONE MINOR BUG
 Parent Slice: NONE
-Status: FIX REQUIRED
+Status: READY FOR B REVIEW
 Task Base: 9fa51289539c5279687ad0420bc74de758414776
 Difficulty: Medium
 Test Level: T4
@@ -249,50 +249,33 @@ web/.DS_Store
 ### Developer Completion Report
 
 **状态：`READY FOR B REVIEW`。实施候选已本地 checkpoint：
-`d6e8f979c491f9101c926c4f2854a5fb33e4383a`
-（`fix(automation): move copy to the list and align the shared enable switch`）。
-下面所有验证均在该 checkpoint 的同一源码/测试树上执行；其后只追加本报告的 SHA 引用，
-不改可执行输入。Task Base 仍为 `9fa51289539c5279687ad0420bc74de758414776`，
-未改 `SLICE.md`、Roadmap、Progress，未推送。实施开始时 Task 处于 `IN PROGRESS`，
-本报告提交时转入 `READY FOR B REVIEW`。**
+`7fac98cb5aeb69d449eba04800c9be2c97209b7a`
+（`fix(automation): bind list copy feedback and authority to one observed row`）。
+以下验证均在该 checkpoint 的同一源码/测试树上执行；Task Base 仍为
+`9fa51289539c5279687ad0420bc74de758414776`，未改 `SLICE.md`、Roadmap、Progress，未推送。
+本轮按 B Review Result 的 B-PATCH-01/02/03 修复，不重设 Base、不另立 Task。**
 
-**改动（仅本 Task 入口）：**
+**改动（仅本 Task 列表复制入口）：**
 
-1. `web/src/shared/ui/AppShell.tsx`：新增 `isAutomationListSurface`，列表、规范新建
-   （`/automation/lifecycle`）、旧新建（`/automation/new`）、编辑
-   （`/automation/lifecycle/$id`）统一不输出 `.mf-page-context`，也不保留其占位；
-   其他页面提示不变。
-2. `web/src/features/operations/AutomationInventory.tsx`：列表行在“编辑”后新增“复制”；
-   行内独立忙碌/结果区；复制/核对/编辑副本入口；成功行按“刚刚复制”标记。
-3. `web/src/features/operations/AutomationListPage.tsx`：复用
-   `copyAutomationDefinitionFocused` 与表单授权 Active（同一只读投影缓存键）；提交前
-   持久化 principal 作用域的来源+Active fence；逐行忙碌/拒绝/待核对状态；成功后刷新
-   真实列表、标记副本并保留筛选/分页/滚动；副本不在当前页时说明并保留“编辑副本”；
-   409/403/404/400/5xx/畸形响应/传输异常分别给中文原因和下一步；未决命令可从行内或
-   “不在当前页”的核对入口读取，不自动重发。
-4. `web/src/features/operations/automation-copy-session.ts`（新增）：从旧编辑卡片迁移
-   复制会话，兼容读取旧的
-   `mediaflow.operations.automation-copy-intent:<principal>` 单条记录，并新增按来源
-   分键的列表记录（上限 20）；仅存来源 ID 与 Active fence，随主体切换清理。
-5. `web/src/features/operations/AutomationEditDialog.tsx`：移除“生命周期操作”标题及
-   即时启停、复制、刷新组；复制会话/查询/按钮迁出；“引用安全的移除定义”独立保留原
-   确认、权限、影响证据与行为；未决启停/保存仍通过原“核对本次发布”读取；保存 409 后
-   只读重读当前 Active，使既有“未保存的修改基于较旧的配置 → 核对当前值并采用”恢复
-   路径仍可达（不自动换基线、不重发）。
-6. `web/src/features/operations/AutomationDefinitionFormFields.tsx` +
-   `web/src/shared/ui/styles.css`：创建/编辑共用 44×24 紧凑开关（`role="switch"`，
-   文字同排、说明下置、与处理上限输入同一 40px 控制行），作用域样式避免文本框规则
-   覆盖开关；保留禁用、焦点、键盘与 reduced-motion。`styles.css` 为唯一视觉改动处。
-7. `web/src/entities/operations/automation-lifecycle.ts`：表单授权归一化补上后端已发布
-   的 `actions.copy`（缺失/畸形按无权限失败关闭），供列表权威地决定是否显示复制入口。
-   无后端、schema 或命令语义改动。
+1. **B-PATCH-01 本次结果不再被旧成功覆盖。** `clearCopyRowFeedback` 现在同时移除该行
+   已显示的 `copiedCopies` 成功记录；一次新的明确复制开始后，旧“已复制为停用副本”
+   与“编辑副本”立即退出，只显示本次提交、拒绝、未知或核对结果。兄弟行与其它未决意图
+   保持不变；待核对时仍显示本次“核对复制结果”，核对后“编辑副本”打开本次副本。
+2. **B-PATCH-02 409 与页面刷新同时恢复来源和授权。** `refreshDefinitionRead` 除列表外
+   同步失效并重读表单授权查询；页面“刷新”也走同一恢复，且在列表/授权读取期间禁用，
+   避免用户按旧提示再次提交同一版本。更新后的下一次明确点击绑定重新读取的配置。
+3. **B-PATCH-03 所见来源与命令基线配对。** 新增 `readCopyBaseline`：仅当行的
+   `activeConfiguration` 与表单授权 `active` 的 `revisionId`、`revisionSequence` 和
+   `version` 完全一致且 digest 非空时才允许提交；授权读取先返回新版本而旧行仍显示旧值时，
+   本次明确点击不发 POST，只做只读重读并保留可见说明；用户看到最新值后再次点击才提交。
+   不在原点击里换基线自动补发，也不把新授权静默配给旧行。无权限、授权读失败和不可用
+   授权继续给出中文原因与下一步。
 
 **实际验证（本工作区候选；命令均在仓库根或 `web/` 实际执行）：**
 
 - `python3 scripts/check_governance.py` → `governance check: PASS`。
 - `.venv/bin/python -m unittest tests.test_automation_definition_publication
-  tests.test_v2_automation_lifecycle` → **91 tests OK**（49.4s），覆盖复制发布/来源
-  身份/权限/版本与遗留未知核对；无 Python 源码改动。
+  tests.test_v2_automation_lifecycle` → **91 tests OK**（46.8s）。
 - `git diff --check` → 无输出。
 - `npm run typecheck`（两份 tsconfig）→ 通过。
 - `npm run test -- run src/shared/ui/AppShell.test.tsx
@@ -301,47 +284,46 @@ web/.DS_Store
   src/features/operations/AutomationLifecyclePage.test.tsx
   src/features/operations/AutomationListRunOnce.test.tsx
   src/features/operations/AutomationListCopy.test.tsx
-  src/features/operations/automation-create-form.test.ts`
-  → **7 files / 87 tests passed**（13.7s）。
-- `npm run test -- run src/entities/operations/automation-lifecycle.test.ts`
-  → **17 tests passed**（0.6s，授权的 `actions.copy` 归一化未改变既有结构断言）。新增 `AutomationListCopy.test.tsx` 7 项：
-  一次点击+连点仅 1 次 POST、exact 来源/fence、留在列表并标记副本、409 不重放并重读、
-  丢响应→核对 committed 后不产生第二副本、遗留编辑页 legacy 会话、不完整证据保持未知、
-  完整零命令证据才释放、副本不在当前页仍可编辑、无权限隐藏/授权读失败说明；AppShell
-  新增四路由无位置行；生命周期用例把旧启停按钮改为共用开关+保存，并保留未知发布核对、
-  移除、失效候选重读采用等原断言。
-- `npx eslint`（上述 11 个改动源/测试文件）→ 无输出；`npx prettier --check`（含
-  `styles.css`、两个 E2E spec）→ 全部通过。
-- `npm run build` → 成功（`index-BPlF38lR.js`，仅既有 chunk >500 kB warning）。
+  src/features/operations/automation-create-form.test.ts
+  src/entities/operations/automation-lifecycle.test.ts`
+  → **8 files / 108 tests passed**（15.6s）。
+- `AutomationListCopy.test.tsx` 新增 4 项并保留原 7 项，共 **11 项**：旧成功后第二次
+  丢响应只显示本次待核对、核对出第二个副本并可编辑；旧成功后第二次明确拒绝不再显示旧
+  成功；409 后列表与授权一起更新，页面刷新后的下一次明确复制用新版本成功；行先返回、
+  授权后返回且中间已保存新值时，旧行不发 POST，重读显示新值后才提交。断言真实 POST
+  次数、请求中的 `expectedRevisionId`/`expectedVersion`/`expectedDigest`、副本 ID/上限
+  和 session 清理。
+- `npx eslint`（本次 3 个改动源/测试文件及 TASK 所列入口文件）→ 无输出；
+  `npx prettier --check`（上述改动文件及 `styles.css`）→ 通过。
+- `npm run build` → 成功（`index-1dc4Y-rF.js`、`index-UWKGzSrN.css`，仅既有
+  chunk >500 kB warning）。
 - 原生 Python E2E（真实 API + 临时 SQLite + 上述生产构建，单 worker）：
   `npm run test:e2e -- --config=playwright.python.automation.config.ts
   tests/e2e/automation-create-dialog.python.spec.ts
-  tests/e2e/automation-lifecycle.python.spec.ts
-  tests/e2e/automation-workspace.python.spec.ts`
-  → **41 passed（1.1m）**（创建 14、生命周期 18、工作区 9）。新增/更新：
-  - 四类列表背景路由无 `.mf-page-context`；列表→新建→取消→新建→保存→行编辑的
-    背景标题 y 坐标差 ≤1px；
-  - 开关实际 bounding box 40–48×20–26、与处理上限控制行中心差 ≤2px、文字同排，
-    1536 与 390 宽度无页面横向溢出，空格键切换；
-  - 列表复制→停用副本/来源不变、列表内核对遗留丢失响应、审计分页后仍核对、副本编辑
-    入口、行编辑不再包含生命周期组；启用改为开关+保存并在持久状态回读。
+  tests/e2e/automation-lifecycle.python.spec.ts`
+  → **35 passed（54.6s）**（创建 14、生命周期 21）。新增 3 条真实生命周期旅程：
+  - 第一次复制成功→第二次响应丢失→当前行只显示第二次待核对→核对第二个真实 ID/上限→
+    编辑第二个副本；两次 POST 分别携带第一次和第二次观察的 Active fence。
+  - 列表行先显示 5、授权 GET 被延迟；另一标签页真实编辑保存 9 后授权才返回；旧行点击
+    复制不发 POST，只读重读显示 9，再次明确点击才发布复制 9 的停用副本。
+  - 列表行/授权仍为旧版本时另一标签页保存 9；原列表复制收到 409；列表与授权重读并
+    显示 9，页面刷新后下一次明确复制以新 revision/digest 成功。
+  原有创建/编辑、共享开关、未知发布核对、移除与复制回归同时通过。
 
-**用时：** 本轮约 40 分钟，测试/门禁执行约 4.5 分钟（Python 49s、Vitest 约 14s ×2、
-E2E 60s+66s、静态/构建约 30s），约 11%，低于 30% 上限。
+**用时：** 本轮约 30 分钟，测试/门禁执行约 3 分钟（Python 47s、Vitest 16s、
+E2E 55s + 新增用例复跑约 19s、静态/构建约 20s），约 10%，低于 30% 上限。
 
 **剩余风险 / B 注意：**
 
-1. 列表复制以表单授权的 `actions.copy` + 非空 Active digest 为准，不使用列表行里
-   draft-gated 的旧 `actions.copy` 字段；无 Draft 时也允许 focused copy（后端
-   `copy_object` 直接发布新 ID 停用副本）。请按真实权限矩阵复核。
-2. 移除了健康卡片内的独立刷新；并发变更改由提交时后端权威 409 触发只读重读，随后
-   仍走原“核对当前值并采用”。既有未决启停/保存的“核对本次发布”保留。
-3. 列表复制反馈为当前列表挂载期状态；点击“编辑副本”进入编辑后返回，副本仍在真实
-   列表/统计中，但该行成功提示不跨路由重挂载保留。
-4. 核对一次只允许一个行处于“正在确认”，与既有 Run once 核对一致；不同来源的忙碌与
-   结果不串用。
-5. 未执行 B 的 T4 全量/默认 E2E/wheel/source 外消费者/容器门禁；未改私有配置或用户
-   媒体。工作区原有未跟踪文件（含 `mediaflow/.DS_Store`）全部保留，未纳入候选。
+1. 复制入口是否显示仍以后端表单授权 `actions.copy`（配置管理 + 配置激活）为准，不使用
+   列表行 draft-gated 的旧 `actions.copy` 字段；这是 Task 既有可复制范围，本轮未改变，
+   请 B 按真实权限矩阵复核。
+2. 行列配对依赖列表行携带的 `activeConfiguration`。若某来源没有该只读身份，复制会被
+   拒绝并说明；本轮未新增 schema 或后端投影。
+3. 列表复制反馈仍是当前列表挂载期状态；进入副本编辑再返回后，副本在真实列表/统计中，
+   但该行成功提示不跨路由重挂载保留。
+4. 未执行 B 的 T4 全量/默认 E2E/wheel/安装消费者/容器门禁；未改私有配置或用户媒体。
+   工作区原有未跟踪文件（含 `mediaflow/.DS_Store`）全部保留，未纳入候选。
 
 ### B Review Result
 
