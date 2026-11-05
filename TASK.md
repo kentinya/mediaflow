@@ -164,75 +164,90 @@ Web变更文件Prettier check、governance及 `git diff --check` 通过后交实
 生产外部服务验收/部署。不改Slice/Roadmap/Progress，不提前把TARGET改为CURRENT。
 如确需schema或兼容边界扩展，列具体用户阻塞交A作范围决定。
 
-### Developer Completion Report
+### Developer Completion Report（B49.2-01/02 修正轮）
 
-Checkpoint: `9eae8f666c50f8bfc488b914336c2c4be8b750b7`（main，Task Base
-`efc628cf62b102f689e779bbee7747d88006598d`..`9eae8f66`）— **READY FOR B REVIEW**。
-实施起点为激活提交 `0d85b48e`；预存 untracked 文件（日志/`15`/output/图片等）全部保留且未入提交。
-本轮实施前 governance PASS，`git diff --check` 通过。
+Checkpoint: `e5fe262a`（main，Task Base `efc628cf62b102f689e779bbee7747d88006598d`..`e5fe262a`；
+实现起点为 B Reviewed Head `ff7e3f99`）— **READY FOR B REVIEW**。本轮只修复 B49.2-01/02，
+governance PASS，`git diff --check` 通过；预存 untracked 文件（日志/`15`/output/图片等）
+全部保留且未入提交（本轮曾误在仓库根跑 vitest 留下仅含缓存目录的 `node_modules/`，
+已确认内容后删除，恢复起始状态）。
 
-**变更行为（对应 RO-3 / RO-4、AC1–7、AC9）：**
+**B49.2-01 修复（共用卡片旅程）：**
 
-- 后端（`automation_workspace_commands.py`、`service_api.py`）：`save_object`
-  新增 create 命令的显式可选启用参数——省略仍停用，严格布尔 `true`
-  在同一次原子激活内发布启用定义并复用既有共享发布意图链（作用域主体、
-  激活边界的 `GRANT_UNATTENDED_EXECUTION`、审计）；仅凭候选内 `enabled: true`
-  仍被拒绝（409 `automation_definition_enable_requires_command`），非布尔类型
-  400 拒绝；PUT 编辑命令不接受额外 `enabled` 键（启用经类型化候选提交）。
-  `form_authority` 按连接主体权限投影 `create/edit/copy/toggle/remove/enable/
-  createEnabled` 及有界无秘需的中文原因；API 层始终传主体权限，直接服务调用
-  保留宽容投影。创建启用复用 `_publish` 的原子后继发布与
-  `automation_intent_ids`，无分步编排（AC8 原子方案路径，无第二命令/中间态）。
-- Web（新 `AutomationDefinitionFormFields.tsx`）：新建与已保存编辑共用同一张
-  中文卡片（字段、校验展示、有界目录浏览、后端近期时间预览、启用开关），
-  无第二套表单/校验器；`AutomationCreateForm` 增加启用选择（默认关），
-  `editFormFromDefinition` 精确回填（任意合法 Cron/`1.5` 秒等小数间隔原文保留、
-  ID 不变）；创建选中开关后主按钮变「创建并启用」一次提交完成，成功提示
-  「已创建并启用 / 创建成功，尚未启用」依据持久真值（响应定义），列表横幅同步；
-  编辑回填 enabled 并可保存切换；无 `createEnabled`/`enable` 权限时开关禁用
-  并显示后端原因；lifecycle 页移除旧英文长表单与本地预览按钮，共享卡片
-  自动预览；编辑「运行一次」保持不存在；复制/移除及 successor-Draft 编辑器
-  （`/operations/automation/editor/$definitionId`）边界不变。
+- 新建共享卡片容器 `automation-card-shell.tsx`：创建/编辑共用同一 layer/backdrop/
+  中文头部、退出动画、继续编辑/放弃修改钉住选择、Escape/Tab 焦点圈、body 滚动锁、
+  邻接 inert、路由/浏览器返回拦截（submitting 或未保存输入时阻断，未知结果保留原命令
+  允许离开重开核对）、关闭后焦点返回原入口。`AutomationCreateDialog` 重构到该容器，
+  行为不变（原 13 项组件测试全过）。
+- 新 `AutomationEditDialog.tsx`：列表行编辑与普通已保存编辑入口打开列表背景上的同一
+  张中文卡片；共享字段/校验组件与命令差异保留（PUT 保存、独立启停/复制/移除命令及其
+  确认/权限/未知阻断）；内部 ID、Active 修订、发布机制、executionEffects 收进折叠的
+  「诊断信息」；编辑卡无「运行一次」。深链/刷新/登录续转进入同一体验；Draft-only/历史/
+  不可读按原错误状态呈现，不伪装 Active；复制成功后导航沿用 resetExit 保持卡片可用。
+- 确认保存成功返回原列表：刷新真实行/统计、标记该行、横幅显示“已保存并启用 /
+  已保存，当前停用”，被筛选掉时解释；取消/放弃/保存保留合法列表条件、页、滚动，
+  焦点回到该行编辑入口。提交中的保存防重复命令并阻断离开（取消按钮禁用、Escape/
+  返回均不弃命令）；提交期间继续输入的场景确认合并（仅替换未重打字段）并如实提示，
+  不静默丢弃。
+- `RefreshControl` 显式 `type="button"`：修复其位于编辑卡表单内时点击会触发表单提交
+  （意外发布保存）的真实缺陷。
 
-**实际受影响测试（Developer 范围，均于 Task candidate 上运行）：**
+**B49.2-02 修复（核对区分当时结果与当前状态）：**
+
+- 后端 `publication_intent`：证明发布时新增当前状态证据
+  `currentDefinitionState`(current/modified/absent/unreadable) + `currentDefinition` +
+  `currentActive`，从当前 Active 读取并指纹比对提交候选；当前 Active 不可读时如实返回
+  unreadable，绝不以发布修订冒充当前状态，也不影响已证明的发布事实。
+- Web 模型/客户端 fail-closed 归一化：published 响应缺少/畸形当前证据时降级 unreadable，
+  仅 current/modified 携带当前定义。
+- 创建卡核对文案与列表横幅按证据区分：“已核对本次创建；已创建并启用，当前保存状态与
+  之一致”（current）/“创建当时已启用；该定义之后被再次修改，当前为停用状态…”（modified，
+  横幅标题为「已核对本次创建」，不再出现现在时“已创建并启用”）/absent/unreadable
+  （当前状态无法确认，不推断仍启用）；核对不重新创建、不自动启停。
+- 编辑卡核对：仅 current 时以当前 Active 为新基线合并；modified/absent/unreadable 保留
+  操作者后续输入与原 observed authority（不配新基线），由既有“未保存的修改基于较旧的
+  配置”横幅引导显式重读采用；未知查找缺失仍不允许重发。
+
+**实际受影响测试（Developer 范围，均在候选 `e5fe262a` 构建上运行）：**
 
 - Python（仓库根，`.venv/bin/python -m unittest`）：
   - `tests.test_automation_definition_publication tests.test_v2_automation_lifecycle
-    tests.test_automation_execution_intent` → **106 tests OK**（新增：原子创建启用、
-    缺定时权限拒绝+同主体可停用创建、非布尔拒绝、form_authority 主体投影（服务级+API 级）、
-    创建启用定义的 Scheduler 意图链、PUT 拒绝 `enabled` 侧键、非布尔 400）。
+    tests.test_automation_execution_intent` → **110 tests OK，51.6s**（新增 4 项：
+    modified/still-current/absent/unreadable 当前状态证据，含当前 Active 读取故障注入）。
   - `tests.test_v2_automation_run_once tests.test_automation_authorized_execution_matrix`
-    → **48 tests OK**；直接受影响邻域 `tests.test_classification_destination_contract
-    tests.test_automation_run_once tests.test_v2_rules_workspace_commands` → **111 tests OK**；
-    `tests.test_automation_task_admission tests.test_automation_definition_occurrence
-    tests.test_task_scheduling tests.test_task_scheduling_fencing` → **87 tests OK**。
-- Web（`web/`）：任务指定 8 文件清单 → **117 tests OK**；全量 `npm run test`
-  → **92 files / 1321 tests OK**；`npm run typecheck`、`npm run lint`、
-  `npm run build` 通过；Prettier check（含变更 e2e spec）通过。
-- 原生 E2E（`playwright.python.automation.config.ts`，真实 harness，单 worker）：
-  四个指定 spec → **41 passed**；新增旅程用例「一次提交创建并启用」验证
-  默认关→选中变「创建并启用」→恰好一个 POST→持久 enabled→再开编辑卡回填 checked。
-- Python 变更文件 ruff format/check 通过；`git diff --check` 通过；
-  governance PASS。
-- 用时：本轮实施约 85 分钟，测试/验证（含单元、集成、E2E、类型/构建门禁）
-  累计约 15 分钟（<30%）。
+    → **48 tests OK**；邻域 `tests.test_automation_task_admission
+    tests.test_automation_definition_occurrence tests.test_task_scheduling
+    tests.test_task_scheduling_fencing` → **87 tests OK**。
+- Web（`web/`）：任务指定 8 文件清单 + 生命周期组件测试全过；全量 `npm run test`
+  → **92 files / 1321 tests OK，103s**；`npm run typecheck`、`npm run lint`、
+  `npm run format:check`、`npm run build`（既有 chunk 体积 warning）通过。
+- 原生 E2E（`playwright.python.automation.config.ts`，真实 Python API/SQLite harness，
+  单 worker）：四个指定 spec → **46 passed，1.2 分钟**。新增：行编辑卡片在列表背景上
+  打开/未改直关/修改后退出选择/放弃恢复列表上下文/保存返回并标记行/再编辑；提交中
+  阻断离开+未知结果关闭重开核对（PUT 恰一次）；390px 无溢出+键盘可达；创建启用丢响应
+  →另一会话经行编辑停用→刷新重连核对→横幅同时说明“创建当时已启用、当前为停用”、
+  无第二次创建 POST、无自动启停。既有旅程按“保存返回列表”实际语义改写（保存成功断言
+  URL/横幅/持久状态，不再断言旧页内提示）。
+- Python 变更文件 ruff format/check 通过；Web 变更文件 Prettier check 通过。
+- 用时：本轮开发（含阅读/实现/测试排障）约 4.5 小时；测试与门禁执行累计约 25 分钟
+  （<30%，不含写报告）。测试排障中发现并修复的真实产品缺陷一并计入实现：
+  RefreshControl 缺 type="button" 会在其被置于表单内时把刷新点击变成表单提交。
 
 **剩余风险 / B 需注意：**
 
-1. 未采用分步 create→enable 编排，AC8 仅适用原子方案的证明（已提供：失败保留
-   原 Active、无第二命令）；AC7 的创建后核对复用现有 `publication-intent`
-   （create action、候选含真实 enabled），组件级/后端级已覆盖，未扩建 harness 主体
-   切换工具——「无 scheduled 权限创建停用并见原因」由 API 级（configurator 主体）
-   与组件级用例覆盖，如 B 需要浏览器级证据需新增 harness 主体 fixture。
-2. e2e 断言从旧英文文案改为共享卡片中文文案/`exact: true`（如 `保存`、启用/停用
-   提示、复制核对文案），B 审查时请按新 UI 文案核对匹配面。
-3. lifecycle 页仅翻译了与本次直接相关的提示（头部/保存/启停/错误横幅）；
-   removal/copy 区块的其余英文说明保留原样，属 Non-goal 范围。
-4. 编辑保存成功后停留在当前页继续编辑（不再导航），旧响应不覆盖后来输入的语义
-   由共享 accept-merge 逻辑保持。
-5. 未执行 B 的全量 T4 门禁（全量 Python/Web、默认 E2E、wheel/source 外消费者、
-   容器安全证明、fresh/同版本重开安装证明）——按分工由 B 执行；`npm run build`
-   已在候选上通过，E2E 使用该构建产物。
+1. 编辑卡保存成功即关闭返回列表；提交期间继续输入是唯一留在卡片内的路径（合并+提示
+   “你在提交后的新输入已保留”）。列表横幅是保存成功的主反馈面。
+2. 保存成功路径会同步把确认后的 Active 写入 authority 查询缓存，消除“保存后立即重开
+   仍用旧 fence”的 409 窗口；若 B 在极端时序下复现 409，既有冲突文案+过期候选横幅
+   提供显式重读路径。
+3. e2e 中 “corrupt published evidence” 旅程遗留的 open Draft 会作为 draft-only 行出现
+   在列表背景中（既有已接受 workspace 行为，harness 无丢弃 Draft 的生产边界）；该测试
+   的“不得渲染 Draft 候选”断言已按合同意图收窄到编辑卡片，请 B 审查该收窄是否可接受。
+4. 未执行 B 的全量 T4 门禁（全量 Python/Web 默认 E2E、wheel/source 外消费者、容器安全
+   证明、fresh/同版本重开安装证明）——按分工由 B 执行；`npm run build` 已在候选通过，
+   E2E 使用该构建产物。
+5. 删除/复制/启停成功提示仍在卡片内（保持既有命令语义）；移除成功关闭卡片返回列表，
+   未新增列表横幅——如 B 认为需要保存同级反馈，请在同一 Task 内指出。
 
 ### B 规划核对 / 全部 Slice 结果重评（激活前记录）
 
