@@ -48,6 +48,26 @@ for immediate reopen; independently newer form authority cannot repin older cach
 changes require explicit reread; later input is preserved. Publishing performs no Task admission/Storage effects; the
 resident Scheduler independently follows the schedule using existing pins and live authority checks.
 
+**List Copy and form controls:** the accepted [standalone UI correction](https://github.com/kentinya/mediaflow/blob/8a37d1a17526347116df528dcba0467f0fdfe766/TASK.md)
+uses the existing focused Copy command from the inventory beside Edit. The list row's
+`activeConfiguration` and form-authority read must identify the same Active revision/version/sequence;
+only that authority's digest is submitted. A mismatch or backend conflict rereads both projections
+and awaits another explicit click, without substituting a newer baseline into the original command.
+Backend command availability, source validation, publication and concurrency checks remain authoritative.
+
+Retain bounded principal-scoped Copy context before POST: source identity and observed publication
+baseline, never credentials or execution grants. Busy/refused/copied/unknown feedback belongs to the
+current source and attempt; clear that source's previous success when a new explicit attempt starts.
+Unknown outcomes reconcile exact durable Copy evidence through the existing read entry, including
+legacy edit sessions and sources outside the current page/filter. Incomplete evidence cannot release
+repeat protection. Success offers the exact disabled copy's edit entry; no forced navigation or Task
+admission. No schema, backend command or configuration store is added.
+
+Create/edit use one compact accessible enable switch; only Create/Save publishes its choice. The
+separate lifecycle toggle/copy/refresh group is removed, while reference-safe removal and retained
+unknown publication reconciliation remain. The shared shell suppresses its extra location line for
+the list and its create/legacy-create/edit backgrounds, preserving their common layout.
+
 **Direct list command:** read the backend's exact saved-definition/configuration identity and action
 availability, then use the existing Run once admission and request-lookup service from the row.
 Expose any necessary bounded read identity through the existing projection rather than deriving
@@ -1142,7 +1162,7 @@ Completed/in-flight effects are not rolled back; uncertain mutation is never aut
 The ordinary V2 inventory/detail reads saved definitions and bounded `executionReadiness`, without
 querying historical grant eligibility. Enabled is a published schedule state, not proof of a valid
 future plan. Removed/Draft-only/unavailable states retain their actual identities; reads create no
-work. Confirmed focused Save/toggle advances the same form's publication identity while preserving
+work. Confirmed focused Save advances the same form's publication identity while preserving
 later input. Peer changes retain the old candidate. Unknown responses retain principal-scoped
 candidate/action/base identity and reconcile only the matching durable command and activation audit;
 absence is unknown, never permission to replay. Reconnect does not resubmit commands.

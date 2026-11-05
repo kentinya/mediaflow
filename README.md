@@ -40,27 +40,19 @@ business authority. The retained V1 `/ui` is a historical surface; V1 is unsuppo
 [Documentation](docs/README.md) maps document
 responsibilities. [Roadmap](docs/roadmap.md) records priority/status,
 [Progress](docs/progress.md) accepted closures, and [SLICE.md](SLICE.md)/[TASK.md](TASK.md) current work.
-Slice43 is PASS / CLOSED: native Automation lifecycle, bounded Run once, read-only records/statistics
-and engine settings with actual resident adoption are accepted. Slice45's Task Center and retired
-Scan/Preview/FileIndex boundaries remain intact; V2 is still unreleased and V1 cutover is not selected.
-Slice46 is PASS / CLOSED: readable V2 actions, Files-first admitted organizing, library-local ordinary
-operation status, organizing-only eight-view/four-type Task Center and checked Enabled/real Run once
-are accepted. Slice47 is PASS / CLOSED: one organizing Task owns admission, scheduling and execution
-across manual/due/Run once and same-Task four-type recovery. Live Job, Pause/resume-from-pause and
-CLI `tasks retry-failed` are retired. Latest failed/partial source history controls automatic
-exclusion and manual Web warnings; three shared runtime settings live in System Settings.
-Slice48 is PASS / CLOSED: Task flow uses pending/running/completed/failed/cancelled independently
-of file outcomes. A normally closed flow, including ended file technical failures with unknown
-effects or missing Results, is completed; Task-level flow failure remains failed. Required human
-or machine work stays unfinished. Task completion grants no replay and proves no file success.
-[Slice49](SLICE.md) is PASS / CLOSED: saved Automation sources resolve correctly, list Run once
-submits directly, creation/editing share one Chinese card, and creation can explicitly enable the
-schedule. Later editing supports enable/disable with checked authority and exact unknown-result
-reconciliation. [TASK.md](TASK.md) has no active implementation Task; A selects the next large Slice
-separately.
-[Slice48's preserved Contract](https://github.com/kentinya/mediaflow/blob/02fb77dd713bad4dd51c29b6cfc5556ddd6d5b4e/SLICE.md)
-retains its B Closure Packet pointer and A whole-range acceptance. The Slice49 requirements,
-journey and architecture are CURRENT; this remains unreleased V2 development acceptance.
+The accepted V2 baseline includes live library/Storage management, typed Rules, Files-first organizing,
+a Task-owned execution queue and same-Task four-type recovery. Ordinary file progress stays on its
+originating library page; Task Center handles organizing. Live Job, Pause/resume-from-pause and CLI
+`tasks retry-failed` are retired. Scan/Preview/FileIndex retirement remains intact. Three shared
+runtime settings live in System Settings. Five-state Task flow stays independent of file outcomes;
+completion neither proves file success nor grants replay.
+
+[Slice49](SLICE.md) is PASS / CLOSED: Automation uses confined saved sources, direct list Run once,
+a shared Chinese create/edit card and optional enabled creation. The subsequent accepted UI
+correction places Copy beside Edit and uses a compact enable switch saved through the form.
+[TASK.md](TASK.md) has no active implementation Task and links the latest independent B review;
+[Progress](docs/progress.md) preserves original large-Slice Base/Head, closure evidence and deferrals.
+A selects the next large Slice separately. This is unreleased V2 development acceptance.
 
 The current [Task Center](docs/task-center-page-spec.md) has no shared top search. All eight views
 offer only the local creation-date range and clear. Clearing restores the current view’s complete
@@ -75,8 +67,14 @@ The [Automation workspace](docs/product-experience.md#current--complete-native-a
 contains `任务列表 / 执行记录`; the three shared runtime settings live in System Settings.
 `新建自动化任务` and a row's `编辑` open the same Chinese card for source, schedule, limit and
 explicit enablement. Creation defaults disabled; choosing `启用定时计划` uses `创建并启用`.
-Editing can later enable/disable and Save; cancellation or success preserves list context. Publishing
-runs no media work. Unknown creation/publication is reconciled before further commands. A row's
+Editing can later enable/disable through the same compact switch and Save; cancellation or success
+preserves list context. The list and its create/edit backgrounds have no extra location-label row.
+A row's actions are `打开 / 编辑 / 复制 / 运行一次`, subject to backend permissions. Copy stays in the
+list, creates a disabled definition with a new ID and offers `编辑副本`, including when filters/paging
+hide it. An unknown copy uses `核对复制结果` for that original command; it is never automatically
+reposted. Concurrent changes require rereading the displayed source and its matching authority before
+a new explicit click. Publishing runs no media work. Unknown creation/publication is reconciled
+before further commands. A row's
 `运行一次` directly submits the saved definition in place; use its `查看任务` link for progress/results.
 An unknown Run once uses `查看提交结果` to reconcile the original request without resubmitting.
 Execution-record rows offer only `查看详情 / 收起详情`;

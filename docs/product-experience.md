@@ -26,15 +26,20 @@ progress and four business recovery types; Automation owns saved-definition sche
 `9d6b78147d90b950ed2333f9747facc77bf0391a`, preserving original Base
 `02fb77dd713bad4dd51c29b6cfc5556ddd6d5b4e`. `V2-AUTO-013–015` and these journeys are CURRENT;
 they replace the earlier disabled-only create outcome while preserving copy's disabled state.
-Original Slice43/46 acceptance and all unchanged deferrals remain historical facts.
+Original Slice43/46 acceptance and all unchanged deferrals remain historical facts. The accepted
+[standalone UI correction](https://github.com/kentinya/mediaflow/blob/8a37d1a17526347116df528dcba0467f0fdfe766/TASK.md) updates the current entries and feedback below;
+it does not replace Slice49's acceptance or introduce another lifecycle command.
 
 - **Goal/entry:** from `自动化 → 任务列表`, create or edit an automatic-organization definition
-  in one familiar card, explicitly choose whether its schedule is enabled, or click a saved row's
-  `运行一次` to immediately submit one real organizing Task. Opening, browsing and closing do no work.
+  in one familiar card, explicitly choose whether its schedule is enabled, copy a saved definition
+  from the list, or click a saved row's `运行一次` to immediately submit one real organizing Task. Available row actions appear as `打开 / 编辑 / 复制 / 运行一次` under backend
+  authority. Opening, browsing and closing do no work. The list, create/legacy-create and edit routes
+  share one background without an extra location label or its layout shift.
 - **Create state/action:** `新建自动化任务` opens the current list's Chinese card. Name, library,
   whole-library/subdirectory browser, interval value/unit, daily/weekly times, advanced Cron/timezone,
-  backend upcoming times and limit retain the accepted interaction. `启用自动化任务` defaults off;
-  an explicit selection changes the primary action to communicate `创建并启用`. The note explains
+  backend upcoming times and limit retain the accepted interaction. The compact `启用定时计划`
+  switch defaults off. On desktop it shares the item-limit control row, with its label alongside
+  and help below; narrow screens stack the fields without page overflow. An explicit selection changes the primary action to communicate `创建并启用`. The note explains
   that enabling schedules future runs; it is distinct from `运行一次`. Missing enable permission
   explains that limit while allowing disabled creation when the operator has configuration rights.
 - **Create success/failure/recovery:** one form submission completes the selected create/enable result
@@ -54,7 +59,9 @@ Original Slice43/46 acceptance and all unchanged deferrals remain historical fac
   publishes only that intended successor under existing configuration and execution permissions.
   After creation the operator can explicitly enable or disable the saved definition here, regardless
   of the initial choice. The edit card/page has no `运行一次` button; use the list for that action.
-  Existing copy/remove actions remain reachable with their present authority/confirmation boundaries.
+  Enable/disable uses the shared form switch and takes effect only on Save; the separate lifecycle
+  heading and immediate toggle/copy/refresh group are absent. Reference-safe removal retains its
+  separate impact evidence, explicit confirmation and authority.
 - **Edit success/failure/recovery:** preserve the creation card's grouping, controls, animations,
   reduced-motion, keyboard and narrow-screen behavior. Success returns to the original list with
   current readback. Reopening that definition permits another edit/enable change against the confirmed publication.
@@ -65,6 +72,19 @@ Original Slice43/46 acceptance and all unchanged deferrals remain historical fac
   unknown response can leave/reopen with the retained reconciliation context. Cancel/discard/success
   preserve valid list filters, page, scroll and entry focus; filtered-out successes are explained.
   Ordinary deep-link/reload/login continuations reach the same form with a safe default list return.
+- **Copy state/action:** click `复制` beside the saved row's `编辑`; it copies saved source values,
+  independently of unsaved editor input. Stay on the list and retain filters, page, scroll and focus.
+  Show busy feedback for that source; each explicit new attempt replaces its previous result.
+- **Copy success/failure/recovery:** show the actual new disabled copy and an `编辑副本` entry;
+  explain when filters/paging hide it. The copy has a new ID and no inherited execution authority;
+  the source is unchanged and no Task/media work starts. Permission/read/validation refusal gives
+  its cause and next action. A stale conflict refreshes both list and configuration authority;
+  a row and authority from different saved versions cannot be submitted together. Reread and show
+  current values, then await another explicit click. Lost/5xx/malformed responses retain the original
+  principal/source/publication baseline and offer `核对复制结果`, including after reload or when the
+  source is filtered away. Reconcile only that command; never repost automatically or show an earlier
+  success as its result. Retained legacy edit-copy sessions remain reconcilable here. Incomplete
+  evidence stays unknown; only complete proof of non-publication releases the repeat block.
 - **Run once state/action:** click the saved row's `运行一次` once. The row becomes busy in place;
   no prerequisite navigation, picker, manual analysis or second initial confirmation is required;
   backend analysis, planning and safety checks still run. Bind the exact observed published definition
@@ -733,8 +753,8 @@ rate follow accepted48, and creation/editing/list Run once follow accepted49 abo
   scheduled intent with current execution permission and audit; there is no independent grant or
   mandatory grant analysis. Confirmed Save reconciles the same editor's values/publication identity
   so another Enabled edit/Save works, preserving later typing. Peer conflicts preserve input. Unknown
-  edit/toggle uses “核对本次发布” to read exact principal/action/candidate/base/activation evidence
-  without reposting; unknown Run once reconciles only its own principal/request identity.
+  edit or a retained earlier toggle uses “核对本次发布” to read exact
+  principal/action/candidate/base/activation evidence without reposting; unknown Run once reconciles only its own principal/request identity.
 - **Scheduled success:** each valid due occurrence creates one linked pinned run and executes through
   the existing Worker/OrganizerExecutor without another per-run click, with independent item results.
 - **Run once:** click the saved row's `运行一次` directly in the list, retaining row feedback and an

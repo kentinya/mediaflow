@@ -390,7 +390,10 @@ workspace are delivered; V1 cutover remains unselected. Current Task Center is o
 eight views and four business recovery types; ordinary file work stays on its originating library page.
 Checked Enabled publication supplies scoped scheduled intent. [Automation creation/editing](product-experience.md#current--automation-forms-and-direct-run-once-slice49-pass--closed)
 uses the same list-background card: default-disabled creation can explicitly enable, and later editing
-can enable/disable and Save. The list's Run once directly submits the saved bounded scope under
+can enable/disable with the shared compact switch and Save. Copy is beside Edit in the list, creates
+a disabled definition with a new ID, and retains an edit/reconciliation entry even outside current
+filters. It uses saved values and their matching publication baseline, never unsaved editor input.
+The list's Run once directly submits the saved bounded scope under
 current permissions; publishing itself starts no media work. Scan/Preview/FileIndex retirement remains intact.
 Production uses Waitress `api serve-production`; standard-library `api serve` stays trusted-loopback.
 See [Roadmap](roadmap.md), [Progress](progress.md) and [Deployment](deployment.md) for their own facts.
