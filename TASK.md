@@ -8,13 +8,13 @@ Authority: committed [Slice49](SLICE.md) RO-3 / RO-4；生命周期遵循
 Task ID: 49.2
 Task Type: SLICE
 Parent Slice: 49
-Status: FIX REQUIRED
+Status: READY FOR B REVIEW
 Task Base: efc628cf62b102f689e779bbee7747d88006598d
 Difficulty: High
 Test Level: T4
 Planner / Reviewer: B
 Development Authorization: USER ACTIVATED TASK49.2; IMPLEMENT ONLY THIS TASK
-Next Action: DEVELOPER FIXES B49.2-03 IN THIS TASK; B REVIEWS THE NEW CHECKPOINT
+Next Action: B REVIEWS THE B49.2-03 FIX CHECKPOINT 9d6b7814
 ```
 
 Task49.1已接受的PASS、精确Base..Head和完整证据保留于
@@ -445,3 +445,73 @@ Closure Packet、不规划下一Task、不由B关闭Slice。下一步为 **SAME 
 本地证据：`.git/validation-evidence/3f91045555fb32f20cfdc360314fc23b88f23eb5/b-task49.2/`。
 审查起点main / Reviewed Head，tracked干净，工作区/Git可写，预存untracked清单完整保留。
 本轮只提交Task审查结论/修正指导，不改产品、Slice/Roadmap/Progress，不push/部署/改写历史。
+
+### Developer Completion Report（B49.2-03 修正轮）
+
+Checkpoint: `9d6b7814`（main；Task Base `efc628cf62b102f689e779bbee7747d88006598d`..
+`9d6b7814`，实现起点为 B Re-review 已审候选 `e5fe262a`）— **READY FOR B REVIEW**。
+本轮只修复 B49.2-03，未重开 B49.2-01/02 结论，未动后端并发校验、schema、Slice/Roadmap/Progress。
+governance PASS、`git diff --check` 通过；预存 untracked 文件（日志、`15`、output、图片、
+`.DS_Store`）全部保留且未入提交。
+
+**根因（实际代码与实测）：**
+
+1. 编辑卡片的「已保存字段」与「提交基线」来自两次不同读取：回填值来自
+   `automation-lifecycle-edit` projection（含 `definition`+`active`），而提交 fence 取自独立的
+   `automation-lifecycle-authority` 的 Active。定义读取较慢/命中旧缓存时，旧字段被配上最新
+   Active，成为「合法」候选。
+2. 保存成功只推进 authority 缓存（`updateAuthorityCache`），未同步该定义自身的 projection 缓存，
+   因此「返回列表 → 立即再编辑」会先渲染旧缓存字段，却已能用刚确认的新版本提交；只改名称保存
+   就把 enabled 改回停用（B 的原生复现）。
+3. 复核同一路径时发现的对称风险：启停/复制/移除同样取该混合 fence；且 `candidateIsStale`
+   只与 authority 查询比对，当定义投影比 authority 更新（如显式重读后）会把当前候选误判过期
+   并禁用保存。
+
+**修复（`web/src/features/operations/AutomationEditDialog.tsx`，唯一生产文件）：**
+
+1. 新增 `candidateAuthorityOf` 与 `loadedAuthority`：未修改表单的候选与其 fence 只来自同一次
+   定义投影（`model.active`）；保存/启停/复制/移除四条命令统一使用这一对。`canManage` 额外要求
+   本页已有可用 fence（本页值与被提交基线必须成对）。
+2. 新增 `seedDefinitionProjection`：保存成功（含提交中输入被保留分支）、启停成功、核对结果为
+   `current` 时，把「已确认定义 + 其对应 Active」写回该定义的 projection 缓存，使关闭→立即
+   重开（即便下一次定义读取很慢）回填与基线仍是同一对；下一次打开照常从持久状态重读。
+   写入的 `definitionFingerprint` 为 `null`（该命令响应没有此证据，不臆造），当前仅编辑卡片
+   消费该键。
+3. `candidateIsStale` 改为按 `revisionSequence` 与「已观测到的最新 Active」比较：更旧的读取不再
+   被当成并发变更证据并误禁保存；更新的读取仍显示过期横幅、禁用保存并要求显式重读。
+   并发改变仍由后端精确 fence 拒绝、不自动重试、不偷偷换基线。
+
+**测试（Developer 范围，均在候选 `9d6b7814` 生产构建上运行）：**
+
+- Web 组件（`web/`，`npx vitest run src/features/operations/AutomationLifecyclePage.test.tsx`）
+  → **22 tests OK**，新增 3 项：
+  - 慢读再编辑：行编辑启用并保存（上限 7）→ 定义 GET 延迟 1.2 秒时立即再编辑，快照断言回填
+    名称/上限/启用均为已确认值；随即只改名称保存 → PUT 携带 `enabled=true`、`itemLimit=7`，
+    fence = 上一次确认的 Active，SQLite 回读仍启用。
+  - 旧字段不得配新 fence：authority 已观测更新 Active、projection 较旧时，输入后出现
+    「未保存的修改基于较旧的配置」、保存禁用、零 PUT；显式重读后按 peer 的 Active 保存。
+  - 投影比 authority 更新时不误判过期，保存使用投影 fence 并保留 peer 的上限 9。
+  - 前两项在修复前源码（`HEAD:web/.../AutomationEditDialog.tsx`）上实测失败：回填
+    `Harness automation`/5/未勾选，fence 提交 `revision-peer`；修复后通过。
+- Web 任务清单 8 文件 → **119 tests OK**（先前一轮，同一构建链）。
+- 静态：`npm run typecheck`、`npm run lint`、变更文件 Prettier check、`npm run build`
+  （`index-Dlq65Kgv.js`，既有 chunk 体积 warning）通过。
+- 原生 E2E（`playwright.python.automation.config.ts`，真实 Python API + 临时 SQLite + 生产
+  构建产物，单 worker）：`tests/e2e/automation-lifecycle.python.spec.ts` → **18 passed，
+  36.4s**，含新增「re-editing right after an enabled save keeps the saved values and fence」：
+  普通读与 1.2 秒延迟读两组各从真实行编辑启用保存、立即再次编辑只改名称，断言开启前快照回填、
+  PUT 候选 `enabled`/`itemLimit`、fence = 上一次确认的 Active，且持久回读 enabled 仍为 true；
+  保留原有退出/返回/提交中离开/丢响应核对/同伴冲突/narrow 用例。该原生用例在修复前构建上实测
+  失败（回填为旧缓存值 `Harness automation`/5/未勾选），修复后通过。
+- 用时：本轮窗口约 20 分钟，测试/门禁执行累计约 2.7 分钟（vitest 约 40 秒、E2E 约 89 秒、
+  typecheck/lint/format 约 33 秒、build 约 2 秒），约 13%，低于本轮 30% 上限；排障重跑
+  已知失败用例（修复前后对照）计入上述时间。
+
+**剩余风险 / B 需注意：**
+
+1. 延迟读窗口内若操作者在定义读取返回前开始改其它字段，候选会以当时读到的那一版 fence 记录
+   并显示过期横幅，需要显式「核对当前值并采用」。这是刻意的安全取舍，不自动换基线。
+2. `candidateIsStale` 改为依赖 `revisionSequence` 单调递增（现有缓存推进逻辑已如此假设）。
+3. 复制/移除沿用同一 fence 来源，语义未变；其 409 仍复用通用保存冲突文案（既有行为）。
+4. 未执行 B 的 T4 全量/默认 E2E/wheel、source 外消费者、容器与 fresh/同版本重开门禁——按分工
+   由 B 在 `9d6b7814` 上执行；`npm run build` 已在候选通过，E2E 使用该产物（`web/dist` 被忽略）。
