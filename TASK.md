@@ -14,7 +14,7 @@ Difficulty: High
 Test Level: T4
 Planner / Reviewer: B
 Development Authorization: USER ACTIVATED TASK49.2; IMPLEMENT ONLY THIS TASK
-Next Action: DEVELOPER FIXES B49.2-01/02 IN THIS TASK; B REVIEWS THE NEW CHECKPOINT
+Next Action: DEVELOPER FIXES B49.2-03 IN THIS TASK; B REVIEWS THE NEW CHECKPOINT
 ```
 
 Task49.1已接受的PASS、精确Base..Head和完整证据保留于
@@ -378,3 +378,70 @@ Closure Packet、不规划下一Task、不由B关闭Slice。下一步为 **SAME 
 审查起点main / Reviewed Head，tracked干净、工作区/Git可写；预存untracked全部保留。
 本轮只提交Task结论/修正指导，不改Slice/Roadmap/Progress，不读用户数据库、私有配置或
 生产媒体，不push、部署或改写历史。
+
+### B Re-review — 2026-11-05（B49.2-01/02 修正候选）
+
+**FIX REQUIRED — SAME TASK FIX LOOP**。原Task ID、Base、Goal、范围和T4分工不变。
+
+- Reviewed：`efc628cf62b102f689e779bbee7747d88006598d`..
+  `3f91045555fb32f20cfdc360314fc23b88f23eb5`，完整24个变更文件。
+- 本轮实现checkpoint：`e5fe262a4051bfd10d973f55453b8da390f1cac7`，之后仅Task交接文档。
+- 结合上一轮已审且未变的实现，核对本次全部16个变更文件及合并结果：卡片容器/退出、
+  编辑发布与回填、列表缓存/返回、当前状态核对、共享刷新控件和全部变更测试。
+- **B49.2-01/02 的已知阻塞复现已通过**：真实列表编辑卡片、修改后退出选择、保存返回、
+  提交中拦截离开、未知保存重开核对、390px键盘操作，以及“创建启用回复丢失→他人停用→
+  刷新重连核对”四项原生测试通过。相关旧阻塞不再重复提出；这不是整个Task的PASS。
+- 发现下述连续编辑P1，暂不启动昂贵全量/安装门禁。
+
+#### B49.2-03 — P1：再次编辑必须使用同一已保存版本的值和提交基线
+
+真实完整旅程：“列表新建停用任务 → 行编辑 → 勾选启用并保存 → 返回列表显示已保存并
+启用 → 立即再点编辑 → 只改名称并保存”。当再次打开时的定义读取稍慢，卡片先显示旧缓存
+的停用值，却允许用刚才成功保存的新版本提交。实际原生复现中：第二次保存前持久enabled
+仍为true，卡片显示false，提交只改名称却携带false及**最新的有效版本**；后端正常接受，
+最终名称保存且enabled变为false。用户没有在第二次编辑中取消启用，计划却被停用了。
+违反Task AC2/AC4/AC6、Slice RO-3/RO-4及AC-8/9的精确回填、连续保存和版本一致性。
+
+复现仅延迟现有`GET /api/v1/operations/automation/definitions/{id}`真实响应的交付，
+模拟普通读取延迟；创建、两次PUT及SQLite持久结果均走生产链，没有改响应数据或手写状态。
+请求/回读证据表明这不是被409拒绝的旧版本保存，而是旧字段与新基线拼接后被正式发布。
+
+开发修正指导：
+
+1. 表单值与保存基线必须来自同一次已审定义投影。复用已有edit projection携带的Active，
+   不能将旧edit-query缓存的定义与独立authority-query的较新Active组合成可提交候选；
+   已输入候选继续保留其原值和基线，并发改变仍由明确重读处理。
+2. 成功保存返回列表前，保持已确认定义及其版本的回填数据一致：同步采用匹配的确认结果，
+   或在拿到匹配的真实回读之前暂不开放基于旧缓存的提交。不能只更新authority缓存、期待
+   稍后的GET碰巧修正旧字段，也不能靠要求用户手动刷新解决普通连续编辑。
+3. 同一绑定规则覆盖保存、启停和已证实的核对结果；保留后续输入与旧响应不覆盖规则。
+   不改后端并发校验、不增加自动重试，不把旧字段自动配上最新版本来绕过冲突。
+4. 在现有原生harness加入本旅程：普通及读取延迟两组都从真实行编辑启用保存，立即再次
+   编辑只改名称，断言回填、提交候选/基线与持久enabled一致。再核对来源/计划等未修改字段
+   不被旧缓存带回；保留原有退出/返回/丢响应及同伴冲突用例。组件级覆盖已确认缓存与
+   定义投影版本不一致的状态；Developer只跑新增/修改和直接受影响测试，B负责后续T4。
+
+#### 本轮实际验收与全部Slice重评
+
+- `web/`：`npm run build`通过，有既有bundle体积warning。
+- 上轮关键复现：`npm run test:e2e -- --config=playwright.python.automation.config.ts
+  tests/e2e/automation-lifecycle.python.spec.ts tests/e2e/automation-create-dialog.python.spec.ts
+  --grep 'row edit entry|submitting save blocks|edit card fits|proved create reconciliation'`
+  → **4 passed（9.6秒）**。测试运行在本轮生产构建、真实Python API/临时SQLite上。
+- B追加原生：`npm run test:e2e -- --config=playwright.python.automation.config.ts
+  tests/e2e/task49-2-b-reopen.python.spec.ts` → **1 failed**，断言第二次只改名称后enabled
+  应保持true，实际false。源码、实际PUT与持久回读JSON、截图及trace留存；临时spec已撤出
+  工作树。没有读取生产媒体或用户运行库。
+- governance、链接/范围及`git diff --check`通过。测试/构建累计不足20秒，本轮总用时
+  已超过4分钟，满足测试低于50%；未重跑上轮后端专项，不将Developer结果冒充本轮验收。
+- 已证明P1，按workflow提前FIX REQUIRED；完整Python/Web/默认E2E、wheel/source外、容器
+  及fresh/同版本重开等必需门禁仍由B在修正候选执行，尚未完成，不能PASS。
+
+**Slice全部结果：** RO-1/RO-2保留Task49.1接受事实，最终仍需结合共享列表回归；RO-3的
+卡片/退出/保存返回及RO-4的历史核对已补齐已知复现，但连续编辑可能把启用值改回停用，
+所以RO-3/RO-4尚未完整满足。Slice49保持ACTIVE，不建下一Task、不提交Closure Packet、
+不关闭Slice。
+
+本地证据：`.git/validation-evidence/3f91045555fb32f20cfdc360314fc23b88f23eb5/b-task49.2/`。
+审查起点main / Reviewed Head，tracked干净，工作区/Git可写，预存untracked清单完整保留。
+本轮只提交Task审查结论/修正指导，不改产品、Slice/Roadmap/Progress，不push/部署/改写历史。
